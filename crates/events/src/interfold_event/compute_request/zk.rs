@@ -186,8 +186,8 @@ fn validate_lbfv_generation_row(
         "l-BFV key-share response operation ID does not match its request"
     );
     anyhow::ensure!(
-        source.params_preset == BfvPreset::SecureThreshold16384,
-        "l-BFV proof requests require SecureThreshold16384"
+        e3_fhe_params::supports_lbfv(source.params_preset),
+        "l-BFV proof requests require a preset with l-BFV parameters"
     );
     anyhow::ensure!(
         source.ciphertext_level == 0 && source.key_level == 0,
@@ -216,8 +216,8 @@ fn validate_lbfv_proof_request_domain(
     committee_size: CiphernodesCommitteeSize,
 ) -> anyhow::Result<()> {
     anyhow::ensure!(
-        params_preset == BfvPreset::SecureThreshold16384,
-        "l-BFV proof requests require SecureThreshold16384"
+        e3_fhe_params::supports_lbfv(params_preset),
+        "l-BFV proof requests require a preset with l-BFV parameters"
     );
     e3_zk_helpers::threshold::lbfv_proof_domain::lbfv_proof_session(proof_domain)
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;

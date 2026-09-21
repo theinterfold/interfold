@@ -24,6 +24,6 @@ describe('ZK inputs generator preset', () => {
     expect(getZkInputsGenerator().getBFVParams().degree).toBe(8192)
 
     setZkInputsGeneratorPreset(null)
-    expect(getZkInputsGenerator().getBFVParams().degree).toBe(512)
+    expect(getZkInputsGenerator().getBFVParams().degree).toBe(128)
   })
 })

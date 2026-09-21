@@ -3,7 +3,6 @@
 //! Dispatch the final DKG aggregation proof once all prerequisites exist.
 
 use super::super::*;
-use crate::LBFV_ROW_COUNT;
 use e3_events::DkgAggregationV2Request;
 
 impl PublicKeyAggregator {
@@ -234,6 +233,22 @@ impl PublicKeyAggregator {
     }
 
     fn try_dispatch_dkg_aggregation_v2(&mut self, ec: &EventContext<Sequenced>) -> Result<()> {
+        info!(
+            e3_id = %self.e3_id,
+            effects_enabled = self.effects_enabled,
+            is_aggregator = self.is_aggregator,
+            has_aggregation_sidecar = self
+                .lbfv_aggregation
+                .as_ref()
+                .is_some_and(e3_data::Persistable::has),
+            "Checking DkgAggregationV2 readiness"
+        );
+        // The final aggregation requires the complete l-BFV row and fold
+        // chain. Re-check that chain on every V2 readiness probe so a request
+        // the chain never published cannot stall publication: the row and fold
+        // dispatchers ignore work that is already dispatched or complete.
+        self.try_dispatch_lbfv_aggregation_rows(ec)?;
+        self.try_dispatch_lbfv_aggregation_fold(ec)?;
         let Some(PublicKeyAggregatorState::GeneratingC5Proof {
             party_nodes,
             dkg_node_proofs,
@@ -258,11 +273,12 @@ impl PublicKeyAggregator {
         let Some(mut aggregation) = self.lbfv_aggregation_state()? else {
             return Ok(());
         };
+        let row_count = aggregation.row_count()?;
         if aggregation.is_failed()
             || aggregation.operational_rlk.is_none()
             || aggregation.dkg_aggregation_correlation.is_some()
             || aggregation.dkg_aggregated_proof.is_some()
-            || aggregation.aggregation_fold_completed_rows != LBFV_ROW_COUNT as u32
+            || aggregation.aggregation_fold_completed_rows != row_count as u32
         {
             return Ok(());
         }
@@ -315,6 +331,12 @@ impl PublicKeyAggregator {
             ),
             ec.clone(),
         )?;
+        self.note_lbfv_aggregation_dispatch(correlation, ec);
+        info!(
+            e3_id = %self.e3_id,
+            correlation = %correlation,
+            "Dispatched DkgAggregationV2"
+        );
         Ok(())
     }
 

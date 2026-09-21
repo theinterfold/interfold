@@ -11,10 +11,10 @@ use crate::{
     LbfvContributionRepositoryFactory, LbfvContributionVerificationStateV1,
     LbfvPartyContributionStatusV1,
 };
-use e3_data::Repositories;
+use e3_data::{AutoPersist, Repositories};
 use e3_events::{
     LbfvKeyShareDocument, LbfvKeyShareDocumentFetchFailed, LbfvKeyShareDocumentReceived,
-    LbfvKeyShareManifestPublished, LbfvVerificationContext, LbfvVerificationContextV1,
+    LbfvKeyShareManifestPublished, LbfvVerificationContext, LbfvVerificationContextV2,
     PartyProofsToVerify,
 };
 use std::{collections::BTreeSet, time::Duration};
@@ -29,8 +29,10 @@ enum PreparedLbfvDispatch {
 
 impl PublicKeyAggregator {
     pub(in crate::actors::publickey_aggregator) fn is_lbfv(&self) -> bool {
-        self.params_preset == BfvPreset::SecureThreshold16384
-            && self.committee_size == CiphernodesCommitteeSize::Minimum
+        e3_fhe_params::supports_lbfv(self.params_preset)
+            && (self.lbfv_collection.is_some()
+                || self.lbfv_aggregation.is_some()
+                || self.lbfv_publication.is_some())
     }
 
     pub(in crate::actors::publickey_aggregator) fn replace_lbfv_collection(
@@ -193,6 +195,7 @@ impl PublicKeyAggregator {
         }
         let (event, ec) = event.into_components();
         let party_id = event.document.context().party_id;
+        let document = event.document.clone();
         let Ok(state) = self.lbfv_collection_state() else {
             return;
         };
@@ -224,12 +227,33 @@ impl PublicKeyAggregator {
                         None => {}
                     }
                 }
-                anyhow::Ok(state)
+                let aggregation_repository = repositories.publickey_lbfv_aggregation(&state.e3_id);
+                let mut aggregation_sidecar = aggregation_repository.load().await?;
+                let aggregation = match aggregation_sidecar.get() {
+                    Some(aggregation)
+                        if aggregation
+                            .accepted_party_ids
+                            .binary_search(&party_id)
+                            .is_ok() =>
+                    {
+                        aggregation_sidecar.try_mutate_without_context(|mut aggregation| {
+                            aggregation.record_document(document)?;
+                            Ok(aggregation)
+                        })?;
+                        Some(aggregation_sidecar)
+                    }
+                    Some(_) => None,
+                    None => None,
+                };
+                anyhow::Ok((state, aggregation))
             }
             .into_actor(self)
             .map(move |result, actor, ctx| match result {
-                Ok(state) => {
+                Ok((state, aggregation)) => {
                     actor.replace_lbfv_collection(state);
+                    if let Some(aggregation) = aggregation {
+                        actor.replace_lbfv_aggregation(aggregation);
+                    }
                     actor.after_lbfv_collection_update(ec, ctx);
                 }
                 Err(error) => actor.bus.err(EType::PublickeyAggregation, error),
@@ -450,6 +474,14 @@ impl PublicKeyAggregator {
         if let Err(error) = self.publish_inputs_ready(ec.clone()) {
             self.bus.err(EType::PublickeyAggregation, error);
         }
+        if matches!(
+            self.state.get(),
+            Some(PublicKeyAggregatorState::GeneratingC5Proof { .. })
+        ) {
+            if let Err(error) = self.try_dispatch_lbfv_aggregation_rows(&ec) {
+                self.bus.err(EType::PublickeyAggregation, error);
+            }
+        }
         self.try_progress_lbfv_verification(ec, ctx);
     }
 
@@ -570,6 +602,12 @@ impl PublicKeyAggregator {
         ec: EventContext<Sequenced>,
         ctx: &mut Context<Self>,
     ) -> bool {
+        if !matches!(
+            self.state.get(),
+            Some(PublicKeyAggregatorState::VerifyingC1 { .. })
+        ) {
+            return false;
+        }
         let Some(submitted_party_ids) = self.submitted_lbfv_parties() else {
             return false;
         };
@@ -778,25 +816,34 @@ async fn prepare_lbfv_dispatch(
             .map(|(_, c1)| c1)
             .expect("ready party has a KeyshareCreated C1 proof");
         let validation = (|| {
-            manifest.validate_documents(&public_key, &rlk)?;
-            let LbfvKeyShareDocument::PublicKeyV1(public_key) = &public_key else {
-                anyhow::bail!("l-BFV public-key artifact has the wrong role");
-            };
-            let LbfvKeyShareDocument::RelinearizationKeyV1(rlk) = &rlk else {
-                anyhow::bail!("l-BFV relinearization-key artifact has the wrong role");
+            manifest.validate_documents_for_preset(&public_key, &rlk, preset)?;
+            anyhow::ensure!(
+                public_key.role() == e3_events::LbfvKeyShareDocumentRole::PublicKey,
+                "l-BFV public-key artifact has the wrong role"
+            );
+            anyhow::ensure!(
+                rlk.role() == e3_events::LbfvKeyShareDocumentRole::RelinearizationKey,
+                "l-BFV relinearization-key artifact has the wrong role"
+            );
+            let document_c1 = match &public_key {
+                LbfvKeyShareDocument::PublicKeyV1(document) => &document.signed_c1_proof,
+                LbfvKeyShareDocument::PublicKeyV2(document) => &document.signed_c1_proof,
+                _ => unreachable!("the public-key role was checked above"),
             };
             anyhow::ensure!(
-                public_key.signed_c1_proof.payload == expected_c1.payload,
+                document_c1.payload == expected_c1.payload,
                 "l-BFV document C1 payload does not match KeyshareCreated"
             );
-            let commitments = e3_zk_prover::validate_lbfv_key_share_document_commitments(
-                preset, public_key, rlk,
+            let commitments = e3_zk_prover::validate_lbfv_key_share_document_commitments_dynamic(
+                preset,
+                &public_key,
+                &rlk,
             )?;
             anyhow::ensure!(
                 state.validated_commitments(*party_id)? == &commitments,
                 "l-BFV bundle commitments changed after validation"
             );
-            lbfv_proofs_for_dispatch(public_key, rlk, expected_c1)
+            lbfv_proofs_for_dispatch(&public_key, &rlk, expected_c1)
         })();
         match validation {
             Ok(signed_proofs) => party_proofs.push(PartyProofsToVerify {
@@ -860,18 +907,38 @@ async fn prepare_lbfv_dispatch(
 }
 
 fn lbfv_proofs_for_dispatch(
-    public_key: &e3_events::LbfvPublicKeyShareDocumentV1,
-    rlk: &e3_events::LbfvRelinearizationKeyShareDocumentV1,
+    public_key: &LbfvKeyShareDocument,
+    rlk: &LbfvKeyShareDocument,
     expected_c1: &SignedProofPayload,
 ) -> Result<Vec<SignedProofPayload>> {
+    let (signed_c1_proof, pk_rows) = match public_key {
+        LbfvKeyShareDocument::PublicKeyV1(document) => (
+            &document.signed_c1_proof,
+            document.signed_row_proofs.as_slice(),
+        ),
+        LbfvKeyShareDocument::PublicKeyV2(document) => (
+            &document.signed_c1_proof,
+            document.signed_row_proofs.as_slice(),
+        ),
+        _ => anyhow::bail!("l-BFV public-key artifact has the wrong role"),
+    };
+    let rlk_rows = match rlk {
+        LbfvKeyShareDocument::RelinearizationKeyV1(document) => {
+            document.signed_row_proofs.as_slice()
+        }
+        LbfvKeyShareDocument::RelinearizationKeyV2(document) => {
+            document.signed_row_proofs.as_slice()
+        }
+        _ => anyhow::bail!("l-BFV relinearization-key artifact has the wrong role"),
+    };
     anyhow::ensure!(
-        public_key.signed_c1_proof.payload == expected_c1.payload,
+        signed_c1_proof.payload == expected_c1.payload,
         "l-BFV document C1 payload does not match KeyshareCreated"
     );
-    let mut proofs = Vec::with_capacity(11);
-    proofs.push(public_key.signed_c1_proof.clone());
-    proofs.extend(public_key.signed_row_proofs.iter().cloned());
-    proofs.extend(rlk.signed_row_proofs.iter().cloned());
+    let mut proofs = Vec::with_capacity(1 + pk_rows.len() + rlk_rows.len());
+    proofs.push(signed_c1_proof.clone());
+    proofs.extend(pk_rows.iter().cloned());
+    proofs.extend(rlk_rows.iter().cloned());
     Ok(proofs)
 }
 
@@ -890,7 +957,7 @@ fn lbfv_dispatch_event(
         pre_dishonest,
         params_preset: preset,
         committee_size,
-        lbfv_context: Some(LbfvVerificationContext::V1(LbfvVerificationContextV1 {
+        lbfv_context: Some(LbfvVerificationContext::V2(LbfvVerificationContextV2 {
             proof_domain: state.proof_domain,
             aggregation: None,
         })),
@@ -917,13 +984,12 @@ mod tests {
         collection.mark_ready(vec![0, 1])?;
         collection.mark_verification_dispatched()?;
         let (public_key, rlk, _) = bundle(&fixture, 0);
-        let LbfvKeyShareDocument::PublicKeyV1(public_key) = public_key.document else {
-            unreachable!();
+        let expected_c1 = match &public_key.document {
+            LbfvKeyShareDocument::PublicKeyV1(document) => &document.signed_c1_proof,
+            LbfvKeyShareDocument::PublicKeyV2(document) => &document.signed_c1_proof,
+            _ => unreachable!(),
         };
-        let LbfvKeyShareDocument::RelinearizationKeyV1(rlk) = rlk.document else {
-            unreachable!();
-        };
-        let proofs = lbfv_proofs_for_dispatch(&public_key, &rlk, &public_key.signed_c1_proof)
+        let proofs = lbfv_proofs_for_dispatch(&public_key.document, &rlk.document, expected_c1)
             .expect("canonical proof bundle");
         assert_eq!(proofs.len(), 11);
         assert_eq!(proofs[0].payload.proof_type, ProofType::C1PkGeneration);
@@ -933,7 +999,10 @@ mod tests {
                 proof
                     .payload
                     .proof_type
-                    .identity(&proof.payload.proof)?
+                    .identity(
+                        &proof.payload.proof,
+                        e3_fhe_params::lbfv_row_count(BfvPreset::SecureThreshold16384),
+                    )?
                     .instance,
                 row as u32
             );
@@ -944,7 +1013,10 @@ mod tests {
                 proof
                     .payload
                     .proof_type
-                    .identity(&proof.payload.proof)?
+                    .identity(
+                        &proof.payload.proof,
+                        e3_fhe_params::lbfv_row_count(BfvPreset::SecureThreshold16384),
+                    )?
                     .instance,
                 row as u32
             );
@@ -968,7 +1040,7 @@ mod tests {
         );
         assert!(matches!(
             event.lbfv_context,
-            Some(LbfvVerificationContext::V1(LbfvVerificationContextV1 {
+            Some(LbfvVerificationContext::V2(LbfvVerificationContextV2 {
                 proof_domain,
                 aggregation: None,
             })) if proof_domain == fixture.state.proof_domain

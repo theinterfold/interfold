@@ -5,4 +5,5 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 pub mod dkg;
+pub mod lbfv;
 pub mod threshold;

@@ -23,6 +23,7 @@ BENCH_COMPILE=false
 CIRCUIT_FILTER=""
 VERBOSE=false
 PRESET_ARTIFACTS_READY=false
+USER_DATA_ENCRYPTION_INPUTS_READY=false
 MULTITHREAD_JOBS="${BENCHMARK_MULTITHREAD_JOBS:-}"
 export CIPHERNODE_SKIP_PROOF_AGGREGATION=false
 
@@ -332,7 +333,18 @@ for CIRCUIT in $RUN_CIRCUITS; do
         
         # Generate Prover.toml (and configs.nr) via zk_cli so nargo execute has witness
         echo "  Generating Prover.toml..."
-        if ! BENCHMARK_COMMITTEE="$OUTPUT_COMMITTEE" "${SCRIPT_DIR}/generate_prover_toml.sh" "$CIRCUIT" "$MODE" "$REPO_ROOT" 2>&1; then
+        if [[ "$CIRCUIT" == threshold/user_data_encryption_ct0 || "$CIRCUIT" == threshold/user_data_encryption_ct1 ]]; then
+            if [ "$USER_DATA_ENCRYPTION_INPUTS_READY" = false ]; then
+                if ! BENCHMARK_COMMITTEE="$OUTPUT_COMMITTEE" "${SCRIPT_DIR}/generate_prover_toml.sh" "$CIRCUIT" "$MODE" "$REPO_ROOT" 2>&1; then
+                    echo "⚠️  Prover.toml generation failed for $CIRCUIT, skipping benchmark"
+                    echo ""
+                    continue
+                fi
+                USER_DATA_ENCRYPTION_INPUTS_READY=true
+            else
+                echo "  Reusing the generated ct0/ct1 recursive inputs."
+            fi
+        elif ! BENCHMARK_COMMITTEE="$OUTPUT_COMMITTEE" "${SCRIPT_DIR}/generate_prover_toml.sh" "$CIRCUIT" "$MODE" "$REPO_ROOT" 2>&1; then
             echo "⚠️  Prover.toml generation failed for $CIRCUIT, skipping benchmark"
             echo ""
             continue
@@ -340,7 +352,7 @@ for CIRCUIT in $RUN_CIRCUITS; do
         
         # Run benchmark
         BENCHMARK_ARGS=("$CIRCUIT_PATH" "$ORACLE" "$OUTPUT_FILE" "$MODE")
-        if [ "$BENCH_COMPILE" != true ]; then
+        if [ "$BENCH_COMPILE" != true ] && [ "$CIRCUIT" != "config" ]; then
             if [ "$SKIP_COMPILE" = true ] || [ "$PRESET_ARTIFACTS_READY" = true ]; then
                 BENCHMARK_ARGS+=("--skip-compile")
             fi
@@ -378,6 +390,10 @@ fi
 # Persist CLI flags for report regeneration (see generate_report.sh → Run configuration).
 RUN_META_FILE="${BENCHMARKS_DIR}/${OUTPUT_DIR}/benchmark_run_meta.json"
 MT_JOBS_JSON="${BENCHMARK_MULTITHREAD_JOBS:-1}"
+NODES_SPAWNED_JSON=20
+if [ -f "${GAS_JSON_FILE}" ]; then
+    NODES_SPAWNED_JSON=$(jq -r '.integration_summary.benchmark_config.nodes_spawned // 20' "${GAS_JSON_FILE}")
+fi
 load_committee_by_name "$OUTPUT_COMMITTEE" "$REPO_ROOT"
 jq -n \
     --arg mode "$MODE" \
@@ -389,6 +405,7 @@ jq -n \
     --argjson committee_size_n "$COMMITTEE_N" \
     --argjson committee_size_h "$COMMITTEE_H" \
     --argjson committee_threshold_t "$COMMITTEE_T" \
+    --argjson nodes_spawned "$NODES_SPAWNED_JSON" \
     '{
       benchmark_mode: $mode,
       bfv_preset_subdir: $preset,
@@ -396,7 +413,7 @@ jq -n \
       proof_aggregation: $proof_agg,
       multithread_jobs: $multithread_jobs,
       verbose: $verbose,
-      nodes_spawned: 20,
+      nodes_spawned: $nodes_spawned,
       committee_size_n: $committee_size_n,
       committee_size_h: $committee_size_h,
       committee_threshold_t: $committee_threshold_t,

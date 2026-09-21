@@ -10,6 +10,9 @@ import {
   getBfvPkVkBindingHashPaths,
   getBfvV2SubCircuitVkHashPaths,
   getBfvV2VkBindingHashPaths,
+  ACTIVE_BFV_PARAM_SET,
+  BFV_DKG_H,
+  ACTIVE_BFV_COMMITTEE_N,
   readVkRecursiveHash,
 } from "../../scripts/utils";
 import dkgAggregatorV2VerifierModule from "./dkgAggregatorV2Verifier";
@@ -24,6 +27,9 @@ export default buildModule("BfvPkVerifierV2", (m) => {
   const bfvPkVerifierV2 = m.contract("BfvPkVerifierV2", [
     dkgAggregatorV2Verifier,
     registry,
+    ACTIVE_BFV_PARAM_SET,
+    BFV_DKG_H,
+    ACTIVE_BFV_COMMITTEE_N,
     readVkRecursiveHash(getBfvV2SubCircuitVkHashPaths().nodesFold),
     readVkRecursiveHash(pkPaths.c5),
     readVkRecursiveHash(pkPaths.skC2Chunk),

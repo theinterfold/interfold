@@ -20,11 +20,10 @@ use crate::dkg::share_computation::ShareComputationCircuitData;
 use crate::CircuitsErrors;
 use crate::{calculate_bit_width, crt_polynomial_to_toml_json, poly_coefficients_to_toml_json};
 use crate::{CircuitComputation, Computation};
-use e3_fhe_params::build_pair_for_preset;
 use e3_fhe_params::BfvPreset;
+use e3_fhe_params::{build_pair_for_preset, calculate_smudging_bound};
 use e3_polynomial::{reduce, CrtPolynomial};
 use fhe::bfv::SecretKey;
-use fhe::trbfv::{SmudgingBoundCalculator, SmudgingBoundCalculatorConfig};
 use num_bigint::{BigInt, BigUint};
 use serde::{Deserialize, Serialize};
 
@@ -164,7 +163,7 @@ impl Computation for Bounds {
 
         // Use the same committee size as C1 (pk_generation) so smudging bounds and
         // bit widths match PK_GENERATION_BIT_E_SM / SHARE_COMPUTATION_E_SM_BIT_SECRET.
-        let e_sm_config = SmudgingBoundCalculatorConfig::new_multiplicative(
+        let e_sm_bound = calculate_smudging_bound(
             threshold_params,
             data.n_parties as usize,
             num_ciphertexts as usize,
@@ -172,12 +171,8 @@ impl Computation for Bounds {
             lambda,
         )
         .map_err(|e| {
-            CircuitsErrors::Sample(format!("Failed to create smudging config: {:?}", e))
+            CircuitsErrors::Sample(format!("Failed to calculate smudging bound: {:?}", e))
         })?;
-
-        let e_sm_calculator = SmudgingBoundCalculator::new(e_sm_config);
-
-        let e_sm_bound = e_sm_calculator.calculate_sm_bound()?;
 
         Ok(Bounds {
             sk_bound: BigUint::from(SecretKey::sk_bound() as u128),
@@ -353,9 +348,9 @@ mod tests {
     fn insecure_smudging_ranges_match_pk_generation() {
         let preset = BfvPreset::InsecureThreshold512;
         for (size, expected_bits) in [
-            (CiphernodesCommitteeSize::Minimum, 38),
-            (CiphernodesCommitteeSize::Micro, 40),
-            (CiphernodesCommitteeSize::Small, 41),
+            (CiphernodesCommitteeSize::Minimum, 140),
+            (CiphernodesCommitteeSize::Micro, 148),
+            (CiphernodesCommitteeSize::Small, 154),
         ] {
             let committee = size.values();
             let sample = ShareComputationCircuitData::generate_sample(
@@ -409,11 +404,11 @@ mod tests {
             DkgInputType::SmudgingNoise,
         )
         .unwrap();
-        let short_coefficients = sample.secret.limbs[1].coefficients()[..511].to_vec();
+        let short_coefficients = sample.secret.limbs[1].coefficients()[..127].to_vec();
         sample.secret.limbs[1] = Polynomial::new(short_coefficients);
 
         let error = Inputs::compute(preset, &sample).unwrap_err().to_string();
-        assert!(error.contains("CRT limb 1 has 511 coefficients; expected 512"));
+        assert!(error.contains("CRT limb 1 has 127 coefficients; expected 128"));
     }
 
     #[test]

@@ -41,10 +41,10 @@ impl AccusationVoting {
             return Vec::new();
         }
 
-        let Ok(identity) = event
-            .proof_type
-            .identity(&event.signed_payload.payload.proof)
-        else {
+        let Ok(identity) = event.proof_type.identity(
+            &event.signed_payload.payload.proof,
+            e3_fhe_params::lbfv_row_count(self.params_preset),
+        ) else {
             warn!("Ignoring proof failure with an invalid proof instance");
             return Vec::new();
         };
@@ -107,10 +107,7 @@ impl AccusationVoting {
             return Vec::new();
         }
 
-        if (!data.proof_type.is_multirow() && data.proof_instance != 0)
-            || (data.proof_type.is_multirow()
-                && data.proof_instance >= ProofType::LBFV_ROW_INSTANCES)
-        {
+        if !data.proof_type.is_multirow() && data.proof_instance != 0 {
             warn!("Ignoring commitment violation with an invalid proof instance");
             return Vec::new();
         }

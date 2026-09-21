@@ -204,8 +204,12 @@ For secure mode, use `--mode secure` and the `results_secure_<committee>/` direc
 
 Split rows are deterministic:
 
+- `C2a` and `C2b` benchmark one configured share-computation chunk. The insecure preset uses 128
+  coefficients. Secure presets use 512 coefficients.
 - `C3a` and `C3b` both map to `dkg/share_encryption` benchmark output.
 - `C4a` and `C4b` both map to `dkg/share_decryption` benchmark output.
+- The P3 benchmark first generates the recursive child proofs. It then benchmarks the top-level
+  `user_data_encryption_ct0` and `user_data_encryption_ct1` circuits with those proofs.
 
 ## Gas measurement source
 
@@ -218,7 +222,8 @@ Split rows are deterministic:
 
 For `Π_DKG` and `Π_dec`, verifier gas is sourced from folded recursive-aggregation proofs exported
 by `cargo test -p e3-tests test_trbfv_actor` (via `BENCHMARK_FOLDED_OUTPUT`) and then replayed into
-EVM verifier `estimateGas` in `packages/interfold-contracts/scripts/benchmarkGasFromRaw.ts`.
+the matching legacy or V2 EVM verifier `estimateGas` in
+`packages/interfold-contracts/scripts/benchmarkGasFromRaw.ts`.
 
 `extract_crisp_verify_gas.sh` (and `replay_folded_verify_gas.sh --build <preset>`) call
 `ensure_circuit_preset_built.sh`, which runs
@@ -229,8 +234,8 @@ pair (for example, you ran insecure benchmarks after a secure build), the build 
 only pay the full compile once per pair until circuit sources change. Then
 `pnpm generate:verifiers --check --no-compile --preset <preset> --committee <committee>` verifies
 that `dist/circuits/<preset>/<committee>/` is built and `circuits/bin/.active-preset.json` matches
-the benchmark pair (`insecure` for `--mode insecure`, `secure-8192` for `--mode secure`). It
-also diffs the selected committed Honk Solidity verifiers (`DkgAggregatorVerifier.sol` and
+the benchmark pair (`insecure` for `--mode insecure`, `secure-8192` for `--mode secure`). It also
+diffs the selected committed Honk Solidity verifiers (`DkgAggregatorVerifier.sol` and
 `DecryptionAggregatorVerifier.sol`) against the current VKs. Gas replay runs after that check. If
 you see a preset, committee, or verifier-drift error, follow the fix recipe printed by the script.
 

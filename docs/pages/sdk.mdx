@@ -58,7 +58,7 @@ const sdk = new InterfoldSDK({
   },
   chain: sepolia,
   // Match the parameter set selected by the target E3.
-  thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_512',
+  thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD',
 })
 ```
 
@@ -78,7 +78,7 @@ const sdk = InterfoldSDK.create({
   chain: sepolia,
   privateKey: '0x...', // optional — omit for read-only
   // Match the parameter set selected by the target E3.
-  thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_512',
+  thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD',
 })
 ```
 
@@ -87,18 +87,18 @@ const sdk = InterfoldSDK.create({
 The `thresholdBfvParamsPresetName` field selects the BFV encryption parameters used by the client.
 It must match the `paramSet` index registered in the on-chain `Interfold` contract:
 
-| Preset Name              | On-chain `paramSet` | Degree | CRT moduli (L) | Security | Use case                   |
-| ------------------------ | ------------------- | ------ | -------------- | -------- | -------------------------- |
-| `INSECURE_THRESHOLD_512` | `0`                 | 512    | 2              | ❌ None  | Fast local or testnet work |
-| `SECURE_THRESHOLD_8192`  | `1`                 | 8192   | 3              | ✅ Full  | Production-equivalent work |
+| Preset Name             | On-chain `paramSet` | Degree | CRT moduli (L) | Security | Use case                   |
+| ----------------------- | ------------------- | ------ | -------------- | -------- | -------------------------- |
+| `INSECURE_THRESHOLD`    | `0`                 | 128    | 2              | ❌ None  | Fast local or testnet work |
+| `SECURE_THRESHOLD_8192` | `1`                 | 8192   | 3              | ✅ Full  | Production-equivalent work |
 
 #### Which preset to use on which network
 
-| Network           | Supported presets                                    |
-| ----------------- | ---------------------------------------------------- |
-| Local development | `INSECURE_THRESHOLD_512` and `SECURE_THRESHOLD_8192` |
-| Sepolia testnet   | `INSECURE_THRESHOLD_512` and `SECURE_THRESHOLD_8192` |
-| Ethereum mainnet  | `SECURE_THRESHOLD_8192` only                         |
+| Network           | Supported presets                                |
+| ----------------- | ------------------------------------------------ |
+| Local development | `INSECURE_THRESHOLD` and `SECURE_THRESHOLD_8192` |
+| Sepolia testnet   | `INSECURE_THRESHOLD` and `SECURE_THRESHOLD_8192` |
+| Ethereum mainnet  | `SECURE_THRESHOLD_8192` only                     |
 
 Use the preset that the target E3 selects. A Sepolia deployment can use the insecure preset for fast
 tests or the secure preset for production-equivalent tests. Mainnet rejects the insecure preset.
@@ -109,8 +109,8 @@ security targets. It also needs `secure-8192` circuit artifacts on the prover an
 [Proving: embedded circuits or your own](#proving-embedded-circuits-or-your-own).
 
 The `paramSet` index in the E3 request must match the preset used by the ciphernode network. If you
-request an E3 with `paramSet: 1` but initialise the SDK with `INSECURE_THRESHOLD_512`, the
-ciphertext will be encrypted under the wrong parameters and decryption will fail.
+request an E3 with `paramSet: 1` but initialize the SDK with `INSECURE_THRESHOLD`, the ciphertext
+will be encrypted under the wrong parameters and decryption will fail.
 
 ### Requesting computations
 
@@ -172,8 +172,8 @@ export function Dashboard() {
       ciphernodeRegistry: import.meta.env.VITE_REGISTRY_ADDRESS,
       feeToken: import.meta.env.VITE_FEE_TOKEN_ADDRESS,
     },
-    // 'INSECURE_THRESHOLD_512' for local dev and Sepolia; 'SECURE_THRESHOLD_8192' for production.
-    thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_512',
+    // 'INSECURE_THRESHOLD' for local dev and Sepolia; 'SECURE_THRESHOLD_8192' for production.
+    thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD',
   })
 
   useEffect(() => {
@@ -214,8 +214,8 @@ const { encryptedData, circuitInputs } = await sdk.encryptNumberAndGenInputs(42n
 // Standalone import (pass preset name explicitly)
 import { generatePublicKey, encryptNumber } from '@interfold/sdk'
 
-const pk = await generatePublicKey('INSECURE_THRESHOLD_512')
-const ct = await encryptNumber(42n, pk, 'INSECURE_THRESHOLD_512')
+const pk = await generatePublicKey('INSECURE_THRESHOLD')
+const ct = await encryptNumber(42n, pk, 'INSECURE_THRESHOLD')
 ```
 
 ### Full encryption method reference
@@ -237,9 +237,8 @@ const ct = await encryptNumber(42n, pk, 'INSECURE_THRESHOLD_512')
 
 `generateProof()` — and the `*AndGenProof` helpers that call it — run the user-data-encryption (UDE)
 circuits that are embedded in the package. Those artifacts are compiled with
-`--preset insecure --committee minimum` (see
-`packages/interfold-sdk/scripts/compile-circuits.sh`), so they only match `INSECURE_THRESHOLD_512`
-and a minimum-size committee.
+`--preset insecure --committee minimum` (see `packages/interfold-sdk/scripts/compile-circuits.sh`),
+so they only match `INSECURE_THRESHOLD` and a minimum-size committee.
 
 This has two consequences:
 

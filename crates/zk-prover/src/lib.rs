@@ -25,7 +25,10 @@ pub use actors::{
     ShareVerificationActor, ZkVerificationRequest, ZkVerificationResponse,
 };
 pub use domain::commitment_links::default_links;
-pub use domain::commitment_links::lbfv_share_transport::validate_lbfv_key_share_document_commitments;
+pub use domain::commitment_links::lbfv_share_transport::{
+    validate_lbfv_key_share_document_commitments,
+    validate_lbfv_key_share_document_commitments_dynamic,
+};
 
 pub use backend::{SetupStatus, ZkBackend};
 pub use circuits::aggregation::c2_terminal_validation::{
@@ -42,8 +45,11 @@ pub use circuits::aggregation::nodes_fold_accumulator::{
     generate_nodes_fold_step, generate_sequential_nodes_fold,
 };
 pub use circuits::aggregation::v2::{
-    prove_dkg_aggregation_v2, prove_lbfv_aggregation_fold_step, prove_lbfv_generation_fold_step,
-    prove_node_dkg_fold_v2, prove_nodes_fold_v2_step,
+    prove_dkg_aggregation_v2, prove_lbfv_aggregation_fold_step,
+    prove_lbfv_aggregation_fold_step_for_preset, prove_lbfv_generation_fold_step,
+    prove_lbfv_generation_fold_step_for_preset, prove_node_dkg_fold_v2,
+    prove_node_dkg_fold_v2_for_preset, prove_nodes_fold_v2_step,
+    prove_nodes_fold_v2_step_for_preset,
 };
 pub use circuits::dkg::share_computation::{
     prove_chunked_share_computation, prove_chunked_share_computation_with_chunk_size,

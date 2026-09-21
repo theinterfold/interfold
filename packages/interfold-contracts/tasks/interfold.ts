@@ -25,7 +25,7 @@ import { stageMockDataAvailabilityObject } from "./mockDataAvailability";
 
 function cryptoConfigIdForParamSet(paramSet: number): string {
   if (paramSet === 0) {
-    return "0x19921c8c12f93c3013be57d0859f4ddcdb4464ac856a0c62be1ad617fbbd2e7d";
+    return "0x7317c190ccb1dccfa505bf5b9b923e341905f6675c16f958e0a7d853795517a5";
   }
   if (paramSet === 1) {
     return "0xac5490c59e158cbb104642bba0ab7b3fd11ca49dd4bb05ce7bec8089ce3c8c31";
@@ -303,7 +303,7 @@ export const requestCommittee = task(
         hre.globalOptions.network,
       );
 
-      // paramSet: 0 = Insecure512, 1 = Secure8192
+      // paramSet: 0 = Insecure128, 1 = Secure8192
       const paramSet = 0;
 
       let computeProviderParams = computeParams;

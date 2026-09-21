@@ -159,7 +159,14 @@ describe('CRISP Contracts', function () {
   describe('validate input', () => {
     it('should verify the proof correctly with the crisp verifier', async function () {
       const verifyGas = await honkVerifier.verify.estimateGas(voteProof.proof, voteProof.publicInputs)
+      const proofCalldataGas = voteProof.proof.reduce((total, byte) => total + (byte === 0 ? 4 : 16), 0)
+      const publicInputsBytes = ethers.getBytes(ethers.concat(voteProof.publicInputs.map((value) => ethers.toBeHex(BigInt(value), 32))))
+      const publicInputsCalldataGas = publicInputsBytes.reduce((total, byte) => total + (byte === 0 ? 4 : 16), 0)
       console.log(`[bench-gas] crisp_user_verify=${verifyGas.toString()}`)
+      console.log(`[bench-gas] crisp_user_proof_bytes=${voteProof.proof.length}`)
+      console.log(`[bench-gas] crisp_user_public_input_bytes=${publicInputsBytes.length}`)
+      console.log(`[bench-gas] crisp_user_proof_calldata=${proofCalldataGas}`)
+      console.log(`[bench-gas] crisp_user_public_input_calldata=${publicInputsCalldataGas}`)
       const isValid = await honkVerifier.verify(voteProof.proof, voteProof.publicInputs)
 
       expect(isValid).to.be.true

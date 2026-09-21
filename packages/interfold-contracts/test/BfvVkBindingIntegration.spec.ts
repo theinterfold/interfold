@@ -390,6 +390,9 @@ describe("BfvVkBindingIntegration", function () {
           const verifier = await ethers.deployContract("BfvPkVerifierV2", [
             await circuit.getAddress(),
             await registry.getAddress(),
+            2,
+            2,
+            3,
             expectedNodesFoldKeyHash,
             expectedC5KeyHash,
             expectedSkC2ChunkKeyHash,

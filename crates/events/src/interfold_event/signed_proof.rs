@@ -165,10 +165,17 @@ impl ProofType {
     }
 
     /// Derive the proof instance from the signed circuit public inputs.
-    pub fn instance_from_public_signals(self, public_signals: &[u8]) -> Result<u32> {
+    pub fn instance_from_public_signals(
+        self,
+        public_signals: &[u8],
+        lbfv_row_count: Option<usize>,
+    ) -> Result<u32> {
         if !self.is_multirow() {
             return Ok(0);
         }
+
+        let row_count = lbfv_row_count
+            .ok_or_else(|| anyhow!("missing l-BFV row count for proof type {self:?}"))?;
 
         let circuit = self.circuit_names()[0];
         let row = circuit
@@ -181,15 +188,14 @@ impl ProofType {
         );
         let instance = u32::from_be_bytes(row[28..].try_into().expect("four-byte u32 suffix"));
         ensure!(
-            instance < Self::LBFV_ROW_INSTANCES,
-            "row_index {instance} is outside 0..{}",
-            Self::LBFV_ROW_INSTANCES
+            (instance as usize) < row_count,
+            "row_index {instance} is outside 0..{row_count}"
         );
         Ok(instance)
     }
 
     /// Validate the circuit mapping and derive the stable proof identity.
-    pub fn identity(self, proof: &Proof) -> Result<ProofIdentity> {
+    pub fn identity(self, proof: &Proof, lbfv_row_count: Option<usize>) -> Result<ProofIdentity> {
         ensure!(
             self.circuit_names().contains(&proof.circuit),
             "circuit {:?} does not match proof type {self:?}",
@@ -197,7 +203,7 @@ impl ProofType {
         );
         Ok(ProofIdentity {
             proof_type: self,
-            instance: self.instance_from_public_signals(&proof.public_signals)?,
+            instance: self.instance_from_public_signals(&proof.public_signals, lbfv_row_count)?,
         })
     }
 }

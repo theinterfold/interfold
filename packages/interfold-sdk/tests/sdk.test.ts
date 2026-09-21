@@ -14,7 +14,7 @@ import { generatePublicKey, encryptNumber as standaloneEncryptNumber, encryptVec
 
 describe('crypto configuration IDs', () => {
   it('uses the v2 circuit identity for every BFV parameter set', () => {
-    expect(cryptoConfigIdForParamSet(0)).to.equal('0x19921c8c12f93c3013be57d0859f4ddcdb4464ac856a0c62be1ad617fbbd2e7d')
+    expect(cryptoConfigIdForParamSet(0)).to.equal('0x7317c190ccb1dccfa505bf5b9b923e341905f6675c16f958e0a7d853795517a5')
     expect(cryptoConfigIdForParamSet(1)).to.equal('0xac5490c59e158cbb104642bba0ab7b3fd11ca49dd4bb05ce7bec8089ce3c8c31')
     expect(cryptoConfigIdForParamSet(2)).to.equal('0xde3c303973a0bf2b841cd0e7266ae68a7e48f8b271ffd629b245485e52dc8cd8')
   })
@@ -32,14 +32,14 @@ describe('encryptNumber', () => {
       },
       rpcUrl: '',
       privateKey: '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80',
-      thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_512',
+      thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD',
     })
 
     it('should encrypt a number without crashing in a node environent', async () => {
       const publicKey = await sdk.generatePublicKey()
       const value = await sdk.encryptNumber(10n, publicKey)
       expect(value).to.be.an.instanceof(Uint8Array)
-      expect(value.length).to.equal(9_238)
+      expect(value.length).to.equal(5_398)
       // TODO: test the encryption is correct
     })
     it('should encrypt a number and generate a proof without crashing in a node environent', async () => {
@@ -56,7 +56,7 @@ describe('encryptNumber', () => {
       const publicKey = await sdk.generatePublicKey()
       const value = await sdk.encryptVector(new BigUint64Array([1n, 2n]), publicKey)
       expect(value).to.be.an.instanceof(Uint8Array)
-      expect(value.length).to.equal(9_238)
+      expect(value.length).to.equal(5_398)
     })
 
     it('should validate a committee public key against its on-chain commitment', async () => {
@@ -93,17 +93,17 @@ describe('encryptNumber', () => {
 
   describe('standalone encryption (no blockchain setup)', () => {
     it('should encrypt a number using standalone functions', async () => {
-      const pk = await generatePublicKey('INSECURE_THRESHOLD_512')
-      const ct = await standaloneEncryptNumber(10n, pk, 'INSECURE_THRESHOLD_512')
+      const pk = await generatePublicKey('INSECURE_THRESHOLD')
+      const ct = await standaloneEncryptNumber(10n, pk, 'INSECURE_THRESHOLD')
       expect(ct).to.be.an.instanceof(Uint8Array)
-      expect(ct.length).to.equal(9_238)
+      expect(ct.length).to.equal(5_398)
     })
 
     it('should encrypt a vector using standalone functions', async () => {
-      const pk = await generatePublicKey('INSECURE_THRESHOLD_512')
-      const ct = await standaloneEncryptVector(new BigUint64Array([1n, 2n]), pk, 'INSECURE_THRESHOLD_512')
+      const pk = await generatePublicKey('INSECURE_THRESHOLD')
+      const ct = await standaloneEncryptVector(new BigUint64Array([1n, 2n]), pk, 'INSECURE_THRESHOLD')
       expect(ct).to.be.an.instanceof(Uint8Array)
-      expect(ct.length).to.equal(9_238)
+      expect(ct.length).to.equal(5_398)
     })
   })
 })

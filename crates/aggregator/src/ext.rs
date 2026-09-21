@@ -194,7 +194,7 @@ impl E3Extension for PublicKeyAggregatorExtension {
                 return;
             }
         };
-        let lbfv_aggregation = if params_preset == e3_fhe_params::BfvPreset::SecureThreshold16384 {
+        let lbfv_aggregation = if lbfv_collection.is_some() {
             Some(
                 ctx.repositories()
                     .publickey_lbfv_aggregation(&e3_id)
@@ -203,7 +203,7 @@ impl E3Extension for PublicKeyAggregatorExtension {
         } else {
             None
         };
-        let lbfv_publication = if params_preset == e3_fhe_params::BfvPreset::SecureThreshold16384 {
+        let lbfv_publication = if lbfv_collection.is_some() {
             Some(
                 ctx.repositories()
                     .publickey_lbfv_publication(&e3_id)
@@ -315,34 +315,33 @@ impl E3Extension for PublicKeyAggregatorExtension {
             committee_size,
         )
         .await?;
-        let (local_party_id, lbfv_aggregation, lbfv_publication) =
-            if meta.params_preset == e3_fhe_params::BfvPreset::SecureThreshold16384 {
-                let committee =
-                    publickey_state_committee_addresses(&recovered_state)?.ok_or_else(|| {
-                        anyhow!(
-                            "public-key state for E3 {} has no finalized committee",
-                            ctx.e3_id
-                        )
-                    })?;
-                let local_party_id = committee
-                    .iter()
-                    .position(|address| *address == self.signer)
-                    .ok_or_else(|| {
-                        anyhow!(
-                            "local signer is not in the finalized committee for E3 {}",
-                            ctx.e3_id
-                        )
-                    })?;
-                let local_party_id = u32::try_from(local_party_id)
-                    .map_err(|_| anyhow!("local party ID does not fit u32 for E3 {}", ctx.e3_id))?;
-                (
-                    local_party_id,
-                    load_lbfv_aggregation(ctx, meta).await?,
-                    Some(load_lbfv_publication(ctx).await?),
-                )
-            } else {
-                (0, None, None)
-            };
+        let (local_party_id, lbfv_aggregation, lbfv_publication) = if lbfv_collection.is_some() {
+            let committee =
+                publickey_state_committee_addresses(&recovered_state)?.ok_or_else(|| {
+                    anyhow!(
+                        "public-key state for E3 {} has no finalized committee",
+                        ctx.e3_id
+                    )
+                })?;
+            let local_party_id = committee
+                .iter()
+                .position(|address| *address == self.signer)
+                .ok_or_else(|| {
+                    anyhow!(
+                        "local signer is not in the finalized committee for E3 {}",
+                        ctx.e3_id
+                    )
+                })?;
+            let local_party_id = u32::try_from(local_party_id)
+                .map_err(|_| anyhow!("local party ID does not fit u32 for E3 {}", ctx.e3_id))?;
+            (
+                local_party_id,
+                load_lbfv_aggregation(ctx, meta).await?,
+                Some(load_lbfv_publication(ctx).await?),
+            )
+        } else {
+            (0, None, None)
+        };
         let value = create_publickey_aggregator(
             PublicKeyAggregatorParams {
                 fhe: fhe.clone(),
@@ -376,7 +375,7 @@ async fn load_lbfv_aggregation(
     ctx: &E3Context,
     meta: &e3_request::E3Meta,
 ) -> Result<Option<Persistable<LbfvAggregationStateV1>>> {
-    if meta.params_preset != e3_fhe_params::BfvPreset::SecureThreshold16384 {
+    if !e3_fhe_params::supports_lbfv(meta.params_preset) {
         return Ok(None);
     }
     let repository = ctx.repositories().publickey_lbfv_aggregation(&ctx.e3_id);
@@ -415,7 +414,7 @@ fn initial_lbfv_collection(
     signer: Address,
     committee_size: CiphernodesCommitteeSize,
 ) -> Result<Option<LbfvContributionCollectionStateV1>> {
-    if selection.params_preset != e3_fhe_params::BfvPreset::SecureThreshold16384 {
+    if !e3_fhe_params::supports_lbfv(selection.params_preset) {
         return Ok(None);
     }
     let interfold_address = interfold_addresses
@@ -438,6 +437,7 @@ fn initial_lbfv_collection(
         generation.context.proof_domain,
         generation.committee,
         committee_size.values().h,
+        selection.params_preset,
     )?))
 }
 
@@ -449,15 +449,19 @@ async fn load_lbfv_collection(
     signer: Address,
     committee_size: CiphernodesCommitteeSize,
 ) -> Result<Option<Persistable<LbfvContributionCollectionStateV1>>> {
-    if meta.params_preset != e3_fhe_params::BfvPreset::SecureThreshold16384 {
+    if !e3_fhe_params::supports_lbfv(meta.params_preset) {
         return Ok(None);
     }
-    let committee = publickey_state_committee_addresses(public_key_state)?.ok_or_else(|| {
-        anyhow!(
-            "public-key state for E3 {} has no finalized committee",
-            ctx.e3_id
-        )
-    })?;
+    let repository = ctx.repositories().publickey_lbfv_collection(&ctx.e3_id);
+    let mut collection = repository.load().await?;
+    if !collection.has() && matches!(public_key_state, PublicKeyAggregatorState::Complete { .. }) {
+        // A completed state without an l-BFV sidecar is a legacy classic-BFV
+        // snapshot. Do not reinterpret it as an incomplete l-BFV workflow.
+        return Ok(None);
+    }
+    let Some(committee) = publickey_state_committee_addresses(public_key_state)? else {
+        return Ok(None);
+    };
     let party_id = committee
         .iter()
         .position(|address| *address == signer)
@@ -481,8 +485,6 @@ async fn load_lbfv_collection(
     let expected =
         initial_lbfv_collection(&selection, interfold_addresses, signer, committee_size)?
             .expect("secure preset creates an l-BFV collection");
-    let repository = ctx.repositories().publickey_lbfv_collection(&ctx.e3_id);
-    let mut collection = repository.load().await?;
     if !collection.has() {
         // The synchronous extension hook cannot await its initial snapshot enqueue. Reconstruct the
         // empty sidecar from the durable public-key context if a crash interrupts that first write.
@@ -1400,6 +1402,7 @@ mod tests {
                 mismatched_domain,
                 committee,
                 2,
+                BfvPreset::SecureThreshold16384,
             )?)
             .await?;
         let snapshot = E3ContextSnapshot {

@@ -307,18 +307,18 @@ impl ZKInputsGenerator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use e3_fhe_params::constants::{insecure_512, secure_8192};
+    use e3_fhe_params::constants::{insecure, secure_8192};
     use e3_fhe_params::{BfvParamSet, BfvPreset};
     use num_bigint::BigUint;
 
     /// Helper function to create a vote vector with alternating 0s and 1s (deterministic)
     fn create_vote_vector() -> Vec<u64> {
-        (0..insecure_512::DEGREE).map(|i| (i % 2) as u64).collect()
+        (0..insecure::DEGREE).map(|i| (i % 2) as u64).collect()
     }
 
     /// A ballot of all zeros, which is what a mask encrypts.
     fn zero_vote() -> Vec<u64> {
-        vec![0u64; insecure_512::DEGREE]
+        vec![0u64; insecure::DEGREE]
     }
 
     /// Reads one commitment out of the witness JSON, as the decimal string the circuit takes.
@@ -350,12 +350,12 @@ mod tests {
             ZKInputsGenerator::from_preset_name("secure-8192").expect("secure preset should parse");
 
         let insecure_params = insecure.get_bfv_params();
-        assert_eq!(insecure_params.degree(), insecure_512::DEGREE);
+        assert_eq!(insecure_params.degree(), insecure::DEGREE);
         assert_eq!(
             insecure_params.plaintext(),
-            insecure_512::threshold::PLAINTEXT_MODULUS
+            insecure::threshold::PLAINTEXT_MODULUS
         );
-        assert_eq!(insecure_params.moduli(), insecure_512::threshold::MODULI);
+        assert_eq!(insecure_params.moduli(), insecure::threshold::MODULI);
 
         let secure_params = secure.get_bfv_params();
         assert_eq!(secure_params.degree(), secure_8192::DEGREE);
@@ -460,9 +460,9 @@ mod tests {
             ZKInputsGenerator::from_set(BfvParamSet::from(BfvPreset::InsecureThreshold512));
         let bfv_params = generator.get_bfv_params();
 
-        assert!(bfv_params.degree() == insecure_512::DEGREE);
-        assert!(bfv_params.plaintext() == insecure_512::threshold::PLAINTEXT_MODULUS);
-        assert!(bfv_params.moduli() == insecure_512::threshold::MODULI);
+        assert!(bfv_params.degree() == insecure::DEGREE);
+        assert!(bfv_params.plaintext() == insecure::threshold::PLAINTEXT_MODULUS);
+        assert!(bfv_params.moduli() == insecure::threshold::MODULI);
     }
 
     #[test]
@@ -619,8 +619,8 @@ mod tests {
 
         // Test with different vote patterns
         let test_votes = vec![
-            vec![0u64; insecure_512::DEGREE], // All zeros
-            vec![1u64; insecure_512::DEGREE], // All ones
+            vec![0u64; insecure::DEGREE], // All zeros
+            vec![1u64; insecure::DEGREE], // All ones
             create_vote_vector(),             // Alternating pattern
         ];
 
@@ -678,7 +678,7 @@ mod tests {
         assert!(result.is_err(), "Should fail with invalid secret key");
 
         // Test invalid ciphertext bytes
-        let valid_sk_bytes = bincode::serialize(&vec![0i64; insecure_512::DEGREE]).unwrap();
+        let valid_sk_bytes = bincode::serialize(&vec![0i64; insecure::DEGREE]).unwrap();
         let result = generator.decrypt_vote(&valid_sk_bytes, &[1, 2, 3]);
         assert!(result.is_err(), "Should fail with invalid ciphertext");
 

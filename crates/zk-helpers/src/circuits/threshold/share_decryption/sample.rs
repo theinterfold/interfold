@@ -14,13 +14,17 @@ use std::sync::Arc;
 use crate::{
     threshold::share_decryption::ShareDecryptionCircuitData, CiphernodesCommittee, CircuitsErrors,
 };
-use e3_fhe_params::{build_pair_for_preset, create_deterministic_crp_from_default_seed, BfvPreset};
+use e3_fhe_params::{
+    build_pair_for_preset, create_deterministic_crp_from_default_seed, generate_smudging_error,
+    BfvPreset,
+};
 use e3_polynomial::CrtPolynomial;
 use fhe::{
     bfv::{Encoding, Plaintext, PublicKey},
     mbfv::{AggregateIter, PublicKeyShare},
-    trbfv::{ShareManager, TRBFV},
+    trbfv::ShareManager,
 };
+use fhe_math::rq::Poly;
 use fhe_traits::{FheEncoder, FheEncrypter};
 use ndarray::ArrayView;
 impl ShareDecryptionCircuitData {
@@ -46,10 +50,6 @@ impl ShareDecryptionCircuitData {
         let lambda = preset
             .lambda()
             .map_err(|e| CircuitsErrors::Sample(e.to_string()))?;
-
-        // Create TRBFV instance for share generation
-        let trbfv = TRBFV::new(num_parties, threshold, threshold_params.clone())
-            .map_err(|e| CircuitsErrors::Sample(format!("Failed to create TRBFV: {:?}", e)))?;
 
         // Generate a random secret key and create public key shares
         let crp = create_deterministic_crp_from_default_seed(&threshold_params);
@@ -85,7 +85,7 @@ impl ShareDecryptionCircuitData {
         // - Party 0 collects shares from other parties (including themselves)
         // - When party 0 computes a decryption share, they aggregate all collected shares
 
-        let mut share_manager = ShareManager::new(num_parties, threshold, threshold_params.clone())
+        let share_manager = ShareManager::new(num_parties, threshold, threshold_params.clone())
             .map_err(|e| {
                 CircuitsErrors::Sample(format!("Failed to create ShareManager: {:?}", e))
             })?;
@@ -103,8 +103,7 @@ impl ShareDecryptionCircuitData {
                     CircuitsErrors::Sample(format!("Failed to convert SK coeffs to poly: {:?}", e))
                 })?;
 
-            let temp_trbfv = trbfv.clone();
-            let sk_sss = temp_trbfv
+            let sk_sss = share_manager
                 .generate_secret_shares_from_poly(sk_poly, &mut rng)
                 .map_err(|e| {
                     CircuitsErrors::Sample(format!("Failed to generate SK shares: {:?}", e))
@@ -112,12 +111,24 @@ impl ShareDecryptionCircuitData {
 
             all_party_sk_shares.push(sk_sss);
 
-            let esi_coeffs = trbfv
-                .generate_smudging_error(num_ciphertexts, sd.mult_depth, lambda, &mut rng)
-                .map_err(|e| {
-                    CircuitsErrors::Sample(format!("Failed to generate smudging error: {:?}", e))
-                })?;
-            let esi_poly = share_manager.bigints_to_poly(&esi_coeffs).map_err(|e| {
+            let esi_coeffs = generate_smudging_error(
+                threshold_params.clone(),
+                num_parties,
+                num_ciphertexts,
+                sd.mult_depth,
+                lambda,
+                &mut rng,
+            )
+            .map_err(|e| {
+                CircuitsErrors::Sample(format!("Failed to generate smudging error: {:?}", e))
+            })?;
+            let esi_poly = Poly::from_bigints(
+                &esi_coeffs,
+                threshold_params.context_at_level(0).map_err(|e| {
+                    CircuitsErrors::Sample(format!("Failed to get BFV context: {:?}", e))
+                })?,
+            )
+            .map_err(|e| {
                 CircuitsErrors::Sample(format!("Failed to convert error to poly: {:?}", e))
             })?;
             let esi_sss = share_manager
@@ -211,21 +222,20 @@ impl ShareDecryptionCircuitData {
 
         // Use aggregate_collected_shares with the correctly formatted data
         // It expects a slice with one Array2 of shape [num_moduli, degree]
-        let sk_poly_sum = trbfv
+        let sk_poly_sum = share_manager
             .aggregate_collected_shares(&[sk_sum_matrix])
             .map_err(|e| {
                 CircuitsErrors::Sample(format!("Failed to aggregate SK shares: {:?}", e))
             })?;
 
-        let es_poly_sum = trbfv
+        let es_poly_sum = share_manager
             .aggregate_collected_shares(&[es_sum_matrix])
             .map_err(|e| {
                 CircuitsErrors::Sample(format!("Failed to aggregate ES shares: {:?}", e))
             })?;
 
         // Compute the decryption share using TRBFV
-        let d_share_rns = trbfv
-            .clone()
+        let d_share_rns = share_manager
             .decryption_share(
                 Arc::new(ciphertext.clone()),
                 sk_poly_sum.clone().into_ntt(),

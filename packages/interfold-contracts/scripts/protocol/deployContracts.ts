@@ -304,6 +304,11 @@ function bfvHonkSource(
 }
 
 function bfvV2HonkSource(config: ActiveBfvConfig): string | undefined {
+  if (config.preset === "insecure") {
+    return config.committee === "minimum"
+      ? "contracts/verifiers/bfv/honk/DkgAggregatorV2Verifier.sol"
+      : `contracts/verifiers/bfv/honk/insecure/${config.committee}/DkgAggregatorV2Verifier.sol`;
+  }
   if (config.preset !== "secure-16384" || config.committee !== "minimum") {
     return undefined;
   }
@@ -502,6 +507,9 @@ async function deployBfvVerifierRoute(
     const pkV2 = await pkV2Factory.deploy(
       dkgAggregatorV2Verifier,
       registry,
+      config.paramSet,
+      config.h,
+      config.n,
       readVkRecursiveHash(v2SubCircuitPaths.nodesFold, config),
       readVkRecursiveHash(pkPaths.c5, config),
       readVkRecursiveHash(pkPaths.skC2Chunk, config),

@@ -29,16 +29,16 @@ pub fn create_deterministic_crp_from_default_seed(params: &Arc<BfvParameters>) -
 mod tests {
     use super::*;
     use crate::build_bfv_params_arc;
-    use crate::constants::insecure_512;
+    use crate::constants::insecure;
     use fhe_traits::Serialize;
 
     #[test]
     fn crp_bytes_roundtrip_via_deserialize() {
         let params = build_bfv_params_arc(
-            insecure_512::DEGREE,
-            insecure_512::threshold::PLAINTEXT_MODULUS,
-            insecure_512::threshold::MODULI,
-            Some(insecure_512::threshold::ERROR1_VARIANCE),
+            insecure::DEGREE,
+            insecure::threshold::PLAINTEXT_MODULUS,
+            insecure::threshold::MODULI,
+            Some(insecure::threshold::ERROR1_VARIANCE),
         );
         let crp = create_deterministic_crp_from_default_seed(&params);
         let bytes = crp.to_bytes();
@@ -52,10 +52,10 @@ mod tests {
     #[test]
     fn deterministic_crp_same_seed_same_output() {
         let params = build_bfv_params_arc(
-            insecure_512::DEGREE,
-            insecure_512::threshold::PLAINTEXT_MODULUS,
-            insecure_512::threshold::MODULI,
-            Some(insecure_512::threshold::ERROR1_VARIANCE),
+            insecure::DEGREE,
+            insecure::threshold::PLAINTEXT_MODULUS,
+            insecure::threshold::MODULI,
+            Some(insecure::threshold::ERROR1_VARIANCE),
         );
         let seed = [42u8; 32];
 
@@ -68,10 +68,10 @@ mod tests {
     #[test]
     fn deterministic_crp_different_seed_different_output() {
         let params = build_bfv_params_arc(
-            insecure_512::DEGREE,
-            insecure_512::threshold::PLAINTEXT_MODULUS,
-            insecure_512::threshold::MODULI,
-            Some(insecure_512::threshold::ERROR1_VARIANCE),
+            insecure::DEGREE,
+            insecure::threshold::PLAINTEXT_MODULUS,
+            insecure::threshold::MODULI,
+            Some(insecure::threshold::ERROR1_VARIANCE),
         );
         let seed1 = [1u8; 32];
         let seed2 = [2u8; 32];

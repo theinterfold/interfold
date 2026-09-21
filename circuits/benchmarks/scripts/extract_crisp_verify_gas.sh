@@ -126,6 +126,75 @@ require_preset_artifacts() {
     fi
 }
 
+CRISP_SDK_DIR="${REPO_ROOT}/examples/CRISP/packages/crisp-sdk"
+CRISP_STAGED_PRESET_JSON="${REPO_ROOT}/examples/CRISP/circuits/dist/insecure/preset.json"
+CRISP_SDK_BUNDLE="${CRISP_SDK_DIR}/dist/presets/insecure.js"
+CRISP_STALE_NOTE=""
+CRISP_PRESET_BUILD_RAN=false
+CRISP_TREE_SWITCHED=false
+CRISP_BUNDLE_REFRESH_NEEDED=false
+
+# The CRISP test proves with the built @crisp-e3/sdk bundle but verifies against the
+# committed verifier, so a bundle built from older circuits proves fine and then dies
+# on chain with SumcheckFailed. Gate the test on freshness instead of paying for that.
+if ! node "${REPO_ROOT}/examples/CRISP/scripts/check-staged-preset.mjs" insecure; then
+    CRISP_PRESET_BUILD_RAN=true
+    CRISP_TREE_SWITCHED=true
+    if ! ( cd "$REPO_ROOT" && pnpm --filter @crisp-e3/sdk build:presets ); then
+        CRISP_STALE_NOTE="insecure CRISP artifact rebuild failed; Pi_user gas will be null."
+    else
+        CRISP_BUNDLE_REFRESH_NEEDED=true
+    fi
+fi
+if [ -z "$CRISP_STALE_NOTE" ]; then
+    if [ ! -s "$CRISP_SDK_BUNDLE" ]; then
+        CRISP_BUNDLE_REFRESH_NEEDED=true
+    elif [ "$CRISP_SDK_BUNDLE" -ot "$CRISP_STAGED_PRESET_JSON" ]; then
+        CRISP_BUNDLE_REFRESH_NEEDED=true
+    fi
+fi
+if [ -z "$CRISP_STALE_NOTE" ] && [ "$SKIP_BUILD" != true ]; then
+    CRISP_BUNDLE_REFRESH_NEEDED=true
+fi
+if [ -z "$CRISP_STALE_NOTE" ] && [ "$CRISP_BUNDLE_REFRESH_NEEDED" = true ]; then
+    if [ "$CRISP_PRESET_BUILD_RAN" != true ]; then
+        echo "  [gas] Hydrating insecure/minimum before rebuilding the CRISP bundle..."
+        INSECURE_ARGS=(insecure --committee minimum)
+        if [ "$VERBOSE" = true ]; then
+            INSECURE_ARGS+=(--verbose)
+        fi
+        if ! "${SCRIPT_DIR}/ensure_circuit_preset_built.sh" "${INSECURE_ARGS[@]}"; then
+            CRISP_STALE_NOTE="insecure circuit hydration failed; Pi_user gas will be null."
+        else
+            CRISP_TREE_SWITCHED=true
+            if ! ( cd "$REPO_ROOT" && pnpm --dir examples/CRISP compile:circuits ); then
+                CRISP_STALE_NOTE="CRISP recursive artifact refresh failed; Pi_user gas will be null."
+            fi
+        fi
+    fi
+
+    # Rebuild the WASM generator with the same BFV constants as the staged Noir artifacts before
+    # tsup inlines it. A stale generator can produce a valid witness with the wrong degree.
+    if [ -z "$CRISP_STALE_NOTE" ]; then
+        echo "  [gas] Refreshing CRISP WASM and the @crisp-e3/sdk insecure bundle..."
+        if ! ( cd "$REPO_ROOT" && pnpm --filter @crisp-e3/sdk build:wasm ) || \
+           ! ( cd "$CRISP_SDK_DIR" && CRISP_PRESET=insecure pnpm exec tsup ); then
+            CRISP_STALE_NOTE="@crisp-e3/sdk bundle refresh failed; Pi_user gas will be null."
+        fi
+    fi
+fi
+
+# The CRISP preset builder leaves the global Noir tree on insecure. Restore the benchmark pair
+# before the secure integration and verifier replay stages.
+if [ "$CRISP_TREE_SWITCHED" = true ] && [ "$PRESET_NAME" != "insecure" ]; then
+    echo "  [gas] Restoring ${PRESET_NAME}/${COMMITTEE} circuit artifacts after the CRISP refresh..."
+    RESTORE_ARGS=("$PRESET_NAME" --committee "$COMMITTEE")
+    if [ "$VERBOSE" = true ]; then
+        RESTORE_ARGS+=(--verbose)
+    fi
+    "${SCRIPT_DIR}/ensure_circuit_preset_built.sh" "${RESTORE_ARGS[@]}"
+fi
+
 if [ "$SKIP_BUILD" = true ]; then
     echo "  [gas] Skipping circuit build and Honk verifier generation (--skip-build)."
     require_preset_artifacts
@@ -144,15 +213,15 @@ else
     # Honk verifiers against those artifacts.
     echo "  [gas] Verifying circuit preset '${PRESET_NAME}' (dist stamp + circuits/bin)..."
     if [ "$VERBOSE" = true ]; then
-        echo "  [gas] [verbose] Running: pnpm generate:verifiers --check --no-compile --preset ${PRESET_NAME}"
+        echo "  [gas] [verbose] Running: pnpm generate:verifiers --check --no-compile --preset ${PRESET_NAME} --committee ${COMMITTEE}"
         (
           cd "$REPO_ROOT" && \
-          pnpm generate:verifiers --check --no-compile --preset "$PRESET_NAME"
+          pnpm generate:verifiers --check --no-compile --preset "$PRESET_NAME" --committee "$COMMITTEE"
         )
     else
         (
           cd "$REPO_ROOT" && \
-          pnpm generate:verifiers --check --no-compile --preset "$PRESET_NAME"
+          pnpm generate:verifiers --check --no-compile --preset "$PRESET_NAME" --committee "$COMMITTEE"
         )
     fi
     echo "  [gas] Preset '${PRESET_NAME}' artifacts ready for integration + gas replay."
@@ -160,6 +229,10 @@ else
 fi
 
 set +e
+if [ -n "$CRISP_STALE_NOTE" ]; then
+    echo "  [gas] Skipping CRISP verifier test: ${CRISP_STALE_NOTE}"
+    CRISP_TEST_EXIT_CODE=2
+else
 echo "  [gas] Running CRISP verifier test for Pi_user gas..."
 (
   cd "$CRISP_CONTRACTS_DIR" && \
@@ -167,6 +240,7 @@ echo "  [gas] Running CRISP verifier test for Pi_user gas..."
 ) 2>&1 | tee "$TMP_LOG_CRISP"
 CRISP_TEST_EXIT_CODE=${PIPESTATUS[0]}
 echo "  [gas] CRISP test completed (exit=${CRISP_TEST_EXIT_CODE})."
+fi
 require_preset_artifacts
 CIPHERNODE_SKIP_PROOF_AGGREGATION=false
 echo "  [gas] Running integration test (test_trbfv_actor); proof_aggregation=true, multithread_jobs=${BENCHMARK_MULTITHREAD_JOBS:-1}, profile=release..."
@@ -194,7 +268,8 @@ else
       cd "$INTERFOLD_CONTRACTS_DIR" && \
       BENCHMARK_RAW_DIR="$RAW_DIR" BENCHMARK_GAS_OUTPUT="$TMP_JSON_INTERFOLD" BENCHMARK_FOLDED_JSON="$TMP_JSON_FOLDED" \
       BENCHMARK_PRESET="$PRESET_NAME" \
-      pnpm hardhat run scripts/benchmarkGasFromRaw.ts --network hardhat
+      BENCHMARK_COMMITTEE="$COMMITTEE" \
+      pnpm hardhat run scripts/benchmarkGasFromRaw.ts --network benchmark
     ) 2>&1 | tee "$TMP_LOG_INTERFOLD"
     INTERFOLD_TEST_EXIT_CODE=${PIPESTATUS[0]}
     echo "  [gas] EVM replay completed (exit=${INTERFOLD_TEST_EXIT_CODE})."
@@ -252,6 +327,10 @@ PY
 }
 
 USER_VERIFY_GAS=$(parse_marker "crisp_user_verify" "$TMP_LOG_CRISP")
+USER_PROOF_SIZE_BYTES=$(parse_marker "crisp_user_proof_bytes" "$TMP_LOG_CRISP")
+USER_PUBLIC_SIZE_BYTES=$(parse_marker "crisp_user_public_input_bytes" "$TMP_LOG_CRISP")
+USER_PROOF_CALLDATA_GAS=$(parse_marker "crisp_user_proof_calldata" "$TMP_LOG_CRISP")
+USER_PUBLIC_CALLDATA_GAS=$(parse_marker "crisp_user_public_input_calldata" "$TMP_LOG_CRISP")
 DKG_VERIFY_GAS=$(jq -r '.verify_gas.dkg // empty' "$TMP_JSON_INTERFOLD" 2>/dev/null || true)
 DEC_VERIFY_GAS=$(jq -r '.verify_gas.dec // empty' "$TMP_JSON_INTERFOLD" 2>/dev/null || true)
 
@@ -271,6 +350,10 @@ DEC_PROOF_CALLDATA_GAS=$(calldata_gas_from_hex "$DEC_PROOF_HEX")
 DEC_PUBLIC_CALLDATA_GAS=$(calldata_gas_from_hex "$DEC_PUBLIC_HEX")
 
 [ -z "$USER_VERIFY_GAS" ] && USER_VERIFY_GAS="null"
+[ -z "$USER_PROOF_SIZE_BYTES" ] && USER_PROOF_SIZE_BYTES="null"
+[ -z "$USER_PUBLIC_SIZE_BYTES" ] && USER_PUBLIC_SIZE_BYTES="null"
+[ -z "$USER_PROOF_CALLDATA_GAS" ] && USER_PROOF_CALLDATA_GAS="null"
+[ -z "$USER_PUBLIC_CALLDATA_GAS" ] && USER_PUBLIC_CALLDATA_GAS="null"
 [ -z "$DKG_VERIFY_GAS" ] && DKG_VERIFY_GAS="null"
 [ -z "$DEC_VERIFY_GAS" ] && DEC_VERIFY_GAS="null"
 [ -z "$DKG_PROOF_SIZE_BYTES" ] && DKG_PROOF_SIZE_BYTES="null"
@@ -299,6 +382,10 @@ cat > "$OUTPUT_JSON" <<EOF
       "proof": ${DKG_PROOF_SIZE_BYTES},
       "public_inputs": ${DKG_PUBLIC_SIZE_BYTES}
     },
+    "user": {
+      "proof": ${USER_PROOF_SIZE_BYTES},
+      "public_inputs": ${USER_PUBLIC_SIZE_BYTES}
+    },
     "dec": {
       "proof": ${DEC_PROOF_SIZE_BYTES},
       "public_inputs": ${DEC_PUBLIC_SIZE_BYTES}
@@ -313,6 +400,17 @@ cat > "$OUTPUT_JSON" <<EOF
             echo "null"
         else
             echo $((DKG_PROOF_CALLDATA_GAS + DKG_PUBLIC_CALLDATA_GAS))
+        fi
+      )
+    },
+    "user": {
+      "proof": ${USER_PROOF_CALLDATA_GAS},
+      "public_inputs": ${USER_PUBLIC_CALLDATA_GAS},
+      "total": $(
+        if [ "$USER_PROOF_CALLDATA_GAS" = "null" ] || [ "$USER_PUBLIC_CALLDATA_GAS" = "null" ]; then
+            echo "null"
+        else
+            echo $((USER_PROOF_CALLDATA_GAS + USER_PUBLIC_CALLDATA_GAS))
         fi
       )
     },

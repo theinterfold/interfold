@@ -11,12 +11,12 @@ use crate::circuits::dkg::share_encryption::circuit::ShareEncryptionCircuitData;
 use crate::computation::DkgInputType;
 use crate::CiphernodesCommittee;
 use crate::CircuitsErrors;
-use e3_fhe_params::build_pair_for_preset;
-use e3_fhe_params::BfvPreset;
+use e3_fhe_params::{build_pair_for_preset, generate_smudging_error, BfvPreset};
 use fhe::bfv::Encoding;
 use fhe::bfv::Plaintext;
 use fhe::bfv::{PublicKey, SecretKey};
-use fhe::trbfv::{ShareManager, TRBFV};
+use fhe::trbfv::ShareManager;
+use fhe_math::rq::Poly;
 use fhe_traits::FheEncoder;
 
 impl ShareEncryptionCircuitData {
@@ -41,9 +41,7 @@ impl ShareEncryptionCircuitData {
         let dkg_secret_key = SecretKey::random(&dkg_params, &mut rng);
         let dkg_public_key = PublicKey::new(&dkg_secret_key, &mut rng);
 
-        let trbfv = TRBFV::new(committee.n, committee.threshold, threshold_params.clone())
-            .map_err(|e| CircuitsErrors::Sample(format!("Failed to create TRBFV: {:?}", e)))?;
-        let mut share_manager =
+        let share_manager =
             ShareManager::new(committee.n, committee.threshold, threshold_params.clone()).map_err(
                 |e| CircuitsErrors::Sample(format!("Failed to create ShareManager: {:?}", e)),
             )?;
@@ -73,26 +71,27 @@ impl ShareEncryptionCircuitData {
                 let sd = preset.search_defaults().ok_or_else(|| {
                     CircuitsErrors::Sample("Preset has no search defaults".into())
                 })?;
-                let esi_coeffs = trbfv
-                    .generate_smudging_error(
-                        num_ciphertexts as usize,
-                        sd.mult_depth,
-                        lambda,
-                        &mut rng,
-                    )
-                    .map_err(|e| {
-                        CircuitsErrors::Sample(format!(
-                            "Failed to generate smudging error: {:?}",
-                            e
-                        ))
-                    })
-                    .map_err(|e| {
-                        CircuitsErrors::Sample(format!(
-                            "Failed to generate smudging error: {:?}",
-                            e
-                        ))
-                    })?;
-                let esi_poly = share_manager.bigints_to_poly(&esi_coeffs).map_err(|e| {
+                let esi_coeffs = generate_smudging_error(
+                    threshold_params.clone(),
+                    committee.n,
+                    num_ciphertexts as usize,
+                    sd.mult_depth,
+                    lambda,
+                    &mut rng,
+                )
+                .map_err(|e| {
+                    CircuitsErrors::Sample(format!("Failed to generate smudging error: {:?}", e))
+                })
+                .map_err(|e| {
+                    CircuitsErrors::Sample(format!("Failed to generate smudging error: {:?}", e))
+                })?;
+                let esi_poly = Poly::from_bigints(
+                    &esi_coeffs,
+                    threshold_params.context_at_level(0).map_err(|e| {
+                        CircuitsErrors::Sample(format!("Failed to get BFV context: {:?}", e))
+                    })?,
+                )
+                .map_err(|e| {
                     CircuitsErrors::Sample(format!("Failed to convert error to poly: {:?}", e))
                 })?;
                 let esi_sss_u64 = share_manager
@@ -123,7 +122,7 @@ impl ShareEncryptionCircuitData {
             dkg_input_type,
             party_idx: 0,
             mod_idx: 0,
-            chunk_size: 512,
+            chunk_size: dkg_params.degree().min(512) as u32,
             committee,
         })
     }
@@ -133,7 +132,7 @@ impl ShareEncryptionCircuitData {
 mod tests {
     use super::*;
     use crate::{computation::DkgInputType, CiphernodesCommitteeSize};
-    use e3_fhe_params::BfvPreset;
+    use e3_fhe_params::{build_pair_for_preset, BfvPreset};
 
     #[test]
     fn test_generate_secret_key_sample() {
@@ -155,17 +154,18 @@ mod tests {
             BfvPreset::InsecureThreshold512.metadata().degree
         );
         assert_eq!(sample.ciphertext.len(), 2);
+        let (_, dkg_params) = build_pair_for_preset(BfvPreset::InsecureThreshold512).unwrap();
         assert_eq!(
             sample.u_rns.coefficients().len(),
-            BfvPreset::InsecureThreshold512.metadata().degree
+            dkg_params.degree() * dkg_params.moduli().len()
         );
         assert_eq!(
             sample.e0_rns.coefficients().len(),
-            BfvPreset::InsecureThreshold512.metadata().degree
+            dkg_params.degree() * dkg_params.moduli().len()
         );
         assert_eq!(
             sample.e1_rns.coefficients().len(),
-            BfvPreset::InsecureThreshold512.metadata().degree
+            dkg_params.degree() * dkg_params.moduli().len()
         );
     }
 
@@ -183,17 +183,18 @@ mod tests {
 
         assert_eq!(sample.public_key.c.len(), 2);
         assert_eq!(sample.ciphertext.len(), 2);
+        let (_, dkg_params) = build_pair_for_preset(BfvPreset::InsecureThreshold512).unwrap();
         assert_eq!(
             sample.u_rns.coefficients().len(),
-            BfvPreset::InsecureThreshold512.metadata().degree
+            dkg_params.degree() * dkg_params.moduli().len()
         );
         assert_eq!(
             sample.e0_rns.coefficients().len(),
-            BfvPreset::InsecureThreshold512.metadata().degree
+            dkg_params.degree() * dkg_params.moduli().len()
         );
         assert_eq!(
             sample.e1_rns.coefficients().len(),
-            BfvPreset::InsecureThreshold512.metadata().degree
+            dkg_params.degree() * dkg_params.moduli().len()
         );
     }
 }

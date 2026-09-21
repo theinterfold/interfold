@@ -32,8 +32,8 @@ Pre-configured BFV parameter sets for PVSS (Public Verifiable Secret Sharing) pr
 - **`BfvPreset::SecureThreshold8192`** (default): Production-ready threshold BFV parameters
   (degree 8192)
 - **`BfvPreset::SecureDkg8192`**: Production-ready DKG parameters (degree 8192)
-- **`BfvPreset::InsecureThreshold512`**: Testing-only threshold BFV parameters (degree 512)
-- **`BfvPreset::InsecureDkg512`**: Testing-only DKG parameters (degree 512)
+- **`BfvPreset::InsecureThreshold512`**: Testing-only threshold BFV parameters (degree 128)
+- **`BfvPreset::InsecureDkg512`**: Testing-only DKG parameters (degree 128)
 
 In the PVSS protocol, two types of BFV parameters are needed:
 

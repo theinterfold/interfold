@@ -286,8 +286,12 @@ async fn secure_16384_waits_for_operational_rlk_after_c5() -> Result<()> {
     {
         *c5_proof_pending = None;
     }
-    let aggregation =
-        LbfvAggregationStateV1::new(e3_id.clone(), fixture.state.proof_domain, vec![0, 1])?;
+    let aggregation = LbfvAggregationStateV1::new(
+        e3_id.clone(),
+        fixture.state.proof_domain,
+        vec![0, 1],
+        BfvPreset::SecureThreshold16384,
+    )?;
     let (bus, rng, _seed, params, crp, _errors, history) =
         get_common_setup(Some(BfvPreset::InsecureThreshold512.into()))?;
     let mut aggregator = PublicKeyAggregator::new(
@@ -348,8 +352,12 @@ async fn secure_16384_restart_redrives_terminal_aggregation_failure() -> Result<
 
     let fixture = fixture();
     let e3_id = fixture.state.e3_id.clone();
-    let mut aggregation =
-        LbfvAggregationStateV1::new(e3_id.clone(), fixture.state.proof_domain, vec![0, 1])?;
+    let mut aggregation = LbfvAggregationStateV1::new(
+        e3_id.clone(),
+        fixture.state.proof_domain,
+        vec![0, 1],
+        BfvPreset::SecureThreshold16384,
+    )?;
     aggregation.fail("worker failed")?;
     let (bus, rng, _seed, params, crp, _errors, history) =
         get_common_setup(Some(BfvPreset::InsecureThreshold512.into()))?;
@@ -553,6 +561,11 @@ async fn standby_retains_dkg_fold_for_failover() -> Result<()> {
             committee_size: CiphernodesCommitteeSize::Minimum,
             dkg_fold_attestation_context: None,
             recovery: test_state(PublicKeyAggregatorRecoveryState::default()),
+            lbfv_collection: None,
+            repositories: Repositories::in_mem(),
+            local_party_id: 0,
+            lbfv_aggregation: None,
+            lbfv_publication: None,
             initial_is_aggregator: false,
             effects_enabled: true,
         },
@@ -586,6 +599,7 @@ async fn standby_retains_dkg_fold_for_failover() -> Result<()> {
 
 mod attestations;
 mod failures;
+mod redrive;
 
 #[actix::test]
 async fn secure_16384_never_dispatches_standalone_c1_verification() -> Result<()> {
@@ -726,6 +740,102 @@ async fn secure_16384_publishes_inputs_ready_after_a_durable_quorum() -> Result<
 }
 
 #[actix::test]
+async fn secure_16384_waits_for_the_selected_roster_before_sealing_a_quorum() -> Result<()> {
+    use crate::domain::lbfv_contribution_collection::tests::{complete_party, fixture};
+
+    let fixture = fixture();
+    let mut collection = fixture.state.clone();
+    complete_party(&mut collection, &fixture, 1);
+    complete_party(&mut collection, &fixture, 2);
+    let repositories = Repositories::in_mem();
+    repositories
+        .publickey_lbfv_collection(&collection.e3_id)
+        .write_sync(&collection)
+        .await?;
+    let loaded = repositories
+        .publickey_lbfv_collection(&collection.e3_id)
+        .load()
+        .await?;
+    let selected_roster = BTreeSet::from([0, 2]);
+    let mut state = PublicKeyAggregatorState::init(
+        3,
+        1,
+        Seed([0; 32]),
+        collection
+            .committee
+            .iter()
+            .enumerate()
+            .map(|(party_id, address)| (party_id as u64, address.to_string()))
+            .collect(),
+    );
+    for party_id in [2, 1] {
+        state = PublicKeyAggregation::add_keyshare(
+            state,
+            ArcBytes::from_bytes(&[party_id as u8]),
+            collection.committee[party_id].to_string(),
+            party_id as u64,
+            None,
+            Some(&selected_roster),
+        )?;
+    }
+    assert!(matches!(state, PublicKeyAggregatorState::Collecting { .. }));
+
+    let (bus, rng, _seed, params, crp, _errors, history) =
+        get_common_setup(Some(BfvPreset::InsecureThreshold512.into()))?;
+    let actor = PublicKeyAggregator::new(
+        PublicKeyAggregatorParams {
+            fhe: Arc::new(Fhe::new(params, crp, rng)),
+            bus,
+            e3_id: collection.e3_id.clone(),
+            params_preset: BfvPreset::SecureThreshold16384,
+            committee_size: CiphernodesCommitteeSize::Minimum,
+            dkg_fold_attestation_context: None,
+            recovery: test_state(PublicKeyAggregatorRecoveryState {
+                selected_roster: Some(selected_roster),
+                ..Default::default()
+            }),
+            lbfv_collection: Some(loaded),
+            repositories: repositories.clone(),
+            local_party_id: 0,
+            lbfv_aggregation: None,
+            lbfv_publication: None,
+            initial_is_aggregator: false,
+            effects_enabled: true,
+        },
+        test_state(state),
+    )
+    .start();
+    let ec = test_ctx(EffectsEnabled::new());
+    actor
+        .send(TypedEvent::new(
+            AggregatorChanged {
+                e3_id: collection.e3_id.clone(),
+                active_party_id: Some(0),
+                is_aggregator: true,
+            },
+            ec,
+        ))
+        .await?;
+    actix::clock::sleep(Duration::from_millis(50)).await;
+
+    let persisted = repositories
+        .publickey_lbfv_collection(&collection.e3_id)
+        .read()
+        .await?
+        .expect("l-BFV collection");
+    assert!(matches!(
+        persisted.verification,
+        crate::LbfvContributionVerificationStateV1::Collecting
+    ));
+    assert!(!history
+        .send(GetEvents::<InterfoldEvent>::new())
+        .await?
+        .iter()
+        .any(|event| matches!(event.get_data(), InterfoldEventData::E3Failed(_))));
+    Ok(())
+}
+
+#[actix::test]
 async fn restart_validates_documents_durable_lbfv_bundles() -> Result<()> {
     use crate::domain::lbfv_contribution_collection::tests::{bundle, fixture};
 
@@ -812,6 +922,7 @@ async fn restart_validates_documents_durable_lbfv_bundles() -> Result<()> {
         .send(TypedEvent::new(
             AggregatorChanged {
                 e3_id: state.e3_id.clone(),
+                active_party_id: None,
                 is_aggregator: false,
             },
             ec,
@@ -1072,6 +1183,7 @@ async fn lbfv_expulsion_durably_invalidates_an_in_flight_dispatch() -> Result<()
         .send(TypedEvent::new(
             AggregatorChanged {
                 e3_id: collection.e3_id.clone(),
+                active_party_id: None,
                 is_aggregator: false,
             },
             ec,
@@ -1174,6 +1286,7 @@ async fn lbfv_stale_verification_completion_is_ignored() -> Result<()> {
         .send(TypedEvent::new(
             AggregatorChanged {
                 e3_id: collection.e3_id.clone(),
+                active_party_id: Some(0),
                 is_aggregator: true,
             },
             ec,
@@ -1277,6 +1390,7 @@ async fn sealed_sidecar_recovery_applies_the_exact_accepted_set() -> Result<()> 
         .send(TypedEvent::new(
             AggregatorChanged {
                 e3_id: collection.e3_id.clone(),
+                active_party_id: Some(0),
                 is_aggregator: true,
             },
             ec,
@@ -1358,6 +1472,7 @@ async fn concurrent_document_roles_do_not_overwrite_sidecar_updates() -> Result<
         .send(TypedEvent::new(
             AggregatorChanged {
                 e3_id: fixture.state.e3_id.clone(),
+                active_party_id: None,
                 is_aggregator: false,
             },
             ec,

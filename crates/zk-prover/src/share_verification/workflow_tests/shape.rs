@@ -27,12 +27,12 @@ fn lbfv_aggregation_context(e3_id: &E3id) -> LbfvVerificationContext {
         .into_iter()
         .map(|party_id| LbfvAcceptedPartyCommitments {
             party_id,
-            pk_generation_commitments: [commitment(30 + party_id); 5],
-            rlk_d0_commitments: [commitment(50 + party_id); 5],
-            rlk_d2_commitments: [commitment(60 + party_id); 5],
+            pk_generation_commitments: [commitment(30 + party_id); 5].to_vec(),
+            rlk_d0_commitments: [commitment(50 + party_id); 5].to_vec(),
+            rlk_d2_commitments: [commitment(60 + party_id); 5].to_vec(),
         })
         .collect();
-    LbfvVerificationContext::V1(LbfvVerificationContextV1 {
+    LbfvVerificationContext::V2(LbfvVerificationContextV2 {
         proof_domain: lbfv_proof_domain(e3_id),
         aggregation: Some(LbfvAggregationVerificationContext { accepted_parties }),
     })
@@ -210,7 +210,7 @@ fn canonical_shape_rejects_cross_phase_and_singleton_multiplicity() {
         BfvPreset::InsecureDkg512,
     ));
 
-    let share_bundle = signed_share_bundle(&s, &e3, 2);
+    let share_bundle = signed_share_bundle(&s, &e3, 3);
     assert!(ShareVerifier::has_canonical_proof_shape(
         &VerificationKind::ShareProofs,
         &share_bundle,
@@ -232,7 +232,7 @@ fn canonical_shape_rejects_cross_phase_and_singleton_multiplicity() {
     ));
     assert!(!ShareVerifier::has_canonical_proof_shape(
         &VerificationKind::ShareProofs,
-        &share_bundle,
+        &signed_share_bundle(&s, &e3, 2),
         BfvPreset::SecureThreshold8192,
     ));
 
@@ -273,9 +273,9 @@ fn share_shape_uses_threshold_secret_rows_when_dispatch_carries_dkg_preset() {
 
     // Production dispatch carries the share-encryption (DKG) preset, but C3 requests are
     // generated from rows of the paired threshold-parameter Shamir secret.
-    let insecure_production_bundle = signed_share_bundle(&s, &e3, 2);
-    assert_eq!(BfvPreset::InsecureDkg512.metadata().num_moduli, 1);
-    assert_eq!(BfvPreset::InsecureThreshold512.metadata().num_moduli, 2);
+    let insecure_production_bundle = signed_share_bundle(&s, &e3, 3);
+    assert_eq!(BfvPreset::InsecureDkg512.metadata().num_moduli, 2);
+    assert_eq!(BfvPreset::InsecureThreshold512.metadata().num_moduli, 3);
     assert!(ShareVerifier::has_canonical_proof_shape(
         &VerificationKind::ShareProofs,
         &insecure_production_bundle,
@@ -283,7 +283,7 @@ fn share_shape_uses_threshold_secret_rows_when_dispatch_carries_dkg_preset() {
     ));
     assert!(!ShareVerifier::has_canonical_proof_shape(
         &VerificationKind::ShareProofs,
-        &signed_share_bundle(&s, &e3, 1),
+        &signed_share_bundle(&s, &e3, 2),
         BfvPreset::InsecureDkg512,
     ));
 
@@ -324,7 +324,9 @@ fn lbfv_generation_requires_both_canonical_linked_row_families() {
     ));
 
     let mut wrong_context = context.clone();
-    let LbfvVerificationContext::V1(wrong_context) = &mut wrong_context;
+    let LbfvVerificationContext::V2(wrong_context) = &mut wrong_context else {
+        unreachable!()
+    };
     wrong_context.proof_domain.crypto_config_id = B256::repeat_byte(0x99);
     assert!(!ShareVerifier::has_valid_lbfv_statements(
         &VerificationKind::LbfvGenerationProofs,
@@ -332,7 +334,7 @@ fn lbfv_generation_requires_both_canonical_linked_row_families() {
         1,
         &e3,
         CiphernodesCommitteeSize::Minimum,
-        Some(&LbfvVerificationContext::V1(wrong_context.clone())),
+        Some(&LbfvVerificationContext::V2(wrong_context.clone())),
     ));
 
     assert!(!ShareVerifier::has_valid_lbfv_statements(
@@ -504,7 +506,9 @@ fn lbfv_aggregation_requires_one_aggregator_and_accepted_set() {
     ));
 
     let mut reordered_context = context.clone();
-    let LbfvVerificationContext::V1(reordered) = &mut reordered_context;
+    let LbfvVerificationContext::V2(reordered) = &mut reordered_context else {
+        unreachable!()
+    };
     reordered
         .aggregation
         .as_mut()
@@ -521,7 +525,9 @@ fn lbfv_aggregation_requires_one_aggregator_and_accepted_set() {
     ));
 
     let mut duplicate_context = context.clone();
-    let LbfvVerificationContext::V1(duplicate) = &mut duplicate_context;
+    let LbfvVerificationContext::V2(duplicate) = &mut duplicate_context else {
+        unreachable!()
+    };
     duplicate.aggregation.as_mut().unwrap().accepted_parties[1].party_id = 0;
     assert!(!ShareVerifier::has_valid_lbfv_statements(
         &VerificationKind::LbfvAggregationProofs,

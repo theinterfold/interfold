@@ -16,10 +16,10 @@ library ActiveCryptoConfig {
     bytes32 internal constant CIRCUIT_VERSION = keccak256("interfold-bfv-v2");
 
     bytes32 internal constant INSECURE_CONFIG_ID =
-        0x19921c8c12f93c3013be57d0859f4ddcdb4464ac856a0c62be1ad617fbbd2e7d;
+        0x7317c190ccb1dccfa505bf5b9b923e341905f6675c16f958e0a7d853795517a5;
     uint8 internal constant INSECURE_PARAM_SET = 0;
     bytes32 internal constant INSECURE_PARAM_SET_HASH =
-        0x18c6d8650486b997d48aa2d285fae878fb267b268332d056a3e8527d50e87b4f;
+        0x0619925361a4d022377f93ccd0022c0164257ffb889b979eb382aa06d401e258;
 
     bytes32 internal constant SECURE_CONFIG_ID =
         0xac5490c59e158cbb104642bba0ab7b3fd11ca49dd4bb05ce7bec8089ce3c8c31;

@@ -77,7 +77,7 @@
                   → each node persists the H-roster aggregation inputs
                   → roster selection and C5 use separate durable 10-minute failover budgets
                   → each secure-16384 node durably fetches and verifies submitted l-BFV bundles
-                  → each node persists the first H-party l-BFV ready quorum as its candidate set
+                  → after the accepted roster submits all keyshares, each node persists its H-party l-BFV candidate set
                   → a durable 60-minute ready-work deadline promotes standbys in order
                   → active aggregator verifies candidates and seals exactly H ascending parties
                   → active aggregator folds the same parties' PK and RLK rows

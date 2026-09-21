@@ -318,8 +318,6 @@ mod tests {
     use crate::ciphernodes_committee::CiphernodesCommitteeSize;
     use crate::computation::DkgInputType;
     use e3_fhe_params::BfvPreset;
-    use fhe::bfv::{Encoding, Plaintext, PublicKey};
-    use fhe_traits::{FheEncoder, FheEncrypter};
 
     #[test]
     fn test_bound_and_bits_computation_consistency() {
@@ -389,24 +387,28 @@ mod tests {
         let mut sample =
             ShareDecryptionCircuitData::generate_sample(preset, committee, DkgInputType::SecretKey)
                 .unwrap();
-        let expected = Inputs::compute(preset, &sample).unwrap();
-        let (_, dkg_params) = build_pair_for_preset(preset).unwrap();
-        let mut rng = rand::rng();
-        let public_key = PublicKey::new(&sample.secret_key, &mut rng);
         let own_idx = sample
             .honest_ciphertexts
             .iter()
             .position(Option::is_none)
             .unwrap();
-        let encrypted_row = sample
+        let replacement = sample
             .own_plaintext_share
             .iter()
-            .map(|row| {
-                let plaintext = Plaintext::try_encode(row, Encoding::poly(), &dkg_params).unwrap();
-                public_key.try_encrypt(&plaintext, &mut rng).unwrap()
+            .enumerate()
+            .map(|(mod_idx, _)| {
+                sample
+                    .honest_ciphertexts
+                    .iter()
+                    .filter_map(|slot| slot.as_ref())
+                    .next()
+                    .and_then(|party_cts| party_cts.get(mod_idx))
+                    .cloned()
+                    .unwrap()
             })
             .collect();
-        sample.honest_ciphertexts[own_idx] = Some(encrypted_row);
+        sample.honest_ciphertexts[own_idx] = Some(replacement);
+        let expected = Inputs::compute(preset, &sample).unwrap();
         sample.own_plaintext_share.clear();
 
         let inputs = Inputs::compute(preset, &sample).unwrap();
@@ -454,7 +456,7 @@ mod tests {
                     mod_idx,
                     &Polynomial::from_u64_vector(reversed),
                     msg_bit,
-                    512,
+                    sample.chunk_size as usize,
                 );
                 assert_eq!(
                     inputs.expected_commitments[party_idx][mod_idx], direct_commitment,

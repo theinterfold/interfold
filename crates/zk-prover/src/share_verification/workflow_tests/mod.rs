@@ -15,7 +15,7 @@ use e3_committee_hash::{
 };
 use e3_events::{
     LbfvAcceptedPartyCommitments, LbfvAggregationVerificationContext, LbfvVerificationContext,
-    LbfvVerificationContextV1, Proof, ProofPayload, ProofType,
+    LbfvVerificationContextV2, Proof, ProofPayload, ProofType,
 };
 use e3_fhe_params::BfvPreset;
 
@@ -115,7 +115,7 @@ fn lbfv_proof_domain(e3_id: &E3id) -> LbfvProofDomainContext {
 }
 
 fn lbfv_generation_context(e3_id: &E3id) -> LbfvVerificationContext {
-    LbfvVerificationContext::V1(LbfvVerificationContextV1 {
+    LbfvVerificationContext::V2(LbfvVerificationContextV2 {
         proof_domain: lbfv_proof_domain(e3_id),
         aggregation: None,
     })

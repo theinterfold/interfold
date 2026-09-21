@@ -63,6 +63,11 @@ async fn c1_result_waits_for_replayed_inputs() -> Result<()> {
             committee_size: CiphernodesCommitteeSize::Minimum,
             dkg_fold_attestation_context: None,
             recovery: test_state(PublicKeyAggregatorRecoveryState::default()),
+            lbfv_collection: None,
+            repositories: Repositories::in_mem(),
+            local_party_id: 0,
+            lbfv_aggregation: None,
+            lbfv_publication: None,
             initial_is_aggregator: true,
             effects_enabled: true,
         },
@@ -77,6 +82,7 @@ async fn c1_result_waits_for_replayed_inputs() -> Result<()> {
     let verification = ShareVerificationComplete {
         e3_id: e3_id.clone(),
         kind: VerificationKind::PkGenerationProofs,
+        verification_id: None,
         dishonest_parties: BTreeSet::new(),
     };
 
@@ -113,6 +119,7 @@ async fn replayed_c1_result_is_ignored_after_c1() -> Result<()> {
     let verification = ShareVerificationComplete {
         e3_id,
         kind: VerificationKind::PkGenerationProofs,
+        verification_id: None,
         dishonest_parties: BTreeSet::new(),
     };
 

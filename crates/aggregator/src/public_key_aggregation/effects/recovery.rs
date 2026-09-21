@@ -3,7 +3,6 @@
 //! Restart recovery for persisted public-key aggregation phases.
 
 use super::super::*;
-use crate::LBFV_ROW_COUNT;
 use anyhow::ensure;
 
 impl PublicKeyAggregator {
@@ -112,8 +111,10 @@ impl PublicKeyAggregator {
                     self.try_dispatch_lbfv_aggregation_rows(&causal_context)?;
                     self.try_dispatch_lbfv_aggregation_fold(&causal_context)?;
                     let fold_complete = self.lbfv_aggregation_state()?.is_some_and(|state| {
-                        state.aggregation_fold_completed_rows == LBFV_ROW_COUNT as u32
-                            && state.aggregation_fold_proof.is_some()
+                        state.row_count().is_ok_and(|row_count| {
+                            state.aggregation_fold_completed_rows == row_count as u32
+                                && state.aggregation_fold_proof.is_some()
+                        })
                     });
                     if fold_complete {
                         self.persist_operational_lbfv_rlk(&causal_context)?;

@@ -22,6 +22,8 @@ const V2_VK_BINDING = Array.from({ length: 13 }, (_, index) =>
 );
 const SECURE_16384_CONFIG_ID =
   "0xde3c303973a0bf2b841cd0e7266ae68a7e48f8b271ffd629b245485e52dc8cd8";
+const INSECURE_CONFIG_ID =
+  "0x7317c190ccb1dccfa505bf5b9b923e341905f6675c16f958e0a7d853795517a5";
 const LBFV_PROTOCOL_VERSION = currentNodeRelease().protocolVersion;
 
 function limbs(hash: string): [string, string] {
@@ -53,6 +55,7 @@ function sessionId(
   e3Id: bigint,
   finalizedCommitteeHash: string,
   protocolVersion = LBFV_PROTOCOL_VERSION,
+  configId = SECURE_16384_CONFIG_ID,
 ): string {
   return ethers.keccak256(
     abiCoder.encode(
@@ -76,7 +79,7 @@ function sessionId(
         chainId,
         interfold,
         e3Id,
-        SECURE_16384_CONFIG_ID,
+        configId,
         finalizedCommitteeHash,
         1,
         0,
@@ -92,13 +95,18 @@ function publicInputs(
   e3Id: bigint,
   pkCommitment: string,
   protocolVersion = LBFV_PROTOCOL_VERSION,
+  configId = SECURE_16384_CONFIG_ID,
+  lbfvRows = 5,
 ): string[] {
-  const inputs = Array.from({ length: 64 }, () => ethers.ZeroHash);
+  const inputs = Array.from(
+    { length: 49 + 3 * lbfvRows },
+    () => ethers.ZeroHash,
+  );
   const hash = committeeHash(nodes);
   const [committeeHi, committeeLo] = limbs(hash);
   const [acceptedHi, acceptedLo] = limbs(acceptedSetHash(0, 2));
   const [sessionHi, sessionLo] = limbs(
-    sessionId(31337n, interfold, e3Id, hash, protocolVersion),
+    sessionId(31337n, interfold, e3Id, hash, protocolVersion, configId),
   );
 
   inputs[0] = NODES_FOLD_KEY_HASH;
@@ -116,7 +124,11 @@ function publicInputs(
   inputs[33] = ethers.toBeHex(0, 32);
   inputs[34] = acceptedHi;
   inputs[35] = acceptedLo;
-  inputs.splice(51, V2_VK_BINDING.length, ...V2_VK_BINDING);
+  inputs.splice(
+    36 + 3 * lbfvRows,
+    V2_VK_BINDING.length,
+    ...V2_VK_BINDING,
+  );
   return inputs;
 }
 
@@ -133,20 +145,25 @@ describe("BfvPkVerifierV2", function () {
     expect(await dkgAggregatorV2Verifier.getAddress()).to.be.properAddress;
   });
 
-  async function deployFixture() {
+  async function deployFixture(paramSet = 2) {
     const circuit = await ethers.deployContract("MockCircuitVerifier");
     await circuit.waitForDeployment();
     await circuit.setReturnValue(true);
 
     const registry = await ethers.deployContract("MockCiphernodeRegistry");
     await registry.waitForDeployment();
-    const interfold = await ethers.deployContract("MockBfvV2Interfold", [2]);
+    const interfold = await ethers.deployContract("MockBfvV2Interfold", [
+      paramSet,
+    ]);
     await interfold.waitForDeployment();
     await registry.setInterfold(await interfold.getAddress());
 
     const verifier = await ethers.deployContract("BfvPkVerifierV2", [
       await circuit.getAddress(),
       await registry.getAddress(),
+      paramSet,
+      2,
+      3,
       NODES_FOLD_KEY_HASH,
       C5_KEY_HASH,
       SK_C2_CHUNK_KEY_HASH,
@@ -182,6 +199,37 @@ describe("BfvPkVerifierV2", function () {
     expect(
       await verifier.getFunction("LBFV_PROTOCOL_VERSION").staticCall(),
     ).to.equal(LBFV_PROTOCOL_VERSION);
+  });
+
+  it("accepts the insecure three-row V2 layout and context", async function () {
+    const { interfold, verifier } = await deployFixture(0);
+    const [signer, second, third] = await ethers.getSigners();
+    const nodes = [signer.address, second.address, third.address];
+    const e3Id = 7n;
+    const pkCommitment = ethers.id("insecure-v2-pk");
+    const proof = encodeProof(
+      publicInputs(
+        nodes,
+        await interfold.getAddress(),
+        e3Id,
+        pkCommitment,
+        LBFV_PROTOCOL_VERSION,
+        INSECURE_CONFIG_ID,
+        3,
+      ),
+    );
+
+    expect(await verifier.expectedPublicInputsLen()).to.equal(58n);
+    expect(
+      await verifier.verify.staticCall(
+        e3Id,
+        0,
+        nodes,
+        pkCommitment,
+        committeeHash(nodes),
+        proof,
+      ),
+    ).to.equal(true);
   });
 
   it("rejects a proof from another protocol version", async function () {

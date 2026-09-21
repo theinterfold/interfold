@@ -339,9 +339,11 @@ aggregation is done by ad-hoc Noir bins under `circuits/bin/recursive_aggregatio
 field — the inner recursive proof itself is what flows between stages.
 
 The chunked C2 path keeps the same signed proof multiplicity. For each C2a/C2b request, Rust
-generates one type-bound recursive proof per chunk. The default chunk size is 512 coefficients. The
+generates one type-bound recursive proof per chunk. The default chunk size is the smaller of 512
+coefficients and the preset polynomial degree. The insecure degree-128 preset therefore uses 128
+coefficients per chunk. The
 `--chunk-size` option accepts any nonzero divisor of the preset polynomial degree for generated
-circuit configuration. The production multithread path uses the compiled default chunk size. Rust
+circuit configuration. The production multithread path selects the preset default chunk size. Rust
 groups the chunk proofs into fixed recursive batches and verifies all batches in a type-bound
 terminal circuit. The terminal circuits reconstruct a root commitment for the secret and for each
 recipient share. The signed response contains only the type-bound terminal `SkC2ChunkFinalize` or
@@ -352,9 +354,9 @@ computation), C3 (share encryption), and C4 (share decryption) witness computati
 generated `configs.nr` values (`SHARE_COMPUTATION_CHUNK_SIZE` / `SHARE_COMPUTATION_N_CHUNKS`), so
 the witness always matches the circuit parameters the artifacts were generated against. The
 generated `configs.nr` `N` and `L` values come from the same parameter object that drives the
-witness computation. The compiled circuits and committed `configs.nr` defaults use chunk size 512; a
-non-512 `--chunk-size` produces artifacts that are valid only if the C2/C3/C4 circuits are
-recompiled against the generated `configs.nr` — the default production path keeps chunk size 512.
+witness computation. The compiled circuits and committed `configs.nr` defaults use 128 coefficients
+for insecure and 512 for the secure presets. A non-default `--chunk-size` produces artifacts that
+are valid only if the C2/C3/C4 circuits are recompiled against the generated `configs.nr`.
 
 All packed polynomial commitments constrain each shifted coefficient to one radix digit. An
 out-of-range C2 secret chunk or C4 decrypted share cannot carry into an adjacent digit and collide
@@ -539,8 +541,10 @@ ShareVerificationActor receives ShareVerificationDispatched(kind=ShareProofs)
 │   │   │   domain, party slot, and the SHA-256 hash of each exact DHT payload. Generic l-BFV DHT
 │   │   │   notifications are ignored. A versioned targeted fetch request identifies the exact E3,
 │   │   │   proof session, party, document role, hash, and attempt. The bounded fetch handler checks
-│   │   │   the SHA-256 hash, full identity, schema, proof order, and signer consistency. It publishes
-│   │   │   a validated document or a typed unavailable/invalid-data failure. The network adapter
+│   │   │   the SHA-256 hash, full identity, schema, proof order, supported row count, and signer
+│   │   │   consistency. Aggregation admission requires the exact row count for the E3 preset. The
+│   │   │   fetch handler publishes a validated document or a typed unavailable/invalid-data failure.
+│   │   │   The network adapter
 │   │   │   enforces the 25 MiB record limit and forwards only manifests with a recoverable
 │   │   │   signature. For `secure-16384`, `ThresholdKeyshare` persists the generation request and
 │   │   │   encrypted seed in `//threshold_keyshare_lbfv_generation/v1/{e3_id}`. It dispatches share
@@ -817,8 +821,8 @@ SignedLbfvKeyShareManifest arrives at every PublicKeyAggregator
 │  ├─ Require the document C1 payload to equal the submitted C1 payload
 │  ├─ Validate all five PK, RLK D0, and RLK D2 row commitments
 │  └─ Persist Ready or InvalidData
-├─ When the first H parties are Ready:
-│  ├─ Persist their ascending party IDs as the exact candidate set
+├─ After every member of the accepted H-party roster submits KeyshareCreated:
+│  ├─ Persist the Ready roster party IDs in ascending order as the exact candidate set
 │  └─ Publish AggregationInputsReady without waiting for unrelated submitted parties
 ├─ If fewer than H parties are Ready, fail only after every submitted party is settled
 │  └─ Settled = Ready, Equivocated, InvalidData, or Excluded
@@ -938,6 +942,17 @@ only that failure. It does not resume row, fold, final V2 proof, or publication 
 │   │     │   → secure-16384 dispatches DkgAggregationV2 with NodesFoldV2, C5, and the
 │   │     │     completed l-BFV aggregation fold
 │   │     │   → secure-16384 also requires the persisted operational RLK before dispatch
+│   │     │   → every V2 readiness probe first re-dispatches missing l-BFV row and
+│   │     │     fold requests, so a request the chain never published cannot stall
+│   │     │     publication (`aggregate_dkg_proofs.rs: try_dispatch_dkg_aggregation_v2`)
+│   │     │   → the compute effect gate evicts a forwarded entry without an outcome
+│   │     │     after 300 s, so a re-published retry runs again instead of parking
+│   │     │     behind a response the event bus dropped (`effect_gate.rs`)
+│   │     │   → a 60 s timer clears an l-BFV row or fold-step correlation older
+│   │     │     than 900 s (final aggregation: 1800 s) and publishes the request
+│   │     │     again; only timed-out correlations are cleared
+│   │     │     (`redrive_lbfv_aggregation.rs`); restart recovery keeps clearing
+│   │     │     all in-flight correlations and re-dispatching
 │   │     │   → `dkg_aggregator` uses each selected party ID for N-wide C3 and C2 recipient slots;
 │   │     │     H-wide C4 sender slots use the selected party's fold-row position
 │   │     │   → The circuit requires H distinct, ascending, in-range party IDs

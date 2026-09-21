@@ -305,10 +305,10 @@ impl AccusationVoting {
         )
             .abi_encode()
             .into();
-        let Ok(instance) = data
-            .proof_type
-            .instance_from_public_signals(&data.public_signals)
-        else {
+        let Ok(instance) = data.proof_type.instance_from_public_signals(
+            &data.public_signals,
+            e3_fhe_params::lbfv_row_count(self.params_preset),
+        ) else {
             warn!("Ignoring passed proof with an invalid proof instance");
             return;
         };

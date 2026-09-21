@@ -8,6 +8,7 @@ impl Actor for PublicKeyAggregator {
     type Context = Context<Self>;
     fn started(&mut self, ctx: &mut Self::Context) {
         ctx.set_mailbox_capacity(MAILBOX_LIMIT);
+        self.arm_lbfv_aggregation_redrive_timer(ctx);
     }
 }
 

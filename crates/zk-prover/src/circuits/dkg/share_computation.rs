@@ -91,7 +91,13 @@ pub fn prove_chunked_share_computation(
         data,
         e3_id,
         artifacts_dir,
-        DEFAULT_C2_CHUNK_SIZE,
+        DEFAULT_C2_CHUNK_SIZE.min(
+            preset
+                .threshold_counterpart()
+                .unwrap_or(preset)
+                .metadata()
+                .degree,
+        ),
     )
 }
 

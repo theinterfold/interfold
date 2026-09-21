@@ -27,8 +27,8 @@ function verifierFixture(): { root: string; verifierDir: string } {
 test('defines the exact on-chain verifier inventory for supported pairs', () => {
   const paths = expectedVerifierRelativePaths()
 
-  assert.equal(paths.length, 15)
-  assert.equal(paths.filter((path) => path.endsWith('DkgAggregatorV2Verifier.sol')).length, 1)
+  assert.equal(paths.length, 18)
+  assert.equal(paths.filter((path) => path.endsWith('DkgAggregatorV2Verifier.sol')).length, 4)
   assert.equal(
     paths.some((path) => path.startsWith('secure-16384/micro/')),
     false,
@@ -38,6 +38,11 @@ test('defines the exact on-chain verifier inventory for supported pairs', () => 
     false,
   )
   assert.deepEqual(onChainVerifierCircuits(CIRCUIT_PRESETS.SECURE_16384, CIRCUIT_COMMITTEES.MINIMUM), [
+    'dkg_aggregator',
+    'decryption_aggregator',
+    'dkg_aggregator_v2',
+  ])
+  assert.deepEqual(onChainVerifierCircuits(CIRCUIT_PRESETS.INSECURE, CIRCUIT_COMMITTEES.MINIMUM), [
     'dkg_aggregator',
     'decryption_aggregator',
     'dkg_aggregator_v2',
@@ -111,9 +116,9 @@ test('leaves the active selector unchanged when a dist-backed check fails', asyn
     writeFileSync(activePath, '{"preset":"secure-16384","committee":"minimum"}\n')
     writeFileSync(selectorPath, 'user-owned selector\n')
     const sourceHash = new NoirCircuitBuilder(fixture.root, {
-      preset: CIRCUIT_PRESETS.INSECURE_512,
+      preset: CIRCUIT_PRESETS.INSECURE,
       committee: CIRCUIT_COMMITTEES.MINIMUM,
-    }).computeSourceHash(CIRCUIT_PRESETS.INSECURE_512, CIRCUIT_COMMITTEES.MINIMUM)
+    }).computeSourceHash(CIRCUIT_PRESETS.INSECURE, CIRCUIT_COMMITTEES.MINIMUM)
     const stampPath = join(artifactDir, '.build-stamp.json')
     writeFileSync(stampPath, `${JSON.stringify({ preset: 'insecure', committee: 'minimum', sourceHash: 'stale' })}\n`)
     writeFileSync(join(artifactCircuitDir, 'dkg_aggregator.json'), '{}\n')
@@ -123,7 +128,7 @@ test('leaves the active selector unchanged when a dist-backed check fails', asyn
       circuits: ['dkg_aggregator'],
       check: true,
       compile: false,
-      preset: CIRCUIT_PRESETS.INSECURE_512,
+      preset: CIRCUIT_PRESETS.INSECURE,
       committee: CIRCUIT_COMMITTEES.MINIMUM,
       artifactDir,
     })

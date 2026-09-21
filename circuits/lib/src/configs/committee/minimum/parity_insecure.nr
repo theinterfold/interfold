@@ -14,6 +14,7 @@ use crate::configs::committee::minimum::{N_PARTIES, T};
 pub use crate::configs::insecure::threshold::L as L_THRESHOLD;
 
 pub global PARITY_MATRIX: [[[Field; N_PARTIES + 1]; N_PARTIES - T]; L_THRESHOLD] = [
-    [[1, 68719403007, 1, 0], [2, 68719403006, 0, 1]],
-    [[1, 68719230975, 1, 0], [2, 68719230974, 0, 1]],
+    [[1, 72057594037913087, 1, 0], [2, 72057594037913086, 0, 1]],
+    [[1, 72057594037912319, 1, 0], [2, 72057594037912318, 0, 1]],
+    [[1, 72057594037904639, 1, 0], [2, 72057594037904638, 0, 1]],
 ];

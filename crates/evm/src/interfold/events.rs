@@ -83,7 +83,7 @@ impl E3RequestedWithChainId {
         let lambda = params_preset
             .lambda()
             .map_err(|e| anyhow::anyhow!("Failed to build lambda for preset: {}", e))?;
-        let lambda_value = lambda.value();
+        let lambda_value = lambda;
 
         let mult_depth = params_preset
             .search_defaults()
@@ -527,7 +527,7 @@ mod tests {
         let expected = [
             (
                 0,
-                "0x19921c8c12f93c3013be57d0859f4ddcdb4464ac856a0c62be1ad617fbbd2e7d",
+                "0x7317c190ccb1dccfa505bf5b9b923e341905f6675c16f958e0a7d853795517a5",
             ),
             (
                 1,
@@ -586,7 +586,7 @@ mod tests {
 
         assert_eq!(
             crypto_config_id(&params),
-            "0x19921c8c12f93c3013be57d0859f4ddcdb4464ac856a0c62be1ad617fbbd2e7d"
+            "0x7317c190ccb1dccfa505bf5b9b923e341905f6675c16f958e0a7d853795517a5"
                 .parse::<B256>()
                 .unwrap()
         );

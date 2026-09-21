@@ -158,7 +158,7 @@ pub fn decode_bfv_params_arc(bytes: &[u8]) -> Result<Arc<BfvParameters>, Encodin
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::constants::{insecure_512, secure_8192};
+    use crate::constants::{insecure, secure_8192};
     use crate::presets::BfvPreset;
     use std::str::FromStr;
 
@@ -186,9 +186,9 @@ mod tests {
         use crate::builder::build_bfv_params;
 
         // Use insecure DKG preset constants for testing arbitrary parameter encoding
-        let degree = insecure_512::DEGREE;
-        let plaintext_modulus = insecure_512::dkg::PLAINTEXT_MODULUS;
-        let moduli = insecure_512::dkg::MODULI;
+        let degree = insecure::DEGREE;
+        let plaintext_modulus = insecure::dkg::PLAINTEXT_MODULUS;
+        let moduli = insecure::dkg::MODULI;
 
         let params = build_bfv_params(degree, plaintext_modulus, moduli, None);
         let encoded = encode_bfv_params(&params);
@@ -200,7 +200,7 @@ mod tests {
         // Verify error1_variance is preserved (defaults to 10 for standard BFV)
         assert_eq!(
             decoded.get_error1_variance(),
-            &num_bigint::BigUint::from_str(insecure_512::dkg::ERROR1_VARIANCE).unwrap()
+            &num_bigint::BigUint::from_str(insecure::dkg::ERROR1_VARIANCE).unwrap()
         );
         assert_eq!(decoded.get_error1_variance(), params.get_error1_variance());
     }
@@ -256,9 +256,9 @@ mod tests {
         use crate::builder::build_bfv_params_arc;
 
         // Use insecure DKG preset constants for testing arbitrary parameter encoding with Arc
-        let degree = insecure_512::DEGREE;
-        let plaintext_modulus = insecure_512::dkg::PLAINTEXT_MODULUS;
-        let moduli = insecure_512::dkg::MODULI;
+        let degree = insecure::DEGREE;
+        let plaintext_modulus = insecure::dkg::PLAINTEXT_MODULUS;
+        let moduli = insecure::dkg::MODULI;
 
         let params = build_bfv_params_arc(degree, plaintext_modulus, moduli, None);
         let encoded = encode_bfv_params(&params);
@@ -271,7 +271,7 @@ mod tests {
         // Verify error1_variance is preserved (defaults to 10 for standard BFV)
         assert_eq!(
             decoded.get_error1_variance(),
-            &num_bigint::BigUint::from_str(insecure_512::dkg::ERROR1_VARIANCE).unwrap()
+            &num_bigint::BigUint::from_str(insecure::dkg::ERROR1_VARIANCE).unwrap()
         );
         assert_eq!(decoded.get_error1_variance(), params.get_error1_variance());
     }

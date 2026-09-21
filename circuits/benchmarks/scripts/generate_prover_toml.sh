@@ -25,7 +25,7 @@ if [ "$MODE" != "insecure" ] && [ "$MODE" != "secure" ]; then
     exit 1
 fi
 
-PRESET="INSECURE_THRESHOLD_512"
+PRESET="INSECURE_THRESHOLD"
 if [ "${BENCHMARK_PRESET:-}" = "secure-8192" ]; then
     PRESET="SECURE_THRESHOLD_8192"
 elif [ "${BENCHMARK_PRESET:-}" = "secure-16384" ]; then
@@ -63,21 +63,74 @@ ZK_INPUTS="${ZK_ARGS[1]:-}"
 
 cd "$REPO_ROOT"
 
+generate_raw_toml() {
+    local output_dir="$1"
+    local cmd=(cargo run -p e3-zk-helpers --bin zk_cli -- --circuit "$ZK_CIRCUIT" --preset "$PRESET" --committee "$COMMITTEE_NAME" --output "$output_dir" --toml --no-configs)
+    if [ -n "$ZK_INPUTS" ]; then
+        cmd+=(--inputs "$ZK_INPUTS")
+    fi
+    "${cmd[@]}"
+}
+
+if [ "$CIRCUIT_PATH" = "threshold/user_data_encryption_ct0" ] || [ "$CIRCUIT_PATH" = "threshold/user_data_encryption_ct1" ]; then
+    TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/interfold-ude-benchmark.XXXXXX")
+    trap 'rm -rf "$TEMP_DIR"' EXIT
+    echo "  Generating the user-data encryption witness and recursive child proofs..."
+    generate_raw_toml "$TEMP_DIR"
+    python3 - "$TEMP_DIR/Prover.toml" "$TEMP_DIR/inputs.json" <<'PY'
+import json
+import sys
+import tomllib
+
+def stringify_integers(value):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, list):
+        return [stringify_integers(item) for item in value]
+    if isinstance(value, dict):
+        return {key: stringify_integers(item) for key, item in value.items()}
+    return value
+
+with open(sys.argv[1], "rb") as source:
+    witness = tomllib.load(source)
+with open(sys.argv[2], "w", encoding="utf-8") as target:
+    json.dump(stringify_integers(witness), target, separators=(",", ":"))
+PY
+    NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=24576}" pnpm --filter @interfold/user-data-encryption-prover exec tsx \
+        src/generate-benchmark-toml.ts \
+        --input "$TEMP_DIR/inputs.json" \
+        --preset "${BENCHMARK_PRESET:-insecure}" \
+        --committee "$COMMITTEE_NAME" \
+        --output-root "$REPO_ROOT/circuits/bin/threshold"
+    exit 0
+fi
+
+if [ "$CIRCUIT_PATH" = "dkg/sk_share_computation_chunk" ] || [ "$CIRCUIT_PATH" = "dkg/esm_share_computation_chunk" ]; then
+    TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/interfold-c2-benchmark.XXXXXX")
+    trap 'rm -rf "$TEMP_DIR"' EXIT
+    echo "  Generating a representative C2 chunk witness..."
+    generate_raw_toml "$TEMP_DIR"
+    CHUNK_SIZE=512
+    if [ "${BENCHMARK_PRESET:-insecure}" = "insecure" ]; then
+        CHUNK_SIZE=128
+    fi
+    python3 "${SCRIPT_DIR}/extract_share_computation_chunk.py" \
+        "$TEMP_DIR/Prover.toml" "$OUTPUT_DIR/Prover.toml" "$CIRCUIT_PATH" "$CHUNK_SIZE"
+    exit 0
+fi
+
 if [ "$ZK_CIRCUIT" = "_no_zk_cli" ]; then
     echo "  No Prover.toml needed (config circuit has no witness inputs)"
     # Ensure empty Prover.toml so nargo execute can run
     mkdir -p "$OUTPUT_DIR"
-    touch "$OUTPUT_DIR/Prover.toml"
+    : > "$OUTPUT_DIR/Prover.toml"
     exit 0
 fi
 
-CMD=(cargo run -p e3-zk-helpers --bin zk_cli -- --circuit "$ZK_CIRCUIT" --preset "$PRESET" --committee "$COMMITTEE_NAME" --output "$OUTPUT_DIR" --toml --no-configs)
-if [ -n "$ZK_INPUTS" ]; then
-    CMD+=(--inputs "$ZK_INPUTS")
-fi
-
 echo "  Generating Prover.toml: zk_cli --circuit $ZK_CIRCUIT --preset $PRESET --committee $COMMITTEE_NAME ${ZK_INPUTS:+--inputs $ZK_INPUTS}"
-if ! "${CMD[@]}" 2>&1; then
+if ! generate_raw_toml "$OUTPUT_DIR" 2>&1; then
     echo "Error: zk_cli failed for $CIRCUIT_PATH"
     exit 1
 fi

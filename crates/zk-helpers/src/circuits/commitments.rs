@@ -29,15 +29,12 @@ use super::output_layout::{
     LBFV_PK_GENERATION_OUTPUTS, RLK_GENERATION_INPUTS, RLK_GENERATION_OUTPUTS,
 };
 
-/// Number of rows in one serialized l-BFV public-key or RLK share.
-pub const LBFV_SHARE_ROW_COUNT: usize = 5;
-
 /// Commitments recomputed from one party's serialized l-BFV PK and RLK shares.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LbfvShareCommitments {
-    pub pk_generation_commitments: [B256; LBFV_SHARE_ROW_COUNT],
-    pub rlk_d0_commitments: [B256; LBFV_SHARE_ROW_COUNT],
-    pub rlk_d2_commitments: [B256; LBFV_SHARE_ROW_COUNT],
+    pub pk_generation_commitments: Vec<B256>,
+    pub rlk_d0_commitments: Vec<B256>,
+    pub rlk_d2_commitments: Vec<B256>,
 }
 
 // ============================================================================
@@ -783,25 +780,26 @@ fn validate_lbfv_serialized_share_commitments_with_adapters(
     public_key_row_signals: &[&[u8]],
     rlk_row_signals: &[&[u8]],
 ) -> Result<LbfvShareCommitments, crate::CircuitsErrors> {
+    let row_count = public_key_adapter.row_count();
+    if rlk_adapter.row_count() != row_count {
+        return Err(crate::CircuitsErrors::Other(format!(
+            "l-BFV adapters must expose the same number of rows"
+        )));
+    }
     validate_lbfv_row_signals(
         "public-key",
         public_key_row_signals,
         LBFV_PK_GENERATION_INPUTS,
         LBFV_PK_GENERATION_OUTPUTS,
+        row_count,
     )?;
     validate_lbfv_row_signals(
         "RLK",
         rlk_row_signals,
         RLK_GENERATION_INPUTS,
         RLK_GENERATION_OUTPUTS,
+        row_count,
     )?;
-    if public_key_adapter.row_count() != LBFV_SHARE_ROW_COUNT
-        || rlk_adapter.row_count() != LBFV_SHARE_ROW_COUNT
-    {
-        return Err(crate::CircuitsErrors::Other(format!(
-            "l-BFV adapters must expose {LBFV_SHARE_ROW_COUNT} rows"
-        )));
-    }
 
     let public_key_share =
         LbfvPublicKeyShare::from_bytes(public_key_share_bytes, params).map_err(|error| {
@@ -817,11 +815,11 @@ fn validate_lbfv_serialized_share_commitments_with_adapters(
     let rlk_layout = CircuitOutputLayout::Fixed {
         fields: RLK_GENERATION_OUTPUTS,
     };
-    let mut pk_generation_commitments = Vec::with_capacity(LBFV_SHARE_ROW_COUNT);
-    let mut rlk_d0_commitments = Vec::with_capacity(LBFV_SHARE_ROW_COUNT);
-    let mut rlk_d2_commitments = Vec::with_capacity(LBFV_SHARE_ROW_COUNT);
+    let mut pk_generation_commitments = Vec::with_capacity(row_count);
+    let mut rlk_d0_commitments = Vec::with_capacity(row_count);
+    let mut rlk_d2_commitments = Vec::with_capacity(row_count);
 
-    for row in 0..LBFV_SHARE_ROW_COUNT {
+    for row in 0..row_count {
         let (_, pk0) = public_key_adapter.share_row_components(row as u32, &public_key_share)?;
         let actual_pk = bigint_commitment_to_b256(compute_threshold_pk_commitment(&pk0, bit))?;
         let expected_pk = extract_commitment(
@@ -870,15 +868,9 @@ fn validate_lbfv_serialized_share_commitments_with_adapters(
     }
 
     Ok(LbfvShareCommitments {
-        pk_generation_commitments: pk_generation_commitments
-            .try_into()
-            .expect("the l-BFV PK row count is fixed"),
-        rlk_d0_commitments: rlk_d0_commitments
-            .try_into()
-            .expect("the l-BFV RLK row count is fixed"),
-        rlk_d2_commitments: rlk_d2_commitments
-            .try_into()
-            .expect("the l-BFV RLK row count is fixed"),
+        pk_generation_commitments,
+        rlk_d0_commitments,
+        rlk_d2_commitments,
     })
 }
 
@@ -887,10 +879,11 @@ fn validate_lbfv_row_signals(
     signals: &[&[u8]],
     inputs: &'static [super::output_layout::OutputField],
     outputs: &'static [super::output_layout::OutputField],
+    row_count: usize,
 ) -> Result<(), crate::CircuitsErrors> {
-    if signals.len() != LBFV_SHARE_ROW_COUNT {
+    if signals.len() != row_count {
         return Err(crate::CircuitsErrors::Other(format!(
-            "l-BFV {family} proof bundle has {} rows; expected {LBFV_SHARE_ROW_COUNT}",
+            "l-BFV {family} proof bundle has {} rows; expected {row_count}",
             signals.len()
         )));
     }
@@ -1190,6 +1183,8 @@ mod tests {
     use fhe::bfv::{BfvParametersBuilder, CommonRandomPolyVec, SecretKey};
     use fhe::trlbfv::{PublicKeyShare as LbfvPublicKeyShare, RelinKeyShare};
     use fhe_traits::Serialize;
+
+    const LBFV_SHARE_ROW_COUNT: usize = 5;
 
     fn field_to_bigint(value: Field) -> BigInt {
         let bytes = value.into_bigint().to_bytes_le();

@@ -4,14 +4,14 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Fold five ordered l-BFV public-key and terminal RLK generation proof pairs.
+//! Fold ordered l-BFV public-key and terminal RLK generation proof pairs.
 
 use bb_proof_verification::{
     UltraHonkProof, UltraHonkVerificationKey, UltraHonkZKProof, verify_honk_proof,
     verify_honk_proof_non_zk,
 };
 
-pub global LBFV_ROWS: u32 = 5;
+pub use lib::configs::default::threshold::L as LBFV_ROWS;
 pub global PK_GENERATION_PUBLIC_LEN: u32 = 7;
 pub global RLK_GENERATION_PUBLIC_LEN: u32 = 9;
 

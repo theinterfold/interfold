@@ -226,7 +226,7 @@ mod tests {
 
         let expected_bits = compute_modulus_bit(&threshold_params);
 
-        assert_eq!(bounds.pk_bound, BigUint::from(34359701504u128));
+        assert_eq!(bounds.pk_bound, BigUint::from(36028797018956544u128));
         assert_eq!(bits.pk_bit, expected_bits);
     }
 }

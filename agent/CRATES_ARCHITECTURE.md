@@ -542,9 +542,10 @@ records produce `LbfvKeyShareDocumentFetchFailed::V1`. A compact signed manifest
 transport event that normal gossip and historical peer sync forward. It binds the full proof domain,
 party slot, and SHA-256 content hash of both DHT records. The network adapter rejects an invalid
 schema, context, proof order, signature, or 25 MiB size before publication or local event
-conversion. Transport and gossipsub identities authenticate the sending peer; they do not by
-themselves prove that a peer is an authorized member of a particular E3 committee. Committee
-authorization and durable peer reputation remain separate protocol-hardening work. Local
+conversion. The document boundary requires the exact l-BFV row count for the E3 preset before the
+document enters aggregation state. Transport and gossipsub identities authenticate the sending peer;
+they do not by themselves prove that a peer is an authorized member of a particular E3 committee.
+Committee authorization and durable peer reputation remain separate protocol-hardening work. Local
 secure-16384 generation stores the canonical committee in the versioned
 `threshold_keyshare_lbfv_generation/v1` snapshot, checks the injected signer against its party slot,
 persists deterministic generation and row-proof progress, and commits both documents and the
@@ -554,12 +555,13 @@ sidecar and content-addressed `//publickey_lbfv_document/v1/{e3_id}/{sha256}` re
 each manifest signer with the canonical slot, persists first-payload and conflict decisions, and
 publishes targeted fetch requests only after the manifest is durable. It writes each artifact before
 its sidecar marker. It persists unavailable retry times, permanent invalid-data results, and
-committee exclusions. Each node persists the first ascending H-party ready quorum. The active
-aggregator can then dispatch generation verification without waiting for unrelated submitted
-parties. A failed candidate becomes durably invalid before the next ready party is selected and the
-replacement exact-H set is dispatched. If no quorum exists, the phase fails only after every
-submitted party has a settled status. Restart validates durable bundles, re-arms retries, redrives
-the candidate-set dispatch, or applies the immutable sealed H-party set. Repeated DKG
+committee exclusions. After every accepted roster member submits a keyshare, each node persists the
+ascending H-party ready quorum. The active aggregator can then dispatch generation verification
+without waiting for unrelated submitted parties. A failed candidate becomes durably invalid before
+the next ready party is selected and the replacement exact-H set is dispatched. If no quorum exists,
+the phase fails only after every submitted party has a settled status. Restart validates durable
+bundles, re-arms retries, redrives the candidate-set dispatch, or applies the immutable sealed
+H-party set. Repeated DKG
 coordination and document notifications use a fresh transport delivery ID. The embedded event or
 document identity stays stable, so transport redelivery does not create a new protocol fact.
 Document publication recovery derives a missing publication request from the durable local key or
@@ -647,7 +649,7 @@ encryption parameters:
 
 | Parameter pair | `L_THRESHOLD` | Recipient bundle                   |
 | -------------- | ------------: | ---------------------------------- |
-| Insecure 512   |             2 | C2a x 1, C2b x 1, C3a x 2, C3b x 2 |
+| Insecure 128   |             3 | C2a x 1, C2b x 1, C3a x 3, C3b x 3 |
 | Secure 8192    |             3 | C2a x 1, C2b x 1, C3a x 3, C3b x 3 |
 
 `ThresholdKeyshare` dispatches verification with the DKG/share-encryption preset. The shape
