@@ -558,7 +558,7 @@ impl EtherscanClient {
     pub async fn resolve_voting_power_sources(
         round_token: Address,
         rpc_url: &str,
-    ) -> VotingPowerSources {
+    ) -> Result<VotingPowerSources> {
         let plain = VotingPowerSources {
             token: round_token,
             registry: None,
@@ -575,7 +575,7 @@ impl EtherscanClient {
                  treating it as a plain token, so any bonded voters will be missing",
                 round_token
             );
-            return plain;
+            return Ok(plain);
         };
         let provider = ProviderBuilder::new().connect_http(url);
         let provider_for_escrow = provider.clone();
@@ -597,50 +597,66 @@ impl EtherscanClient {
                     round_token,
                     token_err
                 );
-                return plain;
+                return Ok(plain);
             }
         };
 
-        // The escrow's lock NFT, resolved through the adapter. Two hops, each optional: an
-        // adapter need not expose an escrow, and an escrow need not expose a lock NFT. Neither
-        // is an error — they mean this deployment has no escrow-held voting power to find.
+        // The escrow's lock NFT, resolved through the adapter. Both hops are optional: an adapter
+        // need not expose an escrow, and an escrow need not expose a lock NFT. A revert is that
+        // negative answer, and yields `None`.
+        //
+        // A transport failure is not an answer. It judged nothing about the deployment, and
+        // swallowing it would build a census silently missing every escrow-only holder — which
+        // looks identical to a deployment that has none.
         let escrow_lock_nft = match adapter.escrow().call().await {
             Ok(escrow) => {
                 let escrow_contract = VotingEscrow::new(escrow, provider_for_escrow);
                 match escrow_contract.lockNFT().call().await {
                     Ok(nft) => Some(nft),
-                    Err(err) => {
-                        // Said out loud: a census missing every escrow holder looks identical to
-                        // a deployment that simply has none.
-                        log::warn!(
-                            "Escrow {} does not answer lockNFT() ({}); any escrow-only voters \
-                             will be missing from the census",
+                    Err(error) if is_metadata_revert(&error) => {
+                        log::debug!(
+                            "Escrow {} does not answer lockNFT() ({}); treating it as having no \
+                             escrow-held voting power",
                             escrow,
-                            err
+                            error
                         );
                         None
                     }
+                    Err(error) => {
+                        return Err(eyre!(
+                            "Could not read lockNFT() from escrow {}: {}",
+                            escrow,
+                            error
+                        ));
+                    }
                 }
             }
-            Err(err) => {
+            Err(error) if is_metadata_revert(&error) => {
                 log::debug!(
                     "{} does not answer escrow() ({}); treating it as having no escrow-held \
                      voting power",
                     round_token,
-                    err
+                    error
                 );
                 None
             }
+            Err(error) => {
+                return Err(eyre!(
+                    "Could not read escrow() from {}: {}",
+                    round_token,
+                    error
+                ));
+            }
         };
 
-        VotingPowerSources {
+        Ok(VotingPowerSources {
             token: underlying,
             registry: Some(registry),
             // Optional: the registry may not have been pointed at a checkpoint contract yet, in
             // which case `BondOwnerSet` alone still names every bond owner.
             checkpoints: adapter.checkpoints().call().await.ok(),
             escrow_lock_nft,
-        }
+        })
     }
 
     /// Fetch every log for one contract and one `topic0`, paging until the source is exhausted.
@@ -1216,7 +1232,9 @@ impl EtherscanClient {
     ) -> Result<Vec<TokenHolder>> {
         log::info!("Starting token holder discovery for {}", token_address);
 
-        let sources = Self::resolve_voting_power_sources(token_address, rpc_url).await;
+        let sources = Self::resolve_voting_power_sources(token_address, rpc_url)
+            .await
+            .context("Failed to resolve voting-power sources")?;
         self.get_token_holders_with_voting_power_from_sources(
             token_address,
             snapshot_timepoint,
@@ -1390,7 +1408,9 @@ impl EtherscanClient {
             token_address
         );
 
-        let sources = Self::resolve_voting_power_sources(token_address, rpc_url).await;
+        let sources = Self::resolve_voting_power_sources(token_address, rpc_url)
+            .await
+            .context("Failed to resolve voting-power sources")?;
         if sources.registry.is_some() {
             let holders = self
                 .get_token_holders_with_voting_power_from_sources(
@@ -1623,6 +1643,50 @@ mod tests {
         let logs = vec![one.clone(), one];
 
         assert_eq!(EtherscanClient::escrow_holders_from_logs(&logs).len(), 1);
+    }
+
+    /// A transport failure while resolving the escrow must not degrade to "no escrow".
+    ///
+    /// An unreachable node judged nothing about the deployment. Treating it as an absent
+    /// interface would build a census silently missing every escrow-only holder, which is
+    /// indistinguishable from a deployment that has none.
+    #[tokio::test]
+    async fn an_unreachable_node_does_not_become_an_absent_escrow() {
+        let result = EtherscanClient::resolve_voting_power_sources(
+            "0x028deEA644258c78b1B5B2eacF469F5D781Fb43E"
+                .parse()
+                .unwrap(),
+            "http://127.0.0.1:1",
+        )
+        .await;
+
+        // The adapter probe fails first and cannot tell a plain token from an unreachable node,
+        // so the call either errors or reports a plain token — never an adapter with a silently
+        // dropped escrow.
+        if let Ok(sources) = result {
+            assert!(
+                sources.registry.is_none() && sources.escrow_lock_nft.is_none(),
+                "an unreachable node must not report a partially resolved adapter"
+            );
+        }
+    }
+
+    /// An unparsable RPC URL is a configuration fault, not a chain answer, and resolves to a
+    /// plain token with no sources rather than a partially filled one.
+    #[tokio::test]
+    async fn an_unparsable_rpc_url_resolves_to_a_plain_token() {
+        let sources = EtherscanClient::resolve_voting_power_sources(
+            "0x028deEA644258c78b1B5B2eacF469F5D781Fb43E"
+                .parse()
+                .unwrap(),
+            "not a url",
+        )
+        .await
+        .expect("an unparsable URL is reported as a plain token, not an error");
+
+        assert!(sources.registry.is_none());
+        assert!(sources.checkpoints.is_none());
+        assert!(sources.escrow_lock_nft.is_none());
     }
 
     #[test]
