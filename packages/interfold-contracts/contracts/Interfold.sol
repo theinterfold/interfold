@@ -549,7 +549,7 @@ contract Interfold is
                 _ciphernodeRegistry != ciphernodeRegistry,
             InvalidCiphernodeRegistry(_ciphernodeRegistry)
         );
-        _requireDependencyReplacementReady(address(_ciphernodeRegistry));
+        _requireGenerationReplacementReady(address(_ciphernodeRegistry));
         ciphernodeRegistry = _ciphernodeRegistry;
         emit CiphernodeRegistrySet(address(_ciphernodeRegistry));
     }
@@ -563,7 +563,7 @@ contract Interfold is
                 _bondingRegistry != bondingRegistry,
             InvalidBondingRegistry(_bondingRegistry)
         );
-        _requireDependencyReplacementReady(address(0));
+        _requireGenerationReplacementReady(address(0));
         bondingRegistry = _bondingRegistry;
         emit BondingRegistrySet(address(_bondingRegistry));
     }
@@ -708,7 +708,7 @@ contract Interfold is
         IE3RefundManager _e3RefundManager
     ) public onlyOwner {
         require(address(_e3RefundManager) != address(0));
-        _requireDependencyReplacementReady(address(0));
+        _requireGenerationReplacementReady(address(0));
         e3RefundManager = _e3RefundManager;
         emit E3RefundManagerSet(address(_e3RefundManager));
     }
@@ -719,7 +719,7 @@ contract Interfold is
         ISlashingManager _slashingManager
     ) external onlyOwner {
         require(address(_slashingManager) != address(0));
-        _requireDependencyReplacementReady(address(0));
+        _requireSlashingManagerReplacementReady();
         slashingManager = _slashingManager;
         emit SlashingManagerSet(address(_slashingManager));
     }
@@ -1257,17 +1257,18 @@ contract Interfold is
         );
     }
 
-    function _requireDependencyReplacementReady(
+    function _requireGenerationReplacementReady(
         address replacementRegistry
     ) private view {
-        InterfoldLifecycle.validateGenerationDrained(
+        InterfoldLifecycle.validateGenerationReplacementDrained(
             _dependencyConfigurationActivated,
-            requestsPaused,
-            activeE3Count,
-            address(ciphernodeRegistry),
-            address(bondingRegistry),
-            address(slashingManager),
             replacementRegistry
+        );
+    }
+
+    function _requireSlashingManagerReplacementReady() private view {
+        InterfoldLifecycle.validateSlashingManagerReplacementDrained(
+            _dependencyConfigurationActivated
         );
     }
 

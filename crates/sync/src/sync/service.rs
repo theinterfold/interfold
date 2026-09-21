@@ -363,7 +363,7 @@ where
     }
 
     // 2. Determine the evm blocks to read from based on the SnapshotMeta
-    let evm_config = snapshot.to_evm_config();
+    let evm_config = snapshot.to_evm_config(default_config)?;
     let snapshot_net_config = snapshot.to_net_config();
 
     // 3. Page post-snapshot EventStore history into temporary per-aggregate runs. Replay preserves
@@ -383,11 +383,10 @@ where
     // 4. Replay the EventStore events to all listeners (except effects).
     //    Skip lifecycle infrastructure events. SyncEnded, EffectsEnabled and sync-start events are
     //    re-published by this sync process; Shutdown belongs to the previous process and would stop
-    //    freshly constructed actors. Replaying these here
-    //    would poison the EventBus deduplication window: the replayed event has the same
-    //    EventId (payload hash) as the one we publish later, causing the later event to be
-    //    silently dropped.  This is critical for SyncEnded, if the EvmChainGateway never
-    //    receives it, the gateway stays in BufferUntilLive and all live EVM events are lost.
+    //    freshly constructed actors. Replaying these here can also suppress the fresh lifecycle
+    //    signal that this boot publishes. These local infrastructure events use their stable event
+    //    ID as their delivery identity. This is critical for SyncEnded: if EvmChainGateway never
+    //    receives the current signal, it stays in BufferUntilLive and loses all live EVM events.
     let replayed = replay_spool.replay(bus).await?;
     info!(replayed_events = replayed, "Events replayed.");
 
@@ -402,10 +401,9 @@ where
     //
     // What is intentionally NOT auto-re-driven *here in sync* is this node's *own* in-flight
     // request work by replaying the originating request events. Blindly re-publishing the
-    // originating request event is a no-op: the event bus dedups by EventId (payload hash), so
-    // the replayed event is dropped. Forcibly minting a fresh EventId to force re-execution is
-    // unsafe on a value-bearing protocol (it can double-emit or race the canonical chain state)
-    // and is therefore deliberately left out of the sync path.
+    // originating request event does not provide a safe restart mechanism. A retained delivery
+    // identity can suppress it, while forcing a new identity can double-emit or race canonical
+    // chain state. The sync path therefore does not manufacture another request occurrence.
     //
     // Note: this is *not* a global absence of restart recovery. Per-E3 actors restore versioned
     // recovery inputs and re-create collectors, proof jobs, compute jobs, and determined outputs

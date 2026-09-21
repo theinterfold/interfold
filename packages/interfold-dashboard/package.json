@@ -9,6 +9,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
+    "test": "tsx --test src/Inspector.test.tsx",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

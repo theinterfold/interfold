@@ -34,6 +34,7 @@ pub(crate) fn find(contract: &str, topic0: B256) -> Option<&'static EvmEventDefi
     catalog(contract)
         .iter()
         .chain(retired_catalog(contract).iter())
+        .chain(PROXY_EVENTS.iter())
         .find(|event| keccak256(event.signature.as_bytes()) == topic0)
 }
 
@@ -62,6 +63,21 @@ fn retired_catalog(contract: &str) -> &'static [EvmEventDefinition] {
         _ => &[],
     }
 }
+
+/// Events emitted by the ERC-1967 proxy wrapper rather than the implementation.
+///
+/// Every watched contract sits behind a transparent proxy (the admin slot is set and the beacon
+/// slot is zero on all of them). The proxy emits these from the same address as the
+/// implementation, but they are declared in the proxy contract, so they never appear in the
+/// implementation ABI the rest of this catalog is generated from.
+///
+/// Deliberately separate from [`catalog`], which is asserted to match those ABIs exactly: adding
+/// these there would break that assertion. Shared by every contract, because any of them can be
+/// upgraded.
+const PROXY_EVENTS: &[EvmEventDefinition] = &[
+    EvmEventDefinition::new("Upgraded", "Upgraded(address)", None),
+    EvmEventDefinition::new("AdminChanged", "AdminChanged(address,address)", None),
+];
 
 const RETIRED_INTERFOLD: &[EvmEventDefinition] = &[EvmEventDefinition::new(
     "FeeAssetConfigUpdated",
@@ -798,6 +814,73 @@ mod tests {
                 actual, expected,
                 "{contract} event catalog drifted from {artifact}"
             );
+        }
+    }
+
+    /// The proxy emits from the implementation's address, so an upgrade log must resolve for
+    /// every watched contract. `Upgraded` is declared in the proxy, not the implementation, so
+    /// it is absent from the ABIs and can only come from the shared proxy list.
+    #[test]
+    fn proxy_upgrade_logs_resolve_for_every_watched_contract() {
+        let upgraded = keccak256("Upgraded(address)");
+        for contract in [
+            "Interfold",
+            "BondingRegistry",
+            "CiphernodeRegistry",
+            "SlashingManager",
+        ] {
+            assert_eq!(
+                find(contract, upgraded).map(|event| event.name),
+                Some("Upgraded"),
+                "{contract} must name the proxy upgrade log"
+            );
+        }
+
+        let admin_changed = keccak256("AdminChanged(address,address)");
+        assert_eq!(
+            find("Interfold", admin_changed).map(|event| event.name),
+            Some("AdminChanged")
+        );
+    }
+
+    /// The proxy list must stay out of the ABI-parity assertion, or adding an entry would break
+    /// [`every_watched_contract_catalog_matches_its_current_abi`].
+    #[test]
+    fn proxy_events_are_absent_from_the_implementation_abis() {
+        for (contract, artifact) in CONTRACT_ARTIFACTS {
+            let abi = artifact_events(artifact);
+            for event in PROXY_EVENTS {
+                assert!(
+                    !abi.contains_key(event.signature),
+                    "{contract}: {} is in {artifact}, so it belongs in catalog() instead",
+                    event.signature
+                );
+            }
+        }
+    }
+
+    /// A proxy signature must never collide with a live or retired one, or a real protocol log
+    /// would decode as an upgrade.
+    #[test]
+    fn proxy_events_never_shadow_a_contract_event() {
+        for contract in [
+            "Interfold",
+            "BondingRegistry",
+            "CiphernodeRegistry",
+            "SlashingManager",
+        ] {
+            let known: HashSet<B256> = catalog(contract)
+                .iter()
+                .chain(retired_catalog(contract).iter())
+                .map(|event| keccak256(event.signature.as_bytes()))
+                .collect();
+            for event in PROXY_EVENTS {
+                assert!(
+                    !known.contains(&keccak256(event.signature.as_bytes())),
+                    "{contract}: proxy signature {} collides with a contract event",
+                    event.signature
+                );
+            }
         }
     }
 }

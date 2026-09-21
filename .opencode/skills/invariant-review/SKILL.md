@@ -1,7 +1,7 @@
 ---
 name: invariant-review
 description:
-  Review the current branch diff against agent/INVARIANTS.md and flow-trace docs. Use before pushing
+  Review the current branch diff against agent/invariants/ and flow-trace docs. Use before pushing
   protocol-bearing changes.
 ---
 

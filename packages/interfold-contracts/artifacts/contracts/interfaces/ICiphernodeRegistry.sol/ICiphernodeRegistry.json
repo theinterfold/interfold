@@ -194,6 +194,17 @@
     {
       "inputs": [
         {
+          "internalType": "address",
+          "name": "candidate",
+          "type": "address"
+        }
+      ],
+      "name": "IncompatibleSlashingManager",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
           "internalType": "uint256",
           "name": "requested",
           "type": "uint256"
@@ -392,6 +403,16 @@
     {
       "inputs": [],
       "name": "RegistryGenerationNotDrained",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "ServiceDependencyMigrationNotDrained",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "ServiceDependencyMigrationRequiresPause",
       "type": "error"
     },
     {
@@ -1991,5 +2012,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/ICiphernodeRegistry.sol",
-  "buildInfoId": "solc-0_8_28-b9d4a3b69423f157d5a2f8518a2d9fd694c035e3"
+  "buildInfoId": "solc-0_8_28-1042fd83bc4d0ee1a97ad2fa8827341487a706dc"
 }

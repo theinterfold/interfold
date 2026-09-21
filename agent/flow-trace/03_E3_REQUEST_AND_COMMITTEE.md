@@ -74,9 +74,11 @@ Requester calls: Interfold.request({
 │   │  reciprocal dependency graph with matching operator membership
 │   ├─ Validate the requested crypto configuration against the chain matrix.
 │   │    The caller selects (paramSet, committeeSize); the target chain must support that pair.
-│   │    Mainnet supports secure-8192 with minimum, micro, and small committees.
+│   │    Mainnet has secure-8192 routes for minimum, micro, and small committees.
+│   │    The launch pricing policy sets `minCommitteeSize = 19`, so only Small can be
+│   │    requested. Minimum and Micro remain configured for a later governance change.
 │   │    Sepolia and local chains support insecure and secure-8192 with all committee sizes.
-│   │    Secure-16384 currently supports the minimum committee only because its V2 route is minimum-only.
+│   │    They support secure-16384 with the minimum committee because its V2 route is minimum-only.
 │   │    A different parameter hash, committee shape, or verifier H/T is rejected.
 │   │    CI derives and compares the full BFV tuple across deployment code, Rust, and Noir.
 │   ├─ inputWindow[0] >= block.timestamp (start in future)
@@ -208,6 +210,15 @@ Requester calls: Interfold.request({
 
 When the running ciphernodes detect `DkgFoldAttestationContextEstablished`, `E3Requested`, and the
 configured provider's `RandomnessFulfilled` event from the chain:
+
+Chain ingestion waits for one confirmation by default, even when the configured URL points to a
+local RPC proxy. Only a single-process development chain explicitly sets
+`ingestion_confirmations: 0`. If an RPC log carries its block timestamp, the reader uses it without
+another provider request. Otherwise, it retries a temporarily missing block. During initial
+historical sync, an error that remains after the configured retries stops the EVM stream because the
+node cannot start from incomplete history. During live ingestion, a rejected zero-confirmation log
+or a failed confirmed-log backfill closes the current subscription and reconnects for canonical
+backfill.
 
 At startup, each ciphernode loads the saved request-time registry and verifier for every active E3.
 It gives this data to the proof actors and registry writers before event replay starts. Events after

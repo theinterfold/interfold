@@ -1,5 +1,5 @@
 ---
-description: Review the current branch diff against agent/INVARIANTS.md and flow-trace docs
+description: Review the current branch diff against agent/invariants/ and flow-trace docs
 ---
 
 Launch the `invariant-reviewer` agent on the current branch (diff vs origin/main plus

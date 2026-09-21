@@ -1,6 +1,7 @@
 chains:
   - name: 'localhost'
     rpc_url: 'ws://localhost:8545'
+    ingestion_confirmations: 0
     data_availability:
       mode: mock_http
       rpc_url: http://127.0.0.1:8080/availability

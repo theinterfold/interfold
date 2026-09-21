@@ -151,7 +151,9 @@ export default function PollCard({
           <div className='poll-card__eyebrow'>
             <span className='poll-card__kicker'>Today on CRISP</span>
             <span className='poll-card__sep'>·</span>
-            <span className='poll-card__id'>{poll.id}</span>
+            <span className='poll-card__id' title={poll.id}>
+              {poll.displayId}
+            </span>
           </div>
           {onToggleLive && (
             <button

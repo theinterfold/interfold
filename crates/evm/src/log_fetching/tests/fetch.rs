@@ -21,16 +21,16 @@ async fn test_fetch_logs_empty_range() {
 }
 
 #[actix::test]
-async fn timestamp_failure_is_not_cached_as_zero() {
+async fn timestamp_lookup_retries_transient_provider_lag() {
+    tokio::time::pause();
+
     let mock = MockLogProvider::new(100);
-    mock.push_timestamp_error("RPC unavailable");
+    mock.push_timestamp_error("provider returned no block for height 100");
     mock.push_timestamp(1234);
     let mut tracker = TimestampTracker::new();
 
-    let error = tracker.get(&mock, Some(100)).await.unwrap_err();
-    assert!(error.to_string().contains("RPC unavailable"));
-    assert_eq!(tracker.get(&mock, Some(100)).await.unwrap(), 1234);
-    assert_eq!(tracker.get(&mock, Some(100)).await.unwrap(), 1234);
+    assert_eq!(tracker.get(&mock, Some(100), None).await.unwrap(), 1234);
+    assert_eq!(tracker.get(&mock, Some(100), None).await.unwrap(), 1234);
     assert_eq!(mock.timestamp_call_count(), 2);
 }
 
@@ -39,16 +39,32 @@ async fn missing_log_block_number_is_rejected_without_rpc_fallback() {
     let mock = MockLogProvider::new(100);
     let mut tracker = TimestampTracker::new();
 
-    let error = tracker.get(&mock, None).await.unwrap_err();
+    let error = tracker.get(&mock, None, None).await.unwrap_err();
     assert!(error.to_string().contains("missing its block number"));
     assert_eq!(mock.timestamp_call_count(), 0);
 }
 
 #[actix::test]
+async fn log_timestamp_avoids_cross_provider_block_lookup() {
+    let mock = MockLogProvider::new(100);
+    let mut tracker = TimestampTracker::new();
+
+    assert_eq!(
+        tracker.get(&mock, Some(100), Some(1234)).await.unwrap(),
+        1234
+    );
+    assert_eq!(mock.timestamp_call_count(), 0);
+}
+
+#[actix::test]
 async fn timestamp_rpc_failure_prevents_log_dispatch() {
+    tokio::time::pause();
+
     let mock = MockLogProvider::new(100);
     mock.push_logs(vec![make_test_log(100)]);
-    mock.push_timestamp_error("timestamp RPC unavailable");
+    for _ in 0..BLOCK_TIMESTAMP_MAX_ATTEMPTS {
+        mock.push_timestamp_error("timestamp RPC unavailable");
+    }
     let (next, mut receiver) = setup_collector();
     let mut tracker = TimestampTracker::new();
 
@@ -57,6 +73,7 @@ async fn timestamp_rpc_failure_prevents_log_dispatch() {
         .unwrap_err();
 
     assert!(error.to_string().contains("timestamp RPC unavailable"));
+    assert_eq!(mock.timestamp_call_count(), BLOCK_TIMESTAMP_MAX_ATTEMPTS);
     tokio::task::yield_now().await;
     assert!(receiver.try_recv().is_err());
 }

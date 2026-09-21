@@ -1,7 +1,7 @@
 # Interfold — Project Context
 
 What this project is, how the monorepo is laid out, and how to build/test it. For working rules see
-`RULES.md`; for things you must not break see `INVARIANTS.md`.
+`RULES.md`; for things you must not break see `invariants/00_INDEX.md`.
 
 ## What Interfold is
 

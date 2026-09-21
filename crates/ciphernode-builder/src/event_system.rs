@@ -16,8 +16,8 @@ use e3_data::{
 use e3_events::{hlc::Hlc, hlc_factory::HlcFactory};
 use e3_events::{
     AggregateConfig, BusHandle, Disabled, Enabled, EventBus, EventBusConfig, EventStore,
-    EventStoreClockFloor, EventStoreRouter, EventSubscriber, EventType, InsertBatch,
-    InterfoldEvent, Sequencer, SnapshotBuffer, StoreEventRequested, UpdateDestination,
+    EventStoreClockFloor, EventStoreRouter, InsertBatch, InterfoldEvent, Sequencer, SnapshotBuffer,
+    StoreEventRequested, SubscribePreFanout, UpdateDestination,
 };
 use e3_utils::enumerate_path;
 use once_cell::sync::OnceCell;
@@ -355,7 +355,12 @@ impl EventSystem {
             }
         }
 
-        let bus = self.handle()?.enable_with_hlc(hlc);
+        let handle = self.handle()?;
+        self.eventbus()
+            .send(e3_events::EventBusBarrier)
+            .await
+            .context("event bus stopped before snapshot admission was registered")?;
+        let bus = handle.enable_with_hlc(hlc);
         if let Some(timestamp) = durable_floor {
             bus.seed_clock(timestamp)?;
         }
@@ -421,10 +426,14 @@ impl EventSystem {
     pub fn handle(&self) -> Result<BusHandle<Disabled>> {
         self.handle
             .get_or_try_init(|| {
-                let handle = BusHandle::new(self.eventbus(), self.sequencer()?, HlcFactory::new());
-                // Buffer subscribes to all events first
-                // This is important so as to open up a batch for each sequence
-                handle.subscribe(EventType::All, self.buffer()?.recipient());
+                let eventbus = self.eventbus();
+                eventbus
+                    .try_send(
+                        SubscribePreFanout::new(self.buffer()?.recipient())
+                            .with_failure_signal(self.failure_signal.clone()),
+                    )
+                    .context("event bus could not register snapshot admission")?;
+                let handle = BusHandle::new(eventbus, self.sequencer()?, HlcFactory::new());
                 Ok(handle)
             })
             .cloned()
@@ -483,6 +492,7 @@ mod tests {
     use e3_data::Persistable;
     use e3_data::Repository;
     use e3_events::hlc::HlcTimestamp;
+    use e3_events::AggregateId;
     use e3_events::EventContext;
     use e3_events::EventId;
     use e3_events::EventSource;
@@ -638,6 +648,72 @@ mod tests {
 
         let _handle = system.handle().expect("Failed to get handle");
         system.store().expect("Failed to get store");
+    }
+
+    #[actix::test]
+    async fn source_bus_events_are_admitted_to_snapshot_batches() -> Result<()> {
+        let eventbus = EventBus::<InterfoldEvent>::default().start();
+        let system = EventSystem::in_mem()
+            .with_event_bus(eventbus.clone())
+            .with_aggregate_config(AggregateConfig::new(HashMap::new()));
+        let handle = system.handle()?.enable("source-bus-snapshot");
+        let store = system.store()?;
+        let event = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            TestEvent::new("source", 1).into(),
+            None,
+            1,
+            None,
+            EventSource::Local,
+        )
+        .into_sequenced(1);
+
+        eventbus.send(e3_events::EventBusFanout(event)).await??;
+        handle.flush_event_pipeline().await?;
+        system.buffer()?.send(FlushPendingSnapshots).await??;
+
+        assert_eq!(
+            store
+                .scope(StoreKeys::aggregate_seq(AggregateId::new(0)))
+                .read::<u64>()
+                .await?,
+            Some(1)
+        );
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn forked_bus_events_are_admitted_to_snapshot_batches() -> Result<()> {
+        let source = EventBus::<InterfoldEvent>::default().start();
+        let fork = EventBus::<InterfoldEvent>::default().start();
+        let system = EventSystem::in_mem()
+            .with_event_bus(fork.clone())
+            .with_aggregate_config(AggregateConfig::new(HashMap::new()));
+        let handle = system.handle()?.enable("forked-bus-snapshot");
+        let store = system.store()?;
+        EventBus::pipe(&source, &fork);
+        source.send(e3_events::EventBusBarrier).await?;
+
+        let event = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            TestEvent::new("fork", 1).into(),
+            None,
+            1,
+            None,
+            EventSource::Local,
+        )
+        .into_sequenced(1);
+        source.send(e3_events::EventBusFanout(event)).await??;
+        fork.send(e3_events::EventBusBarrier).await?;
+        handle.flush_event_pipeline().await?;
+        system.buffer()?.send(FlushPendingSnapshots).await??;
+
+        assert_eq!(
+            store
+                .scope(StoreKeys::aggregate_seq(AggregateId::new(0)))
+                .read::<u64>()
+                .await?,
+            Some(1)
+        );
+        Ok(())
     }
 
     #[actix::test]
@@ -803,7 +879,6 @@ mod tests {
         let router = system.in_mem_eventstore_router()?;
 
         // Get all events after the given timestamp using the router
-        use e3_events::AggregateId;
         let mut ts_map = HashMap::new();
         ts_map.insert(AggregateId::new(0), ts);
         let sender: Recipient<EventStoreQueryResponse> = listener.clone().into();
@@ -819,8 +894,6 @@ mod tests {
 
     #[actix::test]
     async fn test_multiple_eventstores() -> Result<()> {
-        use e3_events::AggregateId;
-
         // Create an AggregateConfig with multiple AggregateIds
         let mut delays = HashMap::new();
         delays.insert(AggregateId::new(0), Duration::from_micros(1000)); // 1ms delay

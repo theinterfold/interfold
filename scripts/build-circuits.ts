@@ -152,6 +152,18 @@ function hydratedCircuitTargetDir(bin: string, group: CircuitGroup, name: string
   return join(bin, group, name, 'target')
 }
 
+export function normalizeCargoLockForCircuitHash(source: Buffer): Buffer {
+  const normalized = source
+    .toString()
+    .split(/(?=\[\[package\]\]\n)/)
+    .map((entry) => {
+      if (!entry.startsWith('[[package]]') || /^source = /m.test(entry)) return entry
+      return entry.replace(/^version = "[^"]+"$/m, 'version = "<workspace>"')
+    })
+    .join('')
+  return Buffer.from(normalized)
+}
+
 interface CircuitInfo {
   name: string
   group: CircuitGroup
@@ -1566,7 +1578,8 @@ library ActiveCryptoConfig {
       const path = join(this.rootDir, sourceFile)
       if (existsSync(path)) {
         hash.update(sourceFile)
-        hash.update(readFileSync(path))
+        const source = readFileSync(path)
+        hash.update(sourceFile === 'Cargo.lock' ? normalizeCargoLockForCircuitHash(source) : source)
       }
     }
     return hash.digest('hex').substring(0, 16)

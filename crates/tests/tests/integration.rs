@@ -1840,6 +1840,7 @@ async fn test_trbfv_actor() -> Result<()> {
         },
         finalization_ms: None,
         chain_id: Some(1),
+        ingestion_confirmations: Some(0),
         data_availability: None,
     };
 

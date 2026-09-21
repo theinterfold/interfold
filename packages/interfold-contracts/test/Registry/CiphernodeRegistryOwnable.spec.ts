@@ -14,6 +14,7 @@ import {
   SEVEN_DAYS,
   TICKET_PRICE,
   deployInterfoldSystem,
+  deploySlashingManager,
   encodeMockDkgProof,
   ethers,
   networkHelpers,
@@ -1411,6 +1412,113 @@ describe("CiphernodeRegistryOwnable", function () {
       await expect(await registry.setInterfold(AddressTwo))
         .to.emit(registry, "InterfoldSet")
         .withArgs(AddressTwo);
+    });
+  });
+
+  describe("service dependency migration", function () {
+    async function deployWiredSlashingManager(
+      system: Awaited<ReturnType<typeof setup>>,
+    ) {
+      const replacement = await deploySlashingManager(
+        0,
+        await system.owner.getAddress(),
+      );
+      await replacement.setInterfold(await system.interfold.getAddress());
+      await replacement.setBondingRegistry(
+        await system.bondingRegistry.getAddress(),
+      );
+      await replacement.setCiphernodeRegistry(
+        await system.registry.getAddress(),
+      );
+      await replacement.setE3RefundManager(
+        await system.interfold.e3RefundManager(),
+      );
+      return replacement;
+    }
+
+    it("preserves registered operators when the slashing manager changes", async function () {
+      const system = await loadFixture(setup);
+      const replacement = await deployWiredSlashingManager(system);
+      const replacementAddress = await replacement.getAddress();
+      const registryAddress = await system.registry.getAddress();
+      const operatorAddresses = await Promise.all(
+        [system.operator1, system.operator2, system.operator3].map((operator) =>
+          operator.getAddress(),
+        ),
+      );
+      const rootBefore = await system.registry.root();
+      const registryCountBefore = await system.registry.numCiphernodes();
+      const bondingCountBefore =
+        await system.bondingRegistry.numRegisteredOperators();
+
+      await system.interfold.setRequestsPaused(true);
+      await system.bondingRegistry.setSlashingManager(replacementAddress);
+      await system.interfold.setSlashingManager(replacementAddress);
+      await expect(system.registry.setSlashingManager(replacementAddress))
+        .to.emit(system.registry, "RegistrySlashingManagerSet")
+        .withArgs(replacementAddress);
+
+      expect(await system.registry.root()).to.equal(rootBefore);
+      expect(await system.registry.numCiphernodes()).to.equal(
+        registryCountBefore,
+      );
+      expect(await system.bondingRegistry.numRegisteredOperators()).to.equal(
+        bondingCountBefore,
+      );
+      for (const operator of operatorAddresses) {
+        expect(await system.registry.isEnabled(operator)).to.equal(true);
+      }
+      expect(await system.registry.interfold()).to.equal(
+        await system.interfold.getAddress(),
+      );
+      expect(await system.registry.bondingRegistry()).to.equal(
+        await system.bondingRegistry.getAddress(),
+      );
+      expect(await system.registry.slashingManager()).to.equal(
+        replacementAddress,
+      );
+      await system.interfold.setRequestsPaused(false);
+      expect(await system.registry.getAddress()).to.equal(registryAddress);
+    });
+
+    it("requires a pause before a service dependency changes", async function () {
+      const system = await loadFixture(setup);
+      const replacement = await deployWiredSlashingManager(system);
+
+      await expect(
+        system.interfold.setSlashingManager(await replacement.getAddress()),
+      ).to.be.revertedWithCustomError(system.interfold, "RequestsPaused");
+    });
+
+    it("rejects a migration while an E3 is active", async function () {
+      const system = await loadFixture(setup);
+      const replacement = await deployWiredSlashingManager(system);
+      await system.request();
+      await system.interfold.setRequestsPaused(true);
+
+      await expect(
+        system.interfold.setSlashingManager(await replacement.getAddress()),
+      ).to.be.revertedWithCustomError(
+        system.interfold,
+        "DependencyGenerationNotDrained",
+      );
+    });
+
+    it("rejects a replacement with an inconsistent dependency graph", async function () {
+      const system = await loadFixture(setup);
+      const replacement = await deployWiredSlashingManager(system);
+      const replacementAddress = await replacement.getAddress();
+      await replacement.setE3RefundManager(AddressTwo);
+      await system.interfold.setRequestsPaused(true);
+      await system.bondingRegistry.setSlashingManager(replacementAddress);
+      await system.interfold.setSlashingManager(replacementAddress);
+
+      await expect(system.registry.setSlashingManager(replacementAddress))
+        .to.be.revertedWithCustomError(
+          system.registry,
+          "IncompatibleSlashingManager",
+        )
+        .withArgs(replacementAddress);
     });
   });
 

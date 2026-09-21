@@ -201,6 +201,20 @@ describe("Interfold", function () {
       );
     });
 
+    it("rejects a registry replacement while the current operator generation is not empty", async function () {
+      const { interfold } = await loadFixture(setup);
+      const replacement = await ethers.deployContract("MockCiphernodeRegistry");
+
+      await interfold.setRequestsPaused(true);
+
+      await expect(
+        interfold.setCiphernodeRegistry(await replacement.getAddress()),
+      ).to.be.revertedWithCustomError(
+        interfold,
+        "DependencyGenerationNotDrained",
+      );
+    });
+
     it("emits CiphernodeRegistrySet event", async function () {
       const { interfold } = await deployInterfoldSystem({ setupOperators: 0 });
       const replacement = await ethers.deployContract("MockCiphernodeRegistry");
@@ -210,6 +224,21 @@ describe("Interfold", function () {
       await expect(interfold.setCiphernodeRegistry(replacementAddress))
         .to.emit(interfold, "CiphernodeRegistrySet")
         .withArgs(replacementAddress);
+    });
+  });
+
+  describe("dependency replacement", function () {
+    it("keeps refund-manager replacement on the empty-generation path", async function () {
+      const { interfold } = await loadFixture(setup);
+
+      await interfold.setRequestsPaused(true);
+
+      await expect(
+        interfold.setE3RefundManager(AddressTwo),
+      ).to.be.revertedWithCustomError(
+        interfold,
+        "DependencyGenerationNotDrained",
+      );
     });
   });
 

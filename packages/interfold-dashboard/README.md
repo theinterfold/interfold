@@ -5,7 +5,7 @@ Interfold / CRISP public observation dashboard. Three tabs:
 - **CRISP** — hero poll card, live 7-stage timeline, expandable history, network pulse footer.
   Observational only (no vote CTA).
 - **E3 inspector** — deep technical record of one E3: request, committee, keygen rounds, input
-  window, compute, decryption, publication, fees, on-chain event log.
+  window, compute, decryption, publication, failure, fees, and on-chain event log.
 - **Run a ciphernode** — interactive operator guide. The only writing page: it connects a wallet and
   walks the on-chain setup (authorize bond owner → bond the ciphernode bond → register → buy
   tickets).
@@ -30,8 +30,9 @@ Addresses are **not** repeated here — they go stale. The live values are the d
 `src/lib/chain.ts` (`CONTRACTS`), each overridable by its `VITE_*` variable. Cross-check them
 against `packages/interfold-contracts/deployed_contracts.json` for the target network.
 
-- `Interfold` proxy — `E3Requested`, `PlaintextOutputPublished`, `RewardsDistributed`, plus `getE3`
-  / `getE3Stage` / `e3Payments` view functions.
+- `Interfold` proxy — `E3Requested`, `E3Failed`, `PlaintextOutputPublished`, and
+  `RewardsDistributed`, plus the `getE3`, `getE3Stage`, `getFailureReason`, and `e3Payments` view
+  functions.
 - `CiphernodeRegistryOwnable` — `CommitteeRequested` (threshold + seed), `CommitteeFinalized`
   (members), `CommitteePublished` (joint PK).
 - `BondingRegistry` — operator collateral and the write path behind the operator guide (see below).
@@ -67,9 +68,9 @@ Only `VITE_BONDING_REGISTRY_ADDRESS` is configured. The ciphernode bond token, t
 ticket underlying, bond size, ticket price, minimum tickets, and exit delay are all read back from
 the registry, so the guide follows the deployment instead of a hardcoded token list.
 
-CRISP question text + option labels are off-chain (the program doesn't store them); the mapping
-lives in `src/lib/pollMeta.ts`. Unknown E3 ids get a generic "Encrypted poll #N" header with numeric
-option labels.
+CRISP question text + option labels are off-chain (the program does not store them). The mapping
+lives in `src/lib/pollMeta.ts`. Unknown E3 IDs get a generic header that contains the compact E3 ID.
+They use numeric option labels.
 
 ### Configuration
 

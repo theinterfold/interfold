@@ -7,7 +7,7 @@ Input: a committee name `minimum` | `micro` | `small`, optionally
 `--preset insecure | secure-8192 | secure-16384`. Supported pairs live in
 `scripts/circuit-constants.ts`.
 
-Rules — read `agent/INVARIANTS.md` §Committee config sync first:
+Rules — read `agent/invariants/02_CRYPTO_CIRCUITS.md` §Committee config sync first:
 
 1. NEVER hand-edit the synced files (`circuits/lib/src/configs/committee/active.nr`,
    `circuits/bin/.active-preset.json`, `packages/interfold-contracts/scripts/utils.ts`, parity

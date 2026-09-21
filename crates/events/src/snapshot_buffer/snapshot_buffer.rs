@@ -429,6 +429,39 @@ mod tests {
     }
 
     #[actix::test]
+    async fn a_sequence_gap_still_schedules_every_older_snapshot() -> Result<()> {
+        let aggregate_id = AggregateId::new(7);
+        let config =
+            &AggregateConfig::new(HashMap::from([(aggregate_id, Duration::from_micros(10))]));
+        let store = mock_store::MockStore::default().start();
+        let clock = Arc::new(MockClock::new(1000));
+        let (buffer, timelock) =
+            SnapshotBuffer::with_clock(config, store.clone(), clock.clone(), None)?;
+
+        let first = create_ec(7, 1);
+        buffer.send(create_event(&first)).await?;
+        buffer
+            .send(Insert::new_with_context("state", vec![1], first))
+            .await?;
+
+        // Sequence 2 is intentionally absent. Sequence 3 must still close sequence 1.
+        buffer.send(create_event(&create_ec(7, 3))).await?;
+        clock.set(Duration::from_micros(1010));
+        timelock.send(Tick).await?;
+
+        let batches = store.send(GetEvts).await?;
+        assert_eq!(batches.len(), 1);
+        assert_eq!(
+            batches[0]
+                .snapshot_revision()?
+                .context("flushed snapshot has no revision")?
+                .seq(),
+            1
+        );
+        Ok(())
+    }
+
+    #[actix::test]
     async fn final_flush_waits_for_destination_acknowledgement() -> Result<()> {
         let config = &AggregateConfig::new(HashMap::from([(
             AggregateId::new(1),

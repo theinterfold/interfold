@@ -5,7 +5,7 @@
 # without even the implied warranty of MERCHANTABILITY
 # or FITNESS FOR A PARTICULAR PURPOSE.
 
-# Mechanically enforces grep-checkable invariants from agent/INVARIANTS.md.
+# Mechanically enforces grep-checkable invariants from agent/invariants/.
 # Companion to check-committee.sh (structural sync) and check-doc-sync.sh (doc drift).
 #
 # Checks:
@@ -16,7 +16,7 @@
 #      a default feature and must only be *enabled* (as a dependency feature) by
 #      crates/tests. Forwarding declarations in [features] sections are fine.
 #   3. runtime proof-skip guard — validate_proof_aggregation_mode must exist and be
-#      called in crates/entrypoint (INVARIANTS §No proof-disabled bypass, C-02).
+#      called in crates/entrypoint (agent/invariants/02_CRYPTO_CIRCUITS.md, C-02).
 #   4. ciphernode Docker workspace coverage — every root workspace crate manifest
 #      must be present in the dependency-cache stage of crates/Dockerfile.
 #   5. l-BFV protocol version sync — the Rust release manifest and Solidity V2
@@ -80,7 +80,7 @@ fi
 if ! grep -rq 'fn validate_proof_aggregation_mode' crates/entrypoint/src ||
   ! grep -rEq 'validate_proof_aggregation_mode\(config' crates/entrypoint/src; then
   echo "check-invariants: FAILED — validate_proof_aggregation_mode missing or no longer called"
-  echo "  in crates/entrypoint/src (INVARIANTS §No proof-disabled bypass, C-02)."
+  echo "  in crates/entrypoint/src (agent/invariants/02_CRYPTO_CIRCUITS.md, C-02)."
   fail=1
 fi
 

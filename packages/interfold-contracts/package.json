@@ -1,7 +1,7 @@
 {
   "name": "@interfold/contracts",
   "description": "Interfold is an open-source protocol for Encrypted Execution Environments (E3).",
-  "version": "0.15.0",
+  "version": "0.16.0",
   "license": "LGPL-3.0-only",
   "type": "module",
   "author": {
@@ -177,6 +177,7 @@
     "upgrade:secure-crisp": "pnpm validate:upgrade && pnpm -w store:circuits verify-release && tsx scripts/upgrade/secureCrisp.ts",
     "upgrade:secure-crisp:validate": "tsx scripts/upgrade/validateSecureCrisp.ts",
     "upgrade:secure-crisp:resume": "tsx scripts/upgrade/resumeSecureCrisp.ts",
+    "upgrade:service-migration:simulate": "pnpm validate:upgrade && hardhat run scripts/upgrade/simulateServiceMigration.ts",
     "upgrade:node-release": "tsx scripts/upgrade/nodeRelease.ts",
     "e3:activate": "hardhat e3:activate",
     "e3:enable": "hardhat interfold:enableE3",

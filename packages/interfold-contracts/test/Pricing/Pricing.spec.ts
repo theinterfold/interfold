@@ -456,6 +456,28 @@ describe("E3 Pricing", function () {
       });
       await (await interfold.setCommitteeThresholds(0, [2, 3])).wait();
     });
+
+    it("can keep every committee configured while admitting only Small", async function () {
+      const { interfold, request } = await loadFixture(setup);
+
+      await (await interfold.setCommitteeThresholds(1, [5, 9])).wait();
+      await (await interfold.setCommitteeThresholds(2, [14, 19])).wait();
+      await setPricingConfig(interfold, {
+        ...defaultPricingConfig,
+        minCommitteeSize: 19,
+        minThreshold: 2,
+      });
+
+      await expect(interfold.getE3Quote({ ...request, committeeSize: 0 }))
+        .to.be.revertedWithCustomError(interfold, "CommitteeSizeTooSmall")
+        .withArgs(0);
+      await expect(interfold.getE3Quote({ ...request, committeeSize: 1 }))
+        .to.be.revertedWithCustomError(interfold, "CommitteeSizeTooSmall")
+        .withArgs(1);
+      expect(
+        await interfold.getE3Quote({ ...request, committeeSize: 2 }),
+      ).to.be.greaterThan(0);
+    });
   });
 
   describe("setRandomnessFlatFee()", function () {

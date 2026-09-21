@@ -33,6 +33,7 @@ pub(super) struct SnapshotKey {
 struct PendingBatch {
     order: u128,
     addr: Addr<Batch>,
+    scheduled: bool,
 }
 
 impl SnapshotKey {
@@ -132,6 +133,34 @@ impl BatchRouter {
             self.write_failure = Some(error);
         }
     }
+
+    fn schedule_older_batches(&mut self, aggregate_id: AggregateId, seq: Seq) {
+        let mut older = self
+            .batches
+            .iter()
+            .filter_map(|(key, batch)| {
+                (key.aggregate_id() == aggregate_id && key.seq() < seq && !batch.scheduled)
+                    .then_some((*key, batch.order))
+            })
+            .collect::<Vec<_>>();
+        older.sort_by_key(|(_, order)| *order);
+
+        let delay = self.config.get_delay(&aggregate_id);
+        let now = Duration::from_micros(self.clock.now_micros());
+        for (key, _) in older {
+            let Some(batch) = self.batches.get_mut(&key) else {
+                continue;
+            };
+            batch.scheduled = true;
+            debug!(
+                aggregate = %aggregate_id,
+                seq = key.seq(),
+                "Scheduling older snapshot batch"
+            );
+            self.timelock_queue
+                .do_send(StartTimelock::new(key, now, delay));
+        }
+    }
 }
 
 impl Handler<Insert> for BatchRouter {
@@ -185,22 +214,9 @@ impl Handler<InterfoldEvent<Sequenced>> for BatchRouter {
 
         let ec = msg.get_ctx();
         let agg_id = ec.aggregate_id();
-        if let Some(prev_seq) = ec.seq().checked_sub(1) {
-            let previous = SnapshotKey::new(agg_id, prev_seq);
-            if self.batches.contains_key(&previous) {
-                debug!(
-                        aggregate = %agg_id,
-                        seq = prev_seq,
-                        "Scheduling previous snapshot batch"
-                );
-                let delay = self.config.get_delay(&agg_id);
-
-                let now = Duration::from_micros(self.clock.now_micros());
-
-                self.timelock_queue
-                    .do_send(StartTimelock::new(previous, now, delay));
-            }
-        }
+        // A downstream deduplication or a failed subscriber must not strand an earlier sequence.
+        // Schedule every older open batch, not only the exact predecessor.
+        self.schedule_older_batches(agg_id, ec.seq());
 
         let key = SnapshotKey::new(agg_id, ec.seq());
         if self.batches.contains_key(&key) {
@@ -235,8 +251,14 @@ impl Handler<InterfoldEvent<Sequenced>> for BatchRouter {
         );
         let order = self.next_batch_order;
         self.next_batch_order = self.next_batch_order.saturating_add(1);
-        self.batches
-            .insert(key, PendingBatch { order, addr: batch });
+        self.batches.insert(
+            key,
+            PendingBatch {
+                order,
+                addr: batch,
+                scheduled: false,
+            },
+        );
     }
 }
 

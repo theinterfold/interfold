@@ -8,8 +8,8 @@ import {
   CRISP_MIN_VOTING_DURATION_SECONDS,
   availVectorXForChain,
 } from "../dataAvailability";
-import { connect } from "../protocol/cli";
-import { BFV_PARAMS } from "../protocol/constants";
+import { connect, hasFlag } from "../protocol/cli";
+import { BFV_PARAMS, ZERO } from "../protocol/constants";
 import {
   deploymentPath,
   protocolDir,
@@ -20,6 +20,11 @@ import {
   currentNodeRelease,
   requiredCircuitsVersion,
 } from "../protocol/nodeRelease";
+import {
+  assertVrfSubscription,
+  readOptionalPendingRequestCount,
+  requireExistingRandomnessConfig,
+} from "../protocol/randomness";
 import type {
   ProtocolConfigFile,
   ProtocolDeployment,
@@ -147,6 +152,49 @@ export async function validateSecureCrispUpgrade(): Promise<void> {
     deployment.ciphernodeRegistryProxyAdmin,
     "CiphernodeRegistry ProxyAdmin",
   );
+  equalAddress(
+    plan.bondingProxy,
+    deployment.bondingRegistryProxy,
+    "BondingRegistry proxy",
+  );
+  equalAddress(
+    plan.bondingProxyAdmin,
+    deployment.bondingRegistryProxyAdmin,
+    "BondingRegistry ProxyAdmin",
+  );
+  equalAddress(
+    plan.refundManagerProxy,
+    deployment.e3RefundManager,
+    "E3RefundManager proxy",
+  );
+  equalAddress(
+    plan.refundManagerProxyAdmin,
+    deployment.e3RefundManagerProxyAdmin,
+    "E3RefundManager ProxyAdmin",
+  );
+  equalAddress(
+    plan.previousSlashingManager,
+    deployment.slashingManager,
+    "previous SlashingManager",
+  );
+  equalAddress(
+    plan.previousRandomnessProvider,
+    deployment.randomnessProvider,
+    "previous randomness provider",
+  );
+  const resolvedRandomness = requireExistingRandomnessConfig(
+    config,
+    deployment,
+  );
+  for (const key of Object.keys(resolvedRandomness) as Array<
+    keyof typeof resolvedRandomness
+  >) {
+    equalValue(
+      plan.randomness[key],
+      resolvedRandomness[key],
+      `upgrade plan randomness ${key}`,
+    );
+  }
   equalAddress(plan.availBridge, avail.bridge, "Avail bridge");
   equalAddress(plan.vectorx, avail.vectorx, "VectorX verifier");
   equalAddress(
@@ -199,9 +247,20 @@ export async function validateSecureCrispUpgrade(): Promise<void> {
   const codeAddresses = [
     [plan.interfoldImplementation, "Interfold implementation"],
     [plan.registryImplementation, "CiphernodeRegistry implementation"],
+    [plan.bondingImplementation, "BondingRegistry implementation"],
+    [plan.refundManagerImplementation, "E3RefundManager implementation"],
     [plan.sortitionLibrary, "RegistrySortitionLib"],
     [plan.lifecycleLibrary, "InterfoldLifecycle"],
     [plan.pricingLibrary, "InterfoldPricing"],
+    [plan.bondingAssetLibrary, "BondingAssetLib"],
+    [plan.bondingEligibilityLibrary, "BondingEligibilityLib"],
+    [plan.bondingSlashingLibrary, "BondingSlashingLib"],
+    [plan.bondingRegistrationLibrary, "BondingRegistrationLib"],
+    [plan.bondingOwnershipLibrary, "BondingOwnershipLib"],
+    [plan.refundClaimLibrary, "RefundClaimLib"],
+    [plan.slashingManager, "SlashingManager"],
+    [plan.slashingEvidenceLibrary, "SlashingEvidenceLib"],
+    [plan.randomnessProvider, "Chainlink VRF provider"],
     [plan.pkVerifier, "BFV PK router"],
     [plan.decryptionVerifier, "BFV decryption router"],
     [plan.ciphertextVerifier, "CRISP ciphertext verifier"],
@@ -286,6 +345,16 @@ export async function validateSecureCrispUpgrade(): Promise<void> {
     plan.registryImplementation,
     "live CiphernodeRegistry implementation",
   );
+  equalAddress(
+    await proxyImplementation(ethers, deployment.bondingRegistryProxy),
+    plan.bondingImplementation,
+    "live BondingRegistry implementation",
+  );
+  equalAddress(
+    await proxyImplementation(ethers, deployment.e3RefundManager),
+    plan.refundManagerImplementation,
+    "live E3RefundManager implementation",
+  );
 
   const interfold = await ethers.getContractAt(
     "Interfold",
@@ -294,6 +363,26 @@ export async function validateSecureCrispUpgrade(): Promise<void> {
   const registry = await ethers.getContractAt(
     "CiphernodeRegistryOwnable",
     deployment.ciphernodeRegistry,
+  );
+  const bonding = await ethers.getContractAt(
+    "BondingRegistry",
+    deployment.bondingRegistryProxy,
+  );
+  const refundManager = await ethers.getContractAt(
+    "E3RefundManager",
+    deployment.e3RefundManager,
+  );
+  const slashingManager = await ethers.getContractAt(
+    "SlashingManager",
+    plan.slashingManager,
+  );
+  const previousSlashingManager = await ethers.getContractAt(
+    "SlashingManager",
+    plan.previousSlashingManager,
+  );
+  const randomnessProvider = await ethers.getContractAt(
+    "ChainlinkVrfRandomnessProvider",
+    plan.randomnessProvider,
   );
   const releases = await ethers.getContractAt(
     "NodeReleaseRegistry",
@@ -328,6 +417,255 @@ export async function validateSecureCrispUpgrade(): Promise<void> {
     await registry.unreleasedCommitteeCount(),
     0n,
     "unreleased committee count",
+  );
+  equalValue(
+    await bonding.unresolvedCommitteeCount(),
+    0n,
+    "unresolved committee count",
+  );
+  equalValue(
+    await registry.numCiphernodes(),
+    BigInt(plan.registeredOperatorCount),
+    "registered registry operators",
+  );
+  equalValue(
+    await bonding.numRegisteredOperators(),
+    BigInt(plan.registeredOperatorCount),
+    "registered bonding operators",
+  );
+  const activeOperatorCount = await bonding.numActiveOperators();
+  if (plan.nodeReleasePolicyUpdated) {
+    if (activeOperatorCount > BigInt(plan.registeredOperatorCount)) {
+      throw new Error(
+        `Active bonding operators exceed registrations: ${activeOperatorCount} > ${plan.registeredOperatorCount}`,
+      );
+    }
+  } else {
+    equalValue(
+      activeOperatorCount,
+      BigInt(plan.preUpgradeActiveOperatorCount),
+      "active bonding operators",
+    );
+  }
+  equalValue(await registry.root(), BigInt(plan.registryRoot), "registry root");
+  for (const [label, actual, expected] of [
+    [
+      "Interfold registry",
+      await interfold.ciphernodeRegistry(),
+      plan.registryProxy,
+    ],
+    [
+      "Interfold bonding registry",
+      await interfold.bondingRegistry(),
+      plan.bondingProxy,
+    ],
+    [
+      "Interfold refund manager",
+      await interfold.e3RefundManager(),
+      plan.refundManagerProxy,
+    ],
+    [
+      "Interfold slashing manager",
+      await interfold.slashingManager(),
+      plan.slashingManager,
+    ],
+    ["registry Interfold", await registry.interfold(), plan.interfoldProxy],
+    [
+      "registry bonding registry",
+      await registry.bondingRegistry(),
+      plan.bondingProxy,
+    ],
+    [
+      "registry slashing manager",
+      await registry.slashingManager(),
+      plan.slashingManager,
+    ],
+    [
+      "registry randomness provider",
+      await registry.randomnessProvider(),
+      plan.randomnessProvider,
+    ],
+    ["bonding registry", await bonding.registry(), plan.registryProxy],
+    [
+      "bonding slashing manager",
+      await bonding.slashingManager(),
+      plan.slashingManager,
+    ],
+    [
+      "refund manager Interfold",
+      await refundManager.interfold(),
+      plan.interfoldProxy,
+    ],
+    [
+      "refund manager bonding registry",
+      await refundManager.bondingRegistry(),
+      plan.bondingProxy,
+    ],
+    [
+      "slashing manager Interfold",
+      await slashingManager.interfold(),
+      plan.interfoldProxy,
+    ],
+    [
+      "slashing manager registry",
+      await slashingManager.ciphernodeRegistry(),
+      plan.registryProxy,
+    ],
+    [
+      "slashing manager bonding registry",
+      await slashingManager.bondingRegistry(),
+      plan.bondingProxy,
+    ],
+    [
+      "slashing manager refund manager",
+      await slashingManager.e3RefundManager(),
+      plan.refundManagerProxy,
+    ],
+  ] as const) {
+    equalAddress(String(actual), expected, label);
+  }
+  for (const [label, owner] of [
+    ["BondingRegistry owner", await bonding.owner()],
+    ["E3RefundManager owner", await refundManager.owner()],
+    ["SlashingManager admin", await slashingManager.defaultAdmin()],
+  ] as const) {
+    equalAddress(String(owner), config.protocolOwner, label);
+  }
+  equalValue(
+    await slashingManager.activeE3Assignments(),
+    0n,
+    "replacement manager active E3 assignments",
+  );
+  equalValue(
+    await slashingManager.activeBanCount(),
+    0n,
+    "replacement manager active bans",
+  );
+  equalValue(
+    await previousSlashingManager.activeE3Assignments(),
+    0n,
+    "previous manager active E3 assignments",
+  );
+  equalValue(
+    await previousSlashingManager.activeBanCount(),
+    0n,
+    "previous manager active bans",
+  );
+  equalValue(
+    await bonding.isAuthorizedSlashingManager(plan.slashingManager),
+    true,
+    "replacement manager authorization",
+  );
+  equalValue(
+    await bonding.isAuthorizedSlashingManager(plan.previousSlashingManager),
+    false,
+    "previous manager authorization",
+  );
+  const governanceRole = await slashingManager.GOVERNANCE_ROLE();
+  equalValue(
+    await slashingManager.hasRole(governanceRole, config.protocolOwner),
+    true,
+    "SlashingManager governance role",
+  );
+  if (config.slasher.toLowerCase() !== ZERO.toLowerCase()) {
+    const slasherRole = await slashingManager.SLASHER_ROLE();
+    equalValue(
+      await slashingManager.hasRole(slasherRole, config.slasher),
+      true,
+      "configured slasher role",
+    );
+  }
+  const slashPolicyFields = [
+    "ticketPenalty",
+    "ciphernodeBondPenalty",
+    "requiresProof",
+    "proofVerifier",
+    "banNode",
+    "appealWindow",
+    "enabled",
+    "affectsCommittee",
+    "failureReason",
+  ] as const;
+  for (const reason of plan.migratedSlashPolicyReasons) {
+    const [previousPolicy, migratedPolicy] = await Promise.all([
+      previousSlashingManager.getSlashPolicy(reason),
+      slashingManager.getSlashPolicy(reason),
+    ]);
+    for (const field of slashPolicyFields) {
+      equalValue(
+        migratedPolicy[field],
+        previousPolicy[field],
+        `slash policy ${reason} ${field}`,
+      );
+    }
+  }
+  equalAddress(
+    await randomnessProvider.requester(),
+    plan.registryProxy,
+    "randomness provider requester",
+  );
+  equalAddress(
+    await randomnessProvider.owner(),
+    config.protocolOwner,
+    "randomness provider owner",
+  );
+  for (const [label, actual, expected] of [
+    [
+      "subscription ID",
+      await randomnessProvider.subscriptionId(),
+      plan.randomness.subscriptionId,
+    ],
+    ["key hash", await randomnessProvider.keyHash(), plan.randomness.keyHash],
+    [
+      "request confirmations",
+      await randomnessProvider.requestConfirmations(),
+      plan.randomness.requestConfirmations,
+    ],
+    [
+      "callback gas limit",
+      await randomnessProvider.callbackGasLimit(),
+      plan.randomness.callbackGasLimit,
+    ],
+    [
+      "native payment",
+      await randomnessProvider.nativePayment(),
+      plan.randomness.nativePayment,
+    ],
+    [
+      "minimum subscription balance",
+      await randomnessProvider.minimumSubscriptionBalance(),
+      plan.randomness.minimumSubscriptionBalance,
+    ],
+    [
+      "randomness request timeout",
+      await registry.randomnessRequestTimeout(),
+      plan.randomness.requestTimeout,
+    ],
+  ] as const) {
+    equalValue(actual, expected, `randomness ${label}`);
+  }
+  equalValue(
+    await randomnessProvider.pendingRequestCount(),
+    0n,
+    "replacement randomness pending requests",
+  );
+  const previousPendingRequests = await readOptionalPendingRequestCount(
+    ethers.provider,
+    plan.previousRandomnessProvider,
+  );
+  if (previousPendingRequests !== undefined) {
+    equalValue(
+      previousPendingRequests,
+      0n,
+      "previous randomness pending requests",
+    );
+  }
+  const effectiveConfig = { ...config, randomness: plan.randomness };
+  await assertVrfSubscription(ethers, effectiveConfig, plan.randomnessProvider);
+  await assertVrfSubscription(
+    ethers,
+    effectiveConfig,
+    plan.previousRandomnessProvider,
   );
   equalAddress(
     await interfold.nodeReleaseRegistry(),
@@ -369,6 +707,17 @@ export async function validateSecureCrispUpgrade(): Promise<void> {
     encodeBfvParams(BFV_PARAMS.secure8192),
     "secure BFV parameter set",
   );
+  equalValue(
+    plan.minimumCommitteeSize,
+    config.interfold.pricing.minCommitteeSize,
+    "prepared minimum committee size",
+  );
+  const livePricing = await interfold.getPricingConfig();
+  equalValue(
+    livePricing.minCommitteeSize,
+    plan.minimumCommitteeSize,
+    "minimum request committee size",
+  );
   for (const threshold of config.interfold.committeeThresholds) {
     const size = BigInt(threshold.size);
     const actual = await Promise.all([
@@ -404,20 +753,21 @@ export async function validateSecureCrispUpgrade(): Promise<void> {
   if (!(await interfold.e3Programs(plan.crispProgram))) {
     throw new Error("CRISP program is not registered");
   }
-  const initialE3Program = deployment.initialE3Program;
-  if (initialE3Program.toLowerCase() !== plan.crispProgram.toLowerCase()) {
-    if (plan.retiredE3Program) {
-      equalAddress(
-        plan.retiredE3Program,
-        initialE3Program,
-        "retired initial E3 program",
+  for (const program of plan.retiredE3Programs) {
+    if (program.toLowerCase() === plan.crispProgram.toLowerCase()) {
+      throw new Error("Upgrade plan cannot retire the active CRISP program");
+    }
+    if (await interfold.e3Programs(program)) {
+      throw new Error(
+        `Retired E3 program still accepts new requests: ${program}`,
       );
     }
+  }
+  const initialE3Program = deployment.initialE3Program;
+  if (initialE3Program.toLowerCase() !== plan.crispProgram.toLowerCase()) {
     if (await interfold.e3Programs(initialE3Program)) {
       throw new Error("Initial E3 program still accepts new requests");
     }
-  } else if (plan.retiredE3Program) {
-    throw new Error("Upgrade plan cannot retire the active CRISP program");
   }
   equalAddress(
     String(
@@ -707,6 +1057,19 @@ export async function validateSecureCrispUpgrade(): Promise<void> {
   deployment.interfoldPricing = plan.pricingLibrary;
   deployment.ciphernodeRegistryImplementation = plan.registryImplementation;
   deployment.registrySortitionLib = plan.sortitionLibrary;
+  deployment.bondingRegistryImplementation = plan.bondingImplementation;
+  deployment.bondingAssetLib = plan.bondingAssetLibrary;
+  deployment.bondingEligibilityLib = plan.bondingEligibilityLibrary;
+  deployment.bondingSlashingLib = plan.bondingSlashingLibrary;
+  deployment.bondingRegistrationLib = plan.bondingRegistrationLibrary;
+  deployment.bondingOwnershipLib = plan.bondingOwnershipLibrary;
+  deployment.e3RefundManagerImplementation = plan.refundManagerImplementation;
+  deployment.refundClaimLib = plan.refundClaimLibrary;
+  deployment.slashingManager = plan.slashingManager;
+  deployment.slashingEvidenceLib = plan.slashingEvidenceLibrary;
+  deployment.randomnessProvider = plan.randomnessProvider;
+  deployment.randomness = { ...plan.randomness };
+  deployment.randomnessProviderOwnershipAcceptanceRequired = false;
   deployment.pkVerifier = plan.pkVerifier;
   deployment.decryptionVerifier = plan.decryptionVerifier;
   deployment.ciphertextVerifier = plan.ciphertextVerifier;
@@ -720,11 +1083,21 @@ export async function validateSecureCrispUpgrade(): Promise<void> {
   deployment.dkgVerifierRelationsLib = first.dkgVerifierRelationsLib;
   deployment.decryptionVerifierRelationsLib =
     first.decryptionVerifierRelationsLib;
-  writeJson(deploymentFile, deployment);
+  if (!hasFlag("check-only")) {
+    writeJson(deploymentFile, deployment);
+  }
 
   console.log(`
 Secure CRISP activation validated
   crypto config:       ${PRODUCTION_BFV_CONFIG.configId}
+  operators registered: ${plan.registeredOperatorCount}
+  active before upgrade: ${plan.preUpgradeActiveOperatorCount}
+  active now:            ${activeOperatorCount}
+  release acknowledgement: ${plan.nodeReleasePolicyUpdated ? "required before requests resume" : "not required"}
+  registry root:       ${plan.registryRoot}
+  slashing manager:    ${plan.slashingManager}
+  VRF provider:        ${plan.randomnessProvider}
+  VRF subscription:    ${plan.randomness.subscriptionId} (reused)
   secure BFV routes:   ${plan.bfvVerifierRoutes.length}
   CRISP program:       ${plan.crispProgram}
   DA verifier:         ${plan.dataAvailabilityVerifier}

@@ -84,10 +84,10 @@ The BFV preset and chunked DKG release used `protocol_version = 3`, `GOSSIP_WIRE
 `node_generation = 1` because the change is not a separate node-only cutover. The wire majors stay
 at 3 because the wire encoding is unchanged. Drain all active E3s and committees before governance
 activates protocol 4 and the matching contracts. The activation invalidates protocol-3 eligibility
-in O(1). Protocol 4 also raises the local persisted-state schema to 4 because accusation events now
-carry multirow proof identities. A node with a schema-3 store halts before replay; archive that
-drained store and perform the controlled resync before starting the protocol-4 process. Start
-protocol-4 nodes and deploy the matching circuit archive before requests resume.
+in O(1). The merged release uses local persisted-state schema 6. A node with an older store halts
+before replay. Archive that drained store and perform the controlled resync before starting the
+protocol-4 process. Start protocol-4 nodes and deploy the matching circuit archive before requests
+resume.
 
 ## Secure CRISP activation on mainnet
 
@@ -96,23 +96,40 @@ requests paused and all E3s and committees drained, `upgrade:secure-crisp` prepa
 governance batch that:
 
 ```text
-upgrade Interfold to the secure chain-aware crypto configuration
+snapshot the operator counts and registry root
+  -> upgrade Interfold, CiphernodeRegistry, BondingRegistry, and E3RefundManager in place
   -> apply the complete configured timeout values
+  -> deploy and wire a replacement SlashingManager
+  -> copy every configured slash policy, including policies that are currently disabled
+  -> preserve the registered operators and revoke the drained old manager
+  -> deploy a replacement VRF consumer against the existing funded subscription
+  -> add the new consumer and switch the registry without replacing the subscription
   -> register the secure BFV parameter set and all committee thresholds
   -> install the secure minimum, micro, and small verifier routes
   -> install the PK, decryption, and ciphertext verifiers
   -> register and bind the CRISP program
+  -> close the bootstrap program and each configured incompatible E3 program to new requests
   -> raise the required node protocol version and invalidate old node eligibility
   -> keep requests paused
 ```
 
 Run `upgrade:secure-crisp:validate` after governance executes the batch. The validator checks the
-implementation, the live timeout configuration, every verifier route and VK anchor, the CRISP
-receipt-verifier binding, and the paused and drained state. Publish a new SemVer ciphernode artifact
+four proxy implementations, the live timeout configuration, the complete slashing dependency graph,
+the preserved operator counts and registry root, the reused VRF subscription and its two consumers,
+every verifier route and VK anchor, the CRISP receipt-verifier binding, each retired E3 program, and
+the paused and drained state. The old VRF consumer stays authorized through validation and the first
+successful E3. Remove it in a later cleanup transaction. Publish a new SemVer ciphernode artifact
 from the same release source before governance executes the batch. Restart matching ciphernodes
 after execution, and resume only after at least the largest configured committee size has
 acknowledged the new protocol and is online. Do not use the older CRISP-only builder on mainnet
 because it cannot install the protocol-side secure configuration.
+
+Registry, BondingRegistry, and refund-manager address replacement still requires an empty operator
+generation. A SlashingManager rotation is different: when the same registry and bonding proxies
+remain in place, the replacement can preserve operators. The migration requires paused requests, no
+active E3, no unreleased or unresolved committee, no active slashing assignment, and no active ban.
+The registry accepts the manager only after Interfold, BondingRegistry, and the replacement manager
+all point to the same dependency graph.
 
 After the nodes restart, run
 `upgrade:secure-crisp:resume -- --network mainnet --ciphernodes-restarted`. It reruns the complete
@@ -127,6 +144,58 @@ and DKG windows if the old CRISP program does not expose that selector. This fal
 short migration interval only. Deploy and register the new program, then update the server and DAO
 application address before requests resume. An old server cannot create valid rounds against the new
 program because it does not schedule the separate voting start required by that program.
+
+## Durable state across an incompatible release
+
+`SCHEMA_VERSION` (`crates/sync/src/sync/schema_version.rs`) is the durable format marker. The
+preflight admits only an exact match and refuses to guess in either direction: older on-disk state
+halts as an upgrade with no migration, newer state halts as a downgrade. A raised schema therefore
+makes every populated data directory unloadable until the operator clears it.
+
+The operator key and the libp2p keypair live in the same key/value store as that state, under
+`//eth_private_key` and `//libp2p/keypair`. Deleting the data directory destroys the identity that
+holds the bond, and `nodes purge` additionally removes the configuration directory holding the
+cipher key file. Neither is a safe reset.
+
+`interfold node reset-data` is the supported path. It takes the same `ProcessFence` as `start`, so
+it refuses while a node runs, copies both secrets out as ciphertext without the password, backs them
+up at mode `0600`, removes the event logs and the key/value store, then restores and reads them back
+to confirm.
+
+The event log is not one file. `EventSystem::persisted` passes `config.log_file()` through
+`enumerate_path`, which inserts a per-aggregate index before the extension, so the durable logs are
+`log.<aggregate>` rather than `log`. `AggregateId` is the chain id, with `0` reserved for events
+that carry no chain (`AggregateId::from_chain_id`: `None -> 0`), and `AggregateConfig::new` always
+inserts aggregate `0`. A mainnet node therefore holds `log.0` and `log.1`; a Sepolia node holds
+`log.0` and `log.11155111`.
+
+A reset that removes only `config.log_file()` deletes nothing, because that path is never written.
+The key/value store is cleared, the event log survives, and the next start halts with
+`no schema marker` — a worse state than before the reset, since the marker that made the old state
+coherent is gone. The reset enumerates the real paths and verifies afterwards that none survive.
+
+```text
+raise SCHEMA_VERSION in a release
+  -> populated data directories halt at preflight
+  -> operator stops the node
+  -> node reset-data preserves identity and clears both state stores
+  -> preflight sees an identity-only store, stamps the current schema, and proceeds
+  -> node re-syncs from each contract deploy_block
+```
+
+Both stores must be cleared together. The marker lives in the key/value store, so clearing only that
+leaves an unmarked event log; `has_existing_state` is then true and the preflight halts with
+`no schema marker` instead of starting. `preflight.rs` treats the complete identity pair as the one
+exception that still counts as a fresh store, which is what the reset relies on.
+
+`ciphernode.jsonl` sits beside the logs in the same directory but is not durable state. It is the
+append-only operational log written by `LogCollector`, never read back, and a reset leaves it in
+place.
+
+A schema raise is an upgrade-window action. `assertUpgradeWindow` already requires paused requests,
+zero active E3s, and zero unreleased committees, so no in-flight round loses state to this. The
+command is not a general repair tool: a node in a live committee that resets loses its keyshare and
+fails that E3.
 
 ## Failure and rollback
 

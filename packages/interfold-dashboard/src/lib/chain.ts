@@ -34,6 +34,24 @@ export enum E3Stage {
   Failed = 6,
 }
 
+// Failure reasons mirror the Solidity `IInterfold.FailureReason` enum.
+// Keep this list in the same order as the contract ABI.
+export enum FailureReason {
+  None = 0,
+  CommitteeFormationTimeout = 1,
+  InsufficientCommitteeMembers = 2,
+  DKGTimeout = 3,
+  DKGInvalidShares = 4,
+  NoInputsReceived = 5,
+  ComputeTimeout = 6,
+  ComputeProviderExpired = 7,
+  ComputeProviderFailed = 8,
+  RequesterCancelled = 9,
+  DecryptionTimeout = 10,
+  DecryptionInvalidShares = 11,
+  VerificationFailed = 12,
+}
+
 // Per-network deployment profile. `VITE_NETWORK` selects one; every value in it
 // can then be overridden individually via the VITE_* variables below, so the
 // dashboard can point at a custom deployment without code changes.
@@ -86,9 +104,7 @@ const NETWORKS: Record<string, NetworkProfile> = {
     explorer: 'https://etherscan.io',
     interfold: '0x28cF63B459e6218C69EA97ea7D90541cf648c715',
     ciphernodeRegistry: '0xC927A5B2d8F68697bC28C0670df05178c93df2d7',
-    // CRISP is not deployed on mainnet yet; MockE3Program fills the slot so the
-    // poll views resolve until a real CRISP deployment replaces it via env.
-    crispProgram: '0x4976E5E47852eFCe6851d35B95A1A2E19456F3D7',
+    crispProgram: '0x53FCdb21E73A461CfE6c64B19855204384B91BA3',
     bondingRegistry: '0x0ec90465095C21830BEcED07e032809A2Bd2915F',
     // No faucet on mainnet.
     faucet: '',
