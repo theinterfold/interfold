@@ -7,6 +7,8 @@ contract MockSlashingBondingRegistry {
     uint256 public ticketPenaltyRequested;
     uint256 public bondPenaltyRequested;
     uint256 public openLocks;
+    uint256 public openSlashLockCalls;
+    uint256 public closeSlashLockCalls;
 
     function snapshotSlashRouteDestination(
         uint256,
@@ -16,10 +18,12 @@ contract MockSlashingBondingRegistry {
 
     function openSlashLock(uint256, uint256, address) external {
         openLocks++;
+        openSlashLockCalls++;
     }
 
     function closeSlashLock(uint256, address) external {
         openLocks--;
+        closeSlashLockCalls++;
     }
 
     function slashTicketBalance(

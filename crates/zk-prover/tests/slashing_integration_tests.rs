@@ -118,6 +118,8 @@ sol! {
         function ticketPenaltyRequested() external view returns (uint256);
         function bondPenaltyRequested() external view returns (uint256);
         function openLocks() external view returns (uint256);
+        function openSlashLockCalls() external view returns (uint256);
+        function closeSlashLockCalls() external view returns (uint256);
     }
 
     #[sol(rpc)]
@@ -1141,13 +1143,31 @@ async fn test_onchain_valid_attestation_executes_slash() {
     assert_eq!(proposal.e3Id, U256::from(e3_id));
     assert_eq!(proposal.operator, operator_addr);
     let bonding = MockSlashingBondingRegistry::new(_bonding, &provider);
+    // Compare against the configured penalties, not only the proposal fields: a regression that
+    // zeroes the policy and the requests alike would still satisfy a proposal-only comparison.
+    let expected_ticket_penalty = U256::from(50_000_000u64);
+    let expected_bond_penalty = U256::from(100_000_000_000_000_000_000u128);
+    assert_eq!(proposal.ticketAmount, expected_ticket_penalty);
+    assert_eq!(proposal.ciphernodeBondAmount, expected_bond_penalty);
     assert_eq!(
         bonding.ticketPenaltyRequested().call().await.unwrap(),
-        proposal.ticketAmount
+        expected_ticket_penalty
     );
     assert_eq!(
         bonding.bondPenaltyRequested().call().await.unwrap(),
-        proposal.ciphernodeBondAmount
+        expected_bond_penalty
+    );
+    // `openLocks` is a net counter, so it also reads zero when neither lock call happens.
+    // Count each call separately to show that the lock opened and then closed exactly once.
+    assert_eq!(
+        bonding.openSlashLockCalls().call().await.unwrap(),
+        U256::from(1u64),
+        "openSlashLock must be called exactly once"
+    );
+    assert_eq!(
+        bonding.closeSlashLockCalls().call().await.unwrap(),
+        U256::from(1u64),
+        "closeSlashLock must be called exactly once"
     );
     assert_eq!(bonding.openLocks().call().await.unwrap(), U256::ZERO);
 

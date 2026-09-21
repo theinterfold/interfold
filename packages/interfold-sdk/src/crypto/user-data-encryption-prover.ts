@@ -83,7 +83,8 @@ export const proveUserDataEncryption = async (circuitInputs: CircuitInputs): Pro
       verifierTarget: 'noir-recursive-no-zk',
     })
   } finally {
-    api.destroy()
+    // `destroy` returns a promise; await it so the proof settles after cleanup completes.
+    await api.destroy()
   }
 }
 
