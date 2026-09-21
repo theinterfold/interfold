@@ -37,6 +37,14 @@ sol! {
         function token() external view returns (address);
         function checkpoints() external view returns (address);
         function registry() external view returns (address);
+        function escrow() external view returns (address);
+    }
+}
+
+sol! {
+    #[sol(rpc)]
+    interface VotingEscrow {
+        function lockNFT() external view returns (address);
     }
 }
 
@@ -51,6 +59,14 @@ pub struct VotingPowerSources {
     pub registry: Option<Address>,
     /// The checkpoint contract emitting `BondedCheckpointed`, when one is configured.
     pub checkpoints: Option<Address>,
+    /// The vote-escrow lock NFT whose `Transfer` logs name every escrow position holder. `None`
+    /// when the round's token is not an adapter, or when the adapter exposes no escrow.
+    ///
+    /// Escrow holders are a third source of voting power: `BondedVotes.getPastVotes` sums the
+    /// wallet's delegated votes, its bonded collateral, AND its escrow-locked balance. A holder
+    /// whose power is entirely escrow-locked appears in none of the token's own logs and owns no
+    /// bond, so without this they are never even considered as a candidate.
+    pub escrow_lock_nft: Option<Address>,
 }
 
 /// Which unit a census token's `getPastVotes` timepoint is denominated in.
@@ -547,6 +563,7 @@ impl EtherscanClient {
             token: round_token,
             registry: None,
             checkpoints: None,
+            escrow_lock_nft: None,
         };
 
         let Ok(url) = rpc_url.parse() else {
@@ -561,6 +578,7 @@ impl EtherscanClient {
             return plain;
         };
         let provider = ProviderBuilder::new().connect_http(url);
+        let provider_for_escrow = provider.clone();
         let adapter = BondedVotes::new(round_token, provider);
 
         // `token()` is the discriminator. Anything that answers it while also answering
@@ -583,12 +601,45 @@ impl EtherscanClient {
             }
         };
 
+        // The escrow's lock NFT, resolved through the adapter. Two hops, each optional: an
+        // adapter need not expose an escrow, and an escrow need not expose a lock NFT. Neither
+        // is an error — they mean this deployment has no escrow-held voting power to find.
+        let escrow_lock_nft = match adapter.escrow().call().await {
+            Ok(escrow) => {
+                let escrow_contract = VotingEscrow::new(escrow, provider_for_escrow);
+                match escrow_contract.lockNFT().call().await {
+                    Ok(nft) => Some(nft),
+                    Err(err) => {
+                        // Said out loud: a census missing every escrow holder looks identical to
+                        // a deployment that simply has none.
+                        log::warn!(
+                            "Escrow {} does not answer lockNFT() ({}); any escrow-only voters \
+                             will be missing from the census",
+                            escrow,
+                            err
+                        );
+                        None
+                    }
+                }
+            }
+            Err(err) => {
+                log::debug!(
+                    "{} does not answer escrow() ({}); treating it as having no escrow-held \
+                     voting power",
+                    round_token,
+                    err
+                );
+                None
+            }
+        };
+
         VotingPowerSources {
             token: underlying,
             registry: Some(registry),
             // Optional: the registry may not have been pointed at a checkpoint contract yet, in
             // which case `BondOwnerSet` alone still names every bond owner.
             checkpoints: adapter.checkpoints().call().await.ok(),
+            escrow_lock_nft,
         }
     }
 
@@ -699,6 +750,68 @@ impl EtherscanClient {
         }
 
         Ok(owners.into_iter().collect())
+    }
+
+    /// Every address that has ever received a vote-escrow lock NFT.
+    ///
+    /// Escrow positions carry voting power through the adapter's `_lockedVotes` term without
+    /// appearing in the token's own `Transfer` or `DelegateVotesChanged` logs — a holder who
+    /// acquired FOLD and locked it in one flow never shows up as a wallet holder. They own no
+    /// bond either, so neither existing candidate source finds them.
+    ///
+    /// Current owners are not resolved here, and burns are not subtracted. Over-inclusion is
+    /// harmless in exactly the way it is for bond owners: every candidate is verified against
+    /// `getPastVotes` at the round's snapshot and dropped if it has no power. Resolving current
+    /// ownership instead would be wrong — a position transferred after the snapshot must still
+    /// be evaluated at whoever held it then, which only the verification step can decide.
+    ///
+    /// # Arguments
+    /// * `lock_nft` - The escrow's ERC721 lock NFT
+    /// * `from_block` - First block to scan
+    /// * `to_block` - Last block to scan
+    pub async fn get_escrow_holder_candidates(
+        &self,
+        lock_nft: &str,
+        from_block: u64,
+        to_block: u64,
+    ) -> Result<Vec<Address>> {
+        // keccak256("Transfer(address,address,uint256)"). On an ERC721 all three parameters are
+        // indexed, so the recipient is topic 2 and the token id topic 3.
+        const TRANSFER_TOPIC: &str =
+            "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+
+        let logs = self
+            .get_logs_by_topic(lock_nft, TRANSFER_TOPIC, from_block, to_block)
+            .await
+            .with_context(|| format!("Escrow lock NFT transfer logs for {}", lock_nft))?;
+
+        Ok(Self::escrow_holders_from_logs(&logs))
+    }
+
+    /// The distinct, non-zero recipients named by a set of ERC721 `Transfer` logs.
+    ///
+    /// Split from the fetch so the decoding rules can be tested without a network: which topic
+    /// carries the recipient, that ERC20-shaped logs are skipped, and that mint's zero `from`
+    /// never becomes a candidate.
+    fn escrow_holders_from_logs(logs: &[TopicLog]) -> Vec<Address> {
+        let mut holders: HashSet<Address> = HashSet::new();
+        for log in logs {
+            // An ERC20 `Transfer` shares this signature but leaves the value unindexed, giving
+            // three topics rather than four. Skipping those keeps a misconfigured address from
+            // contributing garbage candidates.
+            if log.topics.len() < 4 {
+                continue;
+            }
+            if let Some(raw) = log.topics.get(2) {
+                if let Ok(holder) = Self::address_from_topic(raw) {
+                    if !holder.is_zero() {
+                        holders.insert(holder);
+                    }
+                }
+            }
+        }
+
+        holders.into_iter().collect()
     }
 
     /// Decode an address from a 32-byte indexed log topic (left-padded).
@@ -1124,13 +1237,15 @@ impl EtherscanClient {
         divisor_override: Option<U256>,
         sources: VotingPowerSources,
     ) -> Result<Vec<TokenHolder>> {
-        // The adapter has no logs. Scan its token and registry for candidates.
+        // The adapter has no logs. Scan its token, registry and escrow for candidates.
         if sources.registry.is_some() {
             log::info!(
-                "{} is a bonded-votes adapter: scanning token {} and registry {:?}",
+                "{} is a bonded-votes adapter: scanning token {}, registry {:?} and escrow lock \
+                 NFT {:?}",
                 token_address,
                 sources.token,
-                sources.registry
+                sources.registry,
+                sources.escrow_lock_nft
             );
         }
         let scan_token = sources.token;
@@ -1195,6 +1310,28 @@ impl EtherscanClient {
                 if !known.contains(&owner) {
                     potential_voters.push(PotentialVoter {
                         address: owner,
+                        token_balance: U256::ZERO,
+                        has_delegation: false,
+                    });
+                }
+            }
+        }
+
+        // Escrow-locked power is the third term of the adapter's sum, and it reaches nobody
+        // through the two sources above: a holder who locked FOLD without ever holding it in a
+        // wallet has no token logs, and owns no bond. Unioned in on the same terms.
+        if let Some(lock_nft) = sources.escrow_lock_nft {
+            let known: HashSet<Address> = potential_voters.iter().map(|v| v.address).collect();
+            let escrow_holders = self
+                .get_escrow_holder_candidates(&lock_nft.to_string(), start_block, snapshot_block)
+                .await
+                .context("Failed to fetch escrow holder candidates")?;
+
+            log::info!("Found {} escrow-holder candidates", escrow_holders.len());
+            for holder in escrow_holders {
+                if !known.contains(&holder) {
+                    potential_voters.push(PotentialVoter {
+                        address: holder,
                         token_balance: U256::ZERO,
                         has_delegation: false,
                     });
@@ -1394,6 +1531,99 @@ pub fn get_mock_token_holders() -> Vec<TokenHolder> {
 mod tests {
     use super::*;
     use crate::server::CONFIG;
+
+    /// Left-pad an address into a 32-byte indexed topic.
+    fn topic(addr: &str) -> String {
+        format!("0x{:0>64}", addr.trim_start_matches("0x"))
+    }
+
+    const ZERO: &str = "0x0000000000000000000000000000000000000000";
+    const ALICE: &str = "0x680921b11dD10982FAa868ceb0AD16dd2239137A";
+    const BOB: &str = "0xBB10585C2cf0E3f7B1346E8F9acb5914391F8ab6";
+
+    /// A mint names its recipient in topic 2; the zero `from` must not become a candidate.
+    ///
+    /// A lock minted straight to its holder is the case no other candidate source reaches: that
+    /// address has no token transfers, no delegation, and no bond.
+    #[test]
+    fn escrow_mint_names_the_recipient_not_the_zero_address() {
+        let logs = vec![TopicLog {
+            address: "0xlocknft".to_string(),
+            topics: vec![
+                "0xddf252ad".to_string(),
+                topic(ZERO),
+                topic(ALICE),
+                "0x11".to_string(),
+            ],
+        }];
+
+        let holders = EtherscanClient::escrow_holders_from_logs(&logs);
+
+        assert_eq!(holders.len(), 1);
+        assert_eq!(holders[0], ALICE.parse::<Address>().unwrap());
+    }
+
+    /// An ERC20 `Transfer` shares the signature but leaves the value unindexed, so it carries
+    /// three topics. Decoding one as ERC721 would read the wrong slot.
+    #[test]
+    fn erc20_shaped_transfers_are_skipped() {
+        let logs = vec![TopicLog {
+            address: "0xtoken".to_string(),
+            topics: vec!["0xddf252ad".to_string(), topic(ALICE), topic(BOB)],
+        }];
+
+        assert!(EtherscanClient::escrow_holders_from_logs(&logs).is_empty());
+    }
+
+    /// A position that changed hands yields both holders. Neither is resolved to a current
+    /// owner: whoever held it at the round's snapshot is decided by `getPastVotes`, so both are
+    /// offered as candidates and the verification step drops the one with no power.
+    #[test]
+    fn transferred_positions_offer_both_holders_as_candidates() {
+        let logs = vec![
+            TopicLog {
+                address: "0xlocknft".to_string(),
+                topics: vec![
+                    "0xddf252ad".to_string(),
+                    topic(ZERO),
+                    topic(ALICE),
+                    "0x11".to_string(),
+                ],
+            },
+            TopicLog {
+                address: "0xlocknft".to_string(),
+                topics: vec![
+                    "0xddf252ad".to_string(),
+                    topic(ALICE),
+                    topic(BOB),
+                    "0x11".to_string(),
+                ],
+            },
+        ];
+
+        let holders = EtherscanClient::escrow_holders_from_logs(&logs);
+
+        assert_eq!(holders.len(), 2);
+        assert!(holders.contains(&ALICE.parse::<Address>().unwrap()));
+        assert!(holders.contains(&BOB.parse::<Address>().unwrap()));
+    }
+
+    /// Repeated transfers to one address must not inflate the candidate list.
+    #[test]
+    fn repeat_recipients_are_deduplicated() {
+        let one = TopicLog {
+            address: "0xlocknft".to_string(),
+            topics: vec![
+                "0xddf252ad".to_string(),
+                topic(ZERO),
+                topic(ALICE),
+                "0x11".to_string(),
+            ],
+        };
+        let logs = vec![one.clone(), one];
+
+        assert_eq!(EtherscanClient::escrow_holders_from_logs(&logs).len(), 1);
+    }
 
     #[test]
     fn test_extract_addresses() {
