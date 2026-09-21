@@ -54,6 +54,10 @@ get_zk_args() {
             echo "pk-generation"
             return
             ;;
+        threshold/lbfv_party_secrets)
+            echo "lbfv-party-secrets"
+            return
+            ;;
         threshold/lbfv_pk_generation_limb)
             echo "lbfv-pk-generation-limb"
             return
