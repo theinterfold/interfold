@@ -59,6 +59,7 @@ impl ProofRequestActor {
                 e3_id
             );
             let pending = self.pending_threshold.remove(&e3_id).unwrap();
+            self.completed_threshold.insert(e3_id);
             self.publish_threshold_share_with_proofs(pending);
         }
     }

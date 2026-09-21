@@ -309,6 +309,56 @@ fn aggregating_decryption_key_for_roster_test() -> AggregatingDecryptionKey {
     }
 }
 
+#[actix::test]
+async fn replayed_signed_c3_proof_is_stored_once() -> Result<()> {
+    let (bus, _) = test_bus();
+    let e3_id = E3id::new("42", 1);
+    let (state, _) = test_state(
+        &e3_id,
+        KeyshareState::AggregatingDecryptionKey(aggregating_decryption_key_for_roster_test()),
+    );
+    let signer = alloy::signers::local::PrivateKeySigner::random();
+    let signed_proof = SignedProofPayload::sign(
+        ProofPayload {
+            e3_id: e3_id.clone(),
+            proof_type: ProofType::C3aSkShareEncryption,
+            proof: Proof::new(
+                CircuitName::ShareEncryption,
+                ArcBytes::from_bytes(&[1]),
+                ArcBytes::from_bytes(&[2]),
+            ),
+        },
+        &signer,
+    )?;
+    let mut actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bus,
+        cipher: Arc::new(Cipher::from_password("test-password").await?),
+        state,
+        share_enc_preset: DEFAULT_BFV_PRESET,
+        interfold_address: Address::ZERO,
+        signer,
+        effects_enabled: true,
+        recovery: test_recovery(),
+        recovery_payloads: test_recovery_payloads(),
+        dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
+    });
+    let event = DkgProofSigned {
+        e3_id,
+        party_id: 0,
+        signed_proof,
+    };
+
+    actor.handle_share_computation_proof_signed(TypedEvent::new(event.clone(), test_ec(1)))?;
+    actor.handle_share_computation_proof_signed(TypedEvent::new(event, test_ec(2)))?;
+
+    let state = actor.state.try_get()?;
+    let KeyshareState::AggregatingDecryptionKey(state) = state.state else {
+        panic!("expected AggregatingDecryptionKey");
+    };
+    assert_eq!(state.signed_sk_share_encryption_proofs.len(), 1);
+    Ok(())
+}
+
 fn ready_message(party_id: u64, dealer_ids: &[u64], e3_id: &E3id) -> DkgCoordination {
     DkgCoordination {
         e3_id: e3_id.clone(),

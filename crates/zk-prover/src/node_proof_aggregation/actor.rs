@@ -527,9 +527,13 @@ mod tests {
         let mut actor =
             NodeProofAggregator::new(&bus, test_signer(), HashMap::new(), HashMap::new(), true)
                 .with_recovery(repositories.clone(), NodeProofRecovery::default());
+        let proof = dummy_proof(10);
+        actor.persist_proof(&e3_id, 1, &proof, &ec)?;
         actor.persist_completed(&output, &ec)?;
 
-        let recovered = NodeProofRecovery::load(&repositories, &HashSet::from([e3_id])).await?;
+        let recovered =
+            NodeProofRecovery::load(&repositories, &HashSet::from([e3_id.clone()])).await?;
+        assert_eq!(recovered.proofs[&e3_id][&1], proof);
         let mut restarted =
             NodeProofAggregator::new(&bus, test_signer(), HashMap::new(), HashMap::new(), true)
                 .with_recovery(repositories, recovered);

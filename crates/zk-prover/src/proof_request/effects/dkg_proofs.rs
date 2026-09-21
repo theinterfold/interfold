@@ -43,6 +43,14 @@ impl ProofRequestActor {
         let (msg, ec) = msg.into_components();
         let e3_id = msg.e3_id.clone();
 
+        if self.completed_threshold.contains(&e3_id) {
+            debug!(
+                e3_id = %e3_id,
+                "Ignoring duplicate completed DKG proof work"
+            );
+            return;
+        }
+
         if self.pending_threshold.contains_key(&e3_id) {
             let stale_count = self
                 .threshold_correlation
@@ -91,28 +99,45 @@ impl ProofRequestActor {
             }
         }
 
-        self.pending_threshold.insert(
+        let mut pending = PendingThresholdProofs::new(
             e3_id.clone(),
-            PendingThresholdProofs::new(
-                e3_id.clone(),
-                msg.full_share.clone(),
-                ec.clone(),
-                sk_enc_count,
-                e_sm_enc_count,
-                msg.recipient_party_ids,
-            ),
+            msg.full_share.clone(),
+            ec.clone(),
+            sk_enc_count,
+            e_sm_enc_count,
+            msg.recipient_party_ids,
         );
 
-        // C1/C2/C3: dispatch threshold proof requests in canonical seq order.
-        // Sequencing/kind assignment lives in the pure domain planner; the actor
-        // only allocates correlation ids, publishes, and rolls back on failure.
-        for item in plan_threshold_dispatch(
+        // The node-fold collector persists every inner proof before accepting it.
+        // Rehydrate the proof-request actor from that canonical sequence map so a
+        // process restart does not regenerate a completed C1-C3 batch.
+        let recovered = self
+            .recovered_inner_proofs
+            .remove(&e3_id)
+            .unwrap_or_default();
+        let dispatch = plan_threshold_dispatch(
             msg.proof_request,
             msg.sk_share_computation_request,
             msg.e_sm_share_computation_request,
             msg.sk_share_encryption_requests,
             msg.e_sm_share_encryption_requests,
-        ) {
+        );
+        for item in &dispatch {
+            if let Some(proof) = recovered.get(&item.seq) {
+                pending.store_proof(&item.kind, proof.clone());
+            }
+        }
+        let recovered_count = pending.total_received();
+
+        self.pending_threshold.insert(e3_id.clone(), pending);
+
+        // C1/C2/C3: dispatch threshold proof requests in canonical seq order.
+        // Sequencing/kind assignment lives in the pure domain planner; the actor
+        // only allocates correlation ids, publishes, and rolls back on failure.
+        for item in dispatch {
+            if recovered.contains_key(&item.seq) {
+                continue;
+            }
             let corr = CorrelationId::new();
             self.threshold_correlation
                 .insert(corr, (e3_id.clone(), item.kind, item.seq));
@@ -126,6 +151,24 @@ impl ProofRequestActor {
                 self.pending_threshold.remove(&e3_id);
                 return;
             }
+        }
+
+        if recovered_count > 0 {
+            info!(
+                e3_id = %e3_id,
+                recovered = recovered_count,
+                total = self.pending_threshold[&e3_id].total_expected(),
+                "Reused persisted threshold proofs after restart"
+            );
+        }
+
+        if self.pending_threshold[&e3_id].is_complete() {
+            let pending = self
+                .pending_threshold
+                .remove(&e3_id)
+                .expect("pending threshold work was just inserted");
+            self.completed_threshold.insert(e3_id);
+            self.publish_threshold_share_with_proofs(pending);
         }
     }
 

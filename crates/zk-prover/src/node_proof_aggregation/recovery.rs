@@ -129,9 +129,6 @@ impl NodeProofRecovery {
                 entry.last_ec.is_some(),
                 "persisted DKG fold has no event context for E3 {e3_id}"
             );
-            if entry.completed.is_some() {
-                continue;
-            }
             if entry.meta_present {
                 let value = meta_repository(repositories, e3_id)
                     .read()

@@ -60,16 +60,26 @@ impl ThresholdKeyshare {
                 },
                 ProofType::C3aSkShareEncryption => {
                     let mut updated = current;
-                    updated
+                    if !updated
                         .signed_sk_share_encryption_proofs
-                        .push(msg.signed_proof);
+                        .contains(&msg.signed_proof)
+                    {
+                        updated
+                            .signed_sk_share_encryption_proofs
+                            .push(msg.signed_proof);
+                    }
                     updated
                 }
                 ProofType::C3bESmShareEncryption => {
                     let mut updated = current;
-                    updated
+                    if !updated
                         .signed_e_sm_share_encryption_proofs
-                        .push(msg.signed_proof);
+                        .contains(&msg.signed_proof)
+                    {
+                        updated
+                            .signed_e_sm_share_encryption_proofs
+                            .push(msg.signed_proof);
+                    }
                     updated
                 }
                 other => {

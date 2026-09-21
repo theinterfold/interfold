@@ -186,6 +186,71 @@ fn threshold_share_pending(e3_id: E3id, marker: u8) -> ThresholdSharePending {
     }
 }
 
+fn recovered_threshold_proofs(e3_id: E3id, count: usize) -> HashMap<E3id, BTreeMap<usize, Proof>> {
+    let proofs = (1..=count)
+        .map(|seq| {
+            let circuit = match seq {
+                1 => CircuitName::PkGeneration,
+                2 => CircuitName::SkShareComputation,
+                3 => CircuitName::ESmShareComputation,
+                _ => CircuitName::ShareEncryption,
+            };
+            (
+                seq,
+                Proof::new(
+                    circuit,
+                    ArcBytes::from_bytes(&[seq as u8]),
+                    ArcBytes::from_bytes(&[seq as u8 + 10]),
+                ),
+            )
+        })
+        .collect();
+    HashMap::from([(e3_id, proofs)])
+}
+
+#[actix::test]
+async fn restart_reuses_complete_persisted_threshold_proofs() -> Result<()> {
+    let (bus, _rng, _seed, _params, _crp, _errors, history) = get_common_setup(None)?;
+    let e3_id = E3id::new("recovered-threshold", 1);
+    let mut actor = ProofRequestActor::new(&bus, PrivateKeySigner::random(), true)
+        .with_recovered_inner_proofs(recovered_threshold_proofs(e3_id.clone(), 3));
+    let event = threshold_share_pending(e3_id.clone(), 0x11);
+
+    actor.handle_threshold_share_pending(TypedEvent::new(event.clone(), test_ctx(event)));
+
+    actix::clock::sleep(std::time::Duration::from_millis(20)).await;
+    let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+    assert!(events
+        .iter()
+        .all(|event| !matches!(event.get_data(), InterfoldEventData::ComputeRequest(_))));
+    assert!(actor.pending_threshold.is_empty());
+    assert!(actor.threshold_correlation.is_empty());
+    assert!(actor.completed_threshold.contains(&e3_id));
+    Ok(())
+}
+
+#[actix::test]
+async fn restart_dispatches_only_missing_threshold_proofs() -> Result<()> {
+    let (bus, _rng, _seed, _params, _crp, _errors, history) = get_common_setup(None)?;
+    let e3_id = E3id::new("partially-recovered-threshold", 1);
+    let mut actor = ProofRequestActor::new(&bus, PrivateKeySigner::random(), true)
+        .with_recovered_inner_proofs(recovered_threshold_proofs(e3_id.clone(), 2));
+    let event = threshold_share_pending(e3_id.clone(), 0x11);
+
+    actor.handle_threshold_share_pending(TypedEvent::new(event.clone(), test_ctx(event)));
+
+    actix::clock::sleep(std::time::Duration::from_millis(20)).await;
+    let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+    let requests = events
+        .iter()
+        .filter(|event| matches!(event.get_data(), InterfoldEventData::ComputeRequest(_)))
+        .count();
+    assert_eq!(requests, 1);
+    assert_eq!(actor.pending_threshold[&e3_id].total_received(), 2);
+    assert_eq!(actor.threshold_correlation.len(), 1);
+    Ok(())
+}
+
 #[actix::test]
 async fn replayed_threshold_work_invalidates_old_correlations() -> Result<()> {
     let (bus, _rng, _seed, _params, _crp, _errors, _history) = get_common_setup(None)?;

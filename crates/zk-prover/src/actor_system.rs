@@ -95,7 +95,12 @@ pub fn setup_zk_actors(
     let zk_actor = ZkActor::new(backend).start();
     let verifier = zk_actor.clone().recipient();
 
-    let proof_request = ProofRequestActor::setup(bus, signer.clone(), proof_aggregation_enabled);
+    let proof_request = ProofRequestActor::setup_with_recovery(
+        bus,
+        signer.clone(),
+        proof_aggregation_enabled,
+        node_proofs.proofs.clone(),
+    );
     let proof_verification =
         ProofVerificationActor::setup(bus, verifier, finalized_committees.clone(), e3_metadata);
     let share_verification = ShareVerificationActor::setup(bus, finalized_committees);
