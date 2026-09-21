@@ -42,6 +42,18 @@ impl<let N: u32, let L: u32, let BIT_SK: u32, let BIT_E_SM: u32, let BIT_PK: u32
     }
 
     pub fn execute(self) -> (Field, Field) {
+        self.perform_range_checks();
+
+        let sk_commitment =
+            compute_sc_sk_secret_root_from_polynomial::<N, N_CHUNKS, CHUNK_SIZE, BIT_SK>(self.sk);
+        let e_sm_commitment = compute_sc_esm_secret_root_from_polynomial::<N, L, N_CHUNKS, CHUNK_SIZE, BIT_E_SM>(
+            self.e_sm,
+        );
+
+        (sk_commitment, e_sm_commitment)
+    }
+
+    fn perform_range_checks(self) {
         // A ternary secret is the one parameter this circuit cannot read off the config. The row
         // proofs that bind to `commit(sk)` derive their quotient window from a formula that assumes
         // it, so rejecting a wider secret here keeps both sides on the same assumption.
@@ -63,45 +75,49 @@ impl<let N: u32, let L: u32, let BIT_SK: u32, let BIT_E_SM: u32, let BIT_PK: u32
                 .assert_max_bit_size::<BIT_E_SM>();
             centered::<N, BIT_PK>(self.e_sm[l], self.configs.qis[l]);
         }
-
-        let sk_commitment =
-            compute_sc_sk_secret_root_from_polynomial::<N, N_CHUNKS, CHUNK_SIZE, BIT_SK>(self.sk);
-        let e_sm_commitment = compute_sc_esm_secret_root_from_polynomial::<N, L, N_CHUNKS, CHUNK_SIZE, BIT_E_SM>(
-            self.e_sm,
-        );
-
-        (sk_commitment, e_sm_commitment)
     }
 }
 
 #[test]
 fn test_lbfv_party_secrets_accepts_bounded_secrets() {
     let configs: Configs<4, 1> = Configs::new([17], 1, 1, 8, [1], [1]);
-    let circuit: LbfvPartySecrets<4, 1, 1, 5, 4, 1, 4> =
-        LbfvPartySecrets::new(configs, Polynomial::new([1, -1, 0, 1]), [Polynomial::new([8, -8, 0, 1])]);
+    let circuit: LbfvPartySecrets<4, 1, 1, 5, 4, 1, 4> = LbfvPartySecrets::new(
+        configs,
+        Polynomial::new([1, -1, 0, 1]),
+        [Polynomial::new([8, -8, 0, 1])],
+    );
     let _ = circuit.execute();
 }
 
 #[test(should_fail)]
 fn test_lbfv_party_secrets_rejects_out_of_range_sk() {
     let configs: Configs<4, 1> = Configs::new([17], 1, 1, 8, [1], [1]);
-    let circuit: LbfvPartySecrets<4, 1, 1, 5, 4, 1, 4> =
-        LbfvPartySecrets::new(configs, Polynomial::new([2, 0, 0, 0]), [Polynomial::new([0, 0, 0, 0])]);
+    let circuit: LbfvPartySecrets<4, 1, 1, 5, 4, 1, 4> = LbfvPartySecrets::new(
+        configs,
+        Polynomial::new([2, 0, 0, 0]),
+        [Polynomial::new([0, 0, 0, 0])],
+    );
     let _ = circuit.execute();
 }
 
 #[test(should_fail)]
 fn test_lbfv_party_secrets_rejects_non_centered_e_sm() {
     let configs: Configs<4, 1> = Configs::new([17], 1, 1, 8, [1], [1]);
-    let circuit: LbfvPartySecrets<4, 1, 1, 5, 4, 1, 4> =
-        LbfvPartySecrets::new(configs, Polynomial::new([0, 0, 0, 0]), [Polynomial::new([9, 0, 0, 0])]);
+    let circuit: LbfvPartySecrets<4, 1, 1, 5, 4, 1, 4> = LbfvPartySecrets::new(
+        configs,
+        Polynomial::new([0, 0, 0, 0]),
+        [Polynomial::new([9, 0, 0, 0])],
+    );
     let _ = circuit.execute();
 }
 
 #[test(should_fail)]
 fn test_lbfv_party_secrets_rejects_non_ternary_parameter_set() {
     let configs: Configs<4, 1> = Configs::new([17], 1, 2, 8, [1], [1]);
-    let circuit: LbfvPartySecrets<4, 1, 2, 5, 4, 1, 4> =
-        LbfvPartySecrets::new(configs, Polynomial::new([0, 0, 0, 0]), [Polynomial::new([0, 0, 0, 0])]);
+    let circuit: LbfvPartySecrets<4, 1, 2, 5, 4, 1, 4> = LbfvPartySecrets::new(
+        configs,
+        Polynomial::new([0, 0, 0, 0]),
+        [Polynomial::new([0, 0, 0, 0])],
+    );
     let _ = circuit.execute();
 }

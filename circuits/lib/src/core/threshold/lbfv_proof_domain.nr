@@ -32,6 +32,15 @@ pub fn validate_generation_statement<let N_PARTIES: u32, let N_ROWS: u32>(
     assert(row_index < N_ROWS, "row_index out of range");
 }
 
+/// Validate the party statement before the circuit commits to that party's secrets.
+///
+/// The secrets are per party rather than per gadget row, so this statement carries no row index.
+pub fn validate_party_statement<let N_PARTIES: u32>(session: LbfvProofSession, party_id: u32) {
+    assert_canonical_limb(session.session_id_hi);
+    assert_canonical_limb(session.session_id_lo);
+    assert(party_id < N_PARTIES, "party_id out of range");
+}
+
 /// Validate the common aggregation statement before the circuit proves its row relation.
 pub fn validate_aggregation_statement<let N_PARTIES: u32, let N_ROWS: u32>(
     session: LbfvProofSession,

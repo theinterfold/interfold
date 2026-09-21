@@ -7,11 +7,11 @@
 use lib::configs::default::dkg::{SHARE_COMPUTATION_CHUNK_SIZE, SHARE_COMPUTATION_N_CHUNKS};
 use lib::configs::default::N_PARTIES;
 use lib::configs::default::threshold::{
-    GADGET_DIM, L, N, PK_GENERATION_BIT_E_SM, PK_GENERATION_BIT_PK, PK_GENERATION_BIT_SK,
+    L, N, PK_GENERATION_BIT_E_SM, PK_GENERATION_BIT_PK, PK_GENERATION_BIT_SK,
     PK_GENERATION_CONFIGS,
 };
 use lib::core::threshold::lbfv_party_secrets::LbfvPartySecrets;
-use lib::core::threshold::lbfv_proof_domain::{LbfvProofSession, validate_generation_statement};
+use lib::core::threshold::lbfv_proof_domain::{LbfvProofSession, validate_party_statement};
 use lib::math::polynomial::Polynomial;
 
 /// Bound and commit one party's l-BFV secrets: the secret key and its smudging noise.
@@ -25,10 +25,9 @@ fn main(
     sk: Polynomial<N>,
     e_sm: [Polynomial<N>; L],
 ) -> pub (Field, Field) {
-    validate_generation_statement::<N_PARTIES, GADGET_DIM>(
+    validate_party_statement::<N_PARTIES>(
         LbfvProofSession { session_id_hi, session_id_lo },
         party_id,
-        0,
     );
 
     let circuit: LbfvPartySecrets<N, L, PK_GENERATION_BIT_SK, PK_GENERATION_BIT_E_SM, PK_GENERATION_BIT_PK, SHARE_COMPUTATION_N_CHUNKS, SHARE_COMPUTATION_CHUNK_SIZE> =

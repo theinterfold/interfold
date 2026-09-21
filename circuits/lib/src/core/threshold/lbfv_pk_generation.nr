@@ -61,36 +61,50 @@ impl<let N: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_R1: u32, let BIT_PK:
         // assumes it; a wider secret would make that window too narrow to hold the quotient.
         assert(self.sk_bound == 1);
 
-        // Step 1: bound the small secrets to their configured distributions.
-        self.sk.range_check_2bounds::<BIT_SK>(self.sk_bound, self.sk_bound);
-        self.eek.range_check_2bounds::<BIT_EEK>(self.eek_bound, self.eek_bound);
-
-        // Step 2: reduce the modulus-switching quotient modulo X^N + 1, then bound the result. The
-        // reduction itself is a witness derivation over the native field and may wrap; only this
-        // bound makes the reduced values usable as integers.
-        let short_offset = 2.pow_32(BIT_R1 as Field);
+        // Reduce the modulus-switching quotient modulo X^N + 1. The reduction itself is a witness
+        // derivation over the native field and may wrap; the bound in `perform_range_checks` is
+        // what makes the reduced values usable as integers.
         let q_short = fold_negacyclic(self.r1);
-        for j in 0..N {
-            (q_short.coefficients[j] + short_offset).assert_max_bit_size::<BIT_R1 + 1>();
-        }
+        self.perform_range_checks(q_short);
 
-        // Step 3: pin pk0 to its canonical centered interval. Without this one public key limb
-        // opens under several distinct commitments.
-        centered::<N, BIT_PK>(self.pk0, self.qi);
-
-        // Step 4: derive the commitments this limb publishes. `sk` uses the chunked-root helper so
-        // the value matches what the C2 chunk pipeline finalizes, which is what C1->C2a compares.
         let sk_commitment =
             compute_sc_sk_secret_root_from_polynomial::<N, N_CHUNKS, CHUNK_SIZE, BIT_SK>(self.sk);
         let eek_commitment =
             compute_lbfv_pk_limb_eek_commitment::<N, BIT_EEK>(self.row_index, self.eek);
         let pk_limb_commitment =
             compute_lbfv_pk_limb_commitment::<N, BIT_PK>(self.row_index, self.limb_index, self.pk0);
+        let gamma =
+            self.generate_challenge(q_short, sk_commitment, eek_commitment, pk_limb_commitment);
+        self.verify_evaluation(gamma, q_short);
 
-        // Step 5: bind every independent operand before drawing the checking point. `pk0` and `sk`
-        // are bound through their commitments; `eek` and the quotient are packed directly; `qi` and
-        // `a` are configuration constants, and `DS_CLG_PK_GENERATION_LIMB_V1` identifies the
-        // circuit, so the payload carries no circuit tag.
+        (sk_commitment, eek_commitment, pk_limb_commitment)
+    }
+
+    fn perform_range_checks(self, q_short: Polynomial<N>) {
+        self.eek.range_check_2bounds::<BIT_EEK>(self.eek_bound, self.eek_bound);
+        self.sk.range_check_2bounds::<BIT_SK>(self.sk_bound, self.sk_bound);
+
+        let short_offset = 2.pow_32(BIT_R1 as Field);
+        for j in 0..N {
+            (q_short.coefficients[j] + short_offset).assert_max_bit_size::<BIT_R1 + 1>();
+        }
+
+        // Pin pk0 to its canonical centered interval. Without this one public key limb opens under
+        // several distinct commitments.
+        centered::<N, BIT_PK>(self.pk0, self.qi);
+    }
+
+    fn generate_challenge(
+        self,
+        q_short: Polynomial<N>,
+        sk_commitment: Field,
+        eek_commitment: Field,
+        pk_limb_commitment: Field,
+    ) -> Field {
+        // Bind every independent operand before drawing the checking point. `pk0` and `sk` are
+        // bound through their commitments; `eek` and the quotient are packed directly; `qi` and `a`
+        // are configuration constants, and `DS_CLG_PK_GENERATION_LIMB_V1` identifies the circuit,
+        // so the payload carries no circuit tag.
         let mut payload = [
             N as Field,
             self.row_index as Field,
@@ -102,11 +116,13 @@ impl<let N: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_R1: u32, let BIT_PK:
         ]
             .as_vector();
         payload = append::<N, BIT_EEK + 1>(payload, self.eek, self.eek_bound);
-        payload = append::<N, BIT_R1 + 1>(payload, q_short, short_offset);
-        let gamma = compute_lbfv_pk_limb_challenge(payload);
+        payload = append::<N, BIT_R1 + 1>(payload, q_short, 2.pow_32(BIT_R1 as Field));
+        compute_lbfv_pk_limb_challenge(payload)
+    }
 
-        // Step 6: check pk0 = -(a*sk mod X^N+1) + eek + q*short. The kernel evaluates the reduced
-        // product by constrained recurrence, so no product hint is accepted.
+    fn verify_evaluation(self, gamma: Field, q_short: Polynomial<N>) {
+        // pk0 = -(a*sk mod X^N+1) + eek + q*short. The kernel evaluates the reduced product by
+        // constrained recurrence, so no product hint is accepted.
         let k = kernel(self.sk, gamma);
         let mut residual = [0; N];
         for j in 0..N {
@@ -118,8 +134,6 @@ impl<let N: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_R1: u32, let BIT_PK:
             Polynomial::new(residual).eval(gamma) == -dot(self.a, k),
             "Public key equation failed",
         );
-
-        (sk_commitment, eek_commitment, pk_limb_commitment)
     }
 }
 
