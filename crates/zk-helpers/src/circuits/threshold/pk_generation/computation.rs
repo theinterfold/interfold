@@ -12,7 +12,7 @@
 use crate::calculate_bit_width;
 use crate::ciphernodes_committee::CiphernodesCommittee;
 use crate::crt_polynomial_to_toml_json;
-use crate::math::{cyclotomic_polynomial, decompose_residue};
+use crate::math::cyclotomic_polynomial;
 use crate::polynomial_to_toml_json;
 use crate::threshold::pk_generation::circuit::PkGenerationCircuit;
 use crate::threshold::pk_generation::circuit::PkGenerationCircuitData;
@@ -76,8 +76,7 @@ pub struct Bits {
     pub eek_bit: u32,
     pub sk_bit: u32,
     pub e_sm_bit: u32,
-    pub r1_bit: u32,
-    pub r2_bit: u32,
+    pub r_bit: u32,
     pub pk_bit: u32,
 }
 
@@ -86,8 +85,7 @@ pub struct Bounds {
     pub eek_bound: BigUint,
     pub sk_bound: BigUint,
     pub e_sm_bound: BigUint,
-    pub r1_bounds: Vec<BigUint>,
-    pub r2_bounds: Vec<BigUint>,
+    pub r_bounds: Vec<BigUint>,
     pub pk_bound: BigUint,
 }
 
@@ -96,7 +94,7 @@ pub struct Inputs {
     pub eek: Polynomial,
     pub sk: Polynomial,
     pub e_sm: CrtPolynomial,
-    pub r1is: CrtPolynomial,
+    pub r: CrtPolynomial,
     pub pk0is: CrtPolynomial,
 }
 
@@ -141,24 +139,17 @@ impl Computation for Bits {
             build_pair_for_preset(preset).map_err(|e| CircuitsErrors::Other(e.to_string()))?;
         let pk_bit = crate::compute_modulus_bit(&threshold_params);
 
-        // For r1, use the maximum of all low and up bounds
-        let mut r1_bit = 0;
-        for bound in &data.r1_bounds {
-            r1_bit = r1_bit.max(calculate_bit_width(BigInt::from(bound.clone())));
-        }
-
-        // For r2, use the maximum of all bounds
-        let mut r2_bit = 0;
-        for bound in &data.r2_bounds {
-            r2_bit = r2_bit.max(calculate_bit_width(BigInt::from(bound.clone())));
+        // The quotient window covers every limb, so take the widest bound.
+        let mut r_bit = 0;
+        for bound in &data.r_bounds {
+            r_bit = r_bit.max(calculate_bit_width(BigInt::from(bound.clone())));
         }
 
         Ok(Bits {
             eek_bit,
             sk_bit,
             e_sm_bit,
-            r1_bit,
-            r2_bit,
+            r_bit,
             pk_bit,
         })
     }
@@ -208,8 +199,7 @@ impl Computation for Bounds {
 
         // Calculate bounds for each CRT basis
         let num_moduli = ctx.moduli().len();
-        let mut r2_bounds = vec![BigInt::from(0); num_moduli];
-        let mut r1_bounds = vec![BigInt::from(0); num_moduli];
+        let mut r_bounds = vec![BigInt::from(0); num_moduli];
         let mut moduli = Vec::new();
         let mut pk_bound_max = BigInt::from(0);
 
@@ -219,10 +209,12 @@ impl Computation for Bounds {
 
             moduli.push(**qi);
 
-            r2_bounds[i] = qi_bound.clone();
-
-            // Compute asymmetric range for r1 bounds per modulus
-            r1_bounds[i] = ((&n + 2u32) * &qi_bound + eek_bound) / &qi_bigint;
+            // Bound on the reduced modulus-switching quotient, per modulus. C1 checks
+            // pk0 = -(a*sk mod X^N+1) + eek + q*r, so r = (pk0 + (a*sk mod X^N+1) - eek) / q and
+            // |r| <= ((N + 1) * (q - 1) / 2 + eek_bound) / q: one (q - 1) / 2 for the centered pk0,
+            // N of them for the reduced product, whose every coefficient is a signed sum of exactly
+            // N products of a ternary secret with a centered `a`.
+            r_bounds[i] = ((&n + 1u32) * &qi_bound + eek_bound) / &qi_bigint;
 
             // Track maximum pk bound across all moduli
             // We don't need to store them as we only need the maximum bound to compute the commitment bit width
@@ -235,11 +227,7 @@ impl Computation for Bounds {
             eek_bound: BigUint::from(eek_bound),
             sk_bound: BigUint::from(sk_bound as u128),
             e_sm_bound,
-            r1_bounds: r1_bounds
-                .iter()
-                .map(|b| BigUint::from(b.to_u128().unwrap()))
-                .collect(),
-            r2_bounds: r2_bounds
+            r_bounds: r_bounds
                 .iter()
                 .map(|b| BigUint::from(b.to_u128().unwrap()))
                 .collect(),
@@ -277,6 +265,7 @@ impl Computation for Inputs {
             .collect();
         let n = threshold_params.degree() as u64;
         let cyclo = cyclotomic_polynomial(n);
+        let bounds = Bounds::compute(preset, &data.committee)?;
 
         // Perform the main computation logic
         let mut results: Vec<(usize, Polynomial, Polynomial, Polynomial)> = izip!(
@@ -314,17 +303,41 @@ impl Computation for Inputs {
 
             assert_eq!((pk0_share_hat.coefficients().len() as u64) - 1, 2 * (n - 1));
 
-            // C1 reduces modulo X^N + 1 in-circuit, so only the modulus-switching quotient
-            // is a witness. The cyclotomic quotient is discarded.
-            let (r1, _r2) = decompose_residue(&pk0_share, &pk0_share_hat, &qi, &cyclo, n);
+            // C1 checks the public key equation in Z[X]/(X^N+1), so reduce first and read the
+            // quotient off the reduced difference. Reducing the degree-2N-2 residue instead would
+            // route through a cyclotomic quotient that no longer reaches the circuit; both give
+            // the same r, because reducing pk0 - pk0_hat = q*r1 + r2*(X^N+1) modulo X^N + 1 kills
+            // the second term and folds the first.
+            let pk0_share_tilde = pk0_share_hat
+                .reduce_by_cyclotomic(&cyclo)
+                .expect("cyclotomic polynomial is non-zero and monic");
+            // Exact division: `div` rejects a coefficient that q does not divide, which is what
+            // proves pk0_share is the centered residue of pk0_share_hat modulo q.
+            let (r, remainder) = pk0_share
+                .sub(&pk0_share_tilde)
+                .div(&Polynomial::new(vec![qi.clone()]))
+                .expect("pk0 - pk0_hat mod X^N+1 is divisible by q");
+            assert!(remainder
+                .coefficients()
+                .iter()
+                .all(|c| c == &BigInt::from(0)));
+            assert_eq!(r.coefficients().len() as u64, n);
+            // The circuit range-checks r against a window derived from this bound, so a quotient
+            // that exceeds it makes a witness that no proof can satisfy. Fail here, where the
+            // cause is still visible, rather than at proving time.
+            let r_bound = &bounds.r_bounds[i];
+            assert!(
+                r.coefficients().iter().all(|c| c.magnitude() <= r_bound),
+                "C1 quotient exceeds r_bound for modulus {i}"
+            );
 
-            (i, r1, pk0_share.clone(), e_sm.clone())
+            (i, r, pk0_share.clone(), e_sm.clone())
         })
         .collect();
 
         results.sort_by_key(|(i, _, _, _)| *i);
 
-        let mut r1 = CrtPolynomial::new(vec![]);
+        let mut r = CrtPolynomial::new(vec![]);
         let mut pk0_share = CrtPolynomial::new(vec![]);
         let mut e_sm = CrtPolynomial::new(vec![]);
 
@@ -336,8 +349,8 @@ impl Computation for Inputs {
         eek.reverse();
         eek.center(&moduli[0]);
 
-        for (_i, r1i, pk0_sharei, e_smi) in results {
-            r1.add_limb(r1i);
+        for (_i, ri, pk0_sharei, e_smi) in results {
+            r.add_limb(ri);
             pk0_share.add_limb(pk0_sharei);
             e_sm.add_limb(e_smi);
         }
@@ -346,7 +359,7 @@ impl Computation for Inputs {
             eek,
             sk,
             e_sm,
-            r1is: r1,
+            r,
             pk0is: pk0_share,
         })
     }
@@ -356,14 +369,14 @@ impl Computation for Inputs {
         let e = polynomial_to_toml_json(&self.eek);
         let sk = polynomial_to_toml_json(&self.sk);
         let e_sm = crt_polynomial_to_toml_json(&self.e_sm);
-        let r1is = crt_polynomial_to_toml_json(&self.r1is);
+        let r = crt_polynomial_to_toml_json(&self.r);
 
         let json = serde_json::json!({
             "pk0is": pk0is,
             "eek": e,
             "sk": sk,
             "e_sm": e_sm,
-            "r1is": r1is,
+            "r": r,
         });
 
         Ok(json)
