@@ -377,6 +377,13 @@ mod tests {
         assert!(aggregator.states.contains_key(&e3_id));
         assert!(aggregator.pending_fold_proofs.contains_key(&e3_id));
 
+        aggregator.try_dispatch_node_dkg_fold(&e3_id);
+        actix::clock::sleep(std::time::Duration::from_millis(20)).await;
+        assert!(history
+            .send(GetEvents::<InterfoldEvent>::new())
+            .await?
+            .is_empty());
+
         let context = DkgFoldAttestationContext {
             registry: Address::repeat_byte(0x11),
             verifying_contract: Address::repeat_byte(0x12),

@@ -212,6 +212,9 @@ impl NodeProofAggregator {
         &mut self,
         e3_id: &E3id,
     ) {
+        if self.pending_fold_proofs.contains_key(e3_id) {
+            return;
+        }
         let state = match self.states.get_mut(e3_id) {
             Some(s) => s,
             None => return,
