@@ -531,10 +531,11 @@ fn validated_row_instance(
     proof_type: e3_events::ProofType,
     proof: &Proof,
     requested_row: u32,
+    params_preset: BfvPreset,
     request: &ComputeRequest,
 ) -> Result<u32, ComputeRequestError> {
     let identity = proof_type
-        .identity(proof)
+        .identity(proof, e3_fhe_params::lbfv_row_count(params_preset))
         .map_err(|error| make_zk_error(request, error.to_string()))?;
     if identity.instance != requested_row {
         return Err(make_zk_error(
@@ -794,6 +795,7 @@ fn handle_lbfv_pk_generation_proof(
         e3_events::ProofType::LbfvPkGeneration,
         &proof,
         req.row_index,
+        req.params_preset,
         &request,
     )?;
     Ok(ComputeResponse::zk(
@@ -844,6 +846,7 @@ fn handle_rlk_generation_proof(
         e3_events::ProofType::RlkGeneration,
         &proof,
         req.row_index,
+        req.params_preset,
         &request,
     )?;
     Ok(ComputeResponse::zk(
@@ -885,6 +888,7 @@ fn handle_lbfv_pk_aggregation_proof(
         e3_events::ProofType::LbfvPkAggregation,
         &proof,
         req.row_index,
+        req.params_preset,
         &request,
     )?;
     Ok(ComputeResponse::zk(
@@ -927,6 +931,7 @@ fn handle_rlk_aggregation_proof(
         e3_events::ProofType::RlkAggregation,
         &proof,
         req.row_index,
+        req.params_preset,
         &request,
     )?;
     Ok(ComputeResponse::zk(

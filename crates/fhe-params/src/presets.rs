@@ -11,6 +11,7 @@ use crate::constants::{
     defaults::DEFAULT_SECURE_16384_LAMBDA,
     defaults::DEFAULT_SECURE_LAMBDA,
     defaults::INSECURE_MULT_DEPTH,
+    defaults::MIN_SECURE_LAMBDA,
     defaults::SECURE_16384_MULT_DEPTH,
     defaults::SECURE_8192_MULT_DEPTH,
     insecure,
@@ -157,7 +158,7 @@ impl core::str::FromStr for SecurityTier {
 /// its security properties and basic parameter dimensions.
 #[derive(Debug, Clone, Copy)]
 pub struct PresetMetadata {
-    /// The canonical name of the preset (e.g., "INSECURE_THRESHOLD_512")
+    /// The canonical name of the preset (for example, "INSECURE_THRESHOLD")
     pub name: &'static str,
     /// LWE dimension (d) - the degree of the polynomial ring, must be a power of 2
     ///
@@ -256,6 +257,11 @@ impl LambdaConfig {
     /// Return the configured statistical security parameter.
     pub fn into_lambda(self) -> Result<usize, PresetError> {
         match self {
+            LambdaConfig::Secure(lambda) if lambda < MIN_SECURE_LAMBDA => {
+                Err(PresetError::InsecureLambda(format!(
+                    "lambda {lambda} is below the secure minimum {MIN_SECURE_LAMBDA}"
+                )))
+            }
             LambdaConfig::Secure(lambda) | LambdaConfig::Insecure(lambda) => Ok(lambda),
         }
     }
@@ -321,8 +327,8 @@ impl BfvPreset {
     pub fn from_name(name: &str) -> Result<Self, PresetError> {
         let normalized = name.trim().to_ascii_uppercase();
         match normalized.as_str() {
-            "INSECURE_THRESHOLD_512" => Ok(Self::InsecureThreshold512),
-            "INSECURE_DKG_512" => Ok(Self::InsecureDkg512),
+            "INSECURE_THRESHOLD" => Ok(Self::InsecureThreshold512),
+            "INSECURE_DKG" => Ok(Self::InsecureDkg512),
             "SECURE_THRESHOLD_8192" => Ok(Self::SecureThreshold8192),
             "SECURE_DKG_8192" => Ok(Self::SecureDkg8192),
             "SECURE_THRESHOLD_16384" => Ok(Self::SecureThreshold16384),
@@ -333,8 +339,8 @@ impl BfvPreset {
 
     pub fn name(&self) -> &'static str {
         match self {
-            BfvPreset::InsecureThreshold512 => "INSECURE_THRESHOLD_512",
-            BfvPreset::InsecureDkg512 => "INSECURE_DKG_512",
+            BfvPreset::InsecureThreshold512 => "INSECURE_THRESHOLD",
+            BfvPreset::InsecureDkg512 => "INSECURE_DKG",
             BfvPreset::SecureThreshold8192 => "SECURE_THRESHOLD_8192",
             BfvPreset::SecureDkg8192 => "SECURE_DKG_8192",
             BfvPreset::SecureThreshold16384 => "SECURE_THRESHOLD_16384",
@@ -634,6 +640,20 @@ mod tests {
             let parsed = BfvPreset::from_name(preset.name()).expect("preset should parse");
             assert_eq!(parsed, preset);
         }
+    }
+
+    #[test]
+    fn lambda_config_enforces_the_secure_minimum() {
+        assert_eq!(
+            LambdaConfig::Secure(MIN_SECURE_LAMBDA)
+                .into_lambda()
+                .unwrap(),
+            MIN_SECURE_LAMBDA
+        );
+        assert!(LambdaConfig::Secure(MIN_SECURE_LAMBDA - 1)
+            .into_lambda()
+            .is_err());
+        assert_eq!(LambdaConfig::Insecure(2).into_lambda().unwrap(), 2);
     }
 
     #[test]

@@ -27,6 +27,16 @@ pub fn lbfv_row_count(preset: BfvPreset) -> Option<usize> {
     supports_lbfv(preset).then(|| preset.metadata().num_moduli)
 }
 
+/// Return whether a row count belongs to a supported l-BFV preset.
+#[must_use]
+pub fn is_supported_lbfv_row_count(row_count: usize) -> bool {
+    BfvPreset::PAIR_PRESETS
+        .iter()
+        .copied()
+        .filter_map(lbfv_row_count)
+        .any(|supported| supported == row_count)
+}
+
 /// SHA-256 of `interfold/lbfv/secure-16384/v1/crs`.
 pub const SECURE_16384_LBFV_CRS_SEED: [u8; 32] = [
     0x23, 0x5a, 0x38, 0xb7, 0x34, 0xd5, 0xf8, 0x73, 0xbd, 0x8e, 0x54, 0x79, 0xa1, 0x9b, 0x88, 0x03,
@@ -92,6 +102,9 @@ mod tests {
         assert_eq!(lbfv_row_count(BfvPreset::InsecureThreshold512), Some(3));
         assert_eq!(lbfv_row_count(BfvPreset::SecureThreshold16384), Some(5));
         assert_eq!(lbfv_row_count(BfvPreset::SecureThreshold8192), None);
+        assert!(is_supported_lbfv_row_count(3));
+        assert!(is_supported_lbfv_row_count(5));
+        assert!(!is_supported_lbfv_row_count(4));
     }
 
     #[test]

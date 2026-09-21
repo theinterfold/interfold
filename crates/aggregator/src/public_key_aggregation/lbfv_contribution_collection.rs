@@ -724,7 +724,7 @@ impl LbfvContributionCollectionStateV1 {
             received.document.content_hash()? == received.content_hash,
             "l-BFV document content hash does not match its bytes"
         );
-        let signer = received.document.validate()?;
+        let signer = received.document.validate_for_preset(self.params_preset)?;
         let context = received.document.context();
         self.validate_transport_context(context)?;
         let party = self

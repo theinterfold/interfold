@@ -106,7 +106,7 @@ done
 # map circuit path -> exact zk_cli preset name (BfvPreset::name, e.g. SECURE_THRESHOLD_16384)
 preset_to_zk_name() {
     case "$1" in
-        insecure) echo "INSECURE_THRESHOLD_512" ;;
+        insecure) echo "INSECURE_THRESHOLD" ;;
         secure-8192) echo "SECURE_THRESHOLD_8192" ;;
         secure-16384) echo "SECURE_THRESHOLD_16384" ;;
         *) echo "Error: unknown preset $1" >&2; return 1 ;;

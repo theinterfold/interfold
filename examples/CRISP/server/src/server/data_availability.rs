@@ -3251,7 +3251,7 @@ mod tests {
             "0x04f3677e73b0f5066d6caf5cbd92e3fb2e38338edaf5cfc971ab28f7b684da78"
                 .parse::<B256>()
                 .unwrap(),
-            "insecure-512 must reproduce ActiveCryptoConfig.INSECURE_CONFIG_ID"
+            "insecure must reproduce ActiveCryptoConfig.INSECURE_CONFIG_ID"
         );
 
         let (_, secure_config_id) = bfv_parameters_for_param_set(1).unwrap();

@@ -816,7 +816,7 @@ async fn prepare_lbfv_dispatch(
             .map(|(_, c1)| c1)
             .expect("ready party has a KeyshareCreated C1 proof");
         let validation = (|| {
-            manifest.validate_documents(&public_key, &rlk)?;
+            manifest.validate_documents_for_preset(&public_key, &rlk, preset)?;
             anyhow::ensure!(
                 public_key.role() == e3_events::LbfvKeyShareDocumentRole::PublicKey,
                 "l-BFV public-key artifact has the wrong role"
@@ -999,7 +999,10 @@ mod tests {
                 proof
                     .payload
                     .proof_type
-                    .identity(&proof.payload.proof)?
+                    .identity(
+                        &proof.payload.proof,
+                        e3_fhe_params::lbfv_row_count(BfvPreset::SecureThreshold16384),
+                    )?
                     .instance,
                 row as u32
             );
@@ -1010,7 +1013,10 @@ mod tests {
                 proof
                     .payload
                     .proof_type
-                    .identity(&proof.payload.proof)?
+                    .identity(
+                        &proof.payload.proof,
+                        e3_fhe_params::lbfv_row_count(BfvPreset::SecureThreshold16384),
+                    )?
                     .instance,
                 row as u32
             );

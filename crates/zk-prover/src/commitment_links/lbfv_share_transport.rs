@@ -66,9 +66,11 @@ pub fn validate_lbfv_key_share_document_commitments_dynamic(
         public_key_context == rlk_context,
         "l-BFV PK and RLK document contexts do not match"
     );
+    let row_count = e3_fhe_params::lbfv_row_count(preset)
+        .ok_or_else(|| anyhow::anyhow!("selected preset does not support l-BFV"))?;
     let public_key_row_signals =
-        ordered_row_signals(public_key_proofs, ProofType::LbfvPkGeneration)?;
-    let rlk_row_signals = ordered_row_signals(rlk_proofs, ProofType::RlkGeneration)?;
+        ordered_row_signals(public_key_proofs, ProofType::LbfvPkGeneration, row_count)?;
+    let rlk_row_signals = ordered_row_signals(rlk_proofs, ProofType::RlkGeneration, row_count)?;
     let commitments = validate_lbfv_serialized_share_commitments(
         preset,
         public_key_share,
@@ -85,7 +87,16 @@ pub fn validate_lbfv_key_share_document_commitments_dynamic(
     })
 }
 
-fn ordered_row_signals(proofs: &[SignedProofPayload], proof_type: ProofType) -> Result<Vec<&[u8]>> {
+fn ordered_row_signals(
+    proofs: &[SignedProofPayload],
+    proof_type: ProofType,
+    row_count: usize,
+) -> Result<Vec<&[u8]>> {
+    ensure!(
+        proofs.len() == row_count,
+        "l-BFV proof bundle has {} rows; expected {row_count}",
+        proofs.len()
+    );
     proofs
         .iter()
         .enumerate()
@@ -95,7 +106,7 @@ fn ordered_row_signals(proofs: &[SignedProofPayload], proof_type: ProofType) -> 
                 "l-BFV row proof has the wrong proof type"
             );
             ensure!(
-                proof_type.identity(&signed.payload.proof)?
+                proof_type.identity(&signed.payload.proof, Some(row_count))?
                     == (ProofIdentity {
                         proof_type,
                         instance: row as u32,
@@ -145,18 +156,19 @@ mod tests {
     #[test]
     fn ordered_rows_require_the_expected_family_and_position() {
         let mut proofs = row_proofs(ProofType::LbfvPkGeneration);
+        let row_count = ProofType::LBFV_ROW_INSTANCES as usize;
         assert_eq!(
-            ordered_row_signals(&proofs, ProofType::LbfvPkGeneration)
+            ordered_row_signals(&proofs, ProofType::LbfvPkGeneration, row_count)
                 .unwrap()
                 .len(),
-            ProofType::LBFV_ROW_INSTANCES as usize
+            row_count
         );
 
         proofs[0].payload.proof_type = ProofType::RlkGeneration;
-        assert!(ordered_row_signals(&proofs, ProofType::LbfvPkGeneration).is_err());
+        assert!(ordered_row_signals(&proofs, ProofType::LbfvPkGeneration, row_count).is_err());
 
         let mut proofs = row_proofs(ProofType::LbfvPkGeneration);
         proofs.swap(0, 1);
-        assert!(ordered_row_signals(&proofs, ProofType::LbfvPkGeneration).is_err());
+        assert!(ordered_row_signals(&proofs, ProofType::LbfvPkGeneration, row_count).is_err());
     }
 }

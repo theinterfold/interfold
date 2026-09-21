@@ -19,6 +19,7 @@ use e3_committee_hash::{
     hash_committee_addresses, hash_lbfv_proof_session, split_hash_to_field_limbs,
     LbfvProofDomainContext,
 };
+use e3_fhe_params::{is_supported_lbfv_row_count, lbfv_row_count, BfvPreset};
 use e3_utils::ArcBytes;
 use e3_zk_helpers::FIELD_BYTE_LEN;
 use serde::{Deserialize, Serialize};
@@ -62,8 +63,9 @@ impl LbfvKeyShareDocumentContextV1 {
         &self,
         signed: &SignedProofPayload,
         expected_identity: ProofIdentity,
+        lbfv_row_count: Option<usize>,
     ) -> Result<Address> {
-        validate_proof(signed, self, expected_identity)
+        validate_proof(signed, self, expected_identity, lbfv_row_count)
     }
 }
 
@@ -171,18 +173,29 @@ impl LbfvKeyShareDocument {
 
     /// Validate document context, proof order, proof signatures, and signer consistency.
     pub fn validate(&self) -> Result<Address> {
+        self.validate_with_row_count(None)
+    }
+
+    /// Validate a document against the exact row count for one BFV preset.
+    pub fn validate_for_preset(&self, preset: BfvPreset) -> Result<Address> {
+        let row_count = lbfv_row_count(preset)
+            .ok_or_else(|| anyhow!("preset {} does not support l-BFV", preset.name()))?;
+        self.validate_with_row_count(Some(row_count))
+    }
+
+    fn validate_with_row_count(&self, expected_row_count: Option<usize>) -> Result<Address> {
         self.context().validate()?;
         match self {
-            Self::PublicKeyV1(document) => document.validate(),
-            Self::RelinearizationKeyV1(document) => document.validate(),
-            Self::PublicKeyV2(document) => document.validate(),
-            Self::RelinearizationKeyV2(document) => document.validate(),
+            Self::PublicKeyV1(document) => document.validate(expected_row_count),
+            Self::RelinearizationKeyV1(document) => document.validate(expected_row_count),
+            Self::PublicKeyV2(document) => document.validate(expected_row_count),
+            Self::RelinearizationKeyV2(document) => document.validate(expected_row_count),
         }
     }
 }
 
 impl LbfvPublicKeyShareDocumentV1 {
-    fn validate(&self) -> Result<Address> {
+    fn validate(&self, expected_row_count: Option<usize>) -> Result<Address> {
         ensure!(!self.share.is_empty(), "l-BFV public-key share is empty");
         let signer = self.context.validate_signed_proof(
             &self.signed_c1_proof,
@@ -190,19 +203,21 @@ impl LbfvPublicKeyShareDocumentV1 {
                 proof_type: ProofType::C1PkGeneration,
                 instance: 0,
             },
+            None,
         )?;
         validate_rows(
             &self.signed_row_proofs,
             &self.context,
             ProofType::LbfvPkGeneration,
             signer,
+            expected_row_count,
         )?;
         Ok(signer)
     }
 }
 
 impl LbfvRelinearizationKeyShareDocumentV1 {
-    fn validate(&self) -> Result<Address> {
+    fn validate(&self, expected_row_count: Option<usize>) -> Result<Address> {
         ensure!(
             !self.share.is_empty(),
             "l-BFV relinearization-key share is empty"
@@ -213,13 +228,14 @@ impl LbfvRelinearizationKeyShareDocumentV1 {
             &self.context,
             ProofType::RlkGeneration,
             signer,
+            expected_row_count,
         )?;
         Ok(signer)
     }
 }
 
 impl LbfvPublicKeyShareDocumentV2 {
-    fn validate(&self) -> Result<Address> {
+    fn validate(&self, expected_row_count: Option<usize>) -> Result<Address> {
         ensure!(!self.share.is_empty(), "l-BFV public-key share is empty");
         let signer = self.context.validate_signed_proof(
             &self.signed_c1_proof,
@@ -227,19 +243,21 @@ impl LbfvPublicKeyShareDocumentV2 {
                 proof_type: ProofType::C1PkGeneration,
                 instance: 0,
             },
+            None,
         )?;
         validate_rows_slice(
             &self.signed_row_proofs,
             &self.context,
             ProofType::LbfvPkGeneration,
             signer,
+            expected_row_count,
         )?;
         Ok(signer)
     }
 }
 
 impl LbfvRelinearizationKeyShareDocumentV2 {
-    fn validate(&self) -> Result<Address> {
+    fn validate(&self, expected_row_count: Option<usize>) -> Result<Address> {
         ensure!(
             !self.share.is_empty(),
             "l-BFV relinearization-key share is empty"
@@ -254,6 +272,7 @@ impl LbfvRelinearizationKeyShareDocumentV2 {
             &self.context,
             ProofType::RlkGeneration,
             signer,
+            expected_row_count,
         )?;
         Ok(signer)
     }
@@ -264,8 +283,15 @@ fn validate_rows(
     context: &LbfvKeyShareDocumentContextV1,
     proof_type: ProofType,
     expected_signer: Address,
+    expected_row_count: Option<usize>,
 ) -> Result<()> {
-    validate_rows_slice(proofs, context, proof_type, expected_signer)
+    validate_rows_slice(
+        proofs,
+        context,
+        proof_type,
+        expected_signer,
+        expected_row_count,
+    )
 }
 
 fn validate_rows_slice(
@@ -273,8 +299,23 @@ fn validate_rows_slice(
     context: &LbfvKeyShareDocumentContextV1,
     proof_type: ProofType,
     expected_signer: Address,
+    expected_row_count: Option<usize>,
 ) -> Result<()> {
     ensure!(!proofs.is_empty(), "l-BFV proof bundle is empty");
+    if let Some(expected) = expected_row_count {
+        ensure!(
+            proofs.len() == expected,
+            "l-BFV proof bundle has {} rows; expected {expected}",
+            proofs.len()
+        );
+    } else {
+        ensure!(
+            is_supported_lbfv_row_count(proofs.len()),
+            "l-BFV proof bundle has unsupported row count {}",
+            proofs.len()
+        );
+    }
+    let row_count = expected_row_count.unwrap_or(proofs.len());
     for (row, proof) in proofs.iter().enumerate() {
         let signer = context.validate_signed_proof(
             proof,
@@ -282,6 +323,7 @@ fn validate_rows_slice(
                 proof_type,
                 instance: row as u32,
             },
+            Some(row_count),
         )?;
         ensure!(
             signer == expected_signer,
@@ -295,6 +337,7 @@ fn validate_proof(
     signed: &SignedProofPayload,
     context: &LbfvKeyShareDocumentContextV1,
     expected_identity: ProofIdentity,
+    lbfv_row_count: Option<usize>,
 ) -> Result<Address> {
     ensure!(
         signed.payload.e3_id == context.e3_id,
@@ -305,7 +348,11 @@ fn validate_proof(
         "l-BFV proof type does not match its document position"
     );
     ensure!(
-        signed.payload.proof_type.identity(&signed.payload.proof)? == expected_identity,
+        signed
+            .payload
+            .proof_type
+            .identity(&signed.payload.proof, lbfv_row_count)?
+            == expected_identity,
         "l-BFV proof row does not match its document position"
     );
     let proof = &signed.payload.proof;
@@ -535,6 +582,25 @@ impl SignedLbfvKeyShareManifest {
         public_key: &LbfvKeyShareDocument,
         relinearization_key: &LbfvKeyShareDocument,
     ) -> Result<()> {
+        self.validate_documents_with_preset(public_key, relinearization_key, None)
+    }
+
+    /// Validate both records against the exact row count for one BFV preset.
+    pub fn validate_documents_for_preset(
+        &self,
+        public_key: &LbfvKeyShareDocument,
+        relinearization_key: &LbfvKeyShareDocument,
+        preset: BfvPreset,
+    ) -> Result<()> {
+        self.validate_documents_with_preset(public_key, relinearization_key, Some(preset))
+    }
+
+    fn validate_documents_with_preset(
+        &self,
+        public_key: &LbfvKeyShareDocument,
+        relinearization_key: &LbfvKeyShareDocument,
+        preset: Option<BfvPreset>,
+    ) -> Result<()> {
         let manifest_signer = self.recover_address()?;
         let LbfvKeyShareManifest::V1(manifest) = &self.payload;
         let (public_key_context, public_key_hash) = match public_key {
@@ -577,9 +643,16 @@ impl SignedLbfvKeyShareManifest {
             relinearization_key_hash == manifest.relinearization_key_document_hash,
             "l-BFV relinearization-key document hash does not match the manifest"
         );
+        let public_key_signer = match preset {
+            Some(preset) => public_key.validate_for_preset(preset)?,
+            None => public_key.validate()?,
+        };
+        let relinearization_key_signer = match preset {
+            Some(preset) => relinearization_key.validate_for_preset(preset)?,
+            None => relinearization_key.validate()?,
+        };
         ensure!(
-            public_key.validate()? == manifest_signer
-                && relinearization_key.validate()? == manifest_signer,
+            public_key_signer == manifest_signer && relinearization_key_signer == manifest_signer,
             "l-BFV manifest and proof bundles have different signers"
         );
         Ok(())
@@ -813,6 +886,19 @@ mod tests {
         (signer, public_key, relinearization_key)
     }
 
+    fn dynamic_public_key_document(row_count: usize) -> LbfvKeyShareDocument {
+        let signer = signer();
+        let context = context();
+        LbfvKeyShareDocument::PublicKeyV2(LbfvPublicKeyShareDocumentV2 {
+            context: context.clone(),
+            share: ArcBytes::from_bytes(b"dynamic public key share"),
+            signed_c1_proof: signed_proof(&context, ProofType::C1PkGeneration, 0, &signer),
+            signed_row_proofs: (0..row_count)
+                .map(|row| signed_proof(&context, ProofType::LbfvPkGeneration, row as u32, &signer))
+                .collect(),
+        })
+    }
+
     fn signed_manifest(
         signer: &PrivateKeySigner,
         public_key: &LbfvKeyShareDocument,
@@ -897,6 +983,49 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("document position"));
+    }
+
+    #[test]
+    fn dynamic_document_requires_a_supported_and_matching_row_count() {
+        let insecure = dynamic_public_key_document(3);
+        insecure.validate().unwrap();
+        insecure
+            .validate_for_preset(BfvPreset::InsecureThreshold512)
+            .unwrap();
+        assert!(insecure
+            .validate_for_preset(BfvPreset::SecureThreshold16384)
+            .is_err());
+
+        let secure = dynamic_public_key_document(5);
+        secure.validate().unwrap();
+        secure
+            .validate_for_preset(BfvPreset::SecureThreshold16384)
+            .unwrap();
+        assert!(secure
+            .validate_for_preset(BfvPreset::InsecureThreshold512)
+            .is_err());
+
+        assert!(dynamic_public_key_document(4).validate().is_err());
+    }
+
+    #[test]
+    fn proof_identity_rejects_a_row_outside_the_selected_preset() {
+        let context = context();
+        let signed = signed_proof(&context, ProofType::LbfvPkGeneration, 3, &signer());
+        assert!(signed
+            .payload
+            .proof_type
+            .identity(&signed.payload.proof, Some(3))
+            .is_err());
+        assert_eq!(
+            signed
+                .payload
+                .proof_type
+                .identity(&signed.payload.proof, Some(5))
+                .unwrap()
+                .instance,
+            3
+        );
     }
 
     #[test]

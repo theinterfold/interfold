@@ -25,7 +25,7 @@ if [ "$MODE" != "insecure" ] && [ "$MODE" != "secure" ]; then
     exit 1
 fi
 
-PRESET="INSECURE_THRESHOLD_512"
+PRESET="INSECURE_THRESHOLD"
 if [ "${BENCHMARK_PRESET:-}" = "secure-8192" ]; then
     PRESET="SECURE_THRESHOLD_8192"
 elif [ "${BENCHMARK_PRESET:-}" = "secure-16384" ]; then

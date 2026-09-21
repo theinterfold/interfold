@@ -6,4 +6,4 @@
 
 import type { ThresholdBfvParamsPresetName } from './crypto/types'
 
-export const DEFAULT_THRESHOLD_BFV_PARAMS_PRESET_NAME: ThresholdBfvParamsPresetName = 'INSECURE_THRESHOLD_128'
+export const DEFAULT_THRESHOLD_BFV_PARAMS_PRESET_NAME: ThresholdBfvParamsPresetName = 'INSECURE_THRESHOLD'

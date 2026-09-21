@@ -307,10 +307,14 @@ impl LbfvGenerationStateV1 {
             );
         }
         if self.is_ready() {
-            self.signed_manifest.as_ref().unwrap().validate_documents(
-                self.public_key_document.as_ref().unwrap(),
-                self.relinearization_key_document.as_ref().unwrap(),
-            )?;
+            self.signed_manifest
+                .as_ref()
+                .unwrap()
+                .validate_documents_for_preset(
+                    self.public_key_document.as_ref().unwrap(),
+                    self.relinearization_key_document.as_ref().unwrap(),
+                    self.params_preset,
+                )?;
             self.signed_manifest
                 .as_ref()
                 .unwrap()
@@ -554,8 +558,8 @@ impl LbfvGenerationStateV1 {
                 share: response.rlk_share_bytes.clone(),
                 signed_row_proofs: rlk_rows,
             });
-        public_key.validate()?;
-        relinearization_key.validate()?;
+        public_key.validate_for_preset(self.params_preset)?;
+        relinearization_key.validate_for_preset(self.params_preset)?;
         Ok(Some((public_key, relinearization_key)))
     }
 
@@ -577,7 +581,11 @@ impl LbfvGenerationStateV1 {
         relinearization_key: LbfvKeyShareDocument,
         signed_manifest: SignedLbfvKeyShareManifest,
     ) -> Result<bool> {
-        signed_manifest.validate_documents(&public_key, &relinearization_key)?;
+        signed_manifest.validate_documents_for_preset(
+            &public_key,
+            &relinearization_key,
+            self.params_preset,
+        )?;
         signed_manifest.verify_committee_signer(&self.committee)?;
         if self.is_ready() {
             ensure!(
@@ -644,6 +652,7 @@ impl LbfvGenerationStateV1 {
                 proof_type,
                 instance,
             },
+            lbfv_row_count(self.params_preset),
         )?;
         let expected_signer = self.expected_signer()?;
         ensure!(

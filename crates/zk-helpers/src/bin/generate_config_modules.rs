@@ -14,7 +14,7 @@
 //!
 //! Usage:
 //!     cargo run --release --bin generate_config_modules -- \
-//!         --preset INSECURE_THRESHOLD_512 \
+//!         --preset INSECURE_THRESHOLD \
 //!         [--output-root <path-to-circuits/lib/src/configs>]
 //!
 //! A preset maps to a distinct Noir module (`insecure`, `secure_8192`, or `secure_16384`); the
@@ -860,7 +860,7 @@ fn main() -> Result<()> {
         .with_context(|| format!("unknown preset: {:?}", args.preset))?;
     if preset.metadata().parameter_type != ParameterType::THRESHOLD {
         anyhow::bail!(
-            "preset {:?} is a DKG-only preset; pass the threshold variant (e.g. INSECURE_THRESHOLD_512)",
+            "preset {:?} is a DKG-only preset; pass the threshold variant (for example, INSECURE_THRESHOLD)",
             preset
         );
     }
@@ -906,7 +906,7 @@ fn main() -> Result<()> {
     about = "Regenerate a preset's BFV/CRT config module (threshold.nr / dkg.nr / mod.nr)."
 )]
 struct Args {
-    /// Preset name (e.g. `INSECURE_THRESHOLD_512`, `SECURE_THRESHOLD_8192`, `SECURE_THRESHOLD_16384`).
+    /// Preset name (for example, `INSECURE_THRESHOLD`, `SECURE_THRESHOLD_8192`, or `SECURE_THRESHOLD_16384`).
     #[arg(long)]
     preset: String,
 

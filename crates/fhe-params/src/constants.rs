@@ -127,6 +127,8 @@ pub mod defaults {
 
     /// Default insecure security parameter (λ).
     pub const DEFAULT_INSECURE_LAMBDA: usize = 2;
+    /// Minimum statistical security parameter (λ) for secure presets.
+    pub const MIN_SECURE_LAMBDA: usize = 31;
     /// Default secure security parameter (λ) for the 8192 presets.
     pub const DEFAULT_SECURE_LAMBDA: usize = 45;
     /// Statistical security parameter (λ) for the 16384 presets.

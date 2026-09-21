@@ -121,13 +121,13 @@ echo "E3_PROGRAM_ADDRESS=<deployed_address>" >> .env
 
 ## 4. Keep the Insecure BFV Preset on Sepolia
 
-Sepolia runs the insecure preset. Keep `INSECURE_THRESHOLD_512` in your SDK initialisation, and
-request E3s with `paramSet: 0`:
+Sepolia runs the insecure preset. Keep `INSECURE_THRESHOLD` in your SDK initialization, and request
+E3s with `paramSet: 0`:
 
 ```typescript
 const sdk = new InterfoldSDK({
   // ... other config
-  thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_512',
+  thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD',
 })
 ```
 
@@ -205,12 +205,12 @@ sdk.onInterfoldEvent(InterfoldEventType.PLAINTEXT_OUTPUT_PUBLISHED, (e) =>
 
 ## Troubleshooting
 
-| Issue                       | Possible cause                           | Fix                                                                          |
-| --------------------------- | ---------------------------------------- | ---------------------------------------------------------------------------- |
-| E3 request reverts          | Insufficient fee token approval          | Call `sdk.approveFeeToken()` first                                           |
-| Committee never forms       | Not enough active ciphernodes on Sepolia | Check the registry for active operators                                      |
+| Issue                       | Possible cause                           | Fix                                                                      |
+| --------------------------- | ---------------------------------------- | ------------------------------------------------------------------------ |
+| E3 request reverts          | Insufficient fee token approval          | Call `sdk.approveFeeToken()` first                                       |
+| Committee never forms       | Not enough active ciphernodes on Sepolia | Check the registry for active operators                                  |
 | Proof generation fails      | Preset mismatch with the SDK's circuits  | The embedded circuits are `insecure`; compile your own for other presets |
-| Decryption produces garbage | BFV preset mismatch                      | Verify both SDK and E3 request use `INSECURE_THRESHOLD_512` / `paramSet: 0`  |
+| Decryption produces garbage | BFV preset mismatch                      | Verify both SDK and E3 request use `INSECURE_THRESHOLD` / `paramSet: 0`  |
 
 ---
 

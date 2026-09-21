@@ -114,6 +114,8 @@ pub(crate) struct CommitmentConsistency {
     links: Vec<Box<dyn CommitmentLink>>,
     /// Number of selected C4 dealer rows.
     committee_h: usize,
+    /// Number of rows in each l-BFV proof family for this E3.
+    lbfv_row_count: Option<usize>,
     /// Full-committee party IDs in the accepted C4 row order.
     roster: Option<Vec<u64>>,
     /// Verified proof outputs grouped by signer and complete proof identity.
@@ -133,10 +135,22 @@ impl CommitmentConsistency {
             e3_id,
             links,
             committee_h,
+            lbfv_row_count: None,
             roster: None,
             verified: HashMap::new(),
             dirty: false,
         }
+    }
+
+    pub(crate) fn new_for_preset(
+        e3_id: E3id,
+        links: Vec<Box<dyn CommitmentLink>>,
+        committee_h: usize,
+        params_preset: e3_fhe_params::BfvPreset,
+    ) -> Self {
+        let mut consistency = Self::new(e3_id, links, committee_h);
+        consistency.lbfv_row_count = e3_fhe_params::lbfv_row_count(params_preset);
+        consistency
     }
 
     pub(crate) fn snapshot(&self) -> CommitmentConsistencySnapshot {
@@ -502,7 +516,9 @@ impl CommitmentConsistency {
 
         let proof_type = data.proof_type;
         let address = data.address;
-        let Ok(instance) = proof_type.instance_from_public_signals(&data.public_signals) else {
+        let Ok(instance) =
+            proof_type.instance_from_public_signals(&data.public_signals, self.lbfv_row_count)
+        else {
             warn!("Ignoring verified proof with an invalid proof instance");
             return Vec::new();
         };

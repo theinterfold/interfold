@@ -541,8 +541,10 @@ ShareVerificationActor receives ShareVerificationDispatched(kind=ShareProofs)
 │   │   │   domain, party slot, and the SHA-256 hash of each exact DHT payload. Generic l-BFV DHT
 │   │   │   notifications are ignored. A versioned targeted fetch request identifies the exact E3,
 │   │   │   proof session, party, document role, hash, and attempt. The bounded fetch handler checks
-│   │   │   the SHA-256 hash, full identity, schema, proof order, and signer consistency. It publishes
-│   │   │   a validated document or a typed unavailable/invalid-data failure. The network adapter
+│   │   │   the SHA-256 hash, full identity, schema, proof order, supported row count, and signer
+│   │   │   consistency. Aggregation admission requires the exact row count for the E3 preset. The
+│   │   │   fetch handler publishes a validated document or a typed unavailable/invalid-data failure.
+│   │   │   The network adapter
 │   │   │   enforces the 25 MiB record limit and forwards only manifests with a recoverable
 │   │   │   signature. For `secure-16384`, `ThresholdKeyshare` persists the generation request and
 │   │   │   encrypted seed in `//threshold_keyshare_lbfv_generation/v1/{e3_id}`. It dispatches share

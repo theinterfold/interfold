@@ -16,7 +16,7 @@ describe("verifier artifact selection", function () {
       selectCanonicalVerifierFqn(
         [
           `project/${source}`,
-          `project/contracts/verifiers/bfv/honk/insecure-512/minimum/${contractName}.sol:${contractName}`,
+          `project/contracts/verifiers/bfv/honk/insecure/micro/${contractName}.sol:${contractName}`,
           `project/contracts/verifiers/bfv/honk/secure-8192/small/${contractName}.sol:${contractName}`,
         ],
         contractName,
@@ -40,7 +40,7 @@ describe("verifier artifact selection", function () {
     expect(() =>
       selectCanonicalVerifierFqn(
         [
-          `project/contracts/verifiers/bfv/honk/insecure-512/minimum/${contractName}.sol:${contractName}`,
+          `project/contracts/verifiers/bfv/honk/insecure/micro/${contractName}.sol:${contractName}`,
         ],
         contractName,
       ),

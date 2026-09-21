@@ -359,7 +359,7 @@ jobs:
 
       - name: Prepare source-aligned circuit archive
         run: |
-          test -f .ci-noir/circuits/insecure-512/minimum/default/dkg/pk/pk.json
+          test -f .ci-noir/circuits/insecure/minimum/default/dkg/pk/pk.json
           test -f .ci-noir/circuits/secure-8192/minimum/default/dkg/pk/pk.json
           mkdir -p "$RUNNER_TEMP/circuit-release"
           tar -czf "$RUNNER_TEMP/circuit-release/circuits-candidate.tar.gz" \

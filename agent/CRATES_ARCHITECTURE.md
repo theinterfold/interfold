@@ -542,9 +542,10 @@ records produce `LbfvKeyShareDocumentFetchFailed::V1`. A compact signed manifest
 transport event that normal gossip and historical peer sync forward. It binds the full proof domain,
 party slot, and SHA-256 content hash of both DHT records. The network adapter rejects an invalid
 schema, context, proof order, signature, or 25 MiB size before publication or local event
-conversion. Transport and gossipsub identities authenticate the sending peer; they do not by
-themselves prove that a peer is an authorized member of a particular E3 committee. Committee
-authorization and durable peer reputation remain separate protocol-hardening work. Local
+conversion. The document boundary requires the exact l-BFV row count for the E3 preset before the
+document enters aggregation state. Transport and gossipsub identities authenticate the sending peer;
+they do not by themselves prove that a peer is an authorized member of a particular E3 committee.
+Committee authorization and durable peer reputation remain separate protocol-hardening work. Local
 secure-16384 generation stores the canonical committee in the versioned
 `threshold_keyshare_lbfv_generation/v1` snapshot, checks the injected signer against its party slot,
 persists deterministic generation and row-proof progress, and commits both documents and the

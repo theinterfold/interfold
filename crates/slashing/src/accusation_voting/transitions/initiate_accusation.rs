@@ -41,10 +41,10 @@ impl AccusationVoting {
             return Vec::new();
         }
 
-        let Ok(identity) = event
-            .proof_type
-            .identity(&event.signed_payload.payload.proof)
-        else {
+        let Ok(identity) = event.proof_type.identity(
+            &event.signed_payload.payload.proof,
+            e3_fhe_params::lbfv_row_count(self.params_preset),
+        ) else {
             warn!("Ignoring proof failure with an invalid proof instance");
             return Vec::new();
         };

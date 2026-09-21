@@ -262,7 +262,7 @@ impl LbfvContributionRepositoryFactory for Repositories {
             })?;
 
         let validation = (|| {
-            manifest.validate_documents(&public_key, &rlk)?;
+            manifest.validate_documents_for_preset(&public_key, &rlk, state.params_preset)?;
             ensure!(
                 public_key.role() == e3_events::LbfvKeyShareDocumentRole::PublicKey,
                 "l-BFV public-key artifact has the wrong role"
