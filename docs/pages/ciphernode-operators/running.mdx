@@ -372,10 +372,11 @@ docker run --rm \
 Do not start the node when validation reports `FAIL`; preserve a copy of the volume before repair,
 restore, or controlled resynchronization.
 
-If validation reports only a recoverable uncommitted event-log tail, keep the node stopped and run
-the same command with `--repair`. This repair can re-index complete uncommitted frames or truncate a
-torn physical suffix. It never removes an indexed record and cannot repair committed corruption or
-an unsupported storage schema.
+If validation reports only a recoverable uncommitted event-log tail, or a stale sortition projection
+while the event log, schema, and snapshot cursor checks all pass, keep the node stopped and run the
+same command with `--repair`. This repair can re-index complete uncommitted frames, truncate a torn
+physical suffix, or rebuild the derived sortition projection from intact events. It never removes an
+indexed event and cannot repair committed corruption or an unsupported storage schema.
 
 ### Persistent Event Data
 
