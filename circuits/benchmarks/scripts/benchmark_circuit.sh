@@ -145,6 +145,7 @@ EXECUTE_SUCCESS="false"
 CIRCUIT_SIZE=0
 WITNESS_SIZE=0
 GATES_OUTPUT=""
+GATES_SUCCESS="false"
 TOTAL_GATES=0
 ACIR_OPCODES=0
 VK_GEN_TIME=0
@@ -251,6 +252,7 @@ if [ "$EXECUTE_SUCCESS" = "true" ]; then
     echo ""
     echo "[3/6] Counting gates..."
     if GATES_OUTPUT=$($BB_GATES_CMD -b "${TARGET_DIR}/${CIRCUIT_NAME}.json" 2>&1); then
+        GATES_SUCCESS="true"
         echo "✓ Gate count retrieved"
         echo "$GATES_OUTPUT"
         # Extract circuit_size and acir_opcodes from JSON output (bb gates returns JSON)
@@ -425,6 +427,7 @@ cat > "$OUTPUT_JSON" <<EOF
     "witness_size_bytes": ${WITNESS_SIZE:-0}
   },
   "gates": {
+    "success": $GATES_SUCCESS,
     "total_gates": ${TOTAL_GATES:-0},
     "acir_opcodes": ${ACIR_OPCODES:-0},
     "raw_output": $(echo "$GATES_OUTPUT" | jq -Rs .)
@@ -458,3 +461,9 @@ echo "=================================================="
 echo "Benchmark complete!"
 echo "Results saved to: $OUTPUT_JSON"
 echo "=================================================="
+
+if [ "$COMPILE_SUCCESS" != "true" ] || [ "$EXECUTE_SUCCESS" != "true" ] || \
+   [ "$GATES_SUCCESS" != "true" ] || [ "$VK_GEN_SUCCESS" != "true" ] || \
+   [ "$PROVE_SUCCESS" != "true" ] || [ "$VERIFY_SUCCESS" != "true" ]; then
+    exit 1
+fi

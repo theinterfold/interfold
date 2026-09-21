@@ -86,6 +86,20 @@ find_json_by_path_fragment() {
     echo ""
 }
 
+find_json_by_exact_path() {
+    local expected="$1"
+    for json_file in "$INPUT_DIR"/*.json; do
+        [ -f "$json_file" ] || continue
+        local circuit_path
+        circuit_path=$(jq -r '.circuit_path // ""' "$json_file")
+        if [[ "$circuit_path" == *"/$expected" ]]; then
+            echo "$json_file"
+            return
+        fi
+    done
+    echo ""
+}
+
 emit_circuit_row() {
     local label="$1"
     local path_fragment="$2"
@@ -105,7 +119,7 @@ emit_circuit_row() {
 
 emit_user_data_enc_row() {
     local wrapper ct0 ct1
-    wrapper=$(find_json_by_path_fragment "/threshold/user_data_encryption")
+    wrapper=$(find_json_by_exact_path "threshold/user_data_encryption")
     ct0=$(find_json_by_path_fragment "/threshold/user_data_encryption_ct0")
     ct1=$(find_json_by_path_fragment "/threshold/user_data_encryption_ct1")
 
@@ -164,8 +178,22 @@ artifact_metrics() {
     esac
 
     if [ "$label" = "user_data_encryption" ]; then
-        local wrapper
-        wrapper=$(find_json_by_path_fragment "/threshold/user_data_encryption")
+        local wrapper gas_proof_size gas_public_size gas_calldata
+        if [ -f "$GAS_JSON" ]; then
+            gas_proof_size=$(jq -r '.artifact_sizes_bytes.user.proof // empty' "$GAS_JSON")
+            gas_public_size=$(jq -r '.artifact_sizes_bytes.user.public_inputs // empty' "$GAS_JSON")
+            gas_calldata=$(jq -r '.calldata_gas.user.total // empty' "$GAS_JSON")
+            if [ -n "$gas_proof_size" ] && [ "$gas_proof_size" != "null" ] && [ "$gas_proof_size" != "0" ] \
+                && [ -n "$gas_public_size" ] && [ "$gas_public_size" != "null" ] && [ "$gas_public_size" != "0" ] \
+                && [ -n "$gas_calldata" ] && [ "$gas_calldata" != "null" ] && [ "$gas_calldata" != "0" ]; then
+                local gas_total="N/A"
+                if [ "$verify_gas" != "N/A" ]; then gas_total=$((verify_gas + gas_calldata)); fi
+                echo "| $name | $(format_kb "$gas_proof_size") KiB | $(format_kb "$gas_public_size") KiB | $verify_gas | $gas_calldata | $gas_total |" >> "$OUTPUT_FILE"
+                return
+            fi
+        fi
+
+        wrapper=$(find_json_by_exact_path "threshold/user_data_encryption")
         local proof_size public_size calldata total
 
         # Prefer the wrapper artifact when available; it matches what is posted/verified on-chain.
@@ -296,6 +324,7 @@ integration_timing_seconds() {
 
 emit_audit_warnings() {
     local missing=0
+    local failed_circuits=0
     local v
     {
         echo "## Audit status"
@@ -315,6 +344,22 @@ EOF
     else
         echo "On-chain verify gas: **complete** (CRISP Π_user + Interfold Π_DKG / Π_dec replay)." >> "$OUTPUT_FILE"
         echo "" >> "$OUTPUT_FILE"
+    fi
+    failed_circuits=$(find "$RAW_DIR" -maxdepth 1 -name '*.json' -type f -print0 2>/dev/null | \
+        xargs -0 -I{} jq -r 'select(
+            (.compilation.success != true) or
+            (.execution.success != true) or
+            (.gates.success == false) or
+            ((.gates.total_gates // 0) <= 0) or
+            (.vk_generation.success != true) or
+            (.proof_generation.success != true) or
+            (.verification.success != true)
+        ) | 1' {} 2>/dev/null | wc -l | tr -d ' ')
+    if [ "${failed_circuits:-0}" -gt 0 ]; then
+        cat >> "$OUTPUT_FILE" <<EOF
+> **Incomplete circuit benchmarks:** $failed_circuits raw result file(s) contain a failed stage. Re-run the failed circuit benchmarks before audit sign-off.
+
+EOF
     fi
     if [ -z "$INTEGRATION_BLOB" ]; then
         cat >> "$OUTPUT_FILE" <<EOF
@@ -590,7 +635,7 @@ cat > "$OUTPUT_FILE" <<EOF
 
 **Generated:** ${TIMESTAMP}
 
-**Git Branch:** \`${GIT_BRANCH}\`  
+**Git Branch:** \`${GIT_BRANCH}\`<br>
 **Git Commit:** \`${GIT_COMMIT}\`
 
 **Committee Size:** \`H=${PROTOCOL_H}\`, \`N=${PROTOCOL_N}\`, \`T=${PROTOCOL_T}\`
@@ -628,8 +673,8 @@ emit_circuit_row "l-BFV PK generation limb" "/threshold/lbfv_pk_generation_limb"
 emit_circuit_row "l-BFV PK aggregation row" "/threshold/lbfv_pk_aggregation"
 emit_circuit_row "RLK generation limb" "/threshold/rlk_generation_limb"
 emit_circuit_row "RLK aggregation row" "/threshold/rlk_aggregation"
-emit_circuit_row "C2a" "/dkg/sk_share_computation"
-emit_circuit_row "C2b" "/dkg/e_sm_share_computation"
+emit_circuit_row "C2a" "/dkg/sk_share_computation_chunk"
+emit_circuit_row "C2b" "/dkg/esm_share_computation_chunk"
 emit_circuit_row "C3a" "/dkg/share_encryption"
 emit_circuit_row "C3b" "/dkg/share_encryption"
 emit_circuit_row "C4a" "/dkg/share_decryption"
@@ -669,6 +714,9 @@ p4n_metric="isolated_nargo"
 p4a_metric="wall_clock"
 
 p1_integration=$(integration_timing_seconds "ThresholdShares -> PublicKeyAggregated" "$INTEGRATION_BLOB")
+if [ -z "$p1_integration" ] || [ "$p1_integration" = "null" ]; then
+    p1_integration=$(integration_timing_seconds "ThresholdShares -> LbfvPublicKeyAggregated" "$INTEGRATION_BLOB")
+fi
 if [ -n "$p1_integration" ] && [ "$p1_integration" != "null" ]; then
     p1t="$(format_s "$p1_integration") s"
 else
@@ -677,6 +725,9 @@ else
 fi
 
 p2_integration=$(integration_timing_seconds "Aggregator P2: PkAggregation pending -> PublicKeyAggregated (wall)" "$INTEGRATION_BLOB")
+if [ -z "$p2_integration" ] || [ "$p2_integration" = "null" ]; then
+    p2_integration=$(integration_timing_seconds "Aggregator P2: PkAggregation pending -> LbfvPublicKeyAggregated (wall)" "$INTEGRATION_BLOB")
+fi
 if [ -n "$p2_integration" ] && [ "$p2_integration" != "null" ]; then
     p2t="$(format_s "$p2_integration") s"
 else
@@ -705,8 +756,13 @@ p2_artifact=$(artifact_size_pair_from_gas "dkg")
 if [ -n "$p2_artifact" ]; then
     IFS='|' read -r p2s p2b <<< "$p2_artifact"
 fi
-wrapper_json=$(find_json_by_path_fragment "/threshold/user_data_encryption")
-if [ -n "$wrapper_json" ]; then
+p3_artifact=$(artifact_size_pair_from_gas "user")
+if [ -n "$p3_artifact" ]; then
+    IFS='|' read -r p3s p3b <<< "$p3_artifact"
+else
+    wrapper_json=$(find_json_by_exact_path "threshold/user_data_encryption")
+fi
+if [ -n "${wrapper_json:-}" ]; then
     p3_proof_bytes=$(jq -r '.proof_generation.proof_size_bytes // 0' "$wrapper_json")
     p3_public_bytes=$(jq -r '.verification.public_inputs_size_bytes // 0' "$wrapper_json")
     p3_bandwidth_bytes=$(echo "$p3_proof_bytes + $p3_public_bytes" | bc)

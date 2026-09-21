@@ -106,10 +106,10 @@ fn smudging_b_enc_value(preset: BfvPreset) -> Result<BigUint> {
     let (threshold_params, _) = build_pair_for_preset(preset)
         .with_context(|| format!("build_pair_for_preset({preset:?}) failed"))?;
     let variance = threshold_params.get_error1_variance();
-    if variance < &BigUint::from(16u32) {
+    if variance <= &BigUint::from(16u32) {
         Ok(BigUint::from(2u64 * variance.to_u64().unwrap()))
     } else {
-        Ok((BigUint::from(3u32) * variance).sqrt())
+        Ok(ceil_sqrt(&(BigUint::from(3u32) * variance)))
     }
 }
 

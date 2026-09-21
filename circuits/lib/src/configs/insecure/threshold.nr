@@ -32,7 +32,7 @@ pub global PARAMS_SEARCH_Z: Field = 3;
 pub global PARAMS_LAMBDA: u32 = 2;
 pub global PARAMS_TWO_POW_LAMBDA_PLUS_ONE: Field = 8;
 pub global PARAMS_MULT_DEPTH: u32 = 3;
-pub global PARAMS_SMUDGING_B_ENC: Field = 389120;
+pub global PARAMS_SMUDGING_B_ENC: Field = 389121;
 
 pub global CRP: [Polynomial<N>; L] = [
     Polynomial::new([

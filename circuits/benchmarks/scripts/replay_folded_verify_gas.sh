@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Replay DkgAggregatorVerifier / DecryptionAggregatorVerifier estimateGas using folded proofs from an
-# integration summary JSON (BENCHMARK_SUMMARY_OUTPUT shape: .folded_artifacts.{dkg_aggregator,...})
-# and merge verify_gas.dkg / verify_gas.dec into an existing crisp_verify_gas.json.
+# Replay the matching DKG aggregator and decryption aggregator verifiers with folded proofs from an
+# integration summary JSON (BENCHMARK_SUMMARY_OUTPUT shape: .folded_artifacts.{dkg_aggregator,...}).
+# Then merge verify_gas.dkg / verify_gas.dec into an existing crisp_verify_gas.json.
 #
 # Usage (from repo root):
 #   ./circuits/benchmarks/scripts/replay_folded_verify_gas.sh \
@@ -87,12 +87,12 @@ TMP_FOLDED="$(mktemp)"
 TMP_GAS_PARTIAL="$(mktemp)"
 trap 'rm -f "$TMP_FOLDED" "$TMP_GAS_PARTIAL"' EXIT
 
-jq -c '.folded_artifacts' "$SUMMARY_JSON" >"$TMP_FOLDED"
+jq -c '.folded_artifacts + {replay_context: .replay_context}' "$SUMMARY_JSON" >"$TMP_FOLDED"
 
 if [ -n "$BUILD_PRESET" ]; then
     if [ "$SKIP_BUILD" = true ]; then
         echo "  [replay-gas] Skipping circuit build (--skip-build)."
-        "${SCRIPT_DIR}/check_circuit_preset_artifacts.sh" "$BUILD_PRESET"
+        "${SCRIPT_DIR}/check_circuit_preset_artifacts.sh" "$BUILD_PRESET" --committee "${COMMITTEE:-minimum}"
     else
         ENSURE_ARGS=("$BUILD_PRESET")
         if [ -n "$COMMITTEE" ]; then
@@ -103,7 +103,7 @@ if [ -n "$BUILD_PRESET" ]; then
         fi
         "${SCRIPT_DIR}/ensure_circuit_preset_built.sh" "${ENSURE_ARGS[@]}"
         echo "  [replay-gas] Verifying preset '${BUILD_PRESET}' (dist stamp + circuits/bin)..."
-        (cd "$REPO_ROOT" && pnpm generate:verifiers --check --no-compile --preset "$BUILD_PRESET")
+        (cd "$REPO_ROOT" && pnpm generate:verifiers --check --no-compile --preset "$BUILD_PRESET" --committee "${COMMITTEE:-minimum}")
     fi
 fi
 
@@ -114,7 +114,8 @@ echo "  [replay-gas] Running Hardhat benchmarkGasFromRaw.ts (folded proofs)..."
     BENCHMARK_GAS_OUTPUT="$TMP_GAS_PARTIAL" \
     BENCHMARK_FOLDED_JSON="$TMP_FOLDED" \
     BENCHMARK_PRESET="${BUILD_PRESET:-insecure}" \
-    pnpm hardhat run scripts/benchmarkGasFromRaw.ts --network hardhat
+    BENCHMARK_COMMITTEE="${COMMITTEE:-minimum}" \
+    pnpm hardhat run scripts/benchmarkGasFromRaw.ts --network benchmark
 )
 
 if ! jq -e '.verify_gas.dkg and .verify_gas.dec' "$TMP_GAS_PARTIAL" >/dev/null 2>&1; then

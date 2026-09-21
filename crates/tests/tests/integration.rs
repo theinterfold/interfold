@@ -2993,6 +2993,27 @@ async fn test_trbfv_actor() -> Result<()> {
         "PlaintextAggregated must always carry an aggregated decryption proof payload"
     );
 
+    let replay_committee = publication_committee_addresses
+        .iter()
+        .map(|address| format!("\"{address}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let replay_context_json = format!(
+        concat!(
+            "  \"replay_context\": {{\n",
+            "    \"chain_id\": {},\n",
+            "    \"e3_id\": \"{}\",\n",
+            "    \"interfold\": \"{}\",\n",
+            "    \"committee_root\": \"0\",\n",
+            "    \"committee_addresses\": [{}]\n",
+            "  }}"
+        ),
+        e3_id.chain_id(),
+        json_escape(e3_id.e3_id()),
+        Address::repeat_byte(0x11),
+        replay_committee,
+    );
+
     if let Ok(path) = std::env::var("BENCHMARK_FOLDED_OUTPUT") {
         if let (Some(dkg_proof), Some(dec_proof)) = (
             dkg_aggregator_proof.as_ref(),
@@ -3008,13 +3029,15 @@ async fn test_trbfv_actor() -> Result<()> {
                     "  \"decryption_aggregator\": {{\n",
                     "    \"proof_hex\": \"{}\",\n",
                     "    \"public_inputs_hex\": \"{}\"\n",
-                    "  }}\n",
+                    "  }},\n",
+                    "{}\n",
                     "}}\n"
                 ),
                 to_hex(&dkg_proof.data),
                 to_hex(&dkg_proof.public_signals),
                 to_hex(&dec_proof.data),
                 to_hex(&dec_proof.public_signals),
+                replay_context_json,
             );
             fs::write(&path, json)?;
             println!("Wrote folded benchmark proofs to {path}");
@@ -3124,15 +3147,17 @@ async fn test_trbfv_actor() -> Result<()> {
                     "      \"proof_hex\": \"{}\",\n",
                     "      \"public_inputs_hex\": \"{}\"\n",
                     "    }}\n",
-                    "  }}\n"
+                    "  }},\n",
+                    "{}\n"
                 ),
                 to_hex(&dkg_proof.data),
                 to_hex(&dkg_proof.public_signals),
                 to_hex(&dec_proof.data),
                 to_hex(&dec_proof.public_signals),
+                replay_context_json,
             )
         } else {
-            String::from("  \"folded_artifacts\": null\n")
+            format!("  \"folded_artifacts\": null,\n{replay_context_json}\n")
         };
 
         let dkg_fold_verifier_json = benchmark_dkg_fold_attestation_verifier_address()

@@ -36,7 +36,7 @@ const ALL_PRESETS = [...new Set(Object.values(CHANNEL_PRESETS).flat())]
 const VERIFIERS = ['CRISPVerifier.sol', 'CRISPOnchainVerifier.sol']
 
 /** Polynomial degree each preset's circuits carry, used to prove the bundle is what it claims. */
-const EXPECTED_DEGREE = { insecure: 512, 'secure-8192': 8192, 'secure-16384': 16384 }
+const EXPECTED_DEGREE = { insecure: 128, 'secure-8192': 8192, 'secure-16384': 16384 }
 
 /** Below this a "built" entry is a stub or a failed inline rather than a real circuit bundle. */
 const MIN_BYTES = 100 * 1024

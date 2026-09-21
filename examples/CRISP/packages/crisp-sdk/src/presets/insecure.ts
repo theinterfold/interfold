@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-// The insecure (N=512, L=2) preset-bound proof tree, published as a separate entry point.
+// The insecure (N=128, L=3) preset-bound proof tree, published as a separate entry point.
 //
 // Kept out of the main entry so a consumer's bundler pulls one preset rather than all presets. The
 // artifacts are staged by scripts/stage-preset-artifacts.mjs; see src/circuits.ts for why the
@@ -37,7 +37,7 @@ import userDataEncryptionCt1 from '../../../../circuits/dist/insecure/user_data_
 export const preset: CircuitPreset = 'insecure'
 
 /**
- * The insecure (N=512, L=2) circuits, ready for `setCircuits()`.
+ * The insecure (N=128, L=3) circuits, ready for `setCircuits()`.
  *
  * Asynchronous because the artifacts are inlined today but need not stay that way: the secure set
  * is large enough that a consumer may want it fetched on demand, and that change belongs inside
