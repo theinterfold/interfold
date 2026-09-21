@@ -65,8 +65,14 @@ export const STAGE_STATUS: Record<string, { label: string; sub: string }> = {
 
 // ─── Shared UI types ─────────────────────────────────────────────────────────
 
+// `id` is the canonical E3 identity: it keys React lists, the selection state,
+// and the URL hash. A real E3 id is 77 digits (the Interfold address in the top
+// 160 bits plus a counter), so never show it directly. `displayId` is the
+// per-deployment sequence number for the screen. It is unique within a
+// deployment, but not across networks, so use it only for display.
 export type Poll = {
   id: string
+  displayId: string
   question: string
   context: string
   opened: string
@@ -77,6 +83,7 @@ export type Poll = {
 
 export type HistoryEntry = {
   id: string
+  displayId: string
   question: string
   closed: string
   duration: string

@@ -160,6 +160,7 @@ const pollStateForStage = (uiStageIdx: number, ballotCount: number): string => {
 // Synthetic poll used only for the "Watch the lifecycle" demo when nothing is live.
 const DEMO_POLL: Poll = {
   id: 'Sample',
+  displayId: 'Sample',
   question: 'A sample CRISP poll — watch how an encrypted poll moves through its lifecycle.',
   context: 'This is an interactive demonstration, not a live poll.',
   opened: '—',
@@ -361,7 +362,7 @@ export default function App() {
                       ballotCount={s.ballotCount}
                       onNavigate={navigate}
                     />
-                    <Timeline stages={STAGES} currentStageIdx={stageIdx} pollId={poll.id} density={DENSITY} />
+                    <Timeline stages={STAGES} currentStageIdx={stageIdx} pollLabel={poll.displayId} density={DENSITY} />
                   </Fragment>
                 )
               })}
@@ -382,7 +383,7 @@ export default function App() {
               <Timeline
                 stages={STAGES}
                 currentStageIdx={demoStage}
-                pollId='demo'
+                pollLabel='demo'
                 density={DENSITY}
                 onStageClick={liveMode ? undefined : setStage}
               />

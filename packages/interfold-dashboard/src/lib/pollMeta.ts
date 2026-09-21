@@ -41,10 +41,21 @@ export function formatE3Id(id: bigint): string {
   return `E3-${id.toString().padStart(4, '0')}`
 }
 
+// E3 ids are not small sequential numbers. Interfold seeds its counter with its
+// own address (`nexte3Id = uint256(uint160(address(this))) << 96`,
+// Interfold.sol:268) and increments it once per request (Interfold.sol:319).
+// The top 160 bits are therefore the same on every E3 of a deployment, and the
+// low 96 bits are the sequence number. Show the sequence number: the full value
+// is 77 digits whose leading 76 digits are identical between E3 0 and E3 1.
+const E3_SEQUENCE_MASK = (1n << 96n) - 1n
+
+/** Per-deployment sequence number of an E3: 0, 1, 2, ... */
+export function e3Sequence(id: bigint): bigint {
+  return id & E3_SEQUENCE_MASK
+}
+
 export function compactE3Id(id: bigint): string {
-  const value = id.toString().padStart(4, '0')
-  if (value.length <= 18) return `E3-${value}`
-  return `E3-${value.slice(0, 8)}…${value.slice(-6)}`
+  return `E3-${e3Sequence(id)}`
 }
 
 export function shortAddr(addr: string): string {

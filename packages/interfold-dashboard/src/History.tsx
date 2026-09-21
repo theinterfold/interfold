@@ -9,6 +9,7 @@ import { useState } from 'react'
 
 type Entry = {
   id: string
+  displayId: string
   question: string
   closed: string
   duration: string
@@ -77,7 +78,9 @@ function HistoryRow({
       <button type='button' className='hist-row__btn' onClick={onToggle} aria-expanded={expanded}>
         <div className='hist-row__main'>
           <div className='hist-row__meta'>
-            <span className='hist-row__id mono'>{entry.id}</span>
+            <span className='hist-row__id mono' title={entry.id}>
+              {entry.displayId}
+            </span>
             <span className='hist-row__sep'>·</span>
             <span className='hist-row__date'>{entry.closed}</span>
             <span className='hist-row__sep'>·</span>

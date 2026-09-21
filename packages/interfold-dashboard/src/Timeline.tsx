@@ -39,13 +39,14 @@ function StageDot({ state }: { state: 'done' | 'active' | 'todo' }) {
 export default function Timeline({
   stages,
   currentStageIdx,
-  pollId,
+  pollLabel,
   density,
   onStageClick,
 }: {
   stages: Stage[]
   currentStageIdx: number
-  pollId: string
+  // Display text only — use the compact E3 id, not the full identity value.
+  pollLabel: string
   density: string
   onStageClick?: (i: number) => void
 }) {
@@ -59,7 +60,7 @@ export default function Timeline({
       <header className='timeline__head'>
         <div className='timeline__eyebrow'>
           <span className='dot-live' />
-          <span>Live · {pollId}</span>
+          <span>Live · {pollLabel}</span>
         </div>
         <h2 className='timeline__title'>Where this poll is in its lifecycle</h2>
       </header>
