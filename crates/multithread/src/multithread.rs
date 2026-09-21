@@ -241,8 +241,8 @@ mod task_group_tests {
     }
 
     #[test]
-    fn only_worker_proof_failures_retry() {
-        let request = ComputeRequest::zk(
+    fn proof_and_keyshare_worker_failures_retry() {
+        let zk_request = ComputeRequest::zk(
             ZkRequest::PkBfv(PkBfvProofRequest::new(
                 e3_utils::ArcBytes::default(),
                 BfvPreset::InsecureThreshold512,
@@ -253,15 +253,41 @@ mod task_group_tests {
         );
         let retryable = ComputeRequestError::new(
             ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed("oom".to_owned())),
-            request.clone(),
+            zk_request.clone(),
         );
         let invalid = ComputeRequestError::new(
             ComputeRequestErrorKind::Zk(ZkEventError::InvalidParams("bad input".to_owned())),
-            request,
+            zk_request.clone(),
         );
+        let trbfv = ComputeRequestError::new(
+            ComputeRequestErrorKind::TrBFV(TrBFVError::GenPkShareAndSkSss(TrBFVFailure::from(
+                "worker panic",
+            ))),
+            zk_request.clone(),
+        );
+        let threshold_decryption = ComputeRequestError::new(
+            ComputeRequestErrorKind::TrBFV(TrBFVError::CalculateThresholdDecryption(
+                TrBFVFailure::from("invalid threshold shares"),
+            )),
+            zk_request.clone(),
+        );
+        let keyshare_request = ComputeRequestKind::TrBFV(TrBFVRequest::GenEsiSss(
+            e3_trbfv::gen_esi_sss::GenEsiSssRequest {
+                trbfv_config: e3_trbfv::TrBFVConfig::new(
+                    e3_utils::ArcBytes::from_bytes(b"params"),
+                    3,
+                    1,
+                ),
+                e_sm_raw: e3_crypto::SensitiveBytes::from_encrypted(&[1]),
+            },
+        ));
 
         assert!(is_retryable_compute_error(&retryable));
+        assert!(is_retryable_compute_error(&trbfv));
         assert!(!is_retryable_compute_error(&invalid));
+        assert!(!is_retryable_compute_error(&threshold_decryption));
+        assert!(is_retryable_trbfv_request(&keyshare_request));
+        assert!(!is_retryable_trbfv_request(&zk_request.request));
     }
 
     #[test]
@@ -344,6 +370,8 @@ async fn handle_compute_request_event(
     let task_group = task_group(&task_scope, &msg.e3_id);
 
     let is_zk = matches!(&request_snapshot.request, ComputeRequestKind::Zk(_));
+    let retries_local_worker_failures =
+        is_zk || is_retryable_trbfv_request(&request_snapshot.request);
     let mut attempt = 1usize;
     let mut total_duration = Duration::ZERO;
 
@@ -386,14 +414,15 @@ async fn handle_compute_request_event(
                 return Ok(());
             }
             Err(pool_error) => {
-                if is_zk {
+                if retries_local_worker_failures {
                     let delay = compute_retry_delay(attempt)
-                        .expect("the ZK retry schedule always returns a capped delay");
+                        .expect("the compute retry schedule always returns a capped delay");
                     log_compute_retry(
                         &retry_logs,
                         &request_snapshot,
                         attempt,
                         delay,
+                        is_zk,
                         &format!("task pool error: {pool_error}"),
                     );
                     sleep(delay).await;
@@ -421,7 +450,7 @@ async fn handle_compute_request_event(
                         e3_id = %request_snapshot.e3_id,
                         request = %msg_string,
                         attempt,
-                        low_memory = true,
+                        low_memory = is_zk,
                         "Compute request recovered after a worker failure"
                     );
                 }
@@ -433,12 +462,13 @@ async fn handle_compute_request_event(
             }
             Err(compute_error) if is_retryable_compute_error(&compute_error) => {
                 let delay = compute_retry_delay(attempt)
-                    .expect("the ZK retry schedule always returns a capped delay");
+                    .expect("the compute retry schedule always returns a capped delay");
                 log_compute_retry(
                     &retry_logs,
                     &request_snapshot,
                     attempt,
                     delay,
+                    is_zk,
                     &bounded_error(&compute_error),
                 );
                 sleep(delay).await;
@@ -517,6 +547,24 @@ fn is_retryable_compute_error(error: &ComputeRequestError) -> bool {
     matches!(
         error.get_err(),
         ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(_))
+            | ComputeRequestErrorKind::TrBFV(
+                TrBFVError::GenPkShareAndSkSss(_)
+                    | TrBFVError::GenEsiSss(_)
+                    | TrBFVError::CalculateDecryptionKey(_)
+                    | TrBFVError::CalculateDecryptionShare(_)
+            )
+    )
+}
+
+fn is_retryable_trbfv_request(request: &ComputeRequestKind) -> bool {
+    matches!(
+        request,
+        ComputeRequestKind::TrBFV(
+            TrBFVRequest::GenPkShareAndSkSss(_)
+                | TrBFVRequest::GenEsiSss(_)
+                | TrBFVRequest::CalculateDecryptionKey(_)
+                | TrBFVRequest::CalculateDecryptionShare(_)
+        )
     )
 }
 
@@ -538,6 +586,7 @@ fn log_compute_retry(
     request: &ComputeRequest,
     completed_attempt: usize,
     delay: Duration,
+    low_memory_next_attempt: bool,
     reason: &str,
 ) {
     if let Some(suppressed_retries) = limiter.observe() {
@@ -546,10 +595,10 @@ fn log_compute_retry(
             request = %request,
             completed_attempt,
             retry_in_secs = delay.as_secs(),
-            low_memory_next_attempt = true,
+            low_memory_next_attempt,
             suppressed_retries,
             error = %reason,
-            "Compute worker failed; automatic low-memory recovery remains active"
+            "Compute worker failed; automatic recovery remains active"
         );
     } else {
         debug!(
@@ -852,7 +901,13 @@ fn handle_trbfv_request(
 ) -> (Result<ComputeResponse, ComputeRequestError>, Duration) {
     match trbfv_req {
         TrBFVRequest::GenPkShareAndSkSss(req) => timefunc("gen_pk_share_and_sk_sss", id, || {
-            let mut rng_guard = rng.lock().expect("SharedRng mutex poisoned");
+            let mut rng_guard = match rng.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => {
+                    warn!("Recovering the shared random generator after a TrBFV worker panic");
+                    poisoned.into_inner()
+                }
+            };
             match gen_pk_share_and_sk_sss(&mut *rng_guard, &cipher, req) {
                 Ok(o) => Ok(ComputeResponse::trbfv(
                     TrBFVResponse::GenPkShareAndSkSss(o),
@@ -868,7 +923,13 @@ fn handle_trbfv_request(
             }
         }),
         TrBFVRequest::GenEsiSss(req) => timefunc("gen_esi_sss", id, || {
-            let mut rng_guard = rng.lock().expect("SharedRng mutex poisoned");
+            let mut rng_guard = match rng.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => {
+                    warn!("Recovering the shared random generator after a TrBFV worker panic");
+                    poisoned.into_inner()
+                }
+            };
             match gen_esi_sss(&mut *rng_guard, &cipher, req) {
                 Ok(o) => Ok(ComputeResponse::trbfv(
                     TrBFVResponse::GenEsiSss(o),

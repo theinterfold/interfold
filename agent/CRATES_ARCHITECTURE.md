@@ -646,19 +646,21 @@ validator must not silently infer that extension.
 The production node defaults to two concurrent compute jobs and two reserved logical CPUs. Startup
 limits that request by the available logical CPUs and the detected host or cgroup memory limit. The
 memory calculation reserves 4 GiB for the node and host. It budgets 13 GiB for each prover job. The
-122 GiB E3-977 incident showed a maximum killed `bb` resident set of approximately 10.9 GiB.
-Startup fails before joining protocol work when the detected limit cannot cover the node reserve and
-one prover budget.
+122 GiB E3-977 incident showed a maximum killed `bb` resident set of approximately 10.9 GiB. Startup
+fails before joining protocol work when the detected limit cannot cover the node reserve and one
+prover budget.
 
 `TaskPool` applies one semaphore to ZK and TrBFV work. Each ZK request also belongs to a node-scoped
 E3 task group. A terminal E3 cancels queued work in that group. The cancellation does not affect a
 different node that shares the process during tests or embedding.
 
-A `ProofGenerationFailed` result or a ZK task-pool failure retries the exact request. The first
-retry adds Barretenberg `--slow_low_memory`. Delays increase from 5 seconds to 15 seconds, 60
-seconds, and five minutes. Five minutes is the maximum delay. Retries continue until success or
-task-group cancellation. A node-scoped limiter emits at most one retry warning per minute. Other
-attempts use DEBUG logs.
+A `ProofGenerationFailed` result or a ZK task-pool failure retries the exact request. The first ZK
+retry adds Barretenberg `--slow_low_memory`. The scheduler also retries local worker and task-pool
+failures for `GenPkShareAndSkSss`, `GenEsiSss`, `CalculateDecryptionKey`, and
+`CalculateDecryptionShare`. Delays increase from 5 seconds to 15 seconds, 60 seconds, and five
+minutes. Five minutes is the maximum delay. Retries continue until success or task-group
+cancellation. A node-scoped limiter emits at most one retry warning per minute. Other attempts use
+DEBUG logs.
 
 The prover removes each attempt directory after success or failure. Before a new process reuses a
 deterministic attempt path, it also removes files left by a hard process kill. It limits process
@@ -672,8 +674,10 @@ dispatches only the missing sequences from a partial bundle. It does not recompu
 proofs merely because their `ComputeResponse` events are older than the current snapshot cursor.
 
 Proof consumers retain their inputs and correlation IDs after a local worker error. EventStore
-replay and `ComputeEffectGate` can reissue the work after restart. Randomized TrBFV contributions do
-not use the ZK retry loop. Restart must reuse their durable responses exactly.
+replay and `ComputeEffectGate` can reissue the work after restart. A live randomized TrBFV request
+can retry only before it publishes a successful response. Failed attempts are not durable protocol
+contributions. After a successful response becomes durable, restart must reuse it exactly and must
+not run the randomized computation again.
 
 During replay, `ComputeEffectGate` also indexes successful durable `ComputeResponse` events by the
 semantic request that produced them. If a hydrated actor regenerates the same request with a new

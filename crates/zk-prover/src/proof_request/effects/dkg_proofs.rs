@@ -163,12 +163,11 @@ impl ProofRequestActor {
         }
 
         if self.pending_threshold[&e3_id].is_complete() {
-            let pending = self
-                .pending_threshold
-                .remove(&e3_id)
-                .expect("pending threshold work was just inserted");
-            self.completed_threshold.insert(e3_id);
-            self.publish_threshold_share_with_proofs(pending);
+            let pending = self.pending_threshold[&e3_id].clone();
+            if self.publish_threshold_share_with_proofs(pending) {
+                self.pending_threshold.remove(&e3_id);
+                self.completed_threshold.insert(e3_id);
+            }
         }
     }
 

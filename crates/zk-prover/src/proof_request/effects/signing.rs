@@ -58,9 +58,11 @@ impl ProofRequestActor {
                 pending.total_expected(),
                 e3_id
             );
-            let pending = self.pending_threshold.remove(&e3_id).unwrap();
-            self.completed_threshold.insert(e3_id);
-            self.publish_threshold_share_with_proofs(pending);
+            let pending = self.pending_threshold[&e3_id].clone();
+            if self.publish_threshold_share_with_proofs(pending) {
+                self.pending_threshold.remove(&e3_id);
+                self.completed_threshold.insert(e3_id);
+            }
         }
     }
 
@@ -81,48 +83,6 @@ impl ProofRequestActor {
                 error!("Failed to sign {:?} proof: {err}", proof_type);
                 None
             }
-        }
-    }
-
-    pub(in crate::actors::proof_request) fn fail_dkg_round(
-        &self,
-        e3_id: E3id,
-        ec: &EventContext<Sequenced>,
-        context: &str,
-    ) {
-        if let Err(err) = self.bus.publish(
-            E3Failed {
-                e3_id: e3_id.clone(),
-                failed_at_stage: E3Stage::CommitteeFinalized,
-                reason: FailureReason::DKGInvalidShares,
-            },
-            ec.clone(),
-        ) {
-            error!(
-                "Failed to publish E3Failed for {context} on E3 {}: {err}",
-                e3_id
-            );
-        }
-    }
-
-    pub(in crate::actors::proof_request) fn fail_decryption_round(
-        &self,
-        e3_id: E3id,
-        ec: &EventContext<Sequenced>,
-        context: &str,
-    ) {
-        if let Err(err) = self.bus.publish(
-            E3Failed {
-                e3_id: e3_id.clone(),
-                failed_at_stage: E3Stage::CiphertextReady,
-                reason: FailureReason::DecryptionInvalidShares,
-            },
-            ec.clone(),
-        ) {
-            error!(
-                "Failed to publish E3Failed for {context} on E3 {}: {err}",
-                e3_id
-            );
         }
     }
 

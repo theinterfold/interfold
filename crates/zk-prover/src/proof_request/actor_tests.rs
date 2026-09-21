@@ -9,9 +9,9 @@ use alloy::signers::local::PrivateKeySigner;
 use anyhow::Result;
 use e3_crypto::SensitiveBytes;
 use e3_events::{
-    CircuitName, ComputeRequestErrorKind, EncryptionKey, Event, GetEvents, HistoryCollector,
-    PkGenerationProofRequest, ShareComputationProofRequest, TakeEvents, ThresholdShare,
-    ThresholdSharePending, Unsequenced, ZkError,
+    CircuitName, ComputeRequestErrorKind, E3Failed, E3Stage, EncryptionKey, Event, FailureReason,
+    GetEvents, HistoryCollector, PkGenerationProofRequest, ShareComputationProofRequest,
+    ThresholdShare, ThresholdSharePending, Unsequenced, ZkError,
 };
 use e3_fhe_params::BfvPreset;
 use e3_test_helpers::get_common_setup;
@@ -21,12 +21,6 @@ use e3_zk_helpers::{computation::DkgInputType, CiphernodesCommitteeSize};
 
 fn test_ctx(data: impl Into<InterfoldEventData>) -> EventContext<Sequenced> {
     EventContext::<Unsequenced>::from(data.into()).sequence(0)
-}
-
-async fn next_event(history: &Addr<HistoryCollector<InterfoldEvent>>) -> Result<InterfoldEvent> {
-    let mut result = history.send(TakeEvents::<InterfoldEvent>::new(1)).await?;
-    assert!(!result.timed_out, "timed out waiting for an event");
-    Ok(result.events.pop().expect("expected one event"))
 }
 
 async fn assert_no_events(history: &Addr<HistoryCollector<InterfoldEvent>>) -> Result<()> {
@@ -80,29 +74,35 @@ async fn c0_compute_error_preserves_pending_work_without_failing_the_round() -> 
 }
 
 #[actix::test]
-async fn decryption_failure_helper_emits_e3_failed() -> Result<()> {
+async fn c0_signing_error_preserves_work_without_failing_the_round() -> Result<()> {
     let (bus, _rng, _seed, _params, _crp, _errors, history) = get_common_setup(None)?;
-    let actor = ProofRequestActor::new(&bus, PrivateKeySigner::random(), true);
-    let e3_id = E3id::new("45", 1);
-
-    actor.fail_decryption_round(
-        e3_id.clone(),
-        &test_ctx(E3Failed {
+    let mut actor = ProofRequestActor::new(&bus, PrivateKeySigner::random(), true);
+    let e3_id = E3id::new("not-a-uint256", 1);
+    let correlation_id = CorrelationId::new();
+    actor.pending.insert(
+        correlation_id,
+        PendingProofRequest {
             e3_id: e3_id.clone(),
-            failed_at_stage: E3Stage::CiphertextReady,
-            reason: FailureReason::DecryptionInvalidShares,
-        }),
-        "test decryption failure",
+            key: Arc::new(EncryptionKey::new(7, ArcBytes::from_bytes(&[1]))),
+        },
     );
 
-    let event = next_event(&history).await?;
-    assert!(matches!(
-        event.into_data(),
-        InterfoldEventData::E3Failed(data)
-            if data.e3_id == e3_id
-                && data.failed_at_stage == E3Stage::CiphertextReady
-                && data.reason == FailureReason::DecryptionInvalidShares
-    ));
+    actor.handle_pk_bfv_response(
+        &correlation_id,
+        Proof::new(
+            CircuitName::PkBfv,
+            ArcBytes::from_bytes(&[1]),
+            ArcBytes::from_bytes(&[2]),
+        ),
+        &test_ctx(E3Failed {
+            e3_id,
+            failed_at_stage: E3Stage::CommitteeFinalized,
+            reason: FailureReason::DKGInvalidShares,
+        }),
+    );
+
+    assert_no_events(&history).await?;
+    assert!(actor.pending.contains_key(&correlation_id));
 
     Ok(())
 }
@@ -211,7 +211,7 @@ fn recovered_threshold_proofs(e3_id: E3id, count: usize) -> HashMap<E3id, BTreeM
 #[actix::test]
 async fn restart_reuses_complete_persisted_threshold_proofs() -> Result<()> {
     let (bus, _rng, _seed, _params, _crp, _errors, history) = get_common_setup(None)?;
-    let e3_id = E3id::new("recovered-threshold", 1);
+    let e3_id = E3id::new("45", 1);
     let mut actor = ProofRequestActor::new(&bus, PrivateKeySigner::random(), true)
         .with_recovered_inner_proofs(recovered_threshold_proofs(e3_id.clone(), 3));
     let event = threshold_share_pending(e3_id.clone(), 0x11);

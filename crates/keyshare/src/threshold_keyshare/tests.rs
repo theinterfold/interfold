@@ -12,14 +12,18 @@ use anyhow::Result;
 use e3_crypto::Cipher;
 use e3_data::{AutoPersist, DataStore, InMemStore, Persistable, Repository};
 use e3_events::{
-    hlc_factory::HlcFactory, AggregatorChanged, BusHandle, CircuitName, ComputeRequestKind,
-    DecryptionKeyShared, DkgCoordination, DkgCoordinationKind, DkgDealer, E3Stage, E3id,
-    EffectsEnabled, EncryptionKey, EncryptionKeyCreated, Event, EventBus, EventBusConfig,
-    EventSource, FailureReason, GetEvents, HistoryCollector, InterfoldEvent, InterfoldEventData,
-    Proof, ProofPayload, ProofType, Sequencer, SignedProofPayload, StoreEventRequested,
-    StoreEventResponse, TakeEvents, Unsequenced, VerificationKind,
+    hlc_factory::HlcFactory, AggregatorChanged, BusHandle, CircuitName, ComputeRequest,
+    ComputeRequestError, ComputeRequestErrorKind, ComputeRequestKind, DecryptionKeyShared,
+    DkgCoordination, DkgCoordinationKind, DkgDealer, E3Stage, E3id, EffectsEnabled, EncryptionKey,
+    EncryptionKeyCreated, Event, EventBus, EventBusConfig, EventSource, FailureReason, GetEvents,
+    HistoryCollector, InterfoldEvent, InterfoldEventData, Proof, ProofPayload, ProofType,
+    Sequencer, SignedProofPayload, StoreEventRequested, StoreEventResponse, TakeEvents,
+    Unsequenced, VerificationKind,
 };
 use e3_fhe_params::DEFAULT_BFV_PRESET;
+use e3_trbfv::{
+    gen_esi_sss::GenEsiSssRequest, TrBFVConfig, TrBFVError, TrBFVFailure, TrBFVRequest,
+};
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -975,6 +979,46 @@ async fn start_actor() -> Result<(
     Repository<ThresholdKeyshareState>,
 )> {
     start_actor_with_state(KeyshareState::Init).await
+}
+
+#[actix::test]
+async fn local_trbfv_error_does_not_fail_the_shared_e3() -> Result<()> {
+    let (actor, history, e3_id, repo) = start_actor().await?;
+    let error = ComputeRequestError::new(
+        ComputeRequestErrorKind::TrBFV(TrBFVError::GenEsiSss(TrBFVFailure::from(
+            "local worker failure",
+        ))),
+        ComputeRequest::trbfv(
+            TrBFVRequest::GenEsiSss(GenEsiSssRequest {
+                trbfv_config: TrBFVConfig::new(ArcBytes::from_bytes(b"params"), 3, 1),
+                e_sm_raw: SensitiveBytes::from_encrypted(&[1]),
+            }),
+            CorrelationId::new(),
+            e3_id,
+        ),
+    );
+    let event = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+        error.into(),
+        None,
+        1,
+        None,
+        EventSource::Local,
+    )
+    .into_sequenced(1);
+
+    actor.send(event).await?;
+    actix::clock::sleep(std::time::Duration::from_millis(25)).await;
+
+    assert!(history
+        .send(GetEvents::<InterfoldEvent>::new())
+        .await?
+        .iter()
+        .all(|event| !matches!(event.get_data(), InterfoldEventData::E3Failed(_))));
+    assert!(matches!(
+        repo.read().await?.expect("persisted keyshare state").state,
+        KeyshareState::Init
+    ));
+    Ok(())
 }
 
 async fn next_event(history: &Addr<HistoryCollector<InterfoldEvent>>) -> Result<InterfoldEvent> {

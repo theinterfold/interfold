@@ -209,11 +209,9 @@ different response for the same stage fails closed.
     ├─ ThresholdKeyshare tracks the correlation id for both TrBFV requests:
     │   ├─ `GenPkShareAndSkSss`
     │   └─ `GenEsiSss`
-    │   → If the worker returns `ComputeRequestError` for either request,
-    │     `ThresholdKeyshare` now emits `E3Failed {
-    │       failed_at_stage: CommitteeFinalized,
-    │       reason: DKGInvalidShares
-    │     }` and stops instead of remaining stuck in `GeneratingThresholdShare`
+    │   → A local worker or task-pool failure retries the same live request.
+    │   → Retry warnings are limited to one per minute.
+    │   → The node does not report local failure as invalid committee data.
 
 ### Step 5: Encrypt & Broadcast Shares (with C1, C2, C3 Proofs)
 
@@ -221,11 +219,8 @@ different response for the same stage fails closed.
 Both GenPkShareAndSkSss and GenEsiSss complete
     │
     ├─ `ThresholdKeyshare` tracks the `CalculateDecryptionKey` correlation id:
-    │   → `ComputeRequestError` for this request now emits
-    │     `E3Failed {
-    │       failed_at_stage: CommitteeFinalized,
-    │       reason: DKGInvalidShares
-    │     }` and stops before C4 proof dispatch
+    │   → A local worker or task-pool failure retries the same request.
+    │   → An unexpected terminal local error is logged without reporting invalid shares.
 │
 ├─ handle_shares_generated():
 │   │
@@ -348,13 +343,13 @@ retries the exact request until the E3 becomes terminal. A canonical `KeyPublish
 terminal E3 event removes the saved node-fold data. `PublicKeyAggregator` and
 `ThresholdPlaintextAggregator` dispatch the aggregator requests instead of pairwise folding.
 
-**Failure boundary:** A local prover or verifier process failure is not proof that a peer supplied
-invalid data. The compute scheduler retries `ProofGenerationFailed` requests. Attempts after the
-first use Barretenberg low-memory mode. Pending proof inputs and correlation IDs remain available
-for restart replay. A local worker failure does not emit `DKGInvalidShares` or
-`DecryptionInvalidShares`. Cryptographically invalid proofs and incomplete proof sets keep their
-existing protocol-failure paths. Local proof-signing failures also keep their explicit terminal
-failure paths.
+**Failure boundary:** A local prover, verifier, signer, parameter builder, attestation builder, or
+worker failure is not proof that a peer supplied invalid data. The compute scheduler retries
+`ProofGenerationFailed` and keyshare-owned TrBFV work. ZK attempts after the first use Barretenberg
+low-memory mode. Pending inputs and correlation IDs remain available for restart replay. A completed
+NodeFold waits for its request-time attestation context when that context is late. These local
+failures do not emit `DKGInvalidShares` or `DecryptionInvalidShares`. Cryptographically invalid
+proofs and incomplete proof sets keep their protocol-failure paths.
 
 ### Step 6: Collect Threshold Shares (with C2/C3 Verification)
 
@@ -742,8 +737,8 @@ phase.
 │   │     ├─ Tracks the in-flight correlation id
 │   │     ├─ A local ComputeRequestError preserves the aggregation input and correlation ID
 │   │     │   for automatic retry or restart replay
-│   │     └─ A mixed Some/None honest NodeFold-proof set is treated as a terminal DKG
-│   │         failure instead of only surfacing as InterfoldError telemetry
+│   │     └─ A mixed Some/None honest NodeFold-proof set is a local configuration mismatch.
+│   │         The aggregator keeps its inputs and does not report invalid committee shares.
 │   │
 │   └─ 6. Publish PublicKeyAggregated {
 │         e3_id, pubkey: aggregate_pk, pk_commitment, nodes,
@@ -1087,11 +1082,8 @@ InterfoldSolReader decodes CiphertextOutputPublished event
     │   │  └─────────────────────────────────────────────────────┘
       │
       ├─ `ThresholdKeyshare` tracks the `CalculateDecryptionShare` correlation id:
-      │   → `ComputeRequestError` for this request now emits
-      │     `E3Failed {
-      │       failed_at_stage: CiphertextReady,
-      │       reason: DecryptionInvalidShares
-      │     }` and stops before C6 proof generation
+      │   → A local worker or task-pool failure retries the same request.
+      │   → The node does not report a local failure as invalid decryption shares.
     │
     ├─ REQUEST C6 PROOF:
     │   Publish ShareDecryptionProofPending {
@@ -1376,22 +1368,24 @@ job limit when the host or cgroup memory limit cannot support two 13 GiB prover 
 higher job limit remains subject to the same CPU and memory limits. Startup fails before protocol
 participation when the detected limit cannot cover the 4 GiB node reserve and one prover budget.
 
-| Failure scenario                                                       | Detection                                                                      | Recovery                                                                                                    | Verification                                                                                    |
-| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| The configured job count exceeds the CPU or memory limit.              | Startup computes CPU and memory job limits.                                    | The scheduler uses the smallest safe limit. It refuses startup if no prover fits.                            | `memory::tests::*` and the configuration default test cover 16 GiB, 32 GiB, and 122 GiB limits. |
-| `bb prove` exits, receives a signal, or reports an allocation failure. | `ZkProver` returns `ProofGenerationFailed`.                                    | The scheduler retries the same request. Attempts after the first use `--slow_low_memory`.                   | The retry-policy and low-memory flag tests cover this path.                                     |
-| `bb verify` does not report the explicit invalid-proof result.         | `ZkProver` returns a verifier-process error instead of `false`.                | The scheduler retries locally and does not accuse the proof sender.                                         | Prover and share-verification tests separate process errors from invalid proofs.                |
-| A Rayon task panics or its result channel closes.                      | `TaskPool` returns a structured pool error.                                    | The scheduler retries ZK work with the same E3 task group.                                                  | Task-pool panic and retry-policy tests cover this path.                                         |
-| Resource pressure continues.                                           | The retry delay reaches a five-minute cap.                                     | Retries continue until success or a terminal E3 event cancels the task group.                               | The capped schedule and task-group cancellation tests cover this path.                          |
-| Many proof requests fail together.                                     | A node-scoped retry-log limiter counts suppressed messages.                    | The node emits at most one retry warning per minute. Other attempts use DEBUG logs.                         | The retry-log limiter test verifies the warning window and count.                               |
-| The process exits during proof work.                                   | The supervisor restarts the node.                                              | EventStore replay restores the exact pending input. `ComputeEffectGate` reissues it after `EffectsEnabled`. | Proof actors test that local errors retain pending inputs and correlation IDs.                  |
-| The process restarts after a proof result was already durable.         | Node-proof recovery loads proofs by canonical sequence, including completed folds. | The proof actor republishes a complete recovered share bundle or computes only missing sequences.        | Unit tests cover full and partial recovery. A full-proof restart run confirms no recomputation. |
-| A proof attempt leaves output files.                                   | A per-job directory guard observes scope exit or finds a stale restart path.    | The prover removes the attempt directory after exit and before a restarted process reuses that path.         | Prover tests cover normal cleanup and a stale directory after process restart.                   |
-| A pre-v0.16 snapshot has stale registered-node membership.             | `interfold node validate` compares both sortition projections with EventStore. | `interfold node validate --repair` rebuilds only derived membership and missing member history.             | Validator tests cover detection, reconstruction, preservation, and removal.                     |
+| Failure scenario                                                       | Detection                                                                          | Recovery                                                                                                    | Verification                                                                                    |
+| ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| The configured job count exceeds the CPU or memory limit.              | Startup computes CPU and memory job limits.                                        | The scheduler uses the smallest safe limit. It refuses startup if no prover fits.                           | `memory::tests::*` and the configuration default test cover 16 GiB, 32 GiB, and 122 GiB limits. |
+| `bb prove` exits, receives a signal, or reports an allocation failure. | `ZkProver` returns `ProofGenerationFailed`.                                        | The scheduler retries the same request. Attempts after the first use `--slow_low_memory`.                   | The retry-policy and low-memory flag tests cover this path.                                     |
+| `bb verify` does not report the explicit invalid-proof result.         | `ZkProver` returns a verifier-process error instead of `false`.                    | The scheduler retries locally and does not accuse the proof sender.                                         | Prover and share-verification tests separate process errors from invalid proofs.                |
+| A keyshare-owned TrBFV operation returns a local error.                | The worker returns a typed TrBFV error.                                            | The scheduler retries the same live request before any successful response becomes durable.                 | Retry-policy and keyshare-routing tests cover this path.                                        |
+| A Rayon task panics or its result channel closes.                      | `TaskPool` returns a structured pool error.                                        | The scheduler retries ZK and keyshare-owned TrBFV work with the same E3 task group.                         | Task-pool panic and retry-policy tests cover this path.                                         |
+| Resource pressure continues.                                           | The retry delay reaches a five-minute cap.                                         | Retries continue until success or a terminal E3 event cancels the task group.                               | The capped schedule and task-group cancellation tests cover this path.                          |
+| Many proof requests fail together.                                     | A node-scoped retry-log limiter counts suppressed messages.                        | The node emits at most one retry warning per minute. Other attempts use DEBUG logs.                         | The retry-log limiter test verifies the warning window and count.                               |
+| The process exits during proof work.                                   | The supervisor restarts the node.                                                  | EventStore replay restores the exact pending input. `ComputeEffectGate` reissues it after `EffectsEnabled`. | Proof actors test that local errors retain pending inputs and correlation IDs.                  |
+| The process restarts after a proof result was already durable.         | Node-proof recovery loads proofs by canonical sequence, including completed folds. | The proof actor republishes a complete recovered share bundle or computes only missing sequences.           | Unit tests cover full and partial recovery. A full-proof restart run confirms no recomputation. |
+| A proof attempt leaves output files.                                   | A per-job directory guard observes scope exit or finds a stale restart path.       | The prover removes the attempt directory after exit and before a restarted process reuses that path.        | Prover tests cover normal cleanup and a stale directory after process restart.                  |
+| A pre-v0.16 snapshot has stale registered-node membership.             | `interfold node validate` compares both sortition projections with EventStore.     | `interfold node validate --repair` rebuilds only derived membership and missing member history.             | Validator tests cover detection, reconstruction, preservation, and removal.                     |
 
-The retry path does not regenerate randomized TrBFV contributions. Their durable responses must be
-reused exactly after restart. A canonical E3 timeout remains the authority when local recovery does
-not finish before the protocol deadline.
+A failed live randomized TrBFV attempt can retry because it has not published a protocol
+contribution. After a successful response becomes durable, replay reuses that exact response and
+does not regenerate it. A canonical E3 timeout remains the authority when local recovery does not
+finish before the protocol deadline.
 
 ### Proof Infrastructure
 

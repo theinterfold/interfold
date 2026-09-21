@@ -54,11 +54,11 @@ impl ProofRequestActor {
         correlation_id: &CorrelationId,
         proof: Proof,
     ) {
-        let Some(e3_id) = self.pk_aggregation_correlation.remove(correlation_id) else {
+        let Some(e3_id) = self.pk_aggregation_correlation.get(correlation_id).cloned() else {
             return;
         };
 
-        let Some(pending) = self.pending_pk_aggregation.remove(&e3_id) else {
+        let Some(pending) = self.pending_pk_aggregation.get(&e3_id).cloned() else {
             error!(
                 "No pending pk aggregation proof for E3 {} — orphan correlation",
                 e3_id
@@ -67,10 +67,12 @@ impl ProofRequestActor {
         };
 
         let Some(signed) = self.sign_proof(&e3_id, ProofType::C5PkAggregation, proof) else {
-            error!("Failed to sign C5 proof — PkAggregationProofSigned will not be published");
-            self.fail_dkg_round(e3_id, &pending.ec, "C5 signing error");
+            error!("Failed to sign the local C5 proof; pending work is preserved");
             return;
         };
+
+        self.pk_aggregation_correlation.remove(correlation_id);
+        self.pending_pk_aggregation.remove(&e3_id);
 
         info!(
             "C5 proof signed for E3 {} (signer: {})",
@@ -136,11 +138,11 @@ impl ProofRequestActor {
         correlation_id: &CorrelationId,
         proofs: Vec<Proof>,
     ) {
-        let Some(e3_id) = self.aggregation_correlation.remove(correlation_id) else {
+        let Some(e3_id) = self.aggregation_correlation.get(correlation_id).cloned() else {
             return;
         };
 
-        let Some(pending) = self.pending_aggregation.remove(&e3_id) else {
+        let Some(pending) = self.pending_aggregation.get(&e3_id).cloned() else {
             error!(
                 "No pending aggregation proof for E3 {} — orphan correlation",
                 e3_id
@@ -154,12 +156,14 @@ impl ProofRequestActor {
             let Some(signed) =
                 self.sign_proof(&e3_id, ProofType::C7DecryptedSharesAggregation, proof)
             else {
-                error!("Failed to sign C7 proof — AggregationProofSigned will not be published");
-                self.fail_decryption_round(e3_id.clone(), &pending.ec, "C7 signing error");
+                error!("Failed to sign the local C7 proof; pending work is preserved");
                 return;
             };
             signed_proofs.push(signed);
         }
+
+        self.aggregation_correlation.remove(correlation_id);
+        self.pending_aggregation.remove(&e3_id);
 
         info!(
             "All C7 proofs signed for E3 {} (signer: {})",

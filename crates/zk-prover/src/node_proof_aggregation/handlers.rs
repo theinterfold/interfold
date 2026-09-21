@@ -3,6 +3,7 @@
 //! Event routing and compute-result handling.
 
 use super::*;
+use e3_events::E3Stage;
 
 impl Actor for NodeProofAggregator {
     type Context = Context<Self>;
@@ -117,8 +118,12 @@ impl NodeProofAggregator {
     ) {
         let (msg, _) = msg.into_components();
         if msg.schema_version == DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION {
+            let e3_id = msg.e3_id;
             self.dkg_fold_attestation_contexts_by_e3
-                .insert(msg.e3_id, msg.context);
+                .insert(e3_id.clone(), msg.context);
+            if let Some(proof) = self.pending_fold_proofs.remove(&e3_id) {
+                self.finish_node_dkg_fold(e3_id, proof);
+            }
         }
     }
 

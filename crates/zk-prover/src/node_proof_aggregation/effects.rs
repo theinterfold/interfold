@@ -50,28 +50,20 @@ impl NodeProofAggregator {
         let total_expected = NodeDkgFoldMeta::total_expected_for(sk_enc_count, e_sm_enc_count);
 
         let committee = msg.proof_request.committee_size.values();
-        let (committee_n, committee_h, n_moduli) =
-            match build_pair_for_preset(msg.proof_request.params_preset) {
-                Ok((threshold_params, _)) => {
-                    (committee.n, committee.h, threshold_params.moduli().len())
-                }
-                Err(e) => {
-                    self.pending_inner_proofs.remove(&e3_id);
-                    error!(
-                        "NodeProofAggregator: build_pair_for_preset failed for E3 {}: {e}",
+        let (committee_n, committee_h, n_moduli) = match build_pair_for_preset(
+            msg.proof_request.params_preset,
+        ) {
+            Ok((threshold_params, _)) => {
+                (committee.n, committee.h, threshold_params.moduli().len())
+            }
+            Err(e) => {
+                error!(
+                        "NodeProofAggregator: local parameter construction failed for E3 {}: {e}; pending inputs remain available for restart",
                         e3_id
                     );
-                    let _ = self.bus.publish(
-                        E3Failed {
-                            e3_id: e3_id.clone(),
-                            failed_at_stage: E3Stage::CommitteeFinalized,
-                            reason: FailureReason::DKGInvalidShares,
-                        },
-                        ec.clone(),
-                    );
-                    return;
-                }
-            };
+                return;
+            }
+        };
 
         let meta = NodeDkgFoldMeta {
             party_id: msg.full_share.party_id,
@@ -268,9 +260,25 @@ impl NodeProofAggregator {
             return;
         };
 
-        let Some(state) = self.states.remove(&e3_id) else {
+        let Some(state) = self.states.get_mut(&e3_id) else {
             error!(
                 "NodeProofAggregator: NodeDkgFold response for unknown E3 {}",
+                e3_id
+            );
+            return;
+        };
+        state.fold_correlation = None;
+        self.finish_node_dkg_fold(e3_id, proof);
+    }
+
+    pub(in crate::actors::node_proof_aggregator) fn finish_node_dkg_fold(
+        &mut self,
+        e3_id: E3id,
+        proof: Proof,
+    ) {
+        let Some(state) = self.states.get(&e3_id) else {
+            error!(
+                "NodeProofAggregator: completed NodeDkgFold for unknown E3 {}",
                 e3_id
             );
             return;
@@ -280,83 +288,71 @@ impl NodeProofAggregator {
         let committee_n = state.meta.committee_n;
         let committee_h = state.meta.committee_h;
         let n_moduli = state.meta.n_moduli;
+        let ec = state.last_ec.clone();
 
-        let fold_attestation = match extract_node_fold_agg_commits(
+        let (extracted_party, commits) = match extract_node_fold_agg_commits(
             &proof,
             committee_n,
             committee_h,
             n_moduli,
         ) {
-            Ok((extracted_party, commits)) => {
-                if extracted_party != party_id {
-                    error!(
-                        e3_id = %e3_id,
-                        expected_party_id = party_id,
-                        extracted_party_id = extracted_party,
-                        "NodeFold public party_id does not match sortition party_id"
-                    );
-                    None
-                } else if let Some(context) = self.dkg_fold_attestation_context_for(&e3_id) {
-                    let payload = DkgFoldAttestationPayload {
-                        e3_id: e3_id.clone(),
-                        verifying_contract: context.verifying_contract,
-                        registry: context.registry,
-                        party_id,
-                        agg_commits: commits,
-                    };
-                    match SignedDkgFoldAttestation::sign(payload, &self.signer) {
-                        Ok(signed) => Some(signed),
-                        Err(e) => {
-                            error!(
-                                e3_id = %e3_id,
-                                party_id,
-                                error = %e,
-                                "failed to sign DkgFoldAttestation"
-                            );
-                            None
-                        }
-                    }
-                } else {
-                    error!(
-                        e3_id = %e3_id,
-                        party_id,
-                        "NodeProofAggregator: cannot sign DkgFoldAttestation — CiphernodeRegistry.dkgFoldAttestationVerifier not configured"
-                    );
-                    None
-                }
-            }
+            Ok(result) => result,
             Err(e) => {
                 error!(
                     e3_id = %e3_id,
                     party_id,
                     error = %e,
-                    "failed to extract sk_agg/esm_agg from NodeFold proof"
+                    "Failed to extract local NodeFold commitments; saved inputs remain available for restart"
                 );
-                None
+                return;
             }
         };
 
-        if fold_attestation.is_none() {
+        if extracted_party != party_id {
             error!(
                 e3_id = %e3_id,
-                party_id,
-                "NodeDkgFold succeeded but fold attestation missing — failing E3"
+                expected_party_id = party_id,
+                extracted_party_id = extracted_party,
+                "Local NodeFold party does not match the roster; invalid committee data was not reported"
             );
-            if let Err(err) = self.bus.publish(
-                E3Failed {
-                    e3_id: e3_id.clone(),
-                    failed_at_stage: E3Stage::CommitteeFinalized,
-                    reason: FailureReason::DKGInvalidShares,
-                },
-                state.last_ec,
-            ) {
-                error!(
-                    "NodeProofAggregator: failed to publish E3Failed for E3 {}: {err}",
-                    e3_id
-                );
-            }
             return;
         }
+
+        let Some(context) = self.dkg_fold_attestation_context_for(&e3_id) else {
+            warn!(
+                e3_id = %e3_id,
+                party_id,
+                "Holding the completed NodeFold until its attestation context is available"
+            );
+            self.pending_fold_proofs.insert(e3_id, proof);
+            return;
+        };
+
+        let payload = DkgFoldAttestationPayload {
+            e3_id: e3_id.clone(),
+            verifying_contract: context.verifying_contract,
+            registry: context.registry,
+            party_id,
+            agg_commits: commits,
+        };
+        let fold_attestation = match SignedDkgFoldAttestation::sign(payload, &self.signer) {
+            Ok(signed) => signed,
+            Err(e) => {
+                error!(
+                    e3_id = %e3_id,
+                    party_id,
+                    error = %e,
+                    "Failed to sign the local NodeFold attestation; saved work remains available for restart"
+                );
+                self.pending_fold_proofs.insert(e3_id, proof);
+                return;
+            }
+        };
+
+        let Some(state) = self.states.remove(&e3_id) else {
+            return;
+        };
+        self.pending_fold_proofs.remove(&e3_id);
 
         info!(
             "NodeProofAggregator: NodeDkgFold complete for E3 {} party {} — publishing DKGRecursiveAggregationComplete",
@@ -367,16 +363,23 @@ impl NodeProofAggregator {
             e3_id: e3_id.clone(),
             party_id,
             aggregated_proof: Some(proof),
-            fold_attestation,
+            fold_attestation: Some(fold_attestation),
         };
-        if let Err(err) = self.persist_completed(&output, &state.last_ec) {
+        if let Err(err) = self.persist_completed(&output, &ec) {
             error!("NodeProofAggregator: could not persist completed fold for E3 {e3_id}: {err}");
             let mut state = state;
             state.fold_correlation = None;
+            self.pending_fold_proofs.insert(
+                e3_id.clone(),
+                output
+                    .aggregated_proof
+                    .clone()
+                    .expect("completed fold contains its proof"),
+            );
             self.states.insert(e3_id, state);
             return;
         }
-        if let Err(err) = self.bus.publish(output, state.last_ec) {
+        if let Err(err) = self.bus.publish(output, ec) {
             error!(
                 "NodeProofAggregator: failed to publish DKGRecursiveAggregationComplete for E3 {}: {err}",
                 e3_id

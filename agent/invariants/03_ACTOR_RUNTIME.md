@@ -91,6 +91,9 @@ every section.
   rebuilt collector restores its prerequisite state, hold the response until that state is ready; do
   not dispatch a replacement computation that would produce different shares and proofs. —
   `flow-trace/04`; INDEX concern #57
+- A live randomized TrBFV request can retry only before it publishes a successful response. A failed
+  attempt is not a durable protocol contribution. After success becomes durable, replay must reuse
+  that exact response and must not regenerate the contribution. — `flow-trace/04`; INDEX concern #57
 - A replayed C1 verification result can arrive before replayed keyshares restore `VerifyingC1`. Hold
   at most one result, bind it to the saved selected roster, and apply it when those inputs are
   ready. Never apply it to a replacement roster. A result received after C1 is complete is an

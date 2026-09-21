@@ -8,7 +8,7 @@ impl ProofRequestActor {
     pub(in crate::actors::proof_request) fn publish_threshold_share_with_proofs(
         &mut self,
         pending: PendingThresholdProofs,
-    ) {
+    ) -> bool {
         let e3_id = &pending.e3_id;
         let party_id = pending.full_share.party_id;
         let ec = &pending.ec;
@@ -19,9 +19,8 @@ impl ProofRequestActor {
             ProofType::C1PkGeneration,
             pending.pk_generation_proof.expect("checked"),
         ) else {
-            error!("Failed to sign C1 proof — shares will not be published");
-            self.fail_dkg_round(e3_id.clone(), ec, "C1 signing error");
-            return;
+            error!("Failed to sign the local C1 proof; pending work is preserved");
+            return false;
         };
 
         // Sign C2a (SkShareComputation)
@@ -30,9 +29,8 @@ impl ProofRequestActor {
             ProofType::C2aSkShareComputation,
             pending.sk_share_computation_proof.expect("checked"),
         ) else {
-            error!("Failed to sign C2a proof — shares will not be published");
-            self.fail_dkg_round(e3_id.clone(), ec, "C2a signing error");
-            return;
+            error!("Failed to sign the local C2a proof; pending work is preserved");
+            return false;
         };
 
         // Sign C2b (ESmShareComputation)
@@ -41,9 +39,8 @@ impl ProofRequestActor {
             ProofType::C2bESmShareComputation,
             pending.e_sm_share_computation_proof.expect("checked"),
         ) else {
-            error!("Failed to sign C2b proof — shares will not be published");
-            self.fail_dkg_round(e3_id.clone(), ec, "C2b signing error");
-            return;
+            error!("Failed to sign the local C2b proof; pending work is preserved");
+            return false;
         };
 
         let Some(signed_c3a_map) = self.sign_and_group_proofs(
@@ -54,9 +51,8 @@ impl ProofRequestActor {
                 .iter()
                 .map(|((recipient, _row), proof)| (*recipient, proof.clone())),
         ) else {
-            error!("Failed to sign C3a proofs — shares will not be published");
-            self.fail_dkg_round(e3_id.clone(), ec, "C3a signing error");
-            return;
+            error!("Failed to sign the local C3a proofs; pending work is preserved");
+            return false;
         };
 
         let Some(signed_c3b_map) = self.sign_and_group_proofs(
@@ -67,9 +63,8 @@ impl ProofRequestActor {
                 .iter()
                 .map(|((_esi, recipient, _row), proof)| (*recipient, proof.clone())),
         ) else {
-            error!("Failed to sign C3b proofs — shares will not be published");
-            self.fail_dkg_round(e3_id.clone(), ec, "C3b signing error");
-            return;
+            error!("Failed to sign the local C3b proofs; pending work is preserved");
+            return false;
         };
 
         info!(
@@ -194,5 +189,7 @@ impl ProofRequestActor {
                 }
             }
         }
+
+        true
     }
 }

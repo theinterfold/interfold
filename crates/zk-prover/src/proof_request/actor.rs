@@ -15,12 +15,12 @@ use e3_events::{
     AggregationProofPending, AggregationProofSigned, BusHandle, ComputeRequest,
     ComputeRequestError, ComputeResponse, ComputeResponseKind, CorrelationId, DKGInnerProofReady,
     DecryptionKeyShared, DecryptionShareProofSigned, DecryptionShareProofsPending,
-    DecryptionshareCreated, DkgProofSigned, E3Failed, E3Stage, E3id, EncryptionKeyCreated,
-    EncryptionKeyPending, EventContext, EventPublisher, EventSubscriber, EventType, FailureReason,
-    InterfoldEvent, InterfoldEventData, PkAggregationProofPending, PkAggregationProofSigned,
-    PkBfvProofRequest, PkGenerationProofSigned, Proof, ProofPayload, ProofType,
-    ProofVerificationPassed, Sequenced, ShareDecryptionProofPending, SignedProofPayload,
-    ThresholdShareCreated, ThresholdSharePending, TypedEvent, ZkRequest, ZkResponse,
+    DecryptionshareCreated, DkgProofSigned, E3id, EncryptionKeyCreated, EncryptionKeyPending,
+    EventContext, EventPublisher, EventSubscriber, EventType, InterfoldEvent, InterfoldEventData,
+    PkAggregationProofPending, PkAggregationProofSigned, PkBfvProofRequest,
+    PkGenerationProofSigned, Proof, ProofPayload, ProofType, ProofVerificationPassed, Sequenced,
+    ShareDecryptionProofPending, SignedProofPayload, ThresholdShareCreated, ThresholdSharePending,
+    TypedEvent, ZkRequest, ZkResponse,
 };
 use e3_utils::NotifySync;
 use tracing::{debug, error, info, trace, warn};

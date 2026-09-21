@@ -117,8 +117,10 @@ impl ProofRequestActor {
                 "All C4 proofs complete for E3 {} — signing and publishing DecryptionKeyShared",
                 e3_id
             );
-            let pending = self.pending_decryption.remove(&e3_id).unwrap();
-            self.sign_and_publish_decryption_key_shared(&e3_id, pending);
+            let pending = self.pending_decryption[&e3_id].clone();
+            if self.sign_and_publish_decryption_key_shared(&e3_id, pending) {
+                self.pending_decryption.remove(&e3_id);
+            }
         }
     }
 
@@ -127,16 +129,15 @@ impl ProofRequestActor {
         &mut self,
         e3_id: &E3id,
         pending: PendingDecryptionProofs,
-    ) {
+    ) -> bool {
         // Sign C4a (SK decryption proof)
         let Some(signed_sk) = self.sign_proof(
             e3_id,
             ProofType::C4aSkShareDecryption,
             pending.sk_proof.expect("checked in is_complete"),
         ) else {
-            error!("Failed to sign C4a SK proof — DecryptionKeyShared will not be published");
-            self.fail_dkg_round(e3_id.clone(), &pending.ec, "C4a signing error");
-            return;
+            error!("Failed to sign the local C4a proof; pending work is preserved");
+            return false;
         };
 
         // Sign C4b (ESM decryption proofs) in esi_idx order
@@ -150,11 +151,10 @@ impl ProofRequestActor {
             let Some(signed) = self.sign_proof(e3_id, ProofType::C4bESmShareDecryption, proof)
             else {
                 error!(
-                    "Failed to sign C4b ESM proof [{}] — DecryptionKeyShared will not be published",
+                    "Failed to sign the local C4b proof [{}]; pending work is preserved",
                     idx
                 );
-                self.fail_dkg_round(e3_id.clone(), &pending.ec, "C4b signing error");
-                return;
+                return false;
             };
             signed_esms.push(signed);
         }
@@ -179,5 +179,7 @@ impl ProofRequestActor {
         ) {
             error!("Failed to publish DecryptionKeyShared: {err}");
         }
+
+        true
     }
 }

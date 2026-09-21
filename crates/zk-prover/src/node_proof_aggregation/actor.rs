@@ -15,11 +15,10 @@ use e3_data::Repositories;
 use e3_events::{
     BusHandle, ComputeRequest, ComputeRequestError, ComputeResponse, ComputeResponseKind,
     CorrelationId, DKGInnerProofReady, DKGRecursiveAggregationComplete, DkgFoldAttestationContext,
-    DkgFoldAttestationContextEstablished, DkgFoldAttestationPayload, E3Failed, E3Stage,
-    E3StageChanged, E3id, EventContext, EventPublisher, EventSubscriber, EventType, FailureReason,
-    InterfoldEvent, InterfoldEventData, Proof, Sequenced, SignedDkgFoldAttestation,
-    ThresholdSharePending, TypedEvent, ZkRequest, ZkResponse,
-    DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
+    DkgFoldAttestationContextEstablished, DkgFoldAttestationPayload, E3StageChanged, E3id,
+    EventContext, EventPublisher, EventSubscriber, EventType, InterfoldEvent, InterfoldEventData,
+    Proof, Sequenced, SignedDkgFoldAttestation, ThresholdSharePending, TypedEvent, ZkRequest,
+    ZkResponse, DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
 };
 use e3_fhe_params::build_pair_for_preset;
 use tracing::{debug, error, info, warn};
@@ -40,6 +39,8 @@ pub struct NodeProofAggregator {
     dkg_fold_attestation_contexts_by_chain: HashMap<u64, Option<DkgFoldAttestationContext>>,
     states: HashMap<E3id, DkgProofCollectionState>,
     fold_correlation: HashMap<CorrelationId, E3id>,
+    /// A completed local fold waiting for its request-time attestation context.
+    pending_fold_proofs: HashMap<E3id, Proof>,
     pending_inner_proofs: HashMap<E3id, BTreeMap<usize, Proof>>,
     recovery_repositories: Option<Repositories>,
     recovery_index: NodeProofRecoveryIndex,
@@ -61,6 +62,7 @@ impl NodeProofAggregator {
             dkg_fold_attestation_contexts_by_chain,
             states: HashMap::new(),
             fold_correlation: HashMap::new(),
+            pending_fold_proofs: HashMap::new(),
             pending_inner_proofs: HashMap::new(),
             recovery_repositories: None,
             recovery_index: NodeProofRecoveryIndex::default(),
@@ -160,6 +162,20 @@ mod tests {
             CircuitName::PkAggregation,
             e3_utils::ArcBytes::from_bytes(&[seed]),
             e3_utils::ArcBytes::from_bytes(&[seed.wrapping_add(1)]),
+        )
+    }
+
+    fn node_fold_proof(party_id: u64, n: usize, h: usize, l: usize) -> Proof {
+        let field_count = crate::node_fold_public::node_fold_public_field_count(n, h, l);
+        let mut fields = vec![[0_u8; 32]; field_count];
+        fields[0][24..].copy_from_slice(&party_id.to_be_bytes());
+        fields[field_count - 2] = [0x11; 32];
+        fields[field_count - 1] = [0x22; 32];
+        let public_signals = fields.into_iter().flatten().collect::<Vec<_>>();
+        Proof::new(
+            CircuitName::NodeFold,
+            e3_utils::ArcBytes::from_bytes(&[0x33]),
+            e3_utils::ArcBytes::from_bytes(&public_signals),
         )
     }
 
@@ -308,6 +324,81 @@ mod tests {
             aggregator.fold_correlation.get(&correlation_id),
             Some(&e3_id)
         );
+
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn completed_fold_waits_for_attestation_context_without_failing_the_round() -> Result<()>
+    {
+        let (bus, _rng, _seed, _params, _crp, _errors, history) = get_common_setup(None)?;
+        let mut aggregator =
+            NodeProofAggregator::new(&bus, test_signer(), HashMap::new(), HashMap::new(), true);
+        let e3_id = E3id::new("42", 1);
+        let correlation_id = CorrelationId::new();
+        let output_context = test_ctx(DKGRecursiveAggregationComplete {
+            e3_id: e3_id.clone(),
+            party_id: 1,
+            aggregated_proof: None,
+            fold_attestation: None,
+        });
+        aggregator.states.insert(
+            e3_id.clone(),
+            DkgProofCollectionState {
+                meta: NodeDkgFoldMeta {
+                    party_id: 1,
+                    total_expected: 0,
+                    sk_enc_count: 0,
+                    e_sm_enc_count: 0,
+                    sk_share_encryption_requests: Vec::new(),
+                    e_sm_share_encryption_requests: Vec::new(),
+                    committee_n: 3,
+                    committee_h: 2,
+                    n_moduli: 1,
+                    params_preset: e3_fhe_params::BfvPreset::InsecureThreshold512,
+                    committee_size: CiphernodesCommitteeSize::Minimum,
+                },
+                buffer: BTreeMap::new(),
+                fold_correlation: Some(correlation_id),
+                last_ec: output_context.clone(),
+            },
+        );
+        aggregator
+            .fold_correlation
+            .insert(correlation_id, e3_id.clone());
+
+        aggregator.handle_node_dkg_response(&correlation_id, node_fold_proof(1, 3, 2, 1));
+
+        actix::clock::sleep(std::time::Duration::from_millis(20)).await;
+        assert!(history
+            .send(GetEvents::<InterfoldEvent>::new())
+            .await?
+            .is_empty());
+        assert!(aggregator.states.contains_key(&e3_id));
+        assert!(aggregator.pending_fold_proofs.contains_key(&e3_id));
+
+        let context = DkgFoldAttestationContext {
+            registry: Address::repeat_byte(0x11),
+            verifying_contract: Address::repeat_byte(0x12),
+        };
+        let event = DkgFoldAttestationContextEstablished {
+            schema_version: DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
+            e3_id: e3_id.clone(),
+            context,
+        };
+        aggregator
+            .handle_dkg_fold_attestation_context(TypedEvent::new(event.clone(), test_ctx(event)));
+
+        let published = next_event(&history).await?;
+        assert!(matches!(
+            published.into_data(),
+            InterfoldEventData::DKGRecursiveAggregationComplete(data)
+                if data.e3_id == e3_id
+                    && data.aggregated_proof.is_some()
+                    && data.fold_attestation.is_some()
+        ));
+        assert!(!aggregator.states.contains_key(&e3_id));
+        assert!(!aggregator.pending_fold_proofs.contains_key(&e3_id));
 
         Ok(())
     }
