@@ -407,7 +407,9 @@ impl CiphernodeBuilder {
         let capacity =
             e3_multithread::ComputeCapacity::detect(concurrent_jobs.unwrap_or(2), max_threads);
         let jobs = capacity.effective_jobs;
-        let pool_threads = jobs.max(1);
+        // Job admission protects memory. The Rayon worker count controls how much CPU each
+        // admitted job can use, so keep the two limits independent.
+        let pool_threads = max_threads;
         if jobs < capacity.requested_jobs {
             warn!(
                 requested_jobs = capacity.requested_jobs,
@@ -1242,7 +1244,6 @@ impl CiphernodeBuilder {
         let task_pool = self.task_pool.clone().unwrap_or_else(|| {
             let pool_threads = self.threads.unwrap_or(1);
             let concurrent_jobs = self.multithread_concurrent_jobs.unwrap_or(1);
-            let pool_threads = concurrent_jobs.min(pool_threads).max(1);
             Multithread::create_taskpool(pool_threads, concurrent_jobs)
         });
 

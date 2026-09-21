@@ -174,6 +174,15 @@ fn benchmark_multithread_concurrent_jobs() -> usize {
         .unwrap_or(1)
 }
 
+/// Logical CPUs reserved outside the benchmark Rayon pool
+/// (`BENCHMARK_MULTITHREAD_RESERVE_THREADS`, default 2).
+fn benchmark_multithread_reserve_threads() -> usize {
+    std::env::var("BENCHMARK_MULTITHREAD_RESERVE_THREADS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(2)
+}
+
 static NEXT_BENCHMARK_NODE_RNG_SALT: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone)]
@@ -1456,8 +1465,8 @@ async fn test_trbfv_actor() -> Result<()> {
     // Actor system setup
     let concurrent_jobs = benchmark_multithread_concurrent_jobs();
     let slashing_manager_addr = benchmark_slashing_manager_address();
-    let max_threadroom = Multithread::get_max_threads_minus(1);
-    let pool_threads = concurrent_jobs.min(max_threadroom).max(1);
+    let reserve_threads = benchmark_multithread_reserve_threads();
+    let pool_threads = Multithread::get_max_threads_minus(reserve_threads);
     let task_pool = Multithread::create_taskpool(pool_threads, concurrent_jobs);
     let multithread_report = MultithreadReport::new(pool_threads, concurrent_jobs).start();
 
