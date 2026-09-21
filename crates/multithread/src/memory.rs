@@ -13,9 +13,9 @@ const GIB: u64 = 1024 * 1024 * 1024;
 
 /// Conservative memory budget for one secure Small `bb prove` process.
 ///
-/// Mainnet incident E3-977 observed one killed proof at approximately 10.9 GiB RSS. The 13 GiB
-/// budget leaves headroom for allocator and circuit-shape variance while admitting two jobs on the
-/// documented 32 GB host profile.
+/// Mainnet incident E3-977 observed a proof process killed at approximately 10.9 GiB RSS, so its
+/// actual memory demand was at least 10.9 GiB. The 13 GiB admission budget adds provisional
+/// headroom while admitting two jobs on the documented 32 GB host profile.
 pub const PROVER_JOB_MEMORY_BYTES: u64 = 13 * GIB;
 
 /// Memory retained for the ciphernode, operating system, RPC, and networking processes.

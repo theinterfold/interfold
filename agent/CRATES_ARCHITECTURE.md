@@ -646,7 +646,8 @@ validator must not silently infer that extension.
 The production node defaults to two concurrent compute jobs and two reserved logical CPUs. Startup
 limits that request by the available logical CPUs and the detected host or cgroup memory limit. The
 memory calculation reserves 4 GiB for the node and host. It budgets 13 GiB for each prover job. The
-122 GiB E3-977 incident showed a maximum killed `bb` resident set of approximately 10.9 GiB. Startup
+122 GiB E3-977 incident killed one `bb` process at approximately 10.9 GiB resident memory, so its
+actual demand was at least 10.9 GiB. The 13 GiB admission budget adds provisional headroom. Startup
 fails before joining protocol work when the detected limit cannot cover the node reserve and one
 prover budget.
 
@@ -659,8 +660,8 @@ retry adds Barretenberg `--slow_low_memory`. The scheduler also retries local wo
 failures for `GenPkShareAndSkSss`, `GenEsiSss`, `CalculateDecryptionKey`, and
 `CalculateDecryptionShare`. Delays increase from 5 seconds to 15 seconds, 60 seconds, and five
 minutes. Five minutes is the maximum delay. Retries continue until success or task-group
-cancellation. A node-scoped limiter emits at most one retry warning per minute. Other attempts use
-DEBUG logs.
+cancellation. A terminal event also interrupts an active retry delay. A node-scoped limiter emits
+at most one retry warning per minute. Other attempts use DEBUG logs.
 
 The prover removes each attempt directory after success or failure. Before a new process reuses a
 deterministic attempt path, it also removes files left by a hard process kill. It limits process

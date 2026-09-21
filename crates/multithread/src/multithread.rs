@@ -86,7 +86,6 @@ use fhe_traits::{DeserializeParametrized, FheEncoder};
 use ndarray::Array2;
 use num_bigint::BigInt;
 use rand::Rng;
-use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
 
 use crate::effect_gate::ComputeEffectGate;
@@ -231,13 +230,13 @@ mod task_group_tests {
     }
 
     #[test]
-    fn prover_retry_schedule_is_bounded_and_backed_off() {
-        assert_eq!(compute_retry_delay(1), Some(Duration::from_secs(5)));
-        assert_eq!(compute_retry_delay(2), Some(Duration::from_secs(15)));
-        assert_eq!(compute_retry_delay(3), Some(Duration::from_secs(60)));
-        assert_eq!(compute_retry_delay(4), Some(Duration::from_secs(300)));
-        assert_eq!(compute_retry_delay(5), Some(Duration::from_secs(300)));
-        assert_eq!(compute_retry_delay(100), Some(Duration::from_secs(300)));
+    fn prover_retry_delay_is_capped_and_backed_off() {
+        assert_eq!(compute_retry_delay(1), Duration::from_secs(5));
+        assert_eq!(compute_retry_delay(2), Duration::from_secs(15));
+        assert_eq!(compute_retry_delay(3), Duration::from_secs(60));
+        assert_eq!(compute_retry_delay(4), Duration::from_secs(300));
+        assert_eq!(compute_retry_delay(5), Duration::from_secs(300));
+        assert_eq!(compute_retry_delay(100), Duration::from_secs(300));
     }
 
     #[test]
@@ -375,6 +374,9 @@ async fn handle_compute_request_event(
     let mut attempt = 1usize;
     let mut total_duration = Duration::ZERO;
 
+    // Retry count is deliberately not capped. A fixed attempt limit could abandon recoverable
+    // work before the protocol deadline. The E3 task group is the lifetime bound: terminal E3
+    // events cancel queued work, retry delays, and every later attempt.
     loop {
         let prover_for_worker = if attempt > 1 {
             zk_prover
@@ -415,8 +417,7 @@ async fn handle_compute_request_event(
             }
             Err(pool_error) => {
                 if retries_local_worker_failures {
-                    let delay = compute_retry_delay(attempt)
-                        .expect("the compute retry schedule always returns a capped delay");
+                    let delay = compute_retry_delay(attempt);
                     log_compute_retry(
                         &retry_logs,
                         &request_snapshot,
@@ -425,7 +426,15 @@ async fn handle_compute_request_event(
                         is_zk,
                         &format!("task pool error: {pool_error}"),
                     );
-                    sleep(delay).await;
+                    if let Err(TaskPoolError::Cancelled(group)) =
+                        pool.wait_for_retry(&task_group, delay).await
+                    {
+                        info!(
+                            task_group = group,
+                            "Stopped compute recovery for a terminal E3"
+                        );
+                        return Ok(());
+                    }
                     attempt = attempt.saturating_add(1);
                     continue;
                 }
@@ -461,8 +470,7 @@ async fn handle_compute_request_event(
                 return Ok(());
             }
             Err(compute_error) if is_retryable_compute_error(&compute_error) => {
-                let delay = compute_retry_delay(attempt)
-                    .expect("the compute retry schedule always returns a capped delay");
+                let delay = compute_retry_delay(attempt);
                 log_compute_retry(
                     &retry_logs,
                     &request_snapshot,
@@ -471,7 +479,15 @@ async fn handle_compute_request_event(
                     is_zk,
                     &bounded_error(&compute_error),
                 );
-                sleep(delay).await;
+                if let Err(TaskPoolError::Cancelled(group)) =
+                    pool.wait_for_retry(&task_group, delay).await
+                {
+                    info!(
+                        task_group = group,
+                        "Stopped compute recovery for a terminal E3"
+                    );
+                    return Ok(());
+                }
                 attempt = attempt.saturating_add(1);
                 continue;
             }
@@ -486,12 +502,13 @@ async fn handle_compute_request_event(
 const COMPUTE_RETRY_DELAYS_SECS: [u64; 4] = [5, 15, 60, 300];
 const COMPUTE_RETRY_LOG_INTERVAL: Duration = Duration::from_secs(60);
 
-fn compute_retry_delay(completed_attempt: usize) -> Option<Duration> {
-    COMPUTE_RETRY_DELAYS_SECS
+fn compute_retry_delay(completed_attempt: usize) -> Duration {
+    let seconds = COMPUTE_RETRY_DELAYS_SECS
         .get(completed_attempt.saturating_sub(1))
         .or_else(|| COMPUTE_RETRY_DELAYS_SECS.last())
         .copied()
-        .map(Duration::from_secs)
+        .expect("the retry schedule is not empty");
+    Duration::from_secs(seconds)
 }
 
 #[derive(Debug)]

@@ -3,4 +3,4 @@
 # Increase protocol_version when contracts, events, cryptography, or protocol behavior become
 # incompatible. Increase node_generation for a mandatory node-only release.
 protocol_version = 4
-node_generation = 1
+node_generation = 2

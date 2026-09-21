@@ -91,6 +91,26 @@ impl TaskPool {
         sender.send_replace(true);
     }
 
+    /// Wait for a retry delay, unless the E3 becomes terminal first.
+    pub(crate) async fn wait_for_retry(
+        &self,
+        group: &str,
+        delay: Duration,
+    ) -> Result<(), TaskPoolError> {
+        let mut cancellation = self.subscribe_group(group);
+        if *cancellation.borrow() {
+            return Err(TaskPoolError::Cancelled(group.to_owned()));
+        }
+
+        tokio::select! {
+            biased;
+            _ = cancellation.changed() => {
+                Err(TaskPoolError::Cancelled(group.to_owned()))
+            }
+            _ = sleep(delay) => Ok(()),
+        }
+    }
+
     fn subscribe_group(&self, group: &str) -> watch::Receiver<bool> {
         let mut groups = self.task_groups.lock().expect("task group lock poisoned");
         groups
@@ -390,6 +410,29 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn cancelling_a_group_skips_work_queued_inside_rayon() {
         assert_group_cancellation(2, true).await;
+    }
+
+    #[tokio::test]
+    async fn cancelling_a_group_interrupts_a_retry_delay() {
+        let pool = TaskPool::new(1, 1);
+        let waiting = {
+            let pool = pool.clone();
+            tokio::spawn(async move {
+                pool.wait_for_retry("terminal-e3", Duration::from_secs(60))
+                    .await
+            })
+        };
+
+        tokio::task::yield_now().await;
+        pool.cancel_group("terminal-e3");
+
+        assert!(matches!(
+            timeout(Duration::from_secs(2), waiting)
+                .await
+                .expect("retry wait timed out")
+                .expect("retry wait join failed"),
+            Err(TaskPoolError::Cancelled(group)) if group == "terminal-e3"
+        ));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

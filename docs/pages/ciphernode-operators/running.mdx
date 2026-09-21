@@ -165,6 +165,12 @@ budget, and the scheduler reserves 4 GiB for the node and host. The node refuses
 detected limit cannot cover the node reserve and one prover budget. Do not increase the job count
 unless the host has enough memory for all node processes.
 
+If local proof work fails because of memory or another worker error, the node retries it with
+backoff and uses Barretenberg low-memory mode after the first failure. A warning that says automatic
+recovery remains active is not a failed E3. The node stops those retries when it observes a terminal
+E3 event. A non-retryable local error is logged as an error and leaves the durable work available
+for repair and restart; it does not accuse another committee member.
+
 Use one coherent provider for the WebSocket subscription and its RPC requests. Do not place a
 round-robin pool of independently synchronized providers behind one local URL. A subscription can
 announce a block before another pool member can return that block or its logs.
