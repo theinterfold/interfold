@@ -540,9 +540,15 @@ async fn actor_persists_state_and_restores_it_after_restart() -> anyhow::Result<
         .enable("commitment-consistency-persistence-test");
     let store = DataStore::from_in_mem(&InMemStore::new(false).start());
     let repo = store.repositories().commitment_consistency(&e3());
-    let checker = CommitmentConsistencyChecker::new(&bus, e3(), vec![same_party_link()], 2)
-        .with_snapshot(repo.clone(), None)?
-        .start();
+    let checker = CommitmentConsistencyChecker::new(
+        &bus,
+        e3(),
+        vec![same_party_link()],
+        2,
+        e3_fhe_params::BfvPreset::InsecureThreshold512,
+    )
+    .with_snapshot(repo.clone(), None)?
+    .start();
 
     let proof = passed(
         e3(),
@@ -594,8 +600,14 @@ async fn actor_persists_state_and_restores_it_after_restart() -> anyhow::Result<
     })
     .await??;
 
-    let restarted = CommitmentConsistencyChecker::new(&bus, e3(), vec![same_party_link()], 2)
-        .with_snapshot(repo.clone(), Some(restored))?;
+    let restarted = CommitmentConsistencyChecker::new(
+        &bus,
+        e3(),
+        vec![same_party_link()],
+        2,
+        e3_fhe_params::BfvPreset::InsecureThreshold512,
+    )
+    .with_snapshot(repo.clone(), Some(restored))?;
     assert_eq!(restarted.cached_proof_count(), 1);
     assert_eq!(restarted.accepted_roster(), Some(&[1, 2][..]));
 

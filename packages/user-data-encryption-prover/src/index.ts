@@ -65,6 +65,11 @@ export type UserDataEncryptionProofTree = {
   ct1: RecursiveProof
 }
 
+export type UserDataEncryptionTopLevelInputs = {
+  ct0: NoirInputMap
+  ct1: NoirInputMap
+}
+
 const proofToFields = (proof: Uint8Array): Field[] => {
   const fields: Field[] = []
   for (let offset = 0; offset < proof.length; offset += 32) {
@@ -136,13 +141,13 @@ const sameVerificationKey = (left: RecursiveProof, right: RecursiveProof, circui
 
 const leafProof = (proof: RecursiveProof) => proofToFields(proof.proof)
 
-const proveCt0 = async (
+const buildCt0TopLevelInputs = async (
   api: Barretenberg,
   circuits: UserDataEncryptionCircuitBundle,
   inputs: UserDataEncryptionInputs,
   l: number,
   chunkSize: number,
-): Promise<RecursiveProof> => {
+): Promise<NoirInputMap> => {
   const r1is = inputs.r1is.map(padLeadingZero)
   const r2is = inputs.r2is.map(padLeadingZero)
 
@@ -281,31 +286,26 @@ const proveCt0 = async (
     'noir-recursive-no-zk',
   )
 
-  return prove(
-    api,
-    circuits.userDataEncryptionCt0,
-    {
-      a_vk: roundA.vkAsFields,
-      a_key_hash: roundA.vkHash,
-      a_proof: leafProof(roundA),
-      a_public_inputs: roundA.publicInputs,
-      b_vk: roundB.vkAsFields,
-      b_key_hash: roundB.vkHash,
-      b_proof: leafProof(roundB),
-      b_public_inputs: roundB.publicInputs,
-      k1: inputs.k1,
-    },
-    'noir-recursive',
-  )
+  return {
+    a_vk: roundA.vkAsFields,
+    a_key_hash: roundA.vkHash,
+    a_proof: leafProof(roundA),
+    a_public_inputs: roundA.publicInputs,
+    b_vk: roundB.vkAsFields,
+    b_key_hash: roundB.vkHash,
+    b_proof: leafProof(roundB),
+    b_public_inputs: roundB.publicInputs,
+    k1: inputs.k1,
+  }
 }
 
-const proveCt1 = async (
+const buildCt1TopLevelInputs = async (
   api: Barretenberg,
   circuits: UserDataEncryptionCircuitBundle,
   inputs: UserDataEncryptionInputs,
   l: number,
   chunkSize: number,
-): Promise<RecursiveProof> => {
+): Promise<NoirInputMap> => {
   const p1is = inputs.p1is.map(padLeadingZero)
   const p2is = inputs.p2is.map(padLeadingZero)
 
@@ -434,21 +434,28 @@ const proveCt1 = async (
     'noir-recursive-no-zk',
   )
 
-  return prove(
-    api,
-    circuits.userDataEncryptionCt1,
-    {
-      a_vk: roundA.vkAsFields,
-      a_key_hash: roundA.vkHash,
-      a_proof: leafProof(roundA),
-      a_public_inputs: roundA.publicInputs,
-      b_vk: roundB.vkAsFields,
-      b_key_hash: roundB.vkHash,
-      b_proof: leafProof(roundB),
-      b_public_inputs: roundB.publicInputs,
-    },
-    'noir-recursive-no-zk',
-  )
+  return {
+    a_vk: roundA.vkAsFields,
+    a_key_hash: roundA.vkHash,
+    a_proof: leafProof(roundA),
+    a_public_inputs: roundA.publicInputs,
+    b_vk: roundB.vkAsFields,
+    b_key_hash: roundB.vkHash,
+    b_proof: leafProof(roundB),
+    b_public_inputs: roundB.publicInputs,
+  }
+}
+
+/** Build the recursive child proofs and return the two top-level circuit inputs. */
+export const buildUserDataEncryptionTopLevelInputs = async (
+  api: Barretenberg,
+  circuits: UserDataEncryptionCircuitBundle,
+  inputs: UserDataEncryptionInputs,
+): Promise<UserDataEncryptionTopLevelInputs> => {
+  const { l, chunkSize } = assertShape(inputs)
+  const ct0 = await buildCt0TopLevelInputs(api, circuits, inputs, l, chunkSize)
+  const ct1 = await buildCt1TopLevelInputs(api, circuits, inputs, l, chunkSize)
+  return { ct0, ct1 }
 }
 
 /** Build both recursive user-data encryption legs from the original polynomial witness. */
@@ -457,8 +464,8 @@ export const proveUserDataEncryptionTree = async (
   circuits: UserDataEncryptionCircuitBundle,
   inputs: UserDataEncryptionInputs,
 ): Promise<UserDataEncryptionProofTree> => {
-  const { l, chunkSize } = assertShape(inputs)
-  const ct0 = await proveCt0(api, circuits, inputs, l, chunkSize)
-  const ct1 = await proveCt1(api, circuits, inputs, l, chunkSize)
+  const topLevelInputs = await buildUserDataEncryptionTopLevelInputs(api, circuits, inputs)
+  const ct0 = await prove(api, circuits.userDataEncryptionCt0, topLevelInputs.ct0, 'noir-recursive')
+  const ct1 = await prove(api, circuits.userDataEncryptionCt1, topLevelInputs.ct1, 'noir-recursive-no-zk')
   return { ct0, ct1 }
 }

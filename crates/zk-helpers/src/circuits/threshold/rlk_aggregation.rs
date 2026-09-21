@@ -360,9 +360,6 @@ mod tests {
     fn unsupported_presets_fail_closed() {
         let committee = CiphernodesCommitteeSize::Minimum.values();
         assert!(
-            RlkAggregationConfigs::compute(BfvPreset::InsecureThreshold512, &committee).is_err()
-        );
-        assert!(
             RlkAggregationConfigs::compute(BfvPreset::SecureThreshold8192, &committee).is_err()
         );
     }

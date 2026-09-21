@@ -43,13 +43,14 @@ export function encodeMockDkgProofForAttestation(
   );
 }
 
-/** Encode the secure-16384 V2 public-input shape used by fold attestations. */
+/** Encode a V2 l-BFV public-input shape used by fold attestations. */
 export function encodeMockDkgV2ProofForAttestation(
   pkCommitment: string,
   committeeHash: string,
   partyIds: number[],
   skCommits: string[],
   esmCommits: string[],
+  lbfvRows = 5,
 ): string {
   if (
     partyIds.length !== 2 ||
@@ -59,7 +60,7 @@ export function encodeMockDkgV2ProofForAttestation(
     throw new Error("V2 attestation fixtures require two honest parties");
   }
   const publicInputs: string[] = Array.from(
-    { length: 64 },
+    { length: 43 + 3 * partyIds.length + 3 * lbfvRows },
     () => ethers.ZeroHash,
   );
   const toLimbs = (hash: string): [string, string] => {

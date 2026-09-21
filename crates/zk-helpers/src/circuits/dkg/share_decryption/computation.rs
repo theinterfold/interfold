@@ -380,6 +380,42 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_recipient_outside_dealer_set_decrypts_every_row() {
+        let committee = CiphernodesCommitteeSize::Small.values();
+        let preset = BfvPreset::InsecureThreshold512;
+        let mut sample =
+            ShareDecryptionCircuitData::generate_sample(preset, committee, DkgInputType::SecretKey)
+                .unwrap();
+        let own_idx = sample
+            .honest_ciphertexts
+            .iter()
+            .position(Option::is_none)
+            .unwrap();
+        let replacement = sample
+            .own_plaintext_share
+            .iter()
+            .enumerate()
+            .map(|(mod_idx, _)| {
+                sample
+                    .honest_ciphertexts
+                    .iter()
+                    .filter_map(|slot| slot.as_ref())
+                    .next()
+                    .and_then(|party_cts| party_cts.get(mod_idx))
+                    .cloned()
+                    .unwrap()
+            })
+            .collect();
+        sample.honest_ciphertexts[own_idx] = Some(replacement);
+        let expected = Inputs::compute(preset, &sample).unwrap();
+        sample.own_plaintext_share.clear();
+
+        let inputs = Inputs::compute(preset, &sample).unwrap();
+        assert_eq!(inputs.decrypted_shares, expected.decrypted_shares);
+        assert_eq!(inputs.expected_commitments, expected.expected_commitments);
+    }
+
     /// Verify expected_commitments[i][j] matches direct commitment computation for each
     /// slot, proving row ordering is consistent. External slots use BFV-decryption; the
     /// own slot uses the supplied plaintext.
@@ -420,7 +456,7 @@ mod tests {
                     mod_idx,
                     &Polynomial::from_u64_vector(reversed),
                     msg_bit,
-                    512,
+                    sample.chunk_size as usize,
                 );
                 assert_eq!(
                     inputs.expected_commitments[party_idx][mod_idx], direct_commitment,

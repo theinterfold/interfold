@@ -18,9 +18,9 @@ pub fn node_fold_public_field_count(n: usize, h: usize, l: usize) -> usize {
     14 + n + 2 * (n + h) * l
 }
 
-/// Total public field count for the secure-16384 V2 node fold.
+/// Total public field count for the V2 node fold.
 pub fn node_fold_v2_public_field_count(n: usize, h: usize, l: usize) -> usize {
-    NODE_FOLD_V2_PUBLIC_PREFIX_LEN + node_fold_public_field_count(n, h, l) + 3 + (3 * 5)
+    NODE_FOLD_V2_PUBLIC_PREFIX_LEN + node_fold_public_field_count(n, h, l) + 3 + (3 * l)
 }
 
 fn field_hex_to_bytes32(field: &str) -> Result<[u8; 32], ZkError> {
@@ -167,5 +167,11 @@ mod tests {
         assert_eq!(party_id, 2);
         assert_eq!(commits.sk_agg_commit, [0x11; 32]);
         assert_eq!(commits.esm_agg_commit, [0x22; 32]);
+    }
+
+    #[test]
+    fn v2_field_count_uses_the_preset_row_count() {
+        assert_eq!(node_fold_v2_public_field_count(3, 2, 3), 63);
+        assert_eq!(node_fold_v2_public_field_count(3, 2, 5), 89);
     }
 }

@@ -33,7 +33,7 @@ export const PROOF = "0x1337";
 
 // ── Active BFV parameter set ────────────────────────────────────────────────
 const abiCoder = ethers.AbiCoder.defaultAbiCoder();
-export const CIRCUIT_VERSION = ethers.id("interfold-bfv-v2");
+export const CIRCUIT_VERSION = ethers.id("interfold-bfv-v5");
 
 function encodeBfvParams(params: {
   degree: bigint;
@@ -56,8 +56,8 @@ function encodeBfvParams(params: {
   );
 }
 
-/** The insecure parameter set compiled into the active test circuits. */
-export const BFV_PARAMS_DEFAULT = encodeBfvParams(BFV_PARAMS.insecure512);
+/** The insecure-64 parameter set compiled into the active test circuits. */
+export const BFV_PARAMS_DEFAULT = encodeBfvParams(BFV_PARAMS.insecure64);
 
 /** The secure-8192 parameter set that Sepolia/local deployments can also register. */
 export const BFV_PARAMS_SECURE = encodeBfvParams(BFV_PARAMS.secure8192);
@@ -103,8 +103,8 @@ export const SECURE_16384_CRYPTO_CONFIG_ID = ethers.keccak256(
 
 export function cryptoConfigIdForParamSet(paramSet: number): string {
   if (paramSet === 0) return ACTIVE_CRYPTO_CONFIG_ID;
-  if (paramSet === 1) return PRODUCTION_CRYPTO_CONFIG_ID;
-  if (paramSet === 2) return SECURE_16384_CRYPTO_CONFIG_ID;
+  if (paramSet === 2) return PRODUCTION_CRYPTO_CONFIG_ID;
+  if (paramSet === 3) return SECURE_16384_CRYPTO_CONFIG_ID;
   throw new Error(`Unsupported BFV parameter set: ${paramSet}`);
 }
 

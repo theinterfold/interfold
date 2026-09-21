@@ -31,9 +31,9 @@ pub struct C2ChunkLayout {
 }
 
 impl C2ChunkLayout {
-    /// Builds the layout for the compiled default chunk size (512).
+    /// Builds the layout for the compiled default chunk size, capped at the polynomial degree.
     pub fn compiled(degree: usize) -> Result<Self, ZkError> {
-        Self::from_degree_chunk_size(degree, DEFAULT_C2_CHUNK_SIZE)
+        Self::from_degree_chunk_size(degree, DEFAULT_C2_CHUNK_SIZE.min(degree))
     }
 
     /// Builds a layout with the compiled `chunks_per_batch` rule: a degree that
@@ -93,12 +93,12 @@ mod tests {
 
     #[test]
     fn insecure_compiled_layout_is_one_chunk_one_batch() {
-        let layout = C2ChunkLayout::compiled(512).unwrap();
+        let layout = C2ChunkLayout::compiled(128).unwrap();
         assert_eq!(
             layout,
             C2ChunkLayout {
-                degree: 512,
-                chunk_size: 512,
+                degree: 128,
+                chunk_size: 128,
                 chunk_count: 1,
                 chunks_per_batch: 1,
                 batch_count: 1,

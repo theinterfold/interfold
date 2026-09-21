@@ -17,10 +17,13 @@ use crate::{
     threshold::decrypted_shares_aggregation::DecryptedSharesAggregationCircuitData,
     CiphernodesCommittee,
 };
-use e3_fhe_params::{build_pair_for_preset, create_deterministic_crp_from_default_seed, BfvPreset};
+use e3_fhe_params::{
+    build_pair_for_preset, create_deterministic_crp_from_default_seed, generate_smudging_error,
+    BfvPreset,
+};
 use fhe::bfv::{Encoding, Plaintext, PublicKey, SecretKey};
 use fhe::mbfv::{AggregateIter, PublicKeyShare};
-use fhe::trbfv::{ShareManager, TRBFV};
+use fhe::trbfv::ShareManager;
 use fhe_math::rq::{Poly, PowerBasis};
 use fhe_traits::FheDecoder;
 use fhe_traits::{FheEncoder, FheEncrypter};
@@ -62,8 +65,6 @@ impl DecryptedSharesAggregationCircuitData {
         let degree = threshold_params.degree();
         let num_moduli = threshold_params.moduli().len();
 
-        let trbfv = TRBFV::new(num_parties, threshold, threshold_params.clone())
-            .map_err(|e| CircuitsErrors::Sample(format!("Failed to create TRBFV: {:?}", e)))?;
         let mut rng = rand::rng();
 
         let crp = create_deterministic_crp_from_default_seed(&threshold_params);
@@ -81,7 +82,7 @@ impl DecryptedSharesAggregationCircuitData {
                         ))
                     })?;
 
-                let mut share_manager = ShareManager::new(
+                let share_manager = ShareManager::new(
                     num_parties,
                     threshold,
                     threshold_params.clone(),
@@ -104,15 +105,24 @@ impl DecryptedSharesAggregationCircuitData {
                         CircuitsErrors::Sample(format!("Failed to generate secret shares: {:?}", e))
                     })?;
 
-                let esi_coeffs = trbfv
-                    .generate_smudging_error(sd.z as usize, sd.mult_depth, lambda, &mut rng)
-                    .map_err(|e| {
-                        CircuitsErrors::Sample(format!(
-                            "Failed to generate smudging error: {:?}",
-                            e
-                        ))
-                    })?;
-                let esi_poly = share_manager.bigints_to_poly(&esi_coeffs).map_err(|e| {
+                let esi_coeffs = generate_smudging_error(
+                    threshold_params.clone(),
+                    num_parties,
+                    sd.z as usize,
+                    sd.mult_depth,
+                    lambda,
+                    &mut rng,
+                )
+                .map_err(|e| {
+                    CircuitsErrors::Sample(format!("Failed to generate smudging error: {:?}", e))
+                })?;
+                let esi_poly = Poly::from_bigints(
+                    &esi_coeffs,
+                    threshold_params.context_at_level(0).map_err(|e| {
+                        CircuitsErrors::Sample(format!("Failed to get BFV context: {:?}", e))
+                    })?,
+                )
+                .map_err(|e| {
                     CircuitsErrors::Sample(format!("Failed to convert error to poly: {:?}", e))
                 })?;
                 let esi_sss = share_manager

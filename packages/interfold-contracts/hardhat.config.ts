@@ -108,6 +108,13 @@ const config: HardhatUserConfig = {
     updateSubmissionWindow,
   ],
   networks: {
+    // Folded integration proofs bind the in-process benchmark to chain ID 1.
+    benchmark: {
+      chainId: chainIds.mainnet,
+      type: "edr-simulated",
+      chainType: "l1",
+      blockGasLimit: 1_000_000_000,
+    },
     hardhat: {
       chainId: chainIds.hardhat,
       type: "edr-simulated",

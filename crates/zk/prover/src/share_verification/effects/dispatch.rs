@@ -19,7 +19,9 @@ impl ShareVerificationActor {
 
         let params_preset = msg.params_preset;
         let committee_size = msg.committee_size;
-        let lbfv_context = msg.lbfv_context;
+        let lbfv_context = msg
+            .lbfv_context
+            .map(e3_events::LbfvVerificationContext::into_latest);
         let verification_id = msg.verification_id;
         match msg.kind {
             VerificationKind::ShareProofs

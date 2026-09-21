@@ -631,7 +631,7 @@ mod tests {
         let max_pk_bound = bounds.pk_bounds.iter().max().unwrap();
         let expected_bits = calculate_bit_width(BigInt::from(max_pk_bound.clone()));
 
-        assert_eq!(max_pk_bound.clone(), BigUint::from(34359701504u64));
+        assert_eq!(max_pk_bound.clone(), BigUint::from(36028797018956544u64));
         assert_eq!(bits.pk_bit, expected_bits);
     }
 

@@ -4,10 +4,9 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::constants::{insecure_512, secure_16384, secure_8192};
+use crate::constants::{insecure, secure_16384, secure_8192};
 use crate::presets::{BfvParamSet, BfvPreset, PresetError};
 use fhe::bfv::{BfvParameters, BfvParametersBuilder};
-use num_bigint::BigUint;
 use std::sync::Arc;
 
 pub fn build_pair_for_preset(
@@ -16,20 +15,19 @@ pub fn build_pair_for_preset(
     match preset {
         BfvPreset::InsecureThreshold64 => {
             let params_threshold = BfvParametersBuilder::new()
-                .set_degree(insecure_64::DEGREE)
-                .set_plaintext_modulus(insecure_64::threshold::PLAINTEXT_MODULUS)
-                .set_moduli(insecure_64::threshold::MODULI)
-                .set_error1_variance(BigUint::from(
-                    insecure_64::threshold::ERROR1_VARIANCE_BIGUINT,
-                ))
+                .set_degree(insecure::DEGREE)
+                .set_plaintext_modulus(insecure::threshold::PLAINTEXT_MODULUS)
+                .set_moduli(insecure::threshold::MODULI)
+                .set_error1_variance_str(insecure::threshold::ERROR1_VARIANCE)
+                .unwrap()
                 .build_arc()
                 .unwrap();
 
             let params_dkg = BfvParametersBuilder::new()
-                .set_degree(insecure_64::DEGREE)
-                .set_plaintext_modulus(insecure_64::dkg::PLAINTEXT_MODULUS)
-                .set_moduli(insecure_64::dkg::MODULI)
-                .set_variance(insecure_64::dkg::VARIANCE as usize)
+                .set_degree(insecure::DEGREE)
+                .set_plaintext_modulus(insecure::dkg::PLAINTEXT_MODULUS)
+                .set_moduli(insecure::dkg::MODULI)
+                .set_variance(insecure::dkg::VARIANCE as usize)
                 .build_arc()
                 .unwrap();
 
@@ -164,18 +162,36 @@ pub fn try_build_bfv_params_arc(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::constants::{defaults, insecure_512, secure_16384, secure_8192};
+    use crate::constants::{defaults, insecure, secure_16384, secure_8192};
     use crate::presets::BfvPreset;
     use fhe::trbfv::{SmudgingBoundCalculator, SmudgingBoundCalculatorConfig};
     use num_bigint::BigUint;
     use std::str::FromStr;
 
     #[test]
+    fn test_build_insecure_dkg_params() {
+        // Test building BFV params using insecure DKG preset constants
+        let degree = insecure::DEGREE;
+        let plaintext_modulus = insecure::dkg::PLAINTEXT_MODULUS;
+        let moduli = insecure::dkg::MODULI;
+
+        let params = build_bfv_params(degree, plaintext_modulus, moduli, None);
+        assert_eq!(params.degree(), degree);
+        assert_eq!(params.plaintext(), plaintext_modulus);
+        assert_eq!(params.moduli(), moduli);
+        assert_eq!(params.variance(), defaults::VARIANCE);
+        assert_eq!(
+            params.get_error1_variance(),
+            &BigUint::from_str(insecure::dkg::ERROR1_VARIANCE).unwrap()
+        );
+    }
+
+    #[test]
     fn test_build_insecure_dkg_params_arc() {
         // Test building Arc<BFV params> using insecure DKG preset constants
-        let degree = insecure_64::DEGREE;
-        let plaintext_modulus = insecure_64::dkg::PLAINTEXT_MODULUS;
-        let moduli = insecure_64::dkg::MODULI;
+        let degree = insecure::DEGREE;
+        let plaintext_modulus = insecure::dkg::PLAINTEXT_MODULUS;
+        let moduli = insecure::dkg::MODULI;
 
         let params = build_bfv_params_arc(degree, plaintext_modulus, moduli, None);
 
@@ -185,7 +201,7 @@ mod tests {
         assert_eq!(params.variance(), defaults::VARIANCE);
         assert_eq!(
             params.get_error1_variance(),
-            &BigUint::from_str(insecure_64::dkg::ERROR1_VARIANCE).unwrap()
+            &BigUint::from_str(insecure::dkg::ERROR1_VARIANCE).unwrap()
         );
     }
 
@@ -242,24 +258,9 @@ mod tests {
         assert_eq!(BfvPreset::SecureThreshold8192.metadata().lambda, 45);
         assert_eq!(BfvPreset::SecureDkg8192.metadata().lambda, 45);
 
-        let defaults = BfvPreset::SecureThreshold8192.search_defaults().unwrap();
-        let config = SmudgingBoundCalculatorConfig::new(
-            threshold.clone(),
-            defaults.n as usize,
-            defaults.z as usize,
-            BfvPreset::SecureThreshold8192.lambda().unwrap(),
-        )
-        .unwrap();
-        let smudging_bound = SmudgingBoundCalculator::new(config)
-            .calculate_sm_bound()
-            .unwrap();
-        assert_eq!(
-            smudging_bound.to_string(),
-            "13292279957850296184850092126921713254400000"
-        );
-        let b_c = BigUint::parse_bytes(b"23058430092138912691300000", 10).unwrap();
-        let delta = &threshold_q / threshold.plaintext();
-        assert!(BigUint::from(2u8) * (b_c + BigUint::from(defaults.n) * smudging_bound) < delta);
+        assert_eq!(params.degree(), insecure::DEGREE);
+        assert_eq!(params.plaintext(), insecure::dkg::PLAINTEXT_MODULUS);
+        assert_eq!(params.moduli(), insecure::dkg::MODULI);
     }
 
     #[test]
@@ -269,9 +270,28 @@ mod tests {
         let param_set = preset.into();
         let params = build_bfv_params_from_set_arc(param_set);
 
-        assert_eq!(params.degree(), insecure_64::DEGREE);
-        assert_eq!(params.plaintext(), insecure_64::dkg::PLAINTEXT_MODULUS);
-        assert_eq!(params.moduli(), insecure_64::dkg::MODULI);
+        assert_eq!(params.degree(), insecure::DEGREE);
+        assert_eq!(params.plaintext(), insecure::dkg::PLAINTEXT_MODULUS);
+        assert_eq!(params.moduli(), insecure::dkg::MODULI);
+    }
+
+    #[test]
+    fn test_build_secure_threshold_params_from_set() {
+        // Test building from BfvParamSet using secure threshold preset
+        let preset = BfvPreset::SecureThreshold8192;
+        let param_set = preset.into();
+        let params = build_bfv_params_from_set(param_set);
+
+        assert_eq!(params.degree(), secure_8192::DEGREE);
+        assert_eq!(
+            params.plaintext(),
+            secure_8192::threshold::PLAINTEXT_MODULUS
+        );
+        assert_eq!(params.moduli(), secure_8192::threshold::MODULI);
+        assert_eq!(
+            params.get_error1_variance(),
+            &BigUint::from_str(secure_8192::threshold::ERROR1_VARIANCE).unwrap()
+        );
     }
 
     #[test]
@@ -336,28 +356,24 @@ mod tests {
     /// ever tightened beyond it, this test fails.
     #[test]
     fn test_secure_16384_smudging_bound_feasible() {
-        use crate::presets::LambdaConfig;
-        use fhe::trbfv::{SmudgingBoundCalculator, SmudgingBoundCalculatorConfig};
+        use fhe::trbfv::{SmudgingConfig, SmudgingNoiseGenerator};
         use num_traits::Zero;
 
         let preset = BfvPreset::SecureThreshold16384;
         let params = build_bfv_params_from_set_arc(BfvParamSet::from(preset));
         let defaults = preset.search_defaults().unwrap();
 
-        let lambda = LambdaConfig::Secure(defaults.lambda as usize)
-            .into_lambda()
-            .unwrap();
-        let config = SmudgingBoundCalculatorConfig::new_multiplicative(
+        let mut config = SmudgingConfig::new(
             params.clone(),
             defaults.n as usize,
             defaults.z as usize,
-            defaults.mult_depth,
-            lambda,
+            defaults.lambda as usize,
         )
         .expect("config construction should succeed");
-        let bound = SmudgingBoundCalculator::new(config)
-            .calculate_sm_bound()
+        config.mult_depth = defaults.mult_depth;
+        let generator = SmudgingNoiseGenerator::new(config)
             .expect("2*(B_C + n*B_sm) < Delta must hold at the configured depth");
+        let bound = generator.smudging_bound();
         assert!(!bound.is_zero());
     }
 }

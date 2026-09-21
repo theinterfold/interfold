@@ -328,9 +328,6 @@ mod tests {
     fn unsupported_presets_fail_closed() {
         let committee = CiphernodesCommitteeSize::Minimum.values();
         assert!(
-            LbfvPkAggregationConfigs::compute(BfvPreset::InsecureThreshold512, &committee).is_err()
-        );
-        assert!(
             LbfvPkAggregationConfigs::compute(BfvPreset::SecureThreshold8192, &committee).is_err()
         );
     }

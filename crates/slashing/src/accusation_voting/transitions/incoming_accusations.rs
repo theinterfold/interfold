@@ -27,10 +27,7 @@ impl AccusationVoting {
             return;
         }
 
-        if (!accusation.proof_type.is_multirow() && accusation.proof_instance != 0)
-            || (accusation.proof_type.is_multirow()
-                && accusation.proof_instance >= ProofType::LBFV_ROW_INSTANCES)
-        {
+        if !accusation.proof_type.is_multirow() && accusation.proof_instance != 0 {
             warn!("Ignoring accusation with an invalid proof instance");
             return;
         }

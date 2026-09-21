@@ -200,7 +200,7 @@ mod tests {
 
     fn valid_signals(chunk_hash: &BigUint, batch_hash: &BigUint) -> Vec<BigUint> {
         let mut fields = vec![chunk_hash.clone(), BigUint::from(3u8)];
-        fields.extend(std::iter::repeat_with(|| BigUint::from(7u8)).take(6));
+        fields.extend(std::iter::repeat_with(|| BigUint::from(7u8)).take(9));
         fields.push(batch_hash.clone());
         fields
     }
@@ -212,7 +212,7 @@ mod tests {
                 BfvPreset::InsecureDkg512,
                 CiphernodesCommitteeSize::Minimum
             ),
-            9
+            12
         );
         assert_eq!(
             expected_public_field_count(
@@ -223,7 +223,7 @@ mod tests {
         );
         assert_eq!(
             expected_public_field_count(BfvPreset::InsecureDkg512, CiphernodesCommitteeSize::Micro),
-            1 + 9 * 2 + 2
+            30
         );
     }
 
@@ -354,7 +354,7 @@ mod tests {
         };
         let r = scalar_field_modulus();
         let mut fields = vec![BigUint::from(11u8), r];
-        fields.extend(std::iter::repeat_with(|| BigUint::from(7u8)).take(6));
+        fields.extend(std::iter::repeat_with(|| BigUint::from(7u8)).take(9));
         fields.push(BigUint::from(13u8));
         let proof = terminal_proof(CircuitName::SkC2ChunkFinalize, &fields);
         assert!(validate_c2_terminal_proof(

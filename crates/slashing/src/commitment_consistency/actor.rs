@@ -39,6 +39,7 @@ use e3_events::{
     E3RequestComplete, E3id, EventContext, EventPublisher, EventSubscriber, EventType,
     InterfoldEvent, InterfoldEventData, ProofVerificationPassed, Sequenced, TypedEvent,
 };
+use e3_fhe_params::BfvPreset;
 use e3_utils::NotifySync;
 use tracing::{error, info};
 
@@ -63,11 +64,17 @@ impl CommitmentConsistencyChecker {
         e3_id: E3id,
         links: Vec<Box<dyn CommitmentLink>>,
         committee_h: usize,
+        params_preset: BfvPreset,
     ) -> Self {
         Self {
             bus: bus.clone(),
             e3_id: e3_id.clone(),
-            consistency: CommitmentConsistency::new(e3_id, links, committee_h),
+            consistency: CommitmentConsistency::new_for_preset(
+                e3_id,
+                links,
+                committee_h,
+                params_preset,
+            ),
             snapshot_repo: None,
         }
     }
@@ -137,8 +144,9 @@ impl CommitmentConsistencyChecker {
         e3_id: E3id,
         links: Vec<Box<dyn CommitmentLink>>,
         committee_h: usize,
+        params_preset: BfvPreset,
     ) -> Addr<Self> {
-        let actor = Self::new(bus, e3_id, links, committee_h);
+        let actor = Self::new(bus, e3_id, links, committee_h, params_preset);
         let addr = actor.start();
         bus.subscribe(
             EventType::CommitmentConsistencyCheckRequested,

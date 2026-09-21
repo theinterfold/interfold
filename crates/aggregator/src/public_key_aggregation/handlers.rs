@@ -8,6 +8,7 @@ impl Actor for PublicKeyAggregator {
     type Context = Context<Self>;
     fn started(&mut self, ctx: &mut Self::Context) {
         ctx.set_mailbox_capacity(MAILBOX_LIMIT);
+        self.arm_lbfv_aggregation_redrive_timer(ctx);
     }
 }
 
@@ -81,37 +82,7 @@ impl Handler<InterfoldEvent> for PublicKeyAggregator {
             InterfoldEventData::CommitteePublished(data) if data.e3_id == self.e3_id => {
                 self.observe_stage(&E3Stage::KeyPublished);
                 trap(EType::PublickeyAggregation, &self.bus.with_ec(&ec), || {
-                    let was_collecting = matches!(
-                        self.state.get(),
-                        Some(PublicKeyAggregatorState::Collecting { .. })
-                    );
-
-                    self.handle_member_expelled(node_addr, &ec)?;
-
-                    // If we just transitioned to VerifyingC1, dispatch C1 verification
-                    // using the c1_proofs now stored in the VerifyingC1 state (already
-                    // cleaned of the expelled node's entry).
-                    if was_collecting && self.aggregation_inputs_ready() {
-                        self.publish_inputs_ready(ec.clone())?;
-                    }
-                    if was_collecting && self.can_run_aggregation_effects() && !self.is_lbfv() {
-                        if let Some(PublicKeyAggregatorState::VerifyingC1 {
-                            submission_order,
-                            c1_proofs,
-                            ..
-                        }) = self.state.get()
-                        {
-                            self.dispatch_c1_verification(
-                                &submission_order,
-                                &c1_proofs,
-                                ec.clone(),
-                            )?;
-                        }
-                    }
-                    if self.is_lbfv() {
-                        self.persist_lbfv_exclusion(node_addr, ec.clone(), ctx);
-                    }
-                    Ok(())
+                    self.forget_saved_publication(&ec)
                 });
             }
             // The aggregation of an ended E3 does not resume, also when the context stays for
@@ -163,30 +134,9 @@ impl Handler<InterfoldEvent> for PublicKeyAggregator {
                     "{message}"
                 );
                 trap(EType::PublickeyAggregation, &self.bus.with_ec(&ec), || {
-                    let was_collecting = matches!(
-                        self.state.get(),
-                        Some(PublicKeyAggregatorState::Collecting { .. })
-                    );
-                    self.handle_member_expelled(node_addr, &ec)?;
-                    if was_collecting && self.aggregation_inputs_ready() {
-                        self.publish_inputs_ready(ec.clone())?;
-                    }
-                    if was_collecting && self.can_run_aggregation_effects() && !self.is_lbfv() {
-                        if let Some(PublicKeyAggregatorState::VerifyingC1 {
-                            submission_order,
-                            c1_proofs,
-                            ..
-                        }) = self.state.get()
-                        {
-                            self.dispatch_c1_verification(
-                                &submission_order,
-                                &c1_proofs,
-                                ec.clone(),
-                            )?;
-                        }
-                    }
+                    self.handle_member_expelled(node, &ec)?;
                     if self.is_lbfv() {
-                        self.persist_lbfv_exclusion(node_addr, ec.clone(), ctx);
+                        self.persist_lbfv_exclusion(node, ec.clone(), ctx);
                     }
                     Ok(())
                 });
@@ -262,15 +212,8 @@ impl Handler<TypedEvent<KeyshareCreated>> for PublicKeyAggregator {
 
             // If we just transitioned to VerifyingC1, dispatch verification
             // using c1_proofs stored in the new state.
-            if became_ready && self.can_run_aggregation_effects() && !self.is_lbfv() {
-                if let Some(PublicKeyAggregatorState::VerifyingC1 {
-                    submission_order,
-                    c1_proofs,
-                    ..
-                }) = self.state.get()
-                {
-                    self.dispatch_c1_verification(&submission_order, &c1_proofs, ec.clone())?;
-                }
+            if became_ready && self.can_run_aggregation_effects() {
+                self.continue_c1_verification(ec.clone())?;
             }
 
             if self.is_lbfv() {

@@ -14,6 +14,8 @@ import {
 import { currentNodeRelease } from "../protocol/nodeRelease";
 import {
   BFV_DKG_H,
+  ACTIVE_BFV_COMMITTEE_N,
+  ACTIVE_BFV_PARAM_SET,
   assertBfvPkVerifierSubCircuitVkHashes,
   assertBfvPkVerifierV2VkHashes,
   getBfvPkSubCircuitVkHashPaths,
@@ -224,6 +226,9 @@ export const deployAndSaveBfvPkVerifierV2 = async (
   const bfvPkVerifierV2 = await bfvPkVerifierV2Factory.deploy(
     circuitVerifierArgs.address,
     ciphernodeRegistryAddress,
+    ACTIVE_BFV_PARAM_SET,
+    BFV_DKG_H,
+    ACTIVE_BFV_COMMITTEE_N,
     expectedNodesFoldKeyHash,
     expectedC5KeyHash,
     expectedSkC2ChunkKeyHash,

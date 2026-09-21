@@ -106,7 +106,7 @@ done
 # map circuit path -> exact zk_cli preset name (BfvPreset::name, e.g. SECURE_THRESHOLD_16384)
 preset_to_zk_name() {
     case "$1" in
-        insecure) echo "INSECURE_THRESHOLD_512" ;;
+        insecure) echo "INSECURE_THRESHOLD" ;;
         secure-8192) echo "SECURE_THRESHOLD_8192" ;;
         secure-16384) echo "SECURE_THRESHOLD_16384" ;;
         *) echo "Error: unknown preset $1" >&2; return 1 ;;
@@ -141,7 +141,7 @@ for preset in "${SELECT_PRESETS[@]}"; do
 
             if [[ "$zk_circuit" == "_no_zk_cli" ]]; then
                 # `config` circuit has no witness inputs; emit an empty Prover.toml so nargo runs.
-                touch "$out_dir/Prover.toml"
+                : > "$out_dir/Prover.toml"
                 echo "  . $preset/$committee/$circuit_path  (no zk_cli)"
                 continue
             fi
@@ -158,7 +158,16 @@ for preset in "${SELECT_PRESETS[@]}"; do
 
             echo "  → $preset/$committee/$circuit_path  (zk_cli --circuit $zk_circuit --preset $zk_preset --committee $committee)"
             if "${cmd[@]}"; then
-                : # success
+                if [[ "$circuit_path" == "dkg/sk_share_computation_chunk" || "$circuit_path" == "dkg/esm_share_computation_chunk" ]]; then
+                    chunk_size=512
+                    if [[ "$preset" == "insecure" ]]; then
+                        chunk_size=128
+                    fi
+                    mv "$out_dir/Prover.toml" "$out_dir/Prover.full.toml"
+                    python3 "$REPO_ROOT/circuits/benchmarks/scripts/extract_share_computation_chunk.py" \
+                        "$out_dir/Prover.full.toml" "$out_dir/Prover.toml" "$circuit_path" "$chunk_size"
+                    rm -f "$out_dir/Prover.full.toml"
+                fi
             else
                 printf -v fail "%s\t%s\t%s\t(zk_cli %s %s failed)" "$preset" "$committee" "$circuit_path" "$zk_circuit" "$zk_inputs"
                 FAILURES+=("$fail")

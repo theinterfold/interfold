@@ -29,6 +29,37 @@ enum RequestIdentity {
 
 type RequestKey = (E3id, RequestIdentity);
 
+#[derive(Clone)]
+enum ComputeOutcome {
+    Response(ComputeResponse),
+    Error(ComputeRequestError),
+}
+
+struct ForwardedRequest {
+    correlation_id: CorrelationId,
+    waiting: Vec<CorrelationId>,
+    outcome: Option<ComputeOutcome>,
+    /// Unix seconds when the request was forwarded. An entry without an outcome
+    /// older than `stale_after_secs` is evicted so a retry can run again.
+    sent_at: u64,
+}
+
+/// A forwarded request without an outcome becomes re-forwardable after this many
+/// seconds, so a response the event bus dropped cannot park retries forever. The
+/// value must stay below the public-key aggregator's l-BFV correlation timeouts,
+/// which bound the only in-process re-publishers of an identical request. The
+/// eviction applies to every compute kind: a re-published legacy request (for
+/// example a streaming nodes-fold step) must also run again, and a duplicated
+/// job is harmless because responses still resolve by correlation ID.
+const FORWARDED_STALE_AFTER_SECS: u64 = 300;
+
+fn now_unix_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
 /// Buffers compute effects observed during EventStore replay. Legacy requests
 /// use their complete payload as the deduplication key. l-BFV requests use
 /// their stable operation ID. The newest HLC context wins.
@@ -47,9 +78,8 @@ pub(crate) struct ComputeEffectGate {
     request_keys_by_correlation: HashMap<CorrelationId, RequestKey>,
     replayed_responses: HashMap<RequestKey, ComputeOutcome>,
     stages: HashMap<E3id, E3Stage>,
-    canonical_keys: e3_request::canonical_key::CanonicalPublicKeys,
-    running: RunningJobs,
-    reforward_after: Duration,
+    /// Age after which a forwarded request without an outcome is evicted.
+    stale_after_secs: u64,
 }
 
 impl ComputeEffectGate {
@@ -63,9 +93,7 @@ impl ComputeEffectGate {
             request_keys_by_correlation: HashMap::new(),
             replayed_responses: HashMap::new(),
             stages: initial_stages,
-            canonical_keys: Default::default(),
-            running: RunningJobs::default(),
-            reforward_after: REFORWARD_AFTER,
+            stale_after_secs: FORWARDED_STALE_AFTER_SECS,
         }
     }
 
@@ -227,40 +255,43 @@ impl ComputeEffectGate {
                 }
             }
             let correlation_id = request.correlation_id;
-            self.request_keys_by_correlation
-                .insert(correlation_id, key.clone());
-            if let Some(outcome) = self.replayed_responses.get(&key) {
-                self.publish_outcome(outcome, correlation_id, &event);
-                debug!(
-                    e3_id = %key.0,
-                    "reused a durable compute response instead of repeating completed work"
-                );
-                return false;
-            }
-            match self.forwarded.get_mut(&key) {
-                Some(forwarded) if forwarded.correlation_ids.contains(&correlation_id) => {
+            let now = now_unix_secs();
+            let existing = self.forwarded.get(&key).map(|forwarded| {
+                (
+                    forwarded.correlation_id == correlation_id,
+                    forwarded.outcome.clone(),
+                    forwarded.sent_at,
+                    forwarded.waiting.contains(&correlation_id),
+                )
+            });
+            match existing {
+                Some((true, ..)) => {
                     debug!("dropping duplicate compute effect with the same correlation ID");
                     return false;
                 }
-                Some(forwarded) => {
-                    if let Some(outcome) = forwarded.outcome.clone() {
-                        self.publish_outcome(&outcome, correlation_id, &event);
-                        return false;
-                    }
-                    if forwarded.forwarded_at.elapsed() < self.reforward_after
-                        || self.running.any(&forwarded.correlation_ids)
-                    {
-                        if !forwarded.waiting.contains(&correlation_id) {
-                            forwarded.waiting.push(correlation_id);
+                Some((_, Some(outcome), ..)) => {
+                    self.publish_outcome(&outcome, correlation_id, &event);
+                    return false;
+                }
+                Some((_, None, sent_at, already_waiting)) => {
+                    if now.saturating_sub(sent_at) > self.stale_after_secs {
+                        // The worker finished but its outcome never arrived, so
+                        // parked retries cannot recover. Evict the entry and
+                        // forward this request again, keeping the parked
+                        // waiters so the retry outcome still fans out to them.
+                        debug!("evicting a stale forwarded compute effect without an outcome");
+                        let mut entry = self.forwarded.remove(&key).expect("entry exists");
+                        entry.correlation_id = correlation_id;
+                        entry.sent_at = now;
+                        self.forwarded.insert(key, entry);
+                    } else {
+                        if !already_waiting {
+                            if let Some(forwarded) = self.forwarded.get_mut(&key) {
+                                forwarded.waiting.push(correlation_id);
+                            }
                         }
                         return false;
                     }
-                    info!(
-                        e3_id = %key.0,
-                        "Sending a compute request to the worker again: its result has not reached the gate"
-                    );
-                    forwarded.correlation_ids.push(correlation_id);
-                    forwarded.forwarded_at = Instant::now();
                 }
                 None => {
                     self.forwarded.insert(
@@ -270,6 +301,7 @@ impl ComputeEffectGate {
                             forwarded_at: Instant::now(),
                             waiting: Vec::new(),
                             outcome: None,
+                            sent_at: now,
                         },
                     );
                 }
@@ -1044,6 +1076,88 @@ pub(crate) mod tests {
         // is suppressed — only one compute reaches the target.
         gate.send(compute(redriven, 40)).await.unwrap();
         assert_eq!(recorder.send(Received).await.unwrap(), vec![buffered]);
+    }
+
+    fn request_key(event: &InterfoldEvent) -> RequestKey {
+        let InterfoldEventData::ComputeRequest(request) = event.get_data() else {
+            unreachable!("expected a compute request event");
+        };
+        (
+            request.e3_id.clone(),
+            ComputeEffectGate::request_identity(&request.request),
+        )
+    }
+
+    #[actix::test]
+    async fn stale_outcome_less_entry_is_evicted_and_run_again() {
+        let recorder = Recorder::default().start();
+        let mut gate = ComputeEffectGate::new(recorder.clone().recipient(), HashMap::new());
+        let first = CorrelationId::new();
+        let parked = CorrelationId::new();
+        let retry = CorrelationId::new();
+
+        let event = compute(first, 10);
+        let key = request_key(&event);
+        assert!(gate.forward(event));
+        assert_eq!(recorder.send(Received).await.unwrap(), vec![first]);
+
+        // Same payload, fresh entry: parked while the first outcome is pending.
+        assert!(!gate.forward(compute(parked, 11)));
+        assert_eq!(recorder.send(Received).await.unwrap(), vec![first]);
+
+        // The first outcome never arrives. After the stale threshold the retry
+        // must run again instead of parking forever.
+        let aged = now_unix_secs().saturating_sub(gate.stale_after_secs + 1);
+        gate.forwarded.get_mut(&key).unwrap().sent_at = aged;
+        assert!(gate.forward(compute(retry, 12)));
+        assert_eq!(recorder.send(Received).await.unwrap(), vec![first, retry]);
+    }
+
+    #[actix::test]
+    async fn evicted_entry_keeps_parked_waiters_for_the_retry_outcome() {
+        let recorder = Recorder::default().start();
+        let (bus, history) = test_bus();
+        let mut gate =
+            ComputeEffectGate::new(recorder.clone().recipient(), HashMap::new()).with_bus(bus);
+        let first = CorrelationId::new();
+        let parked = CorrelationId::new();
+        let retry = CorrelationId::new();
+
+        let event = compute(first, 10);
+        let key = request_key(&event);
+        assert!(gate.forward(event));
+        assert!(!gate.forward(compute(parked, 11)));
+        gate.forwarded.get_mut(&key).unwrap().sent_at = 0;
+        assert!(gate.forward(compute(retry, 12)));
+        gate.on_outcome(&outcome_event(response(retry)));
+
+        // The waiter parked behind the evicted entry receives the retry
+        // outcome under its own correlation ID.
+        assert!(matches!(
+            next_outcome(&history).await.into_data(),
+            InterfoldEventData::ComputeResponse(result) if result.correlation_id == parked
+        ));
+        assert_eq!(recorder.send(Received).await.unwrap(), vec![first, retry]);
+    }
+
+    #[actix::test]
+    async fn forwarded_entry_with_outcome_is_never_evicted() {
+        let recorder = Recorder::default().start();
+        let mut gate = ComputeEffectGate::new(recorder.clone().recipient(), HashMap::new());
+        let first = CorrelationId::new();
+        let retry = CorrelationId::new();
+
+        let event = compute(first, 10);
+        let key = request_key(&event);
+        assert!(gate.forward(event));
+        gate.on_outcome(&outcome_event(response(first)));
+
+        // An aged entry with an outcome still answers the retry from the
+        // outcome instead of running the compute again.
+        gate.forwarded.get_mut(&key).unwrap().sent_at = 0;
+        assert!(!gate.forward(compute(retry, 11)));
+        assert_eq!(recorder.send(Received).await.unwrap(), vec![first]);
+        assert!(gate.forwarded.get(&key).unwrap().outcome.is_some());
     }
 
     #[actix::test]

@@ -162,7 +162,10 @@ impl ShareVerifier {
                         signed
                             .payload
                             .proof_type
-                            .identity(&signed.payload.proof)
+                            .identity(
+                                &signed.payload.proof,
+                                e3_fhe_params::lbfv_row_count(params_preset),
+                            )
                             .expect("canonical proof shape validated the proof identity"),
                         Self::proof_data_hash(signed),
                     )
@@ -176,7 +179,10 @@ impl ShareVerifier {
                         signed
                             .payload
                             .proof_type
-                            .identity(&signed.payload.proof)
+                            .identity(
+                                &signed.payload.proof,
+                                e3_fhe_params::lbfv_row_count(params_preset),
+                            )
                             .expect("canonical proof shape validated the proof identity"),
                         signed.payload.proof.public_signals.clone(),
                     )
@@ -190,7 +196,10 @@ impl ShareVerifier {
                         signed
                             .payload
                             .proof_type
-                            .identity(&signed.payload.proof)
+                            .identity(
+                                &signed.payload.proof,
+                                e3_fhe_params::lbfv_row_count(params_preset),
+                            )
                             .expect("canonical proof shape validated the proof identity"),
                         signed.payload.proof.data.clone(),
                     )

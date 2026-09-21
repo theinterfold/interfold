@@ -26,15 +26,15 @@ use alloy::sol_types::SolValue;
 use anyhow::ensure;
 use e3_events::{
     CommitmentConsistencyCheckComplete, CommitmentConsistencyCheckRequested,
-    CommitmentConsistencyViolation, CommitmentLink, E3id, LinkScope, ProofIdentity, ProofType,
-    ProofVerificationPassed,
+    CommitmentConsistencyViolation, CommitmentLink, CommitmentRosterSelected, E3id, LinkScope,
+    ProofIdentity, ProofType, ProofVerificationPassed,
 };
 use e3_utils::utility_types::ArcBytes;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap};
 use tracing::warn;
 
-const COMMITMENT_CONSISTENCY_SNAPSHOT_VERSION: u32 = 1;
+const COMMITMENT_CONSISTENCY_SNAPSHOT_VERSION: u32 = 2;
 
 /// Cached data from a verified proof.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -61,7 +61,7 @@ struct VerifiedProofData {
 pub(crate) struct CommitmentConsistencySnapshot {
     version: u32,
     roster: Option<Vec<u64>>,
-    entries: Vec<(Address, ProofType, Vec<VerifiedProofData>)>,
+    entries: Vec<(Address, ProofIdentity, Vec<VerifiedProofData>)>,
 }
 
 impl Default for CommitmentConsistencySnapshot {
@@ -114,9 +114,15 @@ pub(crate) struct CommitmentConsistency {
     links: Vec<Box<dyn CommitmentLink>>,
     /// Number of selected C4 dealer rows.
     committee_h: usize,
+    /// Number of rows in each l-BFV proof family for this E3.
+    lbfv_row_count: Option<usize>,
+    /// Full-committee party IDs in the accepted C4 row order.
+    roster: Option<Vec<u64>>,
     /// Verified proof outputs grouped by signer and complete proof identity.
     /// Multiple payloads per identity preserve equivocation evidence.
     verified: HashMap<(Address, ProofIdentity), Vec<VerifiedProofData>>,
+    /// Whether the durable representation changed since the last snapshot write.
+    dirty: bool,
 }
 
 impl CommitmentConsistency {
@@ -129,23 +135,35 @@ impl CommitmentConsistency {
             e3_id,
             links,
             committee_h,
+            lbfv_row_count: None,
             roster: None,
             verified: HashMap::new(),
             dirty: false,
         }
     }
 
+    pub(crate) fn new_for_preset(
+        e3_id: E3id,
+        links: Vec<Box<dyn CommitmentLink>>,
+        committee_h: usize,
+        params_preset: e3_fhe_params::BfvPreset,
+    ) -> Self {
+        let mut consistency = Self::new(e3_id, links, committee_h);
+        consistency.lbfv_row_count = e3_fhe_params::lbfv_row_count(params_preset);
+        consistency
+    }
+
     pub(crate) fn snapshot(&self) -> CommitmentConsistencySnapshot {
         let mut entries = self
             .verified
             .iter()
-            .map(|((address, proof_type), entries)| {
+            .map(|((address, identity), entries)| {
                 let mut entries = entries.clone();
                 entries.sort_by_key(|entry| entry.data_hash);
-                (*address, *proof_type, entries)
+                (*address, *identity, entries)
             })
             .collect::<Vec<_>>();
-        entries.sort_by_key(|(address, proof_type, _)| (*address, *proof_type as u8));
+        entries.sort_by_key(|(address, identity, _)| (*address, *identity));
         CommitmentConsistencySnapshot {
             version: COMMITMENT_CONSISTENCY_SNAPSHOT_VERSION,
             roster: self.roster.clone(),
@@ -174,7 +192,7 @@ impl CommitmentConsistency {
         self.verified = snapshot
             .entries
             .into_iter()
-            .map(|(address, proof_type, entries)| ((address, proof_type), entries))
+            .map(|(address, identity, entries)| ((address, identity), entries))
             .collect();
         self.dirty = false;
         Ok(())
@@ -498,7 +516,9 @@ impl CommitmentConsistency {
 
         let proof_type = data.proof_type;
         let address = data.address;
-        let Ok(instance) = proof_type.instance_from_public_signals(&data.public_signals) else {
+        let Ok(instance) =
+            proof_type.instance_from_public_signals(&data.public_signals, self.lbfv_row_count)
+        else {
             warn!("Ignoring verified proof with an invalid proof instance");
             return Vec::new();
         };

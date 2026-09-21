@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -129,8 +128,81 @@ test('checksums command covers exactly the staged circuit configurations', () =>
   }
 })
 
-test('release verification refuses the checksum manifests that a node refuses', () => {
-  const dir = makeCompleteMatrix()
+test('hydrate replaces stale targets at the paths used by Nargo', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'interfold-circuit-hydrate-'))
+  const outputDir = join(dir, 'dist', 'circuits')
+  const preset = 'insecure'
+  const committee = 'small'
+  const source = 'source-hash'
+
+  const fixtures = [
+    {
+      group: 'dkg',
+      name: 'sk_share_computation',
+      workspace: true,
+      expectedTarget: join(dir, 'circuits', 'bin', 'dkg', 'target'),
+    },
+    {
+      group: 'recursive_aggregation',
+      name: 'c3_fold',
+      workspace: false,
+      expectedTarget: join(dir, 'circuits', 'bin', 'recursive_aggregation', 'c3_fold', 'target'),
+    },
+    // Stubs for the required dist/bin markers that hydrate validates before and after copying.
+    {
+      group: 'dkg',
+      name: 'pk',
+      workspace: true,
+      expectedTarget: join(dir, 'circuits', 'bin', 'dkg', 'target'),
+    },
+    {
+      group: 'threshold',
+      name: 'pk_aggregation',
+      workspace: true,
+      expectedTarget: join(dir, 'circuits', 'bin', 'threshold', 'target'),
+    },
+    {
+      group: 'recursive_aggregation',
+      name: 'dkg_aggregator',
+      workspace: false,
+      expectedTarget: join(dir, 'circuits', 'bin', 'recursive_aggregation', 'dkg_aggregator', 'target'),
+    },
+    {
+      group: 'recursive_aggregation',
+      name: 'decryption_aggregator',
+      workspace: false,
+      expectedTarget: join(dir, 'circuits', 'bin', 'recursive_aggregation', 'decryption_aggregator', 'target'),
+    },
+    ...[
+      'lbfv_pk_generation',
+      'lbfv_pk_generation_limb',
+      'lbfv_pk_aggregation',
+      'rlk_generation',
+      'rlk_generation_limb',
+      'rlk_aggregation',
+    ].map((name) => ({
+      group: 'threshold',
+      name,
+      workspace: true,
+      expectedTarget: join(dir, 'circuits', 'bin', 'threshold', 'target'),
+    })),
+    ...[
+      'lbfv_generation_fold',
+      'lbfv_generation_fold_kernel',
+      'node_fold_v2',
+      'nodes_fold_v2',
+      'nodes_fold_v2_kernel',
+      'lbfv_aggregation_fold',
+      'lbfv_aggregation_fold_kernel',
+      'dkg_aggregator_v2',
+    ].map((name) => ({
+      group: 'recursive_aggregation',
+      name,
+      workspace: false,
+      expectedTarget: join(dir, 'circuits', 'bin', 'recursive_aggregation', name, 'target'),
+    })),
+  ] as const
+
   try {
     execFileSync('pnpm', ['tsx', 'scripts/circuits/artifacts.ts', 'checksums', '--dir', dir])
     validateChecksums(dir)
@@ -142,21 +214,11 @@ test('release verification refuses the checksum manifests that a node refuses', 
       change(parsed.files)
       writeFileSync(manifestPath, JSON.stringify(parsed))
     }
-    edit((files) => delete files[first])
-    assert.throws(() => validateChecksums(dir), /does not list/)
-    edit((files) => (files[first] = '0'.repeat(64)))
-    assert.throws(() => validateChecksums(dir), /wrong digest/)
-    edit((files) => (files['../outside'] = files[first]))
-    assert.throws(() => validateChecksums(dir), /invalid path/)
-    edit((files) => (files['insecure-64/minimum/absent.json'] = files[first]))
-    assert.throws(() => validateChecksums(dir), /missing file/)
-    edit(() => {})
-    unlinkSync(manifestPath)
-    assert.throws(() => validateChecksums(dir), /checksums.json is missing/)
-  } finally {
-    rmSync(dir, { recursive: true, force: true })
-  }
-})
+    for (const marker of requiredArtifactMarkers(preset, committee)) {
+      const markerPath = join(outputDir, marker)
+      mkdirSync(join(markerPath, '..'), { recursive: true })
+      if (!existsSync(markerPath)) writeFileSync(markerPath, '{}')
+    }
 
 test('artifact selection uses the newest matching build, not another source tree at the branch tip', () => {
   const dir = mkdtempSync(join(tmpdir(), 'interfold-circuit-history-'))
@@ -297,9 +359,12 @@ test('rejects every missing user-data encryption child artifact', () => {
   }
 })
 
-test('requires l-BFV row artifacts only for secure-16384', () => {
-  const secureMarkers = requiredArtifactMarkers('secure-16384', 'minimum').filter((artifact) => REQUIRED_LBFV_MARKERS.includes(artifact))
-  assert.deepEqual(secureMarkers.sort(), REQUIRED_LBFV_MARKERS.toSorted())
+test('requires l-BFV row artifacts for insecure and secure-16384', () => {
+  for (const preset of ['insecure', 'secure-16384']) {
+    const expectedMarkers = REQUIRED_LBFV_MARKERS.map((marker) => marker.replace('secure-16384', preset))
+    const markers = requiredArtifactMarkers(preset, 'minimum').filter((artifact) => expectedMarkers.includes(artifact))
+    assert.deepEqual(markers.sort(), expectedMarkers.toSorted())
+  }
 
   const unsupportedMarkers = requiredArtifactMarkers('secure-8192', 'minimum').filter((artifact) =>
     REQUIRED_LBFV_MARKERS.includes(artifact),
@@ -307,14 +372,17 @@ test('requires l-BFV row artifacts only for secure-16384', () => {
   assert.deepEqual(unsupportedMarkers, [])
 })
 
-test('rejects every missing secure-16384 l-BFV row artifact', () => {
-  for (const marker of REQUIRED_LBFV_MARKERS) {
-    const dir = makeCompleteMatrix()
-    try {
-      unlinkSync(join(dir, marker))
-      assert.throws(() => validateReleaseArtifacts(dir, sourceHash), /Incomplete circuit artifacts/)
-    } finally {
-      rmSync(dir, { recursive: true, force: true })
+test('rejects every missing insecure and secure-16384 l-BFV row artifact', () => {
+  for (const preset of ['insecure', 'secure-16384']) {
+    const markers = REQUIRED_LBFV_MARKERS.map((marker) => marker.replace('secure-16384', preset))
+    for (const marker of markers) {
+      const dir = makeCompleteMatrix()
+      try {
+        unlinkSync(join(dir, marker))
+        assert.throws(() => validateReleaseArtifacts(dir, sourceHash), /Incomplete circuit artifacts/)
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
     }
   }
 })

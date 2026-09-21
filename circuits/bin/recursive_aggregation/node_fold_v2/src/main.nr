@@ -12,7 +12,7 @@ use bb_proof_verification::{
 };
 use lib::math::commitments::compute_vk_hash;
 
-pub global LBFV_ROWS: u32 = 5;
+pub use lib::configs::default::threshold::L as LBFV_ROWS;
 pub global NODE_FOLD_PUBLIC_LEN: u32 = 14
     + lib::configs::default::N_PARTIES
     + (

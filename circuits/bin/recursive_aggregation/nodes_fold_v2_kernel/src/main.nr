@@ -10,7 +10,7 @@ use bb_proof_verification::{UltraHonkProof, UltraHonkVerificationKey, verify_hon
 use lib::configs::default::dkg::L_THRESHOLD;
 use lib::configs::default::{H, N_PARTIES};
 
-pub global LBFV_ROWS: u32 = 5;
+pub use lib::configs::default::threshold::L as LBFV_ROWS;
 pub global NODE_FOLD_PUBLIC_LEN: u32 = 14 + N_PARTIES + (2 * (N_PARTIES + H) * L_THRESHOLD);
 pub global NODE_FOLD_V2_APPEND_LEN: u32 = 3 + (3 * LBFV_ROWS);
 pub global NODE_FOLD_V2_PREFIX_LEN: u32 = 4;

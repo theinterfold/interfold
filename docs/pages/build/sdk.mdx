@@ -126,7 +126,8 @@ const sdk = new InterfoldSDK({
     feeToken: FEE_TOKEN_ADDRESS,
   },
   chain: sepolia,
-  thresholdBfvParamsPresetName: 'SECURE_THRESHOLD_8192',
+  // Match the parameter set selected by the target E3.
+  thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD',
 })
 ```
 
@@ -158,24 +159,30 @@ const sdk = InterfoldSDK.create({
     ciphernodeRegistry: CIPHERNODE_REGISTRY_CONTRACT as `0x${string}`,
     feeToken: FEE_TOKEN_CONTRACT as `0x${string}`,
   },
-  chain: hardhat,
-  thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_64',
+  chain: sepolia,
+  privateKey: '0x...', // optional — omit for read-only
+  // Match the parameter set selected by the target E3.
+  thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD',
 })
 ```
 
 ## BFV presets
 
-The preset selects the BFV parameters that the client uses to encrypt. It must match the `paramSet`
-of the E3.
+| Preset Name             | On-chain `paramSet` | Degree | CRT moduli (L) | Security | Use case                   |
+| ----------------------- | ------------------- | ------ | -------------- | -------- | -------------------------- |
+| `INSECURE_THRESHOLD`    | `0`                 | 128    | 2              | ❌ None  | Fast local or testnet work |
+| `SECURE_THRESHOLD_8192` | `1`                 | 8192   | 3              | ✅ Full  | Production-equivalent work |
 
 | Preset name             | `paramSet` | Ring degree | CRT moduli (L) | Use                             |
 | ----------------------- | ---------- | ----------- | -------------- | ------------------------------- |
 | `INSECURE_THRESHOLD_64` | 0          | 64          | 3              | Local development and tests     |
 | `SECURE_THRESHOLD_8192` | 2          | 8192        | 3              | Production and secure test runs |
 
-The insecure preset has no production security. Use it only for tests.
-`ThresholdBfvParamsPresetNames` lists both names, and `DEFAULT_THRESHOLD_BFV_PARAMS_PRESET_NAME` is
-`INSECURE_THRESHOLD_64`.
+| Network           | Supported presets                                |
+| ----------------- | ------------------------------------------------ |
+| Local development | `INSECURE_THRESHOLD` and `SECURE_THRESHOLD_8192` |
+| Sepolia testnet   | `INSECURE_THRESHOLD` and `SECURE_THRESHOLD_8192` |
+| Ethereum mainnet  | `SECURE_THRESHOLD_8192` only                     |
 
 <Callout type='warning'>
   The SDK does not compare the preset with the `paramSet` of the E3. A mismatch encrypts inputs
@@ -184,9 +191,11 @@ The insecure preset has no production security. Use it only for tests.
 
 ## Request an E3
 
-The request takes three calls: quote the fee, approve the fee token, and send the request. This
-sample is trimmed from `templates/default/client/src/pages/steps/RequestComputation.tsx`. It adds
-`maxFee`.
+The `paramSet` index in the E3 request must match the preset used by the ciphernode network. If you
+request an E3 with `paramSet: 1` but initialize the SDK with `INSECURE_THRESHOLD`, the ciphertext
+will be encrypted under the wrong parameters and decryption will fail.
+
+### Requesting computations
 
 ```ts
 import {
@@ -227,7 +236,27 @@ const hash = await sdk.requestE3({ ...requestParams, maxFee: fee })
 | `maxFee`                | `bigint`                    | A fresh quote     |
 | `gasLimit`              | `bigint`                    | Estimated by viem |
 
-`requestE3` fills the fields that the contract needs and the SDK knows:
+export function Dashboard() {
+  const {
+    sdk,
+    isInitialized,
+    error,
+    requestE3,
+    getThresholdBfvParamsSet,
+    onInterfoldEvent,
+    off,
+    InterfoldEventType,
+    RegistryEventType,
+  } = useInterfoldSDK({
+    autoConnect: true,
+    contracts: {
+      interfold: import.meta.env.VITE_INTERFOLD_ADDRESS,
+      ciphernodeRegistry: import.meta.env.VITE_REGISTRY_ADDRESS,
+      feeToken: import.meta.env.VITE_FEE_TOKEN_ADDRESS,
+    },
+    // 'INSECURE_THRESHOLD' for local dev and Sepolia; 'SECURE_THRESHOLD_8192' for production.
+    thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD',
+  })
 
 - `expectedFeeToken` is the `feeToken` address from the SDK configuration.
 - `expectedCryptoConfigId` is the configuration ID for `paramSet` 0 or 2. Other values fail.
@@ -268,6 +297,15 @@ await sdk.onInterfoldEvent(
     // assembled.publicKey is the committee public key for assembled.e3Id.
   },
 )
+
+// Generate circuit inputs without proof (useful for debugging)
+const { encryptedData, circuitInputs } = await sdk.encryptNumberAndGenInputs(42n, publicKey)
+
+// Standalone import (pass preset name explicitly)
+import { generatePublicKey, encryptNumber } from '@interfold/sdk'
+
+const pk = await generatePublicKey('INSECURE_THRESHOLD')
+const ct = await encryptNumber(42n, pk, 'INSECURE_THRESHOLD')
 ```
 
 ### Full encryption method reference
@@ -289,9 +327,8 @@ await sdk.onInterfoldEvent(
 
 `generateProof()` — and the `*AndGenProof` helpers that call it — run the user-data-encryption (UDE)
 circuits that are embedded in the package. Those artifacts are compiled with
-`--preset insecure --committee minimum` (see
-`packages/interfold-sdk/scripts/compile-circuits.sh`), so they only match `INSECURE_THRESHOLD_512`
-and a minimum-size committee.
+`--preset insecure --committee minimum` (see `packages/interfold-sdk/scripts/compile-circuits.sh`),
+so they only match `INSECURE_THRESHOLD` and a minimum-size committee.
 
 This has two consequences:
 

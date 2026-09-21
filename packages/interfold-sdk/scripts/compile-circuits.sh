@@ -67,7 +67,7 @@ for PRESET in "${PRESETS[@]}"; do
   done
 
   case "${PRESET}" in
-    insecure) EXPECTED_DEGREE=512 ;;
+    insecure) EXPECTED_DEGREE=128 ;;
     secure-8192) EXPECTED_DEGREE=8192 ;;
     secure-16384) EXPECTED_DEGREE=16384 ;;
   esac

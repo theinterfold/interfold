@@ -18,7 +18,7 @@ mod tests {
 
     #[test]
     fn insecure_artifacts_use_one_chunk_and_batch() {
-        let layout = C2ChunkLayout::compiled(512).unwrap();
+        let layout = C2ChunkLayout::compiled(128).unwrap();
         assert_eq!(layout.chunk_count, 1);
         assert_eq!(layout.chunks_per_batch, 1);
         assert_eq!(layout.batch_count, 1);

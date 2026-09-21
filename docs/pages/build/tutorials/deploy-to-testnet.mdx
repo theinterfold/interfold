@@ -305,19 +305,15 @@ checks the OpenVM receipt for real.
 Do not rely on this behavior on mainnet. A non-mock ciphertext verifier checks every proof against
 its pinned identity.
 
-The receipt verifier in your program affects only `MyProgram.verify`. It does not affect the
-protocol verifier. The Interfold contract copies the current verifier into each E3 at request time,
-so a later change applies only to new requests. See
-[Verify the Compute Provider](/build/e3-program/verify-compute-provider).
+Sepolia runs the insecure preset. Keep `INSECURE_THRESHOLD` in your SDK initialization, and request
+E3s with `paramSet: 0`:
 
-### Replace the local data-availability check
-
-Sepolia ciphernodes read the output ciphertext from Avail (`data_availability.mode: avail` in the
-Sepolia configurations). They use the block and leaf index that `verifyDataAvailability` returns.
-The template version returns zero for both, so a Sepolia committee cannot read your output.
-
-Delegate the check to `AvailVectorXDataAvailabilityVerifier` from `@interfold/contracts`, as
-`CRISPProgram` does:
+```typescript
+const sdk = new InterfoldSDK({
+  // ... other config
+  thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD',
+})
+```
 
 ```solidity filename="contracts/MyProgram.sol"
 IDataAvailabilityVerifier public immutable dataAvailabilityVerifier;
@@ -425,12 +421,12 @@ await sdk.onInterfoldEvent(InterfoldEventType.PLAINTEXT_OUTPUT_PUBLISHED, (event
 
 ## Deploy scripts and tasks
 
-| Issue                       | Possible cause                           | Fix                                                                          |
-| --------------------------- | ---------------------------------------- | ---------------------------------------------------------------------------- |
-| E3 request reverts          | Insufficient fee token approval          | Call `sdk.approveFeeToken()` first                                           |
-| Committee never forms       | Not enough active ciphernodes on Sepolia | Check the registry for active operators                                      |
+| Issue                       | Possible cause                           | Fix                                                                      |
+| --------------------------- | ---------------------------------------- | ------------------------------------------------------------------------ |
+| E3 request reverts          | Insufficient fee token approval          | Call `sdk.approveFeeToken()` first                                       |
+| Committee never forms       | Not enough active ciphernodes on Sepolia | Check the registry for active operators                                  |
 | Proof generation fails      | Preset mismatch with the SDK's circuits  | The embedded circuits are `insecure`; compile your own for other presets |
-| Decryption produces garbage | BFV preset mismatch                      | Verify both SDK and E3 request use `INSECURE_THRESHOLD_512` / `paramSet: 0`  |
+| Decryption produces garbage | BFV preset mismatch                      | Verify both SDK and E3 request use `INSECURE_THRESHOLD` / `paramSet: 0`  |
 
 Outside the Interfold monorepo, the deploy scripts come from the published `@interfold/contracts`
 package. With `ENABLE_ZK_VERIFICATION=true`, the deploy of the BFV ZK verifiers reads the

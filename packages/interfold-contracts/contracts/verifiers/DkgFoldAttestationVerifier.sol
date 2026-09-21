@@ -18,14 +18,6 @@ import { CommitteeHashLib } from "../lib/CommitteeHashLib.sol";
  * @notice Stateless verifier for DKG fold attestations at committee publication.
  */
 contract DkgFoldAttestationVerifier is IDkgFoldAttestationVerifier {
-    uint256 private constant V2_PUBLIC_INPUTS_LEN = 64;
-    uint256 private constant V2_H = 2;
-    uint256 private constant V2_N = 3;
-    uint256 private constant V2_PARTY_ID_START = 2;
-    uint256 private constant V2_COMMITTEE_HASH_HI_IDX = 4;
-    uint256 private constant V2_COMMITTEE_HASH_LO_IDX = 5;
-    uint256 private constant V2_ACCEPTED_SET_HI_IDX = 34;
-    uint256 private constant V2_ACCEPTED_SET_LO_IDX = 35;
     bytes32 private constant LBFV_ACCEPTED_SET_LABEL_HASH =
         keccak256("interfold.lbfv.accepted-party-set:v1");
 
@@ -203,8 +195,9 @@ contract DkgFoldAttestationVerifier is IDkgFoldAttestationVerifier {
         uint256 e3Id,
         bytes32[] memory publicInputs
     ) private view returns (uint256 h) {
-        if (_isV2Statement(registry, e3Id, publicInputs)) {
-            return V2_H;
+        (uint256 v2H, ) = _v2CommitteeParams(publicInputs.length);
+        if (v2H > 0 && _isV2Statement(registry, e3Id, publicInputs, v2H)) {
+            return v2H;
         }
         require(
             publicInputs.length >= 27 && (publicInputs.length - 24) % 3 == 0,
@@ -220,37 +213,62 @@ contract DkgFoldAttestationVerifier is IDkgFoldAttestationVerifier {
     function _isV2Statement(
         address registry,
         uint256 e3Id,
-        bytes32[] memory publicInputs
+        bytes32[] memory publicInputs,
+        uint256 v2H
     ) private view returns (bool) {
-        if (publicInputs.length != V2_PUBLIC_INPUTS_LEN) return false;
-
-        uint256 first = uint256(publicInputs[V2_PARTY_ID_START]);
-        uint256 second = uint256(publicInputs[V2_PARTY_ID_START + 1]);
-        if (first >= V2_N || second >= V2_N || first >= second) return false;
+        (, uint256 v2N) = _v2CommitteeParams(publicInputs.length);
+        uint256 previous;
+        for (uint256 i = 0; i < v2H; ++i) {
+            uint256 partyId = uint256(publicInputs[2 + i]);
+            if (partyId >= v2N || (i > 0 && partyId <= previous)) return false;
+            previous = partyId;
+        }
 
         bytes32 committeeHash = ICiphernodeRegistry(registry).getCommitteeHash(
             e3Id
         );
         if (
-            publicInputs[V2_COMMITTEE_HASH_HI_IDX] !=
-            CommitteeHashLib.hi(committeeHash) ||
-            publicInputs[V2_COMMITTEE_HASH_LO_IDX] !=
-            CommitteeHashLib.lo(committeeHash)
+            publicInputs[2 + v2H] !=
+                CommitteeHashLib.hi(committeeHash) ||
+            publicInputs[3 + v2H] !=
+                CommitteeHashLib.lo(committeeHash)
         ) return false;
 
-        bytes32 acceptedSetHash = keccak256(
-            abi.encodePacked(
-                LBFV_ACCEPTED_SET_LABEL_HASH,
-                uint32(V2_H),
-                uint32(first),
-                uint32(second)
-            )
+        bytes memory acceptedSetPreimage = abi.encodePacked(
+            LBFV_ACCEPTED_SET_LABEL_HASH,
+            uint32(v2H)
         );
+        for (uint256 i = 0; i < v2H; ++i) {
+            acceptedSetPreimage = bytes.concat(
+                acceptedSetPreimage,
+                abi.encodePacked(uint32(uint256(publicInputs[2 + i])))
+            );
+        }
+        bytes32 acceptedSetHash = keccak256(
+            acceptedSetPreimage
+        );
+        uint256 acceptedSetHiIdx = 28 + (3 * v2H);
+        uint256 acceptedSetLoIdx = 29 + (3 * v2H);
         return
-            publicInputs[V2_ACCEPTED_SET_HI_IDX] ==
+            publicInputs[acceptedSetHiIdx] ==
             CommitteeHashLib.hi(acceptedSetHash) &&
-            publicInputs[V2_ACCEPTED_SET_LO_IDX] ==
+            publicInputs[acceptedSetLoIdx] ==
             CommitteeHashLib.lo(acceptedSetHash);
+    }
+
+    function _v2CommitteeParams(
+        uint256 publicInputLength
+    ) private pure returns (uint256 v2H, uint256 v2N) {
+        if (publicInputLength == 58 || publicInputLength == 64) {
+            return (2, 3);
+        }
+        if (publicInputLength == 67 || publicInputLength == 73) {
+            return (5, 9);
+        }
+        if (publicInputLength == 94 || publicInputLength == 100) {
+            return (14, 19);
+        }
+        return (0, 0);
     }
 
     function _verifyBinding(

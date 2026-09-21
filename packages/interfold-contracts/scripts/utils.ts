@@ -126,9 +126,9 @@ export interface ActiveBfvConfig {
 }
 
 const INSECURE_PARAM_SET_HASH =
-  "0xaff065a7d6e3d8c830dfcd37c2af8a25b3dcc6cd74ba458894075e8264f1ab1e";
+  "0x0619925361a4d022377f93ccd0022c0164257ffb889b979eb382aa06d401e258";
 const INSECURE_CONFIG_ID =
-  "0x19921c8c12f93c3013be57d0859f4ddcdb4464ac856a0c62be1ad617fbbd2e7d";
+  "0x7317c190ccb1dccfa505bf5b9b923e341905f6675c16f958e0a7d853795517a5";
 const SECURE_PARAM_SET_HASH =
   "0x80775a19b6126a12943f9c1c53f92299f0c92ece819b625026ab1406bbbe0721";
 const SECURE_CONFIG_ID =
@@ -534,7 +534,7 @@ export function getBfvPkVkBindingHashPaths(config?: ActiveBfvConfig) {
   ] as const;
 }
 
-/** Recursive VK hashes used by the secure-16384 V2 DKG aggregation wrapper. */
+/** Recursive VK hashes used by the V2 DKG aggregation wrapper. */
 export function getBfvV2SubCircuitVkHashPaths(config?: ActiveBfvConfig) {
   const root = config ? distCircuitRoot(config) : getRepoRoot();
   return {

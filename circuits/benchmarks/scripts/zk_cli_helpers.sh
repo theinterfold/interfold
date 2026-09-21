@@ -26,11 +26,11 @@ get_zk_args() {
             echo "pk"
             return
             ;;
-        dkg/sk_share_computation)
+        dkg/sk_share_computation_chunk)
             echo "share-computation secret-key"
             return
             ;;
-        dkg/e_sm_share_computation)
+        dkg/esm_share_computation_chunk)
             echo "share-computation smudging-noise"
             return
             ;;

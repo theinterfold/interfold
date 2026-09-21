@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Fold five ordered l-BFV public-key and RLK aggregation proof pairs.
+//! Fold ordered l-BFV public-key and RLK aggregation proof pairs.
 
 use bb_proof_verification::{
     UltraHonkProof, UltraHonkVerificationKey, UltraHonkZKProof, verify_honk_proof,
@@ -12,7 +12,7 @@ use bb_proof_verification::{
 };
 use lib::configs::default::H;
 
-pub global LBFV_ROWS: u32 = 5;
+pub use lib::configs::default::threshold::L as LBFV_ROWS;
 pub global PK_AGGREGATION_PUBLIC_LEN: u32 = 7 + H;
 pub global RLK_AGGREGATION_PUBLIC_LEN: u32 = 8 + (2 * H);
 

@@ -12,13 +12,14 @@
 use crate::{
     threshold::pk_generation::PkGenerationCircuitData, CiphernodesCommittee, CircuitsErrors,
 };
-use e3_fhe_params::{build_pair_for_preset, create_deterministic_crp_from_default_seed, BfvPreset};
-use e3_polynomial::CrtPolynomial;
-use fhe::mbfv::PublicKeyShare;
-use fhe::{
-    bfv::SecretKey,
-    trbfv::{ShareManager, TRBFV},
+use e3_fhe_params::{
+    build_pair_for_preset, create_deterministic_crp_from_default_seed, generate_smudging_error,
+    BfvPreset,
 };
+use e3_polynomial::CrtPolynomial;
+use fhe::bfv::SecretKey;
+use fhe::mbfv::PublicKeyShare;
+use fhe_math::rq::{Poly, PowerBasis};
 use std::ops::Deref;
 
 impl PkGenerationCircuitData {
@@ -41,7 +42,6 @@ impl PkGenerationCircuitData {
             })?;
 
         let num_parties = committee.n;
-        let threshold = committee.threshold;
 
         let defaults = preset
             .search_defaults()
@@ -52,11 +52,10 @@ impl PkGenerationCircuitData {
             .lambda()
             .map_err(|e| CircuitsErrors::Sample(e.to_string()))?;
 
-        let trbfv = TRBFV::new(num_parties, threshold, threshold_params.clone())?;
-        let share_manager = ShareManager::new(num_parties, threshold, threshold_params)?;
-
         // Generate smudging error coefficients
-        let esi_coeffs = trbfv.generate_smudging_error(
+        let esi_coeffs = generate_smudging_error(
+            threshold_params.clone(),
+            num_parties,
             num_ciphertexts as usize,
             defaults.mult_depth,
             lambda,
@@ -65,7 +64,13 @@ impl PkGenerationCircuitData {
 
         // Convert to polynomial in RNS representation
         // bigints_to_poly returns Zeroizing<Poly>, we need to clone the inner Poly
-        let e_sm_rns_zeroizing = share_manager.bigints_to_poly(&esi_coeffs)?;
+        let e_sm_rns_zeroizing = Poly::<PowerBasis>::from_bigints(
+            &esi_coeffs,
+            threshold_params
+                .context_at_level(0)
+                .map_err(|e| CircuitsErrors::Sample(e.to_string()))?,
+        )
+        .map_err(|e| CircuitsErrors::Sample(e.to_string()))?;
 
         let e_sm = e_sm_rns_zeroizing.deref().clone();
 
@@ -97,9 +102,45 @@ mod tests {
                 .unwrap();
         let inputs = Inputs::compute(BfvPreset::InsecureThreshold512, &sample).unwrap();
 
-        assert_eq!(inputs.pk0is.limbs.len(), 2);
-        assert_eq!(inputs.e_sm.limbs.len(), 2);
-        assert_eq!(inputs.r1is.limbs.len(), 2);
-        assert_eq!(inputs.r2is.limbs.len(), 2);
+        assert_eq!(inputs.pk0is.limbs.len(), 3);
+        assert_eq!(inputs.e_sm.limbs.len(), 3);
+        assert_eq!(inputs.r1is.limbs.len(), 3);
+        assert_eq!(inputs.r2is.limbs.len(), 3);
+        for coefficient in inputs.eek.coefficients() {
+            assert!(
+                coefficient.abs() <= BigInt::from(bounds.eek_bound.clone()),
+                "key-generation error exceeds the C1 bound"
+            );
+        }
+        for coefficient in inputs.sk.coefficients() {
+            assert!(
+                coefficient.abs() <= BigInt::from(bounds.sk_bound.clone()),
+                "secret key exceeds the C1 bound"
+            );
+        }
+        for limb in &inputs.e_sm.limbs {
+            for coefficient in limb.coefficients() {
+                assert!(
+                    coefficient.abs() <= BigInt::from(bounds.e_sm_bound.clone()),
+                    "smudging error exceeds the C1 bound"
+                );
+            }
+        }
+        for (limb, bound) in inputs.r1is.limbs.iter().zip(&bounds.r1_bounds) {
+            for coefficient in limb.coefficients() {
+                assert!(
+                    coefficient.abs() <= BigInt::from(bound.clone()),
+                    "first quotient exceeds the C1 bound"
+                );
+            }
+        }
+        for (limb, bound) in inputs.r2is.limbs.iter().zip(&bounds.r2_bounds) {
+            for coefficient in limb.coefficients() {
+                assert!(
+                    coefficient.abs() <= BigInt::from(bound.clone()),
+                    "second quotient exceeds the C1 bound"
+                );
+            }
+        }
     }
 }

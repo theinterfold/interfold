@@ -2413,7 +2413,7 @@ dependencies = [
 
 [[package]]
 name = "e3-committee-hash"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -2468,6 +2468,7 @@ dependencies = [
  "anyhow",
  "clap",
  "fhe",
+ "fhe-math",
  "num-bigint 0.5.1",
  "num-traits",
  "rand 0.9.4",
@@ -2855,7 +2856,7 @@ dependencies = [
 [[package]]
 name = "fhe"
 version = "0.3.0"
-source = "git+https://github.com/gnosisguild/fhe.rs?branch=dev#96981eebe18a63117fb65569b8bf5c2362c29f9a"
+source = "git+https://github.com/gnosisguild/fhe.rs?branch=dev#8755efa203fbaf94841110d2fc7c9f1aaf92f0d8"
 dependencies = [
  "doc-comment",
  "fhe-math",
@@ -2880,7 +2881,7 @@ dependencies = [
 [[package]]
 name = "fhe-math"
 version = "0.3.0"
-source = "git+https://github.com/gnosisguild/fhe.rs?branch=dev#96981eebe18a63117fb65569b8bf5c2362c29f9a"
+source = "git+https://github.com/gnosisguild/fhe.rs?branch=dev#8755efa203fbaf94841110d2fc7c9f1aaf92f0d8"
 dependencies = [
  "ethnum",
  "fhe-traits",
@@ -2904,7 +2905,7 @@ dependencies = [
 [[package]]
 name = "fhe-traits"
 version = "0.3.0"
-source = "git+https://github.com/gnosisguild/fhe.rs?branch=dev#96981eebe18a63117fb65569b8bf5c2362c29f9a"
+source = "git+https://github.com/gnosisguild/fhe.rs?branch=dev#8755efa203fbaf94841110d2fc7c9f1aaf92f0d8"
 dependencies = [
  "rand 0.9.4",
 ]
@@ -2912,7 +2913,7 @@ dependencies = [
 [[package]]
 name = "fhe-util"
 version = "0.3.0"
-source = "git+https://github.com/gnosisguild/fhe.rs?branch=dev#96981eebe18a63117fb65569b8bf5c2362c29f9a"
+source = "git+https://github.com/gnosisguild/fhe.rs?branch=dev#8755efa203fbaf94841110d2fc7c9f1aaf92f0d8"
 dependencies = [
  "num-bigint-dig",
  "num-traits",
@@ -6818,7 +6819,60 @@ dependencies = [
  "rand_chacha 0.3.1",
  "serde",
  "serde_json",
- "snark-verifier",
+ "siphasher",
+ "slab",
+ "smol",
+ "smoldot",
+ "zeroize",
+]
+
+[[package]]
+name = "socket2"
+version = "0.5.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e22376abed350d73dd1cd119b57ffccad95b4e585a7cda43e286245ce23c0678"
+dependencies = [
+ "libc",
+ "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "socket2"
+version = "0.6.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "52d1cfed4120b4d927bf7c0f86d2087a4a7d6027c906d9f9d525a80573b9be51"
+dependencies = [
+ "libc",
+ "windows-sys 0.60.2",
+]
+
+[[package]]
+name = "soketto"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2e859df029d160cb88608f5d7df7fb4753fd20fdfb4de5644f3d8b8440841721"
+dependencies = [
+ "base64 0.22.1",
+ "bytes",
+ "futures 0.3.31",
+ "httparse",
+ "log",
+ "rand 0.8.6",
+ "sha1 0.10.6",
+]
+
+[[package]]
+name = "sp-crypto-hashing"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc9927a7f81334ed5b8a98a4a978c81324d12bd9713ec76b5c68fd410174c5eb"
+dependencies = [
+ "blake2b_simd",
+ "byteorder",
+ "digest 0.10.7",
+ "sha2 0.10.9",
+ "sha3",
+ "twox-hash",
 ]
 
 [[package]]
@@ -7304,9 +7358,10 @@ version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ee855f1f400bd0e5c02d150ae5de3840039a3f54b025156404e34c23c03f47c3"
 dependencies = [
- "log",
- "once_cell",
- "tracing-core",
+ "cfg-if 0.1.10",
+ "digest 0.10.7",
+ "rand 0.8.6",
+ "static_assertions",
 ]
 
 [[package]]
@@ -7534,6 +7589,15 @@ name = "winapi-i686-pc-windows-gnu"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ac3b87c63620426dd9b991e5ce0329eff545bccbbb34f3be09ff6fb6ab51b7b6"
+
+[[package]]
+name = "winapi-util"
+version = "0.1.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
+dependencies = [
+ "windows-sys 0.52.0",
+]
 
 [[package]]
 name = "winapi-x86_64-pc-windows-gnu"

@@ -96,9 +96,9 @@ use e3_zk_prover::{
     generate_nodes_fold_step, load_staged_lbfv_pk_generation_limb_vk_hash,
     load_staged_rlk_generation_limb_vk_hash, prove_chunked_share_computation,
     prove_decryption_aggregation_jobs, prove_dkg_aggregation, prove_dkg_aggregation_v2,
-    prove_lbfv_aggregation_fold_step, prove_lbfv_generation_fold_step,
-    prove_lbfv_pk_generation_row, prove_node_dkg_fold, prove_node_dkg_fold_v2,
-    prove_nodes_fold_v2_step, prove_rlk_generation_row, validate_c2_terminal_proof,
+    prove_lbfv_aggregation_fold_step_for_preset, prove_lbfv_generation_fold_step_for_preset,
+    prove_lbfv_pk_generation_row, prove_node_dkg_fold, prove_node_dkg_fold_v2_for_preset,
+    prove_nodes_fold_v2_step_for_preset, prove_rlk_generation_row, validate_c2_terminal_proof,
     validate_lbfv_pk_generation_terminal_proof, validate_rlk_generation_terminal_proof,
     C2TerminalAnchors, CircuitVariant, DecryptionAggregationJob, DkgAggregationInput,
     NodeDkgFoldInput, NodeDkgFoldProveResult, Provable, ZkBackend, ZkError, ZkProver,
@@ -115,7 +115,14 @@ use rand_chacha::ChaCha20Rng;
 use tracing::{error, info};
 use zeroize::{Zeroize, Zeroizing};
 
-use crate::effect_gate::{ComputeEffectGate, RunningJob, RunningJobs};
+fn c2_chunk_size_for_preset(preset: BfvPreset) -> usize {
+    match preset {
+        BfvPreset::InsecureThreshold512 | BfvPreset::InsecureDkg512 => 128,
+        _ => DEFAULT_C2_CHUNK_SIZE,
+    }
+}
+
+use crate::effect_gate::ComputeEffectGate;
 
 /// Multithread actor
 pub struct Multithread {
@@ -636,11 +643,25 @@ async fn handle_compute_request_event(
     let request_snapshot = msg.clone();
     let task_group = request_task_group(&task_scope, &msg);
 
-    let is_zk = matches!(&request_snapshot.request, ComputeRequestKind::Zk(_));
-    let retries_local_worker_failures =
-        is_zk || is_retryable_trbfv_request(&request_snapshot.request);
-    let mut attempt = 1usize;
-    let mut total_duration = Duration::ZERO;
+    if matches!(
+        &request_snapshot.request,
+        ComputeRequestKind::Zk(ZkRequest::NodesFoldV2Step(_) | ZkRequest::DkgAggregationV2(_))
+    ) {
+        info!(
+            e3_id = %request_snapshot.e3_id,
+            correlation = %request_snapshot.correlation_id,
+            request = %request_snapshot,
+            "Multithread received recursive V2 request"
+        );
+    }
+
+    let report_for_worker = report.clone();
+    let task_group = task_group(&task_scope, &msg.e3_id);
+    let pool_result = pool
+        .spawn_in_group(task_group, job_name, TaskTimeouts::default(), move || {
+            handle_compute_request(rng, cipher, zk_prover, msg, report_for_worker)
+        })
+        .await;
 
     let (result, duration) = match pool_result {
         Ok(v) => v,
@@ -679,6 +700,18 @@ async fn handle_compute_request_event(
             return Ok(());
         }
     };
+
+    if matches!(
+        &request_snapshot.request,
+        ComputeRequestKind::Zk(ZkRequest::NodesFoldV2Step(_) | ZkRequest::DkgAggregationV2(_))
+    ) {
+        info!(
+            e3_id = %request_snapshot.e3_id,
+            correlation = %request_snapshot.correlation_id,
+            request = %request_snapshot,
+            "Multithread recursive V2 worker returned"
+        );
+    }
 
     if let Some(report) = report {
         report.do_send(TrackDuration::new(msg_string, duration))
@@ -793,14 +826,14 @@ fn handle_pk_aggregation_proof(
     ))
 }
 
-fn ensure_secure_lbfv_preset(
+fn ensure_lbfv_preset(
     preset: BfvPreset,
     request: &ComputeRequest,
 ) -> Result<(), ComputeRequestError> {
-    if preset != BfvPreset::SecureThreshold16384 {
+    if !e3_fhe_params::supports_lbfv(preset) {
         return Err(make_zk_error(
             request,
-            format!("l-BFV row proofs require SecureThreshold16384; received {preset:?}"),
+            format!("l-BFV row proofs require an l-BFV preset; received {preset:?}"),
         ));
     }
     Ok(())
@@ -810,10 +843,11 @@ fn validated_row_instance(
     proof_type: e3_events::ProofType,
     proof: &Proof,
     requested_row: u32,
+    params_preset: BfvPreset,
     request: &ComputeRequest,
 ) -> Result<u32, ComputeRequestError> {
     let identity = proof_type
-        .identity(proof)
+        .identity(proof, e3_fhe_params::lbfv_row_count(params_preset))
         .map_err(|error| make_zk_error(request, error.to_string()))?;
     if identity.instance != requested_row {
         return Err(make_zk_error(
@@ -832,7 +866,7 @@ fn build_lbfv_pk_generation_data(
     req: &LbfvPkGenerationProofRequest,
     request: &ComputeRequest,
 ) -> Result<LbfvPkGenerationCircuitData, ComputeRequestError> {
-    ensure_secure_lbfv_preset(req.params_preset, request)?;
+    ensure_lbfv_preset(req.params_preset, request)?;
     let (params, _) = build_pair_for_preset(req.params_preset)
         .map_err(|error| make_zk_error(request, format!("build_pair_for_preset: {error}")))?;
     let secret_key_bytes = req
@@ -868,7 +902,7 @@ fn build_rlk_generation_data(
     req: &RlkGenerationProofRequest,
     request: &ComputeRequest,
 ) -> Result<RlkGenerationCircuitData, ComputeRequestError> {
-    ensure_secure_lbfv_preset(req.params_preset, request)?;
+    ensure_lbfv_preset(req.params_preset, request)?;
     let (params, _) = build_pair_for_preset(req.params_preset)
         .map_err(|error| make_zk_error(request, format!("build_pair_for_preset: {error}")))?;
     let expected_rows = params.moduli().len();
@@ -943,7 +977,7 @@ fn build_lbfv_pk_aggregation_data(
     req: &LbfvPkAggregationProofRequest,
     request: &ComputeRequest,
 ) -> Result<LbfvPkAggregationCircuitData, ComputeRequestError> {
-    ensure_secure_lbfv_preset(req.params_preset, request)?;
+    ensure_lbfv_preset(req.params_preset, request)?;
     let committee = req.committee_size.values();
     validate_lbfv_aggregation_parties(&req.party_ids, req.share_bytes.len(), &committee, request)?;
     let (params, _) = build_pair_for_preset(req.params_preset)
@@ -975,7 +1009,7 @@ fn build_rlk_aggregation_data(
     req: &RlkAggregationProofRequest,
     request: &ComputeRequest,
 ) -> Result<RlkAggregationCircuitData, ComputeRequestError> {
-    ensure_secure_lbfv_preset(req.params_preset, request)?;
+    ensure_lbfv_preset(req.params_preset, request)?;
     let committee = req.committee_size.values();
     validate_lbfv_aggregation_parties(&req.party_ids, req.share_bytes.len(), &committee, request)?;
     let (params, _) = build_pair_for_preset(req.params_preset)
@@ -1073,6 +1107,7 @@ fn handle_lbfv_pk_generation_proof(
         e3_events::ProofType::LbfvPkGeneration,
         &proof,
         req.row_index,
+        req.params_preset,
         &request,
     )?;
     Ok(ComputeResponse::zk(
@@ -1123,6 +1158,7 @@ fn handle_rlk_generation_proof(
         e3_events::ProofType::RlkGeneration,
         &proof,
         req.row_index,
+        req.params_preset,
         &request,
     )?;
     Ok(ComputeResponse::zk(
@@ -1164,6 +1200,7 @@ fn handle_lbfv_pk_aggregation_proof(
         e3_events::ProofType::LbfvPkAggregation,
         &proof,
         req.row_index,
+        req.params_preset,
         &request,
     )?;
     Ok(ComputeResponse::zk(
@@ -1206,6 +1243,7 @@ fn handle_rlk_aggregation_proof(
         e3_events::ProofType::RlkAggregation,
         &proof,
         req.row_index,
+        req.params_preset,
         &request,
     )?;
     Ok(ComputeResponse::zk(
@@ -1899,13 +1937,13 @@ fn handle_lbfv_generation_fold_proof(
     req: LbfvGenerationFoldRequest,
     request: ComputeRequest,
 ) -> Result<ComputeResponse, ComputeRequestError> {
-    ensure_secure_lbfv_preset(req.params_preset, &request)?;
+    ensure_lbfv_preset(req.params_preset, &request)?;
     let artifacts_dir =
         prover.resolve_artifacts_dir(req.params_preset, req.committee_size.as_str());
     let trusted_pk_limb_key_hash =
         load_staged_lbfv_pk_generation_limb_vk_hash(prover, &artifacts_dir)
             .map_err(|error| make_zk_error(&request, error.to_string()))?;
-    let proof = prove_lbfv_generation_fold_step(
+    let proof = prove_lbfv_generation_fold_step_for_preset(
         prover,
         &req.pk_proof,
         &req.rlk_proof,
@@ -1913,6 +1951,7 @@ fn handle_lbfv_generation_fold_proof(
         req.row_index,
         &ArcBytes::from_bytes(&trusted_pk_limb_key_hash),
         &req.trusted_limb_key_hash,
+        req.params_preset,
         &zk_bb_work_id(&request),
         artifacts_dir.as_str(),
     )
@@ -1934,15 +1973,17 @@ fn handle_node_dkg_fold_v2_proof(
     req: NodeDkgFoldV2Request,
     request: ComputeRequest,
 ) -> Result<ComputeResponse, ComputeRequestError> {
-    ensure_secure_lbfv_preset(req.params_preset, &request)?;
+    ensure_lbfv_preset(req.params_preset, &request)?;
     let artifacts_dir =
         prover.resolve_artifacts_dir(req.params_preset, req.committee_size.as_str());
-    let proof = prove_node_dkg_fold_v2(
+    let proof = prove_node_dkg_fold_v2_for_preset(
         prover,
         &req.legacy_node_fold_proof,
         &req.c1_proof,
         &req.generation_proof,
         req.party_id,
+        req.params_preset,
+        req.committee_size,
         &zk_bb_work_id(&request),
         artifacts_dir.as_str(),
     )
@@ -1964,15 +2005,23 @@ fn handle_nodes_fold_v2_step_proof(
     req: NodesFoldV2StepRequest,
     request: ComputeRequest,
 ) -> Result<ComputeResponse, ComputeRequestError> {
-    ensure_secure_lbfv_preset(req.params_preset, &request)?;
+    ensure_lbfv_preset(req.params_preset, &request)?;
+    info!(
+        e3_id = %request.e3_id,
+        slot = req.slot_index,
+        total_slots = req.total_slots,
+        "Multithread: proving NodesFoldV2Step"
+    );
     let artifacts_dir =
         prover.resolve_artifacts_dir(req.params_preset, req.committee_size.as_str());
-    let proof = prove_nodes_fold_v2_step(
+    let proof = prove_nodes_fold_v2_step_for_preset(
         prover,
         &req.inner_proof,
         req.prior_accumulator.as_ref(),
         req.slot_index,
         req.total_slots,
+        req.params_preset,
+        req.committee_size,
         &format!("{}-nodesfold-v2-{}", req.e3_id, req.slot_index),
         artifacts_dir.as_str(),
     )
@@ -1982,6 +2031,11 @@ fn handle_nodes_fold_v2_step_proof(
             request.clone(),
         )
     })?;
+    info!(
+        e3_id = %request.e3_id,
+        slot = req.slot_index,
+        "Multithread: proved NodesFoldV2Step"
+    );
     Ok(ComputeResponse::zk(
         ZkResponse::NodesFoldV2Step(NodesFoldV2StepResponse {
             accumulator_proof: proof,
@@ -1996,16 +2050,17 @@ fn handle_lbfv_aggregation_fold_proof(
     req: LbfvAggregationFoldRequest,
     request: ComputeRequest,
 ) -> Result<ComputeResponse, ComputeRequestError> {
-    ensure_secure_lbfv_preset(req.params_preset, &request)?;
+    ensure_lbfv_preset(req.params_preset, &request)?;
     let artifacts_dir =
         prover.resolve_artifacts_dir(req.params_preset, req.committee_size.as_str());
-    let proof = prove_lbfv_aggregation_fold_step(
+    let proof = prove_lbfv_aggregation_fold_step_for_preset(
         prover,
         &req.pk_proof,
         &req.rlk_proof,
         req.prior_accumulator.as_ref(),
         req.row_index,
         req.committee_size.values().h,
+        req.params_preset,
         &zk_bb_work_id(&request),
         artifacts_dir.as_str(),
     )
@@ -2027,7 +2082,7 @@ fn handle_dkg_aggregation_v2_proof(
     req: DkgAggregationV2Request,
     request: ComputeRequest,
 ) -> Result<ComputeResponse, ComputeRequestError> {
-    ensure_secure_lbfv_preset(req.params_preset, &request)?;
+    ensure_lbfv_preset(req.params_preset, &request)?;
     let proof = prove_dkg_aggregation_v2(
         prover,
         &req.nodes_fold_proof,
@@ -2175,7 +2230,7 @@ fn handle_share_computation_proof(
         parity_matrix,
         n_parties: committee.n as u32,
         threshold: committee.threshold as u32,
-        chunk_size: DEFAULT_C2_CHUNK_SIZE as u32,
+        chunk_size: c2_chunk_size_for_preset(req.params_preset) as u32,
     };
 
     let bb_work = zk_bb_work_id(&request);
@@ -2430,7 +2485,7 @@ fn handle_share_encryption_proof(
         dkg_input_type: req.dkg_input_type,
         party_idx,
         mod_idx,
-        chunk_size: DEFAULT_C2_CHUNK_SIZE as u32,
+        chunk_size: c2_chunk_size_for_preset(req.params_preset) as u32,
         committee: committee_val,
     };
 
@@ -2589,7 +2644,7 @@ fn handle_dkg_share_decryption_proof(
         recipient_party_id: req.recipient_party_id,
         own_plaintext_share,
         dkg_input_type: req.dkg_input_type,
-        chunk_size: DEFAULT_C2_CHUNK_SIZE as u32,
+        chunk_size: c2_chunk_size_for_preset(req.params_preset) as u32,
         committee: req.committee_size.values(),
     };
 

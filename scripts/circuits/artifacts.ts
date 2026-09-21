@@ -227,7 +227,7 @@ function stampFiles(dir: string): string[] {
 
 export function requiredArtifactMarkers(preset: string, committee: string): string[] {
   const circuits =
-    preset === CIRCUIT_PRESETS.SECURE_16384
+    preset === CIRCUIT_PRESETS.INSECURE || preset === CIRCUIT_PRESETS.SECURE_16384
       ? [
           ...REQUIRED_VARIANT_CIRCUITS,
           ...REQUIRED_LBFV_VARIANT_CIRCUITS,

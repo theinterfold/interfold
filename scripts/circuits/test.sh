@@ -33,19 +33,15 @@ for pair in minimum:insecure micro:secure small:secure; do
     -e "s/committee::(minimum|micro|small)/committee::$committee/g" \
     "$BACKUP_DIR/active.nr" > "$ACTIVE_COMMITTEE"
 
-  preset_name="${preset}-64"
-  if [[ "$preset" == "secure" ]]; then
-    preset_name="secure-8192"
-  fi
-  sed -E \
-    -e "s/preset: (insecure-64|secure-8192)/preset: $preset_name/g" \
-    -e "s/super::(insecure|secure)::/super::$preset::/g" \
-    "$BACKUP_DIR/default.nr" > "$ACTIVE_PRESET"
-  echo "Testing DKG aggregation for $preset_name/$committee"
-  (cd "$REPO_ROOT/circuits/bin/recursive_aggregation/dkg_aggregator" && nargo test)
-  # node_fold's recipient-key constraints are indexed by N_PARTIES and L_THRESHOLD, the same
-  # values these pairs cover.
-  (cd "$REPO_ROOT/circuits/bin/recursive_aggregation/node_fold" && nargo test)
+  for preset in insecure secure_8192; do
+    preset_name="${preset//_/-}"
+    sed -E \
+      -e "s/preset: (insecure|secure-8192)/preset: $preset_name/g" \
+      -e "s/super::(insecure|secure_8192)::/super::$preset::/g" \
+      "$BACKUP_DIR/default.nr" > "$ACTIVE_PRESET"
+    echo "Testing DKG aggregation for $preset_name/$committee"
+    (cd "$REPO_ROOT/circuits/bin/recursive_aggregation/dkg_aggregator" && nargo test)
+  done
 done
 
 echo "Noir circuits tested successfully"

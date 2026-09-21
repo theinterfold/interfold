@@ -483,6 +483,7 @@ async fn ensure_lbfv_aggregation_sidecar(
             collection.e3_id.clone(),
             collection.proof_domain,
             accepted_party_ids,
+            collection.params_preset,
         )?,
     };
 

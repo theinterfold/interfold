@@ -236,11 +236,11 @@ mod tests {
             &bits,
             n_parties,
             threshold,
-            256,
+            64,
         )
         .unwrap();
 
-        assert!(configs.contains("SHARE_COMPUTATION_CHUNK_SIZE: u32 = 256"));
+        assert!(configs.contains("SHARE_COMPUTATION_CHUNK_SIZE: u32 = 64"));
         assert!(configs.contains("SHARE_COMPUTATION_N_CHUNKS: u32 = 2"));
     }
 
