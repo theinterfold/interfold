@@ -107,6 +107,7 @@ pub fn calculate_decryption_share(
     req: CalculateDecryptionShareRequest,
 ) -> Result<CalculateDecryptionShareResponse> {
     info!("Calculating decryption share: `{}`...", req.name);
+    validate_smudging_share_count(req.ciphertexts.len(), req.es_poly_sum.len())?;
     let req: InnerRequest = (cipher, req).try_into()?;
 
     let num_ciphernodes = req.trbfv_config.num_parties() as usize;
@@ -141,4 +142,36 @@ pub fn calculate_decryption_share(
     info!("Returning successful result...");
 
     Ok(InnerResponse { d_share_poly }.into())
+}
+
+fn validate_smudging_share_count(
+    ciphertext_count: usize,
+    smudging_share_count: usize,
+) -> Result<()> {
+    ensure!(
+        ciphertext_count == 0 || smudging_share_count > 0,
+        "At least one smudging polynomial is required"
+    );
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_smudging_share_count;
+
+    #[test]
+    fn nonempty_ciphertexts_require_a_smudging_polynomial() {
+        let error = validate_smudging_share_count(1, 0)
+            .expect_err("a nonempty ciphertext set must not use an empty smudging-share set");
+        assert_eq!(
+            error.to_string(),
+            "At least one smudging polynomial is required"
+        );
+    }
+
+    #[test]
+    fn empty_ciphertexts_do_not_require_a_smudging_polynomial() {
+        assert!(validate_smudging_share_count(0, 0).is_ok());
+        assert!(validate_smudging_share_count(1, 1).is_ok());
+    }
 }

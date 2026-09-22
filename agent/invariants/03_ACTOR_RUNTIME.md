@@ -131,11 +131,11 @@ every section.
   secrets before it redrives the saved failure. Existing threshold-keyshare snapshots remain
   unchanged. — `flow-trace/04`
 - Secure-16384 public-key publication uses the separate `//publickey_lbfv_publication/v1/{e3_id}`
-  snapshot. It validates the E3 identity and `DkgAggregatorV2` circuit, commits the
-  `LbfvPublicKeyAggregated` intent before emission, and redrives the intent after restart. The
-  registry writer adapts the local event to the existing public-key submission gate and passes the
-  V2 proof and attestation bundle to `publishCommittee`. The legacy public-key recovery schema
-  remains unchanged. — `flow-trace/04`
+  snapshot. Schema 2 rejects pending version-2 key envelopes. It validates the E3 identity and
+  `DkgAggregatorV2` circuit, commits the `LbfvPublicKeyAggregated` intent before emission, and
+  redrives the intent after restart. The registry writer adapts the local event to the existing
+  public-key submission gate and passes the V2 proof and attestation bundle to `publishCommittee`.
+  The legacy public-key recovery schema remains unchanged. — `flow-trace/04`
 - Secure-16384 l-BFV row aggregation uses `//publickey_lbfv_aggregation/v1/{e3_id}`. The sidecar
   binds the proof domain, the immutable ascending accepted-party set, both accepted document
   families, five PK proofs, five RLK proofs, the fold cursor, both operational keys, and the final

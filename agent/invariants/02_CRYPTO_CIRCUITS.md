@@ -228,14 +228,15 @@ every section.
   `flow-trace/04`
 - **Client PK commitment binding (C-01):** Serialized PK event bytes are an untrusted transport
   hint. Legacy consumers decode the bytes with the request-time threshold BFV parameters.
-  Secure-16384 consumers decode the version-2 l-BFV key envelope and validate its complete public
-  key and RLK against the fixed CRS and URS. Consumers store the key only when the recomputed legacy
-  or envelope commitment equals the on-chain proof value. Proof-backed committee publication never
-  accepts key bytes. Public-key candidates are bounded and gated to request-time committee members
-  while the E3 remains in `KeyPublished`. Retained expelled members can still repair transport, but
-  their bytes receive no extra trust. Terminal E3s cannot create new durable assemblies after
-  cleanup. Consumers accept at most one candidate per member, so an invalid candidate cannot block a
-  valid candidate from another member. — INDEX concerns #33, Z-31
+  Secure-16384 consumers decode the version-3 l-BFV key envelope, reconstruct its complete public
+  key from the RLK, and validate both keys against the fixed CRS and URS. Consumers store the key
+  only when the recomputed legacy or envelope commitment equals the on-chain proof value.
+  Proof-backed committee publication rejects unbound or commitment-mismatched key bytes. Public-key
+  candidates are bounded and gated to request-time committee members while the E3 remains in
+  `KeyPublished`. Retained expelled members can still repair transport, but their bytes receive no
+  extra trust. Terminal E3s cannot create new durable assemblies after cleanup. Consumers accept at
+  most one candidate per member, so an invalid candidate cannot block a valid candidate from another
+  member. — INDEX concerns #33, Z-31
 - **No proof-disabled bypass (C-02):** both final verifier calls are mandatory in production;
   `skip_proof_aggregation` works only under the `test-only-skip-proof-aggregation` Cargo feature;
   production verifiers reject placeholder C5/C7 proofs. — INDEX concern #32
@@ -258,10 +259,11 @@ every section.
   manifests independently. It must not require corresponding legacy and V2 VK hashes to be equal.
 - **Secure-16384 key publication binds all operational key material:** `dkg_aggregator_v2` computes
   ordered SAFE commitments for all public-key rows and all RLK D0 and D2 rows. It combines these
-  commitments into the version-2 key-envelope commitment. The existing on-chain `pkCommitment` field
+  commitments into the version-3 key-envelope commitment. The existing on-chain `pkCommitment` field
   carries this value. The published `IFLBFVKE` envelope contains the canonical fhe.rs
-  `LBFVPublicKey` and `LBFVRelinearizationKey` bytes. A consumer must validate the envelope against
-  `pkCommitment` before it uses public-key component 0 or exposes the RLK to an FHE processor.
+  `LBFVRelinearizationKey` bytes. A consumer reconstructs the level-0 `LBFVPublicKey` from the RLK.
+  A consumer must validate the envelope against `pkCommitment` before it uses public-key component 0
+  or exposes the RLK to an FHE processor.
 - **l-BFV proof identity and retries:** the proof session is Keccak-derived from the complete E3,
   deployment, crypto-configuration, committee, constants-version, and level domain. The accepted
   aggregation party set uses the canonical `e3-committee-hash` Keccak function. Local operation IDs

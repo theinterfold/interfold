@@ -21,7 +21,7 @@ use fhe_traits::{DeserializeParametrized, Serialize as FheSerialize};
 use num_bigint::{BigInt, Sign};
 
 const MAGIC: [u8; 8] = *b"IFLBFVKE";
-const SCHEMA_VERSION: u16 = 2;
+const SCHEMA_VERSION: u16 = 3;
 const HEADER_LEN: usize = MAGIC.len() + 2 + 4 + 4;
 
 /// Return `true` when bytes start with the l-BFV key-envelope identifier.
@@ -29,10 +29,9 @@ pub fn is_lbfv_key_envelope(encoded: &[u8]) -> bool {
     encoded.starts_with(&MAGIC)
 }
 
-/// The canonical key payloads in an l-BFV key envelope.
+/// The canonical key payload in an l-BFV key envelope.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LbfvKeyEnvelope {
-    pub public_key: Vec<u8>,
     pub relinearization_key: Vec<u8>,
 }
 
@@ -44,34 +43,45 @@ pub struct LbfvKeyEnvelopeCommitments {
     pub envelope: [u8; 32],
 }
 
-/// Encode the two canonical fhe.rs key payloads in the version-2 envelope.
-pub fn encode_lbfv_key_envelope(public_key: &[u8], relinearization_key: &[u8]) -> Result<Vec<u8>> {
+/// Encode one canonical fhe.rs relinearization key in the version-3 envelope.
+pub fn encode_lbfv_key_envelope(
+    public_key: &[u8],
+    relinearization_key: &[u8],
+    preset: BfvPreset,
+) -> Result<Vec<u8>> {
     ensure!(!public_key.is_empty(), "l-BFV public key is empty");
     ensure!(
         !relinearization_key.is_empty(),
         "l-BFV relinearization key is empty"
     );
-    let public_key_len =
-        u32::try_from(public_key.len()).context("l-BFV public key is too large")?;
+    let (params, _) = build_pair_for_preset(preset)?;
+    let public_key = LBFVPublicKey::from_bytes(public_key, &params)
+        .context("failed to decode the l-BFV public key")?;
+    let relinearization_key_value =
+        LBFVRelinearizationKey::from_bytes(relinearization_key, &params)
+            .context("failed to decode the l-BFV relinearization key")?;
+    let reconstructed_public_key = relinearization_key_value
+        .reconstruct_public_key()
+        .context("failed to reconstruct the l-BFV public key")?;
+    ensure_same_public_key_material(&public_key, &reconstructed_public_key)?;
+
     let relinearization_key_len = u32::try_from(relinearization_key.len())
         .context("l-BFV relinearization key is too large")?;
-    let payload_len = public_key
+    let payload_len = relinearization_key
         .len()
-        .checked_add(relinearization_key.len())
-        .and_then(|length| length.checked_add(HEADER_LEN))
+        .checked_add(HEADER_LEN)
         .ok_or_else(|| anyhow!("l-BFV key envelope length overflow"))?;
 
     let mut encoded = Vec::with_capacity(payload_len);
     encoded.extend_from_slice(&MAGIC);
     encoded.extend_from_slice(&SCHEMA_VERSION.to_be_bytes());
-    encoded.extend_from_slice(&public_key_len.to_be_bytes());
+    encoded.extend_from_slice(&0_u32.to_be_bytes());
     encoded.extend_from_slice(&relinearization_key_len.to_be_bytes());
-    encoded.extend_from_slice(public_key);
     encoded.extend_from_slice(relinearization_key);
     Ok(encoded)
 }
 
-/// Decode one version-2 l-BFV key envelope.
+/// Decode one version-3 l-BFV key envelope.
 pub fn decode_lbfv_key_envelope(encoded: &[u8]) -> Result<LbfvKeyEnvelope> {
     ensure!(
         encoded.len() >= HEADER_LEN,
@@ -96,7 +106,10 @@ pub fn decode_lbfv_key_envelope(encoded: &[u8]) -> Result<LbfvKeyEnvelope> {
             .try_into()
             .expect("fixed relinearization-key length field"),
     ) as usize;
-    ensure!(public_key_len > 0, "l-BFV public key is empty");
+    ensure!(
+        public_key_len == 0,
+        "version-3 l-BFV key envelope must reconstruct its public key"
+    );
     ensure!(
         relinearization_key_len > 0,
         "l-BFV relinearization key is empty"
@@ -113,7 +126,6 @@ pub fn decode_lbfv_key_envelope(encoded: &[u8]) -> Result<LbfvKeyEnvelope> {
     );
 
     Ok(LbfvKeyEnvelope {
-        public_key: encoded[HEADER_LEN..public_key_end].to_vec(),
         relinearization_key: encoded[public_key_end..envelope_end].to_vec(),
     })
 }
@@ -139,15 +151,12 @@ pub fn inspect_lbfv_key_envelope(
 ) -> Result<(LbfvKeyEnvelopeCommitments, Vec<u8>)> {
     let envelope = decode_lbfv_key_envelope(encoded)?;
     let (params, _) = build_pair_for_preset(preset)?;
-    let public_key = LBFVPublicKey::from_bytes(&envelope.public_key, &params)
-        .context("failed to decode the l-BFV public key")?;
     let relinearization_key =
         LBFVRelinearizationKey::from_bytes(&envelope.relinearization_key, &params)
             .context("failed to decode the l-BFV relinearization key")?;
-    ensure!(
-        public_key.parameters() == params.as_ref(),
-        "l-BFV public key parameters do not match the preset"
-    );
+    let public_key = relinearization_key
+        .reconstruct_public_key()
+        .context("failed to reconstruct the l-BFV public key")?;
     ensure!(
         relinearization_key.parameters().as_ref() == params.as_ref(),
         "l-BFV relinearization-key parameters do not match the preset"
@@ -261,6 +270,26 @@ pub fn inspect_lbfv_key_envelope(
     Ok((commitments, encryption_key))
 }
 
+fn ensure_same_public_key_material(
+    expected: &LBFVPublicKey,
+    reconstructed: &LBFVPublicKey,
+) -> Result<()> {
+    ensure!(
+        expected.parameters() == reconstructed.parameters()
+            && expected.row_count() == reconstructed.row_count()
+            && expected.rows().len() == reconstructed.rows().len(),
+        "l-BFV relinearization key does not contain the public key"
+    );
+    for (expected_row, reconstructed_row) in expected.rows().iter().zip(reconstructed.rows()) {
+        ensure!(
+            expected_row.level == reconstructed_row.level
+                && expected_row.iter().eq(reconstructed_row.iter()),
+            "l-BFV relinearization key does not contain the public key"
+        );
+    }
+    Ok(())
+}
+
 fn ensure_components_at_level(
     components: &[Poly<NttShoup>],
     expected_context: &std::sync::Arc<fhe_math::rq::Context>,
@@ -312,7 +341,7 @@ mod tests {
     use fhe::bfv::SecretKey;
     use fhe::trlbfv::{aggregate_relinearization_key, PublicKeyShare, RelinKeyShare};
 
-    fn envelope() -> Result<Vec<u8>> {
+    fn operational_keys() -> Result<(BfvPreset, LBFVPublicKey, LBFVRelinearizationKey)> {
         let preset = BfvPreset::InsecureThreshold512;
         let (params, _) = build_pair_for_preset(preset)?;
         let crs = CommonRandomPolyVec::from_seed(
@@ -339,7 +368,12 @@ mod tests {
             .collect::<std::result::Result<Vec<_>, _>>()?;
         let public_key: LBFVPublicKey = public_key_shares.into_iter().aggregate()?;
         let rlk = aggregate_relinearization_key(&rlk_shares, &public_key)?;
-        encode_lbfv_key_envelope(&public_key.to_bytes(), &rlk.to_bytes())
+        Ok((preset, public_key, rlk))
+    }
+
+    fn envelope() -> Result<Vec<u8>> {
+        let (preset, public_key, rlk) = operational_keys()?;
+        encode_lbfv_key_envelope(&public_key.to_bytes(), &rlk.to_bytes(), preset)
     }
 
     #[test]
@@ -380,13 +414,27 @@ mod tests {
 
     #[test]
     fn envelope_rejects_the_pre_cutover_outer_version() -> Result<()> {
-        let mut envelope = envelope()?;
-        envelope[8..10].copy_from_slice(&1_u16.to_be_bytes());
-        let error = decode_lbfv_key_envelope(&envelope)
-            .expect_err("the pre-cutover operational envelope must be rejected");
+        for version in [1_u16, 2_u16] {
+            let mut envelope = envelope()?;
+            envelope[8..10].copy_from_slice(&version.to_be_bytes());
+            let error = decode_lbfv_key_envelope(&envelope)
+                .expect_err("the pre-cutover operational envelope must be rejected");
+            assert!(error
+                .to_string()
+                .contains(&format!("unsupported l-BFV key envelope version {version}")));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn envelope_rejects_a_relinearization_key_for_another_public_key() -> Result<()> {
+        let (preset, public_key, _) = operational_keys()?;
+        let (_, _, other_rlk) = operational_keys()?;
+        let error = encode_lbfv_key_envelope(&public_key.to_bytes(), &other_rlk.to_bytes(), preset)
+            .expect_err("the relinearization key must contain the public key");
         assert!(error
             .to_string()
-            .contains("unsupported l-BFV key envelope version 1"));
+            .contains("does not contain the public key"));
         Ok(())
     }
 

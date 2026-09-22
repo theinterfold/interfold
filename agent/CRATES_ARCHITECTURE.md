@@ -641,7 +641,7 @@ output. For secure-16384, the active aggregator also stores the accepted l-BFV d
 row-proof pairs. It derives and persists the operational public key and RLK after the row fold
 completes. Restart repeats that derivation when the fold is durable but either operational key is
 absent. The final V2 DKG proof and publication remain blocked until both keys exist. Publication
-uses one version-2 envelope that binds both keys to the final proof.
+uses one version-3 envelope. It transports the RLK and reconstructs the embedded level-0 public key.
 
 After C2/C3 verification, each member publishes a signed readiness report. The active aggregator
 selects the first canonical `H` dealers that are mutually complete and announces that roster. The

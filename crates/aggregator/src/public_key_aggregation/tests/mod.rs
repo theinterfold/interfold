@@ -36,8 +36,13 @@ fn dummy_proof(circuit: CircuitName) -> Proof {
 }
 
 fn lbfv_publication(e3_id: E3id) -> LbfvPublicKeyAggregated {
+    let mut key_envelope = Vec::from(*b"IFLBFVKE");
+    key_envelope.extend_from_slice(&3_u16.to_be_bytes());
+    key_envelope.extend_from_slice(&0_u32.to_be_bytes());
+    key_envelope.extend_from_slice(&1_u32.to_be_bytes());
+    key_envelope.push(1);
     LbfvPublicKeyAggregated {
-        pubkey: ArcBytes::from_bytes(&[1, 2, 3]),
+        pubkey: ArcBytes::from_bytes(&key_envelope),
         e3_id,
         nodes: OrderedSet::from_iter(["node".to_owned()]),
         committee_addresses: vec![Address::repeat_byte(1)],

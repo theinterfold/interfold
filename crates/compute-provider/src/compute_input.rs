@@ -282,11 +282,15 @@ mod tests {
             RelinKeyShare::contribution_with_crp(&secret_key, &urs, &crs, 0, 0, &mut rng)?;
         let rlk = aggregate_relinearization_key(&[rlk_share], &public_key)?;
         let substituted_rlk = aggregate_relinearization_key(&[substituted_rlk_share], &public_key)?;
-        let committee_key =
-            e3_bfv_client::encode_lbfv_key_envelope(&public_key.to_bytes(), &rlk.to_bytes())?;
+        let committee_key = e3_bfv_client::encode_lbfv_key_envelope(
+            &public_key.to_bytes(),
+            &rlk.to_bytes(),
+            preset,
+        )?;
         let substituted_rlk_envelope = e3_bfv_client::encode_lbfv_key_envelope(
             &public_key.to_bytes(),
             &substituted_rlk.to_bytes(),
+            preset,
         )?;
         let (commitments, _) = e3_bfv_client::inspect_lbfv_key_envelope(&committee_key, preset)?;
         let plaintext = Plaintext::try_encode(&[3u64], Encoding::poly(), &params)?;

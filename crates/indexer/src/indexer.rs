@@ -1197,13 +1197,13 @@ mod public_key_chunk_tests {
 
     #[test]
     fn secure_16384_chunks_reassemble_in_index_order() {
-        let bytes = vec![0x44; 10_445_217];
+        let bytes = vec![0x44; 7_833_906];
         let mut events = (0..bytes.len().div_ceil(PUBLIC_KEY_CHUNK_BYTES) as u16)
             .map(|index| chunk_event(&bytes, index))
             .collect::<Vec<_>>();
         let mut assembly = PublicKeyChunkAssembly::from_event(&events[0]);
 
-        assert_eq!(events.len(), 114);
+        assert_eq!(events.len(), 86);
         events.reverse();
         for event in &events {
             assert!(PublicKeyChunkAssembly::event_shape_is_valid(event));

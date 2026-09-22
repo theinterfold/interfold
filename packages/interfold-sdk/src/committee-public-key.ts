@@ -11,13 +11,14 @@ import type { CommitteePublicKeyChunkPublishedData } from './events/types'
 export const MAX_COMMITTEE_PUBLIC_KEY_BYTES = 16 * 1024 * 1024
 export const MAX_COMMITTEE_PUBLIC_KEY_CHUNK_BYTES = 90 * 1024
 export const DEFAULT_MAX_TRACKED_COMMITTEE_KEYS = 128
+export const DEFAULT_MAX_BUFFERED_COMMITTEE_KEY_BYTES = 64 * 1024 * 1024
+export const DEFAULT_MAX_COMMITTEE_KEY_ASSEMBLIES_PER_E3 = 19
 const LBFV_KEY_ENVELOPE_MAGIC = new TextEncoder().encode('IFLBFVKE')
 const LBFV_KEY_ENVELOPE_HEADER_BYTES = 18
-const LBFV_KEY_ENVELOPE_SCHEMA_VERSION = 2
+const LBFV_KEY_ENVELOPE_SCHEMA_VERSION = 3
 
 export interface LbfvKeyEnvelope {
   schemaVersion: number
-  publicKey: Uint8Array
   relinearizationKey: Uint8Array
 }
 
@@ -35,6 +36,7 @@ interface Assembly {
   candidateHash: Hex
   totalLength: number
   chunks: Array<Uint8Array | undefined>
+  receivedBytes: number
 }
 
 /**
@@ -49,23 +51,37 @@ export class CommitteePublicKeyAssembler {
   private readonly invalidAssemblies = new Set<string>()
   private readonly completedAssemblies = new Set<string>()
   private readonly trackedE3s = new Map<string, true>()
+  private bufferedBytes = 0
 
-  constructor(private readonly maxTrackedE3s = DEFAULT_MAX_TRACKED_COMMITTEE_KEYS) {
+  constructor(
+    private readonly maxTrackedE3s = DEFAULT_MAX_TRACKED_COMMITTEE_KEYS,
+    private readonly maxBufferedBytes = DEFAULT_MAX_BUFFERED_COMMITTEE_KEY_BYTES,
+    private readonly maxAssembliesPerE3 = DEFAULT_MAX_COMMITTEE_KEY_ASSEMBLIES_PER_E3,
+  ) {
     if (!Number.isInteger(maxTrackedE3s) || maxTrackedE3s < 1) {
       throw new Error('Maximum tracked committee-key count must be a positive integer')
+    }
+    if (!Number.isInteger(maxBufferedBytes) || maxBufferedBytes < MAX_COMMITTEE_PUBLIC_KEY_BYTES) {
+      throw new Error('Maximum buffered committee-key bytes must support one complete key')
+    }
+    if (!Number.isInteger(maxAssembliesPerE3) || maxAssembliesPerE3 < 1) {
+      throw new Error('Maximum committee-key assemblies per E3 must be a positive integer')
     }
   }
 
   add(event: CommitteePublicKeyChunkPublishedData): AssembledCommitteePublicKey | undefined {
     const e3Key = event.e3Id.toString()
-    this.track(e3Key)
     const metadata = validateEvent(event)
+    this.track(e3Key)
     const publisherKey = `${e3Key}:${event.publisher.toLowerCase()}`
     const selectedCandidate = this.selectedCandidates.get(publisherKey)
     if (selectedCandidate && selectedCandidate.toLowerCase() !== metadata.candidateHash.toLowerCase()) {
       return undefined
     }
-    this.selectedCandidates.set(publisherKey, metadata.candidateHash)
+    if (!selectedCandidate) {
+      if (this.selectedCandidateCount(e3Key) >= this.maxAssembliesPerE3) return undefined
+      this.selectedCandidates.set(publisherKey, metadata.candidateHash)
+    }
 
     const assemblyKey = `${publisherKey}:${metadata.candidateHash.toLowerCase()}`
     if (this.completedAssemblies.has(assemblyKey)) return undefined
@@ -76,21 +92,28 @@ export class CommitteePublicKeyAssembler {
       candidateHash: metadata.candidateHash,
       totalLength: event.totalLength,
       chunks: Array.from<Uint8Array | undefined>({ length: event.chunkCount }).fill(undefined),
+      receivedBytes: 0,
     }
 
     if (!metadataMatches(assembly, event, metadata.pkCommitment)) {
-      this.assemblies.delete(assemblyKey)
-      this.invalidAssemblies.add(assemblyKey)
+      this.discardAssembly(assemblyKey, true)
       return undefined
     }
 
     const existing = assembly.chunks[event.chunkIndex]
     if (existing && !bytesEqual(existing, metadata.chunk)) {
-      this.assemblies.delete(assemblyKey)
-      this.invalidAssemblies.add(assemblyKey)
+      this.discardAssembly(assemblyKey, true)
       return undefined
     }
-    assembly.chunks[event.chunkIndex] = metadata.chunk
+    if (!existing) {
+      if (this.bufferedBytes + metadata.chunk.length > this.maxBufferedBytes) {
+        this.discardAssembly(assemblyKey, true)
+        return undefined
+      }
+      assembly.chunks[event.chunkIndex] = metadata.chunk
+      assembly.receivedBytes += metadata.chunk.length
+      this.bufferedBytes += metadata.chunk.length
+    }
     this.assemblies.set(assemblyKey, assembly)
 
     if (assembly.chunks.some((chunk) => chunk === undefined)) return undefined
@@ -102,8 +125,7 @@ export class CommitteePublicKeyAssembler {
       offset += chunk.length
     }
     if (offset !== assembly.totalLength || keccak256(publicKey).toLowerCase() !== assembly.candidateHash.toLowerCase()) {
-      this.assemblies.delete(assemblyKey)
-      this.invalidAssemblies.add(assemblyKey)
+      this.discardAssembly(assemblyKey, true)
       return undefined
     }
 
@@ -112,14 +134,13 @@ export class CommitteePublicKeyAssembler {
       try {
         lbfvKeyEnvelope = decodeLbfvKeyEnvelope(publicKey)
       } catch {
-        this.assemblies.delete(assemblyKey)
-        this.invalidAssemblies.add(assemblyKey)
+        this.discardAssembly(assemblyKey, true)
         return undefined
       }
     }
 
     this.completedAssemblies.add(assemblyKey)
-    this.assemblies.delete(assemblyKey)
+    this.discardAssembly(assemblyKey, false)
     return {
       e3Id: event.e3Id,
       nodes: assembly.nodes,
@@ -133,6 +154,11 @@ export class CommitteePublicKeyAssembler {
     const e3Key = e3Id.toString()
     this.trackedE3s.delete(e3Key)
     this.dropE3(e3Key)
+  }
+
+  /** The number of chunk bytes retained in incomplete assemblies. */
+  get bufferedByteLength(): number {
+    return this.bufferedBytes
   }
 
   private track(e3Key: string): void {
@@ -151,8 +177,8 @@ export class CommitteePublicKeyAssembler {
     for (const key of this.selectedCandidates.keys()) {
       if (key.startsWith(prefix)) this.selectedCandidates.delete(key)
     }
-    for (const key of this.assemblies.keys()) {
-      if (key.startsWith(prefix)) this.assemblies.delete(key)
+    for (const key of [...this.assemblies.keys()]) {
+      if (key.startsWith(prefix)) this.discardAssembly(key, false)
     }
     for (const key of this.invalidAssemblies) {
       if (key.startsWith(prefix)) this.invalidAssemblies.delete(key)
@@ -160,6 +186,24 @@ export class CommitteePublicKeyAssembler {
     for (const key of this.completedAssemblies) {
       if (key.startsWith(prefix)) this.completedAssemblies.delete(key)
     }
+  }
+
+  private selectedCandidateCount(e3Key: string): number {
+    const prefix = `${e3Key}:`
+    let count = 0
+    for (const key of this.selectedCandidates.keys()) {
+      if (key.startsWith(prefix)) count += 1
+    }
+    return count
+  }
+
+  private discardAssembly(assemblyKey: string, invalid: boolean): void {
+    const assembly = this.assemblies.get(assemblyKey)
+    if (assembly) {
+      this.bufferedBytes -= assembly.receivedBytes
+      this.assemblies.delete(assemblyKey)
+    }
+    if (invalid) this.invalidAssemblies.add(assemblyKey)
   }
 }
 
@@ -174,15 +218,13 @@ export function decodeLbfvKeyEnvelope(encoded: Uint8Array): LbfvKeyEnvelope {
   }
   const publicKeyLength = view.getUint32(10, false)
   const relinearizationKeyLength = view.getUint32(14, false)
-  const publicKeyEnd = LBFV_KEY_ENVELOPE_HEADER_BYTES + publicKeyLength
-  const envelopeEnd = publicKeyEnd + relinearizationKeyLength
-  if (publicKeyLength === 0 || relinearizationKeyLength === 0 || envelopeEnd !== encoded.length) {
+  const envelopeEnd = LBFV_KEY_ENVELOPE_HEADER_BYTES + relinearizationKeyLength
+  if (publicKeyLength !== 0 || relinearizationKeyLength === 0 || envelopeEnd !== encoded.length) {
     throw new Error('The l-BFV key envelope length does not match its header')
   }
   return {
     schemaVersion,
-    publicKey: encoded.slice(LBFV_KEY_ENVELOPE_HEADER_BYTES, publicKeyEnd),
-    relinearizationKey: encoded.slice(publicKeyEnd),
+    relinearizationKey: encoded.slice(LBFV_KEY_ENVELOPE_HEADER_BYTES),
   }
 }
 

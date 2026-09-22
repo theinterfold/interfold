@@ -13,6 +13,8 @@ export { ContractClient } from './contracts/contract-client'
 export {
   CommitteePublicKeyAssembler,
   decodeLbfvKeyEnvelope,
+  DEFAULT_MAX_BUFFERED_COMMITTEE_KEY_BYTES,
+  DEFAULT_MAX_COMMITTEE_KEY_ASSEMBLIES_PER_E3,
   MAX_COMMITTEE_PUBLIC_KEY_BYTES,
   MAX_COMMITTEE_PUBLIC_KEY_CHUNK_BYTES,
 } from './committee-public-key'

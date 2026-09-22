@@ -230,8 +230,11 @@ impl PublicKeyAggregator {
             .operational_rlk
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("operational l-BFV relinearization key is missing"))?;
-        let key_envelope =
-            e3_bfv_client::encode_lbfv_key_envelope(operational_public_key, operational_rlk)?;
+        let key_envelope = e3_bfv_client::encode_lbfv_key_envelope(
+            operational_public_key,
+            operational_rlk,
+            self.params_preset,
+        )?;
         e3_bfv_client::validate_lbfv_key_envelope(
             &key_envelope,
             pk_commitment,

@@ -6,7 +6,7 @@
 
 //! Durable secure-16384 l-BFV row aggregation state.
 
-use anyhow::{ensure, Result};
+use anyhow::{ensure, Context, Result};
 use e3_committee_hash::LbfvProofDomainContext;
 use e3_events::{CorrelationId, E3id, LbfvKeyShareDocument, LbfvPublicKeyAggregated, Proof};
 use e3_fhe_params::{lbfv_row_count, BfvPreset};
@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 pub const LBFV_AGGREGATION_SCHEMA_VERSION: u32 = 4;
-pub const LBFV_PUBLICATION_SCHEMA_VERSION: u32 = 1;
+pub const LBFV_PUBLICATION_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LbfvPublicKeyPublicationStateV1 {
@@ -48,6 +48,8 @@ impl LbfvPublicKeyPublicationStateV1 {
                 event.dkg_aggregator_v2_proof.circuit == e3_events::CircuitName::DkgAggregatorV2,
                 "l-BFV publication intent has the wrong recursive circuit"
             );
+            e3_bfv_client::decode_lbfv_key_envelope(&event.pubkey)
+                .context("l-BFV publication intent has an unsupported key envelope")?;
         }
         Ok(())
     }
@@ -60,8 +62,13 @@ mod publication_tests {
     use e3_events::{CircuitName, OrderedSet};
 
     fn publication(e3_id: E3id, circuit: CircuitName) -> LbfvPublicKeyAggregated {
+        let mut key_envelope = Vec::from(*b"IFLBFVKE");
+        key_envelope.extend_from_slice(&3_u16.to_be_bytes());
+        key_envelope.extend_from_slice(&0_u32.to_be_bytes());
+        key_envelope.extend_from_slice(&1_u32.to_be_bytes());
+        key_envelope.push(1);
         LbfvPublicKeyAggregated {
-            pubkey: ArcBytes::from_bytes(&[1]),
+            pubkey: ArcBytes::from_bytes(&key_envelope),
             e3_id,
             nodes: OrderedSet::from_iter(["node".to_owned()]),
             committee_addresses: vec![Address::repeat_byte(1)],
@@ -77,7 +84,7 @@ mod publication_tests {
     }
 
     #[test]
-    fn publication_state_accepts_the_v2_intent() {
+    fn publication_state_accepts_the_v3_envelope_intent() {
         let e3_id = E3id::new("42", 1);
         let state = LbfvPublicKeyPublicationStateV1 {
             schema_version: LBFV_PUBLICATION_SCHEMA_VERSION,
@@ -86,6 +93,22 @@ mod publication_tests {
         };
 
         assert!(state.validate_loaded().is_ok());
+    }
+
+    #[test]
+    fn publication_state_rejects_the_pre_cutover_schema() {
+        let state = LbfvPublicKeyPublicationStateV1 {
+            schema_version: 1,
+            e3_id: E3id::new("42", 1),
+            pending: None,
+        };
+
+        let error = state
+            .validate_loaded()
+            .expect_err("the version-2 envelope publication state must be rejected");
+        assert!(error
+            .to_string()
+            .contains("unsupported l-BFV publication schema version 1"));
     }
 
     #[test]
@@ -103,6 +126,25 @@ mod publication_tests {
 
         state.pending = Some(publication(e3_id, CircuitName::PkAggregation));
         assert!(state.validate_loaded().is_err());
+    }
+
+    #[test]
+    fn publication_state_rejects_the_version_two_envelope() {
+        let e3_id = E3id::new("42", 1);
+        let mut event = publication(e3_id.clone(), CircuitName::DkgAggregatorV2);
+        let mut key_envelope = event.pubkey.to_vec();
+        key_envelope[8..10].copy_from_slice(&2_u16.to_be_bytes());
+        event.pubkey = ArcBytes::from_bytes(&key_envelope);
+        let state = LbfvPublicKeyPublicationStateV1 {
+            schema_version: LBFV_PUBLICATION_SCHEMA_VERSION,
+            e3_id,
+            pending: Some(event),
+        };
+
+        let error = state
+            .validate_loaded()
+            .expect_err("the version-2 envelope must be rejected");
+        assert!(error.to_string().contains("unsupported key envelope"));
     }
 }
 

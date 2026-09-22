@@ -1085,20 +1085,24 @@ E3 ID and committee.
 
 The serialized key is transported in Ethereum event chunks. It is not on-chain authority. The
 transport accepts at most 16 MiB and keeps the canonical chunk size at 90 KiB. The measured
-secure-16384 envelope is 10,445,217 bytes and uses 114 chunks. It contains a 2,611,311-byte public
-key and a 7,833,888-byte RLK. Only a request-time committee member can emit chunks while the E3
-remains in `KeyPublished`. This includes a retained expelled member, whose bytes receive no extra
-trust but can still repair availability. Terminal E3s reject new chunks, so late publishers cannot
-recreate assemblies after cleanup. Consumers accept the first candidate hash from each member. The
-ciphernode coordinator and `e3-indexer` group the canonical chunks by E3, publisher, and candidate
-hash. They require a complete sequence, check `keccak256(serializedKey) == candidateHash`, and
-decode the key for the request-time parameter set. For secure-16384, consumers validate the
-`IFLBFVKE` version-2 framing, complete public key, RLK, CRS, URS, levels, and ordered row
-commitments. They recompute the combined envelope commitment and require equality with the proven
-on-chain `pkCommitment`. Encryption uses public-key component 0. Only proof-bound computation
-exposes the RLK. Invalid candidates do not consume another committee member's candidate. Production
-verifies the C5-backed legacy final DKG proof or the `DkgAggregatorV2` final proof on-chain; the
-explicit test/CI skip mode works only with mock verifiers.
+secure-16384 envelope is 7,833,906 bytes and uses 86 chunks. It contains the 7,833,888-byte RLK.
+Consumers reconstruct the 2,611,311-byte level-0 public key from the RLK. Only a request-time
+committee member can emit chunks while the E3 remains in `KeyPublished`. This includes a retained
+expelled member, whose bytes receive no extra trust but can still repair availability. Terminal E3s
+reject new chunks, so late publishers cannot recreate assemblies after cleanup. Consumers accept the
+first candidate hash from each member. The ciphernode coordinator and `e3-indexer` group the
+canonical chunks by E3, publisher, and candidate hash. They require a complete sequence, check
+`keccak256(serializedKey) == candidateHash`, and decode the key for the request-time parameter set.
+For secure-16384, consumers validate the `IFLBFVKE` version-3 framing, reconstructed public key,
+RLK, CRS, URS, levels, and ordered row commitments. They recompute the combined envelope commitment
+and require equality with the proven on-chain `pkCommitment`. Encryption uses public-key
+component 0. Only proof-bound computation exposes the RLK. Invalid candidates do not consume another
+committee member's candidate. Production verifies the C5-backed legacy final DKG proof or the
+`DkgAggregatorV2` final proof on-chain; the explicit test/CI skip mode works only with mock
+verifiers. The SDK assembler tracks at most 19 candidates for each E3. By default, it tracks 128 E3s
+and retains at most 64 MiB of incomplete chunks. It checks the byte budget before it stores a chunk.
+It releases the accounted bytes when an assembly completes, becomes invalid, is cleared, or is
+evicted.
 
 > **C-08 (BfvPkVerifier domain binding) — implemented** The wrapper exposes a
 > `verify(e3Id, committeeRoot, sortedNodes, pkCommitment, committeeHash, proof)` signature.

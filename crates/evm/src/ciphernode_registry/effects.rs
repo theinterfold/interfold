@@ -571,7 +571,7 @@ mod tests {
     #[test]
     fn public_key_size_boundary_covers_secure_16384() {
         assert_eq!(MAX_PUBLIC_KEY_BYTES, 16 * 1024 * 1024);
-        assert_eq!(public_key_chunk_count(10_445_217).unwrap(), 114);
+        assert_eq!(public_key_chunk_count(7_833_906).unwrap(), 86);
         assert_eq!(public_key_chunk_count(MAX_PUBLIC_KEY_BYTES).unwrap(), 183);
         assert!(public_key_chunk_count(0).is_err());
         assert!(public_key_chunk_count(MAX_PUBLIC_KEY_BYTES + 1).is_err());
