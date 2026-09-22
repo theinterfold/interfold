@@ -1076,9 +1076,9 @@ dependencies = [
  "e3-fhe-params",
  "e3-polynomial",
  "e3-zk-helpers",
- "fhe",
- "fhe-math",
- "fhe-traits",
+ "fhe 0.3.0 (git+https://github.com/gnosisguild/fhe.rs?rev=8755efa203fbaf94841110d2fc7c9f1aaf92f0d8)",
+ "fhe-math 0.3.0 (git+https://github.com/gnosisguild/fhe.rs?rev=8755efa203fbaf94841110d2fc7c9f1aaf92f0d8)",
+ "fhe-traits 0.3.0 (git+https://github.com/gnosisguild/fhe.rs?rev=8755efa203fbaf94841110d2fc7c9f1aaf92f0d8)",
  "num-bigint 0.5.1",
  "prost",
  "rand 0.9.4",
@@ -1105,8 +1105,8 @@ dependencies = [
  "ark-ff 0.4.2",
  "e3-bfv-client",
  "e3-fhe-params",
- "fhe",
- "fhe-traits",
+ "fhe 0.3.0 (git+https://github.com/gnosisguild/fhe.rs?rev=8755efa203fbaf94841110d2fc7c9f1aaf92f0d8)",
+ "fhe-traits 0.3.0 (git+https://github.com/gnosisguild/fhe.rs?rev=8755efa203fbaf94841110d2fc7c9f1aaf92f0d8)",
  "hex",
  "lean-imt",
  "light-poseidon",
@@ -1128,8 +1128,8 @@ dependencies = [
  "alloy-primitives",
  "anyhow",
  "clap",
- "fhe",
- "fhe-math",
+ "fhe 0.3.0 (git+https://github.com/gnosisguild/fhe.rs?rev=8755efa203fbaf94841110d2fc7c9f1aaf92f0d8)",
+ "fhe-math 0.3.0 (git+https://github.com/gnosisguild/fhe.rs?rev=8755efa203fbaf94841110d2fc7c9f1aaf92f0d8)",
  "num-bigint 0.5.1",
  "num-traits",
  "rand 0.9.4",
@@ -1154,7 +1154,7 @@ name = "e3-polynomial"
 version = "0.17.0"
 source = "git+https://github.com/theinterfold/interfold?rev=9e4c00b3a5c520331cb86e2f2429aeca289f317d#9e4c00b3a5c520331cb86e2f2429aeca289f317d"
 dependencies = [
- "fhe-math",
+ "fhe-math 0.3.0 (git+https://github.com/gnosisguild/fhe.rs?rev=8755efa203fbaf94841110d2fc7c9f1aaf92f0d8)",
  "num-bigint 0.5.1",
  "num-traits",
  "serde",
@@ -1193,8 +1193,8 @@ version = "0.1.0"
 dependencies = [
  "e3-compute-provider",
  "e3-fhe-params",
- "fhe",
- "fhe-traits",
+ "fhe 0.3.0 (git+https://github.com/gnosisguild/fhe.rs?branch=dev)",
+ "fhe-traits 0.3.0 (git+https://github.com/gnosisguild/fhe.rs?branch=dev)",
  "sha2",
  "sha3",
 ]
@@ -1214,9 +1214,9 @@ dependencies = [
  "e3-parity-matrix",
  "e3-polynomial",
  "e3-safe",
- "fhe",
- "fhe-math",
- "fhe-traits",
+ "fhe 0.3.0 (git+https://github.com/gnosisguild/fhe.rs?rev=8755efa203fbaf94841110d2fc7c9f1aaf92f0d8)",
+ "fhe-math 0.3.0 (git+https://github.com/gnosisguild/fhe.rs?rev=8755efa203fbaf94841110d2fc7c9f1aaf92f0d8)",
+ "fhe-traits 0.3.0 (git+https://github.com/gnosisguild/fhe.rs?rev=8755efa203fbaf94841110d2fc7c9f1aaf92f0d8)",
  "hex",
  "itertools 0.14.0",
  "ndarray",
@@ -1384,12 +1384,36 @@ dependencies = [
 [[package]]
 name = "fhe"
 version = "0.3.0"
+source = "git+https://github.com/gnosisguild/fhe.rs?branch=dev#85ee978d6c2833d4afae98b2b6455de668693c81"
+dependencies = [
+ "doc-comment",
+ "fhe-math 0.3.0 (git+https://github.com/gnosisguild/fhe.rs?branch=dev)",
+ "fhe-traits 0.3.0 (git+https://github.com/gnosisguild/fhe.rs?branch=dev)",
+ "fhe-util 0.3.0 (git+https://github.com/gnosisguild/fhe.rs?branch=dev)",
+ "itertools 0.15.0",
+ "ndarray",
+ "num-bigint 0.5.1",
+ "num-traits",
+ "prost",
+ "rand 0.9.4",
+ "rand_chacha 0.9.0",
+ "rand_distr",
+ "rayon",
+ "serde",
+ "thiserror 2.0.20",
+ "zeroize",
+ "zeroize_derive",
+]
+
+[[package]]
+name = "fhe"
+version = "0.3.0"
 source = "git+https://github.com/gnosisguild/fhe.rs?rev=8755efa203fbaf94841110d2fc7c9f1aaf92f0d8#8755efa203fbaf94841110d2fc7c9f1aaf92f0d8"
 dependencies = [
  "doc-comment",
- "fhe-math",
- "fhe-traits",
- "fhe-util",
+ "fhe-math 0.3.0 (git+https://github.com/gnosisguild/fhe.rs?rev=8755efa203fbaf94841110d2fc7c9f1aaf92f0d8)",
+ "fhe-traits 0.3.0 (git+https://github.com/gnosisguild/fhe.rs?rev=8755efa203fbaf94841110d2fc7c9f1aaf92f0d8)",
+ "fhe-util 0.3.0 (git+https://github.com/gnosisguild/fhe.rs?rev=8755efa203fbaf94841110d2fc7c9f1aaf92f0d8)",
  "itertools 0.15.0",
  "ndarray",
  "num-bigint 0.5.1",
@@ -1409,11 +1433,34 @@ dependencies = [
 [[package]]
 name = "fhe-math"
 version = "0.3.0"
+source = "git+https://github.com/gnosisguild/fhe.rs?branch=dev#85ee978d6c2833d4afae98b2b6455de668693c81"
+dependencies = [
+ "ethnum",
+ "fhe-traits 0.3.0 (git+https://github.com/gnosisguild/fhe.rs?branch=dev)",
+ "fhe-util 0.3.0 (git+https://github.com/gnosisguild/fhe.rs?branch=dev)",
+ "itertools 0.15.0",
+ "ndarray",
+ "num-bigint 0.5.1",
+ "num-bigint-dig",
+ "num-traits",
+ "prost",
+ "pulp",
+ "rand 0.9.4",
+ "rand_chacha 0.9.0",
+ "serde",
+ "sha2",
+ "thiserror 2.0.20",
+ "zeroize",
+]
+
+[[package]]
+name = "fhe-math"
+version = "0.3.0"
 source = "git+https://github.com/gnosisguild/fhe.rs?rev=8755efa203fbaf94841110d2fc7c9f1aaf92f0d8#8755efa203fbaf94841110d2fc7c9f1aaf92f0d8"
 dependencies = [
  "ethnum",
- "fhe-traits",
- "fhe-util",
+ "fhe-traits 0.3.0 (git+https://github.com/gnosisguild/fhe.rs?rev=8755efa203fbaf94841110d2fc7c9f1aaf92f0d8)",
+ "fhe-util 0.3.0 (git+https://github.com/gnosisguild/fhe.rs?rev=8755efa203fbaf94841110d2fc7c9f1aaf92f0d8)",
  "itertools 0.15.0",
  "ndarray",
  "num-bigint 0.5.1",
@@ -1433,9 +1480,30 @@ dependencies = [
 [[package]]
 name = "fhe-traits"
 version = "0.3.0"
+source = "git+https://github.com/gnosisguild/fhe.rs?branch=dev#85ee978d6c2833d4afae98b2b6455de668693c81"
+dependencies = [
+ "rand 0.9.4",
+]
+
+[[package]]
+name = "fhe-traits"
+version = "0.3.0"
 source = "git+https://github.com/gnosisguild/fhe.rs?rev=8755efa203fbaf94841110d2fc7c9f1aaf92f0d8#8755efa203fbaf94841110d2fc7c9f1aaf92f0d8"
 dependencies = [
  "rand 0.9.4",
+]
+
+[[package]]
+name = "fhe-util"
+version = "0.3.0"
+source = "git+https://github.com/gnosisguild/fhe.rs?branch=dev#85ee978d6c2833d4afae98b2b6455de668693c81"
+dependencies = [
+ "num-bigint-dig",
+ "num-traits",
+ "prime_factorization",
+ "rand 0.9.4",
+ "rand_distr",
+ "rayon",
 ]
 
 [[package]]

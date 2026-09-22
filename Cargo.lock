@@ -5018,7 +5018,7 @@ dependencies = [
 [[package]]
 name = "fhe"
 version = "0.3.0"
-source = "git+https://github.com/gnosisguild/fhe.rs?rev=8755efa203fbaf94841110d2fc7c9f1aaf92f0d8#8755efa203fbaf94841110d2fc7c9f1aaf92f0d8"
+source = "git+https://github.com/gnosisguild/fhe.rs?branch=dev#85ee978d6c2833d4afae98b2b6455de668693c81"
 dependencies = [
  "doc-comment",
  "fhe-math",
@@ -5029,7 +5029,6 @@ dependencies = [
  "num-bigint 0.5.1",
  "num-traits",
  "prost 0.14.4",
- "prost-build",
  "rand 0.9.4",
  "rand_chacha 0.9.0",
  "rand_distr",
@@ -5043,7 +5042,7 @@ dependencies = [
 [[package]]
 name = "fhe-math"
 version = "0.3.0"
-source = "git+https://github.com/gnosisguild/fhe.rs?rev=8755efa203fbaf94841110d2fc7c9f1aaf92f0d8#8755efa203fbaf94841110d2fc7c9f1aaf92f0d8"
+source = "git+https://github.com/gnosisguild/fhe.rs?branch=dev#85ee978d6c2833d4afae98b2b6455de668693c81"
 dependencies = [
  "ethnum",
  "fhe-traits",
@@ -5054,7 +5053,6 @@ dependencies = [
  "num-bigint-dig",
  "num-traits",
  "prost 0.14.4",
- "prost-build",
  "pulp",
  "rand 0.9.4",
  "rand_chacha 0.9.0",
@@ -5067,7 +5065,7 @@ dependencies = [
 [[package]]
 name = "fhe-traits"
 version = "0.3.0"
-source = "git+https://github.com/gnosisguild/fhe.rs?rev=8755efa203fbaf94841110d2fc7c9f1aaf92f0d8#8755efa203fbaf94841110d2fc7c9f1aaf92f0d8"
+source = "git+https://github.com/gnosisguild/fhe.rs?branch=dev#85ee978d6c2833d4afae98b2b6455de668693c81"
 dependencies = [
  "rand 0.9.4",
 ]
@@ -5075,7 +5073,7 @@ dependencies = [
 [[package]]
 name = "fhe-util"
 version = "0.3.0"
-source = "git+https://github.com/gnosisguild/fhe.rs?rev=8755efa203fbaf94841110d2fc7c9f1aaf92f0d8#8755efa203fbaf94841110d2fc7c9f1aaf92f0d8"
+source = "git+https://github.com/gnosisguild/fhe.rs?branch=dev#85ee978d6c2833d4afae98b2b6455de668693c81"
 dependencies = [
  "num-bigint-dig",
  "num-traits",
@@ -7463,12 +7461,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "multimap"
-version = "0.10.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d87ecb2933e8aeadb3e3a02b828fed80a7528047e68b4f424523a0981a3a084"
-
-[[package]]
 name = "multistream-select"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8650,16 +8642,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "prettyplease"
-version = "0.2.37"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "479ca8adacdd7ce8f1fb39ce9ecccbfe93a3f1344b3d0d97f20bc0196208f62b"
-dependencies = [
- "proc-macro2",
- "syn 2.0.117",
-]
-
-[[package]]
 name = "prime_factorization"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8837,25 +8819,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "prost-build"
-version = "0.14.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "03da047801ff44bb6a4d407d4860c05fd70bb81714e6b2f3812603d5b145b042"
-dependencies = [
- "heck",
- "itertools 0.13.0",
- "log",
- "multimap",
- "petgraph",
- "prettyplease",
- "prost 0.14.4",
- "prost-types",
- "regex",
- "syn 2.0.117",
- "tempfile",
-]
-
-[[package]]
 name = "prost-derive"
 version = "0.13.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8879,15 +8842,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
-]
-
-[[package]]
-name = "prost-types"
-version = "0.14.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f94967dc7688f3054c7fac87473ffae4cc4c3904800e2d9f5b857246d8963b0a"
-dependencies = [
- "prost 0.14.4",
 ]
 
 [[package]]

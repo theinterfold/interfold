@@ -3428,7 +3428,7 @@ dependencies = [
 [[package]]
 name = "fhe"
 version = "0.3.0"
-source = "git+https://github.com/gnosisguild/fhe.rs?rev=8755efa203fbaf94841110d2fc7c9f1aaf92f0d8#8755efa203fbaf94841110d2fc7c9f1aaf92f0d8"
+source = "git+https://github.com/gnosisguild/fhe.rs?branch=dev#85ee978d6c2833d4afae98b2b6455de668693c81"
 dependencies = [
  "doc-comment",
  "fhe-math",
@@ -3439,7 +3439,6 @@ dependencies = [
  "num-bigint 0.5.1",
  "num-traits",
  "prost",
- "prost-build",
  "rand 0.9.4",
  "rand_chacha 0.9.0",
  "rand_distr",
@@ -3453,7 +3452,7 @@ dependencies = [
 [[package]]
 name = "fhe-math"
 version = "0.3.0"
-source = "git+https://github.com/gnosisguild/fhe.rs?rev=8755efa203fbaf94841110d2fc7c9f1aaf92f0d8#8755efa203fbaf94841110d2fc7c9f1aaf92f0d8"
+source = "git+https://github.com/gnosisguild/fhe.rs?branch=dev#85ee978d6c2833d4afae98b2b6455de668693c81"
 dependencies = [
  "ethnum",
  "fhe-traits",
@@ -3464,7 +3463,6 @@ dependencies = [
  "num-bigint-dig",
  "num-traits",
  "prost",
- "prost-build",
  "pulp",
  "rand 0.9.4",
  "rand_chacha 0.9.0",
@@ -3477,7 +3475,7 @@ dependencies = [
 [[package]]
 name = "fhe-traits"
 version = "0.3.0"
-source = "git+https://github.com/gnosisguild/fhe.rs?rev=8755efa203fbaf94841110d2fc7c9f1aaf92f0d8#8755efa203fbaf94841110d2fc7c9f1aaf92f0d8"
+source = "git+https://github.com/gnosisguild/fhe.rs?branch=dev#85ee978d6c2833d4afae98b2b6455de668693c81"
 dependencies = [
  "rand 0.9.4",
 ]
@@ -3485,7 +3483,7 @@ dependencies = [
 [[package]]
 name = "fhe-util"
 version = "0.3.0"
-source = "git+https://github.com/gnosisguild/fhe.rs?rev=8755efa203fbaf94841110d2fc7c9f1aaf92f0d8#8755efa203fbaf94841110d2fc7c9f1aaf92f0d8"
+source = "git+https://github.com/gnosisguild/fhe.rs?branch=dev#85ee978d6c2833d4afae98b2b6455de668693c81"
 dependencies = [
  "num-bigint-dig",
  "num-traits",
@@ -3518,12 +3516,6 @@ dependencies = [
  "rustc-hex",
  "static_assertions",
 ]
-
-[[package]]
-name = "fixedbitset"
-version = "0.5.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d674e81391d1e1ab681a28d99df07927c6d4aa5b027d7da16ba32d1d21ecd99"
 
 [[package]]
 name = "flate2"
@@ -4970,12 +4962,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "685a9ac4b61f4e728e1d2c6a7844609c16527aeb5e6c865915c08e619c16410f"
 
 [[package]]
-name = "multimap"
-version = "0.10.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d87ecb2933e8aeadb3e3a02b828fed80a7528047e68b4f424523a0981a3a084"
-
-[[package]]
 name = "native-tls"
 version = "0.2.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5436,17 +5422,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "petgraph"
-version = "0.8.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8701b58ea97060d5e5b155d383a69952a60943f0e6dfe30b04c287beb0b27455"
-dependencies = [
- "fixedbitset",
- "hashbrown 0.15.5",
- "indexmap 2.14.0",
-]
-
-[[package]]
 name = "pharos"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5703,25 +5678,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "prost-build"
-version = "0.14.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "03da047801ff44bb6a4d407d4860c05fd70bb81714e6b2f3812603d5b145b042"
-dependencies = [
- "heck",
- "itertools 0.13.0",
- "log",
- "multimap",
- "petgraph",
- "prettyplease",
- "prost",
- "prost-types",
- "regex",
- "syn 2.0.117",
- "tempfile",
-]
-
-[[package]]
 name = "prost-derive"
 version = "0.14.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5732,15 +5688,6 @@ dependencies = [
  "proc-macro2 1.0.106",
  "quote 1.0.45",
  "syn 2.0.117",
-]
-
-[[package]]
-name = "prost-types"
-version = "0.14.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f94967dc7688f3054c7fac87473ffae4cc4c3904800e2d9f5b857246d8963b0a"
-dependencies = [
- "prost",
 ]
 
 [[package]]

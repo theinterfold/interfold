@@ -47,9 +47,8 @@ sha3 = "=0.10.8"
 # build crates/support on its own, and the RISC Zero Docker build context root is crates/support,
 # so anything outside that directory is unreachable from the guest build.
 #
-# The pin therefore decides which compute-provider code the guest runs, and moving it changes the
-# image ID. Bump it only together with a reproducible rebuild of
-# crates/support/contracts/ImageID.sol and a complete provenance manifest.
+# The dependency therefore decides which compute-provider code the guest runs, and updates can
+# change the image ID. Rebuild crates/support/contracts/ImageID.sol after dependency updates.
 #
 # Why this revision: 9e4c00b3 contains the proof-bound l-BFV key envelope and RLK delivery,
 # compute-input binding, secure-parameter fixes, shared-parameter path, and accelerated SAFE
@@ -60,11 +59,10 @@ sha3 = "=0.10.8"
 # files and no Rust at all, so crates/compute-provider and the guest were outside its scope, and
 # outside the mitigation review at c64bcfb8 as well. See packages/interfold-contracts/audits/README.md.
 # Holding the old audit pin bought reproducibility rather than assurance while excluding real fixes
-# to the code the guest runs. The revision remains content-addressed even though a permanent main
-# commit retains it; a movable branch or tag is not an acceptable guest dependency.
-fhe = { package = "fhe", git = "https://github.com/gnosisguild/fhe.rs", rev = "8755efa203fbaf94841110d2fc7c9f1aaf92f0d8" }
-fhe-traits = { git = "https://github.com/gnosisguild/fhe.rs", rev = "8755efa203fbaf94841110d2fc7c9f1aaf92f0d8" }
-fhe-util = { git = "https://github.com/gnosisguild/fhe.rs", rev = "8755efa203fbaf94841110d2fc7c9f1aaf92f0d8" }
+# to the code the guest runs. The development branch is used here to track the latest fhe.rs code.
+fhe = { package = "fhe", git = "https://github.com/gnosisguild/fhe.rs", branch = "dev" }
+fhe-traits = { git = "https://github.com/gnosisguild/fhe.rs", branch = "dev" }
+fhe-util = { git = "https://github.com/gnosisguild/fhe.rs", branch = "dev" }
 e3-compute-provider = { git = "https://github.com/theinterfold/interfold", rev = "9e4c00b3a5c520331cb86e2f2429aeca289f317d" }
 tokio = { version = "=1.46.1", features = ["full"] }
 rand = { version = "=0.9.4" }
