@@ -39,16 +39,24 @@ import {
   type CircuitPreset,
 } from './circuit-constants'
 
+/**
+ * Reduce Cargo.lock to the external crate pins that the circuit generators compile against.
+ *
+ * Circuit output comes from the Noir sources and from the Rust generators that write the C1/C2
+ * bounds and the parity matrices. Only the version, the source, and the checksum of an external
+ * crate can change that output. A workspace entry records the release version and the internal
+ * dependency graph, and neither reaches a circuit input. Hash those entries and every dependency
+ * edit in an unrelated crate makes the prebuilt artifact matrix stale.
+ */
 export function normalizeCargoLockForCircuitHash(source: Buffer): Buffer {
-  const normalized = source
+  const field = (entry: string, key: string): string => new RegExp(`^${key} = "([^"]*)"$`, 'm').exec(entry)?.[1] ?? ''
+  const pins = source
     .toString()
     .split(/(?=\[\[package\]\]\n)/)
-    .map((entry) => {
-      if (!entry.startsWith('[[package]]') || /^source = /m.test(entry)) return entry
-      return entry.replace(/^version = "[^"]+"$/m, 'version = "<workspace>"')
-    })
-    .join('')
-  return Buffer.from(normalized)
+    .filter((entry) => entry.startsWith('[[package]]') && /^source = /m.test(entry))
+    .map((entry) => `${field(entry, 'name')} ${field(entry, 'version')} ${field(entry, 'source')} ${field(entry, 'checksum')}\n`)
+    .sort()
+  return Buffer.from(pins.join(''))
 }
 
 interface CircuitInfo {

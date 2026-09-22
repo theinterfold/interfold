@@ -281,6 +281,15 @@ pnpm store:circuits push
 pnpm store:circuits pull
 ```
 
+### Source hash
+
+`pnpm build:circuits hash` prints the hash that gates the published artifacts. It covers the Noir
+circuits, the Noir config for the selected preset and committee, the Rust sources that generate the
+C1/C2 bounds and the parity matrices, the circuit build scripts, and the external crate pins in
+`Cargo.lock`. It ignores the generated bound values, the workspace release version, and the
+dependency graph between workspace crates. A change outside that set does not need a circuit
+rebuild.
+
 ### What it does
 
 - **Push**: Merges local `dist/circuits/` into the `circuit-artifacts` branch, refreshes
@@ -288,6 +297,10 @@ pnpm store:circuits pull
 - **Pull**: Fetches the `circuit-artifacts` branch and extracts to `dist/circuits/`
 - **Replace**: `pnpm store:circuits push --replace` rewrites the branch from local `dist/circuits/`;
   use only when intentionally deleting old artifact sets
+- **Restamp**: `pnpm store:circuits restamp --expect-source-hash <previous hash>` rewrites the build
+  stamps when the hash scheme changed but the artifacts did not. Compute the previous hash from the
+  same tree with the previous version of `scripts/build-circuits.ts`. The command refuses a branch
+  that records another hash, and it fails when a rewrite touches a circuit artifact
 
 ### Workflow
 

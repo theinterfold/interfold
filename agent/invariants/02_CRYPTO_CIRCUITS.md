@@ -55,6 +55,12 @@ every section.
   parameter set and committee size.
 - The pair source hash ignores generated C1/C2 bound values and includes the Rust sources that
   generate them. Switching the active committee must not change another pair's source hash.
+- The source hash reads `Cargo.lock` for external crate pins only: name, version, source, and
+  checksum. A workspace version bump or a dependency edit inside the workspace must not make the
+  published artifact matrix stale. — `scripts/build-circuits.ts`
+- Restamp published artifacts only when the branch records the source hash that the current tree
+  produced under the previous hash scheme. Artifacts from another tree need a rebuild. —
+  `scripts/circuit-artifacts.ts`
 
 ### DKG / threshold structure
 
