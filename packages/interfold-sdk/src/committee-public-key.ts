@@ -27,6 +27,7 @@ export interface AssembledCommitteePublicKey {
   nodes: string[]
   pkCommitment: Hex
   publicKey: Uint8Array
+  /** Decoded transport data only. Validate `publicKey` against `pkCommitment` before use. */
   lbfvKeyEnvelope?: LbfvKeyEnvelope
 }
 

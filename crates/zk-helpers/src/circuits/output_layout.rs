@@ -173,6 +173,110 @@ pub const PK_AGGREGATION_OUTPUTS: &[OutputField] = &[f("commitment")];
 /// C6 — Threshold share decryption (prefix commitment to `d`, per CRT limb).
 pub const THRESHOLD_SHARE_DECRYPTION_OUTPUTS: &[OutputField] = &[f("d_commitment")];
 
+/// Number of legacy recursive verification-key bindings in `dkg_aggregator_v2`.
+pub const DKG_AGGREGATOR_V2_LEGACY_VK_BINDING_LEN: usize = 16;
+
+/// Number of V2 recursive verification-key bindings in `dkg_aggregator_v2`.
+pub const DKG_AGGREGATOR_V2_VK_BINDING_LEN: usize = 13;
+
+/// Exact public-signal positions for `dkg_aggregator_v2`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DkgAggregatorV2PublicLayout {
+    pub nodes_fold_key_hash: usize,
+    pub c5_key_hash: usize,
+    pub party_ids: Range<usize>,
+    pub committee_hash_hi: usize,
+    pub committee_hash_lo: usize,
+    pub legacy_vk_binding: Range<usize>,
+    pub legacy_key_hash: usize,
+    pub c2a_chunk_hash: usize,
+    pub c2b_chunk_hash: usize,
+    pub sk_agg_commitments: Range<usize>,
+    pub esm_agg_commitments: Range<usize>,
+    pub key_envelope_commitment: usize,
+    pub v2_key_hash: usize,
+    pub session_id_hi: usize,
+    pub session_id_lo: usize,
+    pub aggregator_party_id: usize,
+    pub accepted_party_set_hash_hi: usize,
+    pub accepted_party_set_hash_lo: usize,
+    pub aggregate_pk_commitments: Range<usize>,
+    pub aggregate_d0_commitments: Range<usize>,
+    pub aggregate_d2_commitments: Range<usize>,
+    pub v2_vk_binding: Range<usize>,
+    pub field_count: usize,
+}
+
+impl DkgAggregatorV2PublicLayout {
+    /// Build the layout for one compiled committee and l-BFV row count.
+    pub fn new(committee_h: usize, lbfv_row_count: usize) -> Self {
+        let party_ids = 2..2 + committee_h;
+        let committee_hash_hi = party_ids.end;
+        let committee_hash_lo = committee_hash_hi + 1;
+        let legacy_vk_binding =
+            committee_hash_lo + 1..committee_hash_lo + 1 + DKG_AGGREGATOR_V2_LEGACY_VK_BINDING_LEN;
+
+        let legacy_key_hash = legacy_vk_binding.end;
+        let c2a_chunk_hash = legacy_key_hash + 1;
+        let c2b_chunk_hash = c2a_chunk_hash + 1;
+        let sk_agg_commitments = c2b_chunk_hash + 1..c2b_chunk_hash + 1 + committee_h;
+        let esm_agg_commitments = sk_agg_commitments.end..sk_agg_commitments.end + committee_h;
+        let key_envelope_commitment = esm_agg_commitments.end;
+        let v2_key_hash = key_envelope_commitment + 1;
+        let session_id_hi = v2_key_hash + 1;
+        let session_id_lo = session_id_hi + 1;
+        let aggregator_party_id = session_id_lo + 1;
+        let accepted_party_set_hash_hi = aggregator_party_id + 1;
+        let accepted_party_set_hash_lo = accepted_party_set_hash_hi + 1;
+        let aggregate_pk_commitments =
+            accepted_party_set_hash_lo + 1..accepted_party_set_hash_lo + 1 + lbfv_row_count;
+        let aggregate_d0_commitments =
+            aggregate_pk_commitments.end..aggregate_pk_commitments.end + lbfv_row_count;
+        let aggregate_d2_commitments =
+            aggregate_d0_commitments.end..aggregate_d0_commitments.end + lbfv_row_count;
+        let v2_vk_binding = aggregate_d2_commitments.end
+            ..aggregate_d2_commitments.end + DKG_AGGREGATOR_V2_VK_BINDING_LEN;
+
+        Self {
+            nodes_fold_key_hash: 0,
+            c5_key_hash: 1,
+            party_ids,
+            committee_hash_hi,
+            committee_hash_lo,
+            legacy_vk_binding,
+            legacy_key_hash,
+            c2a_chunk_hash,
+            c2b_chunk_hash,
+            sk_agg_commitments,
+            esm_agg_commitments,
+            key_envelope_commitment,
+            v2_key_hash,
+            session_id_hi,
+            session_id_lo,
+            aggregator_party_id,
+            accepted_party_set_hash_hi,
+            accepted_party_set_hash_lo,
+            aggregate_pk_commitments,
+            aggregate_d0_commitments,
+            aggregate_d2_commitments,
+            field_count: v2_vk_binding.end,
+            v2_vk_binding,
+        }
+    }
+
+    /// Extract the key-envelope commitment from an exact-shape public statement.
+    pub fn extract_key_envelope_commitment<'a>(
+        &self,
+        public_signals: &'a [u8],
+    ) -> Option<&'a [u8]> {
+        if public_signals.len() != self.field_count.checked_mul(FIELD_BYTE_LEN)? {
+            return None;
+        }
+        let start = self.key_envelope_commitment.checked_mul(FIELD_BYTE_LEN)?;
+        public_signals.get(start..start + FIELD_BYTE_LEN)
+    }
+}
+
 // ── Per-circuit input field constants ───────────────────────────────────────
 
 /// C3 — Share encryption public inputs (at HEAD of `public_signals`).
@@ -607,6 +711,22 @@ mod tests {
         assert_eq!(rlk.d0_agg_commitment, 10);
         assert_eq!(rlk.d2_agg_commitment, 11);
         assert_eq!(rlk.field_count, 12);
+    }
+
+    #[test]
+    fn dkg_aggregator_v2_layout_tracks_dynamic_commitment_position() {
+        let secure_minimum = DkgAggregatorV2PublicLayout::new(2, 5);
+        assert_eq!(secure_minimum.party_ids, 2..4);
+        assert_eq!(secure_minimum.sk_agg_commitments, 25..27);
+        assert_eq!(secure_minimum.esm_agg_commitments, 27..29);
+        assert_eq!(secure_minimum.key_envelope_commitment, 29);
+        assert_eq!(secure_minimum.aggregate_pk_commitments, 36..41);
+        assert_eq!(secure_minimum.v2_vk_binding, 51..64);
+        assert_eq!(secure_minimum.field_count, 64);
+
+        let insecure_micro = DkgAggregatorV2PublicLayout::new(5, 3);
+        assert_eq!(insecure_micro.key_envelope_commitment, 38);
+        assert_eq!(insecure_micro.field_count, 67);
     }
 
     /// C7 (`DecryptedSharesAggregation`) has no `-> pub` return values; metadata uses `None`.

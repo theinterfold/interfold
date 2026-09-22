@@ -220,8 +220,15 @@ impl PublicKeyAggregator {
             "l-BFV publication requires a DkgAggregatorV2 proof"
         );
         let committee_h = self.committee_size.values().h;
-        let pk_commitment =
-            extract_lbfv_key_envelope_commitment(&dkg_aggregator_v2_proof, committee_h)?;
+        let lbfv_row_count =
+            e3_fhe_params::lbfv_row_count(self.params_preset).ok_or_else(|| {
+                anyhow::anyhow!("l-BFV row count is unavailable for the active preset")
+            })?;
+        let pk_commitment = extract_lbfv_key_envelope_commitment(
+            &dkg_aggregator_v2_proof,
+            committee_h,
+            lbfv_row_count,
+        )?;
         let operational_public_key = aggregation
             .operational_public_key
             .as_ref()
