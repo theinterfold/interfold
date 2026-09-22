@@ -20,8 +20,10 @@ file rather than duplicating its content.
 Maintenance rule: these docs are part of the codebase. When a change invalidates a statement in any
 of them (a command, an invariant, a crate's role), update the doc **in the same PR** — surgical
 edits, same style as flow-trace updates below. Enforced mechanically by `pnpm check:docs`
-(pre-push): protocol-bearing code changes without an `agent/` diff are rejected unless a commit
-message carries `[skip-doc-sync]`.
+(pre-push): protocol-bearing code changes without an `agent/` diff are rejected. A watched file is
+exempted automatically when neither its changed lines nor the declarations that enclose them name an
+identifier these docs mention, when the change is a pure formatter reflow, or when the branch
+reverts the file to its base content; anything else needs `[skip-doc-sync]` in a commit message.
 
 ## Working rules
 
