@@ -552,7 +552,7 @@ the document schema before it publishes `LbfvKeyShareDocumentReceived`; unavaila
 records produce `LbfvKeyShareDocumentFetchFailed::V1`. A compact signed manifest is the only l-BFV
 transport event that normal gossip and historical peer sync forward. It binds the full proof domain,
 party slot, and SHA-256 content hash of both DHT records. The network adapter rejects an invalid
-schema, context, proof order, signature, or 25 MiB size before publication or local event
+schema, context, proof order, signature, or 16 MiB size before publication or local event
 conversion. The document boundary requires the exact l-BFV row count for the E3 preset before the
 document enters aggregation state. Transport and gossipsub identities authenticate the sending peer;
 they do not by themselves prove that a peer is an authorized member of a particular E3 committee.
@@ -641,7 +641,7 @@ output. For secure-16384, the active aggregator also stores the accepted l-BFV d
 row-proof pairs. It derives and persists the operational public key and RLK after the row fold
 completes. Restart repeats that derivation when the fold is durable but either operational key is
 absent. The final V2 DKG proof and publication remain blocked until both keys exist. Publication
-uses one version-1 envelope that binds both keys to the final proof.
+uses one version-2 envelope that binds both keys to the final proof.
 
 After C2/C3 verification, each member publishes a signed readiness report. The active aggregator
 selects the first canonical `H` dealers that are mutually complete and announces that roster. The

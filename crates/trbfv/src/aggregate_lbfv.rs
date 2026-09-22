@@ -22,6 +22,44 @@ pub struct LbfvOperationalKeys {
     pub relinearization_key: ArcBytes,
 }
 
+/// Validate one public-key contribution against a supported l-BFV preset.
+pub fn validate_lbfv_public_key_share_bytes(bytes: &[u8]) -> Result<()> {
+    validate_share_bytes(bytes, true)
+}
+
+/// Validate one relinearization-key contribution against a supported l-BFV preset.
+pub fn validate_lbfv_relinearization_key_share_bytes(bytes: &[u8]) -> Result<()> {
+    validate_share_bytes(bytes, false)
+}
+
+fn validate_share_bytes(bytes: &[u8], public_key: bool) -> Result<()> {
+    let mut errors = Vec::new();
+    for preset in [
+        BfvPreset::InsecureThreshold512,
+        BfvPreset::SecureThreshold16384,
+    ] {
+        let (params, _) = build_pair_for_preset(preset)?;
+        let result = if public_key {
+            PublicKeyShare::from_bytes(bytes, &params).map(|_| ())
+        } else {
+            RelinKeyShare::from_bytes(bytes, &params).map(|_| ())
+        };
+        match result {
+            Ok(()) => return Ok(()),
+            Err(error) => errors.push(error.to_string()),
+        }
+    }
+    let kind = if public_key {
+        "public-key"
+    } else {
+        "relinearization-key"
+    };
+    Err(anyhow::anyhow!(
+        "l-BFV {kind} contribution does not use a supported fhe.rs wire format: {}",
+        errors.join("; ")
+    ))
+}
+
 /// Aggregate accepted public-key and RLK contributions in one canonical order.
 ///
 /// The caller must perform signer, party-set, session, and commitment validation before calling

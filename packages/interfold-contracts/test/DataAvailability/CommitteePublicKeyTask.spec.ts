@@ -15,7 +15,7 @@ const publisherA = `0x${"aa".repeat(20)}`;
 const publisherB = `0x${"bb".repeat(20)}`;
 const publicKeyChunkBytes = 90 * 1024;
 const maxPublicKeyBytes = 16 * 1024 * 1024;
-const secure16384KeyEnvelopeBytes = 13_056_502;
+const secure16384KeyEnvelopeBytes = 10_445_217;
 
 function allChunksFor(
   publicKey: Uint8Array,
@@ -79,11 +79,11 @@ describe("committee public-key task assembly", function () {
     expect(hexlify(result)).to.equal(concat([first, second]));
   });
 
-  it("reassembles the secure-16384 key envelope in 142 chunks", function () {
+  it("reassembles the secure-16384 key envelope in 114 chunks", function () {
     const keyEnvelope = new Uint8Array(secure16384KeyEnvelopeBytes).fill(0x44);
     const chunks = allChunksFor(keyEnvelope).reverse();
 
-    expect(chunks).to.have.length(142);
+    expect(chunks).to.have.length(114);
     const result = assembleUniqueCommitteePublicKey(chunks, commitment);
     expect(result).to.have.length(secure16384KeyEnvelopeBytes);
     expect(result[0]).to.equal(0x44);

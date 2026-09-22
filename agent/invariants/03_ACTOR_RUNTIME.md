@@ -20,8 +20,8 @@ every section.
   synchronize with each other. `node_generation` covers a mandatory node-only release. P2P
   serialization compatibility within one protocol version remains separately gated by
   `GOSSIP_WIRE_MAJOR` and `SYNC_WIRE_MAJOR`. — `crates/config/protocol-release.toml`;
-  `flow-trace/07`. The `interfold-bfv-v2` circuit identity uses `protocol_version = 4` and keeps
-  `node_generation = 1` because this is not a separate mandatory node-only release.
+  `flow-trace/07`. The `interfold-bfv-v2` circuit identity uses `protocol_version = 4`. The later
+  mandatory runtime recovery release increases `node_generation` to 2.
 - Protocol 4 is also the coordinated fhe.rs l-BFV contribution-wire cutoff. Public-key and
   relinearization-key contribution bytes use their typed envelope formats; old bare contribution
   bytes are rejected by the typed decoders and must not be replayed or republished. Development
@@ -142,10 +142,11 @@ every section.
   V2 proof. The active aggregator derives the operational public key and RLK only from those
   accepted documents after the five-row fold completes. If C5 completes first, publication waits for
   both persisted keys. Restart must derive a missing operational key from the same durable documents
-  before it dispatches the final V2 proof. Schema 3 migrates schema-1 and schema-2 sidecars without
-  inventing an operational public key. A persisted aggregation failure is terminal and immutable.
-  Restart must clear process-local correlations, publish `E3Failed(DKGInvalidShares)`, and suppress
-  all proof and publication work. — `LbfvAggregationStateV1`; `aggregate_lbfv.rs`; `flow-trace/04`
+  before it dispatches the final V2 proof. Schema 4 rejects schema-1 through schema-3 sidecars
+  because their operational-key bytes use the pre-cutover fhe.rs codec. A persisted aggregation
+  failure is terminal and immutable. Restart must clear process-local correlations, publish
+  `E3Failed(DKGInvalidShares)`, and suppress all proof and publication work. —
+  `LbfvAggregationStateV1`; `aggregate_lbfv.rs`; `flow-trace/04`
 
 ### Ordering, backpressure, effects
 

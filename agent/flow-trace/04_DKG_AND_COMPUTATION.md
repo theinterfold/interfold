@@ -541,7 +541,7 @@ ShareVerificationActor receives ShareVerificationDispatched(kind=ShareProofs)
 │   │   │   consistency. Aggregation admission requires the exact row count for the E3 preset. The
 │   │   │   fetch handler publishes a validated document or a typed unavailable/invalid-data failure.
 │   │   │   The network adapter
-│   │   │   enforces the 25 MiB record limit and forwards only manifests with a recoverable
+│   │   │   enforces the 16 MiB record limit and forwards only manifests with a recoverable
 │   │   │   signature. For `secure-16384`, `ThresholdKeyshare` persists the generation request and
 │   │   │   encrypted seed in `//threshold_keyshare_lbfv_generation/v1/{e3_id}`. It dispatches share
 │   │   │   generation, derives and redrives missing row requests by stable operation ID, and collects the signed C1
@@ -1085,7 +1085,7 @@ E3 ID and committee.
 
 The serialized key is transported in Ethereum event chunks. It is not on-chain authority. The
 transport accepts at most 16 MiB and keeps the canonical chunk size at 90 KiB. The measured
-secure-16384 envelope is 13,056,502 bytes and uses 142 chunks. It contains a 5,222,596-byte public
+secure-16384 envelope is 10,445,217 bytes and uses 114 chunks. It contains a 2,611,311-byte public
 key and a 7,833,888-byte RLK. Only a request-time committee member can emit chunks while the E3
 remains in `KeyPublished`. This includes a retained expelled member, whose bytes receive no extra
 trust but can still repair availability. Terminal E3s reject new chunks, so late publishers cannot
@@ -1093,7 +1093,7 @@ recreate assemblies after cleanup. Consumers accept the first candidate hash fro
 ciphernode coordinator and `e3-indexer` group the canonical chunks by E3, publisher, and candidate
 hash. They require a complete sequence, check `keccak256(serializedKey) == candidateHash`, and
 decode the key for the request-time parameter set. For secure-16384, consumers validate the
-`IFLBFVKE` version-1 framing, complete public key, RLK, CRS, URS, levels, and ordered row
+`IFLBFVKE` version-2 framing, complete public key, RLK, CRS, URS, levels, and ordered row
 commitments. They recompute the combined envelope commitment and require equality with the proven
 on-chain `pkCommitment`. Encryption uses public-key component 0. Only proof-bound computation
 exposes the RLK. Invalid candidates do not consume another committee member's candidate. Production

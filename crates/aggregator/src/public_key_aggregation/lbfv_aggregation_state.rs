@@ -14,7 +14,7 @@ use e3_utils::ArcBytes;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-pub const LBFV_AGGREGATION_SCHEMA_VERSION: u32 = 3;
+pub const LBFV_AGGREGATION_SCHEMA_VERSION: u32 = 4;
 pub const LBFV_PUBLICATION_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -199,7 +199,7 @@ impl<'de> Deserialize<'de> for LbfvAggregationStateV1 {
                 let schema_version: u32 = sequence
                     .next_element()?
                     .ok_or_else(|| A::Error::custom("missing l-BFV aggregation schema version"))?;
-                if !matches!(schema_version, 1 | 2 | LBFV_AGGREGATION_SCHEMA_VERSION) {
+                if schema_version != LBFV_AGGREGATION_SCHEMA_VERSION {
                     return Err(A::Error::custom(format!(
                         "unsupported l-BFV aggregation schema version {schema_version}"
                     )));
@@ -831,32 +831,31 @@ mod aggregation_tests {
     }
 
     #[test]
-    fn legacy_aggregation_fixture_migrates_to_current_schema() {
+    fn legacy_aggregation_fixture_is_rejected_after_codec_cutover() {
         assert_eq!(
             bincode::serialize(&legacy_state()).unwrap(),
             LEGACY_AGGREGATION_STATE
         );
 
-        let restored: LbfvAggregationStateV1 =
-            bincode::deserialize(LEGACY_AGGREGATION_STATE).unwrap();
-        assert_eq!(restored.schema_version, LBFV_AGGREGATION_SCHEMA_VERSION);
-        assert_eq!(restored.params_preset, BfvPreset::SecureThreshold16384);
-        restored.validate_loaded().unwrap();
+        let error = bincode::deserialize::<LbfvAggregationStateV1>(LEGACY_AGGREGATION_STATE)
+            .expect_err("pre-cutover aggregation state must be rejected");
+        assert!(error
+            .to_string()
+            .contains("unsupported l-BFV aggregation schema version 1"));
     }
 
     #[test]
-    fn schema_two_aggregation_fixture_migrates_to_current_schema() {
+    fn schema_two_aggregation_fixture_is_rejected_after_codec_cutover() {
         assert_eq!(
             bincode::serialize(&schema_two_state()).unwrap(),
             SCHEMA_TWO_AGGREGATION_STATE
         );
 
-        let restored: LbfvAggregationStateV1 =
-            bincode::deserialize(SCHEMA_TWO_AGGREGATION_STATE).unwrap();
-        assert_eq!(restored.schema_version, LBFV_AGGREGATION_SCHEMA_VERSION);
-        assert_eq!(restored.params_preset, BfvPreset::SecureThreshold16384);
-        assert!(restored.operational_public_key.is_none());
-        restored.validate_loaded().unwrap();
+        let error = bincode::deserialize::<LbfvAggregationStateV1>(SCHEMA_TWO_AGGREGATION_STATE)
+            .expect_err("pre-cutover aggregation state must be rejected");
+        assert!(error
+            .to_string()
+            .contains("unsupported l-BFV aggregation schema version 2"));
     }
 
     #[test]

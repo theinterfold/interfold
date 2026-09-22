@@ -21,7 +21,7 @@ use fhe_traits::{DeserializeParametrized, Serialize as FheSerialize};
 use num_bigint::{BigInt, Sign};
 
 const MAGIC: [u8; 8] = *b"IFLBFVKE";
-const SCHEMA_VERSION: u16 = 1;
+const SCHEMA_VERSION: u16 = 2;
 const HEADER_LEN: usize = MAGIC.len() + 2 + 4 + 4;
 
 /// Return `true` when bytes start with the l-BFV key-envelope identifier.
@@ -44,7 +44,7 @@ pub struct LbfvKeyEnvelopeCommitments {
     pub envelope: [u8; 32],
 }
 
-/// Encode the two canonical fhe.rs key payloads in the version-1 envelope.
+/// Encode the two canonical fhe.rs key payloads in the version-2 envelope.
 pub fn encode_lbfv_key_envelope(public_key: &[u8], relinearization_key: &[u8]) -> Result<Vec<u8>> {
     ensure!(!public_key.is_empty(), "l-BFV public key is empty");
     ensure!(
@@ -71,7 +71,7 @@ pub fn encode_lbfv_key_envelope(public_key: &[u8], relinearization_key: &[u8]) -
     Ok(encoded)
 }
 
-/// Decode one version-1 l-BFV key envelope.
+/// Decode one version-2 l-BFV key envelope.
 pub fn decode_lbfv_key_envelope(encoded: &[u8]) -> Result<LbfvKeyEnvelope> {
     ensure!(
         encoded.len() >= HEADER_LEN,
@@ -375,6 +375,18 @@ mod tests {
         let error = inspect_lbfv_key_envelope(&envelope, BfvPreset::SecureThreshold16384)
             .expect_err("a key from another preset must fail");
         assert!(error.to_string().contains("failed to decode"));
+        Ok(())
+    }
+
+    #[test]
+    fn envelope_rejects_the_pre_cutover_outer_version() -> Result<()> {
+        let mut envelope = envelope()?;
+        envelope[8..10].copy_from_slice(&1_u16.to_be_bytes());
+        let error = decode_lbfv_key_envelope(&envelope)
+            .expect_err("the pre-cutover operational envelope must be rejected");
+        assert!(error
+            .to_string()
+            .contains("unsupported l-BFV key envelope version 1"));
         Ok(())
     }
 

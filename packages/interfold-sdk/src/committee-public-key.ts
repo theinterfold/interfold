@@ -13,6 +13,7 @@ export const MAX_COMMITTEE_PUBLIC_KEY_CHUNK_BYTES = 90 * 1024
 export const DEFAULT_MAX_TRACKED_COMMITTEE_KEYS = 128
 const LBFV_KEY_ENVELOPE_MAGIC = new TextEncoder().encode('IFLBFVKE')
 const LBFV_KEY_ENVELOPE_HEADER_BYTES = 18
+const LBFV_KEY_ENVELOPE_SCHEMA_VERSION = 2
 
 export interface LbfvKeyEnvelope {
   schemaVersion: number
@@ -168,7 +169,9 @@ export function decodeLbfvKeyEnvelope(encoded: Uint8Array): LbfvKeyEnvelope {
   }
   const view = new DataView(encoded.buffer, encoded.byteOffset, encoded.byteLength)
   const schemaVersion = view.getUint16(8, false)
-  if (schemaVersion !== 1) throw new Error(`Unsupported l-BFV key envelope version ${schemaVersion}`)
+  if (schemaVersion !== LBFV_KEY_ENVELOPE_SCHEMA_VERSION) {
+    throw new Error(`Unsupported l-BFV key envelope version ${schemaVersion}`)
+  }
   const publicKeyLength = view.getUint32(10, false)
   const relinearizationKeyLength = view.getUint32(14, false)
   const publicKeyEnd = LBFV_KEY_ENVELOPE_HEADER_BYTES + publicKeyLength

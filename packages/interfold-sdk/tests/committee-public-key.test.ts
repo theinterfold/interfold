@@ -19,11 +19,11 @@ const publisher = '0x0000000000000000000000000000000000000001'
 const nodes = [publisher, '0x0000000000000000000000000000000000000002']
 const pkCommitment = `0x${'11'.repeat(32)}`
 
-function lbfvEnvelope(publicKey: Uint8Array, relinearizationKey: Uint8Array): Uint8Array {
+function lbfvEnvelope(publicKey: Uint8Array, relinearizationKey: Uint8Array, schemaVersion = 2): Uint8Array {
   const encoded = new Uint8Array(18 + publicKey.length + relinearizationKey.length)
   encoded.set(new TextEncoder().encode('IFLBFVKE'))
   const view = new DataView(encoded.buffer)
-  view.setUint16(8, 1, false)
+  view.setUint16(8, schemaVersion, false)
   view.setUint32(10, publicKey.length, false)
   view.setUint32(14, relinearizationKey.length, false)
   encoded.set(publicKey, 18)
@@ -53,9 +53,15 @@ describe('CommitteePublicKeyAssembler', () => {
     const encoded = lbfvEnvelope(new Uint8Array([1, 2]), new Uint8Array([3, 4, 5]))
     const decoded = decodeLbfvKeyEnvelope(encoded)
 
-    expect(decoded.schemaVersion).toBe(1)
+    expect(decoded.schemaVersion).toBe(2)
     expect(decoded.publicKey).toEqual(new Uint8Array([1, 2]))
     expect(decoded.relinearizationKey).toEqual(new Uint8Array([3, 4, 5]))
+  })
+
+  it('rejects a pre-cutover l-BFV key envelope', () => {
+    const encoded = lbfvEnvelope(new Uint8Array([1, 2]), new Uint8Array([3, 4, 5]), 1)
+
+    expect(() => decodeLbfvKeyEnvelope(encoded)).toThrow('Unsupported l-BFV key envelope version 1')
   })
 
   it('exposes decoded l-BFV key material after assembly', () => {
@@ -90,14 +96,14 @@ describe('CommitteePublicKeyAssembler', () => {
     expect(result?.publicKey).toEqual(bytes)
   })
 
-  it('assembles the secure-16384 key envelope in 142 chunks', () => {
-    const publicKey = new Uint8Array(5_222_596).fill(7)
+  it('assembles the secure-16384 key envelope in 114 chunks', () => {
+    const publicKey = new Uint8Array(2_611_311).fill(7)
     const relinearizationKey = new Uint8Array(7_833_888).fill(9)
     const bytes = lbfvEnvelope(publicKey, relinearizationKey)
     const events = eventsFor(bytes).reverse()
     const assembler = new CommitteePublicKeyAssembler()
 
-    expect(events).toHaveLength(142)
+    expect(events).toHaveLength(114)
     let result
     for (const event of events) result = assembler.add(event) ?? result
 

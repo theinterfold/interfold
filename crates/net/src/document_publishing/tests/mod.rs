@@ -28,7 +28,11 @@ use e3_events::{
     LbfvRelinearizationKeyShareDocumentV1, Proof, ProofPayload, ProofType,
     PublishDocumentRequested, SignedProofPayload, TakeEvents,
 };
+use e3_fhe_params::{build_pair_for_preset, lbfv_crs_seed, lbfv_urs_seed, BfvPreset};
 use e3_utils::ArcBytes;
+use fhe::bfv::{CommonRandomPolyVec, SecretKey};
+use fhe::trlbfv::{PublicKeyShare, RelinKeyShare};
+use fhe_traits::Serialize as FheSerialize;
 use libp2p::kad::{GetRecordError, PutRecordError, RecordKey};
 use std::time::Instant;
 use tokio::{
@@ -167,7 +171,7 @@ fn lbfv_documents() -> (LbfvKeyShareDocument, LbfvKeyShareDocument) {
     let context = lbfv_context();
     let public_key = LbfvKeyShareDocument::PublicKeyV1(LbfvPublicKeyShareDocumentV1 {
         context: context.clone(),
-        share: ArcBytes::from_bytes(b"public key share"),
+        share: ArcBytes::from_bytes(&lbfv_share_bytes(true, 64)),
         signed_c1_proof: lbfv_signed_proof(&context, ProofType::C1PkGeneration, 0),
         signed_row_proofs: std::array::from_fn(|row| {
             lbfv_signed_proof(&context, ProofType::LbfvPkGeneration, row as u32)
@@ -176,12 +180,33 @@ fn lbfv_documents() -> (LbfvKeyShareDocument, LbfvKeyShareDocument) {
     let relinearization_key =
         LbfvKeyShareDocument::RelinearizationKeyV1(LbfvRelinearizationKeyShareDocumentV1 {
             context,
-            share: ArcBytes::from_bytes(b"relinearization key share"),
+            share: ArcBytes::from_bytes(&lbfv_share_bytes(false, 64)),
             signed_row_proofs: std::array::from_fn(|row| {
                 lbfv_signed_proof(public_key.context(), ProofType::RlkGeneration, row as u32)
             }),
         });
     (public_key, relinearization_key)
+}
+
+fn lbfv_share_bytes(public_key: bool, minimum_len: usize) -> Vec<u8> {
+    let preset = BfvPreset::InsecureThreshold512;
+    let (params, _) = build_pair_for_preset(preset).unwrap();
+    let crs = CommonRandomPolyVec::from_seed(&params, lbfv_crs_seed(preset).unwrap()).unwrap();
+    let urs = CommonRandomPolyVec::from_seed(&params, lbfv_urs_seed(preset).unwrap()).unwrap();
+    let mut random = rand::rng();
+    let secret_key = SecretKey::random(&params, &mut random);
+    let mut bytes = if public_key {
+        PublicKeyShare::contribute_with_crp(&secret_key, &crs, &mut random)
+            .unwrap()
+            .to_bytes()
+    } else {
+        RelinKeyShare::contribution_with_crp_extended(&secret_key, &urs, &crs, 0, 0, &mut random)
+            .unwrap()
+            .0
+            .to_bytes()
+    };
+    bytes.resize(bytes.len().max(minimum_len), 0);
+    bytes
 }
 
 fn lbfv_fetch_request(

@@ -148,7 +148,7 @@ opentelemetry/tracing.
   implemented. The active aggregator persists the complete operational public key and RLK. Restart
   reconstructs a missing key from the durable accepted documents after the row fold completes. A
   terminal row-aggregation failure suppresses later proof and publication work. The aggregator
-  publishes both keys in a version-1 envelope whose SAFE commitment replaces the legacy
+  publishes both keys in a version-2 envelope whose SAFE commitment replaces the legacy
   published-key commitment output. The active aggregator also persists and redrives a secure-16384
   `LbfvPublicKeyAggregated` publication intent. The registry writer adapts that local intent to the
   existing replay-safe publication gate and submits the V2 proof and attestation bundle. The

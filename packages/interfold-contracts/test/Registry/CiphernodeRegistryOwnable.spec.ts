@@ -29,7 +29,7 @@ const dataHash = ethers.id(data);
 const SORTITION_SUBMISSION_WINDOW = 60;
 const PUBLIC_KEY_CHUNK_BYTES = 90 * 1024;
 const MAX_PUBLIC_KEY_BYTES = 16 * 1024 * 1024;
-const SECURE_16384_KEY_ENVELOPE_BYTES = 13_056_502;
+const SECURE_16384_KEY_ENVELOPE_BYTES = 10_445_217;
 
 describe("CiphernodeRegistryOwnable", function () {
   let firstE3Id: bigint;
@@ -1008,7 +1008,7 @@ describe("CiphernodeRegistryOwnable", function () {
       const secureChunkCount = Math.ceil(
         SECURE_16384_KEY_ENVELOPE_BYTES / PUBLIC_KEY_CHUNK_BYTES,
       );
-      expect(secureChunkCount).to.equal(142);
+      expect(secureChunkCount).to.equal(114);
 
       await expect(
         publishPublicKey(
