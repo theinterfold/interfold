@@ -173,8 +173,7 @@ impl ShareVerificationActor {
         }
     }
 
-    /// Handle computation error from multithread — clean up pending state and
-    /// publish ShareVerificationComplete treating all dispatched parties as dishonest.
+    /// Handle an exhausted local verification failure without accusing remote parties.
     pub(in crate::actors::share_verification) fn handle_compute_request_error(
         &mut self,
         msg: TypedEvent<ComputeRequestError>,
@@ -182,7 +181,7 @@ impl ShareVerificationActor {
         let (msg, _ec) = msg.into_components();
 
         let correlation_id = msg.correlation_id();
-        let Some(pending) = self.pending.remove(correlation_id) else {
+        let Some(pending) = self.pending.get(correlation_id) else {
             // Every compute-dispatching actor receives every error, so an unowned correlation
             // is another actor's failure, not a fault here.
             debug!(
@@ -192,19 +191,8 @@ impl ShareVerificationActor {
         };
 
         error!(
-            "ZK verification computation failed for E3 {} ({:?}): {} — treating all dispatched parties as dishonest",
+            "ZK verification failed locally for E3 {} ({:?}): {}; pending work is preserved for restart",
             pending.e3_id, pending.kind, msg
-        );
-
-        let mut all_dishonest: BTreeSet<u64> = pending.pre_dishonest;
-        all_dishonest.extend(pending.ecdsa_dishonest);
-        all_dishonest.extend(pending.dispatched_party_ids);
-        self.publish_complete(
-            pending.e3_id,
-            pending.kind,
-            pending.verification_id,
-            all_dishonest,
-            pending.ec,
         );
     }
 }

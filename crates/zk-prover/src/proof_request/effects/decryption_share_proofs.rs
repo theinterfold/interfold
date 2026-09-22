@@ -59,11 +59,15 @@ impl ProofRequestActor {
         correlation_id: &CorrelationId,
         proofs: Vec<Proof>,
     ) {
-        let Some(e3_id) = self.share_decryption_correlation.remove(correlation_id) else {
+        let Some(e3_id) = self
+            .share_decryption_correlation
+            .get(correlation_id)
+            .cloned()
+        else {
             return;
         };
 
-        let Some(pending) = self.pending_share_decryption.remove(&e3_id) else {
+        let Some(pending) = self.pending_share_decryption.get(&e3_id).cloned() else {
             error!(
                 "No pending share decryption proof for E3 {} — orphan correlation",
                 e3_id
@@ -77,12 +81,14 @@ impl ProofRequestActor {
             let Some(signed) =
                 self.sign_proof(&e3_id, ProofType::C6ThresholdShareDecryption, proof)
             else {
-                error!("Failed to sign C6 proof — DecryptionshareCreated will not be published");
-                self.fail_decryption_round(e3_id.clone(), &pending.ec, "C6 signing error");
+                error!("Failed to sign the local C6 proof; pending work is preserved");
                 return;
             };
             signed_proofs.push(signed);
         }
+
+        self.share_decryption_correlation.remove(correlation_id);
+        self.pending_share_decryption.remove(&e3_id);
 
         info!(
             "All C6 proofs signed for E3 {} party {} (signer: {})",

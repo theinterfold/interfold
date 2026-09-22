@@ -8,8 +8,9 @@ use super::*;
 use actix::{Actor, Context, Handler};
 use alloy::signers::local::PrivateKeySigner;
 use e3_events::{
-    hlc_factory::HlcFactory, Event, EventBus, EventBusBarrier, EventBusConfig, EventPublisher,
-    Proof, ProofPayload, ProofType, Sequencer, StoreEventRequested, StoreEventResponse,
+    hlc_factory::HlcFactory, ComputeRequestErrorKind, EffectsEnabled, Event, EventBus,
+    EventBusBarrier, EventBusConfig, EventPublisher, GetEvents, Proof, ProofPayload, ProofType,
+    Sequencer, StoreEventRequested, StoreEventResponse, Unsequenced, ZkError,
 };
 use e3_fhe_params::BfvPreset;
 use e3_utils::utility_types::ArcBytes;
@@ -59,6 +60,60 @@ fn signed_c6(signer: &PrivateKeySigner, e3_id: &E3id, marker: u8) -> SignedProof
         signer,
     )
     .expect("sign C6 test proof")
+}
+
+#[actix::test]
+async fn local_verifier_error_preserves_pending_work_without_accusing_parties() {
+    let bus = test_bus();
+    let history = bus.history();
+    let e3_id = E3id::new("worker-recovery", 1);
+    let correlation_id = CorrelationId::new();
+    let context_data: InterfoldEventData = EffectsEnabled::new().into();
+    let context = EventContext::<Unsequenced>::from(context_data).sequence(0);
+    let mut actor = ShareVerificationActor::new(&bus, HashMap::new());
+    actor.pending.insert(
+        correlation_id,
+        PendingVerification {
+            e3_id: e3_id.clone(),
+            kind: VerificationKind::ShareProofs,
+            verification_id: None,
+            ec: context.clone(),
+            ecdsa_dishonest: HashSet::new(),
+            pre_dishonest: BTreeSet::new(),
+            dispatched_party_ids: HashSet::from([0]),
+            party_addresses: HashMap::new(),
+            party_proof_hashes: HashMap::new(),
+            party_public_signals: HashMap::new(),
+            party_proof_data: HashMap::new(),
+            params_preset: BfvPreset::InsecureThreshold512,
+            committee_size: CiphernodesCommitteeSize::Minimum,
+        },
+    );
+    let request = ComputeRequest::zk(
+        ZkRequest::VerifyShareProofs(VerifyShareProofsRequest {
+            party_proofs: Vec::new(),
+            params_preset: BfvPreset::InsecureThreshold512,
+            committee_size: CiphernodesCommitteeSize::Minimum,
+        }),
+        correlation_id,
+        e3_id,
+    );
+
+    actor.handle_compute_request_error(TypedEvent::new(
+        ComputeRequestError::new(
+            ComputeRequestErrorKind::Zk(ZkError::ProofGenerationFailed("oom".to_owned())),
+            request,
+        ),
+        context,
+    ));
+
+    actix::clock::sleep(Duration::from_millis(20)).await;
+    assert!(actor.pending.contains_key(&correlation_id));
+    assert!(history
+        .send(GetEvents::<InterfoldEvent>::new())
+        .await
+        .expect("read history")
+        .is_empty());
 }
 
 #[actix::test]

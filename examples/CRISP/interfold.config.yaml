@@ -102,12 +102,12 @@ program:
   #     lock_timeout_secs: 14400
   #     ramp_up_secs: 7200
   #     lock_collateral_zkc: 100.0
-  # Default profile: multithread uses (logical CPUs - 1) Rayon workers and the same concurrent job
-  # limit. Reserve threads with `multithread_reserve_threads` (default 1 for Actix / libp2p).
-  # Example override on a 16-core host:
+  # The scheduler defaults to 2 concurrent jobs and reserves 2 logical CPUs for Actix / libp2p.
+  # It reduces concurrency when the host or cgroup memory limit is too small.
+  # Example override on a dedicated 64 GB host:
   # node:
-  #   multithread_reserve_threads: 1
-  #   multithread_concurrent_jobs: 8
+  #   multithread_reserve_threads: 2
+  #   multithread_concurrent_jobs: 4
   #   # Test/CI only. Requires mock on-chain proof verifiers and an Interfold binary built with
   #   # the `test-only-skip-proof-aggregation` Cargo feature.
   #   skip_proof_aggregation: false

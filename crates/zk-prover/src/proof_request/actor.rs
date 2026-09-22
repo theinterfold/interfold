@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 use actix::{Actor, Addr, Context, Handler};
@@ -15,12 +15,12 @@ use e3_events::{
     AggregationProofPending, AggregationProofSigned, BusHandle, ComputeRequest,
     ComputeRequestError, ComputeResponse, ComputeResponseKind, CorrelationId, DKGInnerProofReady,
     DecryptionKeyShared, DecryptionShareProofSigned, DecryptionShareProofsPending,
-    DecryptionshareCreated, DkgProofSigned, E3Failed, E3Stage, E3id, EncryptionKeyCreated,
-    EncryptionKeyPending, EventContext, EventPublisher, EventSubscriber, EventType, FailureReason,
-    InterfoldEvent, InterfoldEventData, PkAggregationProofPending, PkAggregationProofSigned,
-    PkBfvProofRequest, PkGenerationProofSigned, Proof, ProofPayload, ProofType,
-    ProofVerificationPassed, Sequenced, ShareDecryptionProofPending, SignedProofPayload,
-    ThresholdShareCreated, ThresholdSharePending, TypedEvent, ZkRequest, ZkResponse,
+    DecryptionshareCreated, DkgProofSigned, E3id, EncryptionKeyCreated, EncryptionKeyPending,
+    EventContext, EventPublisher, EventSubscriber, EventType, InterfoldEvent, InterfoldEventData,
+    PkAggregationProofPending, PkAggregationProofSigned, PkBfvProofRequest,
+    PkGenerationProofSigned, Proof, ProofPayload, ProofType, ProofVerificationPassed, Sequenced,
+    ShareDecryptionProofPending, SignedProofPayload, ThresholdShareCreated, ThresholdSharePending,
+    TypedEvent, ZkRequest, ZkResponse,
 };
 use e3_utils::NotifySync;
 use tracing::{debug, error, info, trace, warn};
@@ -61,6 +61,12 @@ pub struct ProofRequestActor {
     aggregation_correlation: HashMap<CorrelationId, E3id>,
     /// C7 pending proofs per E3
     pending_aggregation: HashMap<E3id, PendingAggregationProof>,
+    /// Durable C0-C4 proofs recovered by the node-fold collector. A restarted
+    /// proof-request actor reuses the C1-C3 subset instead of proving it again.
+    recovered_inner_proofs: HashMap<E3id, BTreeMap<usize, Proof>>,
+    /// Prevent a duplicate `ThresholdSharePending` delivery from republishing
+    /// the same signed share bundle in one process lifetime.
+    completed_threshold: HashSet<E3id>,
 }
 
 impl ProofRequestActor {
@@ -81,7 +87,17 @@ impl ProofRequestActor {
             pending_pk_aggregation: HashMap::new(),
             aggregation_correlation: HashMap::new(),
             pending_aggregation: HashMap::new(),
+            recovered_inner_proofs: HashMap::new(),
+            completed_threshold: HashSet::new(),
         }
+    }
+
+    pub(crate) fn with_recovered_inner_proofs(
+        mut self,
+        recovered_inner_proofs: HashMap<E3id, BTreeMap<usize, Proof>>,
+    ) -> Self {
+        self.recovered_inner_proofs = recovered_inner_proofs;
+        self
     }
 
     pub fn setup(
@@ -89,7 +105,18 @@ impl ProofRequestActor {
         signer: PrivateKeySigner,
         proof_aggregation_enabled: bool,
     ) -> Addr<Self> {
-        let addr = Self::new(bus, signer, proof_aggregation_enabled).start();
+        Self::setup_with_recovery(bus, signer, proof_aggregation_enabled, HashMap::new())
+    }
+
+    pub(crate) fn setup_with_recovery(
+        bus: &BusHandle,
+        signer: PrivateKeySigner,
+        proof_aggregation_enabled: bool,
+        recovered_inner_proofs: HashMap<E3id, BTreeMap<usize, Proof>>,
+    ) -> Addr<Self> {
+        let addr = Self::new(bus, signer, proof_aggregation_enabled)
+            .with_recovered_inner_proofs(recovered_inner_proofs)
+            .start();
         bus.subscribe(EventType::EncryptionKeyPending, addr.clone().into());
         bus.subscribe(EventType::ComputeResponse, addr.clone().into());
         bus.subscribe(EventType::ComputeRequestError, addr.clone().into());

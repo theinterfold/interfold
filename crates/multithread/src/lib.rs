@@ -5,10 +5,12 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 mod effect_gate;
+mod memory;
 mod multithread;
 mod pool;
 mod report;
 
+pub use memory::*;
 pub use multithread::*;
 pub use pool::*;
 pub use report::*;

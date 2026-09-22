@@ -10,7 +10,7 @@ use e3_events::{CircuitName, CircuitVariant, Proof};
 use e3_fhe_params::BfvPreset;
 use e3_utils::utility_types::ArcBytes;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command as StdCommand;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::{debug, info, warn};
@@ -19,31 +19,58 @@ use tracing::{debug, info, warn};
 /// when prove/verify runs concurrently (integration harness + `multithread_concurrent_jobs` > 1).
 static BB_WORK_JOB_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-fn next_bb_work_subdir(prefix: &str) -> String {
-    let id = BB_WORK_JOB_COUNTER.fetch_add(1, Ordering::Relaxed);
-    format!("{prefix}_{id}")
-}
+const PROCESS_OUTPUT_LIMIT: usize = 4 * 1024;
 
 struct JobDirGuard(PathBuf);
 
 impl Drop for JobDirGuard {
     fn drop(&mut self) {
-        if let Err(error) = fs::remove_dir_all(&self.0) {
-            if error.kind() != std::io::ErrorKind::NotFound {
-                warn!(
-                    "failed to remove Barretenberg work directory {}: {}",
-                    self.0.display(),
-                    error
-                );
-            }
-        }
+        let _ = fs::remove_dir_all(&self.0);
     }
 }
 
+fn prepare_job_dir(job_dir: &Path) -> Result<JobDirGuard, std::io::Error> {
+    // A process-level kill cannot run `JobDirGuard::drop`. The per-process counter restarts at
+    // zero, so remove only this deterministic attempt directory before a recovered job reuses it.
+    if job_dir.exists() {
+        fs::remove_dir_all(job_dir)?;
+    }
+    fs::create_dir_all(job_dir)?;
+    Ok(JobDirGuard(job_dir.to_path_buf()))
+}
+
+fn bounded_process_output(output: &[u8]) -> String {
+    let value = String::from_utf8_lossy(output);
+    if value.len() <= PROCESS_OUTPUT_LIMIT {
+        return value.into_owned();
+    }
+
+    let mut end = PROCESS_OUTPUT_LIMIT;
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!(
+        "{}\n... truncated {} byte(s)",
+        &value[..end],
+        value.len() - end
+    )
+}
+
+fn verifier_reported_invalid_proof(stderr: &str, stdout: &str) -> bool {
+    stderr.contains("Proof verification failed") || stdout.contains("Proof verification failed")
+}
+
+fn next_bb_work_subdir(prefix: &str) -> String {
+    let id = BB_WORK_JOB_COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("{prefix}_{id}")
+}
+
+#[derive(Clone)]
 pub struct ZkProver {
     bb_binary: PathBuf,
     circuits_dir: PathBuf,
     work_dir: PathBuf,
+    slow_low_memory: bool,
 }
 
 impl ZkProver {
@@ -52,6 +79,15 @@ impl ZkProver {
             bb_binary: backend.bb_binary.clone(),
             circuits_dir: backend.circuits_dir.clone(),
             work_dir: backend.work_dir.clone(),
+            slow_low_memory: false,
+        }
+    }
+
+    /// Return a prover that asks Barretenberg to trade speed for a smaller memory peak.
+    pub fn with_slow_low_memory(&self) -> Self {
+        Self {
+            slow_low_memory: true,
+            ..self.clone()
         }
     }
 
@@ -201,6 +237,7 @@ impl ZkProver {
             .join(next_bb_work_subdir(&format!("prove_{}", circuit.as_str())));
         let witness_path = job_dir.join("witness.gz");
         let output_dir = job_dir.join("out");
+
         fs::create_dir_all(&job_dir)?;
         let _job_dir_guard = JobDirGuard(job_dir.clone());
 
@@ -218,7 +255,7 @@ impl ZkProver {
         let vk_path_s = vk_path.to_string_lossy();
         let output_dir_s = output_dir.to_string_lossy();
 
-        let args = vec![
+        let mut args = vec![
             "prove",
             "-b",
             circuit_path_s.as_ref(),
@@ -232,12 +269,15 @@ impl ZkProver {
             "-t",
             verifier_target,
         ];
+        if self.slow_low_memory {
+            args.push("--slow_low_memory");
+        }
 
         let output = StdCommand::new(&self.bb_binary).args(&args).output()?;
 
         if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = bounded_process_output(&output.stderr);
+            let stdout = bounded_process_output(&output.stdout);
             return Err(ZkError::ProveFailed(format!(
                 "bb prove failed:\nstderr: {}\nstdout: {}",
                 stderr, stdout
@@ -375,6 +415,7 @@ impl ZkProver {
             circuit.as_str()
         )));
         let out_dir = job_dir.join("out");
+        let _job_dir_guard = prepare_job_dir(&job_dir)?;
         fs::create_dir_all(&out_dir)?;
         let _job_dir_guard = JobDirGuard(job_dir.clone());
 
@@ -405,8 +446,14 @@ impl ZkProver {
         let output = StdCommand::new(&self.bb_binary).args(&args).output()?;
 
         if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = bounded_process_output(&output.stderr);
+            let stdout = bounded_process_output(&output.stdout);
+            if !verifier_reported_invalid_proof(&stderr, &stdout) {
+                return Err(ZkError::VerifyFailed(format!(
+                    "bb verification process failed without an invalid-proof result:\n\
+                     stderr: {stderr}\nstdout: {stdout}"
+                )));
+            }
             warn!(
                 "bb verification failed for {}:\nVK: {}\nstderr: {}\nstdout: {}",
                 circuit.as_str(),
@@ -447,5 +494,78 @@ mod tests {
 
         let result = prover.generate_proof(CircuitName::PkBfv, b"witness", "e3-1", "insecure");
         assert!(matches!(result, Err(ZkError::BbNotInstalled)));
+    }
+
+    #[test]
+    fn process_output_is_bounded() {
+        let input = vec![b'x'; PROCESS_OUTPUT_LIMIT + 100];
+        let output = bounded_process_output(&input);
+
+        assert!(output.contains("truncated 100 byte(s)"));
+        assert!(output.len() < input.len());
+    }
+
+    #[test]
+    fn low_memory_retry_enables_the_barretenberg_option() {
+        let temp = get_tempdir().unwrap();
+        let backend = ZkBackend::new(
+            BBPath::Default(temp.path().join("bb")),
+            temp.path().join("circuits"),
+            temp.path().join("work"),
+        );
+
+        let prover = ZkProver::new(&backend).with_slow_low_memory();
+
+        assert!(prover.slow_low_memory);
+    }
+
+    #[test]
+    fn job_directory_guard_removes_failed_attempt_files() {
+        let temp = get_tempdir().unwrap();
+        let job_dir = temp.path().join("job");
+        fs::create_dir_all(&job_dir).unwrap();
+        fs::write(job_dir.join("partial-proof"), b"partial").unwrap();
+
+        {
+            let _guard = JobDirGuard(job_dir.clone());
+        }
+
+        assert!(!job_dir.exists());
+    }
+
+    #[test]
+    fn recovered_job_removes_a_stale_attempt_directory() {
+        let temp = get_tempdir().unwrap();
+        let job_dir = temp.path().join("job");
+        fs::create_dir_all(&job_dir).unwrap();
+        fs::write(job_dir.join("partial-proof"), b"partial").unwrap();
+
+        let guard = prepare_job_dir(&job_dir).unwrap();
+
+        assert!(job_dir.exists());
+        assert!(!job_dir.join("partial-proof").exists());
+        drop(guard);
+        assert!(!job_dir.exists());
+    }
+
+    #[test]
+    fn only_an_explicit_verifier_result_is_an_invalid_proof() {
+        assert!(verifier_reported_invalid_proof(
+            "Proof verification failed",
+            ""
+        ));
+        assert!(verifier_reported_invalid_proof(
+            "",
+            "Proof verification failed: invalid proof size"
+        ));
+        assert!(!verifier_reported_invalid_proof("std::bad_alloc", ""));
+        assert!(!verifier_reported_invalid_proof(
+            "Cannot allocate memory",
+            ""
+        ));
+        assert!(!verifier_reported_invalid_proof(
+            "failed to write temporary file",
+            ""
+        ));
     }
 }

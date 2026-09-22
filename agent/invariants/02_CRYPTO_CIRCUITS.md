@@ -87,7 +87,8 @@ every section.
   responses. — `flow-trace/04`
 - DKG aggregation receives **exactly H** canonical honest NodeFold proofs (unique in-range party
   IDs) and **exactly N** ordered committee addresses; every preset has `H < N` — never assert
-  `H == N`. A mixed Some/None NodeFold set is terminal DKG failure. — `ARCHITECTURE.md`;
+  `H == N`. A mixed Some/None NodeFold set is a local test-configuration mismatch. Preserve the
+  aggregation inputs and do not report invalid committee shares. — `ARCHITECTURE.md`;
   `flow-trace/04`
 - Secure-16384 persists the first exact-H ascending ready candidate set before verification
   dispatch. If a candidate fails, persist its invalid status before selecting and dispatching the

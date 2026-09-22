@@ -129,9 +129,6 @@ impl NodeProofRecovery {
                 entry.last_ec.is_some(),
                 "persisted DKG fold has no event context for E3 {e3_id}"
             );
-            if entry.completed.is_some() {
-                continue;
-            }
             if entry.meta_present {
                 let value = meta_repository(repositories, e3_id)
                     .read()
@@ -186,6 +183,7 @@ impl NodeProofAggregator {
         self.pending_inner_proofs.remove(e3_id);
         self.fold_correlation
             .retain(|_, pending_id| pending_id != e3_id);
+        self.pending_fold_proofs.remove(e3_id);
         let Some(entry) = self.recovery_index.entries.remove(e3_id) else {
             return;
         };

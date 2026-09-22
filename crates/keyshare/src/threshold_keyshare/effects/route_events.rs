@@ -252,9 +252,7 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
             InterfoldEventData::ComputeRequestError(data) => {
-                if let Err(err) = self.handle_lbfv_compute_error(TypedEvent::new(data, ec)) {
-                    error!("Failed to handle l-BFV compute error: {err}");
-                }
+                self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
             InterfoldEventData::CommitteeMemberExpelled(data) => {
                 self.handle_committee_member_expelled(data, ec);

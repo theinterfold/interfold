@@ -354,11 +354,13 @@ short page.
 
 `interfold node validate` detects a recoverable uncommitted event-log tail without changing it. With
 the node stopped, `interfold node validate --repair` applies the same boundary-checked tail recovery
-as startup and refuses to remove indexed records. Recovery adds missing index entries for complete,
-CRC-valid records and truncates only an incomplete physical suffix. It also removes the exact
-two-byte, index-free segment shape left when a process stops during rollover. Runtime EventStore
-query failures are returned to the correlated caller rather than panicking the actor; committed
-corruption remains a startup/integrity failure.
+as startup and refuses to remove indexed records. The repair also compares both registered-node
+projections with the intact EventStore prefix. It can reconcile derived membership and reconstruct
+missing member ticket and activation history. It does not delete the encrypted identity or matching
+member history. Tail recovery adds missing index entries for complete, CRC-valid records and
+truncates only an incomplete physical suffix. It also removes the exact two-byte, index-free segment
+shape left when a process stops during rollover. Runtime EventStore query failures return to the
+correlated caller. Committed corruption remains a startup or integrity failure.
 
 Large local events use content-addressed blob files beside the commit log. The log stores a small
 versioned reference only after the blob is synced. Open, replay, and tail recovery verify the blob

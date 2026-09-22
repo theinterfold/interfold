@@ -53,6 +53,43 @@ impl Handler<TypedEvent<ComputeResponse>> for ThresholdKeyshare {
     }
 }
 
+impl Handler<TypedEvent<ComputeRequestError>> for ThresholdKeyshare {
+    type Result = ();
+
+    fn handle(
+        &mut self,
+        msg: TypedEvent<ComputeRequestError>,
+        _ctx: &mut Self::Context,
+    ) -> Self::Result {
+        let (msg, _) = msg.into_components();
+        let Some(state) = self.state.get() else {
+            return;
+        };
+        if msg.request().e3_id != state.e3_id {
+            return;
+        }
+
+        let ComputeRequestErrorKind::TrBFV(error_kind) = msg.get_err() else {
+            return;
+        };
+        let owned = matches!(
+            error_kind,
+            e3_trbfv::TrBFVError::GenPkShareAndSkSss(_)
+                | e3_trbfv::TrBFVError::GenEsiSss(_)
+                | e3_trbfv::TrBFVError::CalculateDecryptionKey(_)
+                | e3_trbfv::TrBFVError::CalculateDecryptionShare(_)
+        );
+        if owned {
+            error!(
+                e3_id = %state.e3_id,
+                state = state.variant_name(),
+                error = %msg,
+                "Threshold-BFV work failed locally; protocol-invalid shares were not reported"
+            );
+        }
+    }
+}
+
 impl Handler<TypedEvent<CiphernodeSelected>> for ThresholdKeyshare {
     type Result = ResponseActFuture<Self, ()>;
     fn handle(

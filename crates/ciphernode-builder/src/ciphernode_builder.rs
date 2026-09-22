@@ -395,19 +395,40 @@ impl CiphernodeBuilder {
 
     /// Configure the Rayon compute pool for production workloads.
     ///
-    /// Reserves `reserve_threads` CPUs for Actix / networking, uses the remainder for Rayon, and
-    /// allows up to `concurrent_jobs` CPU-bound tasks at once (ZK + TrBFV). When `concurrent_jobs`
-    /// is `None`, uses all available compute threads.
+    /// Reserves `reserve_threads` CPUs for Actix and networking. The scheduler limits concurrent
+    /// ZK and TrBFV work by the requested job count, available CPUs, and detected host or cgroup
+    /// memory. An omitted job count uses the production default of two.
     pub fn with_multithread_config(
         mut self,
         reserve_threads: usize,
         concurrent_jobs: Option<usize>,
     ) -> Self {
         let max_threads = Multithread::get_max_threads_minus(reserve_threads);
-        let jobs = concurrent_jobs.unwrap_or(max_threads).max(1);
-        let pool_threads = jobs.min(max_threads).max(1);
+        let capacity =
+            e3_multithread::ComputeCapacity::detect(concurrent_jobs.unwrap_or(2), max_threads);
+        let jobs = capacity.effective_jobs;
+        // Job admission protects memory. The Rayon worker count controls how much CPU each
+        // admitted job can use, so keep the two limits independent.
+        let pool_threads = max_threads;
+        if jobs < capacity.requested_jobs {
+            warn!(
+                requested_jobs = capacity.requested_jobs,
+                effective_jobs = jobs,
+                cpu_job_limit = capacity.cpu_jobs,
+                memory_job_limit = capacity.memory_jobs,
+                "Reduced compute concurrency to fit detected CPU and memory limits"
+            );
+        }
         info!(
-            "Multithread pool: rayon_threads={pool_threads}, max_concurrent_jobs={jobs}, reserve_threads={reserve_threads}"
+            requested_jobs = capacity.requested_jobs,
+            max_concurrent_jobs = jobs,
+            rayon_threads = pool_threads,
+            reserve_threads,
+            memory_limit_mib = capacity
+                .memory_limit_bytes
+                .map(|bytes| bytes / (1024 * 1024)),
+            memory_job_limit = capacity.memory_jobs,
+            "Configured memory-aware compute scheduler"
         );
         self.threads = Some(pool_threads);
         self.multithread_concurrent_jobs = Some(jobs);
@@ -547,6 +568,10 @@ impl CiphernodeBuilder {
     }
 
     pub async fn build(mut self) -> anyhow::Result<CiphernodeHandle> {
+        ensure!(
+            self.multithread_concurrent_jobs != Some(0),
+            "the detected memory limit cannot safely run one prover job in addition to the node; increase the host or cgroup memory limit"
+        );
         ensure!(
             self.max_buffered_evm_events > 0,
             "max_buffered_evm_events must be greater than zero"
@@ -1228,7 +1253,6 @@ impl CiphernodeBuilder {
         let task_pool = self.task_pool.clone().unwrap_or_else(|| {
             let pool_threads = self.threads.unwrap_or(1);
             let concurrent_jobs = self.multithread_concurrent_jobs.unwrap_or(1);
-            let pool_threads = concurrent_jobs.min(pool_threads).max(1);
             Multithread::create_taskpool(pool_threads, concurrent_jobs)
         });
 

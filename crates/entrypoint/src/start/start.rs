@@ -53,7 +53,7 @@ pub async fn execute(config: &AppConfig) -> Result<CiphernodeHandle> {
         "Ciphernode multithread: reserve_threads={reserve}, concurrent_jobs={}",
         concurrent_jobs
             .map(|n| n.to_string())
-            .unwrap_or_else(|| "auto (CPUs - reserve)".to_string())
+            .unwrap_or_else(|| "2 (default)".to_string())
     );
 
     let startup_timeout = Duration::from_secs(config.startup_timeout_secs());

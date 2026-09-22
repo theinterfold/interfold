@@ -140,61 +140,10 @@ impl PublicKeyAggregator {
 
         if matched_nodes_fold_step {
             error!(
-                "PublicKeyAggregator: NodesFoldStep failed for E3 {}: {:?}",
+                "PublicKeyAggregator: NodesFoldStep failed locally for E3 {}: {:?}; pending work is preserved for restart",
                 self.e3_id,
                 msg.get_err()
             );
-            self.bus.publish(
-                E3Failed {
-                    e3_id: self.e3_id.clone(),
-                    failed_at_stage: E3Stage::CommitteeFinalized,
-                    reason: FailureReason::DKGInvalidShares,
-                },
-                ec.clone(),
-            )?;
-            self.state.try_mutate(&ec, |state| {
-                let PublicKeyAggregatorState::GeneratingC5Proof {
-                    public_key,
-                    keyshare_bytes,
-                    nodes,
-                    party_nodes,
-                    dkg_node_proofs,
-                    dkg_fold_attestations,
-                    honest_party_ids,
-                    dishonest_parties,
-                    circuit_committee_n,
-                    circuit_committee_h,
-                    dkg_aggregation_correlation,
-                    dkg_aggregated_proof,
-                    c5_proof_pending: _,
-                    last_ec,
-                    nodes_fold_accumulator,
-                    nodes_fold_completed_slots,
-                    nodes_fold_step_correlation: _,
-                } = state
-                else {
-                    return Ok(state);
-                };
-                Ok(PublicKeyAggregatorState::GeneratingC5Proof {
-                    public_key,
-                    keyshare_bytes,
-                    nodes,
-                    party_nodes,
-                    dkg_node_proofs,
-                    dkg_fold_attestations,
-                    honest_party_ids,
-                    dishonest_parties,
-                    circuit_committee_n,
-                    circuit_committee_h,
-                    dkg_aggregation_correlation,
-                    dkg_aggregated_proof,
-                    c5_proof_pending: None,
-                    last_ec,
-                    nodes_fold_accumulator,
-                    nodes_fold_completed_slots,
-                    nodes_fold_step_correlation: None,
-                })
-            })?;
             return Ok(());
         }
 
@@ -211,64 +160,10 @@ impl PublicKeyAggregator {
         }
 
         error!(
-            "PublicKeyAggregator: DkgAggregation failed for E3 {}: {:?}",
+            "PublicKeyAggregator: DkgAggregation failed locally for E3 {}: {:?}; pending work is preserved for restart",
             self.e3_id,
             msg.get_err()
         );
-
-        self.bus.publish(
-            E3Failed {
-                e3_id: self.e3_id.clone(),
-                failed_at_stage: E3Stage::CommitteeFinalized,
-                reason: FailureReason::DKGInvalidShares,
-            },
-            ec.clone(),
-        )?;
-
-        self.state.try_mutate(&ec, |state| {
-            let PublicKeyAggregatorState::GeneratingC5Proof {
-                public_key,
-                keyshare_bytes,
-                nodes,
-                party_nodes,
-                dkg_node_proofs,
-                dkg_fold_attestations,
-                honest_party_ids,
-                dishonest_parties,
-                circuit_committee_n,
-                circuit_committee_h,
-                dkg_aggregation_correlation: _,
-                dkg_aggregated_proof,
-                c5_proof_pending: _,
-                last_ec,
-                nodes_fold_accumulator,
-                nodes_fold_completed_slots,
-                nodes_fold_step_correlation,
-            } = state
-            else {
-                return Ok(state);
-            };
-
-            Ok(PublicKeyAggregatorState::GeneratingC5Proof {
-                public_key,
-                keyshare_bytes,
-                nodes,
-                party_nodes,
-                dkg_node_proofs,
-                dkg_fold_attestations,
-                honest_party_ids,
-                dishonest_parties,
-                circuit_committee_n,
-                circuit_committee_h,
-                dkg_aggregation_correlation: None,
-                dkg_aggregated_proof,
-                c5_proof_pending: None,
-                last_ec,
-                nodes_fold_accumulator,
-                nodes_fold_completed_slots,
-                nodes_fold_step_correlation,
-            })
-        })?;
 
         Ok(())
     }
