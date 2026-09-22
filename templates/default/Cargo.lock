@@ -1428,9 +1428,22 @@ dependencies = [
  "e3-polynomial",
  "e3-zk-helpers",
  "fhe",
+ "fhe-math",
  "fhe-traits",
+ "num-bigint 0.5.1",
+ "prost",
  "rand 0.9.4",
  "thiserror 1.0.69",
+]
+
+[[package]]
+name = "e3-committee-hash"
+version = "0.17.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
+ "hex",
+ "serde",
 ]
 
 [[package]]
@@ -1442,6 +1455,7 @@ dependencies = [
  "e3-bfv-client",
  "e3-fhe-params",
  "fhe",
+ "fhe-traits",
  "hex",
  "lean-imt",
  "light-poseidon",
@@ -1463,6 +1477,7 @@ dependencies = [
  "anyhow",
  "clap",
  "fhe",
+ "fhe-math",
  "num-bigint 0.5.1",
  "num-traits",
  "rand 0.9.4",
@@ -1549,10 +1564,12 @@ dependencies = [
 name = "e3-zk-helpers"
 version = "0.17.0"
 dependencies = [
+ "alloy-primitives",
  "anyhow",
  "ark-bn254 0.5.0",
  "ark-ff 0.5.0",
  "clap",
+ "e3-committee-hash",
  "e3-fhe-params",
  "e3-parity-matrix",
  "e3-polynomial",
@@ -1718,7 +1735,7 @@ dependencies = [
 [[package]]
 name = "fhe"
 version = "0.3.0"
-source = "git+https://github.com/gnosisguild/fhe.rs?branch=dev#96981eebe18a63117fb65569b8bf5c2362c29f9a"
+source = "git+https://github.com/gnosisguild/fhe.rs?rev=8755efa203fbaf94841110d2fc7c9f1aaf92f0d8#8755efa203fbaf94841110d2fc7c9f1aaf92f0d8"
 dependencies = [
  "doc-comment",
  "fhe-math",
@@ -1743,7 +1760,7 @@ dependencies = [
 [[package]]
 name = "fhe-math"
 version = "0.3.0"
-source = "git+https://github.com/gnosisguild/fhe.rs?branch=dev#96981eebe18a63117fb65569b8bf5c2362c29f9a"
+source = "git+https://github.com/gnosisguild/fhe.rs?rev=8755efa203fbaf94841110d2fc7c9f1aaf92f0d8#8755efa203fbaf94841110d2fc7c9f1aaf92f0d8"
 dependencies = [
  "ethnum",
  "fhe-traits",
@@ -1767,7 +1784,7 @@ dependencies = [
 [[package]]
 name = "fhe-traits"
 version = "0.3.0"
-source = "git+https://github.com/gnosisguild/fhe.rs?branch=dev#96981eebe18a63117fb65569b8bf5c2362c29f9a"
+source = "git+https://github.com/gnosisguild/fhe.rs?rev=8755efa203fbaf94841110d2fc7c9f1aaf92f0d8#8755efa203fbaf94841110d2fc7c9f1aaf92f0d8"
 dependencies = [
  "rand 0.9.4",
 ]
@@ -1775,7 +1792,7 @@ dependencies = [
 [[package]]
 name = "fhe-util"
 version = "0.3.0"
-source = "git+https://github.com/gnosisguild/fhe.rs?branch=dev#96981eebe18a63117fb65569b8bf5c2362c29f9a"
+source = "git+https://github.com/gnosisguild/fhe.rs?rev=8755efa203fbaf94841110d2fc7c9f1aaf92f0d8#8755efa203fbaf94841110d2fc7c9f1aaf92f0d8"
 dependencies = [
  "num-bigint-dig",
  "num-traits",
@@ -4039,7 +4056,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d904e7009df136af5297832a3ace3370cd14ff1546a232f4f185036c2736fcac"
 dependencies = [
  "quote",
- "syn 2.0.117",
+ "syn 2.0.119",
 ]
 
 [[package]]

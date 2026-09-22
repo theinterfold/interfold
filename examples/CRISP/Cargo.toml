@@ -49,10 +49,10 @@ log = { version = "=0.4.27" }
 reqwest = { version = "=0.12.22", features = ["json"] }
 serde = { version = "=1.0.228", features = ["derive", "std"] }
 serde_json = "=1.0.145"
-fhe = { git = "https://github.com/gnosisguild/fhe.rs", branch = "dev", features = ["experimental-mbfv"] }
-fhe-traits = { git = "https://github.com/gnosisguild/fhe.rs", branch = "dev" }
-fhe-math = { git = "https://github.com/gnosisguild/fhe.rs", branch = "dev" }
-fhe-util = { git = "https://github.com/gnosisguild/fhe.rs", branch = "dev" }
+fhe = { git = "https://github.com/gnosisguild/fhe.rs", rev = "8755efa203fbaf94841110d2fc7c9f1aaf92f0d8", features = ["experimental-mbfv"] }
+fhe-traits = { git = "https://github.com/gnosisguild/fhe.rs", rev = "8755efa203fbaf94841110d2fc7c9f1aaf92f0d8" }
+fhe-math = { git = "https://github.com/gnosisguild/fhe.rs", rev = "8755efa203fbaf94841110d2fc7c9f1aaf92f0d8" }
+fhe-util = { git = "https://github.com/gnosisguild/fhe.rs", rev = "8755efa203fbaf94841110d2fc7c9f1aaf92f0d8" }
 tokio = { version = "=1.46.1", features = ["full"] }
 rand = { version = "0.9" }
 tracing = { version = "=0.1.41" }
