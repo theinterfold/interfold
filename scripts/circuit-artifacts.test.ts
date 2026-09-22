@@ -31,15 +31,28 @@ function makeCompleteMatrix(): string {
   return dir
 }
 
-test('circuit hash ignores workspace package version bumps', () => {
-  const before = Buffer.from(
-    `[version]\n3\n\n[[package]]\nname = "e3-example"\nversion = "0.14.0"\n\n[[package]]\nname = "external"\nversion = "1.0.0"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\n`,
-  )
-  const workspaceBump = Buffer.from(before.toString().replace('version = "0.14.0"', 'version = "0.15.0"'))
-  const dependencyBump = Buffer.from(before.toString().replace('version = "1.0.0"', 'version = "1.0.1"'))
+test('circuit hash tracks external crate pins and ignores the workspace graph', () => {
+  const external = `[[package]]\nname = "external"\nversion = "1.0.0"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\nchecksum = "1111"\n`
+  const member = `[[package]]\nname = "e3-example"\nversion = "0.14.0"\ndependencies = [\n "e3-test-helpers",\n "external",\n]\n`
+  const before = Buffer.from(`[version]\n3\n\n${member}\n${external}`)
+  const edited = (from: string, to: string) => Buffer.from(before.toString().replace(from, to))
 
-  assert.deepEqual(normalizeCargoLockForCircuitHash(workspaceBump), normalizeCargoLockForCircuitHash(before))
-  assert.notDeepEqual(normalizeCargoLockForCircuitHash(dependencyBump), normalizeCargoLockForCircuitHash(before))
+  // A release bump and an internal dependency edit leave every circuit input untouched.
+  assert.deepEqual(
+    normalizeCargoLockForCircuitHash(edited('version = "0.14.0"', 'version = "0.15.0"')),
+    normalizeCargoLockForCircuitHash(before),
+  )
+  assert.deepEqual(normalizeCargoLockForCircuitHash(edited(' "e3-test-helpers",\n', '')), normalizeCargoLockForCircuitHash(before))
+
+  // A different external crate can compile the generators into different bounds.
+  assert.notDeepEqual(
+    normalizeCargoLockForCircuitHash(edited('version = "1.0.0"', 'version = "1.0.1"')),
+    normalizeCargoLockForCircuitHash(before),
+  )
+  assert.notDeepEqual(
+    normalizeCargoLockForCircuitHash(edited('checksum = "1111"', 'checksum = "2222"')),
+    normalizeCargoLockForCircuitHash(before),
+  )
 })
 
 test('pair source hash ignores generated bounds but tracks other Noir config', () => {
