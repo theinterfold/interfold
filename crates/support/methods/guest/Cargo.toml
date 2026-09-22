@@ -16,7 +16,7 @@ risc0-zkvm = { version = "=3.0.3", default-features = false, features = ['std'] 
 # This revision decides which compute-provider code runs inside the zkVM, so it decides the image
 # ID. It must match the pin in crates/support/Cargo.toml. See that file for why the dependency is
 # pinned by revision instead of by path.
-e3-compute-provider = { git = "https://github.com/theinterfold/interfold", rev = "972751adf15d45c9eda236cc4ebd3d83d5ef5509" }
+e3-compute-provider = { git = "https://github.com/theinterfold/interfold", rev = "0134d1bbce2204b894033ddf1aa35820deda8e8f" }
 e3-support-types = { path = "../../types" }
 e3-user-program = { path = "../../program" }
 bincode = "=1.3.3"

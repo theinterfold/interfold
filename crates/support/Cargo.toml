@@ -13,7 +13,7 @@ e3-support-app = { path = "./app" }
 e3-support-host = { path = "./host" }
 e3-user-program = { path = "./program" }
 e3-support-types = { path = "./types" }
-e3-fhe-params = { git = "https://github.com/theinterfold/interfold", rev = "972751adf15d45c9eda236cc4ebd3d83d5ef5509" }
+e3-fhe-params = { git = "https://github.com/theinterfold/interfold", rev = "0134d1bbce2204b894033ddf1aa35820deda8e8f" }
 
 methods = { path = "./methods" }
 alloy-primitives = { version = "1.3", default-features = false, features = [
@@ -50,9 +50,9 @@ sha3 = "=0.10.8"
 # The dependency therefore decides which compute-provider code the guest runs, and updates can
 # change the image ID. Rebuild crates/support/contracts/ImageID.sol after dependency updates.
 #
-# Why this revision: 972751ad contains the proof-bound l-BFV key envelope and RLK delivery,
-# compute-input binding, secure-parameter fixes, shared-parameter path, and accelerated SAFE
-# commitment path that the guest must run.
+# Why this revision: 0134d1bb contains the version-3 l-BFV envelope, public-key reconstruction from
+# the RLK, proof-bound RLK delivery, compute-input binding, secure-parameter fixes, shared-parameter
+# path, and accelerated SAFE commitment path that the guest must run.
 #
 # It replaces c2097da6, the scope commit of the 2026-08-17 Zenith protocol audit. Sitting at the
 # audited baseline read as the conservative choice and was not: the audit covered six Solidity
@@ -63,7 +63,7 @@ sha3 = "=0.10.8"
 fhe = { package = "fhe", git = "https://github.com/gnosisguild/fhe.rs", branch = "dev" }
 fhe-traits = { git = "https://github.com/gnosisguild/fhe.rs", branch = "dev" }
 fhe-util = { git = "https://github.com/gnosisguild/fhe.rs", branch = "dev" }
-e3-compute-provider = { git = "https://github.com/theinterfold/interfold", rev = "972751adf15d45c9eda236cc4ebd3d83d5ef5509" }
+e3-compute-provider = { git = "https://github.com/theinterfold/interfold", rev = "0134d1bbce2204b894033ddf1aa35820deda8e8f" }
 tokio = { version = "=1.46.1", features = ["full"] }
 rand = { version = "=0.9.4" }
 tracing-subscriber = { version = "=0.3.20", features = ["env-filter"] }
