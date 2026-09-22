@@ -5018,7 +5018,7 @@ dependencies = [
 [[package]]
 name = "fhe"
 version = "0.3.0"
-source = "git+https://github.com/gnosisguild/fhe.rs?branch=dev#8755efa203fbaf94841110d2fc7c9f1aaf92f0d8"
+source = "git+https://github.com/gnosisguild/fhe.rs?rev=8755efa203fbaf94841110d2fc7c9f1aaf92f0d8#8755efa203fbaf94841110d2fc7c9f1aaf92f0d8"
 dependencies = [
  "doc-comment",
  "fhe-math",
@@ -5043,7 +5043,7 @@ dependencies = [
 [[package]]
 name = "fhe-math"
 version = "0.3.0"
-source = "git+https://github.com/gnosisguild/fhe.rs?branch=dev#8755efa203fbaf94841110d2fc7c9f1aaf92f0d8"
+source = "git+https://github.com/gnosisguild/fhe.rs?rev=8755efa203fbaf94841110d2fc7c9f1aaf92f0d8#8755efa203fbaf94841110d2fc7c9f1aaf92f0d8"
 dependencies = [
  "ethnum",
  "fhe-traits",
@@ -5067,7 +5067,7 @@ dependencies = [
 [[package]]
 name = "fhe-traits"
 version = "0.3.0"
-source = "git+https://github.com/gnosisguild/fhe.rs?branch=dev#8755efa203fbaf94841110d2fc7c9f1aaf92f0d8"
+source = "git+https://github.com/gnosisguild/fhe.rs?rev=8755efa203fbaf94841110d2fc7c9f1aaf92f0d8#8755efa203fbaf94841110d2fc7c9f1aaf92f0d8"
 dependencies = [
  "rand 0.9.4",
 ]
@@ -5075,7 +5075,7 @@ dependencies = [
 [[package]]
 name = "fhe-util"
 version = "0.3.0"
-source = "git+https://github.com/gnosisguild/fhe.rs?branch=dev#8755efa203fbaf94841110d2fc7c9f1aaf92f0d8"
+source = "git+https://github.com/gnosisguild/fhe.rs?rev=8755efa203fbaf94841110d2fc7c9f1aaf92f0d8#8755efa203fbaf94841110d2fc7c9f1aaf92f0d8"
 dependencies = [
  "num-bigint-dig",
  "num-traits",

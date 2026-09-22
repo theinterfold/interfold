@@ -155,10 +155,10 @@ dirs = "=5.0.1"
 dialoguer = "=0.11.0"
 duct = "=1.0.0"
 eyre = { version = "=0.6.12" }
-fhe = { git = "https://github.com/gnosisguild/fhe.rs", branch = "dev", features = ["experimental-mbfv"] }
-fhe-traits = { git = "https://github.com/gnosisguild/fhe.rs", branch = "dev" }
-fhe-math = { git = "https://github.com/gnosisguild/fhe.rs", branch = "dev" }
-fhe-util = { git = "https://github.com/gnosisguild/fhe.rs", branch = "dev" }
+fhe = { git = "https://github.com/gnosisguild/fhe.rs", rev = "8755efa203fbaf94841110d2fc7c9f1aaf92f0d8", features = ["experimental-mbfv"] }
+fhe-traits = { git = "https://github.com/gnosisguild/fhe.rs", rev = "8755efa203fbaf94841110d2fc7c9f1aaf92f0d8" }
+fhe-math = { git = "https://github.com/gnosisguild/fhe.rs", rev = "8755efa203fbaf94841110d2fc7c9f1aaf92f0d8" }
+fhe-util = { git = "https://github.com/gnosisguild/fhe.rs", rev = "8755efa203fbaf94841110d2fc7c9f1aaf92f0d8" }
 figment = { version = "=0.10.19", features = ["env", "yaml", "test"] }
 futures = "=0.3.31"
 futures-util = "=0.3.31"
