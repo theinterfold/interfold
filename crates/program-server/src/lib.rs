@@ -560,6 +560,7 @@ async fn handle_compute(
     let fhe_inputs = FHEInputs {
         params: req.params.clone(),
         ciphertexts: req.ciphertext_inputs.clone(),
+        committee_key: req.committee_public_key.clone(),
     };
     let domain = ComputeDomain::new(
         req.chain_id,

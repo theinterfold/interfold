@@ -51,7 +51,7 @@ contract CiphernodeRegistryOwnable is
     uint256 public constant MAX_SORTITION_SUBMISSION_WINDOW = 1 days;
 
     /// @notice Largest serialized committee public key accepted by the transport.
-    uint256 public constant MAX_COMMITTEE_PUBLIC_KEY_BYTES = 6 * 1024 * 1024;
+    uint256 public constant MAX_COMMITTEE_PUBLIC_KEY_BYTES = 16 * 1024 * 1024;
 
     /// @notice Timeout used by new registries before governance changes it.
     uint256 private constant DEFAULT_RANDOMNESS_REQUEST_TIMEOUT = 1 hours;

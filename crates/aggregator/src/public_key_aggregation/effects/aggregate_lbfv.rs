@@ -332,7 +332,7 @@ impl PublicKeyAggregator {
         if state.is_failed() {
             return Ok(());
         }
-        if state.operational_rlk.is_some() {
+        if state.operational_public_key.is_some() && state.operational_rlk.is_some() {
             return Ok(());
         }
         anyhow::ensure!(
@@ -350,12 +350,15 @@ impl PublicKeyAggregator {
             |document| document.role() == e3_events::LbfvKeyShareDocumentRole::RelinearizationKey,
             "relinearization-key",
         )?;
-        let operational_rlk = e3_trbfv::aggregate_lbfv::aggregate_lbfv_relinearization_key(
+        let operational_keys = e3_trbfv::aggregate_lbfv::aggregate_lbfv_keys(
             self.params_preset,
             &public_key_shares,
             &rlk_shares,
         )?;
-        state.set_operational_rlk(operational_rlk)?;
+        state.set_operational_keys(
+            operational_keys.public_key,
+            operational_keys.relinearization_key,
+        )?;
         self.set_lbfv_aggregation(state, ec)
     }
 }

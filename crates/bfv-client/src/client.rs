@@ -15,6 +15,22 @@ use fhe_traits::{DeserializeParametrized, FheEncoder, FheEncrypter, Serialize};
 use rand::rng;
 use std::sync::Arc;
 
+fn decode_public_key(
+    public_key: &[u8],
+    params: &Arc<BfvParameters>,
+    preset: Option<BfvPreset>,
+) -> Result<PublicKey> {
+    let public_key = if crate::is_lbfv_key_envelope(public_key) {
+        let preset = preset
+            .ok_or_else(|| anyhow!("Unsupported BFV parameters for an l-BFV key envelope"))?;
+        crate::inspect_lbfv_key_envelope(public_key, preset)?.1
+    } else {
+        public_key.to_vec()
+    };
+    PublicKey::from_bytes(&public_key, params)
+        .map_err(|error| anyhow!("Error deserializing public key: {error}"))
+}
+
 fn build_client_params(
     degree: usize,
     plaintext_modulus: u64,
@@ -55,8 +71,8 @@ where
 {
     let params = build_client_params(degree, plaintext_modulus, moduli, None)?;
 
-    let pk = PublicKey::from_bytes(&public_key, &params)
-        .map_err(|e| anyhow!("Error deserializing public key:{e}"))?;
+    let preset = BfvPreset::from_threshold_parameters(degree, plaintext_modulus, moduli);
+    let pk = decode_public_key(&public_key, &params, preset)?;
 
     let pt = Plaintext::try_encode(&data, Encoding::poly(), &params)
         .map_err(|e: FheError| anyhow!("Error encoding plaintext: {e}"))?;
@@ -120,8 +136,7 @@ where
         preset_parameters.error1_variance,
     )?;
 
-    let pk = PublicKey::from_bytes(&public_key, &params)
-        .map_err(|e| anyhow!("Error deserializing public key: {}", e))?;
+    let pk = decode_public_key(&public_key, &params, Some(preset))?;
 
     let plaintext = Plaintext::try_encode(&data, Encoding::poly(), &params)
         .map_err(|e: FheError| anyhow!("Error encoding plaintext: {}", e))?;
@@ -175,6 +190,13 @@ pub fn compute_pk_commitment(
 ) -> Result<[u8; 32]> {
     use e3_zk_helpers::circuits::threshold::user_data_encryption::utils::compute_public_key_commitment;
 
+    if crate::is_lbfv_key_envelope(&public_key) {
+        let preset = BfvPreset::from_threshold_parameters(degree, plaintext_modulus, &moduli)
+            .ok_or_else(|| anyhow!("Unsupported BFV parameters for an l-BFV key envelope"))?;
+        return Ok(crate::inspect_lbfv_key_envelope(&public_key, preset)?
+            .0
+            .envelope);
+    }
     let params = build_client_params(degree, plaintext_modulus, &moduli, None)?;
 
     let public_key = PublicKey::from_bytes(&public_key, &params)
@@ -203,6 +225,12 @@ pub fn validate_pk_commitment(
 ) -> Result<()> {
     use e3_zk_helpers::circuits::threshold::user_data_encryption::utils::compute_public_key_commitment;
 
+    if crate::is_lbfv_key_envelope(public_key) {
+        let preset = BfvPreset::from_threshold_parameters(degree, plaintext_modulus, &moduli)
+            .ok_or_else(|| anyhow!("Unsupported BFV parameters for an l-BFV key envelope"))?;
+        crate::validate_lbfv_key_envelope(public_key, expected_commitment, preset)?;
+        return Ok(());
+    }
     let params = build_client_params(degree, plaintext_modulus, &moduli, None)?;
     let decoded = PublicKey::from_bytes(public_key, &params)
         .map_err(|e| anyhow!("Error deserializing public key: {e}"))?;

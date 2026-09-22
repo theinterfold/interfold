@@ -134,14 +134,14 @@ every section.
   remains unchanged. — `flow-trace/04`
 - Secure-16384 l-BFV row aggregation uses `//publickey_lbfv_aggregation/v1/{e3_id}`. The sidecar
   binds the proof domain, the immutable ascending accepted-party set, both accepted document
-  families, five PK proofs, five RLK proofs, the fold cursor, the operational RLK, and the final V2
-  proof. The active aggregator derives the operational RLK only from those accepted documents after
-  the five-row fold completes. If C5 completes first, publication waits for the persisted
-  operational RLK. Restart must derive a missing operational RLK from the same durable documents
-  before it dispatches the final V2 proof. A persisted aggregation failure is terminal and
-  immutable. Restart must clear process-local correlations, publish `E3Failed(DKGInvalidShares)`,
-  and suppress all proof and publication work. — `LbfvAggregationStateV1`; `aggregate_lbfv.rs`;
-  `flow-trace/04`
+  families, five PK proofs, five RLK proofs, the fold cursor, both operational keys, and the final
+  V2 proof. The active aggregator derives the operational public key and RLK only from those
+  accepted documents after the five-row fold completes. If C5 completes first, publication waits for
+  both persisted keys. Restart must derive a missing operational key from the same durable documents
+  before it dispatches the final V2 proof. Schema 3 migrates schema-1 and schema-2 sidecars without
+  inventing an operational public key. A persisted aggregation failure is terminal and immutable.
+  Restart must clear process-local correlations, publish `E3Failed(DKGInvalidShares)`, and suppress
+  all proof and publication work. — `LbfvAggregationStateV1`; `aggregate_lbfv.rs`; `flow-trace/04`
 
 ### Ordering, backpressure, effects
 

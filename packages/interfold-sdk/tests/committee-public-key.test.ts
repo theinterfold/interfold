@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   CommitteePublicKeyAssembler,
+  decodeLbfvKeyEnvelope,
   MAX_COMMITTEE_PUBLIC_KEY_BYTES,
   MAX_COMMITTEE_PUBLIC_KEY_CHUNK_BYTES,
 } from '../src/committee-public-key'
@@ -17,6 +18,18 @@ import type { CommitteePublicKeyChunkPublishedData } from '../src/events/types'
 const publisher = '0x0000000000000000000000000000000000000001'
 const nodes = [publisher, '0x0000000000000000000000000000000000000002']
 const pkCommitment = `0x${'11'.repeat(32)}`
+
+function lbfvEnvelope(publicKey: Uint8Array, relinearizationKey: Uint8Array): Uint8Array {
+  const encoded = new Uint8Array(18 + publicKey.length + relinearizationKey.length)
+  encoded.set(new TextEncoder().encode('IFLBFVKE'))
+  const view = new DataView(encoded.buffer)
+  view.setUint16(8, 1, false)
+  view.setUint32(10, publicKey.length, false)
+  view.setUint32(14, relinearizationKey.length, false)
+  encoded.set(publicKey, 18)
+  encoded.set(relinearizationKey, 18 + publicKey.length)
+  return encoded
+}
 
 function eventsFor(bytes: Uint8Array, candidateHash = keccak256(bytes), e3Id = 7n): CommitteePublicKeyChunkPublishedData[] {
   const chunkCount = Math.ceil(bytes.length / MAX_COMMITTEE_PUBLIC_KEY_CHUNK_BYTES)
@@ -36,6 +49,33 @@ function eventsFor(bytes: Uint8Array, candidateHash = keccak256(bytes), e3Id = 7
 }
 
 describe('CommitteePublicKeyAssembler', () => {
+  it('decodes the versioned l-BFV key envelope', () => {
+    const encoded = lbfvEnvelope(new Uint8Array([1, 2]), new Uint8Array([3, 4, 5]))
+    const decoded = decodeLbfvKeyEnvelope(encoded)
+
+    expect(decoded.schemaVersion).toBe(1)
+    expect(decoded.publicKey).toEqual(new Uint8Array([1, 2]))
+    expect(decoded.relinearizationKey).toEqual(new Uint8Array([3, 4, 5]))
+  })
+
+  it('exposes decoded l-BFV key material after assembly', () => {
+    const encoded = lbfvEnvelope(new Uint8Array([1, 2]), new Uint8Array([3, 4, 5]))
+    const [event] = eventsFor(encoded)
+    const result = new CommitteePublicKeyAssembler().add(event)
+
+    expect(result?.lbfvKeyEnvelope?.publicKey).toEqual(new Uint8Array([1, 2]))
+    expect(result?.lbfvKeyEnvelope?.relinearizationKey).toEqual(new Uint8Array([3, 4, 5]))
+  })
+
+  it('rejects a malformed l-BFV key envelope', () => {
+    const encoded = lbfvEnvelope(new Uint8Array([1, 2]), new Uint8Array([3, 4, 5]))
+    new DataView(encoded.buffer).setUint32(14, 4, false)
+    const [event] = eventsFor(encoded)
+
+    expect(() => decodeLbfvKeyEnvelope(encoded)).toThrow('length does not match its header')
+    expect(new CommitteePublicKeyAssembler().add(event)).toBeUndefined()
+  })
+
   it('assembles deterministic chunks in any event order', () => {
     const bytes = new Uint8Array(MAX_COMMITTEE_PUBLIC_KEY_CHUNK_BYTES + 17).map((_, index) => index % 251)
     const [first, second] = eventsFor(bytes)
@@ -50,27 +90,35 @@ describe('CommitteePublicKeyAssembler', () => {
     expect(result?.publicKey).toEqual(bytes)
   })
 
-  it('assembles the secure-16384 public key in 57 chunks', () => {
-    const bytes = new Uint8Array(5_222_596).map((_, index) => index % 251)
+  it('assembles the secure-16384 key envelope in 142 chunks', () => {
+    const publicKey = new Uint8Array(5_222_596).fill(7)
+    const relinearizationKey = new Uint8Array(7_833_888).fill(9)
+    const bytes = lbfvEnvelope(publicKey, relinearizationKey)
     const events = eventsFor(bytes).reverse()
     const assembler = new CommitteePublicKeyAssembler()
 
-    expect(events).toHaveLength(57)
+    expect(events).toHaveLength(142)
     let result
     for (const event of events) result = assembler.add(event) ?? result
 
-    expect(result?.publicKey).toEqual(bytes)
+    expect(result?.publicKey.length).toBe(bytes.length)
+    expect(result?.lbfvKeyEnvelope?.publicKey.length).toBe(publicKey.length)
+    expect(result?.lbfvKeyEnvelope?.publicKey[0]).toBe(7)
+    expect(result?.lbfvKeyEnvelope?.relinearizationKey.length).toBe(relinearizationKey.length)
+    expect(result?.lbfvKeyEnvelope?.relinearizationKey[0]).toBe(9)
   })
 
-  it('accepts 6 MiB and rejects one additional byte', () => {
+  it('accepts 16 MiB and rejects one additional byte', () => {
     const bytes = new Uint8Array(MAX_COMMITTEE_PUBLIC_KEY_BYTES).fill(3)
     const events = eventsFor(bytes)
     const assembler = new CommitteePublicKeyAssembler()
 
-    expect(events).toHaveLength(69)
+    expect(events).toHaveLength(183)
     let result
     for (const event of events) result = assembler.add(event) ?? result
-    expect(result?.publicKey).toEqual(bytes)
+    expect(result?.publicKey.length).toBe(bytes.length)
+    expect(result?.publicKey[0]).toBe(3)
+    expect(result?.publicKey.at(-1)).toBe(3)
 
     expect(() =>
       new CommitteePublicKeyAssembler().add({

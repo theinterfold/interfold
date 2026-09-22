@@ -18,7 +18,14 @@ fn main() {
 
     // The policy comes from the user program, not from a default here: it decides the input-tree
     // leaf and which inputs count, and both have to agree with what the E3 program's contract did.
-    let result = input.input.process(fhe_processor, policy()).unwrap();
+    let result = input
+        .input
+        .process_bound(
+            fhe_processor,
+            policy(),
+            input.domain.committee_public_key_hash,
+        )
+        .unwrap();
     let journal = ComputeJournal::new(input.domain, result).unwrap();
 
     env::commit(&journal);

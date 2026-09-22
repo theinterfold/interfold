@@ -15,3 +15,6 @@ fhe-traits.workspace = true
 rand.workspace = true
 thiserror = { workspace = true }
 e3-polynomial = { workspace = true }
+fhe-math.workspace = true
+num-bigint.workspace = true
+prost.workspace = true

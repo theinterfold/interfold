@@ -395,6 +395,7 @@ async fn handle_compute(req: web::Json<ComputeRequest>) -> ActixResult<HttpRespo
     let fhe_inputs = FHEInputs {
         params: req.params.clone(),
         ciphertexts: req.ciphertext_inputs.clone(),
+        committee_key: req.committee_public_key.clone(),
     };
     let published = published_from(&req)?;
     let domain = ComputeDomain::new(

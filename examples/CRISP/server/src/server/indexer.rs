@@ -1017,6 +1017,7 @@ async fn handle_e3_input_deadline_expiration(
                 e3.interfold_address,
                 e3.encryption_scheme_id,
                 e3.committee_public_key_hash,
+                e3.committee_public_key,
                 e3.e3_params,
                 RoundInputs {
                     ciphertexts: snapshot.ciphertexts,

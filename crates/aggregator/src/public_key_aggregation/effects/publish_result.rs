@@ -175,7 +175,6 @@ impl PublicKeyAggregator {
         }
 
         let PublicKeyAggregatorState::GeneratingC5Proof {
-            public_key,
             nodes,
             party_nodes,
             honest_party_ids,
@@ -203,14 +202,14 @@ impl PublicKeyAggregator {
             return self.mark_lbfv_complete(committee_addresses, honest_committee_addresses, ec);
         }
 
-        let Some(c5_proof) = c5_proof_pending else {
+        if c5_proof_pending.is_none() {
             return Ok(());
-        };
+        }
         let Some(aggregation) = self.lbfv_aggregation_state()? else {
             return Ok(());
         };
         aggregation.validate_loaded()?;
-        if aggregation.operational_rlk.is_none() {
+        if aggregation.operational_public_key.is_none() || aggregation.operational_rlk.is_none() {
             return Ok(());
         }
         let Some(dkg_aggregator_v2_proof) = aggregation.dkg_aggregated_proof else {
@@ -220,6 +219,24 @@ impl PublicKeyAggregator {
             dkg_aggregator_v2_proof.circuit == e3_events::CircuitName::DkgAggregatorV2,
             "l-BFV publication requires a DkgAggregatorV2 proof"
         );
+        let committee_h = self.committee_size.values().h;
+        let pk_commitment =
+            extract_lbfv_key_envelope_commitment(&dkg_aggregator_v2_proof, committee_h)?;
+        let operational_public_key = aggregation
+            .operational_public_key
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("operational l-BFV public key is missing"))?;
+        let operational_rlk = aggregation
+            .operational_rlk
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("operational l-BFV relinearization key is missing"))?;
+        let key_envelope =
+            e3_bfv_client::encode_lbfv_key_envelope(operational_public_key, operational_rlk)?;
+        e3_bfv_client::validate_lbfv_key_envelope(
+            &key_envelope,
+            pk_commitment,
+            self.params_preset,
+        )?;
         let dkg_attestation_bundle = e3_zk_prover::encode_dkg_attestation_bundle(
             &honest_party_ids,
             &party_nodes,
@@ -234,12 +251,12 @@ impl PublicKeyAggregator {
         let honest_committee_addresses =
             committee_addresses_in_party_order(&honest_party_ids_vec, &party_nodes)?;
         let publication = LbfvPublicKeyAggregated {
-            pubkey: public_key,
+            pubkey: ArcBytes::from_bytes(&key_envelope),
             e3_id: self.e3_id.clone(),
             nodes,
             committee_addresses,
             honest_committee_addresses,
-            pk_commitment: extract_pk_commitment(&c5_proof)?,
+            pk_commitment,
             dkg_aggregator_v2_proof,
             dkg_attestation_bundle: Some(ArcBytes::from_bytes(&dkg_attestation_bundle)),
         };

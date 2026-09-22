@@ -274,7 +274,7 @@ async fn secure_16384_restart_redrives_publication_intent() -> Result<()> {
 }
 
 #[actix::test]
-async fn secure_16384_waits_for_operational_rlk_after_c5() -> Result<()> {
+async fn secure_16384_waits_for_both_operational_keys_after_c5() -> Result<()> {
     use crate::domain::lbfv_contribution_collection::tests::fixture;
 
     let fixture = fixture();
@@ -336,9 +336,9 @@ async fn secure_16384_waits_for_operational_rlk_after_c5() -> Result<()> {
             ..
         })
     ));
-    assert!(aggregator
-        .lbfv_aggregation_state()?
-        .is_some_and(|state| state.operational_rlk.is_none()));
+    assert!(aggregator.lbfv_aggregation_state()?.is_some_and(|state| {
+        state.operational_public_key.is_none() && state.operational_rlk.is_none()
+    }));
     assert!(history
         .send(GetEvents::<InterfoldEvent>::new())
         .await?

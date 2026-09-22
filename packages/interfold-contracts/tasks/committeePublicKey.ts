@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 import { getBytes, isHexString, keccak256 } from "ethers";
 
-const MAX_PUBLIC_KEY_BYTES = 6 * 1024 * 1024;
+const MAX_PUBLIC_KEY_BYTES = 16 * 1024 * 1024;
 const PUBLIC_KEY_CHUNK_BYTES = 90 * 1024;
 
 export interface CommitteePublicKeyChunk {

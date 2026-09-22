@@ -180,6 +180,7 @@ path-clean = "=1.0.1"
 petname = "=2.0.2"
 phf = { version = "=0.11.3", features = ["macros"] }
 proptest = "=1.11.0"
+prost = "=0.14.4"
 proc-macro2 = "=1.0.106"
 quote = "=1.0.45"
 rand_chacha = "=0.9.0"

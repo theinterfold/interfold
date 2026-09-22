@@ -6,8 +6,8 @@
 
 use crate::domain::committee::committee_addresses_in_party_order;
 use crate::workflow::publickey_aggregation::{
-    check_c1_keyshare_commitments, extract_pk_commitment, verify_dkg_fold_attestation, C1Dispatch,
-    HonestSelection, PublicKeyAggregation,
+    check_c1_keyshare_commitments, extract_lbfv_key_envelope_commitment, extract_pk_commitment,
+    verify_dkg_fold_attestation, C1Dispatch, HonestSelection, PublicKeyAggregation,
 };
 use crate::{
     LbfvAggregationStateV1, LbfvContributionVerificationStateV1, LbfvPublicKeyPublicationStateV1,

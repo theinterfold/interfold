@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Derive an operational l-BFV relinearization key from accepted share bytes.
+//! Derive operational l-BFV keys from accepted share bytes.
 
 use anyhow::{ensure, Result};
 use e3_fhe_params::{build_pair_for_preset, lbfv_crs_seed, lbfv_urs_seed, BfvPreset};
@@ -13,15 +13,24 @@ use fhe::aggregate::AggregateIter;
 use fhe::trlbfv::{aggregate_relinearization_key, LBFVPublicKey, PublicKeyShare, RelinKeyShare};
 use fhe_traits::{DeserializeParametrized, Serialize as FheSerialize};
 
+/// Operational key material from one accepted contribution set.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LbfvOperationalKeys {
+    /// Canonical fhe.rs serialization of the complete l-component public key.
+    pub public_key: ArcBytes,
+    /// Canonical fhe.rs serialization of the matching relinearization key.
+    pub relinearization_key: ArcBytes,
+}
+
 /// Aggregate accepted public-key and RLK contributions in one canonical order.
 ///
 /// The caller must perform signer, party-set, session, and commitment validation before calling
-/// this adapter. The returned bytes are the operational `LBFVRelinearizationKey` serialization.
-pub fn aggregate_lbfv_relinearization_key(
+/// this adapter. Both serializations derive from the same ordered contribution set.
+pub fn aggregate_lbfv_keys(
     preset: BfvPreset,
     public_key_share_bytes: &[ArcBytes],
     rlk_share_bytes: &[ArcBytes],
-) -> Result<ArcBytes> {
+) -> Result<LbfvOperationalKeys> {
     ensure!(
         lbfv_crs_seed(preset).is_some() && lbfv_urs_seed(preset).is_some(),
         "operational l-BFV RLK requires a preset with l-BFV constants"
@@ -42,5 +51,8 @@ pub fn aggregate_lbfv_relinearization_key(
         .collect::<std::result::Result<Vec<_>, _>>()?;
     let public_key: LBFVPublicKey = public_key_shares.into_iter().aggregate()?;
     let operational = aggregate_relinearization_key(&rlk_shares, &public_key)?;
-    Ok(ArcBytes::from_bytes(&operational.to_bytes()))
+    Ok(LbfvOperationalKeys {
+        public_key: ArcBytes::from_bytes(&public_key.to_bytes()),
+        relinearization_key: ArcBytes::from_bytes(&operational.to_bytes()),
+    })
 }

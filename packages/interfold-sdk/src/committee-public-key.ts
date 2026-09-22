@@ -8,15 +8,24 @@ import { hexToBytes, isHex, keccak256, type Hex } from 'viem'
 
 import type { CommitteePublicKeyChunkPublishedData } from './events/types'
 
-export const MAX_COMMITTEE_PUBLIC_KEY_BYTES = 6 * 1024 * 1024
+export const MAX_COMMITTEE_PUBLIC_KEY_BYTES = 16 * 1024 * 1024
 export const MAX_COMMITTEE_PUBLIC_KEY_CHUNK_BYTES = 90 * 1024
 export const DEFAULT_MAX_TRACKED_COMMITTEE_KEYS = 128
+const LBFV_KEY_ENVELOPE_MAGIC = new TextEncoder().encode('IFLBFVKE')
+const LBFV_KEY_ENVELOPE_HEADER_BYTES = 18
+
+export interface LbfvKeyEnvelope {
+  schemaVersion: number
+  publicKey: Uint8Array
+  relinearizationKey: Uint8Array
+}
 
 export interface AssembledCommitteePublicKey {
   e3Id: bigint
   nodes: string[]
   pkCommitment: Hex
   publicKey: Uint8Array
+  lbfvKeyEnvelope?: LbfvKeyEnvelope
 }
 
 interface Assembly {
@@ -97,6 +106,17 @@ export class CommitteePublicKeyAssembler {
       return undefined
     }
 
+    let lbfvKeyEnvelope: LbfvKeyEnvelope | undefined
+    if (isLbfvKeyEnvelope(publicKey)) {
+      try {
+        lbfvKeyEnvelope = decodeLbfvKeyEnvelope(publicKey)
+      } catch {
+        this.assemblies.delete(assemblyKey)
+        this.invalidAssemblies.add(assemblyKey)
+        return undefined
+      }
+    }
+
     this.completedAssemblies.add(assemblyKey)
     this.assemblies.delete(assemblyKey)
     return {
@@ -104,6 +124,7 @@ export class CommitteePublicKeyAssembler {
       nodes: assembly.nodes,
       pkCommitment: assembly.pkCommitment,
       publicKey,
+      lbfvKeyEnvelope,
     }
   }
 
@@ -139,6 +160,31 @@ export class CommitteePublicKeyAssembler {
       if (key.startsWith(prefix)) this.completedAssemblies.delete(key)
     }
   }
+}
+
+export function decodeLbfvKeyEnvelope(encoded: Uint8Array): LbfvKeyEnvelope {
+  if (!isLbfvKeyEnvelope(encoded) || encoded.length < LBFV_KEY_ENVELOPE_HEADER_BYTES) {
+    throw new Error('Invalid l-BFV key envelope')
+  }
+  const view = new DataView(encoded.buffer, encoded.byteOffset, encoded.byteLength)
+  const schemaVersion = view.getUint16(8, false)
+  if (schemaVersion !== 1) throw new Error(`Unsupported l-BFV key envelope version ${schemaVersion}`)
+  const publicKeyLength = view.getUint32(10, false)
+  const relinearizationKeyLength = view.getUint32(14, false)
+  const publicKeyEnd = LBFV_KEY_ENVELOPE_HEADER_BYTES + publicKeyLength
+  const envelopeEnd = publicKeyEnd + relinearizationKeyLength
+  if (publicKeyLength === 0 || relinearizationKeyLength === 0 || envelopeEnd !== encoded.length) {
+    throw new Error('The l-BFV key envelope length does not match its header')
+  }
+  return {
+    schemaVersion,
+    publicKey: encoded.slice(LBFV_KEY_ENVELOPE_HEADER_BYTES, publicKeyEnd),
+    relinearizationKey: encoded.slice(publicKeyEnd),
+  }
+}
+
+function isLbfvKeyEnvelope(encoded: Uint8Array): boolean {
+  return encoded.length >= LBFV_KEY_ENVELOPE_MAGIC.length && LBFV_KEY_ENVELOPE_MAGIC.every((byte, index) => encoded[index] === byte)
 }
 
 function validateEvent(event: CommitteePublicKeyChunkPublishedData): {

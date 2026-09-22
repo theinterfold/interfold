@@ -26,7 +26,7 @@ use std::{
 use tracing::{info, warn};
 
 const OUTPUT_RETRY_DELAY: Duration = Duration::from_secs(30);
-const MAX_PUBLIC_KEY_BYTES: usize = 6 * 1024 * 1024;
+const MAX_PUBLIC_KEY_BYTES: usize = 16 * 1024 * 1024;
 const PUBLIC_KEY_CHUNK_BYTES: usize = 90 * 1024;
 pub const DATA_AVAILABILITY_RECOVERY_SCHEMA_VERSION: u32 = 2;
 
@@ -37,6 +37,10 @@ fn validate_committee_public_key(
     expected_commitment: [u8; 32],
     preset: BfvPreset,
 ) -> anyhow::Result<()> {
+    if preset == BfvPreset::SecureThreshold16384 {
+        e3_bfv_client::validate_lbfv_key_envelope(public_key, expected_commitment, preset)?;
+        return Ok(());
+    }
     // The final committee key uses threshold parameters. DKG parameters apply only to temporary
     // share-transport keys.
     let params = BfvParamSet::from(preset);
@@ -537,15 +541,13 @@ mod tests {
 
     #[test]
     fn secure_16384_chunks_reassemble_in_index_order() {
-        let bytes = (0..5_222_596)
-            .map(|index| (index % 251) as u8)
-            .collect::<Vec<_>>();
+        let bytes = vec![0x44; 13_056_502];
         let mut events = (0..bytes.len().div_ceil(PUBLIC_KEY_CHUNK_BYTES) as u16)
             .map(|index| chunk_event(&bytes, index))
             .collect::<Vec<_>>();
         let mut assembly = KeyAssembly::new(&events[0]);
 
-        assert_eq!(events.len(), 57);
+        assert_eq!(events.len(), 142);
 
         events.reverse();
         for event in &events {

@@ -3702,7 +3702,10 @@ dependencies = [
  "e3-polynomial",
  "e3-zk-helpers",
  "fhe",
+ "fhe-math",
  "fhe-traits",
+ "num-bigint 0.5.1",
+ "prost 0.14.4",
  "rand 0.9.4",
  "thiserror 1.0.69",
 ]
@@ -4206,6 +4209,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "bincode",
+ "e3-bfv-client",
  "e3-committee-hash",
  "e3-config",
  "e3-crypto",

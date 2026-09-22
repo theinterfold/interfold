@@ -84,6 +84,37 @@ pub(crate) fn extract_pk_commitment(c5_proof: &Proof) -> Result<[u8; 32]> {
     Ok(out)
 }
 
+/// Extract the versioned key-envelope commitment from a V2 DKG proof.
+pub(crate) fn extract_lbfv_key_envelope_commitment(
+    proof: &Proof,
+    committee_h: usize,
+) -> Result<[u8; 32]> {
+    ensure!(
+        proof.circuit == CircuitName::DkgAggregatorV2,
+        "key-envelope commitment requires a DkgAggregatorV2 proof"
+    );
+    let field_index = 23usize
+        .checked_add(
+            3usize
+                .checked_mul(committee_h)
+                .ok_or_else(|| anyhow!("V2 public-signal index overflow"))?,
+        )
+        .ok_or_else(|| anyhow!("V2 public-signal index overflow"))?;
+    let start = field_index
+        .checked_mul(32)
+        .ok_or_else(|| anyhow!("V2 public-signal offset overflow"))?;
+    let end = start
+        .checked_add(32)
+        .ok_or_else(|| anyhow!("V2 public-signal offset overflow"))?;
+    let bytes = proof
+        .public_signals
+        .get(start..end)
+        .ok_or_else(|| anyhow!("V2 proof is missing the key-envelope commitment"))?;
+    Ok(bytes
+        .try_into()
+        .expect("the V2 commitment slice has a fixed length"))
+}
+
 /// Outcome of cross-checking each honest party's keyshare against its signed C1
 /// `pk_commitment` public signal.
 pub(crate) struct C1CommitmentAudit {
