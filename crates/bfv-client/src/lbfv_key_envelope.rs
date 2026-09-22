@@ -12,7 +12,7 @@ use e3_polynomial::CrtPolynomial;
 use e3_zk_helpers::{
     compute_lbfv_key_envelope_commitment, compute_lbfv_public_key_commitment,
     compute_lbfv_rlk_commitment, compute_modulus_bit, compute_pk_aggregation_commitment,
-    compute_rlk_aggregation_commitment,
+    compute_rlk_aggregation_commitment, fhe_poly_to_crt_centered_checked,
 };
 use fhe::bfv::{CommonRandomPolyVec, PublicKey};
 use fhe::trlbfv::{LBFVPublicKey, LBFVRelinearizationKey};
@@ -211,6 +211,8 @@ pub fn inspect_lbfv_key_envelope(
     validate_shared_polynomials(d1_rows, &urs, "d1")?;
     validate_shared_polynomials(a_rows, &crs, "a")?;
     let bit = compute_modulus_bit(&params);
+    let moduli = params.moduli();
+    let degree = params.degree();
     let mut public_key_commitment_rows = Vec::with_capacity(public_key_row_count);
     let mut d0_commitments = Vec::with_capacity(public_key_row_count);
     let mut d2_commitments = Vec::with_capacity(public_key_row_count);
@@ -229,23 +231,25 @@ pub fn inspect_lbfv_key_envelope(
         let a = ciphertext
             .get(1)
             .ok_or_else(|| anyhow!("l-BFV public-key row {row} has no a component"))?;
-        let b_crt = CrtPolynomial::from_fhe_polynomial(b);
-        let a_crt = CrtPolynomial::from_fhe_polynomial(a);
+        let b_raw = CrtPolynomial::from_fhe_polynomial(b);
+        let a_raw = CrtPolynomial::from_fhe_polynomial(a);
         ensure!(
-            a_crt == CrtPolynomial::from_fhe_polynomial(&crs[row]),
+            a_raw == CrtPolynomial::from_fhe_polynomial(&crs[row]),
             "l-BFV public-key row {row} does not use the preset CRS"
         );
         ensure!(
-            CrtPolynomial::from_fhe_polynomial(&b_rows[row]) == b_crt,
+            CrtPolynomial::from_fhe_polynomial(&b_rows[row]) == b_raw,
             "l-BFV relinearization-key b-vector differs at row {row}"
         );
+        let b_crt = fhe_poly_to_crt_centered_checked(b, moduli, degree)?;
+        let a_crt = fhe_poly_to_crt_centered_checked(a, moduli, degree)?;
         public_key_commitment_rows.push(compute_pk_aggregation_commitment(&b_crt, &a_crt, bit));
         d0_commitments.push(compute_rlk_aggregation_commitment(
-            &CrtPolynomial::from_fhe_polynomial(&d0_rows[row]),
+            &fhe_poly_to_crt_centered_checked(&d0_rows[row], moduli, degree)?,
             bit,
         ));
         d2_commitments.push(compute_rlk_aggregation_commitment(
-            &CrtPolynomial::from_fhe_polynomial(&d2_rows[row]),
+            &fhe_poly_to_crt_centered_checked(&d2_rows[row], moduli, degree)?,
             bit,
         ));
     }
@@ -337,11 +341,28 @@ fn field_bytes(value: &BigInt) -> Result<[u8; 32]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use e3_zk_helpers::circuits::threshold::lbfv_pk_aggregation::{
+        LbfvPkAggregationCircuitData, LbfvPkAggregationInputs,
+    };
+    use e3_zk_helpers::circuits::threshold::lbfv_proof_domain::sample_lbfv_proof_domain;
+    use e3_zk_helpers::circuits::threshold::pk_generation::LbfvPkGenerationAdapter;
+    use e3_zk_helpers::circuits::threshold::rlk_aggregation::{
+        RlkAggregationCircuitData, RlkAggregationInputs,
+    };
+    use e3_zk_helpers::{CiphernodesCommitteeSize, Computation};
     use fhe::aggregate::AggregateIter;
     use fhe::bfv::SecretKey;
     use fhe::trlbfv::{aggregate_relinearization_key, PublicKeyShare, RelinKeyShare};
 
-    fn operational_keys() -> Result<(BfvPreset, LBFVPublicKey, LBFVRelinearizationKey)> {
+    type OperationalKeyMaterial = (
+        BfvPreset,
+        Vec<PublicKeyShare>,
+        Vec<RelinKeyShare>,
+        LBFVPublicKey,
+        LBFVRelinearizationKey,
+    );
+
+    fn operational_key_material() -> Result<OperationalKeyMaterial> {
         let preset = BfvPreset::InsecureThreshold512;
         let (params, _) = build_pair_for_preset(preset)?;
         let crs = CommonRandomPolyVec::from_seed(
@@ -366,8 +387,13 @@ mod tests {
                 RelinKeyShare::contribution_with_crp(secret_key, &urs, &crs, 0, 0, &mut rng)
             })
             .collect::<std::result::Result<Vec<_>, _>>()?;
-        let public_key: LBFVPublicKey = public_key_shares.into_iter().aggregate()?;
+        let public_key: LBFVPublicKey = public_key_shares.iter().cloned().aggregate()?;
         let rlk = aggregate_relinearization_key(&rlk_shares, &public_key)?;
+        Ok((preset, public_key_shares, rlk_shares, public_key, rlk))
+    }
+
+    fn operational_keys() -> Result<(BfvPreset, LBFVPublicKey, LBFVRelinearizationKey)> {
+        let (preset, _, _, public_key, rlk) = operational_key_material()?;
         Ok((preset, public_key, rlk))
     }
 
@@ -388,6 +414,64 @@ mod tests {
         )?;
         let (params, _) = build_pair_for_preset(BfvPreset::InsecureThreshold512)?;
         PublicKey::from_bytes(&encryption_key, &params)?;
+        Ok(())
+    }
+
+    #[test]
+    fn envelope_commitment_matches_aggregation_circuit_outputs() -> Result<()> {
+        let (preset, public_key_shares, rlk_shares, public_key, rlk) = operational_key_material()?;
+        let encoded = encode_lbfv_key_envelope(&public_key.to_bytes(), &rlk.to_bytes(), preset)?;
+        let (actual, _) = inspect_lbfv_key_envelope(&encoded, preset)?;
+        let (params, _) = build_pair_for_preset(preset)?;
+        let committee = CiphernodesCommitteeSize::Minimum.values();
+        let proof_domain = sample_lbfv_proof_domain();
+        let party_ids = vec![0, 1];
+        let bit = compute_modulus_bit(&params);
+        let pk_adapter = LbfvPkGenerationAdapter::new(preset)?;
+        let mut pk_rows = Vec::with_capacity(params.moduli().len());
+        let mut d0_rows = Vec::with_capacity(params.moduli().len());
+        let mut d2_rows = Vec::with_capacity(params.moduli().len());
+
+        for row_index in 0..params.moduli().len() {
+            let row_index = u32::try_from(row_index)?;
+            let pk_inputs = LbfvPkAggregationInputs::compute(
+                preset,
+                &LbfvPkAggregationCircuitData {
+                    committee: committee.clone(),
+                    proof_domain: proof_domain.clone(),
+                    aggregator_party_id: 0,
+                    party_ids: party_ids.clone(),
+                    row_index,
+                    shares: public_key_shares.clone(),
+                },
+            )?;
+            let rlk_inputs = RlkAggregationInputs::compute(
+                preset,
+                &RlkAggregationCircuitData {
+                    committee: committee.clone(),
+                    proof_domain: proof_domain.clone(),
+                    aggregator_party_id: 0,
+                    party_ids: party_ids.clone(),
+                    row_index,
+                    shares: rlk_shares.clone(),
+                },
+            )?;
+            pk_rows.push(compute_pk_aggregation_commitment(
+                &pk_inputs.pk0_agg,
+                &pk_adapter.crs_row(row_index)?,
+                bit,
+            ));
+            d0_rows.push(compute_rlk_aggregation_commitment(&rlk_inputs.d0_agg, bit));
+            d2_rows.push(compute_rlk_aggregation_commitment(&rlk_inputs.d2_agg, bit));
+        }
+
+        let expected_public_key = compute_lbfv_public_key_commitment(&pk_rows);
+        let expected_rlk = compute_lbfv_rlk_commitment(&d0_rows, &d2_rows)?;
+        let expected_envelope =
+            compute_lbfv_key_envelope_commitment(&expected_public_key, &expected_rlk);
+        assert_eq!(actual.public_key, field_bytes(&expected_public_key)?);
+        assert_eq!(actual.relinearization_key, field_bytes(&expected_rlk)?);
+        assert_eq!(actual.envelope, field_bytes(&expected_envelope)?);
         Ok(())
     }
 

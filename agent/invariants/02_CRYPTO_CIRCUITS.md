@@ -262,8 +262,9 @@ every section.
   commitments into the version-3 key-envelope commitment. The existing on-chain `pkCommitment` field
   carries this value. The published `IFLBFVKE` envelope contains the canonical fhe.rs
   `LBFVRelinearizationKey` bytes. A consumer reconstructs the level-0 `LBFVPublicKey` from the RLK.
-  A consumer must validate the envelope against `pkCommitment` before it uses public-key component 0
-  or exposes the RLK to an FHE processor.
+  A consumer converts each reconstructed FHE polynomial to the reversed, centered circuit CRT
+  representation before it recomputes the row commitments. It must validate the envelope against
+  `pkCommitment` before it uses public-key component 0 or exposes the RLK to an FHE processor.
 - **l-BFV proof identity and retries:** the proof session is Keccak-derived from the complete E3,
   deployment, crypto-configuration, committee, constants-version, and level domain. The accepted
   aggregation party set uses the canonical `e3-committee-hash` Keccak function. Local operation IDs

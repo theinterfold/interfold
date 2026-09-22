@@ -1094,10 +1094,11 @@ first candidate hash from each member. The ciphernode coordinator and `e3-indexe
 canonical chunks by E3, publisher, and candidate hash. They require a complete sequence, check
 `keccak256(serializedKey) == candidateHash`, and decode the key for the request-time parameter set.
 For secure-16384, consumers validate the `IFLBFVKE` version-3 framing, reconstructed public key,
-RLK, CRS, URS, levels, and ordered row commitments. They recompute the combined envelope commitment
-and require equality with the proven on-chain `pkCommitment`. Encryption uses public-key
-component 0. Only proof-bound computation exposes the RLK. Invalid candidates do not consume another
-committee member's candidate. Production verifies the C5-backed legacy final DKG proof or the
+RLK, CRS, URS, levels, and ordered row commitments. They reverse and center each FHE polynomial into
+the circuit CRT representation before they recompute the combined envelope commitment. They require
+equality with the proven on-chain `pkCommitment`. Encryption uses public-key component 0. Only
+proof-bound computation exposes the RLK. Invalid candidates do not consume another committee
+member's candidate. Production verifies the C5-backed legacy final DKG proof or the
 `DkgAggregatorV2` final proof on-chain; the explicit test/CI skip mode works only with mock
 verifiers. The SDK assembler tracks at most 19 candidates for each E3. By default, it tracks 128 E3s
 and retains at most 64 MiB of incomplete chunks. It checks the byte budget before it stores a chunk.
