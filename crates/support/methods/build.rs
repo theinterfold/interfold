@@ -48,8 +48,8 @@ fn use_docker() -> bool {
 /// Builds and returns the pinned guest-builder image tag.
 ///
 /// risc0-build generates its own Dockerfile. Its default image has the wrong Rust version for the
-/// pinned fhe.rs dependency and does not contain `protoc`. Build the small checked-in layer first,
-/// then tell risc0-build to use it for the deterministic guest build.
+/// pinned fhe.rs dependency. Build the small checked-in layer first, then tell risc0-build to use it
+/// for the deterministic guest build.
 fn guest_builder_tag(support_dir: &Path) -> String {
     let dockerfile = support_dir.join("methods/guest-builder.Dockerfile");
     println!("cargo:rerun-if-changed={}", dockerfile.display());
@@ -73,7 +73,7 @@ fn guest_builder_tag(support_dir: &Path) -> String {
         dockerfile.display()
     );
 
-    let tag = format!("interfold-r0.{toolchain}-protoc-v1");
+    let tag = format!("interfold-r0.{toolchain}-v2");
     let image = format!("risczero/risc0-guest-builder:{tag}");
     let status = Command::new("docker")
         .args([

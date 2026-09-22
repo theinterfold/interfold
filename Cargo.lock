@@ -3705,7 +3705,6 @@ dependencies = [
  "fhe-math",
  "fhe-traits",
  "num-bigint 0.5.1",
- "prost 0.14.4",
  "rand 0.9.4",
  "thiserror 1.0.69",
 ]
@@ -4693,6 +4692,7 @@ dependencies = [
  "e3-utils",
  "e3-zk-helpers",
  "fhe",
+ "fhe-math",
  "fhe-traits",
  "flate2",
  "futures-util",

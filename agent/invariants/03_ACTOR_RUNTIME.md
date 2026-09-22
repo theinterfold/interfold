@@ -22,6 +22,10 @@ every section.
   `GOSSIP_WIRE_MAJOR` and `SYNC_WIRE_MAJOR`. — `crates/config/protocol-release.toml`;
   `flow-trace/07`. The `interfold-bfv-v2` circuit identity uses `protocol_version = 4` and keeps
   `node_generation = 1` because this is not a separate mandatory node-only release.
+- Protocol 4 is also the coordinated fhe.rs l-BFV contribution-wire cutoff. Public-key and
+  relinearization-key contribution bytes use their typed envelope formats; old bare contribution
+  bytes are rejected by the typed decoders and must not be replayed or republished. Development
+  records from before this cutoff are disposable and require fresh key generation.
 
 ### Layering
 

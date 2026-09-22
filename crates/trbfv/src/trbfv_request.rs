@@ -172,7 +172,7 @@ impl fmt::Display for TrBFVFailure {
 /// `party_id` identifies the implicated party when the underlying variant carries one. Note
 /// the index space depends on the operation: for decryption-share reconstruction
 /// (`decrypt_from_shares`) it is the 1-based Shamir party id; for share aggregation
-/// (`aggregate_collected_shares`) it is the 0-based index into the collected-shares vector,
+/// (`aggregate_secret_key_shares`) it is the 0-based index into the collected-shares vector,
 /// i.e. collection order. Callers attributing blame must map it accordingly.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ThresholdFailure {

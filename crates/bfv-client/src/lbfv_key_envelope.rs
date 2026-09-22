@@ -15,13 +15,10 @@ use e3_zk_helpers::{
     compute_rlk_aggregation_commitment,
 };
 use fhe::bfv::{CommonRandomPolyVec, PublicKey};
-use fhe::proto::bfv::KeySwitchingKey as KeySwitchingKeyProto;
-use fhe::proto::lbfv::LbfvRelinearizationKey as LbfvRelinearizationKeyProto;
 use fhe::trlbfv::{LBFVPublicKey, LBFVRelinearizationKey};
-use fhe_math::rq::{NttShoup, Poly};
-use fhe_traits::{DeserializeParametrized, DeserializeWithContext, Serialize as FheSerialize};
+use fhe_math::rq::{Ntt, NttShoup, Poly};
+use fhe_traits::{DeserializeParametrized, Serialize as FheSerialize};
 use num_bigint::{BigInt, Sign};
-use prost::Message;
 
 const MAGIC: [u8; 8] = *b"IFLBFVKE";
 const SCHEMA_VERSION: u16 = 1;
@@ -148,58 +145,81 @@ pub fn inspect_lbfv_key_envelope(
         LBFVRelinearizationKey::from_bytes(&envelope.relinearization_key, &params)
             .context("failed to decode the l-BFV relinearization key")?;
     ensure!(
+        public_key.parameters() == params.as_ref(),
+        "l-BFV public key parameters do not match the preset"
+    );
+    ensure!(
+        relinearization_key.parameters().as_ref() == params.as_ref(),
+        "l-BFV relinearization-key parameters do not match the preset"
+    );
+    ensure!(
         relinearization_key.ciphertext_level() == 0 && relinearization_key.key_level() == 0,
         "l-BFV relinearization key must use level zero"
     );
-
-    let rlk_proto = LbfvRelinearizationKeyProto::decode(envelope.relinearization_key.as_slice())
-        .context("failed to decode the l-BFV relinearization-key payload")?;
-    let r_to_s = rlk_proto
-        .ksk_r_to_s
-        .as_ref()
-        .ok_or_else(|| anyhow!("l-BFV relinearization key has no r-to-s key"))?;
-    let s_to_r = rlk_proto
-        .ksk_s_to_r
-        .as_ref()
-        .ok_or_else(|| anyhow!("l-BFV relinearization key has no s-to-r key"))?;
-    validate_ksk_shape(r_to_s, public_key.l, "r-to-s")?;
-    validate_ksk_shape(s_to_r, public_key.l, "s-to-r")?;
     ensure!(
-        rlk_proto.b_vec.len() == public_key.l,
-        "l-BFV relinearization-key b-vector length does not match the public key"
+        relinearization_key.decomposition_log_base() == 0,
+        "l-BFV relinearization key must use RNS decomposition"
     );
 
-    let key_context = params.context_at_level(0)?.clone();
     let crs_seed =
         lbfv_crs_seed(preset).ok_or_else(|| anyhow!("the preset has no l-BFV CRS seed"))?;
     let urs_seed =
         lbfv_urs_seed(preset).ok_or_else(|| anyhow!("the preset has no l-BFV URS seed"))?;
     let crs = CommonRandomPolyVec::from_seed(&params, crs_seed)?.to_polys();
     let urs = CommonRandomPolyVec::from_seed(&params, urs_seed)?.to_polys();
+    if let Some(seed) = public_key.seed() {
+        ensure!(
+            seed == crs_seed,
+            "l-BFV public-key seed does not match the preset CRS"
+        );
+    }
+    let key_context = params.context_at_level(0)?.clone();
+    let public_key_rows = public_key.rows();
+    let public_key_row_count = public_key.row_count();
+    let d0_rows = relinearization_key.d0_components();
+    let d1_rows = relinearization_key.d1_components();
+    let d2_rows = relinearization_key.d2_components();
+    let a_rows = relinearization_key.a_components();
+    let b_rows = relinearization_key.b_components();
     ensure!(
-        public_key.c.len() == public_key.l
-            && crs.len() == public_key.l
-            && urs.len() == public_key.l,
+        public_key_rows.len() == public_key_row_count
+            && public_key_row_count == params.moduli().len()
+            && crs.len() == public_key_row_count
+            && urs.len() == public_key_row_count
+            && d0_rows.len() == public_key_row_count
+            && d1_rows.len() == public_key_row_count
+            && d2_rows.len() == public_key_row_count
+            && a_rows.len() == public_key_row_count
+            && b_rows.len() == public_key_row_count,
         "l-BFV key row count does not match the preset"
     );
 
-    let d0_rows = decode_ksk_polynomials(&r_to_s.c0, &key_context, "r-to-s c0")?;
-    let d2_rows = decode_ksk_polynomials(&s_to_r.c0, &key_context, "s-to-r c0")?;
-    let b_vec = decode_ksk_polynomials(&rlk_proto.b_vec, &key_context, "b-vector")?;
-    validate_shared_polynomials(r_to_s, urs_seed, &urs, &key_context, "r-to-s c1")?;
-    validate_shared_polynomials(s_to_r, crs_seed, &crs, &key_context, "s-to-r c1")?;
+    ensure_components_at_level(d0_rows, &key_context, "d0")?;
+    ensure_components_at_level(d1_rows, &key_context, "d1")?;
+    ensure_components_at_level(d2_rows, &key_context, "d2")?;
+    ensure_components_at_level(a_rows, &key_context, "a")?;
+    ensure_components_at_level(b_rows, &key_context, "b")?;
+    validate_shared_polynomials(d1_rows, &urs, "d1")?;
+    validate_shared_polynomials(a_rows, &crs, "a")?;
     let bit = compute_modulus_bit(&params);
-    let mut public_key_rows = Vec::with_capacity(public_key.l);
-    let mut d0_commitments = Vec::with_capacity(public_key.l);
-    let mut d2_commitments = Vec::with_capacity(public_key.l);
+    let mut public_key_commitment_rows = Vec::with_capacity(public_key_row_count);
+    let mut d0_commitments = Vec::with_capacity(public_key_row_count);
+    let mut d2_commitments = Vec::with_capacity(public_key_row_count);
 
-    for row in 0..public_key.l {
-        let ciphertext = public_key
-            .c
+    for row in 0..public_key_row_count {
+        let ciphertext = public_key_rows
             .get(row)
             .ok_or_else(|| anyhow!("l-BFV public key is missing row {row}"))?;
-        let b = &ciphertext[0];
-        let a = &ciphertext[1];
+        ensure!(
+            ciphertext.len() == 2,
+            "l-BFV public-key row {row} must have two components"
+        );
+        let b = ciphertext
+            .first()
+            .ok_or_else(|| anyhow!("l-BFV public-key row {row} has no b component"))?;
+        let a = ciphertext
+            .get(1)
+            .ok_or_else(|| anyhow!("l-BFV public-key row {row} has no a component"))?;
         let b_crt = CrtPolynomial::from_fhe_polynomial(b);
         let a_crt = CrtPolynomial::from_fhe_polynomial(a);
         ensure!(
@@ -207,10 +227,10 @@ pub fn inspect_lbfv_key_envelope(
             "l-BFV public-key row {row} does not use the preset CRS"
         );
         ensure!(
-            CrtPolynomial::from_fhe_polynomial(&b_vec[row]) == b_crt,
+            CrtPolynomial::from_fhe_polynomial(&b_rows[row]) == b_crt,
             "l-BFV relinearization-key b-vector differs at row {row}"
         );
-        public_key_rows.push(compute_pk_aggregation_commitment(&b_crt, &a_crt, bit));
+        public_key_commitment_rows.push(compute_pk_aggregation_commitment(&b_crt, &a_crt, bit));
         d0_commitments.push(compute_rlk_aggregation_commitment(
             &CrtPolynomial::from_fhe_polynomial(&d0_rows[row]),
             bit,
@@ -221,7 +241,7 @@ pub fn inspect_lbfv_key_envelope(
         ));
     }
 
-    let public_key_commitment = compute_lbfv_public_key_commitment(&public_key_rows);
+    let public_key_commitment = compute_lbfv_public_key_commitment(&public_key_commitment_rows);
     let rlk_commitment = compute_lbfv_rlk_commitment(&d0_commitments, &d2_commitments)?;
     let envelope_commitment =
         compute_lbfv_key_envelope_commitment(&public_key_commitment, &rlk_commitment);
@@ -232,8 +252,7 @@ pub fn inspect_lbfv_key_envelope(
     };
     let encryption_key = PublicKey {
         params,
-        c: public_key
-            .c
+        c: public_key_rows
             .first()
             .cloned()
             .ok_or_else(|| anyhow!("l-BFV public key has no encryption component"))?,
@@ -242,39 +261,25 @@ pub fn inspect_lbfv_key_envelope(
     Ok((commitments, encryption_key))
 }
 
-fn validate_ksk_shape(ksk: &KeySwitchingKeyProto, rows: usize, name: &str) -> Result<()> {
-    ensure!(
-        ksk.ciphertext_level == 0 && ksk.ksk_level == 0 && ksk.log_base == 0,
-        "l-BFV {name} key has noncanonical levels or decomposition"
-    );
-    ensure!(
-        ksk.c0.len() == rows,
-        "l-BFV {name} key row count does not match the public key"
-    );
-    ensure!(
-        (ksk.seed.is_empty() && ksk.c1.len() == rows)
-            || (!ksk.seed.is_empty() && ksk.c1.is_empty()),
-        "l-BFV {name} key has invalid shared-polynomial encoding"
-    );
+fn ensure_components_at_level(
+    components: &[Poly<NttShoup>],
+    expected_context: &std::sync::Arc<fhe_math::rq::Context>,
+    name: &str,
+) -> Result<()> {
+    for (row, component) in components.iter().enumerate() {
+        ensure!(
+            component.ctx() == expected_context,
+            "l-BFV {name} row {row} has an unexpected context"
+        );
+    }
     Ok(())
 }
 
 fn validate_shared_polynomials(
-    ksk: &KeySwitchingKeyProto,
-    expected_seed: [u8; 32],
-    expected_rows: &[Poly<fhe_math::rq::Ntt>],
-    context: &std::sync::Arc<fhe_math::rq::Context>,
+    actual_rows: &[Poly<NttShoup>],
+    expected_rows: &[Poly<Ntt>],
     name: &str,
 ) -> Result<()> {
-    if !ksk.seed.is_empty() {
-        ensure!(
-            ksk.seed == expected_seed,
-            "l-BFV {name} seed does not match the preset"
-        );
-        return Ok(());
-    }
-
-    let actual_rows = decode_ksk_polynomials(&ksk.c1, context, name)?;
     ensure!(
         actual_rows.len() == expected_rows.len(),
         "l-BFV {name} row count does not match the preset"
@@ -287,21 +292,6 @@ fn validate_shared_polynomials(
         );
     }
     Ok(())
-}
-
-fn decode_ksk_polynomials(
-    encoded: &[Vec<u8>],
-    context: &std::sync::Arc<fhe_math::rq::Context>,
-    name: &str,
-) -> Result<Vec<Poly<NttShoup>>> {
-    encoded
-        .iter()
-        .enumerate()
-        .map(|(row, bytes)| {
-            Poly::<NttShoup>::from_bytes(bytes, context)
-                .map_err(|error| anyhow!("failed to decode l-BFV {name} row {row}: {error}"))
-        })
-        .collect()
 }
 
 fn field_bytes(value: &BigInt) -> Result<[u8; 32]> {
@@ -377,5 +367,88 @@ mod tests {
             .to_string()
             .contains("does not match the proof commitment"));
         Ok(())
+    }
+
+    #[test]
+    fn envelope_rejects_a_different_parameter_preset() -> Result<()> {
+        let envelope = envelope()?;
+        let error = inspect_lbfv_key_envelope(&envelope, BfvPreset::SecureThreshold16384)
+            .expect_err("a key from another preset must fail");
+        assert!(error.to_string().contains("failed to decode"));
+        Ok(())
+    }
+
+    #[test]
+    fn contribution_envelopes_round_trip_and_do_not_cross_key_boundaries() -> Result<()> {
+        let preset = BfvPreset::InsecureThreshold512;
+        let (params, _) = build_pair_for_preset(preset)?;
+        let crs = CommonRandomPolyVec::from_seed(
+            &params,
+            lbfv_crs_seed(preset).expect("the insecure preset has an l-BFV CRS"),
+        )?;
+        let urs = CommonRandomPolyVec::from_seed(
+            &params,
+            lbfv_urs_seed(preset).expect("the insecure preset has an l-BFV URS"),
+        )?;
+        let mut rng = rand::rng();
+        let secret_key = SecretKey::random(&params, &mut rng);
+        let public_key_share = PublicKeyShare::contribute_with_crp(&secret_key, &crs, &mut rng)?;
+        let (relinearization_key_share, _) =
+            RelinKeyShare::contribution_with_crp_extended(&secret_key, &urs, &crs, 0, 0, &mut rng)?;
+        assert_eq!(
+            PublicKeyShare::from_bytes(&public_key_share.to_bytes(), &params)?,
+            public_key_share
+        );
+        assert_eq!(
+            RelinKeyShare::from_bytes(&relinearization_key_share.to_bytes(), &params)?,
+            relinearization_key_share
+        );
+
+        let encoded_rlk_share = relinearization_key_share.to_bytes();
+        let public_key: LBFVPublicKey = [public_key_share].into_iter().aggregate()?;
+        let operational_rlk =
+            aggregate_relinearization_key(&[relinearization_key_share], &public_key)?;
+        // The old public-key contribution format was the bare operational-key payload.
+        assert!(PublicKeyShare::from_bytes(&public_key.to_bytes(), &params).is_err());
+        // The old RLK contribution format was the inner contribution message without its
+        // LBFVRelinKeyShare envelope. Verify that persisted pre-cutoff bytes remain rejected.
+        let (body_start, body_len) = protobuf_length_delimited_body(&encoded_rlk_share)?;
+        assert!(RelinKeyShare::from_bytes(
+            &encoded_rlk_share[body_start..body_start + body_len],
+            &params
+        )
+        .is_err());
+        assert!(RelinKeyShare::from_bytes(&operational_rlk.to_bytes(), &params).is_err());
+        Ok(())
+    }
+
+    fn protobuf_length_delimited_body(encoded: &[u8]) -> Result<(usize, usize)> {
+        ensure!(
+            encoded.first() == Some(&0x0a),
+            "missing protobuf envelope field"
+        );
+        let mut offset = 1;
+        let mut length = 0usize;
+        let mut shift = 0;
+        loop {
+            let byte = *encoded
+                .get(offset)
+                .ok_or_else(|| anyhow!("truncated protobuf envelope length"))?;
+            offset += 1;
+            length |= usize::from(byte & 0x7f) << shift;
+            if byte & 0x80 == 0 {
+                break;
+            }
+            shift += 7;
+            ensure!(
+                shift < usize::BITS as usize,
+                "protobuf envelope length overflows usize"
+            );
+        }
+        ensure!(
+            encoded.len() >= offset + length,
+            "truncated protobuf envelope body"
+        );
+        Ok((offset, length))
     }
 }

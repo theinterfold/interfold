@@ -13,7 +13,10 @@ use crate::TrBFVConfig;
 use anyhow::*;
 use e3_crypto::{Cipher, SensitiveBytes};
 use e3_utils::utility_types::ArcBytes;
-use fhe::{bfv::Ciphertext, trbfv::ShareManager};
+use fhe::{
+    bfv::Ciphertext,
+    trbfv::{SecretKeyShare, ShareManager, SmudgingShare},
+};
 use fhe_math::rq::{Poly, PowerBasis};
 use fhe_traits::DeserializeParametrized;
 use fhe_traits::Serialize;
@@ -113,26 +116,28 @@ pub fn calculate_decryption_share(
     let es_poly_sum = req.es_poly_sum;
 
     info!("Calculating d_share_poly...");
-    let d_share_poly = req
-        .ciphertexts
-        .into_iter()
-        .enumerate()
-        .map(|(index, ciphertext)| {
-            let share_manager = ShareManager::new(num_ciphernodes, threshold, params.clone())?;
-            info!("Create decryption share for ct index {}...", index);
-            // Currently there is a single smudging noise polynomial shared across all
-            // ciphertexts. When multiple per-ciphertext noises are supported, the
-            // index mapping here will need to change.
-            let es_idx = index % es_poly_sum.len();
-            share_manager
-                .decryption_share(
-                    Arc::new(ciphertext),
-                    sk_poly_sum.clone().into_ntt(),
-                    es_poly_sum[es_idx].clone(),
-                )
-                .context(format!("Could not decrypt ciphertext {}", index))
-        })
-        .collect::<Result<Vec<Poly<PowerBasis>>>>()?;
+    let d_share_poly =
+        req.ciphertexts
+            .into_iter()
+            .enumerate()
+            .map(|(index, ciphertext)| {
+                let share_manager = ShareManager::new(num_ciphernodes, threshold, params.clone())?;
+                let sk_aggregate = share_manager.aggregate_secret_key_shares(vec![
+                    SecretKeyShare::from_transport(sk_poly_sum.coefficients().to_owned()),
+                ])?;
+                info!("Create decryption share for ct index {}...", index);
+                // Currently there is a single smudging noise polynomial shared across all
+                // ciphertexts. When multiple per-ciphertext noises are supported, the
+                // index mapping here will need to change.
+                let es_idx = index % es_poly_sum.len();
+                let es_aggregate = share_manager.aggregate_smudging_shares(vec![
+                    SmudgingShare::from_transport(es_poly_sum[es_idx].coefficients().to_owned()),
+                ])?;
+                share_manager
+                    .decryption_share(Arc::new(ciphertext), &sk_aggregate, es_aggregate)
+                    .context(format!("Could not decrypt ciphertext {}", index))
+            })
+            .collect::<Result<Vec<Poly<PowerBasis>>>>()?;
     info!("Returning successful result...");
 
     Ok(InnerResponse { d_share_poly }.into())

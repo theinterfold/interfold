@@ -1431,7 +1431,6 @@ dependencies = [
  "fhe-math",
  "fhe-traits",
  "num-bigint 0.5.1",
- "prost",
  "rand 0.9.4",
  "thiserror 1.0.69",
 ]

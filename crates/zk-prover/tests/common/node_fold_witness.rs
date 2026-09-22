@@ -24,8 +24,9 @@ use e3_zk_prover::DEFAULT_C2_CHUNK_SIZE;
 use fhe::bfv::Encoding;
 use fhe::bfv::SecretKey;
 use fhe::mbfv::PublicKeyShare;
-use fhe::trbfv::{ShareManager, TRBFV};
+use fhe::trbfv::ShareManager;
 use fhe::{bfv::Plaintext, bfv::PublicKey};
+use fhe_math::rq::{Poly, PowerBasis};
 use fhe_traits::FheEncoder;
 use fhe_traits::Serialize;
 use ndarray::Array2;
@@ -85,7 +86,6 @@ pub fn pk_generation_sample_with_esi_and_share(
         .map_err(|e| CircuitsErrors::Sample(format!("center sk CRT: {:?}", e)))?;
 
     let num_parties = committee.n;
-    let threshold = committee.threshold;
 
     let defaults = preset
         .search_defaults()
@@ -96,33 +96,29 @@ pub fn pk_generation_sample_with_esi_and_share(
         .lambda()
         .map_err(|e| CircuitsErrors::Sample(e.to_string()))?;
 
-    let trbfv = TRBFV::new(num_parties, threshold, threshold_params.clone())
-        .map_err(|e| CircuitsErrors::Sample(format!("Failed to create TRBFV: {:?}", e)))?;
-    let share_manager = ShareManager::new(num_parties, threshold, threshold_params.clone())
-        .map_err(|e| CircuitsErrors::Sample(format!("Failed to create ShareManager: {:?}", e)))?;
+    let esi_coeffs: Vec<BigInt> = e3_fhe_params::generate_smudging_error(
+        threshold_params.clone(),
+        num_parties,
+        num_ciphertexts as usize,
+        defaults.mult_depth,
+        lambda,
+        &mut rng,
+    )
+    .map_err(|e| CircuitsErrors::Sample(format!("Failed to generate smudging error: {:?}", e)))?;
 
-    let esi_coeffs: Vec<BigInt> = trbfv
-        .generate_smudging_error(
-            num_ciphertexts as usize,
-            defaults.mult_depth,
-            lambda,
-            &mut rng,
-        )
-        .map_err(|e| {
-            CircuitsErrors::Sample(format!("Failed to generate smudging error: {:?}", e))
-        })?;
-
-    let e_sm_rns_zeroizing = share_manager
-        .bigints_to_poly(&esi_coeffs)
-        .map_err(|e| CircuitsErrors::Sample(format!("bigints_to_poly: {:?}", e)))?;
-
-    let e_sm = e_sm_rns_zeroizing.deref().clone();
+    let e_sm = Poly::<PowerBasis>::from_bigints(
+        &esi_coeffs,
+        threshold_params
+            .context_at_level(0)
+            .map_err(|e| CircuitsErrors::Sample(format!("context_at_level: {:?}", e)))?,
+    )
+    .map_err(|e| CircuitsErrors::Sample(format!("from_bigints: {:?}", e)))?;
 
     let pk = PkGenerationCircuitData {
         committee,
         pk0_share: CrtPolynomial::from_fhe_polynomial(&pk0_share),
         eek: CrtPolynomial::from_fhe_polynomial(&e),
-        e_sm: CrtPolynomial::from_fhe_polynomial(&e_sm),
+        e_sm: CrtPolynomial::from_fhe_polynomial(e_sm.deref()),
         sk: sk_crt,
     };
 
@@ -145,7 +141,7 @@ pub fn share_computation_sk_from_pk(
         compute_parity_matrix(threshold_params.moduli(), committee.n, committee.threshold)
             .map_err(CircuitsErrors::Sample)?;
 
-    let mut share_manager =
+    let share_manager =
         ShareManager::new(committee.n, committee.threshold, threshold_params.clone()).map_err(
             |e| CircuitsErrors::Sample(format!("Failed to create ShareManager: {:?}", e)),
         )?;
@@ -154,10 +150,9 @@ pub fn share_computation_sk_from_pk(
         .coeffs_to_poly_level0(secret_key.coeffs.clone().as_ref())
         .map_err(|e| CircuitsErrors::Sample(format!("coeffs_to_poly_level0: {:?}", e)))?;
     let sk_sss_u64 = share_manager
-        .generate_secret_shares_from_poly(sk_poly, &mut rng)
-        .map_err(|e| {
-            CircuitsErrors::Sample(format!("generate_secret_shares_from_poly: {:?}", e))
-        })?;
+        .generate_secret_key_shares(sk_poly, &mut rng)
+        .map(|shares| shares.into_transport())
+        .map_err(|e| CircuitsErrors::Sample(format!("generate_secret_key_shares: {:?}", e)))?;
     let secret_sss: Vec<Array2<BigInt>> = sk_sss_u64
         .into_iter()
         .map(|a| a.mapv(BigInt::from))
@@ -189,19 +184,22 @@ pub fn share_computation_esm_from_esi(
         compute_parity_matrix(threshold_params.moduli(), committee.n, committee.threshold)
             .map_err(CircuitsErrors::Sample)?;
 
-    let mut share_manager =
+    let share_manager =
         ShareManager::new(committee.n, committee.threshold, threshold_params.clone()).map_err(
             |e| CircuitsErrors::Sample(format!("Failed to create ShareManager: {:?}", e)),
         )?;
 
-    let esi_poly = share_manager
-        .bigints_to_poly(esi_coeffs)
-        .map_err(|e| CircuitsErrors::Sample(format!("bigints_to_poly: {:?}", e)))?;
+    let esi_poly = Poly::<PowerBasis>::from_bigints(
+        esi_coeffs,
+        threshold_params
+            .context_at_level(0)
+            .map_err(|e| CircuitsErrors::Sample(format!("context_at_level: {:?}", e)))?,
+    )
+    .map_err(|e| CircuitsErrors::Sample(format!("from_bigints: {:?}", e)))?;
     let esi_sss_u64 = share_manager
-        .generate_secret_shares_from_poly(esi_poly, &mut rng)
-        .map_err(|e| {
-            CircuitsErrors::Sample(format!("generate_secret_shares_from_poly: {:?}", e))
-        })?;
+        .generate_secret_key_shares(esi_poly, &mut rng)
+        .map(|shares| shares.into_transport())
+        .map_err(|e| CircuitsErrors::Sample(format!("generate_secret_key_shares: {:?}", e)))?;
     let secret_sss: Vec<Array2<BigInt>> = esi_sss_u64
         .into_iter()
         .map(|a| a.mapv(BigInt::from))

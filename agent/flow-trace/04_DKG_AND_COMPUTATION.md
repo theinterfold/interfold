@@ -970,6 +970,20 @@ only that failure. It does not resume row, fold, final V2 proof, or publication 
 │       }
 │         → forwarded to peers so every committee member can bind C6 proofs to the aggregated key
 │
+### l-BFV contribution-wire cutoff
+
+The protocol-4 l-BFV release uses the contribution envelopes emitted by the typed fhe.rs APIs:
+`LBFVPublicKeyShare` for public-key contributions and `LBFVRelinKeyShare` containing an
+`LBFVRelinKeyContribution` for relinearization-key contributions. Operational public keys and
+relinearization keys use different codecs and are not valid contribution records.
+
+The previous bare contribution encodings have no compatibility decoder. A persisted or fetched
+record that contains those bytes fails typed deserialization before aggregation, proof use, or
+publication. This is a coordinated development-data cutoff: clear pre-cutoff l-BFV records and
+regenerate contributions with the protocol-4 node release. Existing bincode document enum
+variants remain in their original order; the protocol version, not a variant renumbering, carries
+this incompatible byte-codec boundary.
+
 └─ Existing CiphernodeRegistrySolWriter receives `PublicKeyAggregated` or a local
   secure-16384 `LbfvPublicKeyAggregated` intent:
   ├─ Adapts the secure event to the existing public-key submission gate, preserving the V2 proof and

@@ -22,7 +22,7 @@ use e3_polynomial::CrtPolynomial;
 use fhe::{
     bfv::{Encoding, Plaintext, PublicKey},
     mbfv::{AggregateIter, PublicKeyShare},
-    trbfv::ShareManager,
+    trbfv::{SecretKeyShare, ShareManager, SmudgingShare},
 };
 use fhe_math::rq::Poly;
 use fhe_traits::{FheEncoder, FheEncrypter};
@@ -104,7 +104,8 @@ impl ShareDecryptionCircuitData {
                 })?;
 
             let sk_sss = share_manager
-                .generate_secret_shares_from_poly(sk_poly, &mut rng)
+                .generate_secret_key_shares(sk_poly, &mut rng)
+                .map(|shares| shares.into_transport())
                 .map_err(|e| {
                     CircuitsErrors::Sample(format!("Failed to generate SK shares: {:?}", e))
                 })?;
@@ -132,7 +133,8 @@ impl ShareDecryptionCircuitData {
                 CircuitsErrors::Sample(format!("Failed to convert error to poly: {:?}", e))
             })?;
             let esi_sss = share_manager
-                .generate_secret_shares_from_poly(esi_poly, &mut rng)
+                .generate_secret_key_shares(esi_poly, &mut rng)
+                .map(|shares| shares.into_transport())
                 .map_err(|e| {
                     CircuitsErrors::Sample(format!("Failed to generate error shares: {:?}", e))
                 })?;
@@ -192,9 +194,9 @@ impl ShareDecryptionCircuitData {
             es_sss_collected.push(es_collected);
         }
 
-        // Aggregate collected shares to get s and e polynomials
-        // First, sum across parties for each modulus, then restructure to match
-        // the format expected by aggregate_collected_shares: one Array2 of shape [num_moduli, degree]
+        // Aggregate collected shares to get s and e polynomials.
+        // First, sum across parties for each modulus, then rehydrate the typed
+        // fhe.rs share owners for the decryption operation.
         let ctx = threshold_params.context_at_level(0)?;
         let num_moduli = sk_sss_collected.len();
 
@@ -220,27 +222,33 @@ impl ShareDecryptionCircuitData {
             }
         }
 
-        // Use aggregate_collected_shares with the correctly formatted data
-        // It expects a slice with one Array2 of shape [num_moduli, degree]
-        let sk_poly_sum = share_manager
-            .aggregate_collected_shares(&[sk_sum_matrix])
+        let sk_crt = CrtPolynomial::from_bigint_vectors(
+            sk_sum_matrix
+                .outer_iter()
+                .map(|row| row.iter().copied().map(num_bigint::BigInt::from).collect())
+                .collect(),
+        );
+        let es_crt = CrtPolynomial::from_bigint_vectors(
+            es_sum_matrix
+                .outer_iter()
+                .map(|row| row.iter().copied().map(num_bigint::BigInt::from).collect())
+                .collect(),
+        );
+        let sk_aggregate = share_manager
+            .aggregate_secret_key_shares(vec![SecretKeyShare::from_transport(sk_sum_matrix)])
             .map_err(|e| {
                 CircuitsErrors::Sample(format!("Failed to aggregate SK shares: {:?}", e))
             })?;
 
-        let es_poly_sum = share_manager
-            .aggregate_collected_shares(&[es_sum_matrix])
+        let es_aggregate = share_manager
+            .aggregate_smudging_shares(vec![SmudgingShare::from_transport(es_sum_matrix)])
             .map_err(|e| {
                 CircuitsErrors::Sample(format!("Failed to aggregate ES shares: {:?}", e))
             })?;
 
         // Compute the decryption share using TRBFV
         let d_share_rns = share_manager
-            .decryption_share(
-                Arc::new(ciphertext.clone()),
-                sk_poly_sum.clone().into_ntt(),
-                es_poly_sum.clone(),
-            )
+            .decryption_share(Arc::new(ciphertext.clone()), &sk_aggregate, es_aggregate)
             .map_err(|e| {
                 CircuitsErrors::Sample(format!("Failed to compute decryption share: {:?}", e))
             })?;
@@ -248,8 +256,8 @@ impl ShareDecryptionCircuitData {
         Ok(Self {
             ciphertext,
             public_key,
-            s: CrtPolynomial::from_fhe_polynomial(&sk_poly_sum),
-            e: CrtPolynomial::from_fhe_polynomial(&es_poly_sum),
+            s: sk_crt,
+            e: es_crt,
             d_share: CrtPolynomial::from_fhe_polynomial(&d_share_rns),
             domain_hi: 1,
             domain_lo: 2,
