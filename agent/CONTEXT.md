@@ -101,11 +101,14 @@ for that chain.
   `documentation` label. CI validates commit messages.
 - **Branches:** `main` = latest (feature-flagged); `v*.*.*` tags; `stable` = latest stable.
 - **Pre-push hook (husky):** `pnpm lint`, `check:pnpm`, `check:license`, `check:committee`,
-  `check:docs` (harness-doc drift gate — escape with `[skip-doc-sync]` in a commit message when no
-  documented behavior changed), `check:addresses` (contract addresses in the docs, dashboard,
-  DAppNode package, and CRISP example must match `deployments/manifest.json`), `check:invariants`
-  (grep-enforced invariants: `do_send` ratchet, skip-proof feature containment — baselines in
-  `scripts/invariant-baselines.env`), `check:verifiers`.
+  `check:docs` (harness-doc drift gate — a watched file is exempt automatically when neither its
+  changed lines nor the declarations that enclose them name an identifier the `agent/` docs mention,
+  when the change is a pure formatter reflow, or when the branch reverts the file; otherwise escape
+  with `[skip-doc-sync]` in a commit message when no documented behavior changed), `check:addresses`
+  (contract addresses in the docs, dashboard, DAppNode package, and CRISP example must match
+  `deployments/manifest.json`), `check:invariants` (grep-enforced invariants: `do_send` ratchet,
+  skip-proof feature containment — baselines in `scripts/invariant-baselines.env`),
+  `check:verifiers`.
 - **Docs MCP server:** `.mcp.json`, `.codex/config.toml`, and `opencode.json` expose
   `@interfold/mcp` (`interfold-docs`) to their respective agents. The launch configs run the
   TypeScript source through the workspace toolchain; `pnpm mcp:build` builds the publishable
