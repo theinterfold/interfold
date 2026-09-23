@@ -107,18 +107,37 @@ const readFoldedArtifactsFromFile = (
   return isValidFoldedArtifacts(parsed) ? parsed : null;
 };
 
-const hasExpectedFoldedLayout = (value: FoldedArtifacts): boolean =>
-  [
-    bfvPkExpectedPublicInputsLen(BFV_DKG_H),
-    43 + 3 * BFV_DKG_H + 3 * 3,
-  ].includes(
-    hexToBytes32Array(value.dkg_aggregator.public_inputs_hex).length,
-  ) &&
-  hexToBytes32Array(value.decryption_aggregator.public_inputs_hex).length ===
-    bfvDecExpectedPublicInputsLen(BFV_THRESHOLD_T);
+const v2DkgLbfvRows = (publicInputs: string[]): 3 | 5 | null => {
+  if (publicInputs.length === 43 + 3 * BFV_DKG_H + 3 * 3) {
+    return 3;
+  }
+  if (publicInputs.length === 43 + 3 * BFV_DKG_H + 3 * 5) {
+    return 5;
+  }
+  return null;
+};
+
+const hasExpectedFoldedLayout = (value: FoldedArtifacts): boolean => {
+  const dkgPublicInputs = hexToBytes32Array(
+    value.dkg_aggregator.public_inputs_hex,
+  );
+  const decPublicInputs = hexToBytes32Array(
+    value.decryption_aggregator.public_inputs_hex,
+  );
+  return (
+    (dkgPublicInputs.length === bfvPkExpectedPublicInputsLen(BFV_DKG_H) ||
+      v2DkgLbfvRows(dkgPublicInputs) !== null) &&
+    decPublicInputs.length === bfvDecExpectedPublicInputsLen(BFV_THRESHOLD_T)
+  );
+};
 
 const isV2DkgLayout = (publicInputs: string[]): boolean =>
-  publicInputs.length === 43 + 3 * BFV_DKG_H + 3 * 3;
+  v2DkgLbfvRows(publicInputs) !== null;
+
+const v2DkgVkBindingStart = (publicInputs: string[]): number | null => {
+  const rows = v2DkgLbfvRows(publicInputs);
+  return rows === null ? null : 30 + 3 * BFV_DKG_H + 3 * rows;
+};
 
 /** Prefer env override, then current-layout benchmark output, then the committed fixture. */
 const resolveFoldedArtifacts = (): FoldedArtifacts | null => {
@@ -178,11 +197,8 @@ function hexToBytes32Array(hex: string): string[] {
 }
 
 const DKG_COMMITTEE_HASH_IDX = bfvDkgCommitteeHashIndices(BFV_DKG_H);
-const DKG_EXPECTED_PUBLIC_INPUT_LEN = bfvPkExpectedPublicInputsLen(BFV_DKG_H);
 const DEC_COMMITTEE_HASH_IDX = bfvDecCommitteeHashIndices();
 const DEC_DOMAIN_IDX = bfvDecDomainIndices();
-const DEC_EXPECTED_PUBLIC_INPUT_LEN =
-  bfvDecExpectedPublicInputsLen(BFV_THRESHOLD_T);
 
 /** Headroom for Honk `verify` staticCalls (much higher under `--coverage`). */
 const HONK_VERIFY_GAS_LIMIT = 1_000_000_000n;
@@ -203,6 +219,16 @@ function plaintextHashFromPublicInputs(publicInputs: string[]): string {
 }
 
 describe("BfvVkBindingIntegration", function () {
+  it("recognizes the five-row secure-16384 folded DKG layout", function () {
+    const secure16384DkgPublicInputs = Array.from(
+      { length: 43 + 3 * BFV_DKG_H + 3 * 5 },
+      () => ethers.ZeroHash,
+    );
+
+    expect(v2DkgLbfvRows(secure16384DkgPublicInputs)).to.equal(5);
+    expect(v2DkgVkBindingStart(secure16384DkgPublicInputs)).to.equal(51);
+  });
+
   const deployHonkAndBfv = async () => {
     const { mockCiphernodeRegistry } = await ignition.deploy(
       MockCiphernodeRegistryModule,
@@ -485,12 +511,7 @@ describe("BfvVkBindingIntegration", function () {
       const decPublicInputs = hexToBytes32Array(
         folded.decryption_aggregator.public_inputs_hex,
       );
-      if (
-        ![DKG_EXPECTED_PUBLIC_INPUT_LEN, 43 + 3 * BFV_DKG_H + 3 * 3].includes(
-          dkgPublicInputs.length,
-        ) ||
-        decPublicInputs.length !== DEC_EXPECTED_PUBLIC_INPUT_LEN
-      ) {
+      if (!hasExpectedFoldedLayout(folded)) {
         throw new Error(
           "Folded artifact public-input layout is stale. Re-run insecure benchmarks or set BFV_VK_BINDING_FOLDED_ARTIFACTS.",
         );
@@ -530,8 +551,7 @@ describe("BfvVkBindingIntegration", function () {
         expectedESmC2ChunkKeyHash,
       );
       if (isV2DkgLayout(dkgPublicInputs)) {
-        const lbfvRows = 3;
-        const v2BindingStart = 30 + 3 * BFV_DKG_H + 3 * lbfvRows;
+        const v2BindingStart = v2DkgVkBindingStart(dkgPublicInputs)!;
         getBfvV2VkBindingHashPaths().forEach((filePath, index) => {
           expect(dkgPublicInputs[v2BindingStart + index]).to.equal(
             readVkRecursiveHash(filePath),

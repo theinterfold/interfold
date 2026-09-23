@@ -176,6 +176,23 @@ pub fn ceil_sqrt(value: &BigUint) -> BigUint {
     }
 }
 
+/// Return the absolute coefficient bound used by the BFV error sampler.
+pub fn error_sampler_bound(variance: &BigUint) -> BigUint {
+    if let Some(value) = variance.to_u64().filter(|value| *value <= 16) {
+        return BigUint::from(2u32 * value as u32);
+    }
+
+    let target = BigUint::from(3u32) * variance;
+    let mut bound = target.sqrt();
+    while &bound * (&bound + 1u32) < target {
+        bound += 1u32;
+    }
+    while bound > 0u32.into() && (&bound - 1u32) * &bound >= target {
+        bound -= 1u32;
+    }
+    bound
+}
+
 /// Computes the bit width of ring elements (coefficients bounded by the coefficient modulus).
 ///
 /// # Arguments
@@ -356,6 +373,18 @@ mod tests {
     fn ceil_sqrt_rounds_non_square_values_up() {
         assert_eq!(ceil_sqrt(&BigUint::from(9u32)), BigUint::from(3u32));
         assert_eq!(ceil_sqrt(&BigUint::from(10u32)), BigUint::from(4u32));
+    }
+
+    #[test]
+    fn error_sampler_bound_matches_cbd_and_uniform_variance_rules() {
+        assert_eq!(
+            error_sampler_bound(&BigUint::from(16u32)),
+            BigUint::from(32u32)
+        );
+        assert_eq!(
+            error_sampler_bound(&BigUint::from(13_334u32)),
+            BigUint::from(200u32)
+        );
     }
 
     #[test]

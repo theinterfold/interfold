@@ -15,7 +15,7 @@
 // The comparison is a content digest recorded at staging time, not a modification time, because a
 // `git checkout` rewrites modification times for files whose content did not change.
 
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -67,15 +67,29 @@ if (!manifest.sources?.digest) {
   fail(`✗ ${preset} was staged before this check existed and carries no source digest.`, `  ${RESTAGE}`)
 }
 
-const { digest, fileCount } = circuitSourcesDigest()
+const current = circuitSourcesDigest()
 
-if (digest !== manifest.sources.digest) {
+// Migrate a v1 stamp when its full source digest still matches. Version 2 excludes generated
+// witness TOML files because they do not change the compiled artifacts.
+if (manifest.sources.version !== 2) {
+  const legacy = circuitSourcesDigest({ includeGeneratedWitnesses: true })
+  if (legacy.digest === manifest.sources.digest) {
+    manifest.sources = { version: 2, ...current }
+    const originalTimes = statSync(manifestPath)
+    writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+    utimesSync(manifestPath, originalTimes.atime, originalTimes.mtime)
+    console.log(`✓ ${preset} stamp migrated (${current.fileCount} circuit source files, ${current.digest.slice(0, 12)}).`)
+    process.exit(0)
+  }
+}
+
+if (current.digest !== manifest.sources.digest) {
   fail(
     `✗ ${preset} is staged from circuits that have changed since.`,
     `  staged from: ${manifest.sources.digest.slice(0, 12)} (${manifest.sources.fileCount} source files)`,
-    `  tree now at: ${digest.slice(0, 12)} (${fileCount} source files)`,
+    `  tree now at: ${current.digest.slice(0, 12)} (${current.fileCount} source files)`,
     `  ${RESTAGE}`,
   )
 }
 
-console.log(`✓ ${preset} is staged from the current circuits (${fileCount} source files, ${digest.slice(0, 12)}).`)
+console.log(`✓ ${preset} is staged from the current circuits (${current.fileCount} source files, ${current.digest.slice(0, 12)}).`)

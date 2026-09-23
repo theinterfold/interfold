@@ -38,6 +38,7 @@
     "build:sdk": "pnpm -C packages/crisp-sdk build",
     "build:presets": "pnpm -C packages/crisp-sdk build:presets",
     "check:staged": "pnpm -C packages/crisp-sdk check:staged",
+    "test:source-stamp": "node --test ./scripts/circuit-sources.test.mjs",
     "report": "playwright show-report",
     "publish:packages": "tsx scripts/publish.ts",
     "setup:testnet": "bash ./scripts/setup_testnet.sh"

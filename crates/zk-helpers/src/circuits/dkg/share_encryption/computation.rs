@@ -241,25 +241,17 @@ impl Computation for Bounds {
 
         let t = BigInt::from(dkg_params.plaintext());
 
-        // CBD bound
-        let cbd_bound = (dkg_params.variance() * 2) as u64;
-        // Uniform bound
-        let uniform_bound =
-            crate::utils::ceil_sqrt(&(dkg_params.get_error1_variance() * BigUint::from(3u32)))
-                .to_bigint()
-                .ok_or_else(|| {
-                    CircuitsErrors::Other("Failed to convert uniform bound to BigInt".into())
-                })?;
+        let error_bound = crate::utils::error_sampler_bound(dkg_params.get_error1_variance())
+            .to_bigint()
+            .ok_or_else(|| {
+                CircuitsErrors::Other("Failed to convert error bound to BigInt".into())
+            })?;
 
         let u_bound = SecretKey::sk_bound() as u128; // u_bound is the same as sk_bound
 
-        // e0 = e1 in the fhe.rs
-        let e0_bound: u128 = if dkg_params.get_error1_variance() <= &BigUint::from(16u32) {
-            cbd_bound as u128
-        } else {
-            uniform_bound.to_u128().unwrap()
-        };
-        let e1_bound = cbd_bound; // e1 = e2 in the fhe.rs
+        // e0 = e1 in fhe.rs; e1 = e2 in fhe.rs.
+        let e0_bound = error_bound.to_u128().unwrap();
+        let e1_bound = (dkg_params.variance() * 2) as u64;
 
         // Message bound: message is in [0, t), so bound is t - 1
         let msg_bound = t.clone() - BigInt::from(1);

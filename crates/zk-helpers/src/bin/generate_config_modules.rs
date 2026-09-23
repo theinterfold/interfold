@@ -40,10 +40,9 @@ use e3_zk_helpers::circuits::threshold::rlk_generation::RlkGenerationConfigs;
 use e3_zk_helpers::circuits::threshold::share_decryption::Configs as ThresholdShareDecryptionConfigs;
 use e3_zk_helpers::circuits::threshold::user_data_encryption::Configs as UserDataEncryptionConfigs;
 use e3_zk_helpers::computation::DkgInputType;
-use e3_zk_helpers::utils::{bigint_to_field, ceil_sqrt, compute_msg_bit, join_display};
+use e3_zk_helpers::utils::{bigint_to_field, compute_msg_bit, error_sampler_bound, join_display};
 use e3_zk_helpers::Computation;
 use num_bigint::{BigInt, BigUint};
-use num_traits::ToPrimitive;
 
 const LICENSE: &str = "// SPDX-License-Identifier: LGPL-3.0-only
 //
@@ -91,26 +90,17 @@ fn moduli_str(moduli: &[u64]) -> String {
     join_display(moduli, ", ")
 }
 
-/// Computes the deterministic error bound `B_enc = ceil(sqrt(3 * error1_variance))`
-/// for the threshold parameter set, matching `pk_generation` codegen.
 fn b_enc_value(preset: BfvPreset) -> Result<BigUint> {
     let (threshold_params, _) = build_pair_for_preset(preset)
         .with_context(|| format!("build_pair_for_preset({preset:?}) failed"))?;
-    Ok(ceil_sqrt(
-        &(BigUint::from(3u32) * threshold_params.get_error1_variance()),
-    ))
+    Ok(error_sampler_bound(threshold_params.get_error1_variance()))
 }
 
-/// Computes the sampler-aligned encryption bound used by the smudging calculator.
+/// Computes the encryption bound used by the upstream error sampler and smudging calculator.
 fn smudging_b_enc_value(preset: BfvPreset) -> Result<BigUint> {
     let (threshold_params, _) = build_pair_for_preset(preset)
         .with_context(|| format!("build_pair_for_preset({preset:?}) failed"))?;
-    let variance = threshold_params.get_error1_variance();
-    if variance <= &BigUint::from(16u32) {
-        Ok(BigUint::from(2u64 * variance.to_u64().unwrap()))
-    } else {
-        Ok(ceil_sqrt(&(BigUint::from(3u32) * variance)))
-    }
+    Ok(error_sampler_bound(threshold_params.get_error1_variance()))
 }
 
 /// The C2 chunking for a polynomial degree, matching `c2_chunk_layout::C2ChunkLayout::compiled`.

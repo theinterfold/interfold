@@ -521,19 +521,18 @@ fn verify_user_data_encryption_bounds() {
         // Use Field arithmetic since e0_bound is ~107 bits
         let e0_bound_i: u128 = (USER_DATA_ENCRYPTION_E0_BOUND as u128) % qi;
 
-        // r1_up_bounds[i] = (ptxt_up * k0i + ((n * u + 2) * qi_bound + e0_i)) / q_i
-        let expected_r1_up: u128 =
-            (ptxt_up_bound * k0i + ((n * u_bound + 2) * qi_bound + e0_bound_i)) / qi;
-        assert(
-            USER_DATA_ENCRYPTION_R1_UP_BOUNDS[i] as u128 == expected_r1_up,
-            "USER_DATA_ENCRYPTION_R1_UP_BOUNDS mismatch",
-        );
-
-        // r1_low_bounds[i] uses the lower plaintext bound of zero.
-        let expected_r1_low: u128 = ((n * u_bound + 2) * qi_bound + e0_bound_i) / qi;
+        // Round each magnitude up so the bound includes all possible integer coefficients.
+        let r1_residual_bound: u128 = (n * u_bound + 2) * qi_bound + e0_bound_i;
+        let expected_r1_low: u128 = (ptxt_up_bound * k0i + r1_residual_bound + qi - 1) / qi;
         assert(
             USER_DATA_ENCRYPTION_R1_LOW_BOUNDS[i] as u128 == expected_r1_low,
             "USER_DATA_ENCRYPTION_R1_LOW_BOUNDS mismatch",
+        );
+
+        let expected_r1_up: u128 = (r1_residual_bound + qi - 1) / qi;
+        assert(
+            USER_DATA_ENCRYPTION_R1_UP_BOUNDS[i] as u128 == expected_r1_up,
+            "USER_DATA_ENCRYPTION_R1_UP_BOUNDS mismatch",
         );
     }
 }

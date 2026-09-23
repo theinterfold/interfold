@@ -40,6 +40,9 @@ const SOURCE_DIRS = [
 /** A compile reads these. Everything else in those directories is output or editor noise. */
 const SOURCE_FILE = /\.(nr|toml)$/
 
+// Nargo reads these files as witnesses. Changes to them do not change compiled circuits.
+const GENERATED_WITNESS_FILES = new Set(['Prover.toml', 'Witness.toml'])
+
 /** Compiler output and installed packages. Both are derived, and both are large. */
 const SKIP_DIRS = new Set(['target', 'node_modules'])
 
@@ -57,14 +60,17 @@ const SKIP_DIRS = new Set(['target', 'node_modules'])
  */
 const GENERATED = new Set([join(REPO, 'circuits/lib/src/configs/default/mod.nr')])
 
-const walk = (dir, found) => {
+export const isCircuitSourceFile = (name, includeGeneratedWitnesses = false) =>
+  SOURCE_FILE.test(name) && (includeGeneratedWitnesses || !GENERATED_WITNESS_FILES.has(name))
+
+const walk = (dir, found, includeGeneratedWitnesses) => {
   if (!existsSync(dir)) return found
 
   for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
     const path = join(dir, entry.name)
     if (entry.isDirectory()) {
-      if (!SKIP_DIRS.has(entry.name)) walk(path, found)
-    } else if (SOURCE_FILE.test(entry.name) && !GENERATED.has(path)) {
+      if (!SKIP_DIRS.has(entry.name)) walk(path, found, includeGeneratedWitnesses)
+    } else if (isCircuitSourceFile(entry.name, includeGeneratedWitnesses) && !GENERATED.has(path)) {
       found.push(path)
     }
   }
@@ -77,9 +83,9 @@ const walk = (dir, found) => {
  *
  * Paths go into the hash as well as content, so a moved or deleted file changes the digest.
  */
-export const circuitSourcesDigest = () => {
+export const circuitSourcesDigest = ({ includeGeneratedWitnesses = false } = {}) => {
   const hash = createHash('sha256')
-  const files = SOURCE_DIRS.flatMap((dir) => walk(dir, [])).sort()
+  const files = SOURCE_DIRS.flatMap((dir) => walk(dir, [], includeGeneratedWitnesses)).sort()
 
   for (const file of files) {
     hash.update(relative(REPO, file))
