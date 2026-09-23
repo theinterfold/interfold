@@ -68,7 +68,7 @@ export const ACTIVE_CRYPTO_CONFIG_ID = ethers.keccak256(
     [
       ENCRYPTION_SCHEME_ID,
       ethers.keccak256(BFV_PARAMS_DEFAULT),
-      ethers.id("interfold-bfv-v1"),
+      ethers.id("interfold-bfv-v2"),
     ],
   ),
 );
@@ -80,7 +80,7 @@ export const PRODUCTION_CRYPTO_CONFIG_ID = ethers.keccak256(
     [
       ENCRYPTION_SCHEME_ID,
       ethers.keccak256(BFV_PARAMS_SECURE),
-      ethers.id("interfold-bfv-v1"),
+      ethers.id("interfold-bfv-v2"),
     ],
   ),
 );

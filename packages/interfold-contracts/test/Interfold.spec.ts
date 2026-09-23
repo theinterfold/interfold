@@ -584,6 +584,31 @@ describe("Interfold", function () {
       ).to.be.revertedWithCustomError(interfold, "CryptoConfigChanged");
     });
 
+    it("rejects a quote for the previous insecure circuit version", async function () {
+      const { interfold, request } = await loadFixture(setup);
+      const previousConfigId = ethers.keccak256(
+        abiCoder.encode(
+          ["bytes32", "bytes32", "bytes32"],
+          [
+            encryptionSchemeId,
+            ethers.keccak256(BFV_PARAMS_DEFAULT),
+            ethers.id("interfold-bfv-v1"),
+          ],
+        ),
+      );
+      expect(previousConfigId).to.not.equal(ACTIVE_CRYPTO_CONFIG_ID);
+
+      await expect(
+        interfold.request({
+          ...request,
+          inputWindow: await freshInputWindow(),
+          expectedCryptoConfigId: previousConfigId,
+        }),
+      )
+        .to.be.revertedWithCustomError(interfold, "CryptoConfigChanged")
+        .withArgs(previousConfigId, ACTIVE_CRYPTO_CONFIG_ID);
+    });
+
     it("reverts if USDC allowance is insufficient", async function () {
       const { interfold, request, usdcToken } = await loadFixture(setup);
       await expect(

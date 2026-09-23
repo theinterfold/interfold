@@ -153,6 +153,13 @@ EncryptionKeyCollector collects verified EncryptionKeyCreated events
 
 ### Step 4: Generate TrBFV Key Shares + Shamir Secret Shares
 
+For `secure-8192`, the threshold key uses plaintext modulus 1,000,000 and three 59-bit CRT primes
+(`0x0400000000c00001`, `0x0400000000a40001`, `0x0400000000990001`). The paired share-encryption key
+uses plaintext modulus 288230376164294657 and two 61-bit primes (`0x1000000000024001`,
+`0x1000000000054001`). Both use ring degree 8192 and statistical security parameter 45. The
+threshold encryption error variance is 17723039943798878305460955570711717478400. These values bind
+the C1-C7 witness dimensions and the on-chain BFV parameter hash.
+
 ```
 ThresholdKeyshare receives AllEncryptionKeysCollected
 │
@@ -176,7 +183,8 @@ ThresholdKeyshare receives AllEncryptionKeysCollected
 │   │  │     → One share per committee member                    │
 │   │  │                                                         │
 │   │  │  3. Generate smudging noise (e_sm_raw):                │
-│   │  │     → Statistical security parameter                    │
+│   │  │     → Uses the preset's lambda and additive depth 0      │
+│   │  │     → Bound: 2^(lambda + 1) × degree × B_C              │
 │   │  │     → Prevents information leakage during decryption    │
 │   │  │                                                         │
 │   │  │  4. Extract raw polynomials for ZK proof:              │

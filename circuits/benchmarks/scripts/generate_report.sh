@@ -590,7 +590,7 @@ cat > "$OUTPUT_FILE" <<EOF
 
 **Generated:** ${TIMESTAMP}
 
-**Git Branch:** \`${GIT_BRANCH}\`  
+**Git Branch:** \`${GIT_BRANCH}\`
 **Git Commit:** \`${GIT_COMMIT}\`
 
 **Committee Size:** \`H=${PROTOCOL_H}\`, \`N=${PROTOCOL_N}\`, \`T=${PROTOCOL_T}\`

@@ -451,7 +451,7 @@ async fn store_committee_public_key<S: DataStore, R: ProviderType>(
         (
             keccak256(b"fhe.rs:BFV"),
             keccak256(&e3_params),
-            keccak256(b"interfold-bfv-v1"),
+            keccak256(b"interfold-bfv-v2"),
         )
             .abi_encode(),
     );

@@ -105,7 +105,7 @@ impl DecryptedSharesAggregationCircuitData {
                     })?;
 
                 let esi_coeffs = trbfv
-                    .generate_smudging_error(sd.z as usize, lambda, &mut rng)
+                    .generate_smudging_error(sd.z as usize, 0, lambda, &mut rng)
                     .map_err(|e| {
                         CircuitsErrors::Sample(format!(
                             "Failed to generate smudging error: {:?}",

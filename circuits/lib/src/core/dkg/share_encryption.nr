@@ -201,7 +201,7 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
     ///
     /// Each coefficient is transformed as:
     ///   k1[i] = (Q_mod_t * message[i]) mod t
-    /// then centered to [-t/2, t/2) to produce the BFV plaintext encoding.
+    /// The residue stays in [0, t) to match the BFV plaintext encoding.
     fn compute_scaled_message(self) -> Polynomial<N> {
         let t = self.configs.t;
         // t < 2^62 (plaintext modulus); q_mod_t, msg_i < t: all safe for ModU64.
@@ -209,25 +209,9 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
         let q_mod_t: Field = self.configs.q_mod_t;
         let mut k1_coeffs: [Field; N] = [0; N];
 
-        // Integer division for t_half; t < 2^62 so u64 is sufficient.
-        let t_half: u64 = (t as u64) / 2;
-
         for i in 0..N {
             let msg_i: Field = self.message.coefficients[i];
-            let q_times_m_mod_t = t_mod.mul_mod(q_mod_t, msg_i);
-
-            // Check if centering is needed (value > t/2 means negative in centered form)
-            let needs_centering = (q_times_m_mod_t as u64) > t_half;
-
-            k1_coeffs[i] = if needs_centering {
-                // Value is in (t/2, t), negative in centered form
-                // Represent as P - magnitude (i.e., 0 - magnitude in Field)
-                let magnitude = t - q_times_m_mod_t;
-                0 - magnitude
-            } else {
-                // Value is in [0, t/2], stays positive
-                q_times_m_mod_t
-            };
+            k1_coeffs[i] = t_mod.mul_mod(q_mod_t, msg_i);
         }
 
         Polynomial { coefficients: k1_coeffs }

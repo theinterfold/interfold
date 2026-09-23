@@ -134,10 +134,12 @@ pub fn compute_k0is(moduli: &[u64], plaintext_modulus: u64) -> Result<Vec<u64>, 
         let m = Modulus::new(qi).map_err(|e| {
             CircuitsErrors::Sample(format!("Failed to create modulus for k0is: {:?}", e))
         })?;
-        let k0qi = m.inv(m.neg(plaintext_modulus)).ok_or_else(|| {
-            CircuitsErrors::Fhe(fhe::Error::MathError(fhe_math::Error::Default(
-                "Failed to calculate modulus inverse for k0qi".into(),
-            )))
+        let neg_t = m.neg(plaintext_modulus % qi);
+        let k0qi = m.inv(neg_t).ok_or_else(|| {
+            CircuitsErrors::Fhe(fhe::Error::MathError(fhe_math::Error::NonInvertible {
+                value: neg_t,
+                modulus: qi,
+            }))
         })?;
         k0is.push(k0qi);
     }

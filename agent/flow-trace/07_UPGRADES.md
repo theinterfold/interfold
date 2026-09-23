@@ -14,6 +14,15 @@ discover, or synchronize with each other. P2P encoding remains separate. Increas
 `GOSSIP_WIRE_MAJOR` or `SYNC_WIRE_MAJOR` when the corresponding wire format becomes incompatible
 within the same protocol version.
 
+The fhe.rs v0.4.1 upgrade raises `protocol_version` from 4 to 5. Its smudging bound and BFV
+validation rules change the DKG and proof inputs. Its non-centered plaintext scale also changes the
+CRISP ballot check and its circuit artifacts. Drain active E3s and install matching circuit
+artifacts and verifier routes before requests resume. The circuit ID domain changes from
+`interfold-bfv-v1` to `interfold-bfv-v2` for both parameter sets. Old clients must update their
+expected configuration IDs before they submit new requests. The RISC Zero guest in `crates/support`
+uses a separate, content-addressed Interfold revision. Rebuild its image and provenance record
+before changing that guest revision or its fhe.rs pin.
+
 ## Compatible rolling release
 
 ```text

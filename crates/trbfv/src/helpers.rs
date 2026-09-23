@@ -79,7 +79,7 @@ pub fn calculate_error_size(
     num_ciphertexts: usize,
     lambda: Lambda,
 ) -> Result<BigUint> {
-    let config = SmudgingBoundCalculatorConfig::new(params, n, num_ciphertexts, lambda);
+    let config = SmudgingBoundCalculatorConfig::new(params, n, num_ciphertexts, lambda)?;
     let calculator = SmudgingBoundCalculator::new(config);
     Ok(calculator.calculate_sm_bound()?)
 }

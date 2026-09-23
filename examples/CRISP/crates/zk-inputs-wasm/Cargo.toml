@@ -18,7 +18,7 @@ web-sys = "0.3"
 getrandom = { version = "0.3", features = ["wasm_js"] }
 getrandom2 = { package = "getrandom", version = "0.2", features = ["js"] }
 serde_json.workspace = true
-num-bigint = "0.4.6"
+num-bigint = "0.5.1"
 
 [dev-dependencies]
 wasm-bindgen-test = "0.2"

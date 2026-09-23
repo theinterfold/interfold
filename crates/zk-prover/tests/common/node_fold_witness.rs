@@ -34,7 +34,7 @@ use std::ops::Deref;
 
 /// Same as [`PkGenerationCircuitData::generate_sample`], plus smudging coefficients for C2b.
 ///
-/// Returns the [`SecretKey`] used for [`PublicKeyShare::new_extended`] so correlated C2a shares can
+/// Returns the [`SecretKey`] used for [`PublicKeyShare::new_with_intermediates`] so correlated C2a shares can
 /// be built with [`ShareComputationCircuitData::generate_sample`]-compatible
 /// `coeffs_to_poly_level0(secret_key.coeffs)` (not a round-trip through `pk.sk` limb 0).
 pub fn pk_generation_sample_with_esi(
@@ -49,10 +49,10 @@ pub fn pk_generation_sample_with_esi(
     let secret_key = SecretKey::random(&threshold_params, &mut rng);
     let crp = create_deterministic_crp_from_default_seed(&threshold_params);
 
-    let (pk0_share, _, _sk_fhe, e) =
-        PublicKeyShare::new_extended(&secret_key, crp.clone(), &mut rng).map_err(|e| {
-            CircuitsErrors::Sample(format!("Failed to create public key share: {:?}", e))
-        })?;
+    let (pk_share, intermediates) =
+        PublicKeyShare::new_with_intermediates(&secret_key, crp.clone(), &mut rng).map_err(
+            |e| CircuitsErrors::Sample(format!("Failed to create public key share: {:?}", e)),
+        )?;
 
     let sk_coeffs: Vec<BigInt> = secret_key.coeffs.iter().map(|&c| BigInt::from(c)).collect();
     let mut sk_crt = CrtPolynomial::from_mod_q_polynomial(&sk_coeffs, threshold_params.moduli());
@@ -78,7 +78,7 @@ pub fn pk_generation_sample_with_esi(
         .map_err(|e| CircuitsErrors::Sample(format!("Failed to create ShareManager: {:?}", e)))?;
 
     let esi_coeffs: Vec<BigInt> = trbfv
-        .generate_smudging_error(num_ciphertexts as usize, lambda, &mut rng)
+        .generate_smudging_error(num_ciphertexts as usize, 0, lambda, &mut rng)
         .map_err(|e| {
             CircuitsErrors::Sample(format!("Failed to generate smudging error: {:?}", e))
         })?;
@@ -91,8 +91,8 @@ pub fn pk_generation_sample_with_esi(
 
     let pk = PkGenerationCircuitData {
         committee,
-        pk0_share: CrtPolynomial::from_fhe_polynomial(&pk0_share),
-        eek: CrtPolynomial::from_fhe_polynomial(&e),
+        pk0_share: CrtPolynomial::from_fhe_polynomial(pk_share.p0_share()),
+        eek: CrtPolynomial::from_fhe_polynomial(intermediates.error()),
         e_sm: CrtPolynomial::from_fhe_polynomial(&e_sm),
         sk: sk_crt,
     };
@@ -224,18 +224,18 @@ pub fn share_encryption_for_slot(
     let pt = Plaintext::try_encode(&share_row, Encoding::poly(), &dkg_params)
         .map_err(|e| CircuitsErrors::Sample(format!("encode plaintext: {:?}", e)))?;
 
-    let (_ct, u_rns, e0_rns, e1_rns) = dkg_pk
-        .try_encrypt_extended(&pt, &mut rng)
+    let (ct, encryption) = dkg_pk
+        .try_encrypt_with_intermediates(&pt, &mut rng)
         .map_err(|e| CircuitsErrors::Sample(format!("encrypt: {:?}", e)))?;
 
     Ok(ShareEncryptionCircuitData {
         plaintext: pt,
-        ciphertext: _ct,
+        ciphertext: ct,
         public_key: dkg_pk.clone(),
         secret_key: dkg_sk.clone(),
-        u_rns,
-        e0_rns,
-        e1_rns,
+        u_rns: encryption.randomness().clone(),
+        e0_rns: encryption.error_0().clone(),
+        e1_rns: encryption.error_1().clone(),
         dkg_input_type,
     })
 }

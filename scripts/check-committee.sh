@@ -145,7 +145,12 @@ hex_csv_to_decimal() {
 
 error_bound_for_variance() {
   node -e '
-const value = 3n * BigInt(process.argv[1]);
+const variance = BigInt(process.argv[1]);
+if (variance < 16n) {
+  process.stdout.write((2n * variance).toString());
+  process.exit(0);
+}
+const value = 3n * variance;
 if (value < 2n) {
   process.stdout.write(value.toString());
 } else {

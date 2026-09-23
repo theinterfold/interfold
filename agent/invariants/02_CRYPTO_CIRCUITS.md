@@ -100,6 +100,14 @@ every section.
 - Proof multiplicity: C2a/C2b singleton per recipient; C3a/C3b follow configured Shamir
   multiplicities. Witness dimensions come from the **active preset**, never incidental vector sizes.
   — `ARCHITECTURE.md`; `CRATES_ARCHITECTURE.md`
+- fhe.rs v0.4.1 derives additive smudging bounds as `2^(lambda + 1) * degree * B_C` and uses
+  sampler-specific encryption error bounds. The C1/C2 Noir bit widths must use the same bounds as
+  the Rust sampler for each preset and committee. Regenerate them with `pnpm build:circuits`;
+  rebuild the matching verifier artifacts before deploying a protocol-version-5 node. —
+  `flow-trace/04`; `scripts/build-circuits.ts`
+- fhe.rs v0.4.1 passes plaintext-scaled ballot coefficients as non-centered residues. Both CRISP
+  vote circuits must check `Q_MOD_T`, rather than `Q_MOD_T_CENTERED`, against those coefficients. —
+  `examples/CRISP/circuits/bin/{crisp,crisp_onchain}/src/main.nr`
 - All C0–C7 proofs must complete before `ThresholdShareCreated` is published. — `flow-trace/04`
 
 ### Proof binding / domain separation (audit-fix invariants — do not regress)

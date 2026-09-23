@@ -30,7 +30,7 @@ describe('encryptNumber', () => {
       const publicKey = await sdk.generatePublicKey()
       const value = await sdk.encryptNumber(10n, publicKey)
       expect(value).to.be.an.instanceof(Uint8Array)
-      expect(value.length).to.equal(9_242)
+      expect(value.length).to.equal(9_238)
       // TODO: test the encryption is correct
     })
     it('should encrypt a number and generate a proof without crashing in a node environent', async () => {
@@ -47,7 +47,7 @@ describe('encryptNumber', () => {
       const publicKey = await sdk.generatePublicKey()
       const value = await sdk.encryptVector(new BigUint64Array([1n, 2n]), publicKey)
       expect(value).to.be.an.instanceof(Uint8Array)
-      expect(value.length).to.equal(9_242)
+      expect(value.length).to.equal(9_238)
     })
 
     it('should validate a committee public key against its on-chain commitment', async () => {
@@ -87,14 +87,14 @@ describe('encryptNumber', () => {
       const pk = await generatePublicKey('INSECURE_THRESHOLD_512')
       const ct = await standaloneEncryptNumber(10n, pk, 'INSECURE_THRESHOLD_512')
       expect(ct).to.be.an.instanceof(Uint8Array)
-      expect(ct.length).to.equal(9_242)
+      expect(ct.length).to.equal(9_238)
     })
 
     it('should encrypt a vector using standalone functions', async () => {
       const pk = await generatePublicKey('INSECURE_THRESHOLD_512')
       const ct = await standaloneEncryptVector(new BigUint64Array([1n, 2n]), pk, 'INSECURE_THRESHOLD_512')
       expect(ct).to.be.an.instanceof(Uint8Array)
-      expect(ct.length).to.equal(9_242)
+      expect(ct.length).to.equal(9_238)
     })
   })
 })

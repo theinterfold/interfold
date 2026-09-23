@@ -120,8 +120,8 @@ for that chain.
 
 Rust 1.91.1 (pinned, edition 2021, wasm32 target) · pnpm 10.7.1 · TypeScript 5.8.3 · Noir/nargo +
 Barretenberg `bb` (versions pinned in `crates/zk-prover/versions.json`) · FHE via
-`gnosisguild/fhe.rs` fork · Hardhat + alloy · libp2p 0.56 · tokio + actix · sled for persistence ·
-opentelemetry/tracing.
+`gnosisguild/fhe.rs` v0.4.1 fork · Hardhat + alloy · libp2p 0.56 · tokio + actix · sled for
+persistence · opentelemetry/tracing.
 
 ## Circuit map (IDs ↔ `CircuitName` in `crates/events`)
 

@@ -252,12 +252,10 @@ impl Computation for Bounds {
         // Message bound: message is in [0, t), so bound is t - 1
         let msg_bound = t.clone() - BigInt::from(1);
 
-        let ptxt_up_bound = (t.clone() - BigInt::from(1)) / BigInt::from(2);
-        let ptxt_low_bound: BigInt = if (t.clone() % BigInt::from(2)) == BigInt::from(1) {
-            -1 * ptxt_up_bound.clone()
-        } else {
-            -1 * ptxt_up_bound.clone() - BigInt::from(1)
-        };
+        // r1 divides ct0 - (pk0*u + e0 + k1) by qi, so a positive k1
+        // increases its negative bound rather than its positive bound.
+        let ptxt_low_bound = BigInt::from(1) - &t;
+        let ptxt_up_bound = BigInt::from(0);
 
         // Calculate bounds for each CRT basis
         let moduli: Vec<u64> = ctx.moduli_operators().iter().map(|q| **q).collect();
@@ -372,7 +370,6 @@ impl Computation for Inputs {
 
         let mut k1 = Polynomial::from_u64_vector(k1_u64);
         k1.reverse();
-        k1.center(&BigInt::from(t));
 
         let mut message = Polynomial::from_u64_vector(plaintext_poly_u64(&pt)?);
         message.reverse();
@@ -654,5 +651,30 @@ mod tests {
         expected.reverse();
 
         assert_eq!(inputs.message.coefficients(), expected.coefficients());
+    }
+
+    #[test]
+    fn generated_share_encryption_witness_respects_r1_bounds() {
+        let preset = BfvPreset::InsecureThreshold512;
+        let sample = ShareEncryptionCircuitData::generate_sample(
+            preset,
+            CiphernodesCommitteeSize::Minimum.values(),
+            DkgInputType::SecretKey,
+            preset.search_defaults().unwrap().z,
+        )
+        .unwrap();
+        let bounds = Bounds::compute(preset, &sample).unwrap();
+        let inputs = Inputs::compute(preset, &sample).unwrap();
+
+        for (i, limb) in inputs.r1is.limbs.iter().enumerate() {
+            let lower = -BigInt::from(bounds.r1_low_bounds[i].clone());
+            let upper = BigInt::from(bounds.r1_up_bounds[i].clone());
+            for (j, coefficient) in limb.coefficients().iter().enumerate() {
+                assert!(
+                    coefficient >= &lower && coefficient <= &upper,
+                    "r1[{i}][{j}] = {coefficient} outside [{lower}, {upper}]"
+                );
+            }
+        }
     }
 }

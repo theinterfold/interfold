@@ -38,7 +38,7 @@ fhe-traits.workspace = true
 ark-bn254 = "=0.4.0"
 ark-ff = "=0.4.2"
 light-poseidon = "=0.1.0"
-num-bigint = "=0.4.6"
+num-bigint = "0.5.1"
 lean-imt = "=0.1.2"
 
 # Local dependencies
