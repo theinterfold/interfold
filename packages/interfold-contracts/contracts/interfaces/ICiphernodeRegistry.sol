@@ -503,6 +503,7 @@ interface ICiphernodeRegistry {
     /// @param requested The requested committee size (N)
     /// @param available The number of registered ciphernodes
     error InsufficientCiphernodes(uint256 requested, uint256 available);
+    error InsufficientBondOwners(uint256 required, uint256 available);
 
     ////////////////////////////////////////////////////////////
     //                                                        //

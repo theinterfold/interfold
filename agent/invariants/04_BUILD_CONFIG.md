@@ -28,8 +28,8 @@ every section.
 - Upgradeable-contract storage baselines are committed and CI-gated (missing baselines, compiler
   drift, layout incompatibility, bad gap consumption all fail); baseline creation is an explicit
   maintainer command. — INDEX concern #27
-- Contracts CI fails a release if `Interfold` / aggregator-verifier runtime bytecode is within 256
-  bytes of the EIP-170 limit. — INDEX concern #22
+- Contracts CI requires at least 128 bytes below the EIP-170 limit for `Interfold`,
+  `BondingRegistry`, `CiphernodeRegistryOwnable`, and both aggregator verifiers. — INDEX concern #22
 - BFV circuit-verifier and RISC Zero receipt-verifier constructors require deployed verifier
   contracts. BFV circuit wrappers also require nonzero recursive VK hashes. — INDEX concerns #21,
   Z-15

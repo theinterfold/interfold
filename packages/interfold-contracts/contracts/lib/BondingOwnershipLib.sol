@@ -16,6 +16,7 @@ import {
     Checkpoints
 } from "@openzeppelin/contracts/utils/structs/Checkpoints.sol";
 import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import { BondOwnerCapacityLib } from "./BondOwnerCapacityLib.sol";
 
 /**
  * @title BondingOwnershipLib
@@ -52,6 +53,7 @@ library BondingOwnershipLib {
             SafeCast.toUint48(block.timestamp),
             uint208(uint160(newOwner))
         );
+        BondOwnerCapacityLib.transfer(operator, newOwner);
     }
 
     /// @notice Commits a transfer after the registry checks authorization and locked balances.

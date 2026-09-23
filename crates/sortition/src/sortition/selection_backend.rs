@@ -303,6 +303,21 @@ mod tests {
     use super::*;
     use crate::domain::node_registry::{committee_key, NodeState, StateCheckpoint};
     use alloy::primitives::U256;
+    use std::io::Write;
+    use std::sync::{Arc, Mutex};
+
+    struct LogBuffer(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for LogBuffer {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
 
     fn ticket_count(nodes: &[RegisteredNode], address: Address) -> Option<usize> {
         nodes
@@ -313,6 +328,15 @@ mod tests {
 
     #[test]
     fn incomplete_owner_history_keeps_all_candidates_and_local_capacity_checks() {
+        let logs = Arc::new(Mutex::new(Vec::new()));
+        let writer = logs.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_max_level(tracing::Level::WARN)
+            .with_writer(move || LogBuffer(writer.clone()))
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
         let mut backend = SortitionBackend::default();
         let mut state = NodeStateStore::default();
         for i in 1..=50u8 {
@@ -361,6 +385,12 @@ mod tests {
         }
         ranks.sort();
         assert_eq!(ranks, (0..50).collect::<Vec<_>>());
+        let output = String::from_utf8(logs.lock().unwrap().clone()).unwrap();
+        assert!(output.contains("sortition_owner_history_fallback"));
+        assert!(output.contains("missing_owners=50"));
+        assert!(output.contains("eligible_operators=50"));
+        assert!(output.contains("timepoint=1"));
+        assert!(output.contains("e3_id="));
 
         let local = backend.nodes()[0].clone();
         state.nodes.get_mut(&local).unwrap().active_jobs = 1;
@@ -814,15 +844,16 @@ impl SortitionBackend {
         let Some(timepoint) = snapshot.request_block.checked_sub(1) else {
             return Ok(None);
         };
-        let owners: Option<std::collections::HashMap<_, _>> = nodes
+        let owners: std::collections::HashMap<_, _> = nodes
             .iter()
-            .map(|node| {
+            .filter_map(|node| {
                 owner_state
                     .owner_at(chain_id, node.address, timepoint)
                     .map(|owner| (node.address, owner))
             })
             .collect();
-        let winners = if let Some(owners) = owners {
+        let missing_owners = nodes.len() - owners.len();
+        let winners = if missing_owners == 0 {
             ScoreSortition::new(candidate_owners)
                 .get_owner_candidates(e3_id, seed, &nodes, &owners)?
         } else {
@@ -830,6 +861,11 @@ impl SortitionBackend {
             // The contract still enforces the cap on every submitted ticket.
             tracing::warn!(
                 chain_id,
+                e3_id = %e3_id,
+                timepoint,
+                missing_owners,
+                eligible_operators = nodes.len(),
+                event = "sortition_owner_history_fallback",
                 "Bond-owner history is incomplete; submitting without the owner shortlist"
             );
             ScoreSortition::new(nodes.len()).get_committee(e3_id, seed, &nodes)?

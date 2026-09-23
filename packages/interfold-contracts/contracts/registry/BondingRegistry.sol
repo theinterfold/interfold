@@ -359,6 +359,13 @@ contract BondingRegistry is
             BondingOwnershipLib.bondOwnerAt(_bondOwnerOf, operator, timepoint);
     }
 
+    /// @inheritdoc IBondOwnerHistory
+    function committeeOwnerCapacity(
+        uint256 timepoint
+    ) external view returns (uint256) {
+        return BondingEligibilityLib.committeeOwnerCapacity(timepoint);
+    }
+
     /// @inheritdoc IBondingRegistry
     function pendingBondOwnerOf(
         address operator
@@ -561,24 +568,12 @@ contract BondingRegistry is
         uint256 delegatedBond = operators[operator].ciphernodeBond +
             pendingCiphernodeBond;
 
-        if (delegatedBond != 0) {
-            uint256 remainingBonded = _bondedByOwner[previousOwner] -
-                delegatedBond;
-            uint256 lockedBalance = BondingAssetLib.lockedBalanceOf(
-                address(ciphernodeBondToken),
-                previousOwner
-            );
-            uint256 controlledBalance = ciphernodeBondToken.balanceOf(
-                previousOwner
-            ) + remainingBonded;
-            if (lockedBalance > controlledBalance) {
-                revert BondOwnerTransferViolatesLock(
-                    previousOwner,
-                    lockedBalance,
-                    controlledBalance
-                );
-            }
-        }
+        BondingAssetLib.validateBondOwnerTransfer(
+            address(ciphernodeBondToken),
+            previousOwner,
+            _bondedByOwner[previousOwner],
+            delegatedBond
+        );
 
         BondingOwnershipLib.completeTransfer(
             _bondOwnerOf,

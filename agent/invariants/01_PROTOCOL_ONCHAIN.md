@@ -180,7 +180,8 @@ every section.
   `cryptoConfigId != expectedCryptoConfigId`. BFV verifier mappings may point at routers, which
   dispatch by public-input length and VK hash anchors to the concrete verifier for the generated
   pair. Pricing uses circuit threshold `T`, not on-chain viability value `H`.
-  `N <= numActiveOperators` at `requestCommittee`. — `flow-trace/03`
+  `N <= numActiveOperators` at `requestCommittee`. New requests also require N counted active bond
+  owners at `T-1`, under the current eligibility policy, before a VRF draw. — `flow-trace/03`
 - Mainnet CRISP activation is one paused and drained governance batch. It upgrades Interfold to the
   secure crypto configuration, installs every secure BFV verifier route, registers secure BFV
   parameters, wires the receipt verifier, registers CRISP, binds CRISP, and raises the required node
@@ -226,6 +227,18 @@ every section.
   requires N distinct snapshot owners, not merely N submissions. The cap does not establish human
   uniqueness, prevent pre-request wallet splitting, or prevent later collusion. —
   `BondingOwnershipLib.sol`; `RegistrySortitionLib.sol`; `flow-trace/03`
+- **Owner-capacity admission is shared by every requester:** activity refreshes and owner transfers
+  maintain an epoch-scoped count through `BondOwnerCapacityLib`. A configuration change resets the
+  count. After upgrade, unrefreshed legacy operators do not count. Permissionless status refreshes
+  add them without double counting. The count may underestimate capacity during migration, but must
+  never overestimate snapshot owners. `committeeOwnerCapacity` returns zero when the timestamp uses
+  an older eligibility policy. Insufficient capacity reverts the complete request, including fee
+  collection and treasury credit. This check does not prove online availability. — `flow-trace/02`,
+  `03`
+- Terminal committee release clears the bounded `ownerCandidates` entries using snapshot owners,
+  including after later ownership transfers. Legacy requests skip this cleanup. Randomness request
+  context and the accepted seed remain readable for replay. — `RegistrySortitionLib.sol`;
+  `flow-trace/06`
 - `finalizeCommittee()` requires the submission window to have closed. The first successful call
   locks the canonical on-chain committee order. A ready committee must finalize by its absolute
   request-time DKG cutoff. Delayed finalization cannot extend the paid lifecycle. — `flow-trace/03`

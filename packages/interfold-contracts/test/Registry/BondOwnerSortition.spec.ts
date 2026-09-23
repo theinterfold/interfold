@@ -109,6 +109,22 @@ function addresses(nodes: { address: string }[]) {
     .sort((a, b) => (BigInt(a) < BigInt(b) ? -1 : 1));
 }
 
+async function ownerCandidate(ctx: Context, e3Id: bigint, owner: string) {
+  const perE3 = ethers.keccak256(
+    coder.encode(
+      ["uint256", "uint256"],
+      [e3Id, namespace("interfold.storage.RegistrySortitionRandomness") + 4n],
+    ),
+  );
+  const entry = ethers.keccak256(
+    coder.encode(["address", "bytes32"], [owner, perE3]),
+  );
+  return ethers.provider.getStorage(
+    await ctx.ciphernodeRegistry.getAddress(),
+    entry,
+  );
+}
+
 describe("One committee seat per request-time bond owner", function () {
   it("selects the best distinct owners regardless of submission order", async function () {
     const ctx = await loadFixture(setup);
@@ -185,11 +201,80 @@ describe("One committee seat per request-time bond owner", function () {
     for (const node of ctx.candidates.slice(0, 6)) {
       await ctx.ciphernodeRegistry.connect(node).submitTicket(e3Id, 1);
     }
+    const retainedSeed = await ctx.ciphernodeRegistry.sortitionSeed(e3Id);
+    expect(await ownerCandidate(ctx, e3Id, ctx.owners[0].address)).not.to.equal(
+      ethers.ZeroHash,
+    );
     await expect(finalize(ctx, e3Id))
       .to.emit(ctx.ciphernodeRegistry, "CommitteeFormationFailed")
       .withArgs(e3Id, 2, 3);
     expect(await ctx.interfold.getE3Stage(e3Id)).to.equal(6);
     expect(await ctx.bondingRegistry.unresolvedCommitteeCount()).to.equal(0);
+    for (const owner of ctx.owners) {
+      expect(await ownerCandidate(ctx, e3Id, owner.address)).to.equal(
+        ethers.ZeroHash,
+      );
+    }
+    expect(await ctx.ciphernodeRegistry.sortitionSeed(e3Id)).to.deep.equal(
+      retainedSeed,
+    );
+  });
+
+  it("clears finalized candidates by snapshot owner without touching another E3", async function () {
+    const ctx = await loadFixture(setup);
+    const e3Id = await request(ctx);
+    const nextId = await request(ctx);
+    const nodes = [ctx.candidates[0], ctx.candidates[6], ctx.candidates[7]];
+    for (const node of nodes) {
+      await ctx.ciphernodeRegistry.connect(node).submitTicket(e3Id, 1);
+      await ctx.ciphernodeRegistry.connect(node).submitTicket(nextId, 1);
+    }
+    await finalize(ctx, e3Id);
+    const seed = await ctx.ciphernodeRegistry.sortitionSeed(e3Id);
+    const otherCandidate = await ownerCandidate(
+      ctx,
+      nextId,
+      ctx.owners[0].address,
+    );
+    await ctx.bondingRegistry
+      .connect(ctx.owners[0])
+      .proposeBondOwner(nodes[0].address, ctx.owners[1].address);
+    await ctx.bondingRegistry
+      .connect(ctx.owners[1])
+      .acceptBondOwner(nodes[0].address);
+    const timeouts = await ctx.interfold.getE3TimeoutConfig(e3Id);
+    await time.increase(timeouts.dkgWindow + 1n);
+    await ctx.interfold.markE3Failed(e3Id);
+    await expect(
+      ctx.ciphernodeRegistry.releaseCommittee(e3Id),
+    ).to.be.revertedWithCustomError(
+      ctx.ciphernodeRegistry,
+      "CommitteeAccusationWindowOpen",
+    );
+    expect(await ownerCandidate(ctx, e3Id, ctx.owners[0].address)).not.to.equal(
+      ethers.ZeroHash,
+    );
+    await time.increaseTo(
+      (await ctx.slashingManager.accusationSubmissionDeadline(e3Id)) + 1n,
+    );
+    await ctx.ciphernodeRegistry.releaseCommittee(e3Id);
+    for (const owner of ctx.owners) {
+      expect(await ownerCandidate(ctx, e3Id, owner.address)).to.equal(
+        ethers.ZeroHash,
+      );
+    }
+    expect(await ownerCandidate(ctx, nextId, ctx.owners[0].address)).to.equal(
+      otherCandidate,
+    );
+    expect(await ctx.ciphernodeRegistry.sortitionSeed(e3Id)).to.deep.equal(
+      seed,
+    );
+    await expect(
+      ctx.ciphernodeRegistry.releaseCommittee(e3Id),
+    ).to.be.revertedWithCustomError(
+      ctx.ciphernodeRegistry,
+      "CommitteeObligationsAlreadyReleased",
+    );
   });
 
   it("does not let an owner transfer after the request create another seat", async function () {

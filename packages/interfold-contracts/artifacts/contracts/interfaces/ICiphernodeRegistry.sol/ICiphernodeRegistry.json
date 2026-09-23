@@ -206,6 +206,22 @@
       "inputs": [
         {
           "internalType": "uint256",
+          "name": "required",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "available",
+          "type": "uint256"
+        }
+      ],
+      "name": "InsufficientBondOwners",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
           "name": "requested",
           "type": "uint256"
         },
@@ -2025,5 +2041,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/ICiphernodeRegistry.sol",
-  "buildInfoId": "solc-0_8_28-edc0aa765d9cd5d2f829899804087eeff5ce95dc"
+  "buildInfoId": "solc-0_8_28-84e8920f223262c1b56e4fc7f8e7f5775e6b9edd"
 }

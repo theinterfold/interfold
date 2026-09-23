@@ -19,6 +19,7 @@ import { ICiphernodeRegistry } from "../interfaces/ICiphernodeRegistry.sol";
 import { INodeReleaseManager } from "../interfaces/INodeReleaseManager.sol";
 import { INodeReleaseRegistry } from "../interfaces/INodeReleaseRegistry.sol";
 import { InterfoldTicketToken } from "../token/InterfoldTicketToken.sol";
+import { BondOwnerCapacityLib } from "./BondOwnerCapacityLib.sol";
 
 /// @notice Stores the request-boundary eligibility history for BondingRegistry.
 library BondingEligibilityLib {
@@ -70,6 +71,7 @@ library BondingEligibilityLib {
             uint208(newVersion + 1)
         );
         state.activeOperatorCounts.push(uint48(block.timestamp), 0);
+        BondOwnerCapacityLib.reset(newVersion);
         emit IBondingRegistry.EligibilityConfigurationVersionUpdated(
             newVersion
         );
@@ -105,6 +107,12 @@ library BondingEligibilityLib {
             ) &&
             ticketToken.balanceOf(operator) / requirements.ticketPrice >=
             requirements.minTicketBalance;
+        BondOwnerCapacityLib.sync(
+            operator,
+            IBondingRegistry(address(this)).bondOwnerOf(operator),
+            newActive,
+            configurationVersion
+        );
         if (oldActive == newActive) {
             return (activeOperatorCount, newActive);
         }
@@ -153,6 +161,18 @@ library BondingEligibilityLib {
             state.operatorActiveVersions[operator].upperLookup(key) ==
             configurationVersion;
         activeOperatorCount = state.activeOperatorCounts.upperLookup(key);
+    }
+
+    /// @notice Returns counted snapshot owners only under the current eligibility policy.
+    function committeeOwnerCapacity(
+        uint256 timepoint
+    ) external view returns (uint256) {
+        Checkpoints.Trace208 storage versions = _layout().configurationVersions;
+        uint208 version = versions.upperLookupRecent(
+            SafeCast.toUint48(timepoint)
+        );
+        if (version == 0 || version != versions.latest()) return 0;
+        return BondOwnerCapacityLib.countAt(timepoint);
     }
 
     function _layout()

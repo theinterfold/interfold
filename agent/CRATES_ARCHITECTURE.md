@@ -1110,8 +1110,10 @@ wraps `BondOwnerSet` as the appended `BondOwnerSetAt` event, with the original b
 seconds. The separate v2 owner repository never imports ingestion-time v1 checkpoints. Startup
 backfills missing chain projections through aggregate zero's snapshot cursor without changing
 existing node or recovery payloads. Legacy owner events still decode but cannot establish chain-time
-history. Missing history permits all eligible submissions instead of excluding owners. Existing
-ticket intents keep their ticket numbers and finalization ranks on restart, including nodes with
+history. Missing history permits all eligible submissions instead of excluding owners. The
+`sortition_owner_history_fallback` warning includes the E3, chain, snapshot time, missing-owner
+count, and eligible-operator count. It does not add an RPC call or fail the round. Existing ticket
+intents keep their ticket numbers and finalization ranks on restart, including nodes with
 aggregation disabled. Startup reads prefix intents from the durable event log; replay marks suffix
 intents as processed before effects resume.
 

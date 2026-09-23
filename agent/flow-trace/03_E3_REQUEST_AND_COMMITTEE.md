@@ -173,6 +173,9 @@ Requester calls: Interfold.request({
 │   │   │  │         requestBlock - 1) and require               │
 │   │   │  │         threshold[1] <= activeOperatorCount         │
 │   │   │  │       → Count and submissions use one boundary      │
+│   │   │  │       → Require N counted active bond owners at T-1 │
+│   │   │  │         under the current eligibility policy       │
+│   │   │  │       → Failure rolls back fees before any VRF draw│
 │   │   │  │    4. committees[e3Id] = Committee {                │
 │   │   │  │         initialized: true,                          │
 │   │   │  │         seed: unresolved,                           │
@@ -541,6 +544,11 @@ slashable through the whole accusation window (worst-case lifecycle deadline plu
 `CommitteeAccusationWindowOpen(e3Id, submissionDeadline)` until then. After governance `closeE3`
 deletes the window snapshot, the deadline reads as 0 and release proceeds.
 
+Release also clears each retained owner's candidate entry using ownership at `requestBlock - 1`.
+This bounded loop covers at most N entries, including finalized committees and later owner
+transfers. It does not clear the accepted randomness context, seed, or another E3's candidates.
+Uncapped legacy requests skip the owner lookups.
+
 ### 3c. SortitionCommitteeFinalized Event Processing (Rust-Side)
 
 ```text
@@ -622,17 +630,22 @@ A ready committee must finalize at or before its absolute DKG deadline.
    persists a provisional reservation. Committee finalization confirms or releases that reservation.
    Terminal failure or completion releases every remaining reservation.
 
-   For capped requests, formation requires N distinct snapshot owners. The request's active-node
-   count guard does not count owners. `committee:new` checks distinct eligible owners at a fixed
-   block before fee approval and payment. Direct callers must perform their own preflight. This
-   check does not reserve capacity or prove machine availability. DKG parameters and the canonical
-   operator-address order do not change. Owner history uses the separate v2 Rust repository.
-   `BondOwnerSetAt` retains block time in seconds before the event clock merges with local time.
-   Startup backfills missing chain projections through aggregate zero's snapshot cursor. Legacy
-   `BondOwnerSet` events and v1 owner snapshots cannot establish that boundary, so they are not
-   imported. Missing history permits the broader submission fallback. Existing node and recovery
-   payloads remain unchanged. Startup recovers local ticket intents from the durable event log even
-   when public-key aggregation is disabled; replay also marks post-snapshot intents as processed.
+   For capped requests, admission requires N counted active snapshot owners. Every caller, including
+   CRISP and the SDK, passes this on-chain check before a VRF draw. Failure reverts all request
+   state and fee collection, including the flat fee. `committee:new` also checks distinct eligible
+   owners at a fixed block before fee approval. After upgrade, permissionless status refreshes must
+   populate the owner count. A timestamp from an older eligibility policy returns zero capacity.
+   These checks do not reserve capacity or prove machine availability. DKG parameters and the
+   canonical operator-address order do not change. Owner history uses the separate v2 Rust
+   repository. `BondOwnerSetAt` retains block time in seconds before the event clock merges with
+   local time. Startup backfills missing chain projections through aggregate zero's snapshot cursor.
+   Legacy `BondOwnerSet` events and v1 owner snapshots cannot establish that boundary, so they are
+   not imported. Missing history permits the broader submission fallback. The structured warning
+   `sortition_owner_history_fallback` identifies the E3, chain, snapshot time, missing-owner count,
+   and eligible-operator count. Operators can monitor this event without failing the round or adding
+   RPC calls. Existing node and recovery payloads remain unchanged. Startup recovers local ticket
+   intents from the durable event log even when public-key aggregation is disabled; replay also
+   marks post-snapshot intents as processed.
 
 3. **Runtime committee order**: both the on-chain registry and Rust runtime normalize the finalized
    committee into ascending address order before deriving `party_id`. This keeps party IDs,

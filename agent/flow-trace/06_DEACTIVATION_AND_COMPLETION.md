@@ -151,6 +151,11 @@ Bond owner or operator submits deregisterOperatorFor(operator)
 The ticket collateral asset and FOLD are both paid to the bond owner. The queue and slash target
 remain keyed by the operator until the claim completes.
 
+Terminal committee release clears the retained owner-to-candidate entries for capped requests.
+Cleanup uses each candidate's request-time owner, not its current owner, and visits at most N nodes.
+The finalized committee, owner-cap policy, and randomness context remain available for historical
+reads and replay. Uncapped legacy requests do not query owner history during release.
+
 The next registration uses a free tree index before it appends a leaf. Historical E3 roots remain
 unchanged because each request stores its root value before later tree updates.
 

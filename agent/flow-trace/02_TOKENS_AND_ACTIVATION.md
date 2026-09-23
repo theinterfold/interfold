@@ -229,6 +229,16 @@ chain-local operators inactive until matching `OperatorActivationChanged` refres
 
 A completed ban or unban refreshes the affected registered operator immediately.
 
+Active bond owners have a separate checkpointed count for committee admission. Each owner counts
+once, even when it funds several active operators. Status refreshes update this count even when the
+operator's active flag does not change. Ownership acceptance moves a counted operator to its new
+owner. An eligibility configuration change resets the count in constant time.
+
+After an upgrade adds this count, existing active operators remain uncounted until a permissionless
+`refreshOperatorStatus` or `refreshOperatorStatuses` call. Refresh the registered operators before
+resuming requests, then wait for a later timestamp. Repeated refreshes do not increase the count. An
+unrefreshed operator cannot inflate the count through an ownership transfer.
+
 A mandatory ciphernode release uses the same fail-closed refresh mechanism. Governance pauses and
 drains the protocol, raises the required release policy, and resets the active count to zero.
 Starting the compatible binary acknowledges its release and refreshes the operator. See

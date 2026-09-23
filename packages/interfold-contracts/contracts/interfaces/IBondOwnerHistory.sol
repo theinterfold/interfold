@@ -9,4 +9,10 @@ interface IBondOwnerHistory {
         address operator,
         uint256 timepoint
     ) external view returns (address);
+
+    /// @notice Returns counted active owners at the timestamp under the current eligibility policy.
+    /// @dev Returns zero across policy changes. Existing operators need a status refresh after upgrade.
+    function committeeOwnerCapacity(
+        uint256 timepoint
+    ) external view returns (uint256);
 }

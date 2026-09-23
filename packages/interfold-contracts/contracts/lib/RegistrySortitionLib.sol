@@ -506,7 +506,8 @@ library RegistrySortitionLib {
     function requestRandomness(
         uint256 e3Id,
         uint256 submissionWindow,
-        IBondOwnerHistory bondingHistory
+        IBondOwnerHistory bondingHistory,
+        uint256 requiredOwners
     ) external returns (uint256 requestId, uint256 randomnessDeadline) {
         RandomnessStorage storage state = _randomnessStorage();
         IRandomnessProvider provider = state.provider;
@@ -521,6 +522,14 @@ library RegistrySortitionLib {
         RandomnessRequest storage request = state.requests[e3Id];
         // Reject a partial deployment before the requester pays for a VRF draw.
         bondingHistory.bondOwnerAt(address(0), block.timestamp - 1);
+        uint256 owners = bondingHistory.committeeOwnerCapacity(
+            block.timestamp - 1
+        );
+        if (owners < requiredOwners)
+            revert ICiphernodeRegistry.InsufficientBondOwners(
+                requiredOwners,
+                owners
+            );
         request.bondOwnerCap = true;
         emit ICiphernodeRegistry.CommitteeBondOwnerCapEnabled(e3Id);
         request.provider = provider;
@@ -542,12 +551,23 @@ library RegistrySortitionLib {
         );
     }
 
-    /// @notice Marks a requested committee as failed and reports an expired randomness response.
+    /// @notice Clears terminal candidates and marks an unfinalized committee as failed.
     /// @dev A timely response must never be discarded and replaced with a new draw.
-    function failRequestedCommittee(
+    function releaseCommitteeCandidates(
         ICiphernodeRegistry.Committee storage committee,
-        uint256 e3Id
+        uint256 e3Id,
+        IBondingRegistry bonding
     ) external {
+        RandomnessStorage storage state = _randomnessStorage();
+        if (state.requests[e3Id].bondOwnerCap) {
+            for (uint256 i = 0; i < committee.topNodes.length; ++i) {
+                address owner = IBondOwnerHistory(address(bonding)).bondOwnerAt(
+                    committee.topNodes[i],
+                    committee.requestBlock - 1
+                );
+                delete state.ownerCandidates[e3Id][owner];
+            }
+        }
         if (committee.stage != ICiphernodeRegistry.CommitteeStage.Requested)
             return;
         _flagRandomnessDegraded(e3Id);

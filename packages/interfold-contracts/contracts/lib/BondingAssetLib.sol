@@ -387,6 +387,27 @@ library BondingAssetLib {
         return abi.decode(result, (uint256));
     }
 
+    /// @notice Preserves the previous owner's locked-FOLD coverage during an ownership transfer.
+    function validateBondOwnerTransfer(
+        address token,
+        address previousOwner,
+        uint256 bonded,
+        uint256 delegatedBond
+    ) external view {
+        if (delegatedBond == 0) return;
+        uint256 remainingBonded = bonded - delegatedBond;
+        uint256 locked = lockedBalanceOf(token, previousOwner);
+        uint256 controlled = IERC20(token).balanceOf(previousOwner) +
+            remainingBonded;
+        if (locked > controlled) {
+            revert IBondingRegistry.BondOwnerTransferViolatesLock(
+                previousOwner,
+                locked,
+                controlled
+            );
+        }
+    }
+
     function transferExact(
         address tokenAddress,
         address recipient,

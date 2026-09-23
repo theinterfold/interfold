@@ -337,7 +337,8 @@ contract CiphernodeRegistryOwnable is
         (, uint256 randomnessDeadline) = RegistrySortitionLib.requestRandomness(
             e3Id,
             sortitionSubmissionWindow,
-            IBondOwnerHistory(address(dependencies.bonding))
+            IBondOwnerHistory(address(dependencies.bonding)),
+            threshold[1]
         );
         c.committeeDeadline = randomnessDeadline;
         uint256 latestDeadline = randomnessDeadline + sortitionSubmissionWindow;
@@ -777,7 +778,11 @@ contract CiphernodeRegistryOwnable is
         );
 
         c.obligationsReleased = true;
-        RegistrySortitionLib.failRequestedCommittee(c, e3Id);
+        RegistrySortitionLib.releaseCommitteeCandidates(
+            c,
+            e3Id,
+            _bondingFor(e3Id)
+        );
         _releaseCommitteeObligations(e3Id, c);
         unreleasedCommitteeCount--;
         emit CommitteeActivationChanged(e3Id, false);
