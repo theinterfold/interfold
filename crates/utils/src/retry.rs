@@ -74,3 +74,16 @@ where
         }
     }
 }
+
+pub fn should_retry_error(
+    error: &str,
+    decoded_error: Option<&str>,
+    retry_on_errors: &[&str],
+) -> bool {
+    if retry_on_errors.is_empty() {
+        return true;
+    }
+    retry_on_errors.iter().any(|code| {
+        error.contains(code) || decoded_error.is_some_and(|decoded| decoded.contains(code))
+    })
+}

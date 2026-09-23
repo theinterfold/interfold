@@ -38,7 +38,7 @@ use e3_config::{RpcAuth, RPC};
 use e3_crypto::Cipher;
 use e3_data::Repository;
 use e3_events::Proof;
-use e3_utils::{retry_with_backoff, RetryError};
+use e3_utils::{retry_with_backoff, should_retry_error, RetryError};
 use std::{
     collections::HashMap,
     env,
@@ -291,15 +291,6 @@ where
 
 const TX_RETRY_MAX_ATTEMPTS: u32 = 3;
 const TX_RETRY_INITIAL_DELAY_MS: u64 = 2000;
-
-fn should_retry_error(error: &str, decoded_error: Option<&str>, retry_on_errors: &[&str]) -> bool {
-    if retry_on_errors.is_empty() {
-        return true;
-    }
-    retry_on_errors.iter().any(|code| {
-        error.contains(code) || decoded_error.is_some_and(|decoded| decoded.contains(code))
-    })
-}
 
 pub async fn send_tx_with_retry<F, Fut>(
     operation_name: &str,

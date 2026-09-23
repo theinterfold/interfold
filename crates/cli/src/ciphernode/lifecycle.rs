@@ -7,27 +7,24 @@
 use alloy::primitives::{Address, U256};
 use anyhow::{bail, Result};
 use e3_console::{log, Console};
-use e3_utils::require_successful_receipt;
+
+use crate::helpers::chain::send_and_confirm;
 
 use super::context::{parse_address, ChainContext};
-use super::utils::{format_amount, parse_amount};
+use super::utils::format_amount;
+use super::{bond, tickets};
 
 pub(crate) async fn set_bond_owner(out: Console, ctx: &ChainContext, owner: &str) -> Result<()> {
     let owner = parse_address(owner)?;
-    let receipt = ctx
-        .bonding()
-        .setBondOwner(owner)
-        .send()
-        .await?
-        .get_receipt()
-        .await?;
-    require_successful_receipt("set bond owner", &receipt)?;
+
+    let tx = send_and_confirm("set bond owner", ctx.bonding().setBondOwner(owner)).await?;
+
     log!(
         out,
         "Authorized bond owner {:#x} for operator {:#x} (tx: {:#x})",
         owner,
         ctx.operator(),
-        receipt.transaction_hash
+        tx
     );
     Ok(())
 }
@@ -40,20 +37,19 @@ pub(crate) async fn propose_bond_owner(
 ) -> Result<()> {
     let operator = parse_address(operator)?;
     let new_owner = parse_address(new_owner)?;
-    let receipt = ctx
-        .bonding()
-        .proposeBondOwner(operator, new_owner)
-        .send()
-        .await?
-        .get_receipt()
-        .await?;
-    require_successful_receipt("propose bond owner", &receipt)?;
+
+    let tx = send_and_confirm(
+        "propose bond owner",
+        ctx.bonding().proposeBondOwner(operator, new_owner),
+    )
+    .await?;
+
     log!(
         out,
         "Proposed {:#x} as owner of operator {:#x} (tx: {:#x})",
         new_owner,
         operator,
-        receipt.transaction_hash
+        tx
     );
     Ok(())
 }
@@ -64,56 +60,47 @@ pub(crate) async fn accept_bond_owner(
     operator: &str,
 ) -> Result<()> {
     let operator = parse_address(operator)?;
-    let receipt = ctx
-        .bonding()
-        .acceptBondOwner(operator)
-        .send()
-        .await?
-        .get_receipt()
-        .await?;
-    require_successful_receipt("accept bond owner", &receipt)?;
+
+    let tx = send_and_confirm("accept bond owner", ctx.bonding().acceptBondOwner(operator)).await?;
+
     log!(
         out,
         "Accepted ownership of operator {:#x} (tx: {:#x})",
         operator,
-        receipt.transaction_hash
+        tx
     );
     Ok(())
 }
 
 pub(crate) async fn register(out: Console, ctx: &ChainContext, operator: Address) -> Result<()> {
-    let receipt = ctx
-        .bonding()
-        .registerOperatorFor(operator)
-        .send()
-        .await?
-        .get_receipt()
-        .await?;
-    require_successful_receipt("register ciphernode", &receipt)?;
+    let tx = send_and_confirm(
+        "register ciphernode",
+        ctx.bonding().registerOperatorFor(operator),
+    )
+    .await?;
+
     log!(
         out,
         "Registered operator {:#x} on {} (tx: {:#x})",
         operator,
         ctx.chain_label(),
-        receipt.transaction_hash
+        tx
     );
     Ok(())
 }
 
 pub(crate) async fn deregister(out: Console, ctx: &ChainContext, operator: Address) -> Result<()> {
-    let receipt = ctx
-        .bonding()
-        .deregisterOperatorFor(operator)
-        .send()
-        .await?
-        .get_receipt()
-        .await?;
-    require_successful_receipt("deregister ciphernode", &receipt)?;
+    let tx = send_and_confirm(
+        "deregister operator",
+        ctx.bonding().deregisterOperatorFor(operator),
+    )
+    .await?;
+
     log!(
         out,
         "Deregistration requested for {:#x} (tx: {:#x})",
         operator,
-        receipt.transaction_hash
+        tx
     );
     Ok(())
 }
@@ -136,60 +123,11 @@ pub(crate) async fn deactivate(
     }
 
     if let Some(amount) = ticket_amount {
-        let ticket_contract = ctx.ticket_token_address().await?;
-        let ticket_metadata = ctx.erc20(ticket_contract);
-        let decimals = ticket_metadata.decimals().call().await?;
-        let symbol = ticket_metadata.symbol().call().await?;
-        let parsed = parse_amount(&amount, decimals)?;
-        let receipt = ctx
-            .bonding()
-            .removeTicketBalanceFor(operator, parsed)
-            .send()
-            .await?
-            .get_receipt()
-            .await?;
-        require_successful_receipt("remove ticket balance", &receipt)?;
-        // The withdrawal already succeeded, so a failed read must not fail the command.
-        match ctx.bonding().availableTickets(operator).call().await {
-            Ok(tickets) => log!(
-                out,
-                "Removed {} {} from {:#x}. Ticket balance is now {} tickets (tx: {:#x})",
-                amount,
-                symbol,
-                operator,
-                tickets,
-                receipt.transaction_hash
-            ),
-            Err(err) => log!(
-                out,
-                "Removed {} {} from {:#x} (tx: {:#x}). Could not read the ticket balance: {err}",
-                amount,
-                symbol,
-                operator,
-                receipt.transaction_hash
-            ),
-        }
+        tickets::burn(out.clone(), ctx, operator, &amount).await?;
     }
 
     if let Some(amount) = ciphernode_bond_amount {
-        let ciphernode_bond = ctx.ciphernode_bond_token_address().await?;
-        let decimals = ctx.erc20(ciphernode_bond).decimals().call().await?;
-        let parsed = parse_amount(&amount, decimals)?;
-        let receipt = ctx
-            .bonding()
-            .unbondCiphernodeFor(operator, parsed)
-            .send()
-            .await?
-            .get_receipt()
-            .await?;
-        require_successful_receipt("unbond FOLD", &receipt)?;
-        log!(
-            out,
-            "Queued {} FOLD from {:#x} (tx: {:#x})",
-            amount,
-            operator,
-            receipt.transaction_hash
-        );
+        bond::unbond(out, ctx, operator, &amount).await?;
     }
 
     Ok(())

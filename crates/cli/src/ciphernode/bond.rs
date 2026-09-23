@@ -7,7 +7,8 @@
 use alloy::primitives::{Address, U256};
 use anyhow::Result;
 use e3_console::{log, Console};
-use e3_utils::require_successful_receipt;
+
+use crate::helpers::chain::send_and_confirm;
 
 use super::context::ChainContext;
 use super::utils::{ensure_allowance, parse_amount};
@@ -23,26 +24,7 @@ pub(crate) async fn execute(
         BondCommands::Bond { amount } => {
             bond_ciphernode(out, ctx, operator, &amount).await?;
         }
-        BondCommands::Unbond { amount } => {
-            let ciphernode_bond = ctx.ciphernode_bond_token_address().await?;
-            let decimals = ctx.erc20(ciphernode_bond).decimals().call().await?;
-            let parsed = parse_amount(&amount, decimals)?;
-            let receipt = ctx
-                .bonding()
-                .unbondCiphernodeFor(operator, parsed)
-                .send()
-                .await?
-                .get_receipt()
-                .await?;
-            require_successful_receipt("unbond FOLD", &receipt)?;
-            log!(
-                out,
-                "Queued {} FOLD for operator {:#x} (tx: {:#x})",
-                amount,
-                operator,
-                receipt.transaction_hash
-            );
-        }
+        BondCommands::Unbond { amount } => unbond(out, ctx, operator, &amount).await?,
         BondCommands::Claim {
             max_ticket,
             max_bond,
@@ -68,19 +50,18 @@ pub(crate) async fn execute(
             } else {
                 U256::MAX
             };
-            let receipt = ctx
-                .bonding()
-                .claimExitsFor(operator, ticket, ciphernode_bond)
-                .send()
-                .await?
-                .get_receipt()
-                .await?;
-            require_successful_receipt("claim exits", &receipt)?;
+
+            let tx = send_and_confirm(
+                "claim exits",
+                ctx.bonding()
+                    .claimExitsFor(operator, ticket, ciphernode_bond),
+            )
+            .await?;
             log!(
                 out,
                 "Claimed exits for operator {:#x} (tx: {:#x})",
                 operator,
-                receipt.transaction_hash
+                tx
             );
         }
     }
@@ -99,20 +80,46 @@ async fn bond_ciphernode(
     let decimals = erc20.decimals().call().await?;
     let parsed = parse_amount(amount, decimals)?;
     ensure_allowance(ctx, ciphernode_bond, ctx.bonding_registry(), parsed).await?;
-    let receipt = ctx
-        .bonding()
-        .bondCiphernodeFor(operator, parsed)
-        .send()
-        .await?
-        .get_receipt()
-        .await?;
-    require_successful_receipt("bond FOLD", &receipt)?;
+
+    let tx = send_and_confirm(
+        "bond FOLD",
+        ctx.bonding().bondCiphernodeFor(operator, parsed),
+    )
+    .await?;
+
     log!(
         out,
         "Bonded {} FOLD for operator {:#x} (tx: {:#x})",
         amount,
         operator,
-        receipt.transaction_hash
+        tx
+    );
+    Ok(())
+}
+
+/// Queues `amount` of the ciphernode bond of `operator` for exit.
+pub(crate) async fn unbond(
+    out: Console,
+    ctx: &ChainContext,
+    operator: Address,
+    amount: &str,
+) -> Result<()> {
+    let ciphernode_bond = ctx.ciphernode_bond_token_address().await?;
+    let decimals = ctx.erc20(ciphernode_bond).decimals().call().await?;
+    let parsed = parse_amount(amount, decimals)?;
+
+    let tx = send_and_confirm(
+        "unbond FOLD",
+        ctx.bonding().unbondCiphernodeFor(operator, parsed),
+    )
+    .await?;
+
+    log!(
+        out,
+        "Queued {} FOLD for operator {:#x} (tx: {:#x})",
+        amount,
+        operator,
+        tx
     );
     Ok(())
 }

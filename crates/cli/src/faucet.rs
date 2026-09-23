@@ -12,7 +12,7 @@ use alloy::{
     sol,
 };
 use anyhow::{anyhow, bail, Context, Result};
-use e3_config::{chain_config::ChainConfig, AppConfig};
+use e3_config::AppConfig;
 use e3_console::{log, Console};
 use e3_crypto::Cipher;
 use e3_entrypoint::helpers::datastore::get_repositories;
@@ -54,6 +54,8 @@ mod erc20 {
 
 use erc20::IERC20;
 use faucet_contract::FaucetContract;
+
+use crate::helpers::chain::select_chain;
 
 /// Calls `faucet()` on the configured Faucet contract, sending FOLD + fee
 /// tokens to the operator's signing address. Testnet only.
@@ -172,17 +174,4 @@ pub async fn execute(out: Console, config: &AppConfig, selection: Option<&str>) 
 /// decimals can't be applied.
 fn format_units(value: U256, decimals: u8) -> String {
     alloy::primitives::utils::format_units(value, decimals).unwrap_or_else(|_| value.to_string())
-}
-
-fn select_chain<'a>(config: &'a AppConfig, name: Option<&str>) -> Result<&'a ChainConfig> {
-    match name {
-        Some(desired) => config
-            .chains()
-            .iter()
-            .find(|c| c.name == desired)
-            .ok_or_else(|| anyhow!("Chain '{}' not found in configuration", desired)),
-        None => config.chains().first().ok_or_else(|| {
-            anyhow!("No chains configured. Run `interfold ciphernode setup` first.")
-        }),
-    }
 }
