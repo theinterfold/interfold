@@ -21,7 +21,12 @@ use crate::math::polynomial::Polynomial;
 pub struct Configs<let N: u32, let L: u32> {
     pub qis: [Field; L],
     pub k0is: [Field; L],
+    /// Bound for the lifted error polynomial (e0) coefficients
     pub e0_bound: Field,
+    /// Bounds for the per-modulus residues of e0: (q_i - 1) / 2
+    pub e0is_bounds: [Field; L],
+    /// Bounds for the CRT quotients of e0: (e0_bound + (q_i - 1) / 2) / q_i
+    pub e0_quotient_bounds: [Field; L],
     pub u_bound: Field,
     pub r1_low_bounds: [Field; L],
     pub r1_up_bounds: [Field; L],
@@ -35,6 +40,8 @@ impl<let N: u32, let L: u32> Configs<N, L> {
         qis: [Field; L],
         k0is: [Field; L],
         e0_bound: Field,
+        e0is_bounds: [Field; L],
+        e0_quotient_bounds: [Field; L],
         u_bound: Field,
         r1_low_bounds: [Field; L],
         r1_up_bounds: [Field; L],
@@ -46,6 +53,8 @@ impl<let N: u32, let L: u32> Configs<N, L> {
             qis,
             k0is,
             e0_bound,
+            e0is_bounds,
+            e0_quotient_bounds,
             u_bound,
             r1_low_bounds,
             r1_up_bounds,
@@ -64,7 +73,7 @@ impl<let N: u32, let L: u32> Configs<N, L> {
 /// **Consumes:** Threshold PK from C5 (`pk0is` witness path).
 ///
 /// **Produces:** `(pk0_commitment, ct0_commitment, k1_commitment, u_commitment)` public outputs.
-pub struct UserDataEncryptionCt0<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, let BIT_E0: u32, let BIT_K: u32, let BIT_R1: u32, let BIT_R2: u32> {
+pub struct UserDataEncryptionCt0<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, let BIT_E0: u32, let BIT_E0IS: u32, let BIT_E0_QUOTIENT: u32, let BIT_K: u32, let BIT_R1: u32, let BIT_R2: u32> {
     configs: Configs<N, L>,
     /// Aggregated threshold `pk0` limb (from C5).
     pk0is: [Polynomial<N>; L],
@@ -78,7 +87,7 @@ pub struct UserDataEncryptionCt0<let N: u32, let L: u32, let BIT_PK: u32, let BI
     r2is: [Polynomial<N - 1>; L],
 }
 
-impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, let BIT_E0: u32, let BIT_K: u32, let BIT_R1: u32, let BIT_R2: u32> UserDataEncryptionCt0<N, L, BIT_PK, BIT_CT, BIT_U, BIT_E0, BIT_K, BIT_R1, BIT_R2> {
+impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, let BIT_E0: u32, let BIT_E0IS: u32, let BIT_E0_QUOTIENT: u32, let BIT_K: u32, let BIT_R1: u32, let BIT_R2: u32> UserDataEncryptionCt0<N, L, BIT_PK, BIT_CT, BIT_U, BIT_E0, BIT_E0IS, BIT_E0_QUOTIENT, BIT_K, BIT_R1, BIT_R2> {
 
     pub fn new(
         configs: Configs<N, L>,
@@ -95,6 +104,12 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
         UserDataEncryptionCt0 { configs, pk0is, ct0is, u, e0, e0is, e0_quotients, k1, r1is, r2is }
     }
 
+    /// Binds each per-modulus residue `e0is[i]` to the lifted `e0`.
+    ///
+    /// `q_i` is invertible modulo the proof-system prime, so this equation alone holds for any
+    /// `e0is`. It constrains the witnesses only together with the `e0`, `e0is` and `e0_quotients`
+    /// bounds in `check_range_bounds`, which keep every term far below the prime and thus make
+    /// the equation hold over the integers.
     fn check_e0_crt_consistency(self) {
         for i in 0..L {
             for j in 0..N {
@@ -113,6 +128,17 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
         self.k1.range_check_2bounds::<BIT_K>(self.configs.k1_up_bound, self.configs.k1_low_bound);
 
         for i in 0..L {
+            // e0is[i] must be the centered residue of e0 at q_i, and e0_quotients[i] the matching
+            // CRT quotient. Without both, check_e0_crt_consistency is satisfiable for any e0is.
+            self.e0is[i].range_check_2bounds::<BIT_E0IS>(
+                self.configs.e0is_bounds[i],
+                self.configs.e0is_bounds[i],
+            );
+            self.e0_quotients[i].range_check_2bounds::<BIT_E0_QUOTIENT>(
+                self.configs.e0_quotient_bounds[i],
+                self.configs.e0_quotient_bounds[i],
+            );
+
             self.r1is[i].range_check_2bounds::<BIT_R1>(
                 self.configs.r1_up_bounds[i],
                 self.configs.r1_low_bounds[i],
