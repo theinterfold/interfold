@@ -110,7 +110,7 @@ every section.
   settled history. The detached contract stays correct for the timepoints it covers; a new era needs
   a fresh `BondedCheckpoints` and a fresh `BondedVotes` bound to the new token. —
   `BondingRegistry._setBondingAssetConfig`; `flow-trace/02`
-- **`BondingRegistry` is at its EIP-170 ceiling.** It is gated at 256 bytes of headroom by
+- **`BondingRegistry` is at its EIP-170 ceiling.** It is gated at 128 bytes of headroom by
   `scripts/checkContractSize.ts`, and logic is kept in `BondingAssetLib`, `BondingEligibilityLib`,
   `BondingSlashingLib`, `BondingRegistrationLib` and `BondingOwnershipLib` for that reason. Every
   library must be linked in all deploy paths (ignition, `deployAndSave`, `protocol/deployContracts`,
@@ -191,29 +191,40 @@ every section.
   `scripts/upgrade/secureCrisp.ts`; `scripts/upgrade/validateSecureCrisp.ts`; `flow-trace/07`
 - Sortition score is deterministic and identical on- and off-chain:
   `score = keccak256(address ‖ ticket ‖ e3Id ‖ seed)`, where
-  `seed = keccak256(randomWord ‖ chainId ‖ registry ‖ e3Id ‖ requestId)`; top-N lowest win. Each E3
-  freezes one `IRandomnessProvider` request, response deadline, and submission window after the paid
-  request is stored. The production provider uses Chainlink VRF v2.5 subscription funding. It never
-  re-requests an E3, checks the configured subscription balance floor before requesting, and the
-  Registry rejects responses from the Ethereum request block, future-dated responses, and late
-  responses. This release supports Ethereum mainnet, Sepolia, and local development chains only. The
-  provider reserves the subscription balance floor for each unfulfilled draw, thus a burst of
-  requests in one block cannot all pass the same balance check. A request that expires without a
-  usable response sets an advisory `degraded` flag and emits `RandomnessCircuitBreakerTripped`. It
-  does not clear the active provider, because that path is permissionless and registry-global.
-  Governance reads the flag and re-points the provider, which clears it. A timely accepted response
-  remains readable after terminal cleanup so fresh historical replay derives the same committee
-  request; late responses remain unusable. Rust reads the accepted seed and request context at the
-  fulfillment block. If historical block state is unavailable, it accepts retained current state
-  only when the Registry still reports the seed as ready. Unverifiable state rejects the log and
-  fails closed for replay. Governance can change the provider or response timeout only while
-  requests are paused and all committee obligations are released. The E3 computation seed remains
-  separate. — `flow-trace/03`
+  `seed = keccak256(randomWord ‖ chainId ‖ registry ‖ e3Id ‖ requestId)`. New requests keep the best
+  submission per request-time bond owner, then the lowest N owner scores. Ties use ascending
+  operator address. Each E3 freezes one `IRandomnessProvider` request, response deadline, and
+  submission window after the paid request is stored. The production provider uses Chainlink VRF
+  v2.5 subscription funding. It never re-requests an E3, checks the configured subscription balance
+  floor before requesting, and the Registry rejects responses from the Ethereum request block,
+  future-dated responses, and late responses. This release supports Ethereum mainnet, Sepolia, and
+  local development chains only. The provider reserves the subscription balance floor for each
+  unfulfilled draw, thus a burst of requests in one block cannot all pass the same balance check. A
+  request that expires without a usable response sets an advisory `degraded` flag and emits
+  `RandomnessCircuitBreakerTripped`. It does not clear the active provider, because that path is
+  permissionless and registry-global. Governance reads the flag and re-points the provider, which
+  clears it. A timely accepted response remains readable after terminal cleanup so fresh historical
+  replay derives the same committee request; late responses remain unusable. Rust reads the accepted
+  seed and request context at the fulfillment block. If historical block state is unavailable, it
+  accepts retained current state only when the Registry still reports the seed as ready.
+  Unverifiable state rejects the log and fails closed for replay. Governance can change the provider
+  or response timeout only while requests are paused and all committee obligations are released. The
+  E3 computation seed remains separate. — `flow-trace/03`
 - **Per-E3 sortition state is immutable:** for request timestamp `T`, the request-time eligible
   count, each operator's eligibility, and each ticket balance come from `T-1`. The request also
   freezes `ticketPrice`, and Rust consumes the same timepoint and price. Current registration and
   activity are additional liveness checks only. The IMT root is snapshotted at request time. —
   `CiphernodeRegistryOwnable.sol`; `flow-trace/03`
+- **One selected operator per snapshot bond owner:** new requests freeze the owner-cap policy.
+  `bondOwnerAt(operator, T-1)` determines the group; later transfers cannot create a second seat for
+  that snapshot owner. Both ownership write paths must checkpoint before assignment. Unchanged
+  pre-upgrade owners use a lazy baseline; this history is valid for capped requests, not arbitrary
+  pre-upgrade timestamps. Existing requests retain uncapped selection through an appended zero
+  policy field. Solidity enforces the cap, independently of the submitting binary. Rust permits all
+  eligible operators to submit; an N-plus-buffer cutoff could exclude necessary owners. Formation
+  requires N distinct snapshot owners, not merely N submissions. The cap does not establish human
+  uniqueness, prevent pre-request wallet splitting, or prevent later collusion. —
+  `BondingOwnershipLib.sol`; `RegistrySortitionLib.sol`; `flow-trace/03`
 - `finalizeCommittee()` requires the submission window to have closed. The first successful call
   locks the canonical on-chain committee order. A ready committee must finalize by its absolute
   request-time DKG cutoff. Delayed finalization cannot extend the paid lifecycle. — `flow-trace/03`

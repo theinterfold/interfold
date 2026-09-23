@@ -29,6 +29,10 @@ import { BondingOwnershipLib } from "../lib/BondingOwnershipLib.sol";
 import { ExitQueueLib } from "../lib/ExitQueueLib.sol";
 
 import { IBondingRegistry } from "../interfaces/IBondingRegistry.sol";
+import { IBondOwnerHistory } from "../interfaces/IBondOwnerHistory.sol";
+import {
+    BondOwnerHistoryStorage
+} from "../storage/BondOwnerHistoryStorage.sol";
 import { ICiphernodeRegistry } from "../interfaces/ICiphernodeRegistry.sol";
 import {
     BondingEligibilityStorage
@@ -44,6 +48,8 @@ import { InterfoldTicketToken } from "../token/InterfoldTicketToken.sol";
 // solhint-disable-next-line max-states-count
 contract BondingRegistry is
     IBondingRegistry,
+    IBondOwnerHistory,
+    BondOwnerHistoryStorage,
     BondingEligibilityStorage,
     BondingSlashingStorage,
     Ownable2StepUpgradeable,
@@ -344,6 +350,15 @@ contract BondingRegistry is
         return _bondOwnerOf[operator];
     }
 
+    /// @inheritdoc IBondOwnerHistory
+    function bondOwnerAt(
+        address operator,
+        uint256 timepoint
+    ) external view returns (address) {
+        return
+            BondingOwnershipLib.bondOwnerAt(_bondOwnerOf, operator, timepoint);
+    }
+
     /// @inheritdoc IBondingRegistry
     function pendingBondOwnerOf(
         address operator
@@ -528,13 +543,13 @@ contract BondingRegistry is
     }
 
     /// @inheritdoc IBondingRegistry
-    function proposeBondOwner(
-        address operator,
-        address newOwner
-    ) external onlyBondOwner(operator) {
-        require(newOwner != address(0), ZeroAddress());
-        _pendingBondOwnerOf[operator] = newOwner;
-        emit BondOwnerTransferProposed(operator, msg.sender, newOwner);
+    function proposeBondOwner(address operator, address newOwner) external {
+        BondingOwnershipLib.proposeTransfer(
+            _bondOwnerOf,
+            _pendingBondOwnerOf,
+            operator,
+            newOwner
+        );
     }
 
     /// @inheritdoc IBondingRegistry
@@ -565,10 +580,13 @@ contract BondingRegistry is
             }
         }
 
-        delete _pendingBondOwnerOf[operator];
-        _bondOwnerOf[operator] = msg.sender;
-        _bondedByOwner[previousOwner] -= delegatedBond;
-        _bondedByOwner[msg.sender] += delegatedBond;
+        BondingOwnershipLib.completeTransfer(
+            _bondOwnerOf,
+            _pendingBondOwnerOf,
+            _bondedByOwner,
+            operator,
+            delegatedBond
+        );
         // Both sides, in the same call: the bond leaves one history and joins the other, and
         // checkpointing only the receiver would leave the previous owner voting with weight it
         // no longer holds.
@@ -1446,12 +1464,13 @@ contract BondingRegistry is
     ////////////////////////////////////////////////////////////
 
     /// @notice ERC-165 interface detection. Advertises
-    ///         {IBondingRegistry} and {IERC165}.
+    ///         {IBondingRegistry}, {IBondOwnerHistory}, and {IERC165}.
     function supportsInterface(
         bytes4 interfaceId
     ) external pure virtual returns (bool) {
         return
             interfaceId == type(IBondingRegistry).interfaceId ||
+            interfaceId == type(IBondOwnerHistory).interfaceId ||
             interfaceId == type(IERC165).interfaceId;
     }
 

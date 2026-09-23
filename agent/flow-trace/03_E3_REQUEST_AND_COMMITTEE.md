@@ -24,6 +24,14 @@ claimable while an older request can still accept snapshot-weighted ticket submi
 A ticket that enters the current top-N opens a collateral obligation immediately. A better ticket
 releases the displaced candidate. Finalization retains the winners' obligations until the E3 ends.
 
+New requests admit at most one candidate per `bondOwnerAt(operator, requestBlock - 1)`. The best
+score for each owner competes for one of N seats. Equal scores use ascending operator address.
+Ownership changes after the snapshot do not change that request's groups. Both ownership assignment
+paths checkpoint the old and new owner through `BondingOwnershipLib`. The appended per-request
+policy is zero for pre-upgrade requests, which keep their original rule.
+`CommitteeBondOwnerCapEnabled` identifies new capped requests. This is an owner-address cap, not
+proof of independent human control.
+
 Governance configures the fee token, its expected decimals, and every raw-unit pricing term through
 `setFeeAssetConfig()`. The update is atomic, and the event contains the complete configuration. The
 owner can update only the nonzero flat randomness fee through `setRandomnessFlatFee()`. This narrow
@@ -289,7 +297,7 @@ InterfoldSolReader decodes IInterfold::E3Requested log
     ├─ Waits for CommitteeRequested if the delayed committee seed is not ready
     ├─ Loads the request timepoint and frozen ticket price from CommitteeRequested
     ├─ Uses the CommitteeRequested seed for ticket ranking
-    ├─ Calculates buffer = calculate_buffer_size(T, N)
+    ├─ Includes all eligible operators; no N-plus-buffer cutoff
     │
     ├─ ScoreBackend.get_committee():
     │   │
@@ -308,16 +316,16 @@ InterfoldSolReader decodes IInterfold::E3Requested log
     │   │
     │   ├─ Sort ALL nodes by their best score (ascending)
     │   │
-    │   └─ Select top N nodes (lowest scores win)
-    │       → Returns committee list with party indices
+    │   └─ Return all candidates in score order
+    │       → Submission ranks do not assign canonical DKG party IDs
     │
-    ├─ If THIS node is in the buffered winner set:
+    ├─ If THIS node is eligible:
     │   ├─ Check only this node's voluntary active-job limit
     │   ├─ Treat an existing reservation for this E3 as capacity during replay
     │   ├─ If capacity remains:
     │   │   ├─ Persist one provisional active-job reservation for this E3
     │   │   ├─ ticket_id = Some(TicketId::Score(best_ticket_number))
-    │   │   └─ party_index = Some(index_in_committee)
+    │   │   └─ party_index = Some(submission_rank)
     │   └─ If capacity is exhausted: ticket_id = None
     │
     ├─ If NOT selected: ticket_id = None
@@ -401,9 +409,12 @@ CiphernodeRegistrySolWriter receives TicketGenerated event
     │  │       scoreOf[msg.sender] = score                       │
     │  │                                                         │
     │  │   10. _insertTopN(e3Id, msg.sender, score):             │
-    │  │       Maintains array of N lowest-scoring nodes:        │
-    │  │       - If < N nodes: just insert                       │
-    │  │       - If N nodes: replace highest if new score lower  │
+    │  │       For capped requests:                             │
+    │  │       - Read owner at requestBlock - 1                 │
+    │  │       - Replace own candidate only with a better score │
+    │  │       - New owner: insert if fewer than N candidates   │
+    │  │       - Full: replace worst score, clear its owner map │
+    │  │       - Legacy requests keep uncapped top-N ranking    │
     │  │       - O(N) linear scan per insertion                  │
     │  │                                                         │
     │  │   11. Emit TicketSubmitted(e3Id, msg.sender, score)     │
@@ -604,10 +615,14 @@ A ready committee must finalize at or before its absolute DKG deadline.
 2. **Snapshot-based eligibility**: The eligible count, operator eligibility, and ticket balances use
    `requestBlock - 1`. The ticket price is frozen in the request transaction. Rust and Solidity
    consume those same values, so later activation, collateral, or price changes cannot alter the
-   candidate set. All nodes compute the same buffered winner set. A selected node can decline its
-   own submission when its local active-job capacity is exhausted. Before ticket dispatch, the node
+   candidate set. All nodes rank the complete eligible set. A candidate can decline its own
+   submission when its local active-job capacity is exhausted. Before ticket dispatch, the node
    persists a provisional reservation. Committee finalization confirms or releases that reservation.
    Terminal failure or completion releases every remaining reservation.
+
+   For capped requests, formation requires N distinct snapshot owners. The request's active-node
+   count guard does not count owners. Deployment checks must confirm enough eligible owners before
+   accepting paid requests. DKG parameters and the canonical operator-address order do not change.
 
 3. **Runtime committee order**: both the on-chain registry and Rust runtime normalize the finalized
    committee into ascending address order before deriving `party_id`. This keeps party IDs,

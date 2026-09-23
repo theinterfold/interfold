@@ -1102,6 +1102,12 @@ standard resume tool requires an explicit coordinated-restart acknowledgement be
 unpause transaction, because running nodes add provider addresses only at startup. This release
 starts Registry readers only on Ethereum mainnet, Sepolia, and local development chains.
 
+The sortition runtime ranks all eligible operators and submits its own best ticket when local
+capacity permits. There is no N-plus-buffer submission cutoff. The contract selects at most one
+operator per request-time bond owner for capped requests. This requires no owner-history field in
+the Rust recovery schema: the chain's finalized operator list remains authoritative. Submission rank
+only schedules finalization attempts; canonical party IDs come from the finalized address order.
+
 ## Subsystem contracts
 
 | Subsystem                          | Responsibility and I/O                                                                               | Owned state and dependencies                                                                                                                                       | Invariant and failure behavior                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | Extension boundary / must not own                                                                                         |

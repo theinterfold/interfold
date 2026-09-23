@@ -7,6 +7,7 @@
 pragma solidity 0.8.28;
 
 import { IBondingRegistry } from "../interfaces/IBondingRegistry.sol";
+import { IBondOwnerHistory } from "../interfaces/IBondOwnerHistory.sol";
 import { ICiphernodeRegistry } from "../interfaces/ICiphernodeRegistry.sol";
 import { IInterfold } from "../interfaces/IInterfold.sol";
 import { IRandomnessProvider } from "../interfaces/IRandomnessProvider.sol";
@@ -192,15 +193,18 @@ library RegistrySortitionLib {
         uint256 requestedAt;
         uint256 randomnessDeadline;
         uint256 submissionWindow;
+        // Appended: requests created before this upgrade retain uncapped selection.
+        bool bondOwnerCap;
     }
 
     /// @custom:storage-location erc7201:interfold.storage.RegistrySortitionRandomness
-    /// @dev `degraded` is appended at the end. Do not insert fields before it.
+    /// @dev New fields are appended. Do not reorder existing fields.
     struct RandomnessStorage {
         IRandomnessProvider provider;
         uint256 requestTimeout;
         mapping(uint256 e3Id => RandomnessRequest request) requests;
         bool degraded;
+        mapping(uint256 e3Id => mapping(address owner => address candidate)) ownerCandidates;
     }
 
     function insertCandidate(
@@ -210,33 +214,112 @@ library RegistrySortitionLib {
         address node,
         uint256 score
     ) external {
-        address[] storage top = committee.topNodes;
-        uint256 cap = committee.threshold[1];
-        address displaced;
-
-        if (top.length < cap) {
-            top.push(node);
-        } else {
-            uint256 worstIndex;
-            uint256 worstScore = committee.scoreOf[top[0]];
-            for (uint256 i = 1; i < top.length; ++i) {
-                uint256 candidateScore = committee.scoreOf[top[i]];
-                if (candidateScore > worstScore) {
-                    worstScore = candidateScore;
-                    worstIndex = i;
-                }
-            }
-
-            if (score >= worstScore) return;
-            displaced = top[worstIndex];
-            top[worstIndex] = node;
+        RandomnessStorage storage state = _randomnessStorage();
+        bool ownerCap = state.requests[e3Id].bondOwnerCap;
+        address bondOwner;
+        address sameOwnerCandidate;
+        if (ownerCap) {
+            bondOwner = IBondOwnerHistory(address(bondingRegistry)).bondOwnerAt(
+                node,
+                committee.requestBlock - 1
+            );
+            if (bondOwner == address(0))
+                revert ICiphernodeRegistry.NodeNotEligible();
+            sameOwnerCandidate = state.ownerCandidates[e3Id][bondOwner];
         }
 
+        (bool inserted, address displaced) = _selectCandidate(
+            committee,
+            node,
+            score,
+            sameOwnerCandidate,
+            ownerCap
+        );
+        if (!inserted) return;
+
         committee.scoreOf[node] = score;
+        if (ownerCap) {
+            if (displaced != address(0)) {
+                address displacedOwner = IBondOwnerHistory(
+                    address(bondingRegistry)
+                ).bondOwnerAt(displaced, committee.requestBlock - 1);
+                delete state.ownerCandidates[e3Id][displacedOwner];
+            }
+            state.ownerCandidates[e3Id][bondOwner] = node;
+        }
         bondingRegistry.setCommitteeObligation(e3Id, node, true);
         if (displaced != address(0)) {
             bondingRegistry.setCommitteeObligation(e3Id, displaced, false);
         }
+    }
+
+    function _selectCandidate(
+        ICiphernodeRegistry.Committee storage committee,
+        address node,
+        uint256 score,
+        address sameOwnerCandidate,
+        bool ownerCap
+    ) private returns (bool inserted, address displaced) {
+        address[] storage top = committee.topNodes;
+        if (sameOwnerCandidate != address(0)) {
+            if (
+                !_ranksBefore(
+                    score,
+                    node,
+                    committee.scoreOf[sameOwnerCandidate],
+                    sameOwnerCandidate
+                )
+            ) return (false, address(0));
+            for (uint256 i; i < top.length; ++i) {
+                if (top[i] == sameOwnerCandidate) {
+                    top[i] = node;
+                    break;
+                }
+            }
+            displaced = sameOwnerCandidate;
+        } else if (top.length < committee.threshold[1]) {
+            top.push(node);
+        } else {
+            uint256 worstIndex = _worstCandidateIndex(committee, ownerCap);
+            uint256 worstScore = committee.scoreOf[top[worstIndex]];
+            bool replaces = ownerCap
+                ? _ranksBefore(score, node, worstScore, top[worstIndex])
+                : score < worstScore;
+            if (!replaces) return (false, address(0));
+            displaced = top[worstIndex];
+            top[worstIndex] = node;
+        }
+
+        return (true, displaced);
+    }
+
+    function _worstCandidateIndex(
+        ICiphernodeRegistry.Committee storage committee,
+        bool ownerCap
+    ) private view returns (uint256 worstIndex) {
+        address[] storage top = committee.topNodes;
+        uint256 worstScore = committee.scoreOf[top[0]];
+        for (uint256 i = 1; i < top.length; ++i) {
+            uint256 candidateScore = committee.scoreOf[top[i]];
+            if (
+                candidateScore > worstScore ||
+                (ownerCap &&
+                    candidateScore == worstScore &&
+                    top[i] > top[worstIndex])
+            ) {
+                worstScore = candidateScore;
+                worstIndex = i;
+            }
+        }
+    }
+
+    function _ranksBefore(
+        uint256 score,
+        address node,
+        uint256 otherScore,
+        address otherNode
+    ) private pure returns (bool) {
+        return score < otherScore || (score == otherScore && node < otherNode);
     }
 
     /// @notice Validates every guard on one ticket submission.
@@ -422,7 +505,8 @@ library RegistrySortitionLib {
     /// @notice Requests and freezes randomness configuration for one E3.
     function requestRandomness(
         uint256 e3Id,
-        uint256 submissionWindow
+        uint256 submissionWindow,
+        IBondOwnerHistory bondingHistory
     ) external returns (uint256 requestId, uint256 randomnessDeadline) {
         RandomnessStorage storage state = _randomnessStorage();
         IRandomnessProvider provider = state.provider;
@@ -435,6 +519,10 @@ library RegistrySortitionLib {
             );
 
         RandomnessRequest storage request = state.requests[e3Id];
+        // Reject a partial deployment before the requester pays for a VRF draw.
+        bondingHistory.bondOwnerAt(address(0), block.timestamp - 1);
+        request.bondOwnerCap = true;
+        emit ICiphernodeRegistry.CommitteeBondOwnerCapEnabled(e3Id);
         request.provider = provider;
         request.submissionWindow = submissionWindow;
         request.requestedBlock = currentBlockNumber();

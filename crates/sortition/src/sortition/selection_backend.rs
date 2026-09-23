@@ -311,6 +311,68 @@ mod tests {
     }
 
     #[test]
+    fn submissions_include_candidates_beyond_the_old_small_committee_buffer() {
+        let mut backend = SortitionBackend::default();
+        let mut state = NodeStateStore::default();
+        for i in 1..=50u8 {
+            let address = Address::from([i; 20]).to_string();
+            backend.add(address.clone());
+            state.nodes.insert(
+                address,
+                NodeState {
+                    ticket_balance: U256::from(10),
+                    active_jobs: 0,
+                    active: true,
+                    ticket_balance_history: vec![StateCheckpoint {
+                        timepoint: 1,
+                        value: U256::from(10),
+                    }],
+                    active_history: vec![StateCheckpoint {
+                        timepoint: 1,
+                        value: true,
+                    }],
+                },
+            );
+        }
+        let snapshot = SortitionSnapshot {
+            request_block: 2,
+            ticket_price: U256::from(10),
+        };
+        let e3_id = E3id::new("1", 1);
+        let seed = Seed::from(U256::from(1));
+        let mut ranks = Vec::new();
+        for address in backend.nodes() {
+            let (rank, ticket) = backend
+                .get_submission_index(e3_id.clone(), seed, address, 1, &state, snapshot)
+                .unwrap()
+                .expect("all eligible nodes must submit");
+            assert_eq!(ticket, Some(1));
+            ranks.push(rank);
+        }
+        ranks.sort();
+        assert_eq!(ranks, (0..50).collect::<Vec<_>>());
+
+        let local = backend.nodes()[0].clone();
+        state.nodes.get_mut(&local).unwrap().active_jobs = 1;
+        assert_eq!(
+            backend
+                .get_submission_index(e3_id.clone(), seed, local.clone(), 1, &state, snapshot)
+                .unwrap(),
+            None
+        );
+        state
+            .e3_committees
+            .insert(committee_key(&e3_id), vec![local.clone()]);
+        assert!(
+            backend
+                .get_submission_index(e3_id, seed, local, 1, &state, snapshot)
+                .unwrap()
+                .is_some(),
+            "a restart keeps its existing reservation"
+        );
+    }
+
+    #[test]
     fn active_jobs_do_not_change_the_canonical_ticket_ranges() {
         let local = Address::from([0x11; 20]);
         let remote = Address::from([0x22; 20]);
@@ -587,6 +649,30 @@ impl Default for SortitionBackend {
 impl SortitionBackend {
     pub fn score() -> Self {
         SortitionBackend::Score(ScoreBackend::default())
+    }
+
+    /// Rank all eligible submissions. The contract selects distinct bond owners.
+    ///
+    /// An N-plus-buffer cutoff can contain only one owner's operators and exclude
+    /// the other owners needed to fill the committee.
+    pub fn get_submission_index(
+        &self,
+        e3_id: E3id,
+        seed: Seed,
+        address: String,
+        chain_id: u64,
+        node_state: &NodeStateStore,
+        snapshot: SortitionSnapshot,
+    ) -> Result<Option<(u64, Option<u64>)>> {
+        self.get_index(
+            e3_id,
+            seed,
+            node_state.nodes.len(),
+            address,
+            chain_id,
+            node_state,
+            snapshot,
+        )
     }
 }
 

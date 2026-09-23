@@ -203,11 +203,11 @@ flowchart TD
     E --> F[Calculate Total Ticket Weight]
     F --> G{threshold_n nodes available?}
     G -->|No| H[Error: Insufficient Nodes]
-    G -->|Yes| I[Select Top N Nodes by Weight]
+    G -->|Yes| I[Rank all eligible nodes by best ticket score]
     I --> J[Generate Ticket IDs]
     J --> K[Emit TicketGenerated Events]
     K --> L[EVM: Submit Tickets On-Chain]
-    L --> M{Threshold Tickets Submitted?}
+    L --> M{N distinct snapshot owners submitted?}
     M -->|No| L
     M -->|Yes| N[Contract: finalizeCommittee]
     N --> O[Emit CommitteeFinalized Event]
@@ -222,8 +222,8 @@ flowchart TD
 ```mermaid
 flowchart LR
     A[TicketGenerated] --> D[Score Sortition - Submit to Contract]
-    D --> E[Contract: Collect Tickets]
-    E --> F{Threshold Met?}
+    D --> E[Contract: Keep best ticket per snapshot owner]
+    E --> F{N distinct owners and window closed?}
     F -->|No| E
     F -->|Yes| G[Contract: finalizeCommittee]
     G --> H[Freeze Committee List]
@@ -240,10 +240,12 @@ flowchart LR
 - **Algorithm**:
   - Build list of eligible nodes (active + ticket_balance > 0)
   - Calculate weight for each node based on ticket balance
-  - Select top `threshold_n` nodes by weight
-  - Generate unique ticket IDs for selected nodes
+  - Rank all eligible nodes by their best ticket score
+  - Submit the local node's best ticket if it has capacity
 - **On-Chain Integration**: Tickets submitted to contract for verification
-- **Committee Finalization**: Contract finalizes committee when threshold tickets received
+- **Committee Finalization**: After the window closes, the contract selects N distinct request-time
+  bond owners. Each owner has at most one candidate. Existing requests from before the cap upgrade
+  retain uncapped selection. Multiple owner wallets can still share a controller.
 
 ### 3. NodeStateManager
 

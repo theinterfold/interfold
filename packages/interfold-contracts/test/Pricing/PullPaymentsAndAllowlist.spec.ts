@@ -70,6 +70,14 @@ describe("Interfold — pull payments + fee-token allow-list", function () {
     const operator1 = operator1Maybe!;
     const operator2 = operator2Maybe!;
     const operator3 = operator3Maybe!;
+    const rewardOwners = (await ethers.getSigners()).slice(7, 10);
+    for (const [i, operator] of [operator1, operator2, operator3].entries()) {
+      const address = await operator.getAddress();
+      await bondingRegistry
+        .connect(operator)
+        .proposeBondOwner(address, rewardOwners[i].address);
+      await bondingRegistry.connect(rewardOwners[i]).acceptBondOwner(address);
+    }
     const [, , , , , treasury] = await ethers.getSigners();
     const treasuryAddress = await treasury.getAddress();
 
@@ -114,6 +122,7 @@ describe("Interfold — pull payments + fee-token allow-list", function () {
 
     return {
       owner,
+      rewardOwners,
       operator1,
       operator2,
       operator3,
@@ -173,7 +182,8 @@ describe("Interfold — pull payments + fee-token allow-list", function () {
   describe("H-01 — pull rewards", function () {
     it("credits the bond owner rather than the hot operator keys", async function () {
       const ctx = await loadFixture(fixturePlain);
-      const { interfold, feeToken, owner } = ctx;
+      const { interfold, feeToken } = ctx;
+      const owner = ctx.rewardOwners[0];
       const { e3Id, nodes } = await runRequestAndPublish(ctx);
       const ownerAddress = await owner.getAddress();
 
@@ -194,7 +204,8 @@ describe("Interfold — pull payments + fee-token allow-list", function () {
 
     it("claimRewards batches across E3 ids", async function () {
       const ctx = await loadFixture(fixturePlain);
-      const { interfold, feeToken, owner, request } = ctx;
+      const { interfold, feeToken, request } = ctx;
+      const owner = ctx.rewardOwners[0];
       // Two sequential E3s for the same committee.
       const { e3Id: firstE3Id } = await runRequestAndPublish(ctx);
       const now = await time.latest();
@@ -265,7 +276,8 @@ describe("Interfold — pull payments + fee-token allow-list", function () {
 
     it("blacklisting treasury does not brick publishPlaintextOutput; other claimants unaffected", async function () {
       const ctx = await loadFixture(fixtureBlacklist);
-      const { interfold, feeToken, treasury, owner } = ctx;
+      const { interfold, feeToken, treasury } = ctx;
+      const owner = ctx.rewardOwners[0];
       const treasuryAddr = await treasury.getAddress();
       // Blacklist treasury BEFORE the run.
       const blacklistToken = feeToken as unknown as MockBlacklistUSDC;

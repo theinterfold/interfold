@@ -7,6 +7,7 @@ pragma solidity 0.8.28;
 
 import { ICiphernodeRegistry } from "../interfaces/ICiphernodeRegistry.sol";
 import { IBondingRegistry } from "../interfaces/IBondingRegistry.sol";
+import { IBondOwnerHistory } from "../interfaces/IBondOwnerHistory.sol";
 import { E3 } from "../interfaces/IE3.sol";
 import { IInterfold } from "../interfaces/IInterfold.sol";
 import { IPkVerifier } from "../interfaces/IPkVerifier.sol";
@@ -335,7 +336,8 @@ contract CiphernodeRegistryOwnable is
         // {getPastVotes} lookups resolve consistently.
         (, uint256 randomnessDeadline) = RegistrySortitionLib.requestRandomness(
             e3Id,
-            sortitionSubmissionWindow
+            sortitionSubmissionWindow,
+            IBondOwnerHistory(address(dependencies.bonding))
         );
         c.committeeDeadline = randomnessDeadline;
         uint256 latestDeadline = randomnessDeadline + sortitionSubmissionWindow;

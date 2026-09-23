@@ -641,6 +641,19 @@
           "internalType": "uint256",
           "name": "e3Id",
           "type": "uint256"
+        }
+      ],
+      "name": "CommitteeBondOwnerCapEnabled",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
         },
         {
           "indexed": false,
@@ -2012,5 +2025,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/ICiphernodeRegistry.sol",
-  "buildInfoId": "solc-0_8_28-a920b5856a5dc3ceeeced48571e6eb534cf88182"
+  "buildInfoId": "solc-0_8_28-edc0aa765d9cd5d2f829899804087eeff5ce95dc"
 }

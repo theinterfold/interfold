@@ -5,8 +5,8 @@ description: 'How ticket balances influence committee selection'
 
 # Tickets & Sortition
 
-Tickets determine your probability of being selected for E3 committees. This guide explains the
-ticket system and sortition algorithm.
+Tickets influence your probability of selection for E3 committees. New requests admit at most one
+operator per bond owner. Multiple machines under one owner compete for that owner's single seat.
 
 ## Ticket Overview
 
@@ -120,9 +120,16 @@ For each ticket you hold, a score is calculated:
 score = keccak256(node, ticketNumber, e3Id, seed)
 ```
 
-The **lowest** score wins — each node submits its single best (lowest-scoring) ticket. The same
-inputs always produce the same scores, so all honest nodes converge on the same committee. The E3
-computation seed is separate and does not affect ticket ranking.
+Each eligible node submits its best (lowest-scoring) ticket. The contract keeps the best submission
+per bond owner, then selects the best `N` owners. Equal scores use the lower operator address. The
+E3 computation seed is separate and does not affect ticket ranking.
+
+The owner comes from `bondOwnerAt(operator, requestBlock - 1)`. A transfer after that snapshot does
+not create another seat for the old owner in that E3. Requests created before the cap upgrade keep
+their previous selection rule.
+
+This is an address-based cap, not proof of an independent person. One controller can use several
+owners before the snapshot, buy control later, or collude with other owners.
 
 ### 3. Ticket Submission
 
@@ -142,20 +149,17 @@ reservation for that E3. This prevents two concurrent requests from using the sa
 the ticket transaction fails, the E3 becomes terminal, or the node is not in the finalized
 committee, the runtime releases the reservation.
 
-> The local sortition algorithm considers `threshold_n + buffer` candidate nodes. In these runtime
-> field names, `threshold_m` is the polynomial threshold `T`, `threshold_n` is the committee size
-> `N`, and decryption requires `T+1` shares. The buffer size depends on the `T/N` ratio:
->
-> - Ratio ≥ 0.8 → buffer = `(n - m) + 3`
-> - Ratio ≥ 0.6 → buffer = `(n - m) + 2`
-> - Ratio < 0.6 → buffer = `(n - m) + 1`
+All eligible nodes with local capacity can submit. The runtime no longer excludes candidates with an
+`N + buffer` cutoff. That cutoff could contain one owner's operators and exclude owners needed to
+fill the committee. This increases ticket transaction costs; a submission does not guarantee a seat
+or a reward.
 
 ### 4. Committee Finalization
 
-After the window closes and ≥ `threshold_n` tickets are present:
+After the window closes:
 
 1. Anyone can call `finalizeCommittee(e3Id)`
-2. If enough operators submitted, the registry emits
+2. If at least `N` distinct request-time owners submitted eligible tickets, the registry emits
    `SortitionCommitteeFinalized(e3Id, committee, scores)`
 3. If the threshold isn't met, `CommitteeFormationFailed` is emitted and the E3 fails
 4. Each node reconciles its provisional reservation: selected nodes keep it, and unselected nodes
@@ -165,6 +169,10 @@ After the window closes and ≥ `threshold_n` tickets are present:
 
 The reservation stays active until the E3 reaches a terminal stage. It is also reconstructed from
 durable state after a restart, so restarting a node does not make an in-flight slot appear free.
+
+Small needs 19 distinct eligible owners to form its committee, even though its DKG roster has 14
+members. Check owner capacity before requesting an E3. The request-time active-node count does not
+measure distinct owners; an underfilled round fails at finalization.
 
 ## Parameters
 
@@ -183,15 +191,16 @@ durable state after a restart, so restarting a node does not make an in-flight s
 
 ### Events to Watch
 
-| Event                             | Meaning                                     |
-| --------------------------------- | ------------------------------------------- |
-| `CommitteeRandomnessRequested`    | A request-bound VRF request was created     |
-| `RandomnessFulfilled`             | The provider stored a verified VRF response |
-| `RandomnessCircuitBreakerTripped` | A timeout halted new E3 requests            |
-| `TicketSubmitted`                 | A ticket was submitted for selection        |
-| `SortitionCommitteeFinalized`     | Committee members were confirmed            |
-| `CommitteeFormationFailed`        | Not enough operators submitted tickets      |
-| `CommitteePublished`              | The aggregated public key is ready          |
+| Event                             | Meaning                                      |
+| --------------------------------- | -------------------------------------------- |
+| `CommitteeRandomnessRequested`    | A request-bound VRF request was created      |
+| `RandomnessFulfilled`             | The provider stored a verified VRF response  |
+| `RandomnessCircuitBreakerTripped` | A request's VRF window expired               |
+| `TicketSubmitted`                 | A ticket was submitted for selection         |
+| `CommitteeBondOwnerCapEnabled`    | The request uses one seat per snapshot owner |
+| `SortitionCommitteeFinalized`     | Committee members were confirmed             |
+| `CommitteeFormationFailed`        | Not enough operators submitted tickets       |
+| `CommitteePublished`              | The aggregated public key is ready           |
 
 This release supports Ethereum mainnet and Sepolia. Do not configure the ciphernode Registry reader
 for Arbitrum until a later protocol release adds that deployment path.
@@ -200,11 +209,12 @@ for Arbitrum until a later protocol release adds that deployment path.
 
 Watch your node logs for:
 
-- `"This node was SELECTED for sortition"` - You have a winning ticket for an E3
-- `"This node was NOT selected for sortition"` - Your tickets didn't score low enough
+- `"This node was SELECTED for sortition"` - Your node can submit a candidate ticket
+- `"This node was NOT selected for sortition"` - Your node lacks eligibility or local capacity
 - `"Ticket generated for score sortition"` - Winning ticket emitted to the event bus
 - `"Ciphernode was not selected"` - Node wasn't in the selection set
-- `"Performing Sortition with buffer"` - Sortition started (shows threshold_m, threshold_n, buffer)
+- `"Ranking eligible ticket submissions; the contract selects distinct bond owners"` - Candidate
+  ranking started
 - `"Node is in finalized committee"` - Committee confirmed, CiphernodeSelected emitted
 
 ## Troubleshooting

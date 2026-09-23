@@ -171,6 +171,21 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await interfold.connect(signer).request(requestParams);
       await time.increase(1);
 
+      // This suite tests refunds paid to a shared recipient. Admission uses
+      // distinct owners at the request snapshot; settlement uses ownership
+      // after these transfers. Explicit recipient overrides stay unchanged.
+      for (const operator of [operator1, operator2, operator3]) {
+        const address = await operator.getAddress();
+        if ((await bondingRegistry.bondOwnerOf(address)) === address) {
+          await bondingRegistry
+            .connect(operator)
+            .proposeBondOwner(address, await computeProvider.getAddress());
+          await bondingRegistry
+            .connect(computeProvider)
+            .acceptBondOwner(address);
+        }
+      }
+
       return { e3Id };
     };
 
@@ -191,7 +206,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
     const setupOperator = async (operator: Signer) => {
       const operatorAddress = await operator.getAddress();
-      const bondOwnerAddress = await computeProvider.getAddress();
+      const bondOwnerAddress = operatorAddress;
       const ticketTokenAddress = await bondingRegistry.ticketToken();
       const ticketAmount = ethers.parseUnits("100", 6);
 
@@ -211,28 +226,31 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
           1,
         );
       await foldToken
-        .connect(computeProvider)
+        .connect(operator)
         .approve(await bondingRegistry.getAddress(), ethers.parseEther("2000"));
       await bondingRegistry
-        .connect(computeProvider)
+        .connect(operator)
         .bondCiphernodeFor(operatorAddress, ethers.parseEther("1000"));
       await bondingRegistry
-        .connect(computeProvider)
+        .connect(operator)
         .registerOperatorFor(operatorAddress);
 
       await usdcToken
-        .connect(computeProvider)
+        .connect(operator)
         .approve(ticketTokenAddress, ticketAmount);
       await bondingRegistry
-        .connect(computeProvider)
+        .connect(operator)
         .addTicketBalanceFor(operatorAddress, ticketAmount);
     };
 
     const transferBondOwner = async (operator: Signer, nextOwner: Signer) => {
       const operatorAddress = await operator.getAddress();
       const nextOwnerAddress = await nextOwner.getAddress();
+      const currentOwner = await ethers.getSigner(
+        await bondingRegistry.bondOwnerOf(operatorAddress),
+      );
       await bondingRegistry
-        .connect(computeProvider)
+        .connect(currentOwner)
         .proposeBondOwner(operatorAddress, nextOwnerAddress);
       await bondingRegistry.connect(nextOwner).acceptBondOwner(operatorAddress);
     };

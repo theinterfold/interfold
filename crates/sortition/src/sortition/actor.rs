@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-4.0-only
+// SPDX-License-Identifier: LGPL-3.0-only
 //
 // This file is provided WITHOUT ANY WARRANTY;
 // without even the implied warranty of MERCHANTABILITY
@@ -6,7 +6,6 @@
 
 use crate::domain::backends::{SortitionBackend, SortitionList};
 use crate::domain::node_registry::{NodeRegistry, NodeStateStore, SortitionSnapshot};
-use crate::domain::ticket_sortition;
 use crate::messages::{
     CommitteeMembersResponse, E3CommitteeContainsRequest, E3CommitteeContainsResponse,
     GetCommitteeMembersRequest, WithSortitionTicket,
@@ -308,7 +307,6 @@ impl Sortition {
         &self,
         e3_id: E3id,
         seed: Seed,
-        size: usize,
         chain_id: u64,
         snapshot: SortitionSnapshot,
     ) -> Option<(u64, Option<u64>)> {
@@ -319,15 +317,7 @@ impl Sortition {
         let state = state_map.get(&chain_id)?;
 
         backend
-            .get_index(
-                e3_id,
-                seed,
-                size,
-                self.address.clone(),
-                chain_id,
-                state,
-                snapshot,
-            )
+            .get_submission_index(e3_id, seed, self.address.clone(), chain_id, state, snapshot)
             .unwrap_or_else(|err| {
                 bus.err(EType::Sortition, err);
                 None

@@ -2,7 +2,7 @@
 title: 'Sortition — Technical Deep Dive'
 description:
   'How the Interfold sortition algorithm selects ciphernode committees — scoring function, seed
-  derivation, buffer strategy, and on-chain/off-chain determinism'
+  derivation, bond-owner seat cap, and on-chain/off-chain determinism'
 ---
 
 # Sortition
@@ -11,10 +11,13 @@ Sortition is the mechanism that selects a subset of registered ciphernodes to fo
 each E3 request. The design goals are:
 
 - **Unpredictability** — the requester cannot know the outcome before its request is committed
-- **Proportionality** — selection probability scales linearly with ticket stake
-- **Determinism** — every honest node independently computes the same result
-- **Sybil-resistance** — splitting funds across many wallets provides no advantage
-- **On-chain verifiability** — the contract enforces the same rules the nodes compute off-chain
+- **Ticket weighting** — more eligible tickets improve an owner's best-score distribution
+- **Determinism** — the same accepted submissions produce the same committee
+- **Owner cap** — at most one selected operator per request-time bond owner
+- **On-chain enforcement** — node software cannot bypass the cap
+
+The cap does not establish independent ownership. Splitting resources across different bond owners
+can still increase seat count. This temporary rule is not a permissionless Sybil defense.
 
 ---
 
@@ -82,48 +85,35 @@ Key properties:
 - The hash is computed identically on-chain (Solidity) and off-chain (Rust using `alloy`'s
   `abi_encode_packed`), so both sides always agree
 - Given the same inputs, the score is always the same — there is no per-invocation randomness
-- `ticket_number` is a 0-based index into the operator's ticket balance. Ticket 0, ticket 1, etc.
+- `ticket_number` runs from 1 through `availableTickets`. The contract rejects ticket 0.
 
 ### One Best Ticket Per Node
 
 Each operator computes scores for **all** of their tickets but submits only the single best
-(lowest-scoring) one. This is enforced off-chain by the node software and on-chain by the contract
-(which rejects duplicate submissions from the same address).
+(lowest-scoring) one. The node software chooses the best ticket. The contract checks its range and
+rejects duplicate submissions from the same address; it does not check that the ticket is best.
 
-This design is critical for **sybil-resistance**: splitting 100 tickets across 100 wallets vs
-holding 100 tickets in one wallet produces the same expected score distribution, because:
+For new requests, the registry retains the best ticket across all operators with the same snapshot
+owner. A better submission replaces that owner's current candidate, not another owner's seat.
+Different owners compete for the best `N` scores. Score ties use ascending operator address.
 
-- A single wallet takes `min(score_0, score_1, ..., score_99)` — the minimum of 100 draws
-- 100 wallets each take `min(score_i)` with 1 draw each — 100 independent draws
-
-The minimum of N draws from a uniform distribution is dominated by the same statistics in both
-cases, so there is no incentive to split.
+Under the independent-hash model, distributing the same total valid tickets across operators of one
+owner preserves that owner's best-score distribution. This statement requires the same submitted
+ticket population and eligible operating capacity. It does not apply across different owner wallets,
+and it does not imply that a committee seat count is linear in stake.
 
 ---
 
-## Committee Size and Buffer
+## Committee Size and Submission Candidates
 
-The sortition selects more candidate nodes than the finalized committee needs. In the Rust runtime,
-the legacy field `threshold_m` is the polynomial threshold `T`, so decryption requires
-`threshold_m + 1` shares. The field `threshold_n` is the finalized committee size `N`. The local
-candidate-set size is:
+The runtime ranks all eligible operators. It no longer truncates submissions to `N + buffer`; one
+owner could occupy that whole candidate set. Each eligible operator with local capacity submits
+once, and the contract selects distinct owners. This increases transaction costs.
 
-```
-buffer = (threshold_n - threshold_m) + safety_factor
-total_selection_size = threshold_n + buffer
-```
-
-Where `safety_factor` depends on the `T/N` ratio:
-
-| `threshold_m / threshold_n` | Safety factor | Rationale                                                                |
-| --------------------------- | ------------- | ------------------------------------------------------------------------ |
-| ≥ 0.8 (high threshold)      | 3             | Tight committees are vulnerable to even one dropout; more backups needed |
-| ≥ 0.6                       | 2             | Moderate risk                                                            |
-| < 0.6 (loose threshold)     | 1             | Plenty of slack; minimal buffer required                                 |
-
-The extra nodes act as **standing backups** during committee formation. After finalization, the
-runtime uses the address-sorted committee order for party IDs and aggregator failover; ticket-score
-order does not assign the aggregator.
+The runtime's legacy field `threshold_m` is polynomial threshold `T`; decryption needs `T + 1`
+shares. `threshold_n` is committee size `N`. No circuit parameter changes with this cap. After
+finalization, ascending operator address determines party IDs and aggregator failover. Submission
+rank is only a finalization-attempt priority, not a DKG party ID.
 
 ---
 
@@ -136,8 +126,9 @@ seconds by default. The Ethereum launch configuration uses 600 seconds:
 submitTicket(e3Id, ticketNumber)
 ```
 
-The contract maintains a sorted top-N list of the best submissions seen so far, using a linear scan
-to find the insertion point. Each submission emits:
+The contract maintains up to `N` candidates from distinct snapshot owners. A linear scan finds the
+worst candidate when the set is full. Finalization, not insertion, sorts the selected addresses.
+Each submission emits:
 
 ```solidity
 event TicketSubmitted(uint256 e3Id, address node, uint256 ticketId, uint256 score);
@@ -147,7 +138,15 @@ The contract enforces:
 
 - Only one submission per address per E3
 - The ticket number must be within the operator's balance at `requestBlock - 1`
-- The score must be recomputed on-chain and match what the node claims
+- The contract computes the score; callers submit only a ticket number
+- At most one candidate per `bondOwnerAt(operator, requestBlock - 1)`
+
+Both ownership-assignment paths checkpoint the owner. Operators registered before the upgrade use
+their unchanged owner until the first checkpoint seeds that prior owner. These checkpoints support
+new requests after the upgrade; they do not reconstruct older ownership transfers.
+
+The cap policy is frozen per request. New requests emit `CommitteeBondOwnerCapEnabled(e3Id)`.
+Requests stored before this upgrade have an unset policy field and keep uncapped selection.
 
 ---
 
@@ -155,8 +154,8 @@ The contract enforces:
 
 After the submission window closes, anyone can call `finalizeCommittee(e3Id)`:
 
-- If ≥ `threshold_n` tickets were submitted, `SortitionCommitteeFinalized(e3Id, committee, scores)`
-  is emitted
+- If at least `N` distinct owners have accepted candidates,
+  `SortitionCommitteeFinalized(e3Id, committee, scores)` is emitted
 - If fewer → `CommitteeFormationFailed` is emitted and the E3 fails with a refund
 
 Before emitting `SortitionCommitteeFinalized`, the registry **normalizes** the selected committee by
@@ -192,16 +191,16 @@ that phase's set, and the final eligible party remains active after all standby 
 
 ---
 
-## Off-chain Pre-filtering
+## Off-chain Submission
 
-To avoid every node sending a transaction on every E3 request (which would be expensive and noisy),
-each node runs the full sortition algorithm locally before deciding whether to submit:
+Each node computes its best ticket and its rank among eligible operators. It submits if it has local
+capacity. The contract enforces the owner cap; the aggregator does not approve tickets.
 
 ```rust
-// Pseudocode from crates/sortition/src/backends.rs
+// Pseudocode for SortitionBackend::get_submission_index
 let eligible = nodes.filter(|n| n.is_active && n.available_tickets > 0);
-let committee = ScoreSortition::new(total_selection_size).get_committee(eligible, e3id, seed);
-if committee.contains(my_address) {
+let candidates = ScoreSortition::new(nodes.len()).get_committee(eligible, e3id, seed);
+if candidates.contains(my_address) && has_local_capacity(e3id) {
     submit_winning_ticket(e3id, my_ticket_number);
 }
 ```
@@ -245,30 +244,32 @@ sequenceDiagram
     Note over NodeA,NodeC: Use the accepted seed,<br/>snapshot balances at requestBlock-1,<br/>score all tickets, keep best
 
     NodeA->>Registry: submitTicket(e3Id, ticketId=3)
-    NodeB->>Registry: submitTicket(e3Id, ticketId=0)
-    Note over NodeC: NodeC's best score isn't low enough → doesn't submit
+    NodeB->>Registry: submitTicket(e3Id, ticketId=1)
+    NodeC->>Registry: submitTicket(e3Id, ticketId=2)
+    Note over Registry: Keep best ticket per snapshot owner
 
     Note over Registry: Submission window closes
     Registry->>Registry: finalizeCommittee(e3Id)
-    Registry-->>NodeA: SortitionCommitteeFinalized([NodeA, NodeB], [scoreA, scoreB])
-    Registry-->>NodeB: SortitionCommitteeFinalized([NodeA, NodeB], [scoreA, scoreB])
+    Registry-->>NodeA: SortitionCommitteeFinalized([NodeA, NodeB, NodeC], scores)
+    Registry-->>NodeB: SortitionCommitteeFinalized([NodeA, NodeB, NodeC], scores)
+    Registry-->>NodeC: SortitionCommitteeFinalized([NodeA, NodeB, NodeC], scores)
 
-    Note over NodeA,NodeB: Both sort by address → same party_ids<br/>Lowest address = party_id 0 (aggregator)
+    Note over NodeA,NodeC: Sort by address → same party_ids<br/>Lowest address = party_id 0 (aggregator)
 ```
 
 ---
 
 ## Security Properties
 
-| Property                | Mechanism                                                                      |
-| ----------------------- | ------------------------------------------------------------------------------ |
-| **Unpredictable seed**  | A verified VRF word is bound to the chain, registry, E3, and request ID        |
-| **No reroll fallback**  | A missing or late response fails the E3 instead of requesting replacement data |
-| **Proportionality**     | Expected min-score over N tickets scales with N                                |
-| **Sybil-resistance**    | Splitting tickets across wallets doesn't improve expected min-score            |
-| **Determinism**         | Hash function is identical on-chain (Solidity) and off-chain (Rust)            |
-| **Anti-frontrunning**   | Balances use the timestamp checkpoint at `requestBlock - 1`                    |
-| **Backup availability** | Buffer nodes ensure committee can absorb dropouts without restart              |
+| Property                    | Mechanism                                                                      |
+| --------------------------- | ------------------------------------------------------------------------------ |
+| **Unpredictable seed**      | A verified VRF word is bound to the chain, registry, E3, and request ID        |
+| **No reroll fallback**      | A missing or late response fails the E3 instead of requesting replacement data |
+| **Ticket weighting**        | More eligible tickets improve the owner's best-score distribution              |
+| **Owner concentration cap** | One seat per snapshot owner; different owner wallets remain a bypass           |
+| **Determinism**             | Hash function is identical on-chain (Solidity) and off-chain (Rust)            |
+| **Snapshot stability**      | Balances and owners use the timestamp checkpoint at `requestBlock - 1`         |
+| **Formation candidates**    | All eligible operators may submit; finalization still needs N distinct owners  |
 
 ---
 

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-4.0-only
+// SPDX-License-Identifier: LGPL-3.0-only
 
 //! E3 ticket sortition and selector dispatch.
 
@@ -76,10 +76,6 @@ impl Sortition {
             );
             return;
         };
-        let threshold_m = msg.threshold_m;
-        let threshold_n = msg.threshold_n;
-        let buffer = ticket_sortition::calculate_buffer_size(threshold_m, threshold_n);
-        let total_selection_size = threshold_n + buffer;
         let snapshot = self.node_state.get().and_then(|state| {
             state
                 .get(&chain_id)
@@ -88,11 +84,9 @@ impl Sortition {
 
         info!(
             e3_id = %e3_id,
-            threshold_m = threshold_m,
-            threshold_n = threshold_n,
-            buffer = buffer,
-            total_selection_size = total_selection_size,
-            "Performing Sortition with buffer"
+            threshold_m = msg.threshold_m,
+            threshold_n = msg.threshold_n,
+            "Ranking eligible ticket submissions; the contract selects distinct bond owners"
         );
 
         let node_index = match snapshot {
@@ -100,13 +94,7 @@ impl Sortition {
                 if snapshot.request_block == msg.request_block
                     && !snapshot.ticket_price.is_zero() =>
             {
-                self.get_node_index(
-                    e3_id.clone(),
-                    seed,
-                    total_selection_size,
-                    chain_id,
-                    snapshot,
-                )
+                self.get_node_index(e3_id.clone(), seed, chain_id, snapshot)
             }
             Some(snapshot) if snapshot.request_block != msg.request_block => {
                 self.bus.err(
