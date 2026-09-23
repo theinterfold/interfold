@@ -168,15 +168,6 @@ impl<E: Event> EventBus<E> {
         source.do_send(Subscribe::new(EventType::All, dest.clone().recipient()))
     }
 
-    pub fn pipe_filter<F>(source: &Addr<EventBus<E>>, predicate: F, dest: &Addr<EventBus<E>>)
-    where
-        F: Fn(&E) -> bool + 'static,
-    {
-        let filter = EventFilter::new(dest.clone().recipient(), predicate).start();
-
-        source.do_send(Subscribe::new(EventType::All, filter.recipient()));
-    }
-
     fn track(&mut self, event: &E) {
         if self.config.deduplicate {
             self.ids.insert(event.delivery_id());
@@ -465,45 +456,6 @@ impl<E: Event> Handler<Unsubscribe<E>> for EventBus<E> {
     fn handle(&mut self, msg: Unsubscribe<E>, _: &mut Context<Self>) {
         if let Some(listeners) = self.listeners.get_mut(&msg.event_type) {
             listeners.retain(|listener| listener != &msg.listener);
-        }
-    }
-}
-
-//////////////////////////////////////////////////////////////////////////////
-// Event Filter
-//////////////////////////////////////////////////////////////////////////////
-
-pub type Predicate<E> = Box<dyn Fn(&E) -> bool>;
-
-pub struct EventFilter<E: Event> {
-    dest: Recipient<E>,
-    predicate: Predicate<E>,
-}
-
-impl<E: Event> EventFilter<E> {
-    pub fn new<F>(dest: Recipient<E>, predicate: F) -> Self
-    where
-        F: Fn(&E) -> bool + 'static,
-    {
-        Self {
-            dest,
-            predicate: Box::new(predicate),
-        }
-    }
-}
-
-impl<E: Event> Actor for EventFilter<E> {
-    type Context = actix::Context<Self>;
-    fn started(&mut self, ctx: &mut Self::Context) {
-        ctx.set_mailbox_capacity(MAILBOX_LIMIT_LARGE)
-    }
-}
-
-impl<E: Event> Handler<E> for EventFilter<E> {
-    type Result = ();
-    fn handle(&mut self, msg: E, _: &mut Self::Context) -> Self::Result {
-        if (self.predicate)(&msg) {
-            self.dest.do_send(msg);
         }
     }
 }

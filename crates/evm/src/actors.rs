@@ -14,8 +14,6 @@ mod ciphernode_registry_sol;
 mod data_availability;
 #[path = "chain_gateway/actor.rs"]
 mod evm_chain_gateway;
-#[path = "chain_hub.rs"]
-mod evm_hub;
 #[path = "event_decoding/actor.rs"]
 mod evm_parser;
 #[path = "chain_reader/actor.rs"]
@@ -34,8 +32,6 @@ mod randomness_provider_sol;
 mod slashing_manager_sol_reader;
 #[path = "slashing_writing/actor.rs"]
 mod slashing_manager_sol_writer;
-#[path = "chain_sync/start_extractor.rs"]
-mod sync_start_extractor;
 
 pub use bonding_registry_sol::BondingRegistrySolReader;
 pub use ciphernode_registry_sol::{
@@ -48,7 +44,6 @@ pub use data_availability::{
     DATA_AVAILABILITY_RECOVERY_SCHEMA_VERSION,
 };
 pub use evm_chain_gateway::*;
-pub use evm_hub::*;
 pub use evm_parser::*;
 pub use evm_read_interface::*;
 pub use evm_router::*;
@@ -60,4 +55,3 @@ pub use slashing_manager_sol_reader::SlashingManagerSolReader;
 pub use slashing_manager_sol_writer::{
     SlashingManagerSolWriter, SlashingWriterRecoveryState, SLASHING_WRITER_RECOVERY_SCHEMA_VERSION,
 };
-pub use sync_start_extractor::*;
