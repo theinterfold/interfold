@@ -126,6 +126,17 @@ automatically. `isActive` reports collateral/release readiness; `eligibilityAt` 
 An unchanged pre-upgrade position keeps admission because its original registration time is not
 available.
 
+Before governance pauses admissions after an eligibility configuration change:
+
+1. Refresh every operator that must remain eligible.
+2. Wait for a later block timestamp.
+3. Check that `committeeOwnerCapacity(latest.timestamp - 1)` covers the required committee size.
+4. Pause admissions.
+5. Refresh the frozen eligible pool, then wait for a later timestamp before requesting an E3.
+
+An operator that was inactive at the pause cutoff cannot enter through a later refresh. If the
+pre-pause refresh was missed, governance must unpause, refresh, and pause again in the order above.
+
 The runtime treats each available ticket as one local concurrent-work slot. A node with one ticket
 does not volunteer for a second E3 while its first slot is reserved or active. This is a local
 liveness rule; the contract still recognizes the full request-time ticket balance.

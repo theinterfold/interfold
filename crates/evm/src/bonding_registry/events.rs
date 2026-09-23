@@ -257,6 +257,45 @@ mod tests {
     use super::*;
     use alloy::primitives::Address;
 
+    fn assert_legacy_admission(log: &LogData, chain_id: u64, expected: &InterfoldEventData) {
+        let InterfoldEventData::EvmLogObserved(mut observed) =
+            crate::domain::evm_log_observation::observe(
+                "BondingRegistry",
+                log,
+                log.topics(),
+                chain_id,
+            )
+        else {
+            panic!("expected raw EVM observation");
+        };
+        // Older catalogs did not name these events. Recovery must use the ABI topics.
+        observed.known = false;
+        observed.event_name = "UnknownEvmLog".into();
+        observed.signature = None;
+        let recovered = e3_events::AdmissionUpdated::from_observed_log(&observed)
+            .unwrap()
+            .unwrap();
+        assert_eq!(&InterfoldEventData::from(recovered), expected);
+
+        let mut unrelated = observed.clone();
+        unrelated.contract = "Interfold".into();
+        assert!(e3_events::AdmissionUpdated::from_observed_log(&unrelated)
+            .unwrap()
+            .is_none());
+        unrelated.contract = observed.contract.clone();
+        unrelated.topics[0] = B256::ZERO.to_string();
+        assert!(e3_events::AdmissionUpdated::from_observed_log(&unrelated)
+            .unwrap()
+            .is_none());
+        unrelated.topics.clear();
+        assert!(e3_events::AdmissionUpdated::from_observed_log(&unrelated)
+            .unwrap()
+            .is_none());
+
+        observed.data = e3_utils::ArcBytes::from_bytes(&[]);
+        assert!(e3_events::AdmissionUpdated::from_observed_log(&observed).is_err());
+    }
+
     #[test]
     fn test_extractor_decodes_operator_activation_changed() {
         let event = IBondingRegistry::OperatorActivationChanged {
@@ -334,6 +373,7 @@ mod tests {
             1,
         )
         .unwrap();
+        assert_legacy_admission(&event.encode_log_data(), 1, &out);
         assert_eq!(
             out,
             e3_events::AdmissionUpdated {
@@ -360,6 +400,7 @@ mod tests {
             2,
         )
         .unwrap();
+        assert_legacy_admission(&started.encode_log_data(), 2, &out);
         assert_eq!(
             out,
             e3_events::AdmissionUpdated {

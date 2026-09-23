@@ -7,6 +7,9 @@ description = "E3 - Interfold Ciphernode EVM Connectors"
 repository.workspace = true
 publish = false
 
+[build-dependencies]
+serde_json.workspace = true
+
 [dependencies]
 actix = { workspace = true }
 alloy = { workspace = true }

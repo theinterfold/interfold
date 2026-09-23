@@ -28,7 +28,7 @@ pub struct AdmissionState {
 impl Default for AdmissionState {
     fn default() -> Self {
         Self {
-            schema_version: 1,
+            schema_version: 2,
             chains: HashMap::new(),
         }
     }
@@ -60,7 +60,7 @@ fn record<T>(history: &mut Vec<StateCheckpoint<T>>, timepoint: u64, value: T) ->
 impl AdmissionState {
     pub fn validate(&self) -> Result<()> {
         ensure!(
-            self.schema_version == 1,
+            self.schema_version == 2,
             "unsupported admission snapshot schema {}",
             self.schema_version
         );

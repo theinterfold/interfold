@@ -166,6 +166,35 @@ describe("Governance-controlled committee admission", function () {
     expect(await eligible(ctx)).to.equal(true);
   });
 
+  it("requires a pre-pause refresh after base eligibility changes", async function () {
+    const ctx = await loadFixture(setup);
+    const b = ctx.bondingRegistry;
+    await b.setCiphernodeBondActiveBps(
+      (await b.ciphernodeBondActiveBps()) - 1n,
+    );
+    await time.increase(1);
+    await b.setAdmissionPolicy(false, 0, true);
+    await refresh(ctx);
+    expect(await eligible(ctx, ctx.operators[0])).to.equal(false);
+    expect(await b.committeeOwnerCapacity((await time.latest()) - 1)).to.equal(
+      0,
+    );
+
+    // A later refresh cannot change activity at the frozen pre-pause timestamp.
+    await b.setAdmissionPolicy(false, 0, false);
+    await refresh(ctx);
+    expect(await b.committeeOwnerCapacity((await time.latest()) - 1)).to.equal(
+      3,
+    );
+    await b.setAdmissionPolicy(false, 0, true);
+    await refresh(ctx);
+    expect(await eligible(ctx, ctx.operators[0])).to.equal(true);
+    expect(await b.committeeOwnerCapacity((await time.latest()) - 1)).to.equal(
+      3,
+    );
+    await request(ctx);
+  });
+
   it("blocks new registrations during a pause even with the cooldown disabled", async function () {
     const ctx = await loadFixture(setup);
     await ctx.bondingRegistry.setAdmissionPolicy(false, 0, true);

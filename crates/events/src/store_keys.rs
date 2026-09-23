@@ -94,12 +94,16 @@ impl StoreKeys {
         String::from("//sortition/runtime_recovery/v1")
     }
 
+    pub fn restart_input_cursors() -> String {
+        String::from("//sync/restart_input_cursors/v1")
+    }
+
     pub fn sortition_bond_owners() -> String {
         String::from("//sortition/bond_owners/v2")
     }
 
     pub fn sortition_admission() -> String {
-        String::from("//sortition/admission/v1")
+        String::from("//sortition/admission/v2")
     }
 
     pub fn committee_finalizer_recovery() -> String {

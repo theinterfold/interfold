@@ -4,6 +4,26 @@
 
 use super::*;
 
+impl Handler<TypedEvent<e3_events::EvmLogObserved>> for Sortition {
+    type Result = ();
+
+    fn handle(&mut self, msg: TypedEvent<e3_events::EvmLogObserved>, _: &mut Self::Context) {
+        let (log, ec) = msg.into_components();
+        if ec.source() != e3_events::EventSource::Evm {
+            return;
+        }
+        trap(EType::Sortition, &self.bus.with_ec(&ec), || {
+            if let Some(event) = e3_events::AdmissionUpdated::from_observed_log(&log)? {
+                self.admission.try_mutate(&ec, |mut admission| {
+                    admission.record(&event)?;
+                    Ok(admission)
+                })?;
+            }
+            Ok(())
+        })
+    }
+}
+
 impl Handler<TypedEvent<e3_events::AdmissionUpdated>> for Sortition {
     type Result = ();
 

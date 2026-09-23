@@ -258,6 +258,7 @@ impl Sortition {
                 EventType::CiphernodeRemoved,
                 EventType::BondOwnerSetAt,
                 EventType::AdmissionUpdated,
+                EventType::EvmLogObserved,
                 EventType::TicketBalanceUpdated,
                 EventType::TicketGenerated,
                 EventType::OperatorActivationChanged,

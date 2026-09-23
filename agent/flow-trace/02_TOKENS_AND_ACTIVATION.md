@@ -271,12 +271,23 @@ request history. Permissionless `refreshOperatorStatus` and `refreshOperatorStat
 Refresh matured positions before requesting a committee that needs their capacity. Refreshing a
 waiting position cannot admit it early. No timer transaction runs automatically at expiry.
 
+Before pausing admissions after an eligibility configuration change, refresh every operator that
+must remain eligible. Wait for a later block timestamp. Check that
+`committeeOwnerCapacity(latest.timestamp - 1)` covers the required committee size. An unrefreshed
+operator has no active checkpoint under the new configuration at the pause cutoff. Refreshing it
+after the pause cannot change that history. To correct this case, unpause admissions, refresh the
+operators, wait for a later timestamp, and pause again. Each admission policy change also resets
+capacity, so refresh the frozen eligible pool and wait for a later timestamp before new requests.
+
 Unchanged pre-upgrade positions have no admission start history and remain admitted. This is an
 explicit migration exception, not proof of their age. A later registration or ownership change
-starts the delay. Upgrade node software before deploying this contract change. A node that ingested
-these new logs with older software needs canonical history recovery before it can shortlist
-correctly. This temporary rule buys response time; an attacker can still prepare separate wallets in
-advance.
+starts the delay. Upgrade node software before deploying this contract change. Startup rebuilds the
+v2 admission projection from typed events and legacy `EvmLogObserved` records. Typed events use
+aggregate zero; raw records use the chain aggregate. Replay applies the same decoder after the
+snapshot cursor. Recovery accepts raw admission records only from the EVM source and validates their
+ABI topics and data. The old v1 projection remains unchanged. Missing or invalid required log
+history must be recovered before the node can shortlist correctly. This temporary rule buys response
+time; an attacker can still prepare separate wallets in advance.
 
 A mandatory ciphernode release uses the same fail-closed refresh mechanism. Governance pauses and
 drains the protocol, raises the required release policy, and resets the active count to zero.

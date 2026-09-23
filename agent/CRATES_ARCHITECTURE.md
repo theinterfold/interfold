@@ -1104,11 +1104,13 @@ starts Registry readers only on Ethereum mainnet, Sepolia, and local development
 
 The sortition runtime ranks N-plus-buffer distinct request-time owners and retains their operators
 as backups. Before ranking, it applies the admission policy and position starts at
-`requestBlock - 1`. `AdmissionUpdated` carries the contract timestamp. Its separate versioned
-repository preserves old node payloads; startup backfills missing chain projections from the durable
-aggregate-zero prefix. Disabled, unpaused policies return the existing view immediately. Enabled
-policies filter locally, without per-request RPC reads. A pause also requires activity before the
-pause and does not change previous request views. The matching contract check remains authoritative.
+`requestBlock - 1`. `AdmissionUpdated` carries the contract timestamp. Its separate versioned v2
+repository preserves old node payloads. Startup rebuilds missing chain projections from typed events
+in aggregate zero and legacy raw logs in each chain aggregate. Replay decodes raw admission logs
+after the snapshot cursor too. The decoder checks the EVM source and ABI, not old catalog labels.
+Disabled, unpaused policies return the existing view immediately. Enabled policies filter locally,
+without per-request RPC reads. A pause also requires activity before the pause and does not change
+previous request views. The matching contract check remains authoritative.
 
 Local capacity gates each node's submission. Finalization ranks visit each owner's best operator
 before its backups. The contract selects at most one operator per owner for capped requests;
@@ -1122,7 +1124,10 @@ history permits all eligible submissions instead of excluding owners. The
 count, and eligible-operator count. It does not add an RPC call or fail the round. Existing ticket
 intents keep their ticket numbers and finalization ranks on restart, including nodes with
 aggregation disabled. Startup reads prefix intents from the durable event log; replay marks suffix
-intents as processed before effects resume.
+intents as processed before effects resume. A separate `restart_input_cursors/v1` repository records
+the checked prefix for each unfinished E3, including scans with no local ticket. Later restarts scan
+only newly snapshotted records. The cursor advances only after recovered repositories are durable.
+New E3s start from zero; terminal or finalized E3 checkpoints are removed.
 
 ## Subsystem contracts
 

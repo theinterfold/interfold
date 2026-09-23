@@ -18,14 +18,14 @@ use e3_data::Repositories;
 use e3_events::{
     AccusationOutcome, AccusationQuorumReached, AggregateConfig, AggregateId, BondOwnerSetAt,
     BusHandle, CommitteeMemberExcluded, CommitteeMemberExpelled, CommitteeRequested, CorrelationId,
-    E3Requested, E3id, EffectsEnabled, Event, EventContext, EventPublisher, EventStoreQueryBy,
-    EventStoreQueryResponse, EventSubscriber, EventType, EvmEventConfig,
+    E3Requested, E3id, EffectsEnabled, Event, EventContext, EventContextAccessors, EventPublisher,
+    EventStoreQueryBy, EventStoreQueryResponse, EventSubscriber, EventType, EvmEventConfig,
     HistoricalEvmEventsReceived, HistoricalEvmSyncStart, HistoricalNetSyncStart, InterfoldEvent,
     InterfoldEventData, Seed, SeqAgg, Sequenced, SlashExecuted, StoreKeys, SyncEffect, SyncEnded,
     TicketGenerated, TypedEvent, Unsequenced,
 };
 #[cfg(test)]
-use e3_events::{EventBusBarrier, EventBusFanout, EventContextAccessors};
+use e3_events::{EventBusBarrier, EventBusFanout};
 use e3_utils::actix::channel as actix_toolbox;
 use std::{
     collections::{HashMap, HashSet},
@@ -195,6 +195,7 @@ impl RestartStateBackfill {
 /// this projection into missing recovery repositories before actors start.
 pub async fn project_restart_state_backfill(
     eventstore: &Recipient<EventStoreQueryBy<SeqAgg>>,
+    start_cursors: HashMap<AggregateId, u64>,
     end_cursors: HashMap<AggregateId, u64>,
     target_e3s: &HashSet<E3id>,
     slash_target_chains: &HashSet<u64>,
@@ -208,10 +209,18 @@ pub async fn project_restart_state_backfill(
         return Ok(RestartStateBackfill::default());
     }
 
-    let spool = ReplaySpool::load_bounded(eventstore, end_cursors).await?;
+    let spool = ReplaySpool::load_between(eventstore, start_cursors, end_cursors).await?;
     let mut recovered = RestartStateBackfill::default();
     spool.project(|event| {
         match event.get_data() {
+            InterfoldEventData::EvmLogObserved(log)
+                if event.get_ctx().source() == e3_events::EventSource::Evm
+                    && projection_target_chains.contains(&log.chain_id) =>
+            {
+                if let Some(admission) = e3_events::AdmissionUpdated::from_observed_log(log)? {
+                    recovered.admission_updates.push(admission);
+                }
+            }
             InterfoldEventData::AdmissionUpdated(admission)
                 if projection_target_chains.contains(&admission.chain_id) =>
             {
