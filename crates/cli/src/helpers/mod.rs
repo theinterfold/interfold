@@ -8,6 +8,7 @@ use anyhow::{bail, Context, Result};
 use std::io::BufRead;
 use zeroize::{Zeroize, Zeroizing};
 
+pub mod chain;
 pub mod compile_id;
 pub mod prompt_password;
 pub mod telemetry;

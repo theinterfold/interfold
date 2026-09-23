@@ -4,10 +4,11 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use alloy::primitives::Address;
+use alloy::primitives::{Address, TxHash};
 use anyhow::Result;
 use e3_console::{log, Console};
-use e3_utils::require_successful_receipt;
+
+use crate::helpers::chain::send_and_confirm;
 
 use super::context::ChainContext;
 use super::utils::{ensure_allowance, parse_amount};
@@ -28,75 +29,66 @@ pub(crate) async fn execute(
             let symbol = metadata.symbol().call().await?;
             let parsed = parse_amount(&amount, decimals)?;
             ensure_allowance(ctx, underlying, ticket_contract, parsed).await?;
-            let receipt = ctx
-                .bonding()
-                .addTicketBalanceFor(operator, parsed)
-                .send()
-                .await?
-                .get_receipt()
-                .await?;
-            require_successful_receipt("add ticket balance", &receipt)?;
+
+            let tx = send_and_confirm(
+                "add ticket balance",
+                ctx.bonding().addTicketBalanceFor(operator, parsed),
+            )
+            .await?;
             // `--amount` is collateral, not a ticket count: the contract holds a
             // collateral balance and derives tickets as floor(balance / ticketPrice).
             // Read the count back so a remainder (105 USDC at 10 USDC/ticket) is not
-            // reported as a ticket the operator does not have. The deposit already
-            // succeeded, so a failed read must not fail the command.
-            match ctx.bonding().availableTickets(operator).call().await {
-                Ok(tickets) => log!(
-                    out,
-                    "Deposited {} {} for operator {:#x}. Ticket balance is now {} tickets (tx: {:#x})",
-                    amount,
-                    symbol,
-                    operator,
-                    tickets,
-                    receipt.transaction_hash
-                ),
-                Err(err) => log!(
-                    out,
-                    "Deposited {} {} for operator {:#x} (tx: {:#x}). Could not read the ticket balance: {err}",
-                    amount,
-                    symbol,
-                    operator,
-                    receipt.transaction_hash
-                ),
-            }
+            // reported as a ticket the operator does not have.
+            let action = format!("Deposited {amount} {symbol} for operator {operator:#x}");
+            report_ticket_balance(out, ctx, operator, &action, tx).await;
         }
-        TicketCommands::Burn { amount } => {
-            let ticket_contract = ctx.ticket_token_address().await?;
-            let ticket_metadata = ctx.erc20(ticket_contract);
-            let decimals = ticket_metadata.decimals().call().await?;
-            let symbol = ticket_metadata.symbol().call().await?;
-            let parsed = parse_amount(&amount, decimals)?;
-            let receipt = ctx
-                .bonding()
-                .removeTicketBalanceFor(operator, parsed)
-                .send()
-                .await?
-                .get_receipt()
-                .await?;
-            require_successful_receipt("remove ticket balance", &receipt)?;
-            // The burn already succeeded, so a failed read must not fail the command.
-            match ctx.bonding().availableTickets(operator).call().await {
-                Ok(tickets) => log!(
-                    out,
-                    "Burned {} {} from operator {:#x}. Ticket balance is now {} tickets (tx: {:#x})",
-                    amount,
-                    symbol,
-                    operator,
-                    tickets,
-                    receipt.transaction_hash
-                ),
-                Err(err) => log!(
-                    out,
-                    "Burned {} {} from operator {:#x} (tx: {:#x}). Could not read the ticket balance: {err}",
-                    amount,
-                    symbol,
-                    operator,
-                    receipt.transaction_hash
-                ),
-            }
-        }
+        TicketCommands::Burn { amount } => burn(out, ctx, operator, &amount).await?,
     }
 
     Ok(())
+}
+
+/// Removes `amount` of ticket collateral from `operator` and reports the new ticket balance.
+pub(crate) async fn burn(
+    out: Console,
+    ctx: &ChainContext,
+    operator: Address,
+    amount: &str,
+) -> Result<()> {
+    let ticket_metadata = ctx.erc20(ctx.ticket_token_address().await?);
+    let decimals = ticket_metadata.decimals().call().await?;
+    let symbol = ticket_metadata.symbol().call().await?;
+    let parsed = parse_amount(amount, decimals)?;
+
+    let tx = send_and_confirm(
+        "remove ticket balance",
+        ctx.bonding().removeTicketBalanceFor(operator, parsed),
+    )
+    .await?;
+
+    let action = format!("Burned {amount} {symbol} from operator {operator:#x}");
+    report_ticket_balance(out, ctx, operator, &action, tx).await;
+    Ok(())
+}
+
+/// Logs `action` with the ticket count read back after a confirmed transaction.
+///
+/// The transaction already succeeded, so a failed read is reported and does not fail the command.
+async fn report_ticket_balance(
+    out: Console,
+    ctx: &ChainContext,
+    operator: Address,
+    action: &str,
+    tx: TxHash,
+) {
+    match ctx.bonding().availableTickets(operator).call().await {
+        Ok(tickets) => log!(
+            out,
+            "{action}. Ticket balance is now {tickets} tickets (tx: {tx:#x})"
+        ),
+        Err(err) => log!(
+            out,
+            "{action} (tx: {tx:#x}). Could not read the ticket balance: {err}"
+        ),
+    }
 }
