@@ -2444,6 +2444,7 @@ async fn test_trbfv_actor() -> Result<()> {
         publication_committee_addresses,
         publication_honest_committee_addresses,
         pubkey_bytes,
+        publication_pk_commitment,
         dkg_aggregator_proof,
         dkg_attestation_bundle,
     ) = if is_lbfv {
@@ -2460,6 +2461,7 @@ async fn test_trbfv_actor() -> Result<()> {
             publication.committee_addresses.clone(),
             publication.honest_committee_addresses.clone(),
             publication.pubkey.clone(),
+            publication.pk_commitment,
             Some(publication.dkg_aggregator_v2_proof.clone()),
             publication.dkg_attestation_bundle.clone(),
         )
@@ -2477,6 +2479,7 @@ async fn test_trbfv_actor() -> Result<()> {
             publication.committee_addresses.clone(),
             publication.honest_committee_addresses.clone(),
             publication.pubkey.clone(),
+            publication.pk_commitment,
             publication.dkg_aggregator_proof.clone(),
             publication.dkg_attestation_bundle.clone(),
         )
@@ -2723,7 +2726,19 @@ async fn test_trbfv_actor() -> Result<()> {
         "{publication_event_name} must carry a non-empty DKG attestation payload"
     );
 
-    let pubkey = PublicKey::from_bytes(&pubkey_bytes, &params_raw)?;
+    e3_bfv_client::validate_pk_commitment(
+        &pubkey_bytes,
+        publication_pk_commitment,
+        params_raw.degree(),
+        params_raw.plaintext(),
+        params_raw.moduli().to_vec(),
+    )?;
+    let encryption_key_bytes = if e3_bfv_client::is_lbfv_key_envelope(&pubkey_bytes) {
+        e3_bfv_client::inspect_lbfv_key_envelope(&pubkey_bytes, benchmark_params.bfv_preset)?.1
+    } else {
+        pubkey_bytes.to_vec()
+    };
+    let pubkey = PublicKey::from_bytes(&encryption_key_bytes, &params_raw)?;
 
     println!("Generating inputs this takes some time...");
 
