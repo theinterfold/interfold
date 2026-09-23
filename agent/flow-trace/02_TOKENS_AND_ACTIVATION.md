@@ -239,6 +239,45 @@ After an upgrade adds this count, existing active operators remain uncounted unt
 resuming requests, then wait for a later timestamp. Repeated refreshes do not increase the count. An
 unrefreshed operator cannot inflate the count through an ownership transfer.
 
+### Admission cooldown and pause
+
+The BondingRegistry owner controls
+`setAdmissionPolicy(cooldownEnabled, cooldownDuration, admissionsPaused)`. The duration is in
+seconds. Deployment defaults to a disabled cooldown and open admissions. Effective changes emit
+`AdmissionPolicyUpdated`. These settings do not change collateral, release, exit, or slash
+requirements.
+
+Registration and each actual bond-owner change emit `AdmissionStarted` and checkpoint the position's
+start time. A proposal alone does not restart the delay. Accepting a transfer to the same owner does
+not restart it. Re-registration starts a new delay. Starts are recorded even while the delay is off.
+The registration path already requires the full ciphernode bond. Funding tickets later does not
+restart the delay; tickets must still satisfy the request's collateral checks.
+
+`isActive` remains the current collateral/release check. `eligibilityAt` also applies admission at
+the requested timestamp. This separation lets already requested E3s accept their eligible tickets
+after an owner change or a governance policy change. New requests use the new rule at
+`requestBlock - 1`. If governance changes policy at the request timestamp, the capacity check fails
+closed until a later timestamp and a status refresh.
+
+Pausing freezes the eligible pool at the timestamp before the pause. Waiting positions cannot enter
+while paused, even after expiry. New registrations and changed owners are also excluded. Changing or
+disabling the cooldown while paused does not widen that frozen pool. Existing eligible positions
+must still meet the other requirements. On unpause, the current duration applies to the original
+start time: time continues during the pause. Disabling the cooldown while unpaused bypasses only the
+wait. Multiple policy changes at one timestamp cannot widen a pause's pre-timestamp eligible pool.
+
+Policy changes clear the conservative distinct-owner capacity count, not operator activity or old
+request history. Permissionless `refreshOperatorStatus` and `refreshOperatorStatuses` repopulate it.
+Refresh matured positions before requesting a committee that needs their capacity. Refreshing a
+waiting position cannot admit it early. No timer transaction runs automatically at expiry.
+
+Unchanged pre-upgrade positions have no admission start history and remain admitted. This is an
+explicit migration exception, not proof of their age. A later registration or ownership change
+starts the delay. Upgrade node software before deploying this contract change. A node that ingested
+these new logs with older software needs canonical history recovery before it can shortlist
+correctly. This temporary rule buys response time; an attacker can still prepare separate wallets in
+advance.
+
 A mandatory ciphernode release uses the same fail-closed refresh mechanism. Governance pauses and
 drains the protocol, raises the required release policy, and resets the active count to zero.
 Starting the compatible binary acknowledges its release and refreshes the operator. See

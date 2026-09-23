@@ -32,6 +32,13 @@ policy is zero for pre-upgrade requests, which keep their original rule.
 `CommitteeBondOwnerCapEnabled` identifies new capped requests. This is an owner-address cap, not
 proof of independent human control.
 
+`eligibilityAt(operator, requestBlock - 1)` also applies the historical admission policy and the
+position's registration/owner-change time. A later cooldown change, admission pause, or owner change
+does not alter that E3's admission rule. Current `isActive` still checks collateral and release
+requirements without applying the new admission policy to an older request. Policy updates reset the
+conservative owner count; status refreshes count only positions admitted under the new policy. See
+[admission cooldown and pause](02_TOKENS_AND_ACTIVATION.md#admission-cooldown-and-pause).
+
 Governance configures the fee token, its expected decimals, and every raw-unit pricing term through
 `setFeeAssetConfig()`. The update is atomic, and the event contains the complete configuration. The
 owner can update only the nonzero flat randomness fee through `setRandomnessFlatFee()`. This narrow
@@ -300,6 +307,7 @@ InterfoldSolReader decodes IInterfold::E3Requested log
     ├─ Waits for CommitteeRequested if the delayed committee seed is not ready
     ├─ Loads the request timepoint and frozen ticket price from CommitteeRequested
     ├─ Uses the CommitteeRequested seed for ticket ranking
+    ├─ Filters out positions not admitted at requestBlock - 1 before ranking owners
     ├─ Shortlists N-plus-buffer distinct owners, retaining their operators as backups
     ├─ Reads chain-time BondOwnerSetAt history at requestBlock - 1; gaps permit all operators
     ├─ Existing recovered ticket intents keep their ticket number and finalization rank

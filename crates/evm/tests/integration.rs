@@ -54,6 +54,101 @@ fn test_event_extractor(
 
 struct TestEventParser;
 
+#[actix::test]
+async fn admission_chain_logs_filter_sortition_after_restart() -> Result<()> {
+    use alloy::primitives::Address;
+    use e3_evm::BondingRegistrySolReader;
+    use e3_sortition::{AdmissionState, NodeState, NodeStateStore};
+    use std::collections::HashMap;
+
+    let anvil = Anvil::new().block_time(1).try_spawn()?;
+    let provider = Arc::new(
+        EthProvider::new(
+            ProviderBuilder::new()
+                .wallet(PrivateKeySigner::from_slice(&anvil.keys()[0].to_bytes())?)
+                .connect_ws(WsConnect::new(anvil.ws_endpoint()))
+                .await?,
+        )
+        .await?,
+    );
+    let contract = EmitLogs::deploy(provider.provider()).await?;
+    let system = EventSystem::new().with_fresh_bus();
+    let bus = system.handle()?.enable("admission-integration");
+    let history = bus.history();
+    let sync = FakeSyncActor::setup(&bus);
+    EvmSystemChainBuilder::new(&bus, &provider)
+        .with_contract(*contract.address(), move |upstream| {
+            BondingRegistrySolReader::setup(&upstream).recipient()
+        })
+        .build();
+    let mut config = EvmEventConfig::new();
+    config.insert(provider.chain_id(), EvmEventConfigChain::new(0));
+    bus.publish_without_context(HistoricalEvmSyncStart::new(sync, config))?;
+    let operator = Address::repeat_byte(7);
+    let enabled = EmitLogs::AdmissionPolicy {
+        cooldownEnabled: true,
+        cooldownDuration: 100.try_into()?,
+        admissionsPaused: false,
+        pauseTimepoint: 0.try_into()?,
+        pauseCooldownEnabled: false,
+        pauseCooldownDuration: 0.try_into()?,
+    };
+    let disabled = EmitLogs::AdmissionPolicy {
+        cooldownEnabled: false,
+        ..enabled.clone()
+    };
+    contract
+        .emitAdmissionPolicies(operator, vec![enabled.clone(), disabled, enabled])
+        .send()
+        .await?
+        .watch()
+        .await?;
+    let updates = tokio::time::timeout(Duration::from_secs(20), async {
+        loop {
+            let updates = history
+                .send(GetEvents::<InterfoldEvent>::new())
+                .await?
+                .into_iter()
+                .filter_map(|e| match e.into_data() {
+                    InterfoldEventData::AdmissionUpdated(update) => Some(update),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            if updates.len() == 4 {
+                break Ok::<_, anyhow::Error>(updates);
+            }
+            sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await??;
+    let timepoint = updates[0].timepoint;
+    let mut state = AdmissionState::default();
+    for update in updates {
+        state.record(&update)?;
+    }
+    let state: AdmissionState = bincode::deserialize(&bincode::serialize(&state)?)?;
+    state.validate()?;
+    let nodes = NodeStateStore {
+        nodes: HashMap::from([(operator.to_string(), NodeState::default())]),
+        ..Default::default()
+    };
+    assert_eq!(
+        state
+            .filter(provider.chain_id(), timepoint + 99, &nodes)
+            .nodes
+            .len(),
+        0
+    );
+    assert_eq!(
+        state
+            .filter(provider.chain_id(), timepoint + 100, &nodes)
+            .nodes
+            .len(),
+        1
+    );
+    Ok(())
+}
+
 impl TestEventParser {
     pub fn setup(next: &EvmEventProcessor) -> Addr<EvmParser> {
         EvmParser::new(next, test_event_extractor).start()

@@ -9,6 +9,7 @@ import { InterfoldTicketToken } from "../token/InterfoldTicketToken.sol";
 import { IBondingRegistry } from "../interfaces/IBondingRegistry.sol";
 import { BondingRegistry } from "../registry/BondingRegistry.sol";
 import { ExitQueueLib } from "./ExitQueueLib.sol";
+import { BondingAdmissionLib } from "./BondingAdmissionLib.sol";
 
 /**
  * @title BondingRegistrationLib
@@ -75,6 +76,7 @@ library BondingRegistrationLib {
         );
 
         operators[operator].registered = true;
+        BondingAdmissionLib.start(operator);
     }
 
     /**

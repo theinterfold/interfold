@@ -59,6 +59,14 @@ pub(crate) async fn backfill_restart_state(
     reconcile_committee_snapshots(&mut selector, &mut finalized_committees, &lifecycle)?;
     let sortition_store = repositories.sortition_recovery();
     let owners_store = repositories.sortition_bond_owners();
+    let admission_store = repositories.sortition_admission();
+    let mut admission = admission_store.read().await?.unwrap_or_default();
+    admission.validate()?;
+    let admission_target_chains = chain_ids
+        .iter()
+        .copied()
+        .filter(|chain_id| !admission.chains.contains_key(chain_id))
+        .collect::<HashSet<_>>();
     let mut owners = owners_store.read().await?.unwrap_or_default();
     owners.validate()?;
     let owner_target_chains = chain_ids
@@ -181,7 +189,11 @@ pub(crate) async fn backfill_restart_state(
     if sortition_was_missing {
         targets.extend(active_e3s);
     }
-    if targets.is_empty() && slash_target_chains.is_empty() && owner_target_chains.is_empty() {
+    let projection_target_chains = owner_target_chains
+        .union(&admission_target_chains)
+        .copied()
+        .collect::<HashSet<_>>();
+    if targets.is_empty() && slash_target_chains.is_empty() && projection_target_chains.is_empty() {
         if sortition_was_missing || sortition_pruned {
             sortition_store.write_sync(&sortition).await?;
         }
@@ -205,8 +217,8 @@ pub(crate) async fn backfill_restart_state(
                 .iter()
                 .map(|chain_id| AggregateId::from_chain_id(Some(*chain_id))),
         )
-        // BondOwnerSetAt has no E3 ID, so its durable events belong to aggregate zero.
-        .chain((!owner_target_chains.is_empty()).then(|| AggregateId::from_chain_id(None)))
+        // Owner and admission events have no E3 ID and belong to aggregate zero.
+        .chain((!projection_target_chains.is_empty()).then(|| AggregateId::from_chain_id(None)))
     {
         if cursors.contains_key(&aggregate_id) {
             continue;
@@ -226,12 +238,25 @@ pub(crate) async fn backfill_restart_state(
         cursors,
         &targets,
         &slash_target_chains,
-        &owner_target_chains,
+        &projection_target_chains,
     )
     .await?;
     // Only absent chain projections are backfilled. Existing snapshots remain authoritative.
     for event in recovered.bond_owner_updates {
-        owners.record(&event.owner, event.timepoint)?;
+        if owner_target_chains.contains(&event.owner.chain_id) {
+            owners.record(&event.owner, event.timepoint)?;
+        }
+    }
+    for event in recovered.admission_updates {
+        if admission_target_chains.contains(&event.chain_id) {
+            admission.record(&event)?;
+        }
+    }
+    for chain_id in &admission_target_chains {
+        admission.chains.entry(*chain_id).or_default();
+    }
+    if !admission_target_chains.is_empty() {
+        admission_store.write_sync(&admission).await?;
     }
     for chain_id in &owner_target_chains {
         owners.chains.entry(*chain_id).or_default();
@@ -441,6 +466,75 @@ mod tests {
         backfill_missing_seeds(&mut seeds, HashMap::from([(e3_id.clone(), Seed([2; 32]))]));
 
         assert_eq!(seeds.get(&e3_id), Some(&existing));
+    }
+
+    #[actix::test]
+    async fn admission_backfill_preserves_existing_owner_state_and_restart_history() -> Result<()> {
+        use alloy::primitives::Address;
+        use e3_events::{AdmissionChange, AdmissionPolicy, AdmissionUpdated, EventPublisher};
+        use e3_sortition::{BondOwnerState, NodeState, NodeStateStore};
+        let aggregate = AggregateId::from_chain_id(None);
+        let system = crate::EventSystem::new()
+            .with_fresh_bus()
+            .with_aggregate_config(e3_events::AggregateConfig::new(HashMap::from([(
+                aggregate,
+                std::time::Duration::ZERO,
+            )])));
+        let bus = system.handle()?.enable("admission-backfill");
+        let repositories = e3_data::Repositories::from(system.store()?);
+        let operator = Address::repeat_byte(1);
+        let start = AdmissionUpdated {
+            chain_id: 1,
+            timepoint: 10,
+            change: AdmissionChange::Started {
+                operator: operator.to_string(),
+            },
+        };
+        bus.publish_without_context(start.clone())?;
+        bus.publish_without_context(AdmissionUpdated {
+            chain_id: 1,
+            timepoint: 20,
+            change: AdmissionChange::Policy(AdmissionPolicy {
+                cooldown_enabled: true,
+                cooldown_duration: 100,
+                ..Default::default()
+            }),
+        })?;
+        bus.flush_event_pipeline().await?;
+        repositories.aggregate_seq(aggregate).write_sync(&2).await?;
+        let mut owners = BondOwnerState::default();
+        owners.chains.entry(1).or_default();
+        repositories
+            .sortition_bond_owners()
+            .write_sync(&owners)
+            .await?;
+        let owner_bytes = bincode::serialize(&owners)?;
+        let reader = system.eventstore_reader()?.seq();
+        backfill_restart_state(&repositories, &reader, &[1], false).await?;
+        let store = repositories.sortition_admission();
+        let mut state = store.read().await?.unwrap();
+        state.validate()?;
+        let nodes = NodeStateStore {
+            nodes: HashMap::from([(operator.to_string(), NodeState::default())]),
+            ..Default::default()
+        };
+        assert_eq!(state.filter(1, 19, &nodes).nodes.len(), 1);
+        assert_eq!(state.filter(1, 109, &nodes).nodes.len(), 0);
+        assert_eq!(state.filter(1, 110, &nodes).nodes.len(), 1);
+        assert_eq!(
+            owner_bytes,
+            bincode::serialize(&repositories.sortition_bond_owners().read().await?.unwrap())?
+        );
+        state.record(&AdmissionUpdated {
+            timepoint: 200,
+            ..start
+        })?;
+        store.write_sync(&state).await?;
+        backfill_restart_state(&repositories, &reader, &[1], false).await?;
+        let state = store.read().await?.unwrap();
+        assert_eq!(state.filter(1, 250, &nodes).nodes.len(), 0);
+        assert_eq!(state.filter(1, 150, &nodes).nodes.len(), 1);
+        Ok(())
     }
 
     #[test]

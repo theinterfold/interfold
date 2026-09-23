@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 
-set -e
+set -euo pipefail
 
 echo "Building fixtures..."
 
-echo "{\"abi\": $(solc --abi tests/fixtures/emit_logs.sol | tail -n 1), \"bin\": \"$(solc --bin tests/fixtures/emit_logs.sol| tail -n 1)\"}" | jq '.' > tests/fixtures/emit_logs.json
+solc --combined-json abi,bin tests/fixtures/emit_logs.sol |
+  jq '.contracts["tests/fixtures/emit_logs.sol:EmitLogs"] | {abi, bin}' > tests/fixtures/emit_logs.json

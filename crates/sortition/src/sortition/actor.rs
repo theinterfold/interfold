@@ -11,7 +11,7 @@ use crate::messages::{
     GetCommitteeMembersRequest, WithSortitionTicket,
 };
 use crate::CiphernodeSelector;
-use crate::{BondOwnerState, FinalizedCommitteeRetention};
+use crate::{AdmissionState, BondOwnerState, FinalizedCommitteeRetention};
 use actix::prelude::*;
 use anyhow::{anyhow, ensure, Result};
 use e3_data::{AutoPersist, Persistable, Repository};
@@ -37,6 +37,7 @@ pub struct Sortition {
     node_state: Persistable<HashMap<u64, NodeStateStore>>,
     /// Owner history is derived from chain events and persisted separately from node state.
     bond_owners: Persistable<BondOwnerState>,
+    admission: Persistable<AdmissionState>,
     /// Event bus for error reporting and interfold event subscription.
     bus: BusHandle,
     /// Persistent map of finalized committees per E3
@@ -152,6 +153,7 @@ pub struct SortitionParams {
     /// Node state store per chain
     pub node_state: Persistable<HashMap<u64, NodeStateStore>>,
     pub bond_owners: Persistable<BondOwnerState>,
+    pub admission: Persistable<AdmissionState>,
     /// Persistent map of finalized committees per E3
     pub finalized_committees: Persistable<HashMap<e3_events::E3id, Committee>>,
     /// Persisted delayed and pre-finalization inputs.
@@ -170,6 +172,7 @@ pub struct SortitionAttachParams<'a> {
     pub backends_store: Repository<HashMap<u64, SortitionBackend>>,
     pub node_state_store: Repository<HashMap<u64, NodeStateStore>>,
     pub bond_owners_store: Repository<BondOwnerState>,
+    pub admission_store: Repository<AdmissionState>,
     pub recovery_store: Repository<SortitionRecoveryState>,
     pub committees_store: Repository<HashMap<e3_events::E3id, Committee>>,
     pub default_backend: SortitionBackend,
@@ -184,6 +187,7 @@ impl Sortition {
             backends: params.backends,
             node_state: params.node_state,
             bond_owners: params.bond_owners,
+            admission: params.admission,
             bus: params.bus,
             finalized_committees: params.finalized_committees,
             ciphernode_selector: params.ciphernode_selector,
@@ -201,6 +205,7 @@ impl Sortition {
             backends_store,
             node_state_store,
             bond_owners_store,
+            admission_store,
             recovery_store,
             committees_store,
             default_backend,
@@ -214,6 +219,10 @@ impl Sortition {
             .load_or_default(BondOwnerState::default())
             .await?;
         bond_owners.try_get()?.validate()?;
+        let admission = admission_store
+            .load_or_default(AdmissionState::default())
+            .await?;
+        admission.try_get()?.validate()?;
         let recovery = recovery_store
             .load_or_default(SortitionRecoveryState::default())
             .await?;
@@ -233,6 +242,7 @@ impl Sortition {
             backends,
             node_state,
             bond_owners,
+            admission,
             recovery,
             finalized_committees,
             ciphernode_selector,
@@ -247,6 +257,7 @@ impl Sortition {
                 EventType::CiphernodeAdded,
                 EventType::CiphernodeRemoved,
                 EventType::BondOwnerSetAt,
+                EventType::AdmissionUpdated,
                 EventType::TicketBalanceUpdated,
                 EventType::TicketGenerated,
                 EventType::OperatorActivationChanged,
@@ -335,6 +346,8 @@ impl Sortition {
         let backend = map.get(&chain_id)?;
         let state = state_map.get(&chain_id)?;
         let owners = self.bond_owners.get()?;
+        let admission = self.admission.get()?;
+        let state = admission.filter(chain_id, snapshot.request_block.checked_sub(1)?, state);
 
         backend
             .get_submission_index(
@@ -342,7 +355,7 @@ impl Sortition {
                 seed,
                 self.address.clone(),
                 chain_id,
-                state,
+                &state,
                 snapshot,
                 candidate_owners,
                 &owners,

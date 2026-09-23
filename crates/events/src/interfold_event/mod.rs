@@ -6,6 +6,7 @@
 
 mod accusation_quorum_reached;
 mod accusation_vote;
+mod admission_updated;
 mod aggregation_inputs_ready;
 mod aggregation_proof_pending;
 mod aggregation_proof_signed;
@@ -91,6 +92,7 @@ mod typed_event;
 
 pub use accusation_quorum_reached::*;
 pub use accusation_vote::*;
+pub use admission_updated::*;
 pub use aggregation_inputs_ready::*;
 pub use aggregation_proof_pending::*;
 pub use aggregation_proof_signed::*;
@@ -367,6 +369,7 @@ pub enum InterfoldEventData {
     DkgCoordination(DkgCoordination),
     CommitmentRosterSelected(CommitmentRosterSelected),
     BondOwnerSetAt(BondOwnerSetAt),
+    AdmissionUpdated(AdmissionUpdated),
 }
 
 impl InterfoldEventData {
@@ -889,7 +892,8 @@ impl_event_types!(
     CiphertextOutputReferencePublished,
     DkgCoordination,
     CommitmentRosterSelected,
-    BondOwnerSetAt
+    BondOwnerSetAt,
+    AdmissionUpdated
 );
 
 impl TryFrom<&InterfoldEvent<Sequenced>> for InterfoldError {

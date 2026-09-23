@@ -30,6 +30,10 @@ import { ExitQueueLib } from "../lib/ExitQueueLib.sol";
 
 import { IBondingRegistry } from "../interfaces/IBondingRegistry.sol";
 import { IBondOwnerHistory } from "../interfaces/IBondOwnerHistory.sol";
+import { IBondingAdmission } from "../interfaces/IBondingAdmission.sol";
+import {
+    BondingAdmissionStorage
+} from "../storage/BondingAdmissionStorage.sol";
 import {
     BondOwnerHistoryStorage
 } from "../storage/BondOwnerHistoryStorage.sol";
@@ -49,6 +53,8 @@ import { InterfoldTicketToken } from "../token/InterfoldTicketToken.sol";
 contract BondingRegistry is
     IBondingRegistry,
     IBondOwnerHistory,
+    IBondingAdmission,
+    BondingAdmissionStorage,
     BondOwnerHistoryStorage,
     BondingEligibilityStorage,
     BondingSlashingStorage,
@@ -250,7 +256,7 @@ contract BondingRegistry is
     /// @dev Reverts if operator has an exit in progress that hasn't unlocked yet
     /// @param operator Address of the operator to check
     modifier noExitInProgress(address operator) {
-        Operator memory op = operators[operator];
+        Operator storage op = operators[operator];
         if (op.exitRequested && block.timestamp < op.exitUnlocksAt) {
             revert ExitInProgress();
         }
@@ -366,6 +372,26 @@ contract BondingRegistry is
         return BondingEligibilityLib.committeeOwnerCapacity(timepoint);
     }
 
+    /// @inheritdoc IBondingAdmission
+    function setAdmissionPolicy(
+        bool cooldownEnabled,
+        uint48 cooldownDuration,
+        bool admissionsPaused
+    ) external onlyOwner {
+        BondingEligibilityLib.setAdmissionPolicy(
+            cooldownEnabled,
+            cooldownDuration,
+            admissionsPaused
+        );
+    }
+
+    /// @inheritdoc IBondingAdmission
+    function admissionPolicyAt(
+        uint256 timepoint
+    ) external view returns (AdmissionPolicy memory) {
+        return BondingEligibilityLib.admissionPolicyAt(timepoint);
+    }
+
     /// @inheritdoc IBondingRegistry
     function pendingBondOwnerOf(
         address operator
@@ -478,7 +504,7 @@ contract BondingRegistry is
 
     /// @inheritdoc IBondingRegistry
     function hasExitInProgress(address operator) external view returns (bool) {
-        Operator memory op = operators[operator];
+        Operator storage op = operators[operator];
         return op.exitRequested && block.timestamp < op.exitUnlocksAt;
     }
 
@@ -561,34 +587,16 @@ contract BondingRegistry is
 
     /// @inheritdoc IBondingRegistry
     function acceptBondOwner(address operator) external {
-        require(msg.sender == _pendingBondOwnerOf[operator], Unauthorized());
-
-        address previousOwner = bondOwnerOf(operator);
-        (, uint256 pendingCiphernodeBond) = _exits.getPendingAmounts(operator);
-        uint256 delegatedBond = operators[operator].ciphernodeBond +
-            pendingCiphernodeBond;
-
-        BondingAssetLib.validateBondOwnerTransfer(
-            address(ciphernodeBondToken),
-            previousOwner,
-            _bondedByOwner[previousOwner],
-            delegatedBond
-        );
-
         BondingOwnershipLib.completeTransfer(
             _bondOwnerOf,
             _pendingBondOwnerOf,
             _bondedByOwner,
-            operator,
-            delegatedBond
+            operators,
+            _exits,
+            address(ciphernodeBondToken),
+            bondedCheckpoints,
+            operator
         );
-        // Both sides, in the same call: the bond leaves one history and joins the other, and
-        // checkpointing only the receiver would leave the previous owner voting with weight it
-        // no longer holds.
-        _syncBondedCheckpoint(previousOwner);
-        _syncBondedCheckpoint(msg.sender);
-
-        emit BondOwnerSet(operator, msg.sender);
     }
 
     /// @inheritdoc IBondingRegistry
@@ -1466,6 +1474,7 @@ contract BondingRegistry is
         return
             interfaceId == type(IBondingRegistry).interfaceId ||
             interfaceId == type(IBondOwnerHistory).interfaceId ||
+            interfaceId == type(IBondingAdmission).interfaceId ||
             interfaceId == type(IERC165).interfaceId;
     }
 

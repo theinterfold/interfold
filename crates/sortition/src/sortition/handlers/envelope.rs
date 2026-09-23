@@ -32,6 +32,9 @@ impl Handler<InterfoldEvent> for Sortition {
             InterfoldEventData::BondOwnerSetAt(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
+            InterfoldEventData::AdmissionUpdated(data) => {
+                self.notify_sync(ctx, TypedEvent::new(data, ec))
+            }
             InterfoldEventData::TicketBalanceUpdated(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }

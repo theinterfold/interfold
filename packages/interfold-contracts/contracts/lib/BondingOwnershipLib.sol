@@ -17,6 +17,9 @@ import {
 } from "@openzeppelin/contracts/utils/structs/Checkpoints.sol";
 import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import { BondOwnerCapacityLib } from "./BondOwnerCapacityLib.sol";
+import { BondingAdmissionLib } from "./BondingAdmissionLib.sol";
+import { BondingAssetLib } from "./BondingAssetLib.sol";
+import { IBondedCheckpoints } from "../interfaces/IBondedCheckpoints.sol";
 
 /**
  * @title BondingOwnershipLib
@@ -25,8 +28,8 @@ import { BondOwnerCapacityLib } from "./BondOwnerCapacityLib.sol";
  * @dev External, so this code is delegatecalled and does not count against the registry's
  * EIP-170 limit.
  *
- * The registry checks transfer authorization and locked balances before this library changes
- * ownership. The registry then checkpoints both owners' bonded balances.
+ * This library checks transfer authorization and locked balances before changing ownership.
+ * It then checkpoints both owners' bonded balances in the same transaction.
  */
 library BondingOwnershipLib {
     using ExitQueueLib for ExitQueueLib.ExitQueueState;
@@ -42,6 +45,7 @@ library BondingOwnershipLib {
         address previousOwner,
         address newOwner
     ) private {
+        if (previousOwner == newOwner) return;
         Checkpoints.Trace208 storage history = _ownerHistory().history[
             operator
         ];
@@ -53,23 +57,53 @@ library BondingOwnershipLib {
             SafeCast.toUint48(block.timestamp),
             uint208(uint160(newOwner))
         );
-        BondOwnerCapacityLib.transfer(operator, newOwner);
+        BondingAdmissionLib.start(operator);
+        bool allowed = BondingAdmissionLib.allows(
+            operator,
+            block.timestamp,
+            BondingAdmissionLib.policyAt(block.timestamp)
+        );
+        BondOwnerCapacityLib.transfer(
+            operator,
+            allowed ? newOwner : address(0)
+        );
     }
 
-    /// @notice Commits a transfer after the registry checks authorization and locked balances.
+    /// @notice Checks and commits a transfer, including admission and bonded checkpoints.
     function completeTransfer(
         mapping(address => address) storage bondOwners,
         mapping(address => address) storage pendingBondOwners,
         mapping(address => uint256) storage bondedByOwner,
-        address operator,
-        uint256 delegatedBond
+        mapping(address => BondingRegistry.Operator) storage operators,
+        ExitQueueLib.ExitQueueState storage exits,
+        address token,
+        IBondedCheckpoints checkpoints,
+        address operator
     ) external {
+        require(
+            msg.sender == pendingBondOwners[operator],
+            IBondingRegistry.Unauthorized()
+        );
         address previousOwner = bondOwners[operator];
+        (, uint256 pendingBond) = exits.getPendingAmounts(operator);
+        uint256 delegatedBond = operators[operator].ciphernodeBond +
+            pendingBond;
+        BondingAssetLib.validateBondOwnerTransfer(
+            token,
+            previousOwner,
+            bondedByOwner[previousOwner],
+            delegatedBond
+        );
         delete pendingBondOwners[operator];
         _recordOwner(operator, previousOwner, msg.sender);
         bondOwners[operator] = msg.sender;
         bondedByOwner[previousOwner] -= delegatedBond;
         bondedByOwner[msg.sender] += delegatedBond;
+        if (address(checkpoints) != address(0)) {
+            checkpoints.sync(previousOwner, bondedByOwner[previousOwner]);
+            checkpoints.sync(msg.sender, bondedByOwner[msg.sender]);
+        }
+        emit IBondingRegistry.BondOwnerSet(operator, msg.sender);
     }
 
     /// @notice Proposes a replacement owner without changing snapshot ownership.

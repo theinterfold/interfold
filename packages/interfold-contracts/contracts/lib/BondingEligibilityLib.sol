@@ -20,6 +20,8 @@ import { INodeReleaseManager } from "../interfaces/INodeReleaseManager.sol";
 import { INodeReleaseRegistry } from "../interfaces/INodeReleaseRegistry.sol";
 import { InterfoldTicketToken } from "../token/InterfoldTicketToken.sol";
 import { BondOwnerCapacityLib } from "./BondOwnerCapacityLib.sol";
+import { BondingAdmissionLib } from "./BondingAdmissionLib.sol";
+import { IBondingAdmission } from "../interfaces/IBondingAdmission.sol";
 
 /// @notice Stores the request-boundary eligibility history for BondingRegistry.
 library BondingEligibilityLib {
@@ -71,7 +73,7 @@ library BondingEligibilityLib {
             uint208(newVersion + 1)
         );
         state.activeOperatorCounts.push(uint48(block.timestamp), 0);
-        BondOwnerCapacityLib.reset(newVersion);
+        BondOwnerCapacityLib.reset();
         emit IBondingRegistry.EligibilityConfigurationVersionUpdated(
             newVersion
         );
@@ -110,8 +112,7 @@ library BondingEligibilityLib {
         BondOwnerCapacityLib.sync(
             operator,
             IBondingRegistry(address(this)).bondOwnerOf(operator),
-            newActive,
-            configurationVersion
+            newActive && _admissionAllowed(operator, block.timestamp)
         );
         if (oldActive == newActive) {
             return (activeOperatorCount, newActive);
@@ -159,7 +160,8 @@ library BondingEligibilityLib {
         active =
             configurationVersion != 0 &&
             state.operatorActiveVersions[operator].upperLookup(key) ==
-            configurationVersion;
+            configurationVersion &&
+            _admissionAllowed(operator, timepoint);
         activeOperatorCount = state.activeOperatorCounts.upperLookup(key);
     }
 
@@ -171,8 +173,47 @@ library BondingEligibilityLib {
         uint208 version = versions.upperLookupRecent(
             SafeCast.toUint48(timepoint)
         );
-        if (version == 0 || version != versions.latest()) return 0;
+        if (
+            version == 0 ||
+            version != versions.latest() ||
+            !BondingAdmissionLib.capacityPolicyMatches(timepoint)
+        ) return 0;
         return BondOwnerCapacityLib.countAt(timepoint);
+    }
+
+    function setAdmissionPolicy(
+        bool enabled,
+        uint48 duration,
+        bool paused
+    ) external {
+        BondingAdmissionLib.setPolicy(enabled, duration, paused);
+    }
+
+    function admissionPolicyAt(
+        uint256 timepoint
+    ) external view returns (IBondingAdmission.AdmissionPolicy memory) {
+        return BondingAdmissionLib.policyAt(timepoint);
+    }
+
+    function _admissionAllowed(
+        address operator,
+        uint256 timepoint
+    ) private view returns (bool) {
+        IBondingAdmission.AdmissionPolicy memory policy = BondingAdmissionLib
+            .policyAt(timepoint);
+        if (!BondingAdmissionLib.allows(operator, timepoint, policy))
+            return false;
+        if (!policy.admissionsPaused) return true;
+        BondingEligibilityStorage.EligibilityLayout storage state = _layout();
+        uint208 version = state.configurationVersions.upperLookupRecent(
+            policy.pauseTimepoint
+        );
+        return
+            version != 0 &&
+            state.operatorActiveVersions[operator].upperLookupRecent(
+                policy.pauseTimepoint
+            ) ==
+            version;
     }
 
     function _layout()

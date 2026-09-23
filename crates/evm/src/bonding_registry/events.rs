@@ -154,6 +154,38 @@ pub(crate) fn extractor(
     chain_id: u64,
 ) -> Option<InterfoldEventData> {
     match topics.first() {
+        Some(&IBondingRegistry::AdmissionPolicyUpdated::SIGNATURE_HASH) => {
+            let event = IBondingRegistry::AdmissionPolicyUpdated::decode_log_data(data).ok()?;
+            let policy = event.policy;
+            Some(
+                e3_events::AdmissionUpdated {
+                    chain_id,
+                    timepoint: event.timepoint.to(),
+                    change: e3_events::AdmissionChange::Policy(e3_events::AdmissionPolicy {
+                        cooldown_enabled: policy.cooldownEnabled,
+                        admissions_paused: policy.admissionsPaused,
+                        cooldown_duration: policy.cooldownDuration.to(),
+                        pause_timepoint: policy.pauseTimepoint.to(),
+                        pause_cooldown_enabled: policy.pauseCooldownEnabled,
+                        pause_cooldown_duration: policy.pauseCooldownDuration.to(),
+                    }),
+                }
+                .into(),
+            )
+        }
+        Some(&IBondingRegistry::AdmissionStarted::SIGNATURE_HASH) => {
+            let event = IBondingRegistry::AdmissionStarted::decode_log_data(data).ok()?;
+            Some(
+                e3_events::AdmissionUpdated {
+                    chain_id,
+                    timepoint: event.timepoint.to(),
+                    change: e3_events::AdmissionChange::Started {
+                        operator: event.operator.to_string(),
+                    },
+                }
+                .into(),
+            )
+        }
         Some(&IBondingRegistry::TicketBalanceUpdated::SIGNATURE_HASH) => {
             let Ok(event) = IBondingRegistry::TicketBalanceUpdated::decode_log_data(data) else {
                 error!("Error parsing event TicketBalanceUpdated after topic was matched!");
@@ -281,6 +313,64 @@ mod tests {
             }
             other => panic!("expected BondOwnerSet, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn admission_events_preserve_chain_time_and_the_frozen_pause_policy() {
+        let event = IBondingRegistry::AdmissionPolicyUpdated {
+            timepoint: alloy::primitives::Uint::<48, 1>::from(100),
+            policy: IBondingRegistry::AdmissionPolicy {
+                cooldownEnabled: false,
+                admissionsPaused: true,
+                cooldownDuration: 0.try_into().unwrap(),
+                pauseTimepoint: 90.try_into().unwrap(),
+                pauseCooldownEnabled: true,
+                pauseCooldownDuration: 259200.try_into().unwrap(),
+            },
+        };
+        let out = extractor(
+            &event.encode_log_data(),
+            &[IBondingRegistry::AdmissionPolicyUpdated::SIGNATURE_HASH],
+            1,
+        )
+        .unwrap();
+        assert_eq!(
+            out,
+            e3_events::AdmissionUpdated {
+                chain_id: 1,
+                timepoint: 100,
+                change: e3_events::AdmissionChange::Policy(e3_events::AdmissionPolicy {
+                    cooldown_enabled: false,
+                    admissions_paused: true,
+                    cooldown_duration: 0,
+                    pause_timepoint: 90,
+                    pause_cooldown_enabled: true,
+                    pause_cooldown_duration: 259200,
+                }),
+            }
+            .into()
+        );
+        let started = IBondingRegistry::AdmissionStarted {
+            operator: Address::repeat_byte(1),
+            timepoint: 101.try_into().unwrap(),
+        };
+        let out = extractor(
+            &started.encode_log_data(),
+            &[IBondingRegistry::AdmissionStarted::SIGNATURE_HASH],
+            2,
+        )
+        .unwrap();
+        assert_eq!(
+            out,
+            e3_events::AdmissionUpdated {
+                chain_id: 2,
+                timepoint: 101,
+                change: e3_events::AdmissionChange::Started {
+                    operator: started.operator.to_string()
+                }
+            }
+            .into()
+        );
     }
 
     #[test]

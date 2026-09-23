@@ -15,4 +15,5 @@ fn main() {
         .success());
 
     println!("cargo:rerun-if-changed=./scripts/build_fixtures.sh");
+    println!("cargo:rerun-if-changed=tests/fixtures/emit_logs.sol");
 }

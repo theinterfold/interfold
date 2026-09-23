@@ -4,6 +4,20 @@
 
 use super::*;
 
+impl Handler<TypedEvent<e3_events::AdmissionUpdated>> for Sortition {
+    type Result = ();
+
+    fn handle(&mut self, msg: TypedEvent<e3_events::AdmissionUpdated>, _: &mut Self::Context) {
+        let (event, ec) = msg.into_components();
+        trap(EType::Sortition, &self.bus.with_ec(&ec), || {
+            self.admission.try_mutate(&ec, |mut admission| {
+                admission.record(&event)?;
+                Ok(admission)
+            })
+        })
+    }
+}
+
 impl Handler<TypedEvent<BondOwnerSetAt>> for Sortition {
     type Result = ();
 

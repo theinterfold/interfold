@@ -29,22 +29,16 @@ library BondOwnerCapacityLib {
         }
     }
 
-    function reset(uint256 configurationVersion) internal {
+    function reset() internal {
         BondOwnerHistoryStorage.OwnerHistoryLayout storage state = layout();
-        state.capacityVersion = configurationVersion + 1;
+        ++state.capacityVersion;
         state.activeOwnerCounts.push(SafeCast.toUint48(block.timestamp), 0);
     }
 
     /// @dev An unchanged legacy operator enters the count on its first status refresh.
-    function sync(
-        address operator,
-        address owner,
-        bool active,
-        uint256 configurationVersion
-    ) internal {
+    function sync(address operator, address owner, bool active) internal {
         BondOwnerHistoryStorage.OwnerHistoryLayout storage state = layout();
-        if (state.capacityVersion != configurationVersion + 1)
-            reset(configurationVersion);
+        if (state.capacityVersion == 0) reset();
         BondOwnerHistoryStorage.CountedOperator storage counted = state
             .countedOperators[operator];
         address previous = counted.version == state.capacityVersion

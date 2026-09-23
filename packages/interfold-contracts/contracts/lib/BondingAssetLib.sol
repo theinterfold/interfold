@@ -393,7 +393,7 @@ library BondingAssetLib {
         address previousOwner,
         uint256 bonded,
         uint256 delegatedBond
-    ) external view {
+    ) internal view {
         if (delegatedBond == 0) return;
         uint256 remainingBonded = bonded - delegatedBond;
         uint256 locked = lockedBalanceOf(token, previousOwner);

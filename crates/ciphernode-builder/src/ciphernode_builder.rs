@@ -911,6 +911,7 @@ impl CiphernodeBuilder {
             backends_store: repositories.sortition(),
             node_state_store: repositories.node_state(),
             bond_owners_store: repositories.sortition_bond_owners(),
+            admission_store: repositories.sortition_admission(),
             recovery_store: repositories.sortition_recovery(),
             committees_store: committees_repo,
             default_backend: self.sortition_backend.clone(),

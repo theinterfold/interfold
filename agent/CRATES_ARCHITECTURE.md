@@ -1103,14 +1103,21 @@ unpause transaction, because running nodes add provider addresses only at startu
 starts Registry readers only on Ethereum mainnet, Sepolia, and local development chains.
 
 The sortition runtime ranks N-plus-buffer distinct request-time owners and retains their operators
-as backups. Local capacity gates each node's submission. Finalization ranks visit each owner's best
-operator before its backups. The contract selects at most one operator per owner for capped
-requests; canonical party IDs still come from the finalized address order. The existing EVM decoder
-wraps `BondOwnerSet` as the appended `BondOwnerSetAt` event, with the original block time in
-seconds. The separate v2 owner repository never imports ingestion-time v1 checkpoints. Startup
-backfills missing chain projections through aggregate zero's snapshot cursor without changing
-existing node or recovery payloads. Legacy owner events still decode but cannot establish chain-time
-history. Missing history permits all eligible submissions instead of excluding owners. The
+as backups. Before ranking, it applies the admission policy and position starts at
+`requestBlock - 1`. `AdmissionUpdated` carries the contract timestamp. Its separate versioned
+repository preserves old node payloads; startup backfills missing chain projections from the durable
+aggregate-zero prefix. Disabled, unpaused policies return the existing view immediately. Enabled
+policies filter locally, without per-request RPC reads. A pause also requires activity before the
+pause and does not change previous request views. The matching contract check remains authoritative.
+
+Local capacity gates each node's submission. Finalization ranks visit each owner's best operator
+before its backups. The contract selects at most one operator per owner for capped requests;
+canonical party IDs still come from the finalized address order. The existing EVM decoder wraps
+`BondOwnerSet` as the appended `BondOwnerSetAt` event, with the original block time in seconds. The
+separate v2 owner repository never imports ingestion-time v1 checkpoints. Startup backfills missing
+chain projections through aggregate zero's snapshot cursor without changing existing node or
+recovery payloads. Legacy owner events still decode but cannot establish chain-time history. Missing
+history permits all eligible submissions instead of excluding owners. The
 `sortition_owner_history_fallback` warning includes the E3, chain, snapshot time, missing-owner
 count, and eligible-operator count. It does not add an RPC call or fail the round. Existing ticket
 intents keep their ticket numbers and finalization ranks on restart, including nodes with

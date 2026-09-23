@@ -23,11 +23,15 @@ impl SortitionRepositoryFactory for Repositories {
 }
 
 pub trait SortitionRecoveryRepositoryFactory {
+    fn sortition_admission(&self) -> Repository<crate::AdmissionState>;
     fn sortition_recovery(&self) -> Repository<SortitionRecoveryState>;
     fn sortition_bond_owners(&self) -> Repository<BondOwnerState>;
 }
 
 impl SortitionRecoveryRepositoryFactory for Repositories {
+    fn sortition_admission(&self) -> Repository<crate::AdmissionState> {
+        Repository::new(self.store.scope(StoreKeys::sortition_admission()))
+    }
     fn sortition_recovery(&self) -> Repository<SortitionRecoveryState> {
         Repository::new(self.store.scope(StoreKeys::sortition_recovery()))
     }

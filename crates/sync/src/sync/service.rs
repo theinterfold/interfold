@@ -127,6 +127,7 @@ pub struct RestartStateBackfill {
     pub tickets: HashMap<E3id, TicketGenerated>,
     pub slash_intents: Vec<AccusationQuorumReached>,
     pub bond_owner_updates: Vec<TypedEvent<BondOwnerSetAt>>,
+    pub admission_updates: Vec<e3_events::AdmissionUpdated>,
 }
 
 impl RestartStateBackfill {
@@ -197,9 +198,11 @@ pub async fn project_restart_state_backfill(
     end_cursors: HashMap<AggregateId, u64>,
     target_e3s: &HashSet<E3id>,
     slash_target_chains: &HashSet<u64>,
-    owner_target_chains: &HashSet<u64>,
+    projection_target_chains: &HashSet<u64>,
 ) -> Result<RestartStateBackfill> {
-    if (target_e3s.is_empty() && slash_target_chains.is_empty() && owner_target_chains.is_empty())
+    if (target_e3s.is_empty()
+        && slash_target_chains.is_empty()
+        && projection_target_chains.is_empty())
         || end_cursors.is_empty()
     {
         return Ok(RestartStateBackfill::default());
@@ -209,8 +212,13 @@ pub async fn project_restart_state_backfill(
     let mut recovered = RestartStateBackfill::default();
     spool.project(|event| {
         match event.get_data() {
+            InterfoldEventData::AdmissionUpdated(admission)
+                if projection_target_chains.contains(&admission.chain_id) =>
+            {
+                recovered.admission_updates.push(admission.clone());
+            }
             InterfoldEventData::BondOwnerSetAt(owner)
-                if owner_target_chains.contains(&owner.owner.chain_id) =>
+                if projection_target_chains.contains(&owner.owner.chain_id) =>
             {
                 recovered
                     .bond_owner_updates
