@@ -1326,9 +1326,12 @@ InterfoldSolReader decodes CiphertextOutputPublished event
 │      │                            │                   │ correctly                    │
 ├──────┼────────────────────────────┼───────────────────┼──────────────────────────────┤
 │ C1   │ TrBFV PK Generation        │ DKG: Share Gen    │ Threshold pk_share derived   │
-│      │                            │                   │ correctly from sk; outputs   │
-│      │                            │                   │ sk_commitment, pk_commitment,│
-│      │                            │                   │ e_sm_commitment              │
+│      │                            │                   │ correctly from sk; bounds    │
+│      │                            │                   │ e_sm over the integers via   │
+│      │                            │                   │ e_sm_lifted + CRT quotients; │
+│      │                            │                   │ outputs sk_commitment,       │
+│      │                            │                   │ pk_commitment,               │
+│      │                            │                   │ e_sm_commitment (residues)   │
 ├──────┼────────────────────────────┼───────────────────┼──────────────────────────────┤
 │ C2a  │ SK Share Computation       │ DKG: Share Gen    │ Shamir shares of sk computed │
 │      │                            │                   │ correctly                    │
@@ -1337,10 +1340,13 @@ InterfoldSolReader decodes CiphertextOutputPublished event
 │      │                            │                   │ noise computed correctly     │
 ├──────┼────────────────────────────┼───────────────────┼──────────────────────────────┤
 │ C3a  │ SK Share Encryption        │ DKG: Share Gen    │ sk_sss encrypted correctly   │
-│      │                            │                   │ under recipient's BFV key   │
+│      │                            │                   │ under recipient's BFV key;   │
+│      │                            │                   │ e0 used directly, no CRT     │
+│      │                            │                   │ split (e0_bound < q_i/2)     │
 ├──────┼────────────────────────────┼───────────────────┼──────────────────────────────┤
 │ C3b  │ ESM Share Encryption       │ DKG: Share Gen    │ esi_sss encrypted correctly  │
-│      │                            │                   │ under recipient's BFV key   │
+│      │                            │                   │ under recipient's BFV key;   │
+│      │                            │                   │ same e0 handling as C3a      │
 ├──────┼────────────────────────────┼───────────────────┼──────────────────────────────┤
 │ C4a  │ SK Decryption Share (T2)   │ DKG: Key Calc     │ Verifies H decrypted shares  │
 │      │                            │                   │ match C2a commitments; sums  │

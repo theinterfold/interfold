@@ -107,6 +107,25 @@ every section.
   multiplicities. Witness dimensions come from the **active preset**, never incidental vector sizes.
   — `ARCHITECTURE.md`; `CRATES_ARCHITECTURE.md`
 - All C0–C7 proofs must complete before `ThresholdShareCreated` is published. — `flow-trace/04`
+- A CRT consistency equation of the form `lifted[j] == limb[i][j] + quotient[i][j] * q_i` constrains
+  nothing on its own: `q_i` is invertible modulo the proof-system prime, so every limb admits a
+  quotient that satisfies it. It binds the witnesses only when the lifted value, the limbs **and**
+  the quotients all carry range checks that keep the term sum far below the prime, which is what
+  makes the equation hold over the integers. C1 (`e_sm`) and `user_data_encryption_ct0` (`e0`) both
+  rely on all three bounds; dropping any one makes the check vacuous. — `flow-trace/04`
+- Apply a bound where the quantity it describes actually lives. The smudging bound `e_sm_bound` is
+  an integer bound and belongs on C1's lifted `e_sm_lifted` witness; on secure presets it exceeds
+  every `q_i`, so checking a CRT residue against it is satisfied for free. Limbs carry the modulus
+  bound `(q_i - 1) / 2` instead. — `flow-trace/04`
+- C1 commits to the `e_sm` **residues**, not the lifted value, so C2b keeps hashing what it
+  Shamir-splits. The integer bound reaches C2b through that commitment: C1 proves the limbs are
+  bounded and hash to it, C2b proves its own limbs hash to the same value. `PK_GENERATION_BIT_E_SM`
+  and `SHARE_COMPUTATION_E_SM_BIT_SECRET` are the same modulus width and must move together. —
+  `flow-trace/04`
+- DKG error terms need no CRT decomposition: `error1_variance <= 16` puts `e0_bound` at
+  `2 * variance` (20 secure, 6 insecure), far below every `q_i / 2`, so the centered residue equals
+  `e0`. C3 uses `e0` directly. Raising DKG `error1_variance` past 16 switches `Bounds::compute` to
+  the uniform branch and breaks that assumption — witness generation asserts it. — `flow-trace/04`
 
 ### Proof binding / domain separation (audit-fix invariants — do not regress)
 
