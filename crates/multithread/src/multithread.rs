@@ -44,7 +44,7 @@ use e3_events::{
 use e3_fhe_params::build_pair_for_preset;
 use e3_fhe_params::create_deterministic_crp_from_default_seed;
 use e3_fhe_params::{BfvParamSet, BfvPreset};
-use e3_polynomial::CrtPolynomial;
+use e3_polynomial::{CrtPolynomial, Polynomial};
 use e3_trbfv::calculate_decryption_key::calculate_decryption_key;
 use e3_trbfv::calculate_decryption_share::calculate_decryption_share;
 use e3_trbfv::calculate_threshold_decryption::calculate_threshold_decryption;
@@ -1387,6 +1387,7 @@ fn handle_pk_generation_proof(
     let sk = CrtPolynomial::from_fhe_polynomial(&sk_poly);
     let eek = CrtPolynomial::from_fhe_polynomial(&eek_poly);
     let e_sm = CrtPolynomial::from_fhe_polynomial(&e_sm_poly);
+    let e_sm_lifted = Polynomial::from_fhe_polynomial(&e_sm_poly);
 
     // 4. Build circuit data
     let committee = req.committee_size.values();
@@ -1395,6 +1396,7 @@ fn handle_pk_generation_proof(
         pk0_share,
         eek,
         e_sm,
+        e_sm_lifted,
         sk,
     };
 

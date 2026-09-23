@@ -13,7 +13,7 @@ use crate::{
     threshold::pk_generation::PkGenerationCircuitData, CiphernodesCommittee, CircuitsErrors,
 };
 use e3_fhe_params::{build_pair_for_preset, create_deterministic_crp_from_default_seed, BfvPreset};
-use e3_polynomial::CrtPolynomial;
+use e3_polynomial::{CrtPolynomial, Polynomial};
 use fhe::mbfv::PublicKeyShare;
 use fhe::{
     bfv::SecretKey,
@@ -70,6 +70,7 @@ impl PkGenerationCircuitData {
             pk0_share: CrtPolynomial::from_fhe_polynomial(&pk0_share),
             eek: CrtPolynomial::from_fhe_polynomial(&e),
             e_sm: CrtPolynomial::from_fhe_polynomial(&e_sm),
+            e_sm_lifted: Polynomial::from_fhe_polynomial(&e_sm),
             sk: CrtPolynomial::from_fhe_polynomial(&sk),
         })
     }
