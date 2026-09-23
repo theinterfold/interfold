@@ -18,6 +18,39 @@ struct SyncEventCollector {
 }
 
 #[actix::test]
+async fn owner_checkpoint_keeps_chain_time_when_the_event_clock_advances() -> Result<()> {
+    use e3_events::{hlc::HlcTimestamp, BondOwnerSet, Event, EventContextAccessors};
+
+    let system = EventSystem::new().with_fresh_bus();
+    let bus = system.handle()?.enable("historical-owner-time");
+    let owner = BondOwnerSet {
+        operator: alloy::primitives::Address::from([1; 20]).to_string(),
+        bond_owner: alloy::primitives::Address::from([2; 20]).to_string(),
+        chain_id: 1,
+    };
+    for seconds in [10, 1_700_000_000] {
+        let raw = EvmEvent::new(
+            CorrelationId::new(),
+            owner.clone().into(),
+            42,
+            crate::domain::log_timestamp::from_log_chain_id_to_ts(seconds, 3, 1),
+            1,
+        );
+        let event = raw.into_interfold_event(&bus)?;
+        assert!(HlcTimestamp::wall_time(event.ts()) / 1_000_000 > seconds);
+        let InterfoldEventData::BondOwnerSetAt(checkpoint) = event.get_data() else {
+            panic!("owner events must retain the source block timestamp");
+        };
+        assert_eq!(checkpoint.timepoint, seconds);
+        assert_eq!(checkpoint.owner, owner);
+        let restored: InterfoldEvent<Unsequenced> =
+            bincode::deserialize(&bincode::serialize(&event)?)?;
+        assert_eq!(restored, event);
+    }
+    Ok(())
+}
+
+#[actix::test]
 async fn rejected_log_fails_gateway_readiness() -> Result<()> {
     let system = EventSystem::new().with_fresh_bus();
     let bus = system.handle()?.enable("test-rejected-log");

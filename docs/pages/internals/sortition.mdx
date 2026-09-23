@@ -112,10 +112,17 @@ within those shortlisted groups can submit if it has local capacity. This retain
 owner's best operator is offline, without sending tickets from the rest of the owner groups.
 
 Finalization-attempt ranks visit each shortlisted owner's best operator first, then their second
-operators, and so on. One owner's backups cannot occupy all the first retry positions. Backups
-still submit during the normal window; this is not a new staged submission protocol. If owner
-history is incomplete, the runtime logs a warning and allows all eligible operators to submit.
-The on-chain cap still applies. Neither the buffer nor the fallback guarantees enough online owners.
+operators, and so on. One owner's backups cannot occupy all the first retry positions. Backups still
+submit during the normal window; this is not a new staged submission protocol. If owner history is
+incomplete, the runtime logs a warning and allows all eligible operators to submit. The on-chain cap
+still applies. Neither the buffer nor the fallback guarantees enough online owners.
+
+Owner checkpoints use the source block's timestamp, not the time the node received the event. Older
+local owner records without that timestamp are not used to filter candidates. The fallback can
+increase transaction count and provisional capacity use. A missing update in an otherwise populated
+cache can still give the node a stale shortlist: chain validation protects the cap, not committee
+availability. Operators must complete chain synchronization before serving requests. Restart
+preserves a generated ticket and its finalization rank, including when aggregation is disabled.
 
 The runtime's legacy field `threshold_m` is polynomial threshold `T`; decryption needs `T + 1`
 shares. `threshold_n` is committee size `N`. No circuit parameter changes with this cap. After
@@ -201,8 +208,8 @@ that phase's set, and the final eligible party remains active after all standby 
 ## Off-chain Submission
 
 Each node computes its best ticket and checks whether its request-time owner is shortlisted. It
-submits if shortlisted and it has local capacity. The contract enforces the owner cap; the aggregator
-does not approve tickets.
+submits if shortlisted and it has local capacity. The contract enforces the owner cap; the
+aggregator does not approve tickets.
 
 ```rust
 // Pseudocode for SortitionBackend::get_submission_index
@@ -223,15 +230,17 @@ This reservation is local capacity control, not an on-chain ticket lock. Solidit
 the full snapshotted ticket range, and one node's `active_jobs` count cannot reduce another
 operator's candidate range.
 
-The existing `BondOwnerSet` events supply ownership history in a separate, versioned snapshot.
-On upgrade, startup reconstructs missing chain projections from the global event log through its
-snapshot cursor. Existing node and recovery schemas remain unchanged. A restored ticket intent
-keeps its original ticket number and finalization rank; startup does not rank that request again.
+Newly decoded `BondOwnerSet` logs become `BondOwnerSetAt` records that retain the original block
+timestamp. These records supply the separate v2 owner snapshot. Startup reconstructs missing chain
+projections from the global event log through its snapshot cursor. It does not import old records
+that contain only ingestion time. Existing node and recovery payloads remain unchanged. A restored
+ticket intent keeps its original ticket number and finalization rank; startup does not rank that
+request again.
 
 `committee:new` checks distinct eligible owners at a single chain block before fee approval and
 payment. It stops if fewer than `N` owners qualify or the check fails. This is a request-tool check,
-not a contract-wide admission guard, an online check, or a capacity reservation. Direct callers
-must perform their own preflight, and state can change before a request is mined.
+not a contract-wide admission guard, an online check, or a capacity reservation. Direct callers must
+perform their own preflight, and state can change before a request is mined.
 
 ---
 

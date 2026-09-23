@@ -4,14 +4,14 @@
 
 use super::*;
 
-impl Handler<TypedEvent<BondOwnerSet>> for Sortition {
+impl Handler<TypedEvent<BondOwnerSetAt>> for Sortition {
     type Result = ();
 
-    fn handle(&mut self, msg: TypedEvent<BondOwnerSet>, _: &mut Self::Context) {
+    fn handle(&mut self, msg: TypedEvent<BondOwnerSetAt>, _: &mut Self::Context) {
         let (event, ec) = msg.into_components();
         trap(EType::Sortition, &self.bus.with_ec(&ec), || {
             self.bond_owners.try_mutate(&ec, |mut owners| {
-                owners.record(&event, Self::evm_timepoint(&ec))?;
+                owners.record(&event.owner, event.timepoint)?;
                 Ok(owners)
             })
         })

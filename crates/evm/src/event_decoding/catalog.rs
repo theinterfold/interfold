@@ -412,6 +412,11 @@ const CIPHERNODE_REGISTRY: &[EvmEventDefinition] = &[
         Some(1),
     ),
     EvmEventDefinition::new(
+        "CommitteeBondOwnerCapEnabled",
+        "CommitteeBondOwnerCapEnabled(uint256)",
+        Some(1),
+    ),
+    EvmEventDefinition::new(
         "CommitteeFormationFailed",
         "CommitteeFormationFailed(uint256,uint256,uint256)",
         Some(1),

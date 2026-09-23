@@ -241,7 +241,9 @@ flowchart LR
   - Build list of eligible nodes (active + ticket_balance > 0)
   - Calculate weight for each node based on ticket balance
   - Rank all eligible nodes by their best ticket score
-  - Submit the local node's best ticket if it has capacity
+  - Shortlist N-plus-buffer distinct snapshot owners and retain their operators as backups
+  - Submit the local node's best ticket if its owner is shortlisted and it has capacity
+  - Permit all eligible submissions when chain-time owner history is incomplete
 - **On-Chain Integration**: Tickets submitted to contract for verification
 - **Committee Finalization**: After the window closes, the contract selects N distinct request-time
   bond owners. Each owner has at most one candidate. Existing requests from before the cap upgrade

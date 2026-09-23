@@ -12,10 +12,7 @@ use e3_aggregator::{
     RecoveredCommitteeRequest as FinalizerRecoveredCommitteeRequest,
     COMMITTEE_FINALIZER_RECOVERY_SCHEMA_VERSION,
 };
-use e3_events::{
-    hlc::HlcTimestamp, AggregateId, CiphernodeSelected, Committee, E3Stage, E3id,
-    EventContextAccessors,
-};
+use e3_events::{AggregateId, CiphernodeSelected, Committee, E3Stage, E3id};
 use e3_evm::{SlashingWriterRepositoryFactory, SLASHING_WRITER_RECOVERY_SCHEMA_VERSION};
 use e3_request::E3LifecycleRepositoryFactory;
 use e3_sortition::{
@@ -177,6 +174,7 @@ pub(crate) async fn backfill_restart_state(
             !sortition.seeds.contains_key(*e3_id)
                 || (sortition_was_missing && !sortition.pending_requests.contains_key(*e3_id))
                 || (finalizer_was_missing && !finalizer.pending_requests.contains_key(*e3_id))
+                || !finalizer.tickets.contains_key(*e3_id)
         })
         .cloned()
         .collect();
@@ -207,7 +205,7 @@ pub(crate) async fn backfill_restart_state(
                 .iter()
                 .map(|chain_id| AggregateId::from_chain_id(Some(*chain_id))),
         )
-        // BondOwnerSet has no E3 ID, so its durable events belong to aggregate zero.
+        // BondOwnerSetAt has no E3 ID, so its durable events belong to aggregate zero.
         .chain((!owner_target_chains.is_empty()).then(|| AggregateId::from_chain_id(None)))
     {
         if cursors.contains_key(&aggregate_id) {
@@ -233,7 +231,7 @@ pub(crate) async fn backfill_restart_state(
     .await?;
     // Only absent chain projections are backfilled. Existing snapshots remain authoritative.
     for event in recovered.bond_owner_updates {
-        owners.record(&event, HlcTimestamp::wall_time(event.ts()) / 1_000_000_000)?;
+        owners.record(&event.owner, event.timepoint)?;
     }
     for chain_id in &owner_target_chains {
         owners.chains.entry(*chain_id).or_default();
@@ -272,7 +270,11 @@ pub(crate) async fn backfill_restart_state(
                         )
                     }),
             );
-        finalizer.tickets.extend(recovered.tickets);
+    }
+    // TicketGenerated is durable even when aggregation is disabled. Recover missing intents
+    // from the log prefix, without replacing an intent already saved by the finalizer.
+    for (e3_id, ticket) in recovered.tickets {
+        finalizer.tickets.entry(e3_id).or_insert(ticket);
     }
     for intent in recovered.slash_intents {
         let chain_id = intent.e3_id.chain_id();
@@ -452,7 +454,7 @@ mod tests {
     #[actix::test]
     async fn owner_backfill_preserves_legacy_snapshots_and_restarts() -> Result<()> {
         use alloy::primitives::Address;
-        use e3_events::{BondOwnerSet, EventPublisher};
+        use e3_events::{BondOwnerSet, BondOwnerSetAt, EventPublisher};
         use e3_sortition::NodeStateRepositoryFactory;
 
         let chain = AggregateId::from_chain_id(None);
@@ -472,7 +474,10 @@ mod tests {
             bond_owner: original.to_string(),
             chain_id: 1,
         };
-        bus.publish_without_context(event.clone())?;
+        bus.publish_without_context(BondOwnerSetAt {
+            owner: event.clone(),
+            timepoint: 10,
+        })?;
         bus.flush_event_pipeline().await?;
         repositories.aggregate_seq(chain).write_sync(&1).await?;
         let mut legacy = e3_sortition::NodeStateStore::default();
@@ -495,6 +500,8 @@ mod tests {
         let mut owners = owners_store.read().await?.unwrap();
         owners.validate()?;
         assert_eq!(owners.owner_at(1, node, u64::MAX), Some(original));
+        assert_eq!(owners.owner_at(1, node, 9), None);
+        assert_eq!(owners.owner_at(1, node, 10), Some(original));
         assert_eq!(
             before,
             bincode::serialize(&repositories.node_state().read().await?.unwrap())?
@@ -529,6 +536,40 @@ mod tests {
         assert!(error
             .to_string()
             .contains("unsupported bond-owner snapshot schema"));
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn legacy_owner_events_do_not_become_chain_time_checkpoints() -> Result<()> {
+        use alloy::primitives::Address;
+        use e3_events::{BondOwnerSet, EventPublisher};
+
+        let aggregate = AggregateId::from_chain_id(None);
+        let system = crate::EventSystem::new()
+            .with_fresh_bus()
+            .with_aggregate_config(e3_events::AggregateConfig::new(HashMap::from([(
+                aggregate,
+                std::time::Duration::ZERO,
+            )])));
+        let bus = system.handle()?.enable("legacy-owner-time");
+        let repositories = e3_data::Repositories::from(system.store()?);
+        let operator = Address::from([1; 20]);
+        bus.publish_without_context(BondOwnerSet {
+            operator: operator.to_string(),
+            bond_owner: Address::from([2; 20]).to_string(),
+            chain_id: 1,
+        })?;
+        bus.flush_event_pipeline().await?;
+        repositories.aggregate_seq(aggregate).write_sync(&1).await?;
+        backfill_restart_state(
+            &repositories,
+            &system.eventstore_reader()?.seq(),
+            &[1],
+            false,
+        )
+        .await?;
+        let owners = repositories.sortition_bond_owners().read().await?.unwrap();
+        assert_eq!(owners.owner_at(1, operator, u64::MAX), None);
         Ok(())
     }
 }

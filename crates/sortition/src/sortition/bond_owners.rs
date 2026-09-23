@@ -9,7 +9,7 @@ use e3_events::BondOwnerSet;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-pub const BOND_OWNER_SCHEMA_VERSION: u32 = 1;
+pub const BOND_OWNER_SCHEMA_VERSION: u32 = 2;
 
 /// A separate snapshot leaves the existing node and recovery schemas unchanged.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -106,9 +106,20 @@ mod tests {
     }
 
     #[test]
-    fn version_one_fixture_remains_readable() {
+    fn ingestion_time_history_is_readable_but_not_trusted() {
         let bytes =
             alloy::hex::decode(include_str!("../../tests/fixtures/bond-owners-v1.hex").trim())
+                .unwrap();
+        let state: BondOwnerState = bincode::deserialize(&bytes).unwrap();
+        assert!(state.validate().is_err());
+        assert!(state.chains.is_empty());
+        assert_eq!(bincode::serialize(&state).unwrap(), bytes);
+    }
+
+    #[test]
+    fn version_two_fixture_remains_readable() {
+        let bytes =
+            alloy::hex::decode(include_str!("../../tests/fixtures/bond-owners-v2.hex").trim())
                 .unwrap();
         let state: BondOwnerState = bincode::deserialize(&bytes).unwrap();
         state.validate().unwrap();

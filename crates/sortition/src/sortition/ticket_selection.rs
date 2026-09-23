@@ -334,17 +334,21 @@ mod tests {
             28
         );
 
-        // The best operator is offline, together with five whole backup owner groups.
-        let offline_owner_groups = candidates[25..30]
-            .iter()
-            .map(|w| owners[&w.address])
-            .collect::<HashSet<_>>();
-        let online = candidates.iter().filter(|w| {
-            w.address != winners[0].address && !offline_owner_groups.contains(&owners[&w.address])
-        });
-        let remaining_owners = online.map(|w| owners[&w.address]).collect::<HashSet<_>>();
-        assert!(remaining_owners.contains(&shared_owner));
-        assert_eq!(remaining_owners.len(), 25);
+        // Remove the best operator and one through five whole backup owner groups.
+        for outages in 1..=5 {
+            let offline_owner_groups = candidates[30 - outages..30]
+                .iter()
+                .map(|w| owners[&w.address])
+                .collect::<HashSet<_>>();
+            let online = candidates.iter().filter(|w| {
+                w.address != winners[0].address
+                    && !offline_owner_groups.contains(&owners[&w.address])
+            });
+            let remaining_owners = online.map(|w| owners[&w.address]).collect::<HashSet<_>>();
+            assert!(remaining_owners.contains(&shared_owner));
+            assert_eq!(remaining_owners.len(), 30 - outages);
+            assert!(remaining_owners.len() >= 19);
+        }
     }
 
     #[test]
@@ -365,5 +369,76 @@ mod tests {
             before.iter().map(|w| w.address).collect::<Vec<_>>(),
             after.iter().map(|w| w.address).collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn post_request_owner_splits_cannot_crowd_out_other_snapshot_owners() {
+        use crate::BondOwnerState;
+        use e3_events::BondOwnerSet;
+
+        let id = E3id::new("42", 1);
+        let seed = Seed([42; 32]);
+        let nodes = (1..=68)
+            .map(|i| RegisteredNode {
+                address: address(i),
+                tickets: vec![Ticket { ticket_id: 1 }],
+            })
+            .collect::<Vec<_>>();
+        let ranked = ScoreSortition::new(nodes.len())
+            .get_committee(id.clone(), seed, &nodes)
+            .unwrap();
+        let request_time = 1_700_000_000;
+        let shared_owner = address(1000);
+        let mut owners = BondOwnerState::default();
+        let mut snapshot_owners = std::collections::HashMap::new();
+        for (rank, node) in ranked.iter().enumerate() {
+            let owner = if rank < 28 {
+                shared_owner
+            } else {
+                node.address
+            };
+            snapshot_owners.insert(node.address, owner);
+            let mut event = BondOwnerSet {
+                operator: node.address.to_string(),
+                bond_owner: owner.to_string(),
+                chain_id: 1,
+            };
+            owners.record(&event, request_time - 1).unwrap();
+            if rank < 28 {
+                event.bond_owner = node.address.to_string();
+                owners.record(&event, request_time + 1).unwrap();
+            }
+        }
+        let at = |timepoint| {
+            nodes
+                .iter()
+                .map(|node| {
+                    (
+                        node.address,
+                        owners.owner_at(1, node.address, timepoint).unwrap(),
+                    )
+                })
+                .collect()
+        };
+        let selection = ScoreSortition::new(30);
+        let correct = selection
+            .get_owner_candidates(id.clone(), seed, &nodes, &at(request_time - 1))
+            .unwrap();
+        let correct_groups = correct
+            .iter()
+            .map(|w| snapshot_owners[&w.address])
+            .collect::<HashSet<_>>();
+        assert_eq!(correct_groups.len(), 30);
+
+        // A latest-state lookup would rank the transferred nodes as separate owners.
+        // The contract still sees one owner for those 28 nodes in this request.
+        let stale = selection
+            .get_owner_candidates(id, seed, &nodes, &at(request_time + 1))
+            .unwrap();
+        let stale_groups = stale
+            .iter()
+            .map(|w| snapshot_owners[&w.address])
+            .collect::<HashSet<_>>();
+        assert_eq!(stale_groups.len(), 3);
     }
 }

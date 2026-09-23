@@ -68,8 +68,8 @@ Look for the "Ticket balance" and "available" fields in the output.
 
 ## Ticket Economics
 
-- **Committee probability scales linearly** with your available tickets relative to other operators
-- **Doubling your tickets doubles your odds** (assuming peers stay constant)
+- **More eligible tickets improve your owner's best-score distribution**, with at most one seat per
+  owner. Doubling tickets does not generally double the probability of a committee seat.
 - **Balances are snapshotted** at `requestBlock - 1` - adding tickets after a request won't help
   that round
 - **Idle tickets have opportunity cost** - rewards only accrue when you're selected and complete
@@ -217,8 +217,8 @@ Watch your node logs for:
   its owner is outside the shortlist
 - `"Ticket generated for score sortition"` - Winning ticket emitted to the event bus
 - `"Ciphernode was not selected"` - Node wasn't in the selection set
-- `"Ranking bond owners and their fallback operators for ticket submission"` - Candidate
-  ranking started
+- `"Ranking bond owners and their fallback operators for ticket submission"` - Candidate ranking
+  started
 - `"Node is in finalized committee"` - Committee confirmed, CiphernodeSelected emitted
 
 ## Troubleshooting

@@ -366,6 +366,7 @@ pub enum InterfoldEventData {
     CiphertextOutputReferencePublished(CiphertextOutputReferencePublished),
     DkgCoordination(DkgCoordination),
     CommitmentRosterSelected(CommitmentRosterSelected),
+    BondOwnerSetAt(BondOwnerSetAt),
 }
 
 impl InterfoldEventData {
@@ -887,7 +888,8 @@ impl_event_types!(
     CommitteePublicKeyChunkPublished,
     CiphertextOutputReferencePublished,
     DkgCoordination,
-    CommitmentRosterSelected
+    CommitmentRosterSelected,
+    BondOwnerSetAt
 );
 
 impl TryFrom<&InterfoldEvent<Sequenced>> for InterfoldError {

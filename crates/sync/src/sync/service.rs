@@ -16,7 +16,7 @@ use actix::{Message, Recipient};
 use anyhow::{bail, ensure, Context, Result};
 use e3_data::Repositories;
 use e3_events::{
-    AccusationOutcome, AccusationQuorumReached, AggregateConfig, AggregateId, BondOwnerSet,
+    AccusationOutcome, AccusationQuorumReached, AggregateConfig, AggregateId, BondOwnerSetAt,
     BusHandle, CommitteeMemberExcluded, CommitteeMemberExpelled, CommitteeRequested, CorrelationId,
     E3Requested, E3id, EffectsEnabled, Event, EventContext, EventPublisher, EventStoreQueryBy,
     EventStoreQueryResponse, EventSubscriber, EventType, EvmEventConfig,
@@ -126,7 +126,7 @@ pub struct RestartStateBackfill {
     pub committee_requests: HashMap<E3id, RecoveredCommitteeRequest>,
     pub tickets: HashMap<E3id, TicketGenerated>,
     pub slash_intents: Vec<AccusationQuorumReached>,
-    pub bond_owner_updates: Vec<TypedEvent<BondOwnerSet>>,
+    pub bond_owner_updates: Vec<TypedEvent<BondOwnerSetAt>>,
 }
 
 impl RestartStateBackfill {
@@ -209,8 +209,8 @@ pub async fn project_restart_state_backfill(
     let mut recovered = RestartStateBackfill::default();
     spool.project(|event| {
         match event.get_data() {
-            InterfoldEventData::BondOwnerSet(owner)
-                if owner_target_chains.contains(&owner.chain_id) =>
+            InterfoldEventData::BondOwnerSetAt(owner)
+                if owner_target_chains.contains(&owner.owner.chain_id) =>
             {
                 recovered
                     .bond_owner_updates

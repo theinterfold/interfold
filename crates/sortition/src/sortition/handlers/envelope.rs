@@ -20,13 +20,16 @@ impl Handler<InterfoldEvent> for Sortition {
             InterfoldEventData::E3Requested(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
+            InterfoldEventData::TicketGenerated(data) => {
+                self.notify_sync(ctx, TypedEvent::new(data, ec))
+            }
             InterfoldEventData::CiphernodeAdded(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
             InterfoldEventData::CiphernodeRemoved(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
-            InterfoldEventData::BondOwnerSet(data) => {
+            InterfoldEventData::BondOwnerSetAt(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
             InterfoldEventData::TicketBalanceUpdated(data) => {

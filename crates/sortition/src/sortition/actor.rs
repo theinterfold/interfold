@@ -17,11 +17,11 @@ use anyhow::{anyhow, ensure, Result};
 use e3_data::{AutoPersist, Persistable, Repository};
 use e3_events::hlc::HlcTimestamp;
 use e3_events::{
-    prelude::*, trap, BondOwnerSet, CiphernodeAdded, CiphernodeRemoved, Committee,
+    prelude::*, trap, BondOwnerSetAt, CiphernodeAdded, CiphernodeRemoved, Committee,
     CommitteeFinalized, CommitteeMemberExcluded, CommitteeMemberExpelled, CommitteeRequested,
     ConfigurationUpdated, E3Failed, E3RequestComplete, E3Requested, E3Stage, E3StageChanged, EType,
     EffectsEnabled, EventContext, EventType, InterfoldEvent, OperatorActivationChanged,
-    PlaintextOutputPublished, Seed, Sequenced, TicketBalanceUpdated, TypedEvent,
+    PlaintextOutputPublished, Seed, Sequenced, TicketBalanceUpdated, TicketGenerated, TypedEvent,
 };
 use e3_events::{BusHandle, E3id, InterfoldEventData};
 use e3_utils::{NotifySync, MAILBOX_LIMIT};
@@ -246,8 +246,9 @@ impl Sortition {
             &[
                 EventType::CiphernodeAdded,
                 EventType::CiphernodeRemoved,
-                EventType::BondOwnerSet,
+                EventType::BondOwnerSetAt,
                 EventType::TicketBalanceUpdated,
+                EventType::TicketGenerated,
                 EventType::OperatorActivationChanged,
                 EventType::ConfigurationUpdated,
                 EventType::CommitteeRequested,

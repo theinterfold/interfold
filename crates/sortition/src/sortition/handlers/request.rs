@@ -4,6 +4,18 @@
 
 use super::*;
 
+impl Handler<TypedEvent<TicketGenerated>> for Sortition {
+    type Result = ();
+
+    fn handle(&mut self, msg: TypedEvent<TicketGenerated>, _: &mut Self::Context) {
+        // Startup replays post-snapshot intents before EffectsEnabled. Do not rank a request
+        // again, even if this node did not run the committee finalizer before the restart.
+        if msg.node.eq_ignore_ascii_case(&self.address) {
+            self.processed_requests.insert(msg.e3_id.clone());
+        }
+    }
+}
+
 impl Handler<TypedEvent<E3Requested>> for Sortition {
     type Result = ();
     fn handle(&mut self, msg: TypedEvent<E3Requested>, _: &mut Self::Context) -> Self::Result {
