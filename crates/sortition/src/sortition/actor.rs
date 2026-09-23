@@ -11,17 +11,17 @@ use crate::messages::{
     GetCommitteeMembersRequest, WithSortitionTicket,
 };
 use crate::CiphernodeSelector;
-use crate::FinalizedCommitteeRetention;
+use crate::{BondOwnerState, FinalizedCommitteeRetention};
 use actix::prelude::*;
 use anyhow::{anyhow, ensure, Result};
 use e3_data::{AutoPersist, Persistable, Repository};
 use e3_events::hlc::HlcTimestamp;
 use e3_events::{
-    prelude::*, trap, CiphernodeAdded, CiphernodeRemoved, Committee, CommitteeFinalized,
-    CommitteeMemberExcluded, CommitteeMemberExpelled, CommitteeRequested, ConfigurationUpdated,
-    E3Failed, E3RequestComplete, E3Requested, E3Stage, E3StageChanged, EType, EffectsEnabled,
-    EventContext, EventType, InterfoldEvent, OperatorActivationChanged, PlaintextOutputPublished,
-    Seed, Sequenced, TicketBalanceUpdated, TypedEvent,
+    prelude::*, trap, BondOwnerSet, CiphernodeAdded, CiphernodeRemoved, Committee,
+    CommitteeFinalized, CommitteeMemberExcluded, CommitteeMemberExpelled, CommitteeRequested,
+    ConfigurationUpdated, E3Failed, E3RequestComplete, E3Requested, E3Stage, E3StageChanged, EType,
+    EffectsEnabled, EventContext, EventType, InterfoldEvent, OperatorActivationChanged,
+    PlaintextOutputPublished, Seed, Sequenced, TicketBalanceUpdated, TypedEvent,
 };
 use e3_events::{BusHandle, E3id, InterfoldEventData};
 use e3_utils::{NotifySync, MAILBOX_LIMIT};
@@ -35,6 +35,8 @@ pub struct Sortition {
     backends: Persistable<HashMap<u64, SortitionBackend>>,
     /// Persistent map of `chain_id -> NodeStateStore`.
     node_state: Persistable<HashMap<u64, NodeStateStore>>,
+    /// Owner history is derived from chain events and persisted separately from node state.
+    bond_owners: Persistable<BondOwnerState>,
     /// Event bus for error reporting and interfold event subscription.
     bus: BusHandle,
     /// Persistent map of finalized committees per E3
@@ -149,6 +151,7 @@ pub struct SortitionParams {
     pub backends: Persistable<HashMap<u64, SortitionBackend>>,
     /// Node state store per chain
     pub node_state: Persistable<HashMap<u64, NodeStateStore>>,
+    pub bond_owners: Persistable<BondOwnerState>,
     /// Persistent map of finalized committees per E3
     pub finalized_committees: Persistable<HashMap<e3_events::E3id, Committee>>,
     /// Persisted delayed and pre-finalization inputs.
@@ -157,6 +160,8 @@ pub struct SortitionParams {
     pub ciphernode_selector: Addr<CiphernodeSelector>,
     /// Address for the current node
     pub address: String,
+    /// Existing ticket intents retain their ticket number and finalization rank after upgrade.
+    pub submitted_e3s: HashSet<E3id>,
 }
 
 /// Startup dependencies for the global sortition actor.
@@ -164,11 +169,13 @@ pub struct SortitionAttachParams<'a> {
     pub bus: &'a BusHandle,
     pub backends_store: Repository<HashMap<u64, SortitionBackend>>,
     pub node_state_store: Repository<HashMap<u64, NodeStateStore>>,
+    pub bond_owners_store: Repository<BondOwnerState>,
     pub recovery_store: Repository<SortitionRecoveryState>,
     pub committees_store: Repository<HashMap<e3_events::E3id, Committee>>,
     pub default_backend: SortitionBackend,
     pub ciphernode_selector: Addr<CiphernodeSelector>,
     pub address: &'a str,
+    pub submitted_e3s: HashSet<E3id>,
 }
 
 impl Sortition {
@@ -176,12 +183,13 @@ impl Sortition {
         Self {
             backends: params.backends,
             node_state: params.node_state,
+            bond_owners: params.bond_owners,
             bus: params.bus,
             finalized_committees: params.finalized_committees,
             ciphernode_selector: params.ciphernode_selector,
             address: params.address,
             recovery: params.recovery,
-            processed_requests: HashSet::new(),
+            processed_requests: params.submitted_e3s,
             effects_enabled: false,
         }
     }
@@ -192,14 +200,20 @@ impl Sortition {
             bus,
             backends_store,
             node_state_store,
+            bond_owners_store,
             recovery_store,
             committees_store,
             default_backend,
             ciphernode_selector,
             address,
+            submitted_e3s,
         } = params;
         let mut backends = backends_store.load_or_default(HashMap::new()).await?;
         let node_state = node_state_store.load_or_default(HashMap::new()).await?;
+        let bond_owners = bond_owners_store
+            .load_or_default(BondOwnerState::default())
+            .await?;
+        bond_owners.try_get()?.validate()?;
         let recovery = recovery_store
             .load_or_default(SortitionRecoveryState::default())
             .await?;
@@ -218,10 +232,12 @@ impl Sortition {
             bus: bus.clone(),
             backends,
             node_state,
+            bond_owners,
             recovery,
             finalized_committees,
             ciphernode_selector,
             address: address.to_owned(),
+            submitted_e3s,
         })
         .start();
 
@@ -230,6 +246,7 @@ impl Sortition {
             &[
                 EventType::CiphernodeAdded,
                 EventType::CiphernodeRemoved,
+                EventType::BondOwnerSet,
                 EventType::TicketBalanceUpdated,
                 EventType::OperatorActivationChanged,
                 EventType::ConfigurationUpdated,
@@ -309,15 +326,26 @@ impl Sortition {
         seed: Seed,
         chain_id: u64,
         snapshot: SortitionSnapshot,
+        candidate_owners: usize,
     ) -> Option<(u64, Option<u64>)> {
         let bus = self.bus.clone();
         let map = self.backends.get()?;
         let state_map = self.node_state.get()?;
         let backend = map.get(&chain_id)?;
         let state = state_map.get(&chain_id)?;
+        let owners = self.bond_owners.get()?;
 
         backend
-            .get_submission_index(e3_id, seed, self.address.clone(), chain_id, state, snapshot)
+            .get_submission_index(
+                e3_id,
+                seed,
+                self.address.clone(),
+                chain_id,
+                state,
+                snapshot,
+                candidate_owners,
+                &owners,
+            )
             .unwrap_or_else(|err| {
                 bus.err(EType::Sortition, err);
                 None

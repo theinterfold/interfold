@@ -297,7 +297,9 @@ InterfoldSolReader decodes IInterfold::E3Requested log
     ├─ Waits for CommitteeRequested if the delayed committee seed is not ready
     ├─ Loads the request timepoint and frozen ticket price from CommitteeRequested
     ├─ Uses the CommitteeRequested seed for ticket ranking
-    ├─ Includes all eligible operators; no N-plus-buffer cutoff
+    ├─ Shortlists N-plus-buffer distinct owners, retaining their operators as backups
+    ├─ Reads BondOwnerSet history at requestBlock - 1; incomplete history permits all operators
+    ├─ Existing recovered ticket intents keep their ticket number and finalization rank
     │
     ├─ ScoreBackend.get_committee():
     │   │
@@ -621,8 +623,12 @@ A ready committee must finalize at or before its absolute DKG deadline.
    Terminal failure or completion releases every remaining reservation.
 
    For capped requests, formation requires N distinct snapshot owners. The request's active-node
-   count guard does not count owners. Deployment checks must confirm enough eligible owners before
-   accepting paid requests. DKG parameters and the canonical operator-address order do not change.
+   count guard does not count owners. `committee:new` checks distinct eligible owners at a fixed
+   block before fee approval and payment. Direct callers must perform their own preflight. This
+   check does not reserve capacity or prove machine availability. DKG parameters and the canonical
+   operator-address order do not change. Owner history uses a separate versioned Rust repository;
+   startup backfills missing chain projections from aggregate zero's durable log through its snapshot
+   cursor. Existing node and recovery schemas remain unchanged.
 
 3. **Runtime committee order**: both the on-chain registry and Rust runtime normalize the finalized
    committee into ascending address order before deriving `party_id`. This keeps party IDs,

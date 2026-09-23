@@ -7,6 +7,7 @@
 use crate::domain::node_registry::{NodeStateStore, SortitionSnapshot};
 use crate::domain::ticket::{RegisteredNode, Ticket};
 use crate::domain::ticket_sortition::ScoreSortition;
+use crate::BondOwnerState;
 use alloy::primitives::Address;
 use anyhow::Result;
 use e3_events::{E3id, Seed};
@@ -311,7 +312,7 @@ mod tests {
     }
 
     #[test]
-    fn submissions_include_candidates_beyond_the_old_small_committee_buffer() {
+    fn incomplete_owner_history_keeps_all_candidates_and_local_capacity_checks() {
         let mut backend = SortitionBackend::default();
         let mut state = NodeStateStore::default();
         for i in 1..=50u8 {
@@ -343,7 +344,16 @@ mod tests {
         let mut ranks = Vec::new();
         for address in backend.nodes() {
             let (rank, ticket) = backend
-                .get_submission_index(e3_id.clone(), seed, address, 1, &state, snapshot)
+                .get_submission_index(
+                    e3_id.clone(),
+                    seed,
+                    address,
+                    1,
+                    &state,
+                    snapshot,
+                    30,
+                    &BondOwnerState::default(),
+                )
                 .unwrap()
                 .expect("all eligible nodes must submit");
             assert_eq!(ticket, Some(1));
@@ -356,7 +366,16 @@ mod tests {
         state.nodes.get_mut(&local).unwrap().active_jobs = 1;
         assert_eq!(
             backend
-                .get_submission_index(e3_id.clone(), seed, local.clone(), 1, &state, snapshot)
+                .get_submission_index(
+                    e3_id.clone(),
+                    seed,
+                    local.clone(),
+                    1,
+                    &state,
+                    snapshot,
+                    30,
+                    &BondOwnerState::default()
+                )
                 .unwrap(),
             None
         );
@@ -365,11 +384,134 @@ mod tests {
             .insert(committee_key(&e3_id), vec![local.clone()]);
         assert!(
             backend
-                .get_submission_index(e3_id, seed, local, 1, &state, snapshot)
+                .get_submission_index(
+                    e3_id,
+                    seed,
+                    local,
+                    1,
+                    &state,
+                    snapshot,
+                    30,
+                    &BondOwnerState::default()
+                )
                 .unwrap()
                 .is_some(),
             "a restart keeps its existing reservation"
         );
+    }
+
+    #[test]
+    fn owner_shortlist_preserves_request_boundaries_and_overlapping_reservations() {
+        let mut backend = SortitionBackend::default();
+        let mut state = NodeStateStore::default();
+        let mut owners = BondOwnerState::default();
+        let shared_owner = Address::from([99; 20]);
+        for i in 1..=5u8 {
+            let address = Address::from([i; 20]);
+            backend.add(address.to_string());
+            state.nodes.insert(
+                address.to_string(),
+                NodeState {
+                    ticket_balance: U256::from(10),
+                    active: true,
+                    ticket_balance_history: vec![StateCheckpoint {
+                        timepoint: 1,
+                        value: U256::from(10),
+                    }],
+                    active_history: vec![StateCheckpoint {
+                        timepoint: 1,
+                        value: true,
+                    }],
+                    ..Default::default()
+                },
+            );
+            owners
+                .record(
+                    &e3_events::BondOwnerSet {
+                        operator: address.to_string(),
+                        bond_owner: shared_owner.to_string(),
+                        chain_id: 1,
+                    },
+                    1,
+                )
+                .unwrap();
+        }
+        let first = E3id::new("1", 1);
+        let second = E3id::new("2", 1);
+        let seed = Seed::from(U256::from(1));
+        let snapshot = SortitionSnapshot {
+            request_block: 10,
+            ticket_price: U256::from(10),
+        };
+        let rank = |e3: &E3id,
+                    node: &str,
+                    state: &NodeStateStore,
+                    view,
+                    owners: &BondOwnerState| {
+            backend
+                .get_submission_index(e3.clone(), seed, node.to_owned(), 1, state, view, 1, owners)
+                .unwrap()
+        };
+        let mut original = backend
+            .nodes()
+            .into_iter()
+            .map(|node| {
+                let ticket = rank(&first, &node, &state, snapshot, &owners).unwrap();
+                (node, ticket)
+            })
+            .collect::<Vec<_>>();
+        original.sort_by_key(|(_, (rank, _))| *rank);
+        let (backup, ticket) = original.last().unwrap();
+        owners
+            .record(
+                &e3_events::BondOwnerSet {
+                    operator: backup.clone(),
+                    bond_owner: Address::from([88; 20]).to_string(),
+                    chain_id: 1,
+                },
+                10,
+            )
+            .unwrap();
+        let restarted: BondOwnerState =
+            bincode::deserialize(&bincode::serialize(&owners).unwrap()).unwrap();
+        assert_eq!(
+            rank(&first, backup, &state, snapshot, &restarted),
+            Some(*ticket)
+        );
+        assert_eq!(
+            rank(
+                &first,
+                backup,
+                &state,
+                SortitionSnapshot {
+                    request_block: 11,
+                    ..snapshot
+                },
+                &restarted
+            ),
+            None
+        );
+
+        // A local reservation must not remove this node from its existing request or
+        // change another node's rank. It only stops this node from accepting a new job.
+        state.nodes.get_mut(backup).unwrap().active_jobs = 1;
+        state
+            .e3_committees
+            .insert(committee_key(&first), vec![backup.clone()]);
+        assert_eq!(
+            rank(&first, backup, &state, snapshot, &restarted),
+            Some(*ticket)
+        );
+        assert_eq!(rank(&second, backup, &state, snapshot, &restarted), None);
+        for (node, expected) in &original {
+            assert_eq!(
+                rank(&first, node, &state, snapshot, &restarted),
+                Some(*expected)
+            );
+        }
+        state.e3_committees.remove(&committee_key(&first));
+        state.nodes.get_mut(backup).unwrap().active_jobs = 0;
+        assert!(rank(&second, backup, &state, snapshot, &restarted).is_some());
     }
 
     #[test]
@@ -651,10 +793,7 @@ impl SortitionBackend {
         SortitionBackend::Score(ScoreBackend::default())
     }
 
-    /// Rank all eligible submissions. The contract selects distinct bond owners.
-    ///
-    /// An N-plus-buffer cutoff can contain only one owner's operators and exclude
-    /// the other owners needed to fill the committee.
+    /// Apply the candidate limit to owners, without excluding their fallback operators.
     pub fn get_submission_index(
         &self,
         e3_id: E3id,
@@ -663,16 +802,41 @@ impl SortitionBackend {
         chain_id: u64,
         node_state: &NodeStateStore,
         snapshot: SortitionSnapshot,
+        candidate_owners: usize,
+        owner_state: &BondOwnerState,
     ) -> Result<Option<(u64, Option<u64>)>> {
-        self.get_index(
-            e3_id,
-            seed,
-            node_state.nodes.len(),
-            address,
-            chain_id,
-            node_state,
-            snapshot,
-        )
+        let want: Address = address.parse()?;
+        if !ScoreBackend::has_local_capacity(node_state, &e3_id, want, snapshot) {
+            return Ok(None);
+        }
+        let Self::Score(backend) = self;
+        let nodes = backend.build_nodes_from_state(chain_id, node_state, snapshot);
+        let Some(timepoint) = snapshot.request_block.checked_sub(1) else {
+            return Ok(None);
+        };
+        let owners: Option<std::collections::HashMap<_, _>> = nodes
+            .iter()
+            .map(|node| {
+                owner_state
+                    .owner_at(chain_id, node.address, timepoint)
+                    .map(|owner| (node.address, owner))
+            })
+            .collect();
+        let winners = if let Some(owners) = owners {
+            ScoreSortition::new(candidate_owners)
+                .get_owner_candidates(e3_id, seed, &nodes, &owners)?
+        } else {
+            // Incomplete historical data must not remove another owner's only candidate.
+            // The contract still enforces the cap on every submitted ticket.
+            tracing::warn!(
+                chain_id,
+                "Bond-owner history is incomplete; submitting without the owner shortlist"
+            );
+            ScoreSortition::new(nodes.len()).get_committee(e3_id, seed, &nodes)?
+        };
+        Ok(winners.iter().enumerate().find_map(|(rank, winner)| {
+            (winner.address == want).then_some((rank as u64, Some(winner.ticket_id)))
+        }))
     }
 }
 

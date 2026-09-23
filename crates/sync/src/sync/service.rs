@@ -16,8 +16,8 @@ use actix::{Message, Recipient};
 use anyhow::{bail, ensure, Context, Result};
 use e3_data::Repositories;
 use e3_events::{
-    AccusationOutcome, AccusationQuorumReached, AggregateConfig, AggregateId, BusHandle,
-    CommitteeMemberExcluded, CommitteeMemberExpelled, CommitteeRequested, CorrelationId,
+    AccusationOutcome, AccusationQuorumReached, AggregateConfig, AggregateId, BondOwnerSet,
+    BusHandle, CommitteeMemberExcluded, CommitteeMemberExpelled, CommitteeRequested, CorrelationId,
     E3Requested, E3id, EffectsEnabled, Event, EventContext, EventPublisher, EventStoreQueryBy,
     EventStoreQueryResponse, EventSubscriber, EventType, EvmEventConfig,
     HistoricalEvmEventsReceived, HistoricalEvmSyncStart, HistoricalNetSyncStart, InterfoldEvent,
@@ -126,6 +126,7 @@ pub struct RestartStateBackfill {
     pub committee_requests: HashMap<E3id, RecoveredCommitteeRequest>,
     pub tickets: HashMap<E3id, TicketGenerated>,
     pub slash_intents: Vec<AccusationQuorumReached>,
+    pub bond_owner_updates: Vec<TypedEvent<BondOwnerSet>>,
 }
 
 impl RestartStateBackfill {
@@ -196,8 +197,11 @@ pub async fn project_restart_state_backfill(
     end_cursors: HashMap<AggregateId, u64>,
     target_e3s: &HashSet<E3id>,
     slash_target_chains: &HashSet<u64>,
+    owner_target_chains: &HashSet<u64>,
 ) -> Result<RestartStateBackfill> {
-    if (target_e3s.is_empty() && slash_target_chains.is_empty()) || end_cursors.is_empty() {
+    if (target_e3s.is_empty() && slash_target_chains.is_empty() && owner_target_chains.is_empty())
+        || end_cursors.is_empty()
+    {
         return Ok(RestartStateBackfill::default());
     }
 
@@ -205,6 +209,13 @@ pub async fn project_restart_state_backfill(
     let mut recovered = RestartStateBackfill::default();
     spool.project(|event| {
         match event.get_data() {
+            InterfoldEventData::BondOwnerSet(owner)
+                if owner_target_chains.contains(&owner.chain_id) =>
+            {
+                recovered
+                    .bond_owner_updates
+                    .push(TypedEvent::new(owner.clone(), event.get_ctx().clone()));
+            }
             InterfoldEventData::AccusationQuorumReached(intent)
                 if slash_target_chains.contains(&intent.e3_id.chain_id())
                     && intent.outcome == AccusationOutcome::AccusedFaulted =>

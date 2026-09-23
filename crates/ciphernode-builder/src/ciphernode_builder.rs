@@ -910,11 +910,23 @@ impl CiphernodeBuilder {
             bus,
             backends_store: repositories.sortition(),
             node_state_store: repositories.node_state(),
+            bond_owners_store: repositories.sortition_bond_owners(),
             recovery_store: repositories.sortition_recovery(),
             committees_store: committees_repo,
             default_backend: self.sortition_backend.clone(),
             ciphernode_selector: ciphernode_selector.clone(),
             address: addr,
+            submitted_e3s: repositories
+                .committee_finalizer_recovery()
+                .read()
+                .await?
+                .unwrap_or_default()
+                .tickets
+                .into_iter()
+                .filter_map(|(e3_id, ticket)| {
+                    ticket.node.eq_ignore_ascii_case(addr).then_some(e3_id)
+                })
+                .collect(),
         })
         .await?;
         Ok((sortition, ciphernode_selector, selector_state))
@@ -1656,6 +1668,78 @@ mod tests {
     }
 
     use alloy::primitives::Address;
+
+    #[actix::test]
+    async fn startup_keeps_existing_ticket_intents_without_reranking() -> anyhow::Result<()> {
+        use e3_aggregator::{CommitteeFinalizerRecoveryState, CommitteeFinalizerRepositoryFactory};
+        use e3_events::{
+            E3Requested, EffectsEnabled, EventConstructorWithTimestamp, EventSource, GetEvents,
+            InterfoldEvent, TicketGenerated, TicketId, TypedEvent, Unsequenced,
+        };
+        use e3_sortition::{SortitionRecoveryRepositoryFactory, SortitionRecoveryState};
+
+        let system = crate::EventSystem::new().with_fresh_bus();
+        let bus = system.handle()?.enable("sortition-upgrade");
+        let errors = bus.errors();
+        let repos = e3_data::Repositories::from(system.store()?);
+        let local = Address::from([0xab; 20]).to_string();
+        let e3_id = E3id::new("7", 1);
+        let event = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            E3Requested {
+                e3_id: e3_id.clone(),
+                ..Default::default()
+            }
+            .into(),
+            None,
+            1u128,
+            None,
+            EventSource::Local,
+        )
+        .into_sequenced(1);
+        let ticket = TicketGenerated {
+            e3_id: e3_id.clone(),
+            ticket_id: TicketId::Score(9),
+            node: local.to_lowercase(),
+            party_index: Some(27),
+        };
+        repos
+            .committee_finalizer_recovery()
+            .write_sync(&CommitteeFinalizerRecoveryState {
+                tickets: HashMap::from([(e3_id.clone(), ticket.clone())]),
+                ..Default::default()
+            })
+            .await?;
+        repos
+            .sortition_recovery()
+            .write_sync(&SortitionRecoveryState {
+                seeds: HashMap::from([(e3_id.clone(), Seed([1; 32]))]),
+                pending_requests: HashMap::from([(
+                    e3_id.clone(),
+                    TypedEvent::new(
+                        E3Requested {
+                            e3_id: e3_id.clone(),
+                            ..Default::default()
+                        },
+                        event.get_ctx().clone(),
+                    ),
+                )]),
+                ..Default::default()
+            })
+            .await?;
+        let builder = super::CiphernodeBuilder::new(
+            e3_test_helpers::derive_shared_rng(1, 1),
+            std::sync::Arc::new(e3_crypto::Cipher::from_password("test-only-sortition").await?),
+        );
+        let (sortition, _, _) = builder.setup_sortition(&bus, &repos, &local).await?;
+        sortition.send(EffectsEnabled::new()).await?;
+        bus.flush_event_pipeline().await?;
+        // Without the recovered intent, sortition would try to rank this request and fail
+        // because this fixture deliberately has no ranking snapshot.
+        assert!(errors.send(GetEvents::new()).await?.is_empty());
+        let recovered = repos.committee_finalizer_recovery().read().await?.unwrap();
+        assert_eq!(recovered.tickets[&e3_id], ticket);
+        Ok(())
+    }
 
     #[test]
     fn aggregate_delay_preserves_large_millisecond_values_without_overflow() {

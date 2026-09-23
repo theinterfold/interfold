@@ -6,7 +6,7 @@
 
 use crate::domain::ticket::{calculate_best_ticket_for_node, RegisteredNode, WinnerTicket};
 use alloy::primitives::Address;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use e3_events::{E3id, Seed};
 use std::collections::{hash_map::Entry, HashMap};
 
@@ -87,6 +87,35 @@ impl ScoreSortition {
     /// Construct a new `ScoreSortition` for a given committee size.
     pub fn new(size: usize) -> Self {
         Self { size }
+    }
+
+    /// Shortlist distinct owners and retain their operators as submission fallbacks.
+    /// Finalization ranks visit each owner's best operator before its backup operators.
+    pub fn get_owner_candidates(
+        &self,
+        e3_id: E3id,
+        seed: Seed,
+        nodes: &[RegisteredNode],
+        owners: &HashMap<Address, Address>,
+    ) -> Result<Vec<WinnerTicket>> {
+        let mut winners = Self::new(nodes.len()).get_committee(e3_id, seed, nodes)?;
+        // Match the capped contract's tie-break between different operators.
+        winners.sort_unstable_by(|a, b| a.score.cmp(&b.score).then(a.address.cmp(&b.address)));
+        let mut groups: HashMap<Address, (usize, usize)> = HashMap::new();
+        let mut candidates = Vec::new();
+        for winner in winners {
+            let owner = owners
+                .get(&winner.address)
+                .context("missing request-time bond owner")?;
+            let next_rank = groups.len();
+            let (owner_rank, member_rank) = groups.entry(*owner).or_insert((next_rank, 0));
+            if *owner_rank < self.size {
+                candidates.push(((*member_rank, *owner_rank), winner));
+                *member_rank += 1;
+            }
+        }
+        candidates.sort_unstable_by_key(|(rank, _)| *rank);
+        Ok(candidates.into_iter().map(|(_, winner)| winner).collect())
     }
 
     /// Determine the top-N committee members from a list of registered nodes.
@@ -254,5 +283,87 @@ mod tests {
                 desc, threshold_m, threshold_n, expected_total
             );
         }
+    }
+
+    #[test]
+    fn owner_shortlist_retains_backups_and_spreads_finalization_ranks() {
+        let id = E3id::new("42", 1);
+        let seed = Seed([42; 32]);
+        let nodes = (1..=68)
+            .map(|i| RegisteredNode {
+                address: address(i),
+                tickets: vec![Ticket { ticket_id: 1 }],
+            })
+            .collect::<Vec<_>>();
+        // Put the 28-node owner first in the score order to exercise the crowded prefix.
+        let winners = ScoreSortition::new(nodes.len())
+            .get_committee(id.clone(), seed, &nodes)
+            .unwrap();
+        let shared_owner = address(1000);
+        let owners = winners
+            .iter()
+            .enumerate()
+            .map(|(rank, winner)| {
+                (
+                    winner.address,
+                    if rank < 28 {
+                        shared_owner
+                    } else {
+                        winner.address
+                    },
+                )
+            })
+            .collect();
+        let candidates = ScoreSortition::new(30)
+            .get_owner_candidates(id, seed, &nodes, &owners)
+            .unwrap();
+        assert_eq!(candidates.len(), 57); // 28 operators plus 29 other owners, not all 68.
+        assert_eq!(
+            candidates[..30]
+                .iter()
+                .map(|w| owners[&w.address])
+                .collect::<HashSet<_>>()
+                .len(),
+            30
+        );
+        assert_eq!(
+            candidates
+                .iter()
+                .filter(|w| owners[&w.address] == shared_owner)
+                .count(),
+            28
+        );
+
+        // The best operator is offline, together with five whole backup owner groups.
+        let offline_owner_groups = candidates[25..30]
+            .iter()
+            .map(|w| owners[&w.address])
+            .collect::<HashSet<_>>();
+        let online = candidates.iter().filter(|w| {
+            w.address != winners[0].address && !offline_owner_groups.contains(&owners[&w.address])
+        });
+        let remaining_owners = online.map(|w| owners[&w.address]).collect::<HashSet<_>>();
+        assert!(remaining_owners.contains(&shared_owner));
+        assert_eq!(remaining_owners.len(), 25);
+    }
+
+    #[test]
+    fn independent_owners_keep_the_existing_candidate_buffer() {
+        let nodes = build_nodes();
+        let owners = nodes
+            .iter()
+            .map(|node| (node.address, node.address))
+            .collect();
+        let id = E3id::new("9", 1);
+        let seed = Seed([9; 32]);
+        let selection = ScoreSortition::new(7);
+        let before = selection.get_committee(id.clone(), seed, &nodes).unwrap();
+        let after = selection
+            .get_owner_candidates(id, seed, &nodes, &owners)
+            .unwrap();
+        assert_eq!(
+            before.iter().map(|w| w.address).collect::<Vec<_>>(),
+            after.iter().map(|w| w.address).collect::<Vec<_>>()
+        );
     }
 }

@@ -8,6 +8,8 @@
 
 #[path = "sortition/selection_backend.rs"]
 pub mod backends;
+#[path = "sortition/bond_owners.rs"]
+pub mod bond_owners;
 #[path = "failover.rs"]
 pub mod failover;
 #[path = "sortition/finalized_committee_retention.rs"]
@@ -20,6 +22,7 @@ pub mod ticket;
 pub mod ticket_sortition;
 
 pub use backends::*;
+pub use bond_owners::*;
 pub use failover::*;
 pub use finalized_committee_retention::*;
 pub use node_registry::*;

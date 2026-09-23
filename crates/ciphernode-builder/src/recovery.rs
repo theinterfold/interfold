@@ -12,7 +12,10 @@ use e3_aggregator::{
     RecoveredCommitteeRequest as FinalizerRecoveredCommitteeRequest,
     COMMITTEE_FINALIZER_RECOVERY_SCHEMA_VERSION,
 };
-use e3_events::{AggregateId, CiphernodeSelected, Committee, E3Stage, E3id};
+use e3_events::{
+    hlc::HlcTimestamp, AggregateId, CiphernodeSelected, Committee, E3Stage, E3id,
+    EventContextAccessors,
+};
 use e3_evm::{SlashingWriterRepositoryFactory, SLASHING_WRITER_RECOVERY_SCHEMA_VERSION};
 use e3_request::E3LifecycleRepositoryFactory;
 use e3_sortition::{
@@ -58,6 +61,14 @@ pub(crate) async fn backfill_restart_state(
     // without pruning restart inputs first.
     reconcile_committee_snapshots(&mut selector, &mut finalized_committees, &lifecycle)?;
     let sortition_store = repositories.sortition_recovery();
+    let owners_store = repositories.sortition_bond_owners();
+    let mut owners = owners_store.read().await?.unwrap_or_default();
+    owners.validate()?;
+    let owner_target_chains = chain_ids
+        .iter()
+        .copied()
+        .filter(|chain_id| !owners.chains.contains_key(chain_id))
+        .collect::<HashSet<_>>();
     let persisted_sortition = sortition_store.read().await?;
     let sortition_was_missing = persisted_sortition.is_none();
     let mut sortition = persisted_sortition.unwrap_or_default();
@@ -172,7 +183,7 @@ pub(crate) async fn backfill_restart_state(
     if sortition_was_missing {
         targets.extend(active_e3s);
     }
-    if targets.is_empty() && slash_target_chains.is_empty() {
+    if targets.is_empty() && slash_target_chains.is_empty() && owner_target_chains.is_empty() {
         if sortition_was_missing || sortition_pruned {
             sortition_store.write_sync(&sortition).await?;
         }
@@ -196,6 +207,8 @@ pub(crate) async fn backfill_restart_state(
                 .iter()
                 .map(|chain_id| AggregateId::from_chain_id(Some(*chain_id))),
         )
+        // BondOwnerSet has no E3 ID, so its durable events belong to aggregate zero.
+        .chain((!owner_target_chains.is_empty()).then(|| AggregateId::from_chain_id(None)))
     {
         if cursors.contains_key(&aggregate_id) {
             continue;
@@ -210,8 +223,24 @@ pub(crate) async fn backfill_restart_state(
         }
     }
 
-    let recovered =
-        project_restart_state_backfill(eventstore, cursors, &targets, &slash_target_chains).await?;
+    let recovered = project_restart_state_backfill(
+        eventstore,
+        cursors,
+        &targets,
+        &slash_target_chains,
+        &owner_target_chains,
+    )
+    .await?;
+    // Only absent chain projections are backfilled. Existing snapshots remain authoritative.
+    for event in recovered.bond_owner_updates {
+        owners.record(&event, HlcTimestamp::wall_time(event.ts()) / 1_000_000_000)?;
+    }
+    for chain_id in &owner_target_chains {
+        owners.chains.entry(*chain_id).or_default();
+    }
+    if !owner_target_chains.is_empty() {
+        owners_store.write_sync(&owners).await?;
+    }
     let recovered_seed_count = recovered.sortition_seeds.len();
     let recovered_slash_count = recovered.slash_intents.len();
     backfill_missing_seeds(&mut sortition.seeds, recovered.sortition_seeds);
@@ -418,5 +447,88 @@ mod tests {
         let upper = Committee::new(vec!["0xABCDEFABCDEFABCDEFABCDEFABCDEFABCDEFABCD".to_owned()]);
 
         assert!(committees_match(&lower, &upper));
+    }
+
+    #[actix::test]
+    async fn owner_backfill_preserves_legacy_snapshots_and_restarts() -> Result<()> {
+        use alloy::primitives::Address;
+        use e3_events::{BondOwnerSet, EventPublisher};
+        use e3_sortition::NodeStateRepositoryFactory;
+
+        let chain = AggregateId::from_chain_id(None);
+        let system = crate::EventSystem::new()
+            .with_fresh_bus()
+            .with_aggregate_config(e3_events::AggregateConfig::new(HashMap::from([(
+                chain,
+                std::time::Duration::ZERO,
+            )])));
+        let bus = system.handle()?.enable("owner-backfill");
+        let repositories = e3_data::Repositories::from(system.store()?);
+        let node = Address::from([1; 20]);
+        let original = Address::from([2; 20]);
+        let replacement = Address::from([3; 20]);
+        let event = BondOwnerSet {
+            operator: node.to_string(),
+            bond_owner: original.to_string(),
+            chain_id: 1,
+        };
+        bus.publish_without_context(event.clone())?;
+        bus.flush_event_pipeline().await?;
+        repositories.aggregate_seq(chain).write_sync(&1).await?;
+        let mut legacy = e3_sortition::NodeStateStore::default();
+        legacy.nodes.insert(
+            node.to_string(),
+            e3_sortition::NodeState {
+                active_jobs: 1,
+                ..Default::default()
+            },
+        );
+        repositories
+            .node_state()
+            .write_sync(&HashMap::from([(1, legacy)]))
+            .await?;
+        let before = bincode::serialize(&repositories.node_state().read().await?.unwrap())?;
+
+        let reader = system.eventstore_reader()?.seq();
+        backfill_restart_state(&repositories, &reader, &[1], false).await?;
+        let owners_store = repositories.sortition_bond_owners();
+        let mut owners = owners_store.read().await?.unwrap();
+        owners.validate()?;
+        assert_eq!(owners.owner_at(1, node, u64::MAX), Some(original));
+        assert_eq!(
+            before,
+            bincode::serialize(&repositories.node_state().read().await?.unwrap())?
+        );
+
+        // Simulate a later live update committed with its aggregate snapshot. Backfill must
+        // preserve it instead of rebuilding an existing projection from an older prefix.
+        let later = owners.chains[&1][&node].last().unwrap().timepoint + 1;
+        owners.record(
+            &BondOwnerSet {
+                bond_owner: replacement.to_string(),
+                ..event
+            },
+            later,
+        )?;
+        owners_store.write_sync(&owners).await?;
+        backfill_restart_state(&repositories, &reader, &[1], false).await?;
+        assert_eq!(
+            owners_store
+                .read()
+                .await?
+                .unwrap()
+                .owner_at(1, node, u64::MAX),
+            Some(replacement)
+        );
+
+        owners.schema_version += 1;
+        owners_store.write_sync(&owners).await?;
+        let error = backfill_restart_state(&repositories, &reader, &[1], false)
+            .await
+            .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("unsupported bond-owner snapshot schema"));
+        Ok(())
     }
 }

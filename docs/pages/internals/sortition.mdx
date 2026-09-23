@@ -106,9 +106,16 @@ and it does not imply that a committee seat count is linear in stake.
 
 ## Committee Size and Submission Candidates
 
-The runtime ranks all eligible operators. It no longer truncates submissions to `N + buffer`; one
-owner could occupy that whole candidate set. Each eligible operator with local capacity submits
-once, and the contract selects distinct owners. This increases transaction costs.
+The runtime computes every eligible operator's best ticket, then ranks owners by their best
+operator. The existing `N + buffer` limit counts distinct owners, not operators. Every operator
+within those shortlisted groups can submit if it has local capacity. This retains backups when an
+owner's best operator is offline, without sending tickets from the rest of the owner groups.
+
+Finalization-attempt ranks visit each shortlisted owner's best operator first, then their second
+operators, and so on. One owner's backups cannot occupy all the first retry positions. Backups
+still submit during the normal window; this is not a new staged submission protocol. If owner
+history is incomplete, the runtime logs a warning and allows all eligible operators to submit.
+The on-chain cap still applies. Neither the buffer nor the fallback guarantees enough online owners.
 
 The runtime's legacy field `threshold_m` is polynomial threshold `T`; decryption needs `T + 1`
 shares. `threshold_n` is committee size `N`. No circuit parameter changes with this cap. After
@@ -193,13 +200,15 @@ that phase's set, and the final eligible party remains active after all standby 
 
 ## Off-chain Submission
 
-Each node computes its best ticket and its rank among eligible operators. It submits if it has local
-capacity. The contract enforces the owner cap; the aggregator does not approve tickets.
+Each node computes its best ticket and checks whether its request-time owner is shortlisted. It
+submits if shortlisted and it has local capacity. The contract enforces the owner cap; the aggregator
+does not approve tickets.
 
 ```rust
 // Pseudocode for SortitionBackend::get_submission_index
 let eligible = nodes.filter(|n| n.is_active && n.available_tickets > 0);
-let candidates = ScoreSortition::new(nodes.len()).get_committee(eligible, e3id, seed);
+let limit = n + calculate_buffer_size(t, n);
+let candidates = shortlist_owners_with_backups(eligible, request_owners, limit, e3id, seed);
 if candidates.contains(my_address) && has_local_capacity(e3id) {
     submit_winning_ticket(e3id, my_ticket_number);
 }
@@ -213,6 +222,16 @@ when the node is not selected. A terminal E3 event releases any remaining reserv
 This reservation is local capacity control, not an on-chain ticket lock. Solidity still validates
 the full snapshotted ticket range, and one node's `active_jobs` count cannot reduce another
 operator's candidate range.
+
+The existing `BondOwnerSet` events supply ownership history in a separate, versioned snapshot.
+On upgrade, startup reconstructs missing chain projections from the global event log through its
+snapshot cursor. Existing node and recovery schemas remain unchanged. A restored ticket intent
+keeps its original ticket number and finalization rank; startup does not rank that request again.
+
+`committee:new` checks distinct eligible owners at a single chain block before fee approval and
+payment. It stops if fewer than `N` owners qualify or the check fails. This is a request-tool check,
+not a contract-wide admission guard, an online check, or a capacity reservation. Direct callers
+must perform their own preflight, and state can change before a request is mined.
 
 ---
 
@@ -269,7 +288,7 @@ sequenceDiagram
 | **Owner concentration cap** | One seat per snapshot owner; different owner wallets remain a bypass           |
 | **Determinism**             | Hash function is identical on-chain (Solidity) and off-chain (Rust)            |
 | **Snapshot stability**      | Balances and owners use the timestamp checkpoint at `requestBlock - 1`         |
-| **Formation candidates**    | All eligible operators may submit; finalization still needs N distinct owners  |
+| **Formation candidates**    | N + buffer owner groups with their backup operators; N distinct owners needed  |
 
 ---
 

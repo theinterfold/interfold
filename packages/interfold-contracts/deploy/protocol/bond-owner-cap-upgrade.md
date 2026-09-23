@@ -60,12 +60,20 @@ This document is not authorization to deploy or submit governance transactions.
 Small requires 19 distinct eligible owners to form a committee. H=14 does not
 reduce that requirement. The existing request guard counts active operators, not
 owners. An insufficient owner pool can accept payment and then fail formation.
-Apply the distinct-owner preflight before requesting.
+The `committee:new` task now checks distinct eligible owners at a single chain
+block before fee approval and payment. It reads the configured committee size,
+request-boundary owners, eligibility, and ticket balances from the deployed
+stack. RPC errors and an observed reorg stop the task. Direct callers must do
+their own preflight. The result is not a reservation or an online check, and
+state can change before the request is mined.
 
-The runtime now lets all eligible operators submit, subject to local capacity.
-This uses more transactions than the previous N-plus-buffer filter. Benchmark
-ticket gas and completion within the configured submission window on the target
-network before resuming.
+The runtime shortlists N-plus-buffer distinct owners by their best ticket and
+retains all operators within those groups as backups. Finalization-attempt ranks
+visit each owner's best operator before its backups. Nodes outside those owner
+groups do not submit. Backup operators still use the normal submission window;
+this does not add a coordinator or a staged retry protocol. With exactly N
+owners, every owner is needed and all its eligible operators may submit.
+Benchmark ticket gas and formation time on the target network before resuming.
 
 ## Compatibility and rollback
 
@@ -79,11 +87,17 @@ requests; it does not reconstruct transfers made before the upgrade. Deploying
 either implementation from an older incompatible storage generation requires a
 separate migration review.
 
-No P2P event or persisted Rust schema changes. Older nodes cannot bypass the
-contract cap, but their candidate cutoff may omit owners needed for formation. A
-voluntary binary rollout is therefore a liveness prerequisite. Raising mandatory
-node generation is separate and retains its existing pause-and-drain guards;
-this change does not bypass them.
+No P2P event or existing persisted Rust schema changes. A new versioned
+repository stores owner history from `BondOwnerSet`. Startup reconstructs
+missing chain projections from aggregate zero's event log through its snapshot
+cursor. Existing snapshots remain authoritative. Missing owner history falls
+back to all eligible submissions; the on-chain cap still applies. Restored
+ticket intents keep their original ticket number and finalization rank.
+
+Older nodes cannot bypass the contract cap, but their candidate cutoff may omit
+owners needed for formation. A voluntary binary rollout is therefore a liveness
+prerequisite. Raising mandatory node generation is separate and retains its
+existing pause-and-drain guards; this change does not bypass them.
 
 In-place proxy upgrades are distinct from changing dependency addresses or
 release-policy counters. Preserving old requests here does not authorize
@@ -98,8 +112,11 @@ are not retroactively protected.
 
 - `pnpm evm:test`: formation, ownership transfers, refunds, slashing, rewards,
   and upgrade regressions.
-- `cargo test -p e3-sortition`: candidate range, capacity, reservation recovery,
-  and failover tests.
+- `cargo test -p e3-sortition`: owner shortlist, backups, transfer boundaries,
+  capacity, reservations, and failover tests.
+- `cargo test -p e3-ciphernode-builder`: owner-history backfill, schema
+  rejection, and restored ticket intents.
+- `cargo test -p e3-sync`: bounded event-log replay and recovery projection.
 - `pnpm -C packages/interfold-contracts compile:contracts --force`
 - `pnpm -C packages/interfold-contracts validate:upgrade`
 - `pnpm -C packages/interfold-contracts size:check`

@@ -94,6 +94,10 @@ impl StoreKeys {
         String::from("//sortition/runtime_recovery/v1")
     }
 
+    pub fn sortition_bond_owners() -> String {
+        String::from("//sortition/bond_owners/v1")
+    }
+
     pub fn committee_finalizer_recovery() -> String {
         String::from("//committee_finalizer/recovery/v1")
     }

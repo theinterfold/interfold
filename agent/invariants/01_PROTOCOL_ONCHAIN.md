@@ -220,8 +220,9 @@ every section.
   that snapshot owner. Both ownership write paths must checkpoint before assignment. Unchanged
   pre-upgrade owners use a lazy baseline; this history is valid for capped requests, not arbitrary
   pre-upgrade timestamps. Existing requests retain uncapped selection through an appended zero
-  policy field. Solidity enforces the cap, independently of the submitting binary. Rust permits all
-  eligible operators to submit; an N-plus-buffer cutoff could exclude necessary owners. Formation
+  policy field. Solidity enforces the cap, independently of the submitting binary. Rust shortlists
+  N-plus-buffer distinct owners and retains their eligible operators as backups. An operator-count
+  cutoff must not exclude necessary owners. Missing owner history permits all submissions. Formation
   requires N distinct snapshot owners, not merely N submissions. The cap does not establish human
   uniqueness, prevent pre-request wallet splitting, or prevent later collusion. —
   `BondingOwnershipLib.sol`; `RegistrySortitionLib.sol`; `flow-trace/03`

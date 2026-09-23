@@ -149,10 +149,11 @@ reservation for that E3. This prevents two concurrent requests from using the sa
 the ticket transaction fails, the E3 becomes terminal, or the node is not in the finalized
 committee, the runtime releases the reservation.
 
-All eligible nodes with local capacity can submit. The runtime no longer excludes candidates with an
-`N + buffer` cutoff. That cutoff could contain one owner's operators and exclude owners needed to
-fill the committee. This increases ticket transaction costs; a submission does not guarantee a seat
-or a reward.
+The runtime shortlists `N + buffer` distinct owners by their best ticket scores. Each operator in
+those groups can submit if it has local capacity, so an owner's best node being offline does not
+exclude its backups. The contract keeps at most one seat per owner. A submission does not guarantee
+a seat or reward. If owner history is incomplete, nodes submit without this shortlist and log a
+warning; the contract still enforces the cap.
 
 ### 4. Committee Finalization
 
@@ -171,8 +172,10 @@ The reservation stays active until the E3 reaches a terminal stage. It is also r
 durable state after a restart, so restarting a node does not make an in-flight slot appear free.
 
 Small needs 19 distinct eligible owners to form its committee, even though its DKG roster has 14
-members. Check owner capacity before requesting an E3. The request-time active-node count does not
-measure distinct owners; an underfilled round fails at finalization.
+members. `committee:new` checks distinct eligible owners before fee approval and payment. Direct
+contract callers must do this check themselves. The request-time active-node guard does not measure
+distinct owners; an underfilled round fails at finalization. The preflight cannot establish that
+owners are independent or that their machines will remain online.
 
 ## Parameters
 
@@ -210,10 +213,11 @@ for Arbitrum until a later protocol release adds that deployment path.
 Watch your node logs for:
 
 - `"This node was SELECTED for sortition"` - Your node can submit a candidate ticket
-- `"This node was NOT selected for sortition"` - Your node lacks eligibility or local capacity
+- `"This node was NOT selected for sortition"` - Your node lacks eligibility or local capacity, or
+  its owner is outside the shortlist
 - `"Ticket generated for score sortition"` - Winning ticket emitted to the event bus
 - `"Ciphernode was not selected"` - Node wasn't in the selection set
-- `"Ranking eligible ticket submissions; the contract selects distinct bond owners"` - Candidate
+- `"Ranking bond owners and their fallback operators for ticket submission"` - Candidate
   ranking started
 - `"Node is in finalized committee"` - Committee confirmed, CiphernodeSelected emitted
 

@@ -86,7 +86,7 @@ impl Sortition {
             e3_id = %e3_id,
             threshold_m = msg.threshold_m,
             threshold_n = msg.threshold_n,
-            "Ranking eligible ticket submissions; the contract selects distinct bond owners"
+            "Ranking bond owners and their fallback operators for ticket submission"
         );
 
         let node_index = match snapshot {
@@ -94,7 +94,9 @@ impl Sortition {
                 if snapshot.request_block == msg.request_block
                     && !snapshot.ticket_price.is_zero() =>
             {
-                self.get_node_index(e3_id.clone(), seed, chain_id, snapshot)
+                let candidate_owners = msg.threshold_n
+                    + crate::calculate_buffer_size(msg.threshold_m, msg.threshold_n);
+                self.get_node_index(e3_id.clone(), seed, chain_id, snapshot, candidate_owners)
             }
             Some(snapshot) if snapshot.request_block != msg.request_block => {
                 self.bus.err(
