@@ -50,7 +50,7 @@ share_computation_e_sm (CIRCUIT 2b)
 -------------------------------------
 ************************************/
 
-pub global SHARE_COMPUTATION_E_SM_BIT_SECRET: u32 = 28;
+pub global SHARE_COMPUTATION_E_SM_BIT_SECRET: u32 = 35;
 
 pub global SHARE_COMPUTATION_E_SM_CONFIGS: ShareComputationConfigs<L_THRESHOLD> =
     ShareComputationConfigs::new(QIS_THRESHOLD);

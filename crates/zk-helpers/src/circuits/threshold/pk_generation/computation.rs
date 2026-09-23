@@ -76,6 +76,8 @@ pub struct Bits {
     pub eek_bit: u32,
     pub sk_bit: u32,
     pub e_sm_bit: u32,
+    pub e_sm_lifted_bit: u32,
+    pub e_sm_quotient_bit: u32,
     pub r1_bit: u32,
     pub r2_bit: u32,
     pub pk_bit: u32,
@@ -86,6 +88,8 @@ pub struct Bounds {
     pub eek_bound: BigUint,
     pub sk_bound: BigUint,
     pub e_sm_bound: BigUint,
+    pub e_sm_limb_bounds: Vec<BigUint>,
+    pub e_sm_quotient_bounds: Vec<BigUint>,
     pub r1_bounds: Vec<BigUint>,
     pub r2_bounds: Vec<BigUint>,
     pub pk_bound: BigUint,
@@ -96,6 +100,8 @@ pub struct Inputs {
     pub eek: Polynomial,
     pub sk: Polynomial,
     pub e_sm: CrtPolynomial,
+    pub e_sm_lifted: Polynomial,
+    pub e_sm_quotients: CrtPolynomial,
     pub r1is: CrtPolynomial,
     pub r2is: CrtPolynomial,
     pub pk0is: CrtPolynomial,
@@ -134,7 +140,18 @@ impl Computation for Bits {
         // Calculate bit widths for each bound type
         let eek_bit = calculate_bit_width(BigInt::from(data.eek_bound.clone()));
         let sk_bit = calculate_bit_width(BigInt::from(data.sk_bound.clone()));
-        let e_sm_bit = calculate_bit_width(BigInt::from(data.e_sm_bound.clone()));
+        // e_sm limbs are centered residues, so they share the pk/modulus width. The lifted value
+        // carries the smudging bound and needs its own, much wider, window.
+        let e_sm_lifted_bit = calculate_bit_width(BigInt::from(data.e_sm_bound.clone()));
+        let mut e_sm_bit = 0;
+        for bound in &data.e_sm_limb_bounds {
+            e_sm_bit = e_sm_bit.max(calculate_bit_width(BigInt::from(bound.clone())));
+        }
+        let mut e_sm_quotient_bit = 0;
+        for bound in &data.e_sm_quotient_bounds {
+            e_sm_quotient_bit =
+                e_sm_quotient_bit.max(calculate_bit_width(BigInt::from(bound.clone())));
+        }
 
         // pk_bit: centered representation uses (max(qi) - 1) / 2 as the bound,
         // matching compute_modulus_bit() used in C5 (pk_aggregation).
@@ -158,6 +175,8 @@ impl Computation for Bits {
             eek_bit,
             sk_bit,
             e_sm_bit,
+            e_sm_lifted_bit,
+            e_sm_quotient_bit,
             r1_bit,
             r2_bit,
             pk_bit,
@@ -209,6 +228,8 @@ impl Computation for Bounds {
         let num_moduli = ctx.moduli().len();
         let mut r2_bounds = vec![BigInt::from(0); num_moduli];
         let mut r1_bounds = vec![BigInt::from(0); num_moduli];
+        let mut e_sm_limb_bounds = vec![BigInt::from(0); num_moduli];
+        let mut e_sm_quotient_bounds = vec![BigInt::from(0); num_moduli];
         let mut moduli = Vec::new();
         let mut pk_bound_max = BigInt::from(0);
 
@@ -219,6 +240,11 @@ impl Computation for Bounds {
             moduli.push(**qi);
 
             r2_bounds[i] = qi_bound.clone();
+
+            // e_sm[i] is the centered residue of the lifted smudging noise at q_i; the matching
+            // CRT quotient is bounded by (e_sm_bound + (q_i - 1) / 2) / q_i.
+            e_sm_limb_bounds[i] = qi_bound.clone();
+            e_sm_quotient_bounds[i] = (BigInt::from(e_sm_bound.clone()) + &qi_bound) / &qi_bigint;
 
             // Compute asymmetric range for r1 bounds per modulus
             r1_bounds[i] = ((&n + 2u32) * &qi_bound + eek_bound) / &qi_bigint;
@@ -234,6 +260,14 @@ impl Computation for Bounds {
             eek_bound: BigUint::from(eek_bound),
             sk_bound: BigUint::from(sk_bound as u128),
             e_sm_bound,
+            e_sm_limb_bounds: e_sm_limb_bounds
+                .iter()
+                .map(|b| b.to_biguint().unwrap())
+                .collect(),
+            e_sm_quotient_bounds: e_sm_quotient_bounds
+                .iter()
+                .map(|b| b.to_biguint().unwrap())
+                .collect(),
             r1_bounds: r1_bounds
                 .iter()
                 .map(|b| BigUint::from(b.to_u128().unwrap()))
@@ -269,8 +303,22 @@ impl Computation for Inputs {
         let n = threshold_params.degree() as u64;
         let cyclo = cyclotomic_polynomial(n);
 
+        // Smudging noise over the integers, in the same reversed+centered layout as the limbs.
+        let ctx = threshold_params.context_at_level(0)?;
+        let modulus_q = BigInt::from(ctx.modulus().clone());
+        let mut e_sm_lifted = data.e_sm_lifted.clone();
+        e_sm_lifted.reverse();
+        e_sm_lifted.center(&modulus_q);
+
         // Perform the main computation logic
-        let mut results: Vec<(usize, Polynomial, Polynomial, Polynomial, Polynomial)> = izip!(
+        let mut results: Vec<(
+            usize,
+            Polynomial,
+            Polynomial,
+            Polynomial,
+            Polynomial,
+            Polynomial,
+        )> = izip!(
             moduli.clone(),
             data.pk0_share.limbs.clone(),
             a.limbs.clone(),
@@ -307,16 +355,28 @@ impl Computation for Inputs {
 
             let (r1, r2) = decompose_residue(&pk0_share, &pk0_share_hat, &qi, &cyclo, n);
 
-            (i, r2, r1, pk0_share.clone(), e_sm.clone())
+            // e_sm_quotient = (e_sm_lifted - e_sm[i]) / q_i, the witness the circuit uses to tie
+            // the committed residue back to the bounded lifted value.
+            let diff = e_sm_lifted.sub(&e_sm);
+            let (e_sm_quotient, remainder) = diff
+                .div(&Polynomial::constant(qi.clone()))
+                .expect("CRT requires exact division");
+            assert!(
+                remainder.is_zero(),
+                "e_sm_lifted - e_sm[i] must be divisible by q_i (CRT consistency)"
+            );
+
+            (i, r2, r1, pk0_share.clone(), e_sm.clone(), e_sm_quotient)
         })
         .collect();
 
-        results.sort_by_key(|(i, _, _, _, _)| *i);
+        results.sort_by_key(|(i, ..)| *i);
 
         let mut r2 = CrtPolynomial::new(vec![]);
         let mut r1 = CrtPolynomial::new(vec![]);
         let mut pk0_share = CrtPolynomial::new(vec![]);
         let mut e_sm = CrtPolynomial::new(vec![]);
+        let mut e_sm_quotients = CrtPolynomial::new(vec![]);
 
         let mut sk = data.sk.limbs[0].clone();
         let mut eek = data.eek.limbs[0].clone();
@@ -326,17 +386,20 @@ impl Computation for Inputs {
         eek.reverse();
         eek.center(&moduli[0]);
 
-        for (_i, r2i, r1i, pk0_sharei, e_smi) in results {
+        for (_i, r2i, r1i, pk0_sharei, e_smi, e_sm_quotienti) in results {
             r2.add_limb(r2i);
             r1.add_limb(r1i);
             pk0_share.add_limb(pk0_sharei);
             e_sm.add_limb(e_smi);
+            e_sm_quotients.add_limb(e_sm_quotienti);
         }
 
         Ok(Inputs {
             eek,
             sk,
             e_sm,
+            e_sm_lifted,
+            e_sm_quotients,
             r1is: r1,
             r2is: r2,
             pk0is: pk0_share,
@@ -348,6 +411,8 @@ impl Computation for Inputs {
         let e = polynomial_to_toml_json(&self.eek);
         let sk = polynomial_to_toml_json(&self.sk);
         let e_sm = crt_polynomial_to_toml_json(&self.e_sm);
+        let e_sm_lifted = polynomial_to_toml_json(&self.e_sm_lifted);
+        let e_sm_quotients = crt_polynomial_to_toml_json(&self.e_sm_quotients);
         let r1is = crt_polynomial_to_toml_json(&self.r1is);
         let r2is = crt_polynomial_to_toml_json(&self.r2is);
 
@@ -356,6 +421,8 @@ impl Computation for Inputs {
             "eek": e,
             "sk": sk,
             "e_sm": e_sm,
+            "e_sm_lifted": e_sm_lifted,
+            "e_sm_quotients": e_sm_quotients,
             "r1is": r1is,
             "r2is": r2is,
         });
