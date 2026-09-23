@@ -9,7 +9,7 @@
 use crate::fhe_poly::ToPowerBasisPoly;
 use crate::utils::{center, reduce};
 use num_bigint::{BigInt, BigUint, ToBigInt};
-use num_traits::{One, Zero};
+use num_traits::{One, ToPrimitive, Zero};
 use std::fmt;
 use thiserror::Error;
 
@@ -288,7 +288,12 @@ impl Polynomial {
         Polynomial::new(self.coefficients.iter().map(|x| -x).collect())
     }
 
-    /// Multiplies two polynomials using the naive algorithm.
+    /// Multiplies two polynomials.
+    ///
+    /// Both operands are converted to `i128` when every product fits that width, which is the
+    /// case for every circuit witness: one operand is ternary or a small error term and the
+    /// other is centered modulo a 58-bit CRT modulus. Otherwise the schoolbook `BigInt` path
+    /// runs. Both paths produce the same coefficients.
     ///
     /// # Arguments
     ///
@@ -302,6 +307,10 @@ impl Polynomial {
             return Polynomial::zero(0);
         }
 
+        if let Some(product) = self.mul_i128(other) {
+            return product;
+        }
+
         let product_len = self.coefficients.len() + other.coefficients.len() - 1;
         let mut product = vec![BigInt::zero(); product_len];
 
@@ -312,6 +321,38 @@ impl Polynomial {
         }
 
         Polynomial::new(product)
+    }
+
+    /// Convolves both operands as `i128`, or returns `None` when any coefficient or any
+    /// partial sum could exceed that width.
+    ///
+    /// A product coefficient is a sum of at most `min(len_a, len_b)` terms, so
+    /// `min(len_a, len_b) * max|a| * max|b|` bounds every one of them.
+    fn mul_i128(&self, other: &Self) -> Option<Self> {
+        let lhs = to_i128_vec(&self.coefficients)?;
+        let rhs = to_i128_vec(&other.coefficients)?;
+
+        let max_lhs = lhs.iter().map(|c| c.unsigned_abs()).max()?;
+        let max_rhs = rhs.iter().map(|c| c.unsigned_abs()).max()?;
+        let terms = std::cmp::min(lhs.len(), rhs.len()) as u128;
+        let bound = max_lhs.checked_mul(max_rhs)?.checked_mul(terms)?;
+        if bound > i128::MAX as u128 {
+            return None;
+        }
+
+        let mut product = vec![0i128; lhs.len() + rhs.len() - 1];
+        for (i, &a) in lhs.iter().enumerate() {
+            if a == 0 {
+                continue;
+            }
+            for (j, &b) in rhs.iter().enumerate() {
+                product[i + j] += a * b;
+            }
+        }
+
+        Some(Polynomial::new(
+            product.into_iter().map(BigInt::from).collect(),
+        ))
     }
 
     /// Remove a coefficient from the polynomial.
@@ -494,10 +535,79 @@ impl Polynomial {
     }
 }
 
+/// Converts coefficients to `i128`, or returns `None` when any one does not fit.
+fn to_i128_vec(coefficients: &[BigInt]) -> Option<Vec<i128>> {
+    coefficients.iter().map(BigInt::to_i128).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use num_bigint::BigInt;
+
+    /// Deterministic xorshift64* stream; keeps the fixtures reproducible without `rand`.
+    struct Rng(u64);
+
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+    }
+
+    /// Schoolbook convolution over `BigInt`, the reference for [`Polynomial::mul`].
+    fn schoolbook(lhs: &Polynomial, rhs: &Polynomial) -> Polynomial {
+        let mut product = vec![BigInt::zero(); lhs.coefficients.len() + rhs.coefficients.len() - 1];
+        for (i, a) in lhs.coefficients.iter().enumerate() {
+            for (j, b) in rhs.coefficients.iter().enumerate() {
+                product[i + j] += a * b;
+            }
+        }
+        Polynomial::new(product)
+    }
+
+    #[test]
+    fn test_mul_matches_schoolbook_on_witness_shapes() {
+        // The circuit shape: one operand centered modulo a 58-bit CRT modulus, one ternary.
+        let mut rng = Rng(0x2545F4914F6CDD1D);
+        let qi = 0x02000000015a0001u64;
+        let centered = Polynomial::new(
+            (0..256)
+                .map(|_| BigInt::from((rng.next() % qi) as i128 - (qi / 2) as i128))
+                .collect(),
+        );
+        let ternary = Polynomial::new((0..256).map(|_| BigInt::from(rng.next() % 3) - 1).collect());
+
+        assert!(
+            centered.mul_i128(&ternary).is_some(),
+            "fast path must apply"
+        );
+        assert_eq!(
+            centered.mul(&ternary).coefficients(),
+            schoolbook(&centered, &ternary).coefficients()
+        );
+    }
+
+    #[test]
+    fn test_mul_falls_back_when_product_exceeds_i128() {
+        // 2^100 coefficients: the coefficients fit i128, their products do not.
+        let huge = Polynomial::new(vec![BigInt::from(1) << 100, BigInt::from(-1) << 100]);
+        assert!(huge.mul_i128(&huge).is_none(), "fallback must apply");
+        assert_eq!(
+            huge.mul(&huge).coefficients(),
+            schoolbook(&huge, &huge).coefficients()
+        );
+
+        // Coefficients wider than i128 cannot even be converted.
+        let wider = Polynomial::new(vec![BigInt::from(1) << 200, BigInt::from(3)]);
+        assert!(wider.mul_i128(&wider).is_none(), "fallback must apply");
+        assert_eq!(
+            wider.mul(&wider).coefficients(),
+            schoolbook(&wider, &wider).coefficients()
+        );
+    }
 
     #[test]
     fn test_basic_polynomial_creation() {
