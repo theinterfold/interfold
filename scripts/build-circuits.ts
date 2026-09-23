@@ -885,6 +885,10 @@ library ActiveCryptoConfig {
     }
   }
 
+  private hasCompleteCircuitSelection(): boolean {
+    return ALL_GROUPS.every((group) => this.options.groups?.includes(group))
+  }
+
   private isDistPresetUpToDate(preset: string, committee: string, sourceHash: string): boolean {
     const stamp = this.readPresetStamp(preset, committee)
     if (!stamp?.sourceHash || stamp.sourceHash !== sourceHash) return false
@@ -1088,8 +1092,12 @@ library ActiveCryptoConfig {
 
       this.copyArtifacts(result.compiled, presetOutputDir, preset)
       if (result.errors.length === 0) {
-        this.writePresetStamp(preset, committee, sourceHash)
-        this.writeActiveBinPresetStamp(preset, committee, sourceHash)
+        if (this.hasCompleteCircuitSelection()) {
+          this.writePresetStamp(preset, committee, sourceHash)
+          this.writeActiveBinPresetStamp(preset, committee, sourceHash)
+        } else {
+          console.log('   ℹ️  Partial circuit group build: preserved complete-pair build stamps.')
+        }
       }
       console.log(`\n✅ Built ${result.compiled.length} circuits for preset: ${preset}/${committee}`)
       if (result.errors.length > 0) {

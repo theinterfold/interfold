@@ -60,6 +60,18 @@ test('does not advertise unsupported secure-16384 committee pairs', () => {
   }
 })
 
+test('partial circuit group builds do not claim complete preset stamps', () => {
+  const complete = new NoirCircuitBuilder(undefined, {}) as unknown as {
+    hasCompleteCircuitSelection: () => boolean
+  }
+  const thresholdOnly = new NoirCircuitBuilder(undefined, {
+    groups: [CIRCUIT_GROUPS.THRESHOLD],
+  }) as unknown as { hasCompleteCircuitSelection: () => boolean }
+
+  assert.equal(complete.hasCompleteCircuitSelection(), true)
+  assert.equal(thresholdOnly.hasCompleteCircuitSelection(), false)
+})
+
 function writeFiles(files: string[]): void {
   for (const file of files) {
     mkdirSync(join(file, '..'), { recursive: true })

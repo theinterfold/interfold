@@ -249,9 +249,10 @@ ready, per-circuit `nargo compile` is skipped automatically (Stage 1 `ensure` sk
 `Prover.toml` files under `circuits/bin/` are excluded from the preset source hash so benchmarks do
 not invalidate the stamp. Use **`--bench-compile`** to force per-circuit compile timings anyway. If
 the CRISP staged preset is stale, the gas stage rebuilds it and then restores the complete benchmark
-artifact set before it runs integration. This restore also applies to `insecure/minimum`; the CRISP
-preset build contains only threshold circuits and cannot replace the DKG or decryption aggregation
-artifacts that the integration test requires.
+artifact set before it runs integration. The CRISP threshold-only build preserves the full-preset
+artifacts and stamps, so the restore step hydrates or checks the pair without rebuilding every
+circuit. This also applies to `insecure/minimum`, where DKG and decryption aggregation artifacts are
+required by the integration test.
 
 `Calldata gas` is computed from benchmark proof/public-input bytes with EVM calldata costs
 (`0x00 -> 4`, non-zero byte -> 16) and stored in raw benchmark JSON.
