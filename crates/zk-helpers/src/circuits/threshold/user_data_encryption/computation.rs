@@ -77,6 +77,8 @@ pub struct Bits {
     pub ct_bit: u32,
     pub u_bit: u32,
     pub e0_bit: u32,
+    pub e0is_bit: u32,
+    pub e0_quotient_bit: u32,
     pub e1_bit: u32,
     pub k_bit: u32,
     pub r1_bit: u32,
@@ -90,6 +92,8 @@ pub struct Bounds {
     pub pk_bounds: Vec<BigUint>,
     pub u_bound: BigUint,
     pub e0_bound: BigUint,
+    pub e0is_bounds: Vec<BigUint>,
+    pub e0_quotient_bounds: Vec<BigUint>,
     pub e1_bound: BigUint,
     pub k1_low_bound: BigUint,
     pub k1_up_bound: BigUint,
@@ -160,6 +164,16 @@ impl Computation for Bits {
         let e0_bit = calculate_bit_width(BigInt::from(data.e0_bound.clone()));
         let e1_bit = calculate_bit_width(BigInt::from(data.e1_bound.clone()));
 
+        // For e0is and its CRT quotients, use the maximum bound across all moduli.
+        let mut e0is_bit = 0;
+        for bound in &data.e0is_bounds {
+            e0is_bit = e0is_bit.max(calculate_bit_width(BigInt::from(bound.clone())));
+        }
+        let mut e0_quotient_bit = 0;
+        for bound in &data.e0_quotient_bounds {
+            e0_quotient_bit = e0_quotient_bit.max(calculate_bit_width(BigInt::from(bound.clone())));
+        }
+
         // For k1, use the maximum of low and up bounds
         let k1_low_bit = calculate_bit_width(BigInt::from(data.k1_low_bound.clone()));
         let k1_up_bit = calculate_bit_width(BigInt::from(data.k1_up_bound.clone()));
@@ -194,6 +208,8 @@ impl Computation for Bits {
             ct_bit,
             u_bit,
             e0_bit,
+            e0is_bit,
+            e0_quotient_bit,
             e1_bit,
             k_bit,
             r1_bit,
@@ -253,6 +269,8 @@ impl Computation for Bounds {
         let k0is = compute_k0is(&moduli, threshold_params.plaintext())?;
 
         let mut pk_bounds: Vec<BigInt> = Vec::new();
+        let mut e0is_bounds: Vec<BigInt> = Vec::new();
+        let mut e0_quotient_bounds: Vec<BigInt> = Vec::new();
         let mut r1_low_bounds: Vec<BigInt> = Vec::new();
         let mut r1_up_bounds: Vec<BigInt> = Vec::new();
         let mut r2_bounds: Vec<BigInt> = Vec::new();
@@ -270,6 +288,12 @@ impl Computation for Bounds {
             r2_bounds.push(qi_bound.clone());
 
             let e0_bound_i = e0_bound % qi_bigint.clone();
+
+            // e0is[i] is the centered residue of e0 at q_i; its CRT quotient is bounded by
+            // (e0_bound + (q_i - 1) / 2) / q_i. The circuit needs both to make the CRT
+            // consistency equation hold over the integers rather than only modulo the prime.
+            e0is_bounds.push(qi_bound.clone());
+            e0_quotient_bounds.push((BigInt::from(e0_bound) + &qi_bound) / &qi_bigint);
 
             // R1 bounds (more complex calculation)
             let r1_low: BigInt = (&ptxt_low_bound * k0qi.abs()
@@ -296,6 +320,14 @@ impl Computation for Bounds {
                 .collect(),
             u_bound: BigUint::from(u_bound as u64),
             e0_bound: BigUint::from(e0_bound),
+            e0is_bounds: e0is_bounds
+                .iter()
+                .map(|b| BigUint::from(b.to_u128().unwrap()))
+                .collect(),
+            e0_quotient_bounds: e0_quotient_bounds
+                .iter()
+                .map(|b| BigUint::from(b.to_u128().unwrap()))
+                .collect(),
             e1_bound: BigUint::from(e1_bound),
             k1_low_bound: BigUint::from(k1_low_bound.to_u128().unwrap()),
             k1_up_bound: BigUint::from(k1_up_bound.to_u128().unwrap()),
