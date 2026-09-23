@@ -7,9 +7,8 @@ OUTPUT_FILE=""
 GIT_COMMIT="unknown"
 GIT_BRANCH="unknown"
 GAS_JSON=""
-# Optional JSON from `BENCHMARK_SUMMARY_OUTPUT` (same schema as embedded `integration_summary` in
-# crisp_verify_gas.json). Used when gas JSON has null/broken integration_summary but timings exist
-# on disk (e.g. long secure run wrote /tmp/summary_secure.json separately).
+# Optional JSON from `BENCHMARK_SUMMARY_OUTPUT` for reports without a gas result.
+# When a gas result is present, use only its embedded summary to bind timings to that run.
 INTEGRATION_SUMMARY_FILE=""
 RUN_META_FILE=""
 BENCHMARK_MODE_OVERRIDE=""
@@ -137,16 +136,16 @@ emit_user_data_enc_row() {
 verify_gas_for_artifact() {
     local artifact="$1"
     [ -f "$GAS_JSON" ] || { echo "N/A"; return; }
-    local key=""
+    local key="" extraction_ok
     case "$artifact" in
-        Π_DKG) key="dkg" ;;
-        Π_user) key="user" ;;
-        Π_dec) key="dec" ;;
+        Π_DKG) key="dkg"; extraction_ok=$(jq -r '(.test_exit_code.folded_export == 0) and (.test_exit_code.interfold_contracts == 0)' "$GAS_JSON") ;;
+        Π_user) key="user"; extraction_ok=$(jq -r '.test_exit_code.crisp == 0' "$GAS_JSON") ;;
+        Π_dec) key="dec"; extraction_ok=$(jq -r '(.test_exit_code.folded_export == 0) and (.test_exit_code.interfold_contracts == 0)' "$GAS_JSON") ;;
         *) echo "N/A"; return ;;
     esac
     local value
     value=$(jq -r ".verify_gas.${key} // empty" "$GAS_JSON")
-    if [ -z "$value" ] || [ "$value" = "null" ]; then
+    if [ "$extraction_ok" != "true" ] || ! [[ "$value" =~ ^[1-9][0-9]*$ ]]; then
         echo "N/A"
     else
         echo "$value"
@@ -199,8 +198,8 @@ artifact_metrics() {
         fi
     fi
 
-    # Sizes + calldata from integration summary folded hex (when gas JSON has no folded export).
-    if [ -n "$artifact_key" ] && [ -n "$INTEGRATION_SUMMARY_FILE" ] && [ -f "$INTEGRATION_SUMMARY_FILE" ]; then
+    # Sizes + calldata from the summary selected for this run.
+    if [ -n "$artifact_key" ] && [ -n "$INTEGRATION_BLOB" ]; then
         local pfx ph pubh pb pubb cdp cdc folded_total
         case "$artifact_key" in
             dkg) pfx=".folded_artifacts.dkg_aggregator" ;;
@@ -208,8 +207,8 @@ artifact_metrics() {
             *) pfx="" ;;
         esac
         if [ -n "$pfx" ]; then
-            ph=$(jq -r "${pfx}.proof_hex // empty" "$INTEGRATION_SUMMARY_FILE" 2>/dev/null || true)
-            pubh=$(jq -r "${pfx}.public_inputs_hex // empty" "$INTEGRATION_SUMMARY_FILE" 2>/dev/null || true)
+            ph=$(jq -r "${pfx}.proof_hex // empty" <<<"$INTEGRATION_BLOB" 2>/dev/null || true)
+            pubh=$(jq -r "${pfx}.public_inputs_hex // empty" <<<"$INTEGRATION_BLOB" 2>/dev/null || true)
             if [ -n "$ph" ] && [ "$ph" != "null" ] && [ -n "$pubh" ] && [ "$pubh" != "null" ]; then
                 pb=$(hex_len_bytes "$ph")
                 pubb=$(hex_len_bytes "$pubh")
@@ -222,6 +221,11 @@ artifact_metrics() {
                 return
             fi
         fi
+    fi
+
+    if [ -n "$artifact_key" ]; then
+        echo "| $name | N/A | N/A | $verify_gas | N/A | N/A |" >> "$OUTPUT_FILE"
+        return
     fi
 
     local json_file
@@ -275,23 +279,7 @@ integration_phase_seconds() {
 
 integration_timing_seconds() {
     local label="$1"
-    local val=""
-    local f blob
-    if [ -n "${2:-}" ]; then
-        val=$(integration_phase_seconds "$label" "$2")
-        [ -n "$val" ] && [ "$val" != "null" ] && echo "$val" && return
-    fi
-    for f in "$INTEGRATION_SUMMARY_FILE" "$GAS_JSON"; do
-        [ -n "$f" ] && [ -f "$f" ] || continue
-        blob=$(jq -c 'if (.integration_summary != null) then .integration_summary elif has("integration_test") then . else empty end' "$f" 2>/dev/null || true)
-        [ -z "$blob" ] || [ "$blob" = "null" ] && continue
-        val=$(integration_phase_seconds "$label" "$blob")
-        if [ -n "$val" ] && [ "$val" != "null" ]; then
-            echo "$val"
-            return
-        fi
-    done
-    echo ""
+    integration_phase_seconds "$label" "${2:-}" || true
 }
 
 emit_audit_warnings() {
@@ -345,21 +333,14 @@ EOF
 # Normalized integration summary object: either `results_*/integration_summary.json` or
 # `crisp_verify_gas.json` → `.integration_summary` (see `BENCHMARK_SUMMARY_OUTPUT` in e3-tests).
 integration_blob_from_inputs() {
-    local f blob sibling
-    if [ -z "$INTEGRATION_SUMMARY_FILE" ] && [ -n "$GAS_JSON" ] && [ -f "$GAS_JSON" ]; then
-        sibling="$(dirname "$GAS_JSON")/integration_summary.json"
-        if [ -f "$sibling" ]; then
-            INTEGRATION_SUMMARY_FILE="$sibling"
-        fi
+    if [ -n "$GAS_JSON" ] && [ -f "$GAS_JSON" ]; then
+        jq -c 'if .test_exit_code.folded_export == 0 and (.integration_summary | type == "object") then .integration_summary else empty end' "$GAS_JSON" 2>/dev/null
+        return
     fi
-    for f in "$INTEGRATION_SUMMARY_FILE" "$GAS_JSON"; do
-        [ -n "$f" ] && [ -f "$f" ] || continue
-        blob=$(jq -c 'if (.integration_summary != null) and (.integration_summary | type == "object") then .integration_summary elif has("integration_test") then . else empty end' "$f" 2>/dev/null || true)
-        if [ -n "$blob" ] && [ "$blob" != "null" ]; then
-            echo "$blob"
-            return 0
-        fi
-    done
+    if [ -n "$INTEGRATION_SUMMARY_FILE" ] && [ -f "$INTEGRATION_SUMMARY_FILE" ]; then
+        jq -c 'if has("integration_test") then . else empty end' "$INTEGRATION_SUMMARY_FILE" 2>/dev/null
+        return
+    fi
     return 1
 }
 

@@ -196,9 +196,6 @@ pub fn share_encryption_for_slot(
     slot: usize,
     dkg_input_type: DkgInputType,
 ) -> Result<ShareEncryptionCircuitData, CircuitsErrors> {
-    let (_, dkg_params) =
-        build_pair_for_preset(preset).map_err(|e| CircuitsErrors::Sample(e.to_string()))?;
-
     let (threshold_params, _) = build_pair_for_preset(preset)
         .map_err(|e| CircuitsErrors::Sample(format!("Failed to build pair for preset: {:?}", e)))?;
     let l = threshold_params.moduli().len();
@@ -221,7 +218,7 @@ pub fn share_encryption_for_slot(
     }
 
     let mut rng = rng();
-    let pt = Plaintext::try_encode(&share_row, Encoding::poly(), &dkg_params)
+    let pt = Plaintext::try_encode(&share_row, Encoding::poly(), &dkg_pk.params)
         .map_err(|e| CircuitsErrors::Sample(format!("encode plaintext: {:?}", e)))?;
 
     let (ct, encryption) = dkg_pk

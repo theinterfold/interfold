@@ -324,8 +324,9 @@ echo "Stage 1/3: Running gas extraction pipeline (CRISP test + integration + EVM
 
 # Try to retrieve verifier gas from the existing CRISP verify test path.
 GAS_JSON_FILE="${BENCHMARKS_DIR}/${OUTPUT_DIR}/crisp_verify_gas.json"
-# Remove any previous gas artifact so failures cannot leak stale values.
-rm -f "${GAS_JSON_FILE}"
+INTEGRATION_SNAPSHOT="${BENCHMARKS_DIR}/${OUTPUT_DIR}/integration_summary.json"
+# Remove both run artifacts before extraction so a failed run cannot reuse old data.
+rm -f "${GAS_JSON_FILE}" "${INTEGRATION_SNAPSHOT}"
 EXTRACT_ARGS=(--output "${GAS_JSON_FILE}" --mode "$MODE" --committee "$OUTPUT_COMMITTEE")
 if [ "$VERBOSE" = true ]; then
     EXTRACT_ARGS+=(--verbose)
@@ -371,8 +372,7 @@ jq -n \
 
 # Extract integration summary from the fresh gas JSON before rendering the report so
 # generate_report.sh always sees up-to-date lambda / timings (not a stale on-disk snapshot).
-INTEGRATION_SNAPSHOT="${BENCHMARKS_DIR}/${OUTPUT_DIR}/integration_summary.json"
-if [ -f "${GAS_JSON_FILE}" ] && jq -e '.integration_summary != null' "${GAS_JSON_FILE}" >/dev/null 2>&1; then
+if [ -f "${GAS_JSON_FILE}" ] && jq -e '.test_exit_code.folded_export == 0 and (.integration_summary | type == "object")' "${GAS_JSON_FILE}" >/dev/null 2>&1; then
     jq '.integration_summary' "${GAS_JSON_FILE}" > "${INTEGRATION_SNAPSHOT}"
     echo "✓ Wrote integration summary snapshot: ${INTEGRATION_SNAPSHOT}"
 fi
