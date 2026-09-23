@@ -36,14 +36,6 @@ pub(crate) struct NodeDkgFoldMeta {
     pub(crate) committee_size: CiphernodesCommitteeSize,
 }
 
-impl NodeDkgFoldMeta {
-    /// Total number of inner proofs (C0..C4) expected before the fold can run:
-    /// C0, C1, C2a, C2b (4) + C3a (sk) + C3b (esm) + C4a, C4b (2).
-    pub(crate) fn total_expected_for(sk_enc_count: usize, e_sm_enc_count: usize) -> usize {
-        4 + sk_enc_count + e_sm_enc_count + 2
-    }
-}
-
 /// Per-E3 collection state: buffer proofs by `seq` until the monolithic fold can run.
 pub(crate) struct DkgProofCollectionState {
     pub(crate) meta: NodeDkgFoldMeta,
@@ -136,6 +128,8 @@ impl DkgProofCollectionState {
 
 #[cfg(test)]
 mod tests {
+    use crate::utils::total_expected_for;
+
     use super::*;
     use e3_events::CircuitName;
     use e3_utils::ArcBytes;
@@ -143,7 +137,7 @@ mod tests {
     fn meta(sk: usize, esm: usize) -> NodeDkgFoldMeta {
         NodeDkgFoldMeta {
             party_id: 7,
-            total_expected: NodeDkgFoldMeta::total_expected_for(sk, esm),
+            total_expected: total_expected_for(sk, esm),
             sk_enc_count: sk,
             e_sm_enc_count: esm,
             sk_share_encryption_requests: Vec::new(),
@@ -172,8 +166,8 @@ mod tests {
 
     #[test]
     fn total_expected_counts_fixed_plus_encryption_proofs() {
-        assert_eq!(NodeDkgFoldMeta::total_expected_for(0, 0), 6);
-        assert_eq!(NodeDkgFoldMeta::total_expected_for(2, 3), 11);
+        assert_eq!(total_expected_for(0, 0), 6);
+        assert_eq!(total_expected_for(2, 3), 11);
     }
 
     #[test]

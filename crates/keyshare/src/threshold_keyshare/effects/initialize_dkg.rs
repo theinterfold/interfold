@@ -67,10 +67,7 @@ impl ThresholdKeyshare {
             ))
         })?;
 
-        let committee_size = CiphernodesCommitteeSize::from_threshold(
-            state.threshold_m as usize,
-            state.threshold_n as usize,
-        )?;
+        let committee_size = state.committee_size()?;
         self.bus.publish(
             EncryptionKeyPending {
                 e3_id,
