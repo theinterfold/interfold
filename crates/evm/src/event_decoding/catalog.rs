@@ -230,6 +230,12 @@ const INTERFOLD: &[EvmEventDefinition] = &[
 
 const BONDING_REGISTRY: &[EvmEventDefinition] = &[
     EvmEventDefinition::new(
+        "AdmissionPolicyUpdated",
+        "AdmissionPolicyUpdated(uint48,(bool,bool,uint48,uint48,bool,uint48))",
+        None,
+    ),
+    EvmEventDefinition::new("AdmissionStarted", "AdmissionStarted(address,uint48)", None),
+    EvmEventDefinition::new(
         "AssetsClaimed",
         "AssetsClaimed(address,uint256,uint256)",
         None,
@@ -409,6 +415,11 @@ const CIPHERNODE_REGISTRY: &[EvmEventDefinition] = &[
     EvmEventDefinition::new(
         "CommitteeActivationChanged",
         "CommitteeActivationChanged(uint256,bool)",
+        Some(1),
+    ),
+    EvmEventDefinition::new(
+        "CommitteeBondOwnerCapEnabled",
+        "CommitteeBondOwnerCapEnabled(uint256)",
         Some(1),
     ),
     EvmEventDefinition::new(

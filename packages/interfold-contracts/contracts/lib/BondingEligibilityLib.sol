@@ -19,6 +19,9 @@ import { ICiphernodeRegistry } from "../interfaces/ICiphernodeRegistry.sol";
 import { INodeReleaseManager } from "../interfaces/INodeReleaseManager.sol";
 import { INodeReleaseRegistry } from "../interfaces/INodeReleaseRegistry.sol";
 import { InterfoldTicketToken } from "../token/InterfoldTicketToken.sol";
+import { BondOwnerCapacityLib } from "./BondOwnerCapacityLib.sol";
+import { BondingAdmissionLib } from "./BondingAdmissionLib.sol";
+import { IBondingAdmission } from "../interfaces/IBondingAdmission.sol";
 
 /// @notice Stores the request-boundary eligibility history for BondingRegistry.
 library BondingEligibilityLib {
@@ -41,9 +44,22 @@ library BondingEligibilityLib {
         0x47c917bbb1b321238f7fc4a5d1afedaac975b8f7b2dd6ce265eb240352449e00;
 
     function invalidateConfiguration(
-        uint256 configurationVersion
+        uint256 configurationVersion,
+        uint256 registeredOperators
     ) external returns (uint256 newVersion) {
-        return _invalidateConfiguration(configurationVersion);
+        newVersion = configurationVersion + 1;
+        BondingEligibilityStorage.EligibilityLayout storage state = _layout();
+        // Checkpoint value zero means that no configuration existed yet.
+        state.configurationVersions.push(
+            uint48(block.timestamp),
+            uint208(newVersion + 1)
+        );
+        state.activeOperatorCounts.push(uint48(block.timestamp), 0);
+        _beginRefresh(state, registeredOperators);
+        BondOwnerCapacityLib.reset();
+        emit IBondingRegistry.EligibilityConfigurationVersionUpdated(
+            newVersion
+        );
     }
 
     function requireNodeReleaseRegistry(
@@ -59,22 +75,6 @@ library BondingEligibilityLib {
         }
     }
 
-    function _invalidateConfiguration(
-        uint256 configurationVersion
-    ) private returns (uint256 newVersion) {
-        newVersion = configurationVersion + 1;
-        BondingEligibilityStorage.EligibilityLayout storage state = _layout();
-        // Checkpoint value zero means that no configuration existed yet.
-        state.configurationVersions.push(
-            uint48(block.timestamp),
-            uint208(newVersion + 1)
-        );
-        state.activeOperatorCounts.push(uint48(block.timestamp), 0);
-        emit IBondingRegistry.EligibilityConfigurationVersionUpdated(
-            newVersion
-        );
-    }
-
     function updateOperator(
         address operator,
         bool oldActive,
@@ -82,6 +82,7 @@ library BondingEligibilityLib {
         uint256 configurationVersion,
         uint256 activeOperatorCount
     ) external returns (uint256 newActiveOperatorCount, bool newActive) {
+        if (requirements.registered) completeOperatorRefresh(operator);
         InterfoldTicketToken ticketToken = InterfoldTicketToken(
             requirements.ticketToken
         );
@@ -105,6 +106,11 @@ library BondingEligibilityLib {
             ) &&
             ticketToken.balanceOf(operator) / requirements.ticketPrice >=
             requirements.minTicketBalance;
+        BondOwnerCapacityLib.sync(
+            operator,
+            IBondingRegistry(address(this)).bondOwnerOf(operator),
+            newActive && _admissionAllowed(operator, block.timestamp)
+        );
         if (oldActive == newActive) {
             return (activeOperatorCount, newActive);
         }
@@ -151,8 +157,109 @@ library BondingEligibilityLib {
         active =
             configurationVersion != 0 &&
             state.operatorActiveVersions[operator].upperLookup(key) ==
-            configurationVersion;
+            configurationVersion &&
+            _admissionAllowed(operator, timepoint);
         activeOperatorCount = state.activeOperatorCounts.upperLookup(key);
+    }
+
+    /// @notice Returns counted snapshot owners only under the current eligibility policy.
+    function committeeOwnerCapacity(
+        uint256 timepoint
+    ) external view returns (uint256) {
+        BondingEligibilityStorage.EligibilityLayout storage state = _layout();
+        Checkpoints.Trace208 storage versions = state.configurationVersions;
+        uint208 version = versions.upperLookupRecent(
+            SafeCast.toUint48(timepoint)
+        );
+        if (
+            state.refreshEpoch == 0 ||
+            state.pendingRefreshes != 0 ||
+            timepoint < state.refreshCompletedAt ||
+            version == 0 ||
+            version != versions.latest() ||
+            !BondingAdmissionLib.capacityPolicyMatches(timepoint)
+        ) return 0;
+        return BondOwnerCapacityLib.countAt(timepoint);
+    }
+
+    function setAdmissionPolicy(
+        bool enabled,
+        uint48 duration,
+        bool paused
+    ) external {
+        BondingAdmissionLib.setPolicy(enabled, duration, paused);
+    }
+
+    function admissionPolicyAt(
+        uint256 timepoint
+    ) external view returns (IBondingAdmission.AdmissionPolicy memory) {
+        return BondingAdmissionLib.policyAt(timepoint);
+    }
+
+    /// @dev Call before registration. A new operator cannot settle an existing operator's check.
+    function excludeNewRegistration(address operator) internal {
+        BondingEligibilityStorage.EligibilityLayout
+            storage state = _ensureRefreshStarted();
+        state.refreshedEpochs[operator] = state.refreshEpoch;
+    }
+
+    /// @dev Count each registered operator once, including inactive or departing operators.
+    function completeOperatorRefresh(address operator) internal {
+        BondingEligibilityStorage.EligibilityLayout
+            storage state = _ensureRefreshStarted();
+        if (state.refreshedEpochs[operator] == state.refreshEpoch) return;
+
+        state.refreshedEpochs[operator] = state.refreshEpoch;
+        state.pendingRefreshes -= 1;
+        if (state.pendingRefreshes == 0) {
+            state.refreshCompletedAt = SafeCast.toUint48(block.timestamp);
+        }
+    }
+
+    function _beginRefresh(
+        BondingEligibilityStorage.EligibilityLayout storage state,
+        uint256 registeredOperators
+    ) private {
+        state.refreshEpoch += 1;
+        state.pendingRefreshes = registeredOperators;
+        state.refreshCompletedAt = registeredOperators == 0
+            ? SafeCast.toUint48(block.timestamp)
+            : 0;
+    }
+
+    /// @dev An upgraded proxy captures its registered set before the first membership change.
+    function _ensureRefreshStarted()
+        private
+        returns (BondingEligibilityStorage.EligibilityLayout storage state)
+    {
+        state = _layout();
+        if (state.refreshEpoch == 0) {
+            _beginRefresh(
+                state,
+                IBondingRegistry(address(this)).numRegisteredOperators()
+            );
+        }
+    }
+
+    function _admissionAllowed(
+        address operator,
+        uint256 timepoint
+    ) private view returns (bool) {
+        IBondingAdmission.AdmissionPolicy memory policy = BondingAdmissionLib
+            .policyAt(timepoint);
+        if (!BondingAdmissionLib.allows(operator, timepoint, policy))
+            return false;
+        if (!policy.admissionsPaused) return true;
+        BondingEligibilityStorage.EligibilityLayout storage state = _layout();
+        uint208 version = state.configurationVersions.upperLookupRecent(
+            policy.pauseTimepoint
+        );
+        return
+            version != 0 &&
+            state.operatorActiveVersions[operator].upperLookupRecent(
+                policy.pauseTimepoint
+            ) ==
+            version;
     }
 
     function _layout()

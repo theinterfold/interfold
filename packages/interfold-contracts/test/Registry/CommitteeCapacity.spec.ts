@@ -1,0 +1,528 @@
+// SPDX-License-Identifier: LGPL-3.0-only
+import { expect } from "chai";
+
+import {
+  assertCommitteeOwnerCapacity,
+  assertRefreshedOwnerCapacity,
+} from "../../tasks/committeeCapacity";
+import {
+  deployInterfoldSystem,
+  ethers,
+  networkHelpers,
+  setupOperatorForSortition,
+} from "../fixtures";
+
+const { loadFixture, time, setStorageAt } = networkHelpers;
+const coder = ethers.AbiCoder.defaultAbiCoder();
+
+function slot(keyType: string, key: string | bigint, base: bigint): bigint {
+  return BigInt(
+    ethers.keccak256(coder.encode([keyType, "uint256"], [key, base])),
+  );
+}
+
+const ownerHistorySlot =
+  BigInt(
+    ethers.keccak256(
+      coder.encode(
+        ["uint256"],
+        [BigInt(ethers.id("interfold.storage.BondOwnerHistory")) - 1n],
+      ),
+    ),
+  ) & ~255n;
+
+const eligibilitySlot =
+  BigInt(
+    ethers.keccak256(
+      coder.encode(
+        ["uint256"],
+        [BigInt(ethers.id("interfold.storage.BondingEligibility")) - 1n],
+      ),
+    ),
+  ) & ~255n;
+
+async function clearRefreshState(sys: Awaited<ReturnType<typeof setup>>) {
+  const address = await sys.bondingRegistry.getAddress();
+  // These appended fields are empty on a proxy that predates the refresh barrier.
+  for (const offset of [3n, 4n, 5n])
+    await setStorageAt(address, eligibilitySlot + offset, 0n);
+  for (const node of sys.operators) {
+    await setStorageAt(
+      address,
+      slot("address", node.address, eligibilitySlot + 6n),
+      0n,
+    );
+  }
+}
+
+async function setup() {
+  const sys = await deployInterfoldSystem({
+    setupOperators: 0,
+    committeeThresholds: [
+      [0, [2, 3]],
+      [2, [14, 19]],
+    ],
+  });
+  const signers = await ethers.getSigners();
+  const operators = signers.slice(5, 9);
+  for (const [i, node] of operators.entries()) {
+    await setupOperatorForSortition(
+      node,
+      signers[i < 3 ? 0 : 1],
+      sys.bondingRegistry,
+      sys.ciphernodeBondToken,
+      sys.usdcToken,
+      sys.ticketToken,
+      sys.ciphernodeRegistry,
+      sys.nodeReleaseRegistry,
+    );
+  }
+  await time.increase(2);
+  return { ...sys, operators, signers };
+}
+
+describe("Committee owner-capacity preflight", function () {
+  it("rejects direct requests without charging fees or spending a VRF request", async function () {
+    const sys = await loadFixture(setup);
+    const now = await time.latest();
+    const params = {
+      ...sys.request,
+      inputWindow: [now + 100, now + 10_000] as [number, number],
+    };
+    await sys.usdcToken.approve(
+      await sys.interfold.getAddress(),
+      ethers.MaxUint256,
+    );
+    const e3Id = await sys.interfold.nexte3Id();
+    const payer = await sys.owner.getAddress();
+    const treasury = await sys.treasury.getAddress();
+    const token = await sys.usdcToken.getAddress();
+    const balance = await sys.usdcToken.balanceOf(payer);
+    const credited = await sys.interfold.pendingTreasuryClaim(treasury, token);
+    const vrf = sys.mocks.randomnessProvider!;
+    const nextDraw = await vrf.nextRequestId();
+    expect(await sys.bondingRegistry.numActiveOperators()).to.equal(4);
+    await expect(sys.interfold.request(params))
+      .to.be.revertedWithCustomError(
+        sys.ciphernodeRegistry,
+        "InsufficientBondOwners",
+      )
+      .withArgs(3, 2);
+    expect(await sys.usdcToken.balanceOf(payer)).to.equal(balance);
+    expect(await sys.interfold.pendingTreasuryClaim(treasury, token)).to.equal(
+      credited,
+    );
+    expect(await sys.interfold.nexte3Id()).to.equal(e3Id);
+    expect(await sys.interfold.e3Payments(e3Id)).to.equal(0);
+    expect(await sys.interfold.activeE3Count()).to.equal(0);
+    expect(await sys.ciphernodeRegistry.unreleasedCommitteeCount()).to.equal(0);
+    expect(await sys.bondingRegistry.unresolvedCommitteeCount()).to.equal(0);
+    expect(await vrf.nextRequestId()).to.equal(nextDraw);
+
+    // The same request succeeds once three distinct owners can supply a seat.
+    await sys.bondingRegistry
+      .connect(sys.signers[0])
+      .proposeBondOwner(sys.operators[0].address, sys.signers[2].address);
+    await sys.bondingRegistry
+      .connect(sys.signers[2])
+      .acceptBondOwner(sys.operators[0].address);
+    await time.increase(2);
+    await expect(sys.interfold.request(params)).to.emit(
+      sys.interfold,
+      "E3Requested",
+    );
+    expect(await vrf.nextRequestId()).to.equal(nextDraw + 1n);
+  });
+
+  it("counts active owners once across transfers, withdrawals, and refreshes", async function () {
+    const sys = await loadFixture(setup);
+    const bonding = sys.bondingRegistry;
+    const capacity = async () =>
+      bonding.committeeOwnerCapacity(await time.latest());
+    expect(await capacity()).to.equal(2);
+    await bonding.refreshOperatorStatuses(
+      sys.operators.map((node) => node.address),
+    );
+    await bonding.refreshOperatorStatus(sys.operators[0].address);
+    expect(await capacity()).to.equal(2);
+    await bonding
+      .connect(sys.signers[0])
+      .proposeBondOwner(sys.operators[0].address, sys.signers[2].address);
+    expect(await capacity()).to.equal(2);
+    const beforeTransfer = await time.latest();
+    await bonding
+      .connect(sys.signers[2])
+      .acceptBondOwner(sys.operators[0].address);
+    expect(await capacity()).to.equal(3);
+    expect(await bonding.committeeOwnerCapacity(beforeTransfer)).to.equal(2);
+    await bonding
+      .connect(sys.signers[2])
+      .proposeBondOwner(sys.operators[0].address, sys.signers[1].address);
+    await bonding
+      .connect(sys.signers[1])
+      .acceptBondOwner(sys.operators[0].address);
+    expect(await capacity()).to.equal(2);
+
+    const amount = await sys.ticketToken.balanceOf(sys.operators[0].address);
+    await bonding
+      .connect(sys.signers[1])
+      .removeTicketBalanceFor(sys.operators[0].address, amount);
+    expect(await capacity()).to.equal(2); // This owner still has another active operator.
+    await bonding
+      .connect(sys.signers[1])
+      .removeTicketBalanceFor(sys.operators[3].address, amount);
+    expect(await capacity()).to.equal(1);
+    await time.increase((await bonding.exitDelay()) + 1n);
+    await bonding.claimExitsFor(sys.operators[3].address, ethers.MaxUint256, 0);
+    await sys.usdcToken
+      .connect(sys.signers[1])
+      .approve(await sys.ticketToken.getAddress(), amount);
+    await bonding
+      .connect(sys.signers[1])
+      .addTicketBalanceFor(sys.operators[3].address, amount);
+    expect(await capacity()).to.equal(2);
+    await bonding
+      .connect(sys.signers[1])
+      .deregisterOperatorFor(sys.operators[3].address);
+    expect(await capacity()).to.equal(1);
+  });
+
+  it("invalidates owner capacity with eligibility policy and excludes same-time refreshes", async function () {
+    const sys = await loadFixture(setup);
+    const bonding = sys.bondingRegistry;
+    const before = await time.latest();
+    expect(await bonding.committeeOwnerCapacity(before)).to.equal(2);
+    await bonding.setMinTicketBalance((await bonding.minTicketBalance()) + 1n);
+    expect(await bonding.committeeOwnerCapacity(before)).to.equal(0);
+    expect(await bonding.committeeOwnerCapacity(await time.latest())).to.equal(
+      0,
+    );
+    await bonding.refreshOperatorStatus(sys.operators[0].address);
+    const refreshedAt = await time.latest();
+    expect(await bonding.committeeOwnerCapacity(refreshedAt - 1)).to.equal(0);
+    expect(await bonding.committeeOwnerCapacity(refreshedAt)).to.equal(0);
+    await bonding.refreshOperatorStatuses(
+      sys.operators.map((node) => node.address),
+    );
+    expect(await bonding.committeeOwnerCapacity(await time.latest())).to.equal(
+      2,
+    );
+    expect(await bonding.committeeOwnerCapacity(refreshedAt)).to.equal(0);
+    // A stale generation's owner transfer must not enter or remove a counted owner.
+    await bonding.setMinTicketBalance((await bonding.minTicketBalance()) + 1n);
+    await bonding
+      .connect(sys.signers[0])
+      .proposeBondOwner(sys.operators[0].address, sys.signers[2].address);
+    await bonding
+      .connect(sys.signers[2])
+      .acceptBondOwner(sys.operators[0].address);
+    expect(await bonding.committeeOwnerCapacity(await time.latest())).to.equal(
+      0,
+    );
+    await bonding.refreshOperatorStatuses(
+      sys.operators.map((node) => node.address),
+    );
+    expect(await bonding.committeeOwnerCapacity(await time.latest())).to.equal(
+      3,
+    );
+  });
+
+  it("blocks selective refreshes even when they supply enough distinct owners", async function () {
+    const sys = await loadFixture(setup);
+    const bonding = sys.bondingRegistry;
+    await bonding
+      .connect(sys.signers[0])
+      .proposeBondOwner(sys.operators[1].address, sys.signers[2].address);
+    await bonding
+      .connect(sys.signers[2])
+      .acceptBondOwner(sys.operators[1].address);
+    await bonding.setMinTicketBalance((await bonding.minTicketBalance()) + 1n);
+    const subset = [0, 1, 3].map((i) => sys.operators[i].address);
+    await bonding.connect(sys.signers[19]).refreshOperatorStatuses(subset);
+    await bonding.refreshOperatorStatuses(subset); // Duplicates cannot settle another node.
+    await time.increase(2);
+    expect(await bonding.numActiveOperators()).to.equal(3);
+    expect(await bonding.committeeOwnerCapacity(await time.latest())).to.equal(
+      0,
+    );
+    await expect(assertRefreshedOwnerCapacity(bonding, 3n)).to.be.rejectedWith(
+      "Refresh every registered operator",
+    );
+    await expect(
+      assertCommitteeOwnerCapacity(sys.interfold, 0, 0),
+    ).to.be.rejectedWith("Refresh every registered operator");
+    await sys.usdcToken.approve(
+      await sys.interfold.getAddress(),
+      ethers.MaxUint256,
+    );
+    const now = await time.latest();
+    const request = {
+      ...sys.request,
+      inputWindow: [now + 100, now + 10_000] as [number, number],
+    };
+    const draw = await sys.mocks.randomnessProvider!.nextRequestId();
+    const payer = await sys.owner.getAddress();
+    const balance = await sys.usdcToken.balanceOf(payer);
+    await expect(sys.interfold.request(request))
+      .to.be.revertedWithCustomError(
+        sys.ciphernodeRegistry,
+        "InsufficientBondOwners",
+      )
+      .withArgs(3, 0);
+    expect(await sys.usdcToken.balanceOf(payer)).to.equal(balance);
+    expect(await sys.mocks.randomnessProvider!.nextRequestId()).to.equal(draw);
+
+    // Anyone can check the remaining node; its owner need not return or sign.
+    await bonding
+      .connect(sys.signers[19])
+      .refreshOperatorStatus(sys.operators[2].address);
+    const completedAt = await time.latest();
+    expect(await bonding.committeeOwnerCapacity(completedAt - 1)).to.equal(0);
+    expect(await bonding.committeeOwnerCapacity(completedAt)).to.equal(3);
+    await time.increase(2);
+    await assertRefreshedOwnerCapacity(bonding, 3n);
+    await expect(sys.interfold.request(request)).to.emit(
+      sys.interfold,
+      "E3Requested",
+    );
+  });
+
+  it("enrolls legacy active operators only through permissionless status refresh", async function () {
+    const sys = await loadFixture(setup);
+    const bonding = sys.bondingRegistry;
+    const address = await bonding.getAddress();
+    const version = (await bonding.eligibilityConfigurationVersion()) + 1n;
+    // Reproduce the empty appended capacity fields of an upgraded proxy.
+    for (const owner of sys.signers.slice(0, 2)) {
+      await setStorageAt(
+        address,
+        slot(
+          "address",
+          owner.address,
+          slot("uint256", version, ownerHistorySlot + 1n),
+        ),
+        0n,
+      );
+    }
+    for (const operator of sys.operators) {
+      const counted = slot("address", operator.address, ownerHistorySlot + 2n);
+      await setStorageAt(address, counted, 0n);
+      await setStorageAt(address, counted + 1n, 0n);
+    }
+    await setStorageAt(address, ownerHistorySlot + 3n, 0n);
+    await setStorageAt(address, ownerHistorySlot + 4n, 0n);
+    await clearRefreshState(sys);
+    expect(await bonding.numActiveOperators()).to.equal(4);
+    expect(await bonding.committeeOwnerCapacity(await time.latest())).to.equal(
+      0,
+    );
+    await bonding
+      .connect(sys.signers[0])
+      .proposeBondOwner(sys.operators[0].address, sys.signers[2].address);
+    await bonding
+      .connect(sys.signers[2])
+      .acceptBondOwner(sys.operators[0].address);
+    expect(await bonding.committeeOwnerCapacity(await time.latest())).to.equal(
+      0,
+    );
+    await bonding
+      .connect(sys.signers[19])
+      .refreshOperatorStatus(sys.operators[1].address);
+    expect(await bonding.committeeOwnerCapacity(await time.latest())).to.equal(
+      0,
+    );
+    await bonding
+      .connect(sys.signers[19])
+      .refreshOperatorStatuses(sys.operators.map((node) => node.address));
+    expect(await bonding.committeeOwnerCapacity(await time.latest())).to.equal(
+      3,
+    );
+    await bonding.refreshOperatorStatuses(
+      sys.operators.map((node) => node.address),
+    );
+    expect(await bonding.committeeOwnerCapacity(await time.latest())).to.equal(
+      3,
+    );
+    await time.increase(2);
+    await sys.usdcToken.approve(
+      await sys.interfold.getAddress(),
+      ethers.MaxUint256,
+    );
+    const now = await time.latest();
+    await expect(
+      sys.interfold.request({
+        ...sys.request,
+        inputWindow: [now + 100, now + 10_000],
+      }),
+    ).to.emit(sys.interfold, "E3Requested");
+  });
+
+  it("counts inactive checks and rejects duplicate, unrelated, and policy-reset shortcuts", async function () {
+    const sys = await loadFixture(setup);
+    const bonding = sys.bondingRegistry;
+    const inactive = sys.operators[2];
+    await bonding
+      .connect(sys.signers[0])
+      .removeTicketBalanceFor(
+        inactive.address,
+        await sys.ticketToken.balanceOf(inactive.address),
+      );
+    await bonding.setMinTicketBalance((await bonding.minTicketBalance()) + 1n);
+    const subset = [0, 1, 3].map((i) => sys.operators[i].address);
+    await bonding.refreshOperatorStatuses(subset);
+    await bonding.refreshOperatorStatuses(subset);
+    // Admission changes and an unregistered funded position cannot clear refresh debt.
+    await bonding.setAdmissionPolicy(false, 0, false);
+    const unregistered = sys.signers[10];
+    await bonding.connect(unregistered).setBondOwner(sys.signers[0].address);
+    await sys.ciphernodeBondToken.approve(
+      await bonding.getAddress(),
+      ethers.MaxUint256,
+    );
+    await bonding.bondCiphernodeFor(
+      unregistered.address,
+      await bonding.requiredCiphernodeBond(),
+    );
+    expect(await bonding.committeeOwnerCapacity(await time.latest())).to.equal(
+      0,
+    );
+    await bonding.refreshOperatorStatus(inactive.address);
+    expect(await bonding.isActive(inactive.address)).to.equal(false);
+    expect(await bonding.committeeOwnerCapacity(await time.latest())).to.equal(
+      2,
+    );
+
+    // A later base-policy change requires a new pass, even for previously checked nodes.
+    await bonding.setMinTicketBalance((await bonding.minTicketBalance()) + 1n);
+    await bonding.refreshOperatorStatus(inactive.address);
+    expect(await bonding.committeeOwnerCapacity(await time.latest())).to.equal(
+      0,
+    );
+    await bonding.refreshOperatorStatuses(subset);
+    expect(await bonding.committeeOwnerCapacity(await time.latest())).to.equal(
+      2,
+    );
+  });
+
+  for (const legacy of [false, true]) {
+    it(`keeps the captured set fixed across new registrations (${legacy ? "upgrade" : "policy change"})`, async function () {
+      const sys = await loadFixture(setup);
+      const bonding = sys.bondingRegistry;
+      if (legacy) await clearRefreshState(sys);
+      else
+        await bonding.setMinTicketBalance(
+          (await bonding.minTicketBalance()) + 1n,
+        );
+      await setupOperatorForSortition(
+        sys.signers[10],
+        sys.signers[3],
+        bonding,
+        sys.ciphernodeBondToken,
+        sys.usdcToken,
+        sys.ticketToken,
+        sys.ciphernodeRegistry,
+        sys.nodeReleaseRegistry,
+      );
+      // The newcomer cannot substitute for one of the four existing registrations.
+      await bonding.refreshOperatorStatuses(
+        sys.operators.slice(0, 3).map((node) => node.address),
+      );
+      expect(
+        await bonding.committeeOwnerCapacity(await time.latest()),
+      ).to.equal(0);
+      await bonding.refreshOperatorStatus(sys.operators[3].address);
+      expect(
+        await bonding.committeeOwnerCapacity(await time.latest()),
+      ).to.equal(3);
+    });
+
+    it(`settles an exiting member without requiring its return (${legacy ? "upgrade" : "policy change"})`, async function () {
+      const sys = await loadFixture(setup);
+      const bonding = sys.bondingRegistry;
+      if (legacy) await clearRefreshState(sys);
+      else
+        await bonding.setMinTicketBalance(
+          (await bonding.minTicketBalance()) + 1n,
+        );
+      await bonding
+        .connect(sys.signers[0])
+        .deregisterOperatorFor(sys.operators[2].address);
+      await bonding.refreshOperatorStatuses(
+        [0, 1].map((i) => sys.operators[i].address),
+      );
+      expect(
+        await bonding.committeeOwnerCapacity(await time.latest()),
+      ).to.equal(0);
+      await bonding.refreshOperatorStatus(sys.operators[3].address);
+      expect(
+        await bonding.committeeOwnerCapacity(await time.latest()),
+      ).to.equal(2);
+      await time.increase((await bonding.exitDelay()) + 1n);
+      await sys.ciphernodeBondToken.approve(
+        await bonding.getAddress(),
+        ethers.MaxUint256,
+      );
+      await bonding.bondCiphernodeFor(
+        sys.operators[2].address,
+        await bonding.requiredCiphernodeBond(),
+      );
+      await bonding.registerOperatorFor(sys.operators[2].address);
+      // Re-registration is a new admission, not a second acknowledgement.
+      expect(
+        await bonding.committeeOwnerCapacity(await time.latest()),
+      ).to.equal(2);
+    });
+  }
+
+  it("rejects many operators under too few owners before payment", async function () {
+    const sys = await loadFixture(setup);
+    const before = await sys.interfold.nexte3Id();
+    await expect(
+      assertCommitteeOwnerCapacity(sys.interfold, 0, 0),
+    ).to.be.rejectedWith(
+      "Committee needs 3 distinct eligible bond owners; found 2",
+    );
+    expect(await sys.interfold.nexte3Id()).to.equal(before);
+  });
+
+  it("uses historical owners at the same boundary as the ticket balances", async function () {
+    const sys = await loadFixture(setup);
+    const node = sys.operators[0].address;
+    await sys.bondingRegistry
+      .connect(sys.signers[0])
+      .proposeBondOwner(node, sys.signers[2].address);
+    await sys.bondingRegistry.connect(sys.signers[2]).acceptBondOwner(node);
+    // The newest transfer is not part of head.timestamp - 1 yet.
+    await expect(
+      assertCommitteeOwnerCapacity(sys.interfold, 0, 0),
+    ).to.be.rejectedWith("found 2");
+    await time.increase(2);
+    const result = await assertCommitteeOwnerCapacity(sys.interfold, 0, 0);
+    expect(result.requiredOwners).to.equal(3);
+    expect(result.eligibleOwners).to.equal(3);
+    await expect(
+      assertCommitteeOwnerCapacity(sys.interfold, 2, 0),
+    ).to.be.rejectedWith("Committee needs 19");
+  });
+
+  it("does not count inactive nodes or accept an invalid history range", async function () {
+    const sys = await loadFixture(setup);
+    await sys.bondingRegistry
+      .connect(sys.signers[0])
+      .proposeBondOwner(sys.operators[0].address, sys.signers[2].address);
+    await sys.bondingRegistry
+      .connect(sys.signers[2])
+      .acceptBondOwner(sys.operators[0].address);
+    await time.increase(2);
+    await assertCommitteeOwnerCapacity(sys.interfold, 0, 0);
+    await sys.bondingRegistry
+      .connect(sys.signers[1])
+      .deregisterOperatorFor(sys.operators[3].address);
+    await expect(
+      assertCommitteeOwnerCapacity(sys.interfold, 0, 0),
+    ).to.be.rejectedWith("found 2");
+    await expect(
+      assertCommitteeOwnerCapacity(sys.interfold, 0, -1),
+    ).to.be.rejectedWith("Invalid registry history start block");
+  });
+});

@@ -6,6 +6,7 @@
 
 mod accusation_quorum_reached;
 mod accusation_vote;
+mod admission_updated;
 mod aggregation_inputs_ready;
 mod aggregation_proof_pending;
 mod aggregation_proof_signed;
@@ -91,6 +92,7 @@ mod typed_event;
 
 pub use accusation_quorum_reached::*;
 pub use accusation_vote::*;
+pub use admission_updated::*;
 pub use aggregation_inputs_ready::*;
 pub use aggregation_proof_pending::*;
 pub use aggregation_proof_signed::*;
@@ -366,6 +368,12 @@ pub enum InterfoldEventData {
     CiphertextOutputReferencePublished(CiphertextOutputReferencePublished),
     DkgCoordination(DkgCoordination),
     CommitmentRosterSelected(CommitmentRosterSelected),
+    BondOwnerSetAt(BondOwnerSetAt),
+    AdmissionUpdated(AdmissionUpdated),
+    TicketBalanceUpdatedAt(TicketBalanceUpdatedAt),
+    OperatorActivationChangedAt(OperatorActivationChangedAt),
+    ConfigurationUpdatedAt(ConfigurationUpdatedAt),
+    PlaintextVerificationResumed(PlaintextVerificationResumed),
 }
 
 impl InterfoldEventData {
@@ -571,6 +579,35 @@ mod serialization_tests {
         assert_eq!(first.delivery_id(), replay.delivery_id());
         assert_ne!(first.delivery_id(), other_chain.delivery_id());
     }
+
+    #[test]
+    fn local_c6_results_distinguish_batches_but_deduplicate_retries() {
+        let outcome: InterfoldEventData = ShareVerificationComplete {
+            e3_id: E3id::new("1", 1),
+            kind: VerificationKind::ThresholdDecryptionProofs,
+            dishonest_parties: Default::default(),
+        }
+        .into();
+        let make_result = |batch: &str, ts| {
+            let cause = EventContext::<Unsequenced>::from(InterfoldEventData::from(
+                TestEvent::new(batch, 1),
+            ))
+            .sequence(0);
+            InterfoldEvent::<Unsequenced>::new_with_timestamp(
+                outcome.clone(),
+                Some(cause),
+                ts,
+                None,
+                EventSource::Local,
+            )
+        };
+        let first = make_result("first", 1);
+        let replacement = make_result("replacement", 2);
+        let replay = make_result("first", 3);
+        assert_eq!(first.event_id(), replacement.event_id());
+        assert_ne!(first.delivery_id(), replacement.delivery_id());
+        assert_eq!(first.delivery_id(), replay.delivery_id());
+    }
 }
 
 #[cfg(feature = "test-helpers")]
@@ -626,6 +663,19 @@ impl<S: SeqState> Event for InterfoldEvent<S> {
                 self.ctx.block(),
                 self.ctx.ts(),
             )),
+            // Equal C6 verdicts can belong to different replacement batches. The cause binds
+            // the verdict to its request without changing persisted or network event payloads.
+            EventSource::Local
+                if matches!(
+                    self.payload,
+                    InterfoldEventData::ShareVerificationComplete(ShareVerificationComplete {
+                        kind: VerificationKind::ThresholdDecryptionProofs,
+                        ..
+                    })
+                ) =>
+            {
+                EventId::hash((self.ctx.id(), self.ctx.causation_id()))
+            }
             EventSource::Local | EventSource::Net => self.ctx.id(),
         }
     }
@@ -736,6 +786,7 @@ impl InterfoldEventData {
             InterfoldEventData::PkAggregationProofSigned(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::AggregationProofPending(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::AggregationProofSigned(ref data) => Some(data.e3_id.clone()),
+            InterfoldEventData::PlaintextVerificationResumed(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::DKGRecursiveAggregationComplete(ref data) => {
                 Some(data.e3_id.clone())
             }
@@ -887,7 +938,13 @@ impl_event_types!(
     CommitteePublicKeyChunkPublished,
     CiphertextOutputReferencePublished,
     DkgCoordination,
-    CommitmentRosterSelected
+    CommitmentRosterSelected,
+    BondOwnerSetAt,
+    AdmissionUpdated,
+    TicketBalanceUpdatedAt,
+    OperatorActivationChangedAt,
+    ConfigurationUpdatedAt,
+    PlaintextVerificationResumed
 );
 
 impl TryFrom<&InterfoldEvent<Sequenced>> for InterfoldError {

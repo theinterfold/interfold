@@ -64,6 +64,12 @@ every section.
 
 ### DKG / threshold structure
 
+- Plaintext collection starts verification at **T+1** distinct accepted-roster shares, not at H.
+  Every selected raw share must match its C6 commitment for each ciphertext output. Bad early shares
+  must not prevent the use of valid backups while T+1 roster parties remain possible. A local C6
+  result authorizes only its exact dispatch batch. Share admission checks the signed sender, E3,
+  proof type, raw bytes, and ciphertext position before reserving a party slot. — `flow-trace/04`
+
 - SK splits into N shares; exactly **T+1** shares feed the recursive decryption proof. —
   `flow-trace/04`
 - Runtime `party_id` derives from the finalized committee normalized by ascending address and is

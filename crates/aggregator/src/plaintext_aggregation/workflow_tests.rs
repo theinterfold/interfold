@@ -1,8 +1,4 @@
 // SPDX-License-Identifier: LGPL-3.0-only
-//
-// This file is provided WITHOUT ANY WARRANTY;
-// without even the implied warranty of MERCHANTABILITY
-// or FITNESS FOR A PARTICULAR PURPOSE.
 
 use super::*;
 
@@ -25,143 +21,135 @@ fn c6_proof(marker: u8) -> SignedProofPayload {
     }
 }
 
-fn collecting(threshold_m: u64, threshold_n: u64) -> ThresholdPlaintextAggregatorState {
-    ThresholdPlaintextAggregatorState::init(
-        threshold_m,
-        threshold_n,
-        Seed([0u8; 32]),
-        vec![ab(1)],
-        ab(2),
+fn collecting(t: u64, n: u64) -> ThresholdPlaintextAggregatorState {
+    ThresholdPlaintextAggregatorState::init(t, n, Seed([0u8; 32]), vec![ab(1)], ab(2))
+}
+
+fn add(state: ThresholdPlaintextAggregatorState, party: u64) -> ThresholdPlaintextAggregatorState {
+    ThresholdPlaintextAggregation::add_share(
+        state,
+        party,
+        vec![ab(party as u8)],
+        vec![c6_proof(party as u8)],
     )
+    .unwrap()
 }
 
 #[test]
-fn add_share_below_required_stays_collecting() {
-    let state = collecting(1, 3);
-    let next =
-        ThresholdPlaintextAggregation::add_share(state, 0, vec![ab(10)], vec![c6_proof(10)], 3)
-            .unwrap();
-    match next {
-        ThresholdPlaintextAggregatorState::Collecting(c) => {
-            assert_eq!(c.shares.len(), 1);
-            assert!(c.shares.contains_key(&0));
+fn small_starts_verification_with_up_to_four_missing_roster_members() {
+    for missing in 0..=5 {
+        let mut state = collecting(9, 19);
+        // The roster is not a prefix of the selected committee.
+        for party in 5..19 - missing {
+            state = add(state, party);
         }
-        _ => panic!("expected Collecting"),
-    }
-}
-
-#[test]
-fn add_share_reaching_required_transitions_to_verifying_c6() {
-    let mut state = collecting(1, 3);
-    for pid in 0..3u64 {
-        state = ThresholdPlaintextAggregation::add_share(
-            state,
-            pid,
-            vec![ab(pid as u8)],
-            vec![c6_proof(pid as u8)],
-            3,
-        )
-        .unwrap();
-    }
-    match state {
-        ThresholdPlaintextAggregatorState::VerifyingC6(v) => {
-            assert_eq!(v.shares.len(), 3);
+        if missing <= 4 {
+            let ThresholdPlaintextAggregatorState::VerifyingC6(batch) = state else {
+                panic!("Small must progress with {missing} missing roster members");
+            };
+            assert_eq!(batch.shares.len(), 10);
+            assert_eq!(batch.queued_shares.len(), (4 - missing) as usize);
+        } else {
+            assert!(matches!(
+                state,
+                ThresholdPlaintextAggregatorState::Collecting(_)
+            ));
         }
-        _ => panic!("expected VerifyingC6"),
     }
 }
 
 #[test]
-fn add_share_wrong_state_errors() {
-    let state = ThresholdPlaintextAggregatorState::VerifyingC6(VerifyingC6 {
-        threshold_m: 1,
-        threshold_n: 3,
-        shares: BTreeMap::new(),
-        c6_proofs: BTreeMap::new(),
-        ciphertext_output: vec![ab(1)],
-        params: ab(2),
-    });
-    let res = ThresholdPlaintextAggregation::add_share(state, 0, vec![ab(0)], vec![], 3);
-    assert!(res.is_err());
+fn duplicate_shares_do_not_count_or_replace_an_in_flight_batch() {
+    let state = add(add(collecting(1, 3), 0), 0);
+    let ThresholdPlaintextAggregatorState::Collecting(ref c) = state else {
+        panic!()
+    };
+    assert_eq!(c.shares.len(), 1);
+    let state = add(add(add(state, 1), 2), 2);
+    let ThresholdPlaintextAggregatorState::VerifyingC6(batch) = state else {
+        panic!()
+    };
+    assert_eq!(batch.shares.keys().copied().collect::<Vec<_>>(), [0, 1]);
+    assert_eq!(batch.queued_shares.keys().copied().collect::<Vec<_>>(), [2]);
 }
 
 #[test]
-fn handle_member_expelled_removes_share_and_stays_collecting() {
-    let mut state = collecting(1, 3);
-    for pid in 0..2u64 {
-        state = ThresholdPlaintextAggregation::add_share(
-            state,
-            pid,
-            vec![ab(pid as u8)],
-            vec![c6_proof(pid as u8)],
-            3,
-        )
-        .unwrap();
-    }
-    // required_shares stays 3; remove party 0 -> 1 share left -> Collecting
-    let next = ThresholdPlaintextAggregation::handle_member_expelled(state, 0, 3).unwrap();
-    match next {
-        ThresholdPlaintextAggregatorState::Collecting(c) => {
-            assert_eq!(c.shares.len(), 1);
-            assert!(!c.shares.contains_key(&0));
-        }
-        _ => panic!("expected Collecting"),
-    }
+fn rejected_share_uses_queued_replacement_after_restart() {
+    let state = add(add(add(collecting(1, 5), 0), 2), 4);
+    let restored = bincode::deserialize(&bincode::serialize(&state).unwrap()).unwrap();
+    let ThresholdPlaintextAggregatorState::VerifyingC6(batch) = restored else {
+        panic!()
+    };
+    let next = ThresholdPlaintextAggregation::retry_collection(batch, BTreeSet::from([0]));
+    let ThresholdPlaintextAggregatorState::VerifyingC6(batch) = next else {
+        panic!()
+    };
+    assert_eq!(batch.shares.keys().copied().collect::<Vec<_>>(), [2, 4]);
+    assert_eq!(batch.c6_proofs.keys().copied().collect::<Vec<_>>(), [2, 4]);
+    assert!(batch.rejected_parties.contains(&0));
 }
 
 #[test]
-fn handle_member_expelled_transitions_when_enough_remain() {
-    let mut state = collecting(1, 3);
-    for pid in 0..3u64 {
-        state = ThresholdPlaintextAggregation::add_share(
-            state,
-            pid,
-            vec![ab(pid as u8)],
-            vec![c6_proof(pid as u8)],
-            3,
-        )
-        .unwrap();
-    }
-    // After 3 shares it's already VerifyingC6; rebuild a Collecting with 3 shares to
-    // exercise the expulsion->VerifyingC6 path with required_shares lowered to 2.
-    let state = ThresholdPlaintextAggregatorState::Collecting(Collecting {
-        threshold_m: 1,
-        threshold_n: 3,
-        shares: BTreeMap::from([(0, vec![ab(0)]), (1, vec![ab(1)]), (2, vec![ab(2)])]),
-        c6_proofs: BTreeMap::new(),
-        seed: Seed([0u8; 32]),
-        ciphertext_output: vec![ab(1)],
-        params: ab(2),
-    });
-    let _ = state;
-    let state = ThresholdPlaintextAggregatorState::Collecting(Collecting {
-        threshold_m: 1,
-        threshold_n: 3,
-        shares: BTreeMap::from([(0, vec![ab(0)]), (1, vec![ab(1)]), (2, vec![ab(2)])]),
-        c6_proofs: BTreeMap::new(),
-        seed: Seed([0u8; 32]),
-        ciphertext_output: vec![ab(1)],
-        params: ab(2),
-    });
-    // remove party 0 -> 2 shares remain, required_shares=2 -> VerifyingC6
-    let next = ThresholdPlaintextAggregation::handle_member_expelled(state, 0, 2).unwrap();
-    match next {
-        ThresholdPlaintextAggregatorState::VerifyingC6(v) => {
-            assert_eq!(v.shares.len(), 2);
-        }
-        _ => panic!("expected VerifyingC6"),
-    }
+fn rejected_party_cannot_reenter_while_waiting_for_replacement() {
+    let state = add(add(collecting(1, 5), 0), 2);
+    let ThresholdPlaintextAggregatorState::VerifyingC6(batch) = state else {
+        panic!()
+    };
+    let state = ThresholdPlaintextAggregation::retry_collection(batch, BTreeSet::from([0]));
+    let state = add(state, 0);
+    let ThresholdPlaintextAggregatorState::Collecting(ref c) = state else {
+        panic!()
+    };
+    assert_eq!(c.shares.keys().copied().collect::<Vec<_>>(), [2]);
+    let state = add(state, 4);
+    assert!(matches!(
+        state,
+        ThresholdPlaintextAggregatorState::VerifyingC6(_)
+    ));
 }
 
 #[test]
-fn handle_member_expelled_wrong_state_is_noop() {
+fn expulsion_does_not_change_in_flight_batch_identity() {
+    let state = add(add(add(collecting(1, 5), 0), 1), 2);
+    let state = ThresholdPlaintextAggregation::handle_member_expelled(state, 0).unwrap();
+    let state = ThresholdPlaintextAggregation::handle_member_expelled(state, 2).unwrap();
+    let state = add(state, 2);
+    let ThresholdPlaintextAggregatorState::VerifyingC6(batch) = state else {
+        panic!()
+    };
+    assert_eq!(batch.shares.keys().copied().collect::<Vec<_>>(), [0, 1]);
+    assert_eq!(batch.c6_proofs.keys().copied().collect::<Vec<_>>(), [0, 1]);
+    assert!(batch.queued_shares.is_empty());
+    let next = ThresholdPlaintextAggregation::retry_collection(batch, BTreeSet::new());
+    let ThresholdPlaintextAggregatorState::Collecting(c) = next else {
+        panic!()
+    };
+    assert_eq!(c.shares.keys().copied().collect::<Vec<_>>(), [1]);
+    assert_eq!(c.rejected_parties, BTreeSet::from([0, 2]));
+}
+
+#[test]
+fn expulsion_while_collecting_removes_share_without_lowering_threshold() {
+    let state = add(add(collecting(2, 5), 0), 1);
+    let state = ThresholdPlaintextAggregation::handle_member_expelled(state, 0).unwrap();
+    let ThresholdPlaintextAggregatorState::Collecting(c) = state else {
+        panic!()
+    };
+    assert_eq!(c.shares.len(), 1);
+    assert_eq!(c.threshold_m, 2);
+    assert!(!c.c6_proofs.contains_key(&0));
+}
+
+#[test]
+fn closed_collection_ignores_late_shares_and_expulsions() {
     let state = ThresholdPlaintextAggregatorState::Complete(Complete {
         decrypted: vec![ab(1)],
         shares: vec![],
     });
-    let next = ThresholdPlaintextAggregation::handle_member_expelled(state, 0, 3).unwrap();
+    let state = add(state, 0);
+    let state = ThresholdPlaintextAggregation::handle_member_expelled(state, 0).unwrap();
     assert!(matches!(
-        next,
+        state,
         ThresholdPlaintextAggregatorState::Complete(_)
     ));
 }
@@ -169,23 +157,24 @@ fn handle_member_expelled_wrong_state_is_noop() {
 #[test]
 fn add_share_rejects_c6_share_or_proof_count_mismatch() {
     let missing_share =
-        ThresholdPlaintextAggregation::add_share(collecting(1, 3), 0, vec![], vec![c6_proof(1)], 3)
+        ThresholdPlaintextAggregation::add_share(collecting(1, 3), 0, vec![], vec![c6_proof(1)])
             .expect_err("one decryption share is required for one ciphertext");
     assert!(missing_share.to_string().contains("decryption shares"));
-
     let missing_proof =
-        ThresholdPlaintextAggregation::add_share(collecting(1, 3), 0, vec![ab(1)], vec![], 3)
+        ThresholdPlaintextAggregation::add_share(collecting(1, 3), 0, vec![ab(1)], vec![])
             .expect_err("one C6 proof is required for one ciphertext");
     assert!(missing_proof.to_string().contains("C6 proofs"));
 }
 
 #[test]
 fn plan_c6_dispatch_emits_party_proofs_in_party_order() {
-    let mut c6: BTreeMap<u64, Vec<SignedProofPayload>> = BTreeMap::new();
-    c6.insert(2, vec![]);
-    c6.insert(0, vec![]);
-    c6.insert(1, vec![]);
-    let plan = ThresholdPlaintextAggregation::plan_c6_dispatch(c6);
-    let ids: Vec<u64> = plan.iter().map(|p| p.sender_party_id).collect();
-    assert_eq!(ids, vec![0, 1, 2]);
+    let plan = ThresholdPlaintextAggregation::plan_c6_dispatch(BTreeMap::from([
+        (2, vec![]),
+        (0, vec![]),
+        (1, vec![]),
+    ]));
+    assert_eq!(
+        plan.iter().map(|p| p.sender_party_id).collect::<Vec<_>>(),
+        [0, 1, 2]
+    );
 }

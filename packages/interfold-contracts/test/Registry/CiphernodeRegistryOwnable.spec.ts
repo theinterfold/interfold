@@ -1488,7 +1488,6 @@ describe("CiphernodeRegistryOwnable", function () {
 
     it("keeps exit claims behind request-time committee deadlines", async function () {
       const {
-        owner,
         operator1,
         registry,
         interfold,
@@ -1524,17 +1523,17 @@ describe("CiphernodeRegistryOwnable", function () {
       const operatorAddress = await operator1.getAddress();
       const exitAmount = ethers.parseUnits("1", 6);
       await bondingRegistry
-        .connect(owner)
+        .connect(operator1)
         .removeTicketBalanceFor(operatorAddress, exitAmount);
       await networkHelpers.time.increase(ONE_DAY + 1);
       expect(BigInt(await networkHelpers.time.latest())).to.be.greaterThan(
         oldDeadline,
       );
 
-      const ownerAddress = await owner.getAddress();
+      const ownerAddress = await operator1.getAddress();
       const balanceBefore = await usdcToken.balanceOf(ownerAddress);
       await bondingRegistry
-        .connect(owner)
+        .connect(operator1)
         .claimExitsFor(operatorAddress, exitAmount, 0);
       expect(await usdcToken.balanceOf(ownerAddress)).to.equal(
         balanceBefore + exitAmount,
@@ -1547,7 +1546,6 @@ describe("CiphernodeRegistryOwnable", function () {
 
     it("locks top candidates and releases a displaced candidate", async function () {
       const {
-        owner,
         operator1,
         operator2,
         operator3,
@@ -1562,7 +1560,7 @@ describe("CiphernodeRegistryOwnable", function () {
       const operator4 = (await ethers.getSigners())[5]!;
       await setupOperatorForSortition(
         operator4,
-        owner,
+        operator4,
         bondingRegistry,
         ciphernodeBondToken,
         usdcToken,
@@ -1576,7 +1574,7 @@ describe("CiphernodeRegistryOwnable", function () {
       await bondingRegistry.setExitDelay(ONE_DAY);
       for (const candidate of candidates) {
         await bondingRegistry
-          .connect(owner)
+          .connect(candidate)
           .removeTicketBalanceFor(await candidate.getAddress(), exitAmount);
       }
       await networkHelpers.time.increase(ONE_DAY + 1);

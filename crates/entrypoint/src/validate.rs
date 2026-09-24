@@ -39,8 +39,8 @@ use anyhow::{bail, Context, Result};
 use e3_config::AppConfig;
 use e3_data::{CommitLogEventLog, EventLogOpenMode, Repositories};
 use e3_events::{
-    hlc::HlcTimestamp, AggregateId, E3Stage, Event, EventContextAccessors, EventContextSeq,
-    InterfoldEvent, InterfoldEventData,
+    AggregateId, E3Stage, Event, EventContextAccessors, EventContextSeq, InterfoldEvent,
+    InterfoldEventData,
 };
 use e3_sortition::{
     committee_key, NodeRegistry, NodeStateRepositoryFactory, NodeStateStore, SortitionBackend,
@@ -420,6 +420,7 @@ fn reconcile_node_state_membership(
         if chain_state.ticket_price.is_zero() {
             if let Some(rebuilt_chain) = rebuilt_chain {
                 chain_state.ticket_price = rebuilt_chain.ticket_price;
+                chain_state.ticket_price_position = rebuilt_chain.ticket_price_position;
             }
         }
 
@@ -529,7 +530,6 @@ fn registered_node_states_from_events(
     for (aggregate_id, events) in events_by_aggregate {
         let cursor = snapshot_cursors.get(aggregate_id).copied().unwrap_or(0);
         for event in events.iter().filter(|event| event.seq() <= cursor) {
-            let timepoint = HlcTimestamp::wall_time(event.get_ctx().ts()) / 1_000_000;
             match event.get_data() {
                 InterfoldEventData::CiphernodeAdded(data) => {
                     NodeRegistry::add_node(&mut node_states, data.chain_id, data.address.clone())
@@ -537,45 +537,28 @@ fn registered_node_states_from_events(
                 InterfoldEventData::CiphernodeRemoved(data) => {
                     NodeRegistry::remove_node(&mut node_states, data.chain_id, &data.address)
                 }
-                InterfoldEventData::TicketBalanceUpdated(data) => {
+                InterfoldEventData::TicketBalanceUpdatedAt(event) => {
+                    let balance = &event.balance;
                     NodeRegistry::set_ticket_balance(
                         &mut node_states,
-                        data.chain_id,
-                        data.operator.clone(),
-                        data.new_balance,
-                        timepoint,
+                        balance.chain_id,
+                        balance.operator.clone(),
+                        balance.new_balance,
+                        event.position,
                     );
                 }
-                InterfoldEventData::OperatorActivationChanged(data) => {
+                InterfoldEventData::OperatorActivationChangedAt(event) => {
+                    let activation = &event.activation;
                     NodeRegistry::set_operator_active(
                         &mut node_states,
-                        data.chain_id,
-                        data.operator.clone(),
-                        data.active,
-                        timepoint,
+                        activation.chain_id,
+                        activation.operator.clone(),
+                        activation.active,
+                        event.position,
                     );
                 }
-                InterfoldEventData::ConfigurationUpdated(data)
-                    if matches!(
-                        data.parameter.as_str(),
-                        "ticketPrice"
-                            | "requiredCiphernodeBond"
-                            | "ciphernodeBondActiveBps"
-                            | "minTicketBalance"
-                    ) =>
-                {
-                    if data.parameter == "ticketPrice" {
-                        NodeRegistry::set_ticket_price(
-                            &mut node_states,
-                            data.chain_id,
-                            data.new_value,
-                        );
-                    }
-                    NodeRegistry::invalidate_operator_activity(
-                        &mut node_states,
-                        data.chain_id,
-                        timepoint,
-                    );
+                InterfoldEventData::ConfigurationUpdatedAt(event) => {
+                    NodeRegistry::update_configuration(&mut node_states, event);
                 }
                 InterfoldEventData::CommitteeFinalized(data) => {
                     NodeRegistry::reconcile_committee_jobs(
@@ -1012,8 +995,9 @@ type SeqMap = BTreeMap<AggregateId, u64>;
 mod tests {
     use super::*;
     use commitlog::{CommitLog, LogOptions};
+    use e3_events::hlc::HlcTimestamp;
     use e3_events::{
-        CiphernodeAdded, CommitteeFinalized, E3RequestComplete, E3id,
+        ChainPosition, CiphernodeAdded, CommitteeFinalized, E3RequestComplete, E3id,
         EventConstructorWithTimestamp, EventLog, EventSource, TestEvent, TicketBalanceUpdated,
         Unsequenced,
     };
@@ -1283,7 +1267,7 @@ mod tests {
             1,
             kept.clone(),
             alloy::primitives::U256::from(50),
-            1,
+            ChainPosition::new(1, 0),
         );
         NodeRegistry::add_node(&mut persisted, 1, unexpected.clone());
         let kept_history = persisted[&1].nodes[&kept].ticket_balance_history.clone();
@@ -1294,16 +1278,27 @@ mod tests {
             .insert("1:9".to_owned(), vec![added.clone()]);
 
         let mut rebuilt = HashMap::<u64, NodeStateStore>::new();
-        NodeRegistry::set_ticket_price(&mut rebuilt, 1, alloy::primitives::U256::from(10));
+        NodeRegistry::set_ticket_price(
+            &mut rebuilt,
+            1,
+            alloy::primitives::U256::from(10),
+            ChainPosition::new(1, 0),
+        );
         NodeRegistry::add_node(&mut rebuilt, 1, kept.clone());
         NodeRegistry::set_ticket_balance(
             &mut rebuilt,
             1,
             added.clone(),
             alloy::primitives::U256::from(20),
-            2,
+            ChainPosition::new(2, 0),
         );
-        NodeRegistry::set_operator_active(&mut rebuilt, 1, added.clone(), true, 3);
+        NodeRegistry::set_operator_active(
+            &mut rebuilt,
+            1,
+            added.clone(),
+            true,
+            ChainPosition::new(3, 0),
+        );
         let expected = HashMap::from([(1, HashSet::from([kept.clone(), added.clone()]))]);
 
         reconcile_node_state_membership(&mut persisted, &expected, &rebuilt).unwrap();
@@ -1409,14 +1404,17 @@ mod tests {
     }
 
     #[test]
-    fn node_state_replay_converts_hlc_microseconds_to_seconds() {
+    fn node_state_replay_keeps_source_seconds_when_the_event_clock_advances() {
         let event = InterfoldEvent::<Unsequenced>::new_with_timestamp(
-            TicketBalanceUpdated {
-                operator: "0xaaa".to_owned(),
-                delta: alloy::primitives::I256::ZERO,
-                new_balance: alloy::primitives::U256::from(2),
-                reason: alloy::primitives::FixedBytes::ZERO,
-                chain_id: 1,
+            e3_events::TicketBalanceUpdatedAt {
+                balance: TicketBalanceUpdated {
+                    operator: "0xaaa".to_owned(),
+                    delta: alloy::primitives::I256::ZERO,
+                    new_balance: alloy::primitives::U256::from(2),
+                    reason: alloy::primitives::FixedBytes::ZERO,
+                    chain_id: 1,
+                },
+                position: ChainPosition::new(42, 7),
             }
             .into(),
             None,
@@ -1432,8 +1430,9 @@ mod tests {
 
         assert_eq!(
             states[&1].nodes["0xaaa"].ticket_balance_history[0].timepoint,
-            1_234
+            42
         );
+        assert_eq!(states[&1].nodes["0xaaa"].ticket_balance_log_index, 7);
     }
 
     #[test]

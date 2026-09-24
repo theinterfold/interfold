@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-4.0-only
+// SPDX-License-Identifier: LGPL-3.0-only
 //
 // This file is provided WITHOUT ANY WARRANTY;
 // without even the implied warranty of MERCHANTABILITY
@@ -6,23 +6,21 @@
 
 use crate::domain::backends::{SortitionBackend, SortitionList};
 use crate::domain::node_registry::{NodeRegistry, NodeStateStore, SortitionSnapshot};
-use crate::domain::ticket_sortition;
 use crate::messages::{
     CommitteeMembersResponse, E3CommitteeContainsRequest, E3CommitteeContainsResponse,
     GetCommitteeMembersRequest, WithSortitionTicket,
 };
 use crate::CiphernodeSelector;
-use crate::FinalizedCommitteeRetention;
+use crate::{AdmissionState, BondOwnerState, FinalizedCommitteeRetention};
 use actix::prelude::*;
 use anyhow::{anyhow, ensure, Result};
 use e3_data::{AutoPersist, Persistable, Repository};
-use e3_events::hlc::HlcTimestamp;
 use e3_events::{
-    prelude::*, trap, CiphernodeAdded, CiphernodeRemoved, Committee, CommitteeFinalized,
-    CommitteeMemberExcluded, CommitteeMemberExpelled, CommitteeRequested, ConfigurationUpdated,
-    E3Failed, E3RequestComplete, E3Requested, E3Stage, E3StageChanged, EType, EffectsEnabled,
-    EventContext, EventType, InterfoldEvent, OperatorActivationChanged, PlaintextOutputPublished,
-    Seed, Sequenced, TicketBalanceUpdated, TypedEvent,
+    prelude::*, trap, BondOwnerSetAt, CiphernodeAdded, CiphernodeRemoved, Committee,
+    CommitteeFinalized, CommitteeMemberExcluded, CommitteeMemberExpelled, CommitteeRequested,
+    ConfigurationUpdatedAt, E3Failed, E3RequestComplete, E3Requested, E3Stage, E3StageChanged,
+    EType, EffectsEnabled, EventContext, EventType, InterfoldEvent, OperatorActivationChangedAt,
+    PlaintextOutputPublished, Seed, Sequenced, TicketBalanceUpdatedAt, TicketGenerated, TypedEvent,
 };
 use e3_events::{BusHandle, E3id, InterfoldEventData};
 use e3_utils::{NotifySync, MAILBOX_LIMIT};
@@ -36,6 +34,9 @@ pub struct Sortition {
     backends: Persistable<HashMap<u64, SortitionBackend>>,
     /// Persistent map of `chain_id -> NodeStateStore`.
     node_state: Persistable<HashMap<u64, NodeStateStore>>,
+    /// Owner history is derived from chain events and persisted separately from node state.
+    bond_owners: Persistable<BondOwnerState>,
+    admission: Persistable<AdmissionState>,
     /// Event bus for error reporting and interfold event subscription.
     bus: BusHandle,
     /// Persistent map of finalized committees per E3
@@ -150,6 +151,8 @@ pub struct SortitionParams {
     pub backends: Persistable<HashMap<u64, SortitionBackend>>,
     /// Node state store per chain
     pub node_state: Persistable<HashMap<u64, NodeStateStore>>,
+    pub bond_owners: Persistable<BondOwnerState>,
+    pub admission: Persistable<AdmissionState>,
     /// Persistent map of finalized committees per E3
     pub finalized_committees: Persistable<HashMap<e3_events::E3id, Committee>>,
     /// Persisted delayed and pre-finalization inputs.
@@ -158,6 +161,8 @@ pub struct SortitionParams {
     pub ciphernode_selector: Addr<CiphernodeSelector>,
     /// Address for the current node
     pub address: String,
+    /// Existing ticket intents retain their ticket number and finalization rank after upgrade.
+    pub submitted_e3s: HashSet<E3id>,
 }
 
 /// Startup dependencies for the global sortition actor.
@@ -165,11 +170,14 @@ pub struct SortitionAttachParams<'a> {
     pub bus: &'a BusHandle,
     pub backends_store: Repository<HashMap<u64, SortitionBackend>>,
     pub node_state_store: Repository<HashMap<u64, NodeStateStore>>,
+    pub bond_owners_store: Repository<BondOwnerState>,
+    pub admission_store: Repository<AdmissionState>,
     pub recovery_store: Repository<SortitionRecoveryState>,
     pub committees_store: Repository<HashMap<e3_events::E3id, Committee>>,
     pub default_backend: SortitionBackend,
     pub ciphernode_selector: Addr<CiphernodeSelector>,
     pub address: &'a str,
+    pub submitted_e3s: HashSet<E3id>,
 }
 
 impl Sortition {
@@ -177,12 +185,14 @@ impl Sortition {
         Self {
             backends: params.backends,
             node_state: params.node_state,
+            bond_owners: params.bond_owners,
+            admission: params.admission,
             bus: params.bus,
             finalized_committees: params.finalized_committees,
             ciphernode_selector: params.ciphernode_selector,
             address: params.address,
             recovery: params.recovery,
-            processed_requests: HashSet::new(),
+            processed_requests: params.submitted_e3s,
             effects_enabled: false,
         }
     }
@@ -193,14 +203,25 @@ impl Sortition {
             bus,
             backends_store,
             node_state_store,
+            bond_owners_store,
+            admission_store,
             recovery_store,
             committees_store,
             default_backend,
             ciphernode_selector,
             address,
+            submitted_e3s,
         } = params;
         let mut backends = backends_store.load_or_default(HashMap::new()).await?;
         let node_state = node_state_store.load_or_default(HashMap::new()).await?;
+        let bond_owners = bond_owners_store
+            .load_or_default(BondOwnerState::default())
+            .await?;
+        bond_owners.try_get()?.validate()?;
+        let admission = admission_store
+            .load_or_default(AdmissionState::default())
+            .await?;
+        admission.try_get()?.validate()?;
         let recovery = recovery_store
             .load_or_default(SortitionRecoveryState::default())
             .await?;
@@ -219,10 +240,13 @@ impl Sortition {
             bus: bus.clone(),
             backends,
             node_state,
+            bond_owners,
+            admission,
             recovery,
             finalized_committees,
             ciphernode_selector,
             address: address.to_owned(),
+            submitted_e3s,
         })
         .start();
 
@@ -231,9 +255,13 @@ impl Sortition {
             &[
                 EventType::CiphernodeAdded,
                 EventType::CiphernodeRemoved,
-                EventType::TicketBalanceUpdated,
-                EventType::OperatorActivationChanged,
-                EventType::ConfigurationUpdated,
+                EventType::BondOwnerSetAt,
+                EventType::AdmissionUpdated,
+                EventType::EvmLogObserved,
+                EventType::TicketBalanceUpdatedAt,
+                EventType::TicketGenerated,
+                EventType::OperatorActivationChangedAt,
+                EventType::ConfigurationUpdatedAt,
                 EventType::CommitteeRequested,
                 EventType::PlaintextOutputPublished,
                 EventType::CommitteeFinalized,
@@ -308,34 +336,34 @@ impl Sortition {
         &self,
         e3_id: E3id,
         seed: Seed,
-        size: usize,
         chain_id: u64,
         snapshot: SortitionSnapshot,
+        candidate_owners: usize,
     ) -> Option<(u64, Option<u64>)> {
         let bus = self.bus.clone();
         let map = self.backends.get()?;
         let state_map = self.node_state.get()?;
         let backend = map.get(&chain_id)?;
         let state = state_map.get(&chain_id)?;
+        let owners = self.bond_owners.get()?;
+        let admission = self.admission.get()?;
+        let state = admission.filter(chain_id, snapshot.request_block.checked_sub(1)?, state);
 
         backend
-            .get_index(
+            .get_submission_index(
                 e3_id,
                 seed,
-                size,
                 self.address.clone(),
                 chain_id,
-                state,
+                &state,
                 snapshot,
+                candidate_owners,
+                &owners,
             )
             .unwrap_or_else(|err| {
                 bus.err(EType::Sortition, err);
                 None
             })
-    }
-
-    fn evm_timepoint(ec: &EventContext<Sequenced>) -> u64 {
-        HlcTimestamp::wall_time(ec.ts()) / 1_000_000_000
     }
 
     fn get_committee(&self, e3_id: &E3id) -> Option<Committee> {

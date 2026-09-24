@@ -337,7 +337,12 @@ impl TelemetryProjection {
                 state.registered.remove(&address);
                 state.active.remove(&address);
             }
-            InterfoldEventData::OperatorActivationChanged(event) => {
+            InterfoldEventData::OperatorActivationChanged(event)
+            | InterfoldEventData::OperatorActivationChangedAt(
+                e3_events::OperatorActivationChangedAt {
+                    activation: event, ..
+                },
+            ) => {
                 let state = self.chains.entry(event.chain_id).or_default();
                 let operator = normalize_address(&event.operator);
                 if event.active {
@@ -347,8 +352,10 @@ impl TelemetryProjection {
                 }
             }
             InterfoldEventData::TicketBalanceUpdated(event)
-                if normalize_address(&event.operator) == self.local_address =>
-            {
+            | InterfoldEventData::TicketBalanceUpdatedAt(e3_events::TicketBalanceUpdatedAt {
+                balance: event,
+                ..
+            }) if normalize_address(&event.operator) == self.local_address => {
                 self.chains
                     .entry(event.chain_id)
                     .or_default()
@@ -363,8 +370,9 @@ impl TelemetryProjection {
                     .ciphernode_bond = Some(event.new_bond.to_string());
             }
             InterfoldEventData::BondOwnerSet(event)
-                if normalize_address(&event.operator) == self.local_address =>
-            {
+            | InterfoldEventData::BondOwnerSetAt(e3_events::BondOwnerSetAt {
+                owner: event, ..
+            }) if normalize_address(&event.operator) == self.local_address => {
                 self.chains.entry(event.chain_id).or_default().bond_owner =
                     Some(event.bond_owner.clone());
             }
@@ -934,6 +942,36 @@ mod tests {
         assert_eq!(E3Phase::ALL[0], E3Phase::Request);
         assert_eq!(E3Phase::ALL[7], E3Phase::Settlement);
         assert!(E3Phase::DkgSetup < E3Phase::DkgShares);
+    }
+
+    #[test]
+    fn owner_projection_accepts_legacy_and_chain_time_events() {
+        let operator = "0x0000000000000000000000000000000000000001";
+        let mut projection = TelemetryProjection::new(operator);
+        let mut owner = e3_events::BondOwnerSet {
+            operator: operator.into(),
+            bond_owner: "0x0000000000000000000000000000000000000002".into(),
+            chain_id: 1,
+        };
+        projection.apply(replay_event(owner.clone().into(), 1, 10));
+        assert_eq!(
+            projection.overview().chains[0].bond_owner.as_deref(),
+            Some(owner.bond_owner.as_str())
+        );
+        owner.bond_owner = "0x0000000000000000000000000000000000000003".into();
+        projection.apply(replay_event(
+            e3_events::BondOwnerSetAt {
+                owner: owner.clone(),
+                timepoint: 11,
+            }
+            .into(),
+            2,
+            20,
+        ));
+        assert_eq!(
+            projection.overview().chains[0].bond_owner.as_deref(),
+            Some(owner.bond_owner.as_str())
+        );
     }
 
     #[test]

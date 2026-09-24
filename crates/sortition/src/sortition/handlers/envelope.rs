@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-4.0-only
+// SPDX-License-Identifier: LGPL-3.0-only
 
 //! Actix lifecycle and event-envelope routing.
 
@@ -20,19 +20,31 @@ impl Handler<InterfoldEvent> for Sortition {
             InterfoldEventData::E3Requested(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
+            InterfoldEventData::TicketGenerated(data) => {
+                self.notify_sync(ctx, TypedEvent::new(data, ec))
+            }
             InterfoldEventData::CiphernodeAdded(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
             InterfoldEventData::CiphernodeRemoved(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
-            InterfoldEventData::TicketBalanceUpdated(data) => {
+            InterfoldEventData::BondOwnerSetAt(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
-            InterfoldEventData::OperatorActivationChanged(data) => {
+            InterfoldEventData::AdmissionUpdated(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
-            InterfoldEventData::ConfigurationUpdated(data) => {
+            InterfoldEventData::EvmLogObserved(data) => {
+                self.notify_sync(ctx, TypedEvent::new(data, ec))
+            }
+            InterfoldEventData::TicketBalanceUpdatedAt(data) => {
+                self.notify_sync(ctx, TypedEvent::new(data, ec))
+            }
+            InterfoldEventData::OperatorActivationChangedAt(data) => {
+                self.notify_sync(ctx, TypedEvent::new(data, ec))
+            }
+            InterfoldEventData::ConfigurationUpdatedAt(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
             InterfoldEventData::CommitteeRequested(data) => {

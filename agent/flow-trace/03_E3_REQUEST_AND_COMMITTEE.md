@@ -24,6 +24,21 @@ claimable while an older request can still accept snapshot-weighted ticket submi
 A ticket that enters the current top-N opens a collateral obligation immediately. A better ticket
 releases the displaced candidate. Finalization retains the winners' obligations until the E3 ends.
 
+New requests admit at most one candidate per `bondOwnerAt(operator, requestBlock - 1)`. The best
+score for each owner competes for one of N seats. Equal scores use ascending operator address.
+Ownership changes after the snapshot do not change that request's groups. Both ownership assignment
+paths checkpoint the old and new owner through `BondingOwnershipLib`. The appended per-request
+policy is zero for pre-upgrade requests, which keep their original rule.
+`CommitteeBondOwnerCapEnabled` identifies new capped requests. This is an owner-address cap, not
+proof of independent human control.
+
+`eligibilityAt(operator, requestBlock - 1)` also applies the historical admission policy and the
+position's registration/owner-change time. A later cooldown change, admission pause, or owner change
+does not alter that E3's admission rule. Current `isActive` still checks collateral and release
+requirements without applying the new admission policy to an older request. Policy updates reset the
+conservative owner count; status refreshes count only positions admitted under the new policy. See
+[admission cooldown and pause](02_TOKENS_AND_ACTIVATION.md#admission-cooldown-and-pause).
+
 Governance configures the fee token, its expected decimals, and every raw-unit pricing term through
 `setFeeAssetConfig()`. The update is atomic, and the event contains the complete configuration. The
 owner can update only the nonzero flat randomness fee through `setRandomnessFlatFee()`. This narrow
@@ -165,6 +180,9 @@ Requester calls: Interfold.request({
 │   │   │  │         requestBlock - 1) and require               │
 │   │   │  │         threshold[1] <= activeOperatorCount         │
 │   │   │  │       → Count and submissions use one boundary      │
+│   │   │  │       → Require N counted active bond owners at T-1 │
+│   │   │  │         under the current eligibility policy       │
+│   │   │  │       → Failure rolls back fees before any VRF draw│
 │   │   │  │    4. committees[e3Id] = Committee {                │
 │   │   │  │         initialized: true,                          │
 │   │   │  │         seed: unresolved,                           │
@@ -289,7 +307,10 @@ InterfoldSolReader decodes IInterfold::E3Requested log
     ├─ Waits for CommitteeRequested if the delayed committee seed is not ready
     ├─ Loads the request timepoint and frozen ticket price from CommitteeRequested
     ├─ Uses the CommitteeRequested seed for ticket ranking
-    ├─ Calculates buffer = calculate_buffer_size(T, N)
+    ├─ Filters out positions not admitted at requestBlock - 1 before ranking owners
+    ├─ Shortlists N-plus-buffer distinct owners, retaining their operators as backups
+    ├─ Reads chain-time BondOwnerSetAt history at requestBlock - 1; gaps permit all operators
+    ├─ Existing recovered ticket intents keep their ticket number and finalization rank
     │
     ├─ ScoreBackend.get_committee():
     │   │
@@ -308,16 +329,16 @@ InterfoldSolReader decodes IInterfold::E3Requested log
     │   │
     │   ├─ Sort ALL nodes by their best score (ascending)
     │   │
-    │   └─ Select top N nodes (lowest scores win)
-    │       → Returns committee list with party indices
+    │   └─ Return all candidates in score order
+    │       → Submission ranks do not assign canonical DKG party IDs
     │
-    ├─ If THIS node is in the buffered winner set:
+    ├─ If THIS node is eligible:
     │   ├─ Check only this node's voluntary active-job limit
     │   ├─ Treat an existing reservation for this E3 as capacity during replay
     │   ├─ If capacity remains:
     │   │   ├─ Persist one provisional active-job reservation for this E3
     │   │   ├─ ticket_id = Some(TicketId::Score(best_ticket_number))
-    │   │   └─ party_index = Some(index_in_committee)
+    │   │   └─ party_index = Some(submission_rank)
     │   └─ If capacity is exhausted: ticket_id = None
     │
     ├─ If NOT selected: ticket_id = None
@@ -401,9 +422,12 @@ CiphernodeRegistrySolWriter receives TicketGenerated event
     │  │       scoreOf[msg.sender] = score                       │
     │  │                                                         │
     │  │   10. _insertTopN(e3Id, msg.sender, score):             │
-    │  │       Maintains array of N lowest-scoring nodes:        │
-    │  │       - If < N nodes: just insert                       │
-    │  │       - If N nodes: replace highest if new score lower  │
+    │  │       For capped requests:                             │
+    │  │       - Read owner at requestBlock - 1                 │
+    │  │       - Replace own candidate only with a better score │
+    │  │       - New owner: insert if fewer than N candidates   │
+    │  │       - Full: replace worst score, clear its owner map │
+    │  │       - Legacy requests keep uncapped top-N ranking    │
     │  │       - O(N) linear scan per insertion                  │
     │  │                                                         │
     │  │   11. Emit TicketSubmitted(e3Id, msg.sender, score)     │
@@ -528,6 +552,11 @@ slashable through the whole accusation window (worst-case lifecycle deadline plu
 `CommitteeAccusationWindowOpen(e3Id, submissionDeadline)` until then. After governance `closeE3`
 deletes the window snapshot, the deadline reads as 0 and release proceeds.
 
+Release also clears each retained owner's candidate entry using ownership at `requestBlock - 1`.
+This bounded loop covers at most N entries, including finalized committees and later owner
+transfers. It does not clear the accepted randomness context, seed, or another E3's candidates.
+Uncapped legacy requests skip the owner lookups.
+
 ### 3c. SortitionCommitteeFinalized Event Processing (Rust-Side)
 
 ```text
@@ -604,10 +633,36 @@ A ready committee must finalize at or before its absolute DKG deadline.
 2. **Snapshot-based eligibility**: The eligible count, operator eligibility, and ticket balances use
    `requestBlock - 1`. The ticket price is frozen in the request transaction. Rust and Solidity
    consume those same values, so later activation, collateral, or price changes cannot alter the
-   candidate set. All nodes compute the same buffered winner set. A selected node can decline its
-   own submission when its local active-job capacity is exhausted. Before ticket dispatch, the node
+   candidate set. All nodes rank the complete eligible set. A candidate can decline its own
+   submission when its local active-job capacity is exhausted. Before ticket dispatch, the node
    persists a provisional reservation. Committee finalization confirms or releases that reservation.
    Terminal failure or completion releases every remaining reservation.
+
+   For capped requests, admission requires N counted active snapshot owners. Every caller, including
+   CRISP and the SDK, passes this on-chain check before a VRF draw. Failure reverts all request
+   state and fee collection, including the flat fee. `committee:new` also checks distinct eligible
+   owners at a fixed block before fee approval. After upgrade, permissionless status refreshes must
+   populate the owner count. A timestamp from an older eligibility policy returns zero capacity.
+   After base eligibility changes, capacity also stays zero until every captured registration has
+   been checked or removed. Repeated checks and later registrations cannot satisfy another
+   operator's check. The request's `T-1` snapshot must include completion of that pass. These checks
+   do not reserve capacity or prove machine availability. DKG parameters and the canonical
+   operator-address order do not change. Owner history uses the separate v2 Rust repository.
+   `BondOwnerSetAt` retains block time in seconds before the event clock merges with local time.
+   Startup backfills missing chain projections through aggregate zero's snapshot cursor. Legacy
+   `BondOwnerSet` events and v1 owner snapshots cannot establish that boundary, so they are not
+   imported. Missing history permits the broader submission fallback. The structured warning
+   `sortition_owner_history_fallback` identifies the E3, chain, snapshot time, missing-owner count,
+   and eligible-operator count. Operators can monitor this event without failing the round or adding
+   RPC calls. Existing node and recovery payloads remain unchanged. Startup recovers local ticket
+   intents from the durable event log even when public-key aggregation is disabled; replay also
+   marks post-snapshot intents as processed.
+
+   Ticket, activation, and configuration checkpoints use source seconds and log order from their
+   `*At` payloads. The gateway captures these before the local clock merge. Snapshot replay and
+   offline repair preserve the same positions; older backfill cannot overwrite newer checkpoints,
+   including within one block. Schema 7 requires a controlled resync of schema-6 histories; old
+   event variants stay decodable but do not supply trusted source timestamps.
 
 3. **Runtime committee order**: both the on-chain registry and Rust runtime normalize the finalized
    committee into ascending address order before deriving `party_id`. This keeps party IDs,
