@@ -22,6 +22,13 @@ e3-bfv-client = { workspace = true }
 fhe = { workspace = true }
 e3-fhe-params = { workspace = true, features = ["abi-encoding"] }
 thiserror = { workspace = true }
+rayon = { version = "=1.10.0", optional = true }
+
+[features]
+default = []
+# Computes the per-input ciphertext commitments on a thread pool. Off by default because the
+# zkVM guest is single threaded: it takes this crate by git revision and must not pull in rayon.
+parallel = ["dep:rayon"]
 
 [dev-dependencies]
 fhe = { workspace = true }

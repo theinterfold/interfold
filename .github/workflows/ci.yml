@@ -248,6 +248,16 @@ jobs:
         if: matrix.suite == 'doc'
         run: cargo test --doc
 
+      # `parallel` is off by default, so the step above compiles the sequential fallback of
+      # `recompute_commitments` and the rayon body of that function ships untested. This step is
+      # what exercises it. Scoped with `-p` rather than `--all-features`: the feature is the one
+      # thing this crate needs enabled, and the zkVM guest is unaffected either way because it
+      # builds from `crates/support/methods/guest`, which takes this crate by git revision with
+      # default features.
+      - name: Run compute-provider Unit Tests with parallel batching
+        if: matrix.suite == 'lib'
+        run: 'cargo test -p e3-compute-provider --features parallel'
+
       - name: Cancel workflow on failure
         if: failure()
         run: gh run cancel ${{ github.run_id }}
