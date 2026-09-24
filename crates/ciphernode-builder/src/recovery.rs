@@ -117,12 +117,7 @@ pub(crate) async fn backfill_restart_state(
         .chain(sortition.pending_requests.keys())
         .chain(sortition.pending_expulsions.keys())
         .chain(sortition.pending_exclusions.keys())
-        .filter(|e3_id| {
-            matches!(
-                lifecycle.get(*e3_id),
-                Some(E3Stage::Complete | E3Stage::Failed)
-            )
-        })
+        .filter(|e3_id| lifecycle.get(*e3_id).is_some_and(E3Stage::is_terminal))
         .cloned()
         .collect::<HashSet<_>>();
     let mut sortition_pruned = !terminal_sortition_e3s.is_empty();
@@ -144,10 +139,7 @@ pub(crate) async fn backfill_restart_state(
         .filter(|e3_id| {
             selector.committees.contains_key(*e3_id)
                 || finalized_committees.contains_key(*e3_id)
-                || matches!(
-                    lifecycle.get(*e3_id),
-                    Some(E3Stage::Complete | E3Stage::Failed)
-                )
+                || lifecycle.get(*e3_id).is_some_and(E3Stage::is_terminal)
         })
         .cloned()
         .collect();
@@ -411,7 +403,7 @@ pub(crate) fn reconcile_committee_snapshots(
 ) -> Result<(bool, bool)> {
     let terminal = lifecycle
         .iter()
-        .filter(|(_, stage)| matches!(stage, E3Stage::Complete | E3Stage::Failed))
+        .filter(|(_, stage)| stage.is_terminal())
         .map(|(e3_id, _)| e3_id.clone())
         .collect::<HashSet<_>>();
     let selector_lengths = (
