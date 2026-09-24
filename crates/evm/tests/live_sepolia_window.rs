@@ -84,10 +84,7 @@ async fn live_sepolia_sync_covers_every_block_on_each_endpoint() {
                 Ok(logs) => {
                     for log in &logs {
                         if let Some(block) = log.block_number {
-                            assert!(
-                                covered.insert(block) || true,
-                                "coverage bookkeeping must not panic"
-                            );
+                            covered.insert(block);
                             assert!(
                                 block >= cursor && block <= end,
                                 "{name}: provider returned block {block} outside {cursor}..={end}"
@@ -122,10 +119,12 @@ async fn live_sepolia_sync_covers_every_block_on_each_endpoint() {
         // Every log that does is one eth_getBlockByNumber the sync no longer sends.
         let mut logs_seen = 0u32;
         let mut logs_with_timestamp = 0u32;
+        // Bounded by the learned width: a fixed 10,000-block sample would fail on the endpoints the
+        // scan above had to narrow for.
         let full = Filter::new()
             .address(address)
             .from_block(from)
-            .to_block(from + 9_999);
+            .to_block(from.saturating_add(width - 1).min(head));
         let sample = provider
             .provider()
             .get_logs(&full)

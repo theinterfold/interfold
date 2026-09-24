@@ -127,6 +127,64 @@ async fn test_backfill_partial_failure_preserves_progress() {
 }
 
 #[actix::test]
+async fn a_failure_after_narrowing_keeps_the_chunks_already_delivered() {
+    tokio::time::pause();
+
+    // Gap 101..=10100 is one 10,000 block range. The provider rejects it, the window narrows to
+    // 5,000, the first half is delivered, and the second half then exhausts its retries.
+    let mock = MockLogProvider::new(10_100);
+    mock.push_error("error code -32062: range too large");
+    mock.push_logs(vec![make_test_log(500)]);
+    for _ in 0..GET_LOGS_MAX_RETRIES {
+        mock.push_error("RPC error");
+    }
+
+    let (next, mut rx) = setup_collector();
+    let mut ts = TimestampTracker::new();
+    let mut window = LogWindow::new();
+    let filter = Filter::new();
+    let mut last_block = 100u64;
+
+    let result = backfill_to_head(
+        &mock,
+        &filter,
+        1,
+        &next,
+        &mut ts,
+        &mut last_block,
+        0,
+        &mut window,
+    )
+    .await;
+
+    assert!(result.is_err());
+    // The delivered half counts as progress. Resuming from 100 would deliver block 500 twice.
+    assert_eq!(last_block, 5_100);
+
+    mock.push_logs(vec![make_test_log(7_000)]);
+    backfill_to_head(
+        &mock,
+        &filter,
+        1,
+        &next,
+        &mut ts,
+        &mut last_block,
+        0,
+        &mut window,
+    )
+    .await
+    .expect("the retry covers only the undelivered half");
+    assert_eq!(last_block, 10_100);
+
+    tokio::task::yield_now().await;
+    let mut delivered = Vec::new();
+    while let Ok(InterfoldEvmEvent::Log(log)) = rx.try_recv() {
+        delivered.push(log.log.block_number);
+    }
+    assert_eq!(delivered, vec![Some(500), Some(7_000)]);
+}
+
+#[actix::test]
 async fn test_backfill_clamps_to_confirmed_head() {
     // Head at 200, but require 12 confirmations => only ingest up to 188.
     let mock = MockLogProvider::new(200);

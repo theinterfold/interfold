@@ -30,7 +30,6 @@ async fn timestamp_lookup_retries_transient_provider_lag() {
     mock.push_timestamp(1234);
     let mut tracker = TimestampTracker::new();
 
-
     assert_eq!(tracker.get(&mock, Some(100), None).await.unwrap(), 1234);
     assert_eq!(tracker.get(&mock, Some(100), None).await.unwrap(), 1234);
     assert_eq!(mock.timestamp_call_count(), 2);

@@ -312,8 +312,10 @@ pub(crate) async fn fetch_logs_chunked<L: LogProvider>(
 /// Handles blocks missed during reconnection or due to Geth's eth_subscribe
 /// silently ignoring the fromBlock parameter.
 ///
-/// `last_block` advances after each completed range, so a failure part-way keeps the progress that
-/// was already made and the next call resumes above it.
+/// `last_block` advances after each chunk the provider served and whose logs were dispatched, so a
+/// failure part-way keeps that progress and the next call resumes above it. This holds when a
+/// narrowing splits the range: progress follows the chunks actually served, not a range computed
+/// before the provider rejected it.
 pub(crate) async fn backfill_to_head<L: LogProvider>(
     provider: &L,
     filter: &Filter,
@@ -347,22 +349,20 @@ pub(crate) async fn backfill_to_head<L: LogProvider>(
 
     let mut cursor = gap_start;
     while cursor <= current_head {
-        // Read with the width that applies now. `fetch_logs_chunked` may narrow the window inside
-        // this range; it still covers the whole range before it returns, so the cursor advances by
-        // exactly what was read.
-        let chunk_end = window.end_for(cursor, current_head);
+        let (logs, chunk_end) =
+            fetch_chunk_adapting(provider, filter, cursor, current_head, chain_id, window).await?;
 
-        fetch_logs_chunked(
-            provider,
-            filter,
-            cursor,
-            chunk_end,
+        info!(
             chain_id,
-            next,
-            timestamp_tracker,
-            window,
-        )
-        .await?;
+            from = cursor,
+            to = chunk_end,
+            events = logs.len(),
+            "Backfilled log chunk"
+        );
+
+        for log in logs {
+            process_log(provider, log, chain_id, next, timestamp_tracker).await?;
+        }
 
         *last_block = chunk_end;
         cursor = chunk_end + 1;
