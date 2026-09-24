@@ -1013,7 +1013,7 @@ contract Interfold is
         emit RequestsPausedSet(paused);
     }
 
-    /// @notice Sets the release controller while the protocol is paused and drained.
+    /// @notice Sets the release controller subject to its activation checks.
     function setNodeReleaseRegistry(
         INodeReleaseRegistry newNodeReleaseRegistry
     ) external onlyOwner {

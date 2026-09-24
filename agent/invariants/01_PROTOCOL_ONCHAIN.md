@@ -157,12 +157,15 @@ every section.
   member's check. Deregistration settles the departing member. Rust uses source block seconds from
   `ConfigurationUpdatedAt` and `OperatorActivationChangedAt`, never the merged event clock. —
   `BondingRegistry.sol`; INDEX concern #24
-- **Mandatory release policy changes are paused, drained, and monotonic:** governance may raise the
-  required protocol version or node generation only while requests are paused, `activeE3Count == 0`,
-  and `unreleasedCommitteeCount == 0`. The change invalidates every cached operator status in O(1).
-  A node becomes active again only after it acknowledges compatible values. Never lower either
-  required counter; roll back code under a new release ID and a higher generation. —
-  `NodeReleaseRegistry.sol`; `flow-trace/07`
+- **Mandatory release policy changes are paused and monotonic:** every change requires paused
+  requests and `activeE3Count == 0`. A protocol-version change or initial policy also requires
+  `unreleasedCommitteeCount == 0`. A compatible generation increase can leave terminal committees
+  locked, but must preserve their evidence, appeals, and settlement duties. A replacement uses
+  `inheritReleasePolicy` to copy the current controller's requirements and check its bindings.
+  Activation rejects an intervening eligibility-policy change or controller activation. The change
+  invalidates every cached operator status in O(1). A node becomes active again only after it
+  acknowledges compatible values. Never lower either required counter; roll back code under a new
+  release ID and a higher generation. — `NodeReleaseRegistry.sol`; `flow-trace/07`
 - **Release acknowledgement is not remote attestation:** it prevents accidental stale software
   participation. Byzantine safety still depends on threshold cryptography, proof verification,
   slashing, and committee validation. — `flow-trace/07`
@@ -254,10 +257,11 @@ every section.
   registry, bonding, slashing, refund, treasury, and policy graph. Governance must pause requests
   and drain all E3s, committees, bans, and slash routes before it replaces a graph member. Replacing
   the registry, bonding registry, or refund manager also requires an empty operator generation. A
-  SlashingManager-only rotation can preserve operators when the registry and bonding proxies stay in
-  place, the replacement advertises the supported API, and one atomic transaction commits the
-  complete graph before it revokes the old manager. Old and new graphs never serve requests at the
-  same time. — `flow-trace/03`, `05`, `07`
+  release-controller-only replacement can preserve terminal committees under the release-policy
+  rules above; it does not replace their frozen dependencies. A SlashingManager-only rotation can
+  preserve operators when the registry and bonding proxies stay in place, the replacement advertises
+  the supported API, and one atomic transaction commits the complete graph before it revokes the old
+  manager. Old and new graphs never serve requests at the same time. — `flow-trace/03`, `05`, `07`
 - **Candidate and member collateral remains slashable:** committee requests assign their
   request-time registry in `BondingRegistry`. A top-N ticket submission locks its candidate, and a
   better ticket releases the displaced candidate. Finalization retains each winner's obligation.

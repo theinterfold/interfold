@@ -25,6 +25,9 @@ contract NodeReleaseRegistry is INodeReleaseRegistry, Ownable2Step {
     uint32 public requiredProtocolVersion;
     uint32 public requiredNodeGeneration;
 
+    uint256 private _inheritedEligibilityVersion;
+    bool private _hasInheritedPolicy;
+
     mapping(address operator => OperatorNodeRelease release)
         private _operatorNodeReleases;
 
@@ -42,6 +45,39 @@ contract NodeReleaseRegistry is INodeReleaseRegistry, Ownable2Step {
         ciphernodeRegistry = ciphernodeRegistry_;
     }
 
+    /// @inheritdoc INodeReleaseRegistry
+    function inheritReleasePolicy(
+        INodeReleaseRegistry previous
+    ) external onlyOwner {
+        if (requiredProtocolVersion != 0 || requiredNodeGeneration != 0) {
+            revert NodeReleasePolicyRegression();
+        }
+        INodeReleaseManager interfold = INodeReleaseManager(
+            address(ciphernodeRegistry.interfold())
+        );
+        if (
+            address(previous) == address(0) ||
+            address(previous) == address(this) ||
+            address(interfold.nodeReleaseRegistry()) != address(previous) ||
+            address(previous.bondingRegistry()) != address(bondingRegistry) ||
+            address(previous.ciphernodeRegistry()) !=
+            address(ciphernodeRegistry)
+        ) revert NodeReleaseBindingMismatch();
+        _assertPausedAndIdle();
+        uint32 protocolVersion = previous.requiredProtocolVersion();
+        uint32 nodeGeneration = previous.requiredNodeGeneration();
+        if (protocolVersion == 0 || nodeGeneration == 0) {
+            revert InvalidNodeRelease();
+        }
+
+        requiredProtocolVersion = protocolVersion;
+        requiredNodeGeneration = nodeGeneration;
+        _inheritedEligibilityVersion = bondingRegistry
+            .eligibilityConfigurationVersion();
+        _hasInheritedPolicy = true;
+        emit RequiredNodeReleaseUpdated(0, 0, protocolVersion, nodeGeneration);
+    }
+
     /// @notice Disabled so release administration always has a recoverable owner.
     function renounceOwnership() public pure override {
         revert RenounceOwnershipDisabled();
@@ -54,7 +90,6 @@ contract NodeReleaseRegistry is INodeReleaseRegistry, Ownable2Step {
         if (protocolVersion == 0 || nodeGeneration == 0) {
             revert InvalidNodeRelease();
         }
-        assertUpgradeWindow();
         uint32 previousProtocolVersion = requiredProtocolVersion;
         uint32 previousNodeGeneration = requiredNodeGeneration;
         if (
@@ -63,6 +98,11 @@ contract NodeReleaseRegistry is INodeReleaseRegistry, Ownable2Step {
             (protocolVersion == previousProtocolVersion &&
                 nodeGeneration == previousNodeGeneration)
         ) revert NodeReleasePolicyRegression();
+        if (protocolVersion == previousProtocolVersion) {
+            _assertPausedAndIdle();
+        } else {
+            assertUpgradeWindow();
+        }
         requiredProtocolVersion = protocolVersion;
         requiredNodeGeneration = nodeGeneration;
         if (previousProtocolVersion != 0) {
@@ -120,29 +160,49 @@ contract NodeReleaseRegistry is INodeReleaseRegistry, Ownable2Step {
     }
 
     function assertUpgradeWindow() public view {
-        if (!ciphernodeRegistry.interfold().requestsPaused()) {
-            revert NodeReleasePolicyRequiresPause();
-        }
-        uint256 activeE3s = ciphernodeRegistry.interfold().activeE3Count();
+        _assertPausedAndIdle();
         uint256 unreleasedCommittees = ciphernodeRegistry
             .unreleasedCommitteeCount();
-        if (activeE3s != 0 || unreleasedCommittees != 0) {
-            revert NodeReleasePolicyInUse(activeE3s, unreleasedCommittees);
+        if (unreleasedCommittees != 0) {
+            revert NodeReleasePolicyInUse(0, unreleasedCommittees);
         }
     }
 
     function activate() external {
-        assertUpgradeWindow();
-        address interfold = address(ciphernodeRegistry.interfold());
+        INodeReleaseManager interfold = INodeReleaseManager(
+            address(ciphernodeRegistry.interfold())
+        );
         if (
-            msg.sender != interfold ||
-            address(INodeReleaseManager(interfold).nodeReleaseRegistry()) !=
-            address(this) ||
-            address(INodeReleaseManager(interfold).bondingRegistry()) !=
-            address(bondingRegistry) ||
-            address(INodeReleaseManager(interfold).ciphernodeRegistry()) !=
+            msg.sender != address(interfold) ||
+            address(interfold.nodeReleaseRegistry()) != address(this) ||
+            address(interfold.bondingRegistry()) != address(bondingRegistry) ||
+            address(interfold.ciphernodeRegistry()) !=
             address(ciphernodeRegistry)
         ) revert NodeReleaseBindingMismatch();
+
+        if (_hasInheritedPolicy) {
+            // Another policy change or controller activation invalidates this replacement.
+            if (
+                bondingRegistry.eligibilityConfigurationVersion() !=
+                _inheritedEligibilityVersion
+            ) revert NodeReleaseActivationStale();
+            _assertPausedAndIdle();
+        } else {
+            assertUpgradeWindow();
+        }
         bondingRegistry.refreshOperatorStatus(address(0));
+    }
+
+    function _assertPausedAndIdle() private view {
+        if (!ciphernodeRegistry.interfold().requestsPaused()) {
+            revert NodeReleasePolicyRequiresPause();
+        }
+        uint256 activeE3s = ciphernodeRegistry.interfold().activeE3Count();
+        if (activeE3s != 0) {
+            revert NodeReleasePolicyInUse(
+                activeE3s,
+                ciphernodeRegistry.unreleasedCommitteeCount()
+            );
+        }
     }
 }

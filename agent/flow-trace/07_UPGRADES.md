@@ -32,9 +32,10 @@ path. A compatible contract-only change also needs no node policy change.
 ## Mandatory node-only release
 
 ```text
-increase node_generation and build release
+publish a compatible release with a higher node_generation, or use an existing such release
   -> pause new E3 requests
-  -> wait for activeE3Count == 0 and unreleasedCommitteeCount == 0
+  -> wait for activeE3Count == 0
+  -> verify that old committee evidence and settlement duties remain usable
   -> governance raises the required node generation
   -> BondingRegistry invalidates all active statuses in O(1)
   -> old nodes cannot become active or enter new committees
@@ -49,8 +50,41 @@ increase node_generation and build release
 If the bug affects network parsing, message meaning, or peer safety, use a protocol-version cutover
 instead. A node-generation cutover changes committee eligibility but does not isolate old peers.
 
-Prepare with `upgrade:node-release --action prepare --mandatory`. After operators restart, use
-`upgrade:node-release --action resume` to build the checked resume transaction.
+Terminal committees do not block a compatible generation increase. Their membership, collateral
+locks, accusation deadlines, appeals, and settlement dependencies do not change. A generation
+requirement is not an exact version requirement: releases with the same generation remain eligible.
+The contract cannot verify local data compatibility or which executable an operator runs.
+
+Prepare with `upgrade:node-release --action prepare --mandatory`. If terminal committees remain, the
+tool requires `--preserves-terminal-state` after verifying that the selected software preserves
+their evidence and settlement duties. This flag records an operator check, not a cryptographic
+proof. The tool simulates the live controller; a legacy controller still rejects an undrained
+cutover. After operators restart, use `upgrade:node-release --action resume --ciphernodes-restarted`
+to build the checked resume transaction. This requires a complete eligibility refresh, enough
+snapshot bond owners, and confirmation that the eligible nodes are online and mutually reachable.
+
+### Replace a legacy release controller
+
+`NodeReleaseRegistry` is not a proxy. A compatible replacement uses the existing node ABI and does
+not require a new binary. Keep the protocol version unchanged. With requests paused and no active
+E3s, use `upgrade:node-release --action deploy-controller` with the selected network and config.
+This action deploys a fresh controller and records its address; it does not activate the controller.
+Then use `--action prepare --mandatory --replacement <address>`, with `--preserves-terminal-state`
+when terminal committees remain.
+
+The resulting atomic governance batch:
+
+1. Calls `inheritReleasePolicy` on the replacement. This checks the expected current controller,
+   copies its nonzero requirements, and records the eligibility configuration version.
+2. Calls `Interfold.setNodeReleaseRegistry`. Activation checks the bindings, pause, active-E3 count,
+   and unchanged eligibility configuration version, then invalidates cached eligibility.
+3. Raises the generation if the selected release requires an increase. Neither counter can decrease.
+
+Do not split this batch. An intervening policy change or controller activation makes a prepared
+replacement stale. A replacement without inherited policy still requires a full drain. Existing
+release acknowledgements are not copied: nodes discover the current controller from Interfold on
+restart and acknowledge it with their existing binaries. The tooling also reads this live pointer.
+Do not reset node data for this controller replacement. Preserve the old controller as a record.
 
 ## Contract or protocol upgrade
 
@@ -184,18 +218,21 @@ exception that still counts as a fresh store, which is what the reset relies on.
 append-only operational log written by `LogCollector`, never read back, and a reset leaves it in
 place.
 
-A schema raise is an upgrade-window action. `assertUpgradeWindow` already requires paused requests,
-zero active E3s, and zero unreleased committees, so no in-flight round loses state to this. The
-command is not a general repair tool: a node in a live committee that resets loses its keyshare and
-fails that E3.
+A schema raise without a tested state migration still requires a full drain. The narrower generation
+guard does not authorize deleting old committee data. `assertUpgradeWindow` retains the paused,
+zero-active-E3, and zero-unreleased-committee checks for full-drain operations. A reset is not a
+general repair tool: a node in a live committee loses its keyshare, and a terminal committee can
+still need retained evidence during its accusation window.
 
 ## Failure and rollback
 
-The required counters never decrease. For a bad node-only release, pause, drain, build the previous
-code as a new release, and increase `node_generation`. For a contract or protocol rollback, restore
-the safe behavior under a new, higher `protocol_version` and do not lower `node_generation`; do not
-reuse the old version numbers. Raise the required counters before resuming. This makes the rollback
-explicit and prevents nodes from silently returning to an older vulnerable release.
+The required counters never decrease. For a bad compatible node-only release, pause, wait for active
+E3s to finish, preserve terminal obligations, and build the previous code under a higher
+`node_generation`. If retained state or protocol behavior is incompatible, require a full drain. For
+a contract or protocol rollback, restore the safe behavior under a new, higher `protocol_version`
+and do not lower `node_generation`; do not reuse the old version numbers. Raise the required
+counters before resuming. This makes the rollback explicit and prevents nodes from silently
+returning to an older vulnerable release.
 
 Release acknowledgement is operator self-attestation, not proof of the running executable. It
 prevents accidental mixed deployments. Threshold cryptography and on-chain verification remain the
@@ -204,5 +241,6 @@ controls against a malicious operator.
 The on-chain active count is also not a heartbeat. Before resuming, operations must confirm that the
 release-ready processes are online and can reach the upgraded bootstrap and one another. Check both
 the admitted connection count and the protocol-topic subscriber count on every node. A transport
-connection without the matching gossip subscription is not ready for committee work. A stuck E3 or
-unreleased committee delays a mandatory cutover until normal failure finalization drains it.
+connection without the matching gossip subscription is not ready for committee work. A stuck active
+E3 delays a mandatory cutover until normal completion or failure. Terminal unreleased committees
+block incompatible changes, not compatible generation increases that preserve their obligations.

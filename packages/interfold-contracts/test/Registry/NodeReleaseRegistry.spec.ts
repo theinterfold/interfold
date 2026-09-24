@@ -5,13 +5,21 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 import { expect } from "chai";
 
+import { NodeReleaseRegistry__factory as NodeReleaseRegistryFactory } from "../../types";
 import { deployInterfoldSystem, ethers, networkHelpers } from "../fixtures";
 
 const { loadFixture } = networkHelpers;
 
 describe("NodeReleaseRegistry", function () {
   async function setup() {
-    return deployInterfoldSystem({ setupOperators: 1 });
+    const system = await deployInterfoldSystem({ setupOperators: 1 });
+    const deployReplacement = async () =>
+      new NodeReleaseRegistryFactory(system.owner).deploy(
+        await system.owner.getAddress(),
+        await system.bondingRegistry.getAddress(),
+        await system.ciphernodeRegistry.getAddress(),
+      );
+    return { ...system, deployReplacement };
   }
 
   it("admits every operator that acknowledges the required release", async function () {
@@ -63,21 +71,28 @@ describe("NodeReleaseRegistry", function () {
     ).to.equal(patchRelease);
   });
 
-  it("does not invalidate eligibility twice during initial setup", async function () {
-    const { interfold, bondingRegistry, ciphernodeRegistry, owner } =
-      await deployInterfoldSystem({ setupOperators: 0 });
-    const replacement = await ethers.deployContract("NodeReleaseRegistry", [
-      await owner.getAddress(),
-      await bondingRegistry.getAddress(),
-      await ciphernodeRegistry.getAddress(),
-    ]);
+  it("inherits the current policy when replacing its controller", async function () {
+    const {
+      interfold,
+      bondingRegistry,
+      nodeReleaseRegistry,
+      deployReplacement,
+    } = await loadFixture(setup);
+    const replacement = await deployReplacement();
 
     await interfold.setRequestsPaused(true);
+    await replacement.inheritReleasePolicy(
+      await nodeReleaseRegistry.getAddress(),
+    );
     await interfold.setNodeReleaseRegistry(await replacement.getAddress());
     const versionAfterActivation =
       await bondingRegistry.eligibilityConfigurationVersion();
 
-    await replacement.setRequiredNodeRelease(1, 1);
+    expect(await replacement.requiredProtocolVersion()).to.equal(1);
+    expect(await replacement.requiredNodeGeneration()).to.equal(1);
+    await expect(
+      replacement.setRequiredNodeRelease(1, 1),
+    ).to.be.revertedWithCustomError(replacement, "NodeReleasePolicyRegression");
 
     expect(await bondingRegistry.eligibilityConfigurationVersion()).to.equal(
       versionAfterActivation,
@@ -176,13 +191,94 @@ describe("NodeReleaseRegistry", function () {
       await bondingRegistry.getAddress(),
       await wrongRegistry.getAddress(),
     ]);
-
     await interfold.setRequestsPaused(true);
     await expect(
       interfold.setNodeReleaseRegistry(await wrongController.getAddress()),
     ).to.be.revertedWithCustomError(
       wrongController,
       "NodeReleaseBindingMismatch",
+    );
+  });
+
+  it("rejects a replacement prepared before another policy update", async function () {
+    const { interfold, nodeReleaseRegistry, deployReplacement } =
+      await loadFixture(setup);
+    const replacement = await deployReplacement();
+    await interfold.setRequestsPaused(true);
+    await replacement.inheritReleasePolicy(
+      await nodeReleaseRegistry.getAddress(),
+    );
+    await nodeReleaseRegistry.setRequiredNodeRelease(1, 2);
+
+    await expect(
+      interfold.setNodeReleaseRegistry(await replacement.getAddress()),
+    ).to.be.revertedWithCustomError(replacement, "NodeReleaseActivationStale");
+    expect(await interfold.nodeReleaseRegistry()).to.equal(
+      await nodeReleaseRegistry.getAddress(),
+    );
+    expect(await nodeReleaseRegistry.requiredNodeGeneration()).to.equal(2);
+  });
+
+  it("rejects a competing replacement after another controller activates", async function () {
+    const { interfold, nodeReleaseRegistry, deployReplacement } =
+      await loadFixture(setup);
+    const first = await deployReplacement();
+    const stale = await deployReplacement();
+    await interfold.setRequestsPaused(true);
+    await first.inheritReleasePolicy(await nodeReleaseRegistry.getAddress());
+    await stale.inheritReleasePolicy(await nodeReleaseRegistry.getAddress());
+    await interfold.setNodeReleaseRegistry(await first.getAddress());
+
+    await expect(
+      interfold.setNodeReleaseRegistry(await stale.getAddress()),
+    ).to.be.revertedWithCustomError(stale, "NodeReleaseActivationStale");
+    expect(await interfold.nodeReleaseRegistry()).to.equal(
+      await first.getAddress(),
+    );
+  });
+
+  it("keeps policy updates and activation restricted to their authorities", async function () {
+    const { nodeReleaseRegistry, operator1 } = await loadFixture(setup);
+    await expect(
+      nodeReleaseRegistry.connect(operator1!).setRequiredNodeRelease(1, 2),
+    ).to.be.revertedWithCustomError(
+      nodeReleaseRegistry,
+      "OwnableUnauthorizedAccount",
+    );
+    await expect(nodeReleaseRegistry.activate()).to.be.revertedWithCustomError(
+      nodeReleaseRegistry,
+      "NodeReleaseBindingMismatch",
+    );
+  });
+
+  it("requires the current controller and owner when inheriting a policy", async function () {
+    const { interfold, nodeReleaseRegistry, operator1, deployReplacement } =
+      await loadFixture(setup);
+    const replacement = await deployReplacement();
+    await interfold.setRequestsPaused(true);
+    await expect(
+      replacement.inheritReleasePolicy(ethers.ZeroAddress),
+    ).to.be.revertedWithCustomError(replacement, "NodeReleaseBindingMismatch");
+    await expect(
+      replacement.inheritReleasePolicy(await replacement.getAddress()),
+    ).to.be.revertedWithCustomError(replacement, "NodeReleaseBindingMismatch");
+    await expect(
+      replacement
+        .connect(operator1!)
+        .inheritReleasePolicy(await nodeReleaseRegistry.getAddress()),
+    ).to.be.revertedWithCustomError(replacement, "OwnableUnauthorizedAccount");
+    await replacement.inheritReleasePolicy(
+      await nodeReleaseRegistry.getAddress(),
+    );
+    await expect(
+      replacement.inheritReleasePolicy(await nodeReleaseRegistry.getAddress()),
+    ).to.be.revertedWithCustomError(replacement, "NodeReleasePolicyRegression");
+    await interfold.setNodeReleaseRegistry(await replacement.getAddress());
+    await expect(
+      nodeReleaseRegistry.setRequiredNodeRelease(1, 2),
+    ).to.be.revertedWithCustomError(
+      nodeReleaseRegistry,
+      "OnlyNodeReleaseRegistry",
     );
   });
 

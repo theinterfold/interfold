@@ -26,6 +26,7 @@ interface INodeReleaseRegistry {
         uint256 unreleasedCommittees
     );
     error NodeReleaseBindingMismatch();
+    error NodeReleaseActivationStale();
     error OnlyNodeReleaseRegistry();
     error RenounceOwnershipDisabled();
 
@@ -41,6 +42,10 @@ interface INodeReleaseRegistry {
         uint32 protocolVersion,
         uint32 nodeGeneration
     );
+
+    /// @notice Copies the current controller's policy before a compatible replacement.
+    /// @dev Call this, Interfold.setNodeReleaseRegistry, and any generation increase in one batch.
+    function inheritReleasePolicy(INodeReleaseRegistry previous) external;
 
     /// @notice Sets the minimum compatibility values for new work.
     function setRequiredNodeRelease(
@@ -69,7 +74,7 @@ interface INodeReleaseRegistry {
 
     function ciphernodeRegistry() external view returns (ICiphernodeRegistry);
 
-    /// @notice Reverts unless node eligibility can change without affecting an active E3.
+    /// @notice Requires paused requests, no active E3s, and no unreleased committees.
     function assertUpgradeWindow() external view;
 
     /// @notice Verifies its protocol binding and invalidates cached node eligibility.
