@@ -15,6 +15,9 @@ every section.
 - **Generated verifiers must match the built VKs** — pre-push checks the canonical pair. CI hydrates
   and compares every supported preset and committee pair. A drift means a deployed verifier accepts
   a different circuit from the tree.
+- Circuit artifact pulls select the newest first-parent commit whose `SOURCE_HASH` matches the
+  current source tree. A different build at the branch tip must not replace it. Release verification
+  still checks the source hash, every required pair, and each pair's build stamp.
 - **`Elf.sol` is never committed.** `crates/support/methods/build.rs` writes it with a machine-local
   guest ELF path, so it is generated per checkout and `.gitignore`d.
 - **A release publishes a complete provenance manifest** — `pnpm provenance:manifest`. It ties
