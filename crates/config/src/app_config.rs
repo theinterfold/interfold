@@ -348,11 +348,14 @@ impl AppConfig {
 
     /// Get the peers list
     pub fn peers(&self) -> Vec<String> {
-        let config_peers = self.node_def().peers.clone();
-        let cli_peers = self.peers.clone();
         self.network
-            .resolve_peers(combine_unique(&config_peers, &cli_peers))
+            .resolve_peers(self.configured_peers())
             .expect("active node peers were validated during configuration load")
+    }
+
+    /// Return explicit configuration and CLI peers without the profile defaults.
+    pub fn configured_peers(&self) -> Vec<String> {
+        combine_unique(&self.node_def().peers, &self.peers)
     }
 
     /// Get the immutable P2P network profile for this node.
@@ -685,6 +688,22 @@ nodes:
                 PathBuf::from("/myconfig/interfold/ag/key")
             );
         };
+        Ok(())
+    }
+
+    #[test]
+    fn configured_peers_exclude_profile_defaults_and_include_cli_peers() -> Result<()> {
+        let unscoped: UnscopedAppConfig =
+            serde_yaml::from_str("node:\n  network: mainnet\nchains: []\n")?;
+        let path = PathBuf::from("/config-test");
+        let mut config = unscoped.into_scoped_with_defaults("_default", &path, &path, &path)?;
+        assert!(config.configured_peers().is_empty());
+        assert!(!config.peers().is_empty());
+
+        let peer = "/dnsaddr/peer.example.org".to_string();
+        config.add_peers(vec![peer.clone(), peer.clone()])?;
+        assert_eq!(config.configured_peers(), vec![peer.clone()]);
+        assert_eq!(config.peers(), vec![peer]);
         Ok(())
     }
 

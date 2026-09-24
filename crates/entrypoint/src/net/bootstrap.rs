@@ -39,7 +39,12 @@ pub async fn create(config: &AppConfig) -> Result<Libp2pNetInterface> {
     repositories.store.shutdown().await?;
     let keypair = keypair?;
     info!(peer_id = %keypair.peer_id(), "Starting bootstrap-only networking; committee participation is disabled");
-    Libp2pNetInterface::new_bootstrap(keypair, config.peers(), Some(config.quic_port()), network)
+    Libp2pNetInterface::new_bootstrap(
+        keypair,
+        config.configured_peers(),
+        Some(config.quic_port()),
+        network,
+    )
 }
 
 #[cfg(test)]
