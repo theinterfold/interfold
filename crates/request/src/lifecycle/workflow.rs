@@ -58,10 +58,6 @@ fn rank(stage: &E3Stage) -> u8 {
     }
 }
 
-fn is_terminal(stage: &E3Stage) -> bool {
-    matches!(stage, E3Stage::Complete | E3Stage::Failed)
-}
-
 /// Maps an event to the `(e3_id, stage)` it implies, if any.
 fn implied(event: &InterfoldEventData) -> Option<(E3id, E3Stage)> {
     match event {

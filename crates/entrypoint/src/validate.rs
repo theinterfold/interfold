@@ -589,9 +589,7 @@ fn registered_node_states_from_events(
                         "validator event replay",
                     );
                 }
-                InterfoldEventData::E3StageChanged(data)
-                    if matches!(data.new_stage, E3Stage::Complete | E3Stage::Failed) =>
-                {
+                InterfoldEventData::E3StageChanged(data) if data.new_state.is_terminal() => {
                     NodeRegistry::release_committee_jobs(
                         &mut node_states,
                         &data.e3_id,
@@ -934,9 +932,7 @@ fn collect_terminal_keys(events: &[InterfoldEvent], out: &mut HashSet<String>) {
             InterfoldEventData::E3RequestComplete(d) => {
                 out.insert(committee_key(&d.e3_id));
             }
-            InterfoldEventData::E3StageChanged(d)
-                if matches!(d.new_stage, E3Stage::Complete | E3Stage::Failed) =>
-            {
+            InterfoldEventData::E3StageChanged(d) if d.new_stage.is_terminal() => {
                 out.insert(committee_key(&d.e3_id));
             }
             _ => {}

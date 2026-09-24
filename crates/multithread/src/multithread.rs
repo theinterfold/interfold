@@ -320,9 +320,7 @@ impl Handler<InterfoldEvent> for Multithread {
             InterfoldEventData::E3RequestComplete(data) => {
                 self.task_pool.cancel_group(&self.task_group(&data.e3_id))
             }
-            InterfoldEventData::E3StageChanged(data)
-                if matches!(data.new_stage, E3Stage::Complete | E3Stage::Failed) =>
-            {
+            InterfoldEventData::E3StageChanged(data) if data.new_stage.is_terminal() => {
                 self.task_pool.cancel_group(&self.task_group(&data.e3_id))
             }
             _ => {}
