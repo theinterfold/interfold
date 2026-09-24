@@ -375,6 +375,16 @@ impl Libp2pNetInterface {
         udp_port: Option<u16>,
         network: NetworkPolicy,
     ) -> Result<Self> {
+        let peer_id = id.peer_id();
+        let peers = peers
+            .into_iter()
+            .filter(|address| {
+                address
+                    .parse::<Multiaddr>()
+                    .map(|address| address.iter().last() != Some(Protocol::P2p(peer_id)))
+                    .unwrap_or(true)
+            })
+            .collect();
         Self::with_role(id, peers, udp_port, network, 1, NetworkRole::Bootstrap)
     }
 
@@ -1808,6 +1818,24 @@ mod tests {
     use libp2p::{Multiaddr, PeerId};
     use std::collections::HashSet;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn bootstrap_excludes_its_own_pinned_identity_from_configured_peers() -> anyhow::Result<()> {
+        use super::*;
+
+        let identity = Libp2pKeypair::generate();
+        let own_address = format!("/ip4/127.0.0.1/udp/9501/quic-v1/p2p/{}", identity.peer_id());
+        let other_address = format!("/ip4/127.0.0.1/udp/9502/quic-v1/p2p/{}", PeerId::random());
+        let unpinned_address = "/ip4/127.0.0.1/udp/9503/quic-v1".to_string();
+        let interface = Libp2pNetInterface::new_bootstrap(
+            identity,
+            vec![own_address, other_address.clone(), unpinned_address.clone()],
+            None,
+            NetworkPolicy::local_unrestricted(),
+        )?;
+        assert_eq!(interface.peers, [other_address, unpinned_address]);
+        Ok(())
+    }
 
     #[test]
     fn bootstrap_keeps_wire_protocols_and_bounds_the_document_cache() -> anyhow::Result<()> {
