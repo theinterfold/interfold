@@ -8,6 +8,7 @@ use crate::adapters::log_fetcher::{
     backfill_to_head, fetch_logs_chunked, process_live_log, TimestampTracker,
 };
 use crate::domain::backoff::Backoff;
+use crate::domain::log_window::LogWindow;
 use crate::helpers::{EthProvider, ProviderFactory};
 use crate::messages::HistoricalSyncComplete;
 use crate::messages::{EvmEventProcessor, InterfoldEvmEvent};

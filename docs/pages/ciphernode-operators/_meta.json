@@ -5,6 +5,9 @@
   "running": {
     "title": "Running a Ciphernode"
   },
+  "rpc-endpoints": {
+    "title": "RPC Endpoints"
+  },
   "upgrades": {
     "title": "Ciphernode Upgrades"
   },

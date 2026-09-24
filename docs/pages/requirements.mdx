@@ -57,6 +57,12 @@ proofs. The workload is CPU and memory intensive, especially during DKG and proo
   UDP inbound on this port.
 - **WebSocket RPC**: The node subscribes to on-chain events via WebSocket. An HTTP-only RPC endpoint
   will fall back to polling and may miss events. Always use a `wss://` URL.
+- **RPC log history**: The first sync replays every event from the contract deploy block, so the
+  endpoint must still serve those logs. An endpoint that has dropped them answers with an empty
+  result and no error, and the node then syncs successfully while missing events. Historical _state_
+  is a separate capability and the node does not need it, so test log retention directly rather than
+  with `eth_getCode`. See [RPC Endpoints](/ciphernode-operators/rpc-endpoints) for the check to run
+  before you start a node.
 - **NAT**: If behind NAT, configure port forwarding for the QUIC UDP port.
 
 ### Disk Usage
