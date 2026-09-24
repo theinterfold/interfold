@@ -458,3 +458,7 @@ echo "=================================================="
 echo "Benchmark complete!"
 echo "Results saved to: $OUTPUT_JSON"
 echo "=================================================="
+
+if [ "$VERIFY_SUCCESS" != "true" ]; then
+    exit 1
+fi

@@ -1,8 +1,8 @@
 # Interfold ZK Circuit Benchmarks
 
-**Generated:** 2026-09-23 19:22:29 UTC
+**Generated:** 2026-09-23 20:28:06 UTC
 
-**Git Branch:** `fix/fhe_new_extended` **Git Commit:** `99fae96fc524a67fb3a86b124873361b10146920`
+**Git Branch:** `fix/fhe_new_extended` **Git Commit:** `e63fc5ed06939be67af5a1a25a79c76acc482ccb`
 
 **Committee Size:** `H=2`, `N=3`, `T=1`
 
@@ -73,14 +73,14 @@ Single-circuit `bb prove` on the benchmark oracle witness (not the integration a
 | -------------------- | ----------- | --------- | ----------- | ----------- |
 | C0                   | 6810        | 0.11      | 12.98       | 14.31       |
 | C1                   | 55145       | 0.30      | 12.74       | 14.31       |
-| C2a                  | 27813       | 0.19      | 11.63       | 14.31       |
+| C2a                  | 41207       | 0.24      | 12.71       | 14.31       |
 | C2b                  | 81029       | 0.36      | 12.59       | 14.31       |
 | C3a                  | 116879      | 0.49      | 13.23       | 14.31       |
 | C3b                  | 116879      | 0.49      | 13.23       | 14.31       |
 | C4a                  | 62713       | 0.30      | 12.98       | 14.31       |
 | C4b                  | 62713       | 0.30      | 12.98       | 14.31       |
 | C5                   | 21464       | 0.17      | 12.79       | 14.31       |
-| user_data_encryption | 53158       | 0.29      | 13.34       | 14.31       |
+| user_data_encryption | 99391       | 0.55      | 26.80       | 28.62       |
 | C6                   | 86892       | 0.40      | 13.23       | 14.31       |
 | C7                   | 89602       | 0.38      | 13.87       | 14.31       |
 
@@ -89,16 +89,16 @@ Single-circuit `bb prove` on the benchmark oracle witness (not the integration a
 | Artifact | Proof size | Public input size | Verify gas | Calldata gas | Total gas |
 | -------- | ---------- | ----------------- | ---------- | ------------ | --------- |
 | Π_DKG    | 10.44 KiB  | 0.38 KiB          | 3125145    | 173516       | 3298661   |
-| Π_user   | 14.31 KiB  | 0.12 KiB          | 3034178    | 200568       | 3234746   |
+| Π_user   | N/A        | N/A               | 3034178    | N/A          | N/A       |
 | Π_dec    | 10.44 KiB  | 3.56 KiB          | 3716640    | 186920       | 3903560   |
 
 ### Role / Phase / Activity
 
 | Role            | Phase | Activity                                  | Metric         | Duration | Proof size | Bandwidth  |
 | --------------- | ----- | ----------------------------------------- | -------------- | -------- | ---------- | ---------- |
-| Each ciphernode | P1    | one-time DKG participation (test harness) | wall_clock     | 105.22 s | 114.50 KiB | 115.69 KiB |
+| Each ciphernode | P1    | one-time DKG participation (test harness) | wall_clock     | 105.22 s | 114.50 KiB | 115.56 KiB |
 | Aggregator      | P2    | C5 + Π_DKG fold (aggregator span)         | wall_clock     | 25.28 s  | 10.44 KiB  | 10.81 KiB  |
-| User            | P3    | per user input                            | isolated_nargo | 0.55 s   | 14.31 KiB  | 14.44 KiB  |
+| User            | P3    | per user input                            | isolated_nargo | 0.55 s   | 28.62 KiB  | 28.84 KiB  |
 | Each ciphernode | P4    | per computation output (C6)               | isolated_nargo | 0.40 s   | 14.31 KiB  | 14.50 KiB  |
 | Aggregator      | P4    | C7 + Π_dec fold (full publish→aggregate)  | wall_clock     | 51.35 s  | 10.44 KiB  | 14.00 KiB  |
 | Aggregator      | P4    | C7 + fold only (pending→plaintext span)   | wall_clock     | 43.67 s  | 10.44 KiB  | 14.00 KiB  |

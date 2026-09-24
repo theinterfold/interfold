@@ -306,7 +306,7 @@ for CIRCUIT in $RUN_CIRCUITS; do
         # Run benchmark
         BENCHMARK_ARGS=("$CIRCUIT_PATH" "$ORACLE" "$OUTPUT_FILE" "$MODE")
         if [ "$BENCH_COMPILE" != true ]; then
-            if [ "$SKIP_COMPILE" = true ] || [ "$PRESET_ARTIFACTS_READY" = true ]; then
+            if [ "$SKIP_COMPILE" = true ] || { [ "$PRESET_ARTIFACTS_READY" = true ] && [ "$CIRCUIT" != "config" ]; }; then
                 BENCHMARK_ARGS+=("--skip-compile")
             fi
         fi

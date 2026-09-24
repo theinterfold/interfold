@@ -77,7 +77,7 @@ find_json_by_path_fragment() {
         [ -f "$json_file" ] || continue
         local circuit_path
         circuit_path=$(jq -r '.circuit_path // ""' "$json_file")
-        if [[ "$circuit_path" == *"$frag"* ]]; then
+        if [[ "$circuit_path" == *"$frag" ]]; then
             echo "$json_file"
             return
         fi
@@ -603,6 +603,9 @@ Single-circuit \`bb prove\` on the benchmark oracle witness (not the integration
 |---------|-------------|-----------|-------------|------------|
 EOF
 
+if [ -n "$(find_json_by_path_fragment '/config')" ]; then
+    emit_circuit_row "Secure config" "/config"
+fi
 emit_circuit_row "C0" "/dkg/pk"
 emit_circuit_row "C1" "/threshold/pk_generation"
 emit_circuit_row "C2a" "/dkg/sk_share_computation"

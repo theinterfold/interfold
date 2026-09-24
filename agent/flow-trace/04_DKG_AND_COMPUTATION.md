@@ -158,7 +158,9 @@ For `secure-8192`, the threshold key uses plaintext modulus 1,000,000 and three 
 uses plaintext modulus 288230376164294657 and two 61-bit primes (`0x1000000000024001`,
 `0x1000000000054001`). Both use ring degree 8192 and statistical security parameter 45. The
 threshold encryption error variance is 17723039943798878305460955570711717478400. These values bind
-the C1-C7 witness dimensions and the on-chain BFV parameter hash.
+the C1-C7 witness dimensions and the on-chain BFV parameter hash. C7 uses
+`Q_INVERSE_MOD_T = 663169`, the inverse of the product of the three threshold primes modulo
+1,000,000.
 
 ```
 ThresholdKeyshare receives AllEncryptionKeysCollected

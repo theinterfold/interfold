@@ -174,6 +174,7 @@ check_bfv_preset() {
   local ts_degree ts_plaintext ts_moduli ts_error
   local rust_degree rust_plaintext rust_moduli rust_error
   local noir_degree noir_plaintext noir_moduli noir_error_bound expected_error_bound
+  local noir_q_mod_t noir_q_inverse_mod_t expected_q_mod_t expected_q_inverse_mod_t
 
   ts_block=$(awk -v marker="  ${ts_name}: {" '
     $0 == marker { found = 1 }
@@ -214,12 +215,32 @@ check_bfv_preset() {
   noir_plaintext=$(grep -E '^pub global PLAINTEXT_MODULUS: Field = [0-9]+;' "$noir_file" | sed -E 's/.*= ([0-9]+);/\1/')
   noir_moduli=$(grep -E '^pub global QIS:' "$noir_file" | sed -E 's/.*= \[([^]]+)\];/\1/' | tr -d ' ')
   noir_error_bound=$(grep -E '^pub global PK_GENERATION_B_ENC: Field = [0-9]+;' "$noir_file" | sed -E 's/.*= ([0-9]+);/\1/')
+  noir_q_mod_t=$(grep -E '^pub global Q_MOD_T: Field = [0-9]+;' "$noir_file" | sed -E 's/.*= ([0-9]+);/\1/')
+  noir_q_inverse_mod_t=$(grep -E '^pub global Q_INVERSE_MOD_T: Field = [0-9]+;' "$noir_file" | sed -E 's/.*= ([0-9]+);/\1/')
   expected_error_bound=$(error_bound_for_variance "$ts_error")
 
   if [[ "$ts_degree" != "$noir_degree" || "$ts_plaintext" != "$noir_plaintext" || \
         "$(hex_csv_to_decimal "$ts_moduli")" != "$noir_moduli" || \
         "$expected_error_bound" != "$noir_error_bound" ]]; then
     fail "drift: ${label} BFV parameters differ between $PROTOCOL_CONSTANTS_TS and $noir_file"
+  fi
+
+  # C7 decoding uses the inverse of the product of the threshold CRT primes modulo t.
+  IFS=, read -r expected_q_mod_t expected_q_inverse_mod_t < <(node -e '
+const moduli = process.argv[1].split(",").map(BigInt);
+const t = BigInt(process.argv[2]);
+const qModT = moduli.reduce((product, modulus) => product * modulus, 1n) % t;
+let [a, b, x, y] = [qModT, t, 1n, 0n];
+while (b !== 0n) {
+  const quotient = a / b;
+  [a, b] = [b, a - quotient * b];
+  [x, y] = [y, x - quotient * y];
+}
+if (a !== 1n) process.exit(1);
+process.stdout.write(`${qModT},${(x % t + t) % t}\n`);
+' "$noir_moduli" "$noir_plaintext")
+  if [[ "$noir_q_mod_t" != "$expected_q_mod_t" || "$noir_q_inverse_mod_t" != "$expected_q_inverse_mod_t" ]]; then
+    fail "drift: ${label} C7 Q_MOD_T/Q_INVERSE_MOD_T in $noir_file must be $expected_q_mod_t/$expected_q_inverse_mod_t"
   fi
 }
 
