@@ -1401,7 +1401,7 @@ library ActiveCryptoConfig {
           source = Buffer.from(
             source
               .toString()
-              .replace(/^pub global ((?:PK_GENERATION|SHARE_COMPUTATION)_[A-Z0-9_]+):[^;]*;/gm, 'pub global $1:<generated>;'),
+              .replace(/^pub global ((?:PK_GENERATION|SHARE_COMPUTATION)_[A-Z0-9_]+):[\s\S]*?;(?=\r?\n|$)/gm, 'pub global $1:<generated>;'),
           )
         }
         hash.update(source)

@@ -61,17 +61,26 @@ test('pair source hash ignores generated bounds but tracks other Noir config', (
   mkdirSync(configDir, { recursive: true })
   const thresholdPath = join(configDir, 'threshold.nr')
   const dkgPath = join(configDir, 'dkg.nr')
-  writeFileSync(thresholdPath, 'pub global PK_GENERATION_E_SM_BOUND: Field = 10;\npub global L: u32 = 2;\n')
+  writeFileSync(
+    thresholdPath,
+    'pub global PK_GENERATION_E_SM_BOUND: Field = 10;\npub global PK_GENERATION_R2_BOUNDS: [Field; L] =\n    [11, 12];\npub global L: u32 = 2;\n',
+  )
   writeFileSync(dkgPath, 'pub global SHARE_COMPUTATION_E_SM_BIT_SECRET: u32 = 28;\n')
 
   try {
     const builder = new NoirCircuitBuilder(dir, { preset: 'insecure-512', committee: 'micro' })
     const originalHash = builder.computeSourceHash('insecure-512', 'micro')
-    writeFileSync(thresholdPath, 'pub global PK_GENERATION_E_SM_BOUND: Field = 20;\npub global L: u32 = 2;\n')
+    writeFileSync(
+      thresholdPath,
+      'pub global PK_GENERATION_E_SM_BOUND: Field = 20;\npub global PK_GENERATION_R2_BOUNDS: [Field; L] = [21, 22];\npub global L: u32 = 2;\n',
+    )
     writeFileSync(dkgPath, 'pub global SHARE_COMPUTATION_E_SM_BIT_SECRET: u32 = 30;\n')
     assert.equal(builder.computeSourceHash('insecure-512', 'micro'), originalHash)
 
-    writeFileSync(thresholdPath, 'pub global PK_GENERATION_E_SM_BOUND: Field = 20;\npub global L: u32 = 3;\n')
+    writeFileSync(
+      thresholdPath,
+      'pub global PK_GENERATION_E_SM_BOUND: Field = 20;\npub global PK_GENERATION_R2_BOUNDS: [Field; L] = [21, 22];\npub global L: u32 = 3;\n',
+    )
     assert.notEqual(builder.computeSourceHash('insecure-512', 'micro'), originalHash)
 
     const generatorDir = join(dir, 'crates', 'zk-helpers', 'src')
