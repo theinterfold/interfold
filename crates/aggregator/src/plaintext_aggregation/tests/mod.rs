@@ -212,6 +212,52 @@ fn test_ciphertexts() -> Vec<ArcBytes> {
     CIPHERTEXTS.clone()
 }
 
+// Actor tests inject local verification results. Shares and commitments are real,
+// but these proof bytes do not exercise the ZK verifier.
+fn share_with_matching_commitment(
+    e3_id: &E3id,
+    party: u64,
+    ciphertexts: &[ArcBytes],
+) -> (Vec<ArcBytes>, Vec<SignedProofPayload>) {
+    use e3_zk_helpers::{
+        circuits::commitments::compute_threshold_decryption_share_commitment,
+        circuits::threshold::decrypted_shares_aggregation::MAX_MSG_NON_ZERO_COEFFS,
+        threshold::share_decryption::{Bits, Bounds},
+        Computation,
+    };
+    use fhe_math::rq::{Poly, PowerBasis};
+    use fhe_traits::Serialize;
+
+    let preset = BfvPreset::InsecureThreshold512;
+    let (params, _) = e3_fhe_params::build_pair_for_preset(preset).unwrap();
+    let poly = Poly::<PowerBasis>::zero(params.context_at_level(0).unwrap());
+    let crt = e3_polynomial::CrtPolynomial::from_fhe_polynomial(&poly);
+    let bits = Bits::compute(preset, &Bounds::compute(preset, &()).unwrap()).unwrap();
+    let commitment = compute_threshold_decryption_share_commitment(
+        &crt,
+        bits.d_native_bit,
+        MAX_MSG_NON_ZERO_COEFFS,
+    );
+    let (_, bytes) = commitment.to_bytes_be();
+    let proofs = ciphertexts
+        .iter()
+        .map(|ciphertext| {
+            let mut signals = [0u8; 192];
+            signals[192 - bytes.len()..].copy_from_slice(&bytes);
+            signals[64..96].copy_from_slice(
+                &e3_bfv_client::compute_ct_commitment_with_params(ciphertext, &params).unwrap(),
+            );
+            let mut proof = dummy_signed_c6_proof(e3_id).payload;
+            proof.proof.public_signals = ArcBytes::from_bytes(&signals);
+            SignedProofPayload::sign(proof, &test_signer(party)).unwrap()
+        })
+        .collect();
+    (
+        vec![ArcBytes::from_bytes(&poly.to_bytes()); ciphertexts.len()],
+        proofs,
+    )
+}
+
 async fn build_plaintext_aggregator(
     initial_state: ThresholdPlaintextAggregatorState,
     proof_aggregation_enabled: bool,
@@ -290,7 +336,7 @@ async fn standby_persists_and_resumes_plaintext_work() -> Result<()> {
     let ec = test_ctx(EffectsEnabled::new());
     for party in 0..2 {
         let (shares, proofs) =
-            threshold::share_with_matching_commitment(&e3_id, party, &test_ciphertexts()[..1]);
+            share_with_matching_commitment(&e3_id, party, &test_ciphertexts()[..1]);
         aggregator.add_share(party, shares, proofs, &ec)?;
     }
     aggregator.publish_inputs_ready(ec)?;

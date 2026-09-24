@@ -125,16 +125,7 @@ impl ThresholdPlaintextAggregator {
         if expected.0 != msg.request_id {
             return Ok(());
         }
-        if let Some(outcome) = self
-            .recovery
-            .try_get()?
-            .c6_outcomes
-            .get(&msg.request_id)
-            .cloned()
-        {
-            self.apply_c6_verification_outcome(outcome, ec)?;
-        }
-        Ok(())
+        self.apply_cached_c6_outcome(ec)
     }
 
     /// Retain local C6 results through replay and standby operation.
@@ -146,11 +137,8 @@ impl ThresholdPlaintextAggregator {
 
         if msg.kind != VerificationKind::ThresholdDecryptionProofs
             || ec.source() != e3_events::EventSource::Local
+            || msg.e3_id != self.e3_id
         {
-            return Ok(());
-        }
-
-        if msg.e3_id != self.e3_id {
             return Ok(());
         }
 
@@ -175,33 +163,37 @@ impl ThresholdPlaintextAggregator {
             }
             Ok(recovery)
         })?;
-        if self.can_run_aggregation_effects() {
-            if let Some(ThresholdPlaintextAggregatorState::VerifyingC6(state)) = self.state.get() {
-                let request_id = e3_events::EventId::hash(InterfoldEventData::from(
-                    self.c6_verification_request(state.c6_proofs),
-                ));
-                if let Some(outcome) = self
-                    .recovery
-                    .try_get()?
-                    .c6_outcomes
-                    .get(&request_id.0)
-                    .cloned()
-                {
-                    return self.apply_c6_verification_outcome(outcome, ec);
-                }
-            }
+        self.apply_cached_c6_outcome(ec)
+    }
+
+    fn apply_cached_c6_outcome(&mut self, ec: EventContext<Sequenced>) -> Result<()> {
+        if !self.can_run_aggregation_effects() {
+            return Ok(());
         }
-        Ok(())
+        let Some(ThresholdPlaintextAggregatorState::VerifyingC6(state)) = self.state.get() else {
+            return Ok(());
+        };
+        let request_id = e3_events::EventId::hash(InterfoldEventData::from(
+            self.c6_verification_request(state.c6_proofs.clone()),
+        ));
+        let Some(outcome) = self
+            .recovery
+            .try_get()?
+            .c6_outcomes
+            .get(&request_id.0)
+            .cloned()
+        else {
+            return Ok(());
+        };
+        self.apply_c6_verification_outcome(state, outcome, ec)
     }
 
     fn apply_c6_verification_outcome(
         &mut self,
+        state: VerifyingC6,
         outcome: BTreeSet<u64>,
         ec: EventContext<Sequenced>,
     ) -> Result<()> {
-        let Some(ThresholdPlaintextAggregatorState::VerifyingC6(state)) = self.state.get() else {
-            return Ok(());
-        };
         let mut dishonest_parties = state.rejected_parties.clone();
         dishonest_parties.extend(outcome);
         if !dishonest_parties.is_empty() {
@@ -212,7 +204,6 @@ impl ThresholdPlaintextAggregator {
             );
         }
 
-        // Filter shares to only honest parties
         let mut honest_shares: Vec<(u64, Vec<ArcBytes>)> = state
             .shares
             .iter()
@@ -220,10 +211,7 @@ impl ThresholdPlaintextAggregator {
             .map(|(id, s)| (*id, s.clone()))
             .collect();
 
-        // Verify each honest party's raw decryption share matches the
-        // d_commitment attested by their verified C6 proof. Catches the attack
-        // where a node sends a valid C6 proof for share d_A but broadcasts
-        // different bytes d_B.
+        // Recheck the saved share bytes against the verified proof before computation.
         let share_mismatch_parties =
             ThresholdPlaintextAggregation::verify_shares_match_c6_commitments(
                 self.params_preset,
@@ -242,29 +230,7 @@ impl ThresholdPlaintextAggregator {
         }
 
         if honest_shares.len() <= state.threshold_m as usize {
-            let available = self
-                .committee_addresses
-                .iter()
-                .enumerate()
-                .filter(|(party, address)| {
-                    self.honest_committee_addresses.contains(address)
-                        && !dishonest_parties.contains(&(*party as u64))
-                })
-                .count();
-            if available <= state.threshold_m as usize {
-                return self.fail_decryption_round(ec);
-            }
-            self.state.try_mutate(&ec, |_| {
-                Ok(ThresholdPlaintextAggregation::retry_collection(
-                    state,
-                    dishonest_parties,
-                ))
-            })?;
-            if let Some(ThresholdPlaintextAggregatorState::VerifyingC6(next)) = self.state.get() {
-                self.publish_inputs_ready(ec.clone())?;
-                self.dispatch_c6_verification(next.c6_proofs, ec)?;
-            }
-            return Ok(());
+            return self.retry_c6_with_backups(state, dishonest_parties, ec);
         }
 
         info!(
@@ -272,9 +238,7 @@ impl ThresholdPlaintextAggregator {
             honest_shares.len(),
         );
 
-        // Collect honest C6 inner proofs (from signed payloads) for DecryptionAggregation.
-        // BTreeMap iteration yields ascending party_id, matching the slot layout
-        // used by honest_shares above and enforced by decryption_aggregator.nr.
+        // Keep the same ascending party order for shares and recursive proof inputs.
         let honest_c6: Vec<(u64, Vec<Proof>)> = state
             .c6_proofs
             .iter()
@@ -293,42 +257,75 @@ impl ThresholdPlaintextAggregator {
             Ok(recovery)
         })?;
 
-        // Publish ComputeRequest before transitioning state so a publish
-        // failure leaves us in VerifyingC6 (retryable) rather than
-        // Computing (no retry path).
-        // TrBFV scheme size stays N (`threshold_n`); only the share roster is restricted to the
-        // H canonical honest parties in `PublicKeyAggregated` (see
-        // `node_owns_aggregated_pk_party_slot`).
-        let trbfv_config =
-            TrBFVConfig::new(state.params.clone(), state.threshold_n, state.threshold_m);
+        let computing = Computing {
+            shares: honest_shares,
+            ciphertext_output: state.ciphertext_output,
+            threshold_m: state.threshold_m,
+            threshold_n: state.threshold_n,
+            params: state.params,
+        };
+        // A failed publication leaves VerifyingC6 intact, so the same batch can retry.
+        self.dispatch_threshold_decryption(&computing, ec.clone())?;
+        self.pending.honest_c6_proofs_for_agg = Some(honest_c6);
+        self.state.try_mutate(&ec, |_| {
+            Ok(ThresholdPlaintextAggregatorState::Computing(computing))
+        })?;
+        self.pending.last_ec = Some(ec);
+        Ok(())
+    }
 
+    fn retry_c6_with_backups(
+        &mut self,
+        state: VerifyingC6,
+        dishonest_parties: BTreeSet<u64>,
+        ec: EventContext<Sequenced>,
+    ) -> Result<()> {
+        let available = self
+            .committee_addresses
+            .iter()
+            .enumerate()
+            .filter(|(party, address)| {
+                self.honest_committee_addresses.contains(address)
+                    && !dishonest_parties.contains(&(*party as u64))
+            })
+            .count();
+        if available <= state.threshold_m as usize {
+            return self.fail_decryption_round(ec);
+        }
+        self.state.try_mutate(&ec, |_| {
+            Ok(ThresholdPlaintextAggregation::retry_collection(
+                state,
+                dishonest_parties,
+            ))
+        })?;
+        if let Some(ThresholdPlaintextAggregatorState::VerifyingC6(next)) = self.state.get() {
+            self.publish_inputs_ready(ec.clone())?;
+            self.dispatch_c6_verification(next.c6_proofs, ec)?;
+        }
+        Ok(())
+    }
+
+    pub(super) fn dispatch_threshold_decryption(
+        &mut self,
+        state: &Computing,
+        ec: EventContext<Sequenced>,
+    ) -> Result<()> {
         let correlation_id = CorrelationId::new();
-        let event = ComputeRequest::trbfv(
+        let request = ComputeRequest::trbfv(
             TrBFVRequest::CalculateThresholdDecryption(CalculateThresholdDecryptionRequest {
                 ciphertexts: state.ciphertext_output.clone(),
-                trbfv_config,
-                d_share_polys: honest_shares.clone(),
+                trbfv_config: TrBFVConfig::new(
+                    state.params.clone(),
+                    state.threshold_n,
+                    state.threshold_m,
+                ),
+                d_share_polys: state.shares.clone(),
             }),
             correlation_id,
             self.e3_id.clone(),
         );
-        self.bus.publish(event, ec.clone())?;
-
-        self.pending.honest_c6_proofs_for_agg = Some(honest_c6);
+        self.bus.publish(request, ec)?;
         self.pending.threshold_decryption_correlation = Some(correlation_id);
-
-        self.state.try_mutate(&ec, |_| {
-            Ok(ThresholdPlaintextAggregatorState::Computing(Computing {
-                shares: honest_shares,
-                ciphertext_output: state.ciphertext_output,
-                threshold_m: state.threshold_m,
-                threshold_n: state.threshold_n,
-                params: state.params,
-            }))
-        })?;
-
-        self.pending.last_ec = Some(ec.clone());
-
         Ok(())
     }
 }

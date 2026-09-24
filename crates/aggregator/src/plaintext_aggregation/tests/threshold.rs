@@ -1,51 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
 use super::*;
-use e3_zk_helpers::{
-    circuits::commitments::compute_threshold_decryption_share_commitment,
-    circuits::threshold::decrypted_shares_aggregation::MAX_MSG_NON_ZERO_COEFFS,
-    threshold::share_decryption::{Bits, Bounds},
-    Computation,
-};
-use fhe_math::rq::{Poly, PowerBasis};
-use fhe_traits::Serialize;
-
-// These actor tests inject a local verification result. The share and its commitment
-// are real, but the proof bytes do not exercise the ZK verifier.
-pub(super) fn share_with_matching_commitment(
-    e3_id: &E3id,
-    party: u64,
-    ciphertexts: &[ArcBytes],
-) -> (Vec<ArcBytes>, Vec<SignedProofPayload>) {
-    let preset = BfvPreset::InsecureThreshold512;
-    let (params, _) = e3_fhe_params::build_pair_for_preset(preset).unwrap();
-    let poly = Poly::<PowerBasis>::zero(params.context_at_level(0).unwrap());
-    let crt = e3_polynomial::CrtPolynomial::from_fhe_polynomial(&poly);
-    let bits = Bits::compute(preset, &Bounds::compute(preset, &()).unwrap()).unwrap();
-    let commitment = compute_threshold_decryption_share_commitment(
-        &crt,
-        bits.d_native_bit,
-        MAX_MSG_NON_ZERO_COEFFS,
-    );
-    let (_, bytes) = commitment.to_bytes_be();
-    let proofs = ciphertexts
-        .iter()
-        .map(|ciphertext| {
-            let mut signals = [0u8; 192];
-            signals[192 - bytes.len()..].copy_from_slice(&bytes);
-            signals[64..96].copy_from_slice(
-                &e3_bfv_client::compute_ct_commitment_with_params(ciphertext, &params).unwrap(),
-            );
-            let mut proof = dummy_signed_c6_proof(e3_id).payload;
-            proof.proof.public_signals = ArcBytes::from_bytes(&signals);
-            SignedProofPayload::sign(proof, &test_signer(party)).unwrap()
-        })
-        .collect();
-    (
-        vec![ArcBytes::from_bytes(&poly.to_bytes()); ciphertexts.len()],
-        proofs,
-    )
-}
 
 async fn small_aggregator() -> Result<(
     ThresholdPlaintextAggregator,
@@ -98,10 +53,7 @@ async fn small_decrypts_with_ten_verified_shares_not_all_fourteen() -> Result<()
             event.get_data(),
             InterfoldEventData::ComputeRequest(_)
         ));
-        let Some(ThresholdPlaintextAggregatorState::Computing(state)) = aggregator.state.get()
-        else {
-            panic!()
-        };
+        let state = Computing::try_from(aggregator.state.try_get()?)?;
         assert_eq!(state.shares.len(), 10);
         assert_eq!(state.shares.first().unwrap().0, 5);
         assert_eq!(aggregator.recovery.try_get()?.honest_c6_proofs.len(), 10);
@@ -111,11 +63,25 @@ async fn small_decrypts_with_ten_verified_shares_not_all_fourteen() -> Result<()
 
 #[actix::test]
 async fn bad_first_share_uses_early_or_late_backup_without_failing_round() -> Result<()> {
-    for backup_arrives_early in [false, true] {
-        for invalid_proof in [false, true] {
+    #[derive(Debug, Clone, Copy)]
+    enum Failure {
+        InvalidProof,
+        CorruptedSavedShare,
+    }
+    #[derive(Debug, Clone, Copy)]
+    enum BackupArrival {
+        BeforeVerification,
+        AfterVerification,
+    }
+
+    for arrival in [
+        BackupArrival::BeforeVerification,
+        BackupArrival::AfterVerification,
+    ] {
+        for failure in [Failure::InvalidProof, Failure::CorruptedSavedShare] {
             let (mut aggregator, history, _) = small_aggregator().await?;
             collect(&mut aggregator, 5..15)?;
-            if !invalid_proof {
+            if matches!(failure, Failure::CorruptedSavedShare) {
                 // Check the second validation boundary with a corrupted saved share.
                 aggregator
                     .state
@@ -126,33 +92,27 @@ async fn bad_first_share_uses_early_or_late_backup_without_failing_round() -> Re
                         Ok(state)
                     })?;
             }
-            if backup_arrives_early {
+            if matches!(arrival, BackupArrival::BeforeVerification) {
                 collect(&mut aggregator, 15..16)?;
             }
-            let old_result = c6_completion(
-                &aggregator,
-                if invalid_proof {
-                    BTreeSet::from([5])
-                } else {
-                    BTreeSet::new()
-                },
-            );
+            let dishonest_parties = match failure {
+                Failure::InvalidProof => BTreeSet::from([5]),
+                Failure::CorruptedSavedShare => BTreeSet::new(),
+            };
+            let old_result = c6_completion(&aggregator, dishonest_parties);
             aggregator.handle_c6_verification_complete(old_result.clone())?;
-            if !backup_arrives_early {
+            if matches!(arrival, BackupArrival::AfterVerification) {
                 assert!(matches!(
                     aggregator.state.get(),
                     Some(ThresholdPlaintextAggregatorState::Collecting(_))
                 ));
                 collect(&mut aggregator, 15..16)?;
             }
-            let Some(ThresholdPlaintextAggregatorState::VerifyingC6(batch)) =
-                aggregator.state.get()
-            else {
-                panic!()
-            };
+            let batch = VerifyingC6::try_from(aggregator.state.try_get()?)?;
             assert_eq!(
                 batch.shares.keys().copied().collect::<Vec<_>>(),
-                (6..16).collect::<Vec<_>>()
+                (6..16).collect::<Vec<_>>(),
+                "replacement batch for {failure:?}, {arrival:?}"
             );
             // A duplicate result for the previous batch must not authorize the replacement.
             aggregator.handle_c6_verification_complete(old_result)?;
@@ -204,9 +164,7 @@ async fn replayed_results_survive_restart_and_wait_for_effects_and_promotion() -
     aggregator.is_aggregator = true;
     aggregator.resume_in_flight_work(test_ctx(EffectsEnabled::new()))?;
     deliver_resume(&mut aggregator, &history).await?;
-    let Some(ThresholdPlaintextAggregatorState::VerifyingC6(batch)) = aggregator.state.get() else {
-        panic!()
-    };
+    let batch = VerifyingC6::try_from(aggregator.state.try_get()?)?;
     assert_eq!(
         batch.shares.keys().copied().collect::<Vec<_>>(),
         (6..16).collect::<Vec<_>>()
@@ -273,7 +231,7 @@ async fn cached_verdict_persists_under_the_current_resume_event() -> Result<()> 
     aggregator.resume_in_flight_work(test_ctx(EffectsEnabled::new()))?;
     let resumed = next_event(&history).await?;
     let InterfoldEventData::PlaintextVerificationResumed(payload) = resumed.into_data() else {
-        panic!()
+        panic!("expected a fresh C6 resume event")
     };
     assert_eq!(
         InterfoldEventData::from(payload.clone()).get_aggregate_id(),
@@ -297,25 +255,18 @@ async fn cached_verdict_persists_under_the_current_resume_event() -> Result<()> 
 async fn a_bad_share_for_the_second_ciphertext_does_not_reserve_a_slot() -> Result<()> {
     let (mut aggregator, _history, _) = small_aggregator().await?;
     let ec = test_ctx(EffectsEnabled::new());
-    let mut collecting = match aggregator.state.try_get()? {
-        ThresholdPlaintextAggregatorState::Collecting(state) => state,
-        _ => panic!(),
-    };
+    let mut collecting = Collecting::try_from(aggregator.state.try_get()?)?;
     collecting.ciphertext_output = test_ciphertexts();
     aggregator.state = test_persistable(ThresholdPlaintextAggregatorState::Collecting(collecting));
     for party in 5..16 {
-        let (shares, proofs) =
+        let (mut shares, proofs) =
             share_with_matching_commitment(&aggregator.e3_id, party, &test_ciphertexts());
-        let second = if party == 5 {
-            ArcBytes::from_bytes(&[0])
-        } else {
-            shares[0].clone()
-        };
-        aggregator.add_share(party, vec![shares[0].clone(), second], proofs, &ec)?;
+        if party == 5 {
+            shares[1] = ArcBytes::from_bytes(&[0]);
+        }
+        aggregator.add_share(party, shares, proofs, &ec)?;
     }
-    let Some(ThresholdPlaintextAggregatorState::VerifyingC6(batch)) = aggregator.state.get() else {
-        panic!()
-    };
+    let batch = VerifyingC6::try_from(aggregator.state.try_get()?)?;
     assert!(!batch.shares.contains_key(&5));
     assert!(batch.shares.contains_key(&15));
     let replacement = c6_completion(&aggregator, BTreeSet::new());

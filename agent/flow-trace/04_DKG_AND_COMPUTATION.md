@@ -1155,12 +1155,14 @@ InterfoldSolReader decodes CiphertextOutputPublished event
 │   only the active aggregator can apply them after EffectsEnabled.
 │   A saved result resumes through a fresh PlaintextVerificationResumed event in the E3's
 │   chain aggregate. Its new sequence permits snapshot writes after the recovery watermark.
+│   Admission and post-verification checks use the same C6ShareVerifier for raw-share commitments.
 │
 ├─ When at least T+1 shares pass C6 verification and each output's raw-share commitment check:
 │   │
 │   ├─ State → Computing
 │   │
 │   ├─ COMPUTE REQUEST: CalculateThresholdDecryption
+│   │   Live execution and restart recovery use the same dispatch_threshold_decryption helper.
 │   │   │
 │   │   │  ┌─── TrBFV Computation ──────────────────────────────┐
 │   │   │  │                                                     │

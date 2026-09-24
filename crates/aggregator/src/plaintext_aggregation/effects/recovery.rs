@@ -37,25 +37,7 @@ impl ThresholdPlaintextAggregator {
                     "plaintext aggregation for E3 {} cannot resume threshold decryption without verified C6 proofs",
                     self.e3_id
                 );
-                let correlation_id = CorrelationId::new();
-                let request = ComputeRequest::trbfv(
-                    TrBFVRequest::CalculateThresholdDecryption(
-                        CalculateThresholdDecryptionRequest {
-                            ciphertexts: state.ciphertext_output,
-                            trbfv_config: TrBFVConfig::new(
-                                state.params,
-                                state.threshold_n,
-                                state.threshold_m,
-                            ),
-                            d_share_polys: state.shares,
-                        },
-                    ),
-                    correlation_id,
-                    self.e3_id.clone(),
-                );
-                self.bus.publish(request, causal_context)?;
-                self.pending.threshold_decryption_correlation = Some(correlation_id);
-                Ok(())
+                self.dispatch_threshold_decryption(&state, causal_context)
             }
             ThresholdPlaintextAggregatorState::GeneratingC7Proof(state) => {
                 self.pending.decryption_aggregation_correlation = None;

@@ -21,11 +21,6 @@ use e3_events::{
 };
 use e3_fhe_params::BfvPreset;
 use e3_utils::utility_types::ArcBytes;
-use e3_zk_helpers::circuits::commitments::compute_threshold_decryption_share_commitment;
-use e3_zk_helpers::circuits::threshold::decrypted_shares_aggregation::MAX_MSG_NON_ZERO_COEFFS;
-use e3_zk_helpers::threshold::share_decryption::{Bits as C6Bits, Bounds as C6Bounds};
-use e3_zk_helpers::Computation;
-use tracing::warn;
 
 #[path = "intents.rs"]
 mod intents;
@@ -33,6 +28,8 @@ mod intents;
 mod state;
 #[path = "transitions.rs"]
 mod transitions;
+#[path = "validation.rs"]
+mod validation;
 
 pub(crate) use intents::{build_decryption_aggregation_jobs, format_decrypted_plaintext};
 pub use state::{
@@ -41,6 +38,7 @@ pub use state::{
     THRESHOLD_PLAINTEXT_RECOVERY_SCHEMA_VERSION,
 };
 pub(crate) use transitions::ThresholdPlaintextAggregation;
+pub(crate) use validation::C6ShareVerifier;
 
 #[cfg(test)]
 #[path = "workflow_tests.rs"]

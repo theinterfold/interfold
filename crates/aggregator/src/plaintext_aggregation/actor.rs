@@ -8,7 +8,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::str::FromStr;
 
 use crate::workflow::threshold_plaintext_aggregation::{
-    build_decryption_aggregation_jobs, format_decrypted_plaintext, ThresholdPlaintextAggregation,
+    build_decryption_aggregation_jobs, format_decrypted_plaintext, C6ShareVerifier,
+    ThresholdPlaintextAggregation,
 };
 use actix::prelude::*;
 use alloy::primitives::Address;

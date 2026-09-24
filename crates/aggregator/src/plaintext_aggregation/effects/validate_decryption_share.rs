@@ -19,47 +19,54 @@ impl ThresholdPlaintextAggregator {
         else {
             return Ok(false);
         };
-        if !self.honest_committee_addresses.contains(address)
-            || shares.is_empty()
-            || shares.len() != ciphertexts.len()
-            || proofs.len() != ciphertexts.len()
-            || proofs.iter().any(|proof| {
-                proof.payload.e3_id != self.e3_id
-                    || proof.payload.proof_type != ProofType::C6ThresholdShareDecryption
-                    || proof.payload.proof.circuit != CircuitName::ThresholdShareDecryption
-                    || !proof.verify_address(address).unwrap_or(false)
-            })
-        {
+        let valid_shape = !shares.is_empty()
+            && shares.len() == ciphertexts.len()
+            && proofs.len() == ciphertexts.len();
+        if !valid_shape {
             return Ok(false);
         }
-        if self.pending.ciphertext_commitments.is_none() {
-            let (params, _) = e3_fhe_params::build_pair_for_preset(self.params_preset)?;
-            self.pending.ciphertext_commitments = Some(
-                ciphertexts
+        let valid_sender = self.honest_committee_addresses.contains(address)
+            && proofs.iter().all(|proof| {
+                proof.payload.e3_id == self.e3_id
+                    && proof.payload.proof_type == ProofType::C6ThresholdShareDecryption
+                    && proof.payload.proof.circuit == CircuitName::ThresholdShareDecryption
+                    && proof.verify_address(address).unwrap_or(false)
+            });
+        if !valid_sender {
+            return Ok(false);
+        }
+
+        let commitments = self.ciphertext_commitments(ciphertexts)?;
+        let layout = CircuitName::ThresholdShareDecryption.input_layout();
+        let valid_ciphertexts = commitments.len() == proofs.len()
+            && proofs.iter().zip(commitments).all(|(proof, expected)| {
+                layout.extract_field(&proof.payload.proof.public_signals, "ct_commitment")
+                    == Some(expected.as_slice())
+            });
+        if !valid_ciphertexts {
+            return Ok(false);
+        }
+
+        let Ok(verifier) = C6ShareVerifier::new(self.params_preset) else {
+            warn!("Could not prepare the share commitment check");
+            return Ok(false);
+        };
+        Ok(verifier.matches(shares, proofs))
+    }
+
+    fn ciphertext_commitments(&mut self, ciphertexts: &[ArcBytes]) -> Result<&[[u8; 32]]> {
+        match &mut self.pending.ciphertext_commitments {
+            Some(commitments) => Ok(commitments),
+            cache @ None => {
+                let (params, _) = e3_fhe_params::build_pair_for_preset(self.params_preset)?;
+                let commitments = ciphertexts
                     .iter()
                     .map(|ciphertext| {
                         e3_bfv_client::compute_ct_commitment_with_params(ciphertext, &params)
                     })
-                    .collect::<Result<_>>()?,
-            );
+                    .collect::<Result<_>>()?;
+                Ok(cache.insert(commitments))
+            }
         }
-        let commitments = self.pending.ciphertext_commitments.as_ref().unwrap();
-        let layout = CircuitName::ThresholdShareDecryption.input_layout();
-        if commitments.len() != proofs.len()
-            || proofs.iter().zip(commitments).any(|(proof, expected)| {
-                layout.extract_field(&proof.payload.proof.public_signals, "ct_commitment")
-                    != Some(expected.as_slice())
-            })
-        {
-            return Ok(false);
-        }
-        Ok(
-            ThresholdPlaintextAggregation::verify_shares_match_c6_commitments(
-                self.params_preset,
-                &[(party_id, shares.to_vec())],
-                &BTreeMap::from([(party_id, proofs.to_vec())]),
-            )
-            .is_empty(),
-        )
     }
 }

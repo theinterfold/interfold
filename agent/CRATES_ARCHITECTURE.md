@@ -612,6 +612,8 @@ DKG roster. It does not wait for every roster member. Late shares stay in a dura
 a proof or raw-share commitment fails, the actor excludes that party and verifies a replacement
 batch, or waits while `T+1` valid parties remain possible. Local verification results are bound to
 the dispatch event ID and retained through replay; they cannot authorize a different batch.
+`plaintext_aggregation/validation.rs` owns the raw-share commitment check, shared by admission and
+post-verification checks. Live execution and recovery use the same threshold-decryption dispatch.
 
 After C2/C3 verification, each member publishes a signed readiness report. The active aggregator
 selects the first canonical `H` dealers that are mutually complete and announces that roster. The
