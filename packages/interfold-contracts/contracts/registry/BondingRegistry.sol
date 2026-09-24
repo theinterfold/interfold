@@ -1456,7 +1456,10 @@ contract BondingRegistry is
     ///      considered inactive until they refresh under the new version.
     function _invalidateEligibilityStatuses() internal {
         eligibilityConfigurationVersion = BondingEligibilityLib
-            .invalidateConfiguration(eligibilityConfigurationVersion);
+            .invalidateConfiguration(
+                eligibilityConfigurationVersion,
+                numRegisteredOperators
+            );
         numActiveOperators = 0;
     }
 
@@ -1467,7 +1470,7 @@ contract BondingRegistry is
     ////////////////////////////////////////////////////////////
 
     /// @notice ERC-165 interface detection. Advertises
-    ///         {IBondingRegistry}, {IBondOwnerHistory}, and {IERC165}.
+    ///         {IBondingRegistry}, {IBondOwnerHistory}, {IBondingAdmission}, and {IERC165}.
     function supportsInterface(
         bytes4 interfaceId
     ) external pure virtual returns (bool) {

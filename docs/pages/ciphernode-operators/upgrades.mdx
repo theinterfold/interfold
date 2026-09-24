@@ -44,9 +44,11 @@ For a security fix or incompatible change, governance uses a clean cutover:
 3. Raise the required compatibility value.
 4. Upgrade at least one configured bootstrap peer.
 5. Restart every ciphernode with the new release.
-6. Wait until enough upgraded nodes are active to fill the largest committee and can discover one
+6. Refresh every registered operator, including operators that cannot meet the new release policy.
+7. Wait for a later block timestamp and check `committeeOwnerCapacity(latest.timestamp - 1)`. It
+   must cover the largest committee. Confirm that those nodes are online and can discover one
    another.
-7. Resume requests.
+8. Resume requests.
 
 Raising the requirement immediately marks every previous operator status inactive. The new binary
 checks the policy, acknowledges its release on-chain, and refreshes its operator status during
@@ -61,9 +63,19 @@ leave the node stopped and contact the protocol team.
 
 ### Persistent-state compatibility
 
-The current protocol-v4 binary uses storage schema 6. It accepts only an exact schema match because
+The current protocol-v4 binary uses storage schema 7. It accepts only an exact schema match because
 the event log and actor snapshots contain protocol-bearing binary data. It rejects both older state
 and state written by a newer binary instead of guessing that the layouts are compatible.
+
+Schema 6 can contain ticket and activation checkpoints with incorrect times. Schema 7 stores source
+block timestamps and log order separately from the node's event clock. It keeps old logs readable
+for validation, but requires a controlled chain resync to rebuild their eligibility and bond-owner
+history. Old `BondOwnerSet` records in the local event log do not contain a trusted chain timestamp.
+Replaying only that log cannot restore the owner shortlist. The resync must read the configured
+contract deployment range, not start at the latest block. Do not change the stored schema marker to
+bypass this check. Do not reset during a live DKG: the reset discards the local keyshare. Schema 7
+also changes the plaintext recovery format to retain backup decryption shares and batch-bound
+verification results. Complete active work before this upgrade.
 
 The protocol-v4 rollout has no automatic migration from earlier pre-release state. Before that
 cutover, governance must pause requests and drain active work. Operators must then:

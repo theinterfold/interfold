@@ -19,7 +19,7 @@ impl ThresholdPlaintextAggregator {
             recovery.schema_version,
             self.e3_id
         );
-        let causal_context = recovery.last_ec.unwrap_or(effects_context);
+        let causal_context = recovery.last_ec.unwrap_or(effects_context.clone());
         self.pending.last_ec = Some(causal_context.clone());
 
         let Some(state) = self.state.get() else {
@@ -28,7 +28,7 @@ impl ThresholdPlaintextAggregator {
         match state {
             ThresholdPlaintextAggregatorState::Collecting(_) => Ok(()),
             ThresholdPlaintextAggregatorState::VerifyingC6(state) => {
-                self.dispatch_c6_verification(state.c6_proofs, causal_context)
+                self.dispatch_c6_verification(state.c6_proofs, effects_context)
             }
             ThresholdPlaintextAggregatorState::Computing(state) => {
                 ensure!(

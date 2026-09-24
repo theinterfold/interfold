@@ -103,14 +103,32 @@ impl EvmEvent {
 
     pub fn into_interfold_event(self, bus: &BusHandle) -> Result<InterfoldEvent<Unsequenced>> {
         let ts = self.ts;
+        let position = e3_events::ChainPosition::from_log_timestamp(ts);
         // Capture chain time before the event bus advances its local clock. Keep the old
         // variant readable in existing logs; only newly decoded logs get this metadata.
         let data = match self.data {
             InterfoldEventData::BondOwnerSet(owner) => e3_events::BondOwnerSetAt {
                 owner,
-                timepoint: e3_events::hlc::HlcTimestamp::wall_time(ts) / 1_000_000,
+                timepoint: position.timepoint,
             }
             .into(),
+            InterfoldEventData::TicketBalanceUpdated(balance) => {
+                e3_events::TicketBalanceUpdatedAt { balance, position }.into()
+            }
+            InterfoldEventData::OperatorActivationChanged(activation) => {
+                e3_events::OperatorActivationChangedAt {
+                    activation,
+                    position,
+                }
+                .into()
+            }
+            InterfoldEventData::ConfigurationUpdated(configuration) => {
+                e3_events::ConfigurationUpdatedAt {
+                    configuration,
+                    position,
+                }
+                .into()
+            }
             data => data,
         };
         bus.event_from_remote_source(data, None, ts, Some(self.block), EventSource::Evm)

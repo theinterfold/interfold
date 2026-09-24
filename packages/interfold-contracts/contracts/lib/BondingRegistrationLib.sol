@@ -10,6 +10,7 @@ import { IBondingRegistry } from "../interfaces/IBondingRegistry.sol";
 import { BondingRegistry } from "../registry/BondingRegistry.sol";
 import { ExitQueueLib } from "./ExitQueueLib.sol";
 import { BondingAdmissionLib } from "./BondingAdmissionLib.sol";
+import { BondingEligibilityLib } from "./BondingEligibilityLib.sol";
 
 /**
  * @title BondingRegistrationLib
@@ -75,6 +76,7 @@ library BondingRegistrationLib {
             IBondingRegistry.NotCiphernodeBonded()
         );
 
+        BondingEligibilityLib.excludeNewRegistration(operator);
         operators[operator].registered = true;
         BondingAdmissionLib.start(operator);
     }
@@ -97,6 +99,7 @@ library BondingRegistrationLib {
         BondingRegistry.Operator storage op = operators[operator];
         require(op.registered, IBondingRegistry.NotRegistered());
 
+        BondingEligibilityLib.completeOperatorRefresh(operator);
         op.registered = false;
         op.exitRequested = true;
         op.exitUnlocksAt = uint64(block.timestamp) + exitDelay;

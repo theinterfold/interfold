@@ -227,6 +227,13 @@ the current version count as active, so committee requests cannot rely on status
 older policy. The Rust sortition state consumes the same `ConfigurationUpdated` event and marks its
 chain-local operators inactive until matching `OperatorActivationChanged` refresh events arrive.
 
+Each base eligibility change also captures the number of registered operators. New committee
+requests remain blocked until every member of that set is checked or deregisters. A check counts
+even when the operator remains inactive. Anyone can submit these checks in bounded batches; the
+operator does not need to be online. Duplicate checks and later registrations cannot replace an
+unchecked member. A second configuration change starts a new pass. The request snapshot must be at
+or after completion. Historical eligibility for existing E3s does not use this barrier.
+
 A completed ban or unban refreshes the affected registered operator immediately.
 
 Active bond owners have a separate checkpointed count for committee admission. Each owner counts
@@ -235,8 +242,10 @@ operator's active flag does not change. Ownership acceptance moves a counted ope
 owner. An eligibility configuration change resets the count in constant time.
 
 After an upgrade adds this count, existing active operators remain uncounted until a permissionless
-`refreshOperatorStatus` or `refreshOperatorStatuses` call. Refresh the registered operators before
-resuming requests, then wait for a later timestamp. Repeated refreshes do not increase the count. An
+`refreshOperatorStatus` or `refreshOperatorStatuses` call. The first registration, deregistration,
+or registered status check captures the existing registrations before changing that set. Capacity
+stays zero until all of them are checked or leave. Refresh the registered operators before resuming
+requests, then wait for a later timestamp. Repeated refreshes do not increase the count. An
 unrefreshed operator cannot inflate the count through an ownership transfer.
 
 ### Admission cooldown and pause
@@ -811,3 +820,11 @@ The EVM reader now emits typed `BondOwnerSet`, `CiphernodeBondUpdated`, and
 local dashboard rebuilds each chain's registered/active node sets and the local operator's bond
 owner, ticket, ciphernode bond, and exit state from EventStore history; it does not parse
 human-oriented CLI status output.
+
+The gateway stores ticket, activation, and configuration facts in their appended `*At` event
+variants. Each variant carries the source block timestamp in seconds and log index, captured before
+the event bus merges its clock. Sortition and offline projection repair use those source positions,
+not receipt time. Each ticket, activation, and price projection retains its latest source position
+so overlapping restart backfill cannot replace newer state or append an older checkpoint. Schema 7
+rejects schema-6 stores because their histories can contain incorrect checkpoint times. Old variants
+remain readable for validation, but cannot build new trusted eligibility history.

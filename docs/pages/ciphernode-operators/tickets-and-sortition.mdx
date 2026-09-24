@@ -126,9 +126,15 @@ automatically. `isActive` reports collateral/release readiness; `eligibilityAt` 
 An unchanged pre-upgrade position keeps admission because its original registration time is not
 available.
 
+Changes to collateral, ticket, or required-release rules require a check of every existing
+registration before another E3 request. Anyone can run the batch refresh, including for an offline
+operator. An inactive result still completes that operator's check. Checking the same operator again
+or registering a new operator cannot skip an existing one. After the last check, wait for a later
+block timestamp and check `committeeOwnerCapacity(latest.timestamp - 1)`.
+
 Before governance pauses admissions after an eligibility configuration change:
 
-1. Refresh every operator that must remain eligible.
+1. Refresh every registered operator, including operators expected to remain inactive.
 2. Wait for a later block timestamp.
 3. Check that `committeeOwnerCapacity(latest.timestamp - 1)` covers the required committee size.
 4. Pause admissions.

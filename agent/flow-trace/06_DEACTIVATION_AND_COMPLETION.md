@@ -373,7 +373,8 @@ CLI then exit with a nonzero status instead of leaving a dead storage actor insi
 process. The EventStore syncs each appended log record before it indexes or broadcasts the event. It
 caches the active segment and index handles. Each append still syncs both files, while the directory
 is synced only for the first append and after segment rollover. The current storage schema marker is
-version 6; older node databases must be reset for this release, not silently decoded.
+version 7. Older logs remain decodable, but their eligibility timestamps are not trusted. Operators
+must use the controlled reset and resync procedure outside active E3 work; see `07_UPGRADES.md`.
 
 For DAppNode installations, package v0.2.3 is the mandatory bridge from the shipped v0.1.8 state. It
 atomically moves the legacy `.enclave` custom-config root to `.interfold`, preserves the encrypted
@@ -512,6 +513,13 @@ plaintext standbys persist the same validated inputs as the active aggregator. A
 on the active party, with new process-local correlation IDs. It re-publishes determined outputs
 idempotently. Startup fails closed if an active phase requires a recovery record that is missing or
 has an unsupported schema version.
+
+Plaintext recovery schema 2 also retains C6 verification results by dispatch ID. The collection
+snapshot stores rejected parties and late backup shares without changing the in-flight batch. Replay
+does not trigger compute work. After effects resume, or a standby becomes the aggregator, the actor
+applies only the result for its current batch or dispatches that batch again. A saved result uses a
+new chain-scoped `PlaintextVerificationResumed` event. It must not write under the old result
+sequence or the chain-independent `EffectsEnabled` sequence.
 
 The threshold-keyshare recovery root stores only the length and Keccak-256 digest of each large DKG
 work plan or dealer payload. The immutable payloads use separate per-E3 keys. Hydration verifies

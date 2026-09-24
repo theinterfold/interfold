@@ -110,24 +110,24 @@ impl Handler<TypedEvent<CiphernodeRemoved>> for Sortition {
     }
 }
 
-impl Handler<TypedEvent<TicketBalanceUpdated>> for Sortition {
+impl Handler<TypedEvent<TicketBalanceUpdatedAt>> for Sortition {
     type Result = ();
 
     fn handle(
         &mut self,
-        msg: TypedEvent<TicketBalanceUpdated>,
+        msg: TypedEvent<TicketBalanceUpdatedAt>,
         _: &mut Self::Context,
     ) -> Self::Result {
-        let (msg, ec) = msg.into_components();
-        let timepoint = Self::evm_timepoint(&ec);
+        let (event, ec) = msg.into_components();
+        let balance = &event.balance;
         trap(EType::Sortition, &self.bus.with_ec(&ec), || {
             self.node_state.try_mutate(&ec, |mut state_map| {
                 NodeRegistry::set_ticket_balance(
                     &mut state_map,
-                    msg.chain_id,
-                    msg.operator.clone(),
-                    msg.new_balance,
-                    timepoint,
+                    balance.chain_id,
+                    balance.operator.clone(),
+                    balance.new_balance,
+                    event.position,
                 );
                 Ok(state_map)
             })
@@ -135,24 +135,24 @@ impl Handler<TypedEvent<TicketBalanceUpdated>> for Sortition {
     }
 }
 
-impl Handler<TypedEvent<OperatorActivationChanged>> for Sortition {
+impl Handler<TypedEvent<OperatorActivationChangedAt>> for Sortition {
     type Result = ();
 
     fn handle(
         &mut self,
-        msg: TypedEvent<OperatorActivationChanged>,
+        msg: TypedEvent<OperatorActivationChangedAt>,
         _: &mut Self::Context,
     ) -> Self::Result {
-        let (msg, ec) = msg.into_components();
-        let timepoint = Self::evm_timepoint(&ec);
+        let (event, ec) = msg.into_components();
+        let activation = &event.activation;
         trap(EType::Sortition, &self.bus.with_ec(&ec), || {
             self.node_state.try_mutate(&ec, |mut state_map| {
                 NodeRegistry::set_operator_active(
                     &mut state_map,
-                    msg.chain_id,
-                    msg.operator.clone(),
-                    msg.active,
-                    timepoint,
+                    activation.chain_id,
+                    activation.operator.clone(),
+                    activation.active,
+                    event.position,
                 );
                 Ok(state_map)
             })
@@ -160,37 +160,23 @@ impl Handler<TypedEvent<OperatorActivationChanged>> for Sortition {
     }
 }
 
-impl Handler<TypedEvent<ConfigurationUpdated>> for Sortition {
+impl Handler<TypedEvent<ConfigurationUpdatedAt>> for Sortition {
     type Result = ();
 
     fn handle(
         &mut self,
-        msg: TypedEvent<ConfigurationUpdated>,
+        msg: TypedEvent<ConfigurationUpdatedAt>,
         _: &mut Self::Context,
     ) -> Self::Result {
-        let (msg, ec) = msg.into_components();
-        let timepoint = Self::evm_timepoint(&ec);
+        let (event, ec) = msg.into_components();
+        if !event.configuration.affects_eligibility() {
+            return;
+        }
         trap(EType::Sortition, &self.bus.with_ec(&ec), || {
-            let eligibility_parameter = matches!(
-                msg.parameter.as_str(),
-                "ticketPrice"
-                    | "requiredCiphernodeBond"
-                    | "ciphernodeBondActiveBps"
-                    | "minTicketBalance"
-            );
-
-            if !eligibility_parameter {
-                return Ok(());
-            }
-
             self.node_state.try_mutate(&ec, |mut state_map| {
-                if msg.parameter == "ticketPrice" {
-                    NodeRegistry::set_ticket_price(&mut state_map, msg.chain_id, msg.new_value);
-                }
-                NodeRegistry::invalidate_operator_activity(&mut state_map, msg.chain_id, timepoint);
+                NodeRegistry::update_configuration(&mut state_map, &event);
                 Ok(state_map)
-            })?;
-            Ok(())
+            })
         })
     }
 }

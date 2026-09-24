@@ -15,13 +15,12 @@ use crate::{AdmissionState, BondOwnerState, FinalizedCommitteeRetention};
 use actix::prelude::*;
 use anyhow::{anyhow, ensure, Result};
 use e3_data::{AutoPersist, Persistable, Repository};
-use e3_events::hlc::HlcTimestamp;
 use e3_events::{
     prelude::*, trap, BondOwnerSetAt, CiphernodeAdded, CiphernodeRemoved, Committee,
     CommitteeFinalized, CommitteeMemberExcluded, CommitteeMemberExpelled, CommitteeRequested,
-    ConfigurationUpdated, E3Failed, E3RequestComplete, E3Requested, E3Stage, E3StageChanged, EType,
-    EffectsEnabled, EventContext, EventType, InterfoldEvent, OperatorActivationChanged,
-    PlaintextOutputPublished, Seed, Sequenced, TicketBalanceUpdated, TicketGenerated, TypedEvent,
+    ConfigurationUpdatedAt, E3Failed, E3RequestComplete, E3Requested, E3Stage, E3StageChanged,
+    EType, EffectsEnabled, EventContext, EventType, InterfoldEvent, OperatorActivationChangedAt,
+    PlaintextOutputPublished, Seed, Sequenced, TicketBalanceUpdatedAt, TicketGenerated, TypedEvent,
 };
 use e3_events::{BusHandle, E3id, InterfoldEventData};
 use e3_utils::{NotifySync, MAILBOX_LIMIT};
@@ -259,10 +258,10 @@ impl Sortition {
                 EventType::BondOwnerSetAt,
                 EventType::AdmissionUpdated,
                 EventType::EvmLogObserved,
-                EventType::TicketBalanceUpdated,
+                EventType::TicketBalanceUpdatedAt,
                 EventType::TicketGenerated,
-                EventType::OperatorActivationChanged,
-                EventType::ConfigurationUpdated,
+                EventType::OperatorActivationChangedAt,
+                EventType::ConfigurationUpdatedAt,
                 EventType::CommitteeRequested,
                 EventType::PlaintextOutputPublished,
                 EventType::CommitteeFinalized,
@@ -365,10 +364,6 @@ impl Sortition {
                 bus.err(EType::Sortition, err);
                 None
             })
-    }
-
-    fn evm_timepoint(ec: &EventContext<Sequenced>) -> u64 {
-        HlcTimestamp::wall_time(ec.ts()) / 1_000_000_000
     }
 
     fn get_committee(&self, e3_id: &E3id) -> Option<Committee> {

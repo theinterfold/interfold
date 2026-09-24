@@ -643,17 +643,26 @@ A ready committee must finalize at or before its absolute DKG deadline.
    state and fee collection, including the flat fee. `committee:new` also checks distinct eligible
    owners at a fixed block before fee approval. After upgrade, permissionless status refreshes must
    populate the owner count. A timestamp from an older eligibility policy returns zero capacity.
-   These checks do not reserve capacity or prove machine availability. DKG parameters and the
-   canonical operator-address order do not change. Owner history uses the separate v2 Rust
-   repository. `BondOwnerSetAt` retains block time in seconds before the event clock merges with
-   local time. Startup backfills missing chain projections through aggregate zero's snapshot cursor.
-   Legacy `BondOwnerSet` events and v1 owner snapshots cannot establish that boundary, so they are
-   not imported. Missing history permits the broader submission fallback. The structured warning
+   After base eligibility changes, capacity also stays zero until every captured registration has
+   been checked or removed. Repeated checks and later registrations cannot satisfy another
+   operator's check. The request's `T-1` snapshot must include completion of that pass. These checks
+   do not reserve capacity or prove machine availability. DKG parameters and the canonical
+   operator-address order do not change. Owner history uses the separate v2 Rust repository.
+   `BondOwnerSetAt` retains block time in seconds before the event clock merges with local time.
+   Startup backfills missing chain projections through aggregate zero's snapshot cursor. Legacy
+   `BondOwnerSet` events and v1 owner snapshots cannot establish that boundary, so they are not
+   imported. Missing history permits the broader submission fallback. The structured warning
    `sortition_owner_history_fallback` identifies the E3, chain, snapshot time, missing-owner count,
    and eligible-operator count. Operators can monitor this event without failing the round or adding
    RPC calls. Existing node and recovery payloads remain unchanged. Startup recovers local ticket
    intents from the durable event log even when public-key aggregation is disabled; replay also
    marks post-snapshot intents as processed.
+
+   Ticket, activation, and configuration checkpoints use source seconds and log order from their
+   `*At` payloads. The gateway captures these before the local clock merge. Snapshot replay and
+   offline repair preserve the same positions; older backfill cannot overwrite newer checkpoints,
+   including within one block. Schema 7 requires a controlled resync of schema-6 histories; old
+   event variants stay decodable but do not supply trusted source timestamps.
 
 3. **Runtime committee order**: both the on-chain registry and Rust runtime normalize the finalized
    committee into ascending address order before deriving `party_id`. This keeps party IDs,

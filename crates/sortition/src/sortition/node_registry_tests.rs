@@ -26,9 +26,21 @@ fn add_and_remove_node() {
 #[test]
 fn available_tickets_accounts_for_price_and_jobs() {
     let mut store = HashMap::new();
-    NodeRegistry::set_ticket_price(&mut store, 1, U256::from(10));
-    NodeRegistry::set_ticket_balance(&mut store, 1, "0xabc".into(), U256::from(55), 1);
-    NodeRegistry::set_operator_active(&mut store, 1, "0xabc".into(), true, 1);
+    NodeRegistry::set_ticket_price(&mut store, 1, U256::from(10), ChainPosition::new(1, 0));
+    NodeRegistry::set_ticket_balance(
+        &mut store,
+        1,
+        "0xabc".into(),
+        U256::from(55),
+        ChainPosition::new(1, 1),
+    );
+    NodeRegistry::set_operator_active(
+        &mut store,
+        1,
+        "0xabc".into(),
+        true,
+        ChainPosition::new(1, 2),
+    );
 
     // floor(55 / 10) = 5 tickets, no active jobs yet.
     assert_eq!(store[&1].available_tickets("0xabc"), 5);
@@ -46,7 +58,13 @@ fn available_tickets_accounts_for_price_and_jobs() {
 #[test]
 fn zero_price_yields_no_tickets() {
     let mut store = HashMap::new();
-    NodeRegistry::set_ticket_balance(&mut store, 1, "0xabc".into(), U256::from(100), 1);
+    NodeRegistry::set_ticket_balance(
+        &mut store,
+        1,
+        "0xabc".into(),
+        U256::from(100),
+        ChainPosition::new(1, 0),
+    );
     assert_eq!(store[&1].available_tickets("0xabc"), 0);
 }
 
@@ -55,7 +73,13 @@ fn operator_active_applies_only_to_the_event_chain() {
     let mut store = HashMap::new();
     NodeRegistry::add_node(&mut store, 1, "0xabc".into());
     NodeRegistry::add_node(&mut store, 2, "0xabc".into());
-    NodeRegistry::set_operator_active(&mut store, 1, "0xabc".into(), true, 1);
+    NodeRegistry::set_operator_active(
+        &mut store,
+        1,
+        "0xabc".into(),
+        true,
+        ChainPosition::new(1, 0),
+    );
     assert!(store[&1].nodes["0xabc"].active);
     assert!(!store[&2].nodes["0xabc"].active);
 }
@@ -65,22 +89,121 @@ fn eligibility_update_invalidates_only_the_target_chain() {
     let mut store = HashMap::new();
     NodeRegistry::add_node(&mut store, 1, "0xabc".into());
     NodeRegistry::add_node(&mut store, 2, "0xabc".into());
-    NodeRegistry::set_operator_active(&mut store, 1, "0xabc".into(), true, 1);
-    NodeRegistry::set_operator_active(&mut store, 2, "0xabc".into(), true, 1);
+    NodeRegistry::set_operator_active(
+        &mut store,
+        1,
+        "0xabc".into(),
+        true,
+        ChainPosition::new(1, 0),
+    );
+    NodeRegistry::set_operator_active(
+        &mut store,
+        2,
+        "0xabc".into(),
+        true,
+        ChainPosition::new(1, 0),
+    );
 
-    NodeRegistry::invalidate_operator_activity(&mut store, 1, 2);
+    NodeRegistry::invalidate_operator_activity(&mut store, 1, ChainPosition::new(2, 0));
 
     assert!(!store[&1].nodes["0xabc"].active);
     assert!(store[&2].nodes["0xabc"].active);
 }
 
 #[test]
+fn configuration_updates_share_one_eligibility_rule() {
+    for parameter in [
+        "ticketPrice",
+        "requiredCiphernodeBond",
+        "ciphernodeBondActiveBps",
+        "minTicketBalance",
+    ] {
+        let mut store = HashMap::new();
+        NodeRegistry::set_ticket_price(&mut store, 1, U256::from(10), ChainPosition::new(1, 0));
+        NodeRegistry::set_operator_active(
+            &mut store,
+            1,
+            "0xabc".into(),
+            true,
+            ChainPosition::new(1, 1),
+        );
+        NodeRegistry::set_operator_active(
+            &mut store,
+            2,
+            "0xabc".into(),
+            true,
+            ChainPosition::new(1, 1),
+        );
+        let event = ConfigurationUpdatedAt {
+            configuration: e3_events::ConfigurationUpdated {
+                parameter: parameter.into(),
+                old_value: U256::from(10),
+                new_value: U256::from(20),
+                chain_id: 1,
+            },
+            position: ChainPosition::new(2, 0),
+        };
+
+        NodeRegistry::update_configuration(&mut store, &event);
+
+        assert!(!store[&1].nodes["0xabc"].active, "{parameter}");
+        assert!(store[&2].nodes["0xabc"].active, "{parameter}");
+        let expected_price = if parameter == "ticketPrice" { 20 } else { 10 };
+        assert_eq!(
+            store[&1].ticket_price,
+            U256::from(expected_price),
+            "{parameter}"
+        );
+    }
+}
+
+#[test]
+fn unrelated_configuration_does_not_create_registry_state() {
+    let mut store = HashMap::new();
+    let event = ConfigurationUpdatedAt {
+        configuration: e3_events::ConfigurationUpdated {
+            parameter: "exitDelay".into(),
+            old_value: U256::from(10),
+            new_value: U256::from(20),
+            chain_id: 1,
+        },
+        position: ChainPosition::new(2, 0),
+    };
+    NodeRegistry::update_configuration(&mut store, &event);
+    assert!(store.is_empty());
+}
+
+#[test]
 fn historical_state_excludes_changes_at_the_request_timestamp() {
     let mut store = HashMap::new();
-    NodeRegistry::set_ticket_balance(&mut store, 1, "0xabc".into(), U256::from(30), 10);
-    NodeRegistry::set_operator_active(&mut store, 1, "0xabc".into(), true, 10);
-    NodeRegistry::set_ticket_balance(&mut store, 1, "0xabc".into(), U256::from(90), 20);
-    NodeRegistry::set_operator_active(&mut store, 1, "0xabc".into(), false, 20);
+    NodeRegistry::set_ticket_balance(
+        &mut store,
+        1,
+        "0xabc".into(),
+        U256::from(30),
+        ChainPosition::new(10, 0),
+    );
+    NodeRegistry::set_operator_active(
+        &mut store,
+        1,
+        "0xabc".into(),
+        true,
+        ChainPosition::new(10, 1),
+    );
+    NodeRegistry::set_ticket_balance(
+        &mut store,
+        1,
+        "0xabc".into(),
+        U256::from(90),
+        ChainPosition::new(20, 0),
+    );
+    NodeRegistry::set_operator_active(
+        &mut store,
+        1,
+        "0xabc".into(),
+        false,
+        ChainPosition::new(20, 1),
+    );
 
     let node = &store[&1].nodes["0xabc"];
     assert_eq!(node.ticket_balance_at(19), U256::from(30));
@@ -215,11 +338,29 @@ fn finalization_releases_an_unselected_ticket_reservation() {
 #[test]
 fn get_nodes_with_tickets_filters_inactive_and_empty() {
     let mut store = HashMap::new();
-    NodeRegistry::set_ticket_price(&mut store, 1, U256::from(10));
-    NodeRegistry::set_ticket_balance(&mut store, 1, "active".into(), U256::from(30), 1);
-    NodeRegistry::set_operator_active(&mut store, 1, "active".into(), true, 1);
+    NodeRegistry::set_ticket_price(&mut store, 1, U256::from(10), ChainPosition::new(1, 0));
+    NodeRegistry::set_ticket_balance(
+        &mut store,
+        1,
+        "active".into(),
+        U256::from(30),
+        ChainPosition::new(1, 1),
+    );
+    NodeRegistry::set_operator_active(
+        &mut store,
+        1,
+        "active".into(),
+        true,
+        ChainPosition::new(1, 2),
+    );
     // Inactive node with balance is excluded.
-    NodeRegistry::set_ticket_balance(&mut store, 1, "inactive".into(), U256::from(30), 1);
+    NodeRegistry::set_ticket_balance(
+        &mut store,
+        1,
+        "inactive".into(),
+        U256::from(30),
+        ChainPosition::new(1, 3),
+    );
 
     let with_tickets = store[&1].get_nodes_with_tickets();
     assert_eq!(with_tickets.len(), 1);

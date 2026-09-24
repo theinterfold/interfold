@@ -607,6 +607,12 @@ committee. The Rust proof boundary validates canonical committee dimensions, uni
 signer-to-slot binding, phase-specific proof multiplicity, and one share/proof per ciphertext
 output. Circuit semantics are deliberately outside this refactor's modification scope.
 
+Plaintext aggregation starts C6 verification at `T+1` distinct shares from the accepted `H`-member
+DKG roster. It does not wait for every roster member. Late shares stay in a durable backup queue. If
+a proof or raw-share commitment fails, the actor excludes that party and verifies a replacement
+batch, or waits while `T+1` valid parties remain possible. Local verification results are bound to
+the dispatch event ID and retained through replay; they cannot authorize a different batch.
+
 After C2/C3 verification, each member publishes a signed readiness report. The active aggregator
 selects the first canonical `H` dealers that are mutually complete and announces that roster. The
 existing readiness-gated aggregator failover promotes the next eligible party if this announcement

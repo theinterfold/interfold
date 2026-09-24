@@ -337,7 +337,12 @@ impl TelemetryProjection {
                 state.registered.remove(&address);
                 state.active.remove(&address);
             }
-            InterfoldEventData::OperatorActivationChanged(event) => {
+            InterfoldEventData::OperatorActivationChanged(event)
+            | InterfoldEventData::OperatorActivationChangedAt(
+                e3_events::OperatorActivationChangedAt {
+                    activation: event, ..
+                },
+            ) => {
                 let state = self.chains.entry(event.chain_id).or_default();
                 let operator = normalize_address(&event.operator);
                 if event.active {
@@ -347,8 +352,10 @@ impl TelemetryProjection {
                 }
             }
             InterfoldEventData::TicketBalanceUpdated(event)
-                if normalize_address(&event.operator) == self.local_address =>
-            {
+            | InterfoldEventData::TicketBalanceUpdatedAt(e3_events::TicketBalanceUpdatedAt {
+                balance: event,
+                ..
+            }) if normalize_address(&event.operator) == self.local_address => {
                 self.chains
                     .entry(event.chain_id)
                     .or_default()

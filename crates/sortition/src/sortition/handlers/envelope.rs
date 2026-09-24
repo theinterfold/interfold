@@ -38,13 +38,13 @@ impl Handler<InterfoldEvent> for Sortition {
             InterfoldEventData::EvmLogObserved(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
-            InterfoldEventData::TicketBalanceUpdated(data) => {
+            InterfoldEventData::TicketBalanceUpdatedAt(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
-            InterfoldEventData::OperatorActivationChanged(data) => {
+            InterfoldEventData::OperatorActivationChangedAt(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
-            InterfoldEventData::ConfigurationUpdated(data) => {
+            InterfoldEventData::ConfigurationUpdatedAt(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
             InterfoldEventData::CommitteeRequested(data) => {

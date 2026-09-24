@@ -55,6 +55,134 @@ fn test_event_extractor(
 struct TestEventParser;
 
 #[actix::test]
+async fn historical_owner_logs_restore_the_shortlist_after_resync() -> Result<()> {
+    use alloy::{primitives::Address, providers::Provider};
+    use e3_events::{E3id, Seed};
+    use e3_evm::BondingRegistrySolReader;
+    use e3_sortition::{BondOwnerState, RegisteredNode, ScoreSortition, Ticket};
+    use std::collections::{HashMap, HashSet};
+
+    let anvil = Anvil::new().try_spawn()?;
+    let provider = Arc::new(
+        EthProvider::new(
+            ProviderBuilder::new()
+                .wallet(PrivateKeySigner::from_slice(&anvil.keys()[0].to_bytes())?)
+                .connect_ws(WsConnect::new(anvil.ws_endpoint()))
+                .await?,
+        )
+        .await?,
+    );
+    let contract = EmitLogs::deploy(provider.provider()).await?;
+    let operators = (1..=68).map(Address::repeat_byte).collect::<Vec<_>>();
+    let owners = operators
+        .iter()
+        .enumerate()
+        .map(|(index, operator)| {
+            if index < 28 {
+                Address::repeat_byte(200)
+            } else {
+                *operator
+            }
+        })
+        .collect::<Vec<_>>();
+    let receipt = contract
+        .emitBondOwners(operators.clone(), owners.clone())
+        .send()
+        .await?
+        .get_receipt()
+        .await?;
+    let block = provider
+        .provider()
+        .get_block_by_number(receipt.block_number.expect("mined receipt").into())
+        .await?
+        .expect("mined block");
+    let timestamp = block.header.timestamp;
+
+    // Start ingestion after the logs exist. A fresh store must scan from the deploy range.
+    let system = EventSystem::new().with_fresh_bus();
+    let bus = system.handle()?.enable("owner-resync-integration");
+    let history = bus.history();
+    let sync = FakeSyncActor::setup(&bus);
+    EvmSystemChainBuilder::new(&bus, &provider)
+        .with_contract(*contract.address(), |upstream| {
+            BondingRegistrySolReader::setup(&upstream).recipient()
+        })
+        .build();
+    let mut config = EvmEventConfig::new();
+    config.insert(provider.chain_id(), EvmEventConfigChain::new(0));
+    bus.publish_without_context(HistoricalEvmSyncStart::new(sync, config))?;
+    let checkpoints = tokio::time::timeout(Duration::from_secs(20), async {
+        loop {
+            let checkpoints = history
+                .send(GetEvents::<InterfoldEvent>::new())
+                .await?
+                .into_iter()
+                .filter_map(|event| match event.into_data() {
+                    InterfoldEventData::BondOwnerSetAt(checkpoint) => Some(checkpoint),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            if checkpoints.len() == operators.len() {
+                break Ok::<_, anyhow::Error>(checkpoints);
+            }
+            sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await??;
+    let mut state = BondOwnerState::default();
+    for checkpoint in checkpoints {
+        assert_eq!(checkpoint.timepoint, timestamp);
+        state.record(&checkpoint.owner, checkpoint.timepoint)?;
+    }
+    let restored: BondOwnerState = bincode::deserialize(&bincode::serialize(&state)?)?;
+    restored.validate()?;
+    let request_owners = operators
+        .iter()
+        .map(|operator| {
+            (
+                *operator,
+                restored
+                    .owner_at(provider.chain_id(), *operator, timestamp)
+                    .unwrap(),
+            )
+        })
+        .collect::<HashMap<_, _>>();
+    assert_eq!(
+        request_owners,
+        operators.iter().copied().zip(owners).collect()
+    );
+    assert!(operators.iter().all(|operator| restored
+        .owner_at(provider.chain_id(), *operator, timestamp - 1)
+        .is_none()));
+    let nodes = operators
+        .iter()
+        .map(|operator| RegisteredNode {
+            address: *operator,
+            tickets: vec![Ticket { ticket_id: 1 }],
+        })
+        .collect::<Vec<_>>();
+    let candidates = ScoreSortition::new(30).get_owner_candidates(
+        E3id::new("1", provider.chain_id()),
+        Seed([42; 32]),
+        &nodes,
+        &request_owners,
+    )?;
+    assert!(
+        candidates.len() < nodes.len(),
+        "complete history must restore the shortlist"
+    );
+    assert_eq!(
+        candidates[..30]
+            .iter()
+            .map(|candidate| request_owners[&candidate.address])
+            .collect::<HashSet<_>>()
+            .len(),
+        30
+    );
+    Ok(())
+}
+
+#[actix::test]
 async fn admission_chain_logs_filter_sortition_after_restart() -> Result<()> {
     use alloy::primitives::Address;
     use e3_evm::BondingRegistrySolReader;

@@ -347,6 +347,8 @@ mod tests {
                 NodeState {
                     ticket_balance: U256::from(10),
                     active_jobs: 0,
+                    ticket_balance_log_index: 0,
+                    active_log_index: 0,
                     active: true,
                     ticket_balance_history: vec![StateCheckpoint {
                         timepoint: 1,
@@ -561,6 +563,8 @@ mod tests {
             NodeState {
                 ticket_balance: U256::from(30),
                 active_jobs: 2,
+                ticket_balance_log_index: 0,
+                active_log_index: 0,
                 active: true,
                 ticket_balance_history: vec![StateCheckpoint {
                     timepoint: 1,
@@ -577,6 +581,8 @@ mod tests {
             NodeState {
                 ticket_balance: U256::from(30),
                 active_jobs: 3,
+                ticket_balance_log_index: 0,
+                active_log_index: 0,
                 active: true,
                 ticket_balance_history: vec![StateCheckpoint {
                     timepoint: 1,
@@ -611,6 +617,8 @@ mod tests {
             NodeState {
                 ticket_balance: U256::from(30),
                 active_jobs: 3,
+                ticket_balance_log_index: 0,
+                active_log_index: 0,
                 active: true,
                 ticket_balance_history: vec![StateCheckpoint {
                     timepoint: 1,
@@ -694,6 +702,8 @@ mod tests {
             NodeState {
                 ticket_balance: U256::from(100),
                 active_jobs: 0,
+                ticket_balance_log_index: 0,
+                active_log_index: 0,
                 active: true,
                 ticket_balance_history: vec![
                     StateCheckpoint {
@@ -736,6 +746,8 @@ mod tests {
             NodeState {
                 ticket_balance: U256::from(100),
                 active_jobs: 0,
+                ticket_balance_log_index: 0,
+                active_log_index: 0,
                 active: true,
                 ticket_balance_history: vec![StateCheckpoint {
                     timepoint: 9,
@@ -772,6 +784,8 @@ mod tests {
             NodeState {
                 ticket_balance: U256::from(100),
                 active_jobs: 0,
+                ticket_balance_log_index: 0,
+                active_log_index: 0,
                 active: false,
                 ticket_balance_history: vec![StateCheckpoint {
                     timepoint: 9,

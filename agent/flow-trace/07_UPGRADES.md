@@ -40,7 +40,9 @@ increase node_generation and build release
   -> old nodes cannot become active or enter new committees
   -> upgraded nodes start, verify policy, acknowledge, and refresh themselves
   -> upgraded nodes remain on the existing protocol-version P2P network
-  -> wait until active release-ready nodes cover the largest committee N
+  -> refresh every captured registration, including inactive operators
+  -> wait for a later timestamp and check snapshot owner capacity covers the largest N
+  -> confirm the eligible nodes are online and can reach one another
   -> governance resumes requests
 ```
 
@@ -55,8 +57,8 @@ Prepare with `upgrade:node-release --action prepare --mandatory`. After operator
 Increase `protocol_version`. Pause and drain first. One governance proposal must upgrade the
 contracts and raise the required protocol version. Restart nodes after that proposal executes.
 Upgrade at least one configured bootstrap peer before the remaining operators. Resume only after the
-on-chain active count can fill every configured committee and the new-version peers can discover
-each other.
+full registration refresh is complete, the snapshot owner count can fill every configured committee,
+and the new-version peers can discover each other.
 
 Treat the contracts, verifier routes, ciphernode protocol version, CRISP program, CRISP server, and
 DAO application addresses as one cutover. Do not run a mixed stack. Use this order:
@@ -122,10 +124,11 @@ all point to the same dependency graph.
 
 After the nodes restart, run
 `upgrade:secure-crisp:resume -- --network mainnet --ciphernodes-restarted`. It reruns the complete
-activation validator and requires enough release-ready active operators for the largest committee
-before it writes the checked DAO/Safe unpause transaction. On-chain active status is not a
-heartbeat, so the flag is an explicit operator confirmation that those processes are online and
-mutually reachable.
+activation validator and checks both release-ready operators and snapshot owner capacity for the
+largest committee before it writes the checked DAO/Safe unpause transaction. The capacity check
+requires the full registration refresh to be complete before the `T-1` boundary. On-chain active
+status is not a heartbeat, so the flag is an explicit operator confirmation that those processes are
+online and mutually reachable.
 
 The CRISP server probes `earliestVotingStart()` when it creates a round. During an ordered legacy
 cutover, a new server can derive the same lower bound from the live Interfold randomness, sortition,

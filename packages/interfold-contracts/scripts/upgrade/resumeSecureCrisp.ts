@@ -2,6 +2,7 @@
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { assertRefreshedOwnerCapacity } from "../../tasks/committeeCapacity";
 import { arg, connect, hasFlag } from "../protocol/cli";
 import {
   deploymentPath,
@@ -108,6 +109,8 @@ export async function prepareSecureCrispResume(): Promise<void> {
       `Only ${active} release-ready operators are active; ${requiredActive} are required by the largest secure committee`,
     );
   }
+
+  await assertRefreshedOwnerCapacity(bonding, requiredActive);
 
   const txs = [
     safeTx(

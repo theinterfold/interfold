@@ -1,6 +1,38 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { BaseContract, Contract, ZeroAddress } from "ethers";
 
+function requireCountedCapacity(capacity: bigint, required: bigint): void {
+  if (capacity < required) {
+    throw new Error(
+      `Only ${capacity} refreshed snapshot bond owners are counted; ${required} are required. Refresh every registered operator and wait for a later block timestamp.`,
+    );
+  }
+}
+
+/** Check the contract's refresh barrier before preparing a governance resume. */
+export async function assertRefreshedOwnerCapacity(
+  bonding: BaseContract,
+  required: bigint,
+): Promise<void> {
+  const provider = bonding.runner?.provider;
+  if (!provider)
+    throw new Error("Committee capacity check requires a provider");
+  const block = await provider.getBlock("latest");
+  if (!block || !block.hash || block.timestamp === 0) {
+    throw new Error("Committee capacity check could not read the chain head");
+  }
+  const capacity: bigint = await bonding.getFunction("committeeOwnerCapacity")(
+    block.timestamp - 1,
+    { blockTag: block.number },
+  );
+  if ((await provider.getBlock(block.number))?.hash !== block.hash) {
+    throw new Error(
+      "The chain changed during the committee capacity check; retry",
+    );
+  }
+  requireCountedCapacity(capacity, required);
+}
+
 /** Check distinct eligible owners before the request tool pays for an E3. */
 export async function assertCommitteeOwnerCapacity(
   interfold: BaseContract,
@@ -50,6 +82,7 @@ export async function assertCommitteeOwnerCapacity(
       "function bondOwnerAt(address,uint256) view returns (address)",
       "function ticketToken() view returns (address)",
       "function ticketPrice() view returns (uint256)",
+      "function committeeOwnerCapacity(uint256) view returns (uint256)",
     ],
     provider,
   );
@@ -101,6 +134,7 @@ export async function assertCommitteeOwnerCapacity(
       }),
     );
   }
+  const capacity: bigint = await bonding.committeeOwnerCapacity(timepoint, at);
   if ((await provider.getBlock(block.number))?.hash !== block.hash) {
     throw new Error(
       "The chain changed during the committee capacity check; retry the request",
@@ -111,6 +145,7 @@ export async function assertCommitteeOwnerCapacity(
       `Committee needs ${requiredOwners} distinct eligible bond owners; found ${owners.size} at block ${block.number}. No E3 was requested.`,
     );
   }
+  requireCountedCapacity(capacity, BigInt(requiredOwners));
   // This is a snapshot, not a reservation or proof that operators will remain online.
   return {
     blockNumber: block.number,

@@ -152,9 +152,11 @@ every section.
 - **Eligibility policy version is monotonic and fail-closed:** any effective change to `ticketPrice`
   / `requiredCiphernodeBond` / `ciphernodeBondActiveBps` / `minTicketBalance` bumps
   `eligibilityConfigurationVersion`, resets `numActiveOperators`, and invalidates all cached
-  statuses in O(1). Rust sortition consumes the same `ConfigurationUpdated` event and marks
-  operators inactive until a matching `OperatorActivationChanged` arrives. — `BondingRegistry.sol`;
-  INDEX concern #24
+  statuses in O(1). New committee requests wait for a check of every registration captured at that
+  change, including inactive results. Duplicates and later registrations cannot settle another
+  member's check. Deregistration settles the departing member. Rust uses source block seconds from
+  `ConfigurationUpdatedAt` and `OperatorActivationChangedAt`, never the merged event clock. —
+  `BondingRegistry.sol`; INDEX concern #24
 - **Mandatory release policy changes are paused, drained, and monotonic:** governance may raise the
   required protocol version or node generation only while requests are paused, `activeE3Count == 0`,
   and `unreleasedCommitteeCount == 0`. The change invalidates every cached operator status in O(1).
@@ -232,9 +234,10 @@ every section.
   count. After upgrade, unrefreshed legacy operators do not count. Permissionless status refreshes
   add them without double counting. The count may underestimate capacity during migration, but must
   never overestimate snapshot owners. `committeeOwnerCapacity` returns zero when the timestamp uses
-  an older eligibility policy. Insufficient capacity reverts the complete request, including fee
-  collection and treasury credit. This check does not prove online availability. — `flow-trace/02`,
-  `03`
+  an older eligibility policy or precedes completion of the full refresh pass. An upgraded proxy
+  captures legacy registrations before its first membership change or registered status check.
+  Insufficient capacity reverts the complete request, including fee collection and treasury credit.
+  This check does not prove online availability. — `flow-trace/02`, `03`
 - Terminal committee release clears the bounded `ownerCandidates` entries using snapshot owners,
   including after later ownership transfers. Legacy requests skip this cleanup. Randomness request
   context and the accepted seed remain readable for replay. — `RegistrySortitionLib.sol`;

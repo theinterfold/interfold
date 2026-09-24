@@ -12,7 +12,10 @@
 /// marker is the guardrail: bump it whenever a persisted format changes in a
 /// non-additive way. On boot the persisted value is compared against this
 /// constant (see `decide_schema_version`).
-pub const SCHEMA_VERSION: u32 = 6;
+// Schema 6 can contain sortition checkpoints derived from the merged event clock.
+// A controlled chain resync must rebuild those checkpoints from source timestamps.
+// Schema 7 also adds durable decryption backup shares and batch-bound C6 results.
+pub const SCHEMA_VERSION: u32 = 7;
 
 /// The action a node should take after reading the persisted schema version.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -89,6 +92,14 @@ mod tests {
             }
             other => panic!("expected Halt, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn rejects_histories_without_source_block_timestamps() {
+        assert!(matches!(
+            decide_schema_version(Some(6), SCHEMA_VERSION, true),
+            SchemaVersionDecision::Halt(_)
+        ));
     }
 
     #[test]
