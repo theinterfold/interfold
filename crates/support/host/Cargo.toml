@@ -28,11 +28,6 @@ boundless-market = { workspace = true }
 url = { workspace = true }
 dotenvy = { workspace = true }
 e3-fhe-params = { workspace = true, features = ["abi-encoding"] }
-# Host-only, for the `measure_cycles` binary. The guest is unaffected: it builds from
-# `methods/guest`, whose dependencies are `e3-user-program`, `e3-support-types` and risc0, so
-# nothing here can change the image ID.
-hex = { workspace = true }
-serde_json = { workspace = true }
 
 [dev-dependencies]
 hex = { workspace = true }

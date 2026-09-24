@@ -255,6 +255,7 @@ jobs:
       # builds from `crates/support/methods/guest`, which takes this crate by git revision with
       # default features.
       - name: Run compute-provider Unit Tests with parallel batching
+        if: matrix.suite == 'lib'
         run: 'cargo test -p e3-compute-provider --features parallel'
 
       - name: Cancel workflow on failure
