@@ -14,7 +14,7 @@
 //! writes the result back.
 
 use alloy::primitives::U256;
-use e3_events::E3id;
+use e3_events::{ChainPosition, ConfigurationUpdatedAt, E3id};
 use serde::{Deserialize, Serialize};
 use std::collections::{hash_map::Entry, HashMap};
 use tracing::{info, warn};
@@ -46,6 +46,10 @@ pub struct NodeState {
     pub ticket_balance_history: Vec<StateCheckpoint<U256>>,
     /// Eligibility changes indexed by the EIP-6372 timestamp used on-chain.
     pub active_history: Vec<StateCheckpoint<bool>>,
+    /// Source log index of the latest ticket-balance checkpoint.
+    pub ticket_balance_log_index: u32,
+    /// Source log index of the latest activation checkpoint.
+    pub active_log_index: u32,
 }
 
 impl Default for NodeState {
@@ -56,6 +60,8 @@ impl Default for NodeState {
             active: false,
             ticket_balance_history: Vec::new(),
             active_history: Vec::new(),
+            ticket_balance_log_index: 0,
+            active_log_index: 0,
         }
     }
 }
@@ -68,6 +74,19 @@ impl NodeState {
     pub fn active_at(&self, timepoint: u64) -> bool {
         checkpoint_value(&self.active_history, timepoint).unwrap_or(false)
     }
+
+    fn set_active(&mut self, active: bool, position: ChainPosition) -> bool {
+        if !push_checkpoint(
+            &mut self.active_history,
+            &mut self.active_log_index,
+            position,
+            active,
+        ) {
+            return false;
+        }
+        self.active = active;
+        true
+    }
 }
 
 fn checkpoint_value<T: Copy>(history: &[StateCheckpoint<T>], timepoint: u64) -> Option<T> {
@@ -75,15 +94,25 @@ fn checkpoint_value<T: Copy>(history: &[StateCheckpoint<T>], timepoint: u64) -> 
     index.checked_sub(1).map(|index| history[index].value)
 }
 
-fn push_checkpoint<T>(history: &mut Vec<StateCheckpoint<T>>, timepoint: u64, value: T) {
-    if let Some(last) = history.last_mut() {
-        if last.timepoint == timepoint {
-            last.value = value;
-            return;
+fn push_checkpoint<T>(
+    history: &mut Vec<StateCheckpoint<T>>,
+    latest_log_index: &mut u32,
+    position: ChainPosition,
+    value: T,
+) -> bool {
+    match history.last_mut() {
+        // EVM restart backfill can overlap a restored snapshot or replayed log suffix.
+        Some(last) if position < ChainPosition::new(last.timepoint, *latest_log_index) => {
+            return false
         }
-        debug_assert!(last.timepoint < timepoint);
+        Some(last) if last.timepoint == position.timepoint => last.value = value,
+        _ => history.push(StateCheckpoint {
+            timepoint: position.timepoint,
+            value,
+        }),
     }
-    history.push(StateCheckpoint { timepoint, value });
+    *latest_log_index = position.log_index;
+    true
 }
 
 /// Unified state for all nodes across all chains.
@@ -93,6 +122,8 @@ pub struct NodeStateStore {
     pub nodes: HashMap<String, NodeState>,
     /// Current ticket price.
     pub ticket_price: U256,
+    /// Source timestamp and log index of the latest ticket-price change.
+    pub ticket_price_position: ChainPosition,
     /// Map of `E3 ID -> nodes whose capacity is reserved` for that E3.
     ///
     /// Before committee finalization, a node stores its own ticket reservation.
@@ -187,12 +218,19 @@ impl NodeRegistry {
         chain_id: u64,
         operator: String,
         new_balance: U256,
-        timepoint: u64,
+        position: ChainPosition,
     ) {
         let chain_state = store.entry(chain_id).or_default();
         let node = chain_state.nodes.entry(operator.clone()).or_default();
+        if !push_checkpoint(
+            &mut node.ticket_balance_history,
+            &mut node.ticket_balance_log_index,
+            position,
+            new_balance,
+        ) {
+            return;
+        }
         node.ticket_balance = new_balance;
-        push_checkpoint(&mut node.ticket_balance_history, timepoint, new_balance);
         info!(
             operator = %operator,
             chain_id = chain_id,
@@ -207,12 +245,13 @@ impl NodeRegistry {
         chain_id: u64,
         operator: String,
         active: bool,
-        timepoint: u64,
+        position: ChainPosition,
     ) {
         let chain_state = store.entry(chain_id).or_default();
         let node = chain_state.nodes.entry(operator.clone()).or_default();
-        node.active = active;
-        push_checkpoint(&mut node.active_history, timepoint, active);
+        if !node.set_active(active, position) {
+            return;
+        }
         info!(
             operator = %operator,
             chain_id = chain_id,
@@ -226,9 +265,14 @@ impl NodeRegistry {
         store: &mut HashMap<u64, NodeStateStore>,
         chain_id: u64,
         new_price: U256,
+        position: ChainPosition,
     ) {
         let chain_state = store.entry(chain_id).or_default();
+        if position < chain_state.ticket_price_position {
+            return;
+        }
         chain_state.ticket_price = new_price;
+        chain_state.ticket_price_position = position;
         info!(
             chain_id = chain_id,
             new_ticket_price = ?new_price,
@@ -242,17 +286,36 @@ impl NodeRegistry {
     pub fn invalidate_operator_activity(
         store: &mut HashMap<u64, NodeStateStore>,
         chain_id: u64,
-        timepoint: u64,
+        position: ChainPosition,
     ) {
         let chain_state = store.entry(chain_id).or_default();
         for node in chain_state.nodes.values_mut() {
-            node.active = false;
-            push_checkpoint(&mut node.active_history, timepoint, false);
+            node.set_active(false, position);
         }
         info!(
             chain_id = chain_id,
             "Invalidated operator activity after eligibility-policy update"
         );
+    }
+
+    /// Apply the same configuration rules during live delivery and offline repair.
+    pub fn update_configuration(
+        store: &mut HashMap<u64, NodeStateStore>,
+        event: &ConfigurationUpdatedAt,
+    ) {
+        let configuration = &event.configuration;
+        if !configuration.affects_eligibility() {
+            return;
+        }
+        if configuration.parameter == "ticketPrice" {
+            Self::set_ticket_price(
+                store,
+                configuration.chain_id,
+                configuration.new_value,
+                event.position,
+            );
+        }
+        Self::invalidate_operator_activity(store, configuration.chain_id, event.position);
     }
 
     pub fn record_sortition_snapshot(

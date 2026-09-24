@@ -210,8 +210,10 @@ async fn backfill_recovers_committee_inputs() -> anyhow::Result<()> {
 
     let recovered = project_restart_state_backfill(
         &system.eventstore_reader()?.seq(),
+        std::collections::HashMap::new(),
         std::collections::HashMap::from([(aggregate_id, 3)]),
         &std::collections::HashSet::from([e3_id.clone()]),
+        &std::collections::HashSet::new(),
         &std::collections::HashSet::new(),
     )
     .await?;
@@ -274,9 +276,11 @@ async fn backfill_tracks_unresolved_slash_intents() -> anyhow::Result<()> {
     let slash_chains = std::collections::HashSet::from([1]);
     let recovered = project_restart_state_backfill(
         &system.eventstore_reader()?.seq(),
+        std::collections::HashMap::new(),
         std::collections::HashMap::from([(aggregate_id, 2)]),
         &std::collections::HashSet::new(),
         &slash_chains,
+        &std::collections::HashSet::new(),
     )
     .await?;
     assert_eq!(recovered.slash_intents, vec![intent.clone()]);
@@ -292,9 +296,11 @@ async fn backfill_tracks_unresolved_slash_intents() -> anyhow::Result<()> {
     bus.flush_event_pipeline().await?;
     let recovered = project_restart_state_backfill(
         &system.eventstore_reader()?.seq(),
+        std::collections::HashMap::new(),
         std::collections::HashMap::from([(aggregate_id, 3)]),
         &std::collections::HashSet::new(),
         &slash_chains,
+        &std::collections::HashSet::new(),
     )
     .await?;
     assert!(recovered.slash_intents.is_empty());
@@ -313,9 +319,11 @@ async fn backfill_tracks_unresolved_slash_intents() -> anyhow::Result<()> {
     bus.flush_event_pipeline().await?;
     let recovered = project_restart_state_backfill(
         &system.eventstore_reader()?.seq(),
+        std::collections::HashMap::new(),
         std::collections::HashMap::from([(aggregate_id, 5)]),
         &std::collections::HashSet::new(),
         &slash_chains,
+        &std::collections::HashSet::new(),
     )
     .await?;
     assert!(recovered.slash_intents.is_empty());

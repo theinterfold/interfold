@@ -14,3 +14,11 @@ pub struct OperatorActivationChanged {
     pub active: bool,
     pub chain_id: u64,
 }
+
+/// An activation change with its source block timestamp in seconds and log order.
+#[derive(Message, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[rtype(result = "()")]
+pub struct OperatorActivationChangedAt {
+    pub activation: OperatorActivationChanged,
+    pub position: crate::ChainPosition,
+}

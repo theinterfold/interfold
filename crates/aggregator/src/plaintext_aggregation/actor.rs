@@ -8,7 +8,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::str::FromStr;
 
 use crate::workflow::threshold_plaintext_aggregation::{
-    build_decryption_aggregation_jobs, format_decrypted_plaintext, ThresholdPlaintextAggregation,
+    build_decryption_aggregation_jobs, format_decrypted_plaintext, C6ShareVerifier,
+    ThresholdPlaintextAggregation,
 };
 use actix::prelude::*;
 use alloy::primitives::Address;
@@ -20,9 +21,10 @@ use e3_events::{
     CommitteeMemberExpelled, ComputeRequest, ComputeRequestError, ComputeRequestErrorKind,
     ComputeResponse, ComputeResponseKind, CorrelationId, DecryptedSharesAggregationProofRequest,
     DecryptionAggregationRequest, DecryptionshareCreated, Die, E3Failed, E3Stage, E3id, EType,
-    EventContext, FailureReason, InterfoldEvent, InterfoldEventData, PlaintextAggregated, Proof,
-    Sequenced, ShareVerificationComplete, ShareVerificationDispatched, SignedProofPayload,
-    TypedEvent, VerificationKind, ZkRequest, ZkResponse,
+    EventContext, FailureReason, InterfoldEvent, InterfoldEventData, PlaintextAggregated,
+    PlaintextVerificationResumed, Proof, Sequenced, ShareVerificationComplete,
+    ShareVerificationDispatched, SignedProofPayload, TypedEvent, VerificationKind, ZkRequest,
+    ZkResponse,
 };
 use e3_fhe_params::BfvPreset;
 use e3_sortition::{E3CommitteeContainsRequest, E3CommitteeContainsResponse, Sortition};
@@ -48,6 +50,8 @@ pub use crate::workflow::threshold_plaintext_aggregation::{
 /// redriven from replayed facts.
 #[derive(Default)]
 struct PendingDecryptionWork {
+    /// Commitments to the fixed ciphertext outputs, rebuilt after restart.
+    ciphertext_commitments: Option<Vec<[u8; 32]>>,
     /// Honest parties' C6 inner proofs (sorted by party id) for [`ZkRequest::DecryptionAggregation`].
     honest_c6_proofs_for_agg: Option<Vec<(u64, Vec<Proof>)>>,
     /// In-flight threshold decryption request.
@@ -75,8 +79,8 @@ pub struct ThresholdPlaintextAggregator {
     /// `committee_hash_*` inputs. Same value as `PublicKeyAggregated.committee_addresses`.
     committee_addresses: Vec<Address>,
     /// Canonical honest subset from DKG (length `H ≤ N`, from
-    /// `PublicKeyAggregated.honest_committee_addresses`). Drives share-collection
-    /// gating (expects one share from each H party) and sender checks after sortition.
+    /// `PublicKeyAggregated.honest_committee_addresses`). Only these parties can
+    /// supply shares; T+1 valid shares suffice for decryption.
     honest_committee_addresses: Vec<Address>,
     is_aggregator: bool,
     effects_enabled: bool,
@@ -155,13 +159,6 @@ impl ThresholdPlaintextAggregator {
                 ..Default::default()
             },
         }
-    }
-
-    /// Length of the canonical honest subset (`H`), not on-chain committee size `N`.
-    /// Share collection waits for one decryption share from each address in
-    /// `honest_committee_addresses` (sortition membership is checked separately).
-    fn aggregated_committee_n(&self) -> u64 {
-        self.honest_committee_addresses.len() as u64
     }
 
     /// True when `node` owns `party_id` in the full canonical committee and is part of the honest

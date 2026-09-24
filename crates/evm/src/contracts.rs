@@ -470,6 +470,17 @@ sol! {
 
         event BondOwnerSet(address indexed operator, address indexed bondOwner);
 
+        struct AdmissionPolicy {
+            bool cooldownEnabled;
+            bool admissionsPaused;
+            uint48 cooldownDuration;
+            uint48 pauseTimepoint;
+            bool pauseCooldownEnabled;
+            uint48 pauseCooldownDuration;
+        }
+        event AdmissionPolicyUpdated(uint48 timepoint, AdmissionPolicy policy);
+        event AdmissionStarted(address indexed operator, uint48 timepoint);
+
         event ConfigurationUpdated(
             bytes32 indexed parameter,
             uint256 oldValue,

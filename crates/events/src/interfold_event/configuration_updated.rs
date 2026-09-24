@@ -18,6 +18,26 @@ pub struct ConfigurationUpdated {
     pub chain_id: u64,
 }
 
+/// A configuration change with its source block timestamp in seconds and log order.
+#[derive(Message, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[rtype(result = "()")]
+pub struct ConfigurationUpdatedAt {
+    pub configuration: ConfigurationUpdated,
+    pub position: crate::ChainPosition,
+}
+
+impl ConfigurationUpdated {
+    pub fn affects_eligibility(&self) -> bool {
+        matches!(
+            self.parameter.as_str(),
+            "ticketPrice"
+                | "requiredCiphernodeBond"
+                | "ciphernodeBondActiveBps"
+                | "minTicketBalance"
+        )
+    }
+}
+
 impl Display for ConfigurationUpdated {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(

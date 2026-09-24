@@ -227,7 +227,76 @@ the current version count as active, so committee requests cannot rely on status
 older policy. The Rust sortition state consumes the same `ConfigurationUpdated` event and marks its
 chain-local operators inactive until matching `OperatorActivationChanged` refresh events arrive.
 
+Each base eligibility change also captures the number of registered operators. New committee
+requests remain blocked until every member of that set is checked or deregisters. A check counts
+even when the operator remains inactive. Anyone can submit these checks in bounded batches; the
+operator does not need to be online. Duplicate checks and later registrations cannot replace an
+unchecked member. A second configuration change starts a new pass. The request snapshot must be at
+or after completion. Historical eligibility for existing E3s does not use this barrier.
+
 A completed ban or unban refreshes the affected registered operator immediately.
+
+Active bond owners have a separate checkpointed count for committee admission. Each owner counts
+once, even when it funds several active operators. Status refreshes update this count even when the
+operator's active flag does not change. Ownership acceptance moves a counted operator to its new
+owner. An eligibility configuration change resets the count in constant time.
+
+After an upgrade adds this count, existing active operators remain uncounted until a permissionless
+`refreshOperatorStatus` or `refreshOperatorStatuses` call. The first registration, deregistration,
+or registered status check captures the existing registrations before changing that set. Capacity
+stays zero until all of them are checked or leave. Refresh the registered operators before resuming
+requests, then wait for a later timestamp. Repeated refreshes do not increase the count. An
+unrefreshed operator cannot inflate the count through an ownership transfer.
+
+### Admission cooldown and pause
+
+The BondingRegistry owner controls
+`setAdmissionPolicy(cooldownEnabled, cooldownDuration, admissionsPaused)`. The duration is in
+seconds. Deployment defaults to a disabled cooldown and open admissions. Effective changes emit
+`AdmissionPolicyUpdated`. These settings do not change collateral, release, exit, or slash
+requirements.
+
+Registration and each actual bond-owner change emit `AdmissionStarted` and checkpoint the position's
+start time. A proposal alone does not restart the delay. Accepting a transfer to the same owner does
+not restart it. Re-registration starts a new delay. Starts are recorded even while the delay is off.
+The registration path already requires the full ciphernode bond. Funding tickets later does not
+restart the delay; tickets must still satisfy the request's collateral checks.
+
+`isActive` remains the current collateral/release check. `eligibilityAt` also applies admission at
+the requested timestamp. This separation lets already requested E3s accept their eligible tickets
+after an owner change or a governance policy change. New requests use the new rule at
+`requestBlock - 1`. If governance changes policy at the request timestamp, the capacity check fails
+closed until a later timestamp and a status refresh.
+
+Pausing freezes the eligible pool at the timestamp before the pause. Waiting positions cannot enter
+while paused, even after expiry. New registrations and changed owners are also excluded. Changing or
+disabling the cooldown while paused does not widen that frozen pool. Existing eligible positions
+must still meet the other requirements. On unpause, the current duration applies to the original
+start time: time continues during the pause. Disabling the cooldown while unpaused bypasses only the
+wait. Multiple policy changes at one timestamp cannot widen a pause's pre-timestamp eligible pool.
+
+Policy changes clear the conservative distinct-owner capacity count, not operator activity or old
+request history. Permissionless `refreshOperatorStatus` and `refreshOperatorStatuses` repopulate it.
+Refresh matured positions before requesting a committee that needs their capacity. Refreshing a
+waiting position cannot admit it early. No timer transaction runs automatically at expiry.
+
+Before pausing admissions after an eligibility configuration change, refresh every operator that
+must remain eligible. Wait for a later block timestamp. Check that
+`committeeOwnerCapacity(latest.timestamp - 1)` covers the required committee size. An unrefreshed
+operator has no active checkpoint under the new configuration at the pause cutoff. Refreshing it
+after the pause cannot change that history. To correct this case, unpause admissions, refresh the
+operators, wait for a later timestamp, and pause again. Each admission policy change also resets
+capacity, so refresh the frozen eligible pool and wait for a later timestamp before new requests.
+
+Unchanged pre-upgrade positions have no admission start history and remain admitted. This is an
+explicit migration exception, not proof of their age. A later registration or ownership change
+starts the delay. Upgrade node software before deploying this contract change. Startup rebuilds the
+v2 admission projection from typed events and legacy `EvmLogObserved` records. Typed events use
+aggregate zero; raw records use the chain aggregate. Replay applies the same decoder after the
+snapshot cursor. Recovery accepts raw admission records only from the EVM source and validates their
+ABI topics and data. The old v1 projection remains unchanged. Missing or invalid required log
+history must be recovered before the node can shortlist correctly. This temporary rule buys response
+time; an attacker can still prepare separate wallets in advance.
 
 A mandatory ciphernode release uses the same fail-closed refresh mechanism. Governance pauses and
 drains the protocol, raises the required release policy, and resets the active count to zero.
@@ -751,3 +820,11 @@ The EVM reader now emits typed `BondOwnerSet`, `CiphernodeBondUpdated`, and
 local dashboard rebuilds each chain's registered/active node sets and the local operator's bond
 owner, ticket, ciphernode bond, and exit state from EventStore history; it does not parse
 human-oriented CLI status output.
+
+The gateway stores ticket, activation, and configuration facts in their appended `*At` event
+variants. Each variant carries the source block timestamp in seconds and log index, captured before
+the event bus merges its clock. Sortition and offline projection repair use those source positions,
+not receipt time. Each ticket, activation, and price projection retains its latest source position
+so overlapping restart backfill cannot replace newer state or append an older checkpoint. Schema 7
+rejects schema-6 stores because their histories can contain incorrect checkpoint times. Old variants
+remain readable for validation, but cannot build new trusted eligibility history.

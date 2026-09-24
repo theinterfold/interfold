@@ -1129,26 +1129,40 @@ InterfoldSolReader decodes CiphertextOutputPublished event
   │   └─ Forwards every valid share into each committee member's persisted plaintext actor
   │
   ├─ ThresholdPlaintextAggregator persists shares on active and standby nodes
-  │   ├─ Verifies sender is in committee
-  │   ├─ Adds the share if verified
-  │   └─ Ignores non-members or excluded parties
+  │   ├─ Checks the sender's canonical party ID against the accepted H-member DKG roster
+  │   ├─ Checks each C6 signature, E3, proof type, raw-share commitment, and ciphertext position
+  │   ├─ Stores the first share/proof bundle from each eligible party
+  │   └─ Ignores unauthenticated bundles without reserving or excluding the claimed party
 │
-  ├─ Once all required honest shares are durable:
+  ├─ Once T+1 distinct roster shares are durable (10 for Small, not all 14):
   │   ├─ Persist VerifyingC6 before publishing AggregationInputsReady(Plaintext)
   │   ├─ Start the 10-minute failover budget only at this readiness boundary
   │   └─ A promoted standby resumes the persisted phase
+  │
+  ├─ Shares that arrive during C6 verification remain in a durable backup queue:
+  │   ├─ The in-flight batch stays unchanged
+  │   ├─ Reject duplicate parties and previously excluded parties
+  │   └─ After a failed proof or raw-share commitment check, use backups and verify again
+  │       Wait for replacements if at least T+1 roster parties can still provide valid shares
 │
   ├─ C6 VERIFICATION (per-share, active aggregator only):
 │   ShareVerificationActor receives C6 signed proofs
 │   ├─ ECDSA recovery + ZK verification (same 2-phase as C2/C3)
 │   ├─ On failure: SignedProofFailed → accusation pipeline
 │   └─ On pass: ProofVerificationPassed (cached)
+│   Local completion results are bound to the exact dispatch event ID. Equal verdicts for
+│   different batches have different delivery IDs. Results persist through replay and standby;
+│   only the active aggregator can apply them after EffectsEnabled.
+│   A saved result resumes through a fresh PlaintextVerificationResumed event in the E3's
+│   chain aggregate. Its new sequence permits snapshot writes after the recovery watermark.
+│   Admission and post-verification checks use the same C6ShareVerifier for raw-share commitments.
 │
-├─ When T+1 shares are collected (threshold met):
+├─ When at least T+1 shares pass C6 verification and each output's raw-share commitment check:
 │   │
 │   ├─ State → Computing
 │   │
 │   ├─ COMPUTE REQUEST: CalculateThresholdDecryption
+│   │   Live execution and restart recovery use the same dispatch_threshold_decryption helper.
 │   │   │
 │   │   │  ┌─── TrBFV Computation ──────────────────────────────┐
 │   │   │  │                                                     │
