@@ -7,11 +7,11 @@
 /**
  * Assert every contract test file belongs to exactly one CI leg.
  *
- * The suite is split across `test:unit`, `test:input-tree` and `test:ballots` because proving a
- * ballot costs minutes and the legs run in parallel. Naming files explicitly is what makes the
- * split balanced, and it is also how the split breaks: a new test file that no leg names is never
- * run by CI, and nothing reports it. `pnpm test` still runs everything, so the gap only exists in
- * CI, where it looks exactly like a passing build.
+ * The suite is split across `test:unit`, `test:input-tree` and the `test:ballots:*` legs because
+ * proving a ballot costs minutes and the legs run in parallel. Naming files explicitly is what
+ * makes the split balanced, and it is also how the split breaks: a new test file that no leg names
+ * is never run by CI, and nothing reports it. `pnpm test` still runs everything, so the gap only
+ * exists in CI, where it looks exactly like a passing build.
  */
 
 import { readFileSync, readdirSync } from 'fs'
@@ -19,7 +19,7 @@ import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
 
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
-const LEGS = ['test:unit', 'test:input-tree', 'test:ballots']
+const LEGS = ['test:unit', 'test:input-tree', 'test:ballots:program', 'test:ballots:census']
 
 const scripts = JSON.parse(readFileSync(join(packageRoot, 'package.json'), 'utf-8')).scripts ?? {}
 
