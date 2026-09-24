@@ -237,6 +237,11 @@ publishPlaintextOutput() succeeds
 
 ## Rust-Side: Node Shutdown
 
+`interfold start --bootstrap` holds the same process fence but does not hydrate or write protocol
+state. Its separate entrypoint closes the identity store after reading the key. SIGINT or SIGTERM
+drops the network swarm and closes its listeners. It does not run the ciphernode shutdown barrier
+because no protocol actors or event stores are active.
+
 ```text
 interfold start → running node
 │

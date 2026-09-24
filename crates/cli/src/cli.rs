@@ -177,7 +177,14 @@ impl Cli {
         }
 
         match self.command {
-            Commands::Start { peers } => start::execute(config, peers).await?,
+            Commands::Start {
+                peers,
+                bootstrap: true,
+            } => crate::bootstrap::execute(config, peers).await?,
+            Commands::Start {
+                peers,
+                bootstrap: false,
+            } => start::execute(config, peers).await?,
             Commands::Init { .. } => {
                 bail!("Cannot run `interfold init` when a configuration exists.");
             }
@@ -246,6 +253,9 @@ pub enum Commands {
             help = "Sets a peer URL",
         )]
         peers: Vec<String>,
+        /// Run peer discovery and gossip without committee participation or proving
+        #[arg(long)]
+        bootstrap: bool,
     },
 
     /// Print the config env
@@ -491,5 +501,42 @@ impl TryFrom<RemoteCommand> for Commands {
         };
         // We might have to hold this stuff on RemoteCommand
         Ok(command)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn start_defaults_to_a_ciphernode() {
+        let cli = Cli::try_parse_from(["interfold", "start"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Start {
+                bootstrap: false,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn bootstrap_is_explicit_and_keeps_peer_and_identity_options() {
+        let cli = Cli::try_parse_from([
+            "interfold",
+            "--name",
+            "relay",
+            "start",
+            "--bootstrap",
+            "--peer",
+            "/ip4/127.0.0.1/udp/9090/quic-v1",
+        ])
+        .unwrap();
+        assert_eq!(cli.name(), "relay");
+        let Commands::Start { bootstrap, peers } = cli.command else {
+            panic!("expected start");
+        };
+        assert!(bootstrap);
+        assert_eq!(peers, ["/ip4/127.0.0.1/udp/9090/quic-v1"]);
     }
 }

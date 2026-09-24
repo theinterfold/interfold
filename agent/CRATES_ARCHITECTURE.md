@@ -253,6 +253,14 @@ between them.
 
 ## Actor and message topology
 
+`interfold start --bootstrap` uses a separate network-only entrypoint. It reads the configured
+chain IDs and the existing encrypted libp2p identity, then starts the same scoped QUIC, Identify,
+gossip, and Kademlia protocols. It does not create protocol actors, compute workers, event archives,
+or transaction writers. The document cache holds at most eight 25 MiB values. Valid history queries
+return an empty batch in the existing sync format. A bootstrap peer is not a recovery archive;
+ciphernodes must connect to other ciphernodes for missing history. The normal startup path and its
+prover memory guard are unchanged.
+
 ```mermaid
 flowchart LR
     Ext[EVM logs / libp2p bytes] --> Gateways[EVM gateways / NetEventBuffer]
