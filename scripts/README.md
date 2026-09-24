@@ -292,8 +292,8 @@ rebuild.
 
 ### What it does
 
-- **Push**: Merges local `dist/circuits/` into the `circuit-artifacts` branch, refreshes
-  `SHA256SUMS` and `checksums.json`, then pushes to origin
+- **Push**: Copies the six supported pairs from local `dist/circuits/` into the `circuit-artifacts`
+  branch, refreshes `SHA256SUMS` and `checksums.json`, then pushes to origin
 - **Pull**: Fetches the `circuit-artifacts` branch and extracts to `dist/circuits/`
 - **Replace**: `pnpm store:circuits push --replace` rewrites the branch from local `dist/circuits/`;
   use only when intentionally deleting old artifact sets

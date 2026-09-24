@@ -5,12 +5,18 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { NoirCircuitBuilder, normalizeCargoLockForCircuitHash } from './build-circuits'
-import { RELEASE_REQUIRED_PAIRS, requiredArtifactMarkers, validateArtifactSet, validateReleaseArtifacts } from './circuit-artifacts'
+import {
+  copyArtifactsInto,
+  RELEASE_REQUIRED_PAIRS,
+  requiredArtifactMarkers,
+  validateArtifactSet,
+  validateReleaseArtifacts,
+} from './circuit-artifacts'
 
 function sourceHash(preset: string, committee: string): string {
   return `source:${preset}:${committee}`
@@ -30,6 +36,23 @@ function makeCompleteMatrix(): string {
   }
   return dir
 }
+
+test('publishing copies only supported preset and committee pairs', () => {
+  const source = makeCompleteMatrix()
+  const target = mkdtempSync(join(tmpdir(), 'interfold-circuit-publish-'))
+  try {
+    const legacy = join(source, 'insecure', 'micro')
+    mkdirSync(legacy, { recursive: true })
+    writeFileSync(join(legacy, '.build-stamp.json'), '{}')
+
+    copyArtifactsInto(target, source)
+    assert.equal(existsSync(join(target, 'insecure')), false)
+    validateArtifactSet(target, sourceHash)
+  } finally {
+    rmSync(source, { recursive: true, force: true })
+    rmSync(target, { recursive: true, force: true })
+  }
+})
 
 test('circuit hash tracks external crate pins and ignores the workspace graph', () => {
   const external = `[[package]]\nname = "external"\nversion = "1.0.0"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\nchecksum = "1111"\n`
