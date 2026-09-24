@@ -39,8 +39,7 @@ use anyhow::{bail, Context, Result};
 use e3_config::AppConfig;
 use e3_data::{CommitLogEventLog, EventLogOpenMode, Repositories};
 use e3_events::{
-    AggregateId, E3Stage, Event, EventContextAccessors, EventContextSeq, InterfoldEvent,
-    InterfoldEventData,
+    AggregateId, Event, EventContextAccessors, EventContextSeq, InterfoldEvent, InterfoldEventData,
 };
 use e3_sortition::{
     committee_key, NodeRegistry, NodeStateRepositoryFactory, NodeStateStore, SortitionBackend,
@@ -589,7 +588,7 @@ fn registered_node_states_from_events(
                         "validator event replay",
                     );
                 }
-                InterfoldEventData::E3StageChanged(data) if data.new_state.is_terminal() => {
+                InterfoldEventData::E3StageChanged(data) if data.new_stage.is_terminal() => {
                     NodeRegistry::release_committee_jobs(
                         &mut node_states,
                         &data.e3_id,

@@ -110,7 +110,7 @@ impl E3LifecycleService {
     pub fn active(&self) -> Vec<E3id> {
         self.stages
             .iter()
-            .filter(|(_, stage)| !is_terminal(stage))
+            .filter(|(_, stage)| !stage.is_terminal())
             .map(|(id, _)| id.clone())
             .collect()
     }
@@ -124,7 +124,7 @@ impl E3LifecycleService {
         let current = self.stage(&e3_id);
 
         // Once terminal, the stage is frozen.
-        if is_terminal(&current) {
+        if current.is_terminal() {
             return LifecycleDecision::Unchanged {
                 e3_id,
                 stage: current,
@@ -134,7 +134,7 @@ impl E3LifecycleService {
         match rank(&implied_stage).cmp(&rank(&current)) {
             std::cmp::Ordering::Greater => {
                 self.stages.insert(e3_id.clone(), implied_stage.clone());
-                if is_terminal(&implied_stage) {
+                if implied_stage.is_terminal() {
                     LifecycleDecision::Terminal {
                         e3_id,
                         stage: implied_stage,
