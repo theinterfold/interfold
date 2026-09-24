@@ -110,7 +110,7 @@ every section.
   settled history. The detached contract stays correct for the timepoints it covers; a new era needs
   a fresh `BondedCheckpoints` and a fresh `BondedVotes` bound to the new token. —
   `BondingRegistry._setBondingAssetConfig`; `flow-trace/02`
-- **`BondingRegistry` is at its EIP-170 ceiling.** It is gated at 256 bytes of headroom by
+- **`BondingRegistry` is at its EIP-170 ceiling.** It is gated at 128 bytes of headroom by
   `scripts/checkContractSize.ts`, and logic is kept in `BondingAssetLib`, `BondingEligibilityLib`,
   `BondingSlashingLib`, `BondingRegistrationLib` and `BondingOwnershipLib` for that reason. Every
   library must be linked in all deploy paths (ignition, `deployAndSave`, `protocol/deployContracts`,
@@ -152,9 +152,11 @@ every section.
 - **Eligibility policy version is monotonic and fail-closed:** any effective change to `ticketPrice`
   / `requiredCiphernodeBond` / `ciphernodeBondActiveBps` / `minTicketBalance` bumps
   `eligibilityConfigurationVersion`, resets `numActiveOperators`, and invalidates all cached
-  statuses in O(1). Rust sortition consumes the same `ConfigurationUpdated` event and marks
-  operators inactive until a matching `OperatorActivationChanged` arrives. — `BondingRegistry.sol`;
-  INDEX concern #24
+  statuses in O(1). New committee requests wait for a check of every registration captured at that
+  change, including inactive results. Duplicates and later registrations cannot settle another
+  member's check. Deregistration settles the departing member. Rust uses source block seconds from
+  `ConfigurationUpdatedAt` and `OperatorActivationChangedAt`, never the merged event clock. —
+  `BondingRegistry.sol`; INDEX concern #24
 - **Mandatory release policy changes are paused, drained, and monotonic:** governance may raise the
   required protocol version or node generation only while requests are paused, `activeE3Count == 0`,
   and `unreleasedCommitteeCount == 0`. The change invalidates every cached operator status in O(1).
@@ -180,7 +182,8 @@ every section.
   `cryptoConfigId != expectedCryptoConfigId`. BFV verifier mappings may point at routers, which
   dispatch by public-input length and VK hash anchors to the concrete verifier for the generated
   pair. Pricing uses circuit threshold `T`, not on-chain viability value `H`.
-  `N <= numActiveOperators` at `requestCommittee`. — `flow-trace/03`
+  `N <= numActiveOperators` at `requestCommittee`. New requests also require N counted active bond
+  owners at `T-1`, under the current eligibility policy, before a VRF draw. — `flow-trace/03`
 - Mainnet CRISP activation is one paused and drained governance batch. It upgrades Interfold to the
   secure crypto configuration, installs every secure BFV verifier route, registers secure BFV
   parameters, wires the receipt verifier, registers CRISP, binds CRISP, and raises the required node
@@ -191,29 +194,54 @@ every section.
   `scripts/upgrade/secureCrisp.ts`; `scripts/upgrade/validateSecureCrisp.ts`; `flow-trace/07`
 - Sortition score is deterministic and identical on- and off-chain:
   `score = keccak256(address ‖ ticket ‖ e3Id ‖ seed)`, where
-  `seed = keccak256(randomWord ‖ chainId ‖ registry ‖ e3Id ‖ requestId)`; top-N lowest win. Each E3
-  freezes one `IRandomnessProvider` request, response deadline, and submission window after the paid
-  request is stored. The production provider uses Chainlink VRF v2.5 subscription funding. It never
-  re-requests an E3, checks the configured subscription balance floor before requesting, and the
-  Registry rejects responses from the Ethereum request block, future-dated responses, and late
-  responses. This release supports Ethereum mainnet, Sepolia, and local development chains only. The
-  provider reserves the subscription balance floor for each unfulfilled draw, thus a burst of
-  requests in one block cannot all pass the same balance check. A request that expires without a
-  usable response sets an advisory `degraded` flag and emits `RandomnessCircuitBreakerTripped`. It
-  does not clear the active provider, because that path is permissionless and registry-global.
-  Governance reads the flag and re-points the provider, which clears it. A timely accepted response
-  remains readable after terminal cleanup so fresh historical replay derives the same committee
-  request; late responses remain unusable. Rust reads the accepted seed and request context at the
-  fulfillment block. If historical block state is unavailable, it accepts retained current state
-  only when the Registry still reports the seed as ready. Unverifiable state rejects the log and
-  fails closed for replay. Governance can change the provider or response timeout only while
-  requests are paused and all committee obligations are released. The E3 computation seed remains
-  separate. — `flow-trace/03`
+  `seed = keccak256(randomWord ‖ chainId ‖ registry ‖ e3Id ‖ requestId)`. New requests keep the best
+  submission per request-time bond owner, then the lowest N owner scores. Ties use ascending
+  operator address. Each E3 freezes one `IRandomnessProvider` request, response deadline, and
+  submission window after the paid request is stored. The production provider uses Chainlink VRF
+  v2.5 subscription funding. It never re-requests an E3, checks the configured subscription balance
+  floor before requesting, and the Registry rejects responses from the Ethereum request block,
+  future-dated responses, and late responses. This release supports Ethereum mainnet, Sepolia, and
+  local development chains only. The provider reserves the subscription balance floor for each
+  unfulfilled draw, thus a burst of requests in one block cannot all pass the same balance check. A
+  request that expires without a usable response sets an advisory `degraded` flag and emits
+  `RandomnessCircuitBreakerTripped`. It does not clear the active provider, because that path is
+  permissionless and registry-global. Governance reads the flag and re-points the provider, which
+  clears it. A timely accepted response remains readable after terminal cleanup so fresh historical
+  replay derives the same committee request; late responses remain unusable. Rust reads the accepted
+  seed and request context at the fulfillment block. If historical block state is unavailable, it
+  accepts retained current state only when the Registry still reports the seed as ready.
+  Unverifiable state rejects the log and fails closed for replay. Governance can change the provider
+  or response timeout only while requests are paused and all committee obligations are released. The
+  E3 computation seed remains separate. — `flow-trace/03`
 - **Per-E3 sortition state is immutable:** for request timestamp `T`, the request-time eligible
   count, each operator's eligibility, and each ticket balance come from `T-1`. The request also
   freezes `ticketPrice`, and Rust consumes the same timepoint and price. Current registration and
   activity are additional liveness checks only. The IMT root is snapshotted at request time. —
   `CiphernodeRegistryOwnable.sol`; `flow-trace/03`
+- **One selected operator per snapshot bond owner:** new requests freeze the owner-cap policy.
+  `bondOwnerAt(operator, T-1)` determines the group; later transfers cannot create a second seat for
+  that snapshot owner. Both ownership write paths must checkpoint before assignment. Unchanged
+  pre-upgrade owners use a lazy baseline; this history is valid for capped requests, not arbitrary
+  pre-upgrade timestamps. Existing requests retain uncapped selection through an appended zero
+  policy field. Solidity enforces the cap, independently of the submitting binary. Rust shortlists
+  N-plus-buffer distinct owners and retains their eligible operators as backups. An operator-count
+  cutoff must not exclude necessary owners. Missing owner history permits all submissions. Formation
+  requires N distinct snapshot owners, not merely N submissions. The cap does not establish human
+  uniqueness, prevent pre-request wallet splitting, or prevent later collusion. —
+  `BondingOwnershipLib.sol`; `RegistrySortitionLib.sol`; `flow-trace/03`
+- **Owner-capacity admission is shared by every requester:** activity refreshes and owner transfers
+  maintain an epoch-scoped count through `BondOwnerCapacityLib`. A configuration change resets the
+  count. After upgrade, unrefreshed legacy operators do not count. Permissionless status refreshes
+  add them without double counting. The count may underestimate capacity during migration, but must
+  never overestimate snapshot owners. `committeeOwnerCapacity` returns zero when the timestamp uses
+  an older eligibility policy or precedes completion of the full refresh pass. An upgraded proxy
+  captures legacy registrations before its first membership change or registered status check.
+  Insufficient capacity reverts the complete request, including fee collection and treasury credit.
+  This check does not prove online availability. — `flow-trace/02`, `03`
+- Terminal committee release clears the bounded `ownerCandidates` entries using snapshot owners,
+  including after later ownership transfers. Legacy requests skip this cleanup. Randomness request
+  context and the accepted seed remain readable for replay. — `RegistrySortitionLib.sol`;
+  `flow-trace/06`
 - `finalizeCommittee()` requires the submission window to have closed. The first successful call
   locks the canonical on-chain committee order. A ready committee must finalize by its absolute
   request-time DKG cutoff. Delayed finalization cannot extend the paid lifecycle. — `flow-trace/03`

@@ -7,7 +7,7 @@
 use crate::domain::backends::SortitionBackend;
 use crate::domain::failover::AggregatorFailoverState;
 use crate::domain::node_registry::NodeStateStore;
-use crate::{CiphernodeSelectorState, SortitionRecoveryState};
+use crate::{BondOwnerState, CiphernodeSelectorState, SortitionRecoveryState};
 use e3_data::{Repositories, Repository};
 use e3_events::{Committee, E3id, StoreKeys};
 use std::collections::HashMap;
@@ -23,12 +23,21 @@ impl SortitionRepositoryFactory for Repositories {
 }
 
 pub trait SortitionRecoveryRepositoryFactory {
+    fn sortition_admission(&self) -> Repository<crate::AdmissionState>;
     fn sortition_recovery(&self) -> Repository<SortitionRecoveryState>;
+    fn sortition_bond_owners(&self) -> Repository<BondOwnerState>;
 }
 
 impl SortitionRecoveryRepositoryFactory for Repositories {
+    fn sortition_admission(&self) -> Repository<crate::AdmissionState> {
+        Repository::new(self.store.scope(StoreKeys::sortition_admission()))
+    }
     fn sortition_recovery(&self) -> Repository<SortitionRecoveryState> {
         Repository::new(self.store.scope(StoreKeys::sortition_recovery()))
+    }
+
+    fn sortition_bond_owners(&self) -> Repository<BondOwnerState> {
+        Repository::new(self.store.scope(StoreKeys::sortition_bond_owners()))
     }
 }
 

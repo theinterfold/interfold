@@ -17,5 +17,9 @@ abstract contract BondingEligibilityStorage {
         mapping(address operator => Checkpoints.Trace208 activeVersion) operatorActiveVersions;
         Checkpoints.Trace208 configurationVersions;
         Checkpoints.Trace208 activeOperatorCounts;
+        uint256 refreshEpoch;
+        uint256 pendingRefreshes;
+        uint48 refreshCompletedAt;
+        mapping(address operator => uint256 epoch) refreshedEpochs;
     }
 }

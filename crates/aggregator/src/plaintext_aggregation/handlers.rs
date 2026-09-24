@@ -35,6 +35,11 @@ impl Handler<InterfoldEvent> for ThresholdPlaintextAggregator {
             InterfoldEventData::ShareVerificationComplete(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
+            InterfoldEventData::PlaintextVerificationResumed(data) => {
+                trap(EType::PlaintextAggregation, &self.bus.with_ec(&ec), || {
+                    self.handle_c6_resume(TypedEvent::new(data, ec))
+                });
+            }
             InterfoldEventData::AggregationProofSigned(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
@@ -85,9 +90,13 @@ impl Handler<TypedEvent<DecryptionshareCreated>> for ThresholdPlaintextAggregato
             EType::PublickeyAggregation,
             &self.bus.with_ec(msg.get_ctx()),
             || {
-                let Some(ThresholdPlaintextAggregatorState::Collecting(Collecting { .. })) =
-                    self.state.get()
-                else {
+                if !matches!(
+                    self.state.get(),
+                    Some(
+                        ThresholdPlaintextAggregatorState::Collecting(_)
+                            | ThresholdPlaintextAggregatorState::VerifyingC6(_)
+                    )
+                ) {
                     debug!(state=?self.state, "Aggregator has been closed for collecting so ignoring this event.");
                     return Ok(());
                 };
@@ -285,9 +294,6 @@ impl Handler<TypedEvent<ShareVerificationComplete>> for ThresholdPlaintextAggreg
         msg: TypedEvent<ShareVerificationComplete>,
         _ctx: &mut Self::Context,
     ) -> Self::Result {
-        if !self.can_run_aggregation_effects() {
-            return;
-        }
         trap(
             EType::PlaintextAggregation,
             &self.bus.with_ec(msg.get_ctx()),

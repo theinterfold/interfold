@@ -16,16 +16,16 @@ use actix::{Message, Recipient};
 use anyhow::{bail, ensure, Context, Result};
 use e3_data::Repositories;
 use e3_events::{
-    AccusationOutcome, AccusationQuorumReached, AggregateConfig, AggregateId, BusHandle,
-    CommitteeMemberExcluded, CommitteeMemberExpelled, CommitteeRequested, CorrelationId,
-    E3Requested, E3id, EffectsEnabled, Event, EventContext, EventPublisher, EventStoreQueryBy,
-    EventStoreQueryResponse, EventSubscriber, EventType, EvmEventConfig,
+    AccusationOutcome, AccusationQuorumReached, AggregateConfig, AggregateId, BondOwnerSetAt,
+    BusHandle, CommitteeMemberExcluded, CommitteeMemberExpelled, CommitteeRequested, CorrelationId,
+    E3Requested, E3id, EffectsEnabled, Event, EventContext, EventContextAccessors, EventPublisher,
+    EventStoreQueryBy, EventStoreQueryResponse, EventSubscriber, EventType, EvmEventConfig,
     HistoricalEvmEventsReceived, HistoricalEvmSyncStart, HistoricalNetSyncStart, InterfoldEvent,
     InterfoldEventData, Seed, SeqAgg, Sequenced, SlashExecuted, StoreKeys, SyncEffect, SyncEnded,
     TicketGenerated, TypedEvent, Unsequenced,
 };
 #[cfg(test)]
-use e3_events::{EventBusBarrier, EventBusFanout, EventContextAccessors};
+use e3_events::{EventBusBarrier, EventBusFanout};
 use e3_utils::actix::channel as actix_toolbox;
 use std::{
     collections::{HashMap, HashSet},
@@ -126,6 +126,8 @@ pub struct RestartStateBackfill {
     pub committee_requests: HashMap<E3id, RecoveredCommitteeRequest>,
     pub tickets: HashMap<E3id, TicketGenerated>,
     pub slash_intents: Vec<AccusationQuorumReached>,
+    pub bond_owner_updates: Vec<TypedEvent<BondOwnerSetAt>>,
+    pub admission_updates: Vec<e3_events::AdmissionUpdated>,
 }
 
 impl RestartStateBackfill {
@@ -193,18 +195,44 @@ impl RestartStateBackfill {
 /// this projection into missing recovery repositories before actors start.
 pub async fn project_restart_state_backfill(
     eventstore: &Recipient<EventStoreQueryBy<SeqAgg>>,
+    start_cursors: HashMap<AggregateId, u64>,
     end_cursors: HashMap<AggregateId, u64>,
     target_e3s: &HashSet<E3id>,
     slash_target_chains: &HashSet<u64>,
+    projection_target_chains: &HashSet<u64>,
 ) -> Result<RestartStateBackfill> {
-    if (target_e3s.is_empty() && slash_target_chains.is_empty()) || end_cursors.is_empty() {
+    if (target_e3s.is_empty()
+        && slash_target_chains.is_empty()
+        && projection_target_chains.is_empty())
+        || end_cursors.is_empty()
+    {
         return Ok(RestartStateBackfill::default());
     }
 
-    let spool = ReplaySpool::load_bounded(eventstore, end_cursors).await?;
+    let spool = ReplaySpool::load_between(eventstore, start_cursors, end_cursors).await?;
     let mut recovered = RestartStateBackfill::default();
     spool.project(|event| {
         match event.get_data() {
+            InterfoldEventData::EvmLogObserved(log)
+                if event.get_ctx().source() == e3_events::EventSource::Evm
+                    && projection_target_chains.contains(&log.chain_id) =>
+            {
+                if let Some(admission) = e3_events::AdmissionUpdated::from_observed_log(log)? {
+                    recovered.admission_updates.push(admission);
+                }
+            }
+            InterfoldEventData::AdmissionUpdated(admission)
+                if projection_target_chains.contains(&admission.chain_id) =>
+            {
+                recovered.admission_updates.push(admission.clone());
+            }
+            InterfoldEventData::BondOwnerSetAt(owner)
+                if projection_target_chains.contains(&owner.owner.chain_id) =>
+            {
+                recovered
+                    .bond_owner_updates
+                    .push(TypedEvent::new(owner.clone(), event.get_ctx().clone()));
+            }
             InterfoldEventData::AccusationQuorumReached(intent)
                 if slash_target_chains.contains(&intent.e3_id.chain_id())
                     && intent.outcome == AccusationOutcome::AccusedFaulted =>

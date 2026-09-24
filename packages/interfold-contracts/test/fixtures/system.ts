@@ -139,7 +139,7 @@ export interface DeployInterfoldSystemOptions {
   /**
    * Number of operators to bond + register + fund + add to the ciphernode
    * registry. Operators are taken from `getSigners()[2..2+N]`. Defaults to `3`.
-   * Pass `0` to skip operator onboarding entirely.
+   * Each operator owns its bond. Pass `0` to skip operator onboarding entirely.
    */
   setupOperators?: number;
   /** Program registered atomically by `Interfold.initialize`. */
@@ -587,7 +587,7 @@ export async function deployInterfoldSystem(
     for (const operator of operators) {
       await setupOperatorForSortition(
         operator,
-        owner,
+        operator,
         bondingRegistry,
         ciphernodeBondToken,
         usdcToken,

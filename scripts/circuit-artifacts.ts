@@ -337,6 +337,16 @@ async function restamp() {
   rmSync(tmp, { recursive: true })
 }
 
+export function findArtifactRevision(root: string, reference: string, sourceHash: string): string {
+  const git = (...args: string[]) => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim()
+  const revisions = git('rev-list', '--first-parent', reference).split('\n')
+  for (const revision of revisions) {
+    if (!git('ls-tree', '--name-only', revision, '--', 'SOURCE_HASH')) continue
+    if (git('show', `${revision}:SOURCE_HASH`) === sourceHash) return revision
+  }
+  throw new Error(`No published circuit artifacts match SOURCE_HASH=${sourceHash}. Build and push the required preset/committee pairs.`)
+}
+
 async function pull() {
   try {
     run(`git fetch origin ${BRANCH}`)
@@ -351,11 +361,14 @@ async function pull() {
     process.exit(1)
   }
 
+  const hash = run('pnpm tsx scripts/build-circuits.ts hash')
+  const revision = findArtifactRevision(ROOT, `origin/${BRANCH}`, hash)
+
   if (existsSync(DIST)) rmSync(DIST, { recursive: true })
   mkdirSync(DIST, { recursive: true })
 
-  runV(`git archive origin/${BRANCH} | tar -x -C "${DIST}"`)
-  console.log(`✅ Pulled to ${DIST}`)
+  runV(`git archive ${revision} | tar -x -C "${DIST}"`)
+  console.log(`✅ Pulled ${revision} (SOURCE_HASH=${hash}) to ${DIST}`)
 }
 
 async function verifyRelease() {

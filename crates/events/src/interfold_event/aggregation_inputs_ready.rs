@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
-use crate::E3id;
+use crate::{CorrelationId, E3id};
 use actix::Message;
 use serde::{Deserialize, Serialize};
 use std::fmt::{self, Display};
@@ -40,6 +40,25 @@ impl Display for AggregationInputsReady {
             f,
             "AggregationInputsReady {{ e3_id: {}, phase: {} }}",
             self.e3_id, self.phase
+        )
+    }
+}
+
+/// Apply a saved C6 result under a fresh, chain-scoped event after recovery.
+#[derive(Message, Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[rtype(result = "()")]
+pub struct PlaintextVerificationResumed {
+    pub e3_id: E3id,
+    pub request_id: [u8; 32],
+    pub correlation_id: CorrelationId,
+}
+
+impl Display for PlaintextVerificationResumed {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "PlaintextVerificationResumed {{ e3_id: {} }}",
+            self.e3_id
         )
     }
 }
