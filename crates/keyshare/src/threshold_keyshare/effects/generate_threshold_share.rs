@@ -138,7 +138,9 @@ impl ThresholdKeyshare {
 
     /// 4. SharesGenerated - Encrypt shares with BFV and publish
     pub fn handle_shares_generated(&mut self, ec: EventContext<Sequenced>) -> Result<()> {
-        let Some(ThresholdKeyshareState {
+        let state = self.state.try_get()?;
+        let committee_size = state.committee_size()?;
+        let ThresholdKeyshareState {
             state:
                 KeyshareState::GeneratingThresholdShare(GeneratingThresholdShareData {
                     pk_share: Some(pk_share),
@@ -151,10 +153,8 @@ impl ThresholdKeyshare {
                 }),
             party_id,
             e3_id,
-            threshold_m,
-            threshold_n,
             ..
-        }) = self.state.get()
+        } = state
         else {
             bail!("Invalid state - expected GeneratingThresholdShare with all data");
         };
@@ -170,8 +170,7 @@ impl ThresholdKeyshare {
             &self.cipher,
             self.share_enc_preset,
             party_id,
-            threshold_m,
-            threshold_n,
+            committee_size,
             pk_share,
             decrypted_sk_sss,
             decrypted_esi_sss,

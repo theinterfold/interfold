@@ -115,10 +115,7 @@ impl E3Extension for ThresholdKeyshareExtension {
                     bus: self.bus.clone(),
                     cipher: self.cipher.clone(),
                     state: container,
-                    share_enc_preset: meta
-                        .params_preset
-                        .dkg_counterpart()
-                        .unwrap_or(meta.params_preset),
+                    share_enc_preset: meta.share_enc_preset(),
                     interfold_address,
                     recovery,
                     recovery_payloads,
@@ -179,10 +176,6 @@ impl E3Extension for ThresholdKeyshareExtension {
         let Some(meta) = ctx.get_dependency(META_KEY) else {
             return Err(anyhow!(ERROR_KEYSHARE_META_MISSING));
         };
-        let share_enc_preset = meta
-            .params_preset
-            .dkg_counterpart()
-            .unwrap_or(meta.params_preset);
         let interfold_address = self
             .interfold_addresses
             .get(&snapshot.e3_id.chain_id())
@@ -199,7 +192,7 @@ impl E3Extension for ThresholdKeyshareExtension {
             bus: self.bus.clone(),
             cipher: self.cipher.clone(),
             state,
-            share_enc_preset,
+            share_enc_preset: meta.share_enc_preset(),
             interfold_address,
             recovery,
             recovery_payloads,

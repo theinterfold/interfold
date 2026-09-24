@@ -54,8 +54,7 @@ pub(crate) fn build_decryption_key_plan(
     cipher: &Cipher,
     share_enc_preset: BfvPreset,
     own_party_id: u64,
-    threshold_m: u64,
-    threshold_n: u64,
+    committee_size: CiphernodesCommitteeSize,
     trbfv_config: TrBFVConfig,
     current: &AggregatingDecryptionKey,
     shares: Vec<Arc<ThresholdShare>>,
@@ -64,6 +63,7 @@ pub(crate) fn build_decryption_key_plan(
     e3_id: &E3id,
 ) -> Result<DecryptionKeyPlan> {
     let party_id = own_party_id as usize;
+    let committee = committee_size.values();
 
     if shares.is_empty() {
         bail!("No pending verification shares");
@@ -171,21 +171,18 @@ pub(crate) fn build_decryption_key_plan(
             dimension_excluded.len(),
             dimension_excluded
         );
-        // Re-check threshold after exclusion (+1 for own share).
-        let threshold = threshold_m;
-        if (honest_shares.len() as u64 + 1) <= threshold {
+        // Re-check threshold after exclusion: own share + external shares must exceed T.
+        if honest_shares.len() < committee.threshold {
             return Ok(DecryptionKeyPlan::Insufficient);
         }
     }
 
     // Noir C4 is parameterized by the H dealers named in the accepted roster.
-    let committee =
-        CiphernodesCommitteeSize::from_threshold(threshold_m as usize, threshold_n as usize)?;
-    let committee_h = committee.values().h;
+    let committee_h = committee.h;
     if selected_party_ids.len() != committee_h
         || selected_party_ids
             .iter()
-            .any(|&party_id| party_id >= threshold_n)
+            .any(|&party_id| party_id >= committee.n as u64)
     {
         bail!("selected DKG roster does not match committee H and N");
     }
@@ -326,7 +323,7 @@ pub(crate) fn build_decryption_key_plan(
         own_share_raw: own_plaintext_idx.map(|_| current.own_sk_share_raw.clone()),
         dkg_input_type: DkgInputType::SecretKey,
         params_preset: threshold_preset,
-        committee_size: committee,
+        committee_size,
     };
 
     let esm_requests: Vec<DkgShareDecryptionProofRequest> = esi_ciphertexts_raw
@@ -341,7 +338,7 @@ pub(crate) fn build_decryption_key_plan(
             own_share_raw: own_plaintext_idx.map(|_| current.own_esi_shares_raw[esi_idx].clone()),
             dkg_input_type: DkgInputType::SmudgingNoise,
             params_preset: threshold_preset,
-            committee_size: committee,
+            committee_size,
         })
         .collect();
 

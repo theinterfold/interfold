@@ -39,7 +39,6 @@ use e3_trbfv::{
 };
 use e3_utils::utility_types::ArcBytes;
 use e3_utils::{NotifySync, MAILBOX_LIMIT};
-use e3_zk_helpers::CiphernodesCommitteeSize;
 use fhe_traits::Serialize;
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
