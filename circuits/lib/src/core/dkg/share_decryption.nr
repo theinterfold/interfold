@@ -44,6 +44,27 @@ impl<let N: u32, let L: u32, let H: u32, let BIT_MSG: u32, let BIT_AGG: u32> Sha
         ShareDecryption { expected_commitments, decrypted_shares }
     }
 
+    /// Bounds every opened share coefficient to `[0, q_l)`, the range C2 dealt them in.
+    ///
+    /// `verify_commitments` re-opens C2's commitment from a private witness, and that commitment
+    /// packs `BIT_MSG`-wide coefficients into shared carriers. An unbounded coefficient can overflow
+    /// its slot and cancel against the next one, leaving the carrier — and so the commitment —
+    /// unchanged. Without this check the same C2 commitments open to a different aggregate, and the
+    /// node publishes an anchor that is not the sum of the shares its dealers actually sent.
+    ///
+    /// This is the bound `compute_aggregated_shares` documents but never enforced: it assumed the
+    /// range held "by C2 range checks", which constrain the values C2 committed, not the values
+    /// this circuit opens them to.
+    fn verify_share_ranges(self, moduli: [Field; L]) {
+        for party_idx in 0..H {
+            for mod_idx in 0..L {
+                self.decrypted_shares[party_idx][mod_idx].range_check_standard::<BIT_MSG>(
+                    moduli[mod_idx],
+                );
+            }
+        }
+    }
+
     /// Verifies that each decrypted share matches its expected commitment from C2a/C2b.
     ///
     /// For each honest party and each CRT modulus, hashes the decrypted share polynomial
@@ -77,9 +98,9 @@ impl<let N: u32, let L: u32, let H: u32, let BIT_MSG: u32, let BIT_AGG: u32> Sha
     ///   aggregated[mod_idx][coeff] = sum(decrypted_shares[party_idx][mod_idx][coeff])
     ///                                  for party_idx in 0..H
     ///
-    /// No modular reduction is applied here each share coefficient is in [0, q_l) by C2 range
-    /// checks, so the sum lies in [0, H*q_l) and fits in the circuit field. Reduction to [0, q_l)
-    /// is performed by normalize_aggregated before committing.
+    /// No modular reduction is applied here: each share coefficient is in [0, q_l), enforced by
+    /// `verify_share_ranges`, so the sum lies in [0, H*q_l) and fits in the circuit field.
+    /// Reduction to [0, q_l) is performed by normalize_aggregated before committing.
     ///
     /// This reflects the threshold key construction: sk = sum(sk_i) for i in H.
     /// Each ciphernode now holds a share of this sum, used during threshold decryption in P4.
@@ -114,16 +135,20 @@ impl<let N: u32, let L: u32, let H: u32, let BIT_MSG: u32, let BIT_AGG: u32> Sha
     /// Rust witness (which operates on sk coefficients already reduced to `[0, q_l)`
     /// and then applies `.reverse()` and `.center(&qi)` before hashing).
     pub fn execute(self, moduli: [Field; L]) -> Field {
-        // Step 1: Verify decrypted shares match expected C2 commitments.
+        // Step 1: Pin every opened share to `[0, q_l)`. Must run before the commitment check,
+        // which is only binding for bounded coefficients, and before the sum, which assumes it.
+        self.verify_share_ranges(moduli);
+
+        // Step 2: Verify decrypted shares match expected C2 commitments.
         self.verify_commitments();
 
-        // Step 2: Sum shares coefficient-wise per CRT limb.
+        // Step 3: Sum shares coefficient-wise per CRT limb.
         let aggregated = self.compute_aggregated_shares();
 
-        // Step 3: Normalize to match C6's representation: reduce mod q, reverse, center.
+        // Step 4: Normalize to match C6's representation: reduce mod q, reverse, center.
         let normalized = normalize_aggregated::<N, L>(aggregated, moduli);
 
-        // Step 4: Publish commitment to the aggregate (C6 input).
+        // Step 5: Publish commitment to the aggregate (C6 input).
         compute_aggregated_shares_commitment::<N, L, BIT_AGG>(normalized)
     }
 }
