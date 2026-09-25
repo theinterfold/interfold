@@ -46,9 +46,10 @@ body, not the wrappers.
 
 ## Code Review Rules
 
-- Treat `agent/INVARIANTS.md` as required review guidance for contracts, circuits, actor runtime,
-  durable schemas, cryptography, and build configuration. Cite the applicable invariant in each
-  finding. Safe path: preserve it or implement an explicit, tested migration.
+- Treat `agent/invariants/` (`00_INDEX.md` and the section files that it routes to) as required
+  review guidance for contracts, circuits, actor runtime, durable schemas, cryptography, and build
+  configuration. Cite the applicable invariant in each finding. Safe path: preserve it or implement
+  an explicit, tested migration.
 - Do not accept a protocol-bearing change only because it compiles. Verify compatibility, replay,
   persistence, cross-layer behavior, and the matching flow-trace update.
 - Keep formatting and other mechanical findings in automated checks. Report only consequential,

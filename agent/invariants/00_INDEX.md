@@ -71,10 +71,20 @@ These apply to every section.
 The authoritative list is the "Verified Bugs & Protocol Concerns" table in `flow-trace/00_INDEX.md`.
 Known residual gaps:
 
-- `gracePeriod` is dead code in timeout checks (concern #3).
-- CLI `activate` actually calls `register` and reverts for registered operators (#4).
-- Live EventBus subscriber fan-out still includes unacknowledged `do_send` edges (#11). EventStore
-  replay is paged through bounded temporary runs and uses an acknowledged fan-out barrier.
+- CLI `activate` calls `register` and reverts for registered operators. —
+  `crates/cli/src/ciphernode/lifecycle.rs`
+- EventBus fan-out waits for each subscriber to accept the event within a timeout
+  (`crates/events/src/eventbus.rs`). Unacknowledged `do_send` edges remain before the bus in
+  `Sequencer` and after it in the E3 router context (`crates/request/src/context.rs`). EventStore
+  replay reads bounded query pages and spools them to temporary disk runs.
+- The event log and snapshots are positional bincode, and gossip carries bincode payloads inside a
+  versioned envelope. A per-type schema version exists only on some types, for example
+  `BondOwnerState`. The main storage guard is the global `SCHEMA_VERSION` in
+  `crates/sync/src/sync/schema_version.rs`, which a change must increase by hand. Layout fixture
+  tests exist for only a few types, for example `CommitteeFinalized`
+  (`dkg_fold_attestation_context_established.rs`) and `BondOwnerState`. Most `InterfoldEventData`
+  variants have none. `crates/config/protocol-release.toml` is not linked to `SCHEMA_VERSION`.
+  `03_ACTOR_RUNTIME.md` §Schema evolution states the target.
 - `ComputeEffectGate` is in-memory only — no durable external-effect outbox yet.
 - Residual runtime risks: `e3-evm` in-process nonce serialization without a durable tx outbox or
   full reorg rollback; accusation votes/timers lack complete durable reconstruction;

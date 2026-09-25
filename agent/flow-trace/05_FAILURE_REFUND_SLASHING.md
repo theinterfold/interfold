@@ -51,11 +51,11 @@ E3 stage.
 Committee key publication is valid through the DKG deadline. Later publication is rejected as a
 supplier-side timeout.
 
-> **NOTE:** The `gracePeriod` is stored in `_timeoutConfig` and validated on config update, but it
-> is **NOT added** to the deadline checks in `_checkFailureCondition()`. The actual checks compare
-> `block.timestamp` directly against the raw deadlines (which themselves already incorporate the
-> window durations). This may be intentional (grace already baked into the window sizes) or a
-> missing feature.
+> **NOTE:** `_checkFailureCondition()` compares `block.timestamp` with the raw stage deadlines.
+> `E3TimeoutConfig` has only `dkgWindow`, `computeWindow`, and `decryptionWindow`. The failure grace
+> period is `markFailedGracePeriod`. It does not move a deadline. It only limits who can call
+> `markE3Failed` before `deadline + markFailedGracePeriod`
+> (`InterfoldLifecycle.validateMarkFailedCaller`).
 
 ```text
 Anyone calls: Interfold.markE3Failed(e3Id)

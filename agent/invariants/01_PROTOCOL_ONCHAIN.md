@@ -313,18 +313,21 @@ every section.
 
 ### Deadlines
 
-- Every stage has a deadline. Once a deadline is missed, **anyone** may call `markE3Failed(e3Id)`.
-  The request snapshots all timeout windows. The randomness response starts the full ticket
-  submission window; the DKG deadline equals that resolved committee deadline plus the DKG window.
-  The compute deadline starts at the later of key publication and the end of the input window.
-  Request validation reserves the full worst-case randomness, sortition, DKG, compute, and
-  decryption lifecycle. — `flow-trace/03`
+- Every stage has a deadline. Once a deadline is missed, `markE3Failed(e3Id)` can succeed, subject
+  to the failure grace period caller rule below. The request snapshots all timeout windows. The
+  randomness response starts the full ticket submission window; the DKG deadline equals that
+  resolved committee deadline plus the DKG window. The compute deadline starts at the later of key
+  publication and the end of the input window. Request validation reserves the full worst-case
+  randomness, sortition, DKG, compute, and decryption lifecycle. — `flow-trace/03`
 - **The threshold-share checkpoint is not a DKG deadline.** At 75% of the frozen DKG window, a node
   may close collection when it has at least H−1 external shares. Below H−1, it must keep collecting.
   Only the request-frozen on-chain DKG deadline may turn missing threshold shares into `DKGTimeout`.
   Restart must preserve the remaining deadline. — `flow-trace/04`; INDEX concern #54
-- Known open issue: `gracePeriod` is stored/validated but never applied in any deadline check (dead
-  code). — `Interfold.sol`; INDEX concern #3
+- Failure checks compare `block.timestamp` with the raw stage deadline. `E3TimeoutConfig` has no
+  grace field. `markFailedGracePeriod` does not move a deadline. Before
+  `deadline + markFailedGracePeriod`, only the requester, the owner, or an active committee member
+  can call `markE3Failed`. At or after that time, any caller can. — `Interfold.sol` `markE3Failed`;
+  `InterfoldLifecycle.validateMarkFailedCaller`; INDEX concern #3
 
 ### Slashing and failure settlement
 
