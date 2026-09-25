@@ -33,9 +33,11 @@ every section.
 - Each supported `(preset, committee)` pair has its own `BfvPkVerifier` (public-input layout set by
   H) and `BfvDecryptionVerifier` (layout set by T). `BfvPkVerifierRouter` and
   `BfvDecryptionVerifierRouter` dispatch by public-input length and VK anchors, and their routes are
-  fixed at construction. Selecting another supported committee needs no redeployment. A changed
-  circuit or VK needs new wrappers and, where a router is used, a new router and new `setPkVerifier`
-  / `setDecryptionVerifier` calls. — `protocol/deployContracts.ts`; `BfvPkVerifierRouter.sol`
+  fixed at construction. Selecting another committee needs no redeployment if the installed verifier
+  mappings already support that pair. Otherwise, register matching verifiers, and deploy any missing
+  wrappers or replacement routers first. A changed circuit or VK needs new wrappers and, where a
+  router is used, a new router and new `setPkVerifier` / `setDecryptionVerifier` calls. —
+  `protocol/deployContracts.ts`; `BfvPkVerifierRouter.sol`
 - Parity matrices (`parity_{insecure,secure}.nr`) are derived artifacts regenerated from preset
   `QIS` + committee `(N, T)`. Do not hand-edit them. `scripts/check-committee.sh` regenerates and
   diffs them only when `target/release/generate_parity_matrices` and `nargo` exist; the Agent

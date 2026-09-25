@@ -40,8 +40,8 @@ the code does not meet yet.
   `ARCHITECTURE.md`
 - Trust-boundary checks before any message drives a workflow: peer identity, committee membership,
   claimed party slot, signature, chainId, e3Id, proof type, payload size, schema version. **Gap:**
-  messages carry no per-message schema version. Net ingress checks the wire envelope (magic, wire
-  version, size, network ID). Signer, party slot, e3Id, and circuit checks run later, in share
+  most message types lack an explicit schema version. Net ingress checks the wire envelope (magic,
+  wire version, size, network ID). Signer, party slot, e3Id, and circuit checks run later, in share
   verification, before a party counts as honest. — `ARCHITECTURE.md`;
   `crates/net/src/network_sync/wire.rs`; `crates/zk-prover/src/share_verification/`
 
@@ -95,8 +95,7 @@ the code does not meet yet.
   unknown canonical result must fail startup. If the E3 exists at chain head but not yet at the
   finalized block, recovery keeps the context and waits; finality lag is not an unknown E3. **Gap:**
   not implemented. Startup prunes terminal E3 state from the local event-log projection and the
-  lifecycle map; no code reads a finalized block, and concern #48 is marked Resolved in error. —
-  INDEX concern #48
+  lifecycle map; no code reads a finalized block. Concern #48 remains open. — INDEX concern #48
 - EventStore replay preserves durable sequence inside each aggregate. It uses HLC order only to
   choose between the next events of different aggregates. A late event can have an older remote HLC
   and must not move ahead of an earlier local sequence from the same aggregate. — INDEX concern #43
@@ -149,10 +148,11 @@ the code does not meet yet.
 
 ### Ordering, backpressure, effects
 
-- Per-E3 actors are keyed by `E3id`, which includes `chain_id`. Durable order is per chain
-  aggregate. The EventBus delivers one event at a time, so a slow subscriber delays every E3. Legal
-  E3 progress is monotonic. On-chain committee ordering is authoritative. —
-  `crates/events/src/e3id.rs`; `crates/events/src/event_context.rs`; `ARCHITECTURE.md`
+- Protocol work must be partitioned by `(chain_id, e3_id)`, with ordering guaranteed within each
+  partition. Legal E3 progress is monotonic. On-chain committee ordering is authoritative. **Gap:**
+  per-E3 actors are keyed by `E3id`, which includes `chain_id`, but durable order is per chain
+  aggregate, and EventBus fan-out delivers one event at a time, so a slow subscriber can block
+  unrelated E3s. — `ARCHITECTURE.md`; `crates/events/src/e3id.rs`; `crates/events/src/eventbus.rs`
 - Correctness-critical sends are acknowledged and timeout-bounded; `do_send` is allowed only for
   best-effort telemetry. Buffers are bounded by both item count and bytes with an explicit overflow
   policy. **Gap:** 84 `.do_send(` call sites remain (the count covers all sites, not only

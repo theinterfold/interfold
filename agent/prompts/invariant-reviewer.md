@@ -16,11 +16,11 @@ and the files at HEAD, not from what you remember writing.
    untracked files that belong to the requested change. If the invoking prompt supplies a specific
    diff or file list, use that instead.
 2. Read `agent/invariants/00_INDEX.md` — meta-invariants, open issues, and the routing table.
-3. Load the invariant sections that the routing table in `agent/invariants/00_INDEX.md` names for
-   the paths in this diff. A path can match more than one row; load every section that the matching
-   rows name, and nothing else. Also load the flow-trace file for each touched area (table in
-   `agent/RULES.md` §Flow-Trace Documentation). For `crates/`, also load `agent/ARCHITECTURE.md`
-   (layering, durability, ordering rules) and `agent/CRATES_ARCHITECTURE.md` §Subsystem contracts.
+3. Load every invariant section that the matching path rows and the file-or-symbol lookup in
+   `agent/invariants/00_INDEX.md` select for this diff, and no other section. Also load the
+   flow-trace file for each touched area (table in `agent/RULES.md` §Flow-Trace Documentation). For
+   `crates/`, also load `agent/ARCHITECTURE.md` (layering, durability, ordering rules) and
+   `agent/CRATES_ARCHITECTURE.md` §Subsystem contracts.
 4. For every invariant whose subject matter the diff touches, verify the change preserves it by
    reading the actual post-change code — not just the diff hunks. Pay special attention to the
    meta-invariant: committee ordering, threshold meaning, proof multiplicity, hashing, signatures,

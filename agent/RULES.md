@@ -115,9 +115,9 @@ circuits, runtime crates, durable schemas, or build configuration.
 3. If none of these is available, do the review yourself as a separate step after the change is
    complete. Read the procedure again, then read the full diff and each changed file at HEAD.
 4. Handle each finding with Change discipline rule 9: fix it or rebut it with evidence.
-5. Do one review pass per change. Add a second independent pass only for durable schema or wire
-   format, circuit, verification key, or source hash, contract ABI, storage, or upgrade, and release
-   counters.
+5. Normally, run one sequential review pass. For changes to durable schemas, wire formats, circuits,
+   verification keys, source hashes, contract ABIs, contract storage, upgrades, or release counters,
+   run a second pass. Apply steps 2 and 3 to each pass; a second model is not required.
 
 A review does not replace the gates in the verification ladder, and the gates do not replace the
 review. Most invariants have no mechanical check.
@@ -152,11 +152,12 @@ Two orthogonal axes pick what gets compiled into `circuits/bin/`:
 
 `scripts/check-committee.sh` (`pnpm check:committee`, pre-push and the Agent Harness CI workflow)
 compares the BFV tuples, committee values, and configuration IDs across TypeScript, Rust, Noir, and
-Solidity. The file list is at the top of the script. If `target/release/generate_parity_matrices`
-exists, it also regenerates the parity matrices and compares them. A different `.active-preset.json`
-only prints a note. Always switch with `pnpm build:circuits --committee <name>`. Supported
-`(preset, committee)` pairs live in `scripts/circuit-constants.ts`. See
-`scripts/README.md#circuit-builder` and `circuits/benchmarks/README.md` for the full recipe.
+Solidity. The file list is at the top of the script. It regenerates and compares the parity matrices
+only when `target/release/generate_parity_matrices` is executable and `nargo` is on PATH. A
+different `.active-preset.json` only prints a note. Always switch with
+`pnpm build:circuits --committee <name>`. Supported `(preset, committee)` pairs live in
+`scripts/circuit-constants.ts`. See `scripts/README.md#circuit-builder` and
+`circuits/benchmarks/README.md` for the full recipe.
 
 ## Contract addresses
 
@@ -217,8 +218,8 @@ Update flow-trace docs **in the same PR** when any of these happen:
 
 - Edit the specific file that covers the changed area — keep changes scoped
 - If a change spans multiple files, update all affected files
-- Update `00_INDEX.md` only when adding/removing/renaming a file, or when the end-to-end flow
-  summaries or the contract interaction map change
+- Update `00_INDEX.md` only for file additions, removals, or renames; end-to-end summary changes;
+  contract-map changes; or updates to the Verified Bugs & Protocol Concerns table
 - Preserve the existing format: step-by-step traces with `File:` references pointing to actual
   source paths
 - Keep the "Verified Bugs" table in `00_INDEX.md` current — mark fixed bugs, add new ones

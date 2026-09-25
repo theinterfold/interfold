@@ -1,5 +1,6 @@
-<!-- Keep the PR small and focused. Title and commits: Conventional Commits
-     (feat|fix|chore, optional scope, "!" for breaking, description ≤ 72 chars). -->
+<!-- Keep the PR small and focused. Use Conventional Commits: feat|fix|chore|refactor|docs|test,
+     optional lower-case scope, and ! for breaking changes. Keep the whole header at most 72
+     characters. CI validates the PR title. -->
 
 ## What
 

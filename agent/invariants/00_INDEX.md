@@ -30,22 +30,22 @@ independent: `02` also governs verifier contracts, the compute provider, and CRI
 governs Rust sortition and eligibility reads. If a section names a file or symbol that your diff
 changes, read that section too (`rg -l '<file or symbol>' agent/invariants/`).
 
-| Changed path                                                                                  | Read                                                  |
-| --------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
-| `packages/interfold-contracts/contracts/`                                                     | `01_PROTOCOL_ONCHAIN.md`                              |
-| `packages/interfold-contracts/contracts/verifiers/`                                           | also `02_CRYPTO_CIRCUITS.md` and `04_BUILD_CONFIG.md` |
-| `packages/interfold-contracts/{scripts,tasks,deploy,ignition}/`                               | `01_PROTOCOL_ONCHAIN.md` + `04_BUILD_CONFIG.md`       |
-| `circuits/`                                                                                   | `02_CRYPTO_CIRCUITS.md`                               |
-| `crates/` (any crate)                                                                         | `03_ACTOR_RUNTIME.md`                                 |
-| `crates/{zk-prover,zk-helpers,trbfv,fhe-params,compute-provider,wasm}/`                       | also `02_CRYPTO_CIRCUITS.md`                          |
-| `crates/{sortition,evm}/`                                                                     | also `01_PROTOCOL_ONCHAIN.md`                         |
-| `crates/data-availability/`                                                                   | also `01_PROTOCOL_ONCHAIN.md` and `flow-trace/08`     |
-| `crates/cli/`                                                                                 | also `04_BUILD_CONFIG.md` (CLI secrets)               |
-| `examples/CRISP/`, `templates/`                                                               | `01_PROTOCOL_ONCHAIN.md` + `02_CRYPTO_CIRCUITS.md`    |
-| `packages/interfold-sdk/`                                                                     | `02_CRYPTO_CIRCUITS.md`                               |
-| `scripts/`, `crates/*/build.rs`, `.github/workflows/`, `crates/Dockerfile`, root `Cargo.toml` | `04_BUILD_CONFIG.md`; also `02` for toolchain pins    |
-| `deploy/`, `dappnode/`                                                                        | `03_ACTOR_RUNTIME.md` + `04_BUILD_CONFIG.md`          |
-| committee-sync sources (list below)                                                           | `02_CRYPTO_CIRCUITS.md` §Committee config sync        |
+| Changed path                                                                                                                                                                   | Read                                                                                                   |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------ |
+| `packages/interfold-contracts/contracts/`                                                                                                                                      | `01_PROTOCOL_ONCHAIN.md`                                                                               |
+| `packages/interfold-contracts/contracts/verifiers/`                                                                                                                            | also `02_CRYPTO_CIRCUITS.md` and `04_BUILD_CONFIG.md`                                                  |
+| `packages/interfold-contracts/{scripts,tasks,deploy,ignition}/`                                                                                                                | `01_PROTOCOL_ONCHAIN.md` + `04_BUILD_CONFIG.md`                                                        |
+| `circuits/`                                                                                                                                                                    | `02_CRYPTO_CIRCUITS.md`                                                                                |
+| `crates/` (any crate)                                                                                                                                                          | `03_ACTOR_RUNTIME.md`                                                                                  |
+| `crates/{zk-prover,zk-helpers,trbfv,fhe-params,compute-provider,wasm,support,committee-hash}/`                                                                                 | also `02_CRYPTO_CIRCUITS.md`                                                                           |
+| `crates/{sortition,evm}/`                                                                                                                                                      | also `01_PROTOCOL_ONCHAIN.md`                                                                          |
+| `crates/data-availability/`                                                                                                                                                    | also `01_PROTOCOL_ONCHAIN.md`, `02_CRYPTO_CIRCUITS.md`, and `agent/flow-trace/08_DATA_AVAILABILITY.md` |
+| `crates/cli/`                                                                                                                                                                  | also `04_BUILD_CONFIG.md` (CLI secrets)                                                                |
+| `examples/CRISP/`, `templates/`                                                                                                                                                | `01_PROTOCOL_ONCHAIN.md` + `02_CRYPTO_CIRCUITS.md`                                                     |
+| `packages/interfold-sdk/`                                                                                                                                                      | `02_CRYPTO_CIRCUITS.md`                                                                                |
+| `scripts/`, `crates/*/build.rs`, `.github/workflows/`, `crates/Dockerfile`, root `{Cargo.toml,Cargo.lock,package.json,pnpm-lock.yaml,pnpm-workspace.yaml,rust-toolchain.toml}` | `04_BUILD_CONFIG.md`; also `02` for toolchain pins                                                     |
+| `deploy/`, `dappnode/`                                                                                                                                                         | `03_ACTOR_RUNTIME.md` + `04_BUILD_CONFIG.md`                                                           |
+| committee-sync sources (list below)                                                                                                                                            | `02_CRYPTO_CIRCUITS.md` §Committee config sync                                                         |
 
 Committee-sync sources are the files `scripts/check-committee.sh` compares. Some sit under paths
 that route elsewhere, so they need the crypto section in addition to their own row:
@@ -90,8 +90,8 @@ item in code before you rely on it.
   §Activation
 - Slashing: a restart resets the fallback submission delay. — `01_PROTOCOL_ONCHAIN.md` §Slashing and
   failure settlement
-- Startup does not reconcile persisted request contexts with finalized chain state; concern #48 is
-  marked Resolved in error. — `03_ACTOR_RUNTIME.md` §Durability, persistence, replay
+- Startup does not reconcile persisted request contexts with finalized chain state; concern #48
+  remains open. — `03_ACTOR_RUNTIME.md` §Durability, persistence, replay
 - Circuit artifacts: the source hash does not cover the shared Noir library, and a node installs a
   downloaded archive without `checksums.json`. — `02_CRYPTO_CIRCUITS.md` §Noir / Barretenberg
   compatibility
