@@ -4,7 +4,9 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::math::commitments::{compute_pk_aggregation_commitment, compute_threshold_pk_commitment};
+use crate::math::commitments::{
+    compute_pk_aggregation_commitment, compute_threshold_pk_commitment_checked,
+};
 use crate::math::modulo::U64::ModU64;
 use crate::math::polynomial::Polynomial;
 
@@ -68,22 +70,18 @@ impl<let N: u32, let H: u32, let L: u32, let BIT_PK: u32> PkAggregation<N, H, L,
         PkAggregation { configs, crp, expected_threshold_pk_commitments, pk0, pk0_agg }
     }
 
-    /// Bounds every opened `pk0` coefficient and every `pk0_agg` coefficient to a centered
-    /// residue `[-(q_l-1)/2, (q_l-1)/2]`.
+    /// Bounds every `pk0_agg` coefficient to a centered residue `[-(q_l-1)/2, (q_l-1)/2]`.
     ///
-    /// `verify_pk_commitments` re-opens C1's commitment from a private witness, and the commitment
-    /// packs `BIT_PK`-wide coefficients into shared carriers. An unbounded coefficient can overflow
-    /// its slot and cancel against the next one, so one commitment has many openings and the prover
-    /// could pick the sum it wants. Bounding every coefficient below the slot width makes each
-    /// commitment open to exactly one coefficient vector.
+    /// Only `pk0_agg` needs this. The per-party `pk0` limbs are opened from C1's commitment, and
+    /// `compute_threshold_pk_commitment_checked` makes that opening unique, so they are forced to
+    /// equal the coefficients C1 committed and already bounded. `pk0_agg` is opened from nothing:
+    /// `verify_pk_for_basis` pins it only modulo `q_l`, so `pk0_agg + k * q_l` satisfies the sum for
+    /// any `k`, and the packing slot alone would admit `k` of order a hundred. A non-canonical
+    /// aggregate breaks honest encryption downstream, because `user_data_encryption_ct0` does not
+    /// bound `pk0is` and its `r1` bounds were derived for a centered key.
     fn verify_pk_ranges(self) {
         for basis_idx in 0..L {
             let bound: Field = (self.configs.qis[basis_idx] - 1) / 2;
-
-            for party_idx in 0..H {
-                self.pk0[party_idx][basis_idx].range_check_2bounds::<BIT_PK>(bound, bound);
-            }
-
             self.pk0_agg[basis_idx].range_check_2bounds::<BIT_PK>(bound, bound);
         }
     }
@@ -92,10 +90,14 @@ impl<let N: u32, let H: u32, let L: u32, let BIT_PK: u32> PkAggregation<N, H, L,
     ///
     /// C1 commits only to pk0 (not pk1) because pk1 = CRS is a public constant.
     /// Binding pk0 per-party is sufficient: pk1 is pinned globally via the crp field.
+    ///
+    /// Opens with the checked packing helper: asserting each digit fits its slot makes the opening
+    /// unique, so the witness must be the coefficients C1 committed. That transfers C1's centered
+    /// bound at one assert per coefficient instead of repeating it as a two-sided range check.
     fn verify_pk_commitments(self) {
         for i in 0..H {
             assert(
-                compute_threshold_pk_commitment::<N, L, BIT_PK>(self.pk0[i])
+                compute_threshold_pk_commitment_checked::<N, L, BIT_PK>(self.pk0[i])
                     == self.expected_threshold_pk_commitments[i],
                 "PK commitment mismatch",
             );

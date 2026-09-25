@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::math::helpers::{compute_safe, flatten};
+use crate::math::helpers::{compute_safe, flatten, flatten_checked};
 use crate::math::polynomial::Polynomial;
 
 /// DOMAIN SEPARATORS
@@ -157,6 +157,20 @@ pub fn multiple_polynomial_payload<let N: u32, let L: u32, let BIT_POLY: u32>(
     flatten::<_, _, BIT_POLY>(payload, inputs)
 }
 
+pub fn single_polynomial_payload_checked<let N: u32, let BIT_POLY: u32>(
+    payload: [Field],
+    input: Polynomial<N>,
+) -> [Field] {
+    flatten_checked::<_, _, BIT_POLY>(payload, [input])
+}
+
+pub fn multiple_polynomial_payload_checked<let N: u32, let L: u32, let BIT_POLY: u32>(
+    payload: [Field],
+    inputs: [Polynomial<N>; L],
+) -> [Field] {
+    flatten_checked::<_, _, BIT_POLY>(payload, inputs)
+}
+
 /// COMMITMENTS
 
 pub fn compute_dkg_pk_commitment<let N: u32, let L: u32, let BIT_PK: u32>(
@@ -173,6 +187,17 @@ pub fn compute_threshold_pk_commitment<let N: u32, let L: u32, let BIT_PK: u32>(
     pk0: [Polynomial<N>; L],
 ) -> Field {
     let payload = multiple_polynomial_payload::<N, L, BIT_PK>([].as_vector(), pk0);
+    compute_commitment(payload, DS_PK_GENERATION)
+}
+
+/// [`compute_threshold_pk_commitment`] for a circuit that **opens** this commitment rather than
+/// creating it (C5). Asserts each packed digit fits its slot, which makes the opening unique and so
+/// forces the opened `pk0` to equal the `pk0` C1 committed. Produces the same value as the plain
+/// helper, so C1 needs no change.
+pub fn compute_threshold_pk_commitment_checked<let N: u32, let L: u32, let BIT_PK: u32>(
+    pk0: [Polynomial<N>; L],
+) -> Field {
+    let payload = multiple_polynomial_payload_checked::<N, L, BIT_PK>([].as_vector(), pk0);
     compute_commitment(payload, DS_PK_GENERATION)
 }
 
@@ -194,6 +219,17 @@ pub fn compute_share_encryption_commitment_from_message<let N: u32, let BIT_MSG:
     message: Polynomial<N>,
 ) -> Field {
     let payload = single_polynomial_payload::<N, BIT_MSG>([].as_vector(), message);
+    compute_commitment(payload, DS_SHARE_ENCRYPTION)
+}
+
+/// [`compute_share_encryption_commitment_from_message`] for a circuit that **opens** this
+/// commitment rather than creating it (C4). Asserts each packed digit fits its slot, forcing the
+/// opened share to equal the share C2 committed. Same value as the plain helper, so C2 and C3 need
+/// no change.
+pub fn compute_share_encryption_commitment_from_message_checked<let N: u32, let BIT_MSG: u32>(
+    message: Polynomial<N>,
+) -> Field {
+    let payload = single_polynomial_payload_checked::<N, BIT_MSG>([].as_vector(), message);
     compute_commitment(payload, DS_SHARE_ENCRYPTION)
 }
 
