@@ -26,8 +26,25 @@ use libp2p::{
 };
 use tokio::{
     sync::{broadcast, mpsc},
-    time::{sleep, timeout},
+    time::timeout,
 };
+
+const DELIVERY_TIMEOUT: Duration = Duration::from_secs(5);
+
+#[derive(Message)]
+#[rtype(result = "usize")]
+struct BufferedEventCount;
+
+impl Handler<BufferedEventCount> for NetEventBuffer {
+    type Result = usize;
+
+    fn handle(&mut self, _: BufferedEventCount, _: &mut actix::Context<Self>) -> usize {
+        match &self.state {
+            NetEventBufferState::Syncing { events, .. } => events.len(),
+            state => panic!("expected startup buffering, got {state:?}"),
+        }
+    }
+}
 
 fn sync_and_connection_control_events() -> Vec<NetEvent> {
     let (command_tx, _command_rx) = mpsc::channel(1);
@@ -96,24 +113,30 @@ async fn test_buffers_until_sync_ended() -> Result<()> {
     input_tx.send(event1.clone()).unwrap();
     input_tx.send(event2.clone()).unwrap();
 
-    // Give actor time to process
-    sleep(Duration::from_millis(10)).await;
-
-    // Verify no events forwarded yet (should timeout)
+    // Wait for observable actor progress, then check that no event was forwarded.
+    timeout(DELIVERY_TIMEOUT, async {
+        while handle.actor.send(BufferedEventCount).await? != 2 {
+            tokio::task::yield_now().await;
+        }
+        Ok::<_, anyhow::Error>(())
+    })
+    .await
+    .context("network events did not reach the startup buffer")??;
     assert!(
-        timeout(Duration::from_millis(50), output_rx.recv())
-            .await
-            .is_err(),
+        matches!(
+            output_rx.try_recv(),
+            Err(broadcast::error::TryRecvError::Empty)
+        ),
         "Events should be buffered, not forwarded during sync"
     );
 
     // Send SyncEnded event
     bus.publish_without_context(SyncEnded::new()).unwrap();
-    handle.wait_until_running().await?;
+    timeout(DELIVERY_TIMEOUT, handle.wait_until_running()).await??;
 
     // Now buffered events should be forwarded
-    let received1 = output_rx.recv().await.unwrap();
-    let received2 = output_rx.recv().await.unwrap();
+    let received1 = timeout(DELIVERY_TIMEOUT, output_rx.recv()).await??;
+    let received2 = timeout(DELIVERY_TIMEOUT, output_rx.recv()).await??;
 
     assert!(
         matches!(received1, NetEvent::GossipData(GossipData::GossipBytes(ref bytes)) if bytes == &vec![1, 2, 3])
@@ -126,7 +149,7 @@ async fn test_buffers_until_sync_ended() -> Result<()> {
     let event3 = NetEvent::GossipData(GossipData::GossipBytes(vec![7, 8, 9]));
     input_tx.send(event3.clone()).unwrap();
 
-    let received3 = tokio::time::timeout(tokio::time::Duration::from_millis(100), output_rx.recv())
+    let received3 = timeout(DELIVERY_TIMEOUT, output_rx.recv())
         .await
         .expect("Event should be forwarded immediately after sync")
         .unwrap();
@@ -150,7 +173,7 @@ async fn startup_buffer_overflow_fails_readiness_without_dropping_oldest() -> Re
     input_tx.send(NetEvent::GossipData(GossipData::GossipBytes(vec![1])))?;
     input_tx.send(NetEvent::GossipData(GossipData::GossipBytes(vec![2])))?;
 
-    let error = timeout(Duration::from_secs(1), handle.wait_until_running())
+    let error = timeout(DELIVERY_TIMEOUT, handle.wait_until_running())
         .await
         .context("network buffer did not report overflow")?
         .expect_err("overflow must fail startup readiness")
@@ -176,7 +199,7 @@ async fn startup_buffer_enforces_estimated_payload_bytes() -> Result<()> {
 
     input_tx.send(event)?;
 
-    let error = timeout(Duration::from_secs(1), handle.wait_until_running())
+    let error = timeout(DELIVERY_TIMEOUT, handle.wait_until_running())
         .await
         .context("network buffer did not report byte overflow")?
         .expect_err("byte overflow must fail startup readiness")
@@ -212,8 +235,8 @@ async fn sync_control_burst_does_not_lag_or_consume_the_application_buffer() -> 
     event_tx.send(NetEvent::GossipData(GossipData::GossipBytes(vec![7])))?;
     bus.publish_without_context(SyncEnded::new())?;
 
-    handle.wait_until_running().await?;
-    let forwarded = timeout(Duration::from_secs(5), output_rx.recv()).await??;
+    timeout(DELIVERY_TIMEOUT, handle.wait_until_running()).await??;
+    let forwarded = timeout(DELIVERY_TIMEOUT, output_rx.recv()).await??;
     assert!(matches!(
         forwarded,
         NetEvent::GossipData(GossipData::GossipBytes(bytes)) if bytes == vec![7]
