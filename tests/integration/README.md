@@ -14,6 +14,8 @@ Run an individual test:
 pnpm test:integration <test-name>
 ```
 
+`<test-name>` is `base`, `persist`, `net`, or `prebuild` (build fixtures only; used by CI).
+
 Eg.
 
 ```

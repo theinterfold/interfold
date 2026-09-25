@@ -130,9 +130,14 @@ async fn test_trbfv_isolation() -> Result<()> {
         }
     }
 
+    assert_eq!(
+        results.as_slice(),
+        expected_result.as_slice(),
+        "Threshold decryption must return every expected tally"
+    );
+
     for (i, (res, exp)) in results.iter().zip(expected_result.iter()).enumerate() {
         println!("Tally {i} result = {res} / {exp}");
-        assert_eq!(res, exp);
     }
     Ok(())
 }

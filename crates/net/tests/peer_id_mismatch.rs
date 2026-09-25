@@ -11,7 +11,7 @@
 
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use e3_net::events::{NetCommand, NetEvent};
 use e3_net::{Libp2pKeypair, Libp2pNetInterface, NetInterface, NetworkPolicy};
 use libp2p::swarm::DialError;
@@ -49,9 +49,13 @@ async fn configured_peer_id_mismatch_is_rejected() -> Result<()> {
     )?;
     let handle_b = node_b.handle();
     tokio::spawn(async move { node_b.start().await });
-
-    // Give B a moment to bind its QUIC listener.
-    sleep(Duration::from_millis(500)).await;
+    timeout(Duration::from_secs(15), async {
+        while handle_b.status().snapshot().listen_addresses.is_empty() {
+            sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .context("node B did not bind its QUIC listener")?;
 
     // Node A: dials B's address pinned to a STALE peer ID (B's pre-restart
     // identity), exactly like a stale routing/config entry.

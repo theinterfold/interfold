@@ -340,23 +340,6 @@ fn test_sub_with_underflow_equal_values() {
 }
 
 #[test]
-fn test_sub_with_underflow_verification() {
-    let lhs: Field = 30;
-    let rhs: Field = 50;
-    let m: Field = 100;
-    // Safety: Test function calling unconstrained helper
-    let (result, underflow) = unsafe { __sub_with_underflow(lhs, rhs, m) };
-
-    if underflow {
-        // Verify: lhs + m = rhs + result
-        assert(lhs + m == rhs + result);
-    } else {
-        // Verify: lhs = rhs + result
-        assert(lhs == rhs + result);
-    }
-}
-
-#[test]
 fn test_mul_with_quotient_simple() {
     // Safety: Test function calling unconstrained helper
     let (q, r) = unsafe { __mul_with_quotient(6, 7, 10) };

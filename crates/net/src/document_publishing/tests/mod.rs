@@ -28,6 +28,16 @@ use tokio::{
 };
 use tracing::subscriber::DefaultGuard;
 
+#[derive(actix::Message)]
+#[rtype(result = "()")]
+struct PublisherBarrier;
+
+impl actix::Handler<PublisherBarrier> for DocumentPublisher {
+    type Result = ();
+
+    fn handle(&mut self, _message: PublisherBarrier, _context: &mut Self::Context) {}
+}
+
 #[allow(clippy::type_complexity)]
 fn setup_test() -> Result<(
     DefaultGuard,

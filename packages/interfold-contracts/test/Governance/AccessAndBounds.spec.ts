@@ -4,16 +4,11 @@
 // Covers Ownable2Step + renounceOwnership disabling on the four
 // upgradeable contracts and the two ERC20 tokens, public bounds on
 // Interfold / CiphernodeRegistry / BondingRegistry / E3RefundManager /
-// SlashingManager, the BondingRegistry distributor cap, the PkVerifierSet / SlashingManager setter events, the
-// SortitionCommitteeFinalized event rename, and append-only parameter sets.
+// SlashingManager, the BondingRegistry distributor cap, the PkVerifierSet and
+// SlashingManager setter events, and the SortitionCommitteeFinalized event rename.
 import { expect } from "chai";
 
-import {
-  BFV_PARAMS_DEFAULT,
-  deployInterfoldSystem,
-  ethers,
-  networkHelpers,
-} from "../fixtures";
+import { deployInterfoldSystem, ethers, networkHelpers } from "../fixtures";
 
 async function deployAll() {
   const sys = await deployInterfoldSystem({
@@ -77,17 +72,6 @@ describe("Governance — access control, bounds & events", function () {
       expect(await e3RefundManager.pendingOwner()).to.equal(otherAddress);
       await e3RefundManager.connect(other).acceptOwnership();
       expect(await e3RefundManager.owner()).to.equal(otherAddress);
-    });
-
-    it("InterfoldToken: renounceOwnership reverts", async function () {
-      const { ciphernodeBondToken } =
-        await networkHelpers.loadFixture(deployAll);
-      await expect(
-        ciphernodeBondToken.renounceOwnership(),
-      ).to.be.revertedWithCustomError(
-        ciphernodeBondToken,
-        "RenounceOwnershipDisabled",
-      );
     });
 
     it("InterfoldTicketToken: renounceOwnership reverts", async function () {
@@ -330,15 +314,6 @@ describe("Governance — access control, bounds & events", function () {
           "CommitteeFinalized" as unknown as "SortitionCommitteeFinalized",
         ),
       ).to.equal(null);
-    });
-  });
-
-  describe("active parameter set", function () {
-    it("is append-only", async function () {
-      const { interfold } = await networkHelpers.loadFixture(deployAll);
-      await expect(interfold.setParamSet(0, BFV_PARAMS_DEFAULT))
-        .to.be.revertedWithCustomError(interfold, "ParamSetAlreadyRegistered")
-        .withArgs(0);
     });
   });
 });

@@ -52,14 +52,21 @@ describe("Protocol deployment", function () {
     );
   });
 
-  it("updates the node release policy only when the release advances", function () {
-    const release = { protocolVersion: 3, nodeGeneration: 1 };
-
-    expect(requiresNodeReleasePolicyUpdate(release, 2n, 1n)).to.equal(true);
-    expect(requiresNodeReleasePolicyUpdate(release, 3n, 1n)).to.equal(false);
-    expect(() => requiresNodeReleasePolicyUpdate(release, 4n, 1n)).to.throw(
-      "cannot move backwards",
-    );
+  it("requires every node-release dimension to stay monotonic", function () {
+    const release = { protocolVersion: 3, nodeGeneration: 2 };
+    expect(requiresNodeReleasePolicyUpdate(release, 2n, 2n)).to.equal(true);
+    expect(requiresNodeReleasePolicyUpdate(release, 3n, 1n)).to.equal(true);
+    expect(requiresNodeReleasePolicyUpdate(release, 3n, 2n)).to.equal(false);
+    // Neither dimension may move backwards, even when the other one advances.
+    for (const [protocol, generation] of [
+      [3n, 3n],
+      [2n, 3n],
+      [4n, 1n],
+    ] as const) {
+      expect(() =>
+        requiresNodeReleasePolicyUpdate(release, protocol, generation),
+      ).to.throw("cannot move backwards");
+    }
   });
 
   it("allows a named Sepolia rehearsal without weakening production capacity", function () {
@@ -919,32 +926,43 @@ describe("Protocol deployment", function () {
       result.contracts.randomnessProvider,
     );
     expect(await randomnessProvider.minimumSubscriptionBalance()).to.equal(1);
-    const randomnessCalls = [
-      [
-        result.contracts.randomnessProvider,
-        randomnessProvider.interface.getFunction("acceptOwnership")!.selector,
-      ],
-      [
-        await coordinator.getAddress(),
-        coordinator.interface.getFunction("addConsumer")!.selector,
-      ],
-      [
-        result.contracts.ciphernodeRegistry,
-        registry.interface.getFunction("setRandomnessRequestTimeout")!.selector,
-      ],
-      [
-        result.contracts.ciphernodeRegistry,
-        registry.interface.getFunction("setRandomnessProvider")!.selector,
-      ],
-    ] as const;
-    for (const [target, selector] of randomnessCalls) {
-      expect(
-        txs.filter(
-          (tx) =>
-            tx.to.toLowerCase() === target.toLowerCase() &&
-            tx.data.startsWith(selector),
-        ),
-      ).to.have.lengthOf(1);
-    }
+    const decodeOnlyCall = (
+      iface: ethersLib.Interface,
+      target: string,
+      fn: string,
+    ) => {
+      const selector = iface.getFunction(fn)!.selector;
+      const calls = txs.filter(
+        (tx) =>
+          tx.to.toLowerCase() === target.toLowerCase() &&
+          tx.data.startsWith(selector),
+      );
+      expect(calls, fn).to.have.lengthOf(1);
+      return iface.decodeFunctionData(fn, calls[0]!.data);
+    };
+    decodeOnlyCall(
+      randomnessProvider.interface,
+      result.contracts.randomnessProvider,
+      "acceptOwnership",
+    );
+    const consumer = decodeOnlyCall(
+      coordinator.interface,
+      await coordinator.getAddress(),
+      "addConsumer",
+    );
+    expect(consumer.subId).to.equal(subscriptionId);
+    expect(consumer.consumer).to.equal(result.contracts.randomnessProvider);
+    const timeout = decodeOnlyCall(
+      registry.interface,
+      result.contracts.ciphernodeRegistry,
+      "setRandomnessRequestTimeout",
+    );
+    expect(timeout.timeout).to.equal(BigInt(config.randomness.requestTimeout));
+    const provider = decodeOnlyCall(
+      registry.interface,
+      result.contracts.ciphernodeRegistry,
+      "setRandomnessProvider",
+    );
+    expect(provider.provider).to.equal(result.contracts.randomnessProvider);
   });
 });

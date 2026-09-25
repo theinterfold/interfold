@@ -28,6 +28,16 @@ async fn wait_for_connection(rx: &mut tokio::sync::broadcast::Receiver<NetEvent>
     .context("configured peer did not connect before the deadline")?
 }
 
+async fn wait_for_listener(handle: &NetInterfaceHandle) -> Result<()> {
+    timeout(Duration::from_secs(15), async {
+        while handle.status().snapshot().listen_addresses.is_empty() {
+            sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .context("network interface did not bind its listener before the deadline")
+}
+
 async fn wait_for_gossip_subscription(handle: &NetInterfaceHandle) -> Result<()> {
     timeout(Duration::from_secs(15), async {
         loop {
@@ -60,7 +70,9 @@ async fn reconnect_after_restart(pinned: bool) -> Result<()> {
     )?;
     let remote_handle = remote.handle();
     let remote_task = tokio::spawn(async move { remote.start().await });
-    sleep(Duration::from_millis(500)).await;
+    wait_for_listener(&remote_handle)
+        .await
+        .context("initial remote startup")?;
 
     let mut address = format!("/ip4/127.0.0.1/udp/{port}/quic-v1");
     if pinned {
@@ -111,16 +123,13 @@ async fn reconnect_after_restart(pinned: bool) -> Result<()> {
     )?;
     let restarted_handle = restarted.handle();
     let restarted_task = tokio::spawn(async move { restarted.start().await });
-    sleep(Duration::from_millis(500)).await;
+    wait_for_listener(&restarted_handle)
+        .await
+        .context("restarted remote startup")?;
     if restarted_task.is_finished() {
         restarted_task.await??;
         anyhow::bail!("restarted peer exited before redial");
     }
-    assert!(!restarted_handle
-        .status()
-        .snapshot()
-        .listen_addresses
-        .is_empty());
     wait_for_connection(&mut local_events)
         .await
         .context("configured peer redial after restart")?;

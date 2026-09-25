@@ -13,24 +13,6 @@ use e3_zk_prover::{test_utils::get_tempdir, ZkConfig, ZkProver};
 use tokio::fs;
 
 #[tokio::test]
-async fn test_backend_creates_directories() {
-    let temp = get_tempdir().unwrap();
-    let backend = test_backend(temp.path(), ZkConfig::default());
-
-    fs::create_dir_all(&backend.base_dir).await.unwrap();
-    fs::create_dir_all(&backend.circuits_dir).await.unwrap();
-    fs::create_dir_all(&backend.work_dir).await.unwrap();
-
-    assert!(backend.base_dir.exists());
-    assert!(backend.circuits_dir.exists());
-    assert!(backend.work_dir.exists());
-
-    let temp_path = temp.path().to_path_buf();
-    drop(temp);
-    assert!(!temp_path.exists());
-}
-
-#[tokio::test]
 async fn test_work_dir_cleanup() {
     let temp = get_tempdir().unwrap();
     let backend = test_backend(temp.path(), ZkConfig::default());

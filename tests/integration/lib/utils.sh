@@ -8,13 +8,21 @@ get_evm_timestamp() {
     | jq -r '.result.timestamp' | xargs printf "%d\n"
 }
 
+# Set INPUT_WINDOW_START/END. The committee cannot publish its key after the input window
+# closes (`validateCommitteePublication`), so the window must outlast the DKG timeout plus
+# restart and input preparation. The start leaves 60 seconds for the committee request.
+set_integration_input_window() {
+  local now
+  now=$(get_evm_timestamp)
+  INPUT_WINDOW_START=$((now + 60))
+  INPUT_WINDOW_END=$((INPUT_WINDOW_START + ${INTEGRATION_INPUT_WINDOW_SECONDS:-$((INTEGRATION_DKG_TIMEOUT + 300))}))
+}
+
 # Move the dev chain's clock just past an absolute deadline.
 #
-# The input window has to outlast a real DKG, because a committee published after
-# `inputWindowEnd` is refused by `validateCommitteePublication`. That makes the window
-# minutes wide, so waiting for it in wall-clock time would add those minutes to every
-# run. `evm_increaseTime` jumps the chain instead and keeps the suite at DKG speed.
-# A no-op when the deadline has already passed.
+# The input window is minutes wide, so waiting for it in wall-clock time would add those
+# minutes to every run. `evm_increaseTime` jumps the chain instead and keeps the suite at
+# DKG speed. A no-op when the deadline has already passed.
 #
 # Usage: advance_evm_time_past <unix_timestamp> [rpc_url]
 advance_evm_time_past() {

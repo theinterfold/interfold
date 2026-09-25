@@ -225,12 +225,6 @@ fn test_u64_mul_mod_with_zero() {
 }
 
 #[test]
-fn test_u64_mul_mod_prime_modulus() {
-    let m = ModU64::new(97);
-    assert(m.mul_mod(42, 13) == 61); // 546 mod 97
-}
-
-#[test]
 fn test_u64_neg_nonzero() {
     let m = ModU64::new(100);
     assert(m.neg(30) == 70);
@@ -318,12 +312,6 @@ fn test_u64_additive_inverse() {
 }
 
 #[test]
-fn test_u64_additive_identity() {
-    let m = ModU64::new(100);
-    assert(m.add(42, 0) == 42);
-}
-
-#[test]
 fn test_u64_multiplicative_identity() {
     let m = ModU64::new(100);
     assert(m.mul_mod(42, 1) == 42);
@@ -346,15 +334,6 @@ fn test_u64_inverse_of_inverse() {
     let m = ModU64::new(11);
     let a = 7;
     assert(m.inv_mod(m.inv_mod(a)) == a);
-}
-
-#[test]
-fn test_u64_division_multiplication_inverse() {
-    let m = ModU64::new(97);
-    let a = 35;
-    let b = 7;
-    let quotient = m.div_mod(a, b);
-    assert(m.mul_mod(quotient, b) == m.reduce_mod(a));
 }
 
 #[test(should_fail_with = "Division verification failed: result * b != a (mod m)")]

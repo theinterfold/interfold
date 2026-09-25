@@ -18,7 +18,7 @@ use e3_net::{
 };
 use e3_utils::ArcBytes;
 use libp2p::{gossipsub::MessageId, kad::GetRecordError, PeerId};
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{broadcast, watch, RwLock};
 use tracing::{error, warn};
 
 #[derive(Debug, Clone)]
@@ -26,6 +26,8 @@ pub struct Libp2pMock {
     store: Arc<RwLock<HashMap<ContentHash, ArcBytes>>>,
     state: Arc<RwLock<MockState>>,
     next_generation: Arc<AtomicU64>,
+    /// Counts commands dropped because their node was offline or replaced.
+    dropped_commands: Arc<watch::Sender<u64>>,
 }
 
 #[derive(Debug, Default)]
@@ -48,6 +50,7 @@ impl Libp2pMock {
             store: Arc::new(RwLock::new(HashMap::new())),
             state: Arc::new(RwLock::new(MockState::default())),
             next_generation: Arc::new(AtomicU64::new(1)),
+            dropped_commands: Arc::new(watch::Sender::new(0)),
         }
     }
 
@@ -98,6 +101,7 @@ impl Libp2pMock {
         }
         let store = self.store.clone();
         let state = self.state.clone();
+        let dropped_commands = self.dropped_commands.clone();
         let self_peer_id = peer_id;
 
         tokio::spawn(async move {
@@ -113,11 +117,13 @@ impl Libp2pMock {
 
                 let state_snapshot = state.read().await;
                 if state_snapshot.generations.get(&self_peer_id) != Some(&generation) {
+                    dropped_commands.send_modify(|count| *count += 1);
                     break;
                 }
                 let active = state_snapshot.nodes.contains_key(&self_peer_id);
                 drop(state_snapshot);
                 if !active {
+                    dropped_commands.send_modify(|count| *count += 1);
                     continue;
                 }
 
@@ -250,6 +256,7 @@ mod tests {
 
         let offline_key = ContentHash::from_content(b"offline");
         mock.disconnect_node(peer_id).await;
+        let mut dropped = mock.dropped_commands.subscribe();
         bridge
             .cmd_tx()
             .send(NetCommand::DhtPutRecord {
@@ -259,7 +266,10 @@ mod tests {
                 key: offline_key.clone(),
             })
             .unwrap();
-        tokio::time::sleep(Duration::from_millis(20)).await;
+        tokio::time::timeout(Duration::from_secs(1), dropped.changed())
+            .await
+            .unwrap()
+            .unwrap();
         assert!(!mock.store.read().await.contains_key(&offline_key));
 
         let online_key = ContentHash::from_content(b"online");
@@ -301,6 +311,7 @@ mod tests {
         let mut received = receiver.event_rx();
 
         mock.disconnect_node(sender_id).await;
+        let mut dropped = mock.dropped_commands.subscribe();
         sender
             .cmd_tx()
             .send(NetCommand::gossip_publish(
@@ -309,15 +320,14 @@ mod tests {
                 CorrelationId::new(),
             ))
             .unwrap();
-        assert!(tokio::time::timeout(Duration::from_millis(50), async {
-            loop {
-                if let Ok(NetEvent::GossipData(_)) = received.recv().await {
-                    break;
-                }
-            }
-        })
-        .await
-        .is_err());
+        tokio::time::timeout(Duration::from_secs(1), dropped.changed())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            received.try_recv(),
+            Err(broadcast::error::TryRecvError::Empty)
+        ));
 
         mock.reconnect_node(sender_id, sender.clone()).await;
         sender
@@ -389,6 +399,7 @@ mod tests {
         assert!(matches!(recovered, GossipData::GossipBytes(bytes) if bytes == [7]));
 
         let stale_key = ContentHash::from_content(b"stale");
+        let mut dropped = mock.dropped_commands.subscribe();
         old_receiver
             .cmd_tx()
             .send(NetCommand::DhtPutRecord {
@@ -398,7 +409,10 @@ mod tests {
                 key: stale_key.clone(),
             })
             .unwrap();
-        tokio::time::sleep(Duration::from_millis(20)).await;
+        tokio::time::timeout(Duration::from_secs(1), dropped.changed())
+            .await
+            .unwrap()
+            .unwrap();
         assert!(!mock.store.read().await.contains_key(&stale_key));
     }
 }

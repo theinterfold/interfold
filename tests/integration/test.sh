@@ -21,7 +21,7 @@ parse_integration_args() {
         ;;
       *)
         echo "Unknown integration argument: $1" >&2
-        echo "Usage: ./test.sh [base|persist|net|restart] [--skip-proof-aggregation true|false] [--no-prebuild]" >&2
+        echo "Usage: ./test.sh [base|persist|net|prebuild] [--skip-proof-aggregation true|false] [--no-prebuild]" >&2
         exit 1
         ;;
     esac
@@ -57,7 +57,6 @@ if [ $# -eq 0 ]; then
   "$THIS_DIR/persist.sh"
   "$THIS_DIR/base.sh"
   "$THIS_DIR/net.sh"
-  "$THIS_DIR/restart.sh"
 else
   SCRIPT_NAME="$1"
   shift

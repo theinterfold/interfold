@@ -591,6 +591,7 @@ mod tests {
     use super::*;
     use crate::server::database::SledDB;
     use crate::server::log_repo::StoredLog;
+    use alloy::providers::ProviderBuilder;
     use e3_sdk::indexer::SharedStore;
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
@@ -623,34 +624,27 @@ mod tests {
         }
     }
 
-    /// A 32-byte topic word carrying a left-padded address.
-    fn address_from_topic(topic: &str) -> Option<Address> {
-        let hex = topic.trim().trim_start_matches("0x");
-        if hex.len() != 64 {
-            return None;
-        }
-        parse_address(&hex[24..])
-    }
-
-    /// The index half of `scan_delegate_changed`, so the candidate logic can be tested without a
-    /// provider. Same topic filter and same topic-3 read.
+    /// Run the production scanner through its indexed path. The provider URL is never contacted.
     async fn index_candidates(
         store: &web::Data<AppData>,
-        token_key: &str,
+        token: Address,
         from: u64,
         to: u64,
     ) -> eyre::Result<Vec<Address>> {
-        let topic0 = format!("{:#x}", DelegateChanged::SIGNATURE_HASH);
-        let logs = store
-            .logs()
-            .query(token_key, from, to, &[Some(topic0), None, None, None])
-            .await?;
-
-        Ok(logs
-            .into_iter()
-            .filter_map(|log| log.topics.get(3).and_then(|t| address_from_topic(t)))
-            .filter(|address| *address != Address::ZERO)
-            .collect())
+        let provider = ProviderBuilder::new()
+            .connect_http("http://127.0.0.1:1".parse().unwrap())
+            .erased();
+        let token_key = token.to_string().to_lowercase();
+        scan_delegate_changed(
+            store,
+            &provider,
+            token,
+            &token_key,
+            from,
+            to,
+            Some((from, to)),
+        )
+        .await
     }
 
     fn topic_for(address: Address) -> String {
@@ -698,14 +692,11 @@ mod tests {
             .await
             .unwrap();
 
-        let token_key = token.to_string().to_lowercase();
         // Dedup belongs to `merge`, which is also what folds an incremental scan into the set
         // already held — so the two paths cannot disagree about what a repeat is.
         let found = merge(
             Vec::new(),
-            index_candidates(&store.data, &token_key, 0, 200)
-                .await
-                .unwrap(),
+            index_candidates(&store.data, token, 0, 200).await.unwrap(),
         );
 
         assert_eq!(found, vec![first, second]);
@@ -726,10 +717,7 @@ mod tests {
             .await
             .unwrap();
 
-        let token_key = token.to_string().to_lowercase();
-        let found = index_candidates(&store.data, &token_key, 0, 100)
-            .await
-            .unwrap();
+        let found = index_candidates(&store.data, token, 0, 100).await.unwrap();
 
         assert_eq!(found, vec![inside]);
     }
@@ -750,10 +738,7 @@ mod tests {
             .await
             .unwrap();
 
-        let token_key = token.to_string().to_lowercase();
-        let found = index_candidates(&store.data, &token_key, 0, 100)
-            .await
-            .unwrap();
+        let found = index_candidates(&store.data, token, 0, 100).await.unwrap();
 
         assert_eq!(found, vec![ours]);
     }
@@ -780,18 +765,21 @@ mod tests {
         assert_eq!(merge(known.clone(), Vec::new()), known);
     }
 
-    #[test]
-    fn an_address_is_read_out_of_its_padded_topic_word() {
-        let topic = "0x000000000000000000000000cA11bde05977b3631167028862bE2a173976CA11";
-        assert_eq!(address_from_topic(topic), Some(MULTICALL3));
-    }
+    #[actix_web::test]
+    async fn a_malformed_indexed_topic_is_skipped() {
+        let store = temp_store();
+        let token = Address::repeat_byte(0x11);
+        let good = Address::repeat_byte(0x22);
+        let mut malformed = delegate_changed(token, Address::repeat_byte(0x33), 10, 0);
+        malformed.topics[3] = "0x1234".to_string();
+        let mut logs = store.data.logs();
+        logs.append(malformed).await.unwrap();
+        logs.append(delegate_changed(token, good, 11, 0))
+            .await
+            .unwrap();
 
-    #[test]
-    fn a_malformed_topic_is_skipped_rather_than_guessed_at() {
-        assert_eq!(address_from_topic("0x1234"), None);
-        assert_eq!(address_from_topic(""), None);
-        // A word the right length but not hex is not an address either.
-        assert_eq!(address_from_topic(&format!("0x{}", "z".repeat(64))), None);
+        let found = index_candidates(&store.data, token, 0, 100).await.unwrap();
+        assert_eq!(found, vec![good]);
     }
 
     #[test]
