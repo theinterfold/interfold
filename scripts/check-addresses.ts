@@ -90,7 +90,14 @@ const ALLOWED: Record<string, string> = {
   // TODO: record these in deployed_contracts.json so the manifest can publish
   // them. Until then no check can tell a correct value here from a stale one.
   '0xe172e9b6cfbeeb5593bdce3f077356fdb33af904': 'InterfoldToken (FOLD), mainnet — no top-level deployment record',
-  '0xb568e5ad762f7a75f1ec65a985ec4038f6409297': 'DeployableMockCiphertextVerifier, mainnet — no deployment record',
+  '0xb568e5ad762f7a75f1ec65a985ec4038f6409297': 'DeployableMockCiphertextVerifier, mainnet (replaced 2026-08-22) — no deployment record',
+  // Mainnet verifiers that governance set after the deployment. No deployment record carries them.
+  '0x80d217d3b2e16ff2ecc178cc75655c773895c549': 'Risc0BfvCiphertextVerifier, mainnet (set at block 26004622) — no deployment record',
+  '0xa66cab7ae230698b2a9ee1e0e967bad4651feea7': 'BfvDecryptionVerifierRouter, mainnet — no deployment record',
+  '0x7cd10057c25674bd5666a9deee3193f1b29563d1': 'BfvPkVerifierRouter, mainnet — no deployment record',
+  // Not an address: the first 20 bytes of the 32-byte RISC Zero guest image ID that the mainnet
+  // Risc0BfvCiphertextVerifier checks. The address pattern matches the start of the hash.
+  '0x9d3e21fd7cc08e629cb467e5ca6bfc8e1a645b48': 'prefix of the mainnet ciphertext guest image ID (a hash, not an address)',
 
   // Deterministic Anvil accounts used by the local CRISP stack.
   '0x70997970c51812dc3a010c7d01b50e0d17dc79c8': 'Anvil account 1',

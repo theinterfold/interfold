@@ -164,9 +164,12 @@ deployment manifest does not publish these two token addresses.
 `BondingRegistry`, as shown in
 [Registration & Bonding](/operate/registration#read-the-token-addresses).
 
-The mainnet deployment registers `MockE3Program` as its first E3 program. The deployment
-configuration also deploys a mock ciphertext verifier (`deployMockCiphertextVerifier: true` in
-`mainnet-protocol.config.json`). The manifest therefore marks mainnet with `mocks: true`.
+The first mainnet deployment registered `MockE3Program` and a mock ciphertext verifier. The contract
+owner later disabled `MockE3Program` and replaced the mock verifier with a RISC Zero verifier. The
+manifest still marks mainnet with `mocks: true`, so `interfold config check` prints a
+mock-deployment note for mainnet.
+[Contracts & Addresses](/reference/contracts#verifiers-in-use-on-mainnet) shows the verifiers in
+use.
 
 <Callout type='info'>
   The `Interfold` contract starts with E3 requests paused. The owner changes this with
@@ -209,7 +212,9 @@ The Sepolia deployment uses mock verifiers and a mock compute provider:
 
 `interfold config check` compares your configuration with the manifest of the latest release. For
 each network that the manifest marks with `mocks: true`, it prints a note that proofs are accepted
-without verification. The current manifest marks both networks.
+without verification. The current manifest marks both networks. For mainnet, the note does not match
+the verifiers in use. See
+[Verifiers in use on mainnet](/reference/contracts#verifiers-in-use-on-mainnet).
 
 ## Set up a ciphernode
 

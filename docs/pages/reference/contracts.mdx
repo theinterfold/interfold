@@ -31,8 +31,8 @@ The manifest has two sections for each network:
 
 Each network entry also has a `chain_id` and a `mocks` flag. The flag is `true` when the network has
 a mock E3 program or a mock verifier. Both networks set `mocks: true` in this release. Mainnet sets
-it because its first E3 program is `MockE3Program`. See
-[Also used on mainnet](#also-used-on-mainnet).
+it because the deployment record lists `MockE3Program`, although that program is not enabled. See
+[Verifiers in use on mainnet](#verifiers-in-use-on-mainnet).
 
 To compare your node configuration with the published manifest, run this command:
 
@@ -97,13 +97,37 @@ sUSDS is a third-party token. The Interfold does not deploy it. To confirm the t
 on-chain, call `getCiphernodeBondToken()` on the `BondingRegistry` for FOLD. For the ticket
 collateral, call `underlying()` on the `InterfoldTicketToken`.
 
+### Verifiers in use on mainnet
+
+The `Interfold` contract stores one verifier of each kind for each encryption scheme. The table
+shows the values for the BFV scheme (`keccak256("fhe.rs:BFV")`) at block 26,057,073 (25 September
+2026). Each E3 keeps the verifiers that were set when it was requested.
+
+| Verifier   | Contract                      | Address                                      | Set at block | Read with                         |
+| ---------- | ----------------------------- | -------------------------------------------- | ------------ | --------------------------------- |
+| Ciphertext | `Risc0BfvCiphertextVerifier`  | `0x80D217d3b2e16fF2ecc178cC75655C773895c549` | 26004622     | `getCiphertextVerifier(schemeId)` |
+| Decryption | `BfvDecryptionVerifierRouter` | `0xA66CAb7AE230698b2a9ee1E0E967BaD4651FeEa7` | Not recorded | `getDecryptionVerifier(schemeId)` |
+| Public key | `BfvPkVerifierRouter`         | `0x7CD10057c25674bd5666A9deEE3193f1b29563d1` | Not recorded | `getPkVerifier(schemeId)`         |
+
+- The ciphertext verifier checks a RISC Zero Groth16 proof for the guest image ID
+  `0x9d3e21fd7cc08e629cb467e5ca6bfc8e1a645b483bfd91b6b1648ced259110fc`. Read it with `imageId()`.
+- Each router has three routes (`routeCount()`, `routeAt(index)`). All routes point to
+  `BfvDecryptionVerifier` or `BfvPkVerifier` contracts.
+- The deployment record `mainnet-protocol.deployment.json` does not include these values. It lists
+  the verifiers of the first deployment.
+
 <Callout type='info'>
-  The mainnet ciphertext verifier is `DeployableMockCiphertextVerifier`. Its `verify` function
-  returns `true` for every input, so mainnet accepts ciphertext proofs without verification. The
-  mainnet configuration deploys it because `deployMockCiphertextVerifier` is `true`. The contract
-  source says to replace it before production CRISP workloads. The first E3 program on mainnet is
-  `MockE3Program`.
+  The first mainnet deployment set `DeployableMockCiphertextVerifier` as the ciphertext verifier at
+  block 25,788,974 (19 August 2026). That contract accepts every proof. The contract owner replaced
+  it with a `Risc0BfvCiphertextVerifier` at block 25,813,839 (22 August 2026), and again at block
+  26,004,622 (18 September 2026). The first mainnet E3 was requested at block 26,012,772, so no
+  mainnet E3 used the mock verifier. The first E3 program, `MockE3Program`, is registered but not
+  enabled (`e3Programs` returns `false`). `CRISPProgram` is enabled.
 </Callout>
+
+The manifest still marks mainnet with `mocks: true`, because the deployment record lists
+`MockE3Program`. For this reason, `interfold config check` prints the mock-deployment note for
+mainnet, although the verifiers in use are not mocks.
 
 ## Sepolia
 
@@ -167,7 +191,7 @@ flowchart LR
 | Fee token                        | Third-party token (mainnet), `MockUSDC` (Sepolia)     | The ERC-20 token that requesters use to pay for an E3. Mainnet uses USDS.                                                                                                                                                                              |
 | Faucet                           | `contracts/test/Faucet.sol`                           | Sepolia only. Sends 200 FOLD and 200 fee tokens to a caller that holds less than 200 of each.                                                                                                                                                          |
 | Mock contracts                   | `contracts/test/`                                     | `MockE3Program`, `MockComputeProvider`, and the mock verifiers accept test data without real proof verification.                                                                                                                                       |
-| DeployableMockCiphertextVerifier | `contracts/test/DeployableMockCiphertextVerifier.sol` | The ciphertext verifier on mainnet. It accepts every ciphertext proof.                                                                                                                                                                                 |
+| DeployableMockCiphertextVerifier | `contracts/test/DeployableMockCiphertextVerifier.sol` | A test verifier that accepts every ciphertext proof. It was the mainnet ciphertext verifier from 19 to 22 August 2026.                                                                                                                                 |
 
 The main entry points are these functions:
 
