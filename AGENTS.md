@@ -17,6 +17,20 @@ Read before starting any task, in this order:
      (implemented runtime/topology)
    - Protocol behavior → `agent/flow-trace/00_INDEX.md` (lifecycle traces, known bugs)
 
+## Task loop
+
+This loop works with one agent or with several. Each step points to the rule that defines it.
+
+1. Branch from current `origin/main`. — `agent/RULES.md` §Change discipline
+2. Read the harness files above that match the paths you will change.
+3. Change only the requested scope.
+4. Verify at the smallest scope that covers the change. — `agent/RULES.md` §Verification ladder
+5. Review the diff in a fresh context. If you work alone, review it as a separate step. —
+   `agent/RULES.md` §Review before you report done
+6. If documented behavior changed, update `agent/` in the same change. —
+   `agent/prompts/update-flow-trace.md`
+7. Report the commands, results, HEAD SHA, and open questions. Do not merge unless the user asks.
+
 ## Harness layout: canonical vs adapters
 
 Canonical, tool-neutral (edit these; they are the single source of truth):
@@ -33,15 +47,20 @@ Canonical, tool-neutral (edit these; they are the single source of truth):
 Per-tool adapters (thin wrappers; never put content here):
 
 - Claude Code: `CLAUDE.md`, `.claude/settings.json` (permissions + format hook), `.mcp.json`,
-  `.claude/agents/`, `.claude/commands/`, `.claude/skills/`
-- Codex: `AGENTS.md`, `.agents/skills/`, `.codex/config.toml`
-- OpenCode: `opencode.json` (permissions, MCP, and `invariant-reviewer`) and `.opencode/skills/`;
-  portable skills load from `.agents/skills/`
+  `.claude/agents/` (`invariant-reviewer`), `.claude/commands/` (`/invariant-review`,
+  `/switch-committee`, `/update-flow-trace`), `.claude/skills/` (`asd-ste100` pointer)
+- Codex: `AGENTS.md`, `.agents/skills/` (`invariant-review`, `switch-committee`,
+  `update-flow-trace`, `asd-ste100`), `.codex/config.toml` (MCP)
+- OpenCode: `opencode.json` (permissions, MCP, and the `invariant-reviewer` agent). It loads skills
+  from `.agents/skills/` and also from `.claude/skills/`.
 - Others (Cursor, Cline, Windsurf, Copilot): one-line pointers to `AGENTS.md`
 
 Sync rules: the permission policies in `.claude/settings.json` and `opencode.json` must grant and
 deny the same capabilities with each tool's native syntax. Change both together. When adding an
-agent or command, put the body in `agent/prompts/` and add a wrapper per tool. Edit the canonical
+agent or command, put the body in `agent/prompts/`. Add one pointer skill in `.agents/skills/` for
+Codex and OpenCode, and a Claude command or agent in `.claude/`. Do not add a `.claude/skills/`
+pointer for a skill in `.agents/skills/`, because OpenCode would load both. The `asd-ste100` pointer
+is the one exception, because Claude Code finds skills only in `.claude/skills/`. Edit the canonical
 body, not the wrappers.
 
 ## Code Review Rules

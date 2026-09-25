@@ -19,3 +19,9 @@
       Protocol Concerns" table in `agent/flow-trace/00_INDEX.md` is updated.
 - [ ] **Breaking?** — if yes: `!` in the commit type, and this PR merges only alongside a breaking
       release.
+- [ ] **Rollout class** — if this touches `SCHEMA_VERSION`, a wire major, a persisted type, an
+      `InterfoldEventData` variant, a contract event or ABI, or `protocol-release.toml`: name the
+      upgrade class (rolling, drain-and-resync, or governance) and the `protocol_version` /
+      `node_generation` decision.
+- [ ] **Review** — the diff was reviewed in a fresh context, or in a separate self-review step if
+      one agent did the work (`agent/RULES.md` §Review before you report done).
