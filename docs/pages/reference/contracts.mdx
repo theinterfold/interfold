@@ -134,6 +134,13 @@ mainnet, although the verifiers in use are not mocks.
 <Badge tone='testnet'>Testnet</Badge> Ethereum Sepolia, chain ID `11155111`. The fee token and the
 faucet are test contracts.
 
+<Callout type='warning'>
+  On 25 September 2026, the Sepolia protocol contracts predate the node release gate.
+  `nodeReleaseRegistry()` on the Sepolia `Interfold` contract reverts. A 0.18.0 ciphernode reads
+  this value at startup, so it stops with `failed to read Interfold release dependencies`. Until the
+  Sepolia deployment is upgraded, use a local network to run ciphernodes.
+</Callout>
+
 ### Sepolia contracts
 
 | Contract             | Address                                      | Deploy block | Manifest key          | Explorer                                                                                     |

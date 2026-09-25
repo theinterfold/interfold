@@ -180,6 +180,12 @@ use.
   </Tabs.Tab>
   <Tabs.Tab unmount={false}>
 
+<Callout type='warning'>
+  On 25 September 2026, the Sepolia protocol contracts predate the node release gate.
+  `nodeReleaseRegistry()` on the Sepolia `Interfold` contract reverts. A 0.18.0 ciphernode reads
+  this value at startup, so it stops with `failed to read Interfold release dependencies`.
+</Callout>
+
 | Contract                                   | Address                                      | Deploy block |
 | ------------------------------------------ | -------------------------------------------- | ------------ |
 | Interfold                                  | `0x3E856E24c7a95d0e04d387f847DA6FA9f6F6c20C` | 11534993     |

@@ -80,6 +80,14 @@ nodes exclude the member from that E3 only, and no penalty applies. When the agr
 different data from the accused operator, the result is equivocation. The nodes do not submit a
 slash for equivocation, because the current evidence format cannot prove it.
 
+<Callout type='info'>
+  On mainnet at block 26,057,073 (25 September 2026), no slash policy is set. The `SlashingManager`
+  has emitted no `SlashPolicyUpdated` event, and `getSlashPolicy(reason)` returns a disabled policy
+  for each proof type. An accused member is therefore excluded from the E3, and no penalty applies.
+  The node logs `Slash policy is disabled; excluding the faulted member from local E3 work`. Read
+  `getSlashPolicy(reason)` for the current value before you rely on a policy.
+</Callout>
+
 ### The slash policy
 
 | Field                   | Meaning                                                                                                       |

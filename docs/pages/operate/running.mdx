@@ -86,6 +86,13 @@ chains:
   </Tabs.Tab>
   <Tabs.Tab unmount={false}>
 
+<Callout type='warning'>
+  On 25 September 2026, the Sepolia protocol contracts predate the node release gate.
+  `nodeReleaseRegistry()` on the Sepolia `Interfold` contract reverts. A 0.18.0 ciphernode reads
+  this value at startup, so it stops with `failed to read Interfold release dependencies`. Until the
+  Sepolia deployment is upgraded, a Sepolia node on this release does not start.
+</Callout>
+
 ```yaml filename="interfold.config.yaml"
 node:
   network: sepolia

@@ -24,6 +24,13 @@ register it, and your server and client use the testnet.
   verifier contracts.
 </Callout>
 
+<Callout type='warning'>
+  On 25 September 2026, the Sepolia protocol contracts predate the node release gate.
+  `nodeReleaseRegistry()` on the Sepolia `Interfold` contract reverts. A 0.18.0 ciphernode reads
+  this value at startup, so it stops with `failed to read Interfold release dependencies`.
+  Ciphernodes on this release cannot serve Sepolia E3s until the Sepolia deployment is upgraded.
+</Callout>
+
 ## Sepolia protocol contracts
 
 These addresses come from `deployments/manifest.json` (chain ID 11155111). The
