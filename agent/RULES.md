@@ -29,10 +29,10 @@ reverts the file to its base content; anything else needs `[skip-doc-sync]` in a
 
 - Run builds/tests/lint through the root pnpm scripts (`pnpm test`, `pnpm rust:test`, `pnpm lint`,
   ...) — not raw cargo/nargo/hardhat. Full command table: `CONTEXT.md`.
-- Commits and PR titles: Conventional Commits, `!` for breaking changes. The PR title becomes the
-  squash commit. CI checks only the PR title (`.github/workflows/validate-commits.yml`): type
-  `feat`, `fix`, `chore`, `refactor`, `docs`, or `test`; lower-case scope; whole header ≤ 72
-  characters.
+- Commits and PR titles: Conventional Commits, `!` for breaking changes. The PR title is the default
+  squash-commit title; the person who merges can edit it. CI checks only the PR title
+  (`.github/workflows/validate-commits.yml`): type `feat`, `fix`, `chore`, `refactor`, `docs`, or
+  `test`; lower-case scope; whole header ≤ 72 characters.
 - Never hand-edit generated files (committee/preset files, parity matrices, verifier contracts,
   `.active-preset.json`, `deployments/manifest.json`) — see `invariants/04_BUILD_CONFIG.md`.
 - Every new `.rs`/`.sol`/`.ts` file needs the SPDX `LGPL-3.0-only` header.

@@ -114,8 +114,8 @@ for that chain.
 
 - **Commits and PR titles:** Conventional Commits, optional lower-case scope, `!` for breaking. No
   local commit-message hook exists. `.github/workflows/validate-commits.yml` checks only the PR
-  title, which becomes the squash commit: type `feat`, `fix`, `chore`, `refactor`, `docs`, or
-  `test`, and a whole header of at most 72 characters.
+  title, which is the default squash-commit title (the person who merges can edit it): type `feat`,
+  `fix`, `chore`, `refactor`, `docs`, or `test`, and a whole header of at most 72 characters.
 - **PRs:** small and focused; 1 approval required by team rule (the `main` ruleset does not enforce
   it, so do not merge without one); squash merge with a cleaned-up body of meaningful conventional
   commits; breaking PRs merge only alongside a breaking release; docs changes get the

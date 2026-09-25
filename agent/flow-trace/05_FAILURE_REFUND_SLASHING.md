@@ -23,8 +23,10 @@ actually slashed and does not require an oracle or relabel one ERC-20 as another
 
 ### Timeout-Based Failure (Permissionless)
 
-Anyone can call `markE3Failed()` when a deadline is missed. A ready committee remains finalizable
-through its absolute DKG deadline. It can fail if it remains unfinalized after that deadline.
+After a deadline is missed, `markE3Failed()` can succeed. During `markFailedGracePeriod`, only the
+requester, the owner, or an active committee member can call it; after the grace period, any caller
+can. A ready committee remains finalizable through its absolute DKG deadline. It can fail if it
+remains unfinalized after that deadline.
 
 The Interfold writer watches every stage that `failureCondition` supports: `Requested`,
 `CommitteeFinalized`, `KeyPublished`, and `CiphertextReady`. Startup restores the stage from the
@@ -58,7 +60,7 @@ supplier-side timeout.
 > (`InterfoldLifecycle.validateMarkFailedCaller`).
 
 ```text
-Anyone calls: Interfold.markE3Failed(e3Id)
+Caller (restricted during the grace period): Interfold.markE3Failed(e3Id)
 │
 ├─ Revert if stage == None, Complete, or Failed
 │

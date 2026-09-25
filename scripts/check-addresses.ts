@@ -133,6 +133,9 @@ const LABELS: Record<string, string> = {
   CIPHERNODE_REGISTRY_ADDRESS: 'ciphernode_registry',
   FEE_TOKEN_ADDRESS: 'fee_token',
 
+  // Operator shell examples.
+  REGISTRY: 'ciphernode_registry',
+
   // Dashboard network profiles.
   ciphernodeRegistry: 'ciphernode_registry',
   bondingRegistry: 'bonding_registry',

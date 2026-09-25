@@ -21,7 +21,8 @@ Read before starting any task, in this order:
 
 This loop works with one agent or with several. Each step points to the rule that defines it.
 
-1. Branch from current `origin/main`. — `agent/RULES.md` §Change discipline
+1. Branch from current `origin/main`, unless the user names another base. — `agent/RULES.md` §Change
+   discipline
 2. Read the harness files above that match the paths you will change.
 3. Change only the requested scope.
 4. Verify at the smallest scope that covers the change. — `agent/RULES.md` §Verification ladder

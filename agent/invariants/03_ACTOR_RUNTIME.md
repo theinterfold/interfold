@@ -40,10 +40,11 @@ the code does not meet yet.
   `ARCHITECTURE.md`
 - Trust-boundary checks before any message drives a workflow: peer identity, committee membership,
   claimed party slot, signature, chainId, e3Id, proof type, payload size, schema version. **Gap:**
-  most message types lack an explicit schema version. Net ingress checks the wire envelope (magic,
-  wire version, size, network ID). Signer, party slot, e3Id, and circuit checks run later, in share
-  verification, before a party counts as honest. — `ARCHITECTURE.md`;
-  `crates/net/src/network_sync/wire.rs`; `crates/zk-prover/src/share_verification/`
+  the code runs these checks in two stages. Net ingress checks the wire envelope (magic, wire
+  version, size, network ID) before a workflow sees the message. Share verification checks the
+  signer, party slot, e3Id, and circuit later, before a party counts as honest. Most message types
+  lack an explicit schema version. — `ARCHITECTURE.md`; `crates/net/src/network_sync/wire.rs`;
+  `crates/zk-prover/src/share_verification/`
 
 ### Durability, persistence, replay
 
