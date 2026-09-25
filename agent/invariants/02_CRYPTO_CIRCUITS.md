@@ -122,14 +122,29 @@ every section.
   bounded and hash to it, C2b proves its own limbs hash to the same value. `PK_GENERATION_BIT_E_SM`
   and `SHARE_COMPUTATION_E_SM_BIT_SECRET` are the same modulus width and must move together. —
   `flow-trace/04`
-- A circuit that re-opens a commitment from a private witness must range-check that witness. The
-  commitment packs `BIT`-wide coefficients into shared carriers (`acc = acc * radix + (v + base)`),
-  so an unbounded coefficient overflows its slot and cancels against the next one: the carrier, and
-  so the commitment, is unchanged. Without the bound one commitment has many openings and the prover
-  chooses which the circuit sees. C1/C5 (`pk0`) and C4 (`decrypted_shares`) rely on this; the bound
-  must be below the slot width, which the centered residue `(q_l - 1) / 2` and the dealt range
-  `[0, q_l)` both satisfy. — `flow-trace/04`
-- Order matters: a range check that makes a commitment binding must run **before** the commitment
+- A circuit that re-opens a commitment from a private witness must constrain that witness, because
+  the commitment packs `BIT`-wide coefficients into shared carriers
+  (`acc = acc * radix + (v + base)`). An unbounded coefficient overflows its slot and cancels
+  against the next one, leaving the carrier — and so the commitment — unchanged, so one commitment
+  has many openings and the prover chooses which the circuit sees. — `flow-trace/04`
+- **Injectivity is not canonicality, and only injectivity transfers.** Asserting each packed digit
+  fits its slot (`pack_checked`, one `assert_max_bit_size::<nibble_bits + 4>()`) makes the opening
+  unique, so the opened coefficients must _equal_ the ones the creating circuit committed — its
+  canonical bound carries over and need not be repeated. That is all an opener needs: C5's per-party
+  `pk0` (bounded by C1) and C4's shares (bounded by C2) rely on it, at half the cost of a two-sided
+  range check. A value that no upstream commitment bounds still needs its own bound: C1's `pk0`,
+  because C1 originates it and the key equation absorbs `+q` against `r1`; and C5's `pk0_agg`,
+  because `verify_pk_for_basis` pins it only modulo `q_l`. — `flow-trace/04`
+- A derived value that the circuit reduces itself needs no opened-witness bound. C4's aggregate is
+  canonicalised by `normalize_aggregated`, and `reduce_mod` pins its quotient to `u64`, which stays
+  sound for sums far above the slot width. — `flow-trace/04`
+- `packing_layout` rejects `group == 1`. At one value per carrier, packing saves no sponge
+  absorption while still charging the range checks that make it injective — measured +82% gates
+  against absorbing directly. — `flow-trace/04`
+- `pack` and `pack_checked` duplicate the layout arithmetic, so the equivalence tests in
+  `math/helpers.nr` must keep passing: if they drift, commitments created on one path stop matching
+  those opened on the other. — `flow-trace/04`
+- Order matters: a check that makes a commitment binding must run **before** the commitment
   comparison, not after. — `flow-trace/04`
 - Do not document a bound the circuit does not enforce. C4's `compute_aggregated_shares` claimed its
   inputs were in `[0, q_l)` "by C2 range checks" for a value C2 never constrained on this path; the
