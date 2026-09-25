@@ -180,8 +180,13 @@ jobs:
     timeout-minutes: 20
     runs-on:
       ${{ github.repository == 'theinterfold/interfold' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' ||
-      github.ref == 'refs/heads/dev') && format('runs-on={0}-{1}-{2}/runner=4cpu-linux-x64/ram=16', github.run_id, github.run_attempt,
-      'rust_unit_tests') || 'ubuntu-latest' }}
+      github.ref == 'refs/heads/dev') && format('runs-on={0}-{1}-{2}-{3}/runner=4cpu-linux-x64/ram=16', github.run_id, github.run_attempt,
+      'rust_unit_tests', matrix.suite) || 'ubuntu-latest' }}
+    # Library tests link cfg(test) builds and doc-tests link the plain libraries, so the two share
+    # no compiled crates. Run in one job they cost two sequential workspace builds.
+    strategy:
+      matrix:
+        suite: [lib, doc]
     permissions:
       contents: read
       actions: write
@@ -217,16 +222,41 @@ jobs:
         run: 'pnpm install --frozen-lockfile'
 
       - name: Checking code format rust
+        if: matrix.suite == 'lib'
         run: pnpm rust:lint
 
       - name: Check repository invariants
+        if: matrix.suite == 'lib'
         run: pnpm check:invariants
 
       - name: Compile contracts for ABI catalog tests
         run: pnpm evm:build
 
-      - name: Run Unit Tests
-        run: 'cargo test --lib && cargo test --doc'
+      - name: Install cargo-nextest
+        if: matrix.suite == 'lib'
+        uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
+        with:
+          tool: cargo-nextest
+
+      # nextest runs the test binaries in parallel. `cargo test` runs them one after another, so
+      # the step took the sum of every crate's tests rather than the slowest crate's.
+      - name: Run library tests
+        if: matrix.suite == 'lib'
+        run: cargo nextest run --lib
+
+      - name: Run doc-tests
+        if: matrix.suite == 'doc'
+        run: cargo test --doc
+
+      # `parallel` is off by default, so the step above compiles the sequential fallback of
+      # `recompute_commitments` and the rayon body of that function ships untested. This step is
+      # what exercises it. Scoped with `-p` rather than `--all-features`: the feature is the one
+      # thing this crate needs enabled, and the zkVM guest is unaffected either way because it
+      # builds from `crates/support/methods/guest`, which takes this crate by git revision with
+      # default features.
+      - name: Run compute-provider Unit Tests with parallel batching
+        if: matrix.suite == 'lib'
+        run: 'cargo test -p e3-compute-provider --features parallel'
 
       - name: Cancel workflow on failure
         if: failure()
@@ -241,6 +271,11 @@ jobs:
     runs-on:
       group: enclave-ci
       labels: [enclave-ci-runner]
+    # Each full-proof `test_trbfv_actor` run takes about nine minutes. The three runs are
+    # independent, so they run as parallel legs rather than one after another.
+    strategy:
+      matrix:
+        leg: [integration, offline-party, standby-node]
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
@@ -285,12 +320,14 @@ jobs:
           cp -R .ci-noir/circuits/insecure-512/minimum dist/circuits/insecure-512/
 
       - name: Run Integration Tests
+        if: matrix.leg == 'integration'
         env:
           CIPHERNODE_SKIP_PROOF_AGGREGATION: 'true'
           E3_CUSTOM_BB: ${{ github.workspace }}/.ci-noir/bin/bb
         run: 'cargo test --test integration -- --nocapture'
 
       - name: Run offline DKG integration test with full proofs
+        if: matrix.leg == 'offline-party'
         timeout-minutes: 20
         env:
           BENCHMARK_MODE: insecure
@@ -302,6 +339,7 @@ jobs:
         run: 'cargo test -p e3-tests --test integration test_trbfv_actor -- --exact --nocapture'
 
       - name: Run full-proof DKG integration with standby node
+        if: matrix.leg == 'standby-node'
         timeout-minutes: 20
         env:
           BENCHMARK_MODE: insecure
@@ -520,8 +558,11 @@ jobs:
       - name: 'Check the deployment manifest is up to date'
         run: 'pnpm --filter @interfold/contracts gen:manifest:check'
 
-      - name: 'Test the contracts and generate the coverage report'
-        run: 'pnpm coverage'
+      # Without coverage instrumentation. No step reads the coverage report, instrumentation makes
+      # the suite several times slower, and under `--coverage` BfvVkBindingIntegration skips the
+      # on-chain Honk verification because instrumented verifiers run out of gas.
+      - name: 'Test the contracts'
+        run: 'pnpm evm:test'
 
       - name: 'Add test summary'
         run: |
@@ -754,69 +795,22 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
-  crisp_unit:
-    needs: [detect_changes, build_crisp_sdk]
+  # CRISP legs that need neither the built SDK nor the Interfold contracts. They run in their own
+  # job so they do not wait for build_crisp_sdk.
+  crisp_unit_standalone:
+    needs: [detect_changes]
     if: needs.detect_changes.outputs.crisp == 'true'
-    # Use a timeout for each leg because the workloads differ. Tests that generate a ballot prove
-    # five Noir circuits and can take several minutes. Other tests complete in seconds.
     timeout-minutes: ${{ matrix.timeout }}
     runs-on:
       ${{ github.repository == 'theinterfold/interfold' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' ||
       github.ref == 'refs/heads/dev') && format('runs-on={0}-{1}-{2}-{3}/runner=4cpu-linux-x64/ram=16', github.run_id, github.run_attempt,
-      'crisp_unit', matrix['test-suite']) || 'ubuntu-latest' }}
+      'crisp_unit_standalone', matrix['test-suite']) || 'ubuntu-latest' }}
     strategy:
       matrix:
         include:
           - test-suite: test:circuits
-            command: pnpm test:circuits
             timeout: 15
-          # The SDK's six proof tests took 19m35s in one process. The mask group and its
-          # complement run in parallel. The negative match keeps new tests in the core group.
-          - test-suite: test:sdk:core-and-ballot-proofs
-            command: pnpm test:sdk:core-and-ballot-proofs
-            timeout: 30
-            needs-sdk: true
-          - test-suite: test:sdk:mask-proofs
-            command: pnpm test:sdk:mask-proofs
-            timeout: 30
-            needs-sdk: true
-          # The contract suite is split by proving cost, not by subject. Run whole it took 27m54s
-          # against a 30m cap and started dying to ordinary runner variance, and it grows by minutes
-          # with every ballot a new test needs. Split, the critical path is the largest single leg
-          # rather than the sum, and the checks that prove nothing report in seconds instead of
-          # queueing behind twenty minutes of proving.
-          #
-          # Balanced by ballots, which is what the time is: input-tree 7, ballots 5, unit 0.
-          # `pnpm test:contracts` still runs all of it in one go for local use, and
-          # `crisp_contract_leg_coverage` fails if a test file ever belongs to no leg.
-          #
-          # Every contract leg needs both capabilities: `hardhat.config.ts` imports
-          # `@interfold/contracts/tasks/*`, which only resolves once `evm:build` has emitted `dist/`,
-          # and each leg contains at least one test that imports `@crisp-e3/sdk`.
-          # The input-tree file took 25m20s. Run its poisoning cases and their complement in
-          # parallel. The negative match keeps every new test in the canonical group.
-          - test-suite: test:contracts:input-tree:poisoning
-            command: pnpm test:contracts:input-tree:poisoning
-            timeout: 30
-            needs-evm: true
-            needs-sdk: true
-          - test-suite: test:contracts:input-tree:canonical
-            command: pnpm test:contracts:input-tree:canonical
-            timeout: 30
-            needs-evm: true
-            needs-sdk: true
-          - test-suite: test:contracts:ballots
-            command: pnpm test:contracts:ballots
-            timeout: 45
-            needs-evm: true
-            needs-sdk: true
-          - test-suite: test:contracts:unit
-            command: pnpm test:contracts:unit
-            timeout: 15
-            needs-evm: true
-            needs-sdk: true
           - test-suite: cargo test
-            command: cargo test
             timeout: 20
       fail-fast: false
     steps:
@@ -845,18 +839,101 @@ jobs:
         if: matrix.test-suite == 'cargo test'
         uses: ./.github/actions/install-solc
 
+      - name: Run cargo test
+        if: matrix.test-suite == 'cargo test'
+        working-directory: ./examples/CRISP
+        run: cargo test
+
       - name: Install Nargo
         if: matrix.test-suite == 'test:circuits'
         uses: noir-lang/noirup@7dbe69ccc78877f0200ffa5a40836c953d2cfd8f # v0.1.4
         with:
           toolchain: ${{ env.NOIR_TOOLCHAIN }}
 
+      - name: Run circuit tests
+        if: matrix.test-suite == 'test:circuits'
+        working-directory: ./examples/CRISP/circuits/lib
+        run: nargo test
+
+  crisp_unit:
+    needs: [detect_changes, build_crisp_sdk]
+    if: needs.detect_changes.outputs.crisp == 'true'
+    # Use a timeout for each leg because the workloads differ. Tests that generate a ballot prove
+    # five Noir circuits and can take several minutes. Other tests complete in seconds.
+    timeout-minutes: ${{ matrix.timeout }}
+    runs-on:
+      ${{ github.repository == 'theinterfold/interfold' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' ||
+      github.ref == 'refs/heads/dev') && format('runs-on={0}-{1}-{2}-{3}/runner=4cpu-linux-x64/ram=16', github.run_id, github.run_attempt,
+      'crisp_unit', matrix['test-suite']) || 'ubuntu-latest' }}
+    strategy:
+      matrix:
+        include:
+          # The SDK's six proof tests took 19m35s in one process. The mask group and its
+          # complement run in parallel. The negative match keeps new tests in the core group.
+          - test-suite: test:sdk:core-and-ballot-proofs
+            command: pnpm test:sdk:core-and-ballot-proofs
+            timeout: 30
+            needs-sdk: true
+          - test-suite: test:sdk:mask-proofs
+            command: pnpm test:sdk:mask-proofs
+            timeout: 30
+            needs-sdk: true
+          # The contract suite is split by proving cost, not by subject. Run whole it took 27m54s
+          # against a 30m cap and started dying to ordinary runner variance, and it grows by minutes
+          # with every ballot a new test needs. Split, the critical path is the largest single leg
+          # rather than the sum, and the checks that prove nothing report in seconds instead of
+          # queueing behind twenty minutes of proving.
+          #
+          # `pnpm test:contracts` still runs all of it in one go for local use, and
+          # `check:test-legs` fails if a test file ever belongs to no leg.
+          #
+          # Every contract leg needs both capabilities: `hardhat.config.ts` imports
+          # `@interfold/contracts/tasks/*`, which only resolves once `evm:build` has emitted `dist/`,
+          # and each leg contains at least one test that imports `@crisp-e3/sdk`.
+          #
+          # input-tree: the two poisoning cases took 230s and 617s, the rest 633s. Each poisoning
+          # case runs alone. The canonical group's negative match keeps every new test in it.
+          - test-suite: test:contracts:input-tree:forged-input
+            command: pnpm test:contracts:input-tree:forged-input
+            timeout: 30
+            needs-evm: true
+            needs-sdk: true
+          - test-suite: test:contracts:input-tree:poisoned-parent
+            command: pnpm test:contracts:input-tree:poisoned-parent
+            timeout: 30
+            needs-evm: true
+            needs-sdk: true
+          - test-suite: test:contracts:input-tree:canonical
+            command: pnpm test:contracts:input-tree:canonical
+            timeout: 30
+            needs-evm: true
+            needs-sdk: true
+          # ballots: crisp.contracts.test.ts took about 7 minutes, onchain-census.test.ts about 10.
+          - test-suite: test:contracts:ballots:program
+            command: pnpm test:contracts:ballots:program
+            timeout: 30
+            needs-evm: true
+            needs-sdk: true
+          - test-suite: test:contracts:ballots:census
+            command: pnpm test:contracts:ballots:census
+            timeout: 30
+            needs-evm: true
+            needs-sdk: true
+          - test-suite: test:contracts:unit
+            command: pnpm test:contracts:unit
+            timeout: 15
+            needs-evm: true
+            needs-sdk: true
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          submodules: recursive
+
       - name: Setup pnpm
-        if: matrix.test-suite != 'cargo test'
         uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
 
       - name: Setup Node.js
-        if: matrix.test-suite != 'cargo test'
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -864,7 +941,6 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
 
       - name: Install dependencies
-        if: matrix.test-suite != 'cargo test'
         working-directory: .
         run: pnpm install --frozen-lockfile
 
@@ -1299,7 +1375,9 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: support-scripts-artifacts
-          path: templates/default/target/
+          # Only the binary. template_integration is the one consumer and needs nothing else from
+          # the cargo target directory.
+          path: templates/default/target/debug/e3-support-scripts-dev
           retention-days: 1
           if-no-files-found: error
 
@@ -1490,7 +1568,7 @@ jobs:
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: support-scripts-artifacts
-          path: templates/default/target/
+          path: templates/default/target/debug/
 
       - name: Download SDK artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4

@@ -66,6 +66,13 @@ pub enum E3Stage {
     Failed,
 }
 
+impl E3Stage {
+    /// Returns true when the E3 has completed or failed.
+    pub fn is_terminal(&self) -> bool {
+        matches!(self, Self::Complete | Self::Failed)
+    }
+}
+
 #[derive(Message, Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[rtype(result = "()")]
 pub struct E3Failed {

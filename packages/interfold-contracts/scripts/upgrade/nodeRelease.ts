@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import path from "node:path";
 
+import { assertRefreshedOwnerCapacity } from "../../tasks/committeeCapacity";
 import { arg, connect, hasFlag } from "../protocol/cli";
 import {
   deploymentPath,
@@ -233,6 +234,8 @@ async function resume(): Promise<void> {
       `Only ${active} release-ready operators are active; ${minimumActive} are required`,
     );
   }
+
+  await assertRefreshedOwnerCapacity(bonding, minimumActive);
 
   const txs = [
     safeTx(

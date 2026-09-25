@@ -13,6 +13,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
 };
+use tracing::warn;
 
 pub struct E3Repository<S: DataStore> {
     store: SharedStore<S>,
@@ -39,19 +40,15 @@ impl<S: DataStore> E3Repository<S> {
     /// Store the initial E3 record without replacing indexed round data.
     pub async fn set_e3_if_absent(&mut self, value: E3) -> Result<bool> {
         let key = self.e3_key();
-        let inserted = Arc::new(AtomicBool::new(false));
-        let inserted_in_update = Arc::clone(&inserted);
+        let mut inserted = false;
         self.store
-            .modify(&key, move |current: Option<E3>| match current {
-                Some(current) => Some(current),
-                None => {
-                    inserted_in_update.store(true, Ordering::Relaxed);
-                    Some(value.clone())
-                }
+            .modify(&key, |current: Option<E3>| {
+                inserted = current.is_none();
+                current.or_else(|| Some(value.clone()))
             })
             .await
             .map_err(|e| eyre::eyre!("Could not store E3 at '{key}' due to error: {e}"))?;
-        Ok(inserted.load(Ordering::Relaxed))
+        Ok(inserted)
     }
 
     pub async fn get_e3(&self) -> Result<E3> {
@@ -65,59 +62,28 @@ impl<S: DataStore> E3Repository<S> {
         Ok(e3_crisp)
     }
     pub async fn insert_ciphertext_input(&mut self, data: Vec<u8>, index: u64) -> Result<()> {
-        let key = self.e3_key();
-        self.store
-            .modify(&key, |e3_obj: Option<E3>| {
-                e3_obj.map(|mut e| {
-                    e.ciphertext_inputs.push((data.clone(), index));
-                    e
-                })
-            })
-            .await
-            .map_err(|_| eyre::eyre!("Could not append ciphertext_input for '{key}'"))?;
-
-        Ok(())
+        self.update("ciphertext_input", |e3| {
+            e3.ciphertext_inputs.push((data.clone(), index))
+        })
+        .await
     }
     pub async fn set_plaintext_output(&mut self, data: Vec<u8>) -> Result<()> {
-        let key = self.e3_key();
-        self.store
-            .modify(&key, |e3_obj: Option<E3>| {
-                e3_obj.map(|mut e| {
-                    e.plaintext_output = data.clone();
-                    e
-                })
-            })
+        self.update("plaintext_output", |e3| e3.plaintext_output = data.clone())
             .await
-            .map_err(|_| eyre::eyre!("Could not append ciphertext_input for '{key}'"))?;
-        Ok(())
     }
 
     pub async fn set_ciphertext_output(&mut self, data: Vec<u8>) -> Result<()> {
-        let key = self.e3_key();
-        self.store
-            .modify(&key, |e3_obj: Option<E3>| {
-                e3_obj.map(|mut e| {
-                    e.ciphertext_output = data.clone();
-                    e
-                })
-            })
-            .await
-            .map_err(|_| eyre::eyre!("Could not append ciphertext_input for '{key}'"))?;
-        Ok(())
+        self.update("ciphertext_output", |e3| {
+            e3.ciphertext_output = data.clone()
+        })
+        .await
     }
 
     pub async fn set_ciphertext_commitment(&mut self, data: Vec<u8>) -> Result<()> {
-        let key = self.e3_key();
-        self.store
-            .modify(&key, |e3_obj: Option<E3>| {
-                e3_obj.map(|mut e| {
-                    e.ciphertext_commitment = data.clone();
-                    e
-                })
-            })
-            .await
-            .map_err(|_| eyre::eyre!("Could not set ciphertext_commitment for '{key}'"))?;
-        Ok(())
+        self.update("ciphertext_commitment", |e3| {
+            e3.ciphertext_commitment = data.clone();
+        })
+        .await
     }
 
     pub async fn set_ciphertext_output_reference(
@@ -125,17 +91,35 @@ impl<S: DataStore> E3Repository<S> {
         reference: CiphertextOutputReference,
         commitment: Vec<u8>,
     ) -> Result<()> {
+        self.update("ciphertext_output_reference", |e3| {
+            e3.ciphertext_output_reference = Some(reference.clone());
+            e3.ciphertext_commitment = commitment.clone();
+        })
+        .await
+    }
+
+    /// Apply `apply` to the stored E3 record. A missing record stays absent and is logged.
+    async fn update(
+        &mut self,
+        label: &'static str,
+        mut apply: impl FnMut(&mut E3) + Send,
+    ) -> Result<()> {
         let key = self.e3_key();
-        self.store
-            .modify(&key, |e3_obj: Option<E3>| {
-                e3_obj.map(|mut e| {
-                    e.ciphertext_output_reference = Some(reference.clone());
-                    e.ciphertext_commitment = commitment.clone();
-                    e
+        let updated = self
+            .store
+            .modify(&key, |e3: Option<E3>| {
+                e3.map(|mut e3| {
+                    apply(&mut e3);
+                    e3
                 })
             })
             .await
-            .map_err(|_| eyre::eyre!("Could not set ciphertext output reference for '{key}'"))?;
+            .map_err(|e| eyre::eyre!("Could not set {label} for '{key}': {e}"))?;
+
+        if updated.is_none() {
+            warn!("Could not set {label} for '{key}': no E3 record");
+        }
+
         Ok(())
     }
 

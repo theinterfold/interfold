@@ -2,6 +2,8 @@
 
 //! DKG inner-proof collection and node-fold dispatch.
 
+use crate::utils::total_expected_for;
+
 use super::*;
 
 impl NodeProofAggregator {
@@ -47,7 +49,7 @@ impl NodeProofAggregator {
 
         let sk_enc_count = msg.sk_share_encryption_requests.len();
         let e_sm_enc_count = msg.e_sm_share_encryption_requests.len();
-        let total_expected = NodeDkgFoldMeta::total_expected_for(sk_enc_count, e_sm_enc_count);
+        let total_expected = total_expected_for(sk_enc_count, e_sm_enc_count);
 
         let committee = msg.proof_request.committee_size.values();
         let (committee_n, committee_h, n_moduli) = match build_pair_for_preset(

@@ -7,6 +7,33 @@
 use super::*;
 
 #[actix::test]
+async fn schema_six_logs_remain_readable_but_cannot_start_schema_seven() -> anyhow::Result<()> {
+    let system = EventSystem::new().with_fresh_bus();
+    let store = system.store()?;
+    let repositories = Repositories::from(&store);
+    repositories.schema_version().write_sync(&6_u32).await?;
+    let bus = system.handle()?.enable("schema-six-history");
+    bus.publish_without_context(e3_events::OperatorActivationChanged {
+        operator: "0xaaa".into(),
+        active: true,
+        chain_id: 1,
+    })?;
+    bus.publish_without_context(e3_events::BondOwnerSet {
+        operator: "0xaaa".into(),
+        bond_owner: "0xbbb".into(),
+        chain_id: 1,
+    })?;
+    bus.flush_event_pipeline().await?;
+    let eventstore = system.eventstore_reader()?.seq();
+    let error = preflight_schema_version(&repositories, &system.aggregate_config(), &eventstore)
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("schema version 6 is older"));
+    assert_eq!(repositories.schema_version().read().await?, Some(6));
+    Ok(())
+}
+
+#[actix::test]
 async fn schema_preflight_rejects_unversioned_snapshot_state() -> anyhow::Result<()> {
     let system = EventSystem::new().with_fresh_bus();
     let store = system.store()?;

@@ -11,4 +11,5 @@ use super::*;
 mod prove_plaintext;
 mod publish_result;
 mod recovery;
+mod validate_decryption_share;
 mod verify_decryption_shares;

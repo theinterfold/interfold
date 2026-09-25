@@ -24,3 +24,7 @@ serde = { workspace = true }
 tracing = { workspace = true }
 tokio = { workspace = true }
 num-bigint = { workspace = true }
+
+[dev-dependencies]
+bincode.workspace = true
+tracing-subscriber.workspace = true

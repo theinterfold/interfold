@@ -33,6 +33,16 @@ pub struct E3Meta {
     pub error_size: ArcBytes,
 }
 
+impl E3Meta {
+    /// Returns the BFV preset for DKG share encryption: the DKG counterpart of the E3's
+    /// threshold preset.
+    pub fn share_enc_preset(&self) -> BfvPreset {
+        self.params_preset
+            .dkg_counterpart()
+            .unwrap_or(self.params_preset)
+    }
+}
+
 pub struct E3MetaExtension;
 
 impl E3MetaExtension {

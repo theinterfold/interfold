@@ -191,7 +191,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
     const setupOperator = async (operator: Signer) => {
       const operatorAddress = await operator.getAddress();
-      const bondOwnerAddress = await computeProvider.getAddress();
+      const bondOwnerAddress = operatorAddress;
       const ticketTokenAddress = await bondingRegistry.ticketToken();
       const ticketAmount = ethers.parseUnits("100", 6);
 
@@ -211,30 +211,44 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
           1,
         );
       await foldToken
-        .connect(computeProvider)
+        .connect(operator)
         .approve(await bondingRegistry.getAddress(), ethers.parseEther("2000"));
       await bondingRegistry
-        .connect(computeProvider)
+        .connect(operator)
         .bondCiphernodeFor(operatorAddress, ethers.parseEther("1000"));
       await bondingRegistry
-        .connect(computeProvider)
+        .connect(operator)
         .registerOperatorFor(operatorAddress);
 
       await usdcToken
-        .connect(computeProvider)
+        .connect(operator)
         .approve(ticketTokenAddress, ticketAmount);
       await bondingRegistry
-        .connect(computeProvider)
+        .connect(operator)
         .addTicketBalanceFor(operatorAddress, ticketAmount);
     };
 
     const transferBondOwner = async (operator: Signer, nextOwner: Signer) => {
       const operatorAddress = await operator.getAddress();
       const nextOwnerAddress = await nextOwner.getAddress();
+      const currentOwner = await ethers.getSigner(
+        await bondingRegistry.bondOwnerOf(operatorAddress),
+      );
       await bondingRegistry
-        .connect(computeProvider)
+        .connect(currentOwner)
         .proposeBondOwner(operatorAddress, nextOwnerAddress);
       await bondingRegistry.connect(nextOwner).acceptBondOwner(operatorAddress);
+    };
+
+    const consolidateSelfOwnedBonds = async () => {
+      // Refund tests can opt into a shared recipient after the request snapshot.
+      // Keep explicit recipient overrides unchanged.
+      for (const operator of [operator1, operator2, operator3]) {
+        const address = await operator.getAddress();
+        if ((await bondingRegistry.bondOwnerOf(address)) === address) {
+          await transferBondOwner(operator, computeProvider);
+        }
+      }
     };
 
     const makeReadyRequest = async () => {
@@ -294,6 +308,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       settleFailure,
       setupOperator,
       transferBondOwner,
+      consolidateSelfOwnedBonds,
       makeReadyRequest,
       finalizeReadyCommittee,
       finalizeAndPublishCommittee,
@@ -310,6 +325,34 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await expect(
         makeRequest(sys.interfold, sys.usdcToken, sys.request),
       ).to.be.revertedWithCustomError(sys.interfold, "RequestsPaused");
+    });
+
+    it("forms successive committees without changing bond owners in the request helper", async function () {
+      const {
+        registry,
+        bondingRegistry,
+        makeRequest,
+        setupOperator,
+        operator1,
+        operator2,
+        operator3,
+      } = await loadFixture(setup);
+      const operators = [operator1, operator2, operator3];
+      for (const operator of operators) await setupOperator(operator);
+
+      for (let round = 0; round < 2; round++) {
+        const { e3Id } = await makeRequest();
+        for (const operator of operators) {
+          expect(
+            await bondingRegistry.bondOwnerOf(await operator.getAddress()),
+          ).to.equal(await operator.getAddress());
+          await registry.connect(operator).submitTicket(e3Id, 1);
+        }
+        await time.increaseTo((await registry.getCommitteeDeadline(e3Id)) + 1n);
+        await registry.finalizeCommittee(e3Id);
+        const [selected] = await registry.getActiveCommitteeNodes(e3Id);
+        expect(selected).to.have.length(operators.length);
+      }
     });
 
     it("initializes E3 lifecycle when request is made", async function () {
@@ -340,6 +383,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
     it("keeps a selected operator's queued collateral slashable until the E3 ends", async function () {
       const {
+        consolidateSelfOwnedBonds,
         interfold,
         bondingRegistry,
         registry,
@@ -350,6 +394,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       } = await loadFixture(setup);
 
       await finalizeReadyCommittee();
+      await consolidateSelfOwnedBonds();
       const operatorAddress = await operator1.getAddress();
 
       await expect(
@@ -487,6 +532,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
     it("ZEN-09: an exit that matures before the accusation window closes cannot be claimed", async function () {
       const {
+        consolidateSelfOwnedBonds,
         interfold,
         bondingRegistry,
         registry,
@@ -501,6 +547,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       // window of the round configured in this fixture.
       await bondingRegistry.connect(owner).setExitDelay(ONE_DAY);
       await finalizeReadyCommittee();
+      await consolidateSelfOwnedBonds();
       const operatorAddress = await operator1.getAddress();
 
       // Day 0.1: the operator queues its entire stake for withdrawal.
@@ -1453,6 +1500,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
   describe("Slashed Funds Escrow", function () {
     it("E2E: slash via SlashingManager pays honest nodes without reducing the requester refund", async function () {
       const {
+        consolidateSelfOwnedBonds,
         interfold,
         e3RefundManager,
         registry,
@@ -1486,6 +1534,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       });
       // 1. Request E3, form committee, publish key
       await makeRequest(requester, 0);
+      await consolidateSelfOwnedBonds();
       await registry.connect(operator1).submitTicket(firstE3Id, 1);
       await registry.connect(operator2).submitTicket(firstE3Id, 1);
       await registry.connect(operator3).submitTicket(firstE3Id, 1);
@@ -1786,6 +1835,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
     it("AUD-H01: preserves a slash token distinct from the E3 fee token", async function () {
       const {
+        consolidateSelfOwnedBonds,
         interfold,
         e3RefundManager,
         registry,
@@ -1833,6 +1883,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       });
 
       await makeRequest(requester, 0, feeToken);
+      await consolidateSelfOwnedBonds();
       await registry.connect(operator1).submitTicket(firstE3Id, 1);
       await registry.connect(operator2).submitTicket(firstE3Id, 1);
       await registry.connect(operator3).submitTicket(firstE3Id, 1);
@@ -1945,6 +1996,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
     it("E2E: honest nodes can claim their share after slashed funds are escrowed", async function () {
       const {
+        consolidateSelfOwnedBonds,
         interfold,
         e3RefundManager,
         bondingRegistry,
@@ -1978,6 +2030,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
       // 1. Request E3, form committee, publish key
       await makeRequest(undefined, 0);
+      await consolidateSelfOwnedBonds();
       await registry.connect(operator1).submitTicket(firstE3Id, 1);
       await registry.connect(operator2).submitTicket(firstE3Id, 1);
       await registry.connect(operator3).submitTicket(firstE3Id, 1);
@@ -2495,6 +2548,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
     it("does not return a non-expelling ticket penalty to its target", async function () {
       const {
+        consolidateSelfOwnedBonds,
         interfold,
         e3RefundManager,
         slashingManager,
@@ -2518,6 +2572,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await transferBondOwner(operator1, requester);
       await transferBondOwner(operator2, treasury);
       await makeRequest();
+      await consolidateSelfOwnedBonds();
       await finalizeAndPublishCommittee();
 
       const e3 = await interfold.getE3(firstE3Id);
@@ -2574,6 +2629,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
     it("holds an accused member's base reward and reallocates it after expulsion", async function () {
       const {
+        consolidateSelfOwnedBonds,
         interfold,
         e3RefundManager,
         slashingManager,
@@ -2621,6 +2677,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       });
 
       await makeRequest();
+      await consolidateSelfOwnedBonds();
       await finalizeAndPublishCommittee();
 
       const proof = await signAndEncodeAttestation(
@@ -2709,6 +2766,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
     it("reallocates an unclaimed base reward after a late expulsion", async function () {
       const {
+        consolidateSelfOwnedBonds,
         interfold,
         e3RefundManager,
         slashingManager,
@@ -2723,6 +2781,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       } = await loadFixture(setup);
 
       await makeReadyRequest();
+      await consolidateSelfOwnedBonds();
       await finalizeAndPublishCommittee();
 
       const deadlines = await interfold.getDeadlines(firstE3Id);
@@ -3715,6 +3774,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
     it("ZEN2-20: an executed expulsion forfeits a credited reward", async function () {
       const {
+        consolidateSelfOwnedBonds,
         interfold,
         e3RefundManager,
         slashingManager,
@@ -3748,6 +3808,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       });
 
       await makeRequest();
+      await consolidateSelfOwnedBonds();
       await finalizeAndPublishCommittee();
 
       const e3 = await interfold.getE3(firstE3Id);
@@ -3834,6 +3895,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
     it("ZEN2-20: a shared recipient keeps independent per-operator allocations", async function () {
       const {
+        consolidateSelfOwnedBonds,
         interfold,
         e3RefundManager,
         slashingManager,
@@ -3864,6 +3926,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       });
 
       await makeRequest();
+      await consolidateSelfOwnedBonds();
       await finalizeAndPublishCommittee();
 
       const e3 = await interfold.getE3(firstE3Id);
@@ -4017,6 +4080,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
     it("credits every failed-E3 slash to honest nodes without requester compensation", async function () {
       const {
+        consolidateSelfOwnedBonds,
         interfold,
         e3RefundManager,
         registry,
@@ -4036,6 +4100,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await setupOperator(operator3);
 
       await makeRequest(requester);
+      await consolidateSelfOwnedBonds();
       await registry.connect(operator1).submitTicket(firstE3Id, 1);
       await registry.connect(operator2).submitTicket(firstE3Id, 1);
       await registry.connect(operator3).submitTicket(firstE3Id, 1);
@@ -4199,6 +4264,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
   describe("Failure Claim Roles and DKG Timeout", function () {
     it("AUD-M02: a requester who is also a node can claim both requester-fault allocations", async function () {
       const {
+        consolidateSelfOwnedBonds,
         interfold,
         e3RefundManager,
         registry,
@@ -4220,6 +4286,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         ethers.parseUnits("10000", 6),
       );
       await makeRequest(operator1);
+      await consolidateSelfOwnedBonds();
 
       await registry.connect(operator1).submitTicket(firstE3Id, 1);
       await registry.connect(operator2).submitTicket(firstE3Id, 1);
@@ -4701,6 +4768,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
   describe("Success Path (Complete E3)", function () {
     it("distributes escrowed slashed funds to nodes and treasury on successful completion", async function () {
       const {
+        consolidateSelfOwnedBonds,
         interfold,
         e3RefundManager,
         registry,
@@ -4722,6 +4790,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
       // 1. Request E3, form committee, publish key
       await makeRequest(undefined, 0);
+      await consolidateSelfOwnedBonds();
       // Governance changes after request must not alter this E3's success
       // allocation or redirect its treasury share.
       await e3RefundManager.connect(owner).setWorkAllocation({

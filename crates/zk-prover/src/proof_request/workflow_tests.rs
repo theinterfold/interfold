@@ -4,6 +4,8 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+use crate::utils::total_expected_for;
+
 use super::*;
 use e3_crypto::SensitiveBytes;
 use e3_events::CircuitName;
@@ -186,10 +188,10 @@ fn decryption_requires_contiguous_esm_indices() {
 
 #[test]
 fn node_agg_meta_seq_helpers() {
-    assert_eq!(NodeAggregationMeta::total_expected_for(2, 1), 4 + 2 + 1 + 2);
+    assert_eq!(total_expected_for(2, 1), 4 + 2 + 1 + 2);
     let meta = NodeAggregationMeta {
         party_id: 0,
-        total_expected: NodeAggregationMeta::total_expected_for(2, 1),
+        total_expected: total_expected_for(2, 1),
         pending_c0: None,
     };
     // c4_base_seq sits just after C0..C3 = total_expected - 2.

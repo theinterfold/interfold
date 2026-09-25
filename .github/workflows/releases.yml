@@ -72,10 +72,10 @@ jobs:
           push: true
           tags: |
             ${{ env.CIPHERNODE_IMAGE_NAME }}:${{ needs.validate-and-prepare.outputs.version }}
+          # Read-only: a cache written from a tag is scoped to that tag and no later run can
+          # restore it. Each release saved about 2.5 GB that only counted against the quota.
           cache-from: |
             type=gha,scope=ciphernode
-          cache-to: |
-            type=gha,mode=max,scope=ciphernode
 
   build-e3-support-release:
     name: Build & Push e3-support (release)
@@ -111,8 +111,6 @@ jobs:
             ${{ env.SUPPORT_IMAGE_NAME }}:${{ steps.revision.outputs.short_sha }}
           cache-from: |
             type=gha,scope=e3-support
-          cache-to: |
-            type=gha,mode=max,scope=e3-support
 
   build-dappnode-package-release:
     name: Build DAppNode package (release)

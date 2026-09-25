@@ -19,6 +19,14 @@ pub struct TicketBalanceUpdated {
     pub chain_id: u64,
 }
 
+/// A ticket balance with its source block timestamp in seconds and log order.
+#[derive(Message, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[rtype(result = "()")]
+pub struct TicketBalanceUpdatedAt {
+    pub balance: TicketBalanceUpdated,
+    pub position: crate::ChainPosition,
+}
+
 impl Display for TicketBalanceUpdated {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(

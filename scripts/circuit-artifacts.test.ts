@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -12,6 +13,7 @@ import test from 'node:test'
 import { NoirCircuitBuilder, normalizeCargoLockForCircuitHash } from './build-circuits'
 import {
   copyArtifactsInto,
+  findArtifactRevision,
   RELEASE_REQUIRED_PAIRS,
   requiredArtifactMarkers,
   validateArtifactSet,
@@ -51,6 +53,49 @@ test('publishing copies only supported preset and committee pairs', () => {
   } finally {
     rmSync(source, { recursive: true, force: true })
     rmSync(target, { recursive: true, force: true })
+  }
+})
+
+test('artifact selection uses the newest matching build, not another source tree at the branch tip', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'interfold-circuit-history-'))
+  const git = (...args: string[]) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' }).trim()
+  const commit = (message: string) => {
+    git('add', '.')
+    git(
+      '-c',
+      'user.name=Circuit Test',
+      '-c',
+      'user.email=circuit-test@example.invalid',
+      '-c',
+      'commit.gpgsign=false',
+      'commit',
+      '-qm',
+      message,
+    )
+    return git('rev-parse', 'HEAD')
+  }
+
+  try {
+    git('init', '-q')
+    writeFileSync(join(dir, 'artifact.json'), '{}')
+    commit('legacy build without source metadata')
+    assert.throws(() => findArtifactRevision(dir, 'HEAD', 'requested-source'), /No published circuit artifacts match/)
+
+    writeFileSync(join(dir, 'SOURCE_HASH'), 'requested-source\n')
+    commit('requested build')
+    writeFileSync(join(dir, 'artifact.json'), '{"rebuilt":true}')
+    const rebuilt = commit('same source with updated artifacts')
+    assert.equal(findArtifactRevision(dir, 'HEAD', 'requested-source'), rebuilt)
+
+    writeFileSync(join(dir, 'SOURCE_HASH'), 'other-source\n')
+    const newer = commit('build for another source tree')
+    assert.equal(findArtifactRevision(dir, 'HEAD', 'requested-source'), rebuilt)
+    assert.equal(findArtifactRevision(dir, 'HEAD', 'other-source'), newer)
+    assert.throws(() => findArtifactRevision(dir, 'HEAD', 'unpublished-source'), /No published circuit artifacts match/)
+    assert.equal(git('rev-parse', 'HEAD'), newer)
+    assert.equal(git('status', '--porcelain'), '')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
   }
 })
 

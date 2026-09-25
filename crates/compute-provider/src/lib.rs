@@ -13,4 +13,5 @@ pub mod policy;
 pub use ciphertext_output::*;
 pub use compute_input::*;
 pub use compute_manager::*;
+pub use merkle_tree_builder::Batching;
 pub use policy::{InputPolicy, PublishedInput};

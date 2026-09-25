@@ -64,6 +64,12 @@ every section.
 
 ### DKG / threshold structure
 
+- Plaintext collection starts verification at **T+1** distinct accepted-roster shares, not at H.
+  Every selected raw share must match its C6 commitment for each ciphertext output. Bad early shares
+  must not prevent the use of valid backups while T+1 roster parties remain possible. A local C6
+  result authorizes only its exact dispatch batch. Share admission checks the signed sender, E3,
+  proof type, raw bytes, and ciphertext position before reserving a party slot. — `flow-trace/04`
+
 - SK splits into N shares; exactly **T+1** shares feed the recursive decryption proof. —
   `flow-trace/04`
 - Runtime `party_id` derives from the finalized committee normalized by ascending address and is
@@ -147,11 +153,12 @@ every section.
   `Risc0BfvCiphertextVerifier` takes no `inputRoot` argument and constrains none. A program that
   skips the comparison accepts a result computed over any input set. — `flow-trace/04`
 - **A Secure Process derives its leaves; it never receives them, and never drops one.**
-  `MerkleTreeBuilder::compute_leaf_hashes` builds every leaf from the ciphertexts it was given and
-  pushes one per on-chain input leaf, whatever the E3 program's policy decides about computing over
-  it. Both rules are applied by `e3-compute-provider` rather than delegated: a received root can
-  disagree with the data it claims to describe, and a missing leaf changes the root and makes the
-  result unpublishable. — `flow-trace/04`
+  `MerkleTreeBuilder::compute_leaf_hashes_batched` builds every leaf from the ciphertexts it was
+  given, in global index order whatever the batching schedule, and pushes one per on-chain input
+  leaf, whatever the E3 program's policy decides about computing over it. Both rules are applied by
+  `e3-compute-provider` rather than delegated: a received root can disagree with the data it claims
+  to describe, and a missing leaf changes the root and makes the result unpublishable. —
+  `flow-trace/04`
 - **A CRISP input is committed before it is finalized, but computation requires both.**
   `publishInput` verifies the Noir proof and the configured service's EIP-712 storage attestation,
   then reserves the leaf and index so a later input can name it as its parent. `finalizeInput` must

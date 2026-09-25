@@ -371,7 +371,7 @@ impl Handler<TypedEvent<E3StageChanged>> for CiphernodeSelector {
 
     fn handle(&mut self, msg: TypedEvent<E3StageChanged>, ctx: &mut Self::Context) -> Self::Result {
         trap(EType::Sortition, &self.bus.with_ec(msg.get_ctx()), || {
-            if matches!(msg.new_stage, E3Stage::Complete | E3Stage::Failed) {
+            if msg.new_stage.is_terminal() {
                 self.terminal_e3s.insert(msg.e3_id.clone());
             }
             if matches!(&msg.new_stage, E3Stage::None | E3Stage::Requested) {

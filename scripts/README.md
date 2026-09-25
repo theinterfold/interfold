@@ -294,7 +294,10 @@ rebuild.
 
 - **Push**: Copies the six supported pairs from local `dist/circuits/` into the `circuit-artifacts`
   branch, refreshes `SHA256SUMS` and `checksums.json`, then pushes to origin
-- **Pull**: Fetches the `circuit-artifacts` branch and extracts to `dist/circuits/`
+- **Pull**: Fetches `circuit-artifacts` and selects its newest first-parent commit with a matching
+  `SOURCE_HASH`. It extracts that build to `dist/circuits/`. A build for another source tree at the
+  branch tip does not replace this match. If no match exists, the command fails before it changes
+  local artifacts. `verify-release` still checks every required pair and build stamp
 - **Replace**: `pnpm store:circuits push --replace` rewrites the branch from local `dist/circuits/`;
   use only when intentionally deleting old artifact sets
 - **Restamp**: `pnpm store:circuits restamp --expect-source-hash <previous hash>` rewrites the build

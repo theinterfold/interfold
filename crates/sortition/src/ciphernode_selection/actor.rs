@@ -154,7 +154,7 @@ impl CiphernodeSelector {
     ) -> Self {
         let terminal_e3s = lifecycle
             .iter()
-            .filter(|(_, stage)| matches!(stage, E3Stage::Complete | E3Stage::Failed))
+            .filter(|(_, stage)| stage.is_terminal())
             .map(|(e3_id, _)| e3_id.clone())
             .collect();
         let roster_selected = state
@@ -213,7 +213,7 @@ impl CiphernodeSelector {
         // terminal.
         let terminal: HashSet<E3id> = lifecycle
             .iter()
-            .filter(|(_, stage)| matches!(stage, E3Stage::Complete | E3Stage::Failed))
+            .filter(|(_, stage)| stage.is_terminal())
             .map(|(e3_id, _)| e3_id.clone())
             .collect();
         let selector_has_terminal = state.get().is_some_and(|snapshot| {

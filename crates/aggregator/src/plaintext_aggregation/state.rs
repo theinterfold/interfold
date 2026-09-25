@@ -5,7 +5,13 @@
 use super::*;
 use e3_events::{EventContext, Sequenced};
 
-pub const THRESHOLD_PLAINTEXT_RECOVERY_SCHEMA_VERSION: u32 = 1;
+pub const THRESHOLD_PLAINTEXT_RECOVERY_SCHEMA_VERSION: u32 = 2;
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct QueuedDecryptionShare {
+    pub share: Vec<ArcBytes>,
+    pub proofs: Vec<SignedProofPayload>,
+}
 
 /// Restart-only inputs for re-creating interrupted plaintext aggregation effects.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -18,6 +24,8 @@ pub struct ThresholdPlaintextAggregatorRecoveryState {
     /// Retained so v0.12 snapshots remain decodable. Canonical chain deadlines
     /// now own timeout failure, so the actor does not use this value.
     pub collection_deadline_unix_secs: Option<u64>,
+    /// Local results keyed by the exact verification request, including replayed results.
+    pub c6_outcomes: BTreeMap<[u8; 32], BTreeSet<u64>>,
 }
 
 impl Default for ThresholdPlaintextAggregatorRecoveryState {
@@ -29,6 +37,7 @@ impl Default for ThresholdPlaintextAggregatorRecoveryState {
             decryption_aggregator_proofs: None,
             last_ec: None,
             collection_deadline_unix_secs: None,
+            c6_outcomes: BTreeMap::new(),
         }
     }
 }
@@ -43,6 +52,7 @@ pub struct Collecting {
     pub(crate) seed: Seed,
     pub(crate) ciphertext_output: Vec<ArcBytes>,
     pub(crate) params: ArcBytes,
+    pub(crate) rejected_parties: BTreeSet<u64>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -53,6 +63,10 @@ pub struct VerifyingC6 {
     pub(crate) c6_proofs: BTreeMap<u64, Vec<SignedProofPayload>>,
     pub(crate) ciphertext_output: Vec<ArcBytes>,
     pub(crate) params: ArcBytes,
+    pub(crate) seed: Seed,
+    pub(crate) rejected_parties: BTreeSet<u64>,
+    /// Backups must not change the batch whose verification result is pending.
+    pub(crate) queued_shares: BTreeMap<u64, QueuedDecryptionShare>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -163,6 +177,7 @@ impl ThresholdPlaintextAggregatorState {
             seed,
             ciphertext_output,
             params,
+            rejected_parties: BTreeSet::new(),
         })
     }
 }
