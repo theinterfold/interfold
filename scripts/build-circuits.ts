@@ -282,7 +282,7 @@ class NoirCircuitBuilder {
 
   private bfvConfig(preset: CircuitPreset, committee: CircuitCommittee) {
     const { h, t, n } = COMMITTEE_PARAMS[committee]
-    const paramSet = preset === CIRCUIT_PRESETS.INSECURE_512 ? 0 : 1
+    const paramSet = preset === CIRCUIT_PRESETS.INSECURE_512 ? 0 : 2
     const committeeSize = ALL_COMMITTEES.indexOf(committee)
     const params = paramSet === 0 ? BFV_PARAMS.insecure512 : BFV_PARAMS.secure8192
     const encodedParams = AbiCoder.defaultAbiCoder().encode(

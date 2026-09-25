@@ -339,6 +339,7 @@ impl Computation for Inputs {
         let moduli = threshold_params.moduli();
 
         let t = threshold_params.plaintext();
+        let k0is = compute_k0is(moduli, t)?;
         let n = threshold_params.degree() as u64;
         let q_mod_t = (&modulus_q % t)
             .to_u64()
@@ -434,7 +435,7 @@ impl Computation for Inputs {
             );
 
             // k0qi = -t^{-1} mod qi
-            let k0qi = BigInt::from(qi.inv(qi.neg(t)).unwrap());
+            let k0qi = BigInt::from(k0is[i]);
 
             // ki = k1 * k0qi
             let ki = k1.scalar_mul(&k0qi);

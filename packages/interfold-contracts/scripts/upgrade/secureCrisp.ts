@@ -10,7 +10,12 @@ import {
   availVectorXForChain,
 } from "../dataAvailability";
 import { arg, connect, hasFlag, networkName } from "../protocol/cli";
-import { BFV_PARAMS, ZERO, proxyAdminInterface } from "../protocol/constants";
+import {
+  BFV_PARAMS,
+  LEGACY_MAINNET_SECURE_PARAM_SET_HASH,
+  ZERO,
+  proxyAdminInterface,
+} from "../protocol/constants";
 import { deployBfvVerifierRoutes } from "../protocol/deployContracts";
 import {
   deploymentPath,
@@ -70,7 +75,7 @@ import {
 import { expectedCrispImageId } from "./secureCrispArtifacts";
 
 const BFV_SCHEME_ID = ethersLib.id("fhe.rs:BFV");
-const SECURE_PARAM_SET = 1;
+const SECURE_PARAM_SET = PRODUCTION_BFV_CONFIG.paramSet;
 type NormalizedPricingConfig = ReturnType<typeof pricingConfig>;
 const crispInterface = new ethersLib.Interface([
   "function bindInterfold(address interfold)",
@@ -812,6 +817,17 @@ export async function prepareSecureCrispUpgrade(): Promise<void> {
     }
   }
 
+  if (chainId === 1) {
+    const historicalParams = await interfold.paramSetRegistry(1);
+    if (
+      ethersLib.keccak256(historicalParams) !==
+      LEGACY_MAINNET_SECURE_PARAM_SET_HASH
+    ) {
+      throw new Error(
+        "Mainnet historical BFV parameter set 1 differs from the deployed tuple",
+      );
+    }
+  }
   const secureParams = encodeBfvParams(BFV_PARAMS.secure8192);
   const currentParams = await interfold.paramSetRegistry(SECURE_PARAM_SET);
   if (

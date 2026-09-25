@@ -64,12 +64,12 @@ pub enum BfvPreset {
 }
 
 impl BfvPreset {
-    /// Convert an on-chain `ParamSet` enum value (uint8) to the corresponding
-    /// threshold `BfvPreset`. Returns `None` for unknown values.
+    /// Map a supported on-chain parameter-set index to a threshold `BfvPreset`.
+    /// Return `None` for the historical secure index 1 and other unsupported indices.
     pub fn from_on_chain_param_set(value: u8) -> Option<Self> {
         match value {
             0 => Some(BfvPreset::InsecureThreshold512),
-            1 => Some(BfvPreset::SecureThreshold8192),
+            2 => Some(BfvPreset::SecureThreshold8192),
             _ => None,
         }
     }
@@ -638,6 +638,19 @@ mod tests {
         assert_eq!(metadata.degree, secure_8192::DEGREE);
         assert_eq!(metadata.num_parties, secure_8192::NUM_PARTIES);
         assert_eq!(metadata.lambda, DEFAULT_SECURE_LAMBDA);
+    }
+
+    #[test]
+    fn old_secure_parameter_slot_is_not_a_v5_preset() {
+        assert_eq!(
+            BfvPreset::from_on_chain_param_set(0),
+            Some(BfvPreset::InsecureThreshold512)
+        );
+        assert_eq!(BfvPreset::from_on_chain_param_set(1), None);
+        assert_eq!(
+            BfvPreset::from_on_chain_param_set(2),
+            Some(BfvPreset::SecureThreshold8192)
+        );
     }
 
     #[test]

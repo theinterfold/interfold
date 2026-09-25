@@ -255,12 +255,17 @@ describe("Interfold", function () {
       const { interfold } = await loadFixture(setup);
 
       expect(await interfold.paramSetRegistry(0)).to.equal(BFV_PARAMS_DEFAULT);
-      await expect(interfold.setParamSet(1, BFV_PARAMS_SECURE))
+      await expect(interfold.setParamSet(2, BFV_PARAMS_SECURE))
         .to.emit(interfold, "ParamSetRegistered")
-        .withArgs(1, BFV_PARAMS_SECURE);
+        .withArgs(2, BFV_PARAMS_SECURE);
+      expect(await interfold.paramSetRegistry(2)).to.equal(BFV_PARAMS_SECURE);
+      expect(await interfold.paramSetRegistry(1)).to.equal("0x");
       await expect(
-        interfold.setParamSet(2, BFV_PARAMS_DEFAULT),
+        interfold.setParamSet(1, BFV_PARAMS_SECURE),
       ).to.be.revertedWithCustomError(interfold, "UnsupportedCryptoConfig");
+      await expect(interfold.setParamSet(2, BFV_PARAMS_SECURE))
+        .to.be.revertedWithCustomError(interfold, "ParamSetAlreadyRegistered")
+        .withArgs(2);
     });
 
     it("does not overwrite the active parameter set", async function () {
@@ -275,7 +280,7 @@ describe("Interfold", function () {
       const { interfold } = await loadFixture(setup);
 
       await expect(
-        interfold.setParamSet(1, "0x"),
+        interfold.setParamSet(2, "0x"),
       ).to.be.revertedWithCustomError(interfold, "UnsupportedCryptoConfig");
     });
   });
@@ -551,6 +556,27 @@ describe("Interfold", function () {
   });
 
   describe("request()", function () {
+    it("binds new secure requests to slot 2", async function () {
+      const { interfold, request, usdcToken } = await loadFixture(setup);
+      await interfold.setParamSet(2, BFV_PARAMS_SECURE);
+      const secureRequest = {
+        ...request,
+        inputWindow: await freshInputWindow(),
+        paramSet: 2,
+        expectedCryptoConfigId: PRODUCTION_CRYPTO_CONFIG_ID,
+      };
+
+      await usdcToken.approve(await interfold.getAddress(), ethers.MaxUint256);
+      await expect(interfold.request(secureRequest)).to.emit(
+        interfold,
+        "E3Requested",
+      );
+      expect((await interfold.getE3(firstE3Id)).paramSet).to.equal(2);
+      expect(await interfold.e3CryptoConfigIds(firstE3Id)).to.equal(
+        PRODUCTION_CRYPTO_CONFIG_ID,
+      );
+    });
+
     it("rejects a fee token that differs from the accepted quote", async function () {
       const { interfold, request } = await loadFixture(setup);
       await expect(

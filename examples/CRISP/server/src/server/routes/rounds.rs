@@ -589,7 +589,7 @@ pub async fn initialize_crisp_round(
         U256::from(window_start + CONFIG.e3_duration),
     ];
     let param_set = match CONFIG.e3_param_set {
-        0 | 1 => CONFIG.e3_param_set,
+        0 | 2 => CONFIG.e3_param_set,
         invalid => return Err(format!("Invalid param set: {}", invalid).into()),
     };
     let compute_provider_params = ComputeProviderParams {

@@ -353,6 +353,7 @@ impl Computation for Inputs {
         #[allow(non_snake_case)]
         let modulus_q = BigInt::from(ctx.modulus().clone());
         let t = dkg_params.plaintext();
+        let k0is = compute_k0is(moduli, t)?;
         let n = dkg_params.degree() as u64;
         let q_mod_t = (&modulus_q % t)
             .to_u64()
@@ -429,7 +430,7 @@ impl Computation for Inputs {
                 "e0 - e0i must be divisible by qi (CRT consistency)"
             );
 
-            let k0qi = BigInt::from(qi.inv(qi.neg(t)).unwrap());
+            let k0qi = BigInt::from(k0is[i]);
             let ki = k1.scalar_mul(&k0qi);
 
             let ct0i_hat = {

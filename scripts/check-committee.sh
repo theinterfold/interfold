@@ -292,7 +292,7 @@ extract_rust_config_id() {
     | head -n1
 }
 
-for prefix_and_param_set in INSECURE:0 SECURE:1; do
+for prefix_and_param_set in INSECURE:0 SECURE:2; do
   prefix="${prefix_and_param_set%%:*}"
   param_set="${prefix_and_param_set##*:}"
   expected_id=$(sol_bytes32 "${prefix}_CONFIG_ID")

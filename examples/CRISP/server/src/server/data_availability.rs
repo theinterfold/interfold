@@ -3254,7 +3254,7 @@ mod tests {
             "insecure-512 must reproduce ActiveCryptoConfig.INSECURE_CONFIG_ID"
         );
 
-        let (_, secure_config_id) = bfv_parameters_for_param_set(1).unwrap();
+        let (_, secure_config_id) = bfv_parameters_for_param_set(2).unwrap();
         assert_eq!(
             secure_config_id,
             "0xac5490c59e158cbb104642bba0ab7b3fd11ca49dd4bb05ce7bec8089ce3c8c31"
@@ -3264,7 +3264,8 @@ mod tests {
         );
         assert_ne!(insecure_config_id, secure_config_id);
 
-        assert!(bfv_parameters_for_param_set(2).is_err());
+        assert!(bfv_parameters_for_param_set(1).is_err());
+        assert!(bfv_parameters_for_param_set(3).is_err());
 
         // The cache returns the same tables, so intake does not rebuild them for every ballot.
         assert!(Arc::ptr_eq(

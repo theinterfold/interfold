@@ -137,7 +137,7 @@ function bfvConfig(
   return {
     preset,
     committee,
-    paramSet: secure ? 1 : 0,
+    paramSet: secure ? 2 : 0,
     paramSetHash: secure ? SECURE_PARAM_SET_HASH : INSECURE_PARAM_SET_HASH,
     configId: secure ? SECURE_CONFIG_ID : INSECURE_CONFIG_ID,
     ...params,

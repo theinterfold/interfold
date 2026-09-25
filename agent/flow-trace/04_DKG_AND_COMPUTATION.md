@@ -160,7 +160,9 @@ uses plaintext modulus 288230376164294657 and two 61-bit primes (`0x100000000002
 threshold encryption error variance is 17723039943798878305460955570711717478400. These values bind
 the C1-C7 witness dimensions and the on-chain BFV parameter hash. C7 uses
 `Q_INVERSE_MOD_T = 663169`, the inverse of the product of the three threshold primes modulo
-1,000,000.
+1,000,000. New secure E3s use on-chain parameter-set index 2. Index 1 retains the previous secure
+tuple for historical requests. C3 share encryption and user-data encryption use non-centered `k1`
+residues in `[0, t - 1]`; the Rust witness, Noir equation, and quotient bounds must agree.
 
 ```
 ThresholdKeyshare receives AllEncryptionKeysCollected

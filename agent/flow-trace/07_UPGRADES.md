@@ -23,6 +23,18 @@ expected configuration IDs before they submit new requests. The RISC Zero guest 
 uses a separate, content-addressed Interfold revision. Rebuild its image and provenance record
 before changing that guest revision or its fhe.rs pin.
 
+The mainnet `paramSetRegistry(1)` contains the previous secure parameters and cannot be changed.
+Version 5 uses parameter-set index 2 for the new secure tuple. Keep index 1 intact for old E3
+records. While requests are paused and all E3s have drained, register index 2 in the same governance
+batch that installs the version-5 implementation and verifier routes. Validate the registered bytes
+against the new secure tuple before requests resume. Version-5 ciphernodes and request clients
+reject index 1. The indexer reads current index-0 and index-2 public keys with local v2 parameters.
+For historical index-0 and index-1 public-key events, it reads the append-only registry bytes and
+checks their v1 configuration ID against the request before it validates the key.
+
+The non-centered plaintext scale also changes the C3 share-encryption and user-data-encryption `k1`
+witnesses and their quotient bounds. Rebuild those proofs with the matching circuits.
+
 ## Compatible rolling release
 
 ```text
@@ -104,7 +116,7 @@ snapshot the operator counts and registry root
   -> preserve the registered operators and revoke the drained old manager
   -> deploy a replacement VRF consumer against the existing funded subscription
   -> add the new consumer and switch the registry without replacing the subscription
-  -> register the secure BFV parameter set and all committee thresholds
+  -> register the version-5 secure BFV parameter set at index 2 and all committee thresholds
   -> install the secure minimum, micro, and small verifier routes
   -> install the PK, decryption, and ciphertext verifiers
   -> register and bind the CRISP program

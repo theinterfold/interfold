@@ -90,7 +90,7 @@ It must match the `paramSet` index registered in the on-chain `Interfold` contra
 | Preset Name              | On-chain `paramSet` | Degree | CRT moduli (L) | Security | Use case                   |
 | ------------------------ | ------------------- | ------ | -------------- | -------- | -------------------------- |
 | `INSECURE_THRESHOLD_512` | `0`                 | 512    | 2              | ❌ None  | Fast local or testnet work |
-| `SECURE_THRESHOLD_8192`  | `1`                 | 8192   | 3              | ✅ Full  | Production-equivalent work |
+| `SECURE_THRESHOLD_8192`  | `2`                 | 8192   | 3              | ✅ Full  | Production-equivalent work |
 
 #### Which preset to use on which network
 
@@ -109,7 +109,7 @@ security targets. It also needs `secure-8192` circuit artifacts on the prover an
 [Proving: embedded circuits or your own](#proving-embedded-circuits-or-your-own).
 
 The `paramSet` index in the E3 request must match the preset used by the ciphernode network. If you
-request an E3 with `paramSet: 1` but initialise the SDK with `INSECURE_THRESHOLD_512`, the
+request an E3 with `paramSet: 2` but initialise the SDK with `INSECURE_THRESHOLD_512`, the
 ciphertext will be encrypted under the wrong parameters and decryption will fail.
 
 ### Requesting computations
@@ -122,7 +122,7 @@ const requestParams = {
     BigInt(Math.floor(Date.now() / 1000) + 5 * 60),
   ] as const,
   e3Program: '0x...',
-  paramSet: 0, // ParamSet.Insecure512. Use 1 for a secure-8192 E3.
+  paramSet: 0, // ParamSet.Insecure512. Use 2 for a secure-8192 E3.
   computeProviderParams: '0x',
   customParams: '0x',
 }

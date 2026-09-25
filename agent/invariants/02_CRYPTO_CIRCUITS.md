@@ -114,6 +114,12 @@ every section.
 - fhe.rs v0.4.1 passes plaintext-scaled ballot coefficients as non-centered residues. Both CRISP
   vote circuits must check `Q_MOD_T`, rather than `Q_MOD_T_CENTERED`, against those coefficients. —
   `examples/CRISP/circuits/bin/{crisp,crisp_onchain}/src/main.nr`
+- The C3 and user-data-encryption `k1` witnesses use non-centered residues in `[0, t - 1]`. Their
+  Noir equations and asymmetric quotient bounds must match the Rust witnesses. —
+  `circuits/lib/src/core/dkg/share_encryption.nr`; `crates/zk-helpers/src/circuits/`
+- Mainnet secure parameter-set index 1 contains the old tuple. Version 5 registers the new tuple at
+  index 2 and must not reinterpret old index-1 E3s as version-5 secure requests. — `flow-trace/07`;
+  `crates/fhe-params/src/presets.rs`; `ActiveCryptoConfig.sol`
 - All C0–C7 proofs must complete before `ThresholdShareCreated` is published. — `flow-trace/04`
 
 ### Proof binding / domain separation (audit-fix invariants — do not regress)
