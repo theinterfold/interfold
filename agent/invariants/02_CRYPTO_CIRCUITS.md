@@ -122,6 +122,18 @@ every section.
   bounded and hash to it, C2b proves its own limbs hash to the same value. `PK_GENERATION_BIT_E_SM`
   and `SHARE_COMPUTATION_E_SM_BIT_SECRET` are the same modulus width and must move together. —
   `flow-trace/04`
+- A circuit that re-opens a commitment from a private witness must range-check that witness. The
+  commitment packs `BIT`-wide coefficients into shared carriers (`acc = acc * radix + (v + base)`),
+  so an unbounded coefficient overflows its slot and cancels against the next one: the carrier, and
+  so the commitment, is unchanged. Without the bound one commitment has many openings and the prover
+  chooses which the circuit sees. C1/C5 (`pk0`) and C4 (`decrypted_shares`) rely on this; the bound
+  must be below the slot width, which the centered residue `(q_l - 1) / 2` and the dealt range
+  `[0, q_l)` both satisfy. — `flow-trace/04`
+- Order matters: a range check that makes a commitment binding must run **before** the commitment
+  comparison, not after. — `flow-trace/04`
+- Do not document a bound the circuit does not enforce. C4's `compute_aggregated_shares` claimed its
+  inputs were in `[0, q_l)` "by C2 range checks" for a value C2 never constrained on this path; the
+  comment stood in for the missing check. — `flow-trace/04`
 - DKG error terms need no CRT decomposition: `error1_variance <= 16` puts `e0_bound` at
   `2 * variance` (20 secure, 6 insecure), far below every `q_i / 2`, so the centered residue equals
   `e0`. C3 uses `e0` directly. Raising DKG `error1_variance` past 16 switches `Bounds::compute` to
