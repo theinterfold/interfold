@@ -6,13 +6,12 @@
 
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { NoirCircuitBuilder, normalizeCargoLockForCircuitHash } from './build-circuits'
 import {
-  copyArtifactsInto,
   findArtifactRevision,
   RELEASE_REQUIRED_PAIRS,
   requiredArtifactMarkers,
@@ -38,23 +37,6 @@ function makeCompleteMatrix(): string {
   }
   return dir
 }
-
-test('publishing copies only supported preset and committee pairs', () => {
-  const source = makeCompleteMatrix()
-  const target = mkdtempSync(join(tmpdir(), 'interfold-circuit-publish-'))
-  try {
-    const legacy = join(source, 'insecure', 'micro')
-    mkdirSync(legacy, { recursive: true })
-    writeFileSync(join(legacy, '.build-stamp.json'), '{}')
-
-    copyArtifactsInto(target, source)
-    assert.equal(existsSync(join(target, 'insecure')), false)
-    validateArtifactSet(target, sourceHash)
-  } finally {
-    rmSync(source, { recursive: true, force: true })
-    rmSync(target, { recursive: true, force: true })
-  }
-})
 
 test('artifact selection uses the newest matching build, not another source tree at the branch tip', () => {
   const dir = mkdtempSync(join(tmpdir(), 'interfold-circuit-history-'))
@@ -129,26 +111,17 @@ test('pair source hash ignores generated bounds but tracks other Noir config', (
   mkdirSync(configDir, { recursive: true })
   const thresholdPath = join(configDir, 'threshold.nr')
   const dkgPath = join(configDir, 'dkg.nr')
-  writeFileSync(
-    thresholdPath,
-    'pub global PK_GENERATION_E_SM_BOUND: Field = 10;\npub global PK_GENERATION_R2_BOUNDS: [Field; L] =\n    [11, 12];\npub global L: u32 = 2;\n',
-  )
+  writeFileSync(thresholdPath, 'pub global PK_GENERATION_E_SM_BOUND: Field = 10;\npub global L: u32 = 2;\n')
   writeFileSync(dkgPath, 'pub global SHARE_COMPUTATION_E_SM_BIT_SECRET: u32 = 28;\n')
 
   try {
     const builder = new NoirCircuitBuilder(dir, { preset: 'insecure-512', committee: 'micro' })
     const originalHash = builder.computeSourceHash('insecure-512', 'micro')
-    writeFileSync(
-      thresholdPath,
-      'pub global PK_GENERATION_E_SM_BOUND: Field = 20;\npub global PK_GENERATION_R2_BOUNDS: [Field; L] = [21, 22];\npub global L: u32 = 2;\n',
-    )
+    writeFileSync(thresholdPath, 'pub global PK_GENERATION_E_SM_BOUND: Field = 20;\npub global L: u32 = 2;\n')
     writeFileSync(dkgPath, 'pub global SHARE_COMPUTATION_E_SM_BIT_SECRET: u32 = 30;\n')
     assert.equal(builder.computeSourceHash('insecure-512', 'micro'), originalHash)
 
-    writeFileSync(
-      thresholdPath,
-      'pub global PK_GENERATION_E_SM_BOUND: Field = 20;\npub global PK_GENERATION_R2_BOUNDS: [Field; L] = [21, 22];\npub global L: u32 = 3;\n',
-    )
+    writeFileSync(thresholdPath, 'pub global PK_GENERATION_E_SM_BOUND: Field = 20;\npub global L: u32 = 3;\n')
     assert.notEqual(builder.computeSourceHash('insecure-512', 'micro'), originalHash)
 
     const generatorDir = join(dir, 'crates', 'zk-helpers', 'src')

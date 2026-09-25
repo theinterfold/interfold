@@ -292,8 +292,8 @@ rebuild.
 
 ### What it does
 
-- **Push**: Copies the six supported pairs from local `dist/circuits/` into the `circuit-artifacts`
-  branch, refreshes `SHA256SUMS` and `checksums.json`, then pushes to origin
+- **Push**: Merges local `dist/circuits/` into the `circuit-artifacts` branch, refreshes
+  `SHA256SUMS` and `checksums.json`, then pushes to origin
 - **Pull**: Fetches `circuit-artifacts` and selects its newest first-parent commit with a matching
   `SOURCE_HASH`. It extracts that build to `dist/circuits/`. A build for another source tree at the
   branch tip does not replace this match. If no match exists, the command fails before it changes

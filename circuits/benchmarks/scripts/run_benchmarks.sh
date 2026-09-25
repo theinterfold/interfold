@@ -306,7 +306,7 @@ for CIRCUIT in $RUN_CIRCUITS; do
         # Run benchmark
         BENCHMARK_ARGS=("$CIRCUIT_PATH" "$ORACLE" "$OUTPUT_FILE" "$MODE")
         if [ "$BENCH_COMPILE" != true ]; then
-            if [ "$SKIP_COMPILE" = true ] || { [ "$PRESET_ARTIFACTS_READY" = true ] && [ "$CIRCUIT" != "config" ]; }; then
+            if [ "$SKIP_COMPILE" = true ] || [ "$PRESET_ARTIFACTS_READY" = true ]; then
                 BENCHMARK_ARGS+=("--skip-compile")
             fi
         fi
@@ -324,9 +324,8 @@ echo "Stage 1/3: Running gas extraction pipeline (CRISP test + integration + EVM
 
 # Try to retrieve verifier gas from the existing CRISP verify test path.
 GAS_JSON_FILE="${BENCHMARKS_DIR}/${OUTPUT_DIR}/crisp_verify_gas.json"
-INTEGRATION_SNAPSHOT="${BENCHMARKS_DIR}/${OUTPUT_DIR}/integration_summary.json"
-# Remove both run artifacts before extraction so a failed run cannot reuse old data.
-rm -f "${GAS_JSON_FILE}" "${INTEGRATION_SNAPSHOT}"
+# Remove any previous gas artifact so failures cannot leak stale values.
+rm -f "${GAS_JSON_FILE}"
 EXTRACT_ARGS=(--output "${GAS_JSON_FILE}" --mode "$MODE" --committee "$OUTPUT_COMMITTEE")
 if [ "$VERBOSE" = true ]; then
     EXTRACT_ARGS+=(--verbose)
@@ -372,7 +371,8 @@ jq -n \
 
 # Extract integration summary from the fresh gas JSON before rendering the report so
 # generate_report.sh always sees up-to-date lambda / timings (not a stale on-disk snapshot).
-if [ -f "${GAS_JSON_FILE}" ] && jq -e '.test_exit_code.folded_export == 0 and (.integration_summary | type == "object")' "${GAS_JSON_FILE}" >/dev/null 2>&1; then
+INTEGRATION_SNAPSHOT="${BENCHMARKS_DIR}/${OUTPUT_DIR}/integration_summary.json"
+if [ -f "${GAS_JSON_FILE}" ] && jq -e '.integration_summary != null' "${GAS_JSON_FILE}" >/dev/null 2>&1; then
     jq '.integration_summary' "${GAS_JSON_FILE}" > "${INTEGRATION_SNAPSHOT}"
     echo "✓ Wrote integration summary snapshot: ${INTEGRATION_SNAPSHOT}"
 fi

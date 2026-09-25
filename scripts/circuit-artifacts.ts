@@ -65,13 +65,21 @@ const REQUIRED_ARTIFACT_EXTENSIONS = ['.json', '.vk', '.vk_hash'] as const
 const run = (cmd: string, cwd = ROOT) => execSync(cmd, { encoding: 'utf-8', cwd, stdio: 'pipe' }).trim()
 const runV = (cmd: string, cwd = ROOT) => execSync(cmd, { cwd, stdio: 'inherit' })
 
-export function copyArtifactsInto(target: string, source = DIST): void {
-  for (const [preset, committee] of RELEASE_REQUIRED_PAIRS) {
-    const localPair = join(source, preset, committee)
-    const remotePair = join(target, preset, committee)
-    if (existsSync(remotePair)) rmSync(remotePair, { recursive: true })
-    mkdirSync(join(target, preset), { recursive: true })
-    cpSync(localPair, remotePair, { recursive: true })
+function copyArtifactsInto(target: string): void {
+  for (const preset of readdirSync(DIST)) {
+    if (METADATA_FILES.has(preset)) continue
+    const presetPath = join(DIST, preset)
+    if (!statSync(presetPath).isDirectory()) continue
+
+    for (const committee of readdirSync(presetPath)) {
+      const localPair = join(presetPath, committee)
+      if (!statSync(localPair).isDirectory()) continue
+
+      const remotePair = join(target, preset, committee)
+      if (existsSync(remotePair)) rmSync(remotePair, { recursive: true })
+      mkdirSync(join(target, preset), { recursive: true })
+      cpSync(localPair, remotePair, { recursive: true })
+    }
   }
 }
 

@@ -232,7 +232,7 @@ impl Computation for Bounds {
 
         // e0 = e1 in the fhe.rs
         let e0_bound: u128 = if threshold_params.get_error1_variance() <= &BigUint::from(16u32) {
-            cbd_bound as u128
+            threshold_params.get_error1_variance().to_u128().unwrap() * 2
         } else {
             uniform_bound.to_u128().unwrap()
         };
@@ -614,6 +614,17 @@ mod tests {
         assert_eq!(decoded.moduli, constants.moduli);
         assert_eq!(decoded.bits, constants.bits);
         assert_eq!(decoded.bounds, constants.bounds);
+    }
+
+    #[test]
+    fn insecure_e0_bound_matches_error1_sampler() {
+        let preset = BfvPreset::InsecureThreshold512;
+        let bounds = Bounds::compute(preset, &()).unwrap();
+        let bits = Bits::compute(preset, &bounds).unwrap();
+
+        assert_eq!(bounds.e0_bound, BigUint::from(6u32));
+        assert_eq!(bounds.e1_bound, BigUint::from(20u32));
+        assert_eq!(bits.e0_bit, 3);
     }
 
     #[test]

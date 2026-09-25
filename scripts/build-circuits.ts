@@ -378,11 +378,6 @@ class NoirCircuitBuilder {
     this.writeActiveCryptoConfig(preset, committee)
   }
 
-  /** Regenerates the C1/C2 bounds without changing the active preset or circuit artifacts. */
-  syncBounds(preset: CircuitPreset, committee: CircuitCommittee): void {
-    this.syncCommitteeBounds(preset, committee)
-  }
-
   /** Regenerates each circuit's preset constants from the Rust parameter set. */
   syncPresetConfigs(preset: CircuitPreset, committee: CircuitCommittee): void {
     const tier = PRESET_NOIR_CONFIG[preset]
@@ -406,7 +401,7 @@ class NoirCircuitBuilder {
         circuit: 'decrypted-shares-aggregation',
         file: 'threshold.nr',
         prefix: 'DECRYPTED_SHARES_AGGREGATION_',
-        common: ['Q_MOD_T', 'Q_MOD_T_CENTERED'],
+        common: ['Q_MOD_T', 'Q_MOD_T_CENTERED', 'Q_INVERSE_MOD_T'],
       },
     ]
     const pending = new Map<string, string>()
@@ -453,10 +448,6 @@ class NoirCircuitBuilder {
     } finally {
       rmSync(temporaryDir, { recursive: true, force: true })
     }
-  }
-
-  syncParityMatrices(): void {
-    for (const committee of ALL_COMMITTEES) this.regenerateParityMatrices(committee)
   }
 
   /** Writes the circuit-bound constants consumed by Interfold. */
@@ -1459,7 +1450,7 @@ async function main() {
       }
       options.committee = val as CircuitCommittee | 'all'
     } else if (arg === '--skip-utils-patch') options.skipUtilsPatch = true
-    else if (['hash', 'build', 'sync-config', 'sync-bounds', 'sync-preset', 'sync-parity'].includes(arg)) command = arg
+    else if (['hash', 'build', 'sync-config', 'sync-preset'].includes(arg)) command = arg
   }
 
   const builder = new NoirCircuitBuilder(undefined, options)
@@ -1475,18 +1466,11 @@ async function main() {
       throw new Error('sync-config requires one preset and one committee')
     }
     builder.syncProtocolConfig(options.preset ?? CIRCUIT_PRESETS.INSECURE_512, options.committee ?? CIRCUIT_COMMITTEES.MINIMUM)
-  } else if (command === 'sync-bounds') {
-    if (options.preset === 'all' || options.committee === 'all') {
-      throw new Error('sync-bounds requires one preset and one committee')
-    }
-    builder.syncBounds(options.preset ?? CIRCUIT_PRESETS.INSECURE_512, options.committee ?? CIRCUIT_COMMITTEES.MINIMUM)
   } else if (command === 'sync-preset') {
     if (options.preset === 'all' || options.committee === 'all') {
       throw new Error('sync-preset requires one preset and one committee')
     }
     builder.syncPresetConfigs(options.preset ?? CIRCUIT_PRESETS.INSECURE_512, options.committee ?? CIRCUIT_COMMITTEES.MINIMUM)
-  } else if (command === 'sync-parity') {
-    builder.syncParityMatrices()
   } else {
     const result = await builder.buildAll()
     builder.writeGitHubOutput(result)
@@ -1498,7 +1482,7 @@ function showHelp() {
   console.log(`
 Usage: build-circuits [command] [options]
 
-Commands: build (default), hash, sync-config, sync-bounds, sync-preset, sync-parity
+Commands: build (default), hash, sync-config, sync-preset
 
 Options:
   --group <groups>    Circuit groups (comma-separated: dkg,threshold)

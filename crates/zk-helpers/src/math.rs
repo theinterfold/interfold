@@ -134,7 +134,12 @@ pub fn compute_k0is(moduli: &[u64], plaintext_modulus: u64) -> Result<Vec<u64>, 
         let m = Modulus::new(qi).map_err(|e| {
             CircuitsErrors::Sample(format!("Failed to create modulus for k0is: {:?}", e))
         })?;
-        let neg_t = m.neg(plaintext_modulus % qi);
+        if plaintext_modulus >= qi {
+            return Err(CircuitsErrors::Other(format!(
+                "plaintext modulus {plaintext_modulus} must be smaller than CRT modulus {qi}"
+            )));
+        }
+        let neg_t = m.neg(plaintext_modulus);
         let k0qi = m.inv(neg_t).ok_or_else(|| {
             CircuitsErrors::Fhe(fhe::Error::MathError(fhe_math::Error::NonInvertible {
                 value: neg_t,
@@ -365,6 +370,13 @@ mod tests {
         let moduli = [3u64, 5, 7];
         let q = compute_q_product(&moduli);
         assert_eq!(q, BigUint::from(105u64));
+    }
+
+    #[test]
+    fn compute_k0is_requires_plaintext_modulus_below_each_crt_modulus() {
+        assert_eq!(compute_k0is(&[17], 5).unwrap(), vec![10]);
+        assert!(compute_k0is(&[17], 17).is_err());
+        assert!(compute_k0is(&[17], 18).is_err());
     }
 
     #[test]
