@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::math::commitments::{
-    compute_aggregated_shares_commitment, compute_share_encryption_commitment_from_message,
+    compute_aggregated_shares_commitment, compute_share_encryption_commitment_from_message_checked,
 };
 use crate::math::modulo::U64::ModU64;
 use crate::math::polynomial::Polynomial;
@@ -44,31 +44,15 @@ impl<let N: u32, let L: u32, let H: u32, let BIT_MSG: u32, let BIT_AGG: u32> Sha
         ShareDecryption { expected_commitments, decrypted_shares }
     }
 
-    /// Bounds every opened share coefficient to `[0, q_l)`, the range C2 dealt them in.
-    ///
-    /// `verify_commitments` re-opens C2's commitment from a private witness, and that commitment
-    /// packs `BIT_MSG`-wide coefficients into shared carriers. An unbounded coefficient can overflow
-    /// its slot and cancel against the next one, leaving the carrier — and so the commitment —
-    /// unchanged. Without this check the same C2 commitments open to a different aggregate, and the
-    /// node publishes an anchor that is not the sum of the shares its dealers actually sent.
-    ///
-    /// This is the bound `compute_aggregated_shares` documents but never enforced: it assumed the
-    /// range held "by C2 range checks", which constrain the values C2 committed, not the values
-    /// this circuit opens them to.
-    fn verify_share_ranges(self, moduli: [Field; L]) {
-        for party_idx in 0..H {
-            for mod_idx in 0..L {
-                self.decrypted_shares[party_idx][mod_idx].range_check_standard::<BIT_MSG>(
-                    moduli[mod_idx],
-                );
-            }
-        }
-    }
-
     /// Verifies that each decrypted share matches its expected commitment from C2a/C2b.
     ///
     /// For each honest party and each CRT modulus, hashes the decrypted share polynomial
     /// and confirms it equals the commitment produced in C2 via commit_to_party_shares.
+    ///
+    /// Opens with the checked packing helper: asserting each digit fits its slot makes the opening
+    /// unique, so the witness must be the share C2 committed and already bounded to `[0, q_j)`. The
+    /// aggregate needs no bound of its own -- `normalize_aggregated` reduces it mod `q_l` in
+    /// circuit, and `reduce_mod` stays sound for sums far above the slot width.
     /// Since commitments are binding, any substitution or tampering, claiming a different
     /// decrypted value or using the wrong secret key, will cause this assertion to fail.
     fn verify_commitments(self) {
@@ -82,9 +66,9 @@ impl<let N: u32, let L: u32, let H: u32, let BIT_MSG: u32, let BIT_AGG: u32> Sha
                     reversed_coeffs[N - 1 - i] = share.coefficients[i];
                 }
                 assert(
-                    compute_share_encryption_commitment_from_message::<N, BIT_MSG>(Polynomial::new(
-                        reversed_coeffs,
-                    ))
+                    compute_share_encryption_commitment_from_message_checked::<N, BIT_MSG>(
+                        Polynomial::new(reversed_coeffs),
+                    )
                         == self.expected_commitments[party_idx][mod_idx],
                     "Commitment mismatch",
                 );
@@ -98,8 +82,8 @@ impl<let N: u32, let L: u32, let H: u32, let BIT_MSG: u32, let BIT_AGG: u32> Sha
     ///   aggregated[mod_idx][coeff] = sum(decrypted_shares[party_idx][mod_idx][coeff])
     ///                                  for party_idx in 0..H
     ///
-    /// No modular reduction is applied here: each share coefficient is in [0, q_l), enforced by
-    /// `verify_share_ranges`, so the sum lies in [0, H*q_l) and fits in the circuit field.
+    /// No modular reduction is applied here: each share coefficient equals the value C2 committed,
+    /// which C2 bounded to [0, q_l), so the sum fits in the circuit field.
     /// Reduction to [0, q_l) is performed by normalize_aggregated before committing.
     ///
     /// This reflects the threshold key construction: sk = sum(sk_i) for i in H.
@@ -135,20 +119,16 @@ impl<let N: u32, let L: u32, let H: u32, let BIT_MSG: u32, let BIT_AGG: u32> Sha
     /// Rust witness (which operates on sk coefficients already reduced to `[0, q_l)`
     /// and then applies `.reverse()` and `.center(&qi)` before hashing).
     pub fn execute(self, moduli: [Field; L]) -> Field {
-        // Step 1: Pin every opened share to `[0, q_l)`. Must run before the commitment check,
-        // which is only binding for bounded coefficients, and before the sum, which assumes it.
-        self.verify_share_ranges(moduli);
-
-        // Step 2: Verify decrypted shares match expected C2 commitments.
+        // Step 1: Verify decrypted shares match expected C2 commitments, opened injectively.
         self.verify_commitments();
 
-        // Step 3: Sum shares coefficient-wise per CRT limb.
+        // Step 2: Sum shares coefficient-wise per CRT limb.
         let aggregated = self.compute_aggregated_shares();
 
-        // Step 4: Normalize to match C6's representation: reduce mod q, reverse, center.
+        // Step 3: Normalize to match C6's representation: reduce mod q, reverse, center.
         let normalized = normalize_aggregated::<N, L>(aggregated, moduli);
 
-        // Step 5: Publish commitment to the aggregate (C6 input).
+        // Step 4: Publish commitment to the aggregate (C6 input).
         compute_aggregated_shares_commitment::<N, L, BIT_AGG>(normalized)
     }
 }

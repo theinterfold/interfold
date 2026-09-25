@@ -37,8 +37,81 @@ fn packing_layout<let BIT: u32>() -> (u32, u32) {
 
     // Maximum limbs that fit in one BN254 element without wrap.
     let group = 254 / (nibble_bits + 4);
-    assert(group >= 1);
+    // `group == 1` packs one value per carrier: it saves no sponge absorptions at all while still
+    // charging the range checks that make packing injective, so it is always a loss. Measured at
+    // BIT=143: +82% gates against absorbing directly. Reject it rather than pay for nothing.
+    assert(group >= 2);
     (nibble_bits, group)
+}
+
+/// Like [`pack`], but asserts every digit fits its slot.
+///
+/// ## Why
+/// `pack` builds each carrier as a base-`radix` number, `acc = acc * radix + (v + base)`. That
+/// representation is unique only while every digit stays below `radix`. An unbounded value can
+/// overflow its slot and cancel against the next, so one commitment gains a second opening and a
+/// prover can choose which coefficients it opens to.
+///
+/// `digit < radix` is exactly `digit.assert_max_bit_size::<nibble_bits + 4>()`, and because
+/// `assert_max_bit_size` also forces `digit >= 0`, a single assert gives the whole condition.
+///
+/// ## When to use it
+/// Use this where a circuit **opens** a commitment it did not create. The creating circuit's own
+/// range checks already keep its digits in slot, so asserting the same here forces the opened
+/// coefficients to equal the committed ones — injectivity transfers the upstream bound without
+/// repeating it. One assert costs about half a two-sided `range_check_2bounds`.
+///
+/// It does **not** replace a bound the protocol requires in its own right, and it gives injectivity,
+/// not canonicality: it pins the opening, not a unique representative modulo `q`. A value that no
+/// upstream circuit bounded still needs its own check (see C1 `pk0` and C5 `pk0_agg`).
+///
+/// ## Compatibility
+/// Adding asserts does not change the packed value, so a commitment created with [`pack`] and
+/// opened with `pack_checked` agree. Adoption is per circuit and needs no commitment change.
+pub fn pack_checked<let A: u32, let BIT: u32>(values: [Field; A]) -> [Field] {
+    let (nibble_bits, group) = packing_layout::<BIT>();
+
+    let base = 2.pow_32(nibble_bits as Field);
+    let radix = 2.pow_32((nibble_bits + 4) as Field);
+
+    let num_chunks = (A + group - 1) / group;
+    let mut out: [Field] = [].as_vector();
+
+    for chunk in 0..num_chunks {
+        let remain = A - (chunk * group);
+        let take = if remain < group { remain } else { group };
+
+        let mut acc = 0;
+        for i in 0..take {
+            let v = values[chunk * group + i];
+            let digit = v + base;
+            // digit < radix = 2^(nibble_bits + 4): the injectivity condition.
+            digit.assert_max_bit_size::<((BIT + 3) / 4) * 4 + 4>();
+            acc = acc * radix + digit;
+        }
+
+        for _ in 0..(group - take) {
+            acc = acc * radix + base;
+        }
+
+        out = out.push_back(acc);
+    }
+    out
+}
+
+/// Like [`flatten`], but packs with [`pack_checked`]. Use where a circuit opens a commitment it did
+/// not create.
+pub fn flatten_checked<let A: u32, let L: u32, let BIT: u32>(
+    mut inputs: [Field],
+    poly: [Polynomial<A>; L],
+) -> [Field] {
+    for j in 0..L {
+        let packed = pack_checked::<A, BIT>(poly[j].coefficients);
+        for i in 0..packed.len() {
+            inputs = inputs.push_back(packed[i]);
+        }
+    }
+    inputs
 }
 
 /// Flatten `L` polynomials into a single linear stream of packed `Field` carriers.
@@ -333,5 +406,32 @@ fn test_pack_determinism() {
     assert(packed1.len() == packed2.len());
     for i in 0..packed1.len() {
         assert(packed1[i] == packed2[i]);
+    }
+}
+
+/// `pack_checked` must agree with `pack` for in-slot values. The two carry duplicate layout
+/// arithmetic, so if one is changed without the other, a commitment created by a circuit on `pack`
+/// stops matching one opened by a circuit on `pack_checked`. This pins that.
+#[test]
+fn test_pack_checked_matches_pack() {
+    // Mixed signs, and values at the edge of the centred window for BIT = 35 (slot = 2^40).
+    let vals: [Field; 7] = [0, 1, -1, 34359701504, -34359701504, 12345, -6789];
+    let plain = pack::<7, 35>(vals);
+    let checked = pack_checked::<7, 35>(vals);
+    assert(plain.len() == checked.len());
+    for i in 0..plain.len() {
+        assert(plain[i] == checked[i]);
+    }
+}
+
+/// Same, at a width whose chunking leaves a partial final carrier (BIT = 57 -> group 3, 7 values).
+#[test]
+fn test_pack_checked_matches_pack_partial_chunk() {
+    let vals: [Field; 7] = [5, -5, 72057594049265664, -72057594049265664, 1, 0, -1];
+    let plain = pack::<7, 57>(vals);
+    let checked = pack_checked::<7, 57>(vals);
+    assert(plain.len() == checked.len());
+    for i in 0..plain.len() {
+        assert(plain[i] == checked[i]);
     }
 }
