@@ -61,6 +61,7 @@ const FILES: Record<string, Role> = {
 
   'docs/pages/ciphernode-operators/index.mdx': 'consumer',
   'docs/pages/ciphernode-operators/running.mdx': 'consumer',
+  'docs/pages/ciphernode-operators/rpc-endpoints.mdx': 'consumer',
   'docs/pages/tutorials/deploy-to-testnet.mdx': 'consumer',
   'packages/interfold-dashboard/.env.example': 'consumer',
   'packages/interfold-dashboard/src/lib/chain.ts': 'consumer',
