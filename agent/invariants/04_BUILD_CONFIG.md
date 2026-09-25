@@ -8,16 +8,23 @@ every section.
 
 ## Build / config sync
 
-- Committee four-file sync (above) — `scripts/check-committee.sh`, pre-push + CI.
-- **Never hand-edit generated files:** parity matrices, `utils.ts` H/T values, verifier contracts
-  (`generate-verifiers.ts` output), `.active-preset.json`, `crates/support/contracts/ImageID.sol`,
+- Committee config sync: see `02_CRYPTO_CIRCUITS.md` §Committee config sync.
+  `scripts/check-committee.sh` runs in pre-push and in the Agent Harness CI workflow.
+- **Never hand-edit generated files:** parity matrices, `configs/default/mod.nr`,
+  `configs/committee/active.nr`, the generated C1/C2 bounds, the generated constants in `utils.ts`,
+  `ActiveCryptoConfig.sol`, verifier contracts (`generate-verifiers.ts` output),
+  `crates/support/contracts/ImageID.sol`, and the ignored local files `.active-preset.json` and
   `crates/support/tests/Elf.sol`.
-- **Generated verifiers must match the built VKs** — pre-push checks the canonical pair. CI hydrates
-  and compares every supported preset and committee pair. A drift means a deployed verifier accepts
-  a different circuit from the tree.
-- Circuit artifact pulls select the newest first-parent commit whose `SOURCE_HASH` matches the
-  current source tree. A different build at the branch tip must not replace it. Release verification
-  still checks the source hash, every required pair, and each pair's build stamp.
+- **Generated verifiers must match the built VKs.** Pre-push checks `insecure-512` with the
+  committee in the local `.active-preset.json` (default `minimum`). CI hydrates and compares every
+  supported preset and committee pair. A drift means a deployed verifier accepts a different circuit
+  from the tree.
+- `pnpm store:circuits pull` selects the newest first-parent `circuit-artifacts` commit whose
+  `SOURCE_HASH` matches the current source tree. A different build at the branch tip must not
+  replace it. The release workflow archives the branch tip and fails if the tip's hash differs.
+  Release verification still checks the source hash, every required pair, and each pair's build
+  stamp. **Gap:** `SOURCE_HASH` does not cover the shared Noir library (see `02_CRYPTO_CIRCUITS.md`
+  §Noir / Barretenberg compatibility).
 - **`Elf.sol` is never committed.** `crates/support/methods/build.rs` writes it with a machine-local
   guest ELF path, so it is generated per checkout and `.gitignore`d.
 - **A release publishes a complete provenance manifest** — `pnpm provenance:manifest`. It ties
@@ -27,28 +34,37 @@ every section.
   `complete: false` with the unresolved fields rather than emitting a partial record that reads as
   verified. The ELF SHA-256 is **not** the image ID: SHA-256 checks binary integrity, the image ID
   is computed from the loaded memory image. Procedure:
-  `docs/pages/verifying-the-compute-provider.mdx`.
+  `docs/pages/verifying-the-compute-provider.mdx`. **Gap:** the release workflow does not generate
+  or attach this manifest (`.github/workflows/releases.yml`); a maintainer runs
+  `pnpm provenance:manifest` by hand.
 - Upgradeable-contract storage baselines are committed and CI-gated (missing baselines, compiler
   drift, layout incompatibility, bad gap consumption all fail); baseline creation is an explicit
   maintainer command. — INDEX concern #27
 - Contracts CI requires at least 128 bytes below the EIP-170 limit for `Interfold`,
-  `BondingRegistry`, `CiphernodeRegistryOwnable`, and both aggregator verifiers. — INDEX concern #22
+  `BondingRegistry`, `CiphernodeRegistryOwnable`, and the canonical `insecure-512/minimum`
+  aggregator verifiers. Every deployed verifier variant must fit, but CI does not measure the other
+  variants. — `scripts/checkContractSize.ts`; INDEX concern #22
 - BFV circuit-verifier and RISC Zero receipt-verifier constructors require deployed verifier
   contracts. BFV circuit wrappers also require nonzero recursive VK hashes. — INDEX concerns #21,
   Z-15
 - CLI secrets are passed over **stdin only** — never argv or environment; private keys are never
-  stored in plaintext. — `flow-trace/00`, `01`
+  stored in plaintext. **Gap:** the CLI still accepts `--password` and `--private-key` on argv
+  (`crates/cli/src/password.rs`, `crates/cli/src/wallet.rs`), and `deploy/local/nodes.sh` uses them.
+  — `flow-trace/00`, `01`
 - **Deployment writes must be mined, not only sent.** Every configuration transaction in
   `scripts/deployInterfold.ts` goes through the `send()` helper in `scripts/utils.ts`, which awaits
   the receipt and fails on a missing receipt or a non-success status. `send()` also labels a
   rejection from the send or the mining stage and keeps the original error as its `cause`. A bare
-  `await contract.setX(...)` resolves when the transaction is dispatched, so on a real network a
-  dropped write leaves the reference at `address(0)` while the script still exits zero.
+  `await contract.setX(...)` resolves when the transaction is dispatched, not when it is mined.
+  **Gap:** `deployInterfold.ts` still sends `interfoldTicketToken.setRegistry(...)` with a bare
+  `await`, and several other writes call `.wait()` directly instead of `send()`.
 - **A deployment must end with a verified wiring graph.** After configuration, `deployInterfold.ts`
   reads back every cross-contract reference (Interfold, CiphernodeRegistry, BondingRegistry,
   InterfoldTicketToken, SlashingManager, E3RefundManager, FOLD as the BondingRegistry ciphernode
   bond token) plus the BondingRegistry reward-distributor authorization for Interfold, and throws
-  with the full list of mismatches. Add a read-back for each new cross-contract setter.
+  with the full list of mismatches. Add a read-back for each new cross-contract setter and each
+  initializer reference. **Gap:** the check does not read back the references that `E3RefundManager`
+  receives in its initializer.
 - **A deployment must also enable bonded voting.** `protocol/deployContracts` deploys
   `BondedCheckpoints` (bound to the BondingRegistry **proxy**, not the implementation) and the
   governance batch calls `setBondedCheckpoints` after `initialize`. `BondedVotes` comes later, from

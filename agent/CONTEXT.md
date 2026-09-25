@@ -114,11 +114,14 @@ for that chain.
 
 ## Conventions
 
-- **Commits:** Conventional Commits, types `feat` / `fix` / `chore` only, optional scope, `!` for
-  breaking, description ≤ 72 chars (hook regex `^(feat|fix|chore)(\(.+\))?(!)?: .{1,72}$`).
-- **PRs:** small and focused; 1 approval required; squash merge with a cleaned-up body of meaningful
-  conventional commits; breaking PRs merge only alongside a breaking release; docs changes get the
-  `documentation` label. CI validates commit messages.
+- **Commits and PR titles:** Conventional Commits, optional lower-case scope, `!` for breaking. No
+  local commit-message hook exists. `.github/workflows/validate-commits.yml` checks only the PR
+  title, which is the default squash-commit title (the person who merges can edit it): type `feat`,
+  `fix`, `chore`, `refactor`, `docs`, or `test`, and a whole header of at most 72 characters.
+- **PRs:** small and focused; 1 approval required by team rule (the `main` ruleset does not enforce
+  it, so do not merge without one); squash merge with a cleaned-up body of meaningful conventional
+  commits; breaking PRs merge only alongside a breaking release; docs changes get the
+  `documentation` label.
 - **Branches:** `main` = latest (feature-flagged); `v*.*.*` tags; `stable` = latest stable.
 - **Pre-push hook (husky):** `pnpm lint`, `check:pnpm`, `check:license`, `check:committee`,
   `check:docs` (harness-doc drift gate — a watched file is exempt automatically when neither its
@@ -126,9 +129,10 @@ for that chain.
   when the change is a pure formatter reflow, or when the branch reverts the file; otherwise escape
   with `[skip-doc-sync]` in a commit message when no documented behavior changed), `check:addresses`
   (contract addresses in the docs, dashboard, DAppNode package, and CRISP example must match
-  `deployments/manifest.json`), `check:invariants` (grep-enforced invariants: `do_send` ratchet,
-  skip-proof feature containment — baselines in `scripts/invariant-baselines.env`),
-  `check:verifiers`.
+  `deployments/manifest.json`), `check:invariants` (`do_send` ratchet with its baseline in
+  `scripts/invariant-baselines.env`, skip-proof feature containment, runtime proof-skip guard,
+  Docker workspace coverage, Compose shutdown grace), `check:verifiers`. CI does not run
+  `check:addresses`, `check:pnpm`, or the root `eslint`, so these checks run only in this hook.
 - **Docs MCP server:** `.mcp.json`, `.codex/config.toml`, and `opencode.json` expose
   `@interfold/mcp` (`interfold-docs`) to their respective agents. The launch configs run the
   TypeScript source through the workspace toolchain; `pnpm mcp:build` builds the publishable

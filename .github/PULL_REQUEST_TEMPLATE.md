@@ -1,5 +1,6 @@
-<!-- Keep the PR small and focused. Title and commits: Conventional Commits
-     (feat|fix|chore, optional scope, "!" for breaking, description ≤ 72 chars). -->
+<!-- Keep the PR small and focused. Use Conventional Commits: feat|fix|chore|refactor|docs|test,
+     optional lower-case scope, and ! for breaking changes. Keep the whole header at most 72
+     characters. CI validates the PR title. -->
 
 ## What
 
@@ -19,3 +20,9 @@
       Protocol Concerns" table in `agent/flow-trace/00_INDEX.md` is updated.
 - [ ] **Breaking?** — if yes: `!` in the commit type, and this PR merges only alongside a breaking
       release.
+- [ ] **Rollout class** — if this touches `SCHEMA_VERSION`, a wire major, a persisted type, an
+      `InterfoldEventData` variant, a contract event or ABI, or `protocol-release.toml`: name the
+      upgrade class (rolling, drain-and-resync, or governance) and the `protocol_version` /
+      `node_generation` decision.
+- [ ] **Review** — the diff was reviewed in a fresh context, or in a separate self-review step if
+      one agent did the work (`agent/RULES.md` §Review before you report done).
