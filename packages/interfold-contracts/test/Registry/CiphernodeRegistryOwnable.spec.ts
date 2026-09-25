@@ -227,39 +227,6 @@ describe("CiphernodeRegistryOwnable", function () {
       ).to.be.revertedWithCustomError(registry, "CommitteeNotRequested");
     });
 
-    it("stores rootAt for the requested e3Id after a successful request", async function () {
-      const {
-        registry,
-        interfold,
-        usdcToken,
-        mockE3Program,
-        mockDecryptionVerifier,
-      } = await loadFixture(setup);
-      // Request through Interfold
-      await makeRequest(
-        interfold,
-        usdcToken,
-        mockE3Program,
-        mockDecryptionVerifier,
-      );
-      expect(await registry.rootAt(firstE3Id)).to.equal(await registry.root());
-    });
-    it("stores the root of the ciphernode registry at the time of the request", async function () {
-      const {
-        registry,
-        interfold,
-        usdcToken,
-        mockE3Program,
-        mockDecryptionVerifier,
-      } = await loadFixture(setup);
-      await makeRequest(
-        interfold,
-        usdcToken,
-        mockE3Program,
-        mockDecryptionVerifier,
-      );
-      expect(await registry.rootAt(firstE3Id)).to.equal(await registry.root());
-    });
     it("emits a CommitteeRandomnessRequested event", async function () {
       const {
         registry,
@@ -1674,12 +1641,20 @@ describe("CiphernodeRegistryOwnable", function () {
   });
 
   describe("isCiphernodeEligible()", function () {
-    it("returns true if the ciphernode is in the registry", async function () {
+    it("returns true for an enabled operator with active collateral", async function () {
       const { registry, operator1 } = await loadFixture(setup);
-      expect(await registry.isEnabled(await operator1.getAddress())).to.be.true;
+      expect(await registry.isCiphernodeEligible(await operator1.getAddress()))
+        .to.be.true;
     });
     it("returns false if the ciphernode is not in the registry", async function () {
       const { registry } = await loadFixture(setup);
+      expect(await registry.isCiphernodeEligible(AddressTwo)).to.be.false;
+    });
+    it("returns false for an enabled address without active collateral", async function () {
+      const { owner, registry } = await loadFixture(setup);
+      await registry.connect(owner).addCiphernode(AddressTwo);
+
+      expect(await registry.isEnabled(AddressTwo)).to.be.true;
       expect(await registry.isCiphernodeEligible(AddressTwo)).to.be.false;
     });
   });
@@ -1705,11 +1680,17 @@ describe("CiphernodeRegistryOwnable", function () {
   describe("rootAt()", function () {
     it("returns the root of the ciphernode registry merkle tree at the given e3Id", async function () {
       const {
+        owner,
+        notTheOwner,
         registry,
         interfold,
+        bondingRegistry,
+        ciphernodeBondToken,
+        ticketToken,
         usdcToken,
         mockE3Program,
         mockDecryptionVerifier,
+        nodeReleaseRegistry,
       } = await loadFixture(setup);
       const e3Id = firstE3Id;
       const rootBeforeRequest = await registry.root();
@@ -1719,7 +1700,28 @@ describe("CiphernodeRegistryOwnable", function () {
         mockE3Program,
         mockDecryptionVerifier,
       );
+      // A bonded operator, since requests need every enabled node registered.
+      await setupOperatorForSortition(
+        notTheOwner,
+        owner,
+        bondingRegistry,
+        ciphernodeBondToken,
+        usdcToken,
+        ticketToken,
+        registry,
+        nodeReleaseRegistry,
+      );
+      const rootAfterMutation = await registry.root();
+      await makeRequest(
+        interfold,
+        usdcToken,
+        mockE3Program,
+        mockDecryptionVerifier,
+      );
+
       expect(await registry.rootAt(e3Id)).to.equal(rootBeforeRequest);
+      expect(rootAfterMutation).to.not.equal(rootBeforeRequest);
+      expect(await registry.rootAt(e3Id + 1n)).to.equal(rootAfterMutation);
     });
   });
 

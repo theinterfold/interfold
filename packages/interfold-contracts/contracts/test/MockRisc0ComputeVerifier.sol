@@ -6,23 +6,16 @@
 pragma solidity 0.8.28;
 
 contract MockRisc0ComputeVerifier {
-    error UnexpectedJournalDigest(bytes32 actual, bytes32 expected);
+    error UnexpectedCall();
 
-    bytes32 public expectedJournalDigest;
+    bytes32 private expectedCallHash;
 
-    function setExpectedJournalDigest(bytes32 value) external {
-        expectedJournalDigest = value;
+    /// @dev Makes `verify` revert unless its calldata equals `data`.
+    function expectCall(bytes calldata data) external {
+        expectedCallHash = keccak256(data);
     }
 
-    function verify(
-        bytes calldata,
-        bytes32,
-        bytes32 journalDigest
-    ) external view {
-        if (journalDigest != expectedJournalDigest)
-            revert UnexpectedJournalDigest(
-                journalDigest,
-                expectedJournalDigest
-            );
+    function verify(bytes calldata, bytes32, bytes32) external view {
+        if (keccak256(msg.data) != expectedCallHash) revert UnexpectedCall();
     }
 }

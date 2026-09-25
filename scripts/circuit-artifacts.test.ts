@@ -10,7 +10,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { NoirCircuitBuilder, normalizeCargoLockForCircuitHash } from './build-circuits'
+import { NoirCircuitBuilder, normalizeCargoLockForCircuitHash, stripRustTestModules } from './build-circuits'
 import {
   findArtifactRevision,
   RELEASE_REQUIRED_PAIRS,
@@ -103,6 +103,20 @@ test('circuit hash tracks external crate pins and ignores the workspace graph', 
     normalizeCargoLockForCircuitHash(edited('checksum = "1111"', 'checksum = "2222"')),
     normalizeCargoLockForCircuitHash(before),
   )
+})
+
+test('circuit hash ignores Rust test modules and tracks everything else', () => {
+  const tests = '#[cfg(test)]\nmod tests {\n    #[test]\n    fn checks() {\n        assert!(true);\n    }\n}\n'
+  const before = Buffer.from(`pub fn bound() -> u64 {\n    7\n}\n\n${tests}`)
+  const edited = (from: string, to: string) => Buffer.from(before.toString().replace(from, to))
+
+  // Editing or deleting a test module leaves the generator output unchanged.
+  assert.deepEqual(stripRustTestModules(edited('assert!(true)', 'assert_eq!(1, 1)')), stripRustTestModules(before))
+  assert.deepEqual(stripRustTestModules(edited(tests, '')), stripRustTestModules(before))
+
+  // Production code, including code after a test module, still changes the hash.
+  assert.notDeepEqual(stripRustTestModules(edited('    7\n', '    8\n')), stripRustTestModules(before))
+  assert.notDeepEqual(stripRustTestModules(Buffer.from(`${before}pub fn later() {}\n`)), stripRustTestModules(before))
 })
 
 test('pair source hash ignores generated bounds but tracks other Noir config', () => {

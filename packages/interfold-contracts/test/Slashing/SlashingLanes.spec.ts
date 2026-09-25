@@ -389,9 +389,6 @@ describe("SlashingManager — lanes, roles, EIP-712 & admin handover", function 
       expect(await bondingRegistry.isRegistered(operatorAddress)).to.be.false;
       expect(await bondingRegistry.hasExitInProgress(operatorAddress)).to.be
         .true;
-      const op = { registered: false, exitRequested: true };
-      expect(op.registered).to.be.false;
-      expect(op.exitRequested).to.be.true;
     });
 
     it("deregisterOperator succeeds after appeal is upheld (Lane B unwinds open count)", async function () {
@@ -427,9 +424,6 @@ describe("SlashingManager — lanes, roles, EIP-712 & admin handover", function 
       expect(await bondingRegistry.isRegistered(operatorAddress)).to.be.false;
       expect(await bondingRegistry.hasExitInProgress(operatorAddress)).to.be
         .true;
-      const op = { registered: false, exitRequested: true };
-      expect(op.registered).to.be.false;
-      expect(op.exitRequested).to.be.true;
     });
   });
 
@@ -722,10 +716,16 @@ describe("SlashingManager — lanes, roles, EIP-712 & admin handover", function 
 
     it("attestationDomainSeparator() matches EIP-712 view", async function () {
       const { slashingManager } = await loadFixture(setup);
-      const sep = await slashingManager.attestationDomainSeparator();
-      expect(sep).to.be.a("string");
-      expect(sep.length).to.equal(66); // 0x + 32 bytes
-      expect(sep).to.not.equal(ethers.ZeroHash);
+      const { chainId } = await ethers.provider.getNetwork();
+
+      expect(await slashingManager.attestationDomainSeparator()).to.equal(
+        ethers.TypedDataEncoder.hashDomain({
+          name: "InterfoldSlashing",
+          version: "1",
+          chainId,
+          verifyingContract: await slashingManager.getAddress(),
+        }),
+      );
     });
   });
 

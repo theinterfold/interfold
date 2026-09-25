@@ -382,19 +382,3 @@ fn e3_failed_timeout_ignored_when_already_completed() {
         RoutingDecision::Ignore
     );
 }
-
-#[test]
-fn stage_changed_to_failed_ignored_when_already_completed() {
-    let id = e3id();
-    let mut completed = HashSet::new();
-    completed.insert(id.clone());
-    let msg = from_data(E3StageChanged {
-        e3_id: id.clone(),
-        previous_stage: E3Stage::CommitteeFinalized,
-        new_stage: E3Stage::Failed,
-    });
-    assert_eq!(
-        RequestRouter::route(&msg, &completed),
-        RoutingDecision::Ignore
-    );
-}

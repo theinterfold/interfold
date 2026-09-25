@@ -641,9 +641,9 @@ fn test_vote_typehash() {
     );
 }
 
-/// Verifies vote digest computation matches the canonical EIP-712 typed-data hash.
+/// Verifies vote identifiers and EIP-712 hashing against an ethers-generated vector.
 #[test]
-fn test_vote_digest_manual_computation() {
+fn test_vote_digest_matches_external_vector() {
     let chain_id = 31337u64;
     let verifying_contract: Address = "0x9999999999999999999999999999999999999999"
         .parse()
@@ -659,6 +659,12 @@ fn test_vote_digest_manual_computation() {
     let data_hash = FixedBytes::from([0xab; 32]);
 
     let accusation_id = compute_accusation_id(chain_id, e3_id, operator, proof_type);
+    assert_eq!(
+        accusation_id,
+        "0x4511f8ed6c3d679b420f7632b2e7603a3efc8a630e779ce7260a15e4b92dca96"
+            .parse::<FixedBytes<32>>()
+            .unwrap()
+    );
     let digest = compute_vote_digest(
         chain_id,
         verifying_contract,
@@ -670,31 +676,12 @@ fn test_vote_digest_manual_computation() {
         TEST_DEADLINE,
     );
 
-    // Manual EIP-712 computation
-    let typehash = keccak256(VOTE_TYPEHASH_STR);
-    let struct_hash: FixedBytes<32> = keccak256(
-        (
-            typehash,
-            U256::from(e3_id),
-            accusation_id,
-            voter,
-            data_hash,
-            TEST_ISSUED_AT,
-            TEST_DEADLINE,
-        )
-            .abi_encode(),
-    );
-    let domain = compute_vote_domain_separator(chain_id, verifying_contract);
-    let mut buf = Vec::with_capacity(2 + 32 + 32);
-    buf.push(0x19);
-    buf.push(0x01);
-    buf.extend_from_slice(domain.as_ref());
-    buf.extend_from_slice(struct_hash.as_ref());
-    let expected: FixedBytes<32> = keccak256(&buf);
-
     assert_eq!(
-        digest, expected,
-        "vote digest should match canonical EIP-712 typed-data hash"
+        digest,
+        "0xcb216d9b5829c294d91eb7a47e64aec925818d691097005aa78e844591667545"
+            .parse::<FixedBytes<32>>()
+            .unwrap(),
+        "vote digest must match the independently generated EIP-712 vector"
     );
 }
 

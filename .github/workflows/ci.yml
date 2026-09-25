@@ -97,6 +97,8 @@ jobs:
             circuits:
               - 'circuits/**'
               - 'scripts/*-circuits.sh'
+              - 'scripts/generate-verifiers*.ts'
+              - 'scripts/circuit-constants.ts'
               - '!**/*.md'
               - '!**/*.mdx'
             crisp:
@@ -181,6 +183,17 @@ jobs:
 
       - name: Check release promotion safeguards
         run: node --test scripts/release.test.mjs
+
+      - name: Check test runner dispatch and results
+        run: node --test scripts/test-harnesses.test.mjs
+
+  test_dappnode:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - name: Test DAppNode credentials and health checks
+        run: sudo apt-get update && sudo apt-get install -y gettext-base && bash dappnode/tests/test-hardening.sh
 
   rust_unit_tests:
     needs: [detect_changes]
@@ -1186,7 +1199,7 @@ jobs:
             packages/interfold-contracts/contracts/lib/ActiveCryptoConfig.sol \
             packages/interfold-contracts/scripts/utils.ts
 
-      - name: Test circuit artifact validation
+      - name: Test circuit artifact validation and verifier selection
         run: pnpm test:circuit-tooling
 
       # The generated verifier contracts must match the freshly built verification keys. A drift

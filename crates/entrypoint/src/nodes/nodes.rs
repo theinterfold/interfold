@@ -120,14 +120,34 @@ mod tests {
 
     #[tokio::test]
     async fn detached_process_survives_dropping_the_handle() {
-        let child = spawn_detached_process("sh", vec!["-c".into(), "exec sleep 30".into()])
-            .await
-            .unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let proceed = directory.path().join("proceed");
+        let survived = directory.path().join("survived");
+        // The child writes `survived` only after the test has dropped its handle.
+        let child = spawn_detached_process(
+            "sh",
+            vec![
+                "-c".into(),
+                r#"while [ ! -e "$1" ]; do sleep 0.01; done; printf ok > "$2"; exec sleep 30"#
+                    .into(),
+                "detached-process-test".into(),
+                proceed.to_string_lossy().into_owned(),
+                survived.to_string_lossy().into_owned(),
+            ],
+        )
+        .await
+        .unwrap();
         let pid = child.id().unwrap();
 
         drop(child);
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        assert!(process_exists(pid));
+        std::fs::write(&proceed, b"").unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !survived.exists() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("detached child should continue after its handle is dropped");
 
         // SAFETY: the test owns this short-lived child process and reaps it immediately.
         unsafe {

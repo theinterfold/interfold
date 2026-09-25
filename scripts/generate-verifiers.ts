@@ -191,9 +191,13 @@ class VerifierGenerator {
     }
 
     const circuits = this.discoverCircuits()
+    const found = new Set(circuits.map((circuit) => circuit.name))
+    const missing = [...new Set(this.options.circuits || [])].filter((name) => !found.has(name))
+    if (missing.length > 0) {
+      throw new Error(`Cannot find requested circuits: ${missing.join(', ')}`)
+    }
     if (circuits.length === 0) {
-      console.log('   ⚠️  No circuits found')
-      return
+      throw new Error(`No circuits found in ${this.circuitsDir}`)
     }
 
     console.log(`   Found ${circuits.length} circuit(s)\n`)

@@ -33,3 +33,4 @@ zeroize = { workspace = true }
 
 [dev-dependencies]
 e3-ciphernode-builder = { workspace = true }
+tokio = { workspace = true, features = ["test-util"] }
