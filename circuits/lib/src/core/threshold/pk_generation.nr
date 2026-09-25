@@ -198,6 +198,13 @@ impl<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u3
 
         // Check quotient terms are within expected bounds (per modulus)
         for i in 0..L {
+            // pk0 is committed here and re-opened from that commitment by C5. The commitment packs
+            // BIT_PK-wide coefficients into shared carriers, so an unbounded coefficient can
+            // overflow its slot and give the same commitment a second opening. Pin it to a centered
+            // residue, matching the bound C5 applies.
+            let pk_bound: Field = (self.configs.qis[i] - 1) / 2;
+            self.pk0[i].range_check_2bounds::<BIT_PK>(pk_bound, pk_bound);
+
             // Together with the lifted bound and `verify_e_sm_crt_consistency`, these force each
             // e_sm[i] to be the centered residue of a genuinely bounded integer polynomial.
             self.e_sm[i].range_check_2bounds::<BIT_E_SM>(
