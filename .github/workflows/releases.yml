@@ -364,7 +364,7 @@ jobs:
       # The compute-provider provenance manifest is NOT generated here: it can only be complete on
       # a machine that built the guest (Elf.sol + builder image digest) with a deployed ciphertext
       # verifier to read (--rpc/--verifier), none of which this job has. It is produced manually per
-      # docs/pages/verifying-the-compute-provider.mdx until the guest-build job can attach it.
+      # docs/pages/build/e3-program/verify-compute-provider.mdx until the guest-build job can attach it.
 
       - name: Prepare release assets and notes
         env:

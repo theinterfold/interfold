@@ -1,0 +1,241 @@
+---
+title: 'Ciphernode Operators'
+description:
+  'What a ciphernode does, the contracts an operator uses, the operator lifecycle, and the contract
+  addresses for each network.'
+---
+
+import { Callout, Tabs } from 'nextra/components'
+import { Lifecycle, LinkCard, LinkCards, Stage } from '@/components/ui'
+
+# Ciphernode Operators
+
+This page is the starting point for operators who want to run a ciphernode on the Interfold. It
+explains what a ciphernode does, which contracts control an operator position, and the order of the
+setup steps. At the end, you know which page to open for each step and which contract addresses to
+use.
+
+<Callout type='info'>
+  The Interfold dashboard has a guided operator setup at [Run a
+  ciphernode](https://dashboard.theinterfold.com/#operator). It reads the live `BondingRegistry` and
+  sends each on-chain step from your browser wallet: connect a wallet, authorize the bond owner,
+  bond FOLD, register the ciphernode, and buy tickets. You must still run the node software
+  yourself.
+</Callout>
+
+## What a ciphernode does
+
+A ciphernode is a node that holds one share of a committee secret key. The protocol selects a
+committee of ciphernodes for each E3. No single ciphernode can decrypt the output. Decryption needs
+T + 1 decryption shares. For each committee that selects it, a ciphernode does this work:
+
+- It submits sortition tickets for the E3 (`submitTicket` on `CiphernodeRegistry`).
+- It takes part in distributed key generation (DKG) and keeps its key share.
+- It helps the committee publish one public key for the E3.
+- It makes a decryption share of the E3 output after the compute provider publishes the ciphertext.
+- It generates zero-knowledge proofs for its DKG and decryption work.
+
+The node also acknowledges its software release on-chain when it starts (`acknowledgeNodeRelease` on
+`NodeReleaseRegistry`). An operator is active only when its acknowledged release meets the required
+protocol version and node generation. See [Upgrades](/operate/upgrades) for the release rules.
+
+A committee member that fails its duties, or breaks a protocol rule, can lose part of its bond and
+tickets. `SlashingManager` handles these penalties. See
+[Exits, Rewards & Slashing](/operate/exits-and-slashing).
+
+## Contracts for operators
+
+Each operator position uses two keys. The operator key is the hot key that the node loads. The bond
+owner is the wallet or Safe that funds the position and receives exit payouts and rewards. The
+contracts below store the position and its state.
+
+| Contract (source file)                                     | What it does for an operator                                                                                                   |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `BondingRegistry` (`registry/BondingRegistry.sol`)         | Stores the bond owner, the FOLD bond, and the ticket balance. It registers operators, decides active status, and queues exits. |
+| `CiphernodeRegistry` (`CiphernodeRegistryOwnable.sol`)     | Keeps the set of registered ciphernodes. It accepts sortition tickets and finalizes each committee.                            |
+| `Interfold` (`Interfold.sol`)                              | Records each E3 and its stage. Requesters call it to request an E3.                                                            |
+| `SlashingManager` (`slashing/SlashingManager.sol`)         | Processes slash proposals, appeals, and bans.                                                                                  |
+| `NodeReleaseRegistry` (`registry/NodeReleaseRegistry.sol`) | Stores the required node release and the release that each operator acknowledged.                                              |
+| `E3RefundManager`                                          | Calculates and pays refunds when an E3 fails.                                                                                  |
+| `InterfoldToken` (FOLD)                                    | The bond token. The bond owner bonds FOLD for each operator.                                                                   |
+| `InterfoldTicketToken` (tFOLD)                             | A non-transferable token that wraps the ticket collateral. The registry mints it to the operator key.                          |
+
+On both networks, operators bond FOLD (`InterfoldToken`). The ticket collateral is an ERC-20 token
+that `InterfoldTicketToken` wraps. Mainnet uses sUSDS shares, and Sepolia uses a mock stablecoin
+(`MockUSDC`). The fee token is separate: requesters pay E3 fees with it. Mainnet uses USDS as the
+fee token.
+
+## Operator lifecycle
+
+An operator position moves through the stages below. The stepper plays automatically. Select a stage
+to read it. The table after the stepper lists the same states.
+
+<Lifecycle label="Operator lifecycle">
+  <Stage title="Set up" actor="Operator" event="OperatorNodeReleaseAcknowledged">
+
+Install the node software, write its configuration, and store the operator key. When the node
+starts, it syncs the contract history and acknowledges its release on-chain.
+
+  </Stage>
+  <Stage title="Register and bond" actor="Operator key, bond owner" event="CiphernodeAdded">
+
+The operator key calls `setBondOwner`. The bond owner bonds FOLD with `bondCiphernodeFor`, then
+calls `registerOperatorFor`. Registration needs the full `requiredCiphernodeBond`.
+
+  </Stage>
+  <Stage title="Tickets" actor="Bond owner" event="TicketBalanceUpdated">
+
+The bond owner deposits ticket collateral with `addTicketBalanceFor`. The registry mints tFOLD to
+the operator key. Available tickets are `floor(ticket balance / ticketPrice)`.
+
+  </Stage>
+  <Stage title="Active" actor="BondingRegistry" event="OperatorActivationChanged">
+
+The operator becomes active when it is registered, not banned, bonded above the active floor, holds
+at least `minTicketBalance` tickets, and runs an accepted release.
+
+  </Stage>
+  <Stage title="Selected for a committee" actor="Ciphernode" event="SortitionCommitteeFinalized">
+
+For each E3 request, the node scores its tickets and submits its best ticket once. The lowest scores
+form the committee, with at most one operator for each bond owner. The committee runs DKG and later
+decrypts the output.
+
+  </Stage>
+  <Stage title="Exit" actor="Bond owner" event="CiphernodeDeregistrationRequested">
+
+The bond owner or the operator key calls `deregisterOperatorFor`. All collateral enters the exit
+queue. After `exitDelay`, `claimExitsFor` pays the collateral to the bond owner.
+
+  </Stage>
+</Lifecycle>
+
+| State            | Condition                                                                                                      | Next action                                                          |
+| ---------------- | -------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| Not configured   | `bondOwnerOf(operator)` returns the zero address. Calls that need the bond owner revert with `NotBondOwner`.   | The operator key calls `setBondOwner`.                               |
+| Bonded           | The bond owner bonded FOLD, but the operator is not registered.                                                | The bond owner calls `registerOperatorFor`.                          |
+| Registered       | The operator is in the registry, but one activation condition is not met (often, no tickets yet).              | The bond owner calls `addTicketBalanceFor`.                          |
+| Active           | All activation conditions are met. `isActive(operator)` returns `true`.                                        | The node takes part in sortition for new E3s.                        |
+| Inactive         | Registered, but the bond, the tickets, the release, or a ban no longer meets the rules.                        | Add collateral, upgrade the node, or refresh status.                 |
+| Exit in progress | `deregisterOperatorFor` queued all collateral. `hasExitInProgress(operator)` is `true` until `exitDelay` ends. | After the delay, claim the exit. To return, bond and register again. |
+
+[Registration & Bonding](/operate/registration) gives the commands, the activation rules, and the
+economic parameters. [Tickets & Sortition](/operate/tickets-and-sortition) explains committee
+selection.
+
+## Requirements summary
+
+| Requirement       | Summary                                                                                                           |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------- |
+| FOLD bond         | `requiredCiphernodeBond` for each operator. The mainnet deployment value is 32,000 FOLD.                          |
+| Ticket collateral | At least `minTicketBalance` tickets. On mainnet, one ticket is 1,000 sUSDS shares and the minimum is one ticket.  |
+| ETH               | Gas for the bond owner transactions, and for the operator key (ticket submissions and release acknowledgment).    |
+| Memory            | On Linux, the node does not start below 17 GiB (4 GiB reserve plus one 13 GiB prover job). The guidance is 32 GB. |
+| Network           | One open inbound UDP port for QUIC. The default is `9091`.                                                        |
+| RPC endpoints     | A WebSocket Ethereum endpoint with log history from the contract deploy blocks, and an Avail HTTP endpoint.       |
+
+The full list is on [Ciphernode Requirements](/operate/requirements). Read the live economic values
+on-chain before you deposit (see
+[Registration & Bonding](/operate/registration#economic-parameters)).
+
+## Contract addresses
+
+These addresses come from `deployments/manifest.json`, the deployment manifest that
+`interfold config check` also reads. [Contract Reference](/reference/contracts) lists every deployed
+contract.
+
+<Tabs items={['Mainnet', 'Sepolia']}>
+  <Tabs.Tab unmount={false}>
+
+| Contract                     | Address                                      | Deploy block |
+| ---------------------------- | -------------------------------------------- | ------------ |
+| Interfold                    | `0x28cF63B459e6218C69EA97ea7D90541cf648c715` | 25786382     |
+| CiphernodeRegistry           | `0xC927A5B2d8F68697bC28C0670df05178c93df2d7` | 25786378     |
+| BondingRegistry              | `0x0ec90465095C21830BEcED07e032809A2Bd2915F` | 25473398     |
+| SlashingManager              | `0x974E865B1BB24AF2a9ef8204AdEA9251Cc7C5FD9` | 25786375     |
+| E3RefundManager              | `0x1940eF168f4E0B3dA24BEca539856684793B0F6e` | 25786384     |
+| InterfoldTicketToken (tFOLD) | `0xC0B5b49a3949eC4B520eF21BaCFE16e3695F3B5D` | 25786372     |
+| USDS (fee token)             | `0xdC035D45d973E3EC169d2276DDab16f1e407384F` | 20663730     |
+| MockE3Program                | `0x4976E5E47852eFCe6851d35B95A1A2E19456F3D7` | 25786371     |
+
+On mainnet, operators bond FOLD (`InterfoldToken`), and sUSDS shares back the tickets. The
+deployment manifest does not publish these two token addresses.
+[Contract Reference](/reference/contracts#mainnet) lists them. You can also read them from the
+`BondingRegistry`, as shown in
+[Registration & Bonding](/operate/registration#read-the-token-addresses).
+
+The mainnet deployment registers `MockE3Program` as its first E3 program. The deployment
+configuration also deploys a mock ciphertext verifier (`deployMockCiphertextVerifier: true` in
+`mainnet-protocol.config.json`). The manifest therefore marks mainnet with `mocks: true`.
+
+<Callout type='info'>
+  The `Interfold` contract starts with E3 requests paused. The owner changes this with
+  `setRequestsPaused`. Operators can bond, register, and add tickets while requests are paused. Read
+  the current value with `requestsPaused()` on the `Interfold` contract.
+</Callout>
+
+  </Tabs.Tab>
+  <Tabs.Tab unmount={false}>
+
+| Contract                                   | Address                                      | Deploy block |
+| ------------------------------------------ | -------------------------------------------- | ------------ |
+| Interfold                                  | `0x3E856E24c7a95d0e04d387f847DA6FA9f6F6c20C` | 11534993     |
+| CiphernodeRegistry                         | `0x374F4542eC634d5437Dd65020781A9D9Df9c2AB8` | 11534965     |
+| BondingRegistry                            | `0x90250Dc48CBe109fFaA02AeAFbFBdbF12D7BD4d4` | 11534966     |
+| SlashingManager                            | `0x489FB674B143E48eaCAaC999B3DF9EA6E95eA79f` | 11534963     |
+| E3RefundManager                            | `0x79f9EA83Db0fbe3a2cEB765b18285915331A9dc2` | 11534995     |
+| InterfoldTicketToken (tFOLD)               | `0xfFFFc3BB04aEe950c0ed5DEe3214408f09fff488` | 11534961     |
+| InterfoldToken (FOLD)                      | `0x9752444A6a955D420402EaFf5f818afCddb9c340` | 11534976     |
+| MockUSDC (fee token and ticket collateral) | `0xC35B783cA97710be47Fc81D10dADc895EfcD865c` | 11534960     |
+| Faucet                                     | `0x6e281411C055BEEbD74bDFcB9aB095aa98907F85` | 11534982     |
+
+The Sepolia deployment uses mock verifiers and a mock compute provider:
+
+| Contract               | Address                                      | Deploy block |
+| ---------------------- | -------------------------------------------- | ------------ |
+| MockE3Program          | `0x5874CD49929ffcf380C82cDE1e74188dEaff9791` | 11534990     |
+| MockComputeProvider    | `0x3c3434840a1EAA214E0c8abb34A0386e4E22B3A5` | 11534986     |
+| MockDecryptionVerifier | `0x12845e690fD56216C89428d91D5E931142b9779F` | 11534987     |
+| MockCiphertextVerifier | `0xc2905bDcD4449F143d46593AeAf5383A590D2e32` | 11534988     |
+| MockPkVerifier         | `0x22b5Fda887D1c84Df3d4D916452388F99a6A7b61` | 11534989     |
+
+<Callout type='warning'>
+  The Sepolia deployment does not verify proofs. Its mock verifiers accept any proof. Use Sepolia to
+  set up and operate a node, not to test that proofs are correct.
+</Callout>
+
+  </Tabs.Tab>
+</Tabs>
+
+`interfold config check` compares your configuration with the manifest of the latest release. For
+each network that the manifest marks with `mocks: true`, it prints a note that proofs are accepted
+without verification. The current manifest marks both networks.
+
+## Set up a ciphernode
+
+Do the setup pages in this order:
+
+1. Check the hardware, network, and endpoint needs on [Requirements](/operate/requirements).
+2. Install and start the node on [Run a Ciphernode](/operate/running).
+3. Test your Ethereum endpoint on [RPC Endpoints](/operate/rpc-endpoints) before the first sync.
+4. Authorize the bond owner, bond, register, and buy tickets on
+   [Registration & Bonding](/operate/registration).
+
+For help with setup, join the [Interfold technical chat](https://t.me/interfoldhq_technical).
+
+## Next steps
+
+<LinkCards min={230}>
+  <LinkCard title='Requirements' href='/operate/requirements' icon='chip' tag='Set up'>
+    Hardware, operating systems, ports, endpoints, and disk space for a ciphernode.
+  </LinkCard>
+  <LinkCard title='Run a Ciphernode' href='/operate/running' icon='terminal' tag='Set up'>
+    Start the node with DAppNode, the `interfold` CLI, or Docker.
+  </LinkCard>
+  <LinkCard title='RPC Endpoints' href='/operate/rpc-endpoints' icon='network' tag='Set up'>
+    Test that an Ethereum endpoint keeps the log history that the first sync needs.
+  </LinkCard>
+  <LinkCard title='Registration & Bonding' href='/operate/registration' icon='coin' tag='Set up'>
+    Authorize a bond owner, bond FOLD, register the operator, and buy tickets.
+  </LinkCard>
+</LinkCards>

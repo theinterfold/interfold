@@ -1,0 +1,204 @@
+---
+title: 'Node Dashboard'
+description:
+  'Enable the local ciphernode dashboard on 127.0.0.1, read its views and JSON API, and use the
+  hosted Interfold dashboard for network data and the operator guide.'
+---
+
+import { Callout, Steps } from 'nextra/components'
+import { LinkCard, LinkCards } from '@/components/ui'
+
+# Node Dashboard
+
+The Interfold has two dashboards. The local node dashboard runs inside your ciphernode process and
+shows what that node knows. The hosted dashboard is a public web app that reads the chain. This page
+is for operators who monitor a ciphernode. At the end, you can enable the local dashboard and open
+it safely from another computer. You can also read its JSON API, and you know when to use the hosted
+dashboard.
+
+| Dashboard        | Where it runs                                    | Data source                                                     | Use it to                                                                       |
+| ---------------- | ------------------------------------------------ | --------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| Local dashboard  | In the `interfold start` process, on `127.0.0.1` | The EventStore of the node, live P2P state, logs, and RPC reads | Check peers, E3 traces, protocol events, and logs of one node                   |
+| Hosted dashboard | `https://dashboard.theinterfold.com`             | Contract events and views of one network                        | Inspect any E3, watch CRISP polls, and set up an operator from a browser wallet |
+
+## Local node dashboard
+
+The `interfold` binary includes the local dashboard. It needs no separate installation. It is off
+until you set a port.
+
+### Enable the dashboard
+
+<Steps>
+
+### Set the dashboard port
+
+Add `dashboard_port` to the node definition in the configuration file. For the default node, use the
+`node` key:
+
+```yaml
+# interfold.config.yaml
+node:
+  dashboard_port: 9092
+```
+
+For a named node, set the key under `nodes.<name>`. Select a free port. The default `quic_port` is
+9091 and the default `ctrl_port` is 50505.
+
+To set the port with an environment variable, use `E3_NODE__DASHBOARD_PORT=9092`. For a named node,
+use `E3_NODES__<NAME>__DASHBOARD_PORT`.
+
+### Restart the node
+
+Stop the node, then start it again with `interfold start -v`.
+
+The dashboard starts after the node finishes its startup. With `-v`, the log shows this line:
+
+```text
+Dashboard available at http://127.0.0.1:9092
+```
+
+### Open the dashboard
+
+On the computer that runs the node, open `http://127.0.0.1:9092` in a browser.
+
+The page title is **Interfold · Node Observatory**. The chip at the top right shows the node name.
+
+</Steps>
+
+<Callout type='warning'>
+  The dashboard has no authentication. Its API returns detailed protocol payloads and node
+  diagnostics. The server binds only to `127.0.0.1` for this reason. A port forward to a public
+  interface exposes this data to every client that can reach it.
+</Callout>
+
+### Open the dashboard from another computer
+
+The dashboard listens only on the loopback interface of the host that runs the node. To open it from
+your own computer, use an SSH tunnel:
+
+```bash
+ssh -L 9092:127.0.0.1:9092 user@your-server
+```
+
+Keep the SSH session open, then open `http://127.0.0.1:9092` on your own computer.
+
+In a container, `127.0.0.1` is the loopback interface of the container. A port that you publish with
+Docker does not reach it. Open the dashboard from the network namespace of the node process.
+
+### Views
+
+The dashboard has six views. The address of each view is `#<view>`, for example `#logs`, so you can
+bookmark it. The views refresh automatically while the browser tab is visible.
+
+| View           | What it shows                                                                                                                                                                                                                                                                             |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Overview**   | Operator address and peer ID. Network reach (connected and configured peers), registered and active nodes, E3 counts, and the number of durable events. The connected peers with remote address and direction. The on-chain operator state for each chain. The 12 newest protocol events. |
+| **E3 traces**  | Each E3 that this node saw. For the selected E3, the events of each phase: Request, Committee formation, DKG · C0, DKG · C1–C4, Key publication · C5, Encrypted computation, Decryption · C6–C7, and Output & rewards.                                                                    |
+| **Flow graph** | The events of one E3 as a graph by phase, with an arrow from each event to the events that it caused.                                                                                                                                                                                     |
+| **Events**     | Up to 2,000 recent durable events from the EventStore. You can search, and filter by source (Local, Network, EVM) and by level (Errors, Warnings, Info, Debug).                                                                                                                           |
+| **Logs**       | The operational log entries that the node keeps in memory. You can search, and filter by level. Each entry shows its fields, and the E3 ID and stage when they are present.                                                                                                               |
+| **Updates**    | The installed version, the latest stable GitHub release and its notes, the number of active E3s, and a safe update sequence. The dashboard does not replace the binary.                                                                                                                   |
+
+The **Operator state** card on the Overview reads the chain at most once every 15 s. It shows the
+status: Active, Registered, Not registered, or Exit queued. It also shows the available tickets, the
+ticket balance, the ciphernode bond, and the node counts. The ticket balance and the ciphernode bond
+are raw token base units. Hover over a value to see the full number.
+
+The **Rewards** count on the card counts `RewardCredited` events whose account is the operator
+address. Rewards go to the bond owner, so the count stays at 0 when the bond owner is a separate
+wallet. See [Rewards](/operate/exits-and-slashing#rewards).
+
+The Events view gives each event a level:
+
+| Level    | Events                                                                                                                                                                                                                               |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Errors   | `InterfoldError`, `E3Failed`, `CommitteeFormationFailed`, `ProofVerificationFailed`, `SignedProofFailed`, `ThresholdShareCollectionFailed`, `EncryptionKeyCollectionFailed`, `ComputeRequestError`, `CommitmentConsistencyViolation` |
+| Warnings | `ProofFailureAccusation`, `AccusationVote`, `AccusationQuorumReached`, `SlashExecuted`, `CommitteeMemberExpelled`, and unknown EVM logs                                                                                              |
+| Info     | Other events that belong to an E3 phase                                                                                                                                                                                              |
+| Debug    | All other events                                                                                                                                                                                                                     |
+
+When a refresh fails, the dashboard keeps the last data and shows `Live refresh paused` with the
+error.
+
+### Common tasks
+
+- **Trace one E3.** Open **E3 traces** and select the E3. The current phase opens first. A trace
+  that stops in a phase shows where the E3 stopped.
+- **Find errors.** Open **Events** and set the level to **Errors**. Open an event to read its
+  payload.
+- **Check the network after a restart.** On **Overview**, compare the connected peers with the
+  configured peers. A network error appears in the **Connected nodes** panel.
+- **Prepare an upgrade.** Open **Updates**. Wait until the active E3 count is 0 before you stop the
+  node. See [Upgrades](/operate/upgrades).
+
+### JSON API
+
+The dashboard reads five JSON endpoints. You can call them with `curl` on the host that runs the
+node:
+
+```bash
+curl -s http://127.0.0.1:9092/api/snapshot | jq '.network'
+```
+
+| Endpoint                                           | Returns                                                                                                                                                                                                                                                                               |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/snapshot`                                | `node` (name, address, peer ID, ports, version, chains), `network` (`configured_peers`, `connected_peers`, `gossip_subscribed_peers`, `listen_addresses`, `last_error`), `protocol` (E3 counts), `operator` (on-chain state for each chain), `e3s`, and the 40 newest `recent_events` |
+| `GET /api/e3?e3_id=<id>`                           | The trace of one E3. An unknown ID returns HTTP 404.                                                                                                                                                                                                                                  |
+| `GET /api/events?limit=<n>`                        | The newest protocol events. The default limit is 500 and the maximum is 2,000.                                                                                                                                                                                                        |
+| `GET /api/logs?since=&limit=&level=&target=&text=` | Operational log entries, with `next_cursor`, `oldest_cursor`, and `total_stored`. The default limit is 500 and the maximum is 2,000.                                                                                                                                                  |
+| `GET /api/updates`                                 | `current_version`, `latest` release, `update_available`, and `releases_url`. The node checks GitHub at most once an hour, or every 5 minutes after an error.                                                                                                                          |
+
+If the node cannot read its EventStore, an endpoint returns HTTP 503 with an `error` field.
+
+Protocol events come from the durable EventStore of the node. Log entries come from a bounded
+in-memory store, and the node also writes them to `ciphernode.jsonl` in the node data directory. Log
+entries are diagnostics, not protocol records.
+
+## Hosted dashboard
+
+The hosted dashboard at `https://dashboard.theinterfold.com` reads contract events and views
+directly from the chain. It does not connect to your ciphernode, so it cannot show peers, logs, or
+the local state of your node. Each build reads one network. The source selects it with the
+`VITE_NETWORK` build variable (`sepolia` or `mainnet`, default `sepolia`), and the page shows the
+network name.
+
+It has three views:
+
+| View                 | Link                                                        | What it shows                                                                                                                                 |
+| -------------------- | ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| **E3 inspector**     | `#inspector`                                                | Each E3 on the network: request, committee, key generation, input window, compute, decryption, publication, failure, fees, and the event log. |
+| **CRISP**            | `#crisp`                                                    | The CRISP polls of the network and their stages. The view only shows data.                                                                    |
+| **Run a ciphernode** | [`#operator`](https://dashboard.theinterfold.com/#operator) | An interactive operator guide that sends transactions from a browser wallet.                                                                  |
+
+The operator guide is the only view that writes to the chain. It reads the bond size, the ticket
+price, the minimum ticket count, and the exit delay from `BondingRegistry`. It has five steps:
+
+1. **Connect a wallet.**
+2. **Authorize the bond owner.** The operator key sends `setBondOwner`.
+3. **Bond the ciphernode bond.** The bond owner approves FOLD and sends `bondCiphernodeFor`.
+4. **Register the ciphernode.** The bond owner sends `registerOperatorFor`.
+5. **Buy tickets.** The bond owner approves the ticket collateral and sends `addTicketBalanceFor`.
+
+The guide simulates each transaction before the wallet prompt, so a contract error, for example
+`NotBondOwner`, shows before you sign. The guide sets up the on-chain position only. The ciphernode
+must run with the same operator key. See [Registration](/operate/registration) for the CLI
+procedure.
+
+## Next steps
+
+<LinkCards min={230}>
+  <LinkCard title='Troubleshooting' href='/operate/troubleshooting' icon='wrench' tag='Fix'>
+    Symptoms, log lines, and checks for a node that does not behave as expected.
+  </LinkCard>
+  <LinkCard title='Upgrades' href='/operate/upgrades' icon='upgrade' tag='Maintain'>
+    Install a new release, and reset state when a release needs it.
+  </LinkCard>
+  <LinkCard
+    title='Configuration reference'
+    href='/reference/configuration'
+    icon='terminal'
+    tag='Reference'
+  >
+    Every node configuration key, including the dashboard port.
+  </LinkCard>
+</LinkCards>

@@ -1,0 +1,507 @@
+---
+title: 'Node Configuration'
+description:
+  'Every key in interfold.config.yaml, with its type, default, and meaning. Also covers file
+  discovery, storage paths, and environment overrides.'
+---
+
+import { Callout } from 'nextra/components'
+import { LinkCard, LinkCards } from '@/components/ui'
+
+# Node Configuration
+
+This page describes the `interfold.config.yaml` file that the `interfold` CLI and every ciphernode
+read. It is for operators who run a node and for developers who run the local template. It lists
+where the CLI finds the file, where the node stores its data, and every key with its type and
+default. For the procedure that makes and uses this file, see
+[Running a ciphernode](/operate/running).
+
+The source of truth is `crates/config/src`. The values on this page are for release 0.18.0.
+
+## Config file location
+
+The CLI uses the first file that it finds in this order:
+
+1. The path in `--config` (`-c`). A relative path starts from the current directory. With this flag,
+   the file can have any name.
+2. `interfold.config.yaml` in the current directory, or in the nearest parent directory that has
+   one.
+3. `interfold.config.yaml` in the `interfold` folder of the operating system configuration folder.
+   On Linux, this folder is `$XDG_CONFIG_HOME/interfold` or `~/.config/interfold`. On macOS, it is
+   `~/Library/Application Support/interfold`.
+
+To see which file the CLI uses, run `interfold config get config_file`. When no file exists at any
+of these locations, most commands stop. See
+[behavior without a configuration file](/reference/cli#configuration-file).
+
+## How the CLI loads the file
+
+The loader combines four sources. A later source overrides an earlier one:
+
+1. The built-in defaults on this page
+2. The YAML file, after environment variable substitution
+3. Environment variables that start with `E3_`
+4. The `--otel` flag
+
+After it combines the sources, the loader selects one node profile with `--name` and checks it. The
+loader ignores unknown keys at the top level and in a chain entry. An unknown key in a node profile
+stops the load with the error `Could not parse configuration`.
+
+### Variable substitution in the file
+
+Before the loader parses the YAML, it replaces `$NAME` and `${NAME}` with the value of the
+environment variable `NAME`. Use substitution to keep secrets, such as an RPC token, out of the
+file.
+
+```yaml
+chains:
+  - name: sepolia
+    rpc_url: 'wss://ethereum-sepolia-rpc.publicnode.com'
+    rpc_auth:
+      type: Bearer
+      credentials: '${SEPOLIA_RPC_TOKEN}'
+```
+
+When a variable is not set, the load fails with the error `Configuration file not found`.
+
+### Environment overrides
+
+An environment variable that starts with `E3_` overrides one key. Remove the prefix, write the key
+in upper case, and separate nested keys with `__` (two underscores).
+
+| Variable                                       | Key                                     |
+| ---------------------------------------------- | --------------------------------------- |
+| `E3_NODE__QUIC_PORT=9201`                      | `node.quic_port`                        |
+| `E3_NODE__MULTITHREAD_CONCURRENT_JOBS=4`       | `node.multithread_concurrent_jobs`      |
+| `E3_NODES__CN1__MULTITHREAD_CONCURRENT_JOBS=4` | `nodes.cn1.multithread_concurrent_jobs` |
+| `E3_DATA_DIR=/var/lib/interfold/data`          | `data_dir`                              |
+| `E3_CUSTOM_BB=/usr/local/bin/bb`               | `custom_bb`                             |
+
+To change a value in a `chains` entry, use variable substitution in the file.
+
+## Storage paths
+
+The node keeps its files in a `.interfold` folder next to the configuration file. Each node profile
+gets its own subfolder, named after the profile. The default profile is `_default`.
+
+| File                | Default path                                      | Override                 |
+| ------------------- | ------------------------------------------------- | ------------------------ |
+| Password key file   | `.interfold/config/<name>/key`                    | `config_dir`, `key_file` |
+| Key/value store     | `.interfold/data/<name>/db`                       | `data_dir`, `db_file`    |
+| Event log           | `.interfold/data/<name>/log`                      | `data_dir`, `log_file`   |
+| Operational log     | `ciphernode.jsonl` in the folder of the event log | None                     |
+| Barretenberg binary | `.interfold/noir/bin/bb`                          | `custom_bb`              |
+| Circuits            | `.interfold/noir/circuits`                        | None                     |
+| Prover work folder  | `.interfold/noir/work/<name>`                     | None                     |
+
+The paths follow these rules:
+
+- A `config_dir` or `data_dir` in a node profile overrides the top-level key with the same name.
+- The node adds `<name>` to a `config_dir` or `data_dir` override. For example, `data_dir: /srv/if`
+  puts the store of `_default` at `/srv/if/_default/db`.
+- An absolute `key_file`, `db_file`, or `log_file` is used as it is. A relative one starts from
+  `<config_dir>/<name>` or `<data_dir>/<name>`.
+- An absolute `custom_bb` is used as it is. A relative one starts from `.interfold/noir`.
+
+Run `interfold config get key_file`, `db_file`, `log_file`, or `work_dir` to see the resolved paths.
+
+<Callout type='warning'>
+  The key/value store contains the encrypted wallet key and the libp2p key of the node. Do not
+  delete the data folder by hand. To clear the protocol state and keep the identity, use [`interfold
+  node reset-data`](/reference/cli#interfold-node-reset-data).
+</Callout>
+
+## Top-level keys
+
+| Key          | Type             | Default                              | Meaning                                                                                                                              |
+| ------------ | ---------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `node`       | Node profile     | All profile defaults                 | The `_default` profile. Commands use it when `--name` is absent.                                                                     |
+| `nodes`      | Map of profiles  | Empty                                | Named profiles. Select one with `--name <name>`. `interfold nodes up` runs all of them. The name `_default` is reserved.             |
+| `chains`     | List of chains   | Empty                                | The EVM chains that the node reads and writes. See [chain keys](#chain-keys).                                                        |
+| `config_dir` | Path             | `.interfold/config` next to the file | Base folder for key files.                                                                                                           |
+| `data_dir`   | Path             | `.interfold/data` next to the file   | Base folder for the key/value store and the event log.                                                                               |
+| `custom_bb`  | Path             | None                                 | Barretenberg binary to use instead of the downloaded one. The node does not verify its checksum. The version must match the release. |
+| `program`    | Program settings | None                                 | Settings for `interfold program`. See [program settings](#program-settings).                                                         |
+| `otel`       | String           | None                                 | The loader replaces this key with the `--otel` flag, also when the flag is absent. Use `--otel` to set the endpoint.                 |
+
+## Node profile keys
+
+The `node` key and each entry under `nodes` accept the same keys. Every key is optional.
+
+### Network settings
+
+| Key              | Type                      | Default                     | Meaning                                                                                                                      |
+| ---------------- | ------------------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `network`        | String                    | Inferred from the chains    | P2P network profile. The built-in profiles are `mainnet`, `sepolia`, and `local`. See [network profiles](#network-profiles). |
+| `network_id`     | 64 hexadecimal characters | The fixed ID of the profile | 32-byte network identity. A custom network name requires it.                                                                 |
+| `peers`          | List of multiaddrs        | Empty                       | Peers to dial at start. When the list is empty, the node uses the bootstrap peers of the profile.                            |
+| `quic_port`      | Integer (UDP port)        | `9091`                      | Port of the libp2p QUIC listener. The node listens on all interfaces.                                                        |
+| `ctrl_port`      | Integer (TCP port)        | `50505`                     | Control port on `127.0.0.1`. The CLI sends read-only commands to a running node through it.                                  |
+| `dashboard_port` | Integer (TCP port)        | None                        | When set, the node serves a monitoring dashboard at `http://127.0.0.1:<port>`. See [Dashboard](/operate/dashboard).          |
+
+Each profile on one host needs its own `quic_port` and `ctrl_port`.
+
+### Node keys
+
+| Key            | Type    | Default | Meaning                                                                                                                        |
+| -------------- | ------- | ------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `address`      | Address | None    | Ethereum address of the node. `ciphernode setup` writes it. It is information only. The node signs with the stored wallet key. |
+| `autopassword` | Boolean | `false` | When no key file exists, every command that loads the file makes a random password.                                            |
+| `autowallet`   | Boolean | `false` | When no wallet key exists, every command that loads the file makes a random wallet key and the libp2p key from it.             |
+| `autonetkey`   | Boolean | `false` | Only `interfold config get` reads this key. The libp2p key always comes from the wallet key.                                   |
+
+The key file holds the password. The node uses the password to encrypt the wallet key and the libp2p
+key in the key/value store. `interfold wallet set` derives the libp2p key from the wallet private
+key, so the peer ID follows the wallet.
+
+<Callout type='warning'>
+  A random password or wallet from `autopassword` or `autowallet` exists only in the files of that
+  profile. If you lose those files, you lose the key. Use these keys for local development. For an
+  operator node, set the password and the wallet key yourself and keep a copy of the private key.
+</Callout>
+
+### Storage keys
+
+| Key          | Type | Default         | Meaning                                                  |
+| ------------ | ---- | --------------- | -------------------------------------------------------- |
+| `config_dir` | Path | Top-level value | Base folder for the key file of this profile.            |
+| `data_dir`   | Path | Top-level value | Base folder for the store and event log of this profile. |
+| `key_file`   | Path | `key`           | Key file that holds the password.                        |
+| `db_file`    | Path | `db`            | Key/value store.                                         |
+| `log_file`   | Path | `log`           | Event log. The node writes the protocol events here.     |
+
+### Compute and startup limits
+
+| Key                           | Type    | Default               | Meaning                                                                                                   |
+| ----------------------------- | ------- | --------------------- | --------------------------------------------------------------------------------------------------------- |
+| `multithread_reserve_threads` | Integer | `2`                   | Logical CPUs kept for Actix, libp2p, and RPC work. The compute pool does not use them.                    |
+| `multithread_concurrent_jobs` | Integer | `2`                   | Maximum number of CPU-heavy jobs (ZK proofs and TrBFV) at the same time. The node can use a lower value.  |
+| `startup_timeout_secs`        | Integer | `1800` (30 minutes)   | Deadline for construction and initial sync. A node that misses it exits with an error. Must be above `0`. |
+| `max_buffered_evm_events`     | Integer | `100000`              | Maximum decoded EVM events that the node holds for each chain during initial sync. Must be above `0`.     |
+| `max_buffered_net_events`     | Integer | `1024`                | Maximum network events that the node holds during startup sync. Must be above `0`.                        |
+| `max_buffered_net_bytes`      | Integer | `268435456` (256 MiB) | Maximum estimated bytes in the network startup buffer. Must be above `0`.                                 |
+| `skip_proof_aggregation`      | Boolean | `false`               | Test and CI only. See the note below.                                                                     |
+
+The node calculates the number of jobs that it admits. The number is the lowest of these values:
+
+- `multithread_concurrent_jobs`
+- The number of CPUs that is left after `multithread_reserve_threads`
+- The memory limit, minus 4 GiB for the node, divided by 13 GiB for each prover job
+
+The memory limit is the lower of the host memory and the cgroup limit. When the limit cannot hold
+one prover job and the 4 GiB reserve, the node does not start. Do not increase the job count unless
+the host has enough memory for all jobs.
+
+When the EVM buffer overflows during startup, the start fails. The node does not drop the events.
+
+<Callout type='info'>
+  `skip_proof_aggregation: true` skips recursive proof aggregation for DKG and decryption. The node
+  refuses to start with this value unless the binary has the `test-only-skip-proof-aggregation`
+  Cargo feature. Release binaries do not have this feature. On-chain verification still applies, so
+  the value works only against mock verifiers.
+</Callout>
+
+## Network profiles
+
+The network profile selects the P2P network that the node joins. Nodes on different profiles cannot
+communicate.
+
+| Profile   | Network ID                                                         | Bootstrap peer                                 |
+| --------- | ------------------------------------------------------------------ | ---------------------------------------------- |
+| `mainnet` | `c3e81f904b0a8129dce0a85a8d48958a3ca5ee3aea6c32b623fcf66b35728acb` | `/dnsaddr/bootstrap.interfold.network`         |
+| `sepolia` | `ab33954b5b3fadf808f03a7c8a7dd159a29ac5950e6c3d724f76ed4c26c9e5c2` | `/dnsaddr/bootstrap-sepolia.interfold.network` |
+| `local`   | `d7cec7f3c090b451f4ff10461b424728e320f72cf3dada907c5bdfe5570a5807` | None                                           |
+
+When `network` is absent, the loader infers the profile from the enabled chains:
+
+| Chain value                                                               | Profile                                         |
+| ------------------------------------------------------------------------- | ----------------------------------------------- |
+| `chain_id: 1`                                                             | `mainnet`                                       |
+| `chain_id: 11155111`                                                      | `sepolia`                                       |
+| `chain_id: 1337` or `31337`                                               | `local`                                         |
+| No `chain_id`, and `name` is `mainnet`                                    | `mainnet`                                       |
+| No `chain_id`, and `name` is `sepolia`                                    | `sepolia`                                       |
+| No `chain_id`, and `name` is `local`, `localhost`, `hardhat`, or `devnet` | `local`                                         |
+| No enabled chains                                                         | `local`                                         |
+| Any other `chain_id` or `name`                                            | The load fails. Set `network` and `network_id`. |
+
+These rules also apply:
+
+- The names `localhost`, `hardhat`, and `devnet` in `network` mean `local`.
+- When `network` is a built-in profile, every enabled chain must belong to it.
+- When the enabled chains belong to more than one profile, the load fails. Set `network` explicitly
+  and disable the other chains.
+- A custom name can have lowercase letters, digits, and hyphens, up to 32 bytes. It requires
+  `network_id`.
+- The `local` profile rejects the public bootstrap peers. The `mainnet` profile rejects the Sepolia
+  bootstrap peer.
+
+## Chain keys
+
+Each entry in `chains` describes one EVM chain.
+
+| Key                       | Type    | Default      | Meaning                                                                                                                               |
+| ------------------------- | ------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`                    | String  | Required     | Chain name for `--chain`. Use `mainnet` or `sepolia` so that `interfold config check` can compare the chain.                          |
+| `enabled`                 | Boolean | `true`       | When `false`, the node does not read the chain, and the loader ignores it for the network profile.                                    |
+| `rpc_url`                 | URL     | Required     | Ethereum RPC endpoint with the scheme `ws`, `wss`, `http`, or `https`. See [RPC endpoints](/operate/rpc-endpoints).                   |
+| `rpc_auth`                | Object  | `type: None` | RPC credentials. See [RPC authentication](#rpc-authentication).                                                                       |
+| `chain_id`                | Integer | None         | Expected chain ID. At start, the node stops when the RPC endpoint reports a different ID.                                             |
+| `ingestion_confirmations` | Integer | `1`          | Confirmations that a block needs before the node applies its logs. Set `0` only for a single-process development chain such as Anvil. |
+| `finalization_ms`         | Integer | `0`          | Write delay, in milliseconds, of the snapshot buffer for events from this chain.                                                      |
+| `data_availability`       | Object  | None         | Reader for ciphertexts on the data availability layer. `interfold start` requires it. See [data availability](#data-availability).    |
+| `contracts`               | Object  | Required     | Contract addresses. See [contract keys](#contract-keys).                                                                              |
+
+`interfold start` accepts only the chain IDs `1`, `11155111`, `1337`, and `31337`, because VRF
+sortition supports only these chains.
+
+### RPC authentication
+
+| `type`   | `credentials`                            | Header that the node sends  |
+| -------- | ---------------------------------------- | --------------------------- |
+| `None`   | None                                     | None                        |
+| `Basic`  | An object with `username` and `password` | `Authorization: Basic ...`  |
+| `Bearer` | A token string                           | `Authorization: Bearer ...` |
+
+```yaml
+rpc_auth:
+  type: Basic
+  credentials:
+    username: '${RPC_USER}'
+    password: '${RPC_PASSWORD}'
+```
+
+### Data availability
+
+The protocol stores large ciphertext outputs on a data availability layer. The node reads them back
+through this reader. `interfold start` stops with an error when an enabled chain has no
+`data_availability` block.
+
+| Key       | Type   | Values               | Meaning                                                                                  |
+| --------- | ------ | -------------------- | ---------------------------------------------------------------------------------------- |
+| `mode`    | String | `avail`, `mock_http` | `avail` reads from Avail. `mock_http` reads from a local object service for development. |
+| `rpc_url` | URL    | `http` or `https`    | The Avail RPC endpoint, or the URL of the local object service.                          |
+
+The Avail reader does not accept WebSocket URLs. The DAppNode package uses these Avail endpoints by
+default:
+
+| Network | Avail `rpc_url`                     |
+| ------- | ----------------------------------- |
+| Mainnet | `https://avail-rpc.publicnode.com/` |
+| Sepolia | `https://turing-rpc.avail.so/rpc`   |
+
+<Callout type='info'>
+  `interfold ciphernode setup` does not write a `data_availability` block. Add the block to the
+  chain entry before you run `interfold start`.
+</Callout>
+
+### Contract keys
+
+The keys under `contracts` are the same names that `deployments/manifest.json` uses. Copy the values
+from [Contracts & Addresses](/reference/contracts).
+
+| Key                             | Required               | Used by                                                                                  |
+| ------------------------------- | ---------------------- | ---------------------------------------------------------------------------------------- |
+| `interfold`                     | Yes                    | The node, `print-env`, `config check`                                                    |
+| `ciphernode_registry`           | Yes                    | The node, `print-env`, `config check`                                                    |
+| `bonding_registry`              | Yes                    | The node, the `ciphernode` on-chain commands, `print-env`, `config check`                |
+| `slashing_manager`              | For `interfold start`  | The node, which submits slash proposals, and `config check`                              |
+| `fee_token`                     | No                     | `print-env`, `config check`                                                              |
+| `faucet`                        | For `interfold faucet` | `interfold faucet`, `config check`. Sepolia only.                                        |
+| `e3_program`                    | No                     | `print-env`. An application sets its own E3 program. `config check` does not compare it. |
+| `dkg_fold_attestation_verifier` | No                     | `config check`. The node reads the verifier address from the chain.                      |
+
+Each contract accepts two forms:
+
+```yaml
+contracts:
+  # Address and deploy block
+  interfold:
+    address: '0x...'
+    deploy_block: 28
+  # Address only. Use this form only with a local RPC endpoint.
+  e3_program: '0x...'
+```
+
+The node reads chain history from the lowest `deploy_block` of all contracts in the chain entry.
+When the RPC endpoint is not local, every contract needs a `deploy_block` above `0`. Otherwise, the
+start fails with the error `Misconfiguration: Attempted to query historical events from genesis`.
+The node treats `localhost`, `::1`, and every `127.x.x.x` address as local.
+
+## Program settings
+
+The `program` key configures `interfold program` and `interfold compile`. The ciphernode does not
+read it.
+
+| Key                    | Type    | Default | Meaning                                                                                    |
+| ---------------------- | ------- | ------- | ------------------------------------------------------------------------------------------ |
+| `program.dev`          | Boolean | `false` | Uses the Dev Mode scripts. The `--dev` flag overrides it.                                  |
+| `program.risc0`        | Object  | None    | RISC Zero settings. `interfold program start` needs them outside Dev Mode.                 |
+| `risc0.risc0_dev_mode` | Integer | `1`     | Value of `RISC0_DEV_MODE`. `0` makes real proofs through Boundless. `1` makes fake proofs. |
+| `risc0.boundless`      | Object  | None    | Boundless prover market settings.                                                          |
+
+| `boundless` key       | Type    | Default           | Meaning                                                                                |
+| --------------------- | ------- | ----------------- | -------------------------------------------------------------------------------------- |
+| `rpc_url`             | URL     | Required          | RPC endpoint of the chain where Boundless requests go.                                 |
+| `private_key`         | String  | Required          | Key that pays for proof requests. Use variable substitution for it.                    |
+| `pinata_jwt`          | String  | None              | Pinata token for `interfold program upload`.                                           |
+| `ipfs_gateway_url`    | URL     | None              | Public gateway for program and input downloads. Use a dedicated gateway in production. |
+| `program_url`         | URL     | None              | URL of a program that you uploaded before.                                             |
+| `onchain`             | Boolean | `true`            | `true` sends on-chain requests. `false` sends off-chain requests.                      |
+| `min_price_eth`       | Number  | `0.00005`         | Minimum offer price in ETH.                                                            |
+| `max_price_eth`       | Number  | `0.004`           | Maximum offer price in ETH. It must not be below `min_price_eth`.                      |
+| `timeout_secs`        | Integer | `28800` (8 hours) | Total request timeout.                                                                 |
+| `lock_timeout_secs`   | Integer | `14400` (4 hours) | Lock timeout. It must be above `0` and below `timeout_secs`.                           |
+| `ramp_up_secs`        | Integer | `7200` (2 hours)  | Price ramp-up period. It must not be above `lock_timeout_secs`.                        |
+| `lock_collateral_zkc` | Number  | `100.0`           | Lock collateral in ZKC.                                                                |
+
+The support container applies the defaults of the offer parameters when a key is absent.
+
+## Complete example
+
+This example is a valid file for local development with the default template. It sets every key that
+a local node uses. The addresses come from `templates/default/interfold.config.yaml` and change when
+you deploy the contracts again.
+
+```yaml filename="interfold.config.yaml"
+# Top-level folders. When absent, the node uses .interfold/ next to this file.
+# config_dir: /var/lib/interfold/config
+# data_dir: /var/lib/interfold/data
+# custom_bb: /usr/local/bin/bb
+
+# The default profile. Commands use it when --name is absent.
+node:
+  network: local
+  # network_id: '<64 hex characters>' # Only for a custom network name.
+  # address: '0x...'                  # Information only.
+  peers: []
+  quic_port: 9091
+  ctrl_port: 50505
+  dashboard_port: 8004
+  db_file: db
+  key_file: key
+  log_file: log
+  autopassword: false
+  autowallet: false
+  autonetkey: false
+  multithread_reserve_threads: 2
+  multithread_concurrent_jobs: 2
+  startup_timeout_secs: 1800
+  max_buffered_evm_events: 100000
+  max_buffered_net_events: 1024
+  max_buffered_net_bytes: 268435456
+  skip_proof_aggregation: false
+
+# Named profiles. Select one with --name, or run all with `interfold nodes up`.
+nodes:
+  cn1:
+    quic_port: 9201
+    ctrl_port: 50501
+    autopassword: true
+    autowallet: true
+  cn2:
+    quic_port: 9202
+    ctrl_port: 50502
+    autopassword: true
+    autowallet: true
+    peers:
+      - /ip4/127.0.0.1/udp/9201/quic-v1
+
+chains:
+  - name: localhost
+    enabled: true
+    chain_id: 31337
+    rpc_url: ws://localhost:8545
+    rpc_auth:
+      type: None
+    ingestion_confirmations: 0 # Anvil only. Keep the default on public chains.
+    finalization_ms: 0
+    data_availability:
+      mode: mock_http
+      rpc_url: http://127.0.0.1:8080/availability
+    contracts:
+      interfold:
+        address: '0x9A676e781A523b5d0C0e43731313A708CB607508'
+        deploy_block: 28
+      ciphernode_registry:
+        address: '0x5FC8d32690cc91D4c39d9d3abcBD16989F875707'
+        deploy_block: 19
+      bonding_registry:
+        address: '0xa513E6E4b8f2a923D98304ec87F64353C4D5C853'
+        deploy_block: 20
+      slashing_manager:
+        address: '0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9'
+        deploy_block: 18
+      fee_token:
+        address: '0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512'
+        deploy_block: 16
+      e3_program:
+        address: '0xcbEAF3BDe82155F56486Fb5a1072cb8baAf547cc'
+        deploy_block: 56
+
+program:
+  dev: true
+  risc0:
+    risc0_dev_mode: 1
+```
+
+## Public network chain entry
+
+For Sepolia or mainnet, change the chain entry as this fragment shows. Replace each value in angle
+brackets with the value from [Contracts & Addresses](/reference/contracts). For a complete operator
+file, see [Running a ciphernode](/operate/running).
+
+```yaml
+node:
+  network: sepolia # or mainnet
+  quic_port: 9091
+
+chains:
+  - name: sepolia # Use mainnet on mainnet. config check compares by this name.
+    chain_id: 11155111 # 1 on mainnet
+    rpc_url: 'wss://<your RPC endpoint>'
+    data_availability:
+      mode: avail
+      rpc_url: 'https://turing-rpc.avail.so/rpc' # https://avail-rpc.publicnode.com/ on mainnet
+    contracts:
+      interfold:
+        address: '<interfold address>'
+        deploy_block: <interfold deploy block>
+      ciphernode_registry:
+        address: '<ciphernode_registry address>'
+        deploy_block: <ciphernode_registry deploy block>
+      bonding_registry:
+        address: '<bonding_registry address>'
+        deploy_block: <bonding_registry deploy block>
+      slashing_manager:
+        address: '<slashing_manager address>'
+        deploy_block: <slashing_manager deploy block>
+      fee_token:
+        address: '<fee_token address>'
+        deploy_block: <fee_token deploy block>
+```
+
+After you edit the file, run `interfold config check`. The command compares the addresses with the
+published deployment manifest.
+
+## Next steps
+
+<LinkCards min={230}>
+  <LinkCard title='Running a ciphernode' href='/operate/running' icon='node' tag='Operators'>
+    Make the file, set the keys, and start the node.
+  </LinkCard>
+  <LinkCard
+    title='Contracts & Addresses'
+    href='/reference/contracts'
+    icon='contract'
+    tag='Reference'
+  >
+    The address and deploy block of each contract for mainnet and Sepolia.
+  </LinkCard>
+  <LinkCard title='CLI Reference' href='/reference/cli' icon='terminal' tag='Reference'>
+    Every command that reads this file, with its flags.
+  </LinkCard>
+  <LinkCard title='Troubleshooting' href='/operate/troubleshooting' icon='wrench' tag='Operators'>
+    Fixes for start errors, sync problems, and configuration mistakes.
+  </LinkCard>
+</LinkCards>

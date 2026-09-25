@@ -1,0 +1,329 @@
+---
+title: 'Encrypt and Submit an Input'
+description:
+  'Request an E3, get the committee public key, encrypt an input with the SDK, submit it to the E3
+  program, and read the result.'
+---
+
+import { Callout, Steps } from 'nextra/components'
+import { Flow, LinkCards, LinkCard } from '@/components/ui'
+
+# Encrypt and Submit an Input
+
+This tutorial shows the client side of one E3 on the local template stack. You request an E3, get
+the committee public key, encrypt two numbers, and submit them to the E3 program. Then you read the
+decrypted sum. It is for developers who have the template running and want to write their own client
+code. Every call on this page is a real SDK or viem call, and the input format is the format that
+the template program `MyProgram` accepts.
+
+<Flow
+  label='Client side of one E3'
+  steps={[
+    { label: 'Get the key', icon: 'key', sub: 'Join the key chunks and check the commitment.' },
+    { label: 'Encrypt', icon: 'lock', sub: 'Encrypt the value to the committee key.' },
+    { label: 'Commit', icon: 'shield', sub: 'Compute the SAFE commitment of the ciphertext.' },
+    { label: 'Submit', icon: 'contract', sub: 'Call publishInput on the E3 program.' },
+    { label: 'Read', icon: 'eye', sub: 'Decode the plaintext output.' },
+  ]}
+/>
+
+## Before you start
+
+You need these items:
+
+- A running template stack. Run `pnpm dev:all` in the project. See
+  [Quick Start](/build/quick-start).
+- `@interfold/sdk` and `viem` in your project. For a browser, also add the Vite plugins from
+  [SDK](/build/sdk#install).
+- The addresses from `interfold print-env --chain localhost`: `INTERFOLD_ADDRESS`,
+  `REGISTRY_ADDRESS`, `FEE_TOKEN_ADDRESS`, and `E3_PROGRAM_ADDRESS`.
+- A funded local account. The first Anvil account deploys the contracts and holds the mock fee
+  token.
+
+The samples run in Node.js. They use `RPC_URL`, `PRIVATE_KEY`, and the four addresses as variables.
+
+## Procedure
+
+<Steps>
+
+### Create the SDK client
+
+Create one SDK instance and one viem wallet client. The SDK sends Interfold calls. The wallet client
+sends the E3 program call.
+
+```ts
+import { InterfoldSDK } from '@interfold/sdk'
+import { createWalletClient, http } from 'viem'
+import { privateKeyToAccount } from 'viem/accounts'
+import { hardhat } from 'viem/chains'
+
+const sdk = InterfoldSDK.create({
+  rpcUrl: RPC_URL,
+  privateKey: PRIVATE_KEY,
+  contracts: {
+    interfold: INTERFOLD_ADDRESS,
+    ciphernodeRegistry: REGISTRY_ADDRESS,
+    feeToken: FEE_TOKEN_ADDRESS,
+  },
+  chain: hardhat,
+  // Must match paramSet 0, which the request in the next step uses.
+  thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_512',
+})
+
+const walletClient = createWalletClient({
+  account: privateKeyToAccount(PRIVATE_KEY),
+  chain: hardhat,
+  transport: http('http://localhost:8545'),
+})
+```
+
+The result is a client that can read, write, and watch events.
+
+### Request an E3
+
+Quote the fee, approve it, and send the request. Then read the E3 ID from the `E3Requested` log.
+
+```ts
+import {
+  DEFAULT_COMPUTE_PROVIDER_PARAMS,
+  InterfoldEventType,
+  calculateInputWindow,
+  encodeComputeProviderParams,
+  type E3RequestedData,
+} from '@interfold/sdk'
+
+const publicClient = sdk.getPublicClient()
+const requestParams = {
+  committeeSize: 0, // CommitteeSize.Minimum
+  inputWindow: await calculateInputWindow(publicClient, 300), // 300-second window
+  e3Program: E3_PROGRAM_ADDRESS,
+  paramSet: 0,
+  computeProviderParams: encodeComputeProviderParams(DEFAULT_COMPUTE_PROVIDER_PARAMS),
+}
+
+const fee = await sdk.getE3Quote(requestParams)
+await sdk.waitForTransaction(await sdk.approveFeeToken(fee))
+const requestHash = await sdk.requestE3({ ...requestParams, maxFee: fee })
+
+const receipt = await publicClient.waitForTransactionReceipt({ hash: requestHash })
+const logs = await sdk.getHistoricalEvents(
+  InterfoldEventType.E3_REQUESTED,
+  receipt.blockNumber,
+  receipt.blockNumber,
+)
+const requestLog = logs.find((log) => log.transactionHash === requestHash)
+const e3Id = (requestLog as unknown as { args: E3RequestedData }).args.e3Id
+```
+
+The result is the E3 ID. It is a large number, because the Interfold address is in its high bits.
+
+### Get the committee public key
+
+Wait for the committee to publish the key. Committee members publish the serialized key in
+`CommitteePublicKeyChunkPublished` events. Join the chunks, and keep the key only if it matches the
+proven commitment. This code follows `templates/default/server/index.ts`.
+
+```ts
+import { CommitteePublicKeyAssembler, RegistryEventType } from '@interfold/sdk'
+import { hexToBytes } from 'viem'
+
+const assembler = new CommitteePublicKeyAssembler()
+
+const publicKey = await new Promise<Uint8Array>((resolve) => {
+  void sdk.onInterfoldEvent(
+    RegistryEventType.COMMITTEE_PUBLIC_KEY_CHUNK_PUBLISHED,
+    async (event) => {
+      if (event.data.e3Id !== e3Id) return
+      try {
+        const assembled = assembler.add(event.data)
+        if (!assembled) return
+        const isBoundKey = await sdk.validatePublicKeyCommitment(
+          assembled.publicKey,
+          hexToBytes(assembled.pkCommitment),
+        )
+        if (isBoundKey) resolve(assembled.publicKey)
+      } catch (error) {
+        console.warn('Ignored an invalid key chunk:', error)
+      }
+    },
+  )
+})
+```
+
+The result is the committee public key as a `Uint8Array`. On the local stack, it arrives after the
+committee completes DKG.
+
+### Encrypt the input
+
+Encrypt the value to the committee key. Then compute the SAFE commitment of the ciphertext.
+
+```ts
+const ciphertext = await sdk.encryptNumber(20n, publicKey)
+const commitment = await sdk.computeCiphertextCommitment(ciphertext)
+```
+
+The result is the ciphertext bytes and a 32-byte commitment. To encrypt a list of values, use
+`sdk.encryptVector(BigUint64Array.from([1n, 2n]), publicKey)`.
+
+### Submit the input
+
+Encode the ciphertext and the commitment as `(bytes, bytes32)`. Then call `publishInput` on the E3
+program.
+
+```ts
+import { bytesToHex, encodeAbiParameters, parseAbi, parseAbiParameters } from 'viem'
+
+const data = encodeAbiParameters(parseAbiParameters('bytes, bytes32'), [
+  bytesToHex(ciphertext),
+  bytesToHex(commitment),
+])
+
+const inputHash = await walletClient.writeContract({
+  address: E3_PROGRAM_ADDRESS,
+  abi: parseAbi(['function publishInput(uint256 e3Id, bytes data)']),
+  functionName: 'publishInput',
+  args: [e3Id, data],
+})
+await sdk.waitForTransaction(inputHash)
+```
+
+The result is a mined transaction with an `InputPublished(e3Id, data, index)` log from `MyProgram`.
+`MyProgram` rejects the call after `inputWindow[1]` with `InputDeadlineReached`.
+
+### Submit a second input
+
+Repeat the two previous steps with a second value, for example `22n`. The template server runs the
+computation only when the E3 has at least two inputs.
+
+### Read the result
+
+Watch for the plaintext output of your E3. Decode it with `decodePlaintextOutput`.
+
+```ts
+import { decodePlaintextOutput } from '@interfold/sdk'
+
+await sdk.onInterfoldEvent(InterfoldEventType.PLAINTEXT_OUTPUT_PUBLISHED, (event) => {
+  if (event.data.e3Id !== e3Id) return
+  console.log('Sum:', decodePlaintextOutput(event.data.plaintextOutput))
+})
+```
+
+The result appears after the input window closes. The server sends the inputs to the program runner
+and publishes the ciphertext output. Then the committee decrypts it. The output is the sum of the
+two values.
+
+</Steps>
+
+To check the result later, read the stage and the record:
+
+```ts
+import { E3Stage, decodePlaintextOutput } from '@interfold/sdk'
+
+if ((await sdk.getE3Stage(e3Id)) === E3Stage.Complete) {
+  const e3 = await sdk.getE3(e3Id)
+  console.log('Sum:', decodePlaintextOutput(e3.plaintextOutput))
+}
+```
+
+## Read the key after it is published
+
+A client that starts after the key publication does not get the live events. Read the chunks from
+history instead. Give a `fromBlock` before the key publication. The SDK then reads in ranges of
+10,000 blocks.
+
+```ts
+import {
+  CommitteePublicKeyAssembler,
+  RegistryEventType,
+  type CommitteePublicKeyChunkPublishedData,
+} from '@interfold/sdk'
+import { hexToBytes } from 'viem'
+
+const assembler = new CommitteePublicKeyAssembler()
+const chunkLogs = await sdk.getHistoricalEvents(
+  RegistryEventType.COMMITTEE_PUBLIC_KEY_CHUNK_PUBLISHED,
+  fromBlock,
+)
+
+for (const log of chunkLogs) {
+  const chunk = (log as unknown as { args: CommitteePublicKeyChunkPublishedData }).args
+  if (chunk.e3Id !== e3Id) continue
+  const assembled = assembler.add(chunk)
+  if (
+    assembled &&
+    (await sdk.validatePublicKeyCommitment(assembled.publicKey, hexToBytes(assembled.pkCommitment)))
+  ) {
+    // assembled.publicKey is the committee key.
+    break
+  }
+}
+```
+
+`sdk.getE3PublicKey(e3Id)` returns only the 32-byte commitment from the registry. It does not return
+the key.
+
+<Callout type='info'>
+  `sdk.generatePublicKey()` returns a new random BFV public key. It is useful to test encryption
+  without a committee. The committee cannot decrypt data that is encrypted to this key.
+</Callout>
+
+## Add an encryption proof
+
+A program can require a proof that the ciphertext is a valid encryption.
+`sdk.encryptNumberAndGenProof(value, publicKey)` returns `{ encryptedData, proof }`. The circuits in
+the SDK support only the `INSECURE_THRESHOLD_512` preset and the `Minimum` committee. For other
+presets, use `encryptNumberAndGenInputs` and your own circuits. See
+[SDK](/build/sdk#encryption-proofs) and [Custom Noir circuits](/build/tutorials/custom-zk-circuits).
+
+## How CRISP submits inputs
+
+CRISP stores ballot ciphertexts on Avail, not on Ethereum. Its input flow has three parts:
+
+1. The CRISP server checks the ballot proof, stores the exact bytes, and signs an availability
+   attestation.
+2. `CRISPProgram.publishInput` checks the proof and the attestation, reserves the tree leaf, and
+   emits `InputCommitted`.
+3. The server publishes the bytes to Avail. After the Avail range is bridged to Ethereum, any
+   account calls `finalizeInput` with the receipt. The program emits `InputPublished`.
+
+`CRISPProgram.verify` refuses the compute proof while an input is still pending. See
+[CRISP](/CRISP/introduction).
+
+## Common problems
+
+| Symptom                                            | Cause                                                              | Fix                                             |
+| -------------------------------------------------- | ------------------------------------------------------------------ | ----------------------------------------------- |
+| The key promise never resolves                     | The watcher started after the key chunks were published.           | Read the chunks from history.                   |
+| `validatePublicKeyCommitment` returns `false`      | The SDK preset does not match the `paramSet` of the E3.            | Set the preset that matches `paramSet`.         |
+| `GET_E3_PUBLIC_KEY_FAILED`                         | The committee has not published yet.                               | Wait for the key chunk events.                  |
+| `publishInput` reverts with `InputDeadlineReached` | The input window closed.                                           | Request a new E3 with a longer window.          |
+| `publishInput` reverts with `EmptyInputData`       | The ciphertext is empty.                                           | Check the encryption step.                      |
+| No plaintext output                                | The E3 has fewer than two inputs, so the template server skips it. | Submit two inputs before the window closes.     |
+| A WebAssembly error in the browser                 | The Vite plugins are missing.                                      | Add the plugins from [SDK](/build/sdk#install). |
+
+## Next steps
+
+<LinkCards min={230}>
+  <LinkCard title='SDK' href='/build/sdk' icon='terminal' tag='Build'>
+    Every export, event type, and error code.
+  </LinkCard>
+  <LinkCard title='Client and server' href='/build/client-and-server' icon='network' tag='Build'>
+    How the template client and server divide the work.
+  </LinkCard>
+  <LinkCard
+    title='Custom Noir circuits'
+    href='/build/tutorials/custom-zk-circuits'
+    icon='circuit'
+    tag='Tutorial'
+  >
+    Add input proofs that your program verifies.
+  </LinkCard>
+  <LinkCard
+    title='Deploy to Sepolia'
+    href='/build/tutorials/deploy-to-testnet'
+    icon='rocket'
+    tag='Tutorial'
+  >
+    Run the same flow on a testnet.
+  </LinkCard>
+</LinkCards>

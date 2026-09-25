@@ -1,0 +1,346 @@
+---
+title: 'Compute Provider'
+description:
+  'How the compute provider runs the secure process, proves it with RISC Zero, and returns the
+  output to the server that calls publishCiphertextOutput. Includes the setup for a compute
+  provider.'
+---
+
+import { Callout, Steps } from 'nextra/components'
+import { LinkCard, LinkCards } from '@/components/ui'
+
+# Compute Provider
+
+The compute provider (CP) runs the secure process off-chain and proves that it ran correctly. The
+Interfold repository ships one CP stack: a program server that runs the secure process, with a RISC
+Zero zkVM guest for the proof. This page explains what the Interfold contract expects from a CP, how
+the Rust crates fit together, and how to run a CP. It is for E3 program developers and for the
+person who runs the CP.
+
+## What the Interfold contract expects
+
+The Interfold contract has no registry of compute providers. It checks the result, not the party
+that made it.
+
+- Any account can call `publishCiphertextOutput`. The function has no caller restriction.
+- The call must come after the input window closes and before the compute deadline. The E3 must be
+  in the `KeyPublished` stage, and the output can be published only one time.
+- The committee of the E3 must still meet its threshold.
+- The proof must pass the protocol ciphertext verifier of the encryption scheme and then `verify` on
+  the program contract.
+- The request field `computeProviderParams` goes to `IE3Program.validate` unchanged. The Interfold
+  contract does not read it.
+
+<Callout type='info'>
+  `interfaces/IComputeProvider.sol` defines `validate(e3Id, seed, params)`, which returns a
+  decryption verifier. `Interfold.sol` does not call this interface. Only the test contract
+  `MockComputeProvider` implements it. The decryption verifier comes from `setDecryptionVerifier`
+  for the encryption scheme.
+</Callout>
+
+## Components
+
+| Component              | Location                     | Role                                                                                       |
+| ---------------------- | ---------------------------- | ------------------------------------------------------------------------------------------ |
+| `e3-compute-provider`  | `crates/compute-provider`    | `ComputeProvider` trait, `ComputeManager`, `ComputeInput`, `InputPolicy`, input tree       |
+| `e3-program-server`    | `crates/program-server`      | HTTP server with `POST /run_compute` and `GET /health`. It calls your runner function.     |
+| `e3-support-scripts`   | `crates/support-scripts`     | Called by `interfold program`. It holds the dev runner and the Docker control scripts.     |
+| E3 support (RISC Zero) | `crates/support`             | Docker image with the RISC Zero guest, the Boundless host, and the `e3-support-app` server |
+| Coordination server    | `server/index.ts` (template) | Sends the job, receives the webhook, and calls `publishCiphertextOutput`                   |
+
+`crates/support` is a separate Cargo workspace. It reads `e3-compute-provider` and `e3-fhe-params`
+through a git revision pin, not through a path. A change to `crates/compute-provider` has no effect
+on the guest until that pin moves.
+
+## The ComputeProvider trait
+
+A CP implements one method (`crates/compute-provider/src/ciphertext_output.rs`):
+
+```rust filename="crates/compute-provider/src/ciphertext_output.rs"
+pub trait ComputeProvider {
+    type Output: Send + Sync;
+
+    fn prove(&self, input: &ComputeInput, policy: InputPolicy) -> Self::Output;
+}
+```
+
+`ComputeManager` connects the provider, the inputs, and the processor. `start(policy)` runs the
+secure process and then calls `prove` with the same policy. It returns the provider output and the
+output ciphertext from the same input selection. Use `with_published` when the policy reads the
+commitment or metadata of each input.
+
+The dev runner (`crates/support-scripts/dev/src/main.rs`) is the smallest complete CP. It runs the
+template processor, builds a mock proof, and serves it over HTTP:
+
+```rust filename="crates/support-scripts/dev/src/main.rs"
+#[tokio::main]
+async fn main() -> Result<()> {
+    let server = E3ProgramServer::builder(|job| async move {
+        let mut manager = ComputeManager::with_published(
+            MockProofProvider,
+            job.inputs,
+            job.published,
+            fhe_processor,
+        );
+        let (result, ciphertext) = manager.start(e3_user_program::policy())?;
+        let proof = encode_mock_compute_proof(&[3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5], &result)?;
+
+        Ok((proof, ciphertext))
+    })
+    .build()?;
+
+    server.run().await?;
+    Ok(())
+}
+```
+
+The RISC Zero host in `crates/support/host/src/lib.rs` does the same with `BoundlessProvider` and
+`Risc0Provider`.
+
+## The program server
+
+The program server does not send transactions. It computes, then posts the result to the
+`callback_url` of the request. The coordination server receives that webhook and calls
+`publishCiphertextOutput`.
+
+| Setting       | Value                                                                                                                           |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Bind address  | `0.0.0.0:13151` (`E3ProgramServerBuilder` defaults, and fixed in `e3-support-app`)                                              |
+| Endpoints     | `POST /run_compute`, `GET /health`, `HEAD /health`                                                                              |
+| Body limit    | 10 MB of JSON in `crates/program-server`                                                                                        |
+| Parallel jobs | 1 by default in both servers. A request over the limit gets HTTP 429.                                                           |
+| Webhook       | One attempt in `crates/program-server`. Up to five attempts in `e3-support-app` after a network error or HTTP 5xx, 408, or 429. |
+| Response      | `{"status":"processing","e3_id":"<id>"}` at once. The computation runs in the background.                                       |
+
+### Request fields
+
+`POST /run_compute` takes a JSON body (`crates/program-server/src/types.rs`, `ComputeRequest`):
+
+| Field                       | Type                     | Content                                                                     |
+| --------------------------- | ------------------------ | --------------------------------------------------------------------------- |
+| `e3_id`                     | string                   | The E3 ID. Required.                                                        |
+| `chain_id`                  | number                   | Chain ID for the proof domain                                               |
+| `interfold_address`         | hex string               | Interfold contract address for the proof domain                             |
+| `encryption_scheme_id`      | hex string               | `e3.encryptionSchemeId`                                                     |
+| `committee_public_key_hash` | hex string               | `e3.committeePublicKey` (a hash of the committee key)                       |
+| `params`                    | hex string               | `paramSetRegistry[e3.paramSet]` from the Interfold contract                 |
+| `ciphertext_inputs`         | array of `[hex, number]` | Each input ciphertext and its on-chain index, sorted by index               |
+| `input_commitments`         | array of hex strings     | Optional. The commitment that the program stored for each input.            |
+| `input_slots`               | array of hex strings     | Optional. The 20-byte slot of each input. Send it with `input_commitments`. |
+| `input_parents`             | array of numbers         | Optional. The parent index plus one of each input, at most `uint40`.        |
+| `callback_url`              | string                   | The URL for the webhook. Required.                                          |
+
+The template server sends only the first seven fields and `callback_url` (`server/runner.ts`). The
+default policy needs no per-input data. CRISP also sends the three optional fields.
+
+### Webhook payload
+
+The webhook body is a tagged JSON object. On success:
+
+```json
+{
+  "status": "completed",
+  "e3_id": "1",
+  "ciphertext": "0x...",
+  "ciphertext_commitment": "0x...",
+  "proof": "0x..."
+}
+```
+
+On failure: `{"status":"failed","e3_id":"1","error":"..."}`. The template server takes the success
+body and calls `publishCiphertextOutput` with a `CiphertextOutputReference`:
+
+```ts filename="server/index.ts"
+await sdk.publishCiphertextOutput(BigInt(e3_id), {
+  contentHash,
+  ciphertextCommitment: ciphertext_commitment,
+  computeProof: proof,
+  // The local program verifies raw bytes as a deterministic mock receipt.
+  availabilityProof: ciphertext,
+})
+```
+
+The program server rejects a callback URL that points at a private or link-local address. Loopback
+is allowed. Set `ALLOW_PRIVATE_CALLBACKS=1` to allow private addresses for local development.
+
+## Proof modes
+
+The `program` section of `interfold.config.yaml` selects the mode
+(`crates/config/src/program_config.rs`).
+
+| Setting                           | What `interfold program start` runs                                              | Proof                                                  |
+| --------------------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| `program.dev: true`               | `.interfold/support/dev/start`: the dev runner, built from your `program/` crate | Mock proof. Only a mock RISC Zero verifier accepts it. |
+| `program.risc0.risc0_dev_mode: 1` | The `e3-support` container                                                       | Fake proof with an empty seal                          |
+| `program.risc0.risc0_dev_mode: 0` | The `e3-support` container                                                       | Groth16 proof from the Boundless market                |
+
+The template sets `program.dev: true`. `--dev true` on `interfold program start` or
+`interfold program compile` overrides the file. When `dev` is false, `program.risc0` must be
+present, or `start` fails with `start must be run with risc0 config available`. `risc0_dev_mode`
+defaults to `1` when it is not set.
+
+## Proof format
+
+The RISC Zero guest (`crates/support/methods/guest/src/bin/program.rs`) reads the inputs, runs the
+secure process with `policy()`, and commits a nine-field journal. Each field is 32 bytes. RISC Zero
+serializes them as 132 bytes each, which gives a 1188-byte journal (`lib/Risc0ComputeProof.sol`).
+
+1. Chain ID
+2. Interfold contract address
+3. E3 ID
+4. Encryption scheme ID
+5. Committee public key hash
+6. Output ciphertext hash
+7. Output SAFE commitment
+8. BFV parameter hash
+9. Input root
+
+The CP returns the proof as `abi.encode(bytes seal, bytes32 paramsHash, bytes32 inputRoot)`
+(`encode_compute_proof` in `crates/support/host/src/lib.rs`). `Risc0ComputeProof.decode` reads the
+same layout on-chain. The verifiers rebuild the other seven fields from on-chain state. See
+[Verify the Compute Provider](/build/e3-program/verify-compute-provider).
+
+## The guest must match your E3 program
+
+The published `e3-support` image embeds the CRISP secure process from `crates/support/program`. The
+guest links it as `e3-user-program` (`crates/support/methods/guest/Cargo.toml`). The container does
+not mount your `program/` folder.
+
+- In dev mode, the dev runner builds your `program/` crate. This is the mode that the template uses.
+- In RISC Zero mode, the guest runs the CRISP processor and policy. A different E3 program needs a
+  guest that is built against its own `e3-user-program` crate.
+- A different guest has a different image ID. The protocol verifier and your program contract must
+  both name that image ID.
+
+The Interfold contract keeps one ciphertext verifier for each encryption scheme, and its image ID is
+immutable. On one deployment, every BFV E3 program must therefore use the guest that this verifier
+names. The template deploys its own verifier for its local chain (`deploy/default.ts`).
+
+## Run a compute provider
+
+This procedure starts the RISC Zero CP with Boundless proofs. Run it in an Interfold project that
+`interfold init` made. The `interfold program` commands use the scripts in `.interfold/support/ctl`,
+which `interfold init` writes.
+
+<Callout type='warning'>
+  The program server does not authenticate callers. Any caller that can reach port 13151 can start a
+  computation that your Boundless key pays for.
+</Callout>
+
+<Steps>
+
+### Install the tools
+
+Install Docker and the Interfold CLI. See [Installation](/build/installation). The RISC Zero
+toolchain and Foundry run inside the `e3-support` image, so the host does not need them for this
+procedure.
+
+### Configure the program section
+
+Set `program.dev` to `false` and add a `program.risc0` section to `interfold.config.yaml`:
+
+```yaml filename="interfold.config.yaml"
+program:
+  dev: false
+  risc0:
+    risc0_dev_mode: 0
+    boundless:
+      rpc_url: 'https://sepolia.base.org'
+      private_key: '${PRIVATE_KEY}'
+      pinata_jwt: '${PINATA_JWT}'
+      ipfs_gateway_url: 'https://your-gateway.mypinata.cloud'
+      onchain: true
+```
+
+The account of `private_key` must hold ETH on the Boundless chain for gas and for the request
+payment.
+
+### Compile the guest
+
+Run `interfold program compile`. The container builds the guest ELF at
+`target/riscv-guest/methods/guests/riscv32im-risc0-zkvm-elf/release/program.bin` in `/app`. On the
+host, `/app/target` is `.interfold/caches/target`.
+
+### Upload the guest
+
+Run `interfold program upload`. The script uploads the ELF to Pinata and writes the URL to
+`target/.program_url`. Copy that URL to `program.risc0.boundless.program_url`. Without it, the host
+uploads the ELF at run time.
+
+### Restrict the port
+
+Allow connections to port 13151 only from your coordination server. The container publishes the port
+on all host interfaces.
+
+### Start the program server
+
+Run `interfold program start`. The container starts `e3-support-app` on port 13151.
+
+### Check the server
+
+Run `curl http://localhost:13151/health`. The server returns `{"status":"healthy","e3_id":"0"}`.
+
+</Steps>
+
+The container image is `ghcr.io/theinterfold/e3-support:<revision>`, where `<revision>` is the
+output of `interfold rev`. The script pulls the image when it is not available locally. Set
+`E3_SUPPORT_IMAGE_REPOSITORY` to use a mirror.
+
+## Toolchain versions
+
+The `e3-support` image pins its tools in `crates/support/Dockerfile`. Use the same versions when you
+build `crates/support` outside the container.
+
+| Tool                     | Version | Source in the Dockerfile               |
+| ------------------------ | ------- | -------------------------------------- |
+| Rust                     | 1.91.1  | Base image `rust:1.91.1-slim-bookworm` |
+| RISC Zero Rust toolchain | 1.91.1  | `rzup install rust 1.91.1`             |
+| `r0vm`                   | 3.0.3   | `rzup install r0vm 3.0.3`              |
+| `cargo-risczero`         | 3.0.3   | `rzup install cargo-risczero 3.0.3`    |
+| Foundry                  | Latest  | `foundryup`                            |
+
+The Dockerfile installs `rzup` and Foundry with these commands:
+
+```sh
+curl -L https://risczero.com/install | bash
+curl -L https://foundry.paradigm.xyz | bash
+```
+
+The template pins Rust 1.91.1 in `rust-toolchain.toml`. The local stack of the template uses `anvil`
+from Foundry.
+
+## Boundless offer parameters
+
+Each optional field under `program.risc0.boundless` goes to the container as an environment
+variable. The defaults come from `crates/support/host/src/lib.rs`.
+
+| Config field          | Environment variable            | Default   | Description                                    |
+| --------------------- | ------------------------------- | --------- | ---------------------------------------------- |
+| `min_price_eth`       | `BOUNDLESS_MIN_PRICE_ETH`       | `0.00005` | Start price of the auction, in ETH             |
+| `max_price_eth`       | `BOUNDLESS_MAX_PRICE_ETH`       | `0.004`   | Highest price of the auction, in ETH           |
+| `timeout_secs`        | `BOUNDLESS_TIMEOUT_SECS`        | `28800`   | Total life of the request, in seconds          |
+| `lock_timeout_secs`   | `BOUNDLESS_LOCK_TIMEOUT_SECS`   | `14400`   | Deadline of the prover that locks the request  |
+| `ramp_up_secs`        | `BOUNDLESS_RAMP_UP_SECS`        | `7200`    | Time for the price to go from start to highest |
+| `lock_collateral_zkc` | `BOUNDLESS_LOCK_COLLATERAL_ZKC` | `100.0`   | ZKC that the prover locks                      |
+
+The host refuses a minimum price above the maximum price. It also refuses a lock timeout of zero or
+a lock timeout that is not less than the total timeout. The ramp-up period must not be longer than
+the lock timeout.
+
+## Next steps
+
+<LinkCards min={230}>
+  <LinkCard
+    title='Verify the compute provider'
+    href='/build/e3-program/verify-compute-provider'
+    icon='shield'
+  >
+    How the proof is checked on-chain, and how to check the image ID.
+  </LinkCard>
+  <LinkCard title='Complete example' href='/build/e3-program/complete-example' icon='flow'>
+    See the dev runner and the webhook in one E3.
+  </LinkCard>
+  <LinkCard title='Configuration reference' href='/reference/configuration' icon='wrench'>
+    Every key of `interfold.config.yaml`.
+  </LinkCard>
+</LinkCards>

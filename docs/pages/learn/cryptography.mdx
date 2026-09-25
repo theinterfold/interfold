@@ -1,0 +1,287 @@
+---
+title: 'Cryptography'
+description:
+  'How threshold BFV encryption, distributed key generation, and zero-knowledge proofs protect each
+  E3 on the Interfold.'
+---
+
+import { LinkCards, LinkCard, ThresholdRing } from '@/components/ui'
+
+# Cryptography
+
+This page explains the cryptography that protects an E3. It covers threshold BFV encryption,
+distributed key generation (DKG), and the zero-knowledge (ZK) proofs that make each step publicly
+verifiable. It is for developers and operators who want to know what the protocol proves and where.
+At the end, you can map each protocol step to its circuit and to its on-chain verifier. The
+[PVDKG and ZK proof pipeline](/internals/dkg) page gives the full detail.
+
+## Building blocks
+
+| Building block                   | Implementation                                                                   | Job in an E3                                       |
+| -------------------------------- | -------------------------------------------------------------------------------- | -------------------------------------------------- |
+| BFV fully homomorphic encryption | The `gnosisguild/fhe.rs` library, scheme ID `keccak256("fhe.rs:BFV")`            | Compute on encrypted integers                      |
+| Threshold BFV (TrBFV)            | `crates/trbfv`                                                                   | Split the secret key across the committee          |
+| Shamir secret sharing            | Part of TrBFV                                                                    | Give each member a share of each key contribution  |
+| ZK proofs                        | Noir circuits in `circuits/`, proved with Barretenberg UltraHonk (`bb`)          | Prove each key, share, and decryption step         |
+| Commitments                      | The SAFE sponge with the Poseidon2 permutation (`circuits/lib/src/math/safe.nr`) | Link circuits without publishing large polynomials |
+
+## BFV
+
+BFV works in the polynomial ring $R_q = \mathbb{Z}_q[X]/(X^d + 1)$. The degree $d$ is 512 or 8192.
+The ciphertext modulus $q$ is a product of CRT moduli $q_\ell$, and $t$ is the plaintext modulus.
+
+A key pair has a secret key $s$ and a public key $(\mathrm{pk}_0, \mathrm{pk}_1)$. A message $m$
+encrypts to a ciphertext $(\mathrm{ct}_0, \mathrm{ct}_1)$, with small random polynomials $u$, $e$,
+$e_0$, and $e_1$ and the scale factor $\Delta = \lfloor q/t \rfloor$:
+
+$$
+\mathrm{pk}_0 = -a\,s + e, \qquad \mathrm{pk}_1 = a
+$$
+
+$$
+\mathrm{ct}_0 = \mathrm{pk}_0\,u + e_0 + \Delta m, \qquad \mathrm{ct}_1 = \mathrm{pk}_1\,u + e_1
+$$
+
+Decryption computes $\mathrm{ct}_0 + \mathrm{ct}_1 s \bmod q$, which is $\Delta m$ plus small noise.
+It then scales by $t/q$ and rounds to get $m \bmod t$.
+
+The sum of two ciphertexts decrypts to the sum of the two messages. The default template and CRISP
+both use this addition. BFV also supports multiplication, but each multiplication uses part of a
+limited noise budget.
+
+## Threshold BFV
+
+In threshold BFV, no party holds $s$. Three numbers define each committee:
+
+- **N** is the committee size that sortition selects.
+- **H** is the number of dealer contributions that form the key. The active aggregator selects an
+  ascending roster $S$ of H members that are all ready.
+- **T** is the threshold. Decryption needs T + 1 shares from the roster.
+
+| Size      |   N |   H |   T | T + 1 | Members that can drop before the roster | Roster members that can drop before decryption |
+| --------- | --: | --: | --: | ----: | --------------------------------------: | ---------------------------------------------: |
+| `Minimum` |   3 |   2 |   1 |     2 |                                       1 |                                              0 |
+| `Micro`   |   9 |   5 |   4 |     5 |                                       4 |                                              0 |
+| `Small`   |  19 |  14 |   9 |    10 |                                       5 |                                              4 |
+
+The values come from `crates/zk-helpers/src/ciphernodes_committee.rs` and
+`packages/interfold-contracts/contracts/lib/ActiveCryptoConfig.sol`.
+
+<ThresholdRing
+  n={19}
+  t={9}
+  label='A Small committee: 19 members, a roster of 14, and 10 shares to decrypt'
+  phases={[
+    {
+      core: 'DKG',
+      senders: 'all',
+      caption: (
+        <>
+          <strong>Key generation.</strong> Members exchange encrypted shares. The key comes from a
+          roster of 14 contributions.
+        </>
+      ),
+    },
+    {
+      core: 'Sealed',
+      senders: 'none',
+      caption: (
+        <>
+          <strong>No single key.</strong> Each roster member holds only a share of the secret key.
+        </>
+      ),
+    },
+    {
+      core: 'Decrypt',
+      senders: 'quorum',
+      caption: (
+        <>
+          <strong>Threshold decryption.</strong> Any 10 roster members can decrypt the output.
+        </>
+      ),
+    },
+  ]}
+/>
+
+### Key generation
+
+Each member $h$ makes a secret contribution $s_h$ and a public key share. It splits $s_h$ into
+Shamir shares with a polynomial of degree T. It encrypts each share under the recipient's individual
+BFV key and sends it. The same process runs for smudging noise $e_{\mathrm{sm}}$, which later hides
+each decryption share.
+
+The individual BFV keys protect only the share traffic during DKG. They are different from the
+threshold key that data providers use.
+
+After the share proofs pass, each member publishes a signed readiness report. The active aggregator
+then selects the roster $S$. The threshold secret and public key are:
+
+$$
+s = \sum_{h \in S} s_h, \qquad \mathrm{pk}_0 = \sum_{h \in S} \mathrm{pk}_{0,h}, \qquad \mathrm{pk}_1 = a
+$$
+
+All members use the same common polynomial $a$, so $\mathrm{pk}_1$ is not a sum. Each roster member
+$i$ adds the shares that it received from the roster into $\mathrm{sk}_i$, its Shamir share of $s$.
+
+### Threshold decryption
+
+Each roster member $i$ computes a decryption share from the ciphertext output:
+
+$$
+d_i = \mathrm{ct}_0 + \mathrm{ct}_1\,\mathrm{sk}_i + e_{\mathrm{sm},i} \pmod{q}
+$$
+
+The aggregator takes T + 1 shares with party coordinates $x_i$. The coordinates start at 1, and they
+must be unique and in increasing order. The aggregator combines the shares with Lagrange
+coefficients at zero:
+
+$$
+L_i(0) = \prod_{j \neq i} \frac{x_j}{x_j - x_i}, \qquad u = \sum_i L_i(0)\,d_i \pmod{q}
+$$
+
+The coefficients $L_i(0)$ add up to 1, so $u = \mathrm{ct}_0 + \mathrm{ct}_1 s$ plus small noise.
+The aggregator then decodes $u$ to the plaintext, as in normal BFV decryption.
+
+T + 1 roster members that collude can decrypt any ciphertext under the committee key. This limit
+applies to every threshold scheme. Larger committees raise T.
+
+## Publicly verifiable threshold BFV
+
+Publicly verifiable threshold BFV (PV-TBFV) adds a ZK proof to each sensitive step. Anyone can check
+the proofs without the private values. The DKG part is publicly verifiable DKG (PVDKG). The steps
+form four phases:
+
+| Phase                      | What happens                                                       | Circuits                                                                   |
+| -------------------------- | ------------------------------------------------------------------ | -------------------------------------------------------------------------- |
+| P1: Key generation         | Members make keys and shares, encrypt the shares, and decrypt them | C0, C1, C2a, C2b, C3a, C3b, C4a, C4b                                       |
+| P2: Public key aggregation | The aggregator adds the H roster contributions into one key        | C5                                                                         |
+| P3: User encryption        | A data provider proves that an input is a valid BFV encryption     | `user_data_encryption_ct0`, `_ct1`, and the `user_data_encryption` wrapper |
+| P4: Threshold decryption   | Members make decryption shares, and the aggregator combines T + 1  | C6, C7                                                                     |
+
+The FHE computation runs between P3 and P4. The compute provider proves it with its own proof system
+(the RISC Zero zkVM in the current code), not with these circuits.
+
+A failed proof is attributable to one member. Other members then start an accusation, which can lead
+to a slash. See [Commitment consistency](/internals/commitment-consistency) and
+[Exits and slashing](/operate/exits-and-slashing).
+
+## Circuit map
+
+The circuit IDs match the `CircuitName` enum in `crates/events/src/interfold_event/proof.rs`. The
+directories are under `circuits/bin/`.
+
+| ID       | Directory                                | `CircuitName`                | What the proof shows                                                                   |
+| -------- | ---------------------------------------- | ---------------------------- | -------------------------------------------------------------------------------------- |
+| C0       | `dkg/pk`                                 | `PkBfv`                      | The member's individual BFV public key is valid, with a commitment to it               |
+| C1       | `threshold/pk_generation`                | `PkGeneration`               | The public key share follows BFV key generation from the committed secret contribution |
+| C2a      | `dkg/sk_share_computation`               | `SkShareComputation`         | The Shamir shares of the secret contribution are valid (a Reed–Solomon parity check)   |
+| C2b      | `dkg/e_sm_share_computation`             | `ESmShareComputation`        | The Shamir shares of the smudging noise are valid                                      |
+| C3a, C3b | `dkg/share_encryption`                   | `ShareEncryption`            | Each share is encrypted under the recipient's committed C0 key                         |
+| C4a, C4b | `dkg/share_decryption`                   | `DkgShareDecryption`         | The shares from the roster match the C2 commitments, with a commitment to their sum    |
+| C5       | `threshold/pk_aggregation`               | `PkAggregation`              | The threshold public key is the sum of the H roster contributions                      |
+| P3       | `threshold/user_data_encryption*`        | None                         | A user ciphertext is a valid BFV encryption under the threshold key                    |
+| C6       | `threshold/share_decryption`             | `ThresholdShareDecryption`   | The decryption share uses the member's committed key share and smudging noise          |
+| C7       | `threshold/decrypted_shares_aggregation` | `DecryptedSharesAggregation` | T + 1 shares combine and decode to the claimed plaintext                               |
+| Config   | `config`                                 | None                         | The preset constants (CRT moduli, bounds, parity matrices) are consistent              |
+
+The "a" and "b" suffixes are the secret-key track and the smudging-noise track. C3 and C4 use one
+circuit for both tracks.
+
+## Proof aggregation
+
+Members exchange their proofs over libp2p gossip and verify each other's proofs. Recursive circuits
+in `circuits/bin/recursive_aggregation/` then fold the proofs:
+
+| Circuit                           | `CircuitName`                  | What it folds                                    |
+| --------------------------------- | ------------------------------ | ------------------------------------------------ |
+| `c2ab_fold`                       | `C2abFold`                     | C2a and C2b                                      |
+| `c3_fold`, `c3_fold_kernel`       | `C3Fold`, `C3FoldKernel`       | The C3 proofs, in sequence                       |
+| `c3ab_fold`                       | `C3abFold`                     | The final secret-key and smudging-noise C3 folds |
+| `c4ab_fold`                       | `C4abFold`                     | C4a and C4b                                      |
+| `node_fold`                       | `NodeFold`                     | One member's chain from C0 to C4                 |
+| `nodes_fold`, `nodes_fold_kernel` | `NodesFold`, `NodesFoldKernel` | The H `node_fold` proofs, in sequence            |
+| `dkg_aggregator`                  | `DkgAggregator`                | `nodes_fold` and C5                              |
+| `c6_fold`, `c6_fold_kernel`       | `C6Fold`, `C6FoldKernel`       | The T + 1 C6 proofs, in sequence                 |
+| `decryption_aggregator`           | `DecryptionAggregator`         | `c6_fold` and C7                                 |
+
+Only two proofs go on-chain for each E3:
+
+1. **The DKG proof** from `dkg_aggregator`. The registry verifies it at `publishCommittee` through
+   `BfvPkVerifier`. The registry also checks one signed fold attestation from each roster member
+   with `DkgFoldAttestationVerifier`. It then stores the DKG anchors: the party IDs and the
+   commitments to each member's aggregated key share and smudging noise.
+2. **The decryption proof** from `decryption_aggregator`. The Interfold contract verifies it at
+   `publishPlaintextOutput` through `BfvDecryptionVerifier`. The verifier compares the commitments
+   in the proof with the stored DKG anchors.
+
+Both proofs bind the committee hash. `CommitteeHashLib` computes it as the Keccak-256 hash of the
+committee addresses in ascending order. The decryption proof also binds a decryption domain: the
+hash of the chain ID, the Interfold address, the `e3Id`, the committee hash, the ciphertext output
+hash, and the committee public key. A decryption proof for one E3 therefore fails for any other E3.
+
+## Commitments link the circuits
+
+BFV polynomials are too large to publish for every step. Each circuit hashes its polynomials into a
+short commitment with the SAFE sponge. A later circuit takes the earlier commitment as a public
+input. It recomputes the commitment from its private inputs and checks that the two values are
+equal.
+
+These links form one chain from key generation to decryption:
+
+- C1 to C2: the committed secret contribution and smudging noise.
+- C2 to C3: the shares that each ciphertext encrypts.
+- C1 to C5: the public key shares that form the threshold key.
+- C4 to C6: the aggregated key share and smudging noise of each member.
+- C6 to C7: the decryption shares.
+
+The recursive circuits check most links inside the proofs. `node_fold` checks the links in one
+member's chain. `dkg_aggregator` checks the links between members and from C5 to C1.
+`decryption_aggregator` checks the link from C6 to C7. The C4 to C6 link goes through the DKG
+anchors, which the on-chain decryption verifier compares.
+
+Domain-separation labels (`DS_*` in `circuits/lib/src/math/commitments.nr`) keep different kinds of
+commitments apart.
+
+## BFV presets
+
+Two BFV presets exist. Each preset has a threshold parameter set for user data and a DKG parameter
+set for the individual keys. The values come from `crates/fhe-params/src/constants.rs`.
+
+| Preset         | `paramSet` | Threshold degree | Threshold CRT moduli | Plaintext modulus $t$ | DKG degree | DKG CRT moduli |
+| -------------- | ---------: | ---------------: | -------------------: | --------------------: | ---------: | -------------: |
+| `insecure-512` |          0 |              512 |                    2 |                   100 |        512 |              1 |
+| `secure-8192`  |          1 |             8192 |                    3 |             1,000,000 |       8192 |              2 |
+
+`insecure-512` is for development and tests only. The code marks it as not for production. The
+deployment script refuses to deploy it on a chain that is not a known test or local chain.
+
+### Presets by chain
+
+`ActiveCryptoConfig.sol` selects the supported presets from `block.chainid`:
+
+| Chain            | Chain ID    | Presets                       | Committee sizes in the circuit build |
+| ---------------- | ----------- | ----------------------------- | ------------------------------------ |
+| Ethereum mainnet | 1           | `secure-8192`                 | `Minimum`, `Micro`, `Small`          |
+| Sepolia          | 11155111    | `insecure-512`, `secure-8192` | `Minimum`, `Micro`, `Small`          |
+| Local            | 31337, 1337 | `insecure-512`, `secure-8192` | `Minimum`, `Micro`, `Small`          |
+
+Any chain that is not Sepolia or local gets the mainnet rules. The mainnet launch pricing
+configuration sets `minCommitteeSize` to 19. With that value, `getE3Quote` rejects `Minimum` and
+`Micro` requests on mainnet, so only `Small` can be requested.
+
+Each request must name the expected circuit configuration in `expectedCryptoConfigId`. The ID binds
+the scheme, the parameter hash, and the circuit version (`keccak256("interfold-bfv-v1")`).
+
+## Next steps
+
+<LinkCards min={230}>
+  <LinkCard title='PVDKG and ZK proofs' href='/internals/dkg' icon='circuit' tag='Internals'>
+    The DKG state machine, proof counts, and the on-chain anchors in full detail.
+  </LinkCard>
+  <LinkCard title='Noir circuits' href='/build/noir-circuits' icon='wrench' tag='Build'>
+    Build and test the circuits, and connect the prover from Rust.
+  </LinkCard>
+  <LinkCard title='E3 lifecycle' href='/learn/e3-lifecycle' icon='flow' tag='Learn'>
+    Where each proof enters the lifecycle, with deadlines and events.
+  </LinkCard>
+</LinkCards>

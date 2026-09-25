@@ -1,0 +1,55 @@
+{
+  "index": {
+    "title": "Overview"
+  },
+  "-- Set up": {
+    "type": "separator",
+    "title": "Set up"
+  },
+  "requirements": {
+    "title": "Requirements"
+  },
+  "running": {
+    "title": "Run a Ciphernode"
+  },
+  "rpc-endpoints": {
+    "title": "RPC Endpoints"
+  },
+  "registration": {
+    "title": "Registration & Bonding"
+  },
+  "-- Operate": {
+    "type": "separator",
+    "title": "Operate"
+  },
+  "tickets-and-sortition": {
+    "title": "Tickets and Sortition"
+  },
+  "manage-tickets": {
+    "title": "Manage Tickets"
+  },
+  "dashboard": {
+    "title": "Node Dashboard"
+  },
+  "-- Maintain": {
+    "type": "separator",
+    "title": "Maintain"
+  },
+  "upgrades": {
+    "title": "Upgrades"
+  },
+  "migrating": {
+    "title": "Migrate a Node"
+  },
+  "exits-and-slashing": {
+    "title": "Exits, Rewards, and Slashing"
+  },
+  "troubleshooting": {
+    "title": "Troubleshooting"
+  },
+  "interactive-guide": {
+    "title": "Guided Setup ↗",
+    "href": "https://dashboard.theinterfold.com/#operator",
+    "newWindow": true
+  }
+}

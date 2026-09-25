@@ -1,0 +1,388 @@
+---
+title: 'Upgrades'
+description:
+  'How ciphernode releases are versioned and checked on-chain, and the procedure to install a
+  compatible or mandatory release and to reset node state when a release needs it.'
+---
+
+import { Callout, Steps } from 'nextra/components'
+import { Flow, LinkCard, LinkCards } from '@/components/ui'
+
+# Upgrades
+
+This page explains how the Interfold versions ciphernode releases and how to install a new release.
+It also explains how the on-chain release gate decides which nodes can serve on committees. It is
+for operators who run a ciphernode. At the end, you can tell which kind of release you have and
+install it. You can also reset the node state when a release changes the storage format.
+
+## Release versions
+
+Each release has three values. Only the two compatibility values decide eligibility.
+
+| Value              | Where it is defined                         | Increases when                                                             |
+| ------------------ | ------------------------------------------- | -------------------------------------------------------------------------- |
+| Release version    | The workspace version, for example `0.18.0` | Every release. `interfold --version` prints it.                            |
+| `protocol_version` | `crates/config/protocol-release.toml`       | Contracts, events, cryptography, or protocol behavior become incompatible. |
+| `node_generation`  | `crates/config/protocol-release.toml`       | Every operator must install a node-only fix.                               |
+
+The release ID is `keccak256("interfold.node.release:v1:" + version)`. The node records it on-chain,
+but the ID does not decide eligibility.
+
+### Recent releases
+
+| Release          | `protocol_version` | `node_generation` | Storage schema | Gossip and sync wire versions |
+| ---------------- | ------------------ | ----------------- | -------------- | ----------------------------- |
+| v0.15.1, v0.15.2 | 4                  | 1                 | 6              | 4 and 3                       |
+| v0.16.0          | 4                  | 1                 | 6              | 4 and 3                       |
+| v0.17.0          | 4                  | 2                 | 6              | 4 and 3                       |
+| v0.18.0          | 4                  | 2                 | 7              | 4 and 3                       |
+
+Nodes on releases v0.15.1 through v0.18.0 share `protocol_version` 4 and the same P2P wire versions,
+so they can connect to each other. A node on generation 1 can connect, but it cannot be active when
+the chain requires generation 2. The storage schema changes at v0.18.0, so a node that ran v0.15.1
+through v0.17.0 must [reset its state](#reset-node-state) before v0.18.0 can start.
+
+## The on-chain release gate
+
+The Interfold contract points to a node release registry (`INodeReleaseRegistry`). The registry
+stores the required values in `requiredProtocolVersion()` and `requiredNodeGeneration()`. An
+operator is release-ready (`isNodeReleaseReady`) when both of these conditions are true:
+
+- The acknowledged `protocol_version` is equal to the required value.
+- The acknowledged `node_generation` is equal to or larger than the required value.
+
+A release with a higher `protocol_version` than the required value is also not ready. The
+`BondingRegistry` active check includes release readiness, so a node that is not release-ready
+cannot enter new committees. See
+[When a ciphernode is active](/operate/tickets-and-sortition#when-a-ciphernode-is-active).
+
+### Startup check
+
+Before the node starts its protocol actors, it checks each enabled chain:
+
+1. It reads `nodeReleaseRegistry()`, `bondingRegistry()`, and `ciphernodeRegistry()` from the
+   Interfold contract. The configured addresses must match.
+2. It compares its own compatibility values with the required values.
+3. If the operator already acknowledged this release, and the operator is active or not registered,
+   the node logs `Ciphernode release is accepted`.
+4. Otherwise, the node logs `Acknowledging ciphernode release` and sends
+   `acknowledgeNodeRelease(releaseId, protocolVersion, nodeGeneration)` from the operator key. The
+   registry emits `OperatorNodeReleaseAcknowledged` and refreshes the operator status.
+
+The acknowledgment is a transaction, so the operator wallet needs ETH for gas. These errors stop the
+startup:
+
+| Error                                                                                                           | Meaning                                                                                |
+| --------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `ciphernode protocol version <x> does not match required version <y>`                                           | The binary is for a different protocol version.                                        |
+| `ciphernode generation <x> is below required generation <y>`                                                    | Governance requires a newer node-only release.                                         |
+| `Interfold has no node release controller; keep this ciphernode stopped until the protocol upgrade is complete` | The contracts do not have a release registry yet.                                      |
+| `configured contracts do not match Interfold dependencies: …`                                                   | The `bonding_registry` or `ciphernode_registry` address in the configuration is wrong. |
+
+The release acknowledgment is a statement by the operator. It prevents the accidental use of old
+software. It does not prove which executable runs. Threshold cryptography, proof verification, and
+slashing still protect the protocol against a malicious operator.
+
+### Check the required values
+
+Read the values with `cast`. Get the Interfold address from
+[Contracts and addresses](/reference/contracts):
+
+```bash
+cast call <Interfold> "nodeReleaseRegistry()(address)" --rpc-url <RPC_URL>
+cast call <NodeReleaseRegistry> "requiredProtocolVersion()(uint32)" --rpc-url <RPC_URL>
+cast call <NodeReleaseRegistry> "requiredNodeGeneration()(uint32)" --rpc-url <RPC_URL>
+cast call <NodeReleaseRegistry> "operatorNodeRelease(address)((bytes32,uint32,uint32))" \
+  0xOPERATOR --rpc-url <RPC_URL>
+```
+
+## P2P compatibility
+
+Every P2P protocol name includes the network ID and the `protocol_version`. The Kademlia, sync,
+gossip, and Identify names all use the prefix `interfold/<network_id>/protocol/<protocol_version>`.
+Nodes with different protocol versions therefore do not connect to each other.
+
+The `node_generation` is not part of these names. A node-only cutover removes old nodes from new
+committees, but old and new nodes stay on one P2P network. A bug that changes message parsing,
+message meaning, or peer safety therefore needs a new `protocol_version`.
+
+## Release types
+
+| Release type           | Values that change | Governance action                                                    | Old nodes                                                 |
+| ---------------------- | ------------------ | -------------------------------------------------------------------- | --------------------------------------------------------- |
+| Compatible release     | None               | None                                                                 | Stay eligible. Operators upgrade when they want.          |
+| Mandatory node release | `node_generation`  | Raise the required generation                                        | Become inactive. They cannot enter new committees.        |
+| Protocol release       | `protocol_version` | Upgrade the contracts and raise the required version in one proposal | Become inactive and lose the P2P connection to new nodes. |
+
+### Compatible release
+
+A compatible release keeps both values. Old and new nodes stay eligible, so you can install the
+release when you want. If you run several nodes, restart one node at a time. Keep enough committee
+members online so that each active committee keeps its threshold.
+
+### Mandatory release
+
+Governance uses a cutover for a mandatory node release or a protocol release:
+
+<Flow
+  label='Mandatory cutover'
+  steps={[
+    { label: 'Pause', icon: 'lock', sub: 'Governance pauses new E3 requests.' },
+    { label: 'Drain', icon: 'flow', sub: 'Active E3s and committees reach a terminal state.' },
+    {
+      label: 'Raise',
+      icon: 'upgrade',
+      sub: 'Governance raises the required version or generation.',
+    },
+    {
+      label: 'Restart',
+      icon: 'node',
+      sub: 'Operators start the new release. Each node acknowledges it.',
+    },
+    {
+      label: 'Resume',
+      icon: 'rocket',
+      sub: 'Governance resumes requests when enough nodes are active.',
+    },
+  ]}
+/>
+
+`setRequiredNodeRelease` reverts with `NodeReleasePolicyRequiresPause` while requests are open. It
+reverts with `NodeReleasePolicyInUse` while an E3 is active or a committee is not released. A new
+requirement makes every operator inactive at once. Each upgraded node acknowledges its release at
+startup and becomes active again.
+
+Before governance resumes requests, it refreshes every registered operator and checks that
+`committeeOwnerCapacity` covers the largest committee. For a protocol release, operators upgrade at
+least one configured bootstrap peer first, so that new nodes can find each other.
+
+<Callout type='info'>
+  The required values never decrease. `setRequiredNodeRelease` reverts with
+  `NodeReleasePolicyRegression` for a lower value. A rollback is a new release with a higher
+  `node_generation` or `protocol_version` that contains the earlier code.
+</Callout>
+
+## Upgrade a ciphernode
+
+Use this procedure for every release. The release notes tell you if a release changes the storage
+schema or the configuration.
+
+<Steps>
+
+### Read the release notes
+
+Open the release on GitHub, or open the **Updates** view of the
+[local dashboard](/operate/dashboard).
+
+Find out if the release needs a [state reset](#reset-node-state) or a configuration change.
+
+### Wait for active work to finish
+
+Make sure that the node has no active E3. The **Updates** view shows the number of active E3s.
+
+A stop during a DKG can make that E3 fail.
+
+### Stop the node
+
+Send `SIGTERM` to the process, or press `Ctrl+C` in its terminal.
+
+Wait for the `Graceful shutdown barrier complete` log line, or for the process to exit.
+
+### Back up the node
+
+Copy the stopped configuration and data directories to a safe location.
+
+[Migrate a node](/operate/migrating#what-identifies-a-node) lists the files.
+
+### Install the release
+
+Install the exact release that the release notes name:
+
+| Install method | Command                                                                        |
+| -------------- | ------------------------------------------------------------------------------ |
+| `interfoldup`  | `interfoldup update --version v0.18.0`, or `interfoldup update` for the latest |
+| Docker         | `docker pull ghcr.io/theinterfold/ciphernode:0.18.0`                           |
+| DAppNode       | Update the Interfold ciphernode package in the DAppNode interface              |
+
+### Check the version
+
+Run `interfold --version`.
+
+The output must be the release that you installed, for example `interfold 0.18.0`.
+
+### Reset the state if the release needs it
+
+If the release changes the storage schema, follow [Reset node state](#reset-node-state) now.
+
+### Validate the state
+
+Run `interfold node validate --name <node>` with the new binary.
+
+The report must end with `VALIDATION PASSED`. The command takes the process lock of the node, so it
+fails while a node runs.
+
+### Start the node
+
+Start the node the same way as before, for example `interfold start -v --name <node>`.
+
+Look for `Ciphernode release is accepted` or `Acknowledging ciphernode release` in the log.
+
+### Verify the node
+
+Run `interfold ciphernode status`.
+
+Make sure that `Active` is `true`. On the dashboard, make sure that the node has connected peers.
+
+</Steps>
+
+If the startup fails with a release error, leave the node stopped. Install the release that the
+chain requires, or wait for the protocol upgrade to complete.
+
+For Docker, run the `interfold` commands of this procedure in a one-off container from the new
+image. Mount the same volumes, and use `--entrypoint interfold`.
+
+## Reset node state
+
+The storage schema is a marker in the key/value store of the node. The binary loads existing state
+only when the marker is equal to its own schema version. It refuses older state and newer state,
+because the stored event log and actor snapshots contain protocol data in a binary format. These
+messages stop the startup:
+
+| Message starts with                                        | Cause                                                             |
+| ---------------------------------------------------------- | ----------------------------------------------------------------- |
+| `On-disk schema version <v> is older than this binary's …` | The release raised the schema. Reset the state.                   |
+| `On-disk schema version <v> is newer than this binary's …` | A newer release wrote the state. Run that release or a newer one. |
+| `On-disk state has no schema marker …`                     | The event log exists without the key/value store.                 |
+
+The operator key and the libp2p keypair live in the same key/value store as the protocol state. A
+manual delete of the data directory therefore also deletes the identity that holds the bond.
+`interfold node reset-data` removes the state and keeps the identity. See
+[the CLI reference](/reference/cli#interfold-node-reset-data).
+
+<Callout type='warning'>
+  A reset deletes the local key share of every E3 on this node. If the node is on a committee with
+  an active E3, that E3 loses the share of this node. A reset is not a general repair tool.
+</Callout>
+
+<Steps>
+
+### Confirm that a reset is necessary
+
+Read the release notes. Reset the state only when the release notes require it.
+
+### Wait for active work to finish
+
+Make sure that the node has no active E3. The **Updates** view of the local dashboard shows the
+number.
+
+### Stop the node
+
+Stop the process with the tool that supervises it.
+
+`reset-data` takes the same process lock as `interfold start` and refuses to run while the node
+runs.
+
+### Record the identity
+
+Run `interfold wallet get --name <node>` and `interfold net get-peer-id --name <node>`.
+
+Write down the operator address and the peer ID.
+
+### Reset the state
+
+Run the reset command:
+
+```bash
+interfold node reset-data --name <node> --yes
+```
+
+The command reads the encrypted operator key and libp2p keypair, and writes them to a backup file.
+It removes the key/value store and every event-log file (`log.0`, `log.<chain_id>`, and more). Then
+it writes the identity back and reads it again to confirm. It does not decrypt the keys, so it does
+not need the password.
+
+The output lists each removed path and the backup file, and ends with this line:
+
+```text
+The operator key and libp2p identity were preserved. Verify with: interfold wallet get --name <node>
+```
+
+### Verify the identity
+
+Run `interfold wallet get --name <node>` and `interfold net get-peer-id --name <node>`.
+
+The address and the peer ID must be equal to the values that you recorded.
+
+### Validate and start
+
+Run `interfold node validate --name <node>`, then start the node.
+
+The node writes the current schema marker and syncs again from the `deploy_block` of each contract.
+
+</Steps>
+
+Use the same `--name` as the node. Without `--name`, the CLI uses the `_default` node profile. For a
+node that runs under a named profile, the command then works on the `_default` profile instead, and
+`interfold wallet get` reports `No wallet has been set.`
+
+The backup file is `identity-backup-<node>-<unix-time>.json`, next to the `db` directory. The
+command keeps this file after a successful reset. It contains the encrypted operator key, so keep it
+as safe as the data directory, or delete it after the node runs correctly.
+
+The full sync reads the contract logs from each `deploy_block`, so the RPC endpoint must serve the
+complete log history. See [RPC endpoints](/operate/rpc-endpoints). The node exits when the startup
+takes longer than `node.startup_timeout_secs` (default 1800 s).
+
+### Do not use these commands for a reset
+
+- Do not delete the data directory by hand. The operator key and the libp2p keypair are in it.
+- Do not use `interfold nodes purge` or `interfold purge-all`. Both delete `.interfold/data` and
+  `.interfold/config` in the current directory, which includes the key file.
+- Do not change the stored schema marker.
+- Do not clear only the key/value store. The node then halts with
+  `On-disk state has no schema marker`.
+
+`interfold node validate --repair` is a different tool. It can repair an event-log tail that was
+provably not committed, and rebuild a stale derived sortition projection. It does not repair a
+corrupt indexed record or an unsupported schema.
+
+## Configuration for protocol version 4
+
+Each enabled chain that configures the `interfold` contract needs a `data_availability` block. A
+configuration from `interfold ciphernode setup` does not have this block, so add it before the first
+start. The node reads proof-backed ciphertext outputs from the data-availability layer. Without the
+block, the node exits after it accepts the release:
+
+```text
+chain 'mainnet' has Interfold enabled but no data_availability reader; this protocol release must retrieve proof-backed ciphertext outputs
+```
+
+Add the block inside the chain entry:
+
+```yaml
+chains:
+  - name: mainnet
+    chain_id: 1
+    data_availability:
+      mode: avail
+      rpc_url: 'https://avail-rpc.publicnode.com/'
+```
+
+The DAppNode package uses `https://avail-rpc.publicnode.com/` for chain 1 and
+`https://turing-rpc.avail.so/rpc` for Sepolia. The `mock_http` mode is for local tests. Make the
+change while the node is stopped. See
+[Data availability](/reference/configuration#data-availability) for the keys.
+
+## Next steps
+
+<LinkCards min={230}>
+  <LinkCard title='Migrate a node' href='/operate/migrating' icon='arrow' tag='Maintain'>
+    Move a node to a new server and keep its operator address and peer ID.
+  </LinkCard>
+  <LinkCard title='Node dashboard' href='/operate/dashboard' icon='dashboard' tag='Monitor'>
+    Watch the active E3 count and the release channel before you upgrade.
+  </LinkCard>
+  <LinkCard title='Troubleshooting' href='/operate/troubleshooting' icon='wrench' tag='Fix'>
+    Startup errors, schema messages, and connectivity checks.
+  </LinkCard>
+</LinkCards>

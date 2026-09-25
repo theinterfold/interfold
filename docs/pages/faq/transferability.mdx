@@ -1,25 +1,28 @@
 ---
 title: 'FOLD Transferability'
 description:
-  'Guide to general FOLD transferability — timing, claiming, network participation, verified
-  contract information, and official resources'
+  'Guide to general FOLD transferability: timing, claiming, network participation, verified contract
+  information, and official resources.'
 ---
 
 import { Callout } from 'nextra/components'
+import { LinkCard, LinkCards } from '@/components/ui'
 
 # FOLD Transferability
 
 General FOLD transferability is scheduled as part of the Interfold launch sequence on Aug 19.
 
-This guide explains when transferability can be enabled, what changes once it is active, how auction
-participants can claim FOLD, and where to find official Interfold resources.
+This guide explains when transferability can be enabled and what changes when it is active. It also
+tells auction participants how to claim FOLD, and where to find official Interfold resources.
 
 <Callout type='warning'>
   Use only official Interfold links and verified contract addresses. Do not trust unsolicited DMs,
   copied contract addresses, impersonator accounts, or unofficial claiming and trading links.
 </Callout>
 
-## When does general FOLD transferability begin?
+## Timing
+
+### When does general FOLD transferability begin?
 
 General FOLD transferability can be enabled at or after:
 
@@ -30,20 +33,44 @@ General FOLD transferability can be enabled at or after:
 At or after that timestamp, anyone can call the `tge()` function on the FOLD contract to enable
 general transferability.
 
-The timestamp does not automatically enable transfers by itself. General transferability begins once
-the `tge()` transaction has successfully executed onchain.
+The timestamp does not automatically enable transfers by itself. General transferability begins when
+the `tge()` transaction has successfully executed on-chain.
 
-The function is permissionless, meaning it can be called by anyone once the timestamp has passed. It
-does not depend on a specific Interfold-controlled account.
+The function is permissionless: anyone can call it when the timestamp has passed. It does not depend
+on a specific Interfold-controlled account.
 
-Official Interfold channels will confirm once general transferability has been enabled.
+Official Interfold channels will confirm when general transferability has been enabled.
 
-## What changes once general transferability is enabled?
+The FOLD contract (`InterfoldToken`) enforces these rules for `tge()`:
 
-Once general FOLD transferability is enabled:
+- The earliest time is the end of the CCA window (`CCA_END`) plus a 40-day cooldown
+  (`TGE_COOLDOWN`).
+- A call before the earliest time reverts with `TgeTooEarly`.
+- The first successful call records the TGE time and emits `TgeTriggered`.
+- A second call reverts with `AlreadyLive`.
+
+### Is FOLD transferability the same as Network Alpha?
+
+No. General FOLD transferability and Network Alpha are distinct milestones in the broader Interfold
+launch sequence.
+
+**General FOLD transferability** changes the transfer state of FOLD.
+
+**Network Alpha** is the first mainnet operating phase of the Interfold network.
+
+For more about FOLD and its role in the network, see:
+
+- [FOLD Token](/faq/fold-token)
+- [FOLD Tokenomics](/tokenomics)
+
+## What changes for holders
+
+### What changes once general transferability is enabled?
+
+When general FOLD transferability is enabled:
 
 - FOLD can be transferred between addresses without the launch-period general transfer restriction.
-- Holders can interact with FOLD through supported onchain interfaces.
+- Holders can interact with FOLD through supported on-chain interfaces.
 - FOLD can be used for supported network functions, including ciphernode bonding where available.
 - Allocation-specific vesting, lockups, or contractual restrictions continue to apply where
   relevant.
@@ -51,70 +78,76 @@ Once general FOLD transferability is enabled:
 General FOLD transferability does not override restrictions that apply to a specific FOLD
 allocation.
 
-## Is FOLD transferability the same as Network Alpha?
+In the FOLD contract, the TGE removes the pre-TGE transfer restriction. The lock check stays. A
+wallet can transfer only its unlocked balance until the lock sunset time (`NO_MORE_LOCKS`).
 
-No. General FOLD transferability and Network Alpha are distinct milestones within the broader
-Interfold launch sequence.
-
-**General FOLD transferability** changes the transfer state of FOLD.
-
-**Network Alpha** is the first mainnet operating phase of the Interfold network.
-
-For more on FOLD and its role in the network, see:
-
-- [FOLD Token](/faq/fold-token)
-- [FOLD Tokenomics](/tokenomics)
-
-## I participated in the FOLD auction. When can I claim?
-
-Claiming for FOLD Auction 2 is expected to open immediately after the auction closes on Aug 19 at
-**13:00 UTC (9 AM ET)**.
-
-Allocated FOLD and any unspent USDC can then be claimed through the verified auction interface.
-
-Claiming and general FOLD transferability are separate actions. Auction 2 closes one hour before
-general FOLD transferability can be enabled.
-
-Start from the official [FOLD Auction page](https://www.theinterfold.com/fold-auction).
-
-For current auction and claiming information, see the [FOLD Auction FAQ](/faq/auction).
-
-## Do I need to do anything to FOLD I already hold?
-
-General FOLD transferability does not itself require holders to claim through the Auction 2
-interface.
-
-Any vesting, lockup, or contractual restrictions applicable to a specific allocation continue to be
-governed by the terms of that allocation.
-
-For currently published allocation and unlock information, see [FOLD Tokenomics](/tokenomics).
-
-## Can FOLD be used for ciphernode bonding?
-
-FOLD supports ciphernode bonding as part of the economic operation of the Interfold network.
-
-Ciphernode operators bond FOLD to become eligible for network duties and economically accountable
-for correct participation.
-
-For current operator requirements, setup instructions, and bonding information, see:
-
-- [Ciphernode Operators](/ciphernode-operators)
-- [Running a Ciphernode](/ciphernode-operators/running)
-- [Registration & Bonding](/ciphernode-operators/registration)
-
-Current operator documentation is the source of truth for network participation requirements and
-bonding mechanics.
-
-## Does general transferability remove vesting or lockups?
+### Does general transferability remove vesting or lockups?
 
 No. General transferability does not override vesting schedules, contractual restrictions, or other
 conditions that apply to specific FOLD allocations.
 
 See [FOLD Tokenomics](/tokenomics) for currently published allocation and unlock information.
 
-## What is the verified FOLD contract?
+### Do I need to do anything to FOLD I already hold?
 
-The canonical FOLD token contract on Ethereum Mainnet is:
+General FOLD transferability does not itself require holders to claim through the Auction 2
+interface.
+
+The terms of a specific allocation continue to govern any vesting, lockup, or contractual
+restrictions that apply to that allocation.
+
+For currently published allocation and unlock information, see [FOLD Tokenomics](/tokenomics).
+
+## Auction claims
+
+### I participated in the FOLD auction. When can I claim?
+
+Claiming for FOLD Auction 2 is expected to open immediately after the auction closes on Aug 19 at
+**13:06 UTC (9:06 AM ET)**.
+
+You can then claim allocated FOLD and any unspent USDC through the verified auction interface.
+
+Claiming and general FOLD transferability are separate actions. Auction 2 closes shortly before
+general FOLD transferability can be enabled.
+
+Start from the official [FOLD Auction page](https://www.theinterfold.com/fold-auction).
+
+For current auction and claiming information, see the [FOLD Auction FAQ](/faq/auction).
+
+## Using FOLD
+
+### Can FOLD be used for ciphernode bonding?
+
+FOLD supports ciphernode bonding as part of the economic operation of the Interfold network.
+
+Ciphernode operators bond FOLD to become eligible for network duties and economically accountable
+for correct participation.
+
+The FOLD contract lets FOLD move to and from the bonding registry before the TGE as well. FOLD that
+is under an allocation lock can also be bonded, because bonded FOLD counts toward the amount that
+the wallet must keep.
+
+For current operator requirements, setup instructions, and bonding information, see:
+
+- [Ciphernode Operators](/operate)
+- [Running a Ciphernode](/operate/running)
+- [Registration and Bonding](/operate/registration)
+
+Current operator documentation is the source of truth for network participation requirements and
+bonding mechanics.
+
+### Where can I trade FOLD?
+
+Official information about supported on-chain markets and liquidity will be published through
+verified Interfold channels.
+
+Always verify the FOLD token contract before you interact with a market or a third-party interface.
+
+## Verification and safety
+
+### What is the verified FOLD contract?
+
+The canonical FOLD token contract (`InterfoldToken`, FOLD) on Ethereum Mainnet is:
 
 `0xE172e9B6cfBeeB5593bDcE3f077356FDb33af904`
 
@@ -122,17 +155,11 @@ The canonical FOLD token contract on Ethereum Mainnet is:
 
 The `tge()` function that enables general FOLD transferability is called on this contract.
 
-Always verify the FOLD token contract through an official Interfold source before interacting with a
-market, wallet, or third-party interface.
+Always verify the FOLD token contract through an official Interfold source before you interact with
+a market, a wallet, or a third-party interface. The other Interfold contract addresses are in
+[Contract addresses](/reference/contracts).
 
-## Where can I trade FOLD?
-
-Official information about supported onchain markets and liquidity will be published through
-verified Interfold channels.
-
-Always verify the FOLD token contract before interacting with a market or third-party interface.
-
-## Where can I find official FOLD information?
+### Where can I find official FOLD information?
 
 Use official Interfold pages as the starting point for FOLD-related activity:
 
@@ -140,27 +167,27 @@ Use official Interfold pages as the starting point for FOLD-related activity:
 - [FOLD Tokenomics](/tokenomics)
 - [FOLD Auction FAQ](/faq/auction)
 - [Official FOLD Auction page](https://www.theinterfold.com/fold-auction)
-- [Ciphernode Operators](/ciphernode-operators)
+- [Ciphernode Operators](/operate)
 - [Interfold website](https://www.theinterfold.com/)
 - [Interfold X account](https://x.com/theinterfold)
 
-## How do I stay safe around FOLD transferability?
+### How do I stay safe around FOLD transferability?
 
 Periods around token transferability can attract impersonators and fraudulent links.
 
-Before interacting with FOLD:
+Before you interact with FOLD:
 
 - Start from an official Interfold website, documentation page, or verified social account.
-- Verify the FOLD contract address before signing a transaction.
+- Verify the FOLD contract address before you sign a transaction.
 - Do not trust contract addresses, claiming links, or trading links sent through unsolicited DMs.
-- Do not send assets to anyone offering manual claiming, migration, unlocking, or support.
+- Do not send assets to anyone who offers manual claiming, migration, unlocking, or support.
 - Never share your seed phrase, private key, or wallet backup.
-- Review the connected network, destination, and transaction details before signing.
+- Review the connected network, destination, and transaction details before you sign.
 
 Interfold team members and moderators will never ask for your seed phrase, private key, wallet
 backup, or access to your wallet.
 
-## Important Information
+## Important information
 
 _FOLD Auction 2, claiming, general FOLD transferability, and Network Alpha are distinct milestones
 within the broader Interfold launch sequence._
@@ -169,3 +196,22 @@ _Official information will be published only through Interfold’s verified chan
 
 **_No advice / risk notice._** _Nothing in this communication constitutes legal, tax, financial,
 investment, or other professional advice._
+
+## Next steps
+
+<LinkCards min={230}>
+  <LinkCard title='FOLD Auction FAQ' href='/faq/auction' icon='gavel' tag='FAQ'>
+    Auction 2 dates, participation, eligibility, and claiming.
+  </LinkCard>
+  <LinkCard title='FOLD Tokenomics' href='/tokenomics' icon='coin' tag='Token'>
+    Allocation by category and the unlock schedule of each allocation.
+  </LinkCard>
+  <LinkCard
+    title='Registration and bonding'
+    href='/operate/registration'
+    icon='node'
+    tag='Operators'
+  >
+    Bond FOLD and register a ciphernode.
+  </LinkCard>
+</LinkCards>

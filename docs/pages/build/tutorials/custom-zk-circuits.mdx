@@ -1,0 +1,598 @@
+---
+title: 'Custom Noir Circuits for Input Validation'
+description:
+  'Write a Noir circuit that checks each encrypted input, fold it with the user-data-encryption
+  proof, generate a Solidity verifier, and call the verifier from an E3 program contract.'
+---
+
+import { Callout, FileTree, Steps } from 'nextra/components'
+import { Flow, LinkCard, LinkCards } from '@/components/ui'
+
+# Custom Noir Circuits for Input Validation
+
+An E3 program contract cannot read the plaintext of an input. If the program must reject bad inputs,
+the submitter must attach a zero-knowledge proof. This tutorial adds that proof to the default
+template: each input must encrypt 0 or 1, so the sum is a count of "yes" answers. The steps follow
+what CRISP does in `examples/CRISP/circuits` and `packages/crisp-contracts`.
+
+At the end, you have two Noir circuits, a generated Solidity verifier, and a `publishInput` that
+rejects an input without a valid proof.
+
+**Prerequisites:**
+
+- A project from the default template. See
+  [Build a Complete E3 Program](/build/tutorials/write-e3-program).
+- `nargo` `1.0.0-beta.26` and `bb` `5.1.0` on your `PATH`. See
+  [Noir Circuits](/build/noir-circuits).
+- A checkout of the Interfold repository at the tag `v0.18.0`, with Rust installed. You compile the
+  user-data-encryption circuits and run one Rust tool from it.
+
+## What the proof shows
+
+The final proof combines three proofs. The Interfold repository supplies the first two circuits. You
+write the last two.
+
+| Circuit                                                | Source                   | Proves                                                                                        |
+| ------------------------------------------------------ | ------------------------ | --------------------------------------------------------------------------------------------- |
+| `user_data_encryption_ct0`, `user_data_encryption_ct1` | `circuits/bin/threshold` | Each part of the BFV ciphertext is a correct encryption under the committee key.              |
+| `user_data_encryption`                                 | `circuits/bin/threshold` | Both part proofs are valid and use the same randomness.                                       |
+| `binary_input`                                         | Your project             | The plaintext is 0 or 1.                                                                      |
+| `binary_input_fold`                                    | Your project             | Both proofs describe the same ciphertext and plaintext, and each circuit is the expected one. |
+
+The circuits connect through commitments. `user_data_encryption` outputs five public values:
+`ct0_key_hash`, `ct1_key_hash`, `pk_commitment`, `ct_commitment`, and `k1_commitment`. Your input
+circuit computes `ct_commitment` and `k1_commitment` from the same ciphertext and plaintext. The
+fold circuit checks that the values are equal.
+
+<Flow
+  label='Input proof'
+  steps={[
+    {
+      label: 'Encrypt',
+      icon: 'lock',
+      sub: 'The SDK encrypts the value and returns the circuit inputs.',
+    },
+    { label: 'Encryption proof', icon: 'circuit', sub: 'ct0, ct1, and user_data_encryption.' },
+    { label: 'Rule proof', icon: 'shield', sub: 'binary_input checks the plaintext.' },
+    { label: 'Fold', icon: 'layers', sub: 'binary_input_fold makes one EVM proof.' },
+    { label: 'publishInput', icon: 'contract', sub: 'The program calls the Solidity verifier.' },
+  ]}
+/>
+
+In CRISP, the `crisp` circuit has the role of `binary_input`, and `fold` has the role of
+`binary_input_fold`. The CRISP rules are larger (eligibility, signatures, and ciphertext addition),
+but the structure is the same.
+
+## Project layout
+
+Add a `circuits` directory to the project. The verifier goes in `contracts/verifiers`.
+
+<FileTree>
+  <FileTree.Folder name='my-e3' defaultOpen>
+    <FileTree.Folder name='circuits' defaultOpen>
+      <FileTree.Folder name='binary_input' defaultOpen>
+        <FileTree.File name='Nargo.toml' />
+        <FileTree.Folder name='src' defaultOpen>
+          <FileTree.File name='main.nr' />
+        </FileTree.Folder>
+      </FileTree.Folder>
+      <FileTree.Folder name='binary_input_fold' defaultOpen>
+        <FileTree.File name='Nargo.toml' />
+        <FileTree.Folder name='src' defaultOpen>
+          <FileTree.File name='main.nr' />
+        </FileTree.Folder>
+      </FileTree.Folder>
+    </FileTree.Folder>
+    <FileTree.Folder name='contracts' defaultOpen>
+      <FileTree.File name='MyProgram.sol' />
+      <FileTree.Folder name='verifiers' defaultOpen>
+        <FileTree.File name='BinaryInputVerifier.sol' />
+      </FileTree.Folder>
+    </FileTree.Folder>
+  </FileTree.Folder>
+</FileTree>
+
+<Steps>
+
+### Write the input circuit
+
+Create `circuits/binary_input/Nargo.toml`. The library at `v0.18.0` uses the `insecure-512` preset,
+which the template requests (`paramSet: 0`).
+
+```toml filename="circuits/binary_input/Nargo.toml"
+[package]
+name = "binary_input"
+type = "bin"
+
+[dependencies]
+interfold_lib = { git = "https://github.com/theinterfold/interfold", tag = "v0.18.0", directory = "circuits/lib" }
+```
+
+Create `circuits/binary_input/src/main.nr`:
+
+```noir filename="circuits/binary_input/src/main.nr"
+use interfold_lib::configs::default::threshold::{
+    L, N, Q_MOD_T_CENTERED, USER_DATA_ENCRYPTION_BIT_CT, USER_DATA_ENCRYPTION_BIT_K,
+};
+use interfold_lib::math::{
+    commitments::{
+        compute_ciphertext_commitment, compute_single_polynomial_commitment,
+        DS_USER_DATA_ENCRYPTION_COMMITMENT,
+    },
+    polynomial::Polynomial,
+};
+
+/// Proves that a ciphertext encrypts 0 or 1.
+///
+/// Returns the ciphertext commitment and the plaintext commitment. The fold circuit compares both
+/// values with the outputs of the user_data_encryption proof.
+fn main(
+    ct0is: [Polynomial<N>; L],
+    ct1is: [Polynomial<N>; L],
+    k1: Polynomial<N>,
+) -> pub (Field, Field) {
+    let ct_commitment =
+        compute_ciphertext_commitment::<N, L, USER_DATA_ENCRYPTION_BIT_CT>(ct0is, ct1is);
+    let k1_commitment = compute_single_polynomial_commitment::<N, USER_DATA_ENCRYPTION_BIT_K>(
+        k1,
+        DS_USER_DATA_ENCRYPTION_COMMITMENT,
+    );
+
+    // `k1` holds the message coefficients in descending order. `encryptNumber` writes the value
+    // into message coefficient 0, which is `k1.coefficients[N - 1]`. All other coefficients are 0.
+    for i in 0..N - 1 {
+        assert(k1.coefficients[i] == 0);
+    }
+
+    // A message bit of 1 appears in `k1` as `Q_MOD_T_CENTERED`. A bit of 0 appears as 0.
+    let value = k1.coefficients[N - 1];
+    assert(value * (Q_MOD_T_CENTERED - value) == 0);
+
+    (ct_commitment, k1_commitment)
+}
+```
+
+The input `k1` is the plaintext polynomial scaled to `[q * m]_t` (`k1 = [q*m]_t` in
+`crates/zk-helpers/src/circuits/threshold/user_data_encryption/computation.rs`). CRISP uses the same
+test for each vote bit in `check_coefficient_values_with_balance`. The two commitment functions are
+the ones that `user_data_encryption` uses, so equal inputs give equal outputs.
+
+Check the circuit:
+
+```bash
+cd circuits/binary_input && nargo check
+```
+
+The command exits without an error.
+
+### Write the fold circuit
+
+Create `circuits/binary_input_fold/Nargo.toml`. The fold verifies proofs, so it also needs
+`bb_proof_verification` at the `bb` version:
+
+```toml filename="circuits/binary_input_fold/Nargo.toml"
+[package]
+name = "binary_input_fold"
+type = "bin"
+
+[dependencies]
+interfold_lib = { git = "https://github.com/theinterfold/interfold", tag = "v0.18.0", directory = "circuits/lib" }
+bb_proof_verification = { git = "https://github.com/AztecProtocol/aztec-packages/", tag = "v5.1.0", directory = "barretenberg/noir/bb_proof_verification" }
+```
+
+Create `circuits/binary_input_fold/src/main.nr`. It follows `examples/CRISP/circuits/bin/fold`:
+
+```noir filename="circuits/binary_input_fold/src/main.nr"
+use bb_proof_verification::{UltraHonkProof, UltraHonkVerificationKey, verify_honk_proof_non_zk};
+use interfold_lib::math::commitments::compute_vk_hash;
+
+/// The hash of the four inner verification keys. Set it from the compute-vk-hash output.
+pub global EXPECTED_KEY_HASH: Field = 0;
+
+fn main(
+    // The user_data_encryption proof. Its public inputs are
+    // [ct0_key_hash, ct1_key_hash, pk_commitment, ct_commitment, k1_commitment].
+    user_data_encryption_verification_key: UltraHonkVerificationKey,
+    user_data_encryption_proof: UltraHonkProof,
+    user_data_encryption_public_inputs: [Field; 5],
+    user_data_encryption_key_hash: Field,
+    // The binary_input proof. Its public inputs are [ct_commitment, k1_commitment].
+    binary_input_verification_key: UltraHonkVerificationKey,
+    binary_input_proof: UltraHonkProof,
+    binary_input_key_hash: Field,
+    ct_commitment: pub Field,
+    k1_commitment: Field,
+) -> pub Field {
+    verify_honk_proof_non_zk(
+        user_data_encryption_verification_key,
+        user_data_encryption_proof,
+        user_data_encryption_public_inputs,
+        user_data_encryption_key_hash,
+    );
+    verify_honk_proof_non_zk(
+        binary_input_verification_key,
+        binary_input_proof,
+        [ct_commitment, k1_commitment],
+        binary_input_key_hash,
+    );
+
+    // Both proofs must describe the same ciphertext and the same plaintext.
+    assert(ct_commitment == user_data_encryption_public_inputs[3]);
+    assert(k1_commitment == user_data_encryption_public_inputs[4]);
+
+    // Pin the four inner circuits. Without this check, a prover can supply any circuit.
+    let vk_hashes = [
+        user_data_encryption_key_hash,
+        binary_input_key_hash,
+        user_data_encryption_public_inputs[0],
+        user_data_encryption_public_inputs[1],
+    ]
+        .as_vector();
+    assert(compute_vk_hash(vk_hashes) == EXPECTED_KEY_HASH);
+
+    // The committee public key commitment. The E3 program compares it with e3.committeePublicKey.
+    user_data_encryption_public_inputs[2]
+}
+```
+
+The public inputs of the fold proof are `ct_commitment` and then the return value, `pk_commitment`.
+The contract must pass them in this order.
+
+<Callout type='warning'>
+  Do not remove the key-hash check. `verify_honk_proof_non_zk` accepts any verification key that the
+  prover supplies. The check against `EXPECTED_KEY_HASH` is what makes the fold accept only your
+  circuits.
+</Callout>
+
+### Compile the inner circuits and write their keys
+
+In the Interfold checkout, compile the three user-data-encryption circuits. They share the workspace
+target `circuits/bin/threshold/target`:
+
+```bash
+cd <interfold>/circuits/bin/threshold
+(cd user_data_encryption_ct0 && nargo compile)
+(cd user_data_encryption_ct1 && nargo compile)
+(cd user_data_encryption && nargo compile)
+```
+
+Write a `noir-recursive-no-zk` key for each one. `bb` writes `vk` and `vk_hash`, so rename them
+before the next call, as `compile_circuits.sh` does:
+
+```bash
+T=<interfold>/circuits/bin/threshold/target
+for name in user_data_encryption_ct0 user_data_encryption_ct1 user_data_encryption; do
+  bb write_vk -b "$T/$name.json" -o "$T" -t noir-recursive-no-zk
+  mv "$T/vk" "$T/$name.vk_recursive"
+  mv "$T/vk_hash" "$T/$name.vk_recursive_hash"
+done
+```
+
+In your project, compile `binary_input` and write its key the same way:
+
+```bash
+cd circuits/binary_input
+nargo compile
+bb write_vk -b target/binary_input.json -o target -t noir-recursive-no-zk
+mv target/vk target/binary_input.vk_recursive
+mv target/vk_hash target/binary_input.vk_recursive_hash
+```
+
+<Callout type='info'>
+  The checkout must select `insecure-512` with `minimum`, as the tag does. If you ran `pnpm
+  build:circuits` for another pair, the user-data-encryption circuits no longer match the library
+  that your circuits use.
+</Callout>
+
+### Pin the key hash
+
+From the root of the Interfold checkout, hash the four key hashes. The order must match the order in
+the fold circuit:
+
+```bash
+cargo run -q -p e3-zk-helpers --bin compute-vk-hash -- \
+  circuits/bin/threshold/target/user_data_encryption.vk_recursive_hash \
+  <my-e3>/circuits/binary_input/target/binary_input.vk_recursive_hash \
+  circuits/bin/threshold/target/user_data_encryption_ct0.vk_recursive_hash \
+  circuits/bin/threshold/target/user_data_encryption_ct1.vk_recursive_hash
+```
+
+The tool prints one field value as 32-byte hexadecimal. Set `EXPECTED_KEY_HASH` in
+`circuits/binary_input_fold/src/main.nr` to this value. Then compile the fold:
+
+```bash
+cd circuits/binary_input_fold && nargo compile
+```
+
+Each change to `binary_input` changes its key. Repeat this step after each change.
+
+### Generate the Solidity verifier
+
+Write the fold key for the EVM, then generate the verifier. These are the commands in
+`examples/CRISP/scripts/compile_circuits.sh`:
+
+```bash
+cd circuits/binary_input_fold
+bb write_vk -b target/binary_input_fold.json -o target --oracle_hash keccak
+mkdir -p ../../contracts/verifiers
+bb write_solidity_verifier -k target/vk -o ../../contracts/verifiers/BinaryInputVerifier.sol
+```
+
+The generated file declares a contract named `HonkVerifier` and the libraries `ZKTranscriptLib` and
+`RelationsLib`. The deployment must link the two libraries.
+
+CRISP also changes each generated verifier with `patch_verifier` in `compile_circuits.sh`. The patch
+corrects the `ModExpFailed()` error selector that `bb` emits, and it makes the constructor check the
+key sizes. Copy that function if you want the same changes.
+
+### Call the verifier from publishInput
+
+Change `contracts/MyProgram.sol`. The contract stores the verifier, and `publishInput` decodes a
+third field, the proof. This version also adds the stage and window checks that `CRISPProgram`
+makes.
+
+```solidity filename="contracts/MyProgram.sol"
+import { ICircuitVerifier } from '@interfold/contracts/contracts/interfaces/ICircuitVerifier.sol';
+
+contract MyProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownable {
+  // ...
+  ICircuitVerifier public immutable inputVerifier;
+
+  error KeyNotPublished(uint256 e3Id);
+  error InputWindowNotOpen(uint256 e3Id);
+  error InvalidInputProof();
+
+  constructor(
+    IInterfold _interfold,
+    IRiscZeroVerifier _verifier,
+    ICircuitVerifier _inputVerifier,
+    bytes32 _imageId
+  ) Ownable(msg.sender) {
+    require(address(_verifier) != address(0), VerifierAddressZero());
+    require(address(_inputVerifier) != address(0), VerifierAddressZero());
+    inputVerifier = _inputVerifier;
+    // ... the rest of the template constructor
+  }
+
+  function publishInput(uint256 e3Id, bytes memory data) external override {
+    E3 memory e3 = interfold.getE3(e3Id);
+
+    if (interfold.getE3Stage(e3Id) != IInterfold.E3Stage.KeyPublished) revert KeyNotPublished(e3Id);
+    if (block.timestamp < e3.inputWindow[0]) revert InputWindowNotOpen(e3Id);
+    if (block.timestamp > e3.inputWindow[1]) revert InputDeadlineReached();
+
+    (bytes memory ciphertext, bytes32 ciphertextCommitment, bytes memory proof) = abi.decode(
+      data,
+      (bytes, bytes32, bytes)
+    );
+    if (ciphertext.length == 0) revert EmptyInputData();
+
+    // The order must match the public inputs of the fold circuit.
+    bytes32[] memory publicInputs = new bytes32[](2);
+    publicInputs[0] = ciphertextCommitment;
+    publicInputs[1] = e3.committeePublicKey;
+    if (!inputVerifier.verify(proof, publicInputs)) revert InvalidInputProof();
+
+    uint256 index = inputs[e3Id].numberOfLeaves;
+    inputs[e3Id]._insert(uint256(ciphertextCommitment));
+
+    emit InputPublished(e3Id, ciphertext, index);
+  }
+  // ...
+}
+```
+
+`e3.committeePublicKey` holds the commitment that `CiphernodeRegistryOwnable.publishCommittee` sent
+to the Interfold contract. The fold proof returns the same commitment, so a proof for another
+committee key fails. The value in `publicInputs[0]` is the commitment that the program inserts into
+its input tree.
+
+<Callout type='warning'>
+  The proof binds the commitment, not the ciphertext bytes. A submitter can send a valid proof with
+  other bytes. The default input policy of the template (`InputPolicy::default()`) cannot detect
+  this, because its leaf is the commitment alone. The CRISP Secure Process drops an input whose
+  bytes do not reproduce its commitment (`matches_commitment` in
+  `examples/CRISP/program/src/lib.rs`). See [The Secure Process](/build/e3-program/secure-process).
+</Callout>
+
+### Deploy the verifier with the program
+
+In `deploy/default.ts`, deploy the two libraries and the verifier before `MyProgram`. Use fully
+qualified names, as `examples/CRISP/packages/crisp-contracts/scripts/verifiers.ts` does. Every
+generated verifier declares the same contract names.
+
+```ts filename="deploy/default.ts"
+const source = 'contracts/verifiers/BinaryInputVerifier.sol'
+
+const zkTranscriptLib = await ethers.deployContract(`${source}:ZKTranscriptLib`)
+await zkTranscriptLib.waitForDeployment()
+const relationsLib = await ethers.deployContract(`${source}:RelationsLib`)
+await relationsLib.waitForDeployment()
+
+const inputVerifierFactory = await ethers.getContractFactory(`${source}:HonkVerifier`, {
+  libraries: {
+    [`project/${source}:ZKTranscriptLib`]: await zkTranscriptLib.getAddress(),
+    [`project/${source}:RelationsLib`]: await relationsLib.getAddress(),
+  },
+})
+const inputVerifier = await inputVerifierFactory.deploy()
+await inputVerifier.waitForDeployment()
+
+// Pass the verifier as the new third constructor argument.
+const e3Program = await e3ProgramFactory.deploy(
+  await interfold.getAddress(),
+  await verifier.getAddress(),
+  await inputVerifier.getAddress(),
+  programId,
+)
+```
+
+Run `pnpm compile` to regenerate the TypeChain types before you deploy.
+
+### Prove each input in the client
+
+The client makes five proofs: three for the encryption, one for the rule, and the fold. Then it
+encodes the input for `publishInput`. This function is adapted from `generateProof` in
+`examples/CRISP/packages/crisp-sdk/src/vote.ts`.
+
+Before you use it, do these two things:
+
+1. Copy the five compiled JSON files (`user_data_encryption_ct0`, `user_data_encryption_ct1`,
+   `user_data_encryption`, `binary_input`, and `binary_input_fold`) into `client/src/circuits`.
+2. Add `@aztec/bb.js` `5.1.0` and `@noir-lang/noir_js` `1.0.0-beta.26` to `client/package.json`.
+   These are the versions that `@interfold/sdk` uses.
+
+```ts filename="client/src/utils/prove-input.ts"
+import { Barretenberg, UltraHonkBackend } from '@aztec/bb.js'
+import { Noir, type CompiledCircuit } from '@noir-lang/noir_js'
+import type { InterfoldSDK } from '@interfold/sdk'
+import { bytesToHex, encodeAbiParameters, parseAbiParameters } from 'viem'
+import ct0Circuit from '@/circuits/user_data_encryption_ct0.json'
+import ct1Circuit from '@/circuits/user_data_encryption_ct1.json'
+import udeCircuit from '@/circuits/user_data_encryption.json'
+import binaryInputCircuit from '@/circuits/binary_input.json'
+import foldCircuit from '@/circuits/binary_input_fold.json'
+
+const proofToFields = (proof: Uint8Array): string[] => {
+  const fields: string[] = []
+  for (let i = 0; i < proof.length; i += 32) fields.push(bytesToHex(proof.slice(i, i + 32)))
+  return fields
+}
+
+export async function proveBinaryInput(sdk: InterfoldSDK, value: bigint, publicKey: Uint8Array) {
+  const { encryptedData, circuitInputs: c } = await sdk.encryptNumberAndGenInputs(value, publicKey)
+
+  const api = await Barretenberg.new()
+  await api.initSRSChonk(2 ** 21) // the fold circuit needs 2^21 points
+  const inner = { verifierTarget: 'noir-recursive-no-zk' } as const
+
+  const prove = async (circuit: CompiledCircuit, inputs: Record<string, unknown>) => {
+    const { witness, returnValue } = await new Noir(circuit).execute(inputs as any)
+    const backend = new UltraHonkBackend(circuit.bytecode, api)
+    const proof = await backend.generateProof(witness, inner)
+    const artifacts = await backend.generateRecursiveProofArtifacts(
+      proof.proof,
+      proof.publicInputs.length,
+      inner,
+    )
+    return { proof, artifacts, returnValue }
+  }
+
+  try {
+    const ct0 = await prove(ct0Circuit as CompiledCircuit, {
+      pk0is: c.pk0is,
+      ct0is: c.ct0is,
+      u: c.u,
+      e0: c.e0,
+      e0is: c.e0is,
+      e0_quotients: c.e0_quotients,
+      k1: c.k1,
+      r1is: c.r1is,
+      r2is: c.r2is,
+    })
+    const ct1 = await prove(ct1Circuit as CompiledCircuit, {
+      pk1is: c.pk1is,
+      ct1is: c.ct1is,
+      u: c.u,
+      e1: c.e1,
+      p1is: c.p1is,
+      p2is: c.p2is,
+    })
+    const ude = await prove(udeCircuit as CompiledCircuit, {
+      ct0_verification_key: ct0.artifacts.vkAsFields,
+      ct0_proof: proofToFields(ct0.proof.proof),
+      ct0_public_inputs: ct0.proof.publicInputs,
+      ct0_key_hash: ct0.artifacts.vkHash,
+      ct1_verification_key: ct1.artifacts.vkAsFields,
+      ct1_proof: proofToFields(ct1.proof.proof),
+      ct1_public_inputs: ct1.proof.publicInputs,
+      ct1_key_hash: ct1.artifacts.vkHash,
+    })
+    const rule = await prove(binaryInputCircuit as CompiledCircuit, {
+      ct0is: c.ct0is,
+      ct1is: c.ct1is,
+      k1: c.k1,
+    })
+    const [ctCommitment, k1Commitment] = rule.returnValue as string[]
+
+    const { witness } = await new Noir(foldCircuit as CompiledCircuit).execute({
+      user_data_encryption_verification_key: ude.artifacts.vkAsFields,
+      user_data_encryption_proof: proofToFields(ude.proof.proof),
+      user_data_encryption_public_inputs: ude.proof.publicInputs,
+      user_data_encryption_key_hash: ude.artifacts.vkHash,
+      binary_input_verification_key: rule.artifacts.vkAsFields,
+      binary_input_proof: proofToFields(rule.proof.proof),
+      binary_input_key_hash: rule.artifacts.vkHash,
+      ct_commitment: String(ctCommitment),
+      k1_commitment: String(k1Commitment),
+    })
+    const fold = await new UltraHonkBackend(
+      (foldCircuit as CompiledCircuit).bytecode,
+      api,
+    ).generateProof(witness, {
+      verifierTarget: 'evm',
+    })
+
+    // publicInputs[0] is ct_commitment, the value that publishInput inserts into its tree.
+    return encodeAbiParameters(parseAbiParameters('bytes, bytes32, bytes'), [
+      bytesToHex(encryptedData),
+      fold.publicInputs[0] as `0x${string}`,
+      bytesToHex(fold.proof),
+    ])
+  } finally {
+    await api.destroy()
+  }
+}
+```
+
+Send the result as `data` in `publishInput(e3Id, data)`. The template encodes inputs in
+`client/src/utils/input.ts` and `server/input.ts` as `(bytes, bytes32)`. Change both files to the
+new format.
+
+</Steps>
+
+## Test the circuit
+
+Put Noir tests (`#[test]` functions) next to the circuit code and run them with `nargo test` in the
+package. CRISP does this in `examples/CRISP/circuits/lib/src/merkle_tree.nr` and runs the tests with
+`pnpm test:circuits`.
+
+## Compare with CRISP
+
+| Part           | This tutorial                       | CRISP                                                                                           |
+| -------------- | ----------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Rule circuit   | `binary_input`: the value is 0 or 1 | `crisp`: census membership, signature, vote rules, and the ciphertext addition                  |
+| Fold circuit   | 2 public inputs                     | 9 public inputs, from `prev_ct_commitment` to the committee public key                          |
+| Key-hash check | One constant                        | Two constants, one for each BFV preset, so one verifier serves both presets                     |
+| Verifiers      | `BinaryInputVerifier.sol`           | `CRISPVerifier.sol` (census Merkle tree) and `CRISPOnchainVerifier.sol` (on-chain voting power) |
+| Input flow     | One `publishInput` transaction      | `publishInput`, then `finalizeInput` after the ciphertext is available on Avail                 |
+
+For small checks, you do not always need a circuit. A contract can check public data itself, for
+example an allow list of submitters.
+
+## Next steps
+
+<LinkCards min={230}>
+  <LinkCard title='Noir Circuits' href='/build/noir-circuits' icon='circuit' tag='Reference'>
+    The circuits workspace, the toolchain, and the verifier scripts.
+  </LinkCard>
+  <LinkCard
+    title='E3 program contract'
+    href='/build/e3-program/program-contract'
+    icon='contract'
+    tag='Build'
+  >
+    The full `IE3Program` interface and what each function must check.
+  </LinkCard>
+  <LinkCard title='CRISP' href='/CRISP/introduction' icon='vote' tag='Example'>
+    A complete E3 application that uses these patterns for private voting.
+  </LinkCard>
+  <LinkCard
+    title='Deploy to Sepolia'
+    href='/build/tutorials/deploy-to-testnet'
+    icon='rocket'
+    tag='Tutorial'
+  >
+    Deploy the program and its verifier to the testnet.
+  </LinkCard>
+</LinkCards>

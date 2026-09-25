@@ -1,0 +1,375 @@
+---
+title: 'Request an E3'
+description:
+  'What a requester pays for an E3, how the contract computes the fee, what happens when an E3
+  fails, how refunds work, and how to choose a committee size and parameter set.'
+---
+
+import { Callout, Steps } from 'nextra/components'
+import { Lifecycle, Stage, LinkCards, LinkCard } from '@/components/ui'
+
+# Request an E3
+
+This page is for requesters. A requester is the account that calls `request` on the Interfold
+contract and pays for an E3. The page explains the fee and how the contract computes it, the fee
+token on each network, and the lifecycle from the requester side. It also explains failures,
+refunds, and the choice of committee size and parameter set. It ends with a checklist that you can
+use before each request.
+
+For the function signatures, see [The Interfold Contract](/build/interfold-contract). For the SDK
+calls, see [SDK](/build/sdk).
+
+## What the requester pays
+
+The requester pays the total fee in one transfer when `request` succeeds. The total has two parts.
+
+| Part                | Where it goes                                                      | Refund on failure                                                       |
+| ------------------- | ------------------------------------------------------------------ | ----------------------------------------------------------------------- |
+| Service fee         | Escrow in the Interfold contract (`e3Payments`) until the E3 ends. | Full or partial. See [Who pays for a failure](#who-pays-for-a-failure). |
+| Flat randomness fee | Credited to the request-time treasury when the request succeeds.   | None.                                                                   |
+
+The flat randomness fee (`randomnessFlatFee`) pays for the VRF request that selects the committee.
+The margin does not apply to it.
+
+When the E3 completes, the service escrow is split in two:
+
+- The treasury gets `protocolShareBps` of the service escrow.
+- The active committee members share the rest in equal parts. One member gets the rounding dust.
+- If no active member remains, the requester gets the service escrow back.
+
+Committee rewards are pull payments. The contract credits them, and each recipient claims them.
+
+## How the fee is computed
+
+`getE3Quote(params)` returns the total fee. The math is in `lib/InterfoldPricing.sol`. It uses N and
+H from `committeeThresholds` for the committee size and the `PricingConfig`. It also uses the
+timeout windows, the sortition submission window, the input window, and the block time.
+
+Each node produces a fixed number of proofs:
+
+$$
+P = 14 + 4(N - 1)
+$$
+
+The base cost $B$ is the sum of these terms. Each coefficient is a `PricingConfig` field in raw
+fee-token units.
+
+| Term                        | Formula               | `PricingConfig` field       |
+| --------------------------- | --------------------- | --------------------------- |
+| Key generation, fixed part  | $k_f \cdot N$         | `keyGenFixedPerNode`        |
+| Key generation, proofs      | $k_p \cdot N \cdot P$ | `keyGenPerEncryptionProof`  |
+| Key generation coordination | $c \cdot N(N-1)/2$    | `coordinationPerPair`       |
+| Proof verification          | $v \cdot N \cdot P$   | `verificationPerProof`      |
+| Availability                | $a \cdot N \cdot D$   | `availabilityPerNodePerSec` |
+| Decryption                  | $d \cdot H$           | `decryptionPerNode`         |
+| Decryption coordination     | $c \cdot H(H-1)/2$    | `coordinationPerPair`       |
+| Publication                 | $p$                   | `publicationBase`           |
+
+$D$ is the billable duration in seconds. The contract takes the larger of two pre-compute estimates,
+then adds weighted compute and decryption time. It rounds $D$ down to whole seconds.
+
+$$
+D = \max\left(W_s + L + W_k u_k,\ E - t\right) + W_c u_c + W_d u_d
+$$
+
+In this formula:
+
+- $W_s$ is the sortition submission window, and $L$ is the input window length.
+- $W_k$, $W_c$, and $W_d$ are the DKG, compute, and decryption windows.
+- $u_k$, $u_c$, and $u_d$ are `dkgUtilizationBps`, `computeUtilizationBps`, and
+  `decryptUtilizationBps`, as fractions of 10,000.
+- $E$ is the input window end, and $t$ is the block time.
+
+The service fee is $S = B \cdot (10000 + m) / 10000$, where $m$ is `marginBps`. The total fee is $S$
+plus `randomnessFlatFee`. The contract uses integer division.
+
+These rules follow from the formula:
+
+- A larger committee costs more. The key generation and coordination terms grow with $N^2$.
+- A later input window costs more for the same length. The $E - t$ term reserves node availability
+  from the request to the end of the input window.
+- For the same parameters and pricing, a later block gives the same quote or a lower quote.
+  `request` computes the quote again, so a fee approved from an earlier quote is enough.
+
+`getE3Quote` reverts when the request is not valid. The errors are `InvalidInputDeadlineStart`,
+`InvalidInputDeadlineEnd`, `InvalidDuration`, `UnsupportedCryptoConfig`,
+`CommitteeSizeNotConfigured`, `CommitteeSizeTooSmall`, `ThresholdTooSmall`, and `PaymentRequired`.
+An unregistered parameter set reverts with the message `BFV param set not registered`.
+
+## Fee token and pricing per network
+
+The deployment configuration sets the fee token and the pricing. Governance can change these values
+with `setFeeAssetConfig` and `setRandomnessFlatFee`. Read the live values with `feeToken()`,
+`feeTokenDecimals()`, and `getPricingConfig()`.
+
+| Setting             | Ethereum mainnet            | Sepolia and local chains |
+| ------------------- | --------------------------- | ------------------------ |
+| Fee token           | USDS, 18 decimals           | `MockUSDC`, 6 decimals   |
+| `randomnessFlatFee` | 5 USDS                      | 1.00 MockUSDC            |
+| `marginBps`         | 1000 (10%)                  | 1000 (10%)               |
+| `protocolShareBps`  | 182 (1.82% of service fees) | 182                      |
+| `minCommitteeSize`  | 19                          | 0 (no minimum)           |
+| `minThreshold`      | 2                           | 0 (no minimum)           |
+
+The mainnet values come from `deploy/protocol/mainnet-protocol.config.json`. The Sepolia and local
+values come from `scripts/deployInterfold.ts`. For the contract addresses, see
+[Contracts & Addresses](/reference/contracts).
+
+Each request freezes its fee token. Refunds and rewards for that E3 use the frozen token, also after
+governance changes the fee token.
+
+## The lifecycle from the requester side
+
+<Lifecycle label='E3 lifecycle for a requester'>
+  <Stage title='Requested' actor='Requester' event='E3Requested'>
+
+The fee transfer succeeds. The registry requests VRF randomness and opens ticket submission.
+
+  </Stage>
+  <Stage title='CommitteeFinalized' actor='Ciphernodes' event='CommitteeFinalized'>
+
+Sortition selects N ciphernodes. The committee starts DKG. The DKG deadline starts.
+
+  </Stage>
+  <Stage title='KeyPublished' actor='Data providers' event='CommitteeFormed'>
+
+The committee public key is available. Data providers encrypt inputs and send them to the E3 program
+until the input window ends.
+
+  </Stage>
+  <Stage title='CiphertextReady' actor='Compute provider' event='CiphertextOutputReferencePublished'>
+
+The compute provider result passes verification. The decryption deadline starts.
+
+  </Stage>
+  <Stage title='Complete' actor='Ciphernodes' event='PlaintextOutputPublished'>
+
+T + 1 ciphernodes decrypt the result. The contract stores the plaintext and credits rewards.
+
+  </Stage>
+  <Stage title='Failed' actor='Anyone' event='E3Failed' tone='fail'>
+
+A deadline passes, or a slash leaves too few active members. Refund settlement starts.
+
+  </Stage>
+</Lifecycle>
+
+Each stage has a deadline. The contract sets each deadline when the E3 enters the stage.
+
+| Stage                | Deadline                                                                                           | Failure reason after the deadline |
+| -------------------- | -------------------------------------------------------------------------------------------------- | --------------------------------- |
+| `Requested`          | The registry committee deadline. The contract adds the DKG window when enough tickets arrive.      | `CommitteeFormationTimeout`       |
+| `CommitteeFinalized` | `dkgDeadline`: the committee deadline plus the DKG window.                                         | `DKGTimeout`                      |
+| `KeyPublished`       | `computeDeadline`: the later of key publication and the input window end, plus the compute window. | `ComputeTimeout`                  |
+| `CiphertextReady`    | `decryptionDeadline`: the ciphertext publication time plus the decryption window.                  | `DecryptionTimeout`               |
+
+The committee must publish its key before the DKG deadline and before the input window ends. A key
+publication after the DKG deadline reverts with `DKGDeadlinePassed`. A key publication after the
+input window end reverts with `InputWindowClosedBeforeKeyPublication`. Read the deadlines of an E3
+with `getDeadlines(e3Id)`.
+
+The mainnet deployment configuration sets these windows:
+
+| Window                      | Mainnet value       |
+| --------------------------- | ------------------- |
+| Randomness request timeout  | 3600 s (1 hour)     |
+| Sortition submission window | 600 s (10 minutes)  |
+| DKG window                  | 21600 s (6 hours)   |
+| Compute window              | 604800 s (7 days)   |
+| Decryption window           | 21600 s (6 hours)   |
+| `maxDuration`               | 2592000 s (30 days) |
+| `markFailedGracePeriod`     | 3600 s (1 hour)     |
+
+## When an E3 fails
+
+An E3 moves to `Failed` in one of these ways:
+
+- **Timeout.** After a stage deadline, `markE3Failed(e3Id)` records the timeout reason for that
+  stage. During `markFailedGracePeriod`, only the requester, the owner, or an active committee
+  member can call it. After the grace period, anyone can call it.
+- **Committee formation.** `finalizeCommittee` on the registry records `CommitteeFormationTimeout`
+  when no usable randomness arrived. It records `InsufficientCommitteeMembers` when fewer than N
+  tickets arrived.
+- **Slashing.** An expulsion that leaves fewer than H active members records
+  `InsufficientCommitteeMembers`.
+- **Cancellation.** The requester calls `cancelE3`. See [Cancel a request](#cancel-a-request).
+
+Ciphernodes watch the deadlines and submit `markE3Failed` and `processE3Failure` for you. Any
+account can also submit them.
+
+### Who pays for a failure
+
+`lib/FailurePayerLib.sol` assigns each failure reason to a payer. The payer decides the refund.
+
+| Payer       | Failure reasons                                                                                                                                                     | Requester refund of the service escrow |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| Ciphernodes | `CommitteeFormationTimeout`, `InsufficientCommitteeMembers`, `DKGTimeout`, `DKGInvalidShares`, `DecryptionTimeout`, `DecryptionInvalidShares`, `VerificationFailed` | 100%                                   |
+| Requester   | `NoInputsReceived`, `ComputeTimeout`, `ComputeProviderExpired`, `ComputeProviderFailed`, `RequesterCancelled`                                                       | The share for work that was not done   |
+
+For a requester-paid failure, the refund manager uses the work allocation that was frozen at request
+time. The default allocation is `committeeFormationBps` 1000, `dkgBps` 4000, `decryptionBps` 4500,
+and `protocolBps` 500. The four requester-paid reasons that new E3s can record map to the
+`KeyPublished` stage, so the split is:
+
+| Recipient                | Share of the service escrow |
+| ------------------------ | --------------------------- |
+| Honest committee members | 50%                         |
+| Requester                | 45%                         |
+| Treasury                 | 5%                          |
+
+If no honest member remains, the members' share goes to the requester. `RequesterCancelled` is kept
+only for old E3s. New cancellations use `CommitteeFormationTimeout`.
+
+<Callout type='warning'>
+  An E3 that gets no ciphertext output before the compute deadline fails with `ComputeTimeout`. The
+  requester pays for that failure. Make sure that your compute provider and your server can publish
+  the output inside the compute window.
+</Callout>
+
+These rules apply in every case:
+
+- The flat randomness fee is not refunded.
+- Slashed ciphernode collateral goes to the honest committee members, or to the treasury when no
+  honest member remains. It does not go to the requester.
+
+### Cancel a request
+
+`cancelE3(e3Id)` is a recovery path for a randomness request that did not produce a usable result.
+The call succeeds only when all of these conditions are true:
+
+- The caller is the requester (`NotRequester`).
+- The E3 is in `Requested`.
+- The registry has no sortition seed for the E3.
+- The randomness deadline has passed.
+
+Otherwise the call reverts with `E3NotCancellable`. A valid VRF result disables cancellation. A
+requester therefore cannot see a committee and then cancel it to get a new draw.
+
+A cancellation fails the E3 with `CommitteeFormationTimeout` and releases the committee. The
+requester gets 100% of the service escrow after settlement. The registry marks the randomness
+provider as degraded and emits `RandomnessCircuitBreakerTripped`. This flag is advisory. It does not
+stop new requests, and a new provider clears it.
+
+### Claim a refund
+
+Refunds are pull payments. Any account can do the first three steps. Do the last step from the
+requester address.
+
+<Steps>
+
+### Confirm that the E3 failed
+
+Read `getE3Stage(e3Id)` on the Interfold contract. The value must be `Failed` (6). The `E3Failed`
+event also gives the reason.
+
+### Wait for settlement to open
+
+For an E3 with a finalized committee, settlement opens one day after `getE3LifecycleDeadline(e3Id)`.
+It also waits until no open proposal can expel a committee member. An E3 without a finalized
+committee settles at once. Before settlement opens, `processE3Failure` reverts with
+`SettlementBlocked`.
+
+### Process the failure
+
+Call `processE3Failure(e3Id)` on the Interfold contract, if no other account has called it. The call
+moves the service escrow to the refund manager, and the refund manager emits
+`RefundDistributionCalculated`. `NoPaymentToRefund` means that another account already processed the
+E3.
+
+### Claim the refund
+
+Call `claimRequesterRefund(e3Id)` on the `E3RefundManager` from the requester address. The contract
+pays the refund in the fee token that was frozen for the E3. It emits `RefundClaimed`.
+
+</Steps>
+
+Use the refund manager that was current when you made the request. `e3RefundManager()` on the
+Interfold contract returns the current one. `getRefundDistribution(e3Id)` returns the calculated
+split, and `hasRequesterClaimed(e3Id, account)` shows whether you already claimed. The refund
+manager has no claim deadline. The claim reverts with `RefundNotCalculated`, `NotRequester`,
+`AlreadyClaimed`, or `NoRefundAvailable` when it cannot pay.
+
+## Choose a committee size and parameter set
+
+The committee size is an enum. Each size fixes N, H, and T in `lib/ActiveCryptoConfig.sol`. You
+cannot choose other values.
+
+| Size      | Enum value | N (members) | H (honest count) | T (threshold) | Shares to decrypt (T + 1) |
+| --------- | ---------- | ----------- | ---------------- | ------------- | ------------------------- |
+| `Minimum` | 0          | 3           | 2                | 1             | 2                         |
+| `Micro`   | 1          | 9           | 5                | 4             | 5                         |
+| `Small`   | 2          | 19          | 14               | 9             | 10                        |
+
+The committee stays viable while at least H members stay active. Decryption needs T + 1 shares.
+
+The parameter set selects the BFV parameters. The SDK preset must match it.
+
+| `paramSet` | SDK preset name          | Ring degree | Use                                        |
+| ---------- | ------------------------ | ----------- | ------------------------------------------ |
+| 0          | `INSECURE_THRESHOLD_512` | 512         | Tests only. It has no production security. |
+| 1          | `SECURE_THRESHOLD_8192`  | 8192        | Production.                                |
+
+Each network accepts different pairs:
+
+| Network                                | Parameter sets | Committee sizes                                                   |
+| -------------------------------------- | -------------- | ----------------------------------------------------------------- |
+| Ethereum mainnet                       | 1 only         | `Small` only. The launch pricing sets `minCommitteeSize` to 19.   |
+| Sepolia, local chains (31337 and 1337) | 0 and 1        | All three sizes, when the deployment configures their thresholds. |
+
+A parameter set must also be registered on the chain. `paramSetRegistry(paramSet)` returns empty
+bytes for an unregistered set. The local deploy script registers set 0 and configures thresholds
+only for `Minimum`.
+
+Use these rules to choose:
+
+- Choose `paramSet` 1 for any value that must stay private.
+- Choose a larger committee for more fault tolerance. It costs more.
+- Make sure that the network has enough eligible ciphernodes and bond owners. The request reverts
+  when fewer than N are available.
+- Call `getE3Quote` to test a pair before you request. It reverts for a pair that the chain does not
+  accept.
+
+## Checklist
+
+Before each request:
+
+- [ ] Confirm that `requestsPaused()` returns `false`.
+- [ ] Confirm that `e3Programs(program)` returns `true`.
+- [ ] Confirm that the chain accepts your committee size and parameter set.
+- [ ] Set the SDK preset to match `paramSet`.
+- [ ] Set the input window start a few seconds after the current block time.
+- [ ] Set the input window end after the worst-case key publication time.
+- [ ] Get the fee with `getE3Quote`.
+- [ ] Approve exactly that amount for the Interfold contract.
+- [ ] Set `maxFee` to the quoted amount.
+
+The worst-case key publication time is the request time plus the randomness timeout, the sortition
+submission window, and the DKG window. On mainnet, that sum is 25,800 seconds.
+
+After the request:
+
+- [ ] Watch `E3StageChanged` and `E3Failed` for your E3 ID.
+- [ ] Publish the ciphertext output before the compute deadline.
+- [ ] If the E3 fails, process the failure and claim the refund from the requester address.
+
+## Next steps
+
+<LinkCards min={230}>
+  <LinkCard
+    title='The Interfold Contract'
+    href='/build/interfold-contract'
+    icon='contract'
+    tag='Build'
+  >
+    Function signatures, events, and custom errors.
+  </LinkCard>
+  <LinkCard title='SDK' href='/build/sdk' icon='terminal' tag='Build'>
+    Quote, approve, and request an E3 from TypeScript.
+  </LinkCard>
+  <LinkCard title='Best practices' href='/build/best-practices' icon='shield' tag='Build'>
+    Design and operations practices for E3 programs.
+  </LinkCard>
+  <LinkCard title='E3 lifecycle' href='/learn/e3-lifecycle' icon='flow' tag='Concepts'>
+    The stages, the events, and the timeouts in detail.
+  </LinkCard>
+</LinkCards>

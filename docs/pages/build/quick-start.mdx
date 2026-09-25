@@ -1,0 +1,245 @@
+---
+title: 'Quick Start'
+description:
+  'Make a project from the default template, start a local chain with five ciphernodes, and run one
+  E3 from the browser.'
+---
+
+import { Callout, Steps } from 'nextra/components'
+import { LinkCard, LinkCards, Lifecycle, Stage } from '@/components/ui'
+
+# Quick Start
+
+This page takes you from an empty folder to one completed E3 on your computer. It is for developers
+who have installed the Interfold CLI. At the end, you have the default template running locally, and
+a committee of local ciphernodes has decrypted the sum of two encrypted numbers.
+
+## Before you begin
+
+Install the CLI and the developer tools on the [Installation](/build/installation) page. Then make
+sure that each tool is available:
+
+```bash
+interfold --version   # interfold 0.18.0
+node --version        # v22
+pnpm --version        # 10.7.1
+cargo --version
+anvil --version
+```
+
+You also need a browser wallet, for example MetaMask.
+
+## Run the template
+
+<Steps>
+
+### Create the project
+
+```bash
+interfold init my-first-e3
+```
+
+`interfold init` downloads the template that matches your CLI version (tag `v0.18.0` for CLI
+0.18.0). It copies the template to `my-first-e3`, adds the `lib/risc0-ethereum` Git submodule, runs
+`pnpm install`, and makes the first Git commit. The command prints
+`You can now start building on Interfold` when it completes.
+
+### Go to the project folder
+
+```bash
+cd my-first-e3
+```
+
+### Start the local stack
+
+```bash
+pnpm dev:all
+```
+
+The terminal shows log lines from six processes. Each line starts with the process name: `FRONTEND`,
+`EVM`, `CHAIN`, `CIPHER`, `SERVER`, or `PROGRAM`. The first start takes more time, because Cargo
+compiles the program server. The client is ready when the `FRONTEND` process starts Vite. See
+[What runs](#what-runs) for the details of each process.
+
+### Add the local chain to your wallet
+
+Add a custom network to your wallet with these values:
+
+| Field    | Value                   |
+| -------- | ----------------------- |
+| RPC URL  | `http://localhost:8545` |
+| Chain ID | `31337`                 |
+
+### Import the development account
+
+Import this private key into your wallet as a new account:
+
+```text
+0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+```
+
+This key is the first account of the Anvil test mnemonic. The deploy script uses this account, so it
+holds the local fee token that pays for the E3.
+
+<Callout type='warning'>
+  This private key is public. Use it only on the local chain. Never send real funds to this account,
+  and never use it on a live network.
+</Callout>
+
+### Connect the wallet
+
+Open [http://localhost:3000](http://localhost:3000). Use the connect button in the top bar to
+connect the development account on the local chain. The client starts the SDK and moves to **Step 2
+· Request Computation**.
+
+### Request an E3
+
+Select **Request E3 Computation**. Approve the two transactions in your wallet: first the fee token
+approval, then the E3 request.
+
+The page shows the E3 ID and the message `Waiting for committee to publish public key…`. When the
+committee publishes its public key, the client moves to **Step 3 · Enter Your Numbers**.
+
+<Callout type='info'>
+  The button label shows `0.001 ETH`. The client does not send ETH. It gets a fee quote from the
+  Interfold contract and pays that fee in the local fee token.
+</Callout>
+
+### Enter two numbers
+
+Enter a **First Number** and a **Second Number**. Keep the sum less than 100. Select **Proceed to
+Encryption**, then approve the two input transactions in your wallet.
+
+The template uses the `insecure-512` parameter set. Its plaintext modulus is 100, so the result is
+the sum modulo 100. The page shows the time that remains in the input window. You must submit both
+numbers before the window closes.
+
+### Get the result
+
+The page shows the progress of the E3. The coordination server starts the computation when the input
+window closes. Then the committee decrypts the output. The client moves to **Step 5 · Results** and
+shows your two numbers and their sum.
+
+To run another E3, select **Start New Computation**.
+
+</Steps>
+
+To stop the stack, press `Ctrl+C` in the terminal that runs `pnpm dev:all`. Each start deploys the
+contracts again on a new local chain.
+
+## What runs
+
+`pnpm dev:all` runs `scripts/dev_all.sh`, which uses `concurrently` to start six processes. If one
+process fails, `concurrently` stops the others.
+
+| Process    | Command                                                  | What it does                                                                                                                                                                                                                                    | Ports                                                             |
+| ---------- | -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `FRONTEND` | `pnpm dev:frontend`                                      | Waits for the chain and the program server. Exports the contract addresses with `interfold print-env --vite --chain localhost`, then starts the Vite client.                                                                                    | 3000                                                              |
+| `EVM`      | `anvil --host 0.0.0.0 --chain-id 31337 --block-time 1 …` | Runs the local chain. It uses the test mnemonic `test test test test test test test test test test test junk`.                                                                                                                                  | 8545                                                              |
+| `CHAIN`    | `node ./scripts/anvil-automine.mjs`                      | Mines a block every second. Fulfills the mock randomness requests that committee selection uses.                                                                                                                                                | None                                                              |
+| `CIPHER`   | `pnpm dev:ciphernodes`                                   | Sets the wallets of five ciphernodes (`cn1` to `cn5`) and runs `interfold noir setup`. Deploys the protocol contracts and `MyProgram`. Starts the nodes with `interfold nodes up` and registers each node with the `ciphernode:admin-add` task. | QUIC 9201 to 9205, control 50501 to 50505, dashboard 8004 (`cn1`) |
+| `SERVER`   | `TEST_MODE=1 pnpm dev:server`                            | Runs the coordination server. It waits for the committee key, starts the computation when the input window closes, and publishes the ciphertext output. It also serves the output bytes to the ciphernodes.                                     | 8080                                                              |
+| `PROGRAM`  | `pnpm dev:program`                                       | Runs `interfold program start`, which starts the program server. The program server runs the FHE computation in `program/src/lib.rs`.                                                                                                           | 13151                                                             |
+
+The `SERVER` and `PROGRAM` processes wait until the `CIPHER` process has deployed the contracts and
+started all five nodes. The `CIPHER` process signals this with the file
+`/tmp/interfold_ciphernodes_ready`.
+
+To open each process in its own pane, run `pnpm dev:all --tmux`. This mode needs tmux, and it starts
+the chain with `pnpm dev:evm` (a Hardhat node) instead of Anvil.
+
+<Callout type='warning'>
+  The program server accepts callback URLs from any caller. It does not authenticate callers and
+  does not restrict callback destinations. It is a development service only. Do not expose it to a
+  production or untrusted network.
+</Callout>
+
+### What `predev:all` does
+
+pnpm runs the `predev:all` script before `dev:all`:
+
+```bash
+[ ! -f './.interfold/generated/contracts/ImageID.sol' ] && interfold program compile || true
+```
+
+The template includes `.interfold/generated/contracts/ImageID.sol`, so this script usually does
+nothing. When the file is missing, it runs `interfold program compile`. The result of that command
+depends on the `program.dev` setting in `interfold.config.yaml`:
+
+| `program.dev`         | `interfold program compile` runs                                                                                          |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `true` (the template) | `.interfold/support/dev/compile`, which runs `cargo build --locked --bin e3-support-scripts-dev`. No zkVM image is built. |
+| `false`               | `.interfold/support/ctl/compile` in the `e3-support` Docker container. The RISC Zero build writes `ImageID.sol`.          |
+
+In dev mode, the program server runs the computation without a proof. The template also deploys
+`MockRISC0Verifier`, which accepts any RISC Zero seal. See
+[Compute provider](/build/e3-program/compute-provider) for proofs.
+
+## What just happened
+
+The Interfold contract records each E3 in a sequence of stages. Your E3 went through five stages.
+
+<Lifecycle label="Your E3 on the local chain">
+  <Stage title="Requested" actor="Requester" event="E3Requested">
+
+The client requested an E3 with the `minimum` committee size and parameter set `0` (`insecure-512`).
+
+  </Stage>
+  <Stage title="CommitteeFinalized" actor="Ciphernodes" event="CommitteeFinalized">
+
+Sortition selected three of the five local ciphernodes for the committee.
+
+  </Stage>
+  <Stage title="KeyPublished" actor="Committee" event="CommitteePublished">
+
+The committee ran DKG and published one public key. The client used it to encrypt your numbers.
+
+  </Stage>
+  <Stage title="CiphertextReady" actor="Coordination server" event="CiphertextOutputReferencePublished">
+
+The program server added the two ciphertexts. The coordination server published the encrypted sum.
+
+  </Stage>
+  <Stage title="Complete" actor="Committee" event="PlaintextOutputPublished">
+
+The committee decrypted the sum with T + 1 = 2 decryption shares. The plaintext went on-chain.
+
+  </Stage>
+</Lifecycle>
+
+| Stage                | What happened in the template                                                                                                                                                                                                                                                                         |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Requested`          | The client got a fee quote, approved the fee token, and called the Interfold contract. The request used the `minimum` committee size, parameter set `0` (`insecure-512`), and an input window of 100 seconds that opens 15 seconds after the request. The contract emitted `E3Requested`.             |
+| `CommitteeFinalized` | Sortition selected three of the five ciphernodes. The `minimum` committee has N = 3 and threshold T = 1. The `CHAIN` process supplied the randomness that sortition needs on the local chain. The contract emitted `CommitteeFinalized`.                                                              |
+| `KeyPublished`       | The committee ran distributed key generation (DKG) and published one public key. The client assembled the key from `CommitteePublicKeyChunkPublished` events and checked it against the key commitment. Then it encrypted each number and called `MyProgram.publishInput` twice.                      |
+| `CiphertextReady`    | When the input window closed, the coordination server sent the two ciphertexts to the program server. The program server ran `fhe_processor` and returned the encrypted sum. The coordination server called `publishCiphertextOutput`, and the contract emitted `CiphertextOutputReferencePublished`. |
+| `Complete`           | The committee members fetched the encrypted sum and made decryption shares. T + 1 shares (two shares) are sufficient to decrypt. The plaintext was published with a proof, and the contract emitted `PlaintextOutputPublished`. The client decoded the result.                                        |
+
+No single ciphernode could decrypt your numbers. The computation ran on ciphertexts only, and only
+the final sum was decrypted. For the full stage model, including timeouts and the `Failed` stage,
+see [E3 lifecycle](/learn/e3-lifecycle).
+
+## Troubleshooting
+
+| Problem                                                                                  | Cause and fix                                                                                                                                                                                    |
+| ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `interfold init` stops with `Directory '…' is not empty`                                 | The target folder must be empty or must not exist. Use a new folder name.                                                                                                                        |
+| `interfold init` stops with ``Cannot run `interfold init` when a configuration exists.`` | The CLI found an `interfold.config.yaml` in the current folder, in a parent folder, or in the default configuration folder. Run `interfold init` from a folder outside other Interfold projects. |
+| The client shows **Environment Configuration Required**                                  | The client started without the contract addresses. Start the client with `pnpm dev:all` or `pnpm dev:frontend`, which export the addresses.                                                      |
+| `ERROR: only N/5 ciphernodes stayed up`                                                  | A ciphernode stopped during startup. Read the `CIPHER` log lines above the error for the cause.                                                                                                  |
+| The page shows `Input window closed.`                                                    | The input window closed before you submitted both numbers. Select **Start New Computation** and try again.                                                                                       |
+| The client shows an old E3 after a restart                                               | The client keeps its state in the browser. Select **Start over** in the top bar.                                                                                                                 |
+
+## Next steps
+
+<LinkCards min={230}>
+  <LinkCard title='Hello World' href='/build/hello-world' icon='sparkle' tag='Tutorial'>
+    Change the FHE computation in the template and run the E3 again.
+  </LinkCard>
+  <LinkCard title='Project Template' href='/build/project-template' icon='layers' tag='Reference'>
+    Every folder, script, and setting in the template.
+  </LinkCard>
+  <LinkCard title='E3 lifecycle' href='/learn/e3-lifecycle' icon='flow' tag='Concepts'>
+    Each stage of an E3, its events, and its timeouts.
+  </LinkCard>
+</LinkCards>

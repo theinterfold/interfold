@@ -1,63 +1,112 @@
 ---
 title: 'FOLD Token'
 description:
-  'Frequently asked questions about the FOLD token — its purpose, utility, and role in the Interfold
-  network'
+  'Frequently asked questions about the FOLD token: its purpose, its utility, and its role in the
+  Interfold network.'
 ---
+
+import { LinkCard, LinkCards } from '@/components/ui'
 
 # FOLD Token
 
-## What role does FOLD play in the Interfold network?
+This FAQ explains what FOLD does in the Interfold network. It is for token holders and for people
+who want to operate a ciphernode. The questions are in three groups: the role of FOLD,
+transferability, and ciphernode operation. For supply and allocation data, see
+[FOLD Tokenomics](/tokenomics).
+
+## The role of FOLD
+
+### What role does FOLD play in the Interfold network?
 
 The Interfold is a distributed network for confidential coordination. Applications request Encrypted
-Execution Environments (E3s), while ciphernodes coordinate and secure each computation.
+Execution Environments (E3s). Ciphernodes coordinate and secure each computation.
 
 FOLD supports the economic operation of the network.
 
-## What is the utility of the FOLD token?
+### What is the utility of the FOLD token?
 
-FOLD has three main, interlocking functions:
+FOLD has three main functions, and the three functions are interlocked: ciphernode bonding, protocol
+incentives, and governance.
 
-- **Ciphernode bonding** — Ciphernode operators bond FOLD to become eligible for network duties.
-  Bonded FOLD remains locked while the operator is registered and may be subject to protocol-defined
-  withdrawal periods and penalties for provable misbehavior or failure to fulfill assigned
-  responsibilities. These mechanisms align operational responsibility with economic accountability.
-- **Protocol incentives** — Alongside a share of completed E3 fees, ciphernode operators may receive
-  FOLD incentives for successfully completing protocol-defined duties as members of an E3 committee.
-- **Governance** — FOLD is expected to support governance participation via the Interfold DAO.
-  Governance may include decisions related to network parameters, protocol upgrades, and treasury
-  administration. Governance processes may include secret-ballot mechanisms powered by the Interfold
-  network.
+**Ciphernode bonding.** Ciphernode operators bond FOLD to become eligible for network duties. Bonded
+FOLD stays in the `BondingRegistry` contract. When the bond owner (the wallet that funds the bond)
+unbonds it, the FOLD waits in an exit queue before the bond owner can claim it. Bonded FOLD may be
+subject to protocol-defined withdrawal periods. It may also be subject to penalties for provable
+misbehavior or for failure to fulfill assigned responsibilities. These mechanisms align operational
+responsibility with economic accountability.
 
-## When does FOLD become generally transferable?
+**Protocol incentives.** Ciphernode operators receive a share of the fees of completed E3s. In
+addition, they may receive FOLD incentives for successfully completing protocol-defined duties as
+members of an E3 committee.
+
+**Governance.** FOLD is expected to support governance participation through the Interfold DAO.
+Governance may include decisions about network parameters, protocol upgrades, and treasury
+administration. Governance processes may include secret-ballot mechanisms that the Interfold network
+powers. For the current voting rules, see [Governance](/governance).
+
+## Transferability
+
+### When does FOLD become generally transferable?
 
 General FOLD transferability can be enabled at or after Aug 19 at **14:00 UTC (10 AM ET)**.
 
 At or after Unix timestamp **`1787148000`**, anyone can call the `tge()` function on the FOLD
 contract to enable general transferability.
 
-Once that transaction is executed, FOLD becomes generally transferable.
+When that transaction is executed, FOLD becomes generally transferable.
 
-General FOLD transferability and Network Alpha are distinct milestones within the broader Interfold
-launch sequence.
+General FOLD transferability and Network Alpha are distinct milestones in the broader Interfold
+launch sequence. For more information, see [FOLD Transferability](/faq/transferability).
 
-## How can I use FOLD to operate a ciphernode?
+## Ciphernode operation
 
-Operating a ciphernode is designed to be permissionless. The setup involves provisioning cloud-based
-or personal hardware, running the ciphernode software, bonding the ciphernode, and completing
-onchain registration.
+### How can I use FOLD to operate a ciphernode?
 
-Once registered, operators can participate in E3 committees when selected under protocol rules.
+Operating a ciphernode is designed to be permissionless. The setup has four parts:
+
+1. Provision cloud-based or personal hardware.
+2. Run the ciphernode software.
+3. Bond FOLD to the ciphernode.
+4. Complete on-chain registration.
+
+When the ciphernode is registered, it can participate in E3 committees when the protocol rules
+select it. To be active for committee selection, a registered ciphernode also needs a minimum ticket
+balance. See [Tickets and sortition](/operate/tickets-and-sortition).
 
 For current setup requirements, bonding instructions, and operator documentation, see
-[Ciphernode Operators](/ciphernode-operators).
+[Ciphernode Operators](/operate) and [Registration and bonding](/operate/registration).
 
-## Can I delegate my FOLD to a ciphernode operator?
+### Can I delegate my FOLD to a ciphernode operator?
 
-No. The Interfold's bonding model is deliberately operator-only. Every FOLD bonded to a ciphernode
-represents capital at risk to the operator running it.
+No. The bonding model of the Interfold is deliberately operator-only. Every FOLD that is bonded to a
+ciphernode is capital at risk for the operator that runs it.
 
-Delegated capital would allow operators to run partially-owned ciphernodes, diluting accountability
-and weakening the network's economic security guarantees.
+Delegated capital would let operators run partially-owned ciphernodes. That would dilute
+accountability and weaken the economic security guarantees of the network.
+
+In the `BondingRegistry` contract, each ciphernode has one bond owner, and only the bond owner can
+bond FOLD to it. The operator sets the bond owner. The bond owner can be the operator address or a
+separate wallet, for example a cold wallet or a Safe.
+
+## Support
 
 If you need support, join the designated [Telegram group](https://t.me/enclave_e3).
+
+## Next steps
+
+<LinkCards min={230}>
+  <LinkCard title='FOLD Tokenomics' href='/tokenomics' icon='coin' tag='Token'>
+    Total supply, allocation by category, and the unlock schedule.
+  </LinkCard>
+  <LinkCard
+    title='Registration and bonding'
+    href='/operate/registration'
+    icon='node'
+    tag='Operators'
+  >
+    Bond FOLD, get tickets, and register a ciphernode.
+  </LinkCard>
+  <LinkCard title='FOLD Transferability' href='/faq/transferability' icon='lock' tag='FAQ'>
+    The TGE, claiming, and the verified FOLD contract.
+  </LinkCard>
+</LinkCards>

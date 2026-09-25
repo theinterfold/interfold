@@ -1,11 +1,12 @@
 ---
-title: 'Interfold Tokenomics'
+title: 'FOLD Tokenomics'
 description:
-  'An overview of the Interfold token: total supply, allocation across categories, and the vesting
-  schedule'
+  'The FOLD token supply, its allocation across categories, the unlock schedule, and the token
+  contract rules that apply to all FOLD.'
 ---
 
 import { KeyParameters, AllocationPie, VestingSchedule } from '../components/Tokenomics'
+import { LinkCard, LinkCards } from '@/components/ui'
 
 # FOLD Tokenomics
 
@@ -19,60 +20,104 @@ import { KeyParameters, AllocationPie, VestingSchedule } from '../components/Tok
   />
 </div>
 
+FOLD is the token of the Interfold. This page gives the total supply of FOLD, the allocation of that
+supply across categories, and the unlock schedule of each category. It is for token holders,
+operators, and anyone who wants to understand the distribution of FOLD. For the role of FOLD in the
+network, see the [FOLD Token FAQ](/faq/fold-token).
+
 <KeyParameters />
 
-## Token Distribution
+## Token distribution
 
 The total supply of FOLD is 1.2 billion.
 
-The chart below illustrates how total supply is distributed:
+The chart below shows the distribution of the total supply:
 
 <AllocationPie />
 
-## Community Allocations
+The allocations are in two groups: **Community** and **Other**. The sections below describe each
+allocation.
+
+## Community allocations
 
 ### Foundation Treasury
 
-The Interfold has been built in the open and is freely available as open-source software under the
+The Interfold has been built in the open. It is freely available as open-source software under the
 LGPLv3 license. A portion of supply is allocated to The Interfold Foundation. Grants may be awarded
-proactively to support priority work or retroactively to recognize meaningful contributions.
+proactively to support priority work. Grants may also be awarded retroactively to recognize
+meaningful contributions.
 
 ### CCA Sale
 
-This allocation was reserved for two Uniswap Continuous Clearing Auctions, intended to give
+This allocation was reserved for two Uniswap Continuous Clearing Auctions (CCAs). The auctions gave
 community members and early believers in The Interfold a fair opportunity to participate before
-token transferability took place.
+token transferability took place. For the auction details, see [The FOLD Auction](/faq/auction).
 
 ### Airdrop
 
-3.94% of supply was airdropped to web3, privacy and security experts and organizations in order to
-recognize contributions to the space. This allocation has already been executed and fully allocated,
-and vests over 24 months.
+3.94% of supply was airdropped to web3, privacy, and security experts and organizations. The airdrop
+recognizes their contributions to the space. This allocation has already been executed and fully
+allocated, and it vests over 24 months.
 
-## Other
+## Other allocations
 
 ### Gnosis Guild
 
-This allocation recognises Gnosis Guild's early role and is subject to a 48-month release schedule.
+This allocation recognizes the early role of Gnosis Guild. It is subject to a 48-month release
+schedule.
 
 ### Investors
 
-The Interfold, previously developed under the name Enclave, has completed the following fundraising
-rounds.
+The Interfold, previously developed under the name Enclave, has completed these fundraising rounds:
 
-- Pre-seed | $20m valuation
-- Seed | $25.8m valuation
-- Legion round | $25.8m valuation
+| Round        | Valuation |
+| ------------ | --------- |
+| Pre-seed     | $20m      |
+| Seed         | $25.8m    |
+| Legion round | $25.8m    |
 
-This allocation combines all three rounds. It has no lock policy, and becomes transferable in full
-at the TGE. The Uniswap Continuous Clearing Auctions are shown separately, under the CCA Sale
-allocation.
+This allocation combines all three rounds. It has no lock policy, and it becomes transferable in
+full at the TGE (token generation event). The Uniswap Continuous Clearing Auctions are shown
+separately, under the CCA Sale allocation.
 
 ### Team and Advisors
 
-This allocation covers the core team, and the advisors who supported Interfold's early development.
-It follows a 24-month release schedule.
+This allocation covers the core team and the advisors who supported the early development of the
+Interfold. It follows a 24-month release schedule.
 
-## Unlock Schedule
+## Unlock schedule
+
+The chart shows the cumulative circulating supply of each allocation over time. The table below the
+chart gives the unlock schedule of each allocation.
 
 <VestingSchedule />
+
+## Token contract rules
+
+The FOLD token contract (`InterfoldToken`) applies these rules to all FOLD:
+
+| Rule             | What the contract does                                                                                                 |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| Name and symbol  | `Interfold` and `FOLD`. An ERC-20 token with the ERC-20 Permit and ERC-20 Votes extensions.                            |
+| Supply cap       | `MAX_SUPPLY` is 1,200,000,000 FOLD. A mint above the cap reverts with `MaxSupplyExceeded`.                             |
+| Minting          | Only the admin and minter roles can mint, and only before the TGE. After the TGE, a mint reverts with `MintingClosed`. |
+| TGE              | Anyone can call `tge()` after the cooldown that follows the auction window. The call succeeds one time only.           |
+| Allocation locks | An allocation can have a lock policy with an unlock curve. A wallet can transfer only its unlocked balance.            |
+| Bonded FOLD      | Bonded FOLD counts toward the amount that a wallet with locked FOLD must keep. Locked FOLD can be bonded.              |
+
+For the TGE date and what changes after it, see [FOLD Transferability](/faq/transferability). For
+the address of the FOLD contract, see [Contract addresses](/reference/contracts).
+
+## Next steps
+
+<LinkCards min={230}>
+  <LinkCard title='FOLD Token FAQ' href='/faq/fold-token' icon='coin' tag='FAQ'>
+    The role of FOLD in bonding, protocol incentives, and governance.
+  </LinkCard>
+  <LinkCard title='FOLD Transferability' href='/faq/transferability' icon='lock' tag='FAQ'>
+    When general transferability starts, and what changes for holders.
+  </LinkCard>
+  <LinkCard title='Governance' href='/governance' icon='vote' tag='DAO'>
+    How locked, bonded, and vesting FOLD give voting power in the Interfold DAO.
+  </LinkCard>
+</LinkCards>

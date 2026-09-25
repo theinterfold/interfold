@@ -1,0 +1,260 @@
+---
+title: 'Secure Process'
+description:
+  'Write the FHE computation of an E3 program: the fhe_processor signature, the BFV parameters it
+  receives, the input policy, and the limits on what it can compute.'
+---
+
+import { Callout } from 'nextra/components'
+import { LinkCard, LinkCards } from '@/components/ui'
+
+# Secure Process
+
+The secure process is the FHE computation of an E3 program. It receives the encrypted inputs and
+returns one encrypted output. It never sees a plaintext value. This page shows the function that you
+write, the data it receives, and the rules that the `e3-compute-provider` crate applies around it.
+At the end, you can change the computation in `program/src/lib.rs` and test it.
+
+## What you write
+
+An E3 program crate exports two functions from `program/src/lib.rs`:
+
+| Function        | Type                                    | Purpose                                                               |
+| --------------- | --------------------------------------- | --------------------------------------------------------------------- |
+| `fhe_processor` | `fn(&FHEProcessorInput<'_>) -> Vec<u8>` | The computation. It returns the serialized output ciphertext.         |
+| `policy`        | `fn() -> InputPolicy`                   | How each input becomes a tree leaf, and which inputs to compute over. |
+
+The crate is named `e3-user-program` in the template (`program/Cargo.toml`). It depends on `fhe` and
+`fhe-traits` (fhe.rs, tag `v0.2.2`), `e3-compute-provider`, and `e3-fhe-params`. The dev runner and
+the RISC Zero guest link a crate with this name and call these two functions. See
+[The guest must match your E3 program](/build/e3-program/compute-provider#the-guest-must-match-your-e3-program).
+
+This is the policy and the processor of the default template
+(`templates/default/program/src/lib.rs`) without the comments and the test. The processor adds all
+inputs:
+
+```rust filename="program/src/lib.rs"
+use e3_compute_provider::{FHEProcessorInput, InputPolicy};
+use fhe::bfv::Ciphertext;
+use fhe_traits::{DeserializeParametrized, Serialize};
+
+pub fn policy() -> InputPolicy {
+    InputPolicy::default()
+}
+
+pub fn fhe_processor(fhe_inputs: &FHEProcessorInput<'_>) -> Vec<u8> {
+    let mut sum = Ciphertext::zero(fhe_inputs.params);
+    for ciphertext_bytes in fhe_inputs.ciphertexts {
+        let ciphertext = Ciphertext::from_bytes(&ciphertext_bytes.0, fhe_inputs.params).unwrap();
+        sum += &ciphertext;
+    }
+
+    sum.to_bytes()
+}
+```
+
+CRISP uses the same processor (`examples/CRISP/program/src/lib.rs`). The two programs differ only in
+their input policy. See [Input policy](#input-policy).
+
+## Processor inputs
+
+The crate defines the processor type and its input in
+`crates/compute-provider/src/compute_input.rs`:
+
+```rust filename="crates/compute-provider/src/compute_input.rs"
+pub type FHEProcessor = for<'a> fn(&FHEProcessorInput<'a>) -> Vec<u8>;
+
+pub struct FHEProcessorInput<'a> {
+    pub ciphertexts: &'a [(Vec<u8>, u64)],
+    pub params: &'a Arc<BfvParameters>,
+}
+```
+
+| Field         | Content                                                                                                                |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `ciphertexts` | The serialized fhe.rs BFV ciphertexts that the policy selected, in index order. Each one has its on-chain input index. |
+| `params`      | The BFV parameters of the E3, decoded one time and shared with the processor.                                          |
+
+The processor receives only the inputs that the policy selected. The crate builds the input tree
+from all inputs first. See [Rules the crate enforces](#rules-the-crate-enforces).
+
+## BFV parameters
+
+The Interfold contract stores one ABI-encoded parameter set for each `paramSet` index
+(`paramSetRegistry`, set with `setParamSet`). The request names the index. The server reads the
+bytes for the E3 and sends them to the compute provider as `params`. The crate decodes them with
+`decode_bfv_params_arc` (`crates/fhe-params/src/encoding.rs`). The encoding is the tuple
+`(degree, plaintext_modulus, moduli[], error1_variance)`.
+
+The same bytes reach `IE3Program.validate` as `e3ProgramParams`. The program contract stores their
+Keccak-256 hash. The proof must carry the same parameter hash. See
+[Program Contract](/build/e3-program/program-contract#validate).
+
+| `paramSet` | Preset                 | Degree | Plaintext modulus | Ciphertext moduli |
+| ---------- | ---------------------- | ------ | ----------------- | ----------------- |
+| `0`        | `InsecureThreshold512` | 512    | 100               | 2                 |
+| `1`        | `SecureThreshold8192`  | 8192   | 1000000           | 3                 |
+
+Sources: `BfvPreset::from_on_chain_param_set` in `crates/fhe-params/src/presets.rs` and the preset
+constants in `crates/fhe-params/src/constants.rs`.
+
+<Callout type='warning'>
+  Parameter set `0` is insecure. It exists for local development and tests. The template client
+  requests it (`paramSet: 0` in `client/src/pages/steps/RequestComputation.tsx`). Use parameter set
+  `1` for real data.
+</Callout>
+
+## Processor output
+
+The processor returns the serialized output ciphertext (`Ciphertext::to_bytes`). The crate then
+computes four values from the run (`ComputeInput::run_batched`):
+
+| Value                   | How the crate computes it                                    |
+| ----------------------- | ------------------------------------------------------------ |
+| `ciphertext_hash`       | Keccak-256 of the output bytes                               |
+| `ciphertext_commitment` | The SAFE commitment of the output ciphertext                 |
+| `params_hash`           | Keccak-256 of the encoded BFV parameters                     |
+| `merkle_root`           | The Poseidon root of the input tree, one leaf for each input |
+
+The compute provider writes these values into the proof journal. The program contract and the
+protocol verifier check them. See
+[Verify the Compute Provider](/build/e3-program/verify-compute-provider).
+
+## Input policy
+
+An `InputPolicy` holds two function pointers (`crates/compute-provider/src/policy.rs`):
+
+```rust filename="crates/compute-provider/src/policy.rs"
+pub type LeafFn = fn(&PublishedInput) -> Result<String, ComputeError>;
+pub type SelectFn = fn(&[PublishedInput]) -> Vec<usize>;
+
+pub struct InputPolicy {
+    pub leaf: LeafFn,
+    pub select: SelectFn,
+}
+```
+
+- `leaf` builds the tree leaf for one input. It must return the same value that the program contract
+  inserts on-chain for that input. Otherwise the input roots do not match and the output cannot be
+  published.
+- `select` returns the indices of the inputs to compute over. It must be a function of data that the
+  input root binds. Then every prover that uses the same inputs selects the same set.
+
+`PublishedInput` gives the policy the input `index`, the `ciphertext` bytes, the `commitment` that
+the contract stored (if any), opaque `metadata`, and `recomputed`. The `recomputed` field is the
+commitment that the crate computes from the bytes. It is `None` when the bytes do not deserialize.
+
+### Default policy
+
+`InputPolicy::default()` uses `commitment_leaf` and `all_inputs`. The leaf is the SAFE commitment of
+the ciphertext, and every input is computed over. This matches `MyProgram.publishInput`, which
+inserts the commitment in the tree. Under this policy, an input that does not deserialize stops the
+run with `ComputeError::LeafCommitment`.
+
+### CRISP policy
+
+CRISP binds four values in each leaf and computes over one input for each voter slot. Its leaf
+function matches `CRISPProgram.inputLeaf`:
+
+```rust filename="examples/CRISP/program/src/lib.rs"
+pub fn leaf(input: &PublishedInput) -> Result<String, ComputeError> {
+    let commitment = input
+        .commitment
+        .ok_or_else(|| ComputeError::LeafCommitment {
+            index: input.index,
+            reason: "CRISP publishes a commitment with every input".to_string(),
+        })?;
+    metadata_of(input)?;
+
+    let mut outer = Sha256::new();
+    outer.update(Keccak256::digest(input.ciphertext));
+    outer.update(commitment);
+    outer.update(input.metadata);
+    Ok(leaf_from_digest(&outer.finalize()))
+}
+
+pub fn crisp() -> InputPolicy {
+    InputPolicy {
+        leaf,
+        select: chain_head_per_slot,
+    }
+}
+```
+
+The metadata is the 20-byte slot address and a 5-byte parent index. `chain_head_per_slot` skips an
+input when its bytes do not match its commitment. It also skips an input that does not extend the
+current head of its slot. A skipped input keeps its leaf, so the root does not change.
+
+`leaf_from_digest` reduces a digest into the BN254 scalar field and returns it as hex. Use it when
+your leaf is a hash.
+
+## Rules the crate enforces
+
+The crate applies these rules for every E3 program. A policy cannot change them.
+
+- The crate derives every leaf from the ciphertexts that the secure process consumes. `ComputeInput`
+  has no field for a root or for leaves.
+- Every published input gets a leaf, also when `select` does not choose it.
+- A selected index outside the input list stops the run with `ComputeError::MerkleTree`.
+- When the program publishes per-input data, the list must have one entry for each ciphertext.
+  Otherwise the run stops with `ComputeError::MerkleTree`.
+
+These rules are necessary because anyone can call `publishCiphertextOutput`. The only check on the
+input root is the comparison that the program contract makes against its own tree.
+
+The crate does not sort the inputs. A leaf position is its position in the input list, so the caller
+must send the inputs in on-chain index order. A caller that reads inputs from events must sort them
+by index.
+
+## Limits on the computation
+
+The processor has no secret key. It cannot read the value of a ciphertext, so it cannot branch on
+encrypted data. Control flow can use only public data, for example the number of inputs, their
+indices, and the parameters.
+
+| Operation (fhe.rs `v0.2.2`)                   | Result                                              |
+| --------------------------------------------- | --------------------------------------------------- |
+| Ciphertext plus or minus ciphertext, negation | Two components. The output can be published.        |
+| Ciphertext plus, minus, or times plaintext    | Two components. The output can be published.        |
+| Ciphertext times ciphertext                   | Three components. The output commitment rejects it. |
+
+The output commitment accepts only a ciphertext with exactly two components
+(`bfv_ciphertext_to_greco` in `crates/zk-helpers`). A ciphertext product in fhe.rs has three
+components. The Interfold does not publish a relinearization key, so the run then stops with
+`ComputeError::OutputCommitment`.
+
+Other limits:
+
+- BFV arithmetic is modulo the plaintext modulus. With parameter set `0` the modulus is 100, so 60 +
+  50 decrypts to 10.
+- The processor returns `Vec<u8>`, not a `Result`. An `unwrap` that fails panics. Inside the zkVM a
+  panic stops the guest, and the E3 gets no output.
+- When `select` returns no inputs, `Ciphertext::zero` has no components. The output commitment then
+  rejects the output.
+- The zkVM guest is single threaded. Each input adds cycles to the proof, so large rounds take more
+  time and cost more on Boundless.
+
+## Test the processor
+
+The template includes a unit test in `program/src/lib.rs`. It encrypts 3 and 2 with the
+`InsecureThreshold512` preset, runs `fhe_processor`, decrypts the result, and checks that it is 5.
+
+1. Open a terminal in the project root.
+2. Run `cargo test -p e3-user-program`.
+
+The test passes when the processor returns a valid sum. Add a test for each change that you make to
+the computation.
+
+## Next steps
+
+<LinkCards min={230}>
+  <LinkCard title='Program contract' href='/build/e3-program/program-contract' icon='contract'>
+    Insert the same leaf on-chain that your policy builds off-chain.
+  </LinkCard>
+  <LinkCard title='Compute provider' href='/build/e3-program/compute-provider' icon='layers'>
+    Run the secure process in dev mode or in the RISC Zero zkVM.
+  </LinkCard>
+  <LinkCard title='Complete example' href='/build/e3-program/complete-example' icon='flow'>
+    Follow one E3 through the template from request to result.
+  </LinkCard>
+</LinkCards>

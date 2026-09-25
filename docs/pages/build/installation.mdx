@@ -1,0 +1,279 @@
+---
+title: 'Installation'
+description:
+  'Install the Interfold CLI with interfoldup, a release archive, or a source build, and set up the
+  tools that the default project template needs.'
+---
+
+import { Callout, Steps, Tabs } from 'nextra/components'
+import { LinkCard, LinkCards } from '@/components/ui'
+
+# Installation
+
+This page is for developers who build E3 programs. It shows how to install the `interfold` CLI,
+which other tools the default project template needs, and how to verify the installation. At the
+end, you have a working `interfold` command and a computer that is ready for the
+[Quick Start](/build/quick-start).
+
+To run a ciphernode for the network, read [Operator requirements](/operate/requirements) instead.
+
+## Supported platforms
+
+Each release publishes prebuilt archives for two platforms.
+
+| Operating system | Architecture          | CLI archive                      | Installer archive                  |
+| ---------------- | --------------------- | -------------------------------- | ---------------------------------- |
+| Linux            | x86_64                | `interfold-linux-x86_64.tar.gz`  | `interfoldup-linux-x86_64.tar.gz`  |
+| macOS            | Apple silicon (arm64) | `interfold-macos-aarch64.tar.gz` | `interfoldup-macos-aarch64.tar.gz` |
+
+The releases do not include archives for other platforms, for example Linux on arm64 or macOS on
+Intel. On these platforms, [build the CLI from source](#install-the-cli).
+
+## Developer tools
+
+`interfold init` needs Git and pnpm. The default project template also starts a local chain,
+compiles Rust code, and runs a web client, so it needs more tools.
+
+| Tool                                                          | Version            | The template uses it to                                                                      |
+| ------------------------------------------------------------- | ------------------ | -------------------------------------------------------------------------------------------- |
+| [Git](https://git-scm.com/downloads)                          | Any recent version | Clone the template, make the project repository, and add the `lib/risc0-ethereum` submodule. |
+| [Node.js](https://nodejs.org/en/download)                     | 22                 | Run the client, the coordination server, and Hardhat. The repository CI uses Node.js 22.     |
+| [pnpm](https://pnpm.io)                                       | 10.7.1             | Install packages and run scripts. The `packageManager` field in `package.json` pins 10.7.1.  |
+| [Rust](https://rust-lang.org/tools/install/) (with `rustup`)  | 1.91.1             | Build and run the program server. `rust-toolchain.toml` in the template pins this version.   |
+| [Foundry](https://github.com/foundry-rs/foundry)              | Current release    | Run `anvil`, the local chain that `pnpm dev:all` starts on port 8545.                        |
+| A browser wallet, for example [MetaMask](https://metamask.io) | Any                | Sign the transactions that the client sends to the local chain.                              |
+
+Some tools are necessary only for specific tasks.
+
+| Tool                                                 | When you need it                                                                                                     |
+| ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| [Docker](https://docs.docker.com/get-docker/)        | RISC Zero mode (`program.dev: false`) and `interfold program shell`. Both run the `e3-support` image.                |
+| [tmux](https://github.com/tmux/tmux/wiki/Installing) | `pnpm dev:all --tmux`, which opens each process in its own tmux pane.                                                |
+| [Noir](https://noir-lang.org/docs) (`nargo`)         | Only to write your own circuits. The repository CI uses `v1.0.0-beta.26`. See [Noir circuits](/build/noir-circuits). |
+
+You do not install these components yourself:
+
+- **Barretenberg (`bb`) and the protocol circuits.** `interfold noir setup` downloads `bb` 5.1.0 and
+  the circuits for release 0.18.0. The template scripts run this command for you.
+- **The RISC Zero toolchain.** The `e3-support` Docker image contains it. The template runs in dev
+  mode by default, so it does not use RISC Zero.
+
+<Callout type='info'>
+  When you run `cargo` in a folder that has a `rust-toolchain.toml` file, `rustup` uses the Rust
+  version in that file. With Corepack enabled (`corepack enable`), pnpm uses the version in the
+  `packageManager` field.
+</Callout>
+
+## Install the CLI
+
+Select an installation method. The `interfoldup` installer is the recommended method.
+
+<Tabs items={['interfoldup', 'Release archive', 'From source']}>
+<Tabs.Tab unmount={false}>
+
+<Steps>
+
+### Install interfoldup
+
+Run the install script:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/theinterfold/interfold/main/install | bash
+```
+
+If `curl` is not available, use `wget`:
+
+```bash
+wget -qO- https://raw.githubusercontent.com/theinterfold/interfold/main/install | bash
+```
+
+The script detects your platform, downloads the `interfoldup` archive for the latest release, and
+installs `interfoldup` to `~/.local/bin`. If `~/.local/bin` is not in your `PATH`, the script prints
+the commands to add it for bash, zsh, and fish.
+
+### Install the CLI
+
+```bash
+interfoldup install
+```
+
+`interfoldup` downloads the `interfold` archive for the latest release and installs the binary to
+`~/.local/bin/interfold`.
+
+</Steps>
+
+</Tabs.Tab>
+<Tabs.Tab unmount={false}>
+
+<Steps>
+
+### Download the archive
+
+Open the [releases page](https://github.com/theinterfold/interfold/releases). Download the
+`interfold` archive for your platform from the **Assets** list, for example
+`interfold-linux-x86_64.tar.gz`.
+
+### Verify the checksum
+
+Calculate the SHA-256 checksum of the archive:
+
+```bash
+# Linux
+sha256sum interfold-linux-x86_64.tar.gz
+# macOS
+shasum -a 256 interfold-macos-aarch64.tar.gz
+```
+
+Compare the result with the **Checksums** section of the release notes. The two values must be
+identical.
+
+### Extract the binary
+
+```bash
+tar -xzf interfold-linux-x86_64.tar.gz
+```
+
+The archive contains one file, `interfold`.
+
+### Install the binary
+
+Move the binary to a folder in your `PATH`. `interfoldup` uses `~/.local/bin` by default.
+
+```bash
+mkdir -p ~/.local/bin
+mv interfold ~/.local/bin/interfold
+chmod 755 ~/.local/bin/interfold
+```
+
+</Steps>
+
+</Tabs.Tab>
+<Tabs.Tab unmount={false}>
+
+A source build needs Rust 1.91.1 and the Solidity compiler `solc` in your `PATH`. The build script
+of the `e3-evm` crate calls `solc`, and the build stops if `solc` is not available.
+
+<Steps>
+
+### Clone the repository
+
+```bash
+git clone https://github.com/theinterfold/interfold.git
+cd interfold
+```
+
+To build a specific release, check out its tag, for example `git checkout v0.18.0`.
+
+### Build and install the CLI
+
+```bash
+cargo install --locked --path ./crates/cli --bin interfold -f
+```
+
+Cargo installs the binary to `~/.cargo/bin/interfold`.
+
+</Steps>
+
+<Callout type='info'>
+  The template integration test (`pnpm test:integration`) needs a CLI that is built with the
+  `test-only-skip-proof-aggregation` Cargo feature. Release binaries do not include this feature. To
+  build it, add `--features test-only-skip-proof-aggregation` to the `cargo install` command.
+</Callout>
+
+</Tabs.Tab>
+</Tabs>
+
+## Manage versions with interfoldup
+
+`interfoldup` has three commands. Each command uses `~/.local/bin` by default. The `--system` flag
+selects `/usr/local/bin` instead. If your user cannot write to `/usr/local/bin`, run the command
+with `sudo`.
+
+| Command                                 | Result                                                                                              |
+| --------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `interfoldup install`                   | Installs the latest release of `interfold`.                                                         |
+| `interfoldup install --version v0.18.0` | Installs the release with that tag. A tag without the `v` prefix, for example `0.18.0`, also works. |
+| `interfoldup update`                    | Moves to the latest release. If `interfold` is not installed, this command installs it.             |
+| `interfoldup update --version v0.18.0`  | Moves to the release with that tag, forward or backward.                                            |
+| `interfoldup uninstall`                 | Removes the `interfold` binary.                                                                     |
+
+`interfoldup update` reads the installed version from `interfold --version`. When the installed
+version and the target release are the same, it prints `interfold is already at <version>` and makes
+no change.
+
+### Pin the installer version
+
+The install script installs `interfoldup` from the latest release. To install `interfoldup` from a
+specific release, set `INTERFOLDUP_VERSION` or give the `--version` option to the script:
+
+```bash
+# With the environment variable
+curl -fsSL https://raw.githubusercontent.com/theinterfold/interfold/main/install | INTERFOLDUP_VERSION=v0.18.0 bash
+
+# With the script option
+curl -fsSL https://raw.githubusercontent.com/theinterfold/interfold/main/install | bash -s -- --version v0.18.0
+```
+
+`INTERFOLDUP_VERSION` selects the release of the installer only. To select the release of the CLI,
+use `interfoldup install --version`. To update `interfoldup` itself, run the install script again.
+
+## Verify the installation
+
+<Steps>
+
+### Check the version
+
+```bash
+interfold --version
+```
+
+The command prints the CLI version, for example `interfold 0.18.0`.
+
+### Check the build revision
+
+```bash
+interfold rev
+```
+
+The command prints the short Git commit hash that the binary was built from. Run it in a folder that
+is not an Interfold project.
+
+### Check the compiled features
+
+```bash
+interfold rev --features
+```
+
+A release binary prints nothing. A binary built with `test-only-skip-proof-aggregation` prints that
+feature name.
+
+</Steps>
+
+<Callout type='info'>
+  In a project folder with a running ciphernode, the CLI sends `interfold rev` to that node. The
+  output is then the revision of the node, which can differ from the revision of your CLI.
+</Callout>
+
+## Troubleshooting
+
+| Problem                                               | Cause and fix                                                                                                     |
+| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `command not found: interfold`                        | The install folder is not in your `PATH`. Add `~/.local/bin` (or `/usr/local/bin` for `--system`) to your `PATH`. |
+| `No compatible asset found for <os>-<arch>`           | `interfoldup` found no archive for your platform in the release. Build the CLI from source.                       |
+| `No compatible binary found for platform: <platform>` | The install script found no `interfoldup` archive for your platform. Build the CLI from source.                   |
+| `GitHub API request for release <tag> failed`         | The tag does not exist, or GitHub is not available. Check the tag on the releases page.                           |
+| The source build stops with `solc must be installed`  | Install the Solidity compiler `solc` and run the build again.                                                     |
+
+## Next steps
+
+<LinkCards min={230}>
+  <LinkCard title='Quick Start' href='/build/quick-start' icon='rocket' tag='Tutorial'>
+    Make a project from the template and run one E3 on your computer.
+  </LinkCard>
+  <LinkCard title='Project Template' href='/build/project-template' icon='layers' tag='Reference'>
+    The folders, scripts, and configuration of the default template.
+  </LinkCard>
+  <LinkCard title='CLI reference' href='/reference/cli' icon='terminal' tag='Reference'>
+    All `interfold` commands and flags.
+  </LinkCard>
+</LinkCards>

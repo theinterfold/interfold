@@ -1,0 +1,329 @@
+---
+title: 'Program Contract'
+description:
+  'Implement IE3Program: what validate, publishInput, and verify must check, when the Interfold
+  contract calls them, and the extra interfaces that registration requires.'
+---
+
+import { Callout } from 'nextra/components'
+import { LinkCard, LinkCards } from '@/components/ui'
+
+# Program Contract
+
+The program contract is the on-chain part of an E3 program. It configures each E3, accepts the
+encrypted inputs, keeps the input tree, and checks the compute proof. This page describes each
+function that the Interfold contract requires, when it is called, and what it must check. The worked
+example is `contracts/MyProgram.sol` from the default template. At the end, you can change
+`MyProgram.sol` safely or write a new program contract.
+
+## Required interfaces
+
+The Interfold contract calls three interfaces on a program contract. The owner cannot register a
+program that does not advertise all of them.
+
+| Interface                    | Source file                                               | Functions                            |
+| ---------------------------- | --------------------------------------------------------- | ------------------------------------ |
+| `IE3Program`                 | `interfaces/IE3Program.sol`                               | `validate`, `verify`, `publishInput` |
+| `IE3ProgramDataAvailability` | `interfaces/IDataAvailabilityVerifier.sol`                | `verifyDataAvailability`             |
+| `IERC165`                    | `@openzeppelin/contracts/utils/introspection/IERC165.sol` | `supportsInterface`                  |
+
+The first two paths are relative to `packages/interfold-contracts/contracts/`. The template contract
+declares all three:
+
+```solidity filename="contracts/MyProgram.sol"
+contract MyProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownable {
+```
+
+## When each function is called
+
+| Function                 | Caller                                     | Called from                         | Effect of a revert or `false`                      |
+| ------------------------ | ------------------------------------------ | ----------------------------------- | -------------------------------------------------- |
+| `supportsInterface`      | Interfold contract                         | `registerE3Program`                 | Registration reverts                               |
+| `validate`               | Interfold contract                         | `request`                           | The request reverts, and no fee is taken           |
+| `publishInput`           | Data provider (not the Interfold contract) | Direct call on the program contract | The input is refused                               |
+| `verifyDataAvailability` | Interfold contract                         | `publishCiphertextOutput`           | The output is refused                              |
+| `verify`                 | Interfold contract                         | `publishCiphertextOutput`           | The output is refused (`InvalidOutput` on `false`) |
+
+## Registration
+
+Only the owner of the Interfold contract can call `registerE3Program` (`Interfold.sol`). The
+function reverts in these cases:
+
+- The address has no code: `E3ProgramNotAllowed`.
+- The program is already registered: `ModuleAlreadyEnabled`.
+- The program does not return `true` from `supportsInterface` for `IE3Program` and for
+  `IE3ProgramDataAvailability`: `E3ProgramInterfaceMissing`. Each probe has a 30000 gas limit
+  (`InterfoldLifecycle.validateE3ProgramInterfaces`).
+
+`unregisterE3Program` blocks new requests for a program. E3s that already exist keep their program.
+A request for a program that is not registered reverts with `E3ProgramNotAllowed`.
+
+```solidity filename="contracts/MyProgram.sol"
+function supportsInterface(bytes4 interfaceId) external pure override returns (bool) {
+  return
+    interfaceId == type(IE3Program).interfaceId ||
+    interfaceId == type(IE3ProgramDataAvailability).interfaceId ||
+    interfaceId == type(IERC165).interfaceId;
+}
+```
+
+## validate
+
+```solidity filename="interfaces/IE3Program.sol"
+function validate(
+  uint256 e3Id,
+  uint256 seed,
+  bytes calldata e3ProgramParams,
+  bytes calldata computeProviderParams,
+  bytes calldata customParams
+) external returns (bytes32 encryptionSchemeId);
+```
+
+The Interfold contract calls `validate` inside `request`. Before the call, it stores a provisional
+E3 record. The program can read that record with `getE3(e3Id)`. The stage and the requester stay
+unset until `validate` returns.
+
+| Argument                | Value that the Interfold contract passes                                          |
+| ----------------------- | --------------------------------------------------------------------------------- |
+| `e3Id`                  | The new E3 ID                                                                     |
+| `seed`                  | `uint256(keccak256(abi.encode(block.prevrandao, e3Id)))`                          |
+| `e3ProgramParams`       | `paramSetRegistry[paramSet]`: the ABI-encoded BFV parameters of the requested set |
+| `computeProviderParams` | The bytes from the request, unchanged. The Interfold contract does not read them. |
+| `customParams`          | The bytes from the request, unchanged. The program decodes them.                  |
+
+`validate` must do these checks and actions:
+
+1. Refuse callers other than the Interfold contract. The template also accepts its own owner.
+2. Refuse an E3 ID that is already initialized.
+3. Store `keccak256(e3ProgramParams)`. `verify` compares the proof parameter hash with this value.
+4. Start an empty input tree for the E3.
+5. Decode and check `customParams`, if the program uses them.
+6. Return `keccak256("fhe.rs:BFV")`.
+
+After `validate` returns, the Interfold contract checks the scheme ID. Any other value reverts with
+`UnsupportedCryptoConfig`. The request also reverts with `InvalidEncryptionScheme` when the scheme
+has no decryption verifier, public key verifier, or ciphertext verifier. The Interfold contract
+takes the fee only after these checks.
+
+```solidity filename="contracts/MyProgram.sol"
+function validate(
+  uint256 e3Id,
+  uint256,
+  bytes calldata e3ProgramParams,
+  bytes calldata,
+  bytes calldata
+) external returns (bytes32) {
+  require(authorizedContracts[msg.sender] || msg.sender == owner(), CallerNotAuthorized());
+  require(paramsHashes[e3Id] == bytes32(0), E3AlreadyInitialized());
+  paramsHashes[e3Id] = keccak256(e3ProgramParams);
+
+  inputs[e3Id]._init(TREE_DEPTH);
+
+  return ENCRYPTION_SCHEME_ID;
+}
+```
+
+`ENCRYPTION_SCHEME_ID` is `keccak256("fhe.rs:BFV")` and `TREE_DEPTH` is `20`. The input tree is a
+`LazyIMTData` from `@zk-kit/lazy-imt.sol`.
+
+`CRISPProgram.validate` adds two checks. It refuses an E3 that the Interfold contract assigned to a
+different program (`E3NotAssignedToProgram`). It also checks the input window against the request
+timeouts (`_validateInputTiming`).
+
+## publishInput
+
+```solidity filename="interfaces/IE3Program.sol"
+function publishInput(uint256 e3Id, bytes memory data) external;
+```
+
+Data providers call `publishInput` directly on the program contract. The Interfold contract never
+calls it. The program contract defines the format of `data`.
+
+`publishInput` must do these checks and actions:
+
+1. Refuse inputs after the input window closes (`inputWindow[1]`).
+2. Decode `data` and refuse empty inputs.
+3. Check that the ciphertext is valid for this E3. For example, verify a ZK proof of correct
+   encryption to the committee key.
+4. Insert one leaf in the input tree. The leaf must equal the value that the secure process policy
+   builds for the same input.
+5. Emit an event that lets the server get the ciphertext and its index.
+
+The template takes `abi.encode(bytes ciphertext, bytes32 ciphertextCommitment)` and inserts the
+commitment. This matches the default input policy.
+
+```solidity filename="contracts/MyProgram.sol"
+function publishInput(uint256 e3Id, bytes memory data) external override {
+  E3 memory e3 = interfold.getE3(e3Id);
+
+  if (block.timestamp > e3.inputWindow[1]) {
+    revert InputDeadlineReached();
+  }
+
+  (bytes memory ciphertext, bytes32 ciphertextCommitment) = abi.decode(data, (bytes, bytes32));
+  if (ciphertext.length == 0) revert EmptyInputData();
+
+  uint256 index = inputs[e3Id].numberOfLeaves;
+  inputs[e3Id]._insert(uint256(ciphertextCommitment));
+
+  emit InputPublished(e3Id, ciphertext, index);
+}
+```
+
+<Callout type='warning'>
+  The template does not prove that the ciphertext matches its commitment, and it does not check the
+  encryption. An invalid input can then stop the E3 before it completes. A production program must
+  verify this binding before it inserts the leaf. CRISP shows one way to do this.
+</Callout>
+
+## verify
+
+```solidity filename="interfaces/IE3Program.sol"
+function verify(
+  uint256 e3Id,
+  bytes32 ciphertextOutputHash,
+  bytes32 ciphertextCommitment,
+  bytes memory proof
+) external returns (bool success);
+```
+
+The Interfold contract calls `verify` inside `publishCiphertextOutput`. The call comes after the
+protocol ciphertext verifier accepts the same proof, and before the output is stored. The program
+must check the arguments of the call. It must not read the pending output from Interfold storage.
+
+| Argument               | Content                                                         |
+| ---------------------- | --------------------------------------------------------------- |
+| `ciphertextOutputHash` | Keccak-256 of the serialized output ciphertext                  |
+| `ciphertextCommitment` | The SAFE commitment of the output ciphertext                    |
+| `proof`                | `abi.encode(bytes seal, bytes32 paramsHash, bytes32 inputRoot)` |
+
+`verify` must do these checks:
+
+1. Compare `paramsHash` in the proof with the hash that `validate` stored.
+2. Compare `inputRoot` in the proof with the root of the on-chain input tree.
+3. Rebuild the nine-field journal with `Risc0ComputeProof.journal`.
+4. Call the RISC Zero verifier with the seal, the image ID, and `sha256(journal)`.
+
+```solidity filename="contracts/MyProgram.sol"
+function verify(
+  uint256 e3Id,
+  bytes32 ciphertextOutputHash,
+  bytes32 ciphertextCommitment,
+  bytes memory proof
+) external view override returns (bool) {
+  require(paramsHashes[e3Id] != bytes32(0), E3DoesNotExist());
+  E3 memory e3 = interfold.getE3(e3Id);
+  bytes32 paramsHash = paramsHashes[e3Id];
+  bytes32 inputRoot = bytes32(inputs[e3Id]._root());
+  Risc0ComputeProof.Proof memory computeProof = Risc0ComputeProof.decode(proof);
+  if (computeProof.paramsHash != paramsHash || computeProof.inputRoot != inputRoot)
+    revert InvalidComputeContext();
+  bytes memory journal = Risc0ComputeProof.journal(
+    bytes32(block.chainid),
+    bytes32(uint256(uint160(address(interfold)))),
+    bytes32(e3Id),
+    e3.encryptionSchemeId,
+    e3.committeePublicKey,
+    ciphertextOutputHash,
+    ciphertextCommitment,
+    paramsHash,
+    inputRoot
+  );
+
+  verifier.verify(computeProof.seal, imageId, sha256(journal));
+  return true;
+}
+```
+
+<Callout type='error'>
+  The input root comparison is required. The protocol verifier takes the input root from the proof
+  and does not check it against any on-chain value. Without step 2, a prover can publish an output
+  that it computed over inputs that nobody submitted.
+</Callout>
+
+`verify` can change state. After it returns, the Interfold contract reads the stage again and checks
+committee viability again. `CRISPProgram.verify` also refuses the output while an input waits for
+its availability receipt (`InputAvailabilityPending`).
+
+## verifyDataAvailability
+
+```solidity filename="interfaces/IDataAvailabilityVerifier.sol"
+function verifyDataAvailability(
+  bytes32 expectedContentHash,
+  bytes calldata proof
+) external view returns (IDataAvailabilityVerifier.DataReference memory receipt);
+```
+
+The Interfold contract calls this function on every `publishCiphertextOutput`. It proves that the
+output bytes are available outside Ethereum. The returned `receipt.contentHash` must equal
+`expectedContentHash`, or the output is refused. The Interfold contract emits the content hash and
+the receipt coordinates in `CiphertextOutputReferencePublished`. The ciphernodes use them to fetch
+the output bytes before they decrypt.
+
+The template version is for the local stack only. It accepts the raw ciphertext as the proof and
+checks its Keccak-256 hash:
+
+```solidity filename="contracts/MyProgram.sol"
+function verifyDataAvailability(
+  bytes32 expectedContentHash,
+  bytes calldata proof
+) external pure override returns (IDataAvailabilityVerifier.DataReference memory receipt) {
+  bytes32 actual = keccak256(proof);
+  if (actual != expectedContentHash)
+    revert DataAvailabilityHashMismatch(expectedContentHash, actual);
+  return IDataAvailabilityVerifier.DataReference(expectedContentHash, 0, 0);
+}
+```
+
+`CRISPProgram` sends the call to an immutable `dataAvailabilityVerifier`. It uses the same verifier
+for inputs and for the output.
+
+## Input validation with ZK proofs (CRISP)
+
+`CRISPProgram.sol` (`examples/CRISP/packages/crisp-contracts/contracts/`) validates each input with
+a Noir proof. It uses two transactions for each input.
+
+1. **`publishInput`** decodes the Noir proof, the slot address, the ciphertext commitment, the
+   ciphertext content hash, the parent index, and a signed availability attestation. It verifies the
+   Noir proof with nine public inputs, which include the commitment and the committee public key. It
+   checks the attestation signature and expiry. Then it appends the leaf and emits `InputCommitted`.
+2. **`finalizeInput`** can be called by any account. It verifies the data-availability receipt for
+   the exact content hash, and then emits `InputPublished`.
+
+The leaf binds the content hash, the commitment, the slot, and the parent:
+
+```solidity filename="CRISPProgram.sol"
+function inputLeaf(
+  bytes32 encryptedVoteHash,
+  bytes32 commitment,
+  address slotAddress,
+  uint40 parentIndexPlusOne
+) public pure returns (uint256) {
+  return
+    uint256(
+      sha256(abi.encodePacked(encryptedVoteHash, commitment, slotAddress, parentIndexPlusOne))
+    ) % SNARK_SCALAR_FIELD;
+}
+```
+
+The CRISP secure process builds the same leaf. See
+[Secure Process](/build/e3-program/secure-process#crisp-policy). For the circuits, see
+[Noir Circuits](/build/noir-circuits).
+
+## Next steps
+
+<LinkCards min={230}>
+  <LinkCard title='Compute provider' href='/build/e3-program/compute-provider' icon='layers'>
+    How the proof that `verify` checks is made.
+  </LinkCard>
+  <LinkCard
+    title='Verify the compute provider'
+    href='/build/e3-program/verify-compute-provider'
+    icon='shield'
+  >
+    The journal fields, the image ID, and how to check a deployment.
+  </LinkCard>
+  <LinkCard title='Request an E3' href='/build/requesting-an-e3' icon='rocket'>
+    The request parameters that reach `validate`.
+  </LinkCard>
+</LinkCards>

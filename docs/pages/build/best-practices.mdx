@@ -1,0 +1,161 @@
+---
+title: 'Best Practices'
+description:
+  'Design and operations practices for E3 programs, requesters, clients, and servers. Each practice
+  follows from a mechanism in the contracts, the SDK, or the template.'
+---
+
+import { Callout } from 'nextra/components'
+import { LinkCards, LinkCard } from '@/components/ui'
+
+# Best Practices
+
+This page lists design and operations practices for E3 programs and the applications around them. It
+is for developers who design an E3 program, request E3s, or run a coordination server. Each practice
+names the mechanism in the code that makes it necessary. At the end, you have a deployment
+checklist.
+
+## Request parameters
+
+- **Choose a supported committee size.** The committee enum fixes N, H, and T in
+  `lib/ActiveCryptoConfig.sol`. On mainnet, the launch pricing sets `minCommitteeSize` to 19, so
+  only `Small` is accepted. `getE3Quote` reverts with `CommitteeSizeTooSmall` for a smaller size.
+- **Use the secure parameter set for private data.** Mainnet accepts only `paramSet` 1
+  (secure-8192). The insecure-512 preset has no production security.
+- **Match the SDK preset to the parameter set.** The SDK does not compare them. A mismatch encrypts
+  inputs under the wrong parameters.
+- **Place the input window after the worst-case key time.** The worst-case key time is the request
+  time plus `randomnessRequestTimeout`, `sortitionSubmissionWindow`, and `dkgWindow`. The committee
+  cannot publish its key after `inputWindow[1]` (`InputWindowClosedBeforeKeyPublication`). A window
+  that starts earlier can lose input time while DKG runs. In Avail mode, `CRISPProgram.validate`
+  refuses a voting start before the worst-case key time.
+- **Add a start buffer.** `inputWindow[0]` must not be earlier than the block time when the request
+  executes. `calculateInputWindow` adds 15 seconds by default.
+- **Keep the input window no longer than necessary.** The quote charges node availability from the
+  request to the end of the input window. The worst-case lifecycle must also stay inside
+  `maxDuration` (`InvalidDuration`).
+- **Put per-E3 settings in `customParams`.** Interfold stores the bytes on the E3 and passes them to
+  `e3Program.validate`. `CRISPProgram` decodes its round settings from `customParams`.
+
+## Fees
+
+- **Quote right before the request.** For the same parameters and pricing, a later block gives the
+  same quote or a lower quote. An approval of the latest quote is enough.
+- **Approve only the quoted amount.** `request` pulls exactly the quoted fee with `transferFrom`. A
+  larger approval stays open for later calls.
+- **Set `maxFee`, `expectedFeeToken`, and `expectedCryptoConfigId`.** These fields make the request
+  revert when governance changes the fee, the fee token, or the circuit configuration after your
+  quote. `requestE3` in the SDK sets the last two for you.
+- **Check `requestsPaused()` before you offer a request.** A new deployment starts paused, and
+  governance can pause requests again.
+
+## Program contract
+
+- **Advertise both interfaces.** `registerE3Program` probes `IE3Program` and
+  `IE3ProgramDataAvailability` through ERC-165. It rejects a program that does not advertise both
+  (`E3ProgramInterfaceMissing`).
+- **Check the request in `validate`.** Interfold stores the E3 record before it calls `validate`, so
+  the program can read the input window and the frozen timeouts. A revert in `validate` cancels the
+  request before the fee transfer.
+- **Gate `publishInput` yourself.** Interfold does not check inputs. The template program checks
+  only `inputWindow[1]`. `CRISPProgram` also checks a ballot proof, a commitment deadline, and a
+  signed availability attestation.
+- **Bind each ciphertext to its commitment.** The template program inserts the commitment into its
+  input tree without a proof of the binding. A comment in `MyProgram.sol` states that production
+  programs must verify it, because an invalid input can stop the E3 from completing.
+- **Check the input root in `verify`.** The template `verify` requires the compute proof to use the
+  stored parameter hash and the current root of the input tree (`InvalidComputeContext`). A program
+  without this check cannot prove which inputs the computation used.
+- **Verify the arguments, not Interfold storage.** Interfold calls `verify` before it stores the
+  output. `IE3Program` states that `verify` must check the supplied hash, commitment, and proof.
+- **Replace the mock data availability verifier.** The template `verifyDataAvailability` accepts any
+  bytes that hash to the content hash. It is for the local stack only.
+
+## Output and liveness
+
+- **Publish the ciphertext output inside its window.** Interfold accepts it only after
+  `inputWindow[1]` and not after the compute deadline. Read the deadline with `getDeadlines(e3Id)`.
+- **Treat the compute deadline as a hard limit.** A missed compute deadline fails the E3 with
+  `ComputeTimeout`. The requester pays for that failure: 50% of the service escrow goes to the
+  honest members and 5% to the treasury.
+- **Make publication safe to repeat.** A second publication reverts with
+  `CiphertextOutputAlreadyPublished`. Check the stage before you retry after a crash.
+- **Store job state on disk.** The template server keeps its job state in memory and watches only
+  new key events. After a restart, it does not schedule an E3 whose key was published earlier.
+- **Publish the ciphertext before you publish the reference.** The ciphernodes fetch the bytes from
+  the data availability layer with the content hash. On the local stack, they read
+  `GET /availability/objects/:contentHash` on the template server.
+
+## Clients and events
+
+- **Check the committee key against its commitment.** The key chunks are transport data. Use
+  `CommitteePublicKeyAssembler` and `validatePublicKeyCommitment`, as the template client and server
+  do.
+- **Listen to the events that the contracts emit.** Use `CIPHERTEXT_OUTPUT_REFERENCE_PUBLISHED`, not
+  `CIPHERTEXT_OUTPUT_PUBLISHED`. Use `COMMITTEE_PUBLIC_KEY_CHUNK_PUBLISHED`, not
+  `COMMITTEE_PUBLISHED`. The current contracts do not emit `CiphertextOutputPublished` or
+  `CommitteePublished`.
+- **Filter every event by E3 ID.** The SDK watches all events of a type on the contract. The
+  template handlers compare `event.data.e3Id` with the current E3.
+- **Read history with a start block.** `getHistoricalEvents` reads in ranges of 10,000 blocks when
+  you give `fromBlock`. Start at the contract deployment block, not at block 0.
+- **Wait for confirmations before an irreversible action.** A reorganization can remove a log.
+  Ciphernodes apply logs after `ingestion_confirmations` blocks (default 1). The CRISP availability
+  service reads finalized blocks before it retires a job.
+
+## Failures and refunds
+
+- **Know who can end an overdue E3.** Ciphernodes submit `markE3Failed` and `processE3Failure`.
+  During `markFailedGracePeriod` (1 hour in the mainnet configuration), only the requester, the
+  owner, or an active committee member can call `markE3Failed`. After that, any account can.
+- **Expect a delay before a refund.** For an E3 with a finalized committee, settlement opens one day
+  after `getE3LifecycleDeadline(e3Id)`. Until then, `processE3Failure` reverts with
+  `SettlementBlocked`.
+- **Request from an account that can claim.** Only the requester address can call
+  `claimRequesterRefund`. A smart contract wallet must be able to make this call.
+
+For the full refund rules, see [Request an E3](/build/requesting-an-e3#when-an-e3-fails).
+
+## Testing
+
+- **Run a full E3 in CI.** `pnpm test:integration` in the template runs the server tests, then an E3
+  from the request to the plaintext output (`tests/integration.spec.ts`). It needs an `interfold`
+  binary built with the `test-only-skip-proof-aggregation` feature. `pnpm dev:setup` builds it in
+  the monorepo.
+- **Test the runner without a request.** With `TEST_MODE=1`, `GET /test` on the server sends
+  `server/payload.json` to the program runner. `pnpm dev:all` sets `TEST_MODE=1`.
+- **Test the contracts.** `pnpm test` in the template runs the Hardhat tests.
+
+## Deployment checklist
+
+1. Deploy the E3 program. Ask the Interfold owner to register it with `registerE3Program`.
+2. Replace the mock `verifyDataAvailability` with a real data availability verifier.
+3. Set the chain, the RPC URL, and the preset in the server and the client.
+4. Fund the server key with gas for `publishCiphertextOutput`.
+5. Fund the requester with the fee token. Read the token from `feeToken()`.
+6. Confirm that `getE3Quote` accepts your committee size and parameter set on the target chain.
+7. Run `pnpm test:integration` against the new build.
+
+<Callout type='info'>
+  On mainnet, the Interfold owner is the governance DAO. A program registration is a governance
+  action.
+</Callout>
+
+## Next steps
+
+<LinkCards min={230}>
+  <LinkCard title='Request an E3' href='/build/requesting-an-e3' icon='coin' tag='Build'>
+    Fees, deadlines, failures, and refunds from the requester side.
+  </LinkCard>
+  <LinkCard
+    title='Program contract'
+    href='/build/e3-program/program-contract'
+    icon='contract'
+    tag='Build'
+  >
+    Write `validate`, `publishInput`, and `verify` for your program.
+  </LinkCard>
+  <LinkCard title='Client and server' href='/build/client-and-server' icon='network' tag='Build'>
+    The template client and server that these practices refer to.
+  </LinkCard>
+</LinkCards>

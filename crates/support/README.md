@@ -162,7 +162,7 @@ The order matters:
 Skipping step 4 leaves a deployed verifier that accepts a guest that does not match this tree. The
 provenance manifest records the committed image ID and compares it with a deployed verifier. It does
 not rebuild the guest. Therefore, this build order is mandatory. See
-`docs/pages/verifying-the-compute-provider.mdx` for the complete verification procedure.
+`docs/pages/build/e3-program/verify-compute-provider.mdx` for the complete verification procedure.
 
 ### Step 3: Upload Program to IPFS (Pinata)
 
