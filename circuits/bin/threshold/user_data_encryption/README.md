@@ -6,4 +6,4 @@ pk / ciphertext / k1 commitments for downstream use.
 |           |                                                                   |
 | --------- | ----------------------------------------------------------------- |
 | **Index** | [Circuit package index](../../../README.md#circuit-package-index) |
-| **Docs**  | [Noir Circuits](../../../../docs/pages/build/noir-circuits.mdx)   |
+| **Docs**  | [Noir Circuits](../../../../docs/pages/noir-circuits.mdx)         |

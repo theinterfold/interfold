@@ -6,4 +6,4 @@ BFV **individual** public key commitment: binds the ciphernode’s share-encrypt
 | --------- | ----------------------------------------------------------------- |
 | **Core**  | [`lib/src/core/dkg/pk.nr`](../../../lib/src/core/dkg/pk.nr)       |
 | **Index** | [Circuit package index](../../../README.md#circuit-package-index) |
-| **Docs**  | [Noir Circuits](../../../../docs/pages/build/noir-circuits.mdx)   |
+| **Docs**  | [Noir Circuits](../../../../docs/pages/noir-circuits.mdx)         |

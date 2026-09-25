@@ -7,4 +7,4 @@ the plaintext polynomial / message.
 | --------- | --------------------------------------------------------------------------------------------------------------------------- |
 | **Core**  | [`lib/src/core/threshold/decrypted_shares_aggregation.nr`](../../../lib/src/core/threshold/decrypted_shares_aggregation.nr) |
 | **Index** | [Circuit package index](../../../README.md#circuit-package-index)                                                           |
-| **Docs**  | [Noir Circuits](../../../../docs/pages/build/noir-circuits.mdx)                                                             |
+| **Docs**  | [Noir Circuits](../../../../docs/pages/noir-circuits.mdx)                                                                   |
