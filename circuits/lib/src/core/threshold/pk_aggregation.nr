@@ -29,9 +29,10 @@ impl<let L: u32> Configs<L> {
 ///
 /// **Produces:** `commit(pk0_agg, crp)` for user-data encryption (P3).
 ///
-/// **Verifies:** For each limb and coefficient, `pk0_agg` matches the mod-q_l sum of party
-/// pk0 (centered coefficients). pk1_agg is not a witness; the CRS `crp` is used directly,
-/// eliminating H*L*N per-party pk1 witness elements and the pk1 consistency loop.
+/// **Verifies:** Every party `pk0` and `pk0_agg` coefficient is a centered residue, then that
+/// for each limb and coefficient `pk0_agg` matches the mod-q_l sum of party pk0. pk1_agg is not a
+/// witness; the CRS `crp` is used directly, eliminating H*L*N per-party pk1 witness elements and
+/// the pk1 consistency loop.
 pub struct PkAggregation<let N: u32, let H: u32, let L: u32, let BIT_PK: u32> {
     /// Circuit parameters including CRT moduli
     configs: Configs<L>,
@@ -65,6 +66,26 @@ impl<let N: u32, let H: u32, let L: u32, let BIT_PK: u32> PkAggregation<N, H, L,
         pk0_agg: [Polynomial<N>; L],
     ) -> Self {
         PkAggregation { configs, crp, expected_threshold_pk_commitments, pk0, pk0_agg }
+    }
+
+    /// Bounds every opened `pk0` coefficient and every `pk0_agg` coefficient to a centered
+    /// residue `[-(q_l-1)/2, (q_l-1)/2]`.
+    ///
+    /// `verify_pk_commitments` re-opens C1's commitment from a private witness, and the commitment
+    /// packs `BIT_PK`-wide coefficients into shared carriers. An unbounded coefficient can overflow
+    /// its slot and cancel against the next one, so one commitment has many openings and the prover
+    /// could pick the sum it wants. Bounding every coefficient below the slot width makes each
+    /// commitment open to exactly one coefficient vector.
+    fn verify_pk_ranges(self) {
+        for basis_idx in 0..L {
+            let bound: Field = (self.configs.qis[basis_idx] - 1) / 2;
+
+            for party_idx in 0..H {
+                self.pk0[party_idx][basis_idx].range_check_2bounds::<BIT_PK>(bound, bound);
+            }
+
+            self.pk0_agg[basis_idx].range_check_2bounds::<BIT_PK>(bound, bound);
+        }
     }
 
     /// Verifies that each honest party's pk0 hashes to its expected commitment from C1.
@@ -121,15 +142,19 @@ impl<let N: u32, let H: u32, let L: u32, let BIT_PK: u32> PkAggregation<N, H, L,
 
     /// Returns `commit(pk0_agg, crp)` for P3 (`user_data_encryption_ct0` / `ct1`).
     pub fn execute(self) -> Field {
-        // Step 1: Bind each party pk0 to its C1 commitment.
+        // Step 1: Pin every opened coefficient to a single centered residue. Must run before the
+        // commitment check, which is only binding for bounded coefficients.
+        self.verify_pk_ranges();
+
+        // Step 2: Bind each party pk0 to its C1 commitment.
         self.verify_pk_commitments();
 
-        // Step 2: Check `pk0_agg` is the mod-q_l sum of party pk0 limbs (per CRT basis).
+        // Step 3: Check `pk0_agg` is the mod-q_l sum of party pk0 limbs (per CRT basis).
         for basis_idx in 0..L {
             self.verify_pk_for_basis(self.pk0, self.pk0_agg, basis_idx);
         }
 
-        // Step 3: Commit to (pk0_agg, crp). crp is the circuit-constant CRS a used as pk1_agg.
+        // Step 4: Commit to (pk0_agg, crp). crp is the circuit-constant CRS a used as pk1_agg.
         compute_pk_aggregation_commitment::<N, L, BIT_PK>(self.pk0_agg, self.crp)
     }
 }
