@@ -1,0 +1,23 @@
+
+running 1 test
+test c6_secure_small_fold_chain_proves_and_verifies has been running for over 60 seconds
+10 C6 samples generated OK (total 66.17s)
+c6 inner #1/10 PROVED secure/small T=9 (38.90s)
+c6 inner #2/10 PROVED secure/small T=9 (37.80s)
+c6 inner #3/10 PROVED secure/small T=9 (37.71s)
+c6 inner #4/10 PROVED secure/small T=9 (37.51s)
+c6 inner #5/10 PROVED secure/small T=9 (37.63s)
+c6 inner #6/10 PROVED secure/small T=9 (37.50s)
+c6 inner #7/10 PROVED secure/small T=9 (37.70s)
+c6 inner #8/10 PROVED secure/small T=9 (37.50s)
+c6 inner #9/10 PROVED secure/small T=9 (37.46s)
+c6 inner #10/10 PROVED secure/small T=9 (37.30s)
+step: samples x10 (secure/small T=9, total)                       66.17 s
+step: c6 inner proves x10 total                                  377.00 s
+step: c6_fold_kernel genesis + 9 c6_fold steps (total)           123.90 s
+step: verify_fold_proof (production field)                         0.01 s
+c6 production-field anchor GREEN @secure-8192/small (N=19/T=9/H=10): total wall 567.1s = 10 C6 inner proves + 10-slot c6_fold chain (kernel genesis + 9 steps) + verify_fold_proof=true
+test c6_secure_small_fold_chain_proves_and_verifies ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 567.19s
+

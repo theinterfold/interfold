@@ -1,0 +1,27 @@
+R125-LEG C2b nargo compile cwd=/home/dev/interfold-research/interfold/circuits/bin/dkg/e_sm_share_computation
+R125-LEG C2b rc=0
+	Command being timed: "nargo compile"
+	User time (seconds): 1279.34
+	System time (seconds): 20.49
+	Percent of CPU this job got: 99%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 21:39.84
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 31408540
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 18960771
+	Voluntary context switches: 248
+	Involuntary context switches: 4422
+	Swaps: 0
+	File system inputs: 9112
+	File system outputs: 126456
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0
+R125-LEG C2b artifact present: 64744667 1789167374
+bb gates rc=0

@@ -7,7 +7,9 @@
 //! Production witness builders and provers for the per-node DKG fold pipeline and aggregator
 //! proofs ([`CircuitName::NodeFold`], [`CircuitName::DkgAggregator`], [`CircuitName::DecryptionAggregator`]).
 
-use crate::circuits::aggregation::c3_accumulator::generate_sequential_c3_fold;
+use crate::circuits::aggregation::c3_accumulator::{
+    generate_c3_merge_m7x, generate_sequential_c3_fold,
+};
 use crate::circuits::aggregation::c6_accumulator::generate_sequential_c6_fold;
 use crate::circuits::aggregation::helpers::{address_to_field_hex, u64_to_field_hex};
 use crate::circuits::aggregation::nodes_fold_accumulator::generate_sequential_nodes_fold;
@@ -214,26 +216,75 @@ pub fn prove_node_dkg_fold(
                 rayon::join(
                     || {
                         let t = Instant::now();
-                        let r = generate_sequential_c3_fold(
-                            prover,
-                            input.c3a_inner_proofs,
-                            input.c3_slot_indices_a,
-                            input.c3_total_slots,
-                            &format!("{e3_id}-c3a"),
-                            artifacts_dir,
-                        );
+                        let r = if input.c3a_inner_proofs.len() == 54
+                            && input.c3_slot_indices_a.len() == 54
+                        {
+                            // Production N=19 C3a geometry (N=19, L=3): mirrors the C3b M7x
+                            // branch above. The r70 leg RAN-proved this exact shape at
+                            // production counts: c3a M7x 495.8 s vs the c3a serial oracle
+                            // 638.0 s (-22.3%), byte-identical tails all 57 rows, the builder
+                            // is lane-agnostic (same ShareEncryption inner family, same W_P
+                            // scatter), and the BOTH-arms-M7x c3ab seam PASSES on the
+                            // UNRECOMPILED c3ab artifact (VK-polymorphic witness input,
+                            // r9/r35/r65 pattern). Non-54/54 geometry falls through to the
+                            // unchanged sequential fold.
+                            generate_c3_merge_m7x(
+                                prover,
+                                input.c3a_inner_proofs,
+                                input.c3_slot_indices_a,
+                                input.c3_total_slots,
+                                &format!("{e3_id}-c3a"),
+                                artifacts_dir,
+                            )
+                        } else {
+                            generate_sequential_c3_fold(
+                                prover,
+                                input.c3a_inner_proofs,
+                                input.c3_slot_indices_a,
+                                input.c3_total_slots,
+                                &format!("{e3_id}-c3a"),
+                                artifacts_dir,
+                            )
+                        };
                         (r, t.elapsed())
                     },
                     || {
                         let t = Instant::now();
-                        let r = generate_sequential_c3_fold(
-                            prover,
-                            input.c3b_inner_proofs,
-                            input.c3_slot_indices_b,
-                            input.c3_total_slots,
-                            &format!("{e3_id}-c3b"),
-                            artifacts_dir,
-                        );
+                        let r = if input.c3b_inner_proofs.len() == 54
+                            && input.c3_slot_indices_b.len() == 54
+                        {
+                            // Production N=19 C3b geometry (N=19, L=3): the batched M7x merge
+                            // (1 kernel + 5 x B10 + 1 x B3 sub-gates + 1 M7x merge = 8
+                            // top-level proves) replaces the 54-step c3_fold chain with a
+                            // BYTE-IDENTICAL slot state (verified at production geometry,
+                            // r61/r62/r63 e2e) at a one-fold-layer wall of 298.1 s vs the
+                            // serial arm's 449.1 s (r63 RAN). M7x's public layout is
+                            // c3_fold-EXACT (175 = 4 + 3*57) and its final proof carries the
+                            // C3FoldBatchMergeM7x circular-dh ownership, so the c3ab witness
+                            // pins c3b against the M7x VK (single VK per arm — the r35
+                            // pattern). The legacy M7 (r55/r58) was NOT production-shape
+                            // (r60 premise kill); only the parameterized M7x is eligible.
+                            generate_c3_merge_m7x(
+                                prover,
+                                input.c3b_inner_proofs,
+                                input.c3_slot_indices_b,
+                                input.c3_total_slots,
+                                &format!("{e3_id}-c3b"),
+                                artifacts_dir,
+                            )
+                        } else {
+                            // Non-production geometry (other committees / partial chains):
+                            // the generic sequential fold (M7x hard-requires the exact
+                            // 54-inner / 54-slot production fan-out shape).
+                            generate_sequential_c3_fold(
+                                prover,
+                                input.c3b_inner_proofs,
+                                input.c3_slot_indices_b,
+                                input.c3_total_slots,
+                                &format!("{e3_id}-c3b"),
+                                artifacts_dir,
+                            )
+                        };
                         (r, t.elapsed())
                     },
                 )
@@ -256,19 +307,81 @@ pub fn prove_node_dkg_fold(
         seconds: c3b_elapsed.as_secs_f64(),
     });
 
-    let c3_fold_vk = vk::load_vk_artifacts(
-        &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
-        CircuitName::C3Fold,
-    )?;
+    // The c3ab witness must pin each arm against the VK of the circuit that PRODUCED its
+    // final proof. In production N=19 geometry BOTH arms take the M7x route (c3b since r65,
+    // c3a since this commit): the M7x merge returns a C3FoldBatchMergeM7x proof over the
+    // c3_fold-EXACT 175-field public layout, and c3ab_fold's in-circuit verify is
+    // VK-polymorphic at runtime (c3a_vk/c3a_key_hash and c3b_vk/c3b_key_hash are witness
+    // inputs, exactly like the prior-accumulator verify in the batch gates, r9 `c3_batch`)
+    // => c3ab_fold needs no recompile: this wiring is the "VK-rebuild-only" drop-in (r35
+    // pattern). Any other geometry folds that arm sequentially (c3_fold VK).
+    let c3a_arm_used_m7x = input.c3a_inner_proofs.len() == 54 && input.c3_slot_indices_a.len() == 54;
+    let c3a_final_vk = if c3a_arm_used_m7x {
+        vk::load_vk_artifacts(
+            &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
+            CircuitName::C3FoldBatchMergeM7x,
+        )?
+    } else {
+        vk::load_vk_artifacts(
+            &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
+            CircuitName::C3Fold,
+        )?
+    };
+    let c3a_circuit_name = if c3a_arm_used_m7x {
+        CircuitName::C3FoldBatchMergeM7x
+    } else {
+        CircuitName::C3Fold
+    };
+    // Defense-in-depth: the c3a final proof's circuit identity must match the VK arm chosen
+    // above (a geometry/ABI mismatch would otherwise pin c3ab against the wrong VK and fail
+    // at witness gen or, worse, be rejected at verify).
+    if c3a_folded.circuit != c3a_circuit_name {
+        return Err(ZkError::InvalidInput(format!(
+            "c3a final fold proof circuit {:?} does not match the expected arm {:?} (inners={}, slots={})",
+            c3a_folded.circuit,
+            c3a_circuit_name,
+            input.c3a_inner_proofs.len(),
+            input.c3_slot_indices_a.len()
+        )));
+    }
+    let c3b_arm_used_m7x = input.c3b_inner_proofs.len() == 54 && input.c3_slot_indices_b.len() == 54;
+    let c3b_final_vk = if c3b_arm_used_m7x {
+        vk::load_vk_artifacts(
+            &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
+            CircuitName::C3FoldBatchMergeM7x,
+        )?
+    } else {
+        vk::load_vk_artifacts(
+            &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
+            CircuitName::C3Fold,
+        )?
+    };
+    let c3b_circuit_name = if c3b_arm_used_m7x {
+        CircuitName::C3FoldBatchMergeM7x
+    } else {
+        CircuitName::C3Fold
+    };
+    // Defense-in-depth: the c3b final proof's circuit identity must match the VK arm chosen
+    // above (a geometry/ABI mismatch would otherwise pin c3ab against the wrong VK and fail
+    // at witness gen or, worse, be rejected at verify).
+    if c3b_folded.circuit != c3b_circuit_name {
+        return Err(ZkError::InvalidInput(format!(
+            "c3b final fold proof circuit {:?} does not match the expected arm {:?} (inners={}, slots={})",
+            c3b_folded.circuit,
+            c3b_circuit_name,
+            input.c3b_inner_proofs.len(),
+            input.c3_slot_indices_b.len()
+        )));
+    }
     let c3ab = C3abFoldWitness {
-        c3a_vk: c3_fold_vk.verification_key.clone(),
+        c3a_vk: c3a_final_vk.verification_key.clone(),
         c3a_proof: proof_field_strings(&c3a_folded)?,
         c3a_public: proof_public_field_strings(&c3a_folded)?,
-        c3b_vk: c3_fold_vk.verification_key.clone(),
+        c3b_vk: c3b_final_vk.verification_key.clone(),
         c3b_proof: proof_field_strings(&c3b_folded)?,
         c3b_public: proof_public_field_strings(&c3b_folded)?,
-        c3a_key_hash: c3_fold_vk.key_hash.clone(),
-        c3b_key_hash: c3_fold_vk.key_hash.clone(),
+        c3a_key_hash: c3a_final_vk.key_hash.clone(),
+        c3b_key_hash: c3b_final_vk.key_hash.clone(),
     };
     let t = Instant::now();
     let c3ab_proof = build_and_prove_recursive_bin(

@@ -1,0 +1,8 @@
+[package]
+name = "c3_fold_batch_merge_m1"
+type = "bin"
+authors = ["Gnosis Guild / Interfold (I5a r53 MERGE PoC)"]
+
+[dependencies]
+lib = { path = "../../../lib" }
+bb_proof_verification = { git = "https://github.com/AztecProtocol/aztec-packages/", tag = "v5.1.0", directory = "barretenberg/noir/bb_proof_verification" }

@@ -1,0 +1,132 @@
+ROUND 116 (2026-09-06)
+I-r116 = the r115-filed queue-0 "C4 mirror of I14" OPENED + PREMISE-VETTED (RAN) + r33-CHEAPEST kill + C4 source-minimality CLOSED (negative) + the C4 gate table RAN re-anchored to a single re-runnable check. The last per-node DKG leaf family (C4: dkg/share_decryption, C4a/C4b) is now RAN-minimality-closed on box-1. The box-1 leaf pool C1/C2/C3/C4/C5 + inners + 4 seam folds + aggregator pool is now fully RAN-minimality-closed.
+
+(1) PREMISE — REFUTED BY SOURCE (RAN, cheapest-first, zero new compile)
+  r115 filed queue item (0) as: "the C4 analogue (dkg/share_decryption) ... has the
+  same payload() pattern (ct0/ct1/k0/r1/r2/p1/p2 flatten stack) and is already the
+  second-largest DKG leaf at secure-8192/small — if the owner signs off on C6 first,
+  C4 is the natural next port."
+
+  The source read (RAN this round, both files in full):
+    - circuits/lib/src/core/dkg/share_decryption.nr (170 L, C4a/C4b core)
+    - circuits/bin/dkg/share_decryption/src/main.nr (21 L, entrypoint)
+
+  C4 is COMMIT-VERIFY + CRT-AGGREGATE, not FS-SPONGE:
+    execute(moduli):
+      1. verify_commitments()          --  H × L equality vs expected_commitments[p][l]
+      2. compute_aggregated_shares()   --  coeff-wise sum across H parties per limb
+      3. normalize_aggregated()        --  reduce mod q, reverse, center
+      4. compute_aggregated_shares_commitment  --  -> 1 output Field
+    NO payload()  / NO sponge  / NO challenge() / NO gamma  / NO flatten() / NO ct0 / NO ct1.
+    C4's circuit is pure arithmetic over the decrypted-share polynomials and the
+    expected [Field;L;H] commitments — the place r115's queue prose claimed the
+    I14 "ct0/ct1/k0/r1/r2/p1/p2 flatten stack" lives is actually C3's own stack
+    (dkg/share_encryption.nr:236-266, already I14-shipped in-tree for C3).
+
+  Grep of the C4-cone (lib/dkg/share_decryption.nr + bin/dkg/share_decryption/src/main.nr)
+  for {payload|sponge|challenge|gamma|flatten|fiat|compute_.*challenge}
+  => 0 hits. The fs sponge/payload/challenge tokens in the lib-dkg CONE live in
+  dkg/share_encryption.nr (C3), which is the already-shipped I14 site — NOT C4.
+
+  CONCLUSION: the I14 class (raw-polys in the FS sponge replaced by a commitment
+  already bound in-circuit) is STRUCTURALLY ABSENT in C4. Same class + answer as
+  r110-C3 (I14-shipped) / r111-C2 (noponge, minimal, lease-class) / r112-seam-folds
+  (no FS transcript, transitive-verifies + cross-asserts). r115's queue-0 lever
+  class does not apply to C4 — the premise-VET kills the idea in ~5 min source
+  reading, exactly per r33-lesson.
+
+(2) RAN GATE RE-ANCHORS (zero fresh compiles; on-disk artifact reads)
+  bb gates -t noir-recursive-no-zk, three RAN anchors cross-checked to digit-exact:
+    a. Canonical on-disk C4 artifact
+       (circuits/bin/dkg/target/share_decryption.json; preset=INSECURE-512/COMMITTEE-MINIMUM)
+         acir_opcodes  = 23,225
+         circuit_size  =  62,713 g       <- C4 INSECURE/MIN box-1 canonical (STATE r34-sector class)
+         sha256_16 = a45c3ccf2cbd8670
+    b. Durable r74-min pin
+       (poc/r74/min/share_decryption.json, committed r74 era)
+       SAME: 62,713 g / 23,225 ACIR / sha16 a45c3ccf2cbd8670  (0 drift, digit-exact).
+    c. Durable r75-min pin
+       (poc/r75/min/share_decryption.json, committed r75 era;
+        secure-8192, committee minimum, L=3)
+         acir_opcodes  = 573,457
+         circuit_size  = 1,746,030 g
+         sha256_16 = 6500a7416ecfb009
+       CROSS-ANCHOR: model.py ROUND-76 line 279 `C4_GATE_MIN = 1746030.0` — DIGIT-EXACT.
+    d. (box-2, NOT this round: C4 secure-8192/small = model.py line 279
+       C4_GATE_SMALL = 3,571,446 g RAN r46 — still r46-r102's 14.70-GiB OOM-class
+       arm; the box-2 32-GiB card's unspent part-(a) scope remains UNCHANGED
+       per the owner directive 2026-09-05 — do NOT retry on-box.)
+
+(3) VERIFICATION / SMOKE
+  - verify_c4_minimality_anchor_r116.py is a self-contained check-RC-0 re-runnable:
+    it RAN-re-gates both the on-disk insecure/min artifact AND the dual r74/r75
+    on-disk pins, greps the C4 cone for the I14 token set (must be 0 hits), and
+    asserts the model.py C4_GATE_MIN/C4_GATE_SMALL constants + the 0-drift
+    digit-exact re-anchors. All green: `TS1 (source-minimality CONE GREP 0 hits):
+    PASS`; `TS2a (on-disk insecure/min RAN re-gate) ... PASS`; `TS2b (r74-min
+    digit-exact) PASS`; `TS2c (r75-min digit-exact) PASS`; `TS2d (model.py
+    C4_GATE_MIN anchor) PASS`; `TS2e (model.py C4_GATE_SMALL anchor) PASS`;
+    `TS3 (zero-compile / no config drift check) PASS`. FULL ROUND SELF-CHECK OK.
+  - `cargo check --workspace` RC 0 (2.61 s) = crate-delivery smoke (no .nr change;
+    no Rust API footprint; poc-only commit; the .nr is UNTOUCHED — this round
+    ships NO circuit change, matching r110/r111/r112 shape).
+  - POST-COMMIT: `git status --porcelain` 0 lines (clean); active preset at the
+    r74/r68-insecure era (commit tip 678d0fd4; the default/mod.nr points at
+    `super::insecure::` on disk at round end — UNCHANGED, no config swap).
+
+(4) QUEUE-0 REFUTATION IMPLICATIONS + RESCREOPING
+  The premise-vet killed the idea (C4-mirror of I14) but RESCUED the sweep-
+  completion that round r33/r110/r111/r112 each followed: C4 = the last box-1
+  leaf-family NOT YET RAN-minimality-swept (C1 r44 / C2 r111 / C3 r110+I14
+  shipped / C5 r38+I20-secure-r113 / inners r80-r84 / seam folds r112 /
+  aggregator pool r114). This round closes C4 with the SAME shape as r111's C2
+  and r112's folds: PRECISE ANCHORS + C4-CONE-MINIMALITY + DIGIT-EXACT to every
+  prior baseline, 0 cone drift.
+
+  The box-1 DKG-pool per-circuit minimality sweep is now RAN-COMPLETE:
+     C1 (r44, secure committee-detached, committee-free at sha level 53,448 g)
+     C2a/C2b (r111, 4-count anchored, no-payload no-sponge, lease-class,  no I14 class)
+     C3 (r110 + r115-class, I14 SHIPPED in-tree at dkg/share_encryption.nr:236-246, no remaining box-1 FS lever)
+     C4 (THIS ROUND, no-payload-no-sponge, minimal, 2-toolchain anchor digit-exact)
+     C5 (r113 I20-secure RAN: commitment-scheme lever upper bound 84.46%, owner sign-off)
+     inners (r80-r84 RAN anchor lines, min->micro->small-anchored)
+     seam folds (r112, 4-count SG encrypted=no-zk,  r39-table digit-exact)
+     aggregator pool (r114, 6-min + 2-secure anchors, nodes_fold r39/digit-exact)
+
+(5) DELIVERABLES
+  - poc/r116/ (RESULT.txt 5.7 KB + verify_c4_minimality_anchor_r116.py)
+  - Re-runnable anchors single-sourced (revents the `bb gates` + `grep` +
+    model-constant reads without any fresh compile or config swap)
+  - Review branch research/r116-c4-minimality (pushed to enclave, NEVER origin,
+    NOT merged; NEVER to theinterfold/interfold)
+  - NO UPSTREAM-PR CANDIDATE (zero circuits/ or crates/ source change, no gate
+    reduction — poc/ scaffolding only; matches the shape r110/r111/r112 were
+    all enclaved under).
+
+(6) POST-ROUND QUEUE STATE (r116)
+  CLOSED (RAN):  I-r116 queue-0 "C4 mirror of I14" - premise-vet RAN (the C4
+  cone is structurally minimal; the I14 raw-ct-class lever that r115 shipped
+  into C6 lives in the C3/C6 FS-sponge shape; C4 simply lacks the FS sponge).
+  No crop-olever or follow-up.
+
+  OPEN (box-2 only, by owner directive 2026-09-05; 4c/7.8 GiB is the box-ceiling):
+    (0) box-2 32 GiB E2E + 3 heavy small leaf compiles (C2a 15.1 / C2b 14.9 /
+        C4 14.70 GiB r45/r46 - the three r45-r46 OOM walls; the C4 I14-mirror
+        lever queue-0 is now RAN-refuted but C4's secure-8192/small (3,571,446 g)
+        still needs a 32 GiB-less compile value if re-anchored fresh)
+    (1) batched inners >=8c / 16 GiB (r72; CPU-conserved on 4c)
+    (2) 19-node E2E + live-netlink comm wall (one-env-var r78 release run;
+        comm term RAN-anchored r105-r109: BYTES 36.71 MiB OUT / TOPOLOGY+SHAPE
+        RAN / VERIFY WALL FLOOR RAN r108 <17 s/node, upper 16.30 s = 0.025% of
+        the RAN c3-bulk 5183.0 s)
+
+  N=19 WALL TABLE 90.1 min/node @4c EXCL. comm  UNTOUCHED   (C4 = a leaf term
+  outside the c3-bulk-dominated 86.4-of-90.1-min split; r116 is a C4 source-
+  minimality + gate-anchor audit, no new node wall number).
+
+  UPSTREAM SYNC (step 2) RAN: git fetch origin -> origin/main HEAD 499146c9 =
+  merge-base, 0 commits since, NO REBASE (r107's 52/52 rebase stands; 60/0
+  branch ahead/behind before the round commit; this round does NOT advance the
+  branch on origin/main — it re-anchors RAN numbers, nothing else). Branch
+  i5/dkg-research = ...678d0fd4 (r115) -> <round-tip>r116, ahead 61 / behind 0
+  vs origin/main 499146c9.

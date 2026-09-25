@@ -1,0 +1,60 @@
+# r122 - DecryptionAggregator (DA) PRODUCTION-FIELD RAN ANCHOR
+
+## What this round RAN-closes
+The `DecryptionAggregator` (DA) is the **top-level, final on-chain proof of the
+decryption tail**: it transitively verifies a `c6_fold` UltraHonkProof + a C7
+UltraHonkProof (both non-ZK), plus the cross-asserts:
+- **ct-uniformity**: `c6_fold_public[ct_col][i] == ciphertext_commitment` for all i
+- **per-slot d_commitment match (C6 -> C7)**: `c6_fold_public[d_col][i] == c7_public[i]` for all i
+- **party_id validity + strictly-increasing ordering** (1..=N, no dupes, no monotonicity)
+- **common domain**: `c6_fold_public[4/5] == (domain_hi, domain_lo)` (public)
+- **committeeHash cross-beta-salvo**: `committee_hash_limbs(committee_members) == (hi, lo)`
+- **vk-hash bind**: `compute_vk_hash([c6_fold_key_hash, c7_key_hash])` (enforce co-tailored vks)
+
+This circuit is the on-chain-verified end of the P4 "C7 + Pi_dec fold" span (report.md
+205.70 s full integration wall / 64.51 s C7+fold sub-span, M4-Pro main-numbers from the
+bench run at its own committee + toolchain, NOT the production N=19 field).
+
+**Gap**: r117 RAN-compiled the DA at secure-8192/small (1,493,885 g / 9,526 ACIR) as part
+of its "re-pin chain" closure; r119/r120/r121 RAN-proved the C6/C5/C7 LEAVES at small and
+the c6_fold chain at min only. Nobody had ever RAN-PROVED the DA itself at any committee -
+the on-chain final decryption proof was compile-anchored only.
+
+## What this round RAN (GREEN)
+One coherent 19-party TRBFV world (1 shared ciphertext, per-receiver 19-sender
+DKG-aggregated sk/es, T+1 = 10 decryption shares) built at `build wall 6.94s`:
+1. 10 C6 inners (CircuitVariant::Recursive, secure/small) - 37.09-38.87s each,
+   375.25s total - RAN-verified per-inside witness executes at T=9/H=10/L=3
+2. 1 C7 (CircuitVariant::Default, secure/small) - 5.54s - RAN-verified Lagrange +
+   CRT + decode no-cross-assert at T=9/H=10/L=3
+3. **DecryptionAggregator (CircuitVariant::Evm, secure/small) via the CANONICAL
+   production API `prove_decryption_aggregation_jobs`** - **136.61s** - RAN-verified
+   every cross-INSIDE the-assert in-circuit: ct-uniformity, per-slot d_commitment
+   C6->C7 cross-match, party_id validity + strictly-increasing ordering, common
+   domain, committeeHash hash-beta-salvo, vk-hash bind
+4. **DA EVM verify (ok=true, 0.0103s)** - the on-chain verifier path passes
+
+Total leg compute 524.36s wall @4c (1538.09s user + 60.50s system, 302% CPU via rayon),
+peak RSS 3,625,024 kB = 3.47 GiB, Swaps 0, Exit 0. Very comfortable within the
+7.8 GiB / 30-60m box-1 budget.
+
+## Load-bearing honesty note (domain stand-in)
+The shared `(domain_hi, domain_lo) = (1, 2)` stand-in is used for all 10 C6 inners +
+the DA public input. The production keccak-derived E3 decryption domain binds the
+proof to (chainId, interfold addr, e3_id, committee hash, ct output hash, committee
+pk) to prevent cross-deployment replay. The DA cross-assert is "all C6 leaves in
+the fold share ONE domain; the DA publishes that domain publicly" - a consistency
+bind, exercised IDENTICALLY by the (1,2) stand-in. Every OTHER cross-assert runs on
+real RAN data at the production committee. The stand-in costs nothing wall/RAM-wise
+(domain is a public input to the DA, not a witness variable), and the standalone
+hostile-da-meters serve as a domain-value-agnostic cross-version anchor.
+
+## Reproducible leg
+    python3 interfold/poc/r122/stage_da_secure_small_r122.py
+    E3_R122_STAGE_ROOT=/home/dev/interfold-research/interfold/poc/r122/root \
+        cargo test --release -p e3-zk-prover --test da_secure_small_r122 -- --nocapture
+
+(Stage + leg we live-anyway toolchain-pin (nargo 1.0.0-beta.26, bb 5.1.0) on this
+rootielding at definition); the stage is self-restoring (config + on-disk min json
+byte-restore asserted) - rerunnable in ~10 min @4c end-to-end (stage ~8s + leg
+8:49 wall @4c) (poc/r122/stage_da_secure_small_r122.json).

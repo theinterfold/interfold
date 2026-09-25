@@ -1,0 +1,77 @@
+r126 LANDING (2026-09-12 ~01:19-07:2x UTC, T+2nd-box) - RAN round: the 3-leaf
+secure-8192/small (N=19/T=9/H=10/L=3) COMPILE card re-anchored ON the
+re-provisioned 8c / 32 GiB box, 4c-core-pinned. All 3 legs rc=0, gates
+DIGIT-EXACT to the r46/model anchors, configs byte-restored (pre==post
+sha256 + porcelain 0 live-verified). + booked the unbooked r124/r125
+sister legs from the same session's earlier work.
+
+STATUS: RAN (this round = booking + R124/R125-inheritance, all on-disk
+evidence re-verified at tick; no new compile burn - this is a correction
+round for a crashed prior session that RAN everything but died before
+bookkeeping).
+
+(1) 3-LEAF @4c-PINNED BLOCK (this round's new RAN legs; nproc=8,
+    taskset -c 0-3, 99% CPU, Swaps 0, Exit 0; wall = /usr/bin/time -v):
+    C4   (share_decryption)        3,571,446 g /   734,617 ACIR  (r46/model
+                                                       small anchor, DIGIT-EXACT)
+        wall 8:12.99 (492.99 s)  peak 18,588,916 kB = 17.73 GiB
+        artifact 13,837,193 B sha16=5bbabc75143811fc (dkg/target/)
+    C2a  (sk_shake_decryption)     9,422,519 g / 2,370,696 ACIR
+        wall 20:19.12 (1219.12 s)  peak 30,878,452 kB = 29.45 GiB
+        artifact 59,343,001 B sha16=0c727f73cba3a28a
+    C2b  (e_sm_share_computation) 10,865,172 g / 2,771,750 ACIR
+        wall 22:04.59 (1324.59 s)  peak 31,414,640 kB = 29.96 GiB
+        artifact 64,744,667 B sha16=5c1901b1952116a7
+    BATCH: serial total 50:36.70 s (50.6 min), envelope 29.96 GiB.
+
+(2) SISTER 8c-DEFAULT BLOCK (inherited r124/r125, on disk, same
+    session's earlier legs; bumped to this LANDING for horizontal
+    reading):
+    C2a @8 (r124)  wall 20:05.00, peak 30,876,716 kB = 29.45 GiB,
+        rc=0, Swaps 0, rack-code lock narked-off; gates same as (1).
+    C2b @8 (r125)  wall 21:39.84, peak 31,408,540 kB = 29.95 GiB,
+        rc=0, Swaps 0, gates same as (1).
+    C4  @8 (r125)  wall 3:51.63, kill-peak 31,612,108 kB = 30.15 GiB (HOST-GLOBAL kernel OOM at the box ceiling)
+        (LOWER BOUND: rc=137 "Command terminated by signal 9" = mid-
+        compile OOM-kill; artifact absent), 338% CPU (multi-core path
+        actually engaged - the single-threading have-yet-to-pin
+        hypothesis held only for C2a/C2b's default launch, which the
+        time -v at 99% CPU confirms: appending to them was single-
+        threaded even in 8c mode).
+
+(3) CROSS-ANCHOR / SETTLEMENT (the spawn-settlement + the SPEC card):
+    - Gate invariance: r126 @4c and r124/r125 @8c produce the IDENTICAL
+      gate count on all 3 leaves where both exist -> deterministic
+      build, no thread-induced gate variance in this stack.
+    - Memory shape: C2a 4c 29.45 GiB ~= 8c 29.45 GiB (delta 0.005%),
+      C2b 29.96 ~= 29.95 GiB; C4 4c 17.73 vs 8c killed-peak 30.15
+      (8c is a lower bound, mid-kill). => for C2a/C2b, core count is
+      NOT a memory lever (a compile that single-threads at nargo is
+      already memory-neutral at 4c); at 8c they were wasting 7 cores
+      for zero RAM benefit (consistent with r96's 1.22x-3.82x band:
+      no uplift here, in-band at the mild extreme).
+    - CONDENSATION READ (r46-era anchors on OLD box, 8c, nargo beta.16
+      era: C2a 15.1 / C2b 14.9 / C4 14.70 GiB): the NEW toolchain
+      generation's peaks are ~1.96x higher on C2a/C2b (RAN on the
+      3-leaf family, not a model) - C4's 8c lower-bound band extends
+      the range further (17.73-30.15+). This SUPERSEDES (a) the
+      r102 2-pt r99/r100/r101 4c card of 12.01/10.59/12.82 GiB (all
+      3 leaves past MAX 16 GiB SPEC A; tight edge C4 +6.30 GiB margin
+      falls to -1.72 GiB) and (b) the r46-era old-box anchors (kept
+      for provenance only).
+    - SPEC settling (a descending fade the owner should read plainly):
+      SPEC A 16GiB @4c  ->  FAILS  (C2a/C2b 29+ GiB even @4c)
+      SPEC B 24GiB @8c  ->  FAILS  (C2a/C2b 29+ GiB even @8c; C4
+                                            shows the 8c path adds
+                                            ~0 GiB at the leaves but
+                                            costs wall only)
+      32 GiB @4c serial ->  PASSES  (this round: 50.6 min, envelope
+                             29.96, headroom 1.38 GiB on the
+                             32,866,100 kB box)
+      48-64 GiB @8c     ->  DRAFT   (only matters for 8c-parallel:
+                             on this box 32 GiB headroom is 1.38 GiB
+                             (C2b, tightest) / 1.89 GiB (C2a); C4's 8c
+                             ceiling unknown - host-OOM-killed at
+                             30.15 GiB lower bound, so 8c-compile is
+                             OOM-class at 32 GiB by construction)
+    - Uphold: 8c vs 4c is NOT worth it for C2a/C2b (id...[truncated]

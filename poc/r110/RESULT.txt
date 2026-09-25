@@ -1,0 +1,30 @@
+r110 RAN record (2026-09-06, box-1, 4c/7.8GiB+8GiB swap)
+Idea: is there a further C3-sponge lever beyond I3 (k1 raw push) + I14 (ct limb->commitment)?
+
+PREMISE AUDIT (source RAN, circuits/lib/src/core/dkg/share_encryption.nr:236 `payload`)
+The Fiat-Shamir payload after I3+I14+I15 = exactly:
+  [pk_commitment, ct_commitment, e0, e1, u, msg_commitment, r1is, r2is, p1is, p2is]
+- committed single fields (already minimal, I3 removed raw k1 / I14 replaced 2*N*L ct limbs):
+    expected_pk_commitment, ct_commitment, expected_message_commitment
+- fresh SECRET witness polys, range-checked but with NO prior commitment:
+    e0, e1, u, r1is, r2is, p1is, p2is
+  => these 6 polys have nothing to commit to; they MUST stay in the transcript or the
+     Fiat-Shamir challenge degrades to a function of only the 3 commitments + (committed-only)
+     message, opening the k1/r1/r2/p1/p2 forgery classes the BFV relation is meant to bind.
+CONCLUSION: sponge is MINIMAL. The only reachable redundancies (k1 = f(message, committed);
+  ct limbs = f(ct_commitment)) were already removed by I3 (r6) + I14 (21f14961). No further
+  I3-class raw-push lever exists. The C3 lever is now "shrink the 6 fresh secrets OR shrink L",
+  both of which are box-2 by construction (secure-8192/small C3 = the OOM class r45/94). NEGATIVE, closes the last box-1 C3 payload question.
+
+NEW RAN DATUM (re-anchor, zero recompile - on-disk artifact):
+  artifact  = target/tmp/.tmpKhXG7C/.../secure-8192/small/.../share_encryption.json
+  sha256    = 73105502fd85a709 (committee-invariant class, r84)
+  cmd       = bb gates -b <artifact> -t noir-recursive-no-zk
+  circuit_size = 2,966,353 gates
+  BASELINE  = DIGIT-EXACT vs the standing post-I15 C3 secure baseline (r41/r59 2,966,353).
+  => secure-8192 C3 at HEAD re-anchored to a single RAN datum (the whole per-node wall is
+     78.9% C3 inners, r69; this is the load-bearing C3 security number at the security field).
+  C3 cone drift since the on-disk build: EMPTY (git log on core/dkg + configs/secure =>
+     only I3/I14/I15 commits, all predating this artifact) => the 2,966,353 is valid at HEAD.
+
+WRITE-NO-REPO-CHANGE: out-of-repo probe, no circuit/crate source edit. Gate N/A (no commit).

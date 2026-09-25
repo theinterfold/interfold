@@ -1,0 +1,7 @@
+= r124 box census 19:59:56 =
+8
+MemTotal:       32866100 kB
+MemAvailable:   31709468 kB
+SwapTotal:             0 kB
+btime 1789150114
+0.00 0.00 0.00 1/241 5100

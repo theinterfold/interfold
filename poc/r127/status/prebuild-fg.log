@@ -1,0 +1,58 @@
+
+> @interfold/main@0.14.0 build:circuits /home/dev/interfold-research/interfold
+> tsx scripts/build-circuits.ts -- --preset insecure-512 --committee minimum
+
+🔮 Building Noir circuits for preset(s): insecure-512, committee(s): minimum...
+
+🔮 Building preset: insecure-512, committee: minimum...
+   Found 37 circuit(s)
+   📋 Set Noir config to: insecure (preset: insecure-512)
+   📋 Set Noir committee to: minimum
+   📋 Regenerated parity_{insecure,secure}.nr for committee: minimum
+   ⚠️  patchUtilsTs: <generated-committee-doc> block in /home/dev/interfold-research/interfold/packages/interfold-contracts/scripts/utils.ts did not change (committee=minimum)
+   📋 Wrote ActiveCryptoConfig.sol for insecure-512/minimum
+   🧹 Cleaned 1 stale target dir(s)
+   ✓ dkg/e_sm_share_computation
+   ✓ dkg/pk
+   ✓ dkg/share_decryption
+   ✓ dkg/share_encryption
+   ✓ dkg/sk_share_computation
+   ✓ threshold/decrypted_shares_aggregation
+   ✓ threshold/pk_aggregation
+   ✓ threshold/pk_generation
+   ✓ threshold/share_decryption
+   ✓ threshold/user_data_encryption
+   ✓ threshold/user_data_encryption_ct0
+   ✓ threshold/user_data_encryption_ct1
+   ✓ recursive_aggregation/c2ab_fold
+   ✓ recursive_aggregation/c3_fold
+   ✓ recursive_aggregation/c3_fold_batch_b10
+   ✓ recursive_aggregation/c3_fold_batch_b2
+   ✓ recursive_aggregation/c3_fold_batch_b3
+   ✓ recursive_aggregation/c3_fold_batch_b6
+   ✓ recursive_aggregation/c3_fold_batch_merge_m0
+   ✓ recursive_aggregation/c3_fold_batch_merge_m1
+   ✓ recursive_aggregation/c3_fold_batch_merge_m2
+   ✓ recursive_aggregation/c3_fold_batch_merge_m7
+   ✓ recursive_aggregation/c3_fold_batch_merge_m7x
+   ✓ recursive_aggregation/c3_fold_batch_n2
+   ✓ recursive_aggregation/c3_fold_batch_n3
+   ✓ recursive_aggregation/c3_fold_batch_n4
+   ✓ recursive_aggregation/c3_fold_kernel
+   ✓ recursive_aggregation/c3ab_fold
+   ✓ recursive_aggregation/c4ab_fold
+   ✓ recursive_aggregation/c6_fold
+   ✓ recursive_aggregation/c6_fold_kernel
+   ✓ recursive_aggregation/decryption_aggregator
+   ✓ recursive_aggregation/dkg_aggregator
+   ✓ recursive_aggregation/node_fold
+   ✓ recursive_aggregation/nodes_fold
+   ✓ recursive_aggregation/nodes_fold_kernel
+
+✅ Built 36 circuits for preset: insecure-512/minimum
+
+❌ Failed circuits:
+   insecure-512/minimum/c3_fold_batch_lib: recursive_aggregation/c3_fold_batch_lib: compiled artifact not found. Searched for c3_fold_batch_lib.json in: /home/dev/interfold-research/interfold/circuits/bin/recursive_aggregation/c3_fold_batch_lib/target, /home/dev/interfold-research/interfold/circuits/bin/recursive_aggregation/target, /home/dev/interfold-research/interfold/circuits/bin/recursive_aggregation/target, /home/dev/interfold-research/interfold/circuits/bin/target
+
+📋 CI Output: circuits_built=36, circuits_success=false, source_hash=a39bc14e68bc8d08, artifacts_dir=/home/dev/interfold-research/interfold/dist/circuits
+ ELIFECYCLE  Command failed with exit code 1.

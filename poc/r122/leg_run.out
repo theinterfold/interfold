@@ -1,0 +1,82 @@
+=== r122 DA leg @ 06:15:55 ===
+warning: unused variable: `circuit_committee_n`
+  --> crates/aggregator/src/public_key_aggregation/effects/aggregate_dkg_proofs.rs:22:13
+   |
+22 |             circuit_committee_n,
+   |             ^^^^^^^^^^^^^^^^^^^ help: try ignoring the field: `circuit_committee_n: _`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `circuit_committee_h`
+  --> crates/aggregator/src/public_key_aggregation/effects/aggregate_dkg_proofs.rs:23:13
+   |
+23 |             circuit_committee_h,
+   |             ^^^^^^^^^^^^^^^^^^^ help: try ignoring the field: `circuit_committee_h: _`
+
+warning: `e3-aggregator` (lib) generated 2 warnings
+   Compiling e3-zk-prover v0.14.0 (/home/dev/interfold-research/interfold/crates/zk-prover)
+warning: unused variable: `sm`
+   --> crates/zk-prover/tests/da_secure_small_r122.rs:140:9
+    |
+140 |     let sm = ShareManager::new(n, t, threshold_params.clone()).expect("SM::new");
+    |         ^^ help: if this is intentional, prefix it with an underscore: `_sm`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `e3-zk-prover` (test "da_secure_small_r122") generated 1 warning
+    Finished `release` profile [optimized] target(s) in 4.50s
+     Running tests/da_secure_small_r122.rs (target/release/deps/da_secure_small_r122-1e52c9c2040990fe)
+
+running 1 test
+shared world OK: d_shares.len=10 message_vec.len=8192 build=6.94s
+  c6 inner 1/10 PROVED shared-world T=9/H=10/L=3 (38.87s)
+test da_secure_small_proves_and_verifies has been running for over 60 seconds
+  c6 inner 2/10 PROVED shared-world T=9/H=10/L=3 (37.49s)
+  c6 inner 3/10 PROVED shared-world T=9/H=10/L=3 (37.46s)
+  c6 inner 4/10 PROVED shared-world T=9/H=10/L=3 (37.43s)
+  c6 inner 5/10 PROVED shared-world T=9/H=10/L=3 (37.39s)
+  c6 inner 6/10 PROVED shared-world T=9/H=10/L=3 (37.20s)
+  c6 inner 7/10 PROVED shared-world T=9/H=10/L=3 (37.58s)
+  c6 inner 8/10 PROVED shared-world T=9/H=10/L=3 (37.09s)
+  c6 inner 9/10 PROVED shared-world T=9/H=10/L=3 (37.50s)
+  c6 inner 10/10 PROVED shared-world T=9/H=10/L=3 (37.23s)
+  c7 PROVED shared-world T=9/H=10/L=3 (5.54s)
+  DecryptionAggregator EVM PROVED (136.61s)
+  DA EVM verify ok=true (0.0103s)
+
+  C6 inners x10 (Recursive, shared) total            375.25s
+  C7 (Default, shared)                                 5.54s
+  DecryptionAggregator (Evm, production API)         136.61s
+  DA EVM verify (ok=true)                              0.01s
+
+DecryptionAggregator PRODUCTION-FIELD ANCHOR GREEN @secure-8192/small (N=19/T=9/H=10/L=3).
+  Build shared world 6.94s; leg compute 524.36s @4c (7.8 GiB / 30-60m budget).
+  FIRST RAN-prove of the DecryptionAggregator (the on-chain final decryption proof) at any committee on box-1.
+test da_secure_small_proves_and_verifies ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 524.53s
+
+	Command being timed: "cargo test --release -p e3-zk-prover --test da_secure_small_r122 -- --nocapture"
+	User time (seconds): 1538.09
+	System time (seconds): 60.50
+	Percent of CPU this job got: 302%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 8:49.27
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 3625024
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 10995
+	Minor (reclaiming a frame) page faults: 25656172
+	Voluntary context switches: 115187
+	Involuntary context switches: 27218
+	Swaps: 0
+	File system inputs: 3219184
+	File system outputs: 373456
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0
+=== RC=0 @ 06:24:44 ===

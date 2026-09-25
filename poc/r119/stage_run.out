@@ -1,0 +1,13 @@
+snapshotted min c6 share_decryption.json
+snapshotted min c6_fold c6_fold.json
+snapshotted min c6_fold_kernel c6_fold_kernel.json
+config swapped: committee=small, preset=secure
+c6 {'compile_rc': 0, 'writevk_rc': 0, 'gates': 2562117, 'acir': 582009, 'sha16': '1828810867369529', 'compile_wall_s': 160.34, 'writevk_wall_s': 10.21, 'staged': True}
+c6_fold {'compile_rc': 0, 'writevk_rc': 0, 'gates': 1449894, 'acir': 233, 'sha16': '2898129208760196', 'compile_wall_s': 0.86, 'writevk_wall_s': 5.71, 'staged': True}
+c6_fold_kernel {'compile_rc': 0, 'writevk_rc': 0, 'gates': 703953, 'acir': 79, 'sha16': '1518029834632311', 'compile_wall_s': 0.85, 'writevk_wall_s': 2.84, 'staged': True}
+config byte-restored (asserted)
+Traceback (most recent call last):
+  File "/home/dev/interfold-research/interfold/poc/r119/stage_c6_secure_small_r119.py", line 187, in <module>
+    snap = open(os.path.join(PRER, os.path.basename(jsrel).replace(".json", "") + ".min.json"), "rb").read()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: '/home/dev/interfold-research/interfold/poc/r119/pre-secure/share_decryption.min.json'

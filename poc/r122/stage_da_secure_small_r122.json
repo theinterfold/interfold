@@ -1,0 +1,13 @@
+{
+ "da": {
+  "compile_rc": 0,
+  "writevk_rc": 0,
+  "gates": 1493885,
+  "acir": 9526,
+  "sha16": "1192422675816716",
+  "compile_wall_s": 1.1,
+  "writevk_wall_s": 6.44,
+  "staged_evm": true,
+  "staged_default_json": true
+ }
+}

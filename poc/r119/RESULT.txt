@@ -1,0 +1,138 @@
+# r119 - C6 production-field (secure-8192/small, T=9) fold-chain soundness anchor
+
+## claim (I-r119)
+
+r117 RAN the C6 fold-chain soundness anchor ONLY at InsecureThreshold512/Minimum
+(N=3/T=1). r115's C6 I14 gate cut (commit 678d0fd4; C6 secure/small
+2,977,228 -> 2,562,117 g = -13.943 %) and r117's C6 post-patch conformance
+both LANDED at the PRODUCTION field (secure-8192/small, N=19/T=9/H=10, L=3),
+where the C6 proof had only ever been COMPILED (r115, gate re-measure) and never
+once PROVED-and-verified end-to-end. Separately, the C6 secure/small WITNESS layer
+at T=9/L=3 (the r97 witness-risk class that was RAN-for C1 r97 / C2 r98 / C4 r98
+but never C6) had never been RAN-exercised at the production committee. The two
+box-1-convertible gaps this round closes:
+  (A) C6 production-field fold-chain conformance at secure-8192/small - the
+      verification that the I14-patched C6 leaf + the small c6_fold/c6_fold_kernel
+      vk set are CONFORMANT at the PRODUCTION field (not only at the Insecure/
+      Threshold512/min dev field r117 RAN).
+  (B) C6 secure/small T=9/L=3 witness de-risk - every secure-committee range-check
+      (r1_bounds/r2_bounds), the ct-commitment bind, and the I14 payload class
+      RAN-execute at T=9/L=3 for the very first time.
+
+## method (RAN, box-1)
+
+(1) Staging leg (poc/r119/stage_c6_secure_small_r119.py): r115/r113/r117
+    self-restoring config-swap pattern (committee minimum->small, preset
+    insecure:: -> secure::). Snapshots the on-disk min jsons byte-exact,
+    fresh-nargs-compiles the 3 circuits at secure/small (threshold/
+    share_decryption [C6] + recursive_aggregation/c6_fold + c6_fold_kernel),
+    runs bb write_vk (-t noir-recursive for the C6 leaf -> the -t
+    noir-recursive ZK-blinded vk under recursive/ for the Recursive-variant
+    prove; -t noir-recursive-no-zk for c6_fold + c6_fold_kernel -> the non-ZK
+    poseidon vk under default/ for the fold-step prove), stages the (json, vk,
+    vk_hash) triplets into the stage tree, and byte-restores the configs +
+    the min on-disk jsons on exit (both asserted). Stage tree =
+    interfold/poc/r119/root/secure-8192/small/{recursive/threshold/
+    share_decryption, default/recursive_aggregation/{c6_fold, c6_fold_kernel}}.
+(2) Leg (crates/zk-prover/tests/c6_fold_secure_small_r119.rs; the r117 leg
+    shape re-parameterized to secure/small): the production surface
+    generate_sequential_c6_fold (c6_accumulator.rs, the exact production
+    fold-chain API) against the staged artifacts:
+      - 10 independent C6 samples at secure/small (fresh 19-party secrets at T=9, L=3)
+      - 10 C6 PROVES with generate_proof_with_variant(Recursive) at circuits_dir(
+        Recursive)/threshold/share_decryption -> -t noir-recursive bb prove -k
+        share_decryption.vk
+      - generate_sequential_c6_fold(10 inner proofs, slot_indices 0..10,
+        total_slots=10, "e3-r119-c6fold") - the canonical kernel-genesis
+        + 9 c6_fold steps
+      - ZkProver::verify_fold_proof(folded, party_id=1) on the resulting
+        C6Fold proof against the staged default/recursive_aggregation/c6_fold
+        vk.
+
+## RAN numbers (exact)
+
+LEG: /usr/bin/time -v cargo test --release -p e3-zk-prover --test
+     c6_fold_secure_small_r119 -- --nocapture
+     => RC 0 (Exit status: 0); 1 test passed, 0 failed; finished in 567.19 s;
+        wall 9:28.04 @4c. Peak resident set 3,625,068 kB = 3.462 GiB;
+        Swaps 0; 313% avg CPU; 66.17 s samples + 377.00 s inners + 123.90 s
+        c6-fold chain + 0.01 s verify = 567.19 s total (all self-consistent).
+
+C6 inner PROVES at secure-8192/small (T=9/L=3), each RAN-GREEN wall +
+verify (prover.cleanup; no data loss):
+   #1 38.90 s / #2 37.80 s / #3 37.71 s / #4 37.51 s / #5 37.63 s
+   #6 37.50 s / #7 37.70 s / #8 37.50 s / #9 37.46 s / #10 37.30 s
+   Total 377.00 s; 10/10 PROVED. This is the r97-class witness de-risk at
+   the PRODUCTION committee for C6 - the yarn never RAN'd at T=9/L=3 before
+   r119; every range-check (BIT_R1, BIT_R2 vs the secure r1_bounds /
+   r2_bounds), the ct_commitment bind, and the I14-sponge class all
+   RAN-execute here and pass.
+
+c6_fold chain (c6_fold_kernel genesis + 9 c6_fold steps) at secure/small:
+   123.90 s total; kernel-genesis PROVED (is_first_step=true, acc_public_inputs
+   zero-fill to 6 + 4*10 = 46 fields); 9 step PROVES each consuming the prior
+   fold's public signals as acc_public_inputs + the prior c6_fold proof as
+   acc_proof; last step's folded proof is a C6Fold proof with non-empty data
+   + public_signals (asserted in-test).
+
+verify_fold_proof at secure/small on the folded proof: 0.01 s / RAN-verified
+TRUE. This is r117's RED->GREEN anchor, now RAN at the PRODUCTION field
+(the prior r117 anchor was InsecureThreshold512/Minimum RAN; this leg adds
+the secure-8192/small RAN at the actual production committee).
+
+STAGE leg: 3 secure/nargo compiles + 3 bb write_vks + 3 on-disk json
+byte-restores + config byte-restore = the whole stage in ~3-4 min (C6 160 s,
+c6_fold 1 s warm, c6_fold_kernel 1 s warm; both fold VKs writeVk 3-6 s).
+Min on-disk re-gates after restore (all DIGIT-EXACT to r115/r117 RAN):
+  share_decryption.json    78,227 g / 24,433 acir   (r115 I14-patched V1)
+  c6_fold.json           1,448,603 g /    57 acir   (r117 V1-secure)
+  c6_fold_kernel.json      703,873 g /    23 acir   (r117 V1-secure)
+
+Artifacts (re-runnable + sha-pinned):
+  poc/r119/{stage_c6_secure_small_r119.py, stage_run.out, leg_run.out,
+  stage_c6_secure_small_r119.json, RESULT.txt, root/secure-8192/small/...}
+  crates/zk-prover/tests/c6_fold_secure_small_r119.rs
+Run command:
+  E3_R119_STAGE_ROOT=$(pwd)/poc/r119/root \
+    cargo test --release -p e3-zk-prover --test c6_fold_secure_small_r119 -- --nocapture
+  (needs prior run of stage_c6_secure_small_r119.py; ~10 min compute @4c total
+   - 4 min stage + 9.5 min leg)
+
+## verdict
+
+I-r119 CLOSED RAN POSITIVE:
+  - PRODUCTION-FIELD C6 CONFORMANCE RAN-GREEN at secure-8192/small
+    (10 C6 inners + 10-slot c6_fold chain + verify_fold_proof=true; RC 0;
+    Swaps 0; 3.46 GiB peak @4c). The r115 I14 gate cut + r117 post-patch
+    conformance are now RAN-verified at the PRODUCTION FIELD, not only the
+    InsecureThreshold512/Minimum dev field. The "C6 ship = SIGN-OFF-ONLY"
+    line in r115-r118 PRIORITY now rests on a RAN-GREEN production-field
+    conformance anchor, not only a min/dev one.
+  - C6 secure/small T=9/L=3 WITNESS DE-RISK RAN-CLOSED: every secure-
+    committee bound (r1/r2), the ct_commitment bind, and the I14 sponge
+    class RAN-execute at T=9/L=3 for the first time - the r97-class family
+    {C1 r97 / C2 r98 / C4 r98 / C6 THIS ROUND} is now COMPLETE at the
+    production committee on box-1 (C3 witness is T-invariant by source
+    RAN since r41 + already RAN'd in the r41/r84/r110 secure/small min
+    passes, so it is out of this sweep's scope).
+  - N=19 wall table 90.1 min/node @4c EXCL. comm UNTOUCHED: C6 is P2-side
+    in the wall table (already RAN-anchored from the r114 r39-bench span
+    400.03 s), not on the per-node line. The 123.9 s c6_fold chain here is
+    a conformance datum; the RAN wall of a production C6 expansion (T=9 in
+    both arm- and t-c3) is in-box-2 by the r78 lane (the standing card
+    queue item 0: 3 heavy small leaf compiles + r78 one-env-var box-2 run,
+    SPEC A 16 GiB @4c-pinned RAN-anchored vs SPEC B 24 GiB @8c owner
+    decision unchanged by this round).
+  - No rebase (origin/main 499146c9 = merge-base, 0 commits; r107's 52/52
+    stands). Delta: 63 -> 64 ahead / 0 behind origin/main.
+  - Upstream-PR: NOT filed - this round's commit is test + poc/ scaffolding
+    only; no circuit or crates/ source change, matches the r110-r118 class.
+    (r115's in-tree I14 C6 commit 678d0fd4 is the UPSTREAM-PR candidate
+    there; this round extends its EVIDENCE with a production-field RAN
+    anchor, and does NOT change the flagged commit.)
+
+Repo state at commit: clean porcelain (0 lines after); on-disk configs
+byte-restored (asserted); on-disk min jsons byte-restored (asserted); the 3
+secure/small jsons (c6, c6_fold, c6_fold_kernel) + vk triples are under
+poc/r119/root (committed as RAN evidence) NOT under circuits/*/target
+(gitignored + byte-conserved).

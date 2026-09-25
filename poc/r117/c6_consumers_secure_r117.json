@@ -1,0 +1,45 @@
+{
+ "c6_fold": {
+  "wall_s": 0.88,
+  "rc": 0,
+  "gates": 1449894,
+  "acir": 233,
+  "sha16": "2898129208760196",
+  "acc_public_inputs_len": 46
+ },
+ "c6_fold_kernel": {
+  "wall_s": 0.87,
+  "rc": 0,
+  "gates": 703953,
+  "acir": 79,
+  "sha16": "1518029834632311",
+  "acc_public_inputs_len": 46
+ },
+ "decryption_aggregator": {
+  "wall_s": 1.08,
+  "rc": 0,
+  "gates": 1493885,
+  "acir": 9526,
+  "sha16": "1192422675816716",
+  "c6_fold_public_len": 46,
+  "committee_members_len": 19
+ },
+ "min_c6_fold": {
+  "gates": 1448603,
+  "acir": 57,
+  "ran": true,
+  "ts": "PASS"
+ },
+ "min_c6_fold_kernel": {
+  "gates": 703873,
+  "acir": 23,
+  "ran": true,
+  "ts": "PASS"
+ },
+ "min_decryption_aggregator": {
+  "gates": 1448924,
+  "acir": 1643,
+  "ran": true,
+  "ts": "PASS"
+ }
+}

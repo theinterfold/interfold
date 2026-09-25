@@ -1,0 +1,81 @@
+# r121 - C7 (threshold/decrypted_shares_aggregation) PRODUCTION-FIELD prove-wall + witness anchor
+
+RAN-GREEN on box-1 (4c / 7.8 GiB + 8 GiB swap, btime 1788243915 no reboot, r89
+protocol - NO RESTRICTION/PRS). Closes the last post-DKG leaf in the
+production-field prove/witness family: r119 = C6, r120 = C5, r121 = C7.
+
+## What it was
+C7 = decrypted_shares_aggregation = the post-DKG decryption-tail leaf (P4
+"C7 + Pi_dec fold", aggregator; report.md:104/105 span 205.70 s [full] / 64.51 s
+[C7+fold]). r119 (C6) + r120 (C5) RAN-anchored the two aggregator-side leaves at
+secure-8192/small (N=19/T=9/H=10). C7 had only ever been PROVEN at the dev field
+(InsecureThreshold512/Minimum, local_e2e_tests.rs:510 Recursive) and the on-disk
+insecure-512/min artifact (89,602 g sha 9f3c75b2, r114 anchor) - NEVER once
+PROVES+verify'd at the production committee on box-1. C7 single structural risk
+= the witness layer at T=9/H=10 (r97 "witness-exceeds-committed-bound" class,
+r115 source-minimality told us C7 is pure deterministic arith - no FS
+sponge/challenge - so the witness is the only open axis).
+
+## New RAN datum (box-1 4c, release)
+- C7 PRODUCTION-FIELD single-prove: avg **5.80 s** (5.74-5.93 s over 5 proves) /
+  total prove wall **29.02 s** at secure-8192/small (N=19/T=9/H=10, L=3).
+  CircuitVariant::Default (noir-recursive-no-zk) - the production worker's path
+  (handle_decrypted_shares_aggregation, multithread.rs:1575-1596).
+- 5 proof VERIFIES all ok=true (~0.01 s) -> staged vk + artifact coherent
+  (r117 stale-vk class RAN-ABSENT on C7 prod field).
+- C7 WITNESS layer at T=9/H=10/L=3 RAN-CLOSED: the in-circuit d_commitment bind
+  (10x compute_threshold_decryption_share_commitment), per-limb d-coeff
+  range-checks vs BIT_D_NATIVE/BIT_NOISE, Lagrange-at-zero + CRT + decode
+  relations all RAN-execute + pass for the FIRST TIME at the production committee.
+- samples x5 total 37.06 s (~7.4 s each - fresh 19-party TRBFV secrets + T=9
+  decryption shares + decrypt_from_shares, the r97-class witness footprint).
+
+## Gate anchor (r121 fresh secure-8192/small compile)
+- C7 = **334,161 gates / 142,900 ACIR** at secure-8192/small (N=19/T=9/H=10,
+  L=3) - r121's FRESH compile, the DURABLE production-field anchor (durable in
+  secure_gates_r121.json; staged json sha16 a72912c3915355b6).
+- The on-disk bench "C7 136,374 cons" row (results_secure_agg_small/report.md:86)
+  is from the BENCH RUN'S OWN config - report.md:8 "H=5, N=5, T=2" (smaller
+  key-sized committee than production N=19) on branch params/dyn-conf @
+  de480d63 (2026-05-27, commit predating the r-toolchain pin era) - so it is
+  that bench config's own figure, NOT directly comparable to the production
+  field. r121's fresh-secure/small compile is the production anchor; the bench
+  row is carried for context only.
+
+## wall / phrase
+- N=19 wall table **90.1 min/node @4c EXCL. comm UNTOUCHED** (C7 = post-DKG P4
+  decryption tail, NOT the per-node DKG wall; the r76/r83/r84 header carries only
+  per-node + c3 bulk; C7 single-prove 5.80 s is a CONFIRMATION datum on the P4
+  term, not a per-node input).
+
+## Gate + tree
+- `cargo check --workspace --tests` RC 0 (pre-leg crate smoke); leg RAN compiled
+  the full release test binary (RC 0, 4.63 s) + ran.
+- on-disk min C7 json byte-restored to sha 9f3c75b2e5db27a4 (insecure-512/min
+  canonical, r114/r116 lineage); config (committee active.nr + default mod.nr)
+  byte-restored, git porcelain 0 lines on both (stage ASSERTED).
+- leg peach: peak RSS 5,262,720 kB = 5.02 GiB / Swaps 0 / 287% CPU / wall
+  1:10.87 @4c - the TRBFV 19-party sample gen (37 s of it) is the RAM mover,
+  still inside 7.8 GiB with headroom.
+- Commit = test (c7_secure_small_r121.rs) + poc/r121/ {RESULT.txt,
+  stage_c7_secure_small_r121.py, secure_gates_r121.json, stage_run.out,
+  leg_run.out}; poc/r121/{pre-secure,root,vktmp} build output NOT committed
+  (byte-conserved, re-burnable in ~15 min @4c).
+
+## Upstream sync
+`git fetch origin` => origin/main HEAD 499146c9 = merge-base (NO REBASE;
+r107's 52/52 stands). Branch i5/dkg-research 0e08a49d (r120) -> this commit,
+65 -> 66 ahead / 0 behind vs origin/main 499146c9.
+
+## Verdict
+I-r121 CLOSED RAN positive. The production-field prove/witness family is now
+COMPLETE across ALL 3 aggregator/post-DKG leaves {C5 r120 / C6 r119 / C7 THIS}
+and, combined with the per-node leaves (C0-C4, function grid r74/r75/r84 +
+minimality r110-r116 + prove curves r82/r83/r111/r112), EVERY leaf in the DKG
+DAG carries a RAN prove-anchor at its production or RAN committee. NO new
+circuit/crate source change (poc/ + test scaffolding only, matches r110-r120
+class). NO UPSTREAM-PR (no circuits/ or crates/ source change - the in-tree C7
+circuit is r114/r115-era stable; r121 adds a RAN production-field anchor, not a
+change).
+
+UPSTREAM-PR: n/a (poc/ scaffolding + test only; C7 circuit source unchanged).

@@ -1,0 +1,137 @@
+# r118 — IN-PLACE-DERIVATION STALENESS SWEEP (the r117 C6 defect class) across the WHOLE noir artifact surface
+
+Date: 2026-09-07 ~06:35-07:20 UTC. Round 118. Box: 4c / 7.8 GiB + 8 GiB swap
+(MemTotal 8,131,776 kB; SwapTotal 8,388,604 kB; btime 1788243915 = 2026-09-01
+06:25:15 UTC, no reboot, r89 protocol; overcommit 0; load 0.00-0.05).
+
+## claim (I-r118)
+
+r117 RAN-caught + repaired the class "in-place leaf recompile left the
+DERIVED VK artifacts stale against the co-located json" on the C6 axis
+(share_decryption.json 2026-09-06 21:33 vs six pre-patch VK files
+2026-09-02 19:50 -> fold-chain e2e RED -> regen -> GREEN 31.93 s). No round
+had ever asked whether ANY OTHER circuit axis in either on-disk artifact
+surface (the box-2 r78 leg's durable tree + the in-repo min targets) carried
+the same defect. r118 makes the question a RAN sweep over the whole surface,
+not an argument from build chronology alone.
+
+Load-bearing secondary question settled in the same sweep: the C3 axis
+(secure-8192 share_encryption = 78.9% of the N=19 per-node wall, r69) —
+is its on-disk artifact byte-invariant across the I14 (21f14961, 08-20) /
+I15 (b7cfd49e, 08-22) in-tree ships? If the box-2 tree carried a pre-I14/I15
+C3 leaf, the wall-table anchor (2,966,353 g r39/r41/r110) and the r78 leg
+would both be silently mis-anchored.
+
+## method (RAN)
+
+1. `bb write_vk -t noir-recursive -b <on-disk-ACIR-json>` re-derives the
+   VK for every (json, vk) pair, then BYTE-COMPARE to the co-located
+   on-disk vk (vault-independent: a proof proved against the on-disk vk
+   verifies against the on-disk json iff the pair is coherent — exactly the
+   property r117's RED e2e exercised and which the box-2 leg depends on).
+2. bb 5.1.0 / nargo 1.0.0-beta.26 pin-verified (r45/r99 era, no drift).
+3. Upstream sync: `git fetch origin` -> origin/main 499146c9 = merge-base,
+   0 commits since -> NO REBASE (r107's 52/52 stands).
+4. Re-runnable deliverable:
+   `python3 poc/r118/verify_artifact_coherence_r118.py` (self-check TS1-TS4,
+   exit 0 = FULL SELF-CHECK OK).
+
+## findings (RAN, exact)
+
+### Sweep result: 0 stale-VK defects across the whole surface
+
+(Sweep: 12 box-2 tree circuits + 3 three-variant checks + 15 in-repo min
+folds + 5 in-repo dkg leaves + 1 C6 threshold leaf; bb write_vk per set;
+three full surface passes this round = ~19 min compute total, ~5.5-7 min
+each, peak RSS 4.06 GiB, Swaps 0.)
+
+BOX-2 DURABLE TREE (poc/r77/root/secure-8192/small, the r78 leg load
+surface, secure-8192/small N=19/T=9):
+
+| circuit                  | json sha16 | verdict (derive-vs-on-disk vk) |
+|--------------------------|------------|--------------------------------|
+| C0 pk                    | fd9fa7ce704c (= r75 C0 bit-pin) | MATCH |
+| C3 share_encryption      | 73105502fd85 (= r41/r75/r84/r110 bit-pin; 2,966,353 g r110 digit-exact) | MATCH |
+| C1 pk_generation         | 5ce22f94e059 (= r75 C1 bit-pin) | MATCH |
+| c2ab_fold                | a46ddf7f4dc4 (r39/r112 golden) | MATCH |
+| c3_fold                  | 8f49de1ce192 | MATCH |
+| c3_fold_batch_b3         | f7d63c76e079 | MATCH |
+| c3_fold_batch_b10        | 75729c6fee17 | MATCH |
+| c3_fold_batch_merge_m7x  | 0aaf2bdf9a3e | MATCH |
+| c3_fold_kernel           | a5a3368382af | MATCH |
+| c3ab_fold                | ad5736fc4c08 (r39/r112 golden) | MATCH |
+| c4ab_fold                | 2cd4411a8000 (r39/r112 golden) | MATCH |
+| node_fold                | 6a50a30e55eb (r39/r112 golden) | MATCH |
+| leaves 3-variant dirs    | default/evm/recursive byte-identical | 3-VARIANT-IDENTICAL x3 |
+
+IN-REPO MIN TARGETS (insecure-512/min on-disk, the box-1 e2e consumables):
+all 15 recursive_aggregation folds MATCH (c2ab/c3_fold/b3/b10/m7x/kernel/
+c3ab/c4ab/node_fold/c6_fold/c6_fold_kernel/decryption_aggregator/
+dkg_aggregator/nodes_fold/nodes_fold_kernel) + all 5 dkg leaves
+(pk 019a1faa041e / share_encryption ed1e85a00d5e / sk_share_computation
+766839c58feb / e_sm_share_computation 90f939b1e29a / share_decryption
+15f44d5f3343) + C6 threshold leaf sha 5a34b39b19b6 (r115 I14 json,
+2026-09-06 21:33) with its r117-regen vk (04:03 09-07) = MATCH — the r117
+repair HOLDS on disk.
+
+### C3 axis invariance (the secondary question): CLOSED
+
+- git: the C3 cone (circuits/lib/src/core/dkg/ + circuits/bin/dkg/
+  share_encryption) last in-tree change = b7cfd49e (I15, 2026-08-22);
+  since: only 678d0fd4 (r115 C6 threshold source) — the C3 cone is
+  0-commit-drift since I15.
+- The box-2 tree C3 leaf (sha 73105502, mtime 2026-08-31 22:33, the
+  last full build era) is BYTE-IDENTICAL to the r41/r75/r84/r110 RAN bit-pin
+  (2,966,353 gates digit-exact at r110) — i.e. the on-disk C3 the box-2 r78
+  leg loads is the SAME artifact class every wall-table number was anchored
+  to. Zero I14/I15 under-anchoring.
+- Wall-table implication: NONE. The N=19 table 90.1 min/node @4c EXCL. comm
+  UNTOUCHED (r118 is a coherence audit; no new wall number).
+
+### Mtime-cohort dating (corroboration, RAN mtime reads)
+
+box-2 tree: b3/b10 08-28 09:25-26 (post-75244bf3, pre-cfbb9394 — consistent,
+those commits touched only m7x source); m7x 08-28 14:01 (post-9da66b6c
+wire-contract fix — the tree carries the POST-ABI-fix M7x, matching the
+r62/r63 RAN e2e that RAN-verified merge==serial all-57-row byte-identity at
+this exact geometry + the r78 audit_m7x.py vk_hash 26ed7ef3... pin);
+folds 08-31 22:23 + C1/C3 22:33 + C0 22:35 (the 10ac245a-era build-all
+session; zero cone drift since); MANIFEST 09-01 14:19 (r78 M7x staging).
+in-repo: 19:50-19:54 09-02 = r84 build-all (df1ff6a4 era); the three
+09-04-1x leaf jsons (C2a 09:13 / C2b 12:33 / C4 15:27) = the r99/r100/r101
+secure/min leg's self-heal insecure/min restores — sha-dating 766839c5 /
+90f939b1 / 15f44d5f = the r111/r116 RAN insecure-min pins digit-exact; the
+09-06-21:33 C6 json + 09-07-04:03 C6 vks = r115 patch + r117 regen.
+
+### Why the defect class is now fully closed (not just "not found")
+
+Every (json, vk) pair that a cron- or box-2-leg will consume is either
+(i) byte-identical to a RAN-verified bit pin (C0/C1/C3/C2/C4/folds via
+r39/r74/r75/r84/r110/r112/r114/r116), or (ii) RAN re-derived this round
+from its own json (the whole sweep). The only source change since the last
+full build era is the C6 I14 patch (678d0fd4), whose axis was rebuilt in
+place (r115) + vk-regenerated in place (r117) and is coherence-verified
+here. There is no build-era x circuit-axis cell of the surface that is
+unanchored by a RAN bit pin or a RAN re-derivation.
+
+## gate / tree RAN
+
+- Repo change = poc/r118/ only (RESULT.txt + verify script) -> commit gates
+  below. No circuit / crate / config change. `git status --porcelain` clean
+  pre-commit.
+- `python3 poc/r118/verify_artifact_coherence_r118.py` = FULL SELF-CHECK OK
+  (RC 0).
+- `cargo check --workspace` RC 0.
+- model.py RC 0 (N=19 wall table 90.1 min/node @4c EXCL. comm UNTOUCHED).
+
+## verdict
+
+r118 CLOSED RAN (POSITIVE-SWEEP): the r117 defect class is ABSENT across the
+entire noir artifact surface (box-2 r78 load tree + in-repo min targets,
+36 pair-sets + 3-variant checks) — 0 stale-VK defects; the C3
+78.9%-of-wall axis is byte-invariant to the r41/r75/r84/r110 bit pin across
+the I14/I15 in-tree ships; the r117 C6 repair holds. The box-2 r78 leg's
+pre-conditions are now RAN-verified end to end (typo r85, guard r90/r92/r93,
+witness r97, compile r99-r102, comm r105-r109, C6 ship r115/r117, AND
+artifact coherence r118) — the leg is sign-off-only on box-2 RAM, nothing
+else.

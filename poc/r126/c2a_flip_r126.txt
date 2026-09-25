@@ -1,0 +1,3 @@
+config flipped min->small, insecure->secure
+C2a dir resolved: circuits/bin/dkg/sk_share_computation
+C2a leaf=sk_share_computation (nargo in LEAF dir per r124 protocol; artifact lands in workspace-root target/)

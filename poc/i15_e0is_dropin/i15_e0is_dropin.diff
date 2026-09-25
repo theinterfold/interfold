@@ -1,0 +1,229 @@
+diff --git a/circuits/bin/dkg/share_encryption/src/main.nr b/circuits/bin/dkg/share_encryption/src/main.nr
+index 846f9d3..a3edae2 100644
+--- a/circuits/bin/dkg/share_encryption/src/main.nr
++++ b/circuits/bin/dkg/share_encryption/src/main.nr
+@@ -22,8 +22,6 @@ fn main(
+     ct1is: [Polynomial<N>; L],
+     u: Polynomial<N>,
+     e0: Polynomial<N>,
+-    e0is: [Polynomial<N>; L],
+-    e0_quotients: [Polynomial<N>; L],
+     e1: Polynomial<N>,
+     message: Polynomial<N>,
+     r1is: [Polynomial<(2 * N) - 1>; L],
+@@ -41,8 +39,6 @@ fn main(
+         ct1is,
+         u,
+         e0,
+-        e0is,
+-        e0_quotients,
+         e1,
+         message,
+         r1is,
+diff --git a/circuits/lib/src/core/dkg/share_encryption.nr b/circuits/lib/src/core/dkg/share_encryption.nr
+index bd519ee..c4ba386 100644
+--- a/circuits/lib/src/core/dkg/share_encryption.nr
++++ b/circuits/lib/src/core/dkg/share_encryption.nr
+@@ -110,12 +110,11 @@ pub struct ShareEncryption<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT:
+     ct1is: [Polynomial<N>; L],
+     /// Random ternary polynomial u (secret witness)
+     u: Polynomial<N>,
+-    /// Error polynomial e0 (secret witness)
++    /// Error polynomial e0 (secret witness, range-checked). It also enters the CT0 relation
++    /// (I15: the per-limb CRT auxiliaries e0is/e0_quotients were removed — with |e0| < q_l for
++    /// all l, e0is[l] == e0 honestly, so the CT0 relation at gamma uses e0.eval directly and the
++    /// old CRT consistency check was a no-op on the proven statement).
+     e0: Polynomial<N>,
+-    /// Per-basis error polynomials e0[l] (secret witnesses)
+-    e0is: [Polynomial<N>; L],
+-    /// CRT quotients for e0 (secret witnesses)
+-    e0_quotients: [Polynomial<N>; L],
+     /// Error polynomial e1 (secret witness)
+     e1: Polynomial<N>,
+     /// Raw message polynomial (secret witness)
+@@ -141,8 +140,6 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
+         ct1is: [Polynomial<N>; L],
+         u: Polynomial<N>,
+         e0: Polynomial<N>,
+-        e0is: [Polynomial<N>; L],
+-        e0_quotients: [Polynomial<N>; L],
+         e1: Polynomial<N>,
+         message: Polynomial<N>,
+         r1is: [Polynomial<2 * N - 1>; L],
+@@ -160,8 +157,6 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
+             ct1is,
+             u,
+             e0,
+-            e0is,
+-            e0_quotients,
+             e1,
+             message,
+             r1is,
+@@ -270,25 +265,6 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
+         inputs
+     }
+ 
+-    /// Verifies CRT consistency for the e0 error polynomial.
+-    ///
+-    /// Confirms that each per-modulus representation e0is[l] is correctly derived
+-    /// from the global e0 via:
+-    ///   e0[j] == e0is[l][j] + e0_quotients[l][j] * q_l
+-    ///
+-    /// This ensures the error is consistently decomposed across all CRT moduli.
+-    fn check_e0_crt_consistency(self) {
+-        for i in 0..L {
+-            for j in 0..N {
+-                assert(
+-                    self.e0.coefficients[j]
+-                        == self.e0is[i].coefficients[j]
+-                            + self.e0_quotients[i].coefficients[j] * self.configs.qis[i],
+-                );
+-            }
+-        }
+-    }
+-
+     /// Executes the share encryption circuit and returns the ciphertext commitment (C3 public output).
+     pub fn execute(self) -> Field {
+         // Step 1: Verify public key commitment matches expected
+@@ -300,10 +276,7 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
+         // Step 3: Perform range checks
+         self.check_range_bounds();
+ 
+-        // Step 4: Check CRT consistency for e0
+-        self.check_e0_crt_consistency();
+-
+-        // Step 5: Compute scaled message k1 from message
++        // Step 4: Compute scaled message k1 from message
+         let k1 = self.compute_scaled_message();
+ 
+         // Step 6: Generate Fiat-Shamir challenges
+@@ -371,9 +344,16 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
+     /// Verifies BFV encryption equations using Schwartz-Zippel with batched modulus verification.
+     ///
+     /// For each CRT modulus l, checks at the primary challenge point gamma:
+-    ///   ct0[l](gamma) = pk0[l](gamma)*u(gamma) + e0[l](gamma) + k1(gamma)*k0[l] + r1[l](gamma)*q_l + r2[l](gamma)*(gamma^N + 1)
++    ///   ct0[l](gamma) = pk0[l](gamma)*u(gamma) + e0(gamma) + k1(gamma)*k0[l] + r1[l](gamma)*q_l + r2[l](gamma)*(gamma^N + 1)
+     ///   ct1[l](gamma) = pk1[l](gamma)*u(gamma) + e1(gamma) + p2[l](gamma)*(gamma^N + 1) + p1[l](gamma)*q_l
+     ///
++    /// (I15: the CT0 term is the RANGE-CHECKED global error e0, evaluated once at gamma.
++    /// Previously the unbounded per-limb auxiliaries e0is[l] were used, with the constraint
++    /// e0[j] == e0is[l][j] + q_l*e0_quotients[l][j]; since |e0| < q_l (e0 is range-checked to
++    /// a bound far below every q_l) the honest witness has e0is[l] == e0 and quotients == 0,
++    /// and the relation proved the same decryption class before — so the switch is not a
++    /// weakening, only a tightening of the admissible (undecryptable) witnesses.)
++    ///
+     /// Rather than asserting each equation independently, both sides are accumulated
+     /// into a weighted batch sum using additional challenge values as weights.
+     /// A deviation in any single equation will cause the accumulated sums to diverge
+@@ -382,6 +362,7 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
+         let gamma = gammas[0];
+         let cyclo_at_gamma = gamma.pow_32(N as Field) + 1;
+         let u_at_gamma = self.u.eval(gamma);
++        let e0_at_gamma = self.e0.eval(gamma);
+         let e1_at_gamma = self.e1.eval(gamma);
+         let k1_at_gamma = k1.eval(gamma);
+ 
+@@ -390,10 +371,9 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
+             let pk0is_at_gamma = self.pk0is[i].eval(gamma);
+             let r1i_at_gamma = self.r1is[i].eval(gamma);
+             let r2i_at_gamma = self.r2is[i].eval(gamma);
+-            let e0is_at_gamma = self.e0is[i].eval(gamma);
+ 
+-            // ct0[l] = pk0[l]*u + e0[l] + k1*k0[l] + r1[l]*q_l + r2[l]*(gamma^N + 1)
+-            let mut ct0_rhs = (pk0is_at_gamma * u_at_gamma) + e0is_at_gamma;
++            // ct0[l] = pk0[l]*u + e0 + k1*k0[l] + r1[l]*q_l + r2[l]*(gamma^N + 1)
++            let mut ct0_rhs = (pk0is_at_gamma * u_at_gamma) + e0_at_gamma;
+             ct0_rhs += k1_at_gamma * self.configs.k0is[i];
+             ct0_rhs += r1i_at_gamma * self.configs.qis[i];
+             ct0_rhs += r2i_at_gamma * cyclo_at_gamma;
+diff --git a/crates/zk-helpers/src/circuits/dkg/share_encryption/computation.rs b/crates/zk-helpers/src/circuits/dkg/share_encryption/computation.rs
+index 19553c5..ce30ce3 100644
+--- a/crates/zk-helpers/src/circuits/dkg/share_encryption/computation.rs
++++ b/crates/zk-helpers/src/circuits/dkg/share_encryption/computation.rs
+@@ -130,8 +130,6 @@ pub struct Inputs {
+     pub r2is: CrtPolynomial,
+     pub p1is: CrtPolynomial,
+     pub p2is: CrtPolynomial,
+-    pub e0is: CrtPolynomial,
+-    pub e0_quotients: CrtPolynomial,
+     pub e0: Polynomial,
+     pub e1: Polynomial,
+     pub u: Polynomial,
+@@ -425,7 +423,7 @@ impl Computation for Inputs {
+ 
+             let diff = e0_mod_q.sub(&e0i);
+             let qi_poly = Polynomial::constant(qi_bigint.clone());
+-            let (e0_quotient, remainder) = diff.div(&qi_poly).expect("CRT requires exact division");
++            let (_, remainder) = diff.div(&qi_poly).expect("CRT requires exact division");
+ 
+             assert!(
+                 remainder.is_zero(),
+@@ -471,7 +469,6 @@ impl Computation for Inputs {
+                 p1i,
+                 p2i,
+                 e0i,
+-                e0_quotient,
+             )
+         })
+         .collect();
+@@ -486,10 +483,8 @@ impl Computation for Inputs {
+         let mut r2is = Vec::with_capacity(results.len());
+         let mut p1is = Vec::with_capacity(results.len());
+         let mut p2is = Vec::with_capacity(results.len());
+-        let mut e0is = Vec::with_capacity(results.len());
+-        let mut e0_quotients = Vec::with_capacity(results.len());
+ 
+-        for (_, r2i, r1i, ct0i, ct1i, pk0i, pk1i, p1i, p2i, e0i, e0_quotient) in results {
++        for (_, r2i, r1i, ct0i, ct1i, pk0i, pk1i, p1i, p2i, e0i) in results {
+             pk0is.push(pk0i);
+             pk1is.push(pk1i);
+             ct0is.push(ct0i);
+@@ -498,8 +493,10 @@ impl Computation for Inputs {
+             r2is.push(r2i);
+             p1is.push(p1i);
+             p2is.push(p2i);
+-            e0is.push(e0i);
+-            e0_quotients.push(e0_quotient);
++            // e0i (the per-limb e0) is asserted == the global e0 below via the
++            // exact-division check; kept in the results tuple for that check only
++            // (I15: it is no longer a circuit witness).
++            assert_eq!(e0i.coefficients(), e0_mod_q.coefficients());
+         }
+ 
+         let pk0is = CrtPolynomial::new(pk0is);
+@@ -510,8 +507,6 @@ impl Computation for Inputs {
+         let r2is = CrtPolynomial::new(r2is);
+         let p1is = CrtPolynomial::new(p1is);
+         let p2is = CrtPolynomial::new(p2is);
+-        let e0is = CrtPolynomial::new(e0is);
+-        let e0_quotients = CrtPolynomial::new(e0_quotients);
+ 
+         let pk_bit = compute_modulus_bit(&dkg_params);
+         let msg_bit = compute_msg_bit(&dkg_params);
+@@ -527,8 +522,6 @@ impl Computation for Inputs {
+             r2is,
+             p1is,
+             p2is,
+-            e0is,
+-            e0_quotients,
+             e0: e0_mod_q,
+             e1,
+             u,
+@@ -546,8 +539,6 @@ impl Computation for Inputs {
+         let ct1is = crt_polynomial_to_toml_json(&self.ct1is);
+         let u = polynomial_to_toml_json(&self.u);
+         let e0 = polynomial_to_toml_json(&self.e0);
+-        let e0is = crt_polynomial_to_toml_json(&self.e0is);
+-        let e0_quotients = crt_polynomial_to_toml_json(&self.e0_quotients);
+         let e1 = polynomial_to_toml_json(&self.e1);
+         let message = polynomial_to_toml_json(&self.message);
+         let r1is = crt_polynomial_to_toml_json(&self.r1is);
+@@ -564,8 +555,6 @@ impl Computation for Inputs {
+             "ct1is": ct1is,
+             "u": u,
+             "e0": e0,
+-            "e0is": e0is,
+-            "e0_quotients": e0_quotients,
+             "e1": e1,
+             "message": message,
+             "r1is": r1is,

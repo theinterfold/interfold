@@ -1,0 +1,23 @@
+	Command being timed: "nargo compile"
+	User time (seconds): 1179.94
+	System time (seconds): 25.02
+	Percent of CPU this job got: 99%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 20:05.00
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 30876716
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 170
+	Minor (reclaiming a frame) page faults: 18539373
+	Voluntary context switches: 515
+	Involuntary context switches: 5993
+	Swaps: 0
+	File system inputs: 34120
+	File system outputs: 115912
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

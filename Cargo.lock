@@ -4689,6 +4689,7 @@ dependencies = [
  "e3-utils",
  "e3-zk-helpers",
  "fhe",
+ "fhe-math",
  "fhe-traits",
  "flate2",
  "futures-util",

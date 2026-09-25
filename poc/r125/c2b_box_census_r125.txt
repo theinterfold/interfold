@@ -1,0 +1,13 @@
+= r125 c2b box census 22:34:35 =
+nproc=8
+MemTotal:       32866100 kB
+MemAvailable:   31676476 kB
+SwapTotal:             0 kB
+btime 1789150114
+0.15 0.03 0.01 2/248 8988
+= r125 c2b box census POST 22:56:24 =
+MemTotal:       32866100 kB
+MemAvailable:   30883796 kB
+SwapTotal:             0 kB
+CommitLimit:    16433048 kB
+Committed_AS:    1792464 kB

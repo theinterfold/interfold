@@ -1,0 +1,5 @@
+	Percent of CPU this job got: 99%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 22:04.59
+	Maximum resident set size (kbytes): 31414640
+	Swaps: 0
+	Exit status: 0

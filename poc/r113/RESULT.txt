@@ -1,0 +1,69 @@
+# r113 — C5 (PkAggregation) SECURE-8192/small (a)/(b)/(c) gate split — RAN, 2026-09-06
+
+**Idea — I20-secure (the I20 R39 box-1 child, never run):** I20 posits the ONLY structural lever in
+the C4/C5 commitment pool is a commitment-scheme change (per-party re-commit block), protocol-scope,
+owner sign-off. r38 measured it at ring-512 (C5 re-commit = 47,441 g = 75.91% of C5-ring512) and
+flagged "do NOT cross-multiply to secure." r44 confirmed C5 secure-8192/small compiles on this box
+(2,554,248 g / 193,909 ACIR / 2,430 MB — V0, full execute() only). This round closes the gap: runs the
+same 3-arm A/B at the PRODUCTION security field.
+
+**Premise (source, RAN-verified, cheapest-first):**
+- C5 core cone + secure config = byte-stable since r38 addb3d4 (0 commits on
+  pk_aggregation.nr / commitments.nr / modulo.nr / polynomial.nr / secure/{threshold,mod}.nr).
+  → r38's preset-agnostic v0/v1/v2 mirror dirs are still production-faithful.
+- r38's V0/V1/V2 read `lib::configs::default::threshold::{CRP,L,N,PK_AGGREGATION_*}`, which resolves to
+  the preset `default/mod.nr` points at → secure-8192 run = config swap alone (default insecure→secure,
+  committee minimum→small for H=10), zero circuit re-authoring.
+- The post-r38 `09971664 opt/c5 assert zero mod` (2026-06-05, pre-r38) is NOT drift: V0/V1 already
+  reflect the crp-5-arg `new()` + offset line = the current C5 shape (V0 5-arg matches real main.nr).
+- Secure C5 params: N=8192, L=3, BIT_PK=57, H=10 (committee=small); RSS ceiling 2,430 MB (r39) ≪ 7.8 GiB.
+
+**Method (RAN):** 3 compiles + plain `bb gates -t noir-recursive-no-zk` per arm (the `--include_gates_per_opcode`
+flag hit `bb`'s ~300 s timeout on the 2.5M-gate circuit — r40 recorded the same on C4 — and the total is
+all the split needs; per-opcode family census deferred to the box-2 card). Config swap self-restoring
+(trap on EXIT; `git status --porcelain` = 0 lines after). Re-runnable: `verify_c5_secure_split_r113.py`
+(self-checks digit-exact anchor + additivity residual 0 + clean repo).
+
+**Results (RAN, exact, @4c/7.8 GiB, nargo 1.0.0-beta.26 + bb 5.1.0):**
+
+| arm | gates (no-zk) | ACIR | compile wall @4c | RSS peak |
+|-----|---------------|------|------------------|----------|
+| V0 full execute() | **2,554,248** | 193,909 | 0:58.52 | 2,426 MB |
+| V1 (a) dropped     | **396,807**   | 84,658  | 0:29.18 | 1,470 MB |
+| V2 (a)(b) dropped  | **215,849**   | 10,930  | 0:11.19 | 810 MB   |
+
+- **V0 = 2,554,248 DIGIT-EXACT to the r39/r44 secure/small C5 artifact** (V0 == full `execute()` == the
+  r39 secure/small bin target, sha 443213a2 / re-gated 2,554,248 r44) — the instrument is calibrated.
+- **(a) re-commit block = V0−V1 = 2,157,441 g = 84.46% of C5-secure** (vs r38 ring-512 75.91% — the
+  per-party re-commit share GROWS at secure-8192, consistent with the wider 57-bit pk bit-decomps).
+- **(b) divisibility family = V1−V2 = 180,958 g = 7.08%** — the I19 soundness floor analogue (pk0_agg
+  mod-q_l binding); load-bearing, removal unsound.
+- **(c) floor = V2 = 215,849 g = 8.45%** (final compute_pk_aggregation_commitment + ABI plumbing).
+- **Additivity EXACT: (a)+(b) = V0−V2 = 2,338,399 g, residual 0** (independent cross-check on the split).
+- **Commitment-scheme lever secure upper bound = C5 − (a) = 396,807 g = −84.46% of C5-secure** — the number
+  r38 forbade cross-multiplying, now RAN. C5 is the LARGEST circuit in the DKG DAG (r44 2.2M-cons class),
+  so this is the largest single-circuit lever in the per-node pool.
+- Per-honest weight cross-check: (a) ÷ H=10 = 215,744 g/party; r44 whole-C5 per-honest = 224,961 g/H
+  (2,554,248−754,560)/8 → the re-commit block carries ~95.9% of C5's honest-party scaling (the rest = the
+  H-indexed divisibility + floor, consistent with (b)+(c) being small).
+
+**Verdict — I20-secure CLOSED RAN (the secure (a)/(b)/(c) split is now a RAN number, not a cross-multiplied
+estimate).** C5's secure-8192 anatomy confirms the I19 story with a LARGER re-commit share (84.46% vs
+ring-512 75.91%): removal is unsound (V1/V2 = trust-the-prover, I19 floor class), collapse-to-joint-sponge
+≈ 0 win (all H commitments share one DS domain — r38 arg still holds; the block is H-indexed per-party, not
+sponge-size), so the ONLY structural lever remains the commitment-scheme change (protocol-scope, owner
+sign-off), now quantified at secure-8192: up to −84.46% of C5-secure (396,807 g) if the scheme removes the
+per-party re-commit. No box-1 circuit lever; the C4/C5 commitment lever is fully RAN-characterized at both
+preset scales. No repo source change (out-of-repo probe, pendant tracked under poc/r113).
+
+**Box / tree RAN:** box invariant 4c / MemTotal 8,131,776 kB / SwapTotal 8,388,604 kB / overcommit 0 /
+btime 1788243915 (no reboot, r89 protocol) / load 0.00; compute = 3 secure C5 compiles + 3 bb-gate reads
+(~2 min) — in budget. Repos clean (interfold c95a4630 porcelain 0, configs byte-restored; pvthfhe 4b59b52).
+Upstream base UNCHANGED: origin/main 499146c9 = merge-base, 0 commits → NO REBASE (r107's 52/52 stands).
+N=19 wall table 90.1 min/node @4c EXCL. comm UNTOUCHED (r113 is a C5 secure-leaf cost-model datum, no new
+node wall — C5 is a small term outside the c3-bulk-dominated table).
+
+**UPSTREAM-PR:** n/a — poc/ scaffolding + one re-runnable probe only; no circuits/ or crates/ change, no
+gate reduction, no reproductions-guaranteed lever. Not an upstream PR candidate (matches r110/r111/r112:
+these are box-1 verification/cost-model rounds; the commitment-scheme lever itself is owner-sign-off +
+circuit surgery = a future design round, not this one).

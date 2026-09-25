@@ -1,0 +1,11 @@
+INSECURE  on-disk baseline          = 78227 g
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0
+SECURE V0 (raw payload, recorded)   = 2977228 g
+SECURE V1 (I14-patched payload)     = 2562117 g
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+NameError: name 'b1' is not defined
+DELTA = 415111 g  = -% of C6-secure

@@ -110,12 +110,11 @@ pub struct ShareEncryption<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: 
     ct1is: [Polynomial<N>; L],
     /// Random ternary polynomial u (secret witness)
     u: Polynomial<N>,
-    /// Error polynomial e0 (secret witness)
+    /// Error polynomial e0 (secret witness, range-checked). It also enters the CT0 relation
+    /// (I15: the per-limb CRT auxiliaries e0is/e0_quotients were removed — with |e0| < q_l for
+    /// all l, e0is[l] == e0 honestly, so the CT0 relation at gamma uses e0.eval directly and the
+    /// old CRT consistency check was a no-op on the proven statement).
     e0: Polynomial<N>,
-    /// Per-basis error polynomials e0[l] (secret witnesses)
-    e0is: [Polynomial<N>; L],
-    /// CRT quotients for e0 (secret witnesses)
-    e0_quotients: [Polynomial<N>; L],
     /// Error polynomial e1 (secret witness)
     e1: Polynomial<N>,
     /// Raw message polynomial (secret witness)
@@ -141,8 +140,6 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
         ct1is: [Polynomial<N>; L],
         u: Polynomial<N>,
         e0: Polynomial<N>,
-        e0is: [Polynomial<N>; L],
-        e0_quotients: [Polynomial<N>; L],
         e1: Polynomial<N>,
         message: Polynomial<N>,
         r1is: [Polynomial<2 * N - 1>; L],
@@ -160,8 +157,6 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
             ct1is,
             u,
             e0,
-            e0is,
-            e0_quotients,
             e1,
             message,
             r1is,
@@ -238,12 +233,17 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
     /// Uses commitments in place of full pk and message polynomials to reduce
     /// constraint count while preserving binding properties. The computed k1 is
     /// included explicitly since it is derived, not directly committed.
-    fn payload(self, k1: Polynomial<N>) -> [Field] {
+    fn payload(self, k1: Polynomial<N>, ct_commitment: Field) -> [Field] {
         // Use pk commitment instead of full pk polynomials
         let mut inputs = [self.expected_pk_commitment].as_vector();
 
-        inputs = flatten::<_, _, BIT_CT>(inputs, self.ct0is);
-        inputs = flatten::<_, _, BIT_CT>(inputs, self.ct1is);
+        // (I14 variant) ct0/ct1 are bound to the public output
+        // `return_value` = compute_ciphertext_commitment(ct0is, ct1is), which the
+        // proof attests and the aggregator re-derives; the packed raw ct limbs in
+        // the challenge were redundant (I3 pattern: bind via the commitment).
+        // ct_commitment (one Field) is pushed instead of 2*N*L packed carriers;
+        // it is computed ONCE in execute() and threaded in here.
+        inputs = inputs.push_back(ct_commitment);
 
         inputs = flatten::<_, _, BIT_E0>(inputs, [self.e0]);
         inputs = flatten::<_, _, BIT_E1>(inputs, [self.e1]);
@@ -252,10 +252,10 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
         // Use message commitment instead of full message
         inputs = inputs.push_back(self.expected_message_commitment);
 
-        // Include computed k1 in payload
-        for i in 0..N {
-            inputs = inputs.push_back(k1.coefficients[i]);
-        }
+        // (I3) The raw k1 push was removed: k1 = f(message) via compute_scaled_message
+        // and `message` is commitment-bound via verify_message_commitment, so k1 is
+        // transitively bound to the publicly pinned expected_message_commitment.
+        // Pushing all N raw k1 coefficients into the sponge was redundant.
 
         inputs = flatten::<_, _, BIT_R1>(inputs, self.r1is);
         inputs = flatten::<_, _, BIT_R2>(inputs, self.r2is);
@@ -263,25 +263,6 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
         inputs = flatten::<_, _, BIT_P2>(inputs, self.p2is);
 
         inputs
-    }
-
-    /// Verifies CRT consistency for the e0 error polynomial.
-    ///
-    /// Confirms that each per-modulus representation e0is[l] is correctly derived
-    /// from the global e0 via:
-    ///   e0[j] == e0is[l][j] + e0_quotients[l][j] * q_l
-    ///
-    /// This ensures the error is consistently decomposed across all CRT moduli.
-    fn check_e0_crt_consistency(self) {
-        for i in 0..L {
-            for j in 0..N {
-                assert(
-                    self.e0.coefficients[j]
-                        == self.e0is[i].coefficients[j]
-                            + self.e0_quotients[i].coefficients[j] * self.configs.qis[i],
-                );
-            }
-        }
     }
 
     /// Executes the share encryption circuit and returns the ciphertext commitment (C3 public output).
@@ -295,19 +276,19 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
         // Step 3: Perform range checks
         self.check_range_bounds();
 
-        // Step 4: Check CRT consistency for e0
-        self.check_e0_crt_consistency();
-
-        // Step 5: Compute scaled message k1 from message
+        // Step 4: Compute scaled message k1 from message
         let k1 = self.compute_scaled_message();
 
         // Step 6: Generate Fiat-Shamir challenges
-        let gammas = self.generate_challenge(k1);
+        // (I14 variant) compute ct_commitment once; it is both the public output
+        // and the ct binding in the challenge transcript.
+        let ct_commitment = compute_ciphertext_commitment::<N, L, BIT_CT>(self.ct0is, self.ct1is);
+        let gammas = self.generate_challenge(k1, ct_commitment);
 
         // Step 7: Verify encryption constraints
         self.verify_evaluations(gammas, k1);
 
-        compute_ciphertext_commitment::<N, L, BIT_CT>(self.ct0is, self.ct1is)
+        ct_commitment
     }
 
     /// Performs range checks on all secret witness polynomial coefficients.
@@ -354,8 +335,8 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
     /// Returns 2*L challenge values: one primary gamma at index 0 for evaluating all
     /// polynomials, L-1 weights at indices 1..L-1 for batching ct0 equations across
     /// moduli, and L weights at indices L..2L-1 for batching ct1 equations.
-    fn generate_challenge(self, k1: Polynomial<N>) -> [Field] {
-        let inputs = self.payload(k1);
+    fn generate_challenge(self, k1: Polynomial<N>, ct_commitment: Field) -> [Field] {
+        let inputs = self.payload(k1, ct_commitment);
 
         compute_share_encryption_challenge::<L>(inputs)
     }
@@ -363,8 +344,15 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
     /// Verifies BFV encryption equations using Schwartz-Zippel with batched modulus verification.
     ///
     /// For each CRT modulus l, checks at the primary challenge point gamma:
-    ///   ct0[l](gamma) = pk0[l](gamma)*u(gamma) + e0[l](gamma) + k1(gamma)*k0[l] + r1[l](gamma)*q_l + r2[l](gamma)*(gamma^N + 1)
+    ///   ct0[l](gamma) = pk0[l](gamma)*u(gamma) + e0(gamma) + k1(gamma)*k0[l] + r1[l](gamma)*q_l + r2[l](gamma)*(gamma^N + 1)
     ///   ct1[l](gamma) = pk1[l](gamma)*u(gamma) + e1(gamma) + p2[l](gamma)*(gamma^N + 1) + p1[l](gamma)*q_l
+    ///
+    /// (I15: the CT0 term is the RANGE-CHECKED global error e0, evaluated once at gamma.
+    /// Previously the unbounded per-limb auxiliaries e0is[l] were used, with the constraint
+    /// e0[j] == e0is[l][j] + q_l*e0_quotients[l][j]; since |e0| < q_l (e0 is range-checked to
+    /// a bound far below every q_l) the honest witness has e0is[l] == e0 and quotients == 0,
+    /// and the relation proved the same decryption class before — so the switch is not a
+    /// weakening, only a tightening of the admissible (undecryptable) witnesses.)
     ///
     /// Rather than asserting each equation independently, both sides are accumulated
     /// into a weighted batch sum using additional challenge values as weights.
@@ -374,6 +362,7 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
         let gamma = gammas[0];
         let cyclo_at_gamma = gamma.pow_32(N as Field) + 1;
         let u_at_gamma = self.u.eval(gamma);
+        let e0_at_gamma = self.e0.eval(gamma);
         let e1_at_gamma = self.e1.eval(gamma);
         let k1_at_gamma = k1.eval(gamma);
 
@@ -382,10 +371,9 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
             let pk0is_at_gamma = self.pk0is[i].eval(gamma);
             let r1i_at_gamma = self.r1is[i].eval(gamma);
             let r2i_at_gamma = self.r2is[i].eval(gamma);
-            let e0is_at_gamma = self.e0is[i].eval(gamma);
 
-            // ct0[l] = pk0[l]*u + e0[l] + k1*k0[l] + r1[l]*q_l + r2[l]*(gamma^N + 1)
-            let mut ct0_rhs = (pk0is_at_gamma * u_at_gamma) + e0is_at_gamma;
+            // ct0[l] = pk0[l]*u + e0 + k1*k0[l] + r1[l]*q_l + r2[l]*(gamma^N + 1)
+            let mut ct0_rhs = (pk0is_at_gamma * u_at_gamma) + e0_at_gamma;
             ct0_rhs += k1_at_gamma * self.configs.k0is[i];
             ct0_rhs += r1i_at_gamma * self.configs.qis[i];
             ct0_rhs += r2i_at_gamma * cyclo_at_gamma;
