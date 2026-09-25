@@ -267,6 +267,7 @@ jobs:
         run: 'cargo test -p e3-compute-provider --features parallel'
 
       - name: Run Rust-to-Solidity slashing assertions
+        if: matrix.suite == 'lib'
         run: pnpm rust:test:slashing
 
       - name: Cancel workflow on failure
@@ -1253,6 +1254,10 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: compiled-circuits
+          # `.active-preset.json` is a hidden file, and upload-artifact v4 drops hidden files
+          # unless told otherwise. Without it zk_prover_e2e cannot tell which committee the
+          # circuits were built for, and the minimum-committee proof tests fail.
+          include-hidden-files: true
           path: |
             circuits/bin/.active-preset.json
             circuits/bin/dkg/target/
