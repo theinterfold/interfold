@@ -54,7 +54,7 @@ share_computation_e_sm (CIRCUIT 2b)
 ************************************/
 
 // share_computation_e_sm - bit parameters
-pub global SHARE_COMPUTATION_E_SM_BIT_SECRET: u32 = 143;
+pub global SHARE_COMPUTATION_E_SM_BIT_SECRET: u32 = 57;
 
 // verify_shares - configs
 pub global SHARE_COMPUTATION_E_SM_CONFIGS: ShareComputationConfigs<L_THRESHOLD> =

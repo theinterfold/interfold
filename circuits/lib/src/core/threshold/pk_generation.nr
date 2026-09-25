@@ -19,8 +19,12 @@ pub struct Configs<let N: u32, let L: u32> {
     pub eek_bound: Field,
     /// Bound for secret key polynomial (sk) coefficients
     pub sk_bound: Field,
-    /// Bound for smudging noise polynomial (e_sm) coefficients
+    /// Bound for the lifted smudging noise polynomial (e_sm) coefficients
     pub e_sm_bound: Field,
+    /// Bounds for the per-modulus residues of e_sm: (q_i - 1) / 2
+    pub e_sm_limb_bounds: [Field; L],
+    /// Bounds for the CRT quotients of e_sm: (e_sm_bound + (q_i - 1) / 2) / q_i
+    pub e_sm_quotient_bounds: [Field; L],
     /// Bounds for r1 polynomials (modulus switching quotients) for each CRT basis
     pub r1_bounds: [Field; L],
     /// Bounds for r2 polynomials (cyclotomic reduction quotients) for each CRT basis
@@ -33,10 +37,21 @@ impl<let N: u32, let L: u32> Configs<N, L> {
         eek_bound: Field,
         sk_bound: Field,
         e_sm_bound: Field,
+        e_sm_limb_bounds: [Field; L],
+        e_sm_quotient_bounds: [Field; L],
         r1_bounds: [Field; L],
         r2_bounds: [Field; L],
     ) -> Self {
-        Configs { qis, eek_bound, sk_bound, e_sm_bound, r1_bounds, r2_bounds }
+        Configs {
+            qis,
+            eek_bound,
+            sk_bound,
+            e_sm_bound,
+            e_sm_limb_bounds,
+            e_sm_quotient_bounds,
+            r1_bounds,
+            r2_bounds,
+        }
     }
 }
 
@@ -51,7 +66,7 @@ impl<let N: u32, let L: u32> Configs<N, L> {
 /// - `commit(sk)` -> C2a (share computation).
 /// - `commit(pk_trbfv)` -> C5 (pk aggregation).
 /// - `commit(e_sm)` -> C2b (share computation).
-pub struct PkGeneration<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u32, let BIT_R1: u32, let BIT_R2: u32, let BIT_PK: u32> {
+pub struct PkGeneration<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u32, let BIT_E_SM_LIFTED: u32, let BIT_E_SM_QUOTIENT: u32, let BIT_R1: u32, let BIT_R2: u32, let BIT_PK: u32> {
     /// Cryptographic parameters including bounds, moduli, and constants.
     configs: Configs<N, L>,
 
@@ -67,9 +82,17 @@ pub struct PkGeneration<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u3
     /// Small coefficients sampled from CBD (Centered Binomial Distribution)
     sk: Polynomial<N>,
 
-    /// Smudging noise polynomial (secret witness)
-    /// Used for threshold decryption security
+    /// Smudging noise polynomial per modulus (secret witness).
+    /// Centered CRT residues of `e_sm_lifted`; these are what C2b Shamir-splits.
     e_sm: [Polynomial<N>; L],
+
+    /// Smudging noise over the integers (secret witness).
+    /// The `e_sm_bound` range check applies here, not to the residues: `e_sm_bound` exceeds every
+    /// modulus, so checking a residue against it constrains nothing.
+    e_sm_lifted: Polynomial<N>,
+
+    /// CRT quotients that tie `e_sm_lifted` to each residue (secret witnesses)
+    e_sm_quotients: [Polynomial<N>; L],
 
     /// Quotients from polynomial operations (secret witnesses)
     /// r1[i] are quotients from modulus switching for modulus i (can be negative, degree 2*N-1)
@@ -81,18 +104,20 @@ pub struct PkGeneration<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u3
     pk0: [Polynomial<N>; L],
 }
 
-impl<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u32, let BIT_R1: u32, let BIT_R2: u32, let BIT_PK: u32> PkGeneration<N, L, BIT_EEK, BIT_SK, BIT_E_SM, BIT_R1, BIT_R2, BIT_PK> {
+impl<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u32, let BIT_E_SM_LIFTED: u32, let BIT_E_SM_QUOTIENT: u32, let BIT_R1: u32, let BIT_R2: u32, let BIT_PK: u32> PkGeneration<N, L, BIT_EEK, BIT_SK, BIT_E_SM, BIT_E_SM_LIFTED, BIT_E_SM_QUOTIENT, BIT_R1, BIT_R2, BIT_PK> {
     pub fn new(
         configs: Configs<N, L>,
         a: [Polynomial<N>; L],
         eek: Polynomial<N>,
         sk: Polynomial<N>,
         e_sm: [Polynomial<N>; L],
+        e_sm_lifted: Polynomial<N>,
+        e_sm_quotients: [Polynomial<N>; L],
         r1: [Polynomial<2 * N - 1>; L],
         r2: [Polynomial<N - 1>; L],
         pk0: [Polynomial<N>; L],
     ) -> Self {
-        PkGeneration { configs, a, eek, sk, e_sm, r1, r2, pk0 }
+        PkGeneration { configs, a, eek, sk, e_sm, e_sm_lifted, e_sm_quotients, r1, r2, pk0 }
     }
 
     /// Flattens all witness data into a single array for Fiat-Shamir challenge generation.
@@ -126,17 +151,20 @@ impl<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u3
         // Step 1: Range-check secret witnesses (sk, eek, e_sm, quotients).
         self.perform_range_checks();
 
-        // Step 2: Derive commitments for the FS transcript.
+        // Step 2: Tie the committed e_sm residues to the bounded lifted value.
+        self.verify_e_sm_crt_consistency();
+
+        // Step 3: Derive commitments for the FS transcript.
         let sk_commitment = compute_share_computation_sk_commitment::<N, BIT_SK>(self.sk);
         let e_sm_commitment =
             compute_share_computation_e_sm_commitment::<N, L, BIT_E_SM>(self.e_sm);
         let pk_commitment = compute_threshold_pk_commitment::<N, L, BIT_PK>(self.pk0);
 
-        // Step 3: Fiat-Shamir challenge and per-modulus evaluation checks.
+        // Step 4: Fiat-Shamir challenge and per-modulus evaluation checks.
         let gamma = self.generate_challenge(sk_commitment, pk_commitment);
         self.verify_evaluations(gamma);
 
-        // Step 4: Return commitments for downstream circuits.
+        // Step 5: Return commitments for downstream circuits.
         (sk_commitment, pk_commitment, e_sm_commitment)
     }
 
@@ -161,11 +189,32 @@ impl<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u3
         // Check that secret key polynomial has small coefficients
         self.sk.range_check_2bounds::<BIT_SK>(self.configs.sk_bound, self.configs.sk_bound);
 
+        // Check the smudging noise over the integers. The residues cannot carry this bound:
+        // e_sm_bound exceeds every q_i, so a residue satisfies it for free.
+        self.e_sm_lifted.range_check_2bounds::<BIT_E_SM_LIFTED>(
+            self.configs.e_sm_bound,
+            self.configs.e_sm_bound,
+        );
+
         // Check quotient terms are within expected bounds (per modulus)
         for i in 0..L {
+            // pk0 is committed here and re-opened from that commitment by C5. The commitment packs
+            // BIT_PK-wide coefficients into shared carriers, so an unbounded coefficient can
+            // overflow its slot and give the same commitment a second opening. Pin it to a centered
+            // residue, matching the bound C5 applies.
+            let pk_bound: Field = (self.configs.qis[i] - 1) / 2;
+            self.pk0[i].range_check_2bounds::<BIT_PK>(pk_bound, pk_bound);
+
+            // Together with the lifted bound and `verify_e_sm_crt_consistency`, these force each
+            // e_sm[i] to be the centered residue of a genuinely bounded integer polynomial.
             self.e_sm[i].range_check_2bounds::<BIT_E_SM>(
-                self.configs.e_sm_bound,
-                self.configs.e_sm_bound,
+                self.configs.e_sm_limb_bounds[i],
+                self.configs.e_sm_limb_bounds[i],
+            );
+
+            self.e_sm_quotients[i].range_check_2bounds::<BIT_E_SM_QUOTIENT>(
+                self.configs.e_sm_quotient_bounds[i],
+                self.configs.e_sm_quotient_bounds[i],
             );
 
             self.r1[i].range_check_2bounds::<BIT_R1>(
@@ -177,6 +226,24 @@ impl<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u3
                 self.configs.r2_bounds[i],
                 self.configs.r2_bounds[i],
             );
+        }
+    }
+
+    /// Binds each residue `e_sm[i]` to the lifted `e_sm_lifted`.
+    ///
+    /// `q_i` is invertible modulo the proof-system prime, so this equation alone holds for any
+    /// `e_sm[i]`. It carries weight only with the bounds applied in `perform_range_checks`, which
+    /// keep every term far below the prime and so make the equation hold over the integers.
+    fn verify_e_sm_crt_consistency(self) {
+        for i in 0..L {
+            for j in 0..N {
+                assert(
+                    self.e_sm_lifted.coefficients[j]
+                        == self.e_sm[i].coefficients[j]
+                            + self.e_sm_quotients[i].coefficients[j] * self.configs.qis[i],
+                    "Smudging noise CRT consistency failed",
+                );
+            }
         }
     }
 

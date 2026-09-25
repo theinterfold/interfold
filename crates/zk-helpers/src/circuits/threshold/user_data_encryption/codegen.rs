@@ -47,6 +47,8 @@ pub fn generate_configs(_: BfvPreset, configs: &Configs) -> CodegenConfigs {
     let qis_str = join_display(&configs.moduli, ", ");
     let k0is_str = join_display(&configs.k0is, ", ");
     let pk_bounds_str = join_display(&configs.bounds.pk_bounds, ", ");
+    let e0is_bounds_str = join_display(&configs.bounds.e0is_bounds, ", ");
+    let e0_quotient_bounds_str = join_display(&configs.bounds.e0_quotient_bounds, ", ");
     let r1_low_bounds_str = join_display(&configs.bounds.r1_low_bounds, ", ");
     let r1_up_bounds_str = join_display(&configs.bounds.r1_up_bounds, ", ");
     let r2_bounds_str = join_display(&configs.bounds.r2_bounds, ", ");
@@ -72,6 +74,8 @@ pub global {}_BIT_PK: u32 = {};
 pub global {}_BIT_CT: u32 = {};
 pub global {}_BIT_U: u32 = {};
 pub global {}_BIT_E0: u32 = {};
+pub global {}_BIT_E0IS: u32 = {};
+pub global {}_BIT_E0_QUOTIENT: u32 = {};
 pub global {}_BIT_E1: u32 = {};
 pub global {}_BIT_K: u32 = {};
 pub global {}_BIT_R1: u32 = {};
@@ -82,6 +86,8 @@ pub global {}_BIT_P2: u32 = {};
 pub global {}_K0IS: [Field; L] = [{}];
 pub global {}_PK_BOUNDS: [Field; L] = [{}];
 pub global {}_E0_BOUND: Field = {};
+pub global {}_E0IS_BOUNDS: [Field; L] = [{}];
+pub global {}_E0_QUOTIENT_BOUNDS: [Field; L] = [{}];
 pub global {}_E1_BOUND: Field = {};
 pub global {}_U_BOUND: Field = {};
 pub global {}_K1_LOW_BOUND: Field = {};
@@ -102,6 +108,8 @@ pub global {}_CT0_CONFIGS: UserDataEncryptionCt0Configs<N, L> = UserDataEncrypti
     QIS,
     {}_K0IS,
     {}_E0_BOUND,
+    {}_E0IS_BOUNDS,
+    {}_E0_QUOTIENT_BOUNDS,
     {}_U_BOUND,
     {}_R1_LOW_BOUNDS,
     {}_R1_UP_BOUNDS,
@@ -136,6 +144,10 @@ pub global {}_CT1_CONFIGS: UserDataEncryptionCt1Configs<N, L> = UserDataEncrypti
         prefix,
         configs.bits.e0_bit, // BIT_E0
         prefix,
+        configs.bits.e0is_bit, // BIT_E0IS
+        prefix,
+        configs.bits.e0_quotient_bit, // BIT_E0_QUOTIENT
+        prefix,
         configs.bits.e1_bit, // BIT_E1
         prefix,
         configs.bits.k_bit, // BIT_K
@@ -154,6 +166,10 @@ pub global {}_CT1_CONFIGS: UserDataEncryptionCt1Configs<N, L> = UserDataEncrypti
         prefix,
         configs.bounds.e0_bound, // E0_BOUND
         prefix,
+        e0is_bounds_str, // E0IS_BOUNDS array
+        prefix,
+        e0_quotient_bounds_str, // E0_QUOTIENT_BOUNDS array
+        prefix,
         configs.bounds.e1_bound, // E1_BOUND
         prefix,
         configs.bounds.u_bound, // U_BOUND
@@ -171,6 +187,8 @@ pub global {}_CT1_CONFIGS: UserDataEncryptionCt1Configs<N, L> = UserDataEncrypti
         p1_bounds_str, // P1_BOUNDS array
         prefix,
         p2_bounds_str, // P2_BOUNDS array
+        prefix,
+        prefix,
         prefix,
         prefix,
         prefix,
