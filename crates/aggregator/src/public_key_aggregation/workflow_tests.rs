@@ -312,6 +312,6 @@ fn handle_member_expelled_does_not_start_c1_without_a_roster() {
             assert_eq!(submission_order.len(), 1);
             assert_eq!(canonical_party_nodes.len(), 3);
         }
-        _ => panic!("expected VerifyingC1"),
+        _ => panic!("expected Collecting"),
     }
 }

@@ -41,6 +41,25 @@ describe("E3 Pricing", function () {
     minThreshold: 0,
     randomnessFlatFee: 1_000_000n,
   };
+  // Distinct values, so a field read in the wrong role changes the quote.
+  const distinctPricingConfig = {
+    keyGenFixedPerNode: 101_003n,
+    keyGenPerEncryptionProof: 50_107n,
+    coordinationPerPair: 10_109n,
+    availabilityPerNodePerSec: 61n,
+    decryptionPerNode: 300_149n,
+    publicationBase: 1_000_151n,
+    verificationPerProof: 5_157n,
+    protocolTreasury: ADDRESS_ONE,
+    marginBps: 1_103n,
+    protocolShareBps: 103n,
+    dkgUtilizationBps: 2_603n,
+    computeUtilizationBps: 4_907n,
+    decryptUtilizationBps: 2_509n,
+    minCommitteeSize: 3n,
+    minThreshold: 2n,
+    randomnessFlatFee: 1_000_163n,
+  };
 
   // Convert ethers Result to a plain object that can be spread
   const toPlainConfig = (pc: any) => ({
@@ -100,17 +119,10 @@ describe("E3 Pricing", function () {
   // ──────────────────────────────────────────────────────────────────────────
 
   describe("getE3Quote()", function () {
-    it("returns a fee based on BaseCosts, committee size, and duration", async function () {
-      const { interfold, request } = await loadFixture(setup);
-
-      const fee = await interfold.getE3Quote(request);
-      // Fee must be > 0 with default baseCosts
-      expect(fee).to.be.gt(0);
-    });
-
     it("computes fee correctly using the parametric formula", async function () {
       const { interfold, request, ciphernodeRegistryContract } =
         await loadFixture(setup);
+      await setPricingConfig(interfold, distinctPricingConfig);
 
       // Minimum requires H=2 decryption shares from an N=3 committee.
       const n = 3n; // total committee
@@ -126,10 +138,7 @@ describe("E3 Pricing", function () {
       const duration =
         sortitionWindow +
         (BigInt(request.inputWindow[1]) - BigInt(request.inputWindow[0])) +
-        // M-06: sum BPS-weighted windows first then divide once. With the
-        // default config (windows=3600, bps=2500/5000/2500) the per-term and
-        // sum-then-divide formulas coincide, but this matches the on-chain
-        // implementation and the dedicated DurationPrecision tests.
+        // M-06: sum BPS-weighted windows first, then divide once.
         (config.dkgWindow * BigInt(pc.dkgUtilizationBps) +
           config.computeWindow * BigInt(pc.computeUtilizationBps) +
           config.decryptionWindow * BigInt(pc.decryptUtilizationBps)) /
@@ -247,28 +256,15 @@ describe("E3 Pricing", function () {
 
     it("updates config and emits event", async function () {
       const { interfold } = await loadFixture(setup);
-      const newConfig = {
-        ...defaultPricingConfig,
-        keyGenFixedPerNode: 100000n,
-        keyGenPerEncryptionProof: 50000n,
-        coordinationPerPair: 10000n,
-        availabilityPerNodePerSec: 40n,
-        decryptionPerNode: 300000n,
-        publicationBase: 1000000n,
-      };
 
-      await expect(setPricingConfig(interfold, newConfig)).to.emit(
+      await expect(setPricingConfig(interfold, distinctPricingConfig)).to.emit(
         interfold,
         "FeeAssetConfigUpdated",
       );
 
-      const stored = await interfold.getPricingConfig();
-      expect(stored.keyGenFixedPerNode).to.equal(100000n);
-      expect(stored.keyGenPerEncryptionProof).to.equal(50000n);
-      expect(stored.coordinationPerPair).to.equal(10000n);
-      expect(stored.availabilityPerNodePerSec).to.equal(40n);
-      expect(stored.decryptionPerNode).to.equal(300000n);
-      expect(stored.publicationBase).to.equal(1000000n);
+      expect(toPlainConfig(await interfold.getPricingConfig())).to.deep.equal(
+        distinctPricingConfig,
+      );
     });
 
     it("updates the token scale and raw-unit prices together", async function () {

@@ -68,28 +68,43 @@ describe("ChainlinkVrfRandomnessProvider", function () {
     };
   }
 
-  it("records the response for the matching subscription request", async function () {
+  it("binds reverse-order responses to their request and E3", async function () {
     const { coordinator, provider, requesterSigner } = await setup();
-    const e3Id = 42n;
-    const randomWord = 123456789n;
+    const providerAddress = await provider.getAddress();
 
-    await expect(provider.connect(requesterSigner).requestRandomness(e3Id))
+    await expect(provider.connect(requesterSigner).requestRandomness(42n))
       .to.emit(provider, "RandomnessRequested")
-      .withArgs(1, e3Id);
-    const fulfillment = await coordinator.fulfillRandomWordsWithOverride(
-      1,
-      await provider.getAddress(),
-      [randomWord],
-    );
-    const fulfillmentReceipt = await fulfillment.wait();
-    if (!fulfillmentReceipt) throw new Error("fulfillment receipt missing");
+      .withArgs(1, 42n);
+    await expect(provider.connect(requesterSigner).requestRandomness(73n))
+      .to.emit(provider, "RandomnessRequested")
+      .withArgs(2, 73n);
 
-    const [fulfilled, storedWord, fulfilledAt, fulfilledBlock] =
-      await provider.getRandomness(1);
-    expect(fulfilled).to.equal(true);
-    expect(storedWord).to.equal(randomWord);
-    expect(fulfilledAt).to.be.greaterThan(0);
-    expect(fulfilledBlock).to.equal(BigInt(fulfillmentReceipt.blockNumber));
+    // Fulfil the later request first.
+    const second = await (
+      await coordinator.fulfillRandomWordsWithOverride(2, providerAddress, [
+        987654321n,
+      ])
+    ).wait();
+    const first = await (
+      await coordinator.fulfillRandomWordsWithOverride(1, providerAddress, [
+        123456789n,
+      ])
+    ).wait();
+
+    for (const [requestId, e3Id, word, receipt] of [
+      [1n, 42n, 123456789n, first!],
+      [2n, 73n, 987654321n, second!],
+    ] as const) {
+      expect(await provider.requestIdByE3Id(e3Id)).to.equal(requestId);
+      expect(await provider.e3IdByRequestId(requestId)).to.equal(e3Id);
+      const [fulfilled, storedWord, fulfilledAt, fulfilledBlock] =
+        await provider.getRandomness(requestId);
+      const block = await ethers.provider.getBlock(receipt.blockNumber);
+      expect(fulfilled).to.equal(true);
+      expect(storedWord).to.equal(word);
+      expect(fulfilledAt).to.equal(BigInt(block!.timestamp));
+      expect(fulfilledBlock).to.equal(BigInt(receipt.blockNumber));
+    }
   });
 
   it("allows only the bound registry to request and never re-requests an E3", async function () {

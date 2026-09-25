@@ -26,8 +26,26 @@ function proofWithAnchors(
 
 describe("BFV verifier routers", function () {
   it("routes PK proofs by public-input length and VK anchors", async function () {
+    const [, nodeOne, nodeTwo] = await ethers.getSigners();
+    const sortedNodes = [
+      await nodeOne.getAddress(),
+      await nodeTwo.getAddress(),
+    ];
+    const context = [
+      11,
+      12,
+      sortedNodes,
+      ethers.id("pk-commitment"),
+      ethers.id("committee"),
+    ] as const;
     const minimum = await ethers.deployContract("MockBfvPkVerifierRoute", [
       2,
+      HASH_A,
+      HASH_B,
+      false,
+    ]);
+    const sameLength = await ethers.deployContract("MockBfvPkVerifierRoute", [
+      10,
       HASH_A,
       HASH_B,
       false,
@@ -39,111 +57,87 @@ describe("BFV verifier routers", function () {
       true,
     ]);
     const router = await ethers.deployContract("BfvPkVerifierRouter", [
-      [await minimum.getAddress(), await small.getAddress()],
+      [
+        await minimum.getAddress(),
+        await sameLength.getAddress(),
+        await small.getAddress(),
+      ],
       10,
     ]);
+    const smallProof = proofWithAnchors(36, HASH_C, HASH_D);
+    // The selected route rejects any call other than this exact forwarding.
+    await small.expectCall(
+      small.interface.encodeFunctionData("verify", [...context, smallProof]),
+    );
+    const verify = (proof: string) =>
+      router.verify.staticCall(...context, proof);
 
     expect(await router.h()).to.equal(10);
-    expect(await router.routeCount()).to.equal(2);
-    expect(
-      await router.verify.staticCall(
-        1,
-        2,
-        [],
-        ethers.ZeroHash,
-        ethers.ZeroHash,
-        proofWithAnchors(36, HASH_C, HASH_D),
-      ),
-    ).to.equal(true);
-    expect(
-      await router.verify.staticCall(
-        1,
-        2,
-        [],
-        ethers.ZeroHash,
-        ethers.ZeroHash,
-        proofWithAnchors(12, HASH_A, HASH_B),
-      ),
-    ).to.equal(false);
+    expect(await router.routeCount()).to.equal(3);
+    expect(await verify(smallProof)).to.equal(true);
+    expect(await verify(proofWithAnchors(36, HASH_A, HASH_B))).to.equal(false);
+    expect(await verify(proofWithAnchors(12, HASH_A, HASH_B))).to.equal(false);
 
     await expect(
-      router.verify.staticCall(
-        1,
-        2,
-        [],
-        ethers.ZeroHash,
-        ethers.ZeroHash,
-        proofWithAnchors(36, HASH_C, HASH_A),
-      ),
+      verify(proofWithAnchors(36, HASH_A, HASH_D)),
     ).to.be.revertedWithCustomError(router, "VkHashMismatch");
     await expect(
-      router.verify.staticCall(
-        1,
-        2,
-        [],
-        ethers.ZeroHash,
-        ethers.ZeroHash,
-        proofWithAnchors(13, HASH_A, HASH_B),
-      ),
+      verify(proofWithAnchors(36, HASH_C, HASH_A)),
+    ).to.be.revertedWithCustomError(router, "VkHashMismatch");
+    await expect(
+      verify(proofWithAnchors(13, HASH_A, HASH_B)),
     ).to.be.revertedWithCustomError(router, "InvalidPublicInputsLength");
   });
 
   it("routes decryption proofs by public-input length and VK anchors", async function () {
+    const context = [
+      21,
+      ethers.id("decryption-domain"),
+      ethers.id("plaintext-output"),
+      ethers.id("decryption-committee"),
+      ethers.id("ciphertext-commitment"),
+    ] as const;
     const minimum = await ethers.deployContract(
       "MockBfvDecryptionVerifierRoute",
       [1, HASH_A, HASH_B, false],
+    );
+    const sameLength = await ethers.deployContract(
+      "MockBfvDecryptionVerifierRoute",
+      [9, HASH_A, HASH_B, false],
     );
     const small = await ethers.deployContract(
       "MockBfvDecryptionVerifierRoute",
       [9, HASH_C, HASH_D, true],
     );
     const router = await ethers.deployContract("BfvDecryptionVerifierRouter", [
-      [await minimum.getAddress(), await small.getAddress()],
+      [
+        await minimum.getAddress(),
+        await sameLength.getAddress(),
+        await small.getAddress(),
+      ],
       9,
     ]);
+    const smallProof = proofWithAnchors(138, HASH_C, HASH_D);
+    await small.expectCall(
+      small.interface.encodeFunctionData("verify", [...context, smallProof]),
+    );
+    const verify = (proof: string) =>
+      router.verify.staticCall(...context, proof);
 
     expect(await router.threshold()).to.equal(9);
-    expect(await router.routeCount()).to.equal(2);
-    expect(
-      await router.verify.staticCall(
-        1,
-        ethers.ZeroHash,
-        ethers.ZeroHash,
-        ethers.ZeroHash,
-        ethers.ZeroHash,
-        proofWithAnchors(138, HASH_C, HASH_D),
-      ),
-    ).to.equal(true);
-    expect(
-      await router.verify.staticCall(
-        1,
-        ethers.ZeroHash,
-        ethers.ZeroHash,
-        ethers.ZeroHash,
-        ethers.ZeroHash,
-        proofWithAnchors(114, HASH_A, HASH_B),
-      ),
-    ).to.equal(false);
+    expect(await router.routeCount()).to.equal(3);
+    expect(await verify(smallProof)).to.equal(true);
+    expect(await verify(proofWithAnchors(138, HASH_A, HASH_B))).to.equal(false);
+    expect(await verify(proofWithAnchors(114, HASH_A, HASH_B))).to.equal(false);
 
     await expect(
-      router.verify.staticCall(
-        1,
-        ethers.ZeroHash,
-        ethers.ZeroHash,
-        ethers.ZeroHash,
-        ethers.ZeroHash,
-        proofWithAnchors(138, HASH_C, HASH_A),
-      ),
+      verify(proofWithAnchors(138, HASH_A, HASH_D)),
     ).to.be.revertedWithCustomError(router, "VkHashMismatch");
     await expect(
-      router.verify.staticCall(
-        1,
-        ethers.ZeroHash,
-        ethers.ZeroHash,
-        ethers.ZeroHash,
-        ethers.ZeroHash,
-        proofWithAnchors(115, HASH_A, HASH_B),
-      ),
+      verify(proofWithAnchors(138, HASH_C, HASH_A)),
+    ).to.be.revertedWithCustomError(router, "VkHashMismatch");
+    await expect(
+      verify(proofWithAnchors(115, HASH_A, HASH_B)),
     ).to.be.revertedWithCustomError(router, "InvalidPublicInputsLength");
   });
 });

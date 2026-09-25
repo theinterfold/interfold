@@ -446,7 +446,7 @@ describe("BfvDecryptionVerifier", function () {
       ).to.be.revertedWithCustomError(bfvDecryptionVerifier, "VkHashMismatch");
     });
 
-    it("reverts DomainBindingMismatch when committee hash hi limb mismatches (C-08)", async function () {
+    it("rejects an independent mismatch in either committee-hash limb (C-08)", async function () {
       const { bfvDecryptionVerifier, mockCircuit } = await loadFixture(
         deployWithMockCircuit,
       );
@@ -454,9 +454,7 @@ describe("BfvDecryptionVerifier", function () {
       const { decryptionDomain } = ctx();
 
       const committeeHash = ethers.id("real-committee");
-      const wrongCommitteeHash = ethers.id("wrong-committee");
       const messageCoeffs = [1n, 2n, 3n];
-      // proof built with real committeeHash in slots 2/3
       const publicInputs = buildPublicInputsWithMessage(
         messageCoeffs,
         EXPECTED_PUBLIC_INPUTS_LEN,
@@ -464,25 +462,31 @@ describe("BfvDecryptionVerifier", function () {
         committeeHash,
       );
       const plaintextHash = plaintextToHash(messageCoeffs);
-      const proof = encodeProof("0x01", publicInputs);
+      for (const index of [COMMITTEE_HASH_HI_IDX, COMMITTEE_HASH_LO_IDX]) {
+        const mismatchedInputs = [...publicInputs];
+        mismatchedInputs[index] = ethers.toBeHex(
+          BigInt(mismatchedInputs[index]!) ^ 1n,
+          32,
+        );
+        const proof = encodeProof("0x01", mismatchedInputs);
 
-      // pass wrong committeeHash to verify — hi/lo check should fail
-      await expect(
-        bfvDecryptionVerifier.verify.staticCall(
-          E3_ID,
-          decryptionDomain,
-          plaintextHash,
-          wrongCommitteeHash,
-          CIPHERTEXT_COMMITMENT,
-          proof,
-        ),
-      ).to.be.revertedWithCustomError(
-        bfvDecryptionVerifier,
-        "DomainBindingMismatch",
-      );
+        await expect(
+          bfvDecryptionVerifier.verify.staticCall(
+            E3_ID,
+            decryptionDomain,
+            plaintextHash,
+            committeeHash,
+            CIPHERTEXT_COMMITMENT,
+            proof,
+          ),
+        ).to.be.revertedWithCustomError(
+          bfvDecryptionVerifier,
+          "DomainBindingMismatch",
+        );
+      }
     });
 
-    it("rejects replaying a proof under a different E3 decryption domain (C-03)", async function () {
+    it("rejects an independent mismatch in either decryption-domain limb (C-03)", async function () {
       const { bfvDecryptionVerifier, mockCircuit } = await loadFixture(
         deployWithMockCircuit,
       );
@@ -491,21 +495,31 @@ describe("BfvDecryptionVerifier", function () {
       const messageCoeffs = [1n, 2n, 3n];
       const publicInputs = buildPublicInputsWithMessage(messageCoeffs);
       const plaintextHash = plaintextToHash(messageCoeffs);
-      const proof = encodeProof("0x01", publicInputs);
+      for (const index of [
+        DECRYPTION_DOMAIN_HI_IDX,
+        DECRYPTION_DOMAIN_LO_IDX,
+      ]) {
+        const mismatchedInputs = [...publicInputs];
+        mismatchedInputs[index] = ethers.toBeHex(
+          BigInt(mismatchedInputs[index]!) ^ 1n,
+          32,
+        );
+        const proof = encodeProof("0x01", mismatchedInputs);
 
-      await expect(
-        bfvDecryptionVerifier.verify.staticCall(
-          E3_ID,
-          ethers.id("different-e3-domain"),
-          plaintextHash,
-          ethers.ZeroHash,
-          CIPHERTEXT_COMMITMENT,
-          proof,
-        ),
-      ).to.be.revertedWithCustomError(
-        bfvDecryptionVerifier,
-        "DomainBindingMismatch",
-      );
+        await expect(
+          bfvDecryptionVerifier.verify.staticCall(
+            E3_ID,
+            DECRYPTION_DOMAIN,
+            plaintextHash,
+            ethers.ZeroHash,
+            CIPHERTEXT_COMMITMENT,
+            proof,
+          ),
+        ).to.be.revertedWithCustomError(
+          bfvDecryptionVerifier,
+          "DomainBindingMismatch",
+        );
+      }
     });
 
     it("reverts when the stored SAFE ciphertext commitment differs from the proof", async function () {
@@ -812,34 +826,9 @@ describe("BfvDecryptionVerifier", function () {
 
       const messageCoeffs = [1n, 2n, 3n, 42n, 100n];
       const publicInputs = buildPublicInputsWithMessage(messageCoeffs);
+      expect(publicInputs.length).to.equal(EXPECTED_PUBLIC_INPUTS_LEN);
       const plaintextHash = plaintextToHash(messageCoeffs);
       const proof = encodeProof("0x0102", publicInputs);
-
-      const result = await bfvDecryptionVerifier.verify.staticCall(
-        E3_ID,
-        decryptionDomain,
-        plaintextHash,
-        ethers.ZeroHash,
-        CIPHERTEXT_COMMITMENT,
-        proof,
-      );
-      expect(result).to.equal(true);
-    });
-
-    it("returns true with exact-length public inputs", async function () {
-      const { bfvDecryptionVerifier, mockCircuit } = await loadFixture(
-        deployWithMockCircuit,
-      );
-      await mockCircuit.setReturnValue(true);
-      const { decryptionDomain } = ctx();
-
-      const messageCoeffs = [1n, 2n, 3n];
-      const publicInputs = buildPublicInputsWithMessage(
-        messageCoeffs,
-        EXPECTED_PUBLIC_INPUTS_LEN,
-      );
-      const plaintextHash = plaintextToHash(messageCoeffs);
-      const proof = encodeProof("0x01", publicInputs);
 
       const result = await bfvDecryptionVerifier.verify.staticCall(
         E3_ID,

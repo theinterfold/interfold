@@ -59,6 +59,31 @@ export function normalizeCargoLockForCircuitHash(source: Buffer): Buffer {
   return Buffer.from(pins.join(''))
 }
 
+/**
+ * Remove `#[cfg(test)] mod name { ... }` blocks from Rust source.
+ *
+ * Test modules never reach a generator binary, so editing one must not make the published circuit
+ * artifacts stale. The end of a block is found from rustfmt layout: the closing `}` sits at the
+ * attribute's indentation. Any other shape is kept, so an unexpected layout costs a rebuild rather
+ * than hiding a change.
+ */
+export function stripRustTestModules(source: Buffer): Buffer {
+  const lines = source.toString().split('\n')
+  const kept: string[] = []
+  for (let i = 0; i < lines.length; i++) {
+    const indent = /^(\s*)#\[cfg\(test\)\]\s*$/.exec(lines[i])?.[1]
+    if (indent !== undefined && new RegExp(`^${indent}mod \\w+ \\{\\s*$`).test(lines[i + 1] ?? '')) {
+      const end = lines.findIndex((line, j) => j > i + 1 && line === `${indent}}`)
+      if (end !== -1) {
+        i = end
+        continue
+      }
+    }
+    kept.push(lines[i])
+  }
+  return Buffer.from(kept.join('\n'))
+}
+
 interface CircuitInfo {
   name: string
   group: CircuitGroup
@@ -1323,7 +1348,7 @@ library ActiveCryptoConfig {
               .replace(/^pub global ((?:PK_GENERATION|SHARE_COMPUTATION)_[A-Z0-9_]+):[^;]*;/gm, 'pub global $1:<generated>;'),
           )
         }
-        hash.update(source)
+        hash.update(entry.endsWith('.rs') ? stripRustTestModules(source) : source)
       }
     }
   }

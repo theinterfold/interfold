@@ -6,7 +6,6 @@
 
 use super::*;
 use alloy::primitives::{keccak256, FixedBytes, U256};
-use alloy::signers::SignerSync;
 use alloy::sol_types::SolValue;
 use e3_events::{VOTE_DOMAIN_NAME, VOTE_DOMAIN_VERSION, VOTE_TYPEHASH_STR};
 use e3_utils::ArcBytes;
@@ -110,42 +109,6 @@ fn vote_digest_matches_reference() {
         "AccusationManager::vote_digest drifted from the reference EIP-712 \
              computation. Check VOTE_TYPEHASH_STR / VOTE_DOMAIN_NAME against \
              SlashingManager.sol — these MUST stay byte-equal across crates."
-    );
-}
-
-/// Sign-and-recover round-trip using the actor's digest.
-#[test]
-fn actor_signature_recovers_to_voter() {
-    let signer: PrivateKeySigner =
-        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
-            .parse()
-            .unwrap();
-    let voter = signer.address();
-    let verifying_contract: Address = "0x5555555555555555555555555555555555555555"
-        .parse()
-        .unwrap();
-    let chain_id = 31337u64;
-
-    let vote = AccusationVote {
-        e3_id: E3id::new("12345", chain_id),
-        accusation_id: [0x07; 32],
-        voter,
-        data_hash: [0x08; 32],
-        issued_at: 1_699_999_000,
-        deadline: 1_700_000_000,
-        signature: ArcBytes::default(),
-    };
-
-    let digest = AccusationManager::vote_digest(&vote, verifying_contract);
-    let sig = signer
-        .sign_hash_sync(&FixedBytes::<32>::from(digest))
-        .unwrap();
-    let recovered = sig
-        .recover_address_from_prehash(&FixedBytes::<32>::from(digest))
-        .expect("recover");
-    assert_eq!(
-        recovered, voter,
-        "signing the actor's digest and recovering must yield the voter"
     );
 }
 

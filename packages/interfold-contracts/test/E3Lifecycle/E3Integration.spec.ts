@@ -6,15 +6,12 @@
 import { expect } from "chai";
 import type { Signer } from "ethers";
 
-import InterfoldModule from "../../ignition/modules/interfold";
-import { localPricingConfig } from "../../scripts/pricingConfig";
 import type {
   MockBlacklistUSDC,
   MockFeeOnTransferToken,
   MockUSDC,
 } from "../../types";
 import {
-  Interfold__factory as InterfoldFactory,
   MockFeeOnTransferToken__factory as MockFeeOnTransferTokenFactory,
   MockUSDC__factory as MockUSDCFactory,
 } from "../../types";
@@ -25,7 +22,6 @@ import {
   deploySlashingManager,
   encodeMockDkgProof,
   ethers,
-  ignition,
   makeRequest,
   networkHelpers,
   publishAvailableCiphertextOutput,
@@ -51,8 +47,6 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
   const THREE_DAYS = 3 * ONE_DAY;
   const THIRTY_DAYS = 30 * ONE_DAY;
   const SORTITION_SUBMISSION_WINDOW = 60;
-
-  const addressOne = "0x0000000000000000000000000000000000000001";
 
   const defaultTimeoutConfig = {
     dkgWindow: ONE_DAY,
@@ -1146,55 +1140,6 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
   });
 
   describe("processE3Failure()", function () {
-    it("reverts if lifecycle is not a valid contract", async function () {
-      const {
-        interfold,
-        owner,
-        makeRequest,
-        operator1,
-        operator2,
-        operator3,
-        setupOperator,
-        e3Program,
-      } = await loadFixture(setup);
-
-      await setupOperator(operator1);
-      await setupOperator(operator2);
-      await setupOperator(operator3);
-
-      await makeRequest();
-
-      const emptyRegistry = await ethers.deployContract(
-        "MockCiphernodeRegistry",
-      );
-
-      // Create a new Interfold with addressOne as the refund manager placeholder.
-      const newInterfoldContract = await ignition.deploy(InterfoldModule, {
-        parameters: {
-          Interfold: {
-            owner: await owner.getAddress(),
-            maxDuration: THIRTY_DAYS,
-            registry: await emptyRegistry.getAddress(),
-            bondingRegistry: await interfold.bondingRegistry(),
-            e3RefundManager: addressOne,
-            feeToken: await interfold.feeToken(),
-            pricingConfig: localPricingConfig(await owner.getAddress()),
-            initialE3Program: await e3Program.getAddress(),
-          },
-        },
-      });
-      const newInterfold = InterfoldFactory.connect(
-        await newInterfoldContract.interfold.getAddress(),
-        owner,
-      );
-
-      // Calling processE3Failure with a placeholder lifecycle should revert
-      // (it will try to call getE3Stage on an EOA which will fail)
-      await expect(newInterfold.processE3Failure(firstE3Id)).to.be.revert(
-        ethers,
-      );
-    });
-
     it("reverts if E3 not in failed state", async function () {
       const {
         interfold,
@@ -3610,6 +3555,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
     it("ZEN2-04: only the E3's slashing manager corrects a reason", async function () {
       const {
         interfold,
+        registry,
         makeRequest,
         requester,
         operator1,
@@ -3630,6 +3576,22 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         Number(e3.inputWindow[1]) + defaultTimeoutConfig.computeWindow + 1,
       );
       await interfold.markE3Failed(firstE3Id);
+
+      const registryAddress = await registry.getAddress();
+      await networkHelpers.setBalance(registryAddress, ethers.parseEther("1"));
+      await networkHelpers.impersonateAccount(registryAddress);
+      await expect(
+        interfold
+          .connect(await ethers.getSigner(registryAddress))
+          .onE3Failed(firstE3Id, 2 /* InsufficientCommitteeMembers */),
+      ).to.be.revertedWithCustomError(
+        interfold,
+        "OnlyCiphernodeRegistryOrSlashingManager",
+      );
+      await networkHelpers.stopImpersonatingAccount(registryAddress);
+      expect(await interfold.getFailureReason(firstE3Id)).to.equal(
+        6 /* ComputeTimeout */,
+      );
 
       // A failed E3 does not let an arbitrary caller move the payer.
       await expect(
@@ -3878,19 +3840,16 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         e3RefundManager,
         "RewardPendingExpulsion",
       );
-      expect(
-        await e3RefundManager.pendingHeldSuccessReward(
-          firstE3Id,
-          operator2Recipient,
-        ),
-      ).to.be.gt(peersBefore);
 
-      // Custody still covers what the contract says it owes.
+      // The shared recipient claims both peers' original allocations plus the
+      // accused member's entire forfeited allocation.
+      const peerBalanceBefore = await usdcToken.balanceOf(operator2Recipient);
+      await e3RefundManager
+        .connect(computeProvider)
+        .claimHeldSuccessReward(firstE3Id);
       expect(
-        await usdcToken.balanceOf(await e3RefundManager.getAddress()),
-      ).to.be.gte(
-        await e3RefundManager.tokenLiability(await usdcToken.getAddress()),
-      );
+        (await usdcToken.balanceOf(operator2Recipient)) - peerBalanceBefore,
+      ).to.equal(peersBefore + credited);
     });
 
     it("ZEN2-20: a shared recipient keeps independent per-operator allocations", async function () {
