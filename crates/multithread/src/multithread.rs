@@ -117,7 +117,7 @@ use zeroize::{Zeroize, Zeroizing};
 
 fn c2_chunk_size_for_preset(preset: BfvPreset) -> usize {
     match preset {
-        BfvPreset::InsecureThreshold512 | BfvPreset::InsecureDkg512 => 128,
+        BfvPreset::InsecureThreshold | BfvPreset::InsecureDkg => 128,
         _ => DEFAULT_C2_CHUNK_SIZE,
     }
 }
@@ -278,7 +278,7 @@ mod task_group_tests {
         let zk_request = ComputeRequest::zk(
             ZkRequest::PkBfv(PkBfvProofRequest::new(
                 e3_utils::ArcBytes::default(),
-                BfvPreset::InsecureThreshold512,
+                BfvPreset::InsecureThreshold,
                 CiphernodesCommitteeSize::Minimum,
             )),
             e3_events::CorrelationId::new(),
@@ -2159,7 +2159,7 @@ fn handle_pk_bfv_proof(
     req: PkBfvProofRequest,
     request: ComputeRequest,
 ) -> Result<ComputeResponse, ComputeRequestError> {
-    // NOTE: req.params_preset is expected to contain a DKG preset (e.g., InsecureDkg512)
+    // NOTE: req.params_preset is expected to contain a DKG preset (e.g., InsecureDkg)
     // because the proof is for the DKG circuit. This preset is converted to BFV parameters.
     let params = BfvParamSet::from(req.params_preset).build_arc();
     let pk_bfv = PublicKey::from_bytes(&req.pk_bfv, &params).map_err(|e| {
@@ -2178,10 +2178,10 @@ fn handle_pk_bfv_proof(
     let preset_counterpart = req
         .params_preset
         .threshold_counterpart()
-        .unwrap_or(BfvPreset::InsecureThreshold512);
+        .unwrap_or(BfvPreset::InsecureThreshold);
     let artifacts_dir =
         prover.resolve_artifacts_dir(req.params_preset, req.committee_size.as_str());
-    // But here we have to pass the InsecureThreshold512 preset because the underlaying witness generator
+    // But here we have to pass the InsecureThreshold preset because the underlaying witness generator
     // builds both params, but will only use the DKG one
     let proof = circuit
         .prove(

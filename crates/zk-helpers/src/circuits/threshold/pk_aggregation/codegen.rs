@@ -81,7 +81,7 @@ mod tests {
 
     #[test]
     fn test_toml_generation_and_structure() {
-        let preset = BfvPreset::InsecureThreshold512;
+        let preset = BfvPreset::InsecureThreshold;
         let committee = CiphernodesCommitteeSize::Small.values();
         let prefix: &str = <PkAggregationCircuit as Circuit>::PREFIX;
 

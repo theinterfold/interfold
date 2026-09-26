@@ -1730,7 +1730,7 @@ mod tests {
         use fhe::bfv::SecretKey;
         use fhe::mbfv::PublicKeyShare;
         use fhe_traits::Serialize;
-        let preset = BfvPreset::InsecureThreshold512;
+        let preset = BfvPreset::InsecureThreshold;
         let (params, _) = build_pair_for_preset(preset).unwrap();
         let crp = create_deterministic_crp_from_default_seed(&params);
 
@@ -1766,7 +1766,7 @@ mod tests {
         use fhe::bfv::{PublicKey, SecretKey};
         use fhe_traits::Serialize;
 
-        let preset = BfvPreset::InsecureThreshold512;
+        let preset = BfvPreset::InsecureThreshold;
         let (_, dkg_params) = build_pair_for_preset(preset).unwrap();
         let mut rng = rand::rng();
         let secret_key = SecretKey::random(&dkg_params, &mut rng);
@@ -1790,7 +1790,7 @@ mod tests {
     fn compute_dkg_pk_commitment_rejects_malformed_public_key() {
         assert!(compute_dkg_pk_commitment_from_public_key_bytes(
             b"not a BFV public key",
-            e3_fhe_params::BfvPreset::InsecureThreshold512,
+            e3_fhe_params::BfvPreset::InsecureThreshold,
         )
         .is_err());
     }

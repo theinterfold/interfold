@@ -139,9 +139,9 @@ mod tests {
     #[test]
     fn test_generate_secret_key_sample() {
         let committee = CiphernodesCommitteeSize::Small.values();
-        let sd = BfvPreset::InsecureThreshold512.search_defaults().unwrap();
+        let sd = BfvPreset::InsecureThreshold.search_defaults().unwrap();
         let sample = ShareEncryptionCircuitData::generate_sample(
-            BfvPreset::InsecureThreshold512,
+            BfvPreset::InsecureThreshold,
             committee.clone(),
             DkgInputType::SecretKey,
             sd.z,
@@ -153,10 +153,10 @@ mod tests {
             crate::math::plaintext_poly_u64(&sample.plaintext)
                 .unwrap()
                 .len(),
-            BfvPreset::InsecureThreshold512.metadata().degree
+            BfvPreset::InsecureThreshold.metadata().degree
         );
         assert_eq!(sample.ciphertext.len(), 2);
-        let (_, dkg_params) = build_pair_for_preset(BfvPreset::InsecureThreshold512).unwrap();
+        let (_, dkg_params) = build_pair_for_preset(BfvPreset::InsecureThreshold).unwrap();
         assert_eq!(
             sample.u_rns.coefficients().len(),
             dkg_params.degree() * dkg_params.moduli().len()
@@ -174,9 +174,9 @@ mod tests {
     #[test]
     fn test_generate_smudging_noise_sample() {
         let committee = CiphernodesCommitteeSize::Small.values();
-        let sd = BfvPreset::InsecureThreshold512.search_defaults().unwrap();
+        let sd = BfvPreset::InsecureThreshold.search_defaults().unwrap();
         let sample = ShareEncryptionCircuitData::generate_sample(
-            BfvPreset::InsecureThreshold512,
+            BfvPreset::InsecureThreshold,
             committee,
             DkgInputType::SmudgingNoise,
             sd.z,
@@ -185,7 +185,7 @@ mod tests {
 
         assert_eq!(sample.public_key.c.len(), 2);
         assert_eq!(sample.ciphertext.len(), 2);
-        let (_, dkg_params) = build_pair_for_preset(BfvPreset::InsecureThreshold512).unwrap();
+        let (_, dkg_params) = build_pair_for_preset(BfvPreset::InsecureThreshold).unwrap();
         assert_eq!(
             sample.u_rns.coefficients().len(),
             dkg_params.degree() * dkg_params.moduli().len()

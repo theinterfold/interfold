@@ -346,7 +346,7 @@ mod tests {
     }
 
     fn encrypted_inputs(values: &[u64]) -> FHEInputs {
-        let (params, _) = build_pair_for_preset(BfvPreset::InsecureThreshold512).unwrap();
+        let (params, _) = build_pair_for_preset(BfvPreset::InsecureThreshold).unwrap();
         let mut rng = ChaCha8Rng::seed_from_u64(7);
         let secret_key = SecretKey::random(&params, &mut rng);
         let public_key = PublicKey::new(&secret_key, &mut rng);

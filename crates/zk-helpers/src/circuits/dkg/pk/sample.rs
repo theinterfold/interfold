@@ -36,7 +36,7 @@ mod tests {
 
     #[test]
     fn test_generate_pk_sample() {
-        let sample = PkCircuitData::generate_sample(BfvPreset::InsecureThreshold512).unwrap();
+        let sample = PkCircuitData::generate_sample(BfvPreset::InsecureThreshold).unwrap();
 
         assert_eq!(sample.public_key.c.len(), 2);
     }

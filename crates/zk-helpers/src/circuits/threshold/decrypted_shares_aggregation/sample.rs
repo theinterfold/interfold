@@ -327,7 +327,7 @@ mod tests {
     /// Sample generation and input computation: output shapes match circuit expectations.
     #[test]
     fn test_generate_sample() {
-        let preset = BfvPreset::InsecureThreshold512;
+        let preset = BfvPreset::InsecureThreshold;
         let committee = CiphernodesCommitteeSize::Small.values();
 
         let sample =
@@ -355,7 +355,7 @@ mod tests {
     #[test]
     fn test_input_message_matches_sample() {
         use crate::threshold::decrypted_shares_aggregation::computation::Configs;
-        let preset = BfvPreset::InsecureThreshold512;
+        let preset = BfvPreset::InsecureThreshold;
         let committee = CiphernodesCommitteeSize::Small.values();
         let sample =
             DecryptedSharesAggregationCircuitData::generate_sample(preset, committee).unwrap();

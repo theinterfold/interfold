@@ -13,7 +13,7 @@ pub fn build_pair_for_preset(
     preset: BfvPreset,
 ) -> Result<(Arc<BfvParameters>, Arc<BfvParameters>), PresetError> {
     match preset {
-        BfvPreset::InsecureThreshold512 => {
+        BfvPreset::InsecureThreshold => {
             let params_threshold = BfvParametersBuilder::new()
                 .set_degree(insecure::DEGREE)
                 .set_plaintext_modulus(insecure::threshold::PLAINTEXT_MODULUS)
@@ -251,7 +251,7 @@ mod tests {
     #[test]
     fn test_build_insecure_dkg_params_from_set() {
         // Test building from BfvParamSet using insecure DKG preset
-        let preset = BfvPreset::InsecureDkg512;
+        let preset = BfvPreset::InsecureDkg;
         let param_set = preset.into();
         let params = build_bfv_params_from_set(param_set);
 
@@ -263,7 +263,7 @@ mod tests {
     #[test]
     fn test_build_insecure_dkg_params_from_set_arc() {
         // Test building Arc from BfvParamSet using insecure DKG preset
-        let preset = BfvPreset::InsecureDkg512;
+        let preset = BfvPreset::InsecureDkg;
         let param_set = preset.into();
         let params = build_bfv_params_from_set_arc(param_set);
 

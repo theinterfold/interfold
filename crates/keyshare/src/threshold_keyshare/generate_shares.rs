@@ -358,7 +358,7 @@ mod tests {
     #[actix::test]
     async fn missing_c0_keeps_n_c3_slots_and_skips_share_delivery() -> Result<()> {
         let cipher = Cipher::from_password("test-password").await?;
-        let threshold_preset = BfvPreset::InsecureThreshold512;
+        let threshold_preset = BfvPreset::InsecureThreshold;
         let (_, params) = build_pair_for_preset(threshold_preset)?;
         let degree = params.degree();
         let l = BfvParamSet::from(threshold_preset).moduli.len();
@@ -387,7 +387,7 @@ mod tests {
         let sensitive = SensitiveBytes::new(vec![1], &cipher)?;
         let plan = build_shares_generated_plan(
             &cipher,
-            BfvPreset::InsecureDkg512,
+            BfvPreset::InsecureDkg,
             2,
             CiphernodesCommitteeSize::Minimum,
             ArcBytes::from_bytes(&[7]),
@@ -438,7 +438,7 @@ mod tests {
 
     #[test]
     fn c3_recipient_roster_rejects_duplicate_and_out_of_range_keys() -> Result<()> {
-        let (_, params) = build_pair_for_preset(BfvPreset::InsecureThreshold512)?;
+        let (_, params) = build_pair_for_preset(BfvPreset::InsecureThreshold)?;
         let mut rng = rand::rng();
         let sk = SecretKey::random(&params, &mut rng);
         let pk = PublicKey::new(&sk, &mut rng);

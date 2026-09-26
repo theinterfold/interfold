@@ -90,7 +90,7 @@ impl ZKInputsGenerator {
     /// Creates a new generator from a JavaScript-facing preset name.
     pub fn from_preset_name(name: &str) -> Result<Self> {
         let preset = match name.trim() {
-            "insecure" => BfvPreset::InsecureThreshold512,
+            "insecure" => BfvPreset::InsecureThreshold,
             "secure-8192" => BfvPreset::SecureThreshold8192,
             "secure-16384" => BfvPreset::SecureThreshold16384,
             other => BfvPreset::from_name(other)?,
@@ -378,7 +378,7 @@ mod tests {
 
     #[test]
     fn try_new_rejects_noncanonical_error_variance() {
-        let threshold = BfvParamSet::from(BfvPreset::InsecureThreshold512);
+        let threshold = BfvParamSet::from(BfvPreset::InsecureThreshold);
 
         let result = ZKInputsGenerator::try_new(
             threshold.degree,
@@ -414,7 +414,7 @@ mod tests {
     #[test]
     fn test_inputs_generation_with_custom_params() {
         let generator =
-            ZKInputsGenerator::from_set(BfvParamSet::from(BfvPreset::InsecureThreshold512));
+            ZKInputsGenerator::from_set(BfvParamSet::from(BfvPreset::InsecureThreshold));
         let (_secret_key, public_key) = generator.generate_keys().expect("failed to generate keys");
         let vote = create_vote_vector();
         let prev_ciphertext = generator
@@ -436,7 +436,7 @@ mod tests {
     #[test]
     fn test_get_bfv_params() {
         let generator =
-            ZKInputsGenerator::from_set(BfvParamSet::from(BfvPreset::InsecureThreshold512));
+            ZKInputsGenerator::from_set(BfvParamSet::from(BfvPreset::InsecureThreshold));
         let bfv_params = generator.get_bfv_params();
 
         assert!(bfv_params.degree() == insecure::DEGREE);

@@ -56,7 +56,7 @@ pub struct Config {
     #[serde(default)]
     pub cron_api_key: Option<String>,
     // E3 parameters
-    pub e3_param_set: u8,      // 0=InsecureThreshold512, 1=SecureThreshold8192, 2=SecureThreshold16384
+    pub e3_param_set: u8,      // 0=InsecureThreshold, 1=SecureThreshold8192, 2=SecureThreshold16384
     pub e3_committee_size: u8, // 0=Minimum, 1=Micro, 2=Small
     pub e3_duration: u64,
     /// Time allowed for the E3 request transaction to be mined before voting can start.

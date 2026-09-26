@@ -218,7 +218,7 @@ mod tests {
 
     #[test]
     fn test_bound_and_bits_computation_consistency() {
-        let preset = BfvPreset::InsecureThreshold512;
+        let preset = BfvPreset::InsecureThreshold;
         let (threshold_params, _) = build_pair_for_preset(preset).unwrap();
 
         let bounds = Bounds::compute(preset, &()).unwrap();

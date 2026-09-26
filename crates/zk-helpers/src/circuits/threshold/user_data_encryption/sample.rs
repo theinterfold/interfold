@@ -46,15 +46,14 @@ mod tests {
     #[test]
     fn test_generate_sample() {
         let sample =
-            UserDataEncryptionCircuitData::generate_sample(BfvPreset::InsecureThreshold512)
-                .unwrap();
+            UserDataEncryptionCircuitData::generate_sample(BfvPreset::InsecureThreshold).unwrap();
 
         assert_eq!(sample.public_key.c.len(), 2);
         assert_eq!(
             crate::math::plaintext_poly_u64(&sample.plaintext)
                 .unwrap()
                 .len(),
-            BfvPreset::InsecureThreshold512.metadata().degree
+            BfvPreset::InsecureThreshold.metadata().degree
         );
     }
 }

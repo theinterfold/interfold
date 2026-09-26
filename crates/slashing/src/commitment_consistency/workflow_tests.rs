@@ -545,7 +545,7 @@ async fn actor_persists_state_and_restores_it_after_restart() -> anyhow::Result<
         e3(),
         vec![same_party_link()],
         2,
-        e3_fhe_params::BfvPreset::InsecureThreshold512,
+        e3_fhe_params::BfvPreset::InsecureThreshold,
     )
     .with_snapshot(repo.clone(), None)?
     .start();
@@ -605,7 +605,7 @@ async fn actor_persists_state_and_restores_it_after_restart() -> anyhow::Result<
         e3(),
         vec![same_party_link()],
         2,
-        e3_fhe_params::BfvPreset::InsecureThreshold512,
+        e3_fhe_params::BfvPreset::InsecureThreshold,
     )
     .with_snapshot(repo.clone(), Some(restored))?;
     assert_eq!(restarted.cached_proof_count(), 1);

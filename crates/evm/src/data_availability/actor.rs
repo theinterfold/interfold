@@ -626,7 +626,7 @@ mod tests {
 
     #[test]
     fn threshold_public_key_is_validated_with_threshold_parameters() {
-        let preset = BfvPreset::InsecureThreshold512;
+        let preset = BfvPreset::InsecureThreshold;
         let params = BfvParamSet::from(preset);
         let public_key = generate_public_key(
             params.degree,

@@ -85,14 +85,14 @@ async fn local_verifier_error_preserves_pending_work_without_accusing_parties() 
             party_proof_hashes: HashMap::new(),
             party_public_signals: HashMap::new(),
             party_proof_data: HashMap::new(),
-            params_preset: BfvPreset::InsecureThreshold512,
+            params_preset: BfvPreset::InsecureThreshold,
             committee_size: CiphernodesCommitteeSize::Minimum,
         },
     );
     let request = ComputeRequest::zk(
         ZkRequest::VerifyShareProofs(VerifyShareProofsRequest {
             party_proofs: Vec::new(),
-            params_preset: BfvPreset::InsecureThreshold512,
+            params_preset: BfvPreset::InsecureThreshold,
             committee_size: CiphernodesCommitteeSize::Minimum,
         }),
         correlation_id,
@@ -155,7 +155,7 @@ async fn restored_committee_authorizes_c6_without_replayed_finalization_event() 
             .collect(),
         decryption_proofs: Vec::new(),
         pre_dishonest: BTreeSet::new(),
-        params_preset: BfvPreset::InsecureThreshold512,
+        params_preset: BfvPreset::InsecureThreshold,
         committee_size: CiphernodesCommitteeSize::Minimum,
         lbfv_context: None,
         verification_id: None,

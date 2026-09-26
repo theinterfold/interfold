@@ -53,7 +53,7 @@ async fn c0_compute_error_preserves_pending_work_without_failing_the_round() -> 
             ComputeRequest::zk(
                 ZkRequest::PkBfv(PkBfvProofRequest::new(
                     ArcBytes::from_bytes(&[1]),
-                    e3_fhe_params::BfvPreset::InsecureThreshold512,
+                    e3_fhe_params::BfvPreset::InsecureThreshold,
                     e3_zk_helpers::CiphernodesCommitteeSize::Minimum,
                 )),
                 correlation_id,
@@ -132,7 +132,7 @@ async fn c0_trbfv_compute_error_preserves_pending_work() -> Result<()> {
             ComputeRequest::zk(
                 ZkRequest::PkBfv(PkBfvProofRequest::new(
                     ArcBytes::from_bytes(&[1]),
-                    e3_fhe_params::BfvPreset::InsecureThreshold512,
+                    e3_fhe_params::BfvPreset::InsecureThreshold,
                     e3_zk_helpers::CiphernodesCommitteeSize::Minimum,
                 )),
                 correlation_id,
@@ -158,7 +158,7 @@ fn threshold_share_pending(e3_id: E3id, marker: u8) -> ThresholdSharePending {
         secret_raw: sensitive(),
         secret_sss_raw: sensitive(),
         dkg_input_type: DkgInputType::SecretKey,
-        params_preset: BfvPreset::InsecureThreshold512,
+        params_preset: BfvPreset::InsecureThreshold,
         committee_size: CiphernodesCommitteeSize::Minimum,
     };
 
@@ -175,7 +175,7 @@ fn threshold_share_pending(e3_id: E3id, marker: u8) -> ThresholdSharePending {
             sk: sensitive(),
             eek: sensitive(),
             e_sm: sensitive(),
-            params_preset: BfvPreset::InsecureThreshold512,
+            params_preset: BfvPreset::InsecureThreshold,
             committee_size: CiphernodesCommitteeSize::Minimum,
         },
         sk_share_computation_request: share_request(),

@@ -184,10 +184,9 @@ mod tests {
     #[test]
     fn test_toml_generation_and_structure() {
         let sample =
-            UserDataEncryptionCircuitData::generate_sample(BfvPreset::InsecureThreshold512)
-                .unwrap();
+            UserDataEncryptionCircuitData::generate_sample(BfvPreset::InsecureThreshold).unwrap();
         let artifacts = UserDataEncryptionCircuit
-            .codegen(BfvPreset::InsecureThreshold512, &sample)
+            .codegen(BfvPreset::InsecureThreshold, &sample)
             .unwrap();
 
         let parsed: toml::Value = artifacts.toml.parse().unwrap();
@@ -224,20 +223,20 @@ mod tests {
         assert!(configs_path.exists());
 
         let configs_content = std::fs::read_to_string(&configs_path).unwrap();
-        let bounds = Bounds::compute(BfvPreset::InsecureThreshold512, &()).unwrap();
-        let bits = Bits::compute(BfvPreset::InsecureThreshold512, &bounds).unwrap();
+        let bounds = Bounds::compute(BfvPreset::InsecureThreshold, &()).unwrap();
+        let bits = Bits::compute(BfvPreset::InsecureThreshold, &bounds).unwrap();
 
         assert!(configs_content.contains(
             format!(
                 "N: u32 = {}",
-                BfvPreset::InsecureThreshold512.metadata().degree
+                BfvPreset::InsecureThreshold.metadata().degree
             )
             .as_str()
         ));
         assert!(configs_content.contains(
             format!(
                 "L: u32 = {}",
-                BfvPreset::InsecureThreshold512.metadata().num_moduli
+                BfvPreset::InsecureThreshold.metadata().num_moduli
             )
             .as_str()
         ));

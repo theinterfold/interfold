@@ -375,7 +375,7 @@ mod tests {
                     committee_n: 3,
                     committee_h: 2,
                     n_moduli: 1,
-                    params_preset: e3_fhe_params::BfvPreset::InsecureThreshold512,
+                    params_preset: e3_fhe_params::BfvPreset::InsecureThreshold,
                     committee_size: CiphernodesCommitteeSize::Minimum,
                 },
                 buffer: BTreeMap::new(),

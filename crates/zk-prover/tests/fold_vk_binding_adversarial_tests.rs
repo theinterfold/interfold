@@ -107,7 +107,7 @@ fn assert_terminal_vk_rejected(
 
 #[tokio::test]
 async fn chunked_c2_chain_rejects_artifact_vk_substitution() {
-    let preset = BfvPreset::InsecureThreshold512;
+    let preset = BfvPreset::InsecureThreshold;
     let Some(bb) = find_bb().await else {
         println!("skipping: bb not found");
         return;

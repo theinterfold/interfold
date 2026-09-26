@@ -380,7 +380,7 @@ async fn run_node_fold_correlated_sparse_self_slot(preset: BfvPreset) {
 
 #[tokio::test]
 async fn node_fold_correlated_sparse_self_slot_proves_and_verifies() {
-    run_node_fold_correlated_sparse_self_slot(BfvPreset::InsecureThreshold512).await;
+    run_node_fold_correlated_sparse_self_slot(BfvPreset::InsecureThreshold).await;
 }
 
 #[tokio::test]

@@ -92,7 +92,7 @@ async fn decryption_aggregation_compute_error_preserves_pending_work() -> Result
             c6_total_slots: 1,
             jobs: Vec::new(),
             committee_addresses: vec![test_committee_address()],
-            params_preset: BfvPreset::InsecureThreshold512,
+            params_preset: BfvPreset::InsecureThreshold,
             committee_size: CiphernodesCommitteeSize::Minimum,
         }),
         correlation_id,

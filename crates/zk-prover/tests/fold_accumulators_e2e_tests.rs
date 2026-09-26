@@ -308,11 +308,11 @@ async fn setup_c3_fold_with_inner_share_encryption() -> Option<(
     BfvPreset,
 )> {
     let committee = CiphernodesCommitteeSize::Minimum.values();
-    let preset = BfvPreset::InsecureThreshold512;
+    let preset = BfvPreset::InsecureThreshold;
     let bb = find_bb().await?;
     let (backend, temp) = setup_test_prover(&bb).await;
 
-    let sd = BfvPreset::InsecureThreshold512.search_defaults()?;
+    let sd = BfvPreset::InsecureThreshold.search_defaults()?;
 
     setup_compiled_circuit(&backend, "dkg", "share_encryption").await;
     setup_recursive_aggregation_fold_circuit(&backend, CircuitName::C3Fold).await;
@@ -438,7 +438,7 @@ async fn setup_c6_fold_with_inner_threshold_share_decryption() -> Option<(
     BfvPreset,
 )> {
     let committee = CiphernodesCommitteeSize::Minimum.values();
-    let preset = BfvPreset::InsecureThreshold512;
+    let preset = BfvPreset::InsecureThreshold;
     let bb = find_bb().await?;
     let (backend, temp) = setup_test_prover(&bb).await;
 

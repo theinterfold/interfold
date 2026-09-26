@@ -187,7 +187,7 @@ mod tests {
     fn test_generate_secret_key_sample() {
         let committee = CiphernodesCommitteeSize::Small.values();
         let sample = ShareDecryptionCircuitData::generate_sample(
-            BfvPreset::InsecureThreshold512,
+            BfvPreset::InsecureThreshold,
             committee.clone(),
             DkgInputType::SecretKey,
         )
@@ -196,7 +196,7 @@ mod tests {
         assert_eq!(sample.honest_ciphertexts.len(), committee.h);
         assert_eq!(
             sample.secret_key.coeffs.len(),
-            BfvPreset::InsecureThreshold512.metadata().degree
+            BfvPreset::InsecureThreshold.metadata().degree
         );
     }
 
@@ -204,7 +204,7 @@ mod tests {
     fn test_generate_smudging_noise_sample() {
         let committee = CiphernodesCommitteeSize::Small.values();
         let sample = ShareDecryptionCircuitData::generate_sample(
-            BfvPreset::InsecureThreshold512,
+            BfvPreset::InsecureThreshold,
             committee.clone(),
             DkgInputType::SmudgingNoise,
         )
@@ -213,7 +213,7 @@ mod tests {
         assert_eq!(sample.honest_ciphertexts.len(), committee.h);
         assert_eq!(
             sample.secret_key.coeffs.len(),
-            BfvPreset::InsecureThreshold512.metadata().degree
+            BfvPreset::InsecureThreshold.metadata().degree
         );
     }
 }

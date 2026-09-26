@@ -208,10 +208,7 @@ mod tests {
     #[test]
     fn expected_field_count_matches_compiled_layouts() {
         assert_eq!(
-            expected_public_field_count(
-                BfvPreset::InsecureDkg512,
-                CiphernodesCommitteeSize::Minimum
-            ),
+            expected_public_field_count(BfvPreset::InsecureDkg, CiphernodesCommitteeSize::Minimum),
             12
         );
         assert_eq!(
@@ -222,7 +219,7 @@ mod tests {
             12
         );
         assert_eq!(
-            expected_public_field_count(BfvPreset::InsecureDkg512, CiphernodesCommitteeSize::Micro),
+            expected_public_field_count(BfvPreset::InsecureDkg, CiphernodesCommitteeSize::Micro),
             30
         );
     }
@@ -248,7 +245,7 @@ mod tests {
                 &valid_signals(&BigUint::from(11u8), &BigUint::from(13u8)),
             );
             validate_c2_terminal_proof(
-                BfvPreset::InsecureDkg512,
+                BfvPreset::InsecureDkg,
                 CiphernodesCommitteeSize::Minimum,
                 proof_type,
                 &proof,
@@ -262,7 +259,7 @@ mod tests {
     fn non_c2_proof_types_are_ignored() {
         let proof = terminal_proof(CircuitName::ShareEncryption, &[]);
         validate_c2_terminal_proof(
-            BfvPreset::InsecureDkg512,
+            BfvPreset::InsecureDkg,
             CiphernodesCommitteeSize::Minimum,
             ProofType::C3aSkShareEncryption,
             &proof,
@@ -281,7 +278,7 @@ mod tests {
             &valid_signals(&BigUint::from(0u8), &BigUint::from(0u8)),
         );
         let result = validate_c2_terminal_proof(
-            BfvPreset::InsecureDkg512,
+            BfvPreset::InsecureDkg,
             CiphernodesCommitteeSize::Minimum,
             ProofType::C2aSkShareComputation,
             &proof,
@@ -304,7 +301,7 @@ mod tests {
             &valid_signals(&BigUint::from(0u8), &BigUint::from(0u8))[..8],
         );
         assert!(validate_c2_terminal_proof(
-            BfvPreset::InsecureDkg512,
+            BfvPreset::InsecureDkg,
             CiphernodesCommitteeSize::Minimum,
             ProofType::C2aSkShareComputation,
             &truncated,
@@ -324,7 +321,7 @@ mod tests {
             &valid_signals(&BigUint::from(99u8), &BigUint::from(13u8)),
         );
         assert!(validate_c2_terminal_proof(
-            BfvPreset::InsecureDkg512,
+            BfvPreset::InsecureDkg,
             CiphernodesCommitteeSize::Minimum,
             ProofType::C2aSkShareComputation,
             &wrong_chunk,
@@ -337,7 +334,7 @@ mod tests {
             &valid_signals(&BigUint::from(11u8), &BigUint::from(99u8)),
         );
         assert!(validate_c2_terminal_proof(
-            BfvPreset::InsecureDkg512,
+            BfvPreset::InsecureDkg,
             CiphernodesCommitteeSize::Minimum,
             ProofType::C2aSkShareComputation,
             &wrong_batch,
@@ -358,7 +355,7 @@ mod tests {
         fields.push(BigUint::from(13u8));
         let proof = terminal_proof(CircuitName::SkC2ChunkFinalize, &fields);
         assert!(validate_c2_terminal_proof(
-            BfvPreset::InsecureDkg512,
+            BfvPreset::InsecureDkg,
             CiphernodesCommitteeSize::Minimum,
             ProofType::C2aSkShareComputation,
             &proof,
@@ -381,7 +378,7 @@ mod tests {
             &valid_signals(&reduced, &reduced),
         );
         validate_c2_terminal_proof(
-            BfvPreset::InsecureDkg512,
+            BfvPreset::InsecureDkg,
             CiphernodesCommitteeSize::Minimum,
             ProofType::C2aSkShareComputation,
             &proof,

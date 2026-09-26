@@ -234,7 +234,7 @@ mod tests {
             threshold_m: 1,
             threshold_n: 3,
             seed: Seed([0; 32]),
-            params_preset: BfvPreset::InsecureThreshold512,
+            params_preset: BfvPreset::InsecureThreshold,
             params: ArcBytes::default(),
             error_size: ArcBytes::default(),
         }

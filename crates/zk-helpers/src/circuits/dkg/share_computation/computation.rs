@@ -332,13 +332,13 @@ mod tests {
     fn test_bound_and_bits_computation_consistency() {
         let committee = CiphernodesCommitteeSize::Small.values();
         let sample = ShareComputationCircuitData::generate_sample(
-            BfvPreset::InsecureThreshold512,
+            BfvPreset::InsecureThreshold,
             committee,
             DkgInputType::SecretKey,
         )
         .unwrap();
-        let bounds = Bounds::compute(BfvPreset::InsecureThreshold512, &sample).unwrap();
-        let bits = Bits::compute(BfvPreset::InsecureThreshold512, &bounds).unwrap();
+        let bounds = Bounds::compute(BfvPreset::InsecureThreshold, &sample).unwrap();
+        let bits = Bits::compute(BfvPreset::InsecureThreshold, &bounds).unwrap();
         let expected_sk_bits = calculate_bit_width(BigInt::from(bounds.sk_bound.clone()));
 
         assert_eq!(bits.bit_sk_secret, expected_sk_bits);
@@ -346,7 +346,7 @@ mod tests {
 
     #[test]
     fn insecure_smudging_ranges_match_pk_generation() {
-        let preset = BfvPreset::InsecureThreshold512;
+        let preset = BfvPreset::InsecureThreshold;
         for (size, expected_bits) in [
             (CiphernodesCommitteeSize::Minimum, 140),
             (CiphernodesCommitteeSize::Micro, 148),
@@ -373,12 +373,12 @@ mod tests {
     fn test_input_smudging_noise_secret_consistency() {
         let committee = CiphernodesCommitteeSize::Small.values();
         let sample = ShareComputationCircuitData::generate_sample(
-            BfvPreset::InsecureThreshold512,
+            BfvPreset::InsecureThreshold,
             committee,
             DkgInputType::SmudgingNoise,
         )
         .unwrap();
-        let inputs = Inputs::compute(BfvPreset::InsecureThreshold512, &sample).unwrap();
+        let inputs = Inputs::compute(BfvPreset::InsecureThreshold, &sample).unwrap();
         let degree = inputs.secret_crt.limb(0).coefficients().len();
         let num_moduli = inputs.secret_crt.limbs.len();
         for coeff_idx in 0..degree {
@@ -396,7 +396,7 @@ mod tests {
 
     #[test]
     fn rejects_short_non_first_secret_limb() {
-        let preset = BfvPreset::InsecureThreshold512;
+        let preset = BfvPreset::InsecureThreshold;
         let committee = CiphernodesCommitteeSize::Minimum.values();
         let mut sample = ShareComputationCircuitData::generate_sample(
             preset,
@@ -415,13 +415,13 @@ mod tests {
     fn test_constants_json_roundtrip() {
         let committee = CiphernodesCommitteeSize::Small.values();
         let sample = ShareComputationCircuitData::generate_sample(
-            BfvPreset::InsecureThreshold512,
+            BfvPreset::InsecureThreshold,
             committee,
             DkgInputType::SecretKey,
         )
         .unwrap();
 
-        let constants = Configs::compute(BfvPreset::InsecureThreshold512, &sample).unwrap();
+        let constants = Configs::compute(BfvPreset::InsecureThreshold, &sample).unwrap();
 
         let json = constants.to_json().unwrap();
         let decoded: Configs = serde_json::from_value(json).unwrap();
