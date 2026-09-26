@@ -1,0 +1,419 @@
+---
+title: 'Glossary'
+description:
+  'Definitions of the protocol terms that the Interfold docs use, from accusation to VRF, with a
+  link to the page that explains each term.'
+---
+
+import { LinkCard, LinkCards } from '@/components/ui'
+
+# Glossary
+
+This glossary defines the terms that the Interfold docs, the CLI, and the contracts use. It is for
+every reader who finds an unknown term on another page. Each entry gives a short definition and a
+link to the page that explains the term. To link to an entry, use `/reference/glossary#` and the
+entry name in lowercase, with hyphens for spaces, for example `/reference/glossary#bond-owner`.
+
+[A](#a) · [B](#b) · [C](#c) · [D](#d) · [E](#e) · [F](#f) · [G](#g) · [H](#h) · [I](#i) · [K](#k) ·
+[L](#l) · [M](#m) · [N](#n) · [O](#o) · [P](#p) · [R](#r) · [S](#s) · [T](#t) · [V](#v)
+
+## A
+
+### Accusation
+
+A signed claim from a committee member that another member sent an invalid proof or inconsistent
+data. The committee votes on the accusation over [gossip](#gossip). A Lane A slash on-chain needs
+signed votes from at least H committee members. See
+[Exits and slashing](/operate/exits-and-slashing).
+
+### Active operator
+
+An operator that is registered and not banned, holds enough FOLD bond and tickets, and runs an
+accepted node release. The `BondingRegistry` records the state and emits
+`OperatorActivationChanged`. See [Registration](/operate/registration).
+
+### Aggregator
+
+The committee member that combines the work of the committee. The active aggregator is the eligible
+member with the lowest party ID. It makes the C5 and C7 proofs and publishes the results. See
+[Architecture](/learn/architecture).
+
+### Avail
+
+The data availability layer that stores large ciphertext outputs. Each chain entry in the node
+configuration needs a `data_availability` reader for it. See
+[data availability](/reference/configuration#data-availability).
+
+## B
+
+### BFV
+
+Brakerski/Fan-Vercauteren, the fully homomorphic encryption scheme that the Interfold uses. BFV lets
+a program compute on encrypted data without a decryption step. See
+[Cryptography](/learn/cryptography).
+
+### Bond
+
+The FOLD that a bond owner locks for one operator in the `BondingRegistry`. The operator needs the
+required bond to register, and a set share of it to stay active. See
+[Registration](/operate/registration).
+
+### Bond owner
+
+The wallet or Safe that funds and controls the collateral of an operator. The operator key
+authorizes the first bond owner with `interfold ciphernode set-bond-owner`. Exits pay out to the
+bond owner. See [Registration](/operate/registration).
+
+### Bootstrap peer
+
+The first peer that a ciphernode dials to join a P2P network. The `mainnet` and `sepolia` network
+profiles each have one. See [network profiles](/reference/configuration#network-profiles).
+
+### Boundless
+
+The RISC Zero proving network that an E3 program can use to prove its computation. The
+`program.risc0.boundless` settings configure it. See
+[program settings](/reference/configuration#program-settings).
+
+## C
+
+### C0 to C7
+
+The identifiers of the zero-knowledge circuits in the DKG and decryption pipeline. C0 to C4 prove
+the steps of the DKG. C5 proves the public key aggregation, C6 proves each decryption share, and C7
+proves the combination of the shares. See [Noir circuits](/build/noir-circuits).
+
+### Ciphernode
+
+A node that runs the Interfold node software with `interfold start`. Ciphernodes hold key shares,
+serve on committees, and make a proof for each step. See [Ciphernode operators](/operate).
+
+### CiphertextReady
+
+The [E3 stage](#e3-stage) in which the encrypted output is available and the committee decrypts it.
+`publishCiphertextOutput` on the Interfold contract sets this stage. See
+[`E3Stage`](/reference/contracts#e3stage).
+
+### Committee
+
+The ciphernodes that [sortition](#sortition) selects for one E3. The committee runs the DKG, holds
+the key shares, and decrypts the output. See [E3 lifecycle](/learn/e3-lifecycle).
+
+### Committee size
+
+The fixed shape of a committee: `minimum`, `micro`, or `small`. Each size sets the values of
+[N, T, and H](#n-t-and-h). See [`CommitteeSize`](/reference/contracts#committeesize).
+
+### CommitteeFinalized
+
+The [E3 stage](#e3-stage) in which the committee is fixed and the DKG runs. `finalizeCommittee` on
+the `CiphernodeRegistry` sets this stage. See [`E3Stage`](/reference/contracts#e3stage).
+
+### Complete
+
+The [E3 stage](#e3-stage) in which the verified plaintext output is on-chain.
+`publishPlaintextOutput` on the Interfold contract sets this stage. See
+[`E3Stage`](/reference/contracts#e3stage).
+
+### Compute provider
+
+The system that runs the E3 program over the encrypted inputs and proves the result. Its
+`IComputeProvider` contract checks the parameters at request time and names the decryption verifier.
+See [Compute provider](/build/e3-program/compute-provider).
+
+### CRT
+
+The Chinese remainder theorem. A BFV preset splits its ciphertext modulus into several smaller CRT
+moduli, and the `config` circuit checks these moduli. See [Cryptography](/learn/cryptography).
+
+## D
+
+### Data availability
+
+The layer that stores the ciphertext output of an E3 off-chain. The Interfold contract records only
+a reference and an availability proof. Ciphernodes read the data back through a reader such as
+[Avail](#avail). See [data availability](/reference/configuration#data-availability).
+
+### Deploy block
+
+The block in which a contract was deployed. A ciphernode reads chain history from the lowest deploy
+block of its configured contracts. See [contract keys](/reference/configuration#contract-keys).
+
+### Deployment manifest
+
+The file `deployments/manifest.json`, which publishes the current contract addresses for each
+network. `interfold config check` compares a node configuration with it. See
+[Contracts & Addresses](/reference/contracts#deployment-manifest).
+
+### Deregistration
+
+The request to remove an operator from the registry. It puts all collateral of the operator in the
+[exit queue](#exit-queue). See [Exits and slashing](/operate/exits-and-slashing).
+
+### DHT
+
+The Kademlia distributed hash table of the libp2p network. Ciphernodes publish protocol documents to
+it and announce them over gossip. Other ciphernodes fetch each document by its content hash. See
+[Architecture](/learn/architecture).
+
+### DKG
+
+Distributed key generation. The committee makes one shared public key together, and no member holds
+the full secret key. Each member keeps a key share. See [DKG](/internals/dkg).
+
+## E
+
+### E3
+
+Encrypted Execution Environment. One confidential computation, from the request to the verified
+output, identified on-chain by its `e3Id`. See [What is an E3](/learn/what-is-e3).
+
+### E3 program
+
+The application logic of an E3: a contract that implements `IE3Program` and the program that the
+compute provider runs. The contract validates the request, accepts inputs with `publishInput`, and
+verifies the output. See [E3 program](/build/e3-program).
+
+### E3 stage
+
+The state of an E3 in the Interfold contract: `None`, `Requested`, `CommitteeFinalized`,
+`KeyPublished`, `CiphertextReady`, `Complete`, or `Failed`. Each change emits `E3StageChanged`. See
+[`E3Stage`](/reference/contracts#e3stage).
+
+### Exit queue
+
+The queue in the `BondingRegistry` for withdrawn tickets and FOLD bond. Each entry becomes claimable
+after the exit delay, and the bond owner claims it with `claimExitsFor`. See
+[Exits and slashing](/operate/exits-and-slashing).
+
+### Expulsion
+
+The removal of a member from an active committee after a slash. When fewer than H members remain,
+the E3 fails with `InsufficientCommitteeMembers`. See
+[Exits and slashing](/operate/exits-and-slashing).
+
+## F
+
+### Failed
+
+The [E3 stage](#e3-stage) of an E3 that stopped before completion. `getFailureReason` returns the
+[failure reason](#failure-reason). See [`E3Stage`](/reference/contracts#e3stage).
+
+### Failure reason
+
+The value of the `FailureReason` enum that records why an E3 failed. It also decides whether the
+requester or the ciphernodes carry the cost. See
+[`FailureReason`](/reference/contracts#failurereason).
+
+### Fee token
+
+The ERC-20 token that a requester uses to pay for an E3. Mainnet uses USDS. See
+[Contracts & Addresses](/reference/contracts).
+
+### FOLD
+
+The Interfold token (`InterfoldToken`). Operators bond FOLD for each ciphernode. See
+[Tokenomics](/tokenomics).
+
+## G
+
+### Gossip
+
+The libp2p gossipsub topic that ciphernodes use to broadcast signed protocol messages. Each network
+profile has its own topic. See [Architecture](/learn/architecture).
+
+## H
+
+### H (honest parties)
+
+The number of honest parties that a committee needs. See [N, T, and H](#n-t-and-h).
+
+### Honk
+
+The proof system of the Barretenberg prover (`bb`). The on-chain verifiers for the aggregated DKG
+and decryption proofs are Honk verifiers. See [Noir circuits](/build/noir-circuits).
+
+## I
+
+### IMT
+
+Incremental Merkle tree. The `CiphernodeRegistry` keeps the registered ciphernodes in an IMT, and
+each E3 request uses a snapshot of its root. See [Sortition](/internals/sortition).
+
+### Interfold contract
+
+The contract `Interfold.sol`, which coordinates each E3. It accepts requests, records the stage, and
+accepts the outputs. See [Interfold contract](/build/interfold-contract).
+
+## K
+
+### Key share
+
+The part of the committee secret key that one committee member holds after the DKG. Decryption needs
+T + 1 key shares. See [DKG](/internals/dkg).
+
+### KeyPublished
+
+The [E3 stage](#e3-stage) in which the committee public key is on-chain, so that data providers can
+encrypt inputs to it. `publishCommittee` on the `CiphernodeRegistry` sets this stage. See
+[`E3Stage`](/reference/contracts#e3stage).
+
+## L
+
+### Lane A and Lane B
+
+The two paths to a slash in the `SlashingManager`. Lane A uses signed committee votes and anyone can
+submit it. Lane B uses evidence from an account with `SLASHER_ROLE` and has an appeal window. See
+[Exits and slashing](/operate/exits-and-slashing).
+
+## M
+
+### Mock deployment
+
+A network that includes a mock E3 program or mock verifiers, which accept proofs without real
+verification. The manifest marks such a network with `mocks: true`. See
+[Contracts & Addresses](/reference/contracts#deployment-manifest).
+
+## N
+
+### N, T, and H
+
+The three numbers that describe a committee. N is the committee size. T is the threshold, and
+decryption needs T + 1 key shares. H is the number of honest parties. The contract uses H as the
+viability threshold. The sizes are `minimum` (N = 3, T = 1, H = 2), `micro` (N = 9, T = 4, H = 5),
+and `small` (N = 19, T = 9, H = 14). See [`CommitteeSize`](/reference/contracts#committeesize).
+
+### Network profile
+
+The P2P network that a ciphernode joins: `mainnet`, `sepolia`, `local`, or a custom network. Each
+profile has a fixed 32-byte network ID. See
+[network profiles](/reference/configuration#network-profiles).
+
+### Noir
+
+The language of the zero-knowledge circuits in the `circuits/` folder. The Barretenberg prover makes
+the proofs. See [Noir circuits](/build/noir-circuits).
+
+### node_generation
+
+A release counter that increases when a node-only fix becomes mandatory. After governance raises the
+required value, older nodes cannot become active. See [Upgrades](/operate/upgrades).
+
+### Node profile
+
+One set of node settings in `interfold.config.yaml`: the `node` key or an entry under `nodes`. The
+`--name` flag selects the profile. See
+[node profile keys](/reference/configuration#node-profile-keys).
+
+## O
+
+### Operator
+
+The person or organization that runs a ciphernode. In the contracts, `operator` is the address of
+the ciphernode signing key. See [Ciphernode operators](/operate).
+
+## P
+
+### Peer ID
+
+The libp2p identity of a ciphernode. The node derives it from its wallet private key. Print it with
+`interfold net get-peer-id`. See [CLI Reference](/reference/cli#interfold-net-get-peer-id).
+
+### Preset
+
+A set of BFV parameters. `insecure-512` is for development and CI only, and `secure-8192` is for
+production. Mainnet accepts only `secure-8192`. See [Cryptography](/learn/cryptography).
+
+### protocol_version
+
+A release counter that increases when contracts, events, cryptography, or protocol behavior become
+incompatible. Every P2P protocol name contains it, so incompatible releases cannot communicate. See
+[Upgrades](/operate/upgrades).
+
+### PV-TBFV
+
+Publicly verifiable threshold BFV. Each sensitive step of the threshold BFV protocol has a
+zero-knowledge proof that anyone can verify. See [Cryptography](/learn/cryptography).
+
+## R
+
+### Recursive aggregation
+
+The folding of many proofs into one proof. The `dkg_aggregator` and `decryption_aggregator` circuits
+make the final proofs that the contracts verify. See [Noir circuits](/build/noir-circuits).
+
+### Registration
+
+The step that adds an operator to the `BondingRegistry` and to the IMT of the `CiphernodeRegistry`.
+Only the bond owner can register an operator. See [Registration](/operate/registration).
+
+### Requested
+
+The first [E3 stage](#e3-stage). `request` on the Interfold contract accepts the E3 and the fee, and
+sortition starts. See [`E3Stage`](/reference/contracts#e3stage).
+
+### Requester
+
+The account that requests an E3 and pays its fee. The contracts use the term `requester`. See
+[Requesting an E3](/build/requesting-an-e3).
+
+## S
+
+### Slashing
+
+A penalty on the ticket collateral or FOLD bond of an operator for a proven fault. A slash can also
+ban the operator and expel it from a committee. See
+[Exits and slashing](/operate/exits-and-slashing).
+
+### Sortition
+
+The process that selects a committee for an E3. Ciphernodes score their tickets with a random seed
+and submit tickets on-chain, and the registry keeps the best scores. See
+[Sortition](/internals/sortition).
+
+## T
+
+### T (threshold)
+
+The threshold of a committee. Decryption needs T + 1 key shares. See [N, T, and H](#n-t-and-h).
+
+### tFOLD
+
+The ticket token (`InterfoldTicketToken`). It is non-transferable and wraps the ticket collateral of
+an operator. See [Tickets and sortition](/operate/tickets-and-sortition).
+
+### Ticket
+
+One unit of sortition weight. The number of available tickets is the collateral balance divided by
+the ticket price, rounded down. See [Tickets and sortition](/operate/tickets-and-sortition).
+
+### TrBFV
+
+The threshold variant of BFV that the ciphernodes use. The committee holds the secret key as shares,
+and T + 1 shares can decrypt. See [Cryptography](/learn/cryptography).
+
+## V
+
+### VRF
+
+Verifiable random function. A Chainlink VRF randomness provider gives the seed for sortition. See
+[Sortition](/internals/sortition).
+
+## Next steps
+
+<LinkCards min={230}>
+  <LinkCard title='What is an E3' href='/learn/what-is-e3' icon='book' tag='Concepts'>
+    The main idea behind the terms on this page.
+  </LinkCard>
+  <LinkCard title='E3 lifecycle' href='/learn/e3-lifecycle' icon='flow' tag='Concepts'>
+    The stages of an E3 and the events that each stage emits.
+  </LinkCard>
+  <LinkCard
+    title='Contracts & Addresses'
+    href='/reference/contracts'
+    icon='contract'
+    tag='Reference'
+  >
+    The contracts, enums, and events that these terms name.
+  </LinkCard>
+</LinkCards>

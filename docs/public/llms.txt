@@ -7,15 +7,35 @@ It enables shared, verifiable outcomes from private inputs without third-party c
 Key concept: confidential coordination — producing shared outcomes from private inputs across independent parties.
 
 Start here:
-https://docs.theinterfold.com/introduction
+https://docs.theinterfold.com/learn
+
+Learn:
+https://docs.theinterfold.com/learn/what-is-e3
+https://docs.theinterfold.com/learn/architecture
+https://docs.theinterfold.com/learn/e3-lifecycle
+https://docs.theinterfold.com/learn/cryptography
+https://docs.theinterfold.com/learn/use-cases
+
+Build:
+https://docs.theinterfold.com/build/quick-start
+https://docs.theinterfold.com/build/e3-program
+https://docs.theinterfold.com/build/sdk
+
+Run a ciphernode:
+https://docs.theinterfold.com/operate
+
+Reference:
+https://docs.theinterfold.com/reference/cli
+https://docs.theinterfold.com/reference/configuration
+https://docs.theinterfold.com/reference/contracts
+https://docs.theinterfold.com/reference/glossary
+
+All pages:
+https://docs.theinterfold.com/sitemap.xml
 
 Related resources:
 https://theinterfold.com/
 https://blog.theinterfold.com/
-
-Core resources:
-https://docs.theinterfold.com/architecture-overview
-https://docs.theinterfold.com/use-cases
 
 Repository:
 https://github.com/theinterfold/interfold

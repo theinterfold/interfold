@@ -1,0 +1,14 @@
+{
+  "cli": {
+    "title": "CLI"
+  },
+  "configuration": {
+    "title": "Node Configuration"
+  },
+  "contracts": {
+    "title": "Contracts & Addresses"
+  },
+  "glossary": {
+    "title": "Glossary"
+  }
+}
