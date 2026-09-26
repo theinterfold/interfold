@@ -1,204 +1,259 @@
 ---
-title: 'Hello World Tutorial'
-description: 'Build your first E3 program from scratch with step-by-step explanations'
+title: 'Hello World'
+description:
+  'Change the FHE computation in the default template so that the E3 returns two times the sum, and
+  run it again.'
 ---
 
-# Hello World Tutorial
+import { Callout, Steps } from 'nextra/components'
+import { Flow, LinkCard, LinkCards } from '@/components/ui'
 
-This tutorial walks you through building your first E3 program from scratch. You'll learn how each
-component works and how they interact to create a secure, encrypted computation.
+# Hello World
 
-> Make sure to complete the [Quick Start](/quick-start) guide first to get familiar with the basic
-> workflow before diving into this detailed tutorial.
+This tutorial changes the FHE computation in the default template and runs the E3 again. It is for
+developers who have completed the [Quick Start](/build/quick-start). At the end, your E3 returns 2 ×
+(a + b) instead of a + b. You also know which files hold the computation, its test, and its labels
+in the client.
 
-## What We're Building
+## Before you begin
 
-We'll create a simple E3 program that:
+You need the `my-first-e3` project from the [Quick Start](/build/quick-start), with no changes. All
+paths on this page are relative to the project folder.
 
-1. **Accepts** two encrypted numbers from users
-2. **Computes** their sum using Fully Homomorphic Encryption
-3. **Returns** the encrypted result without ever decrypting the inputs
+## How the template computes
 
-## Prerequisites
+The FHE computation is one Rust function, `fhe_processor`, in `program/src/lib.rs`. The other parts
+of the template move ciphertexts to this function and move its result to the committee.
 
-Before starting, ensure you have:
+<Flow
+  label='Data path of one E3'
+  steps={[
+    {
+      label: 'Encrypt',
+      icon: 'lock',
+      sub: 'The client encrypts each number to the committee key.',
+    },
+    { label: 'Publish', icon: 'contract', sub: 'MyProgram.publishInput records each ciphertext.' },
+    {
+      label: 'Compute',
+      icon: 'chip',
+      sub: 'The program server runs fhe_processor on the ciphertexts.',
+    },
+    { label: 'Decrypt', icon: 'key', sub: 'The committee decrypts only the output.' },
+  ]}
+/>
 
-- [Interfold CLI installed](/installation)
-- Basic knowledge of Rust and TypeScript
-- Rust, Docker, Node.js, and pnpm installed
+1. The client encrypts each number with the committee public key and calls `MyProgram.publishInput`.
+2. When the input window closes, the coordination server (`server/index.ts`) reads the published
+   inputs and sends them to the program server on port 13151.
+3. The program server (`.interfold/support/dev/src/main.rs`) calls `fhe_processor` and sends the
+   encrypted result back to the coordination server.
+4. The coordination server publishes the encrypted result. The committee decrypts it.
 
-## Step 1: Project Setup
+This is the default computation in `program/src/lib.rs`. The doc comment above `policy` is removed
+here:
 
-Create a new E3 project:
-
-```bash
-interfold init hello-world-e3
-cd hello-world-e3
-```
-
-Let's examine the generated project structure:
-
-```
-hello-world-e3/
-├── program/           # FHE computation logic (Rust)
-├── contracts/         # Smart contracts (Solidity)
-├── client/           # Frontend application (React/TypeScript)
-├── server/           # Coordination server (TypeScript)
-├── interfold.config.yaml # Interfold configuration
-└── README.md         # Project documentation
-```
-
-## Step 2: Understanding the FHE Program
-
-The heart of your E3 program is in `./program/src/lib.rs`. Let's examine the default implementation:
-
-```rust
-use e3_fhe_params::decode_bfv_params_arc;
-use e3_compute_provider::FHEInputs;
+```rust filename="program/src/lib.rs"
+use e3_compute_provider::{FHEProcessorInput, InputPolicy};
 use fhe::bfv::Ciphertext;
 use fhe_traits::{DeserializeParametrized, Serialize};
 
+pub fn policy() -> InputPolicy {
+    InputPolicy::default()
+}
+
 /// Implementation of the CiphertextProcessor function
-pub fn fhe_processor(fhe_inputs: &FHEInputs) -> Vec<u8> {
-    // Decode the FHE parameters
-    let params = decode_bfv_params_arc(&fhe_inputs.params).unwrap();
-
-    // Start with zero (encrypted)
-    let mut sum = Ciphertext::zero(&params);
-
-    // Add each encrypted input to the sum
-    for ciphertext_bytes in &fhe_inputs.ciphertexts {
-        let ciphertext = Ciphertext::from_bytes(&ciphertext_bytes.0, &params).unwrap();
-        sum += &ciphertext;  // Homomorphic addition
+pub fn fhe_processor(fhe_inputs: &FHEProcessorInput<'_>) -> Vec<u8> {
+    let mut sum = Ciphertext::zero(fhe_inputs.params);
+    for ciphertext_bytes in fhe_inputs.ciphertexts {
+        let ciphertext = Ciphertext::from_bytes(&ciphertext_bytes.0, fhe_inputs.params).unwrap();
+        sum += &ciphertext;
     }
 
-    // Return the encrypted result
     sum.to_bytes()
 }
 ```
 
-### Key Concepts:
+- `FHEProcessorInput` has two fields. `ciphertexts` is a slice of `(Vec<u8>, u64)` pairs: the
+  serialized ciphertext and its input index. `params` holds the BFV parameters of the E3.
+- `Ciphertext::zero` makes the zero ciphertext, the start value. The `+=` operator adds each input
+  ciphertext to it. This addition is homomorphic: the function adds the hidden values, but it cannot
+  see them.
+- `sum.to_bytes()` serializes the encrypted result.
+- `policy()` returns the input policy. The default policy uses every published input.
 
-- **`FHEInputs`**: Contains encrypted data and parameters
-- **`Ciphertext`**: Encrypted values that can be computed on
-- **Homomorphic operations**: `+=` works on encrypted data
-- **No decryption**: We never see the actual values
+<Callout type='info'>
+  The template requests E3s with the `insecure-512` parameter set. Its plaintext modulus is 100, so
+  every result is calculated modulo 100. For this tutorial, 2 × (a + b) must be less than 100.
+</Callout>
 
-## Step 3: Modifying the Computation
+## Change the computation
 
-Let's create a more interesting computation. Replace the content of `./program/src/lib.rs`:
+<Steps>
 
-```rust
-use e3_fhe_params::decode_bfv_params_arc;
-use e3_compute_provider::FHEInputs;
-use fhe::bfv::Ciphertext;
-use fhe_traits::{DeserializeParametrized, Serialize};
+### Stop the stack
 
-/// Compute: (a + b) * 2
-pub fn fhe_processor(fhe_inputs: &FHEInputs) -> Vec<u8> {
-    let params = decode_bfv_params_arc(&fhe_inputs.params).unwrap();
+If `pnpm dev:all` runs, press `Ctrl+C` in its terminal.
 
-    // Extract the two input ciphertexts
-    if fhe_inputs.ciphertexts.len() != 2 {
-        panic!("Expected exactly 2 inputs");
+### Double the encrypted sum
+
+In `program/src/lib.rs`, replace the `fhe_processor` function with this version:
+
+```rust filename="program/src/lib.rs" {9-11}
+/// Implementation of the CiphertextProcessor function
+pub fn fhe_processor(fhe_inputs: &FHEProcessorInput<'_>) -> Vec<u8> {
+    let mut sum = Ciphertext::zero(fhe_inputs.params);
+    for ciphertext_bytes in fhe_inputs.ciphertexts {
+        let ciphertext = Ciphertext::from_bytes(&ciphertext_bytes.0, fhe_inputs.params).unwrap();
+        sum += &ciphertext;
     }
 
-    let a = Ciphertext::from_bytes(&fhe_inputs.ciphertexts[0].0, &params).unwrap();
-    let b = Ciphertext::from_bytes(&fhe_inputs.ciphertexts[1].0, &params).unwrap();
-
-    // Compute (a + b) * 2 homomorphically
-    let sum = &a + &b;           // Add encrypted numbers
-    let double = &sum + &sum;    // Multiply by 2 (via addition)
-
-    double.to_bytes()
+    // Add the encrypted sum to itself. The hidden value becomes 2 × (a + b).
+    let doubled = &sum + &sum;
+    doubled.to_bytes()
 }
 ```
 
-## Step 4: Understanding the Configuration
+`&sum + &sum` adds two ciphertexts and returns a new ciphertext. The function needs no new imports.
 
-The `interfold.config.yaml` file configures your development environment:
+### Update the unit test
 
-```yaml
-chains:
-  - name: 'hardhat'
-    rpc_url: 'ws://localhost:8545'
-    contracts:
-      e3_program: '0x9A676e781A523b5d0C0e43731313A708CB607508'
-      # ... other contract addresses
+The test at the end of `program/src/lib.rs` encrypts 3 and 2 and calls `fhe_processor`. Change the
+expected value from 5 to 10:
 
-nodes:
-  cn1: # Ciphernode 1
-    address: '0x70997970C51812dc3A010C7d01b50e0d17dc79C8'
-    quic_port: 9201
-    autonetkey: true
-    autopassword: true
-  # ... more nodes
+```rust filename="program/src/lib.rs"
+        let tally = Vec::<u64>::try_decode(&decrypted, Encoding::poly())?;
+        assert_eq!(tally[0], 10);
+        Ok(())
 ```
 
-### Key Components:
-
-- **Chains**: Blockchain networks your E3 program uses
-- **Contracts**: Deployed smart contract addresses
-- **Nodes**: Ciphernodes that coordinate the E3 process
-
-## Step 5: Build and Test
-
-Compile your modified program:
+### Run the unit test
 
 ```bash
-interfold program compile
+cargo test -p e3-user-program
 ```
 
-Start the development environment:
+Cargo prints `test tests::test ... ok`. If the test fails, compare your `fhe_processor` with the
+code in the previous step.
+
+### Update the label on the input step
+
+In `client/src/pages/steps/EnterInputs.tsx`, find this line:
+
+```tsx filename="client/src/pages/steps/EnterInputs.tsx"
+<strong className='font-semibold'>Ready to compute:</strong> {input1} + {input2} = ?
+```
+
+Change it to:
+
+```tsx filename="client/src/pages/steps/EnterInputs.tsx"
+<strong className='font-semibold'>Ready to compute:</strong> 2 × ({input1} + {input2}) = ?
+```
+
+### Update the label on the results step
+
+In `client/src/pages/steps/Results.tsx`, find this line:
+
+```tsx filename="client/src/pages/steps/Results.tsx"
+{
+  submittedInputs
+    ? `${submittedInputs.input1} + ${submittedInputs.input2} = ${result !== null ? result : '…'}`
+    : '…'
+}
+```
+
+Change it to:
+
+```tsx filename="client/src/pages/steps/Results.tsx"
+{
+  submittedInputs
+    ? `2 × (${submittedInputs.input1} + ${submittedInputs.input2}) = ${result !== null ? result : '…'}`
+    : '…'
+}
+```
+
+### Start the stack
 
 ```bash
 pnpm dev:all
 ```
 
-## Step 6: Understanding the Client
+The `PROGRAM` process runs `interfold program start`. In dev mode, this command runs
+`cargo run --bin e3-support-scripts-dev`, so Cargo compiles the program server again with your new
+`fhe_processor`.
 
-The client application (in `./client/`) handles:
+### Run an E3
 
-1. **Encryption**: User inputs → encrypted ciphertexts
-2. **Submission**: Publish encrypted data to the Interfold contract
-3. **Result retrieval**: Get the decrypted result from the Interfold contract
+Open [http://localhost:3000](http://localhost:3000). If the client shows the result of an earlier
+E3, select **Start over** in the top bar. Request an E3, then enter 5 and 3.
 
-## Step 7: Test Your Program
+The input step shows `Ready to compute: 2 × (5 + 3) = ?`. The results step shows `2 × (5 + 3) = 16`.
 
-1. Open [http://localhost:3000](http://localhost:3000)
-2. Enter two numbers (e.g., 5 and 3)
-3. Submit the request
-4. Watch the result: `(5 + 3) * 2 = 16`
+</Steps>
 
-The computation happened entirely on encrypted data!
+## Why nothing else changes
 
-## Step 8: Exploring Further
+- **The contract.** `MyProgram.publishInput` stores a commitment for each input, and
+  `MyProgram.verify` checks the compute proof. Neither function contains the computation.
+- **The coordination server.** `server/index.ts` sends every published input to the program server
+  and publishes the output that it gets back. It does not know what the computation does.
+- **The deployment.** `pnpm dev:all` deploys the contracts again on a new local chain at each start.
 
-Now that you understand the basics, try these modifications:
+<Callout type='info'>
+  In dev mode, the program server runs `fhe_processor` without a proof, and the template deploys
+  `MockRISC0Verifier`, which accepts any RISC Zero seal. With a real verifier, `MyProgram.verify`
+  checks the proof against the `imageId` that `MyProgram` receives when it is deployed. A change to
+  the program changes that image ID. See [Compute provider](/build/e3-program/compute-provider).
+</Callout>
 
-### Change the Computation
+## Update the integration test
 
-```rust
-// Compute a² + b²
-let a_squared = &a * &a;
-let b_squared = &b * &b;
-let result = &a_squared + &b_squared;
+The template has an end-to-end test in `tests/integration.spec.ts`. It encrypts 1 and 2 and expects
+their sum. After your change, update the expected value:
+
+```ts filename="tests/integration.spec.ts"
+expect(BigInt(result)).toBe(2n * (num1 + num2))
 ```
 
-### Add More Inputs
+Run the test with `pnpm test:integration`. This test needs a CLI that is built with the
+`test-only-skip-proof-aggregation` Cargo feature. Release binaries do not include it. See
+[Installation](/build/installation#install-the-cli) for a source build.
 
-Modify your program to accept three or more encrypted inputs.
+## Operations on ciphertexts
 
-### Update the UI
+The template uses the `fhe` crate from `gnosisguild/fhe.rs` at tag `v0.2.2`. For a `Ciphertext`,
+that crate implements these operators:
 
-Customize the client application in `./client/src/` to match your computation.
+| Operation                   | Operator             | Example           |
+| --------------------------- | -------------------- | ----------------- |
+| Add two ciphertexts         | `+`, `+=`            | `&a + &b`         |
+| Subtract two ciphertexts    | `-`, `-=`            | `&a - &b`         |
+| Negate a ciphertext         | unary `-`            | `-&a`             |
+| Add or subtract a plaintext | `+`, `+=`, `-`, `-=` | `&a + &plaintext` |
+| Multiply by a plaintext     | `*`, `*=`            | `&a * &plaintext` |
 
-Happy building with the Interfold! 🚀
+A `Plaintext` must use the same parameters object as the ciphertext, that is `fhe_inputs.params`. If
+the parameters objects are different, the operator panics.
 
-## Next Steps
+All results wrap modulo the plaintext modulus. A negative result, for example from `&a - &b` with
+`a < b`, wraps to a large value. The crate also implements `*` for two ciphertexts. The default
+template does not use it, and this page does not cover it.
 
-Ready to build more complex E3 programs? Continue with:
+## Next steps
 
-1. [Writing the Secure Process](/write-secure-program) - Advanced FHE programming
-2. [Writing the E3 Program Contract](/write-e3-contract) - Smart contract integration
-3. [Setting Up the Server](/setting-up-server) - Custom coordination logic
+<LinkCards min={230}>
+  <LinkCard title='Secure process' href='/build/e3-program/secure-process' icon='chip' tag='Build'>
+    Write the FHE computation for your own E3 program.
+  </LinkCard>
+  <LinkCard
+    title='Program contract'
+    href='/build/e3-program/program-contract'
+    icon='contract'
+    tag='Build'
+  >
+    Validate inputs and verify proofs in your E3 program contract.
+  </LinkCard>
+  <LinkCard title='Project Template' href='/build/project-template' icon='layers' tag='Reference'>
+    Find the file to edit for each part of the template.
+  </LinkCard>
+</LinkCards>
