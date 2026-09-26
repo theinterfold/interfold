@@ -1012,7 +1012,7 @@ mod tests {
         let insecure = dynamic_public_key_document(3);
         insecure.validate().unwrap();
         insecure
-            .validate_for_preset(BfvPreset::InsecureThreshold512)
+            .validate_for_preset(BfvPreset::InsecureThreshold)
             .unwrap();
         assert!(insecure
             .validate_for_preset(BfvPreset::SecureThreshold16384)
@@ -1024,7 +1024,7 @@ mod tests {
             .validate_for_preset(BfvPreset::SecureThreshold16384)
             .unwrap();
         assert!(secure
-            .validate_for_preset(BfvPreset::InsecureThreshold512)
+            .validate_for_preset(BfvPreset::InsecureThreshold)
             .is_err());
 
         assert!(dynamic_public_key_document(4).validate().is_err());

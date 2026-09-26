@@ -257,7 +257,7 @@ fn render_threshold(preset: BfvPreset) -> Result<String> {
 
     let slug = preset.noir_config_module();
     let esm_prefix = match preset {
-        BfvPreset::InsecureThreshold512 => "INSECURE",
+        BfvPreset::InsecureThreshold => "INSECURE",
         BfvPreset::SecureThreshold8192 => "SECURE_8192",
         BfvPreset::SecureThreshold16384 => "SECURE_16384",
         _ => unreachable!("config generation requires a threshold preset"),

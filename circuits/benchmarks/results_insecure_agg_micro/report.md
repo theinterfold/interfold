@@ -29,6 +29,9 @@ Settings for this benchmark run (integration test + Nargo circuit benches on the
 | `dkg_fold_attestation_verifier` (EIP-712)             | `0x7969c5eD335650692Bc04293B07F5BF2e7A673C0` |
 | Verbose logging (`run_benchmarks.sh --verbose`)       | true                                         |
 
+The recorded enum name is `InsecureThreshold512`. The current Rust variant for this preset is
+`InsecureThreshold`.
+
 ### Hardware & software (Nargo / Barretenberg host)
 
 |                  |                                                                                                                                                                                    |

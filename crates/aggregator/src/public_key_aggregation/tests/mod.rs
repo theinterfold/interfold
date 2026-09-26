@@ -105,7 +105,7 @@ async fn build_public_key_aggregator_with_committee(
     E3id,
 )> {
     let (bus, rng, _seed, params, crp, _errors, history) =
-        get_common_setup(Some(BfvPreset::InsecureThreshold64.into()))?;
+        get_common_setup(Some(BfvPreset::InsecureThreshold.into()))?;
     let e3_id = E3id::new("42", 1);
     let fhe = Arc::new(Fhe::new(params, crp, rng));
     let aggregator = PublicKeyAggregator::new(
@@ -113,7 +113,7 @@ async fn build_public_key_aggregator_with_committee(
             fhe,
             bus,
             e3_id: e3_id.clone(),
-            params_preset: BfvPreset::InsecureThreshold64,
+            params_preset: BfvPreset::InsecureThreshold,
             committee_size,
             dkg_fold_attestation_context: None,
             recovery: test_state(PublicKeyAggregatorRecoveryState::default()),
@@ -564,7 +564,7 @@ async fn secure_16384_restart_redrives_publication_intent() -> Result<()> {
     let e3_id = E3id::new("42", 1);
     let publication = lbfv_publication(e3_id.clone());
     let (bus, rng, _seed, params, crp, _errors, history) =
-        get_common_setup(Some(BfvPreset::InsecureThreshold512.into()))?;
+        get_common_setup(Some(BfvPreset::InsecureThreshold.into()))?;
     let aggregator = PublicKeyAggregator::new(
         PublicKeyAggregatorParams {
             fhe: Arc::new(Fhe::new(params, crp, rng)),
@@ -619,7 +619,7 @@ async fn secure_16384_waits_for_both_operational_keys_after_c5() -> Result<()> {
         BfvPreset::SecureThreshold16384,
     )?;
     let (bus, rng, _seed, params, crp, _errors, history) =
-        get_common_setup(Some(BfvPreset::InsecureThreshold512.into()))?;
+        get_common_setup(Some(BfvPreset::InsecureThreshold.into()))?;
     let mut aggregator = PublicKeyAggregator::new(
         PublicKeyAggregatorParams {
             fhe: Arc::new(Fhe::new(params, crp, rng)),
@@ -686,7 +686,7 @@ async fn secure_16384_restart_redrives_terminal_aggregation_failure() -> Result<
     )?;
     aggregation.fail("worker failed")?;
     let (bus, rng, _seed, params, crp, _errors, history) =
-        get_common_setup(Some(BfvPreset::InsecureThreshold512.into()))?;
+        get_common_setup(Some(BfvPreset::InsecureThreshold.into()))?;
     let mut aggregator = PublicKeyAggregator::new(
         PublicKeyAggregatorParams {
             fhe: Arc::new(Fhe::new(params, crp, rng)),
@@ -909,7 +909,7 @@ async fn expelling_a_selected_roster_member_fails_the_dkg_immediately() -> Resul
 #[actix::test]
 async fn standby_retains_dkg_fold_for_failover() -> Result<()> {
     let (bus, rng, _seed, params, crp, _errors, _history) =
-        get_common_setup(Some(BfvPreset::InsecureThreshold64.into()))?;
+        get_common_setup(Some(BfvPreset::InsecureThreshold.into()))?;
     let e3_id = E3id::new("42", 1);
     let fhe = Arc::new(Fhe::new(params, crp, rng));
     let party_id = 2;
@@ -933,7 +933,7 @@ async fn standby_retains_dkg_fold_for_failover() -> Result<()> {
             fhe,
             bus,
             e3_id: e3_id.clone(),
-            params_preset: BfvPreset::InsecureThreshold64,
+            params_preset: BfvPreset::InsecureThreshold,
             committee_size: CiphernodesCommitteeSize::Minimum,
             dkg_fold_attestation_context: None,
             recovery: test_state(PublicKeyAggregatorRecoveryState::default()),
@@ -1209,7 +1209,7 @@ async fn secure_16384_never_dispatches_standalone_c1_verification() -> Result<()
         .load()
         .await?;
     let (bus, rng, _seed, params, crp, _errors, history) =
-        get_common_setup(Some(BfvPreset::InsecureThreshold512.into()))?;
+        get_common_setup(Some(BfvPreset::InsecureThreshold.into()))?;
     let mut aggregator = PublicKeyAggregator::new(
         PublicKeyAggregatorParams {
             fhe: Arc::new(Fhe::new(params, crp, rng)),
@@ -1276,7 +1276,7 @@ async fn secure_16384_publishes_inputs_ready_after_a_durable_quorum() -> Result<
         })
         .collect::<Vec<_>>();
     let (bus, rng, _seed, params, crp, _errors, history) =
-        get_common_setup(Some(BfvPreset::InsecureThreshold512.into()))?;
+        get_common_setup(Some(BfvPreset::InsecureThreshold.into()))?;
     let mut aggregator = PublicKeyAggregator::new(
         PublicKeyAggregatorParams {
             fhe: Arc::new(Fhe::new(params, crp, rng)),
@@ -1371,7 +1371,7 @@ async fn secure_16384_waits_for_the_selected_roster_before_sealing_a_quorum() ->
     assert!(matches!(state, PublicKeyAggregatorState::Collecting { .. }));
 
     let (bus, rng, _seed, params, crp, _errors, history) =
-        get_common_setup(Some(BfvPreset::InsecureThreshold512.into()))?;
+        get_common_setup(Some(BfvPreset::InsecureThreshold.into()))?;
     let actor = PublicKeyAggregator::new(
         PublicKeyAggregatorParams {
             fhe: Arc::new(Fhe::new(params, crp, rng)),
@@ -1457,7 +1457,7 @@ async fn restart_validates_documents_durable_lbfv_bundles() -> Result<()> {
         unreachable!();
     };
     let (bus, rng, _seed, params, crp, _errors, _history) =
-        get_common_setup(Some(BfvPreset::InsecureThreshold512.into()))?;
+        get_common_setup(Some(BfvPreset::InsecureThreshold.into()))?;
     let actor = PublicKeyAggregator::new(
         PublicKeyAggregatorParams {
             fhe: Arc::new(Fhe::new(params, crp, rng)),
@@ -1550,7 +1550,7 @@ async fn restart_redrives_due_lbfv_fetches() -> Result<()> {
         .load()
         .await?;
     let (bus, rng, _seed, params, crp, _errors, history) =
-        get_common_setup(Some(BfvPreset::InsecureThreshold512.into()))?;
+        get_common_setup(Some(BfvPreset::InsecureThreshold.into()))?;
     let aggregator = PublicKeyAggregator::new(
         PublicKeyAggregatorParams {
             fhe: Arc::new(Fhe::new(params, crp, rng)),
@@ -1628,7 +1628,7 @@ async fn lbfv_retry_timer_dispatches_without_another_event() -> Result<()> {
         .load()
         .await?;
     let (bus, rng, _seed, params, crp, _errors, history) =
-        get_common_setup(Some(BfvPreset::InsecureThreshold512.into()))?;
+        get_common_setup(Some(BfvPreset::InsecureThreshold.into()))?;
     let actor = PublicKeyAggregator::new(
         PublicKeyAggregatorParams {
             fhe: Arc::new(Fhe::new(params, crp, rng)),
@@ -1701,7 +1701,7 @@ async fn lbfv_expulsion_durably_invalidates_an_in_flight_dispatch() -> Result<()
         .load()
         .await?;
     let (bus, rng, _seed, params, crp, _errors, _history) =
-        get_common_setup(Some(BfvPreset::InsecureThreshold512.into()))?;
+        get_common_setup(Some(BfvPreset::InsecureThreshold.into()))?;
     let submissions = fixture
         .state
         .committee
@@ -1830,7 +1830,7 @@ async fn lbfv_stale_verification_completion_is_ignored() -> Result<()> {
         })
         .collect::<Vec<_>>();
     let (bus, rng, _seed, params, crp, _errors, _history) =
-        get_common_setup(Some(BfvPreset::InsecureThreshold512.into()))?;
+        get_common_setup(Some(BfvPreset::InsecureThreshold.into()))?;
     let actor = PublicKeyAggregator::new(
         PublicKeyAggregatorParams {
             fhe: Arc::new(Fhe::new(params, crp, rng)),
@@ -1921,7 +1921,7 @@ async fn sealed_sidecar_recovery_applies_the_exact_accepted_set() -> Result<()> 
         .load()
         .await?;
     let (bus, rng, _seed, params, crp, _errors, history) =
-        get_common_setup(Some(BfvPreset::InsecureThreshold512.into()))?;
+        get_common_setup(Some(BfvPreset::InsecureThreshold.into()))?;
     let fhe = Arc::new(Fhe::new(params, crp, rng));
     let mut random = rand::rng();
     let mut submissions = Vec::new();
@@ -2019,7 +2019,7 @@ async fn concurrent_document_roles_do_not_overwrite_sidecar_updates() -> Result<
         .load()
         .await?;
     let (bus, rng, _seed, params, crp, _errors, _history) =
-        get_common_setup(Some(BfvPreset::InsecureThreshold512.into()))?;
+        get_common_setup(Some(BfvPreset::InsecureThreshold.into()))?;
     let actor = PublicKeyAggregator::new(
         PublicKeyAggregatorParams {
             fhe: Arc::new(Fhe::new(params, crp, rng)),

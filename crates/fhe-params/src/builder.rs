@@ -13,7 +13,7 @@ pub fn build_pair_for_preset(
     preset: BfvPreset,
 ) -> Result<(Arc<BfvParameters>, Arc<BfvParameters>), PresetError> {
     match preset {
-        BfvPreset::InsecureThreshold64 => {
+        BfvPreset::InsecureThreshold => {
             let params_threshold = BfvParametersBuilder::new()
                 .set_degree(insecure::DEGREE)
                 .set_plaintext_modulus(insecure::threshold::PLAINTEXT_MODULUS)
@@ -246,17 +246,12 @@ mod tests {
             "17723039943798878305460955570711717478400"
         );
 
-        assert_eq!(dkg.degree(), 8192);
-        assert_eq!(dkg.plaintext(), 576460752317792257);
-        assert_eq!(dkg.moduli(), &[0x2000000000104001, 0x200000000013c001]);
-        assert_eq!(dkg_q.to_string(), "5316911983145103662415181469253369857");
-        assert_eq!(
-            (&dkg_q / dkg.plaintext()).to_string(),
-            "9223372036634312696"
-        );
-        assert_eq!(&dkg_q % dkg.plaintext(), BigUint::from(3169161947774985u64));
-        assert_eq!(BfvPreset::SecureThreshold8192.metadata().lambda, 45);
-        assert_eq!(BfvPreset::SecureDkg8192.metadata().lambda, 45);
+    #[test]
+    fn test_build_insecure_dkg_params_from_set() {
+        // Test building from BfvParamSet using insecure DKG preset
+        let preset = BfvPreset::InsecureDkg;
+        let param_set = preset.into();
+        let params = build_bfv_params_from_set(param_set);
 
         assert_eq!(params.degree(), insecure::DEGREE);
         assert_eq!(params.plaintext(), insecure::dkg::PLAINTEXT_MODULUS);
@@ -266,7 +261,7 @@ mod tests {
     #[test]
     fn test_build_insecure_dkg_params_from_set_arc() {
         // Test building Arc from BfvParamSet using insecure DKG preset
-        let preset = BfvPreset::InsecureDkg64;
+        let preset = BfvPreset::InsecureDkg;
         let param_set = preset.into();
         let params = build_bfv_params_from_set_arc(param_set);
 

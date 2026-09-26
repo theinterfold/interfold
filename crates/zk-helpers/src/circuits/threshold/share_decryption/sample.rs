@@ -272,7 +272,7 @@ mod tests {
     use super::*;
     use e3_fhe_params::BfvPreset;
 
-    const PRESET: BfvPreset = BfvPreset::InsecureThreshold512;
+    const PRESET: BfvPreset = BfvPreset::InsecureThreshold;
 
     #[test]
     fn test_generate_template_succeeds_and_has_correct_structure() {

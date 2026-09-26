@@ -72,11 +72,11 @@ fn output_root(args: &Args) -> Result<PathBuf> {
 /// `PARITY_MATRIX` literal. The suffix matches the corresponding preset's Noir module.
 fn file_for(root: &Path, committee: &str, preset: BfvPreset) -> PathBuf {
     let suffix = match preset {
-        BfvPreset::InsecureThreshold512 => "insecure",
+        BfvPreset::InsecureThreshold => "insecure",
         BfvPreset::SecureThreshold8192 => "secure_8192",
         // Codegen runs against the threshold side of each preset family.
         // DKG-only variants don't need their own file.
-        BfvPreset::InsecureDkg512 => "insecure",
+        BfvPreset::InsecureDkg => "insecure",
         BfvPreset::SecureDkg8192 => "secure_8192",
         BfvPreset::SecureThreshold16384 => "secure_16384",
         BfvPreset::SecureDkg16384 => "secure_16384",
@@ -178,7 +178,7 @@ fn main() -> Result<()> {
                 )
             })?;
         let (suffix, l_module) = match preset {
-            BfvPreset::InsecureThreshold512 => ("insecure", "insecure"),
+            BfvPreset::InsecureThreshold => ("insecure", "insecure"),
             BfvPreset::SecureThreshold8192 => ("secure_8192", "secure_8192"),
             BfvPreset::SecureThreshold16384 => ("secure_16384", "secure_16384"),
             _ => continue, // PAIR_PRESETS only carries the threshold variants
@@ -194,7 +194,7 @@ fn main() -> Result<()> {
         );
     }
 
-    let insecure = PkGenerationConfigs::compute(BfvPreset::InsecureThreshold512, &params)
+    let insecure = PkGenerationConfigs::compute(BfvPreset::InsecureThreshold, &params)
         .context("computing insecure smudging constants")?;
     let secure = PkGenerationConfigs::compute(BfvPreset::SecureThreshold8192, &params)
         .context("computing secure smudging constants")?;

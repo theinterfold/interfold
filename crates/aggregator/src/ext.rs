@@ -1448,7 +1448,7 @@ mod tests {
     #[actix::test]
     async fn secure_hydration_reconstructs_a_missing_initial_collection() -> Result<()> {
         let (bus, rng, seed, params, crp, _errors, _history) =
-            get_common_setup(Some(BfvPreset::InsecureThreshold512.into()))?;
+            get_common_setup(Some(BfvPreset::InsecureThreshold.into()))?;
         let e3_id = E3id::new("42", 1);
         let signer = address!("0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC");
         let committee = vec![Address::ZERO, signer, Address::repeat_byte(0xff)];
@@ -1512,7 +1512,7 @@ mod tests {
     #[actix::test]
     async fn secure_hydration_rejects_a_mismatched_proof_domain() -> Result<()> {
         let (bus, rng, seed, params, crp, _errors, _history) =
-            get_common_setup(Some(BfvPreset::InsecureThreshold512.into()))?;
+            get_common_setup(Some(BfvPreset::InsecureThreshold.into()))?;
         let e3_id = E3id::new("42", 1);
         let signer = address!("0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC");
         let committee = vec![Address::ZERO, signer, Address::repeat_byte(0xff)];
@@ -1614,15 +1614,28 @@ mod tests {
     }
 
     #[actix::test]
-    async fn plaintext_dependencies_use_chain_rosters_across_restart() -> Result<()> {
-        use e3_bfv_client::{client::generate_public_key, compute_pk_commitment};
-        use e3_data::{PersistableData, Repository};
-        use e3_events::{EventSource, OrderedSet, PublicKeyAggregated, Unsequenced};
-        use e3_fhe_params::{BfvParamSet, BfvPreset};
-        use e3_keyshare::canonical_key::CanonicalPublicKey;
-        use e3_request::{E3Meta, META_KEY};
-        use e3_sortition::{CiphernodeSelector, SortitionParams};
-        use e3_utils::ArcBytes;
+    async fn publickey_hydration_restores_committee_dependencies_first() -> Result<()> {
+        let (bus, rng, seed, params, crp, _errors, _history) =
+            get_common_setup(Some(BfvPreset::InsecureThreshold.into()))?;
+        let e3_id = E3id::new("42", 1);
+        let store = DataStore::from_in_mem(&InMemStore::new(false).start());
+        let mut ctx = E3Context::from_params(E3ContextParams {
+            repository: store.repositories().context(&e3_id),
+            e3_id: e3_id.clone(),
+            extensions: Arc::new(Vec::new()),
+        });
+        ctx.set_dependency(FHE_KEY, Arc::new(Fhe::new(params, crp, rng)));
+        ctx.set_dependency(
+            META_KEY,
+            E3Meta {
+                threshold_m: 1,
+                threshold_n: 3,
+                seed,
+                params_preset: BfvPreset::InsecureThreshold,
+                params: ArcBytes::from_bytes(&[]),
+                error_size: ArcBytes::from_bytes(&[]),
+            },
+        );
 
         fn persist<T: PersistableData>(value: T) -> Persistable<T> {
             Repository::new(DataStore::from_in_mem(&InMemStore::new(false).start()))

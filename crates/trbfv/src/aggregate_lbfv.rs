@@ -35,7 +35,7 @@ pub fn validate_lbfv_relinearization_key_share_bytes(bytes: &[u8]) -> Result<()>
 fn validate_share_bytes(bytes: &[u8], public_key: bool) -> Result<()> {
     let mut errors = Vec::new();
     for preset in [
-        BfvPreset::InsecureThreshold512,
+        BfvPreset::InsecureThreshold,
         BfvPreset::SecureThreshold16384,
     ] {
         let (params, _) = build_pair_for_preset(preset)?;

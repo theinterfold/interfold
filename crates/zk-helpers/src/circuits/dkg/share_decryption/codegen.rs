@@ -90,14 +90,14 @@ mod tests {
     fn test_toml_generation_and_structure() {
         let committee = CiphernodesCommitteeSize::Small.values();
         let sample = ShareDecryptionCircuitData::generate_sample(
-            BfvPreset::InsecureThreshold512,
+            BfvPreset::InsecureThreshold,
             committee,
             DkgInputType::SecretKey,
         )
         .unwrap();
 
         let artifacts = ShareDecryptionCircuit
-            .codegen(BfvPreset::InsecureThreshold512, &sample)
+            .codegen(BfvPreset::InsecureThreshold, &sample)
             .unwrap();
 
         let parsed: toml::Value = artifacts.toml.parse().unwrap();
@@ -109,17 +109,17 @@ mod tests {
     fn test_configs_generation_contains_expected() {
         let committee = CiphernodesCommitteeSize::Small.values();
         let sample = ShareDecryptionCircuitData::generate_sample(
-            BfvPreset::InsecureThreshold512,
+            BfvPreset::InsecureThreshold,
             committee,
             DkgInputType::SecretKey,
         )
         .unwrap();
 
         let artifacts = ShareDecryptionCircuit
-            .codegen(BfvPreset::InsecureThreshold512, &sample)
+            .codegen(BfvPreset::InsecureThreshold, &sample)
             .unwrap();
 
-        let configs = Configs::compute(BfvPreset::InsecureThreshold512, &sample).unwrap();
+        let configs = Configs::compute(BfvPreset::InsecureThreshold, &sample).unwrap();
         let prefix = <ShareDecryptionCircuit as Circuit>::PREFIX;
         assert!(artifacts
             .configs

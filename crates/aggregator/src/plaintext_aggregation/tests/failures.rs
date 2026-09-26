@@ -55,19 +55,8 @@ async fn insufficient_honest_c6_shares_emit_e3_failed() -> Result<()> {
     let (mut aggregator, history, e3_id) =
         build_plaintext_aggregator(verifying_c6_state(), true).await?;
 
-    aggregator.handle_c6_verification_complete(TypedEvent::new(
-        ShareVerificationComplete {
-            e3_id: e3_id.clone(),
-            kind: VerificationKind::ThresholdDecryptionProofs,
-            verification_id: None,
-            dishonest_parties: BTreeSet::from([1]),
-        },
-        test_ctx(E3Failed {
-            e3_id: e3_id.clone(),
-            failed_at_stage: E3Stage::None,
-            reason: FailureReason::None,
-        }),
-    ))?;
+    let completion = c6_completion(&aggregator, BTreeSet::from([1]));
+    aggregator.handle_c6_verification_complete(completion)?;
 
     let event = next_event(&history).await?;
     assert!(matches!(

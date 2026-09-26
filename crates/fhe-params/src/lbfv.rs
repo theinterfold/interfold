@@ -65,7 +65,7 @@ pub const INSECURE_LBFV_URS_SEED: [u8; 32] = [
 #[must_use]
 pub const fn lbfv_crs_seed(preset: BfvPreset) -> Option<[u8; 32]> {
     match preset {
-        BfvPreset::InsecureThreshold512 => Some(INSECURE_LBFV_CRS_SEED),
+        BfvPreset::InsecureThreshold => Some(INSECURE_LBFV_CRS_SEED),
         BfvPreset::SecureThreshold16384 => Some(SECURE_16384_LBFV_CRS_SEED),
         _ => None,
     }
@@ -75,7 +75,7 @@ pub const fn lbfv_crs_seed(preset: BfvPreset) -> Option<[u8; 32]> {
 #[must_use]
 pub const fn lbfv_urs_seed(preset: BfvPreset) -> Option<[u8; 32]> {
     match preset {
-        BfvPreset::InsecureThreshold512 => Some(INSECURE_LBFV_URS_SEED),
+        BfvPreset::InsecureThreshold => Some(INSECURE_LBFV_URS_SEED),
         BfvPreset::SecureThreshold16384 => Some(SECURE_16384_LBFV_URS_SEED),
         _ => None,
     }
@@ -93,13 +93,13 @@ mod tests {
 
     #[test]
     fn supported_lbfv_presets_are_enabled() {
-        assert!(lbfv_crs_seed(BfvPreset::InsecureThreshold512).is_some());
-        assert!(lbfv_urs_seed(BfvPreset::InsecureThreshold512).is_some());
+        assert!(lbfv_crs_seed(BfvPreset::InsecureThreshold).is_some());
+        assert!(lbfv_urs_seed(BfvPreset::InsecureThreshold).is_some());
         assert!(lbfv_crs_seed(BfvPreset::SecureThreshold16384).is_some());
         assert!(lbfv_urs_seed(BfvPreset::SecureThreshold16384).is_some());
         assert!(lbfv_crs_seed(BfvPreset::SecureThreshold8192).is_none());
-        assert!(lbfv_urs_seed(BfvPreset::InsecureDkg512).is_none());
-        assert_eq!(lbfv_row_count(BfvPreset::InsecureThreshold512), Some(3));
+        assert!(lbfv_urs_seed(BfvPreset::InsecureDkg).is_none());
+        assert_eq!(lbfv_row_count(BfvPreset::InsecureThreshold), Some(3));
         assert_eq!(lbfv_row_count(BfvPreset::SecureThreshold16384), Some(5));
         assert_eq!(lbfv_row_count(BfvPreset::SecureThreshold8192), None);
         assert!(is_supported_lbfv_row_count(3));
@@ -109,7 +109,7 @@ mod tests {
 
     #[test]
     fn seeded_vectors_have_independent_slots() {
-        let params = crate::BfvParamSet::from(BfvPreset::InsecureThreshold512).build_arc();
+        let params = crate::BfvParamSet::from(BfvPreset::InsecureThreshold).build_arc();
         let crs = CommonRandomPolyVec::from_seed(&params, INSECURE_LBFV_CRS_SEED)
             .expect("CRS seed must produce a valid vector");
         let urs = CommonRandomPolyVec::from_seed(&params, INSECURE_LBFV_URS_SEED)
