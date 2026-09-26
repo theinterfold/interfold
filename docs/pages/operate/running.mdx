@@ -76,8 +76,8 @@ chains:
         address: '0x0ec90465095C21830BEcED07e032809A2Bd2915F'
         deploy_block: 25473398
       slashing_manager:
-        address: '0x974E865B1BB24AF2a9ef8204AdEA9251Cc7C5FD9'
-        deploy_block: 25786375
+        address: '0x753109Ee36Dc65cC178875AddA30C6433e5bEEe4'
+        deploy_block: 25998899
       fee_token:
         address: '0xdC035D45d973E3EC169d2276DDab16f1e407384F'
         deploy_block: 20663730
@@ -345,7 +345,9 @@ process manager restarts it. Give the node more than 60 seconds to stop (see
 
 The release image `ghcr.io/theinterfold/ciphernode` contains the `interfold` binary at
 `/usr/local/bin/interfold`. It runs as the user `ciphernode` (UID 1000) and is built for
-`linux/amd64`. The steps below run the binary directly with a persistent volume.
+`linux/amd64`. The image entrypoint, `ciphernode-entrypoint.sh`, stores the password and the
+operator key on the first boot, then starts the node. The node keeps its state on a named volume.
+See [Docker state](#docker-state).
 
 <Steps>
 
@@ -369,47 +371,35 @@ the current directory. The commands below mount it into the container.
 docker volume create ciphernode-data
 ```
 
-The volume holds the encryption password, the encrypted keys, the event log, and the circuit files.
+The volume holds the key file, the encrypted keys, the event log, and the circuit files.
 
-### Prepare the secrets
+### Prepare the credentials file
 
-Create two files that each contain one line: the password and the operator private key.
+On the first boot, the entrypoint reads the password and the operator key from a JSON file mounted
+at `/run/secrets/secrets.json`. It does not read them from environment variables. Create the file
+with restrictive permissions. Do not commit it or paste the values into shell history.
 
 ```bash
 umask 077
-${EDITOR:-vi} password.txt
-${EDITOR:-vi} operator-key.txt
+install -m 600 /dev/null secrets.json
+${EDITOR:-vi} secrets.json
 ```
 
-### Store the password and the key
-
-```bash
-docker run --rm -i \
-  -v ciphernode-data:/home/ciphernode/.config/interfold \
-  -v "$PWD/config.yaml":/home/ciphernode/.config/interfold/config.yaml:ro \
-  --entrypoint interfold "$CIPHERNODE_IMAGE" \
-  --config /home/ciphernode/.config/interfold/config.yaml \
-  password set --password-stdin < password.txt
-
-docker run --rm -i \
-  -v ciphernode-data:/home/ciphernode/.config/interfold \
-  -v "$PWD/config.yaml":/home/ciphernode/.config/interfold/config.yaml:ro \
-  --entrypoint interfold "$CIPHERNODE_IMAGE" \
-  --config /home/ciphernode/.config/interfold/config.yaml \
-  wallet set --private-key-stdin < operator-key.txt
+```json filename="secrets.json"
+{
+  "password": "<strong encryption password>",
+  "private_key": "0x<64 hex characters>"
+}
 ```
 
-The commands print `Password successfully set.` and
-`Wallet key has been successfully stored and encrypted.`
+Both values are required. The wallet command derives the libp2p identity from the operator key. Keep
+the password and the key in your secret management system.
 
-### Remove the plaintext files
+The entrypoint reads this file only when the volume has no key file or no wallet key. After it uses
+the file, it tries to delete it. A read-only mount stays in place, and the boot continues.
 
-```bash
-rm password.txt operator-key.txt
-```
-
-Keep the password and the key in your secret management system. You need the password again only to
-restore the volume on a new host.
+Do not set `autopassword` in `config.yaml` for the image. With `autopassword`, the node creates a
+random password before the entrypoint can set the password from this file.
 
 ### Start the container
 
@@ -418,12 +408,11 @@ docker run -d \
   --name ciphernode \
   --restart unless-stopped \
   --stop-timeout 65 \
-  -v ciphernode-data:/home/ciphernode/.config/interfold \
+  -v ciphernode-data:/home/ciphernode/.local/share/interfold \
   -v "$PWD/config.yaml":/home/ciphernode/.config/interfold/config.yaml:ro \
+  -v "$PWD/secrets.json":/run/secrets/secrets.json:ro \
   -p 9091:9091/udp \
-  --entrypoint interfold "$CIPHERNODE_IMAGE" \
-  --config /home/ciphernode/.config/interfold/config.yaml \
-  start -v
+  "$CIPHERNODE_IMAGE"
 ```
 
 ### Read the logs
@@ -431,6 +420,9 @@ docker run -d \
 ```bash
 docker logs -f ciphernode
 ```
+
+On the first boot, the log shows `Setting password` and `Setting wallet key`. Each boot then shows
+`Starting ciphernode`.
 
 </Steps>
 
@@ -442,23 +434,29 @@ services:
     image: ${CIPHERNODE_IMAGE:?set CIPHERNODE_IMAGE to a versioned release tag}
     restart: unless-stopped
     stop_grace_period: 65s
-    entrypoint: ['interfold']
-    command: ['--config', '/home/ciphernode/.config/interfold/config.yaml', 'start', '-v']
     volumes:
-      - ciphernode-data:/home/ciphernode/.config/interfold
+      - ciphernode-data:/home/ciphernode/.local/share/interfold
       - ./config.yaml:/home/ciphernode/.config/interfold/config.yaml:ro
+    secrets:
+      - source: ciphernode_credentials
+        target: secrets.json
     ports:
       - '9091:9091/udp'
+
+secrets:
+  ciphernode_credentials:
+    file: ./secrets.json
 
 volumes:
   ciphernode-data:
 ```
 
 <Callout type='warning'>
-  Do not use the default entrypoint of the image (`ciphernode-entrypoint.sh`) with a mounted secrets
-  file. That script reads `/run/secrets/secrets.json` and then deletes it. Docker cannot delete a
-  bind-mounted file, so the script stops before it starts the node. The script also needs the
-  secrets file again at each container start.
+  Do not start this image with `--entrypoint interfold`. The image sets `E3_CONFIG_DIR` and
+  `E3_DATA_DIR`, and only the entrypoint decides whether to keep them. A node that runs with
+  `--entrypoint interfold` and a volume at `/home/ciphernode/.config/interfold` does not find its
+  state. Remove `--entrypoint interfold` (or `entrypoint` in Compose) and keep the same volumes. The
+  entrypoint finds the state at `/home/ciphernode/.config/interfold/.interfold` and keeps using it.
 </Callout>
 
 The node refuses to start when the container has less than 17 GiB of memory. On Docker Desktop,
@@ -562,8 +560,16 @@ interfold node validate
 ```
 
 The command changes no files. It ends with `VALIDATION PASSED` or reports `FAIL` lines, and it exits
-with a non-zero status on a failure. In Docker, run it with the same volume and
-`--entrypoint interfold`, as in the steps above.
+with a non-zero status on a failure. In Docker, run it through the image entrypoint with the same
+volume and configuration:
+
+```bash
+docker run --rm \
+  -v ciphernode-data:/home/ciphernode/.local/share/interfold \
+  -v "$PWD/config.yaml":/home/ciphernode/.config/interfold/config.yaml:ro \
+  "$CIPHERNODE_IMAGE" \
+  node validate --config /home/ciphernode/.config/interfold/config.yaml
+```
 
 ### Repair a recoverable tail
 
@@ -595,10 +601,11 @@ and run the validation before the next start. When a release changes the storage
 
 ## Data and backups
 
-The node keeps all state in a `.interfold` directory next to its configuration file. The password
+A CLI node keeps all state in a `.interfold` directory next to its configuration file. The password
 file is in `.interfold/config/<name>/`. The key store and the event log are in
 `.interfold/data/<name>/`. Run `interfold config get db_file` to print the path on your host. The
-[requirements](/operate/requirements#disk-and-storage) page lists the contents.
+[requirements](/operate/requirements#disk-and-storage) page lists the contents. The Docker image
+keeps the state on its volume. See [Docker state](#docker-state).
 
 Back up the complete `.interfold` directory as one unit, while the node is stopped. The event log
 refers to files in its `event-blobs-v1` directory. Do not delete those files to free space.
@@ -608,6 +615,126 @@ refers to files in its `event-blobs-v1` directory. Do not delete those files to 
   directory can sign as your operator. Encrypt backups and control access to them. Do not run two
   nodes from copies of the same directory. See [Migrate a Node](/operate/migrating).
 </Callout>
+
+## Docker state
+
+### Where the node stores its state
+
+The image sets `E3_CONFIG_DIR=/home/ciphernode/.local/share/interfold/config` and
+`E3_DATA_DIR=/home/ciphernode/.local/share/interfold/data`. Thus the node keeps all of its state on
+the volume at `/home/ciphernode/.local/share/interfold`:
+
+| Path on the volume    | Contents                                                                        |
+| --------------------- | ------------------------------------------------------------------------------- |
+| `config/_default/key` | Key file with the password that encrypts the stored keys                        |
+| `data/_default/db`    | Key/value store: wallet key, libp2p keypair, key shares, and protocol snapshots |
+| `data/_default/log.*` | Event logs                                                                      |
+
+A restart, a new container, and a new image all keep this state. `docker rm` does not delete a named
+volume.
+
+These variables override `config.yaml`, so the entrypoint never uses them to move state that exists.
+If `config.yaml` sets `config_dir`, `data_dir`, `key_file`, or `db_file`, the node uses that
+location. If a key file or database exists at `/home/ciphernode/.config/interfold/.interfold`, for
+example on a volume that is mounted at `/home/ciphernode/.config/interfold`, the node keeps using
+it. If state exists both there and on the volume, the container does not start. Keep only the state
+that the node last used, and start the container again. You can also set your own `E3_CONFIG_DIR`
+and `E3_DATA_DIR` for the container.
+
+In these cases the node does not use the image variables, so run other `interfold` commands through
+the entrypoint, which chooses the same location. For example, run
+`docker exec ciphernode ciphernode-entrypoint.sh wallet get --config /home/ciphernode/.config/interfold/config.yaml`.
+The command in [Validate the state](#validate-the-state) also runs through the entrypoint.
+
+### Move state from an earlier image
+
+Earlier images did not set these variables. A node that started from such an image, without a volume
+at `/home/ciphernode/.config/interfold`, keeps its state inside the container, in
+`/home/ciphernode/.config/interfold/.interfold`. That directory is not on the volume. When you
+remove or recreate that container, you lose the key file, the key/value store, and the event log.
+The key/value store holds the key shares of the node, and the chain cannot restore them.
+
+<Callout type='warning'>
+  Do not remove or recreate the old container before you copy its state. `docker rm`, `docker
+  compose down`, and `docker compose up` with a new image all remove the old container. Never do
+  this migration with `interfold node reset-data` or `interfold nodes purge`. These commands delete
+  the state that you must keep.
+</Callout>
+
+Do this procedure one time for each node. Do it only when the new image accepts the stored schema. A
+node that serves an active E3 on v0.17.0 must stay on v0.17.0. See
+[Upgrade a node that serves an active E3](/operate/upgrades#upgrade-a-node-that-serves-an-active-e3).
+
+The commands use the container name `ciphernode` and the volume name `ciphernode-data`. For Docker
+Compose, use the names that `docker ps -a` and `docker volume ls` show.
+
+1. Stop the old container. Do not remove it.
+
+   ```bash
+   docker stop --time 65 ciphernode
+   ```
+
+2. Make sure that the volume has no `data` or `config` directory. If the output shows either name,
+   stop and contact the protocol team.
+
+   ```bash
+   docker run --rm \
+     -v ciphernode-data:/home/ciphernode/.local/share/interfold \
+     --entrypoint ls \
+     "$CIPHERNODE_IMAGE" \
+     -A /home/ciphernode/.local/share/interfold
+   ```
+
+3. Copy the `data` and `config` directories from the old container to the volume. `docker cp` sends
+   each directory as a tar stream, so the key file does not go to the host disk.
+
+   ```bash
+   for dir in data config; do
+     docker cp "ciphernode:/home/ciphernode/.config/interfold/.interfold/$dir" - |
+       docker run --rm -i \
+         -v ciphernode-data:/home/ciphernode/.local/share/interfold \
+         --entrypoint tar \
+         "$CIPHERNODE_IMAGE" \
+         -xf - -C /home/ciphernode/.local/share/interfold
+   done
+   ```
+
+4. Make sure that the copy is complete. The output must show `key`, `db`, and `log.0`. If a name is
+   missing, stop and contact the protocol team.
+
+   ```bash
+   docker run --rm \
+     -v ciphernode-data:/home/ciphernode/.local/share/interfold \
+     --entrypoint ls \
+     "$CIPHERNODE_IMAGE" \
+     /home/ciphernode/.local/share/interfold/config/_default \
+     /home/ciphernode/.local/share/interfold/data/_default
+   ```
+
+5. Run the command in [Validate the state](#validate-the-state) with the new image. Continue only if
+   the report shows `on-disk schema version 7 matches this binary` and ends with
+   `VALIDATION PASSED — state is intact and consistent.` If validation fails, or if it shows
+   `empty store will be initialized`, do not start the new image. Keep the old container and the
+   volume, and contact the protocol team.
+
+6. Start the new image. For `docker run`, rename the old container first, then use the command in
+   [Start the container](#start-the-container):
+
+   ```bash
+   docker rename ciphernode ciphernode-old
+   ```
+
+   For Docker Compose, set the new image and run `docker compose up -d`. This command replaces the
+   old container.
+
+7. Make sure that the log shows `Ciphernode release is accepted`, and that this command shows the
+   operator address:
+
+   ```bash
+   docker exec ciphernode ciphernode-entrypoint.sh wallet get --config /home/ciphernode/.config/interfold/config.yaml
+   ```
+
+8. For `docker run`, remove the old container only after step 7 succeeds.
 
 ## Networking
 

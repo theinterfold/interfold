@@ -642,14 +642,17 @@ the storage schema and the binary refuses to load the old data folder.
 interfold node reset-data --yes
 ```
 
-| Flag    | Value | Default | Description                                                                                     |
-| ------- | ----- | ------- | ----------------------------------------------------------------------------------------------- |
-| `--yes` | None  | Off     | Confirms the deletion. Without it, the command stops with a message that lists what it deletes. |
+| Flag                 | Value | Default | Description                                                                                                                     |
+| -------------------- | ----- | ------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `--yes`              | None  | Off     | Confirms the deletion. Without it, the command stops with a message that lists what it deletes.                                 |
+| `--allow-active-e3s` | None  | Off     | Deletes the state even when this node holds a key share for an E3 that it has not seen complete. The node loses that key share. |
 
 The command first writes an encrypted backup of the wallet key and libp2p key to
 `identity-backup-<name>-<timestamp>.json` next to the database. Then it deletes the key/value store
 and the event log, writes the identity back, and reads it again to confirm. The command refuses to
-run while the node runs.
+run while the node runs. It also refuses, and deletes nothing, while the node holds a key share for
+an E3 that it has not seen complete, including an E3 that shows `Failed`. See
+[Reset node state](/operate/upgrades#reset-node-state).
 
 <Callout type='warning'>
   Do not delete the data folder by hand. The wallet key and the libp2p key are in the same store as
