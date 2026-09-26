@@ -6,6 +6,7 @@ use super::effects::*;
 use super::*;
 use e3_events::EventSource;
 use std::collections::HashSet;
+use tracing::debug;
 
 const PUBLICATION_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(30);
 const FAILURE_RETRY_DELAY: Duration = Duration::from_secs(30);
@@ -413,10 +414,15 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<ProcessFailedE3>
                 let terminal = match &result {
                     Ok(FailureSettlementOutcome::Submitted(_)
                     | FailureSettlementOutcome::Completed) => true,
-                    Ok(FailureSettlementOutcome::Pending) => false,
+                    Ok(FailureSettlementOutcome::Pending | FailureSettlementOutcome::Blocked) => {
+                        false
+                    }
                     Err(error) => failure_settlement_error_is_terminal(error),
                 };
                 actor.failure_settlements.finish(&e3_id, terminal);
+                if terminal {
+                    actor.blocked_settlements.clear(&e3_id);
+                }
 
                 match result {
                     Ok(FailureSettlementOutcome::Submitted(receipt)) => {
@@ -431,6 +437,24 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<ProcessFailedE3>
                     }
                     Ok(FailureSettlementOutcome::Pending) => {
                         ctx.notify_later(ProcessFailedE3 { e3_id }, FAILURE_RETRY_DELAY);
+                    }
+                    Ok(FailureSettlementOutcome::Blocked) => {
+                        let (delay, first) = actor.blocked_settlements.record(&e3_id);
+                        if first {
+                            info!(
+                                e3_id = %e3_id,
+                                retry_in_secs = delay.as_secs(),
+                                "Failure settlement is blocked until the accusation window closes \
+                                 and committee proposals resolve"
+                            );
+                        } else {
+                            debug!(
+                                e3_id = %e3_id,
+                                retry_in_secs = delay.as_secs(),
+                                "Failure settlement is still blocked"
+                            );
+                        }
+                        ctx.notify_later(ProcessFailedE3 { e3_id }, delay);
                     }
                     Err(_) if terminal => {
                         info!(e3_id = %e3_id, "Failure settlement was already processed");
@@ -575,5 +599,69 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<MarkFailedAtDeadlin
                 }
             }),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy::{
+        network::EthereumWallet, providers::ProviderBuilder, signers::local::PrivateKeySigner,
+        sol_types::SolValue, transports::mock::Asserter,
+    };
+    use e3_ciphernode_builder::EventSystem;
+    use e3_events::TakeEvents;
+
+    #[actix::test]
+    async fn blocked_settlement_sends_no_transaction_and_no_error() -> Result<()> {
+        let system = EventSystem::new().with_fresh_bus();
+        let bus = system.handle()?.enable("blocked-settlement");
+        let errors = bus.errors();
+
+        let asserter = Asserter::new();
+        asserter.push_success(&"0x1");
+        let provider = EthProvider::new(
+            ProviderBuilder::new()
+                .wallet(EthereumWallet::from(PrivateKeySigner::random()))
+                .connect_mocked_client(asserter.clone()),
+        )
+        .await?;
+        // `getE3Stage` reports Failed, then the `processE3Failure` simulation reverts with
+        // `SettlementBlocked()`. The mock has no response for a nonce read or a transaction.
+        asserter.push_success(&Bytes::from(U256::from(6).abi_encode()));
+        asserter.push_failure(serde_json::from_str(
+            r#"{"code":3,"message":"execution reverted","data":"0xf51125bb"}"#,
+        )?);
+
+        let writer = InterfoldSolWriter::new_with_recovery(
+            &bus,
+            provider,
+            Address::ZERO,
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+            HashSet::from([E3id::new("7", 1)]),
+        )?
+        .start();
+        writer.send(EffectsEnabled::new()).await?;
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let consumed = asserter.read_q().is_empty();
+                if consumed {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await?;
+        let received = errors.send(TakeEvents::new(1)).await?;
+        assert!(
+            received.timed_out,
+            "a blocked settlement must not emit InterfoldError: {:?}",
+            received.events
+        );
+        Ok(())
     }
 }

@@ -156,7 +156,10 @@ may auto-submit it from any effects-enabled node on the same chain, and it must 
 active-aggregator designation because failures can happen before committee finalization or while the
 current aggregator is offline. A restart restores failed E3 IDs from the durable lifecycle map. The
 writer retries transient failures and treats `NoPaymentToRefund` as proof that another account has
-already processed the escrow.
+already processed the escrow. Before it takes the transaction nonce guard, the writer simulates the
+call with `eth_call`. If the simulation reverts with `SettlementBlocked` (see step 0 below), the
+writer does not emit `InterfoldError`. It retries that E3 after 30 s and doubles the delay after
+each blocked attempt, up to 30 min. This backoff is process-local; a restart starts again at 30 s.
 
 ```text
 Anyone calls: Interfold.processE3Failure(e3Id)

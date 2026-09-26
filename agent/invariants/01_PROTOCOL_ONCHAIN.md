@@ -219,8 +219,8 @@ every section.
 - Sortition score must be byte-identical on- and off-chain:
   `score = keccak256(abi.encodePacked(operator, ticketNumber, e3Id, seed))` with `seed` as a
   `uint256`, where `seed = keccak256(abi.encode(randomWord, chainid, registry, e3Id, requestId))`.
-  **Gap:** Rust builds the VRF-path `Seed` with `to_be_bytes` and decodes it with `from_le_bytes`,
-  so it scores a byte-reversed seed (`crates/evm/src/randomness_provider/events.rs`,
+  Rust stores the VRF-path seed with `Seed::from(U256)`, the little-endian order that
+  `hash_to_score` decodes (`crates/evm/src/randomness_provider/events.rs`,
   `crates/sortition/src/sortition/ticket.rs`). New requests keep the best submission per
   request-time bond owner, then the lowest N owner scores. Owner-capped requests break ties by
   ascending operator address. Each E3 freezes one `IRandomnessProvider` request, response deadline,

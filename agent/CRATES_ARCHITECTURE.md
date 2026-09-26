@@ -855,6 +855,15 @@ backfills a missing outbox from EventStore history. A crash after transaction br
 require on-chain reconciliation to distinguish landed from missing work; contract replay protection
 makes a repeated proposal safe.
 
+At startup, `CiphernodeBuilder` reads `Interfold.slashingManager()` on each enabled chain. That
+chain's `SlashExecuted` reader and proposal writer use the resolved address, and the chain's log
+filter contains only that SlashingManager address. The accusation manager signs every vote with one
+EIP-712 `verifyingContract`: the resolved address of the first configured chain that has one. A
+different configured `slashing_manager` causes a warning and is not used. The configured address
+applies only when the read still fails after two retries or returns zero, or when the chain is
+disabled and has no provider; a failed read logs an error because the configured address can be a
+retired manager. The history backfill start block comes from the configured `deploy_block` values.
+
 ## Program-server trust boundary
 
 ```mermaid

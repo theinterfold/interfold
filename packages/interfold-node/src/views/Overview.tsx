@@ -11,6 +11,8 @@ interface OperatorCard {
   activeNodes: string
   registered: boolean
   active: boolean
+  /** `null` when no live on-chain read is available. */
+  eligible: boolean | null
   exitInProgress: boolean
   ticketBalance?: string
   availableTickets?: string
@@ -57,6 +59,7 @@ export default function Overview({ snapshot }: { snapshot: DashboardSnapshot }) 
         activeNodes: live?.active_nodes ?? String(projected?.active_nodes ?? 0),
         registered: live?.operator_registered ?? projected?.operator_registered ?? false,
         active: live?.operator_active ?? projected?.operator_active ?? false,
+        eligible: live?.operator_eligible ?? null,
         exitInProgress: live?.exit_in_progress ?? projected?.exit_unlock_at !== undefined,
         ticketBalance: live?.ticket_balance ?? projected?.ticket_balance,
         availableTickets: live?.available_tickets,
@@ -183,7 +186,16 @@ export default function Overview({ snapshot }: { snapshot: DashboardSnapshot }) 
                     <dt>Rewards</dt>
                     <dd>{chain.rewardCredits} credits</dd>
                   </div>
+                  <div>
+                    <dt>Eligible for new committees</dt>
+                    <dd>{chain.eligible === null ? 'Unknown' : chain.eligible ? 'Yes' : 'No'}</dd>
+                  </div>
                 </dl>
+                {chain.active && chain.eligible === false && (
+                  <div className='alert alert--warning'>
+                    Active, but not eligible for new committees yet (admission cooldown or policy).
+                  </div>
+                )}
               </div>
             ))}
             {!operatorCards.length && <div className='empty-inline'>Waiting for on-chain registry state to sync.</div>}

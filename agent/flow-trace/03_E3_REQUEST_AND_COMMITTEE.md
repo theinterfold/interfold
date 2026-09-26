@@ -269,6 +269,7 @@ RandomnessProviderSolReader decodes RandomnessFulfilled
 │  → Registry accepts only the request-time provider and request ID
 │  → A response after randomnessDeadline is not usable
 │  → seed = keccak256(randomWord, chainId, registry, e3Id, requestId)
+│  → Stores the uint256 seed with `Seed::from`, the little-endian order that `hash_to_score` decodes
 ├─ Reads the frozen threshold, request timepoint, ticket price, and submission deadline
 └─ Publishes the existing durable CommitteeRequested event for the sortition actors
 

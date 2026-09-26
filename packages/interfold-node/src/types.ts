@@ -78,6 +78,8 @@ export interface OperatorChainStatus {
   active_nodes: string
   operator_registered: boolean
   operator_active: boolean
+  /** `BondingRegistry.eligibilityAt` at the latest block; `null` when the read failed. */
+  operator_eligible: boolean | null
   exit_in_progress: boolean
   ticket_balance: string
   available_tickets: string
