@@ -643,6 +643,14 @@ completes. Restart repeats that derivation when the fold is durable but either o
 absent. The final V2 DKG proof and publication remain blocked until both keys exist. Publication
 uses one version-3 envelope. It transports the RLK and reconstructs the embedded level-0 public key.
 
+Plaintext aggregation starts C6 verification at `T+1` distinct shares from the accepted `H`-member
+DKG roster. It does not wait for every roster member. Late shares stay in a durable backup queue. If
+a proof or raw-share commitment fails, the actor excludes that party and verifies a replacement
+batch, or waits while `T+1` valid parties remain possible. Local verification results are bound to
+the dispatch event ID and retained through replay; they cannot authorize a different batch.
+`plaintext_aggregation/validation.rs` owns the raw-share commitment check, shared by admission and
+post-verification checks. Live execution and recovery use the same threshold-decryption dispatch.
+
 After C2/C3 verification, each member publishes a signed readiness report. The active aggregator
 selects the first canonical `H` dealers that are mutually complete and announces that roster. The
 existing readiness-gated aggregator failover promotes the next eligible party if this announcement
@@ -1140,6 +1148,33 @@ seed before Rust starts sortition. Provider rotation requires all committees to 
 standard resume tool requires an explicit coordinated-restart acknowledgement before it creates an
 unpause transaction, because running nodes add provider addresses only at startup. This release
 starts Registry readers only on Ethereum mainnet, Sepolia, and local development chains.
+
+The sortition runtime ranks N-plus-buffer distinct request-time owners and retains their operators
+as backups. Before ranking, it applies the admission policy and position starts at
+`requestBlock - 1`. `AdmissionUpdated` carries the contract timestamp. Its separate versioned v2
+repository preserves old node payloads. Startup rebuilds missing chain projections from typed events
+in aggregate zero and legacy raw logs in each chain aggregate. Replay decodes raw admission logs
+after the snapshot cursor too. The decoder checks the EVM source and ABI, not old catalog labels.
+Disabled, unpaused policies return the existing view immediately. Enabled policies filter locally,
+without per-request RPC reads. A pause also requires activity before the pause and does not change
+previous request views. The matching contract check remains authoritative.
+
+Local capacity gates each node's submission. Finalization ranks visit each owner's best operator
+before its backups. The contract selects at most one operator per owner for capped requests;
+canonical party IDs still come from the finalized address order. The existing EVM decoder wraps
+`BondOwnerSet` as the appended `BondOwnerSetAt` event, with the original block time in seconds. The
+separate v2 owner repository never imports ingestion-time v1 checkpoints. Startup backfills missing
+chain projections through aggregate zero's snapshot cursor without changing existing node or
+recovery payloads. Legacy owner events still decode but cannot establish chain-time history. Missing
+history permits all eligible submissions instead of excluding owners. The
+`sortition_owner_history_fallback` warning includes the E3, chain, snapshot time, missing-owner
+count, and eligible-operator count. It does not add an RPC call or fail the round. Existing ticket
+intents keep their ticket numbers and finalization ranks on restart, including nodes with
+aggregation disabled. Startup reads prefix intents from the durable event log; replay marks suffix
+intents as processed before effects resume. A separate `restart_input_cursors/v1` repository records
+the checked prefix for each unfinished E3, including scans with no local ticket. Later restarts scan
+only newly snapshotted records. The cursor advances only after recovered repositories are durable.
+New E3s start from zero; terminal or finalized E3 checkpoints are removed.
 
 ## Subsystem contracts
 

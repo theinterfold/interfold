@@ -30,9 +30,9 @@
 //!
 //! On-chain tests require:
 //! - `anvil` on PATH (from Foundry)
-//! - Compiled Hardhat artifacts: `cd packages/interfold-contracts && npx hardhat compile`
+//! - Compiled Hardhat artifacts: `pnpm evm:build`
 //!
-//! Run with: `cargo test -p e3-zk-prover --test slashing_integration_tests`
+//! Run with: `pnpm rust:test:slashing`
 
 mod common;
 
@@ -51,7 +51,8 @@ use e3_events::{
     SignedProofPayload,
 };
 use e3_utils::utility_types::ArcBytes;
-use std::path::PathBuf;
+use serde::Deserialize;
+use std::{collections::BTreeMap, path::PathBuf, sync::OnceLock};
 
 // ── Contract ABI definitions (bytecodes loaded from Hardhat artifacts at runtime) ──
 
@@ -76,6 +77,26 @@ sol! {
         function setBondingRegistry(address newBondingRegistry) external;
         function setCiphernodeRegistry(address newCiphernodeRegistry) external;
         function setInterfold(address newInterfold) external;
+        struct SlashProposal {
+            uint256 e3Id;
+            address operator;
+            bytes32 reason;
+            uint256 ticketAmount;
+            uint256 ciphernodeBondAmount;
+            bool executed;
+            bool appealed;
+            bool resolved;
+            bool appealUpheld;
+            uint256 proposedAt;
+            uint256 executableAt;
+            address proposer;
+            bytes32 proofHash;
+            bool proofVerified;
+            bool banNode;
+            bool affectsCommittee;
+            uint8 failureReason;
+        }
+        function getSlashProposal(uint256 proposalId) external view returns (SlashProposal memory);
         function totalProposals() external view returns (uint256);
         function isBanned(address node) external view returns (bool);
 
@@ -88,6 +109,20 @@ sol! {
     }
 
     #[sol(rpc)]
+    contract MockSlashingInterfold {
+        function snapshotDependencies(address manager, uint256 e3Id, uint256 lifecycleDeadline) external;
+    }
+
+    #[sol(rpc)]
+    contract MockSlashingBondingRegistry {
+        function ticketPenaltyRequested() external view returns (uint256);
+        function bondPenaltyRequested() external view returns (uint256);
+        function openLocks() external view returns (uint256);
+        function openSlashLockCalls() external view returns (uint256);
+        function closeSlashLockCalls() external view returns (uint256);
+    }
+
+    #[sol(rpc)]
     contract MockCiphernodeRegistry {
         function setCommitteeNodes(uint256 e3Id, address[] calldata nodes) external;
         function setThreshold(uint256 e3Id, uint32 m) external;
@@ -97,61 +132,92 @@ sol! {
 
 // ── Helpers ──
 
-/// No-op contract deployment bytecode.
-///
-/// Deploys a contract whose runtime is a single STOP opcode.
-/// All calls to this contract succeed with empty return data, making it
-/// suitable as a mock for any interface that only has void-returning functions
-/// (e.g., IInterfold.onE3Failed).
-const NOOP_DEPLOY_BYTECODE: &[u8] = &[
-    0x60, 0x01, // PUSH1 0x01 (runtime size)
-    0x60, 0x0c, // PUSH1 0x0c (offset of runtime in init code)
-    0x60, 0x00, // PUSH1 0x00 (memory destination)
-    0x39, //       CODECOPY
-    0x60, 0x01, // PUSH1 0x01 (return size)
-    0x60, 0x00, // PUSH1 0x00 (return offset)
-    0xf3, //       RETURN
-    0x00, //       -- runtime: STOP --
-];
+#[derive(Deserialize)]
+struct LinkReference {
+    start: usize,
+    length: usize,
+}
 
-/// Mock contract that returns 32 zero bytes for any call.
-///
-/// EVM memory is zero-initialized, so `RETURN(0x00, 0x20)` returns 32 zero bytes.
-/// Suitable as a mock for interfaces that return a single `uint256`
-/// (e.g., `IBondingRegistry.slashTicketBalance` returns `uint256`).
-const RETURNER_DEPLOY_BYTECODE: &[u8] = &[
-    0x60, 0x05, // PUSH1 0x05 (runtime size)
-    0x60, 0x0c, // PUSH1 0x0c (offset of runtime in init code)
-    0x60, 0x00, // PUSH1 0x00 (memory destination)
-    0x39, //       CODECOPY
-    0x60, 0x05, // PUSH1 0x05 (return size)
-    0x60, 0x00, // PUSH1 0x00 (return offset)
-    0xf3, //       RETURN
-    // -- runtime: return 32 zero bytes --
-    0x60, 0x20, // PUSH1 0x20
-    0x60, 0x00, // PUSH1 0x00
-    0xf3, //       RETURN
-];
+#[derive(Deserialize)]
+struct ContractArtifact {
+    bytecode: String,
+    #[serde(rename = "linkReferences", default)]
+    links: BTreeMap<String, BTreeMap<String, Vec<LinkReference>>>,
+}
 
-fn contracts_artifacts_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+struct SlashingArtifacts {
+    manager: ContractArtifact,
+    registry: Vec<u8>,
+    evidence_library: Vec<u8>,
+    interfold: Vec<u8>,
+    bonding: Vec<u8>,
+}
+
+fn read_artifact(subpath: &str) -> ContractArtifact {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../packages/interfold-contracts/artifacts/contracts")
+        .join(subpath);
+    let raw = std::fs::read_to_string(&path).unwrap_or_else(|error| {
+        panic!(
+            "Cannot read {}: {error}. Run pnpm evm:build.",
+            path.display()
+        )
+    });
+    serde_json::from_str(&raw)
+        .unwrap_or_else(|error| panic!("Invalid artifact {}: {error}", path.display()))
 }
 
-fn read_artifact_bytecode(subpath: &str) -> Option<Vec<u8>> {
-    let path = contracts_artifacts_dir().join(subpath);
-    let json_str = std::fs::read_to_string(&path).ok()?;
-    let json: serde_json::Value = serde_json::from_str(&json_str).ok()?;
-    let hex_str = json["bytecode"].as_str()?;
-    let clean = hex_str.strip_prefix("0x").unwrap_or(hex_str);
-    hex::decode(clean).ok()
+fn decode_bytecode(artifact: &ContractArtifact) -> Vec<u8> {
+    let bytes = hex::decode(
+        artifact
+            .bytecode
+            .strip_prefix("0x")
+            .unwrap_or(&artifact.bytecode),
+    )
+    .expect("Artifact bytecode must be linked hexadecimal");
+    assert!(!bytes.is_empty(), "Artifact deployment bytecode is empty");
+    bytes
 }
 
-/// Load contract bytecodes, returning None if any are missing.
-fn load_slashing_artifacts() -> Option<(Vec<u8>, Vec<u8>)> {
-    let sm = read_artifact_bytecode("slashing/SlashingManager.sol/SlashingManager.json")?;
-    let mr = read_artifact_bytecode("test/MockCiphernodeRegistry.sol/MockCiphernodeRegistry.json")?;
-    Some((sm, mr))
+fn load_slashing_artifacts() -> &'static SlashingArtifacts {
+    static ARTIFACTS: OnceLock<SlashingArtifacts> = OnceLock::new();
+    ARTIFACTS.get_or_init(|| SlashingArtifacts {
+        manager: read_artifact("slashing/SlashingManager.sol/SlashingManager.json"),
+        registry: decode_bytecode(&read_artifact(
+            "test/MockCiphernodeRegistry.sol/MockCiphernodeRegistry.json",
+        )),
+        evidence_library: decode_bytecode(&read_artifact(
+            "lib/SlashingEvidenceLib.sol/SlashingEvidenceLib.json",
+        )),
+        interfold: decode_bytecode(&read_artifact(
+            "test/MockSlashingInterfold.sol/MockSlashingInterfold.json",
+        )),
+        bonding: decode_bytecode(&read_artifact(
+            "test/MockSlashingBondingRegistry.sol/MockSlashingBondingRegistry.json",
+        )),
+    })
+}
+
+fn link_manager_bytecode(artifact: &ContractArtifact, library: Address) -> Vec<u8> {
+    let mut bytecode = artifact
+        .bytecode
+        .strip_prefix("0x")
+        .unwrap_or(&artifact.bytecode)
+        .to_owned();
+    for libraries in artifact.links.values() {
+        for (name, references) in libraries {
+            assert_eq!(name, "SlashingEvidenceLib", "Unexpected linked library");
+            for reference in references {
+                assert_eq!(
+                    reference.length, 20,
+                    "A linked address must occupy 20 bytes"
+                );
+                let start = reference.start * 2;
+                bytecode.replace_range(start..start + 40, &hex::encode(library));
+            }
+        }
+    }
+    hex::decode(bytecode).expect("SlashingManager bytecode must be fully linked")
 }
 
 /// Deploy a contract on the connected provider.
@@ -575,9 +641,9 @@ fn test_vote_typehash() {
     );
 }
 
-/// Verifies vote digest computation matches the canonical EIP-712 typed-data hash.
+/// Verifies vote identifiers and EIP-712 hashing against an ethers-generated vector.
 #[test]
-fn test_vote_digest_manual_computation() {
+fn test_vote_digest_matches_external_vector() {
     let chain_id = 31337u64;
     let verifying_contract: Address = "0x9999999999999999999999999999999999999999"
         .parse()
@@ -593,6 +659,12 @@ fn test_vote_digest_manual_computation() {
     let data_hash = FixedBytes::from([0xab; 32]);
 
     let accusation_id = compute_accusation_id(chain_id, e3_id, operator, proof_type);
+    assert_eq!(
+        accusation_id,
+        "0x4511f8ed6c3d679b420f7632b2e7603a3efc8a630e779ce7260a15e4b92dca96"
+            .parse::<FixedBytes<32>>()
+            .unwrap()
+    );
     let digest = compute_vote_digest(
         chain_id,
         verifying_contract,
@@ -604,31 +676,12 @@ fn test_vote_digest_manual_computation() {
         TEST_DEADLINE,
     );
 
-    // Manual EIP-712 computation
-    let typehash = keccak256(VOTE_TYPEHASH_STR);
-    let struct_hash: FixedBytes<32> = keccak256(
-        (
-            typehash,
-            U256::from(e3_id),
-            accusation_id,
-            voter,
-            data_hash,
-            TEST_ISSUED_AT,
-            TEST_DEADLINE,
-        )
-            .abi_encode(),
-    );
-    let domain = compute_vote_domain_separator(chain_id, verifying_contract);
-    let mut buf = Vec::with_capacity(2 + 32 + 32);
-    buf.push(0x19);
-    buf.push(0x01);
-    buf.extend_from_slice(domain.as_ref());
-    buf.extend_from_slice(struct_hash.as_ref());
-    let expected: FixedBytes<32> = keccak256(&buf);
-
     assert_eq!(
-        digest, expected,
-        "vote digest should match canonical EIP-712 typed-data hash"
+        digest,
+        "0xcb216d9b5829c294d91eb7a47e64aec925818d691097005aa78e844591667545"
+            .parse::<FixedBytes<32>>()
+            .unwrap(),
+        "vote digest must match the independently generated EIP-712 vector"
     );
 }
 
@@ -818,28 +871,27 @@ fn test_attestation_evidence_encoding() {
 // ════════════════════════════════════════════════════════════════════════════
 
 /// Deploy SlashingManager and configure dependencies.
-/// Returns (SlashingManager contract instance, admin address).
+/// Returns the manager and the collateral-call recorder addresses.
 async fn deploy_and_configure(
     provider: &impl Provider,
-    sm_bytecode: &[u8],
+    sm_artifact: &ContractArtifact,
     mock_registry_addr: Address,
 ) -> (Address, Address) {
     let accounts = provider.get_accounts().await.unwrap();
     let admin = accounts[0];
 
-    // Deploy noop for interfold (void functions)
-    let noop_addr = deploy_contract(provider, NOOP_DEPLOY_BYTECODE, &[]).await;
-    // Deploy returner for bondingRegistry (slashTicketBalance returns uint256)
-    let returner_addr = deploy_contract(provider, RETURNER_DEPLOY_BYTECODE, &[]).await;
-
-    // Deploy SlashingManager(initialDelay, admin) — use 0 delay for local tests
+    let artifacts = load_slashing_artifacts();
+    let interfold_addr = deploy_contract(provider, &artifacts.interfold, &[]).await;
+    let bonding_addr = deploy_contract(provider, &artifacts.bonding, &[]).await;
+    let library_addr = deploy_contract(provider, &artifacts.evidence_library, &[]).await;
+    let bytecode = link_manager_bytecode(sm_artifact, library_addr);
     let sm_args = (0u64, admin).abi_encode();
-    let sm_addr = deploy_contract(provider, sm_bytecode, &sm_args).await;
+    let sm_addr = deploy_contract(provider, &bytecode, &sm_args).await;
 
     // Configure dependencies via admin functions
     let slashing_mgr = SlashingManager::new(sm_addr, provider);
     slashing_mgr
-        .setBondingRegistry(returner_addr)
+        .setBondingRegistry(bonding_addr)
         .send()
         .await
         .unwrap()
@@ -855,7 +907,7 @@ async fn deploy_and_configure(
         .await
         .unwrap();
     slashing_mgr
-        .setInterfold(noop_addr)
+        .setInterfold(interfold_addr)
         .send()
         .await
         .unwrap()
@@ -863,7 +915,20 @@ async fn deploy_and_configure(
         .await
         .unwrap();
 
-    (sm_addr, admin)
+    // Each test uses one of these E3 IDs. Snapshot the request-time dependencies.
+    let interfold = MockSlashingInterfold::new(interfold_addr, provider);
+    let (_, deadline) = current_vote_window(provider).await;
+    for e3_id in [7u64, 42u64] {
+        interfold
+            .snapshotDependencies(sm_addr, U256::from(e3_id), deadline)
+            .send()
+            .await
+            .expect("Snapshot dependencies transaction")
+            .get_receipt()
+            .await
+            .expect("Snapshot dependencies receipt");
+    }
+    (sm_addr, bonding_addr)
 }
 
 /// **Lane A attestation flow**: 3 committee members vote on a fault, quorum
@@ -872,22 +937,14 @@ async fn deploy_and_configure(
 /// Proves the complete Rust→Solidity attestation signing pipeline works:
 /// vote_digest → sign_message_sync → abi.encode evidence → proposeSlash → _verifyAttestationEvidence
 #[tokio::test]
+#[ignore = "requires prepared integration artifacts; run pnpm rust:test:slashing"]
 async fn test_onchain_valid_attestation_executes_slash() {
     if !find_anvil().await {
-        println!("skipping: anvil not found on PATH");
-        return;
+        panic!("missing required test prerequisite: anvil not found on PATH");
     }
 
-    let (sm_bytecode, mr_bytecode) = match load_slashing_artifacts() {
-        Some(artifacts) => artifacts,
-        None => {
-            println!(
-                "skipping: contract artifacts not found \
-                 (run `npx hardhat compile` in packages/interfold-contracts)"
-            );
-            return;
-        }
-    };
+    let artifacts = load_slashing_artifacts();
+    let (sm_bytecode, mr_bytecode) = (&artifacts.manager, &artifacts.registry);
 
     let provider = ProviderBuilder::new().connect_anvil_with_wallet();
     let chain_id = provider.get_chain_id().await.unwrap();
@@ -907,7 +964,8 @@ async fn test_onchain_valid_attestation_executes_slash() {
     let mock_registry = MockCiphernodeRegistry::new(mock_registry_addr, &provider);
 
     // Deploy and configure SlashingManager
-    let (sm_addr, _admin) = deploy_and_configure(&provider, &sm_bytecode, mock_registry_addr).await;
+    let (sm_addr, _bonding) =
+        deploy_and_configure(&provider, &sm_bytecode, mock_registry_addr).await;
     let slashing_mgr = SlashingManager::new(sm_addr, &provider);
 
     let e3_id: u64 = 42;
@@ -1050,7 +1108,7 @@ async fn test_onchain_valid_attestation_executes_slash() {
         "proposeSlash should succeed with valid attestation quorum"
     );
 
-    // Verify proposal was created and executed
+    // Verify proposal creation and execution independently.
     let proposals_after = slashing_mgr
         .totalProposals()
         .call()
@@ -1062,26 +1120,57 @@ async fn test_onchain_valid_attestation_executes_slash() {
         "should have 1 proposal after slash"
     );
 
-    println!(
-        "PASS: valid attestation quorum → slash executed — attestation signing pipeline verified"
+    let proposal = slashing_mgr
+        .getSlashProposal(U256::ZERO)
+        .call()
+        .await
+        .unwrap();
+    assert!(proposal.executed, "The proposal must be executed");
+    assert!(proposal.proofVerified, "The attestation must be verified");
+    assert_eq!(proposal.e3Id, U256::from(e3_id));
+    assert_eq!(proposal.operator, operator_addr);
+    let bonding = MockSlashingBondingRegistry::new(_bonding, &provider);
+    // Compare against the configured penalties, not only the proposal fields: a regression that
+    // zeroes the policy and the requests alike would still satisfy a proposal-only comparison.
+    let expected_ticket_penalty = U256::from(50_000_000u64);
+    let expected_bond_penalty = U256::from(100_000_000_000_000_000_000u128);
+    assert_eq!(proposal.ticketAmount, expected_ticket_penalty);
+    assert_eq!(proposal.ciphernodeBondAmount, expected_bond_penalty);
+    assert_eq!(
+        bonding.ticketPenaltyRequested().call().await.unwrap(),
+        expected_ticket_penalty
     );
+    assert_eq!(
+        bonding.bondPenaltyRequested().call().await.unwrap(),
+        expected_bond_penalty
+    );
+    // `openLocks` is a net counter, so it also reads zero when neither lock call happens.
+    // Count each call separately to show that the lock opened and then closed exactly once.
+    assert_eq!(
+        bonding.openSlashLockCalls().call().await.unwrap(),
+        U256::from(1u64),
+        "openSlashLock must be called exactly once"
+    );
+    assert_eq!(
+        bonding.closeSlashLockCalls().call().await.unwrap(),
+        U256::from(1u64),
+        "closeSlashLock must be called exactly once"
+    );
+    assert_eq!(bonding.openLocks().call().await.unwrap(), U256::ZERO);
+
+    println!("PASS: attestation verified and proposal executed against collateral-call mocks");
 }
 
 /// Tests that insufficient attestations (below threshold M) cause revert.
 #[tokio::test]
+#[ignore = "requires prepared integration artifacts; run pnpm rust:test:slashing"]
 async fn test_onchain_insufficient_attestations_reverts() {
     if !find_anvil().await {
-        println!("skipping: anvil not found on PATH");
-        return;
+        panic!("missing required test prerequisite: anvil not found on PATH");
     }
 
-    let (sm_bytecode, mr_bytecode) = match load_slashing_artifacts() {
-        Some(artifacts) => artifacts,
-        None => {
-            println!("skipping: contract artifacts not found");
-            return;
-        }
-    };
+    let artifacts = load_slashing_artifacts();
+    let (sm_bytecode, mr_bytecode) = (&artifacts.manager, &artifacts.registry);
 
     let provider = ProviderBuilder::new().connect_anvil_with_wallet();
     let chain_id = provider.get_chain_id().await.unwrap();
@@ -1198,19 +1287,14 @@ async fn test_onchain_insufficient_attestations_reverts() {
 
 /// Tests that a voter not in the committee causes revert.
 #[tokio::test]
+#[ignore = "requires prepared integration artifacts; run pnpm rust:test:slashing"]
 async fn test_onchain_voter_not_in_committee_reverts() {
     if !find_anvil().await {
-        println!("skipping: anvil not found on PATH");
-        return;
+        panic!("missing required test prerequisite: anvil not found on PATH");
     }
 
-    let (sm_bytecode, mr_bytecode) = match load_slashing_artifacts() {
-        Some(artifacts) => artifacts,
-        None => {
-            println!("skipping: contract artifacts not found");
-            return;
-        }
-    };
+    let artifacts = load_slashing_artifacts();
+    let (sm_bytecode, mr_bytecode) = (&artifacts.manager, &artifacts.registry);
 
     let provider = ProviderBuilder::new().connect_anvil_with_wallet();
     let chain_id = provider.get_chain_id().await.unwrap();
@@ -1321,19 +1405,14 @@ async fn test_onchain_voter_not_in_committee_reverts() {
 
 /// Tests that an invalid vote signature (signed by wrong key) causes revert.
 #[tokio::test]
+#[ignore = "requires prepared integration artifacts; run pnpm rust:test:slashing"]
 async fn test_onchain_invalid_vote_signature_reverts() {
     if !find_anvil().await {
-        println!("skipping: anvil not found on PATH");
-        return;
+        panic!("missing required test prerequisite: anvil not found on PATH");
     }
 
-    let (sm_bytecode, mr_bytecode) = match load_slashing_artifacts() {
-        Some(artifacts) => artifacts,
-        None => {
-            println!("skipping: contract artifacts not found");
-            return;
-        }
-    };
+    let artifacts = load_slashing_artifacts();
+    let (sm_bytecode, mr_bytecode) = (&artifacts.manager, &artifacts.registry);
 
     let provider = ProviderBuilder::new().connect_anvil_with_wallet();
     let chain_id = provider.get_chain_id().await.unwrap();
@@ -1456,19 +1535,14 @@ async fn test_onchain_invalid_vote_signature_reverts() {
 /// The contract requires voters in strictly ascending address order to prevent
 /// the same voter from being counted twice.
 #[tokio::test]
+#[ignore = "requires prepared integration artifacts; run pnpm rust:test:slashing"]
 async fn test_onchain_duplicate_voter_reverts() {
     if !find_anvil().await {
-        println!("skipping: anvil not found on PATH");
-        return;
+        panic!("missing required test prerequisite: anvil not found on PATH");
     }
 
-    let (sm_bytecode, mr_bytecode) = match load_slashing_artifacts() {
-        Some(artifacts) => artifacts,
-        None => {
-            println!("skipping: contract artifacts not found");
-            return;
-        }
-    };
+    let artifacts = load_slashing_artifacts();
+    let (sm_bytecode, mr_bytecode) = (&artifacts.manager, &artifacts.registry);
 
     let provider = ProviderBuilder::new().connect_anvil_with_wallet();
     let chain_id = provider.get_chain_id().await.unwrap();
@@ -1583,19 +1657,14 @@ async fn test_onchain_duplicate_voter_reverts() {
 
 /// Tests that replaying the same evidence causes revert.
 #[tokio::test]
+#[ignore = "requires prepared integration artifacts; run pnpm rust:test:slashing"]
 async fn test_onchain_duplicate_evidence_reverts() {
     if !find_anvil().await {
-        println!("skipping: anvil not found on PATH");
-        return;
+        panic!("missing required test prerequisite: anvil not found on PATH");
     }
 
-    let (sm_bytecode, mr_bytecode) = match load_slashing_artifacts() {
-        Some(artifacts) => artifacts,
-        None => {
-            println!("skipping: contract artifacts not found");
-            return;
-        }
-    };
+    let artifacts = load_slashing_artifacts();
+    let (sm_bytecode, mr_bytecode) = (&artifacts.manager, &artifacts.registry);
 
     let provider = ProviderBuilder::new().connect_anvil_with_wallet();
     let chain_id = provider.get_chain_id().await.unwrap();
@@ -1742,26 +1811,18 @@ async fn test_onchain_duplicate_evidence_reverts() {
 /// must produce calldata that `SlashingManager._verifyAttestationEvidence`
 /// accepts. This is the canonical "actor → Solidity" end-to-end test.
 #[tokio::test]
+#[ignore = "requires prepared integration artifacts; run pnpm rust:test:slashing"]
 async fn test_onchain_actor_signed_vote_accepted() {
     use e3_events::{AccusationOutcome, AccusationQuorumReached, AccusationVote, ProofType};
     use e3_evm::encode_attestation_evidence;
     use e3_slashing::AccusationManager;
 
     if !find_anvil().await {
-        println!("skipping: anvil not found on PATH");
-        return;
+        panic!("missing required test prerequisite: anvil not found on PATH");
     }
 
-    let (sm_bytecode, mr_bytecode) = match load_slashing_artifacts() {
-        Some(artifacts) => artifacts,
-        None => {
-            println!(
-                "skipping: contract artifacts not found \
-                 (run `npx hardhat compile` in packages/interfold-contracts)"
-            );
-            return;
-        }
-    };
+    let artifacts = load_slashing_artifacts();
+    let (sm_bytecode, mr_bytecode) = (&artifacts.manager, &artifacts.registry);
 
     let provider = ProviderBuilder::new().connect_anvil_with_wallet();
     let chain_id = provider.get_chain_id().await.unwrap();

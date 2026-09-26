@@ -91,8 +91,7 @@ fn triplicate_honest_rows(mut d: ShareDecryptionCircuitData) -> ShareDecryptionC
 
 async fn run_node_fold_correlated_sparse_self_slot(preset: BfvPreset) {
     let Some(bb) = find_bb().await else {
-        println!("skipping: bb not found");
-        return;
+        panic!("missing required test prerequisite: bb not found");
     };
 
     if require_minimum_circuits_for_preset(preset).is_none() {
@@ -101,15 +100,13 @@ async fn run_node_fold_correlated_sparse_self_slot(preset: BfvPreset) {
 
     let gate = recursive_aggregation_compiled_json_path(CircuitName::NodeFold);
     if !gate.exists() {
-        println!(
-            "skipping: {} not found (run `pnpm build:circuits --group recursive_aggregation`)",
+        panic!(
+            "missing required test prerequisite: {} not found (run `pnpm build:circuits --group recursive_aggregation`)",
             gate.display()
         );
-        return;
     }
     if !c3_fold_json_path().exists() {
-        println!("skipping: c3_fold.json not found");
-        return;
+        panic!("missing required test prerequisite: c3_fold.json not found");
     }
 
     let committee = CiphernodesCommitteeSize::Minimum.values();

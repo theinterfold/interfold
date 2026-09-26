@@ -13,7 +13,27 @@ use fhe::bfv::{BfvParameters, Ciphertext, Encoding, Plaintext, PublicKey, Secret
 use fhe::Error as FheError;
 use fhe_traits::{DeserializeParametrized, FheEncoder, FheEncrypter, Serialize};
 use rand::rng;
+use serde_json::Value;
 use std::sync::Arc;
+
+/// Preserve exact witness integers when JavaScript parses the JSON returned by WASM.
+fn stringify_unsafe_js_integers(value: &mut Value) {
+    const MAX_SAFE_INTEGER: i64 = 9_007_199_254_740_991;
+    match value {
+        Value::Array(values) => values.iter_mut().for_each(stringify_unsafe_js_integers),
+        Value::Object(fields) => fields.values_mut().for_each(stringify_unsafe_js_integers),
+        Value::Number(number) => {
+            if number
+                .as_i64()
+                .is_some_and(|n| !(-MAX_SAFE_INTEGER..=MAX_SAFE_INTEGER).contains(&n))
+                || number.as_u64().is_some_and(|n| n > MAX_SAFE_INTEGER as u64)
+            {
+                *value = Value::String(number.to_string());
+            }
+        }
+        _ => {}
+    }
+}
 
 fn decode_public_key(
     public_key: &[u8],
@@ -150,7 +170,9 @@ where
     )?;
 
     let encrypted_data = inputs.ciphertext.clone();
-    let circuit_inputs = inputs.to_json()?.to_string();
+    let mut witness = inputs.to_json()?;
+    stringify_unsafe_js_integers(&mut witness);
+    let circuit_inputs = witness.to_string();
 
     Ok(VerifiableEncryptionResult {
         encrypted_data,
@@ -283,6 +305,20 @@ mod tests {
     use fhe_traits::FheDecoder;
 
     use super::*;
+
+    #[test]
+    fn witness_json_preserves_large_signed_integers_for_javascript() {
+        let mut witness = serde_json::json!({
+            "limbs": [9_007_199_254_740_991_i64, 9_007_199_254_740_992_i64,
+                -9_007_199_254_740_992_i64],
+        });
+        stringify_unsafe_js_integers(&mut witness);
+        assert_eq!(
+            witness,
+            serde_json::json!({"limbs": [9_007_199_254_740_991_i64,
+                "9007199254740992", "-9007199254740992"]})
+        );
+    }
 
     #[test]
     fn verifiable_encryption_rejects_noncanonical_parameter_tuple_before_key_decode() {

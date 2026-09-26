@@ -16,6 +16,7 @@ mod node_fold_public;
 mod prover;
 pub mod test_utils;
 mod traits;
+mod utils;
 mod witness;
 mod workflow;
 

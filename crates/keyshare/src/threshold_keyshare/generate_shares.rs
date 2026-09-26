@@ -64,8 +64,7 @@ pub(crate) fn build_shares_generated_plan(
     cipher: &Cipher,
     share_enc_preset: BfvPreset,
     party_id: u64,
-    threshold_m: u64,
-    threshold_n: u64,
+    committee_size: CiphernodesCommitteeSize,
     pk_share: ArcBytes,
     decrypted_sk_sss: SharedSecret,
     decrypted_esi_sss: Vec<SharedSecret>,
@@ -73,8 +72,7 @@ pub(crate) fn build_shares_generated_plan(
     proof_request_data: ProofRequestData,
     collected_encryption_keys: &[Arc<EncryptionKey>],
 ) -> Result<SharesGeneratedPlan> {
-    let derived_committee_size =
-        CiphernodesCommitteeSize::from_threshold(threshold_m as usize, threshold_n as usize)?;
+    let committee = committee_size.values();
 
     // Read the BFV public keys collected by the C0 cutoff from persisted state.
     let encryption_keys = collected_encryption_keys;
@@ -84,13 +82,8 @@ pub(crate) fn build_shares_generated_plan(
         .threshold_counterpart()
         .ok_or_else(|| anyhow!("No threshold counterpart for {:?}", share_enc_preset))?;
     let (_, params) = build_pair_for_preset(threshold_preset)?;
-    let (recipient_pks, recipient_party_ids) = recipient_keys_for_c3(
-        encryption_keys,
-        party_id,
-        derived_committee_size.values().n,
-        derived_committee_size.values().h,
-        &params,
-    )?;
+    let (recipient_pks, recipient_party_ids) =
+        recipient_keys_for_c3(encryption_keys, party_id, committee.n, committee.h, &params)?;
     let recipient_share_indices: Vec<usize> = (0..recipient_pks.len()).collect();
     let own_idx = party_id as usize;
 
@@ -181,7 +174,7 @@ pub(crate) fn build_shares_generated_plan(
         proof_request_data.eek_raw.clone(),
         e_sm_raw.clone(),
         threshold_preset,
-        derived_committee_size,
+        committee_size,
     );
 
     // Build C2a request (SkShareComputation)
@@ -190,7 +183,7 @@ pub(crate) fn build_shares_generated_plan(
         secret_sss_raw: sk_sss_raw,
         dkg_input_type: DkgInputType::SecretKey,
         params_preset: threshold_preset,
-        committee_size: derived_committee_size,
+        committee_size,
     };
 
     // Build C2b request (ESmShareComputation)
@@ -202,7 +195,7 @@ pub(crate) fn build_shares_generated_plan(
             .ok_or_else(|| anyhow!("esi_sss_raw is empty — expected at least one entry"))?,
         dkg_input_type: DkgInputType::SmudgingNoise,
         params_preset: threshold_preset,
-        committee_size: derived_committee_size,
+        committee_size,
     };
 
     // Build C3a proof requests (SK share encryption) from witnesses.
@@ -228,7 +221,7 @@ pub(crate) fn build_shares_generated_plan(
                 e1_rns_raw: SensitiveBytes::new(witness.e1_rns.to_bytes(), cipher)?,
                 dkg_input_type: DkgInputType::SecretKey,
                 params_preset: threshold_preset,
-                committee_size: derived_committee_size,
+                committee_size,
                 recipient_party_id,
                 row_index: row_idx,
                 esi_index: 0,
@@ -260,7 +253,7 @@ pub(crate) fn build_shares_generated_plan(
                     e1_rns_raw: SensitiveBytes::new(witness.e1_rns.to_bytes(), cipher)?,
                     dkg_input_type: DkgInputType::SmudgingNoise,
                     params_preset: threshold_preset,
-                    committee_size: derived_committee_size,
+                    committee_size,
                     recipient_party_id,
                     row_index: row_idx,
                     esi_index: esi_idx,
@@ -396,8 +389,7 @@ mod tests {
             &cipher,
             BfvPreset::InsecureDkg512,
             2,
-            1,
-            3,
+            CiphernodesCommitteeSize::Minimum,
             ArcBytes::from_bytes(&[7]),
             secret.clone(),
             vec![secret.clone()],

@@ -4,21 +4,12 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use e3_utils::{retry_with_backoff, RetryError};
+use e3_utils::{retry_with_backoff, should_retry_error, RetryError};
 use std::future::Future;
 use tracing::{info, warn};
 
 const RETRY_MAX_ATTEMPTS: u32 = 3;
 const RETRY_INITIAL_DELAY_MS: u64 = 2000;
-
-fn should_retry_error(error: &str, decoded_error: Option<&str>, retry_on_errors: &[&str]) -> bool {
-    if retry_on_errors.is_empty() {
-        return true;
-    }
-    retry_on_errors.iter().any(|code| {
-        error.contains(code) || decoded_error.is_some_and(|decoded| decoded.contains(code))
-    })
-}
 
 pub async fn call_with_retry<F, Fut, T>(
     operation_name: &str,

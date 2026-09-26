@@ -589,19 +589,6 @@ mod tests {
     }
 
     #[test]
-    fn extract_ct_commitment_from_share_encryption() {
-        let mut signals = vec![0u8; 96];
-        signals[0..32].copy_from_slice(&[0xAA; 32]);
-        signals[32..64].copy_from_slice(&[0xBB; 32]);
-        signals[64..96].copy_from_slice(&[0xCC; 32]);
-        let proof = make_proof(CircuitName::ShareEncryption, &signals);
-        assert_eq!(
-            &*proof.extract_output("ct_commitment").unwrap(),
-            &[0xCC; 32]
-        );
-    }
-
-    #[test]
     fn extract_signals_too_short() {
         // C1 needs 96 bytes for outputs, only 64 available
         let proof = make_proof(CircuitName::PkGeneration, &[0u8; 64]);

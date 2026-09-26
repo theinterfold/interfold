@@ -2,6 +2,11 @@
 
 This directory contains utility scripts for the Interfold project.
 
+## CRISP end-to-end test
+
+`bash scripts/run-crisp-test.sh [test args]` tests committed `HEAD` in a temporary Git worktree and
+refuses to run with pending changes. A failed run keeps the worktree and prints its path.
+
 ## Version Bumper
 
 `bump-versions.ts` - Bumps the versions of all packages and crates in the project.
@@ -282,13 +287,29 @@ pnpm store:circuits push
 pnpm store:circuits pull
 ```
 
+### Source hash
+
+`pnpm build:circuits hash` prints the hash that gates the published artifacts. It covers the Noir
+circuits, the Noir config for the selected preset and committee, the Rust sources that generate the
+C1/C2 bounds and the parity matrices, the circuit build scripts, and the external crate pins in
+`Cargo.lock`. It ignores the generated bound values, Rust `#[cfg(test)]` modules, the workspace
+release version, and the dependency graph between workspace crates. A change outside that set does
+not need a circuit rebuild.
+
 ### What it does
 
 - **Push**: Merges local `dist/circuits/` into the `circuit-artifacts` branch, refreshes
   `SHA256SUMS` and `checksums.json`, then pushes to origin
-- **Pull**: Fetches the `circuit-artifacts` branch and extracts to `dist/circuits/`
+- **Pull**: Fetches `circuit-artifacts` and selects its newest first-parent commit with a matching
+  `SOURCE_HASH`. It extracts that build to `dist/circuits/`. A build for another source tree at the
+  branch tip does not replace this match. If no match exists, the command fails before it changes
+  local artifacts. `verify-release` still checks every required pair and build stamp
 - **Replace**: `pnpm store:circuits push --replace` rewrites the branch from local `dist/circuits/`;
   use only when intentionally deleting old artifact sets
+- **Restamp**: `pnpm store:circuits restamp --expect-source-hash <previous hash>` rewrites the build
+  stamps when the hash scheme changed but the artifacts did not. Compute the previous hash from the
+  same tree with the previous version of `scripts/build-circuits.ts`. The command refuses a branch
+  that records another hash, and it fails when a rewrite touches a circuit artifact
 
 ### Workflow
 

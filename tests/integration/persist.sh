@@ -65,14 +65,7 @@ ENCODED_PARAMS=0x$($SCRIPT_DIR/lib/pack_e3_params.sh \
   --degree 512 \
   --plaintext-modulus 100)
 
-CURRENT_TIMESTAMP=$(get_evm_timestamp)
-INPUT_WINDOW_START=$((CURRENT_TIMESTAMP + 20))
-# The committee cannot publish its key after the input window closes
-# (`validateCommitteePublication`), and a real DKG on a CI runner takes well over a
-# minute, so the window has to outlast it rather than the other way round. The suite does
-# not wait this out in wall-clock time: `advance_evm_time_past` jumps the chain once the
-# input is in. Override with INTEGRATION_INPUT_WINDOW_SECONDS.
-INPUT_WINDOW_END=$((CURRENT_TIMESTAMP + ${INTEGRATION_INPUT_WINDOW_SECONDS:-600}))
+set_integration_input_window
 
 REQUEST_OUTPUT=$(pnpm committee:new \
   --network localhost \
@@ -85,6 +78,7 @@ printf '%s\n' "$REQUEST_OUTPUT"
 E3_ID=$(extract_e3_id "$REQUEST_OUTPUT")
 
 wait_for_committee_pubkey "$E3_ID" "$SCRIPT_DIR/output/pubkey.bin" "${INTEGRATION_DKG_TIMEOUT:-1300}"
+advance_evm_time_past "$INPUT_WINDOW_START"
 
 ACTIVE_AGG_ADDRESS=$(wait_for_active_aggregator_address "$E3_ID")
 if ! ACTIVE_AGG=$(node_name_for_address "$ACTIVE_AGG_ADDRESS"); then

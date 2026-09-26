@@ -97,6 +97,9 @@ interface ICiphernodeRegistry {
         uint256 randomnessDeadline
     );
 
+    /// @notice This request admits at most one candidate per request-time bond owner.
+    event CommitteeBondOwnerCapEnabled(uint256 indexed e3Id);
+
     /// @notice This event MUST be emitted when a ticket is submitted for sortition
     /// @param e3Id ID of the E3 computation
     /// @param node Address of the ciphernode submitting the ticket
@@ -501,6 +504,7 @@ interface ICiphernodeRegistry {
     /// @param requested The requested committee size (N)
     /// @param available The number of registered ciphernodes
     error InsufficientCiphernodes(uint256 requested, uint256 available);
+    error InsufficientBondOwners(uint256 required, uint256 available);
 
     ////////////////////////////////////////////////////////////
     //                                                        //

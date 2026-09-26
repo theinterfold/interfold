@@ -1,0 +1,82 @@
+name: rust-cache
+
+# A pull request can restore caches saved on its own ref or on main, never another pull request's.
+# `ci` runs only for pull requests and release calls, so nothing ever saved the Rust target cache on
+# main, and the first run of every pull request compiled the whole workspace from scratch.
+#
+# This job builds what the `ci` Rust jobs compile and saves it on main under the same key as
+# `.github/actions/cache-dependencies`. A pull request with the same Cargo.lock restores it by exact
+# key and does not save its own copy.
+#
+# The key changes only with Cargo.lock, so this runs when Cargo.lock changes. Workspace crates
+# compiled from an older main recompile incrementally; dependencies, the bulk of the build, do not.
+# Keep RUST_TOOLCHAIN equal to the value in ci.yml: artifacts from another rustc are not reusable.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - Cargo.lock
+      - .github/workflows/rust-cache.yml
+      - .github/actions/cache-dependencies/**
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: 22
+  RUST_TOOLCHAIN: 1.91.1
+
+jobs:
+  warm:
+    timeout-minutes: 60
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Cache Rust dependencies
+        id: cache
+        uses: ./.github/actions/cache-dependencies
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      # The build scripts of e3-evm, e3-evm-helpers, e3-indexer and e3-zk-prover compile Solidity
+      # fixtures and need the same tools as the ci Rust jobs.
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1
+
+      - name: Install solc
+        uses: ./.github/actions/install-solc
+
+      - name: pnpm-setup
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+
+      - name: Setup node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install the dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Compile contracts
+        run: pnpm evm:build
+
+      # Unit and integration test binaries.
+      - name: Build test targets
+        run: cargo test --no-run
+
+      # Doc-tests link against the non-test build of each library.
+      - name: Build libraries and binaries
+        run: cargo build

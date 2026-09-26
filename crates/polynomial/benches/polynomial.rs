@@ -53,10 +53,11 @@ fn benchmark_polynomial_division(c: &mut Criterion) {
     let mut group = c.benchmark_group("polynomial_division");
 
     for degree in [10, 20, 50, 100] {
-        let (poly1, poly2) = create_test_polynomials(degree);
+        let (divisor, quotient) = create_test_polynomials(degree / 2);
+        let dividend = divisor.mul(&quotient);
 
         group.bench_function(format!("degree_{}", degree), |b| {
-            b.iter(|| black_box(poly1.div(&poly2).unwrap()))
+            b.iter(|| black_box(dividend.div(&divisor).unwrap()))
         });
     }
 

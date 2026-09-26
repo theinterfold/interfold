@@ -4,40 +4,36 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-import { Barretenberg, UltraHonkBackend, type ProofData } from '@aztec/bb.js'
-import { proveUserDataEncryptionTree } from '@interfold/user-data-encryption-prover'
-import { CompiledCircuit, Noir } from '@noir-lang/noir_js'
+import type { ProofData } from '@aztec/bb.js'
 import { assertSdkMinimumCircuits } from '../circuits/assert-minimum-circuits'
-import { proofToFields } from '../utils'
 import type { UserDataEncryptionProofBundle } from './presets/types'
 import type { ThresholdBfvParamsPresetName } from './types'
 
-assertSdkMinimumCircuits()
-
 // Conversion to Noir types
-export type Field = string
-export type NoirCoefficient = string | number
-export type NoirPolynomial = { coefficients: NoirCoefficient[] }
-export type NoirCrtPolynomial = NoirPolynomial[]
+export type Field = string | number
+
+export interface PolynomialInput {
+  coefficients: Field[]
+}
 
 /**
  * Describes the inputs to Greco circuit
  */
 export interface CircuitInputs {
-  pk0is: NoirCrtPolynomial
-  pk1is: NoirCrtPolynomial
-  ct0is: NoirCrtPolynomial
-  ct1is: NoirCrtPolynomial
-  u: NoirPolynomial
-  e0: NoirPolynomial
-  e1: NoirPolynomial
-  e0is: NoirCrtPolynomial
-  e0_quotients: NoirCrtPolynomial
-  k1: NoirPolynomial
-  r1is: NoirCrtPolynomial
-  r2is: NoirCrtPolynomial
-  p1is: NoirCrtPolynomial
-  p2is: NoirCrtPolynomial
+  pk0is: PolynomialInput[]
+  pk1is: PolynomialInput[]
+  ct0is: PolynomialInput[]
+  ct1is: PolynomialInput[]
+  u: PolynomialInput
+  e0: PolynomialInput
+  e1: PolynomialInput
+  e0is: PolynomialInput[]
+  e0_quotients: PolynomialInput[]
+  k1: PolynomialInput
+  r1is: PolynomialInput[]
+  r2is: PolynomialInput[]
+  p1is: PolynomialInput[]
+  p2is: PolynomialInput[]
   pk_commitment: string
 }
 
@@ -58,15 +54,13 @@ const loadProofBundle = async (presetName: ThresholdBfvParamsPresetName): Promis
   }
 }
 
-const resolveProofBundle = async (
-  circuitInputs: CircuitInputs,
-  presetName?: ThresholdBfvParamsPresetName,
-): Promise<UserDataEncryptionProofBundle> => {
+/** Load the circuit artifacts only when a caller requests a proof. */
+export const generateProof = async (circuitInputs: CircuitInputs, presetName?: ThresholdBfvParamsPresetName): Promise<ProofData> => {
+  await assertSdkMinimumCircuits()
   const degree = circuitInputs.u.coefficients.length
   const inferredPreset = (Object.entries(PRESET_DEGREES) as [ThresholdBfvParamsPresetName, number][]).find(
     ([, presetDegree]) => presetDegree === degree,
   )?.[0]
-
   if (inferredPreset === undefined) {
     throw new Error(`No user-data encryption circuit bundle supports polynomial degree ${degree}.`)
   }
@@ -74,26 +68,17 @@ const resolveProofBundle = async (
     throw new Error(`The ${presetName} proof bundle requires degree ${PRESET_DEGREES[presetName]}, but the witness has degree ${degree}.`)
   }
 
-  return loadProofBundle(presetName ?? inferredPreset)
-}
-
-/**
- * Generate a proof for a given circuit and circuit inputs
- * @dev Defaults to the UltraHonkBackend
- * @param circuitInputs - The circuit inputs
- * @param presetName - The BFV preset. When omitted, the function selects it from the witness degree.
- * @returns The proof
- */
-export const generateProof = async (circuitInputs: CircuitInputs, presetName?: ThresholdBfvParamsPresetName): Promise<ProofData> => {
-  const { userDataEncryption, ...proofTreeCircuits } = await resolveProofBundle(circuitInputs, presetName)
+  const { Barretenberg, UltraHonkBackend } = await import('@aztec/bb.js')
+  const { Noir } = await import('@noir-lang/noir_js')
+  const { proveUserDataEncryptionTree } = await import('@interfold/user-data-encryption-prover')
+  const { proofToFields } = await import('../utils')
+  const { userDataEncryption, ...proofTreeCircuits } = await loadProofBundle(presetName ?? inferredPreset)
   const api = await Barretenberg.new()
-
   try {
-    await api.initSRSChonk(2 ** 21) // fold circuit needs 2^21 points; default is 2^20
-
+    await api.initSRSChonk(2 ** 21)
     const { ct0, ct1 } = await proveUserDataEncryptionTree(api, proofTreeCircuits, circuitInputs)
-
-    const { witness: userDataEncryptionWitness } = await executeCircuit(userDataEncryption, {
+    const noir = new Noir(userDataEncryption)
+    const { witness } = await noir.execute({
       ct0_verification_key: ct0.vkAsFields,
       ct0_proof: proofToFields(ct0.proof),
       ct0_public_inputs: ct0.publicInputs,
@@ -103,19 +88,9 @@ export const generateProof = async (circuitInputs: CircuitInputs, presetName?: T
       ct1_public_inputs: ct1.publicInputs,
       ct1_key_hash: ct1.vkHash,
     })
-
-    const userDataEncryptionBackend = new UltraHonkBackend(userDataEncryption.bytecode, api)
-
-    return await userDataEncryptionBackend.generateProof(userDataEncryptionWitness, {
-      verifierTarget: 'noir-recursive-no-zk',
-    })
+    const backend = new UltraHonkBackend(userDataEncryption.bytecode, api)
+    return await backend.generateProof(witness, { verifierTarget: 'noir-recursive-no-zk' })
   } finally {
-    api.destroy()
+    await api.destroy()
   }
-}
-
-const executeCircuit = async (circuit: CompiledCircuit, inputs: any): Promise<{ witness: Uint8Array; returnValue: any }> => {
-  const noir = new Noir(circuit as CompiledCircuit)
-
-  return noir.execute(inputs)
 }

@@ -20,6 +20,7 @@ import { ArgumentType } from "hardhat/types/arguments";
 import path from "path";
 
 import { readDeploymentArgs } from "../scripts/utils";
+import { assertCommitteeOwnerCapacity } from "./committeeCapacity";
 import { assembleUniqueCommitteePublicKey } from "./committeePublicKey";
 import { stageMockDataAvailabilityObject } from "./mockDataAvailability";
 
@@ -297,6 +298,15 @@ export const requestCommittee = task(
       if (!registryArgs) {
         throw new Error("CiphernodeRegistry deployment arguments not found");
       }
+
+      const capacity = await assertCommitteeOwnerCapacity(
+        interfoldContract,
+        committeeSize,
+        registryArgs.blockNumber ?? 0,
+      );
+      console.log(
+        `Committee preflight: ${capacity.eligibleOwners} eligible bond owners, ${capacity.requiredOwners} required (block ${capacity.blockNumber})`,
+      );
 
       const mockE3ProgramArgs = readDeploymentArgs(
         "MockE3Program",

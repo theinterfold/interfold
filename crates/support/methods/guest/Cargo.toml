@@ -12,7 +12,25 @@ name = "program"
 path = "src/bin/program.rs"
 
 [dependencies]
-risc0-zkvm = { version = "=3.0.3", default-features = false, features = ['std'] }
+# `heap-embedded-alloc` replaces the default bump allocator, which never reclaims memory.
+#
+# The Secure Process holds only one ciphertext's working set at a time: `compute_leaf_hashes`
+# converts each input to its Greco form, takes the commitment, and drops it before the next. Under
+# the bump allocator every one of those temporaries is retained anyway, so peak memory grows with
+# the round rather than staying flat.
+#
+# At the secure preset one Greco form is 49152 coefficients (degree 8192 x 3 CRT limbs x 2
+# polynomials) held as `num_bigint::BigInt`, which costs about 48 bytes per coefficient against
+# 8 bytes as a raw word — roughly 2.4 MB per ciphertext, or 7x the 356 KB serialized form. At 500
+# inputs that is ~1.2 GB of retained temporaries alone, and the guest aborts with
+# "Out of memory! You have been using the default bump allocator" partway through a round.
+#
+# Measured: N=100 completes, N=500 aborts after ~43 minutes of Boundless preflight. The feature
+# costs extra cycles per allocation, which is the price of a round size that scales.
+risc0-zkvm = { version = "=3.0.3", default-features = false, features = [
+    'std',
+    'heap-embedded-alloc',
+] }
 # This revision decides which compute-provider code runs inside the zkVM, so it decides the image
 # ID. It must match the pin in crates/support/Cargo.toml. See that file for why the dependency is
 # pinned by revision instead of by path.

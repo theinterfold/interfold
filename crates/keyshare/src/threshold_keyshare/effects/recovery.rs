@@ -351,6 +351,9 @@ impl ThresholdKeyshare {
             c4_proof_intent = recovery.decryption_share_proofs_pending.is_some(),
             "resuming persisted threshold keyshare work"
         );
+        // Derived before the match moves `state.state`; only the CollectingEncryptionKeys arm
+        // needs it, so an error surfaces there and nowhere else.
+        let committee_size = state.committee_size();
 
         if let KeyshareState::Failed {
             failed_at_stage,
@@ -386,10 +389,7 @@ impl ThresholdKeyshare {
                 for event in recovery.encryption_keys.values() {
                     collector.try_send(event.clone())?;
                 }
-                let committee_size = CiphernodesCommitteeSize::from_threshold(
-                    state.threshold_m as usize,
-                    state.threshold_n as usize,
-                )?;
+                let committee_size = committee_size?;
                 self.bus.publish(
                     EncryptionKeyPending {
                         e3_id: state.e3_id,

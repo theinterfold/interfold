@@ -4,8 +4,6 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-#[cfg(test)]
-use crate::domain::ReplayDecision;
 use crate::domain::{
     decide_schema_version, CollectOutcome, HistoricalEvmCollector, SchemaVersionDecision,
     SnapshotMeta, SyncPlanner, SCHEMA_VERSION,
@@ -16,16 +14,14 @@ use actix::{Message, Recipient};
 use anyhow::{bail, ensure, Context, Result};
 use e3_data::Repositories;
 use e3_events::{
-    AccusationOutcome, AccusationQuorumReached, AggregateConfig, AggregateId, BusHandle,
-    CommitteeMemberExcluded, CommitteeMemberExpelled, CommitteeRequested, CorrelationId,
-    E3Requested, E3id, EffectsEnabled, Event, EventContext, EventPublisher, EventStoreQueryBy,
-    EventStoreQueryResponse, EventSubscriber, EventType, EvmEventConfig,
+    AccusationOutcome, AccusationQuorumReached, AggregateConfig, AggregateId, BondOwnerSetAt,
+    BusHandle, CommitteeMemberExcluded, CommitteeMemberExpelled, CommitteeRequested, CorrelationId,
+    E3Requested, E3id, EffectsEnabled, Event, EventContext, EventContextAccessors, EventPublisher,
+    EventStoreQueryBy, EventStoreQueryResponse, EventSubscriber, EventType, EvmEventConfig,
     HistoricalEvmEventsReceived, HistoricalEvmSyncStart, HistoricalNetSyncStart, InterfoldEvent,
     InterfoldEventData, Seed, SeqAgg, Sequenced, SlashExecuted, StoreKeys, SyncEffect, SyncEnded,
     TicketGenerated, TypedEvent, Unsequenced,
 };
-#[cfg(test)]
-use e3_events::{EventBusBarrier, EventBusFanout, EventContextAccessors};
 use e3_utils::actix::channel as actix_toolbox;
 use std::{
     collections::{HashMap, HashSet},
@@ -34,9 +30,6 @@ use std::{
 };
 use tokio::sync::mpsc::Receiver;
 use tracing::info;
-
-#[cfg(test)]
-const REPLAY_PROGRESS_INTERVAL: usize = 10_000;
 
 /// Advance the request-router checkpoint when it trails aggregate snapshots.
 ///
@@ -126,6 +119,8 @@ pub struct RestartStateBackfill {
     pub committee_requests: HashMap<E3id, RecoveredCommitteeRequest>,
     pub tickets: HashMap<E3id, TicketGenerated>,
     pub slash_intents: Vec<AccusationQuorumReached>,
+    pub bond_owner_updates: Vec<TypedEvent<BondOwnerSetAt>>,
+    pub admission_updates: Vec<e3_events::AdmissionUpdated>,
 }
 
 impl RestartStateBackfill {
@@ -193,18 +188,44 @@ impl RestartStateBackfill {
 /// this projection into missing recovery repositories before actors start.
 pub async fn project_restart_state_backfill(
     eventstore: &Recipient<EventStoreQueryBy<SeqAgg>>,
+    start_cursors: HashMap<AggregateId, u64>,
     end_cursors: HashMap<AggregateId, u64>,
     target_e3s: &HashSet<E3id>,
     slash_target_chains: &HashSet<u64>,
+    projection_target_chains: &HashSet<u64>,
 ) -> Result<RestartStateBackfill> {
-    if (target_e3s.is_empty() && slash_target_chains.is_empty()) || end_cursors.is_empty() {
+    if (target_e3s.is_empty()
+        && slash_target_chains.is_empty()
+        && projection_target_chains.is_empty())
+        || end_cursors.is_empty()
+    {
         return Ok(RestartStateBackfill::default());
     }
 
-    let spool = ReplaySpool::load_bounded(eventstore, end_cursors).await?;
+    let spool = ReplaySpool::load_between(eventstore, start_cursors, end_cursors).await?;
     let mut recovered = RestartStateBackfill::default();
     spool.project(|event| {
         match event.get_data() {
+            InterfoldEventData::EvmLogObserved(log)
+                if event.get_ctx().source() == e3_events::EventSource::Evm
+                    && projection_target_chains.contains(&log.chain_id) =>
+            {
+                if let Some(admission) = e3_events::AdmissionUpdated::from_observed_log(log)? {
+                    recovered.admission_updates.push(admission);
+                }
+            }
+            InterfoldEventData::AdmissionUpdated(admission)
+                if projection_target_chains.contains(&admission.chain_id) =>
+            {
+                recovered.admission_updates.push(admission.clone());
+            }
+            InterfoldEventData::BondOwnerSetAt(owner)
+                if projection_target_chains.contains(&owner.owner.chain_id) =>
+            {
+                recovered
+                    .bond_owner_updates
+                    .push(TypedEvent::new(owner.clone(), event.get_ctx().clone()));
+            }
             InterfoldEventData::AccusationQuorumReached(intent)
                 if slash_target_chains.contains(&intent.e3_id.chain_id())
                     && intent.outcome == AccusationOutcome::AccusedFaulted =>
@@ -491,50 +512,6 @@ async fn publish_reconciled_history(
     bus.flush_event_pipeline().await?;
     info!("Sync finished.");
     Ok(())
-}
-
-#[cfg(test)]
-async fn replay_eventstore_events(
-    bus: &BusHandle,
-    mut events: Vec<InterfoldEvent>,
-) -> Result<usize> {
-    let total_events = events.len();
-    let mut replayed = 0usize;
-
-    // Snapshot metadata can lag the append-only log after a failed snapshot write. Seed from the
-    // actual replay set before any subscriber can emit follow-up work, otherwise new local events
-    // may receive timestamps behind durable post-snapshot history.
-    if let Some(max_ts) = events.iter().map(EventContextAccessors::ts).max() {
-        bus.seed_clock(max_ts)?;
-    }
-
-    // This test helper receives fixtures whose per-aggregate sequences are already monotonic. Sort
-    // those ready aggregate events by HLC before stateful subscribers observe cross-aggregate
-    // dependencies. Production uses ReplaySpool to enforce the sequence precondition.
-    events.sort_by_key(|event| event.ts());
-
-    for event in events {
-        if SyncPlanner::classify_replay(&event) == ReplayDecision::SkipInfrastructure {
-            continue;
-        }
-        // Await EventBus handling before submitting the next event. `try_send` lets this producer
-        // outrun the bounded mailbox and aborts startup when it fills; the awaited Actix request
-        // preserves replay order, yields between events, and reports a closed mailbox.
-        bus.event_bus().send(EventBusFanout(event)).await??;
-        replayed += 1;
-
-        if replayed.is_multiple_of(REPLAY_PROGRESS_INTERVAL) {
-            info!(
-                replayed_events = replayed,
-                total_events, "EventStore replay progress"
-            );
-        }
-    }
-    // The EventBus acknowledges its own handler before an awaited subscriber fanout finishes.
-    // A fence queued after the final replay event therefore proves the last downstream handler
-    // has completed before startup advances to canonical-chain reconciliation.
-    bus.event_bus().send(EventBusBarrier).await?;
-    Ok(replayed)
 }
 
 #[path = "history.rs"]

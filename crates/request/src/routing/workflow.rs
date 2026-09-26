@@ -104,11 +104,7 @@ impl RequestRouter {
             let is_late_terminal = match msg.get_data() {
                 // A canonical terminal stage can arrive after another canonical terminal event
                 // has already removed the local context.
-                InterfoldEventData::E3StageChanged(data)
-                    if matches!(data.new_stage, E3Stage::Complete | E3Stage::Failed) =>
-                {
-                    true
-                }
+                InterfoldEventData::E3StageChanged(data) if data.new_stage.is_terminal() => true,
                 // E3Failed from on-chain markE3Failed may arrive after a local timeout already
                 // cleaned up the context.
                 InterfoldEventData::E3Failed(data) if data.reason.ends_without_slashing() => true,

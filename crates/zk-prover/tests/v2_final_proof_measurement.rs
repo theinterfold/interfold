@@ -501,7 +501,13 @@ async fn secure_dkg_aggregator_v2_proves_and_verifies_evm() {
     if let Some(cached) = load_final_cache() {
         print_measurement("dkg_aggregator_v2.cached", &cached);
         assert!(prover
-            .verify_evm_proof(&cached, "v2-final-cached", 0, ARTIFACTS_DIR)
+            .verify_proof_with_variant(
+                &cached,
+                "v2-final-cached",
+                0,
+                CircuitVariant::Evm,
+                ARTIFACTS_DIR
+            )
             .expect("cached final EVM proof verification"));
         return;
     }
@@ -782,10 +788,11 @@ async fn secure_dkg_aggregator_v2_proves_and_verifies_evm() {
     report_phase("DkgAggregatorV2 complete");
     print_measurement("dkg_aggregator_v2", &final_proof);
     assert!(prover
-        .verify_evm_proof(
+        .verify_proof_with_variant(
             &final_proof,
             "v2-final-dkg-aggregator-verify",
             0,
+            CircuitVariant::Evm,
             ARTIFACTS_DIR,
         )
         .expect("final EVM proof verification"));

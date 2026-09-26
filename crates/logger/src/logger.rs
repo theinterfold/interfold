@@ -115,7 +115,9 @@ fn severity(data: &InterfoldEventData) -> Severity {
         | E::CiphernodeAdded(_)
         | E::CiphernodeRemoved(_)
         | E::TicketBalanceUpdated(_)
-        | E::OperatorActivationChanged(_) => Severity::Info,
+        | E::OperatorActivationChanged(_)
+        | E::TicketBalanceUpdatedAt(_)
+        | E::OperatorActivationChangedAt(_) => Severity::Info,
 
         _ => Severity::Debug,
     }

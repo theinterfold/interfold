@@ -13,6 +13,7 @@ e3-zk-helpers = { workspace = true }
 fhe.workspace = true
 fhe-traits.workspace = true
 rand.workspace = true
+serde_json.workspace = true
 thiserror = { workspace = true }
 e3-polynomial = { workspace = true }
 fhe-math.workspace = true

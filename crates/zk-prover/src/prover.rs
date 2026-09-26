@@ -127,22 +127,6 @@ impl ZkProver {
         )
     }
 
-    pub fn generate_evm_proof(
-        &self,
-        circuit: CircuitName,
-        witness_data: &[u8],
-        e3_id: &str,
-        artifacts_dir: &str,
-    ) -> Result<Proof, ZkError> {
-        self.generate_proof_with_variant(
-            circuit,
-            witness_data,
-            e3_id,
-            CircuitVariant::Evm,
-            artifacts_dir,
-        )
-    }
-
     pub fn generate_proof_with_variant(
         &self,
         circuit: CircuitName,
@@ -346,16 +330,6 @@ impl ZkProver {
             variant,
             artifacts_dir,
         )
-    }
-
-    pub fn verify_evm_proof(
-        &self,
-        proof: &Proof,
-        e3_id: &str,
-        party_id: u64,
-        artifacts_dir: &str,
-    ) -> Result<bool, ZkError> {
-        self.verify_proof_with_variant(proof, e3_id, party_id, CircuitVariant::Evm, artifacts_dir)
     }
 
     /// Verifies a recursive-aggregation bin proof (Default variant).

@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::ciphertext_output::ComputeResult;
-use crate::merkle_tree_builder::MerkleTreeBuilder;
+use crate::merkle_tree_builder::{Batching, MerkleTreeBuilder};
 use crate::policy::InputPolicy;
 #[cfg(test)]
 use e3_bfv_client::client::compute_ct_commitment;
@@ -133,7 +133,7 @@ impl ComputeInput {
         fhe_processor: FHEProcessor,
         policy: InputPolicy,
     ) -> Result<(ComputeResult, Vec<u8>), ComputeError> {
-        self.run_bound(fhe_processor, policy, None)
+        self.run_bound_batched(fhe_processor, policy, None, Batching::Sequential)
     }
 
     fn run_bound(
@@ -141,6 +141,35 @@ impl ComputeInput {
         fhe_processor: FHEProcessor,
         policy: InputPolicy,
         expected_commitment: Option<[u8; 32]>,
+    ) -> Result<(ComputeResult, Vec<u8>), ComputeError> {
+        self.run_bound_batched(
+            fhe_processor,
+            policy,
+            expected_commitment,
+            Batching::Sequential,
+        )
+    }
+
+    /// As [`Self::run`], choosing how the per-input commitments are scheduled.
+    ///
+    /// The schedule is not part of the result. Every value the journal publishes is derived from
+    /// the same inputs in the same order whichever variant is given, so a host may batch while the
+    /// guest does not, and the two still agree on the root.
+    pub fn run_batched(
+        &self,
+        fhe_processor: FHEProcessor,
+        policy: InputPolicy,
+        batching: Batching,
+    ) -> Result<(ComputeResult, Vec<u8>), ComputeError> {
+        self.run_bound_batched(fhe_processor, policy, None, batching)
+    }
+
+    fn run_bound_batched(
+        &self,
+        fhe_processor: FHEProcessor,
+        policy: InputPolicy,
+        expected_commitment: Option<[u8; 32]>,
+        batching: Batching,
     ) -> Result<(ComputeResult, Vec<u8>), ComputeError> {
         let params = decode_bfv_params_arc(&self.fhe_inputs.params)
             .map_err(|e| ComputeError::DecodeParams(e.to_string()))?;
@@ -181,8 +210,13 @@ impl ComputeInput {
         }
 
         let mut tree_builder = MerkleTreeBuilder::new(self.fhe_inputs.ciphertexts.len());
-        let selected =
-            tree_builder.compute_leaf_hashes(&self.fhe_inputs, &self.published, &params, policy)?;
+        let selected = tree_builder.compute_leaf_hashes_batched(
+            &self.fhe_inputs,
+            &self.published,
+            &params,
+            policy,
+            batching,
+        )?;
         let merkle_root = tree_builder
             .build_tree()
             .map_err(|e| ComputeError::MerkleTree(e.to_string()))?
@@ -521,6 +555,70 @@ mod tests {
 
         assert!(
             matches!(error, ComputeError::LeafCommitment { index: 1, .. }),
+            "got {error:?}"
+        );
+    }
+
+    /// Batching is a schedule, not a change of meaning. Every batch size must give the same root,
+    /// the same selection and the same ciphertext as the sequential path.
+    ///
+    /// This is the property the removed `start_parallel` did not have. That version chunked the
+    /// round itself and rebuilt a tally over chunk results with a hardcoded index of zero, so the
+    /// leaves stopped binding an input to its position. Batching only the per-input commitments
+    /// cannot drift, and this test is what keeps it that way.
+    #[test]
+    fn batching_does_not_change_the_root() {
+        let inputs = encrypted_inputs(&[3, 1, 4, 1, 5, 9, 2, 6]);
+        let policy = InputPolicy::default();
+        let input = ComputeInput {
+            fhe_inputs: inputs,
+            published: Vec::new(),
+        };
+
+        let (sequential, sequential_ciphertext) = input.run(sum_processor, policy).unwrap();
+
+        // 1 is the degenerate chunk, 3 does not divide the input count, and 8 is the whole set:
+        // between them they cover every boundary a chunked schedule can get wrong.
+        for batch_size in [1, 2, 3, 8, 64] {
+            let (batched, batched_ciphertext) = input
+                .run_batched(sum_processor, policy, Batching::Parallel { batch_size })
+                .unwrap();
+
+            assert_eq!(
+                batched.merkle_root, sequential.merkle_root,
+                "batch size {batch_size} changed the input root"
+            );
+            assert_eq!(
+                batched.ciphertext_hash, sequential.ciphertext_hash,
+                "batch size {batch_size} changed the tally"
+            );
+            assert_eq!(
+                batched_ciphertext, sequential_ciphertext,
+                "batch size {batch_size} changed the published ciphertext"
+            );
+        }
+    }
+
+    /// A batched run must report a bad input the same way a sequential one does, naming the index
+    /// that failed. Recomputing commitments away from the entry loop is where that could be lost.
+    #[test]
+    fn batching_preserves_the_index_of_an_undecodable_input() {
+        let mut inputs = encrypted_inputs(&[1, 1, 1, 1, 1]);
+        inputs.ciphertexts[3].0 = vec![0xff; 8];
+        let params = decode_bfv_params_arc(&inputs.params).unwrap();
+
+        let error = MerkleTreeBuilder::new(5)
+            .compute_leaf_hashes_batched(
+                &inputs,
+                &[],
+                &params,
+                InputPolicy::default(),
+                Batching::Parallel { batch_size: 2 },
+            )
+            .unwrap_err();
+
+        assert!(
+            matches!(error, ComputeError::LeafCommitment { index: 3, .. }),
             "got {error:?}"
         );
     }

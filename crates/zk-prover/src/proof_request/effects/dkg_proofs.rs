@@ -2,6 +2,8 @@
 
 //! Dispatch C0 and threshold-share proof work and route compute results.
 
+use crate::utils::total_expected_for;
+
 use super::*;
 
 impl ProofRequestActor {
@@ -69,7 +71,7 @@ impl ProofRequestActor {
         let sk_enc_count = msg.sk_share_encryption_requests.len();
         let e_sm_enc_count = msg.e_sm_share_encryption_requests.len();
 
-        let total_expected = NodeAggregationMeta::total_expected_for(sk_enc_count, e_sm_enc_count);
+        let total_expected = total_expected_for(sk_enc_count, e_sm_enc_count);
         let pending_c0 = self
             .node_agg_meta
             .get(&e3_id)

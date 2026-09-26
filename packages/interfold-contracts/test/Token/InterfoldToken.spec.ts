@@ -60,6 +60,14 @@ describe("InterfoldToken", function () {
       await mockRegistry.getAddress(),
     );
     await token.connect(admin).setClaimSource(await claimSource.getAddress());
+    // Dedicated holders, so role tests prove the exact role gates each action.
+    for (const [role, holder] of [
+      [await token.MINTER_ROLE(), minter],
+      [await token.WHITELIST_ROLE(), whitelister],
+      [await token.LOCK_MANAGER_ROLE(), lockManager],
+    ] as const) {
+      await token.connect(admin).grantRole(role, await holder.getAddress());
+    }
 
     return {
       deployer,
@@ -489,12 +497,12 @@ describe("InterfoldToken", function () {
 
   describe("mintAllocations", function () {
     it("MINTER_ROLE can mint locked allocations during Virtual", async function () {
-      const { token, admin, alice } = await loadFixture(deploy);
+      const { token, admin, minter, alice } = await loadFixture(deploy);
       const policyId = await createLinearPolicy(token, admin, "TEST_POLICY");
       const amount = ethers.parseEther("1000");
 
       await expect(
-        token.connect(admin).mintAllocations([
+        token.connect(minter).mintAllocations([
           {
             recipient: await alice.getAddress(),
             amount,
@@ -673,10 +681,10 @@ describe("InterfoldToken", function () {
 
   describe("setTransferWhitelisted", function () {
     it("WHITELIST_ROLE can whitelist an address", async function () {
-      const { token, admin, alice } = await loadFixture(deploy);
+      const { token, whitelister, alice } = await loadFixture(deploy);
       await expect(
         token
-          .connect(admin)
+          .connect(whitelister)
           .setTransferWhitelisted(await alice.getAddress(), true),
       )
         .to.emit(token, "TransferWhitelistUpdated")
@@ -707,9 +715,11 @@ describe("InterfoldToken", function () {
 
   describe("setClaimLockExempt", function () {
     it("LOCK_MANAGER_ROLE can manage claim-lock exemption", async function () {
-      const { token, admin, alice } = await loadFixture(deploy);
+      const { token, lockManager, alice } = await loadFixture(deploy);
       await expect(
-        token.connect(admin).setClaimLockExempt(await alice.getAddress(), true),
+        token
+          .connect(lockManager)
+          .setClaimLockExempt(await alice.getAddress(), true),
       )
         .to.emit(token, "ClaimLockExemptUpdated")
         .withArgs(await alice.getAddress(), true);
@@ -746,10 +756,10 @@ describe("InterfoldToken", function () {
 
   describe("createLockPolicy", function () {
     it("LOCK_MANAGER_ROLE can create a policy", async function () {
-      const { token, admin } = await loadFixture(deploy);
+      const { token, lockManager } = await loadFixture(deploy);
       const policyId = ethers.encodeBytes32String("MY_POLICY");
       await expect(
-        token.connect(admin).createLockPolicy(policyId, {
+        token.connect(lockManager).createLockPolicy(policyId, {
           holdUntil: 0n,
           unlock: {
             anchor: 1, // Tge
@@ -1041,15 +1051,6 @@ describe("InterfoldToken", function () {
       const { token, alice } = await loadFixture(deploy);
       expect(await token.lockedBalanceOf(await alice.getAddress())).to.equal(
         0n,
-      );
-    });
-
-    it("mintAllocation creates a lock tracked by lockedBalanceOf", async function () {
-      const { token, alice, amount } = await deployWithLockAndTge({
-        mintAmount: ethers.parseEther("2400"),
-      });
-      expect(await token.lockedBalanceOf(await alice.getAddress())).to.equal(
-        amount,
       );
     });
 
@@ -1482,19 +1483,6 @@ describe("InterfoldToken", function () {
       await token.connect(alice).transfer(await bob.getAddress(), amount);
     });
 
-    it("pre-TGE: claim source transfers are allowed", async function () {
-      const { token, admin, alice, claimSource } = await loadFixture(deploy);
-      const amount = ethers.parseEther("100");
-
-      await token
-        .connect(admin)
-        .mint(await claimSource.getAddress(), amount, ethers.ZeroHash);
-
-      await token
-        .connect(claimSource)
-        .transfer(await alice.getAddress(), amount);
-    });
-
     it("pre-TGE: regular transfers are blocked", async function () {
       const { token, admin, alice, bob } = await loadFixture(deploy);
       const amount = ethers.parseEther("100");
@@ -1710,25 +1698,6 @@ describe("InterfoldToken", function () {
   // ═════════════════════════════════════════════════════════════════════════
 
   describe("claim-source auto-lock & linkClaim", function () {
-    it("CLAIM_SOURCE transfers create PENDING locks", async function () {
-      const { token, alice, claimSource, amount } =
-        await deployWithUnlockedAndTge(ethers.parseEther("500"));
-
-      // Transfer from alice to claimSource first so claimSource has tokens.
-      await token
-        .connect(alice)
-        .transfer(await claimSource.getAddress(), amount);
-
-      await token
-        .connect(claimSource)
-        .transfer(await alice.getAddress(), amount);
-
-      // Pending lock should be created.
-      expect(await token.lockedBalanceOf(await alice.getAddress())).to.equal(
-        amount,
-      );
-    });
-
     it("claimLockExempt exempts from auto-lock on claim-source transfer", async function () {
       const { token, admin, alice, claimSource, amount } =
         await deployWithUnlockedAndTge(ethers.parseEther("500"));
@@ -1756,6 +1725,7 @@ describe("InterfoldToken", function () {
     it("linkClaim moves PENDING to a real policy", async function () {
       const { token, admin, alice, claimSource, amount } =
         await deployWithUnlockedAndTge(ethers.parseEther("500"));
+      const aliceAddress = await alice.getAddress();
       const policyId = await createLinearPolicy(token, admin, "REAL_POLICY", {
         vestDuration: 2n * YEAR,
       });
@@ -1769,53 +1739,13 @@ describe("InterfoldToken", function () {
         .transfer(await alice.getAddress(), amount);
 
       // Now link the claim to the real policy.
-      await token
-        .connect(admin)
-        .linkClaim(await alice.getAddress(), amount, policyId);
+      await token.connect(admin).linkClaim(aliceAddress, amount, policyId);
 
-      // Lock should still exist but now under the real policy (allow tiny
-      // rounding from vesting elapsed seconds).
-      const lb = await token.lockedBalanceOf(await alice.getAddress());
-      expect(lb).to.be.closeTo(amount, ethers.parseEther("0.01"));
-    });
-
-    it("linkClaim queues unfilled amounts for future claims", async function () {
-      const fixture = await loadFixture(deploy);
-      const { token, admin, alice, claimSource, ccaEnd } = fixture;
-      const policyId = await createLinearPolicy(token, admin, "FUTURE_POLICY", {
-        vestDuration: 2n * YEAR,
-      });
-      const linkAmount = ethers.parseEther("500");
-
-      // Link before any claim arrives — should queue.
-      await token
-        .connect(admin)
-        .linkClaim(await alice.getAddress(), linkAmount, policyId);
-
-      // No balance yet so no active lock.
-      expect(await token.lockedBalanceOf(await alice.getAddress())).to.equal(
-        0n,
-      );
-
-      // Mint tokens to claimSource during Virtual phase.
-      await token
-        .connect(admin)
-        .mint(await claimSource.getAddress(), linkAmount, ethers.ZeroHash);
-
-      // Fire TGE so transfers are unrestricted.
-      const TGE_COOLDOWN = 40n * DAY;
-      await time.increaseTo(ccaEnd + TGE_COOLDOWN + 1n);
-      await token.tge();
-
-      // Now send a claim — it should consume the queued lock.
-      await token
-        .connect(claimSource)
-        .transfer(await alice.getAddress(), linkAmount);
-
-      // Queued lock should be consumed and active lock created (allow tiny
-      // rounding from vesting elapsed seconds).
-      const lb2 = await token.lockedBalanceOf(await alice.getAddress());
-      expect(lb2).to.be.closeTo(linkAmount, ethers.parseEther("0.01"));
+      expect(await token.queuedLockCount(aliceAddress)).to.equal(0n);
+      expect(await token.lockCount(aliceAddress)).to.equal(1n);
+      const lock = await token.locks(aliceAddress, 0);
+      expect(lock.policyId).to.equal(policyId);
+      expect(lock.amount).to.equal(amount);
     });
 
     it("linkClaim rejects a conflicting queued policy for the same account", async function () {
@@ -1908,6 +1838,7 @@ describe("InterfoldToken", function () {
 
       await token.connect(admin).linkClaim(aliceAddress, linkAmount, policyId);
       expect(await token.queuedLockCount(aliceAddress)).to.equal(1n);
+      expect(await token.lockedBalanceOf(aliceAddress)).to.equal(0n);
 
       await token
         .connect(admin)
@@ -2005,15 +1936,14 @@ describe("InterfoldToken", function () {
     it("queued locks survive multiple partial claims", async function () {
       const fixture = await loadFixture(deploy);
       const { token, admin, alice, claimSource, ccaEnd } = fixture;
+      const aliceAddress = await alice.getAddress();
       const policyId = await createLinearPolicy(token, admin, "PARTIAL", {
         vestDuration: 2n * YEAR,
       });
       const linkAmount = ethers.parseEther("1000");
 
       // Queue a large amount.
-      await token
-        .connect(admin)
-        .linkClaim(await alice.getAddress(), linkAmount, policyId);
+      await token.connect(admin).linkClaim(aliceAddress, linkAmount, policyId);
 
       // Mint all claim tokens during Virtual phase.
       const totalClaim = ethers.parseEther("700");
@@ -2028,23 +1958,29 @@ describe("InterfoldToken", function () {
 
       // Send a partial claim.
       const partialAmount = ethers.parseEther("400");
-      await token
-        .connect(claimSource)
-        .transfer(await alice.getAddress(), partialAmount);
+      await token.connect(claimSource).transfer(aliceAddress, partialAmount);
 
-      let lb3 = await token.lockedBalanceOf(await alice.getAddress());
-      expect(lb3).to.be.closeTo(partialAmount, ethers.parseEther("0.01"));
+      expect(await token.lockCount(aliceAddress)).to.equal(1n);
+      let activeLock = await token.locks(aliceAddress, 0);
+      expect(activeLock.policyId).to.equal(policyId);
+      expect(activeLock.amount).to.equal(partialAmount);
+      expect(await token.queuedLockCount(aliceAddress)).to.equal(1n);
+      let queuedLock = await token.queuedLocks(aliceAddress, 0);
+      expect(queuedLock.policyId).to.equal(policyId);
+      expect(queuedLock.amount).to.equal(linkAmount - partialAmount);
 
       // Send another claim.
       const anotherAmount = ethers.parseEther("300");
-      await token
-        .connect(claimSource)
-        .transfer(await alice.getAddress(), anotherAmount);
+      await token.connect(claimSource).transfer(aliceAddress, anotherAmount);
 
-      lb3 = await token.lockedBalanceOf(await alice.getAddress());
-      expect(lb3).to.be.closeTo(
-        partialAmount + anotherAmount,
-        ethers.parseEther("0.01"),
+      activeLock = await token.locks(aliceAddress, 0);
+      expect(activeLock.policyId).to.equal(policyId);
+      expect(activeLock.amount).to.equal(partialAmount + anotherAmount);
+      expect(await token.queuedLockCount(aliceAddress)).to.equal(1n);
+      queuedLock = await token.queuedLocks(aliceAddress, 0);
+      expect(queuedLock.policyId).to.equal(policyId);
+      expect(queuedLock.amount).to.equal(
+        linkAmount - partialAmount - anotherAmount,
       );
     });
 

@@ -1591,29 +1591,38 @@ async fn setup_score_sortition_environment(
     eth_addrs: &Vec<String>,
     chain_id: u64,
 ) -> Result<()> {
-    bus.publish_without_context(ConfigurationUpdated {
-        parameter: "ticketPrice".to_string(),
-        old_value: U256::ZERO,
-        new_value: U256::from(10_000_000u64),
-        chain_id,
+    bus.publish_without_context(e3_events::ConfigurationUpdatedAt {
+        configuration: ConfigurationUpdated {
+            parameter: "ticketPrice".to_string(),
+            old_value: U256::ZERO,
+            new_value: U256::from(10_000_000u64),
+            chain_id,
+        },
+        position: e3_events::ChainPosition::new(1, 0),
     })?;
 
     let mut adder = AddToCommittee::new(bus, chain_id);
     for addr in eth_addrs {
         adder.add(addr).await?;
 
-        bus.publish_without_context(TicketBalanceUpdated {
-            operator: addr.clone(),
-            delta: I256::try_from(1_000_000_000u64).unwrap(),
-            new_balance: U256::from(1_000_000_000u64),
-            reason: FixedBytes::ZERO,
-            chain_id,
+        bus.publish_without_context(e3_events::TicketBalanceUpdatedAt {
+            balance: TicketBalanceUpdated {
+                operator: addr.clone(),
+                delta: I256::try_from(1_000_000_000u64).unwrap(),
+                new_balance: U256::from(1_000_000_000u64),
+                reason: FixedBytes::ZERO,
+                chain_id,
+            },
+            position: e3_events::ChainPosition::new(1, 1),
         })?;
 
-        bus.publish_without_context(OperatorActivationChanged {
-            operator: addr.clone(),
-            active: true,
-            chain_id,
+        bus.publish_without_context(e3_events::OperatorActivationChangedAt {
+            activation: OperatorActivationChanged {
+                operator: addr.clone(),
+                active: true,
+                chain_id,
+            },
+            position: e3_events::ChainPosition::new(1, 2),
         })?;
     }
 
@@ -1867,6 +1876,12 @@ async fn test_trbfv_actor() -> Result<()> {
     >::new()));
     let restart_during_dkg =
         std::env::var("BENCHMARK_RESTART_DURING_DKG").is_ok_and(|value| value == "1");
+    let restart_during_decryption =
+        std::env::var("BENCHMARK_RESTART_DURING_DECRYPTION").is_ok_and(|value| value == "1");
+    anyhow::ensure!(
+        !restart_during_decryption || (restart_storage.is_some() && !restart_during_dkg),
+        "decryption restart requires BENCHMARK_RESTART_PARTY_ID and excludes the DKG restart"
+    );
     anyhow::ensure!(
         !restart_during_dkg || restart_storage.is_some(),
         "BENCHMARK_RESTART_DURING_DKG requires BENCHMARK_RESTART_PARTY_ID"
@@ -2773,7 +2788,103 @@ async fn test_trbfv_actor() -> Result<()> {
         ciphertext_commitment: [0u8; 32],
     };
 
-    bus.publish_without_context(ciphertext_published_event.clone())?;
+    if restart_during_decryption {
+        bus.publish_without_context(ciphertext_published_event.clone())?;
+    }
+
+    if let Some(requested_party_id) = (!restart_during_dkg)
+        .then(|| std::env::var("BENCHMARK_RESTART_PARTY_ID").ok())
+        .flatten()
+        .and_then(|value| value.parse::<usize>().ok())
+    {
+        let restart_party_id = if accepted_rosters[0].contains(&(requested_party_id as u64))
+            && committee
+                .get(requested_party_id)
+                .is_some_and(|address| address != &active_aggregator_addr)
+        {
+            requested_party_id
+        } else {
+            accepted_rosters[0]
+                .iter()
+                .copied()
+                .map(|party_id| party_id as usize)
+                .find(|&party_id| {
+                    committee
+                        .get(party_id)
+                        .is_some_and(|address| address != &active_aggregator_addr)
+                })
+                .context("selected DKG roster has no non-aggregator restart target")?
+        };
+        let address = committee
+            .get(restart_party_id)
+            .ok_or_else(|| anyhow::anyhow!("restart party is outside the finalized committee"))?;
+        let node_index = find_node_index_by_address(&nodes, address)?;
+        let identity = restart_identities
+            .lock()
+            .unwrap()
+            .get(&nodes[node_index].address())
+            .cloned()
+            .context("restart identity is missing")?;
+        if restart_during_decryption {
+            let history = wait_for_history_match(
+                &nodes,
+                node_index,
+                0,
+                "ShareDecryptionProofPending before restart",
+                plaintext_flow_timeout,
+                |data| {
+                    matches!(data, InterfoldEventData::ShareDecryptionProofPending(event)
+                    if event.e3_id == e3_id && event.party_id == restart_party_id as u64)
+                },
+            )
+            .await?;
+            anyhow::ensure!(
+                !history.iter().any(|event| matches!(event.get_data(),
+                    InterfoldEventData::DecryptionshareCreated(data)
+                    if data.e3_id == e3_id && data.party_id == restart_party_id as u64)),
+                "restart target already published its share before the C6 fault injection"
+            );
+        }
+        println!("Stopping committee party {restart_party_id} at node index {node_index}");
+        bus.event_bus()
+            .send(Unsubscribe::new(
+                EventType::All,
+                nodes[node_index].bus().event_bus().clone().recipient(),
+            ))
+            .await?;
+        nodes
+            .restart_node(node_index, async {
+                let mut builder = CiphernodeBuilder::new(identity.rng, cipher.clone())
+                    .with_history_collector()
+                    .with_shared_taskpool(&task_pool)
+                    .with_multithread_concurrent_jobs(concurrent_jobs)
+                    .with_shared_multithread_report(&multithread_report)
+                    .with_trbfv()
+                    .with_zkproof(zk_backend.clone())
+                    .with_signer(identity.signer)
+                    .with_pubkey_aggregation()
+                    .with_sortition_score()
+                    .with_threshold_plaintext_aggregation()
+                    .with_forked_bus(bus.event_bus())
+                    .with_eventstore_aggregate_config_for_testing(
+                        benchmark_aggregate_config.clone(),
+                    )
+                    .with_dkg_timing_reader_for_testing(dkg_timing_reader.clone())
+                    .with_chains(std::slice::from_ref(&bench_chain_config))
+                    .with_persistence(&identity.log_path, &identity.kv_path)
+                    .with_logging();
+                if !proof_aggregation_enabled {
+                    builder = builder.with_proof_aggregation_disabled_for_testing();
+                }
+                builder.build().await
+            })
+            .await?;
+        println!("Restarted committee party {restart_party_id} at node index {node_index}");
+    }
+
+    if !restart_during_decryption {
+        bus.publish_without_context(ciphertext_published_event.clone())?;
+    }
 
     println!("CiphertextOutputPublished event has been dispatched!");
 
@@ -2827,12 +2938,11 @@ async fn test_trbfv_actor() -> Result<()> {
             _ => None,
         })
         .collect();
-    // All N committee members that received share material attempt decryption and gossip; the
-    // aggregator consumes only H. So the number of distinct senders observed at the collector
-    // sits in [H, N].
+    // Decryption can finish after T+1 shares. Other parties' gossip can arrive later.
+    let decryption_shares_required = threshold_m + 1;
     assert!(
-        unique_ds_parties.len() >= committee_h && unique_ds_parties.len() <= threshold_n,
-        "collector: expected DecryptionshareCreated from {committee_h}..={threshold_n} distinct parties, got {} parties {unique_ds_parties:?}",
+        unique_ds_parties.len() >= decryption_shares_required && unique_ds_parties.len() <= threshold_n,
+        "collector: expected DecryptionshareCreated from {decryption_shares_required}..={threshold_n} distinct parties, got {} parties {unique_ds_parties:?}",
         unique_ds_parties.len()
     );
     println!(
@@ -2847,9 +2957,8 @@ async fn test_trbfv_actor() -> Result<()> {
     // C6 head layout:
     //   CiphertextOutputPublished, DecryptionshareCreated × K, ShareVerificationDispatched,
     //   CommitmentConsistencyCheckRequested, CommitmentConsistencyCheckComplete
-    // where K is in [H, N] plus possible gossip duplicates — every committee member that received
-    // share material gossips one, the aggregator selects H. Locate boundaries by name rather than
-    // by fixed offset.
+    // K is at least T+1, with possible gossip duplicates. Late shares can also arrive
+    // during verification. Locate boundaries by name rather than by fixed offset.
     assert_eq!(
         active_aggregator_plaintext_events.first().copied(),
         Some("CiphertextOutputPublished"),
@@ -2879,10 +2988,17 @@ async fn test_trbfv_actor() -> Result<()> {
         })
         .collect();
     assert!(
-        unique_ds_parties_agg.len() >= committee_h && unique_ds_parties_agg.len() <= threshold_n,
-        "active aggregator: expected DecryptionshareCreated from {committee_h}..={threshold_n} distinct parties before ShareVerificationDispatched, got {} parties {unique_ds_parties_agg:?}",
+        unique_ds_parties_agg.len() >= decryption_shares_required && unique_ds_parties_agg.len() <= threshold_n,
+        "active aggregator: expected DecryptionshareCreated from {decryption_shares_required}..={threshold_n} distinct parties before ShareVerificationDispatched, got {} parties {unique_ds_parties_agg:?}",
         unique_ds_parties_agg.len()
     );
+    let mut active_aggregator_plaintext_events = active_aggregator_plaintext_events;
+    let mut index = 0;
+    active_aggregator_plaintext_events.retain(|event| {
+        let keep = index < svd_index || *event != "DecryptionshareCreated";
+        index += 1;
+        keep
+    });
     assert_eq!(
         &active_aggregator_plaintext_events[svd_index..svd_index + 3],
         &[
@@ -2905,8 +3021,8 @@ async fn test_trbfv_actor() -> Result<()> {
         "expected one C6 ShareVerificationComplete before aggregation"
     );
     assert!(
-        count_projected_events(c6_body, "ProofVerificationPassed") >= committee_h,
-        "expected >= {committee_h} C6 ProofVerificationPassed events before aggregation"
+        count_projected_events(c6_body, "ProofVerificationPassed") >= decryption_shares_required,
+        "expected >= {decryption_shares_required} C6 ProofVerificationPassed events before aggregation"
     );
     let c6_compute_requests = count_projected_events(c6_body, "ComputeRequest");
     let c6_compute_responses = count_projected_events(c6_body, "ComputeResponse");
@@ -3013,9 +3129,10 @@ async fn test_trbfv_actor() -> Result<()> {
             )
         })?;
 
-    assert!(
-        !decryption_aggregator_proofs.is_empty(),
-        "PlaintextAggregated must always carry an aggregated decryption proof payload"
+    assert_eq!(
+        decryption_aggregator_proofs.len(),
+        num_votes_per_voter,
+        "PlaintextAggregated must carry one decryption proof per tally"
     );
 
     let replay_committee = publication_committee_addresses
@@ -3091,9 +3208,14 @@ async fn test_trbfv_actor() -> Result<()> {
         }
     }
 
+    assert_eq!(
+        results.as_slice(),
+        expected_result.as_slice(),
+        "Threshold decryption must return every expected tally"
+    );
+
     for (i, (res, exp)) in results.iter().zip(expected_result.iter()).enumerate() {
         println!("Tally {i} result = {res} / {exp}");
-        assert_eq!(res, exp);
     }
 
     // Check every connected participant and the observer for false accusations,

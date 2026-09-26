@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use super::*;
+use alloy::signers::local::PrivateKeySigner;
 use e3_data::{AutoPersist, DataStore, InMemStore, PersistableData, Repository};
 use e3_events::{
     CircuitName, Committee, ComputeRequestErrorKind, ComputeRequestKind, EffectsEnabled, GetEvents,
@@ -20,6 +21,31 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 fn test_ctx(data: impl Into<InterfoldEventData>) -> EventContext<Sequenced> {
     EventContext::<Unsequenced>::from(data.into()).sequence(0)
+}
+
+fn c6_completion(
+    aggregator: &ThresholdPlaintextAggregator,
+    dishonest_parties: BTreeSet<u64>,
+) -> TypedEvent<ShareVerificationComplete> {
+    let Some(ThresholdPlaintextAggregatorState::VerifyingC6(batch)) = aggregator.state.get() else {
+        panic!("expected a C6 batch")
+    };
+    let request = aggregator.c6_verification_request(batch.c6_proofs);
+    let result = ShareVerificationComplete {
+        e3_id: aggregator.e3_id.clone(),
+        kind: VerificationKind::ThresholdDecryptionProofs,
+        verification_id: None,
+        dishonest_parties,
+    };
+    let event = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+        result.clone().into(),
+        Some(test_ctx(request)),
+        1,
+        None,
+        e3_events::EventSource::Local,
+    )
+    .into_sequenced(1);
+    event.to_typed_event(result)
 }
 
 fn test_persistable<T: PersistableData>(value: T) -> Persistable<T> {
@@ -106,6 +132,9 @@ fn verifying_c6_state() -> ThresholdPlaintextAggregatorState {
         c6_proofs: BTreeMap::new(),
         ciphertext_output: vec![ArcBytes::from_bytes(&[9])],
         params: test_params(),
+        seed: Seed([0u8; 32]),
+        rejected_parties: BTreeSet::new(),
+        queued_shares: BTreeMap::new(),
     })
 }
 
@@ -125,8 +154,9 @@ fn collecting_state() -> ThresholdPlaintextAggregatorState {
         shares: BTreeMap::new(),
         c6_proofs: BTreeMap::new(),
         seed: Seed([0u8; 32]),
-        ciphertext_output: vec![ArcBytes::from_bytes(&[9])],
+        ciphertext_output: test_ciphertexts()[..1].to_vec(),
         params: test_params(),
+        rejected_parties: BTreeSet::new(),
     })
 }
 
@@ -140,21 +170,93 @@ fn start_sortition(bus: &BusHandle) -> Addr<Sortition> {
     .start();
 
     Sortition::new(SortitionParams {
+        admission: test_persistable(e3_sortition::AdmissionState::default()),
         bus: bus.clone(),
         backends: test_persistable(HashMap::<u64, SortitionBackend>::new()),
         node_state: test_persistable(HashMap::<u64, NodeStateStore>::new()),
+        bond_owners: test_persistable(e3_sortition::BondOwnerState::default()),
         recovery: test_persistable(e3_sortition::SortitionRecoveryState::default()),
         finalized_committees: test_persistable(HashMap::<E3id, Committee>::new()),
         ciphernode_selector: selector,
         address: "node-1".to_string(),
+        submitted_e3s: Default::default(),
     })
     .start()
 }
 
 fn test_committee_address() -> Address {
-    "0x0000000000000000000000000000000000000001"
-        .parse()
-        .expect("test address")
+    test_signer(0).address()
+}
+
+fn test_signer(party: u64) -> PrivateKeySigner {
+    PrivateKeySigner::from_slice(&[party as u8 + 1; 32]).unwrap()
+}
+
+fn test_ciphertexts() -> Vec<ArcBytes> {
+    use fhe::bfv::{Encoding, Plaintext, PublicKey, SecretKey};
+    use fhe_traits::{FheEncoder, FheEncrypter, Serialize};
+    use rand::SeedableRng;
+    use std::sync::LazyLock;
+    static CIPHERTEXTS: LazyLock<Vec<ArcBytes>> = LazyLock::new(|| {
+        let (params, _) =
+            e3_fhe_params::build_pair_for_preset(BfvPreset::InsecureThreshold512).unwrap();
+        let mut rng = rand::rngs::StdRng::seed_from_u64(7);
+        let key = PublicKey::new(&SecretKey::random(&params, &mut rng), &mut rng);
+        [1u64, 2]
+            .into_iter()
+            .map(|value| {
+                let plaintext = Plaintext::try_encode(&[value], Encoding::poly(), &params).unwrap();
+                ArcBytes::from_bytes(&key.try_encrypt(&plaintext, &mut rng).unwrap().to_bytes())
+            })
+            .collect()
+    });
+    CIPHERTEXTS.clone()
+}
+
+// Actor tests inject local verification results. Shares and commitments are real,
+// but these proof bytes do not exercise the ZK verifier.
+fn share_with_matching_commitment(
+    e3_id: &E3id,
+    party: u64,
+    ciphertexts: &[ArcBytes],
+) -> (Vec<ArcBytes>, Vec<SignedProofPayload>) {
+    use e3_zk_helpers::{
+        circuits::commitments::compute_threshold_decryption_share_commitment,
+        circuits::threshold::decrypted_shares_aggregation::MAX_MSG_NON_ZERO_COEFFS,
+        threshold::share_decryption::{Bits, Bounds},
+        Computation,
+    };
+    use fhe_math::rq::{Poly, PowerBasis};
+    use fhe_traits::Serialize;
+
+    let preset = BfvPreset::InsecureThreshold512;
+    let (params, _) = e3_fhe_params::build_pair_for_preset(preset).unwrap();
+    let poly = Poly::<PowerBasis>::zero(params.context_at_level(0).unwrap());
+    let crt = e3_polynomial::CrtPolynomial::from_fhe_polynomial(&poly);
+    let bits = Bits::compute(preset, &Bounds::compute(preset, &()).unwrap()).unwrap();
+    let commitment = compute_threshold_decryption_share_commitment(
+        &crt,
+        bits.d_native_bit,
+        MAX_MSG_NON_ZERO_COEFFS,
+    );
+    let (_, bytes) = commitment.to_bytes_be();
+    let proofs = ciphertexts
+        .iter()
+        .map(|ciphertext| {
+            let mut signals = [0u8; 192];
+            signals[192 - bytes.len()..].copy_from_slice(&bytes);
+            signals[64..96].copy_from_slice(
+                &e3_bfv_client::compute_ct_commitment_with_params(ciphertext, &params).unwrap(),
+            );
+            let mut proof = dummy_signed_c6_proof(e3_id).payload;
+            proof.proof.public_signals = ArcBytes::from_bytes(&signals);
+            SignedProofPayload::sign(proof, &test_signer(party)).unwrap()
+        })
+        .collect();
+    (
+        vec![ArcBytes::from_bytes(&poly.to_bytes()); ciphertexts.len()],
+        proofs,
+    )
 }
 
 async fn build_plaintext_aggregator(
@@ -190,8 +292,8 @@ async fn build_plaintext_aggregator_with_role(
             proof_aggregation_enabled,
             initial_is_aggregator,
             effects_enabled: true,
-            committee_addresses: vec![test_committee_address()],
-            honest_committee_addresses: vec![test_committee_address()],
+            committee_addresses: (0..3).map(|party| test_signer(party).address()).collect(),
+            honest_committee_addresses: (0..2).map(|party| test_signer(party).address()).collect(),
             recovery: test_persistable(ThresholdPlaintextAggregatorRecoveryState::default()),
         },
         test_persistable(initial_state),
@@ -233,12 +335,11 @@ async fn standby_persists_and_resumes_plaintext_work() -> Result<()> {
     let (mut aggregator, history, e3_id) =
         build_plaintext_aggregator_with_role(collecting_state(), true, false).await?;
     let ec = test_ctx(EffectsEnabled::new());
-    aggregator.add_share(
-        0,
-        vec![ArcBytes::from_bytes(&[7])],
-        vec![dummy_signed_c6_proof(&e3_id)],
-        &ec,
-    )?;
+    for party in 0..2 {
+        let (shares, proofs) =
+            share_with_matching_commitment(&e3_id, party, &test_ciphertexts()[..1]);
+        aggregator.add_share(party, shares, proofs, &ec)?;
+    }
     aggregator.publish_inputs_ready(ec)?;
 
     assert!(matches!(
@@ -271,8 +372,8 @@ async fn standby_persists_and_resumes_plaintext_work() -> Result<()> {
 
 #[actix::test]
 async fn decryption_share_after_collection_closed_is_ignored() -> Result<()> {
-    let (mut aggregator, _history, e3_id) =
-        build_plaintext_aggregator(verifying_c6_state(), false).await?;
+    let (mut aggregator, history, e3_id) =
+        build_plaintext_aggregator(computing_state(), false).await?;
 
     aggregator.add_share(
         0,
@@ -283,10 +384,15 @@ async fn decryption_share_after_collection_closed_is_ignored() -> Result<()> {
 
     assert!(matches!(
         aggregator.state.get(),
-        Some(ThresholdPlaintextAggregatorState::VerifyingC6(_))
+        Some(ThresholdPlaintextAggregatorState::Computing(_))
     ));
+    aggregator.bus.flush_event_pipeline().await?;
+    let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+    assert!(events.is_empty(), "late share must not emit side effects");
     Ok(())
 }
 
 mod completion;
 mod failures;
+mod share_admission;
+mod threshold;

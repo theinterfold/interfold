@@ -5,9 +5,16 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 import { expect } from "chai";
 
-import { deployInterfoldSystem, ethers, networkHelpers } from "../fixtures";
+import {
+  deployInterfoldSystem,
+  ethers,
+  makeRequest,
+  networkHelpers,
+  publishAvailableCiphertextOutput,
+  setupAndPublishCommittee,
+} from "../fixtures";
 
-const { loadFixture } = networkHelpers;
+const { loadFixture, time } = networkHelpers;
 
 describe("NodeReleaseRegistry", function () {
   async function setup() {
@@ -111,13 +118,64 @@ describe("NodeReleaseRegistry", function () {
   });
 
   it("requires a paused and drained cutover", async function () {
-    const { nodeReleaseRegistry } = await loadFixture(setup);
+    const {
+      interfold,
+      nodeReleaseRegistry,
+      ciphernodeRegistry,
+      slashingManager,
+      usdcToken,
+      request,
+      operator1,
+      operator2,
+      operator3,
+    } = await deployInterfoldSystem({ setupOperators: 3 });
     await expect(
       nodeReleaseRegistry.setRequiredNodeRelease(2, 2),
     ).to.be.revertedWithCustomError(
       nodeReleaseRegistry,
       "NodeReleasePolicyRequiresPause",
     );
+
+    const e3Id = await interfold.nexte3Id();
+    await makeRequest(interfold, usdcToken, request);
+    await interfold.setRequestsPaused(true);
+    await expect(nodeReleaseRegistry.setRequiredNodeRelease(2, 2))
+      .to.be.revertedWithCustomError(
+        nodeReleaseRegistry,
+        "NodeReleasePolicyInUse",
+      )
+      .withArgs(1, 1);
+
+    // Completing the E3 drains it, but its committee stays unreleased.
+    const proof = "0x1337";
+    await setupAndPublishCommittee(ciphernodeRegistry, e3Id, "0xcafe", [
+      operator1!,
+      operator2!,
+      operator3!,
+    ]);
+    await time.increaseTo(BigInt(request.inputWindow[1]) + 1n);
+    await publishAvailableCiphertextOutput(
+      interfold,
+      e3Id,
+      "0xda7a",
+      ethers.id("node-release-ciphertext"),
+      proof,
+    );
+    await interfold.publishPlaintextOutput(e3Id, "0xbeef", proof);
+    await expect(nodeReleaseRegistry.setRequiredNodeRelease(2, 2))
+      .to.be.revertedWithCustomError(
+        nodeReleaseRegistry,
+        "NodeReleasePolicyInUse",
+      )
+      .withArgs(0, 1);
+
+    await time.increaseTo(
+      (await slashingManager.accusationSubmissionDeadline(e3Id)) + 1n,
+    );
+    await ciphernodeRegistry.releaseCommittee(e3Id);
+    await nodeReleaseRegistry.setRequiredNodeRelease(2, 2);
+    expect(await nodeReleaseRegistry.requiredProtocolVersion()).to.equal(2);
+    expect(await nodeReleaseRegistry.requiredNodeGeneration()).to.equal(2);
   });
 
   it("reserves global eligibility invalidation for the release controller", async function () {

@@ -63,9 +63,15 @@ Run from repo root via pnpm scripts — not raw cargo/nargo/hardhat.
 | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Install / build all         | `pnpm i` · `pnpm build`                                                                                                                            |
 | Build Rust                  | `pnpm rust:build` (cargo `--locked --release`; prebuilds EVM fixtures)                                                                             |
-| Test everything             | `pnpm test` (evm → rust → sdk → noir)                                                                                                              |
+| Test everything             | `pnpm test` (EVM, Rust, required proof/slashing suites, SDK, Noir)                                                                                 |
 | Test one layer              | `pnpm evm:test` · `pnpm rust:test` · `pnpm sdk:test` · `pnpm noir:test`                                                                            |
+| SDK proof verification      | `pnpm sdk:test:proofs` (prepare circuits, generate one proof, verify bindings and reject tampering)                                                |
+| Prepared SDK proof tests    | `pnpm sdk:test:proofs:prepared` (reuse the current SDK build or prepared circuit set)                                                              |
+| Rust proof integration      | `pnpm rust:test:proofs` (prepared insecure/minimum circuits and `bb`)                                                                              |
+| Rust slashing integration   | `pnpm rust:test:slashing` (compiled contract artifacts and `anvil`)                                                                                |
 | Integration tests           | `pnpm test:integration [name]` (`--no-prebuild` to skip binary build)                                                                              |
+| Test runner regressions     | `pnpm test:harnesses`                                                                                                                              |
+| DAppNode hardening tests    | `bash dappnode/tests/test-hardening.sh` (needs `jq` and `envsubst`)                                                                                |
 | Lint / format               | `pnpm lint` · `pnpm format` / `pnpm format:check`                                                                                                  |
 | Build circuits              | `pnpm build:circuits [--preset …] [--committee …]` (needs `nargo` + `bb`; `interfold noir setup` installs them)                                    |
 | Generate Solidity verifiers | `pnpm generate:verifiers [--check\|--write]`                                                                                                       |
@@ -73,6 +79,20 @@ Run from repo root via pnpm scripts — not raw cargo/nargo/hardhat.
 | Consistency checks          | `pnpm check:committee` · `check:docs` · `check:addresses` · `check:invariants` · `check:license` · `check:verifiers` · `check:pnpm` · `check:size` |
 | Prepare release branch      | `pnpm bump:versions X.Y.Z`                                                                                                                         |
 | Tag merged release          | `pnpm release:tag X.Y.Z` from updated `main`                                                                                                       |
+
+## Test preparation
+
+`pnpm sdk:test` runs the fast SDK suites without circuit preparation. The proof API tests mock the
+prover boundary. They do not claim to verify cryptographic proofs. The separate proof suite verifies
+a real proof against the compiled verification key and rejects altered public inputs and proof
+bytes.
+
+Before `pnpm rust:test:proofs` or `pnpm test`, run
+`pnpm build:circuits --preset insecure --committee minimum --skip-if-built`. This prepares one
+consistent set of inner and recursive circuits. Before `pnpm rust:test:slashing`, run
+`pnpm evm:build`. The named Rust integration suites fail if a required tool or artifact is missing.
+Ordinary Rust test runs report these integration tests as ignored. CI explicitly selects them. The
+full test command reuses the prepared circuits for SDK proof verification.
 
 ## Chain-Specific BFV Config
 
@@ -96,19 +116,25 @@ for that chain.
 
 ## Conventions
 
-- **Commits:** Conventional Commits, types `feat` / `fix` / `chore` only, optional scope, `!` for
-  breaking, description ≤ 72 chars (hook regex `^(feat|fix|chore)(\(.+\))?(!)?: .{1,72}$`).
-- **PRs:** small and focused; 1 approval required; squash merge with a cleaned-up body of meaningful
-  conventional commits; breaking PRs merge only alongside a breaking release; docs changes get the
-  `documentation` label. CI validates commit messages.
+- **Commits and PR titles:** Conventional Commits, optional lower-case scope, `!` for breaking. No
+  local commit-message hook exists. `.github/workflows/validate-commits.yml` checks only the PR
+  title, which is the default squash-commit title (the person who merges can edit it): type `feat`,
+  `fix`, `chore`, `refactor`, `docs`, or `test`, and a whole header of at most 72 characters.
+- **PRs:** small and focused; 1 approval required by team rule (the `main` ruleset does not enforce
+  it, so do not merge without one); squash merge with a cleaned-up body of meaningful conventional
+  commits; breaking PRs merge only alongside a breaking release; docs changes get the
+  `documentation` label.
 - **Branches:** `main` = latest (feature-flagged); `v*.*.*` tags; `stable` = latest stable.
 - **Pre-push hook (husky):** `pnpm lint`, `check:pnpm`, `check:license`, `check:committee`,
-  `check:docs` (harness-doc drift gate — escape with `[skip-doc-sync]` in a commit message when no
-  documented behavior changed), `check:addresses` (contract addresses in the docs, dashboard,
-  DAppNode package, and CRISP example must match `deployments/manifest.json`), `check:invariants`
-  (grep-enforced invariants: `do_send` ratchet, skip-proof feature containment — baselines in
-  `scripts/invariant-baselines.env`), and the canonical `insecure/minimum` verifier check. CI runs
-  `check:verifiers` against the complete release matrix.
+  `check:docs` (harness-doc drift gate — a watched file is exempt automatically when neither its
+  changed lines nor the declarations that enclose them name an identifier the `agent/` docs mention,
+  when the change is a pure formatter reflow, or when the branch reverts the file; otherwise escape
+  with `[skip-doc-sync]` in a commit message when no documented behavior changed), `check:addresses`
+  (contract addresses in the docs, dashboard, DAppNode package, and CRISP example must match
+  `deployments/manifest.json`), `check:invariants` (`do_send` ratchet with its baseline in
+  `scripts/invariant-baselines.env`, skip-proof feature containment, runtime proof-skip guard,
+  Docker workspace coverage, Compose shutdown grace), `check:verifiers`. CI does not run
+  `check:addresses`, `check:pnpm`, or the root `eslint`, so these checks run only in this hook.
 - **Docs MCP server:** `.mcp.json`, `.codex/config.toml`, and `opencode.json` expose
   `@interfold/mcp` (`interfold-docs`) to their respective agents. The launch configs run the
   TypeScript source through the workspace toolchain; `pnpm mcp:build` builds the publishable

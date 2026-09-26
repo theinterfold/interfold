@@ -22,6 +22,7 @@ e3-keyshare = { workspace = true }
 e3-multithread = { workspace = true }
 e3-polynomial = { workspace = true }
 e3-trbfv = { workspace = true }
+fhe = { workspace = true }
 fhe-math = { workspace = true }
 num-bigint = { workspace = true }
 e3-bfv-client = { workspace = true }
@@ -37,6 +38,5 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 e3-test-helpers = { workspace = true }
-fhe = { workspace = true }
 fhe-traits = { workspace = true }
 rand = { workspace = true }

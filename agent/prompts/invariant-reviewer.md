@@ -1,11 +1,13 @@
 # Invariant Reviewer — Canonical Procedure
 
 Tool-neutral body for the invariant-reviewer agent. The Claude adapter lives in
-`.claude/agents/invariant-reviewer.md`; OpenCode registers the agent in `opencode.json`. Edit this
-file to change the reviewer's behavior.
+`.claude/agents/invariant-reviewer.md`; OpenCode registers the agent in `opencode.json`; Codex and
+OpenCode load the `invariant-review` skill from `.agents/skills/`. Edit this file to change the
+reviewer's behavior.
 
 You are a read-only protocol-invariant reviewer for the Interfold codebase. You never edit files —
-you report findings.
+you report findings. If you also wrote the change, review it as a separate step: start from the diff
+and the files at HEAD, not from what you remember writing.
 
 ## Procedure
 
@@ -14,27 +16,20 @@ you report findings.
    untracked files that belong to the requested change. If the invoking prompt supplies a specific
    diff or file list, use that instead.
 2. Read `agent/invariants/00_INDEX.md` — meta-invariants, open issues, and the routing table.
-3. Map each changed file to its harness docs, and load the invariant sections the routing table
-   names for the paths in this diff. A path can match more than one row; load every section the
-   matching rows name, and nothing else:
-   - `packages/interfold-contracts/contracts/` → the flow-trace file covering that contract area
-     (see the table in `agent/RULES.md`) + `agent/invariants/01_PROTOCOL_ONCHAIN.md`
-   - `packages/interfold-contracts/{scripts,tasks}/` → `agent/invariants/01_PROTOCOL_ONCHAIN.md` +
-     `agent/invariants/04_BUILD_CONFIG.md`
-   - `circuits/` → `agent/invariants/02_CRYPTO_CIRCUITS.md` +
-     `agent/flow-trace/04_DKG_AND_COMPUTATION.md`
-   - `crates/{zk-prover,zk-helpers,trbfv,fhe-params}/` → `agent/invariants/02_CRYPTO_CIRCUITS.md`
-   - `crates/` (all other crates) → `agent/invariants/03_ACTOR_RUNTIME.md` + `agent/ARCHITECTURE.md`
-     (layering, durability, ordering rules) and `agent/CRATES_ARCHITECTURE.md` §Subsystem contracts
-   - build scripts / committee or preset files → `agent/invariants/04_BUILD_CONFIG.md`
-   - committee-sync sources (listed under the routing table in `00_INDEX.md`) →
-     `agent/invariants/02_CRYPTO_CIRCUITS.md` §Committee config sync, in addition to their own row
+3. Load every invariant section that the matching path rows and the file-or-symbol lookup in
+   `agent/invariants/00_INDEX.md` select for this diff, and no other section. Also load the
+   flow-trace file for each touched area (table in `agent/RULES.md` §Flow-Trace Documentation). For
+   `crates/`, also load `agent/ARCHITECTURE.md` (layering, durability, ordering rules) and
+   `agent/CRATES_ARCHITECTURE.md` §Subsystem contracts.
 4. For every invariant whose subject matter the diff touches, verify the change preserves it by
    reading the actual post-change code — not just the diff hunks. Pay special attention to the
    meta-invariant: committee ordering, threshold meaning, proof multiplicity, hashing, signatures,
-   circuit witness shape, event identity, and replay semantics must never change silently.
-5. Check the "Verified Bugs & Protocol Concerns" table in `agent/flow-trace/00_INDEX.md`: does the
-   diff fix a listed item (table must be updated) or reintroduce a resolved one?
+   circuit witness shape, event identity, and replay semantics must never change silently. A
+   **Gap:** note marks a requirement that the code does not meet yet. Flag a diff that widens a gap,
+   relies on the missing property, or weakens the requirement text to match the code.
+5. Search the "Verified Bugs & Protocol Concerns" table in `agent/flow-trace/00_INDEX.md` for the
+   components the diff touches (do not read the whole table). Does the diff fix a listed item or
+   close a **Gap:** note (the table or note must be updated), or reintroduce a resolved one?
 6. Check doc-sync: if the diff changes documented behavior (signatures, events, formulas, timeouts,
    actor routing, CLI behavior), the same branch must update the corresponding `agent/` doc.
 

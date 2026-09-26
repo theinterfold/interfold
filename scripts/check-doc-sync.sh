@@ -10,11 +10,13 @@
 # rejected. agent/RULES.md requires flow-trace and invariant docs to be updated in the
 # same PR as the change they describe.
 #
-# Escape hatches:
+# A watched path stands down automatically when the change provably cannot affect a
+# documented statement: a pure formatter reflow, or a diff whose changed lines name
+# none of the identifiers the agent/ docs actually mention.
+#
+# Escape hatches for everything else:
 #   - include "[skip-doc-sync]" in the commit that contains a non-behavioral change, or
 #   - set SKIP_DOC_SYNC=1
-# for changes that genuinely do not alter documented behavior (pure refactors,
-# test-only changes, dependency bumps).
 #
 # Run from .husky/pre-push. Exit 0 when consistent or not applicable, 1 on drift.
 
@@ -85,17 +87,30 @@ if [[ -n "$doc_hits" ]]; then
   exit 0
 fi
 
-unskipped_watched="$(sort -u <<<"$unskipped_watched")"
+# Per-commit collection can name a path the branch later reverted. Such a path has no
+# net diff against the base, so it cannot contradict a document and must not be cited.
+unskipped_watched="$(sort -u <<<"$unskipped_watched" |
+  grep -Fxf <(grep -E "$WATCHED_REGEX" <<<"$changed") || true)"
 
-# A formatter reflow cannot change behavior, so it must not demand an agent/ doc
-# update. Every remaining watched path is tested for formatting equivalence, and
-# the gate only stands down when ALL of them are equivalent — one behavioral file
-# re-arms it for the whole branch.
+if [[ -z "$unskipped_watched" ]]; then
+  echo "check-doc-sync: watched changes are reverted in this branch, no agent/ update required"
+  exit 0
+fi
+
+# A change that provably cannot invalidate a documented statement must not demand an
+# agent/ doc update. Two probes can stand a watched path down:
 #
-# Every failure mode here (missing formatter, unknown extension, added or deleted
-# file, too many paths to check) falls through to "behavioral". The gate staying
-# armed costs a commit-message tag, whereas a wrong exemption silently drops the
-# protocol-doc requirement.
+#   1. relevance — no line the branch changed in that path names any identifier the
+#      agent/ docs mention, so no documented statement can be about this change;
+#   2. formatting — the file is byte-identical after the repository's own formatter.
+#
+# The gate only stands down when ALL remaining watched paths are exempt — one
+# behavioral file re-arms it for the whole branch.
+#
+# Every failure mode here (empty symbol set, missing formatter, unknown extension,
+# added or deleted file, too many paths to check) falls through to "behavioral". The
+# gate staying armed costs a commit-message tag, whereas a wrong exemption silently
+# drops the protocol-doc requirement.
 
 # Upper bound on formatter invocations. A branch touching more watched files than
 # this is not a formatting pass, and running prettier twice per file would stall
@@ -109,7 +124,9 @@ normalize_blob() {
   case "${path##*.}" in
     rs)
       command -v rustfmt >/dev/null 2>&1 || return 1
-      git show "$spec" 2>/dev/null | rustfmt --emit stdout --quiet 2>/dev/null
+      # The workspace is edition 2021. rustfmt defaults to 2015, where `async fn`
+      # and `dyn` do not parse, so every async file would fail the probe.
+      git show "$spec" 2>/dev/null | rustfmt --edition 2021 --emit stdout --quiet 2>/dev/null
       ;;
     sol | ts | tsx | js | jsx | mjs | cjs | json | md | mdx | yml | yaml | css)
       # --stdin-filepath makes prettier resolve the parser and .prettierrc
@@ -145,36 +162,78 @@ format_only() {
   [[ "$base_fmt" == "$head_fmt" ]]
 }
 
+# Identifiers the agent/ docs actually name, harvested from backticked spans at $head.
+# Filtered to structurally specific ones — snake_case, path-qualified, dotted or
+# slashed names, and any camelCase with an internal capital — at least 5 characters.
+# `[a-z][A-Z]` is what keeps Solidity and TypeScript names such as `publishInput`,
+# `gracePeriod`, and `committeeHash`, which a multi-capital-only rule silently drops
+# and which are exactly the protocol surface this gate exists to watch. Bare words
+# like `new`, `data`, or `Err` are backticked in the docs too, but occur in nearly
+# every Rust diff, so keeping them would arm the gate unconditionally and make the
+# probe worthless.
+symbols_file="$(mktemp)"
+trap 'rm -f "$symbols_file"' EXIT
+git grep -hoE '`[A-Za-z_][A-Za-z0-9_:./-]{2,}`' "$head" -- 'agent/*.md' 2>/dev/null |
+  tr -d '`' |
+  grep -E '_|::|[a-z][A-Z]|[A-Z][a-z0-9]*[A-Z]|[./]' |
+  awk 'length >= 5' |
+  sort -u >"$symbols_file" || true
+
+# True when no line base..head changed in "$path", and no enclosing declaration it sits
+# in, names a documented identifier. `-U0` hunk headers carry that enclosing
+# declaration, which is what catches a body-only edit inside a documented function.
+# -w is what keeps `proof_verification` from matching inside `bb_proof_verification`.
+undocumented_only() {
+  local path="$1"
+
+  # An added or removed watched file is structural, never irrelevant: undocumented
+  # new code in a watched crate is precisely what this gate exists to notice.
+  git cat-file -e "$base:$path" 2>/dev/null || return 1
+  git cat-file -e "$head:$path" 2>/dev/null || return 1
+
+  [[ -s "$symbols_file" ]] || return 1
+
+  local changed
+  changed="$(git diff -U0 "$base" "$head" -- "$path" |
+    grep -E '^(@@|[+-])' | grep -vE '^(\+\+\+|---)' || true)"
+  [[ -n "$changed" ]] || return 1
+
+  ! grep -qwFf "$symbols_file" <<<"$changed"
+}
+
 behavioral_watched=""
-formatting_watched=""
+exempt_watched=""
 path_count="$(grep -c . <<<"$unskipped_watched" || true)"
 
+# The relevance probe is two greps per path, so it always runs. The formatter probe
+# shells out to rustfmt/prettier twice per path, so it keeps its cap.
+probe_formatting=1
 if ((path_count > MAX_FORMAT_PROBE_PATHS)); then
-  behavioral_watched="$unskipped_watched"
-else
-  while IFS= read -r path; do
-    [[ -n "$path" ]] || continue
-    if format_only "$path"; then
-      formatting_watched+="${formatting_watched:+$'\n'}$path"
-    else
-      behavioral_watched+="${behavioral_watched:+$'\n'}$path"
-    fi
-  done <<<"$unskipped_watched"
+  probe_formatting=0
 fi
 
-if [[ -z "$behavioral_watched" && -n "$formatting_watched" ]]; then
-  echo "check-doc-sync: watched changes are formatting-only, no agent/ update required"
+while IFS= read -r path; do
+  [[ -n "$path" ]] || continue
+  if undocumented_only "$path" || { ((probe_formatting)) && format_only "$path"; }; then
+    exempt_watched+="${exempt_watched:+$'\n'}$path"
+  else
+    behavioral_watched+="${behavioral_watched:+$'\n'}$path"
+  fi
+done <<<"$unskipped_watched"
+
+if [[ -z "$behavioral_watched" && -n "$exempt_watched" ]]; then
+  echo "check-doc-sync: watched changes cannot affect documented behavior, no agent/ update required"
   while IFS= read -r path; do
     echo "  - $path"
-  done <<<"$formatting_watched"
+  done <<<"$exempt_watched"
   exit 0
 fi
 
-if [[ -n "$formatting_watched" ]]; then
-  echo "check-doc-sync: ignoring formatting-only changes:"
+if [[ -n "$exempt_watched" ]]; then
+  echo "check-doc-sync: ignoring changes that name no documented identifier:"
   while IFS= read -r path; do
     echo "  - $path"
-  done <<<"$formatting_watched"
+  done <<<"$exempt_watched"
   echo
 fi
 

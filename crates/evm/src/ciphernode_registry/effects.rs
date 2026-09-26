@@ -3,6 +3,7 @@
 //! Idempotency preflights and CiphernodeRegistry contract effects.
 
 use super::*;
+use crate::adapters::log_fetcher::fetch_logs_adapting;
 use crate::contracts::IInterfold;
 
 alloy::sol! {
@@ -475,33 +476,34 @@ pub async fn fetch_randomness_provider<P: Provider + Clone>(
 }
 
 /// Reads every provider needed to replay committee randomness history.
+///
+/// Read through the shared adaptive fetcher rather than a fixed-width loop. This runs during
+/// startup, before the event pager exists, and a fixed 10,000-block request is refused outright by
+/// any provider whose `eth_getLogs` cap is lower — so the node failed to start against endpoints the
+/// pager already knew how to use, and nothing in the log said the sync itself would have coped.
+/// See [`fetch_logs_adapting`].
 pub async fn fetch_randomness_providers<P: Provider + Clone>(
     provider: &P,
     registry_address: Address,
     from_block: u64,
 ) -> Result<Vec<Address>> {
-    const LOG_CHUNK_SIZE: u64 = 10_000;
+    let chain_id = provider.get_chain_id().await?;
     let base_filter = Filter::new()
         .address(registry_address)
         .event_signature(ICiphernodeRegistry::RandomnessProviderSet::SIGNATURE_HASH);
+    let head = provider.get_block_number().await?;
+
+    let logs = fetch_logs_adapting(provider, &base_filter, from_block, head, chain_id).await?;
+
     let mut providers = Vec::new();
     let mut seen = HashSet::new();
-    let head = provider.get_block_number().await?;
-    let mut start = from_block;
-    while start <= head {
-        let end = start.saturating_add(LOG_CHUNK_SIZE - 1).min(head);
-        let filter = base_filter.clone().from_block(start).to_block(end);
-        for log in provider.get_logs(&filter).await? {
-            let event = ICiphernodeRegistry::RandomnessProviderSet::decode_log_data(log.data())
-                .context("invalid RandomnessProviderSet event")?;
-            if event.randomnessProvider != Address::ZERO && seen.insert(event.randomnessProvider) {
-                providers.push(event.randomnessProvider);
-            }
+
+    for log in logs {
+        let event = ICiphernodeRegistry::RandomnessProviderSet::decode_log_data(log.data())
+            .context("invalid RandomnessProviderSet event")?;
+        if event.randomnessProvider != Address::ZERO && seen.insert(event.randomnessProvider) {
+            providers.push(event.randomnessProvider);
         }
-        if end == head {
-            break;
-        }
-        start = end + 1;
     }
 
     if let Some(current) = fetch_randomness_provider(provider, registry_address).await? {

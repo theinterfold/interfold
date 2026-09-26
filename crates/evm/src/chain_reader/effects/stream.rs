@@ -19,6 +19,10 @@ pub(in crate::actors::evm_read_interface) async fn stream_from_evm<
     let chain_id = provider.chain_id();
     let mut timestamp_tracker = TimestampTracker::new();
     let mut backoff = Backoff::new(MAX_RECONNECT_DELAY_SECS);
+    // One window for the whole session. The provider's range cap is discovered during the
+    // historical sync and then reused by every backfill, so a narrow provider is paid for once
+    // rather than on every reconnect.
+    let mut log_window = LogWindow::new();
 
     // ── Phase 1: Historical sync (must succeed, fatal on failure) ──
 
@@ -39,6 +43,7 @@ pub(in crate::actors::evm_read_interface) async fn stream_from_evm<
         chain_id,
         &next,
         &mut timestamp_tracker,
+        &mut log_window,
     )
     .await
     {
@@ -77,6 +82,7 @@ pub(in crate::actors::evm_read_interface) async fn stream_from_evm<
             &mut timestamp_tracker,
             &mut last_block,
             filters.confirmations(),
+            &mut log_window,
         )
         .await
         {
@@ -168,6 +174,7 @@ pub(in crate::actors::evm_read_interface) async fn stream_from_evm<
                                 &mut timestamp_tracker,
                                 &mut last_block,
                                 filters.confirmations(),
+                                &mut log_window,
                             ).await {
                                 consecutive_failures += 1;
                                 warn!(

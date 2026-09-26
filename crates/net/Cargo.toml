@@ -38,3 +38,4 @@ e3-committee-hash = { workspace = true }
 e3-fhe-params = { workspace = true }
 fhe = { workspace = true }
 fhe-traits = { workspace = true }
+tokio = { workspace = true, features = ["test-util"] }

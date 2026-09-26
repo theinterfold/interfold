@@ -386,6 +386,77 @@ async function push() {
   rmSync(tmp, { recursive: true })
 }
 
+/**
+ * Rewrite the published build stamps after a change of the source-hash scheme.
+ *
+ * The circuit artifacts do not change. The operator supplies the hash that the current tree
+ * produced under the previous scheme. That value proves that the published artifacts come from
+ * this tree, so the recomputed stamps describe the same build and no rebuild is necessary.
+ */
+async function restamp() {
+  const previousHash = argValue('--expect-source-hash')
+  if (!previousHash) {
+    console.error('❌ restamp requires --expect-source-hash <hash the current tree produced under the previous scheme>')
+    process.exit(1)
+  }
+
+  const hash = run('pnpm tsx scripts/build-circuits.ts hash')
+  const remote = run('git remote get-url origin')
+  const tmp = join(ROOT, '.tmp-circuits')
+  if (existsSync(tmp)) rmSync(tmp, { recursive: true })
+  runV(`git clone --depth 1 --branch ${BRANCH} --single-branch ${remote} ${tmp}`)
+
+  const published = readFileSync(join(tmp, 'SOURCE_HASH'), 'utf8').trim()
+  if (published !== previousHash) {
+    console.error(
+      `❌ circuit-artifacts records SOURCE_HASH=${published}, not ${previousHash}. That branch holds another build; rebuild it instead.`,
+    )
+    process.exit(1)
+  }
+  if (published === hash) {
+    console.log('✅ Stamps already match this tree')
+    rmSync(tmp, { recursive: true })
+    return
+  }
+
+  for (const [preset, committee] of RELEASE_REQUIRED_PAIRS) {
+    const stampPath = join(tmp, preset, committee, '.build-stamp.json')
+    const stamp = JSON.parse(readFileSync(stampPath, 'utf8')) as BuildStamp
+    writeFileSync(stampPath, JSON.stringify({ ...stamp, sourceHash: sourceHashForPair(preset, committee) }, null, 2) + '\n')
+  }
+  writeFileSync(join(tmp, 'SOURCE_HASH'), hash)
+  refreshChecksums(tmp)
+
+  // Status columns do not survive the trim in `run`. Name-only listings carry paths alone.
+  const touchedArtifacts = [run('git diff --name-only HEAD', tmp), run('git ls-files --others --exclude-standard', tmp)]
+    .join('\n')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((path) => path.length > 0 && !METADATA_FILES.has(path) && !path.endsWith('.build-stamp.json'))
+  if (touchedArtifacts.length > 0) {
+    console.error(`❌ restamp changed a circuit artifact (${touchedArtifacts[0]}). It may only rewrite build stamps.`)
+    process.exit(1)
+  }
+
+  validateArtifactSet(tmp)
+  run('git add -A', tmp)
+  run(`git commit -m "circuits: restamp ${published} -> ${hash}"`, tmp)
+  runV(`git push origin ${BRANCH}`, tmp)
+  console.log(`✅ Restamped (${published} -> ${hash})`)
+
+  rmSync(tmp, { recursive: true })
+}
+
+export function findArtifactRevision(root: string, reference: string, sourceHash: string): string {
+  const git = (...args: string[]) => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim()
+  const revisions = git('rev-list', '--first-parent', reference).split('\n')
+  for (const revision of revisions) {
+    if (!git('ls-tree', '--name-only', revision, '--', 'SOURCE_HASH')) continue
+    if (git('show', `${revision}:SOURCE_HASH`) === sourceHash) return revision
+  }
+  throw new Error(`No published circuit artifacts match SOURCE_HASH=${sourceHash}. Build and push the required preset/committee pairs.`)
+}
+
 async function pull() {
   try {
     run(`git fetch origin ${BRANCH}`)
@@ -400,11 +471,14 @@ async function pull() {
     process.exit(1)
   }
 
+  const hash = run('pnpm tsx scripts/build-circuits.ts hash')
+  const revision = findArtifactRevision(ROOT, `origin/${BRANCH}`, hash)
+
   if (existsSync(DIST)) rmSync(DIST, { recursive: true })
   mkdirSync(DIST, { recursive: true })
 
-  runV(`git archive origin/${BRANCH} | tar -x -C "${DIST}"`)
-  console.log(`✅ Pulled to ${DIST}`)
+  runV(`git archive ${revision} | tar -x -C "${DIST}"`)
+  console.log(`✅ Pulled ${revision} (SOURCE_HASH=${hash}) to ${DIST}`)
 }
 
 async function verifyRelease() {
@@ -427,5 +501,9 @@ if (require.main === module) {
   if (cmd === 'push') push()
   else if (cmd === 'pull') pull()
   else if (cmd === 'verify-release') verifyRelease()
-  else console.log('Usage: circuit-artifacts.ts [push [--replace]|pull|verify-release [--source-hash <hash>]]')
+  else if (cmd === 'restamp') restamp()
+  else
+    console.log(
+      'Usage: circuit-artifacts.ts [push [--replace]|pull|verify-release [--source-hash <hash>]|restamp --expect-source-hash <hash>]',
+    )
 }

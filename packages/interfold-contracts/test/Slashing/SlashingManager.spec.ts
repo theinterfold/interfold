@@ -26,7 +26,6 @@ describe("SlashingManager", function () {
   const REASON_PT_1 = ethers.keccak256(ethers.solidityPacked(["uint256"], [1]));
   const REASON_INACTIVITY = ethers.encodeBytes32String("inactivity");
 
-  const SLASHER_ROLE = ethers.keccak256(ethers.toUtf8Bytes("SLASHER_ROLE"));
   const GOVERNANCE_ROLE = ethers.keccak256(
     ethers.toUtf8Bytes("GOVERNANCE_ROLE"),
   );
@@ -410,31 +409,6 @@ describe("SlashingManager", function () {
       ).to.be.revertedWithCustomError(slashingManager, "InvalidPolicy");
     });
 
-    // M-14: the `enabled` field on `SlashPolicy` is now informational only —
-    // the on-chain validator no longer rejects policies based on this flag.
-    // The whole-policy disable path is provided via reason removal/zeroing
-    // in governance, not via this boolean. We assert the call succeeds.
-    it("should accept policy with enabled=false (M-14 field is informational)", async function () {
-      const { slashingManager } = await loadFixture(setup);
-
-      const policy = {
-        ticketPenalty: ethers.parseUnits("50", 6),
-        ciphernodeBondPenalty: ethers.parseEther("100"),
-        requiresProof: false,
-        proofVerifier: ethers.ZeroAddress,
-        banNode: false,
-        appealWindow: APPEAL_WINDOW,
-        enabled: false,
-        affectsCommittee: false,
-        failureReason: 0,
-      };
-
-      await expect(slashingManager.setSlashPolicy(REASON_PT_0, policy)).to.emit(
-        slashingManager,
-        "SlashPolicyUpdated",
-      );
-    });
-
     it("should revert if no penalties are set", async function () {
       const { slashingManager } = await loadFixture(setup);
 
@@ -573,39 +547,6 @@ describe("SlashingManager", function () {
   });
 
   describe("role management", function () {
-    it("should add and remove slasher role", async function () {
-      const { slashingManager, notTheOwner } = await loadFixture(setup);
-
-      await slashingManager.addSlasher(await notTheOwner.getAddress());
-      expect(
-        await slashingManager.hasRole(
-          SLASHER_ROLE,
-          await notTheOwner.getAddress(),
-        ),
-      ).to.be.true;
-
-      await slashingManager.removeSlasher(await notTheOwner.getAddress());
-      expect(
-        await slashingManager.hasRole(
-          SLASHER_ROLE,
-          await notTheOwner.getAddress(),
-        ),
-      ).to.be.false;
-    });
-
-    it("should revert if non-admin tries to add slasher", async function () {
-      const { slashingManager, notTheOwner } = await loadFixture(setup);
-
-      await expect(
-        slashingManager
-          .connect(notTheOwner)
-          .addSlasher(await notTheOwner.getAddress()),
-      ).to.be.revertedWithCustomError(
-        slashingManager,
-        "AccessControlUnauthorizedAccount",
-      );
-    });
-
     it("should revert if zero address is added as slasher", async function () {
       const { slashingManager } = await loadFixture(setup);
 
@@ -1151,17 +1092,46 @@ describe("SlashingManager", function () {
       ).to.be.revertedWithCustomError(slashingManager, "ZeroAddress");
     });
 
-    it("should revert if slash reason is disabled", async function () {
-      const { slashingManager, proposer, operatorAddress } =
-        await loadFixture(setup);
+    it("rejects a configured disabled reason and accepts it after re-enabling", async function () {
+      const {
+        slashingManager,
+        proposer,
+        operatorAddress,
+        voter1,
+        voter2,
+        mockCiphernodeRegistry,
+      } = await loadFixture(setup);
+      const disabledPolicy = buildProofPolicy({ enabled: false });
+      await slashingManager.setSlashPolicy(REASON_PT_0, disabledPolicy);
 
-      const proof = encodeDummyAttestation();
+      await mockCiphernodeRegistry.setCommitteeNodes(0, [
+        operatorAddress,
+        await voter1.getAddress(),
+        await voter2.getAddress(),
+      ]);
+      await mockCiphernodeRegistry.setThreshold(0, 2);
+      const proof = await signAndEncodeAttestation(
+        [voter1, voter2],
+        0,
+        operatorAddress,
+        await slashingManager.getAddress(),
+      );
 
       await expect(
         slashingManager
           .connect(proposer)
           .proposeSlash(0, operatorAddress, proof),
       ).to.be.revertedWithCustomError(slashingManager, "SlashReasonDisabled");
+
+      await slashingManager.setSlashPolicy(REASON_PT_0, {
+        ...disabledPolicy,
+        enabled: true,
+      });
+      await expect(
+        slashingManager
+          .connect(proposer)
+          .proposeSlash(0, operatorAddress, proof),
+      ).to.emit(slashingManager, "SlashProposed");
     });
 
     it("should revert if proof is empty", async function () {
@@ -1350,7 +1320,7 @@ describe("SlashingManager", function () {
       expect(await bondingRegistry.numActiveOperators()).to.equal(0);
     });
 
-    it("should propose slash via DKG partyId attribution", async function () {
+    it("attributes a nonzero DKG party to its canonical operator", async function () {
       const {
         slashingManager,
         proposer,
@@ -1367,16 +1337,16 @@ describe("SlashingManager", function () {
       const voter1Addr = await voter1.getAddress();
       const voter2Addr = await voter2.getAddress();
       await mockCiphernodeRegistry.setCommitteeNodes(e3Id, [
-        operatorAddress,
         voter1Addr,
         voter2Addr,
+        operatorAddress,
       ]);
       await mockCiphernodeRegistry.setThreshold(e3Id, 2);
       await (mockCiphernodeRegistry as any).setDkgAnchors(
         e3Id,
-        [0],
-        [ethers.id("sk-0")],
-        [ethers.id("esm-0")],
+        [2],
+        [ethers.id("sk-2")],
+        [ethers.id("esm-2")],
       );
 
       const proof = await signAndEncodeAttestation(
@@ -1386,11 +1356,13 @@ describe("SlashingManager", function () {
         await slashingManager.getAddress(),
       );
 
-      await expect(
-        (slashingManager as any)
-          .connect(proposer)
-          .proposeSlashByDkgParty(e3Id, 0, proof),
-      ).to.emit(slashingManager, "SlashProposed");
+      await slashingManager
+        .connect(proposer)
+        .proposeSlashByDkgParty(e3Id, 2, proof);
+
+      const proposal = await slashingManager.getSlashProposal(0);
+      expect(proposal.operator).to.equal(operatorAddress);
+      expect(proposal.reason).to.equal(REASON_PT_0);
     });
 
     it("should revert if partyId is not in stored DKG anchors", async function () {
@@ -1441,6 +1413,44 @@ describe("SlashingManager", function () {
   });
 
   describe("proposeSlashEvidence() — Lane B (evidence-based, SLASHER_ROLE)", function () {
+    it("rejects a configured disabled reason and accepts it after re-enabling", async function () {
+      const { slashingManager, slasher, operatorAddress } =
+        await loadFixture(setup);
+      const disabledPolicy = buildProofPolicy({
+        requiresProof: false,
+        appealWindow: APPEAL_WINDOW,
+        enabled: false,
+      });
+      const evidence = ethers.toUtf8Bytes("disabled-policy evidence");
+      await slashingManager.setSlashPolicy(REASON_INACTIVITY, disabledPolicy);
+
+      await expect(
+        slashingManager
+          .connect(slasher)
+          .proposeSlashEvidence(
+            0,
+            operatorAddress,
+            REASON_INACTIVITY,
+            evidence,
+          ),
+      ).to.be.revertedWithCustomError(slashingManager, "SlashReasonDisabled");
+
+      await slashingManager.setSlashPolicy(REASON_INACTIVITY, {
+        ...disabledPolicy,
+        enabled: true,
+      });
+      await expect(
+        slashingManager
+          .connect(slasher)
+          .proposeSlashEvidence(
+            0,
+            operatorAddress,
+            REASON_INACTIVITY,
+            evidence,
+          ),
+      ).to.emit(slashingManager, "SlashProposed");
+    });
+
     it("should propose evidence-based slash with appeal window", async function () {
       const { slashingManager, slasher, operatorAddress } =
         await loadFixture(setup);

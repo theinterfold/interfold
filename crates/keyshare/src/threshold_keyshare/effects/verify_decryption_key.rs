@@ -98,10 +98,7 @@ impl ThresholdKeyshare {
             pre_dishonest.len()
         );
 
-        let committee_size = CiphernodesCommitteeSize::from_threshold(
-            state.threshold_m as usize,
-            state.threshold_n as usize,
-        )?;
+        let committee_size = state.committee_size()?;
         self.bus.publish(
             ShareVerificationDispatched {
                 e3_id: e3_id.clone(),

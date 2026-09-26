@@ -205,11 +205,16 @@ mod tests {
     #[tokio::test]
     async fn persistence_failure_is_reported_after_publish() -> Result<()> {
         let (signal, mut health) = tokio::sync::watch::channel(None);
-        signal.send_replace(Some("append failed".to_string()));
-        assert_eq!(
-            wait_for_persistence_failure(&mut health).await?,
-            "append failed"
+        let failure = wait_for_persistence_failure(&mut health);
+        tokio::pin!(failure);
+        assert!(
+            tokio::time::timeout(std::time::Duration::ZERO, &mut failure)
+                .await
+                .is_err()
         );
+
+        signal.send_replace(Some("append failed".to_string()));
+        assert_eq!(failure.await?, "append failed");
         Ok(())
     }
 }

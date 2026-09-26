@@ -14,7 +14,7 @@ use alloy::{
         },
         Identity, Provider, ProviderBuilder, RootProvider, WalletProvider,
     },
-    rpc::types::TransactionReceipt,
+    rpc::{client::ClientBuilder, types::TransactionReceipt},
     signers::local::PrivateKeySigner,
     transports::{
         http::{
@@ -24,6 +24,7 @@ use alloy::{
             },
             Http,
         },
+        layers::RetryBackoffLayer,
         ws::{WebSocketConfig, WsConnect},
         Authorization,
     },
@@ -38,7 +39,7 @@ use e3_config::{RpcAuth, RPC};
 use e3_crypto::Cipher;
 use e3_data::Repository;
 use e3_events::Proof;
-use e3_utils::{retry_with_backoff, RetryError};
+use e3_utils::{retry_with_backoff, should_retry_error, RetryError};
 use std::{
     collections::HashMap,
     env,
@@ -156,6 +157,41 @@ where
 pub type ProviderFactory<P> =
     Arc<dyn Fn() -> Pin<Box<dyn Future<Output = Result<EthProvider<P>>> + Send>> + Send + Sync>;
 
+/// Attempts for a request the provider refused with a rate limit.
+///
+/// A public endpoint refuses a burst but accepts the same request shortly after, so the node waits
+/// rather than fails. Before this retry existed, one HTTP 429 during the first sync ended the
+/// process: `eth_chainId` runs before the actor system starts, and its error reaches the top-level
+/// exit path.
+const RPC_RATE_LIMIT_MAX_RETRIES: u32 = 8;
+
+/// First wait after a refused request, in milliseconds.
+///
+/// A provider that sends a `Retry-After` value overrides this: the transport prefers the interval
+/// the provider asked for. Without such a hint the wait is this constant on every attempt, so the
+/// value must be large enough for a refusal to clear on its own.
+const RPC_RATE_LIMIT_INITIAL_BACKOFF_MS: u64 = 500;
+
+/// Compute units per second the retry path assumes for pacing.
+///
+/// This value only spaces out requests that are already waiting after a refusal; it does not
+/// throttle requests that succeed. The value matches the free tier of common hosted providers, so
+/// the node recovers from a burst instead of repeating it.
+const RPC_COMPUTE_UNITS_PER_SECOND: u64 = 330;
+
+/// Retry transport layer for rate-limited providers.
+///
+/// The policy retries HTTP 429 and 503, and the JSON-RPC errors that report the same condition.
+/// Other errors stay unretried here, because the layers above own their own recovery: a rejected
+/// block range is answered by a narrower window, and a dead transport by provider recreation.
+fn rate_limit_retry_layer() -> RetryBackoffLayer {
+    RetryBackoffLayer::new(
+        RPC_RATE_LIMIT_MAX_RETRIES,
+        RPC_RATE_LIMIT_INITIAL_BACKOFF_MS,
+        RPC_COMPUTE_UNITS_PER_SECOND,
+    )
+}
+
 #[derive(Clone)]
 pub struct ProviderConfig {
     rpc: RPC,
@@ -190,16 +226,17 @@ impl ProviderConfig {
     }
 
     pub async fn create_readonly_provider(&self) -> Result<EthProvider<ConcreteReadProvider>> {
-        let provider = if self.rpc.is_websocket() {
-            ProviderBuilder::new()
-                .connect_ws(self.create_ws_connect()?)
+        let client = if self.rpc.is_websocket() {
+            ClientBuilder::default()
+                .layer(rate_limit_retry_layer())
+                .ws(self.create_ws_connect()?)
                 .await
                 .context("Failed to connect to WebSocket RPC. Check if the node is running and URL is correct.")?
         } else {
-            ProviderBuilder::new().connect_client(self.create_http_client()?)
+            self.create_http_client()?
         };
 
-        EthProvider::new(provider).await
+        EthProvider::new(ProviderBuilder::new().connect_client(client)).await
     }
 
     pub async fn create_signer_provider(
@@ -248,8 +285,11 @@ impl ProviderConfig {
             .build()
             .context("Failed to create HTTP client")?;
 
-        let http = Http::with_client(client, self.rpc.as_http_url()?.parse()?);
-        Ok(alloy::rpc::client::RpcClient::new(http, false))
+        let url = self.rpc.as_http_url()?;
+        let http = Http::with_client(client, url.parse()?);
+        Ok(ClientBuilder::default()
+            .layer(rate_limit_retry_layer())
+            .transport(http, self.rpc.is_local()))
     }
 }
 
@@ -291,15 +331,6 @@ where
 
 const TX_RETRY_MAX_ATTEMPTS: u32 = 3;
 const TX_RETRY_INITIAL_DELAY_MS: u64 = 2000;
-
-fn should_retry_error(error: &str, decoded_error: Option<&str>, retry_on_errors: &[&str]) -> bool {
-    if retry_on_errors.is_empty() {
-        return true;
-    }
-    retry_on_errors.iter().any(|code| {
-        error.contains(code) || decoded_error.is_some_and(|decoded| decoded.contains(code))
-    })
-}
 
 pub async fn send_tx_with_retry<F, Fut>(
     operation_name: &str,

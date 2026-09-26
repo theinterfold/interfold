@@ -41,6 +41,25 @@ describe("E3 Pricing", function () {
     minThreshold: 0,
     randomnessFlatFee: 1_000_000n,
   };
+  // Distinct values, so a field read in the wrong role changes the quote.
+  const distinctPricingConfig = {
+    keyGenFixedPerNode: 101_003n,
+    keyGenPerEncryptionProof: 50_107n,
+    coordinationPerPair: 10_109n,
+    availabilityPerNodePerSec: 61n,
+    decryptionPerNode: 300_149n,
+    publicationBase: 1_000_151n,
+    verificationPerProof: 5_157n,
+    protocolTreasury: ADDRESS_ONE,
+    marginBps: 1_103n,
+    protocolShareBps: 103n,
+    dkgUtilizationBps: 2_603n,
+    computeUtilizationBps: 4_907n,
+    decryptUtilizationBps: 2_509n,
+    minCommitteeSize: 3n,
+    minThreshold: 2n,
+    randomnessFlatFee: 1_000_163n,
+  };
 
   // Convert ethers Result to a plain object that can be spread
   const toPlainConfig = (pc: any) => ({
@@ -100,17 +119,10 @@ describe("E3 Pricing", function () {
   // ──────────────────────────────────────────────────────────────────────────
 
   describe("getE3Quote()", function () {
-    it("returns a fee based on BaseCosts, committee size, and duration", async function () {
-      const { interfold, request } = await loadFixture(setup);
-
-      const fee = await interfold.getE3Quote(request);
-      // Fee must be > 0 with default baseCosts
-      expect(fee).to.be.gt(0);
-    });
-
     it("computes fee correctly using the parametric formula", async function () {
       const { interfold, request, ciphernodeRegistryContract } =
         await loadFixture(setup);
+      await setPricingConfig(interfold, distinctPricingConfig);
 
       // Minimum requires H=2 decryption shares from an N=3 committee.
       const n = 3n; // total committee
@@ -126,10 +138,7 @@ describe("E3 Pricing", function () {
       const duration =
         sortitionWindow +
         (BigInt(request.inputWindow[1]) - BigInt(request.inputWindow[0])) +
-        // M-06: sum BPS-weighted windows first then divide once. With the
-        // default config (windows=3600, bps=2500/5000/2500) the per-term and
-        // sum-then-divide formulas coincide, but this matches the on-chain
-        // implementation and the dedicated DurationPrecision tests.
+        // M-06: sum BPS-weighted windows first, then divide once.
         (config.dkgWindow * BigInt(pc.dkgUtilizationBps) +
           config.computeWindow * BigInt(pc.computeUtilizationBps) +
           config.decryptionWindow * BigInt(pc.decryptUtilizationBps)) /
@@ -247,28 +256,15 @@ describe("E3 Pricing", function () {
 
     it("updates config and emits event", async function () {
       const { interfold } = await loadFixture(setup);
-      const newConfig = {
-        ...defaultPricingConfig,
-        keyGenFixedPerNode: 100000n,
-        keyGenPerEncryptionProof: 50000n,
-        coordinationPerPair: 10000n,
-        availabilityPerNodePerSec: 40n,
-        decryptionPerNode: 300000n,
-        publicationBase: 1000000n,
-      };
 
-      await expect(setPricingConfig(interfold, newConfig)).to.emit(
+      await expect(setPricingConfig(interfold, distinctPricingConfig)).to.emit(
         interfold,
         "FeeAssetConfigUpdated",
       );
 
-      const stored = await interfold.getPricingConfig();
-      expect(stored.keyGenFixedPerNode).to.equal(100000n);
-      expect(stored.keyGenPerEncryptionProof).to.equal(50000n);
-      expect(stored.coordinationPerPair).to.equal(10000n);
-      expect(stored.availabilityPerNodePerSec).to.equal(40n);
-      expect(stored.decryptionPerNode).to.equal(300000n);
-      expect(stored.publicationBase).to.equal(1000000n);
+      expect(toPlainConfig(await interfold.getPricingConfig())).to.deep.equal(
+        distinctPricingConfig,
+      );
     });
 
     it("updates the token scale and raw-unit prices together", async function () {
@@ -520,7 +516,6 @@ describe("E3 Pricing", function () {
         usdcToken,
         ciphernodeRegistryContract,
         bondingRegistry,
-        owner,
         notTheOwner,
         operator1,
         operator2,
@@ -568,7 +563,7 @@ describe("E3 Pricing", function () {
       const operator1Address = await operator1.getAddress();
       const newOwnerAddress = await notTheOwner.getAddress();
       await bondingRegistry
-        .connect(owner)
+        .connect(operator1)
         .proposeBondOwner(operator1Address, newOwnerAddress);
       await bondingRegistry
         .connect(notTheOwner)
@@ -584,25 +579,32 @@ describe("E3 Pricing", function () {
         proof,
       );
 
-      const bondOwner = await owner.getAddress();
-      const ownerBefore = await usdcToken.balanceOf(bondOwner);
+      const recipients = [operator1, operator2, operator3];
+      const before = await Promise.all(
+        recipients.map((node) => usdcToken.balanceOf(node)),
+      );
 
       // Publish plaintext (triggers _distributeRewards)
       await interfold.publishPlaintextOutput(e3Id, data, proof);
 
-      // The shared bond owner receives all three operator credits.
-      expect(await interfold.pendingReward(e3Id, bondOwner)).to.equal(fee);
+      // The three request participants retain their snapshotted reward recipients.
       expect(await interfold.pendingReward(e3Id, newOwnerAddress)).to.equal(0);
       // ZEN2-20: the whole amount now comes from the refund manager's
       // operator-held escrow, not from Interfold's own ledger. The claim must
       // still announce itself, or a consumer following RewardClaimed misses
       // every post-upgrade withdrawal.
-      await expect(interfold.connect(owner).claimReward(e3Id))
-        .to.emit(interfold, "RewardClaimed")
-        .withArgs(e3Id, bondOwner, await usdcToken.getAddress(), fee);
-      const ownerAfter = await usdcToken.balanceOf(bondOwner);
-
-      expect(ownerAfter - ownerBefore).to.equal(fee);
+      let total = 0n;
+      for (const [i, recipient] of recipients.entries()) {
+        const address = await recipient.getAddress();
+        const credit = await interfold.pendingReward(e3Id, address);
+        await expect(interfold.connect(recipient).claimReward(e3Id))
+          .to.emit(interfold, "RewardClaimed")
+          .withArgs(e3Id, address, await usdcToken.getAddress(), credit);
+        const received = (await usdcToken.balanceOf(address)) - before[i];
+        expect(received).to.equal(credit);
+        total += received;
+      }
+      expect(total).to.equal(fee);
     });
 
     it("splits fee between CNs and treasury when protocolShareBps > 0", async function () {
@@ -610,7 +612,6 @@ describe("E3 Pricing", function () {
         interfold,
         usdcToken,
         ciphernodeRegistryContract,
-        owner,
         treasury,
         operator1,
         operator2,
@@ -674,19 +675,24 @@ describe("E3 Pricing", function () {
       );
 
       const treasuryBefore = await usdcToken.balanceOf(treasuryAddr);
-      const bondOwner = await owner.getAddress();
-      const ownerBefore = await usdcToken.balanceOf(bondOwner);
+      const recipients = [operator1, operator2, operator3];
+      const before = await Promise.all(
+        recipients.map((node) => usdcToken.balanceOf(node)),
+      );
 
       await interfold.publishPlaintextOutput(e3Id, data, proof);
 
-      // Pull-payment: treasury and the shared bond owner claim.
+      // Pull-payment: treasury and each distinct bond owner claim.
       await interfold
         .connect(treasury)
         .treasuryClaim(await usdcToken.getAddress());
-      await interfold.connect(owner).claimReward(e3Id);
+      let received = 0n;
+      for (const [i, recipient] of recipients.entries()) {
+        await interfold.connect(recipient).claimReward(e3Id);
+        received += (await usdcToken.balanceOf(recipient)) - before[i];
+      }
 
       const treasuryAfter = await usdcToken.balanceOf(treasuryAddr);
-      const ownerAfter = await usdcToken.balanceOf(bondOwner);
 
       const expectedProtocol = (fee * 182n) / 10000n;
       const expectedCN = fee - expectedProtocol;
@@ -695,7 +701,7 @@ describe("E3 Pricing", function () {
         (await interfold.getPricingConfig()).randomnessFlatFee +
           expectedProtocol,
       );
-      expect(ownerAfter - ownerBefore).to.equal(expectedCN);
+      expect(received).to.equal(expectedCN);
     });
   });
 

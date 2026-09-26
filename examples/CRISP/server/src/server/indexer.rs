@@ -42,8 +42,11 @@ use eyre::Context;
 use log::{error, info, warn};
 use num_bigint::BigUint;
 use std::time::Duration;
-use std::{collections::HashMap, error::Error, sync::Arc};
-use tokio::time::sleep;
+use std::{collections::HashMap, error::Error, sync::Arc, sync::LazyLock};
+use tokio::{sync::Notify, time::sleep};
+
+/// Wakes `retry_pending_discovery` when a round records a missing census.
+static DISCOVERY_OWED: LazyLock<Notify> = LazyLock::new(Notify::new);
 
 type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 
@@ -564,9 +567,12 @@ pub async fn register_e3_requested(
                 // the round index and exits when nothing is owed, so starting it here could let
                 // it run before this round is listed, find nothing, and leave the debt to a
                 // restart.
-                if divisor_unavailable || discovery_failed {
-                    repo.set_discovery_pending(true).await?;
-                }
+                let retry_discovery = record_discovery_debt(
+                    &mut repo,
+                    divisor_unavailable,
+                    discovery_failed,
+                )
+                .await?;
 
                 // Poseidon hashes exist to build the census tree, and an on-chain census has no
                 // tree: `_eligibility` reads power from the token per input. The addresses are
@@ -587,10 +593,11 @@ pub async fn register_e3_requested(
                     .record_round(&e3_id)
                     .await?;
 
-                // The round is listed, so the retry pass can find its debt. The startup pass
-                // covers a restart; this covers the debt taken while up.
-                if divisor_unavailable {
-                    tokio::spawn(retry_pending_discovery(store.clone()));
+                // The round is listed, so the retry task can find its debt. Wake the one task
+                // started at registration instead of spawning another: each task rescans every
+                // owed round, so one per debt multiplied the discovery calls.
+                if retry_discovery {
+                    DISCOVERY_OWED.notify_one();
                 }
 
                 // Skipped for an on-chain census: `_eligibility` never reads `merkleRoot` in
@@ -1475,6 +1482,19 @@ fn pending_discovery_step(round: &E3Crisp) -> PendingDiscoveryStep {
     }
 }
 
+/// Persist a missing census and report whether the retry task must be woken.
+async fn record_discovery_debt<S: DataStore>(
+    repo: &mut CrispE3Repository<S>,
+    divisor_unavailable: bool,
+    discovery_failed: bool,
+) -> eyre::Result<bool> {
+    let retry_discovery = divisor_unavailable || discovery_failed;
+    if retry_discovery {
+        repo.set_discovery_pending(true).await?;
+    }
+    Ok(retry_discovery)
+}
+
 /// Settle holder discovery for rounds that were registered without a census.
 ///
 /// A round carries `discovery_pending` when its census could not be built at `E3Requested`:
@@ -1484,18 +1504,22 @@ fn pending_discovery_step(round: &E3Crisp) -> PendingDiscoveryStep {
 /// the only retry. It reads the divisor again for each such round and, when it answers, runs the
 /// same discovery the handler would have run. A round that has ended is dropped from the pass:
 /// there is nobody left to mask.
-/// Bounded like `recover_round_deadlines`: one task, one provider, exits when nothing is owed.
+///
+/// One task for the process, started at registration. It sleeps on `DISCOVERY_OWED` while nothing
+/// is owed. `notify_one` keeps a permit when the task is mid-pass, so debt recorded after the pass
+/// read that round is still picked up.
 async fn retry_pending_discovery<S: DataStore>(store: SharedStore<S>) {
-    let crisp =
+    let crisp = loop {
         match CRISPContractFactory::create_read(&CONFIG.http_rpc_url, &CONFIG.e3_program_address)
             .await
         {
-            Ok(crisp) => crisp,
+            Ok(crisp) => break crisp,
             Err(error) => {
                 warn!("Could not start the pending-discovery retry reader: {error}");
-                return;
+                sleep(Duration::from_secs(60)).await;
             }
-        };
+        }
+    };
     loop {
         let ids = match CurrentRoundRepository::new(store.clone())
             .get_round_ids()
@@ -1504,7 +1528,8 @@ async fn retry_pending_discovery<S: DataStore>(store: SharedStore<S>) {
             Ok(ids) => ids,
             Err(error) => {
                 warn!("Could not list rounds for pending discovery: {error}");
-                return;
+                sleep(Duration::from_secs(60)).await;
+                continue;
             }
         };
         let mut owed = 0usize;
@@ -1551,9 +1576,10 @@ async fn retry_pending_discovery<S: DataStore>(store: SharedStore<S>) {
             }
         }
         if owed == 0 {
-            return;
+            DISCOVERY_OWED.notified().await;
+        } else {
+            sleep(Duration::from_secs(60)).await;
         }
-        sleep(Duration::from_secs(60)).await;
     }
 }
 
@@ -2084,7 +2110,7 @@ mod custom_params_decoding_tests {
 /// neither one outside ONCHAIN mode.
 #[cfg(test)]
 mod pending_discovery_tests {
-    use super::{pending_discovery_step, PendingDiscoveryStep};
+    use super::{pending_discovery_step, record_discovery_debt, PendingDiscoveryStep};
     use crate::server::models::{CensusMode, CreditMode, CustomParams, E3Crisp, TokenHolder};
     use crate::server::repo::CrispE3Repository;
     use e3_sdk::indexer::{InMemoryStore, SharedStore};
@@ -2149,52 +2175,9 @@ mod pending_discovery_tests {
         );
     }
 
-    /// A discovery FAILURE on an on-chain census must be owed, not silently dropped.
-    ///
-    /// The failure is swallowed at `E3Requested` so the round stays votable, and previously no
-    /// debt was recorded — only an unreadable divisor set one. A transient Etherscan rate limit
-    /// or a momentarily rejected API key therefore left the round permanently without mask
-    /// targets, because the event is never replayed. Both causes must reach the retry pass.
-    #[test]
-    fn a_failed_onchain_discovery_is_owed_like_an_unreadable_divisor() {
-        // Whatever set the debt, a votable round is retried...
-        assert_eq!(
-            pending_discovery_step(&round("Requested", true)),
-            PendingDiscoveryStep::Retry
-        );
-        assert_eq!(
-            pending_discovery_step(&round("Active", true)),
-            PendingDiscoveryStep::Retry
-        );
-        // ...and an ended one is forgiven rather than retried forever.
-        assert_eq!(
-            pending_discovery_step(&round("Finished", true)),
-            PendingDiscoveryStep::Forgive
-        );
-        // A round that never owed anything is untouched, so the wider debt does not make the
-        // pass busier for healthy rounds.
-        assert_eq!(
-            pending_discovery_step(&round("Active", false)),
-            PendingDiscoveryStep::Skip
-        );
-    }
-
-    /// Pins the condition that records the debt. `divisor_unavailable || discovery_failed`:
-    /// either cause alone is enough, which is the whole point of the fix.
-    #[test]
-    fn either_cause_records_the_discovery_debt() {
-        fn owes(divisor_unavailable: bool, discovery_failed: bool) -> bool {
-            divisor_unavailable || discovery_failed
-        }
-        assert!(owes(true, false), "unreadable divisor still owes");
-        assert!(owes(false, true), "failed discovery now owes");
-        assert!(owes(true, true), "both");
-        assert!(!owes(false, false), "a clean census owes nothing");
-    }
-
-    /// The debt is durable: it survives a re-read of the store, and clears only when told to.
-    /// A restart therefore retries rather than forgets, which is what makes the event's
-    /// non-replay safe.
+    /// A failed discovery owes a retry even when the divisor was readable, and the debt is
+    /// durable: it survives a re-read of the store and clears only when told to. A restart
+    /// therefore retries rather than forgets, which is what makes the event's non-replay safe.
     #[tokio::test]
     async fn the_discovery_debt_is_durable_and_clears_on_demand() {
         let store = SharedStore::new(Arc::new(RwLock::new(InMemoryStore::new())));
@@ -2217,9 +2200,12 @@ mod pending_discovery_tests {
         )
         .await
         .unwrap();
+        assert!(!record_discovery_debt(&mut repo, false, false)
+            .await
+            .unwrap());
         assert!(!repo.get_crisp().await.unwrap().discovery_pending);
 
-        repo.set_discovery_pending(true).await.unwrap();
+        assert!(record_discovery_debt(&mut repo, false, true).await.unwrap());
         let reread = CrispE3Repository::new(store.clone(), "7");
         assert!(reread.get_crisp().await.unwrap().discovery_pending);
         assert_eq!(

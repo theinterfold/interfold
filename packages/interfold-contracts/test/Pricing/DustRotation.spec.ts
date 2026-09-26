@@ -79,7 +79,7 @@ describe("Pricing — per-E3 dust rotation across consecutive E3s", function () 
       const operatorAddress = await operator.getAddress();
       const rewardOwnerAddress = await rewardOwners[i].getAddress();
       await bondingRegistry
-        .connect(owner)
+        .connect(operator)
         .proposeBondOwner(operatorAddress, rewardOwnerAddress);
       await bondingRegistry
         .connect(rewardOwners[i])

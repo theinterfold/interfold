@@ -1166,6 +1166,10 @@ The client gets one raw BFV witness from Rust or WASM. The shared proof-tree bui
 `packages/user-data-encryption-prover/src/index.ts` divides that witness into two coefficient
 chunks. It adds the required leading zero to the degree-`N-2` and degree-`2N-2` polynomials before
 it divides them. Both the Interfold SDK and the CRISP SDK use this builder.
+`e3-bfv-client` serializes witness integers outside JavaScript's safe range as decimal strings.
+This preserves exact coefficients when WASM returns JSON to the SDK. The SDK selects its proof
+bundle by BFV degree. Its artifact guard checks the minimum committee and a supported local preset;
+the active local preset does not select the bundle.
 `zk_cli --circuit user-data-encryption` generates this raw witness. The shared builder, not one Noir
 circuit, uses the witness to produce the recursive tree.
 
@@ -1235,9 +1239,9 @@ minimum depth of one. The compute provider and E3 program must use this same lea
 value, and depth rule.
 
 The guest derives the input root from the ciphertexts it processed. `ComputeInput` holds only
-`fhe_inputs`, and `ComputeInput::process` calls `MerkleTreeBuilder::compute_leaf_hashes` over those
-ciphertexts before it builds the tree (`crates/compute-provider/src/compute_input.rs`). The leaves
-are therefore a function of the processed set, not a separate prover-supplied value.
+`fhe_inputs`, and `ComputeInput::run_batched` calls `MerkleTreeBuilder::compute_leaf_hashes_batched`
+over those ciphertexts before it builds the tree (`crates/compute-provider/src/compute_input.rs`).
+The leaves are therefore a function of the processed set, not a separate prover-supplied value.
 
 This binding matters because nothing else supplies it. `Risc0BfvCiphertextVerifier` takes the input
 root from the proof envelope and never constrains it, so the only check on the root is the
@@ -1257,9 +1261,14 @@ Two rules follow for anyone changing this path:
 
 `ComputeManager` proves the whole input set in one guest run. The former `start_parallel` path
 proved per chunk and set the final leaves to sub-tree roots, which produced a tree of sub-tree roots
-rather than the flat input root an E3 program compares against. It was unreachable — every call site
-passed `use_parallel = false` — and it is removed. Restoring batching requires first defining what a
-leaf means on that path.
+rather than the flat input root an E3 program compares against. It is removed.
+
+Batching now covers only the per-input commitment recomputation. `Batching::Parallel` schedules that
+pure function across a Rayon pool behind the `parallel` feature; without the feature it falls back
+to the sequential schedule. The policy still sees every entry in global index order in one call, and
+each leaf keeps its global position, so the root does not depend on the schedule
+(`batching_does_not_change_the_root`). `ComputeManager::start` and `ComputeInput::run` use
+`Batching::Sequential`. The zkVM guest is single threaded and takes the crate without the feature.
 
 ### Ciphertext component count
 
@@ -1439,26 +1448,40 @@ InterfoldSolReader decodes CiphertextOutputPublished event
   │   └─ Forwards every valid share into each committee member's persisted plaintext actor
   │
   ├─ ThresholdPlaintextAggregator persists shares on active and standby nodes
-  │   ├─ Verifies sender is in committee
-  │   ├─ Adds the share if verified
-  │   └─ Ignores non-members or excluded parties
+  │   ├─ Checks the sender's canonical party ID against the accepted H-member DKG roster
+  │   ├─ Checks each C6 signature, E3, proof type, raw-share commitment, and ciphertext position
+  │   ├─ Stores the first share/proof bundle from each eligible party
+  │   └─ Ignores unauthenticated bundles without reserving or excluding the claimed party
 │
-  ├─ Once all required honest shares are durable:
+  ├─ Once T+1 distinct roster shares are durable (10 for Small, not all 14):
   │   ├─ Persist VerifyingC6 before publishing AggregationInputsReady(Plaintext)
   │   ├─ Start the 60-minute failover budget only at this readiness boundary
   │   └─ A promoted standby resumes the persisted phase
+  │
+  ├─ Shares that arrive during C6 verification remain in a durable backup queue:
+  │   ├─ The in-flight batch stays unchanged
+  │   ├─ Reject duplicate parties and previously excluded parties
+  │   └─ After a failed proof or raw-share commitment check, use backups and verify again
+  │       Wait for replacements if at least T+1 roster parties can still provide valid shares
 │
   ├─ C6 VERIFICATION (per-share, active aggregator only):
 │   ShareVerificationActor receives C6 signed proofs
 │   ├─ ECDSA recovery + ZK verification (same 2-phase as C2/C3)
 │   ├─ On failure: SignedProofFailed → accusation pipeline
 │   └─ On pass: ProofVerificationPassed (cached)
+│   Local completion results are bound to the exact dispatch event ID. Equal verdicts for
+│   different batches have different delivery IDs. Results persist through replay and standby;
+│   only the active aggregator can apply them after EffectsEnabled.
+│   A saved result resumes through a fresh PlaintextVerificationResumed event in the E3's
+│   chain aggregate. Its new sequence permits snapshot writes after the recovery watermark.
+│   Admission and post-verification checks use the same C6ShareVerifier for raw-share commitments.
 │
-├─ When T+1 shares are collected (threshold met):
+├─ When at least T+1 shares pass C6 verification and each output's raw-share commitment check:
 │   │
 │   ├─ State → Computing
 │   │
 │   ├─ COMPUTE REQUEST: CalculateThresholdDecryption
+│   │   Live execution and restart recovery use the same dispatch_threshold_decryption helper.
 │   │   │
 │   │   │  ┌─── TrBFV Computation ──────────────────────────────┐
 │   │   │  │                                                     │
@@ -1904,6 +1927,11 @@ The published support image embeds the CRISP guest from `crates/support/program`
 keeps the same guest in `examples/CRISP/program`. A CRISP policy change must update both copies and
 regenerate `crates/support/contracts/ImageID.sol` before the support image is published.
 
+The guest links `risc0-zkvm` with `heap-embedded-alloc`. The default bump allocator never frees, so
+each input's temporary Greco form stayed allocated and a secure-preset round aborted out of memory
+at about 500 inputs. The allocator is part of the guest ELF: changing it changes the image ID, and
+`ImageID.sol`, the ciphertext verifier and every deployed `CRISPProgram.imageId` must move with it.
+
 `interfold program start` sends each configured Boundless offer parameter through the project
 support launcher to the container. The container maps these values to the environment variables that
 build the on-chain offer. An omitted parameter uses the host's built-in default.
@@ -1933,8 +1961,8 @@ leaf = sha256(keccak256(encryptedVote) || encryptedVoteCommitment || slotAddress
 - the **parent**, because the guest walks each slot's chain by it — an unbound parent would let a
   prover re-point entries and change which one holds the slot.
 
-`MerkleTreeBuilder::compute_leaf_hashes` rebuilds exactly that layout. Both sides pin the same test
-vector (`program/tests/input_leaf.rs` and `tests/input-leaf.test.ts`), and
+`MerkleTreeBuilder::compute_leaf_hashes_batched` rebuilds exactly that layout. Both sides pin the
+same test vector (`program/tests/input_leaf.rs` and `tests/input-leaf.test.ts`), and
 `examples/CRISP/program/tests/onchain_root_agreement.rs` asserts Rust reproduces a root a real
 contract produced, from a fixture generated by `tests/input-tree-e2e.test.ts`. A one-byte divergence
 would make every root mismatch and nothing else would detect it.

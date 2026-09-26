@@ -69,12 +69,7 @@ impl ThresholdKeyshare {
             )?);
         }
         dealers.sort_unstable_by_key(|dealer| dealer.party_id);
-        let committee_h = CiphernodesCommitteeSize::from_threshold(
-            state.threshold_m as usize,
-            state.threshold_n as usize,
-        )?
-        .values()
-        .h;
+        let committee_h = state.committee_h()?;
         if dealers.len() < committee_h {
             return Ok(());
         }
@@ -180,12 +175,7 @@ impl ThresholdKeyshare {
         if signer != expected || !message.has_canonical_dealers(committee.len()) {
             return Ok(());
         }
-        let committee_h = CiphernodesCommitteeSize::from_threshold(
-            state.threshold_m as usize,
-            state.threshold_n as usize,
-        )?
-        .values()
-        .h;
+        let committee_h = state.committee_h()?;
         match message.kind {
             DkgCoordinationKind::Ready => {
                 if message.dealers.len() < committee_h
@@ -324,12 +314,7 @@ impl ThresholdKeyshare {
         if recovery.dkg_roster.is_some() {
             return Ok(());
         }
-        let committee_h = CiphernodesCommitteeSize::from_threshold(
-            state.threshold_m as usize,
-            state.threshold_n as usize,
-        )?
-        .values()
-        .h;
+        let committee_h = state.committee_h()?;
         let ready: std::collections::BTreeMap<u64, Vec<DkgDealer>> = recovery
             .ready_by_party
             .iter()
@@ -371,12 +356,7 @@ impl ThresholdKeyshare {
             return Ok(());
         }
         let recovery = self.recovery.try_get()?;
-        let committee_h = CiphernodesCommitteeSize::from_threshold(
-            state.threshold_m as usize,
-            state.threshold_n as usize,
-        )?
-        .values()
-        .h;
+        let committee_h = state.committee_h()?;
         let dealers = if let Some(accepted) = recovery.dkg_roster.as_ref() {
             if accepted.party_id == state.party_id {
                 return Ok(());

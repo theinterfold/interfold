@@ -29,6 +29,14 @@ import { BondingOwnershipLib } from "../lib/BondingOwnershipLib.sol";
 import { ExitQueueLib } from "../lib/ExitQueueLib.sol";
 
 import { IBondingRegistry } from "../interfaces/IBondingRegistry.sol";
+import { IBondOwnerHistory } from "../interfaces/IBondOwnerHistory.sol";
+import { IBondingAdmission } from "../interfaces/IBondingAdmission.sol";
+import {
+    BondingAdmissionStorage
+} from "../storage/BondingAdmissionStorage.sol";
+import {
+    BondOwnerHistoryStorage
+} from "../storage/BondOwnerHistoryStorage.sol";
 import { ICiphernodeRegistry } from "../interfaces/ICiphernodeRegistry.sol";
 import {
     BondingEligibilityStorage
@@ -44,6 +52,10 @@ import { InterfoldTicketToken } from "../token/InterfoldTicketToken.sol";
 // solhint-disable-next-line max-states-count
 contract BondingRegistry is
     IBondingRegistry,
+    IBondOwnerHistory,
+    IBondingAdmission,
+    BondingAdmissionStorage,
+    BondOwnerHistoryStorage,
     BondingEligibilityStorage,
     BondingSlashingStorage,
     Ownable2StepUpgradeable,
@@ -244,7 +256,7 @@ contract BondingRegistry is
     /// @dev Reverts if operator has an exit in progress that hasn't unlocked yet
     /// @param operator Address of the operator to check
     modifier noExitInProgress(address operator) {
-        Operator memory op = operators[operator];
+        Operator storage op = operators[operator];
         if (op.exitRequested && block.timestamp < op.exitUnlocksAt) {
             revert ExitInProgress();
         }
@@ -342,6 +354,42 @@ contract BondingRegistry is
     /// @inheritdoc IBondingRegistry
     function bondOwnerOf(address operator) public view returns (address) {
         return _bondOwnerOf[operator];
+    }
+
+    /// @inheritdoc IBondOwnerHistory
+    function bondOwnerAt(
+        address operator,
+        uint256 timepoint
+    ) external view returns (address) {
+        return
+            BondingOwnershipLib.bondOwnerAt(_bondOwnerOf, operator, timepoint);
+    }
+
+    /// @inheritdoc IBondOwnerHistory
+    function committeeOwnerCapacity(
+        uint256 timepoint
+    ) external view returns (uint256) {
+        return BondingEligibilityLib.committeeOwnerCapacity(timepoint);
+    }
+
+    /// @inheritdoc IBondingAdmission
+    function setAdmissionPolicy(
+        bool cooldownEnabled,
+        uint48 cooldownDuration,
+        bool admissionsPaused
+    ) external onlyOwner {
+        BondingEligibilityLib.setAdmissionPolicy(
+            cooldownEnabled,
+            cooldownDuration,
+            admissionsPaused
+        );
+    }
+
+    /// @inheritdoc IBondingAdmission
+    function admissionPolicyAt(
+        uint256 timepoint
+    ) external view returns (AdmissionPolicy memory) {
+        return BondingEligibilityLib.admissionPolicyAt(timepoint);
     }
 
     /// @inheritdoc IBondingRegistry
@@ -456,7 +504,7 @@ contract BondingRegistry is
 
     /// @inheritdoc IBondingRegistry
     function hasExitInProgress(address operator) external view returns (bool) {
-        Operator memory op = operators[operator];
+        Operator storage op = operators[operator];
         return op.exitRequested && block.timestamp < op.exitUnlocksAt;
     }
 
@@ -528,54 +576,27 @@ contract BondingRegistry is
     }
 
     /// @inheritdoc IBondingRegistry
-    function proposeBondOwner(
-        address operator,
-        address newOwner
-    ) external onlyBondOwner(operator) {
-        require(newOwner != address(0), ZeroAddress());
-        _pendingBondOwnerOf[operator] = newOwner;
-        emit BondOwnerTransferProposed(operator, msg.sender, newOwner);
+    function proposeBondOwner(address operator, address newOwner) external {
+        BondingOwnershipLib.proposeTransfer(
+            _bondOwnerOf,
+            _pendingBondOwnerOf,
+            operator,
+            newOwner
+        );
     }
 
     /// @inheritdoc IBondingRegistry
     function acceptBondOwner(address operator) external {
-        require(msg.sender == _pendingBondOwnerOf[operator], Unauthorized());
-
-        address previousOwner = bondOwnerOf(operator);
-        (, uint256 pendingCiphernodeBond) = _exits.getPendingAmounts(operator);
-        uint256 delegatedBond = operators[operator].ciphernodeBond +
-            pendingCiphernodeBond;
-
-        if (delegatedBond != 0) {
-            uint256 remainingBonded = _bondedByOwner[previousOwner] -
-                delegatedBond;
-            uint256 lockedBalance = BondingAssetLib.lockedBalanceOf(
-                address(ciphernodeBondToken),
-                previousOwner
-            );
-            uint256 controlledBalance = ciphernodeBondToken.balanceOf(
-                previousOwner
-            ) + remainingBonded;
-            if (lockedBalance > controlledBalance) {
-                revert BondOwnerTransferViolatesLock(
-                    previousOwner,
-                    lockedBalance,
-                    controlledBalance
-                );
-            }
-        }
-
-        delete _pendingBondOwnerOf[operator];
-        _bondOwnerOf[operator] = msg.sender;
-        _bondedByOwner[previousOwner] -= delegatedBond;
-        _bondedByOwner[msg.sender] += delegatedBond;
-        // Both sides, in the same call: the bond leaves one history and joins the other, and
-        // checkpointing only the receiver would leave the previous owner voting with weight it
-        // no longer holds.
-        _syncBondedCheckpoint(previousOwner);
-        _syncBondedCheckpoint(msg.sender);
-
-        emit BondOwnerSet(operator, msg.sender);
+        BondingOwnershipLib.completeTransfer(
+            _bondOwnerOf,
+            _pendingBondOwnerOf,
+            _bondedByOwner,
+            operators,
+            _exits,
+            address(ciphernodeBondToken),
+            bondedCheckpoints,
+            operator
+        );
     }
 
     /// @inheritdoc IBondingRegistry
@@ -1435,7 +1456,10 @@ contract BondingRegistry is
     ///      considered inactive until they refresh under the new version.
     function _invalidateEligibilityStatuses() internal {
         eligibilityConfigurationVersion = BondingEligibilityLib
-            .invalidateConfiguration(eligibilityConfigurationVersion);
+            .invalidateConfiguration(
+                eligibilityConfigurationVersion,
+                numRegisteredOperators
+            );
         numActiveOperators = 0;
     }
 
@@ -1446,12 +1470,14 @@ contract BondingRegistry is
     ////////////////////////////////////////////////////////////
 
     /// @notice ERC-165 interface detection. Advertises
-    ///         {IBondingRegistry} and {IERC165}.
+    ///         {IBondingRegistry}, {IBondOwnerHistory}, {IBondingAdmission}, and {IERC165}.
     function supportsInterface(
         bytes4 interfaceId
     ) external pure virtual returns (bool) {
         return
             interfaceId == type(IBondingRegistry).interfaceId ||
+            interfaceId == type(IBondOwnerHistory).interfaceId ||
+            interfaceId == type(IBondingAdmission).interfaceId ||
             interfaceId == type(IERC165).interfaceId;
     }
 

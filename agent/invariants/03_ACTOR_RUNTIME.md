@@ -6,6 +6,12 @@ durability and replay, ordering and backpressure, schema evolution.
 Read `00_INDEX.md` first: it carries the meta-invariants and the open-issues list that apply to
 every section.
 
+Terms: in this file, "persist" and "commit" mean durable on disk. The EventStore flushes an appended
+event before dispatch. `Persistable::try_mutate` only enqueues a snapshot write; the snapshot
+reaches disk when its batch flushes. Where a rule says persist or commit and the code only enqueues,
+the rule still applies and the code has a durability gap. A **Gap:** note marks a requirement that
+the code does not meet yet.
+
 ## Node / actor runtime
 
 ### Release compatibility
@@ -32,22 +38,37 @@ every section.
 - Actors are **concurrency boundaries only**: deterministic reducers own protocol decisions; effect
   runners do crypto/storage/network/chain I/O. `state`/`validation`/ workflow/pure-algorithm code
   must not depend on Actix, repositories, network, wall-clock, or process execution; workflows
-  return typed intents, never perform I/O. — `ARCHITECTURE.md`
-- Trust-boundary checks before any message drives a workflow: peer identity, committee membership,
-  claimed party slot, signature, chainId, e3Id, proof type, payload size, schema version. —
+  return typed intents, never perform I/O. **Gap:** `crates/sync/src/sync/state.rs` reads
+  repositories, and `crates/net/src/document_publishing/workflow.rs` and
+  `crates/keyshare/src/threshold_keyshare/timeout_policy.rs` read the wall clock. Do not add more. —
   `ARCHITECTURE.md`
+- Trust-boundary checks before any message drives a workflow: peer identity, committee membership,
+  claimed party slot, signature, chainId, e3Id, proof type, payload size, schema version. **Gap:**
+  the code runs these checks in two stages. Net ingress checks the wire envelope (magic, wire
+  version, size, network ID) before a workflow sees the message. Share verification checks the
+  signer, party slot, e3Id, and circuit later, before a party counts as honest. Most message types
+  lack an explicit schema version. — `ARCHITECTURE.md`; `crates/net/src/network_sync/wire.rs`;
+  `crates/zk-prover/src/share_verification/`
 
 ### Durability, persistence, replay
 
 - Delivery is **at-least-once**; correctness comes from stable identity, idempotent transitions,
-  effect dedup, and read-before-write guards — never from assumed exactly-once execution. —
-  `ARCHITECTURE.md`
+  effect dedup, and read-before-write guards — never from assumed exactly-once execution. **Gap:**
+  live EventBus fan-out logs a subscriber that misses `FANOUT_ACCEPT_TIMEOUT` and does not retry,
+  and restart replays only the suffix after each snapshot cursor, so a missed live delivery is not
+  always redelivered. — `ARCHITECTURE.md`; `crates/events/src/eventbus.rs`
 - **Commit-before-dispatch:** validate + dedup → reduce → atomically commit transition/outbox → ack
   → execute intents outside the critical section → persist correlated results before they unlock the
-  next transition. Never mutate memory and rely on fire-and-forget persistence. — `ARCHITECTURE.md`
+  next transition. Never mutate memory and rely on fire-and-forget persistence. **Gap:**
+  `Persistable::try_mutate` enqueues its snapshot write and does not wait for it. Slash submissions
+  have a durable intent record; no general transactional outbox exists. — `ARCHITECTURE.md`;
+  `crates/data/src/persistable.rs`
 - The append-only event log is the durable source of truth; snapshots and the timestamp index are
   derived optimizations. Replay-from-checkpoint and snapshot-hydration at the same logical point
-  must produce equivalent state and pending intents. — `ARCHITECTURE.md`; `CRATES_ARCHITECTURE.md`
+  must produce equivalent state and pending intents. **Gap:** startup replays only the suffix after
+  each snapshot cursor, so current recovery needs the matching snapshots, and no test compares full
+  replay with hydration. — `ARCHITECTURE.md`; `CRATES_ARCHITECTURE.md`;
+  `crates/sync/src/sync/service.rs`
 - Before startup enables the event bus, its HLC must be greater than the greatest timestamp in all
   durable event logs. A snapshot timestamp alone is not a sufficient clock floor because the log can
   contain a newer post-snapshot suffix. — INDEX concern #56
@@ -55,8 +76,10 @@ every section.
   Startup verifies every committed blob reference before it removes unreferenced blob files. Replay
   and index reconciliation are bounded by both event count and decoded bytes; one valid event may
   exceed the page budget so the cursor can still advance. — `CRATES_ARCHITECTURE.md`
-- `E3LifecycleCoordinator` is a projection — rebuildable, never a source of truth, never emits
-  protocol events. — `ARCHITECTURE.md`; `flow-trace/06`
+- `E3LifecycleCoordinator` never emits protocol events. It must stay rebuildable from the event log.
+  Startup reads its persisted stage map to prune terminal E3 state and to seed writer and compute
+  recovery, so treat its schema and update order as durable. — `crates/request/src/lifecycle/`;
+  `crates/ciphernode-builder/src/recovery.rs`; `flow-trace/06`
 - EventStore duplicate rule: same HLC timestamp + stable event ID + **equal payload** is an
   idempotent duplicate (even across Local/Net transport); different payloads at the same timestamp
   fail closed. — INDEX concern #15
@@ -75,8 +98,9 @@ every section.
   lifecycle state. A complete E3 or a non-slashing failed E3 must not resume local protocol work. A
   failed E3 that requires accusation or slashing work must retain its context. An unavailable or
   unknown canonical result must fail startup. If the E3 exists at chain head but not yet at the
-  finalized block, recovery keeps the context and waits; finality lag is not an unknown E3. — INDEX
-  concern #48
+  finalized block, recovery keeps the context and waits; finality lag is not an unknown E3. **Gap:**
+  not implemented. Startup prunes terminal E3 state from the local event-log projection and the
+  lifecycle map; no code reads a finalized block. Concern #48 remains open. — INDEX concern #48
 - EventStore replay preserves durable sequence inside each aggregate. It uses HLC order only to
   choose between the next events of different aggregates. A late event can have an older remote HLC
   and must not move ahead of an earlier local sequence from the same aggregate. — INDEX concern #43
@@ -86,8 +110,9 @@ every section.
 - Every state field is classified **Durable / Derivable / Ephemeral**. Pending proof bundles,
   decrypted-share progress, accusation votes/timeouts, retry state, active-aggregator designation,
   deadlines, and undispatched external effects are durable unless a stronger authority can
-  deterministically recreate them. An actor-local cache is not durable just because the actor
-  outlives the process. — `ARCHITECTURE.md`; `CRATES_ARCHITECTURE.md`
+  deterministically recreate them. Process lifetime does not make an actor-local cache durable.
+  **Gap:** accusation votes and timers, and `ComputeEffectGate` buffers, are in memory only. —
+  `ARCHITECTURE.md`; `CRATES_ARCHITECTURE.md`
 - `NodeProofAggregator` persists ordered DKG inner proofs and fold metadata before it accepts them.
   It persists a completed fold before publication. Restart must restore inputs or the completed
   output and resume only after `EffectsEnabled`. `KeyPublished` and terminal E3 events release the
@@ -112,14 +137,18 @@ every section.
   in the same snapshot batch as each event that changes them. Hydration restores this state before
   recovered proof work resumes. A restarted checker must not evaluate C2, C3, C4, or aggregate
   proofs against an empty or partial pre-crash history. Successful E3 teardown clears the durable
-  checker state in the completion event's snapshot batch. — `flow-trace/04`; `flow-trace/06`
+  checker state in the completion event's snapshot batch. **Gap:** a failed snapshot write is only
+  logged and retried on the next change; processing and publication continue. —
+  `crates/slashing/src/commitment_consistency/actor.rs`; `flow-trace/04`; `flow-trace/06`
 - A graceful-shutdown deadline must be longer than the EventBus fanout timeout, and every external
   supervisor must wait longer than the node deadline before it sends `SIGKILL`. A process that must
   outlive its CLI launcher must use the detached spawn path; dropping an owning child handle stops
   that child. — `flow-trace/06`
 - A fatal threshold-keyshare collector timeout commits `KeyshareState::Failed` before it publishes
   `E3Failed`. The persisted failure stage and reason are immutable. After hydration,
-  `EffectsEnabled` redrives the saved failure and does not resume the earlier DKG phase. —
+  `EffectsEnabled` redrives the saved failure and does not resume the earlier DKG phase. **Gap:**
+  the failed snapshot write is enqueued without a durability acknowledgement before `E3Failed`
+  (`crates/keyshare/src/threshold_keyshare/handlers.rs`). —
   `flow-trace/04`; INDEX concern #36
 - Secure-16384 local l-BFV generation uses the separate
   `//threshold_keyshare_lbfv_generation/v1/{e3_id}` snapshot. It persists the encrypted generation
@@ -150,19 +179,28 @@ every section.
 
 ### Ordering, backpressure, effects
 
-- Protocol work is partitioned by `(chain_id, e3_id)`; ordering guaranteed within a partition only.
-  Legal E3 progress is monotonic. On-chain committee ordering is authoritative. — `ARCHITECTURE.md`;
-  `CRATES_ARCHITECTURE.md`
+- Protocol work must be partitioned by `(chain_id, e3_id)`, with ordering guaranteed within each
+  partition. Legal E3 progress is monotonic. On-chain committee ordering is authoritative. **Gap:**
+  per-E3 actors are keyed by `E3id`, which includes `chain_id`, but durable order is per chain
+  aggregate, and EventBus fan-out delivers one event at a time, so a slow subscriber can block
+  unrelated E3s. — `ARCHITECTURE.md`; `crates/events/src/e3id.rs`; `crates/events/src/eventbus.rs`
 - Correctness-critical sends are acknowledged and timeout-bounded; `do_send` is allowed only for
   best-effort telemetry. Buffers are bounded by both item count and bytes with an explicit overflow
-  policy. — `ARCHITECTURE.md`
+  policy. **Gap:** 84 `.do_send(` call sites remain (the count covers all sites, not only
+  correctness paths), including `BusHandle` publication, `Sequencer`, `DataStore::write`, snapshot
+  batches, EVM routing, and keyshare collectors. `pnpm check:invariants` blocks growth of the total
+  only. — `ARCHITECTURE.md`; `scripts/invariant-baselines.env`
 - Timers: persist the absolute deadline + purpose, not an in-memory handle; on restart, compare to
-  the injected clock and deterministically re-arm or fire overdue. — `ARCHITECTURE.md`
+  the injected clock and deterministically re-arm or fire overdue. **Gap:** accusation timers are
+  memory-only `run_later` handles; keyshare collectors read `SystemTime::now()` instead of an
+  injected clock; the slash fallback delay restarts in full (see `01_PROTOCOL_ONCHAIN.md`). —
+  `ARCHITECTURE.md`
 - Effects stay disabled until durable replay completes and both historical sources merge in HLC
   order. Startup fences `EffectsEnabled` → `SyncEffect` → canonical history → `SyncEnded` in that
-  order. `ComputeEffectGate` buffers and deduplicates until `EffectsEnabled`. It mirrors the same
-  response or error to each regenerated correlation ID for one semantic request. —
-  `CRATES_ARCHITECTURE.md`
+  order. `ComputeEffectGate` buffers and deduplicates until `EffectsEnabled`. It sends a live
+  response or error to every waiting correlation ID. It reuses a response seen during replay, but
+  not a replayed error, so the regenerated request runs again. —
+  `crates/multithread/src/effect_gate.rs`; `CRATES_ARCHITECTURE.md`
 - A terminal E3 cancels its local node-scoped compute-task group. Work already executing may finish,
   but queued proof jobs from that E3 must not consume task-pool capacity ahead of a later active E3.
   One node's local failure must not cancel another node's work when tests or embeddings share a task
@@ -184,12 +222,20 @@ every section.
   same chain. It must retain the new provider after a successful reconnect and reject the log if the
   retry still cannot verify the accepted request. — `flow-trace/03`
 - A chain gateway that fails closed after startup must make the node exit unsuccessfully after a
-  durability shutdown. A running node must not report healthy after chain ingestion stops. —
-  `flow-trace/03`; `flow-trace/06`
+  durability shutdown. A running node must not report healthy after chain ingestion stops. **Gap:**
+  `dappnode/healthcheck.sh` checks the process, local files, and the QUIC port, not chain ingestion.
+  — `crates/cli/src/start.rs`; `flow-trace/03`; `flow-trace/06`
+- A network event cannot create a request context for an unknown E3. Only chain events or restored
+  snapshots admit an E3; peer events can only contribute to an admitted one. —
+  `crates/request/src/routing/workflow.rs`
 
 ### Schema evolution
 
 - Rust type compatibility is **not** a storage-migration strategy: every durable payload carries an
   explicit schema version; add/remove/reorder of fields requires a compatibility test against
   checked-in fixtures; version mismatch runs a tested migration or fails startup with an actionable
-  error. — `ARCHITECTURE.md`
+  error. **Gap:** persisted state is positional bincode, and only a few types have a version field
+  or a layout fixture. Until that changes, increase `SCHEMA_VERSION`
+  (`crates/sync/src/sync/schema_version.rs`) for every incompatible change to a persisted type or
+  `InterfoldEventData` variant, including an added field. Startup halts on any mismatch. —
+  `ARCHITECTURE.md`; `00_INDEX.md` known open issues

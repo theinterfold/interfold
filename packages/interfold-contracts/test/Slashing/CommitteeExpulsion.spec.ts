@@ -110,7 +110,7 @@ describe("Committee Expulsion & Fault Tolerance", function () {
     // ── Helpers ────────────────────────────────────────────────────────────
     async function setupOperator(operator: Signer) {
       const operatorAddress = await operator.getAddress();
-      const bondOwnerAddress = await owner.getAddress();
+      const bondOwnerAddress = operatorAddress;
 
       await foldToken.mint(
         bondOwnerAddress,
@@ -128,19 +128,21 @@ describe("Committee Expulsion & Fault Tolerance", function () {
           1,
         );
       await foldToken
-        .connect(owner)
+        .connect(operator)
         .approve(await bondingRegistry.getAddress(), ethers.parseEther("2000"));
       await bondingRegistry
-        .connect(owner)
+        .connect(operator)
         .bondCiphernodeFor(operatorAddress, ethers.parseEther("1000"));
-      await bondingRegistry.connect(owner).registerOperatorFor(operatorAddress);
+      await bondingRegistry
+        .connect(operator)
+        .registerOperatorFor(operatorAddress);
 
       const ticketAmount = ethers.parseUnits("100", 6);
       await usdcToken
-        .connect(owner)
+        .connect(operator)
         .approve(await bondingRegistry.ticketToken(), ticketAmount);
       await bondingRegistry
-        .connect(owner)
+        .connect(operator)
         .addTicketBalanceFor(operatorAddress, ticketAmount);
     }
 

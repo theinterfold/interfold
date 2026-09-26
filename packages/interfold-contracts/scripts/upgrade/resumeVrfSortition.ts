@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import path from "node:path";
 
+import { assertRefreshedOwnerCapacity } from "../../tasks/committeeCapacity";
 import { connect, hasFlag } from "../protocol/cli";
 import {
   deploymentPath,
@@ -153,6 +154,7 @@ export async function prepareVrfSortitionResume(): Promise<void> {
       `Only ${activeNodes} release-ready operators are active; ${requiredActiveNodes} are required by the largest committee configuration`,
     );
   }
+  await assertRefreshedOwnerCapacity(bonding, requiredActiveNodes);
   const requiredProtocolVersion = await nodeRelease.requiredProtocolVersion();
   const requiredNodeGeneration = await nodeRelease.requiredNodeGeneration();
   if (

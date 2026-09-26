@@ -22,6 +22,7 @@ use e3_trbfv::{
     TrBFVConfig,
 };
 use e3_utils::utility_types::ArcBytes;
+use e3_zk_helpers::CiphernodesCommitteeSize;
 use std::{
     collections::{BTreeSet, HashSet},
     mem,
@@ -258,6 +259,19 @@ impl ThresholdKeyshareState {
 
     pub fn get_trbfv_config(&self) -> TrBFVConfig {
         TrBFVConfig::new(self.params.clone(), self.threshold_n, self.threshold_m)
+    }
+
+    /// Returns the canonical committee size for this E3's `(threshold_m, threshold_n)`.
+    pub fn committee_size(&self) -> Result<CiphernodesCommitteeSize> {
+        CiphernodesCommitteeSize::from_threshold(
+            self.threshold_m as usize,
+            self.threshold_n as usize,
+        )
+    }
+
+    /// Returns H, the number of honest dealers that the circuits are sized for.
+    pub fn committee_h(&self) -> Result<usize> {
+        Ok(self.committee_size()?.values().h)
     }
 
     pub fn get_e3_id(&self) -> &E3id {

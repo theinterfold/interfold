@@ -3,6 +3,8 @@
 //! Deterministic plaintext formatting and C7 aggregation job planning.
 
 use super::*;
+use e3_zk_helpers::circuits::threshold::decrypted_shares_aggregation::MAX_MSG_NON_ZERO_COEFFS;
+use tracing::warn;
 
 /// Pad/truncate each decrypted plaintext limb to the fixed `MAX_MSG_NON_ZERO_COEFFS * 8`.
 pub(crate) fn format_decrypted_plaintext(plaintext: &[ArcBytes]) -> Vec<ArcBytes> {

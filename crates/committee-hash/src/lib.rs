@@ -252,18 +252,6 @@ mod tests {
     use alloy_primitives::address;
 
     #[test]
-    fn encode_packed_matches_solidity_layout() {
-        let nodes = vec![
-            address!("0x0000000000000000000000000000000000000001"),
-            address!("0x0000000000000000000000000000000000000002"),
-        ];
-        let hash = hash_committee_addresses(&nodes);
-        let limbs = split_committee_hash(hash);
-        assert_ne!(limbs.hi, B256::ZERO);
-        assert_ne!(limbs.lo, B256::ZERO);
-    }
-
-    #[test]
     fn committee_hash_matches_cross_language_vector() {
         let nodes = vec![
             address!("0x0000000000000000000000001234567890abcdef"),

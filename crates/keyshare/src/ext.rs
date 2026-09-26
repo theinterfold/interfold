@@ -135,10 +135,7 @@ impl E3Extension for ThresholdKeyshareExtension {
                     bus: self.bus.clone(),
                     cipher: self.cipher.clone(),
                     state: container,
-                    share_enc_preset: meta
-                        .params_preset
-                        .dkg_counterpart()
-                        .unwrap_or(meta.params_preset),
+                    share_enc_preset: meta.share_enc_preset(),
                     interfold_address,
                     recovery,
                     lbfv_generation,
@@ -205,10 +202,6 @@ impl E3Extension for ThresholdKeyshareExtension {
         let Some(meta) = ctx.get_dependency(META_KEY) else {
             return Err(anyhow!(ERROR_KEYSHARE_META_MISSING));
         };
-        let share_enc_preset = meta
-            .params_preset
-            .dkg_counterpart()
-            .unwrap_or(meta.params_preset);
         if e3_fhe_params::supports_lbfv(meta.params_preset) {
             let lbfv_state = lbfv_generation.get().ok_or_else(|| {
                 anyhow!(
@@ -239,7 +232,7 @@ impl E3Extension for ThresholdKeyshareExtension {
             bus: self.bus.clone(),
             cipher: self.cipher.clone(),
             state,
-            share_enc_preset,
+            share_enc_preset: meta.share_enc_preset(),
             interfold_address,
             recovery,
             lbfv_generation,

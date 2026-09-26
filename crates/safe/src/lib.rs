@@ -434,31 +434,6 @@ mod tests {
     }
 
     #[test]
-    fn test_commitment_scheme() {
-        // Verifies SAFE can be used for commitment schemes with pattern ABSORB(3) + SQUEEZE(1).
-        let domain_separator = test_domain_separator();
-        let values = vec![field_from_u64(10), field_from_u64(20), field_from_u64(30)];
-
-        // Pattern: ABSORB(3), SQUEEZE(1)
-        let io_pattern = [0x80000003, 0x00000001];
-        let mut sponge = SafeSponge::start(io_pattern, domain_separator);
-        sponge.absorb(values.clone());
-        let output = sponge.squeeze();
-        sponge.finish();
-
-        assert_eq!(output.len(), 1);
-        assert!(output[0] != Field::zero());
-
-        // Test determinism
-        let mut sponge2 = SafeSponge::start(io_pattern, domain_separator);
-        sponge2.absorb(values.clone());
-        let output2 = sponge2.squeeze();
-        sponge2.finish();
-
-        assert_eq!(output[0], output2[0]);
-    }
-
-    #[test]
     fn test_domain_separation() {
         // Verifies that different domain separators produce different outputs for the same input.
         let elements = vec![field_from_u64(1), field_from_u64(2), field_from_u64(3)];

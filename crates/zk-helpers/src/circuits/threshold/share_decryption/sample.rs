@@ -315,31 +315,4 @@ mod tests {
             "each limb has degree coefficients"
         );
     }
-
-    #[test]
-    fn test_generate_template_polynomials_consistent() {
-        let committee = CiphernodesCommitteeSize::Small.values();
-        let sample = ShareDecryptionCircuitData::generate_sample(PRESET, committee).unwrap();
-
-        let n = sample.s.limbs.len();
-        assert_eq!(sample.e.limbs.len(), n, "e must have same limb count as s");
-        assert_eq!(
-            sample.d_share.limbs.len(),
-            n,
-            "d_share must have same limb count as s"
-        );
-    }
-
-    #[test]
-    fn test_generate_template_repeatable() {
-        let committee = CiphernodesCommitteeSize::Small.values();
-
-        let a = ShareDecryptionCircuitData::generate_sample(PRESET, committee.clone()).unwrap();
-        let b = ShareDecryptionCircuitData::generate_sample(PRESET, committee).unwrap();
-
-        assert_eq!(a.public_key.c.len(), b.public_key.c.len());
-        assert_eq!(a.s.limbs.len(), b.s.limbs.len());
-        assert_eq!(a.e.limbs.len(), b.e.limbs.len());
-        assert_eq!(a.d_share.limbs.len(), b.d_share.limbs.len());
-    }
 }

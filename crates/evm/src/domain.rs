@@ -34,6 +34,8 @@ pub(crate) mod historical_order_fixer;
 pub(crate) mod interfold_events;
 #[path = "chain_reader/log_timestamp.rs"]
 pub(crate) mod log_timestamp;
+#[path = "log_fetching/window.rs"]
+pub(crate) mod log_window;
 #[path = "interfold_writing/workflow.rs"]
 pub(crate) mod plaintext_publication;
 #[path = "publication_writing/workflow.rs"]

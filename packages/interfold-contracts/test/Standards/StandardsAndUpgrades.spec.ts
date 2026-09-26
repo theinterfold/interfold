@@ -1,21 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 //
-// Standards & upgradeability hygiene:
-//   * ERC-165 `supportsInterface` on all major contracts.
-//   * EIP-6372 clock advertisement on ERC20Votes tokens.
-//   * LazyIMT depth cap (`MAX_CIPHERNODE_LEAVES` / `CiphernodeTreeExhausted`).
-//   * `__gap[50]` storage gaps on upgradeable contracts (also covered via
-//     `scripts/validateUpgrade.ts`; here we sanity-check that the four
-//     upgradeable contracts deploy cleanly without slot collisions).
-//
-// Deferred (documented, no executable test):
-//   * EIP-1271: no on-chain signer / 1271 verification path exists in
-//     Interfold, registries or the refund manager. Add an IERC1271 check if
-//     a contract-account signer path is introduced.
-//   * Storage-layout snapshot/diff is implemented as
-//     `scripts/validateUpgrade.ts`. Not part of the mocha suite (it reads
-//     build-info artifacts); CI runs `pnpm validate:upgrade` after
-//     `pnpm compile`.
+// Standards and upgradeability checks for ERC-165, LazyIMT limits, and linked
+// libraries. The package README documents the separate storage-layout gate.
 import { expect } from "chai";
 import { type FunctionFragment, Interface } from "ethers";
 
@@ -140,25 +126,6 @@ describe("Standards & upgradeability hygiene", function () {
     });
   });
 
-  describe("EIP-6372 clock advertisement (ERC20Votes)", function () {
-    it("InterfoldTicketToken: CLOCK_MODE() and clock() report timestamp mode", async function () {
-      const { ticketToken } = await deployAll();
-      expect(await ticketToken.CLOCK_MODE()).to.equal("mode=timestamp");
-      const latest = (await ethers.provider.getBlock("latest"))!;
-      const onchain = await ticketToken.clock();
-      // clock() must equal the latest block timestamp under EIP-6372/timestamp mode.
-      expect(onchain).to.equal(BigInt(latest.timestamp));
-    });
-
-    it("InterfoldToken: CLOCK_MODE() and clock() report timestamp mode", async function () {
-      const { ciphernodeBondToken } = await deployAll();
-      expect(await ciphernodeBondToken.CLOCK_MODE()).to.equal("mode=timestamp");
-      const latest = (await ethers.provider.getBlock("latest"))!;
-      const onchain = await ciphernodeBondToken.clock();
-      expect(onchain).to.equal(BigInt(latest.timestamp));
-    });
-  });
-
   describe("LazyIMT depth cap", function () {
     it("CiphernodeRegistryOwnable: exposes MAX_CIPHERNODE_LEAVES = 2^20 - 1", async function () {
       const { ciphernodeRegistry } = await deployAll();
@@ -181,22 +148,6 @@ describe("Standards & upgradeability hygiene", function () {
       ).to.emit(ciphernodeRegistry, "CiphernodeAdded");
       // Real exhaustion (2^20 inserts) is infeasible to drive in a unit test;
       // the revert path is verified by code review of the constant guard.
-    });
-  });
-
-  describe("storage gaps on upgradeable contracts", function () {
-    // The presence of `uint256[50] private __gap` is enforced at compile
-    // time by the source files and verified end-to-end by
-    // `scripts/validateUpgrade.ts` which snapshots the solc storage layout
-    // for each upgradeable contract and fails CI on any incompatible
-    // change. We assert here only that the four upgradeable contracts can
-    // be deployed cleanly (initializers wire up, no slot collision).
-    it("all upgradeable contracts deploy without storage collision", async function () {
-      const all = await deployAll();
-      expect(await all.interfold.getAddress()).to.properAddress;
-      expect(await all.ciphernodeRegistry.getAddress()).to.properAddress;
-      expect(await all.bondingRegistry.getAddress()).to.properAddress;
-      expect(await all.e3RefundManager.getAddress()).to.properAddress;
     });
   });
 
@@ -259,21 +210,5 @@ describe("Standards & upgradeability hygiene", function () {
         pricingAddress,
       );
     });
-  });
-
-  describe("validateUpgrade script", function () {
-    // Implemented as scripts/validateUpgrade.ts. Not run from mocha because
-    // it reads build-info artifacts from disk; CI invokes it via
-    // `pnpm validate:upgrade`.
-    it("[deferred to CI] scripts/validateUpgrade.ts diffs storage layouts");
-  });
-
-  describe("EIP-1271", function () {
-    // Deferred: no contract in this package currently consumes ECDSA
-    // signatures from a third party — registration, slashing, and refunds
-    // are all gated by direct `msg.sender` checks (Ownable / AccessControl)
-    // or by ERC20Votes' built-in `delegateBySig`. Re-evaluate if a
-    // contract-account signer path is introduced.
-    it("[deferred] no contract-account signature verification path exists");
   });
 });

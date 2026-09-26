@@ -6,7 +6,7 @@
 
 use crate::domain::ticket::{calculate_best_ticket_for_node, RegisteredNode, WinnerTicket};
 use alloy::primitives::Address;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use e3_events::{E3id, Seed};
 use std::collections::{hash_map::Entry, HashMap};
 
@@ -87,6 +87,35 @@ impl ScoreSortition {
     /// Construct a new `ScoreSortition` for a given committee size.
     pub fn new(size: usize) -> Self {
         Self { size }
+    }
+
+    /// Shortlist distinct owners and retain their operators as submission fallbacks.
+    /// Finalization ranks visit each owner's best operator before its backup operators.
+    pub fn get_owner_candidates(
+        &self,
+        e3_id: E3id,
+        seed: Seed,
+        nodes: &[RegisteredNode],
+        owners: &HashMap<Address, Address>,
+    ) -> Result<Vec<WinnerTicket>> {
+        let mut winners = Self::new(nodes.len()).get_committee(e3_id, seed, nodes)?;
+        // Match the capped contract's tie-break between different operators.
+        winners.sort_unstable_by(|a, b| a.score.cmp(&b.score).then(a.address.cmp(&b.address)));
+        let mut groups: HashMap<Address, (usize, usize)> = HashMap::new();
+        let mut candidates = Vec::new();
+        for winner in winners {
+            let owner = owners
+                .get(&winner.address)
+                .context("missing request-time bond owner")?;
+            let next_rank = groups.len();
+            let (owner_rank, member_rank) = groups.entry(*owner).or_insert((next_rank, 0));
+            if *owner_rank < self.size {
+                candidates.push(((*member_rank, *owner_rank), winner));
+                *member_rank += 1;
+            }
+        }
+        candidates.sort_unstable_by_key(|(rank, _)| *rank);
+        Ok(candidates.into_iter().map(|(_, winner)| winner).collect())
     }
 
     /// Determine the top-N committee members from a list of registered nodes.
@@ -254,5 +283,162 @@ mod tests {
                 desc, threshold_m, threshold_n, expected_total
             );
         }
+    }
+
+    #[test]
+    fn owner_shortlist_retains_backups_and_spreads_finalization_ranks() {
+        let id = E3id::new("42", 1);
+        let seed = Seed([42; 32]);
+        let nodes = (1..=68)
+            .map(|i| RegisteredNode {
+                address: address(i),
+                tickets: vec![Ticket { ticket_id: 1 }],
+            })
+            .collect::<Vec<_>>();
+        // Put the 28-node owner first in the score order to exercise the crowded prefix.
+        let winners = ScoreSortition::new(nodes.len())
+            .get_committee(id.clone(), seed, &nodes)
+            .unwrap();
+        let shared_owner = address(1000);
+        let owners = winners
+            .iter()
+            .enumerate()
+            .map(|(rank, winner)| {
+                (
+                    winner.address,
+                    if rank < 28 {
+                        shared_owner
+                    } else {
+                        winner.address
+                    },
+                )
+            })
+            .collect();
+        let candidates = ScoreSortition::new(30)
+            .get_owner_candidates(id, seed, &nodes, &owners)
+            .unwrap();
+        assert_eq!(candidates.len(), 57); // 28 operators plus 29 other owners, not all 68.
+        assert_eq!(
+            candidates[..30]
+                .iter()
+                .map(|w| owners[&w.address])
+                .collect::<HashSet<_>>()
+                .len(),
+            30
+        );
+        assert_eq!(
+            candidates
+                .iter()
+                .filter(|w| owners[&w.address] == shared_owner)
+                .count(),
+            28
+        );
+
+        // Remove the best operator and one through five whole backup owner groups.
+        for outages in 1..=5 {
+            let offline_owner_groups = candidates[30 - outages..30]
+                .iter()
+                .map(|w| owners[&w.address])
+                .collect::<HashSet<_>>();
+            let online = candidates.iter().filter(|w| {
+                w.address != winners[0].address
+                    && !offline_owner_groups.contains(&owners[&w.address])
+            });
+            let remaining_owners = online.map(|w| owners[&w.address]).collect::<HashSet<_>>();
+            assert!(remaining_owners.contains(&shared_owner));
+            assert_eq!(remaining_owners.len(), 30 - outages);
+            assert!(remaining_owners.len() >= 19);
+        }
+    }
+
+    #[test]
+    fn independent_owners_keep_the_existing_candidate_buffer() {
+        let nodes = build_nodes();
+        let owners = nodes
+            .iter()
+            .map(|node| (node.address, node.address))
+            .collect();
+        let id = E3id::new("9", 1);
+        let seed = Seed([9; 32]);
+        let selection = ScoreSortition::new(7);
+        let before = selection.get_committee(id.clone(), seed, &nodes).unwrap();
+        let after = selection
+            .get_owner_candidates(id, seed, &nodes, &owners)
+            .unwrap();
+        assert_eq!(
+            before.iter().map(|w| w.address).collect::<Vec<_>>(),
+            after.iter().map(|w| w.address).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn post_request_owner_splits_cannot_crowd_out_other_snapshot_owners() {
+        use crate::BondOwnerState;
+        use e3_events::BondOwnerSet;
+
+        let id = E3id::new("42", 1);
+        let seed = Seed([42; 32]);
+        let nodes = (1..=68)
+            .map(|i| RegisteredNode {
+                address: address(i),
+                tickets: vec![Ticket { ticket_id: 1 }],
+            })
+            .collect::<Vec<_>>();
+        let ranked = ScoreSortition::new(nodes.len())
+            .get_committee(id.clone(), seed, &nodes)
+            .unwrap();
+        let request_time = 1_700_000_000;
+        let shared_owner = address(1000);
+        let mut owners = BondOwnerState::default();
+        let mut snapshot_owners = std::collections::HashMap::new();
+        for (rank, node) in ranked.iter().enumerate() {
+            let owner = if rank < 28 {
+                shared_owner
+            } else {
+                node.address
+            };
+            snapshot_owners.insert(node.address, owner);
+            let mut event = BondOwnerSet {
+                operator: node.address.to_string(),
+                bond_owner: owner.to_string(),
+                chain_id: 1,
+            };
+            owners.record(&event, request_time - 1).unwrap();
+            if rank < 28 {
+                event.bond_owner = node.address.to_string();
+                owners.record(&event, request_time + 1).unwrap();
+            }
+        }
+        let at = |timepoint| {
+            nodes
+                .iter()
+                .map(|node| {
+                    (
+                        node.address,
+                        owners.owner_at(1, node.address, timepoint).unwrap(),
+                    )
+                })
+                .collect()
+        };
+        let selection = ScoreSortition::new(30);
+        let correct = selection
+            .get_owner_candidates(id.clone(), seed, &nodes, &at(request_time - 1))
+            .unwrap();
+        let correct_groups = correct
+            .iter()
+            .map(|w| snapshot_owners[&w.address])
+            .collect::<HashSet<_>>();
+        assert_eq!(correct_groups.len(), 30);
+
+        // A latest-state lookup would rank the transferred nodes as separate owners.
+        // The contract still sees one owner for those 28 nodes in this request.
+        let stale = selection
+            .get_owner_candidates(id, seed, &nodes, &at(request_time + 1))
+            .unwrap();
+        let stale_groups = stale
+            .iter()
+            .map(|w| snapshot_owners[&w.address])
+            .collect::<HashSet<_>>();
+        assert_eq!(stale_groups.len(), 3);
     }
 }

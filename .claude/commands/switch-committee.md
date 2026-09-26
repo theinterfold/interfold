@@ -1,5 +1,5 @@
 ---
-description: Switch the active committee/preset safely (the four-file sync dance)
+description: Switch the active committee or BFV preset with the build script
 ---
 
 Read `agent/prompts/switch-committee.md` and follow it exactly, with input: $ARGUMENTS

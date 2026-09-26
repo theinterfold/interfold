@@ -7,8 +7,8 @@
 use std::str::FromStr;
 
 use alloy::{primitives::Address, providers::WalletProvider, sol};
-use anyhow::{anyhow, Context, Result};
-use e3_config::{chain_config::ChainConfig, AppConfig};
+use anyhow::{Context, Result};
+use e3_config::AppConfig;
 use e3_crypto::Cipher;
 use e3_entrypoint::helpers::datastore::get_repositories;
 use e3_evm::{
@@ -56,6 +56,8 @@ mod erc20_metadata_interface {
 use bonding_registry_contract::BondingRegistryContract;
 use erc20_metadata_interface::IERC20Metadata;
 use interfold_ticket_token_contract::InterfoldTicketTokenContract;
+
+use crate::helpers::chain::select_chain;
 
 pub(crate) struct ChainContext {
     chain_label: String,
@@ -139,19 +141,6 @@ impl ChainContext {
         address: Address,
     ) -> IERC20Metadata::IERC20MetadataInstance<ConcreteWriteProvider> {
         IERC20Metadata::new(address, self.provider_client())
-    }
-}
-
-fn select_chain<'a>(config: &'a AppConfig, name: Option<&str>) -> Result<&'a ChainConfig> {
-    match name {
-        Some(desired) => config
-            .chains()
-            .iter()
-            .find(|c| c.name == desired)
-            .ok_or_else(|| anyhow!("Chain '{}' not found in configuration", desired)),
-        None => config.chains().first().ok_or_else(|| {
-            anyhow!("No chains configured. Run `interfold ciphernode setup` first.")
-        }),
     }
 }
 

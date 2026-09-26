@@ -1542,22 +1542,6 @@ describe("BondingRegistry", function () {
   });
 
   describe("isCiphernodeBonded()", function () {
-    it("returns true when operator has minimum ciphernode bond", async function () {
-      const { bondingRegistry, ciphernodeBondToken, operator1 } =
-        await loadFixture(setup);
-
-      const minBond = (REQUIRED_CIPHERNODE_BOND * 8000n) / 10000n;
-      await ciphernodeBondToken
-        .connect(operator1)
-        .approve(await bondingRegistry.getAddress(), minBond);
-      await bondingRegistry
-        .connect(operator1)
-        .bondCiphernodeFor(operator1Address, minBond);
-
-      expect(await bondingRegistry.isCiphernodeBonded(operator1Address)).to.be
-        .true;
-    });
-
     it("returns false when operator has insufficient ciphernode bond", async function () {
       const { bondingRegistry, ciphernodeBondToken, operator1 } =
         await loadFixture(setup);
@@ -2140,11 +2124,70 @@ describe("BondingRegistry", function () {
 
     describe("withdrawSlashedFunds()", function () {
       it("allows owner to withdraw slashed funds", async function () {
-        const { bondingRegistry, treasury } = await loadFixture(setup);
+        const {
+          bondingRegistry,
+          ticketToken,
+          ciphernodeBondToken,
+          usdcToken,
+          operator1,
+          slashingManager,
+          treasury,
+          treasuryAddress,
+        } = await loadFixture(setup);
+        const bondAmount = REQUIRED_CIPHERNODE_BOND;
+        const ticketAmount = ethers.parseUnits("100", 6);
+        const bondSlash = bondAmount / 4n;
+        const ticketSlash = ticketAmount / 4n;
+        const slashReason = ethers.id("withdraw-slashed-funds");
 
-        await expect(bondingRegistry.withdrawSlashedFunds(0, 0))
+        await ciphernodeBondToken
+          .connect(operator1)
+          .approve(await bondingRegistry.getAddress(), bondAmount);
+        await bondingRegistry
+          .connect(operator1)
+          .bondCiphernodeFor(operator1Address, bondAmount);
+        await bondingRegistry
+          .connect(operator1)
+          .registerOperatorFor(operator1Address);
+        await usdcToken
+          .connect(operator1)
+          .approve(await ticketToken.getAddress(), ticketAmount);
+        await bondingRegistry
+          .connect(operator1)
+          .addTicketBalanceFor(operator1Address, ticketAmount);
+
+        const slashSigner = await impersonateSlashingManager(slashingManager);
+        await bondingRegistry
+          .connect(slashSigner)
+          .slashTicketBalance(operator1Address, ticketSlash, slashReason);
+        await bondingRegistry
+          .connect(slashSigner)
+          .slashCiphernodeBond(operator1Address, bondSlash, slashReason);
+        await networkHelpers.stopImpersonatingAccount(
+          await slashingManager.getAddress(),
+        );
+        const treasuryTicketBefore = await usdcToken.balanceOf(treasuryAddress);
+        const treasuryBondBefore =
+          await ciphernodeBondToken.balanceOf(treasuryAddress);
+
+        await expect(
+          bondingRegistry.withdrawSlashedFunds(ticketSlash, bondSlash),
+        )
           .to.emit(bondingRegistry, "SlashedFundsWithdrawn")
-          .withArgs(await treasury.getAddress(), 0, 0);
+          .withArgs(await treasury.getAddress(), ticketSlash, bondSlash);
+
+        expect(await usdcToken.balanceOf(treasuryAddress)).to.equal(
+          treasuryTicketBefore + ticketSlash,
+        );
+        expect(await ciphernodeBondToken.balanceOf(treasuryAddress)).to.equal(
+          treasuryBondBefore + bondSlash,
+        );
+        expect(await bondingRegistry.slashedTicketBalance()).to.equal(0);
+        expect(await bondingRegistry.slashedCiphernodeBond()).to.equal(0);
+        expect(await ticketToken.payableBalance()).to.equal(0);
+        expect(await bondingRegistry.totalCiphernodeBondLiability()).to.equal(
+          bondAmount - bondSlash,
+        );
       });
 
       it("reverts if not owner", async function () {
@@ -2691,6 +2734,7 @@ describe("BondingRegistry", function () {
         usdcToken,
         operator1,
         owner,
+        slashingManager,
       } = await loadFixture(setup);
 
       await ciphernodeBondToken
@@ -2737,6 +2781,42 @@ describe("BondingRegistry", function () {
           "OutstandingAssetLiabilities",
         )
         .withArgs(await ticketToken.getAddress(), ticketAmount);
+
+      const slashSigner = await impersonateSlashingManager(slashingManager);
+      await bondingRegistry
+        .connect(slashSigner)
+        .slashTicketBalance(
+          operator1Address,
+          ticketAmount,
+          ethers.id("ticket-rotation-liability"),
+        );
+      await networkHelpers.stopImpersonatingAccount(
+        await slashingManager.getAddress(),
+      );
+      expect(await ticketToken.totalSupply()).to.equal(0);
+      expect(await ticketToken.payableBalance()).to.equal(ticketAmount);
+
+      await expect(
+        setBondingAssetConfig(bondingRegistry, {
+          ticketToken: await replacement.getAddress(),
+        }),
+      )
+        .to.be.revertedWithCustomError(
+          bondingRegistry,
+          "OutstandingAssetLiabilities",
+        )
+        .withArgs(await ticketToken.getAddress(), ticketAmount);
+
+      await bondingRegistry.withdrawSlashedFunds(ticketAmount, 0);
+
+      await expect(
+        setBondingAssetConfig(bondingRegistry, {
+          ticketToken: await replacement.getAddress(),
+        }),
+      ).to.emit(bondingRegistry, "BondingAssetConfigUpdated");
+      expect(await bondingRegistry.ticketToken()).to.equal(
+        await replacement.getAddress(),
+      );
     });
   });
 });

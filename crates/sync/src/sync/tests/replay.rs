@@ -5,6 +5,38 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use super::*;
+use crate::replay_spool::ReplaySpool;
+use actix::{Actor, Handler, ResponseFuture};
+use e3_events::Subscribe;
+use std::{collections::HashMap, sync::Arc, time::Duration};
+use tokio::sync::Notify;
+
+async fn load_replay_fixture(events: Vec<InterfoldEvent>) -> anyhow::Result<ReplaySpool> {
+    let cursors: HashMap<_, _> = events
+        .iter()
+        .map(|event| (event.aggregate_id(), 0))
+        .collect();
+    let config = cursors.keys().map(|id| (*id, Duration::ZERO)).collect();
+    // Keep fixture ingestion separate from the destination's clock, deduplication, and history.
+    let source = EventSystem::new()
+        .with_fresh_bus()
+        .with_aggregate_config(e3_events::AggregateConfig::new(config));
+    let source_bus = source.handle()?.enable("replay-fixture-source");
+    for event in &events {
+        source_bus
+            .naked_dispatch_async(event.clone_unsequenced())
+            .await?;
+    }
+    source_bus.flush_event_pipeline().await?;
+
+    let spool = ReplaySpool::load(&source.eventstore_reader()?.seq(), cursors).await?;
+    assert_eq!(
+        spool.total_events(),
+        events.len(),
+        "Load every fixture event from EventStore"
+    );
+    Ok(spool)
+}
 
 #[actix::test]
 async fn router_checkpoint_advances_without_losing_state() -> anyhow::Result<()> {
@@ -76,43 +108,52 @@ async fn infrastructure_events_are_filtered_during_replay() -> anyhow::Result<()
     let events: Vec<InterfoldEvent> = vec![
         InterfoldEvent::<Unsequenced>::test_event("before")
             .id(1)
+            .ts(1)
             .seq(1)
             .build(),
         InterfoldEvent::<Unsequenced>::test_event("sync")
             .data(SyncEnded::new())
+            .ts(2)
             .seq(2)
             .build(),
         InterfoldEvent::<Unsequenced>::test_event("fx")
             .data(EffectsEnabled::new())
+            .ts(3)
             .seq(3)
             .build(),
         InterfoldEvent::<Unsequenced>::test_event("evm")
             .data(make_historical_evm_sync_start())
+            .ts(4)
             .seq(4)
             .build(),
         InterfoldEvent::<Unsequenced>::test_event("net-start")
             .data(HistoricalNetSyncStart::new(BTreeMap::new()))
+            .ts(5)
             .seq(5)
             .build(),
         InterfoldEvent::<Unsequenced>::test_event("net-complete")
             .data(HistoricalNetSyncEventsReceived::new(Vec::new()))
+            .ts(6)
             .seq(6)
             .build(),
         InterfoldEvent::<Unsequenced>::test_event("sync-effect")
             .data(SyncEffect::new())
+            .ts(7)
             .seq(7)
             .build(),
         InterfoldEvent::<Unsequenced>::test_event("net-ready")
             .data(NetReady::new())
+            .ts(8)
             .seq(8)
             .build(),
         InterfoldEvent::<Unsequenced>::test_event("after")
             .id(2)
+            .ts(9)
             .seq(9)
             .build(),
     ];
 
-    let replayed = replay_eventstore_events(&bus, events).await?;
+    let replayed = load_replay_fixture(events).await?.replay(&bus).await?;
     assert_eq!(replayed, 2);
 
     let received = history.send(TakeEvents::new(2)).await?;
@@ -157,7 +198,10 @@ async fn empty_net_sync_completes_after_restart() -> anyhow::Result<()> {
         .build();
     let stale_event_id = stale_completion.id();
 
-    let replayed = replay_eventstore_events(&bus, vec![stale_completion]).await?;
+    let replayed = load_replay_fixture(vec![stale_completion])
+        .await?
+        .replay(&bus)
+        .await?;
     assert_eq!(replayed, 0);
 
     let completion = bus.wait_for(EventType::HistoricalNetSyncEventsReceived);
@@ -210,8 +254,10 @@ async fn backfill_recovers_committee_inputs() -> anyhow::Result<()> {
 
     let recovered = project_restart_state_backfill(
         &system.eventstore_reader()?.seq(),
+        std::collections::HashMap::new(),
         std::collections::HashMap::from([(aggregate_id, 3)]),
         &std::collections::HashSet::from([e3_id.clone()]),
+        &std::collections::HashSet::new(),
         &std::collections::HashSet::new(),
     )
     .await?;
@@ -275,9 +321,11 @@ async fn backfill_tracks_unresolved_slash_intents() -> anyhow::Result<()> {
     let slash_chains = std::collections::HashSet::from([1]);
     let recovered = project_restart_state_backfill(
         &system.eventstore_reader()?.seq(),
+        std::collections::HashMap::new(),
         std::collections::HashMap::from([(aggregate_id, 2)]),
         &std::collections::HashSet::new(),
         &slash_chains,
+        &std::collections::HashSet::new(),
     )
     .await?;
     assert_eq!(recovered.slash_intents, vec![intent.clone()]);
@@ -293,9 +341,11 @@ async fn backfill_tracks_unresolved_slash_intents() -> anyhow::Result<()> {
     bus.flush_event_pipeline().await?;
     let recovered = project_restart_state_backfill(
         &system.eventstore_reader()?.seq(),
+        std::collections::HashMap::new(),
         std::collections::HashMap::from([(aggregate_id, 3)]),
         &std::collections::HashSet::new(),
         &slash_chains,
+        &std::collections::HashSet::new(),
     )
     .await?;
     assert!(recovered.slash_intents.is_empty());
@@ -314,9 +364,11 @@ async fn backfill_tracks_unresolved_slash_intents() -> anyhow::Result<()> {
     bus.flush_event_pipeline().await?;
     let recovered = project_restart_state_backfill(
         &system.eventstore_reader()?.seq(),
+        std::collections::HashMap::new(),
         std::collections::HashMap::from([(aggregate_id, 5)]),
         &std::collections::HashSet::new(),
         &slash_chains,
+        &std::collections::HashSet::new(),
     )
     .await?;
     assert!(recovered.slash_intents.is_empty());
@@ -333,12 +385,13 @@ async fn replay_backlog_larger_than_event_bus_mailbox_is_delivered() -> anyhow::
         .map(|i| {
             InterfoldEvent::<Unsequenced>::test_event("replay")
                 .id(i as u64 + 1)
+                .ts(i as u128 + 1)
                 .seq(i as u64 + 1)
                 .build()
         })
         .collect();
 
-    let replayed = replay_eventstore_events(&bus, events).await?;
+    let replayed = load_replay_fixture(events).await?.replay(&bus).await?;
     assert_eq!(replayed, count);
 
     let received = history.send(TakeEvents::new(count)).await?;
@@ -373,7 +426,7 @@ async fn replay_restores_global_timestamp_order_across_aggregates() -> anyhow::R
             .build(),
     ];
 
-    replay_eventstore_events(&bus, events).await?;
+    load_replay_fixture(events).await?.replay(&bus).await?;
 
     let received = history.send(TakeEvents::new(3)).await?;
     let timestamps = received
@@ -398,8 +451,48 @@ async fn replay_seeds_clock_from_post_snapshot_log_history() -> anyhow::Result<(
         .seq(1)
         .build()];
 
-    replay_eventstore_events(&bus, events).await?;
+    load_replay_fixture(events).await?.replay(&bus).await?;
 
     assert!(HlcTimestamp::from(bus.ts()?) > durable);
+    Ok(())
+}
+
+struct BlockedSubscriber(Arc<Notify>);
+
+impl Actor for BlockedSubscriber {
+    type Context = actix::Context<Self>;
+}
+
+impl Handler<InterfoldEvent> for BlockedSubscriber {
+    type Result = ResponseFuture<()>;
+
+    fn handle(&mut self, _: InterfoldEvent, _: &mut Self::Context) -> Self::Result {
+        let gate = Arc::clone(&self.0);
+        Box::pin(async move { gate.notified().await })
+    }
+}
+
+#[actix::test]
+async fn replay_waits_for_the_final_subscriber() -> anyhow::Result<()> {
+    let system = EventSystem::new().with_fresh_bus();
+    let bus = system.handle()?.enable("test-replay-acknowledgement");
+    let gate = Arc::new(Notify::new());
+    let subscriber = BlockedSubscriber(Arc::clone(&gate)).start();
+    bus.event_bus()
+        .send(Subscribe::new(EventType::TestEvent, subscriber.recipient()))
+        .await?;
+    let event = InterfoldEvent::<Unsequenced>::test_event("final")
+        .seq(1)
+        .build();
+    let mut replay = Box::pin(load_replay_fixture(vec![event]).await?.replay(&bus));
+
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), &mut replay)
+            .await
+            .is_err(),
+        "Replay returned while its final subscriber was still running"
+    );
+    gate.notify_one();
+    assert_eq!(replay.await?, 1);
     Ok(())
 }

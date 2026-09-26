@@ -23,8 +23,10 @@ actually slashed and does not require an oracle or relabel one ERC-20 as another
 
 ### Timeout-Based Failure (Permissionless)
 
-Anyone can call `markE3Failed()` when a deadline is missed. A ready committee remains finalizable
-through its absolute DKG deadline. It can fail if it remains unfinalized after that deadline.
+After a deadline is missed, `markE3Failed()` can succeed. During `markFailedGracePeriod`, only the
+requester, the owner, or an active committee member can call it; after the grace period, any caller
+can. A ready committee remains finalizable through its absolute DKG deadline. It can fail if it
+remains unfinalized after that deadline.
 
 The Interfold writer watches every stage that `failureCondition` supports: `Requested`,
 `CommitteeFinalized`, `KeyPublished`, and `CiphertextReady`. Startup restores the stage from the
@@ -51,14 +53,14 @@ E3 stage.
 Committee key publication is valid through the DKG deadline. Later publication is rejected as a
 supplier-side timeout.
 
-> **NOTE:** The `gracePeriod` is stored in `_timeoutConfig` and validated on config update, but it
-> is **NOT added** to the deadline checks in `_checkFailureCondition()`. The actual checks compare
-> `block.timestamp` directly against the raw deadlines (which themselves already incorporate the
-> window durations). This may be intentional (grace already baked into the window sizes) or a
-> missing feature.
+> **NOTE:** `_checkFailureCondition()` compares `block.timestamp` with the raw stage deadlines.
+> `E3TimeoutConfig` has only `dkgWindow`, `computeWindow`, and `decryptionWindow`. The failure grace
+> period is `markFailedGracePeriod`. It does not move a deadline. It only limits who can call
+> `markE3Failed` before `deadline + markFailedGracePeriod`
+> (`InterfoldLifecycle.validateMarkFailedCaller`).
 
 ```text
-Anyone calls: Interfold.markE3Failed(e3Id)
+Caller (restricted during the grace period): Interfold.markE3Failed(e3Id)
 │
 ├─ Revert if stage == None, Complete, or Failed
 │

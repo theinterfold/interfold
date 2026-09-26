@@ -38,12 +38,6 @@ pub(crate) struct NodeAggregationMeta {
 }
 
 impl NodeAggregationMeta {
-    /// Total expected inner proofs for streaming aggregation:
-    /// C0..C4 (4 + sk + esm + 2). Mirrors the node-fold collector sizing.
-    pub(crate) fn total_expected_for(sk_enc_count: usize, e_sm_enc_count: usize) -> usize {
-        4 + sk_enc_count + e_sm_enc_count + 2
-    }
-
     /// Base `seq` for the first C4 proof: just after all C0..C3 proofs.
     pub(crate) fn c4_base_seq(&self) -> usize {
         self.total_expected.saturating_sub(2)

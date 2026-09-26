@@ -471,7 +471,7 @@ impl Handler<InterfoldEvent> for ComputeEffectGate {
             }
             InterfoldEventData::E3StageChanged(stage) => {
                 self.record_stage(stage.e3_id.clone(), stage.new_stage.clone());
-                if matches!(stage.new_stage, E3Stage::Complete | E3Stage::Failed) {
+                if stage.new_stage.is_terminal() {
                     self.cancel(&stage.e3_id);
                 }
             }

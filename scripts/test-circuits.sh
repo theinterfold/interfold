@@ -17,6 +17,7 @@ cp "$ACTIVE_PRESET" "$BACKUP_DIR/default.nr"
 trap restore_active_config EXIT
 
 (cd "$REPO_ROOT/circuits/lib" && nargo test)
+(cd "$REPO_ROOT/circuits/bin/recursive_aggregation/decryption_aggregator" && nargo test)
 
 for committee in minimum micro small; do
   sed -E \

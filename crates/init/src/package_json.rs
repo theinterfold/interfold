@@ -38,17 +38,6 @@ pub async fn get_version_from_package_json(file_path: &PathBuf) -> Result<String
         .ok_or_else(|| anyhow::anyhow!("version field not found or not a string"))
 }
 
-#[allow(dead_code)]
-fn validate_dependency_type(dep_type: &str) -> Result<()> {
-    match dep_type {
-        "dependencies" | "devDependencies" | "peerDependencies" => Ok(()),
-        _ => Err(anyhow::anyhow!(
-            "Invalid dependency type '{}'. Must be one of: dependencies, devDependencies, peerDependencies",
-            dep_type
-        )),
-    }
-}
-
 pub async fn add_package_to_json(
     file_path: &PathBuf,
     package_name: &str,
@@ -78,10 +67,27 @@ pub async fn add_package_to_json(
     Ok(())
 }
 
-#[test]
-fn test_validate_dependency_type() {
-    assert!(validate_dependency_type("dependencies").is_ok());
-    assert!(validate_dependency_type("devDependencies").is_ok());
-    assert!(validate_dependency_type("peerDependencies").is_ok());
-    assert!(validate_dependency_type("invalidType").is_err());
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn add_dev_dependency_keeps_existing_fields() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("package.json");
+        fs::write(&path, r#"{"version":"1.2.3","devDependencies":{"a":"1"}}"#)
+            .await
+            .unwrap();
+
+        add_package_to_json(&path, "b", "2", DependencyType::DevDependencies)
+            .await
+            .unwrap();
+
+        let saved: Value = serde_json::from_str(&fs::read_to_string(&path).await.unwrap()).unwrap();
+        assert_eq!(
+            saved["devDependencies"],
+            serde_json::json!({"a": "1", "b": "2"})
+        );
+        assert_eq!(get_version_from_package_json(&path).await.unwrap(), "1.2.3");
+    }
 }
