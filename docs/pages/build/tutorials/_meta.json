@@ -1,0 +1,14 @@
+{
+  "write-e3-program": {
+    "title": "Build a Complete E3 Program"
+  },
+  "custom-zk-circuits": {
+    "title": "Custom Noir Circuits"
+  },
+  "encrypt-and-submit": {
+    "title": "Encrypt and Submit an Input"
+  },
+  "deploy-to-testnet": {
+    "title": "Deploy to Sepolia"
+  }
+}
