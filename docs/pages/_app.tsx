@@ -6,6 +6,7 @@
 
 import React, { useEffect } from 'react'
 import type { AppProps } from 'next/app'
+import Router from 'next/router'
 import 'katex/dist/katex.min.css'
 import '../styles/globals.css'
 
@@ -71,9 +72,45 @@ function useSidebarScrollMemory() {
   }, [])
 }
 
+// Pages keep every tab panel in the DOM (`<Tabs.Tab unmount={false}>`), so the table of contents
+// can link to a heading inside a tab that is not selected. When the URL hash or an in-page link
+// points to such a heading, select its tab first and then scroll to the heading.
+function useOpenTabForHash() {
+  useEffect(() => {
+    const open = (hash: string) => {
+      if (hash.length < 2) return
+      const target = document.getElementById(decodeURIComponent(hash.slice(1)))
+      const panel = target?.closest<HTMLElement>('[role="tabpanel"]')
+      if (!target || !panel || getComputedStyle(panel).display !== 'none') return
+      const tabId = panel.getAttribute('aria-labelledby')
+      const tab = tabId ? document.getElementById(tabId) : null
+      if (!tab) return
+      tab.click()
+      requestAnimationFrame(() => requestAnimationFrame(() => target.scrollIntoView({ block: 'start' })))
+    }
+    // Headless UI sets the default tab while the page hydrates. Wait for that before selecting.
+    const onHashChange = () => window.setTimeout(() => open(window.location.hash), 200)
+    const onClick = (event: MouseEvent) => {
+      const anchor = (event.target as HTMLElement | null)?.closest('a')
+      const href = anchor?.getAttribute('href')
+      if (href?.startsWith('#')) window.setTimeout(() => open(href), 0)
+    }
+    onHashChange()
+    window.addEventListener('hashchange', onHashChange)
+    document.addEventListener('click', onClick)
+    Router.events.on('routeChangeComplete', onHashChange)
+    return () => {
+      window.removeEventListener('hashchange', onHashChange)
+      document.removeEventListener('click', onClick)
+      Router.events.off('routeChangeComplete', onHashChange)
+    }
+  }, [])
+}
+
 function App({ Component, pageProps }: AppProps) {
   useSidebarAutoScroll()
   useSidebarScrollMemory()
+  useOpenTabForHash()
   return (
     <>
       <Component {...pageProps} />

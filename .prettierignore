@@ -2,6 +2,8 @@
 node_modules
 dist
 build
+# The docs "Build" section is content, not build output.
+!docs/pages/build
 cache
 coverage
 target
