@@ -1,0 +1,746 @@
+---
+title: 'CLI Reference'
+description:
+  'Every interfold and interfoldup command, with its flags, default values, and behavior, grouped by
+  task.'
+---
+
+import { Callout } from 'nextra/components'
+import { Badge, LinkCard, LinkCards } from '@/components/ui'
+
+# CLI Reference
+
+This page lists every command of the `interfold` CLI and the `interfoldup` installer in release
+0.18.0. It is for developers who build E3 programs and for operators who run ciphernodes. Each entry
+gives the purpose, the usage line, and a table of flags with their default values. The source of
+truth is the clap definitions in `crates/cli/src` and `crates/interfoldup/src/main.rs`.
+
+## Commands at a glance
+
+| Task                                                        | Commands                                                                                                                                                          |
+| ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Install and update](#install-and-update)                   | `interfoldup install`, `interfoldup update`, `interfoldup uninstall`                                                                                              |
+| [Project](#project-commands)                                | `init`, `compile`, `program`, `print-env`                                                                                                                         |
+| [Node](#node-commands)                                      | `ciphernode setup`, `start`, `nodes`, `noir`, `events query`, `config get`                                                                                        |
+| [Operator on-chain lifecycle](#operator-on-chain-lifecycle) | `ciphernode set-bond-owner`, `propose-bond-owner`, `accept-bond-owner`, `bond`, `tickets`, `register`, `deregister`, `activate`, `deactivate`, `status`, `faucet` |
+| [Keys and secrets](#keys-and-secrets)                       | `password set`, `password delete`, `wallet set`, `wallet get`                                                                                                     |
+| [Network](#network-commands)                                | `net get-peer-id`                                                                                                                                                 |
+| [Maintenance](#maintenance-commands)                        | `node validate`, `node reset-data`, `config check`, `rev`, `purge-all`                                                                                            |
+
+Run `interfold <command> --help` to print the help text of one command. Run `interfold --version` to
+print the release version.
+
+## Global options
+
+These options apply to every `interfold` command. You can put them before or after the command name.
+
+| Flag              | Value      | Default                                                          | Description                                                                                                            |
+| ----------------- | ---------- | ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `-c`, `--config`  | `<CONFIG>` | [Discovery order](/reference/configuration#config-file-location) | Path to the configuration file. A relative path starts from the current directory.                                     |
+| `-v`, `--verbose` | Count      | `WARN`                                                           | Increases the log level. `-v` is `INFO`, `-vv` is `DEBUG`, and `-vvv` is `TRACE`.                                      |
+| `-q`, `--quiet`   | None       | Off                                                              | Shows errors only. You cannot use it together with `-v`.                                                               |
+| `--name`          | `<NAME>`   | `_default`                                                       | Selects the node profile `nodes.<NAME>`. The name `_default` selects the `node` key. Logs and telemetry use this name. |
+| `--otel`          | `<OTEL>`   | None                                                             | OpenTelemetry collector gRPC endpoint, for example `http://localhost:4317`. The value must be a valid URL.             |
+| `-h`, `--help`    | None       | None                                                             | Prints help.                                                                                                           |
+| `-V`, `--version` | None       | None                                                             | Prints the version. This flag is available on `interfold` only, not on subcommands.                                    |
+
+The node profile also sets the storage paths. Each profile keeps its keys and data in folders named
+after the profile. See [storage paths](/reference/configuration#storage-paths).
+
+## Behavior common to all commands
+
+### Configuration file
+
+Most commands need a configuration file. The CLI looks for the file in the order that
+[Node Configuration](/reference/configuration#config-file-location) describes. When the CLI finds no
+file, only these commands run:
+
+| Command                     | Behavior without a configuration file                                                                        |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `init`                      | Makes a project.                                                                                             |
+| `rev`                       | Prints the build revision.                                                                                   |
+| `ciphernode setup`          | Writes a configuration file and stores the password and wallet key.                                          |
+| `start`                     | Runs `ciphernode setup` with the `sepolia` profile and stops. Run `interfold start` again to start the node. |
+| `noir status`, `noir setup` | Use the folder `~/.interfold/noir`.                                                                          |
+
+All other commands stop with this error:
+
+```text
+Configuration file not found. Run `interfold ciphernode setup` to create a configuration.
+```
+
+`init` and `ciphernode setup` do the opposite. They stop with an error when the CLI finds a
+configuration file.
+
+When the configuration sets `autopassword: true` or `autowallet: true`, every command that loads the
+file first creates a missing password or wallet key. See
+[node keys](/reference/configuration#node-keys).
+
+### Commands that run inside a running node
+
+`interfold start` opens a control port on `127.0.0.1` at `ctrl_port` (default `50505`). Before a
+command runs, the CLI sends a request to that port and waits up to 1 second. When a node answers,
+these read-only commands run inside that node and print its answer:
+
+- `config get`
+- `ciphernode status`
+- `events query`
+- `net get-peer-id`
+- `noir status`
+- `print-env`
+- `rev` (without `--features`)
+- `wallet get`
+
+All other commands run in the local process.
+
+### Exit status
+
+A command that fails prints the error in red and exits with status `1`.
+
+## Install and update
+
+### Install script
+
+The `install` script at the repository root installs `interfoldup` in `~/.local/bin`. It supports
+Linux on `x86_64` and `aarch64`, and macOS. On an Intel Mac, it installs the Apple Silicon build,
+which runs through Rosetta 2.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/theinterfold/interfold/main/install | bash
+```
+
+| Flag           | Value   | Default        | Description                                                                                        |
+| -------------- | ------- | -------------- | -------------------------------------------------------------------------------------------------- |
+| `--version`    | `<TAG>` | Latest release | Release tag of `interfoldup` to install, for example `v0.18.0`. A tag without `v` gets the prefix. |
+| `-h`, `--help` | None    | None           | Prints the usage text.                                                                             |
+
+The environment variable `INTERFOLDUP_VERSION` sets the same value as `--version`. To pass the flag
+through the pipe, give it to `bash -s --`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/theinterfold/interfold/main/install | bash -s -- --version v0.18.0
+```
+
+### `interfoldup install`
+
+Downloads the `interfold` binary for this platform from a GitHub release and installs it.
+
+```bash
+interfoldup install [--system] [--version <TAG>]
+```
+
+| Flag        | Value   | Default        | Description                                                         |
+| ----------- | ------- | -------------- | ------------------------------------------------------------------- |
+| `--system`  | None    | Off            | Installs to `/usr/local/bin` instead of `~/.local/bin`.             |
+| `--version` | `<TAG>` | Latest release | Release tag to install. The command accepts `0.18.0` and `v0.18.0`. |
+
+The command prints a warning when the install folder is not in `PATH`.
+
+### `interfoldup update`
+
+Replaces the installed binary with the requested release. When no binary is installed, the command
+runs `install`. When the installed version already matches, the command does nothing.
+
+```bash
+interfoldup update [--system] [--version <TAG>]
+```
+
+| Flag        | Value   | Default        | Description                                                             |
+| ----------- | ------- | -------------- | ----------------------------------------------------------------------- |
+| `--system`  | None    | Off            | Updates `/usr/local/bin/interfold` instead of `~/.local/bin/interfold`. |
+| `--version` | `<TAG>` | Latest release | Release tag to move to.                                                 |
+
+### `interfoldup uninstall`
+
+Removes the installed `interfold` binary. It does not remove configuration files or node data.
+
+```bash
+interfoldup uninstall [--system]
+```
+
+| Flag       | Value | Default | Description                                              |
+| ---------- | ----- | ------- | -------------------------------------------------------- |
+| `--system` | None  | Off     | Removes from `/usr/local/bin` instead of `~/.local/bin`. |
+
+## Project commands
+
+These commands make and run an E3 project from the template. For a walkthrough, see
+[Quick Start](/build/quick-start).
+
+### `interfold init`
+
+Makes a new Interfold project from a template. The command clones the template, copies the support
+scripts to `.interfold/support`, adds the `lib/risc0-ethereum` submodule, runs `pnpm install`, and
+makes the first Git commit. It needs `git` and `pnpm`.
+
+```bash
+interfold init [PATH] [--template <TEMPLATE>] [--skip-cleanup] [--skip-install]
+```
+
+| Argument or flag | Value        | Default                                                                      | Description                                                                                                  |
+| ---------------- | ------------ | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `PATH`           | Path         | Current directory                                                            | Folder for the new project. A relative path starts from the current directory.                               |
+| `--template`     | `<TEMPLATE>` | `https://github.com/theinterfold/interfold.git#v<version>:templates/default` | Template repository, in the form `git+https://github.com/theinterfold/interfold.git#main:templates/default`. |
+| `--skip-cleanup` | None         | Off                                                                          | Keeps the working folder when an error occurs. Use it to test the installer.                                 |
+| `--skip-install` | None         | Off                                                                          | Does not install JavaScript packages. Use it for offline setup or unpublished release candidates.            |
+
+The default template uses the tag of the installed CLI version.
+
+### `interfold compile`
+
+Compiles the E3 program of the project. This command is the same as `interfold program compile`.
+
+```bash
+interfold compile [--dev <true|false>]
+```
+
+| Flag    | Value             | Default       | Description                                               |
+| ------- | ----------------- | ------------- | --------------------------------------------------------- |
+| `--dev` | `true` or `false` | `program.dev` | Compiles in Dev Mode. The value overrides the config key. |
+
+### `interfold program`
+
+Manages the E3 program of the project. Each subcommand runs a script in `.interfold/support` in the
+current directory. `interfold init` puts these scripts in the project.
+
+The `--dev` flag selects the script set. When the flag is absent, the CLI uses `program.dev` from
+the configuration, which defaults to `false`.
+
+| Subcommand                      | Purpose                                                                                                      | Script                                                    |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------- |
+| `program start [--dev <DEV>]`   | Starts the program. In Dev Mode, the program runs without a proving backend, so nothing verifies the result. | `dev/start`, or `ctl/start` with `program.risc0` settings |
+| `program compile [--dev <DEV>]` | Compiles the program code.                                                                                   | `dev/compile` or `ctl/compile`                            |
+| `program shell`                 | Opens a shell in the Docker environment that runs the program.                                               | `ctl/shell`                                               |
+| `program upload`                | Uploads the compiled program to Pinata IPFS. It passes `pinata_jwt` and `ipfs_gateway_url` from the config.  | `ctl/upload`                                              |
+| `program cache purge`           | Deletes `.interfold/caches`. The next compilation takes longer.                                              | None                                                      |
+
+`program start` without Dev Mode needs a `program.risc0` section in the configuration. See
+[program settings](/reference/configuration#program-settings).
+
+### `interfold print-env`
+
+Prints the contract addresses and the RPC URL of one configured chain as environment variables on
+one line. Use it to give the addresses to a client or a server.
+
+```bash
+interfold print-env --chain <CHAIN> [--vite]
+```
+
+| Flag      | Value     | Default  | Description                                    |
+| --------- | --------- | -------- | ---------------------------------------------- |
+| `--chain` | `<CHAIN>` | Required | Chain `name` from the `chains` list.           |
+| `--vite`  | None      | Off      | Adds the prefix `VITE_` to each variable name. |
+
+| Variable                   | Source                          | Printed when   |
+| -------------------------- | ------------------------------- | -------------- |
+| `INTERFOLD_ADDRESS`        | `contracts.interfold`           | Always         |
+| `RPC_URL`                  | `rpc_url`                       | Always         |
+| `REGISTRY_ADDRESS`         | `contracts.ciphernode_registry` | Always         |
+| `BONDING_REGISTRY_ADDRESS` | `contracts.bonding_registry`    | Always         |
+| `E3_PROGRAM_ADDRESS`       | `contracts.e3_program`          | The key is set |
+| `FEE_TOKEN_ADDRESS`        | `contracts.fee_token`           | The key is set |
+
+When no chain has the given name, the command prints an empty line.
+
+## Node commands
+
+These commands configure and run a ciphernode. For the full procedure, see
+[Running a ciphernode](/operate/running).
+
+### `interfold ciphernode setup`
+
+Makes a configuration file for one ciphernode and stores its password and wallet key. The command
+runs only when the CLI finds no configuration file.
+
+```bash
+interfold ciphernode setup [--network <sepolia|local>] [-r <RPC_URL>] [-p <PASSWORD> | --password-stdin] [-k <PRIVATE_KEY> | --private-key-stdin]
+```
+
+| Flag                  | Value              | Default   | Description                                                                                                               |
+| --------------------- | ------------------ | --------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `--network`           | `sepolia`, `local` | `sepolia` | P2P network profile and chain for the file. The value `sepolia` uses chain ID `11155111`. The value `local` uses `31337`. |
+| `-r`, `--rpc-url`     | `<RPC_URL>`        | Prompt    | Ethereum RPC URL. The scheme must be `http`, `https`, `ws`, or `wss`.                                                     |
+| `-p`, `--password`    | `<PASSWORD>`       | Prompt    | Password that encrypts the stored keys. It must not be blank.                                                             |
+| `--password-stdin`    | None               | Off       | Reads the password from the first line of standard input. You cannot use it with `--password`.                            |
+| `-k`, `--private-key` | `<PRIVATE_KEY>`    | Prompt    | Wallet private key. It must start with `0x` and contain only hexadecimal characters.                                      |
+| `--private-key-stdin` | None               | Off       | Reads the private key from the next line of standard input. You cannot use it with `--private-key`.                       |
+
+When a value is absent, the command prompts for it. The RPC prompt proposes
+`wss://ethereum-sepolia-rpc.publicnode.com` for `sepolia` and `ws://127.0.0.1:8545` for `local`. The
+last prompt asks for the configuration folder. The default is `interfold` in the operating system
+configuration folder, for example `~/.config/interfold` on Linux.
+
+The command writes `interfold.config.yaml` with these values:
+
+- `node.network` and `node.address`, which comes from the private key
+- One chain named after the network, with `chain_id` and `rpc_url`
+- The `interfold`, `ciphernode_registry`, `bonding_registry`, and `slashing_manager` contracts with
+  their deploy blocks
+
+The contract addresses are the Sepolia deployment that was built into the binary. The file uses
+these addresses also with `--network local`, so replace them with the addresses of your local
+deployment. To compare them with the current deployment, run `interfold config check`. The file does
+not contain a `data_availability` block, and `interfold start` needs one. See
+[data availability](/reference/configuration#data-availability).
+
+<Callout type='info'>
+  A secret in a command-line flag can stay in the shell history and in the process list. The
+  `--password-stdin` and `--private-key-stdin` flags keep secrets out of both. When you use both,
+  put the password on the first line and the private key on the second line.
+</Callout>
+
+### `interfold start`
+
+Starts the ciphernode in the foreground. The node syncs chain events, joins the P2P network, and
+serves on committees. Stop it with `SIGINT` (Ctrl+C) or `SIGTERM`. The node then does a controlled
+shutdown.
+
+```bash
+interfold start [--peer <PEER>]...
+```
+
+| Flag     | Value    | Default                    | Description                                                                                                               |
+| -------- | -------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `--peer` | `<PEER>` | The peers from the profile | libp2p multiaddr of a peer to dial. Repeat the flag for more peers. The node adds these peers to `peers` from the config. |
+
+The command holds a lock on the data folder of the profile, so a second process cannot use the same
+data. It also opens the control port and, when `dashboard_port` is set, a dashboard at
+`http://127.0.0.1:<dashboard_port>`. The node stops with an error when its chain connection fails or
+when its event store fails.
+
+### `interfold nodes`
+
+Runs a set of nodes on one host. The set is every profile under the `nodes` key. The `_default`
+profile is never part of the set. A supervisor process listens on `127.0.0.1:13415` and controls the
+node processes.
+
+Each node starts as `interfold start --name <id>`. The supervisor adds a `--peer` flag for every
+other node in the set, in the form `/ip4/127.0.0.1/udp/<quic_port>/quic-v1`.
+
+| Subcommand           | Arguments and flags                                                                                                               | Purpose                                                                                                                   |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `nodes up`           | `-d`, `--detach`: runs the supervisor in the background. `-e`, `--exclude <EXCLUDE>`: comma-separated profile names to leave out. | Starts all nodes. It fails when a supervisor already runs. With `--detach`, it waits up to 10 seconds for the supervisor. |
+| `nodes down`         | None                                                                                                                              | Stops all nodes and the supervisor.                                                                                       |
+| `nodes ps`           | None                                                                                                                              | Lists the status of each node process.                                                                                    |
+| `nodes start <ID>`   | `ID`: profile name                                                                                                                | Starts one node of the set.                                                                                               |
+| `nodes stop <ID>`    | `ID`: profile name                                                                                                                | Stops one node of the set.                                                                                                |
+| `nodes status <ID>`  | `ID`: profile name                                                                                                                | Prints the status of one node.                                                                                            |
+| `nodes restart <ID>` | `ID`: profile name                                                                                                                | Stops and starts one node.                                                                                                |
+| `nodes purge`        | None                                                                                                                              | Deletes `.interfold/data` and `.interfold/config` in the current directory.                                               |
+
+The detached supervisor does not receive the `--otel` flag.
+
+<Callout type='warning'>
+  `interfold nodes purge` deletes the key files, the stored wallet keys, and the event history of
+  every profile under `.interfold` in the current directory. You cannot undo this action. A deleted
+  wallet key that you have no copy of is lost, together with control of its on-chain position.
+</Callout>
+
+### `interfold noir`
+
+Manages the Noir prover tools that the node uses to make zero-knowledge proofs: the Barretenberg
+binary (`bb`) and the compiled circuits. The required versions come from
+`crates/zk-prover/versions.json`. For release 0.18.0, they are `bb` 5.1.0 and circuits 0.18.0.
+
+| Subcommand    | Flags                                                                                                                                                         | Purpose                                                                                                             |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `noir status` | None                                                                                                                                                          | Prints the path, version, and install state of `bb` and the circuits. The last line is `Ready` or the action to do. |
+| `noir setup`  | `-f`, `--force`: installs `bb` and the circuits again. `--circuits-archive <PATH>`: installs the circuits from a local release archive instead of a download. | Installs or updates `bb` and the circuits. When both are current and `--force` is absent, it does nothing.          |
+
+With a configuration file, the tools go to `.interfold/noir` next to that file. Without one, they go
+to `~/.interfold/noir`. A custom `bb` from `custom_bb` or `E3_CUSTOM_BB` replaces the downloaded
+one.
+
+### `interfold events query`
+
+Reads events from the local event store of the node. The command prints one JSON object for each
+event. The last line is a JSON cursor that you can use for the next page.
+
+```bash
+interfold events query [--agg <AGG>] [--since <SINCE>] [--limit <LIMIT>]
+```
+
+| Flag      | Value     | Default | Description                                                                                               |
+| --------- | --------- | ------- | --------------------------------------------------------------------------------------------------------- |
+| `--agg`   | `<AGG>`   | `0`     | Aggregate ID to read.                                                                                     |
+| `--since` | `<SINCE>` | `0`     | Sequence number to start from.                                                                            |
+| `--limit` | `<LIMIT>` | `10`    | Maximum number of events to read. When the value is above the internal limit, the internal limit applies. |
+
+### `interfold config get`
+
+Prints one resolved configuration value, or all values when you give no parameter.
+
+```bash
+interfold config get [PARAM]
+```
+
+| Argument | Values                                                                                                                                                                                                                                       | Default    |
+| -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- |
+| `PARAM`  | `name`, `peers`, `network`, `network_id`, `quic_port`, `ctrl_port`, `address`, `autonetkey`, `autopassword`, `autowallet`, `otel`, `config_file`, `config_yaml`, `db_file`, `key_file`, `log_file`, `work_dir`, `chains`, `nodes`, `program` | All values |
+
+An unknown parameter causes the error `Unknown config parameter`. The value of `peers` includes the
+bootstrap peer of the network profile when the config sets no peers.
+
+## Operator on-chain lifecycle
+
+Most of these commands send transactions to the `BondingRegistry` contract of a configured chain.
+`status` only reads, and `faucet` calls the `Faucet` contract. For the procedures, see
+[Registration](/operate/registration) and [Manage tickets](/operate/manage-tickets).
+
+### Shared flags and values
+
+| Flag         | Value       | Default                     | Description                                                                               |
+| ------------ | ----------- | --------------------------- | ----------------------------------------------------------------------------------------- |
+| `--chain`    | `<CHAIN>`   | The first entry in `chains` | Chain `name` from the configuration. Every command in this section accepts it.            |
+| `--operator` | `<ADDRESS>` | The configured wallet       | Operator position to act on. The usage line of each command shows if it accepts the flag. |
+
+The wallet that `wallet set` stored signs every transaction. The contract checks that this wallet
+can do the action. For example, `registerOperatorFor` accepts only the bond owner of the operator.
+
+Amounts are decimal token units, for example `1000` or `0.5`. You can use `_` to group digits. The
+number of decimal places must not be more than the decimals of the token. When a command needs a
+token allowance, it sends an `approve` transaction first.
+
+### `interfold ciphernode set-bond-owner`
+
+Authorizes the first bond owner of the operator. The configured wallet is the operator.
+
+```bash
+interfold ciphernode set-bond-owner --owner <ADDRESS> [--chain <CHAIN>]
+```
+
+| Flag      | Value       | Default  | Description                                                                            |
+| --------- | ----------- | -------- | -------------------------------------------------------------------------------------- |
+| `--owner` | `<ADDRESS>` | Required | Wallet or Safe that controls the bond. A separate cold owner is the recommended setup. |
+
+### `interfold ciphernode propose-bond-owner`
+
+Proposes to move an operator position to a new bond owner.
+
+```bash
+interfold ciphernode propose-bond-owner --operator <ADDRESS> --new-owner <ADDRESS> [--chain <CHAIN>]
+```
+
+| Flag          | Value       | Default  | Description                               |
+| ------------- | ----------- | -------- | ----------------------------------------- |
+| `--operator`  | `<ADDRESS>` | Required | Operator position to move.                |
+| `--new-owner` | `<ADDRESS>` | Required | Wallet or Safe that can accept ownership. |
+
+### `interfold ciphernode accept-bond-owner`
+
+Accepts a proposed bond owner transfer. The configured wallet must be the proposed owner.
+
+```bash
+interfold ciphernode accept-bond-owner --operator <ADDRESS> [--chain <CHAIN>]
+```
+
+| Flag         | Value       | Default  | Description                  |
+| ------------ | ----------- | -------- | ---------------------------- |
+| `--operator` | `<ADDRESS>` | Required | Operator position to accept. |
+
+### `interfold ciphernode bond`
+
+Manages the FOLD bond of an operator. The parent command accepts `--operator` and `--chain`.
+
+```bash
+interfold ciphernode bond [--operator <ADDRESS>] [--chain <CHAIN>] <bond|unbond|claim> [FLAGS]
+```
+
+| Subcommand | Flags                                                               | Purpose                                                                                         |
+| ---------- | ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `bond`     | `--amount <AMOUNT>` (required)                                      | Bonds FOLD to the operator position. It calls `bondCiphernodeFor`.                              |
+| `unbond`   | `--amount <AMOUNT>` (required)                                      | Puts FOLD from the position in the exit queue. It calls `unbondCiphernodeFor`.                  |
+| `claim`    | `--max-ticket <MAX_TICKET>`, `--max-bond <MAX_BOND>`. Default: all. | Claims ticket collateral and FOLD exits that the exit delay released. It calls `claimExitsFor`. |
+
+### `interfold ciphernode tickets`
+
+Manages the tickets of an operator. The parent command accepts `--operator` and `--chain`.
+
+```bash
+interfold ciphernode tickets [--operator <ADDRESS>] [--chain <CHAIN>] <buy|burn> --amount <AMOUNT>
+```
+
+| Subcommand | Flags                          | Purpose                                                                                                                                            |
+| ---------- | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `buy`      | `--amount <AMOUNT>` (required) | Deposits collateral to mint tickets. The amount is collateral, not a ticket count. It calls `addTicketBalanceFor`.                                 |
+| `burn`     | `--amount <AMOUNT>` (required) | Burns ticket tokens and puts the collateral in the exit queue. The amount is ticket tokens, not a ticket count. It calls `removeTicketBalanceFor`. |
+
+The number of available tickets is `floor(collateral balance / ticket price)`. After the
+transaction, both subcommands print the new ticket count.
+
+### `interfold ciphernode register`
+
+Registers the operator in the `BondingRegistry` and the `CiphernodeRegistry`. It calls
+`registerOperatorFor`, which only the bond owner can call. The FOLD bond must be at least the
+required bond before you register.
+
+```bash
+interfold ciphernode register [--operator <ADDRESS>] [--chain <CHAIN>]
+```
+
+### `interfold ciphernode deregister`
+
+Requests deregistration. The bond owner or the operator key can send it. It calls
+`deregisterOperatorFor`, which puts all collateral in the exit queue.
+
+```bash
+interfold ciphernode deregister [--operator <ADDRESS>] [--chain <CHAIN>]
+```
+
+### `interfold ciphernode activate`
+
+Sends the same `registerOperatorFor` transaction as `register`. After the registration, the contract
+calculates the activation state. For an operator that is already registered, the transaction reverts
+with `AlreadyRegistered`.
+
+```bash
+interfold ciphernode activate [--operator <ADDRESS>] [--chain <CHAIN>]
+```
+
+### `interfold ciphernode deactivate`
+
+Withdraws tickets, FOLD bond, or both, so that the operator becomes inactive. You must give at least
+one of the two amount flags.
+
+```bash
+interfold ciphernode deactivate [--tickets <AMOUNT>] [--bond <AMOUNT>] [--operator <ADDRESS>] [--chain <CHAIN>]
+```
+
+| Flag        | Value      | Default | Description                                                                               |
+| ----------- | ---------- | ------- | ----------------------------------------------------------------------------------------- |
+| `--tickets` | `<AMOUNT>` | None    | Ticket-token amount to burn, not a ticket count. It runs the same call as `tickets burn`. |
+| `--bond`    | `<AMOUNT>` | None    | FOLD amount to unbond. It runs the same call as `bond unbond`.                            |
+
+### `interfold ciphernode status`
+
+Prints the on-chain state of an operator. The command sends no transaction.
+
+```bash
+interfold ciphernode status [--operator <ADDRESS>] [--chain <CHAIN>]
+```
+
+The output shows these values:
+
+- The operator key, the bond owner, and a pending bond owner
+- The `Registered`, `Active`, and `Exit pending` flags
+- The ticket balance and the number of available tickets
+- The FOLD bond and the pending exits
+- The requirements: `minTickets`, `ticketPrice`, and `ciphernodeBond`
+
+### `interfold faucet`
+
+<Badge tone='testnet'>Testnet only</Badge> Requests test tokens from the `faucet` contract of a
+chain. The faucet sends 200 FOLD and 200 fee tokens to the configured wallet. It sends each token
+only when the wallet holds less than 200 of it.
+
+```bash
+interfold faucet [--chain <CHAIN>]
+```
+
+The chain must have a `faucet` entry in `contracts`. Only Sepolia publishes a faucet. See
+[Contracts & Addresses](/reference/contracts).
+
+## Keys and secrets
+
+The node stores its password in a key file. It uses the password to encrypt the wallet key and the
+libp2p key in its data store. See [node keys](/reference/configuration#node-keys).
+
+### `interfold password set`
+
+Sets the password when no password exists. When the key file already exists, the command stops with
+an error. Run `interfold password delete` first.
+
+```bash
+interfold password set [-p <PASSWORD> | --password-stdin]
+```
+
+| Flag               | Value        | Default | Description                                                               |
+| ------------------ | ------------ | ------- | ------------------------------------------------------------------------- |
+| `-p`, `--password` | `<PASSWORD>` | Prompt  | The new password. It must not be blank. The prompt asks for it two times. |
+| `--password-stdin` | None         | Off     | Reads the password from one line of standard input.                       |
+
+### `interfold password delete`
+
+Deletes the key file. The command asks for confirmation and for the current password.
+
+```bash
+interfold password delete
+```
+
+<Callout type='warning'>
+  The stored wallet key and libp2p key are encrypted with this password. If you delete the password
+  and set a different one, the node cannot decrypt those keys. Keep a copy of the wallet private key
+  before you delete the password, and run `interfold wallet set` again after you set a new one.
+</Callout>
+
+### `interfold wallet set`
+
+Stores the wallet private key, encrypted with the password. The command also derives the libp2p
+keypair from the same private key and stores it. The wallet key gives the node its Ethereum address
+and its peer ID.
+
+```bash
+interfold wallet set [--private-key <PRIVATE_KEY> | --private-key-stdin]
+```
+
+| Flag                  | Value           | Default | Description                                                  |
+| --------------------- | --------------- | ------- | ------------------------------------------------------------ |
+| `--private-key`       | `<PRIVATE_KEY>` | Prompt  | The private key, `0x` followed by 64 hexadecimal characters. |
+| `--private-key-stdin` | None            | Off     | Reads the private key from one line of standard input.       |
+
+### `interfold wallet get`
+
+Prints the Ethereum address of the stored wallet key.
+
+```bash
+interfold wallet get
+```
+
+## Network commands
+
+### `interfold net get-peer-id`
+
+Prints the libp2p peer ID of the node. The peer ID comes from the stored wallet key.
+
+```bash
+interfold net get-peer-id
+```
+
+To dial extra peers, use `interfold start --peer`. To set peers permanently, use the `peers` key.
+See [network settings](/reference/configuration#network-settings).
+
+## Maintenance commands
+
+### `interfold node validate`
+
+Checks the stored state of one node without a start. The command checks these items:
+
+- This binary can load the storage schema.
+- The event log is intact.
+- The snapshot cursor is consistent.
+- No committee tickets are orphaned.
+
+Without `--repair`, the command changes no files. It exits with an error when a check fails.
+
+```bash
+interfold node validate [--repair]
+```
+
+| Flag       | Value | Default | Description                                                            |
+| ---------- | ----- | ------- | ---------------------------------------------------------------------- |
+| `--repair` | None  | Off     | Repairs a safe log tail, or builds a stale sortition projection again. |
+
+The command takes the same data-folder lock as `interfold start`. Stop the node before you run it.
+Use it before an upgrade and after a crash. See [Upgrades](/operate/upgrades).
+
+### `interfold node reset-data`
+
+Deletes the durable protocol state of one node but keeps its identity. Use it when a release raises
+the storage schema and the binary refuses to load the old data folder.
+
+```bash
+interfold node reset-data --yes
+```
+
+| Flag    | Value | Default | Description                                                                                     |
+| ------- | ----- | ------- | ----------------------------------------------------------------------------------------------- |
+| `--yes` | None  | Off     | Confirms the deletion. Without it, the command stops with a message that lists what it deletes. |
+
+The command first writes an encrypted backup of the wallet key and libp2p key to
+`identity-backup-<name>-<timestamp>.json` next to the database. Then it deletes the key/value store
+and the event log, writes the identity back, and reads it again to confirm. The command refuses to
+run while the node runs.
+
+<Callout type='warning'>
+  Do not delete the data folder by hand. The wallet key and the libp2p key are in the same store as
+  the protocol state. If you delete the folder, you lose the identity that holds the bond. Use
+  `interfold node reset-data` instead.
+</Callout>
+
+### `interfold config check`
+
+Compares the contract addresses in the configuration with the published deployment manifest. See
+[Contracts & Addresses](/reference/contracts#deployment-manifest).
+
+```bash
+interfold config check [--chain <CHAIN>] [--manifest-url <MANIFEST_URL>]
+```
+
+| Flag             | Value            | Default                                                | Description                               |
+| ---------------- | ---------------- | ------------------------------------------------------ | ----------------------------------------- |
+| `--chain`        | `<CHAIN>`        | Every chain in the config                              | Checks only this chain.                   |
+| `--manifest-url` | `<MANIFEST_URL>` | The `manifest.json` asset of the latest GitHub release | Reads the manifest from this URL instead. |
+
+The command compares a chain only when its `name` is a network in the manifest, `mainnet` or
+`sepolia`. It skips other chains. Each finding has one of these labels:
+
+| Label   | Meaning                                                                                              | Fails the command |
+| ------- | ---------------------------------------------------------------------------------------------------- | ----------------- |
+| `STALE` | An address or the `chain_id` does not match the manifest.                                            | Yes               |
+| `warn`  | A `deploy_block` is unset or does not match the manifest.                                            | No                |
+| `note`  | The manifest publishes a contract that the config does not set, or the network is a mock deployment. | No                |
+
+The command exits with status `1` when it finds a `STALE` value. A supervisor or a CI job can use it
+as a gate before a restart. It does not compare `e3_program`, because each application has its own
+E3 program.
+
+### `interfold rev`
+
+Prints the Git revision that the binary was built from.
+
+```bash
+interfold rev [--features]
+```
+
+| Flag         | Value | Default | Description                                                                                                   |
+| ------------ | ----- | ------- | ------------------------------------------------------------------------------------------------------------- |
+| `--features` | None  | Off     | Prints the optional Cargo features of this binary instead, one for each line. A release build prints nothing. |
+
+### `interfold purge-all`
+
+Deletes `.interfold/data`, `.interfold/config`, and `.interfold/caches` in the current directory.
+This command is `nodes purge` and `program cache purge` together. It returns an error when
+`.interfold/caches` does not exist.
+
+```bash
+interfold purge-all
+```
+
+<Callout type='warning'>
+  `interfold purge-all` deletes the key files, the stored wallet keys, and the event history under
+  `.interfold` in the current directory. You cannot undo this action.
+</Callout>
+
+## Hidden and feature-gated items
+
+| Item                                             | Status                                      | Description                                                                                                                                       |
+| ------------------------------------------------ | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `interfold nodes daemon`                         | <Badge tone="neutral">Hidden</Badge>        | The supervisor process. `nodes up --detach` starts it. Help output does not list it. Do not run it directly.                                      |
+| `test-only-skip-proof-aggregation` Cargo feature | <Badge tone="warning">Feature-gated</Badge> | Test and CI builds only. Together with `skip_proof_aggregation: true`, it skips recursive proof aggregation. `interfold rev --features` shows it. |
+
+## Next steps
+
+<LinkCards min={230}>
+  <LinkCard
+    title='Node Configuration'
+    href='/reference/configuration'
+    icon='wrench'
+    tag='Reference'
+  >
+    Every key in `interfold.config.yaml`, its default, and the environment overrides.
+  </LinkCard>
+  <LinkCard title='Running a ciphernode' href='/operate/running' icon='node' tag='Operators'>
+    The procedure that uses these commands to set up and start a node.
+  </LinkCard>
+  <LinkCard
+    title='Contracts & Addresses'
+    href='/reference/contracts'
+    icon='contract'
+    tag='Reference'
+  >
+    The contracts that the on-chain commands call, with their addresses.
+  </LinkCard>
+  <LinkCard title='Quick Start' href='/build/quick-start' icon='rocket' tag='Developers'>
+    Make a project with `interfold init` and run it locally.
+  </LinkCard>
+</LinkCards>

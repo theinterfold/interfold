@@ -24,6 +24,9 @@
   "internals": {
     "title": "Protocol Internals"
   },
+  "reference": {
+    "title": "Reference"
+  },
   "-- FOLD & Governance": {
     "type": "separator",
     "title": "FOLD & Governance"
