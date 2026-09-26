@@ -52,6 +52,7 @@ impl NetSyncManager {
 
         bus.subscribe(EventType::HistoricalNetSyncStart, addr.clone().recipient());
         bus.subscribe(EventType::DkgCoordination, addr.clone().recipient());
+        bus.subscribe(EventType::DecryptionshareCreated, addr.clone().recipient());
         bus.subscribe(EventType::E3StageChanged, addr.clone().recipient());
         bus.subscribe(EventType::E3Failed, addr.clone().recipient());
         bus.subscribe(EventType::E3RequestComplete, addr.clone().recipient());

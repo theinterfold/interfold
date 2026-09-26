@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 mod actors;
+mod backoff;
 mod cid;
 mod dialer;
 pub mod direct_requester;
@@ -18,6 +19,7 @@ mod net_interface_handle;
 mod network;
 mod peer_admission;
 mod repo;
+mod seen_messages;
 
 use std::{collections::HashMap, sync::Arc};
 

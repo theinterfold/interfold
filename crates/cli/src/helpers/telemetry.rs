@@ -19,15 +19,61 @@ use tracing::{
     Level,
 };
 use tracing_subscriber::field::RecordFields;
-use tracing_subscriber::filter::Targets;
+use tracing_subscriber::filter::Directive;
 use tracing_subscriber::fmt::format::{FormatFields, Writer};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
+
+/// Dependency targets whose routine warnings would otherwise dominate node logs. libp2p gossipsub
+/// logs every dropped or repeated RPC at WARN, and its queue-full warning prints the whole RPC.
+const QUIET_TARGETS: &[(&str, Level)] = &[
+    ("alloy_pubsub", Level::WARN),
+    ("libp2p_gossipsub", Level::ERROR),
+];
+
+/// Builds the log filter: every target logs at `log_level` except [`QUIET_TARGETS`]. `RUST_LOG`
+/// directives apply on top and replace only the targets they name, so `RUST_LOG=libp2p_gossipsub=warn`
+/// shows gossipsub warnings without hiding node logs. An invalid value is ignored as a whole.
+fn log_filter(log_level: Level, env_directives: Option<&str>) -> EnvFilter {
+    let defaults = QUIET_TARGETS.iter().fold(
+        EnvFilter::default().add_directive(log_level.into()),
+        |filter, (target, level)| {
+            filter.add_directive(
+                format!("{target}={level}")
+                    .parse()
+                    .expect("static log directives are valid"),
+            )
+        },
+    );
+    let Some(value) = env_directives else {
+        return defaults;
+    };
+    let directives: Result<Vec<Directive>, _> = value
+        .split(',')
+        .map(str::trim)
+        .filter(|directive| !directive.is_empty())
+        .map(str::parse)
+        .collect();
+    match directives {
+        Ok(directives) => directives
+            .into_iter()
+            .fold(defaults, EnvFilter::add_directive),
+        Err(error) => {
+            eprintln!("Ignoring invalid RUST_LOG value: {error}");
+            defaults
+        }
+    }
+}
+
+fn default_log_filter(log_level: Level) -> EnvFilter {
+    log_filter(
+        log_level,
+        std::env::var(EnvFilter::DEFAULT_ENV).ok().as_deref(),
+    )
+}
 
 pub fn setup_simple_tracing(log_level: Level) {
     LogCollector::init("interfold", None);
-    let targets = Targets::new()
-        .with_default(log_level)
-        .with_target("alloy_pubsub", Level::WARN);
+    let targets = default_log_filter(log_level);
     let _ = tracing_subscriber::registry()
         .with(
             tracing_subscriber::fmt::layer()
@@ -45,9 +91,7 @@ pub fn setup_tracing(config: &AppConfig, log_level: Level) -> Result<()> {
     let name = config.name();
     LogCollector::init(&name, Some(operational_log_path(config)));
 
-    let targets = Targets::new()
-        .with_default(log_level)
-        .with_target("alloy_pubsub", Level::WARN);
+    let targets = default_log_filter(log_level);
 
     match config.otel() {
         Some(endpoint) => {
@@ -272,6 +316,74 @@ mod tests {
                 bytes: Arc::clone(&self.bytes),
             }
         }
+    }
+
+    fn logged_messages(filter: EnvFilter, emit: impl FnOnce()) -> String {
+        let captured = CapturedLogs::default();
+        let subscriber = tracing_subscriber::registry()
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .compact()
+                    .with_ansi(false)
+                    .with_writer(captured.clone()),
+            )
+            .with(filter);
+        tracing::subscriber::with_default(subscriber, emit);
+        captured.contents()
+    }
+
+    #[test]
+    fn default_filter_keeps_node_warnings_and_drops_gossipsub_warnings() {
+        let output = logged_messages(log_filter(Level::INFO, None), || {
+            tracing::warn!(target: "libp2p_gossipsub::behaviour", "Send Queue full");
+            tracing::warn!(target: "libp2p_gossipsub::peer_score", "Unexpected delivery trace");
+            tracing::error!(target: "libp2p_gossipsub::behaviour", "gossipsub error kept");
+            tracing::info!(target: "e3_net::net_interface", "node info kept");
+            tracing::info!(target: "alloy_pubsub", "pubsub info dropped");
+        });
+        assert!(!output.contains("Send Queue full"));
+        assert!(!output.contains("Unexpected delivery trace"));
+        assert!(output.contains("gossipsub error kept"));
+        assert!(output.contains("node info kept"));
+        assert!(!output.contains("pubsub info dropped"));
+    }
+
+    #[test]
+    fn rust_log_changes_only_the_targets_it_names() {
+        let output = logged_messages(
+            log_filter(Level::INFO, Some("libp2p_gossipsub=warn")),
+            || {
+                tracing::warn!(target: "libp2p_gossipsub::behaviour", "gossipsub warning shown");
+                tracing::info!(target: "e3_net::net_interface", "node info kept");
+                tracing::info!(target: "alloy_pubsub", "pubsub info dropped");
+            },
+        );
+        assert!(output.contains("gossipsub warning shown"));
+        assert!(output.contains("node info kept"));
+        assert!(!output.contains("pubsub info dropped"));
+    }
+
+    #[test]
+    fn a_rust_log_level_keeps_gossipsub_quiet() {
+        let output = logged_messages(log_filter(Level::WARN, Some("debug")), || {
+            tracing::debug!(target: "e3_net::net_interface", "node debug shown");
+            tracing::warn!(target: "libp2p_gossipsub::behaviour", "Send Queue full");
+        });
+        assert!(output.contains("node debug shown"));
+        assert!(!output.contains("Send Queue full"));
+    }
+
+    #[test]
+    fn invalid_rust_log_is_ignored_as_a_whole() {
+        let output = logged_messages(
+            log_filter(Level::INFO, Some("libp2p_gossipsub=warn,=bad[")),
+            || {
+                tracing::info!(target: "e3_net::net_interface", "node info kept");
+                tracing::warn!(target: "libp2p_gossipsub::behaviour", "Send Queue full");
+            },
+        );
+        assert!(output.contains("node info kept"));
+        assert!(!output.contains("Send Queue full"));
     }
 
     #[test]

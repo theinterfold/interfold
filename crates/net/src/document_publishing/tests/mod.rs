@@ -38,6 +38,19 @@ impl actix::Handler<PublisherBarrier> for DocumentPublisher {
     fn handle(&mut self, _message: PublisherBarrier, _context: &mut Self::Context) {}
 }
 
+/// Reports the documents being fetched and the documents waiting to be fetched.
+#[derive(actix::Message)]
+#[rtype(result = "(usize, usize)")]
+struct FetchBacklog;
+
+impl actix::Handler<FetchBacklog> for DocumentPublisher {
+    type Result = actix::MessageResult<FetchBacklog>;
+
+    fn handle(&mut self, _message: FetchBacklog, _context: &mut Self::Context) -> Self::Result {
+        actix::MessageResult((self.fetching.len(), self.fetch_queue.len()))
+    }
+}
+
 #[allow(clippy::type_complexity)]
 fn setup_test() -> Result<(
     DefaultGuard,

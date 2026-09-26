@@ -147,7 +147,7 @@ to a block explorer.
 
 ### Verbosity
 
-The CLI uses `-v` flags, not `RUST_LOG`. Each additional `v` goes one level deeper:
+The CLI sets the log level with `-v` flags. Each additional `v` goes one level deeper:
 
 | Flag          | Level   | When to use                                                     |
 | ------------- | ------- | --------------------------------------------------------------- |
@@ -159,6 +159,14 @@ The CLI uses `-v` flags, not `RUST_LOG`. Each additional `v` goes one level deep
 
 ```bash
 interfold start -vv
+```
+
+By default the node logs libp2p gossipsub only at `ERROR`, because its routine warnings can fill
+gigabytes during one E3. `RUST_LOG` directives apply on top of the `-v` level and change only the
+targets they name. For example, this also shows gossipsub warnings:
+
+```bash
+RUST_LOG=libp2p_gossipsub=warn interfold start -v
 ```
 
 ### Log file location

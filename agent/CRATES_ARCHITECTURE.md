@@ -505,13 +505,25 @@ provider records, and per-peer insertions are bounded. Production network polici
 explicit deployment set; only the local test policy can be unrestricted. Identify retains all staged
 connections for a peer, permanently rejects incompatible peers, and applies a short retryable
 cooldown after an Identify timeout. Gossipsub uses strict signatures and application validation
-before forwarding. Gossip envelopes bind the network, Interfold deployment, chain aggregate, event
-ID, schema version, and payload hash. Gossipsub and direct-request/DHT decoding have explicit byte
-limits. Translation actors accept only the protocol event allowlist before publishing remote events,
-and their broadcast-to-actor ingress loops await mailbox acceptance and stop when the destination
-actor closes. Each publish attempt has a result timeout. No-peer failures use a longer retry window
-than other transient failures. The network producer sends all events to the raw channel. It also
-sends gossip payloads and publish or DHT results to a separate application channel. The startup
+before forwarding. The gossipsub duplicate cache keeps its 60-second default. The node also ignores,
+without forwarding, a message ID from an admitted peer that it handled in the last 6 hours (at most
+100,000 IDs), so a delayed copy cannot circulate again. A message that arrives before its sender is
+admitted is not recorded, so a later copy from an admitted peer is still handled. Gossip envelopes
+bind the network, Interfold deployment, chain aggregate, event ID, schema version, and payload hash.
+Gossipsub and direct-request/DHT decoding have explicit byte limits. Translation actors accept only
+the protocol event allowlist before publishing remote events, and their broadcast-to-actor ingress
+loops await mailbox acceptance and stop when the destination actor closes. The event translator does
+not publish a peer event again while that event ID is in its 6-hour stored window (at most 20,000
+IDs). It records the ID when it hands a gossip event to the event store, and when the EventBus
+delivers a peer event that was stored another way, such as by historical sync. A failed append stops
+the event store and the node, so recording before the commit cannot hide an event from a running
+node. After a restart, the first copy of an already stored event is stored once more. The document
+publisher fetches documents in spawned tasks, so a slow DHT read does not hold its ingress loop. At
+most 8 fetches run and at most 512 notified documents wait; a new notification replaces the waiting
+document with the most failed fetches, and a document is dropped after 6 failed fetches until it is
+announced again. Each publish attempt has a result timeout. No-peer failures use a longer retry
+window than other transient failures. The network producer sends all events to the raw channel. It
+also sends gossip payloads and publish or DHT results to a separate application channel. The startup
 buffer subscribes only to the application channel. Historical-sync and connection-control bursts
 cannot lag the application receiver or consume its actor mailbox. The application buffer is bounded
 by both event count and estimated bytes and fails readiness on overflow or broadcast lag; after
@@ -521,7 +533,15 @@ budget across all aggregate fetches and recovery retries in a startup attempt. B
 makes three bounded startup attempts and then retries unavailable peers every 60 seconds in the
 background. Kademlia peers are evicted after three consecutive dial failures and quarantined from
 discovery-based routing-table reinsertion for up to 30 minutes. An admitted connection clears the
-cooldown early. A peer-ID mismatch quarantines the stale identity immediately. Peer health and
+cooldown early. A peer-ID mismatch quarantines the stale identity immediately. A dial that reaches
+this node's own identity is not a mismatch: the node removes that address from Kademlia and does not
+quarantine the peer it was advertised for. Kademlia adds new routing-table entries only through the
+filtered addresses of admitted peers, not automatically for every connection. Kademlia still adds a
+dialed address to an existing entry, so the node removes loopback addresses when Kademlia reports a
+routing update. Loopback addresses between nodes on one host are therefore not passed on to remote
+peers. The library's record replication and republication jobs are disabled: the replication job
+would put every stored record, including every peer's DKG documents, to 20 peers each hour. Kademlia
+queries time out after 60 seconds, and each request stream after 60 seconds. Peer health and
 quarantine state are process-local and are rebuilt after restart. A peer ID supplied in explicit
 configuration is pinned and cannot rebind to the identity obtained during a failed dial. A
 discovered address without an explicit identity can adopt the authenticated remote peer ID. An
