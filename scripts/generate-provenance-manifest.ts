@@ -112,9 +112,9 @@ function pinnedRevisions(): Record<string, string[]> {
  * builds `risczero/risc0-guest-builder:<tag>` from it. Both sources here are therefore suffixes,
  * and the repository prefix belongs on the outside of the choice.
  *
- * `crates/support/methods/build.rs` builds the checked-in Protobuf layer and always sets the
- * second value to `interfold-r0.<toolchain>-protoc-v1`. The compiled-in default is therefore
- * unreachable from this repository.
+ * `crates/support/methods/build.rs` builds the checked-in toolchain layer and always sets the
+ * second value to `interfold-r0.<toolchain>-v2`. The compiled-in default is therefore unreachable
+ * from this repository.
  *
  * The tag is mutable and does not identify a build on its own, so record the resolved digest
  * whenever Docker can supply it.
@@ -131,7 +131,7 @@ function builderImage(guestToolchain: string | null) {
   // value would otherwise name the image `risczero/risc0-guest-builder:r0.`.
   const toolchain = guestToolchain?.trim() || null
   if (!toolchain) return { tag: null, digest: null }
-  const suffix = process.env.RISC0_DOCKER_CONTAINER_TAG?.trim() || `interfold-r0.${toolchain}-protoc-v1`
+  const suffix = process.env.RISC0_DOCKER_CONTAINER_TAG?.trim() || `interfold-r0.${toolchain}-v2`
   const tag = `risczero/risc0-guest-builder:${suffix}`
   const digest = sh('docker', ['image', 'inspect', '--format', '{{index .RepoDigests 0}}', tag])
   return { tag, digest }

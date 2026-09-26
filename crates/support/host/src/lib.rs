@@ -123,7 +123,11 @@ fn fake_prove(
 
     // Execute the program with the input. The policy is the caller's, so dev mode computes the same
     // result the guest would rather than silently falling back to the default.
-    let processed = match input.process(fhe_processor, policy) {
+    let processed = match input.process_bound(
+        fhe_processor,
+        policy,
+        domain.committee_public_key_hash,
+    ) {
         Ok(processed) => processed,
         Err(error) => return to_output_error(Error::from(error)),
     };
@@ -666,6 +670,7 @@ mod tests {
                 fhe_inputs: FHEInputs {
                     ciphertexts: vec![(vec![0xaa; 32], 0)],
                     params: vec![0xbb; 16],
+                    committee_key: Vec::new(),
                 },
                 published: vec![PublishedData {
                     commitment: Some([0xcc; 32]),

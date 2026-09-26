@@ -72,6 +72,7 @@ fn rust_reproduces_the_root_the_contract_produced() {
         fhe_inputs: FHEInputs {
             ciphertexts,
             params: encode_bfv_params(&params),
+            committee_key: Vec::new(),
         },
         published,
     }
@@ -158,6 +159,7 @@ fn rust_selects_the_honest_mask_that_follows_a_poisoned_one() {
         fhe_inputs: FHEInputs {
             ciphertexts,
             params: encode_bfv_params(&params),
+            committee_key: Vec::new(),
         },
         published,
     }
@@ -226,6 +228,7 @@ fn rust_tallies_the_re_vote() {
         fhe_inputs: FHEInputs {
             ciphertexts,
             params: encode_bfv_params(&params),
+            committee_key: Vec::new(),
         },
         published,
     }

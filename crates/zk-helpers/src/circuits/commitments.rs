@@ -121,6 +121,30 @@ const DS_RLK_AGGREGATION: [u8; 64] = [
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 ];
 
+/// String: "LBFV_PUBLIC_KEY_V1"
+const DS_LBFV_PUBLIC_KEY_V1: [u8; 64] = [
+    0x4c, 0x42, 0x46, 0x56, 0x5f, 0x50, 0x55, 0x42, 0x4c, 0x49, 0x43, 0x5f, 0x4b, 0x45, 0x59, 0x5f,
+    0x56, 0x31, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+];
+
+/// String: "LBFV_RLK_V1"
+const DS_LBFV_RLK_V1: [u8; 64] = [
+    0x4c, 0x42, 0x46, 0x56, 0x5f, 0x52, 0x4c, 0x4b, 0x5f, 0x56, 0x31, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+];
+
+/// String: "LBFV_KEY_ENVELOPE_V1"
+const DS_LBFV_KEY_ENVELOPE_V1: [u8; 64] = [
+    0x4c, 0x42, 0x46, 0x56, 0x5f, 0x4b, 0x45, 0x59, 0x5f, 0x45, 0x4e, 0x56, 0x45, 0x4c, 0x4f, 0x50,
+    0x45, 0x5f, 0x56, 0x31, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+];
+
 /// Domain separator for general-purpose ciphertext commitments.
 /// String: "CIPHERTEXT"
 const DS_CIPHERTEXT: [u8; 64] = [
@@ -647,6 +671,47 @@ pub fn compute_pk_aggregation_commitment(
     let commitment_bytes = commitment_field.into_bigint().to_bytes_le();
 
     BigInt::from_bytes_le(num_bigint::Sign::Plus, &commitment_bytes)
+}
+
+/// Commit to the complete ordered l-BFV public-key row set.
+pub fn compute_lbfv_public_key_commitment(row_commitments: &[BigInt]) -> BigInt {
+    let mut payload = vec![Field::from(1u64), Field::from(row_commitments.len() as u64)];
+    payload.extend(row_commitments.iter().map(field_from_bigint));
+    let io = [0x80000000 | payload.len() as u32, 1];
+    field_to_bigint(compute_commitments(payload, DS_LBFV_PUBLIC_KEY_V1, io)[0])
+}
+
+/// Commit to the complete ordered l-BFV relinearization-key row set.
+pub fn compute_lbfv_rlk_commitment(
+    d0_commitments: &[BigInt],
+    d2_commitments: &[BigInt],
+) -> Result<BigInt, crate::CircuitsErrors> {
+    if d0_commitments.is_empty() || d0_commitments.len() != d2_commitments.len() {
+        return Err(crate::CircuitsErrors::Other(
+            "l-BFV RLK commitment requires equal nonempty d0 and d2 rows".to_string(),
+        ));
+    }
+    let mut payload = vec![Field::from(1u64), Field::from(d0_commitments.len() as u64)];
+    payload.extend(d0_commitments.iter().map(field_from_bigint));
+    payload.extend(d2_commitments.iter().map(field_from_bigint));
+    let io = [0x80000000 | payload.len() as u32, 1];
+    Ok(field_to_bigint(
+        compute_commitments(payload, DS_LBFV_RLK_V1, io)[0],
+    ))
+}
+
+/// Commit to one versioned l-BFV public-key and relinearization-key pair.
+pub fn compute_lbfv_key_envelope_commitment(
+    public_key_commitment: &BigInt,
+    rlk_commitment: &BigInt,
+) -> BigInt {
+    let payload = vec![
+        Field::from(1u64),
+        field_from_bigint(public_key_commitment),
+        field_from_bigint(rlk_commitment),
+    ];
+    let io = [0x80000000 | payload.len() as u32, 1];
+    field_to_bigint(compute_commitments(payload, DS_LBFV_KEY_ENVELOPE_V1, io)[0])
 }
 
 /// Compute the RLK commitment for the ephemeral polynomial shared by all rows.
@@ -1185,6 +1250,41 @@ mod tests {
     use fhe_traits::Serialize;
 
     const LBFV_SHARE_ROW_COUNT: usize = 5;
+
+    #[test]
+    fn lbfv_key_envelope_commitment_matches_noir_vector() {
+        let public_key_rows = [11u32, 22, 33, 44, 55].map(BigInt::from);
+        let d0_rows = [101u32, 102, 103, 104, 105].map(BigInt::from);
+        let d2_rows = [201u32, 202, 203, 204, 205].map(BigInt::from);
+        let public_key = compute_lbfv_public_key_commitment(&public_key_rows);
+        let rlk = compute_lbfv_rlk_commitment(&d0_rows, &d2_rows).unwrap();
+        let envelope = compute_lbfv_key_envelope_commitment(&public_key, &rlk);
+
+        assert_eq!(
+            public_key,
+            BigInt::parse_bytes(
+                b"8794038265432090420098367171184962926773673645207458062703877698737222004818",
+                10,
+            )
+            .unwrap()
+        );
+        assert_eq!(
+            rlk,
+            BigInt::parse_bytes(
+                b"8678089263775503676082767397312743320196209264612503417642947968755201858816",
+                10,
+            )
+            .unwrap()
+        );
+        assert_eq!(
+            envelope,
+            BigInt::parse_bytes(
+                b"18365618805205987395009526854274153391479792244574329633954644120137733297549",
+                10,
+            )
+            .unwrap()
+        );
+    }
 
     fn field_to_bigint(value: Field) -> BigInt {
         let bytes = value.into_bigint().to_bytes_le();

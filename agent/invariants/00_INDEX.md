@@ -77,7 +77,7 @@ Known residual gaps:
   replay is paged through bounded temporary runs and uses an acknowledged fan-out barrier.
 - `ComputeEffectGate` is in-memory only — no durable external-effect outbox yet.
 - `DataAvailabilityCoordinator` keeps incomplete public-key chunk bodies in its schema-2 recovery
-  snapshot and clones the full map on each write. The 6 MiB per-candidate limit and one candidate
+  snapshot and clones the full map on each write. The 16 MiB per-candidate limit and one candidate
   for each publisher do not provide a global memory or snapshot-size bound. The required fix is a
   schema-versioned migration to content-addressed disk records with bounded in-memory metadata and
   terminal cleanup; do not add an eviction policy that can remove the only recoverable candidate.

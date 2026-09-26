@@ -20,7 +20,7 @@ alloy::sol! {
 }
 
 const TICKET_GAS_SAFETY_MULTIPLIER: u64 = 2;
-const MAX_PUBLIC_KEY_BYTES: usize = 6 * 1024 * 1024;
+const MAX_PUBLIC_KEY_BYTES: usize = 16 * 1024 * 1024;
 const PUBLIC_KEY_CHUNK_BYTES: usize = 90 * 1024;
 
 fn public_key_chunk_count(public_key_length: usize) -> Result<u16> {
@@ -570,9 +570,9 @@ mod tests {
 
     #[test]
     fn public_key_size_boundary_covers_secure_16384() {
-        assert_eq!(MAX_PUBLIC_KEY_BYTES, 6 * 1024 * 1024);
-        assert_eq!(public_key_chunk_count(5_222_596).unwrap(), 57);
-        assert_eq!(public_key_chunk_count(MAX_PUBLIC_KEY_BYTES).unwrap(), 69);
+        assert_eq!(MAX_PUBLIC_KEY_BYTES, 16 * 1024 * 1024);
+        assert_eq!(public_key_chunk_count(7_833_906).unwrap(), 86);
+        assert_eq!(public_key_chunk_count(MAX_PUBLIC_KEY_BYTES).unwrap(), 183);
         assert!(public_key_chunk_count(0).is_err());
         assert!(public_key_chunk_count(MAX_PUBLIC_KEY_BYTES + 1).is_err());
     }

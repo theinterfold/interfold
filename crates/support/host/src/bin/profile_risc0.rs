@@ -72,6 +72,7 @@ fn main() {
     let fhe_inputs = FHEInputs {
         ciphertexts,
         params: params_bytes,
+        committee_key: Vec::new(),
     };
 
     println!("Calling run_risc0_compute...");

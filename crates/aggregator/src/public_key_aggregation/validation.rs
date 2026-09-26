@@ -84,6 +84,34 @@ pub(crate) fn extract_pk_commitment(c5_proof: &Proof) -> Result<[u8; 32]> {
     Ok(out)
 }
 
+/// Extract the versioned key-envelope commitment from a V2 DKG proof.
+pub(crate) fn extract_lbfv_key_envelope_commitment(
+    proof: &Proof,
+    committee_h: usize,
+    lbfv_row_count: usize,
+) -> Result<[u8; 32]> {
+    ensure!(
+        proof.circuit == CircuitName::DkgAggregatorV2,
+        "key-envelope commitment requires a DkgAggregatorV2 proof"
+    );
+    let layout = e3_zk_helpers::DkgAggregatorV2PublicLayout::new(committee_h, lbfv_row_count);
+    let expected_len = layout
+        .field_count
+        .checked_mul(e3_zk_helpers::FIELD_BYTE_LEN)
+        .ok_or_else(|| anyhow!("V2 public-signal length overflow"))?;
+    ensure!(
+        proof.public_signals.len() == expected_len,
+        "DkgAggregatorV2 proof has {} public-signal bytes, expected {expected_len}",
+        proof.public_signals.len()
+    );
+    let bytes = layout
+        .extract_key_envelope_commitment(&proof.public_signals)
+        .ok_or_else(|| anyhow!("V2 proof is missing the key-envelope commitment"))?;
+    Ok(bytes
+        .try_into()
+        .expect("the V2 commitment slice has a fixed length"))
+}
+
 /// Outcome of cross-checking each honest party's keyshare against its signed C1
 /// `pk_commitment` public signal.
 pub(crate) struct C1CommitmentAudit {
@@ -205,5 +233,35 @@ mod tests {
         })
         .expect_err("verifier mismatch must fail");
         assert!(err.to_string().contains("verifying contract mismatch"));
+    }
+
+    #[test]
+    fn extracts_minimum_v2_key_envelope_commitment_from_layout() {
+        let mut public_signals = vec![0u8; 64 * 32];
+        let expected = [0xabu8; 32];
+        public_signals[29 * 32..30 * 32].copy_from_slice(&expected);
+        let proof = Proof::new(
+            CircuitName::DkgAggregatorV2,
+            ArcBytes::from_bytes(&[]),
+            ArcBytes::from_bytes(&public_signals),
+        );
+
+        assert_eq!(
+            extract_lbfv_key_envelope_commitment(&proof, 2, 5).unwrap(),
+            expected
+        );
+    }
+
+    #[test]
+    fn rejects_v2_proof_with_another_public_signal_shape() {
+        let proof = Proof::new(
+            CircuitName::DkgAggregatorV2,
+            ArcBytes::from_bytes(&[]),
+            ArcBytes::from_bytes(&vec![0u8; 63 * 32]),
+        );
+
+        let err = extract_lbfv_key_envelope_commitment(&proof, 2, 5)
+            .expect_err("an incompatible public-signal shape must fail");
+        assert!(err.to_string().contains("expected 2048"));
     }
 }

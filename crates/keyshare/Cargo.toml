@@ -7,6 +7,7 @@ description = "E3 - Interfold Ciphernode Keyshare Actors"
 repository.workspace = true
 
 [dependencies]
+e3-bfv-client.workspace = true
 actix = { workspace = true }
 anyhow = { workspace = true }
 async-trait = { workspace = true }

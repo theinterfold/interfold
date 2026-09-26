@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 pub mod client;
+pub mod lbfv_key_envelope;
 
 use fhe::bfv::{Encoding, Plaintext};
 use fhe_traits::FheDecoder;
@@ -14,6 +15,10 @@ pub use client::VerifiableEncryptionResult;
 pub use client::{
     bfv_encrypt, bfv_verifiable_encrypt, compute_ct_commitment, compute_ct_commitment_with_params,
     compute_pk_commitment, validate_pk_commitment,
+};
+pub use lbfv_key_envelope::{
+    decode_lbfv_key_envelope, encode_lbfv_key_envelope, inspect_lbfv_key_envelope,
+    is_lbfv_key_envelope, validate_lbfv_key_envelope, LbfvKeyEnvelope, LbfvKeyEnvelopeCommitments,
 };
 
 #[derive(ThisError, Debug)]

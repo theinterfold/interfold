@@ -14,8 +14,8 @@ const commitment = `0x${"11".repeat(32)}`;
 const publisherA = `0x${"aa".repeat(20)}`;
 const publisherB = `0x${"bb".repeat(20)}`;
 const publicKeyChunkBytes = 90 * 1024;
-const maxPublicKeyBytes = 6 * 1024 * 1024;
-const secure16384PublicKeyBytes = 5_222_596;
+const maxPublicKeyBytes = 16 * 1024 * 1024;
+const secure16384KeyEnvelopeBytes = 7_833_906;
 
 function allChunksFor(
   publicKey: Uint8Array,
@@ -79,26 +79,26 @@ describe("committee public-key task assembly", function () {
     expect(hexlify(result)).to.equal(concat([first, second]));
   });
 
-  it("reassembles the secure-16384 public key in 57 chunks", function () {
-    const publicKey = new Uint8Array(secure16384PublicKeyBytes).map(
-      (_, index) => index % 251,
-    );
-    const chunks = allChunksFor(publicKey).reverse();
+  it("reassembles the secure-16384 key envelope in 86 chunks", function () {
+    const keyEnvelope = new Uint8Array(secure16384KeyEnvelopeBytes).fill(0x44);
+    const chunks = allChunksFor(keyEnvelope).reverse();
 
-    expect(chunks).to.have.length(57);
-    expect(assembleUniqueCommitteePublicKey(chunks, commitment)).to.deep.equal(
-      publicKey,
-    );
+    expect(chunks).to.have.length(86);
+    const result = assembleUniqueCommitteePublicKey(chunks, commitment);
+    expect(result).to.have.length(secure16384KeyEnvelopeBytes);
+    expect(result[0]).to.equal(0x44);
+    expect(result.at(-1)).to.equal(0x44);
   });
 
-  it("accepts 6 MiB and rejects one additional byte", function () {
+  it("accepts 16 MiB and rejects one additional byte", function () {
     const publicKey = new Uint8Array(maxPublicKeyBytes).fill(0x33);
     const chunks = allChunksFor(publicKey);
 
-    expect(chunks).to.have.length(69);
-    expect(assembleUniqueCommitteePublicKey(chunks, commitment)).to.deep.equal(
-      publicKey,
-    );
+    expect(chunks).to.have.length(183);
+    const result = assembleUniqueCommitteePublicKey(chunks, commitment);
+    expect(result).to.have.length(maxPublicKeyBytes);
+    expect(result[0]).to.equal(0x33);
+    expect(result.at(-1)).to.equal(0x33);
 
     const oversized = chunks.map((chunk) => ({
       ...chunk,

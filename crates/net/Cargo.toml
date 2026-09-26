@@ -35,3 +35,6 @@ zeroize = { workspace = true }
 alloy = { workspace = true }
 e3-ciphernode-builder = { workspace = true }
 e3-committee-hash = { workspace = true }
+e3-fhe-params = { workspace = true }
+fhe = { workspace = true }
+fhe-traits = { workspace = true }

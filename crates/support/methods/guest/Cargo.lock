@@ -15,24 +15,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "aho-corasick"
-version = "1.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ddd31a130427c27518df266943a5308ed92d4b226cc639f5a8f1002816174301"
-dependencies = [
- "memchr",
-]
-
-[[package]]
-name = "aligned-vec"
-version = "0.6.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc890384c8602f339876ded803c97ad529f3842aba97f6392b3dba0dd171769b"
-dependencies = [
- "equator",
-]
-
-[[package]]
 name = "allocator-api2"
 version = "0.2.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -85,7 +67,7 @@ dependencies = [
  "keccak-asm",
  "paste",
  "proptest",
- "rand 0.9.2",
+ "rand 0.9.4",
  "ruint",
  "rustc-hash",
  "serde",
@@ -317,7 +299,7 @@ dependencies = [
  "fnv",
  "hashbrown 0.15.5",
  "itertools 0.13.0",
- "num-bigint",
+ "num-bigint 0.4.6",
  "num-integer",
  "num-traits",
  "zeroize",
@@ -334,7 +316,7 @@ dependencies = [
  "ark-serialize 0.3.0",
  "ark-std 0.3.0",
  "derivative",
- "num-bigint",
+ "num-bigint 0.4.6",
  "num-traits",
  "paste",
  "rustc_version 0.3.3",
@@ -354,7 +336,7 @@ dependencies = [
  "derivative",
  "digest 0.10.7",
  "itertools 0.10.5",
- "num-bigint",
+ "num-bigint 0.4.6",
  "num-traits",
  "paste",
  "rustc_version 0.4.1",
@@ -375,7 +357,7 @@ dependencies = [
  "digest 0.10.7",
  "educe",
  "itertools 0.13.0",
- "num-bigint",
+ "num-bigint 0.4.6",
  "num-traits",
  "paste",
  "zeroize",
@@ -417,7 +399,7 @@ version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "db2fd794a08ccb318058009eefdf15bcaaaaf6f8161eb3345f907222bac38b20"
 dependencies = [
- "num-bigint",
+ "num-bigint 0.4.6",
  "num-traits",
  "quote",
  "syn 1.0.109",
@@ -429,7 +411,7 @@ version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7abe79b0e4288889c4574159ab790824d0033b9fdcb2a112a3182fac2e514565"
 dependencies = [
- "num-bigint",
+ "num-bigint 0.4.6",
  "num-traits",
  "proc-macro2",
  "quote",
@@ -442,7 +424,7 @@ version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "09be120733ee33f7693ceaa202ca41accd5653b779563608f1234f78ae07c4b3"
 dependencies = [
- "num-bigint",
+ "num-bigint 0.4.6",
  "num-traits",
  "proc-macro2",
  "quote",
@@ -503,7 +485,7 @@ dependencies = [
  "ark-relations",
  "ark-std 0.5.0",
  "educe",
- "num-bigint",
+ "num-bigint 0.4.6",
  "num-integer",
  "num-traits",
  "tracing",
@@ -540,7 +522,7 @@ dependencies = [
  "ark-serialize-derive 0.4.2",
  "ark-std 0.4.0",
  "digest 0.10.7",
- "num-bigint",
+ "num-bigint 0.4.6",
 ]
 
 [[package]]
@@ -553,7 +535,7 @@ dependencies = [
  "ark-std 0.5.0",
  "arrayvec",
  "digest 0.10.7",
- "num-bigint",
+ "num-bigint 0.4.6",
 ]
 
 [[package]]
@@ -859,7 +841,7 @@ version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fa961b519f0b462e3a3b4a34b64d119eeaca1d59af726fe450bbba07a9fc0a1"
 dependencies = [
- "thiserror 2.0.18",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -1078,33 +1060,47 @@ checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
 
 [[package]]
 name = "e3-bfv-client"
-version = "0.14.0"
-source = "git+https://github.com/theinterfold/interfold?rev=5668f4c9ee0992aeb05b320eaa3b998a6c32e525#5668f4c9ee0992aeb05b320eaa3b998a6c32e525"
+version = "0.17.0"
+source = "git+https://github.com/theinterfold/interfold?rev=0134d1bbce2204b894033ddf1aa35820deda8e8f#0134d1bbce2204b894033ddf1aa35820deda8e8f"
 dependencies = [
  "anyhow",
  "e3-fhe-params",
  "e3-polynomial",
  "e3-zk-helpers",
  "fhe",
+ "fhe-math",
  "fhe-traits",
- "rand 0.9.2",
+ "num-bigint 0.5.1",
+ "rand 0.9.4",
  "thiserror 1.0.69",
 ]
 
 [[package]]
+name = "e3-committee-hash"
+version = "0.17.0"
+source = "git+https://github.com/theinterfold/interfold?rev=0134d1bbce2204b894033ddf1aa35820deda8e8f#0134d1bbce2204b894033ddf1aa35820deda8e8f"
+dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
+ "hex",
+ "serde",
+]
+
+[[package]]
 name = "e3-compute-provider"
-version = "0.14.0"
-source = "git+https://github.com/theinterfold/interfold?rev=5668f4c9ee0992aeb05b320eaa3b998a6c32e525#5668f4c9ee0992aeb05b320eaa3b998a6c32e525"
+version = "0.17.0"
+source = "git+https://github.com/theinterfold/interfold?rev=0134d1bbce2204b894033ddf1aa35820deda8e8f#0134d1bbce2204b894033ddf1aa35820deda8e8f"
 dependencies = [
  "ark-bn254 0.4.0",
  "ark-ff 0.4.2",
  "e3-bfv-client",
  "e3-fhe-params",
  "fhe",
+ "fhe-traits",
  "hex",
  "lean-imt",
  "light-poseidon",
- "num-bigint",
+ "num-bigint 0.5.1",
  "num-traits",
  "serde",
  "sha2",
@@ -1115,17 +1111,18 @@ dependencies = [
 
 [[package]]
 name = "e3-fhe-params"
-version = "0.14.0"
-source = "git+https://github.com/theinterfold/interfold?rev=5668f4c9ee0992aeb05b320eaa3b998a6c32e525#5668f4c9ee0992aeb05b320eaa3b998a6c32e525"
+version = "0.17.0"
+source = "git+https://github.com/theinterfold/interfold?rev=0134d1bbce2204b894033ddf1aa35820deda8e8f#0134d1bbce2204b894033ddf1aa35820deda8e8f"
 dependencies = [
  "alloy-dyn-abi",
  "alloy-primitives",
  "anyhow",
  "clap",
  "fhe",
- "num-bigint",
+ "fhe-math",
+ "num-bigint 0.5.1",
  "num-traits",
- "rand 0.9.2",
+ "rand 0.9.4",
  "rand_chacha 0.9.0",
  "serde",
  "thiserror 1.0.69",
@@ -1133,10 +1130,10 @@ dependencies = [
 
 [[package]]
 name = "e3-parity-matrix"
-version = "0.14.0"
-source = "git+https://github.com/theinterfold/interfold?rev=5668f4c9ee0992aeb05b320eaa3b998a6c32e525#5668f4c9ee0992aeb05b320eaa3b998a6c32e525"
+version = "0.17.0"
+source = "git+https://github.com/theinterfold/interfold?rev=0134d1bbce2204b894033ddf1aa35820deda8e8f#0134d1bbce2204b894033ddf1aa35820deda8e8f"
 dependencies = [
- "num-bigint",
+ "num-bigint 0.5.1",
  "num-traits",
  "serde",
  "thiserror 1.0.69",
@@ -1144,11 +1141,11 @@ dependencies = [
 
 [[package]]
 name = "e3-polynomial"
-version = "0.14.0"
-source = "git+https://github.com/theinterfold/interfold?rev=5668f4c9ee0992aeb05b320eaa3b998a6c32e525#5668f4c9ee0992aeb05b320eaa3b998a6c32e525"
+version = "0.17.0"
+source = "git+https://github.com/theinterfold/interfold?rev=0134d1bbce2204b894033ddf1aa35820deda8e8f#0134d1bbce2204b894033ddf1aa35820deda8e8f"
 dependencies = [
  "fhe-math",
- "num-bigint",
+ "num-bigint 0.5.1",
  "num-traits",
  "serde",
  "thiserror 1.0.69",
@@ -1156,8 +1153,8 @@ dependencies = [
 
 [[package]]
 name = "e3-safe"
-version = "0.14.0"
-source = "git+https://github.com/theinterfold/interfold?rev=5668f4c9ee0992aeb05b320eaa3b998a6c32e525#5668f4c9ee0992aeb05b320eaa3b998a6c32e525"
+version = "0.17.0"
+source = "git+https://github.com/theinterfold/interfold?rev=0134d1bbce2204b894033ddf1aa35820deda8e8f#0134d1bbce2204b894033ddf1aa35820deda8e8f"
 dependencies = [
  "ark-bn254 0.5.0",
  "ark-ff 0.5.0",
@@ -1194,13 +1191,15 @@ dependencies = [
 
 [[package]]
 name = "e3-zk-helpers"
-version = "0.14.0"
-source = "git+https://github.com/theinterfold/interfold?rev=5668f4c9ee0992aeb05b320eaa3b998a6c32e525#5668f4c9ee0992aeb05b320eaa3b998a6c32e525"
+version = "0.17.0"
+source = "git+https://github.com/theinterfold/interfold?rev=0134d1bbce2204b894033ddf1aa35820deda8e8f#0134d1bbce2204b894033ddf1aa35820deda8e8f"
 dependencies = [
+ "alloy-primitives",
  "anyhow",
  "ark-bn254 0.5.0",
  "ark-ff 0.5.0",
  "clap",
+ "e3-committee-hash",
  "e3-fhe-params",
  "e3-parity-matrix",
  "e3-polynomial",
@@ -1211,15 +1210,16 @@ dependencies = [
  "hex",
  "itertools 0.14.0",
  "ndarray",
- "num-bigint",
+ "num-bigint 0.5.1",
  "num-integer",
  "num-traits",
- "rand 0.9.2",
+ "rand 0.9.4",
  "rayon",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
  "toml",
+ "zeroize",
 ]
 
 [[package]]
@@ -1312,26 +1312,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "equator"
-version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4711b213838dfee0117e3be6ac926007d7f433d7bbe33595975d4190cb07e6fc"
-dependencies = [
- "equator-macro",
-]
-
-[[package]]
-name = "equator-macro"
-version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "44f23cf4b44bfce11a86ace86f8a73ffdec849c9fd00a386a53d278bd9e81fb3"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
-]
-
-[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1349,9 +1329,9 @@ dependencies = [
 
 [[package]]
 name = "ethnum"
-version = "1.5.2"
+version = "1.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ca81e6b4777c89fd810c25a4be2b1bd93ea034fbe58e6a75216a34c6b82c539b"
+checksum = "40404c3f5f511ec4da6fe866ddf6a717c309fdbb69fbbad7b0f3edab8f2e835f"
 
 [[package]]
 name = "fastrand"
@@ -1393,73 +1373,68 @@ dependencies = [
 
 [[package]]
 name = "fhe"
-version = "0.2.1"
-source = "git+https://github.com/gnosisguild/fhe.rs?tag=v0.2.2#f2c1d2258fbeef6dbdf5ade68438203fd80a648e"
+version = "0.3.0"
+source = "git+https://github.com/gnosisguild/fhe.rs?branch=dev#375cfc68fbb1dbd27c5fd204706e2dfee6086229"
 dependencies = [
- "bincode",
  "doc-comment",
  "fhe-math",
  "fhe-traits",
  "fhe-util",
- "itertools 0.14.0",
+ "itertools 0.15.0",
  "ndarray",
- "num-bigint",
+ "num-bigint 0.5.1",
  "num-traits",
  "prost",
- "prost-build",
- "rand 0.9.2",
+ "rand 0.9.4",
  "rand_chacha 0.9.0",
  "rand_distr",
  "rayon",
  "serde",
- "thiserror 2.0.18",
+ "thiserror 2.0.20",
  "zeroize",
  "zeroize_derive",
 ]
 
 [[package]]
 name = "fhe-math"
-version = "0.2.1"
-source = "git+https://github.com/gnosisguild/fhe.rs?tag=v0.2.2#f2c1d2258fbeef6dbdf5ade68438203fd80a648e"
+version = "0.3.0"
+source = "git+https://github.com/gnosisguild/fhe.rs?branch=dev#375cfc68fbb1dbd27c5fd204706e2dfee6086229"
 dependencies = [
  "ethnum",
  "fhe-traits",
  "fhe-util",
- "itertools 0.14.0",
+ "itertools 0.15.0",
  "ndarray",
- "num-bigint",
+ "num-bigint 0.5.1",
  "num-bigint-dig",
  "num-traits",
  "prost",
- "prost-build",
  "pulp",
- "rand 0.9.2",
+ "rand 0.9.4",
  "rand_chacha 0.9.0",
  "serde",
  "sha2",
- "tfhe-ntt",
- "thiserror 2.0.18",
+ "thiserror 2.0.20",
  "zeroize",
 ]
 
 [[package]]
 name = "fhe-traits"
-version = "0.2.1"
-source = "git+https://github.com/gnosisguild/fhe.rs?tag=v0.2.2#f2c1d2258fbeef6dbdf5ade68438203fd80a648e"
+version = "0.3.0"
+source = "git+https://github.com/gnosisguild/fhe.rs?branch=dev#375cfc68fbb1dbd27c5fd204706e2dfee6086229"
 dependencies = [
- "rand 0.9.2",
+ "rand 0.9.4",
 ]
 
 [[package]]
 name = "fhe-util"
-version = "0.2.1"
-source = "git+https://github.com/gnosisguild/fhe.rs?tag=v0.2.2#f2c1d2258fbeef6dbdf5ade68438203fd80a648e"
+version = "0.3.0"
+source = "git+https://github.com/gnosisguild/fhe.rs?branch=dev#375cfc68fbb1dbd27c5fd204706e2dfee6086229"
 dependencies = [
  "num-bigint-dig",
  "num-traits",
  "prime_factorization",
- "rand 0.8.5",
- "rand 0.9.2",
+ "rand 0.9.4",
  "rand_distr",
  "rayon",
 ]
@@ -1481,12 +1456,6 @@ dependencies = [
  "rustc-hex",
  "static_assertions",
 ]
-
-[[package]]
-name = "fixedbitset"
-version = "0.5.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d674e81391d1e1ab681a28d99df07927c6d4aa5b027d7da16ba32d1d21ecd99"
 
 [[package]]
 name = "fnv"
@@ -1725,6 +1694,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "itertools"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b4baf93f58d4425749ca49a51c50ebab072c5df6994d08fed93541c331481dc"
+dependencies = [
+ "either",
+]
+
+[[package]]
 name = "itoa"
 version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1800,7 +1778,7 @@ checksum = "3c9a85a9752c549ceb7578064b4ed891179d20acd85f27318573b64d2d7ee7ee"
 dependencies = [
  "ark-bn254 0.4.0",
  "ark-ff 0.4.2",
- "num-bigint",
+ "num-bigint 0.4.6",
  "thiserror 1.0.69",
 ]
 
@@ -1880,12 +1858,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "multimap"
-version = "0.10.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d87ecb2933e8aeadb3e3a02b828fed80a7528047e68b4f424523a0981a3a084"
-
-[[package]]
 name = "ndarray"
 version = "0.17.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1913,7 +1885,7 @@ version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "35bd024e8b2ff75562e5f34e7f4905839deb4b22955ef5e73d2fea1b9813cb23"
 dependencies = [
- "num-bigint",
+ "num-bigint 0.4.6",
  "num-complex",
  "num-integer",
  "num-iter",
@@ -1929,7 +1901,18 @@ checksum = "a5e44f723f1133c9deac646763579fdb3ac745e418f2a7af9cd0c431da1f20b9"
 dependencies = [
  "num-integer",
  "num-traits",
- "rand 0.8.5",
+]
+
+[[package]]
+name = "num-bigint"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "93e7820bc0a80a0238e650327316f929ba18d5be054b647490a3a6a339f3e7c0"
+dependencies = [
+ "num-integer",
+ "num-traits",
+ "rand 0.9.4",
+ "rand_core 0.9.3",
  "serde",
 ]
 
@@ -1944,7 +1927,7 @@ dependencies = [
  "num-iter",
  "num-traits",
  "once_cell",
- "rand 0.9.2",
+ "rand 0.9.4",
  "serde",
  "smallvec",
 ]
@@ -1985,7 +1968,7 @@ version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f83d14da390562dca69fc84082e73e548e1ad308d24accdedd2720017cb37824"
 dependencies = [
- "num-bigint",
+ "num-bigint 0.4.6",
  "num-integer",
  "num-traits",
 ]
@@ -2087,17 +2070,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "petgraph"
-version = "0.8.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8701b58ea97060d5e5b155d383a69952a60943f0e6dfe30b04c287beb0b27455"
-dependencies = [
- "fixedbitset",
- "hashbrown 0.15.5",
- "indexmap",
-]
-
-[[package]]
 name = "pin-project-lite"
 version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2147,16 +2119,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "85eae3c4ed2f50dcfe72643da4befc30deadb458a9b590d720cde2f2b1e97da9"
 dependencies = [
  "zerocopy",
-]
-
-[[package]]
-name = "prettyplease"
-version = "0.2.37"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "479ca8adacdd7ce8f1fb39ce9ecccbfe93a3f1344b3d0d97f20bc0196208f62b"
-dependencies = [
- "proc-macro2",
- "syn 2.0.119",
 ]
 
 [[package]]
@@ -2231,7 +2193,7 @@ dependencies = [
  "bit-vec",
  "bitflags 2.10.0",
  "num-traits",
- "rand 0.9.2",
+ "rand 0.9.4",
  "rand_chacha 0.9.0",
  "rand_xorshift",
  "regex-syntax",
@@ -2251,25 +2213,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "prost-build"
-version = "0.14.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "03da047801ff44bb6a4d407d4860c05fd70bb81714e6b2f3812603d5b145b042"
-dependencies = [
- "heck",
- "itertools 0.14.0",
- "log",
- "multimap",
- "petgraph",
- "prettyplease",
- "prost",
- "prost-types",
- "regex",
- "syn 2.0.119",
- "tempfile",
-]
-
-[[package]]
 name = "prost-derive"
 version = "0.14.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2283,19 +2226,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "prost-types"
-version = "0.14.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f94967dc7688f3054c7fac87473ffae4cc4c3904800e2d9f5b857246d8963b0a"
-dependencies = [
- "prost",
-]
-
-[[package]]
 name = "pulp"
-version = "0.22.2"
+version = "0.22.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2e205bb30d5b916c55e584c22201771bcf2bad9aabd5d4127f38387140c38632"
+checksum = "046aa45b989642ec2e4717c8e72d677b13edd831a4d3b6cf37d9a3e54912496a"
 dependencies = [
  "bytemuck",
  "cfg-if",
@@ -2310,9 +2244,9 @@ dependencies = [
 
 [[package]]
 name = "pulp-wasm-simd-flag"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "40e24eee682d89fb193496edf918a7f407d30175b2e785fe057e4392dfd182e0"
+checksum = "1d8f70e07b9c3962945a74e59ca1c511bba65b6419468acc217c457d93f3c740"
 
 [[package]]
 name = "quick-error"
@@ -2354,9 +2288,9 @@ dependencies = [
 
 [[package]]
 name = "rand"
-version = "0.9.2"
+version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6db2770f06117d490610c7488547d543617b21bfa07796d7a12f6f1bd53850d1"
+checksum = "44c5af06bb1b7d3216d91932aed5265164bf384dc89cd6ba05cf59a35f5f76ea"
 dependencies = [
  "rand_chacha 0.9.0",
  "rand_core 0.9.3",
@@ -2409,7 +2343,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6a8615d50dcf34fa31f7ab52692afec947c4dd0ab803cc87cb3b0b4570ff7463"
 dependencies = [
  "num-traits",
- "rand 0.9.2",
+ "rand 0.9.4",
 ]
 
 [[package]]
@@ -2463,29 +2397,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "03251193000f4bd3b042892be858ee50e8b3719f2b08e5833ac4353724632430"
 
 [[package]]
-name = "regex"
-version = "1.12.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "843bc0191f75f3e22651ae5f1e72939ab2f72a4bc30fa80a066bd66edefc24d4"
-dependencies = [
- "aho-corasick",
- "memchr",
- "regex-automata",
- "regex-syntax",
-]
-
-[[package]]
-name = "regex-automata"
-version = "0.4.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5276caf25ac86c8d810222b3dbb938e512c55c6831a10f3e6ed1c93b84041f1c"
-dependencies = [
- "aho-corasick",
- "memchr",
- "regex-syntax",
-]
-
-[[package]]
 name = "regex-syntax"
 version = "0.8.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2524,7 +2435,7 @@ dependencies = [
  "elf",
  "lazy_static",
  "postcard",
- "rand 0.9.2",
+ "rand 0.9.4",
  "risc0-zkp",
  "risc0-zkvm-platform",
  "ruint",
@@ -2606,7 +2517,7 @@ dependencies = [
  "ark-serialize 0.5.0",
  "bytemuck",
  "hex",
- "num-bigint",
+ "num-bigint 0.4.6",
  "num-traits",
  "risc0-binfmt",
  "risc0-zkp",
@@ -2727,14 +2638,14 @@ dependencies = [
  "bytes",
  "fastrlp 0.3.1",
  "fastrlp 0.4.0",
- "num-bigint",
+ "num-bigint 0.4.6",
  "num-integer",
  "num-traits",
  "parity-scale-codec",
  "primitive-types",
  "proptest",
  "rand 0.8.5",
- "rand 0.9.2",
+ "rand 0.9.4",
  "rlp",
  "ruint-macro",
  "serde_core",
@@ -3029,6 +2940,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "syn"
+version = "3.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8593e8e72159ed2257d083c7a454a85cbf854f37a0966d8d483aff8c8a3ebcee"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "unicode-ident",
+]
+
+[[package]]
 name = "syn-solidity"
 version = "1.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3049,7 +2971,7 @@ dependencies = [
  "ark-bn254 0.5.0",
  "ark-ff 0.5.0",
  "ark-std 0.5.0",
- "num-bigint",
+ "num-bigint 0.4.6",
  "num-traits",
 ]
 
@@ -3073,17 +2995,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tfhe-ntt"
-version = "0.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "10650c743ade46b166c698c8349902ed5986784a7db418c51f810bea25f09e3d"
-dependencies = [
- "aligned-vec",
- "bytemuck",
- "pulp",
-]
-
-[[package]]
 name = "thiserror"
 version = "1.0.69"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3094,11 +3005,11 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
-version = "2.0.18"
+version = "2.0.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4288b5bcbc7920c07a1149a35cf9590a2aa808e0bc1eafaade0b80947865fbc4"
+checksum = "ec86235f5fcc2a73650310756d2ac5b138a5780bbbdfae3eeccec992c435ba4f"
 dependencies = [
- "thiserror-impl 2.0.18",
+ "thiserror-impl 2.0.20",
 ]
 
 [[package]]
@@ -3114,13 +3025,13 @@ dependencies = [
 
 [[package]]
 name = "thiserror-impl"
-version = "2.0.18"
+version = "2.0.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ebc4ee7f67670e9b64d05fa4253e753e016c6c95ff35b89b7941d6b856dec1d5"
+checksum = "bc04cd3e1236dd4a98afca4569f2deb3f120e5422a4023be2cb683f8486292af"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.119",
+ "syn 3.0.6",
 ]
 
 [[package]]
@@ -3390,18 +3301,18 @@ dependencies = [
 
 [[package]]
 name = "zeroize"
-version = "1.8.2"
+version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b97154e67e32c85465826e8bcc1c59429aaaf107c1e4a9e53c8d8ccd5eff88d0"
+checksum = "e13c156562582aa81c60cb29407084cdb54c4164760106ab78e6c5b0858cf64e"
 dependencies = [
  "zeroize_derive",
 ]
 
 [[package]]
 name = "zeroize_derive"
-version = "1.4.3"
+version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "85a5b4158499876c763cb03bc4e49185d3cccbabb15b33c627f7884f43db852e"
+checksum = "3c50655cbb0fe3fc43170059e702f1ce5e19b84cec58dc87b037a09935c2f328"
 dependencies = [
  "proc-macro2",
  "quote",

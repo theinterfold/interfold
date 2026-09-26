@@ -107,11 +107,37 @@ const readFoldedArtifactsFromFile = (
   return isValidFoldedArtifacts(parsed) ? parsed : null;
 };
 
-const hasExpectedFoldedLayout = (value: FoldedArtifacts): boolean =>
-  hexToBytes32Array(value.dkg_aggregator.public_inputs_hex).length ===
-    bfvPkExpectedPublicInputsLen(BFV_DKG_H) &&
-  hexToBytes32Array(value.decryption_aggregator.public_inputs_hex).length ===
-    bfvDecExpectedPublicInputsLen(BFV_THRESHOLD_T);
+const v2DkgLbfvRows = (publicInputs: string[]): 3 | 5 | null => {
+  if (publicInputs.length === 43 + 3 * BFV_DKG_H + 3 * 3) {
+    return 3;
+  }
+  if (publicInputs.length === 43 + 3 * BFV_DKG_H + 3 * 5) {
+    return 5;
+  }
+  return null;
+};
+
+const hasExpectedFoldedLayout = (value: FoldedArtifacts): boolean => {
+  const dkgPublicInputs = hexToBytes32Array(
+    value.dkg_aggregator.public_inputs_hex,
+  );
+  const decPublicInputs = hexToBytes32Array(
+    value.decryption_aggregator.public_inputs_hex,
+  );
+  return (
+    (dkgPublicInputs.length === bfvPkExpectedPublicInputsLen(BFV_DKG_H) ||
+      v2DkgLbfvRows(dkgPublicInputs) !== null) &&
+    decPublicInputs.length === bfvDecExpectedPublicInputsLen(BFV_THRESHOLD_T)
+  );
+};
+
+const isV2DkgLayout = (publicInputs: string[]): boolean =>
+  v2DkgLbfvRows(publicInputs) !== null;
+
+const v2DkgVkBindingStart = (publicInputs: string[]): number | null => {
+  const rows = v2DkgLbfvRows(publicInputs);
+  return rows === null ? null : 30 + 3 * BFV_DKG_H + 3 * rows;
+};
 
 /** Prefer env override, then current-layout benchmark output, then the committed fixture. */
 const resolveFoldedArtifacts = (): FoldedArtifacts | null => {
@@ -171,11 +197,8 @@ function hexToBytes32Array(hex: string): string[] {
 }
 
 const DKG_COMMITTEE_HASH_IDX = bfvDkgCommitteeHashIndices(BFV_DKG_H);
-const DKG_EXPECTED_PUBLIC_INPUT_LEN = bfvPkExpectedPublicInputsLen(BFV_DKG_H);
 const DEC_COMMITTEE_HASH_IDX = bfvDecCommitteeHashIndices();
 const DEC_DOMAIN_IDX = bfvDecDomainIndices();
-const DEC_EXPECTED_PUBLIC_INPUT_LEN =
-  bfvDecExpectedPublicInputsLen(BFV_THRESHOLD_T);
 
 /** Headroom for Honk `verify` staticCalls (much higher under `--coverage`). */
 const HONK_VERIFY_GAS_LIMIT = 1_000_000_000n;
@@ -196,6 +219,16 @@ function plaintextHashFromPublicInputs(publicInputs: string[]): string {
 }
 
 describe("BfvVkBindingIntegration", function () {
+  it("recognizes the five-row secure-16384 folded DKG layout", function () {
+    const secure16384DkgPublicInputs = Array.from(
+      { length: 43 + 3 * BFV_DKG_H + 3 * 5 },
+      () => ethers.ZeroHash,
+    );
+
+    expect(v2DkgLbfvRows(secure16384DkgPublicInputs)).to.equal(5);
+    expect(v2DkgVkBindingStart(secure16384DkgPublicInputs)).to.equal(51);
+  });
+
   const deployHonkAndBfv = async () => {
     const { mockCiphernodeRegistry } = await ignition.deploy(
       MockCiphernodeRegistryModule,
@@ -301,6 +334,33 @@ describe("BfvVkBindingIntegration", function () {
       mockCiphernodeRegistry:
         mockCiphernodeRegistry as unknown as MockCiphernodeRegistry,
     };
+  };
+
+  const deployDkgAggregatorV2 = async () => {
+    const libFactory = await ethers.getContractFactory(
+      "contracts/verifiers/bfv/honk/DkgAggregatorV2Verifier.sol:ZKTranscriptLib",
+    );
+    const zkTranscriptLib = await libFactory.deploy();
+    await zkTranscriptLib.waitForDeployment();
+    const relationsLibFactory = await ethers.getContractFactory(
+      "contracts/verifiers/bfv/honk/DkgAggregatorV2Verifier.sol:RelationsLib",
+    );
+    const relationsLib = await relationsLibFactory.deploy();
+    await relationsLib.waitForDeployment();
+    const dkgAggFactory = await ethers.getContractFactory(
+      "contracts/verifiers/bfv/honk/DkgAggregatorV2Verifier.sol:DkgAggregatorV2Verifier",
+      {
+        libraries: {
+          "project/contracts/verifiers/bfv/honk/DkgAggregatorV2Verifier.sol:ZKTranscriptLib":
+            await zkTranscriptLib.getAddress(),
+          "project/contracts/verifiers/bfv/honk/DkgAggregatorV2Verifier.sol:RelationsLib":
+            await relationsLib.getAddress(),
+        },
+      },
+    );
+    const dkgAgg = await dkgAggFactory.deploy();
+    await dkgAgg.waitForDeployment();
+    return dkgAgg;
   };
 
   describeDeployTimeVkChecks("deploy-time VK staleness checks", function () {
@@ -451,17 +511,16 @@ describe("BfvVkBindingIntegration", function () {
       const decPublicInputs = hexToBytes32Array(
         folded.decryption_aggregator.public_inputs_hex,
       );
-      if (
-        dkgPublicInputs.length !== DKG_EXPECTED_PUBLIC_INPUT_LEN ||
-        decPublicInputs.length !== DEC_EXPECTED_PUBLIC_INPUT_LEN
-      ) {
+      if (!hasExpectedFoldedLayout(folded)) {
         throw new Error(
           "Folded artifact public-input layout is stale. Re-run insecure benchmarks or set BFV_VK_BINDING_FOLDED_ARTIFACTS.",
         );
       }
 
       const expectedNodesFoldKeyHash = readVkRecursiveHash(
-        getBfvPkSubCircuitVkHashPaths().nodesFold,
+        isV2DkgLayout(dkgPublicInputs)
+          ? getBfvV2SubCircuitVkHashPaths().nodesFold
+          : getBfvPkSubCircuitVkHashPaths().nodesFold,
       );
       const expectedC5KeyHash = readVkRecursiveHash(
         getBfvPkSubCircuitVkHashPaths().c5,
@@ -491,6 +550,14 @@ describe("BfvVkBindingIntegration", function () {
       expect(dkgPublicInputs[22 + BFV_DKG_H]).to.equal(
         expectedESmC2ChunkKeyHash,
       );
+      if (isV2DkgLayout(dkgPublicInputs)) {
+        const v2BindingStart = v2DkgVkBindingStart(dkgPublicInputs)!;
+        getBfvV2VkBindingHashPaths().forEach((filePath, index) => {
+          expect(dkgPublicInputs[v2BindingStart + index]).to.equal(
+            readVkRecursiveHash(filePath),
+          );
+        });
+      }
       expect(decPublicInputs[0]).to.equal(expectedC6FoldKeyHash);
       expect(decPublicInputs[1]).to.equal(expectedC7KeyHash);
 
@@ -548,22 +615,33 @@ describe("BfvVkBindingIntegration", function () {
         esmCommits,
       );
 
-      const dkgEncoded = abiCoder.encode(
-        ["bytes", "bytes32[]"],
-        [folded.dkg_aggregator.proof_hex, dkgPublicInputs],
-      );
-      const pkCommitment = dkgPublicInputs[dkgPublicInputs.length - 1];
-      expect(
-        await bfvPk.verify.staticCall(
-          testE3Id,
-          testRoot,
-          [testSigner.address],
-          pkCommitment,
-          dkgCommitteeHash,
-          dkgEncoded,
-          verifyOverrides,
-        ),
-      ).to.equal(true);
+      if (isV2DkgLayout(dkgPublicInputs)) {
+        const dkgAggV2 = await deployDkgAggregatorV2();
+        expect(
+          await dkgAggV2.verify.staticCall(
+            folded.dkg_aggregator.proof_hex,
+            dkgPublicInputs,
+            verifyOverrides,
+          ),
+        ).to.equal(true);
+      } else {
+        const dkgEncoded = abiCoder.encode(
+          ["bytes", "bytes32[]"],
+          [folded.dkg_aggregator.proof_hex, dkgPublicInputs],
+        );
+        const pkCommitment = dkgPublicInputs[dkgPublicInputs.length - 1];
+        expect(
+          await bfvPk.verify.staticCall(
+            testE3Id,
+            testRoot,
+            [testSigner.address],
+            pkCommitment,
+            dkgCommitteeHash,
+            dkgEncoded,
+            verifyOverrides,
+          ),
+        ).to.equal(true);
+      }
 
       const decEncoded = abiCoder.encode(
         ["bytes", "bytes32[]"],
@@ -597,7 +675,7 @@ describe("BfvVkBindingIntegration", function () {
   );
 
   (runFoldedProofIntegration ? it : it.skip)(
-    "rejects verify when expectedNodesFoldKeyHash is wrong by one byte",
+    "rejects a folded proof when the nodes-fold key hash is wrong",
     async function () {
       this.timeout(120_000);
 
@@ -612,10 +690,24 @@ describe("BfvVkBindingIntegration", function () {
       const dkgPublicInputs = hexToBytes32Array(
         folded.dkg_aggregator.public_inputs_hex,
       );
-      if (dkgPublicInputs.length !== bfvPkExpectedPublicInputsLen(BFV_DKG_H)) {
+      if (!hasExpectedFoldedLayout(folded)) {
         throw new Error(
           "Folded artifact public-input layout is stale. Re-run insecure benchmarks or set BFV_VK_BINDING_FOLDED_ARTIFACTS.",
         );
+      }
+      if (isV2DkgLayout(dkgPublicInputs)) {
+        const alteredInputs = [...dkgPublicInputs];
+        const nodesFoldBuf = Buffer.from(alteredInputs[0].slice(2), "hex");
+        nodesFoldBuf[nodesFoldBuf.length - 1] ^= 1;
+        alteredInputs[0] = `0x${nodesFoldBuf.toString("hex")}`;
+        const dkgAggV2 = await deployDkgAggregatorV2();
+        await expect(
+          dkgAggV2.verify.staticCall(
+            folded.dkg_aggregator.proof_hex,
+            alteredInputs,
+          ),
+        ).to.be.rejected;
+        return;
       }
       const expectedC5KeyHash = readVkRecursiveHash(
         getBfvPkSubCircuitVkHashPaths().c5,

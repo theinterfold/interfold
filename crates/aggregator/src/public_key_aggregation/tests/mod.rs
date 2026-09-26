@@ -36,8 +36,13 @@ fn dummy_proof(circuit: CircuitName) -> Proof {
 }
 
 fn lbfv_publication(e3_id: E3id) -> LbfvPublicKeyAggregated {
+    let mut key_envelope = Vec::from(*b"IFLBFVKE");
+    key_envelope.extend_from_slice(&3_u16.to_be_bytes());
+    key_envelope.extend_from_slice(&0_u32.to_be_bytes());
+    key_envelope.extend_from_slice(&1_u32.to_be_bytes());
+    key_envelope.push(1);
     LbfvPublicKeyAggregated {
-        pubkey: ArcBytes::from_bytes(&[1, 2, 3]),
+        pubkey: ArcBytes::from_bytes(&key_envelope),
         e3_id,
         nodes: OrderedSet::from_iter(["node".to_owned()]),
         committee_addresses: vec![Address::repeat_byte(1)],
@@ -274,7 +279,7 @@ async fn secure_16384_restart_redrives_publication_intent() -> Result<()> {
 }
 
 #[actix::test]
-async fn secure_16384_waits_for_operational_rlk_after_c5() -> Result<()> {
+async fn secure_16384_waits_for_both_operational_keys_after_c5() -> Result<()> {
     use crate::domain::lbfv_contribution_collection::tests::fixture;
 
     let fixture = fixture();
@@ -336,9 +341,9 @@ async fn secure_16384_waits_for_operational_rlk_after_c5() -> Result<()> {
             ..
         })
     ));
-    assert!(aggregator
-        .lbfv_aggregation_state()?
-        .is_some_and(|state| state.operational_rlk.is_none()));
+    assert!(aggregator.lbfv_aggregation_state()?.is_some_and(|state| {
+        state.operational_public_key.is_none() && state.operational_rlk.is_none()
+    }));
     assert!(history
         .send(GetEvents::<InterfoldEvent>::new())
         .await?

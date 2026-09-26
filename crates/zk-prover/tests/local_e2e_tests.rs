@@ -61,7 +61,7 @@ use e3_zk_helpers::threshold::{
 use e3_zk_helpers::CiphernodesCommitteeSize;
 use e3_zk_helpers::{compute_pk_aggregation_commitment, compute_threshold_pk_commitment};
 use e3_zk_prover::{CircuitVariant, Provable, ZkBackend, ZkProver};
-use fhe::trbfv::TRBFV;
+use fhe::trbfv::{SecretKeyShare, ShareManager, SmudgingShare};
 
 /// Sum per-modulus decrypted shares across honest parties (matches C4 `compute_aggregated_shares`).
 /// Coefficients are summed in the BN254 field, not reduced mod each CRT modulus (see `share_decryption.nr`).
@@ -1004,18 +1004,32 @@ async fn test_c4_c6_sk_commitment_aligned_transcript_e2e() {
 
     let sk_poly = agg_sk
         .to_fhe_polynomial(ctx, moduli)
-        .expect("agg_sk -> Poly")
-        .into_ntt();
+        .expect("agg_sk -> Poly");
     let es_poly = c6_sample
         .e
         .to_fhe_polynomial(ctx, moduli)
         .expect("e -> Poly");
 
-    let trbfv =
-        TRBFV::new(committee.n, committee.threshold, threshold_params.clone()).expect("TRBFV::new");
+    let share_manager =
+        ShareManager::new(committee.n, committee.threshold, threshold_params.clone())
+            .expect("ShareManager::new");
+    let sk_aggregate = share_manager
+        .aggregate_secret_key_shares(vec![SecretKeyShare::from_transport(
+            sk_poly.coefficients().to_owned(),
+        )])
+        .expect("aggregate secret key share");
+    let es_aggregate = share_manager
+        .aggregate_smudging_shares(vec![SmudgingShare::from_transport(
+            es_poly.coefficients().to_owned(),
+        )])
+        .expect("aggregate smudging share");
 
-    let d_share_rns = trbfv
-        .decryption_share(Arc::new(c6_sample.ciphertext.clone()), sk_poly, es_poly)
+    let d_share_rns = share_manager
+        .decryption_share(
+            Arc::new(c6_sample.ciphertext.clone()),
+            &sk_aggregate,
+            es_aggregate,
+        )
         .expect("decryption_share");
 
     c6_sample.s = agg_sk.clone();

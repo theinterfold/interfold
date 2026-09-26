@@ -75,12 +75,14 @@ mod tests {
         let fhe_inputs = FHEInputs {
             params: encode_bfv_params(&params),
             ciphertexts: vec![(three.to_bytes(), 0), (two.to_bytes(), 1)],
+            committee_key: Vec::new(),
         };
 
         // Run the processor
         let result = fhe_processor(&FHEProcessorInput {
             ciphertexts: &fhe_inputs.ciphertexts,
             params: &params,
+            relinearization_key: None,
         });
 
         // Decrypt result

@@ -80,14 +80,14 @@ The initial VRF upgrade follows this combined path because it introduces the con
 both `Interfold` and `BondingRegistry`.
 
 The BFV preset and chunked DKG release used `protocol_version = 3`, `GOSSIP_WIRE_MAJOR = 3`, and
-`SYNC_WIRE_MAJOR = 3`. The `interfold-bfv-v2` circuit identity uses `protocol_version = 4`. It keeps
-`node_generation = 1` because the change is not a separate node-only cutover. The wire majors stay
-at 3 because the wire encoding is unchanged. Drain all active E3s and committees before governance
-activates protocol 4 and the matching contracts. The activation invalidates protocol-3 eligibility
-in O(1). The merged release uses local persisted-state schema 6. A node with an older store halts
-before replay. Archive that drained store and perform the controlled resync before starting the
-protocol-4 process. Start protocol-4 nodes and deploy the matching circuit archive before requests
-resume.
+`SYNC_WIRE_MAJOR = 3`. The `interfold-bfv-v2` circuit identity uses `protocol_version = 4`. Its
+initial release used `node_generation = 1`. The mandatory runtime recovery release increases the
+generation to 2. The wire majors stay at 3 because the wire encoding is unchanged. Drain all active
+E3s and committees before governance activates protocol 4 and the matching contracts. The activation
+invalidates protocol-3 eligibility in O(1). The merged release uses local persisted-state schema 6.
+A node with an older store halts before replay. Archive that drained store and perform the
+controlled resync before starting the protocol-4 process. Start protocol-4 nodes and deploy the
+matching circuit archive before requests resume.
 
 ## Secure CRISP activation on mainnet
 

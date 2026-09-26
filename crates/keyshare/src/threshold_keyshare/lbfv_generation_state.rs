@@ -29,7 +29,7 @@ use e3_trbfv::{
     lbfv_operation::LbfvOperationId,
 };
 
-pub const LBFV_GENERATION_SCHEMA_VERSION: u32 = 2;
+pub const LBFV_GENERATION_SCHEMA_VERSION: u32 = 3;
 const CIRCUIT_VERSION_LABEL: &[u8] = b"interfold-bfv-v2";
 
 /// Version 1 snapshot for one party's local l-BFV generation workflow.
@@ -99,7 +99,7 @@ impl<'de> serde::Deserialize<'de> for LbfvGenerationStateV1 {
                 let schema_version: u32 = sequence
                     .next_element()?
                     .ok_or_else(|| A::Error::custom("missing l-BFV generation schema version"))?;
-                if !matches!(schema_version, 1 | LBFV_GENERATION_SCHEMA_VERSION) {
+                if schema_version != LBFV_GENERATION_SCHEMA_VERSION {
                     return Err(A::Error::custom(format!(
                         "unsupported l-BFV generation schema version {schema_version}"
                     )));
@@ -806,33 +806,17 @@ mod tests {
     }
 
     #[test]
-    fn legacy_generation_fixture_migrates_to_schema_two() {
+    fn legacy_generation_fixture_is_rejected_after_codec_cutover() {
         assert_eq!(
             bincode::serialize(&legacy_state()).unwrap(),
             LEGACY_GENERATION_STATE
         );
 
-        let restored: LbfvGenerationStateV1 =
-            bincode::deserialize(LEGACY_GENERATION_STATE).unwrap();
-        assert_eq!(restored.schema_version, LBFV_GENERATION_SCHEMA_VERSION);
-        assert_eq!(restored.params_preset, BfvPreset::SecureThreshold16384);
-        assert_eq!(
-            restored
-                .signed_pk_row_proofs
-                .keys()
-                .copied()
-                .collect::<Vec<_>>(),
-            vec![0]
-        );
-        assert_eq!(
-            restored
-                .signed_rlk_row_proofs
-                .keys()
-                .copied()
-                .collect::<Vec<_>>(),
-            vec![0]
-        );
-        restored.validate_loaded().unwrap();
+        let error = bincode::deserialize::<LbfvGenerationStateV1>(LEGACY_GENERATION_STATE)
+            .expect_err("pre-cutover generation state must be rejected");
+        assert!(error
+            .to_string()
+            .contains("unsupported l-BFV generation schema version 1"));
     }
 
     #[test]
@@ -1019,7 +1003,7 @@ mod tests {
         let encoded = bincode::serialize(&state).unwrap();
         assert_eq!(
             keccak256(&encoded),
-            "0xd31dfe1d044e43f244ee49e958b8c61968d43112902c9413f70acce7431ffefc"
+            "0xa1a380bd2cc86ecc2520d50af66cbe5fbe52bc02e01b958eb371c1968eddcd29"
                 .parse::<B256>()
                 .unwrap()
         );

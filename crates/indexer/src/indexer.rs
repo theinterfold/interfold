@@ -43,7 +43,7 @@ use tracing::{error, info, warn};
 type E3Id = String;
 
 const PUBLIC_KEY_CHUNK_BYTES: usize = 90 * 1024;
-const MAX_PUBLIC_KEY_BYTES: usize = 6 * 1024 * 1024;
+const MAX_PUBLIC_KEY_BYTES: usize = 16 * 1024 * 1024;
 
 #[derive(Clone, Debug, Serialize, serde::Deserialize)]
 struct PublicKeyChunkAssembly {
@@ -464,13 +464,23 @@ async fn store_committee_public_key<S: DataStore, R: ProviderType>(
     if e3.encryptionSchemeId == keccak256("fhe.rs:BFV") {
         let decoded_params = decode_bfv_params(&e3_params)
             .map_err(|error| eyre!("invalid BFV parameters for E3 {e3_id}: {error}"))?;
-        if let Err(error) = validate_pk_commitment(
-            &event.publicKey,
-            event.pkCommitment.0,
-            decoded_params.degree(),
-            decoded_params.plaintext(),
-            decoded_params.moduli().to_vec(),
-        ) {
+        let validation = if params_preset == BfvPreset::SecureThreshold16384 {
+            e3_bfv_client::validate_lbfv_key_envelope(
+                &event.publicKey,
+                event.pkCommitment.0,
+                params_preset,
+            )
+            .map(|_| ())
+        } else {
+            validate_pk_commitment(
+                &event.publicKey,
+                event.pkCommitment.0,
+                decoded_params.degree(),
+                decoded_params.plaintext(),
+                decoded_params.moduli().to_vec(),
+            )
+        };
+        if let Err(error) = validation {
             if ignore_invalid_candidate {
                 warn!("Ignoring unbound committee public-key candidate for E3 {e3_id}: {error}");
                 return Ok(false);
@@ -1187,15 +1197,13 @@ mod public_key_chunk_tests {
 
     #[test]
     fn secure_16384_chunks_reassemble_in_index_order() {
-        let bytes = (0..5_222_596)
-            .map(|index| (index % 251) as u8)
-            .collect::<Vec<_>>();
+        let bytes = vec![0x44; 7_833_906];
         let mut events = (0..bytes.len().div_ceil(PUBLIC_KEY_CHUNK_BYTES) as u16)
             .map(|index| chunk_event(&bytes, index))
             .collect::<Vec<_>>();
         let mut assembly = PublicKeyChunkAssembly::from_event(&events[0]);
 
-        assert_eq!(events.len(), 57);
+        assert_eq!(events.len(), 86);
         events.reverse();
         for event in &events {
             assert!(PublicKeyChunkAssembly::event_shape_is_valid(event));

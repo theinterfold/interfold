@@ -20,8 +20,12 @@ every section.
   synchronize with each other. `node_generation` covers a mandatory node-only release. P2P
   serialization compatibility within one protocol version remains separately gated by
   `GOSSIP_WIRE_MAJOR` and `SYNC_WIRE_MAJOR`. — `crates/config/protocol-release.toml`;
-  `flow-trace/07`. The `interfold-bfv-v2` circuit identity uses `protocol_version = 4` and keeps
-  `node_generation = 1` because this is not a separate mandatory node-only release.
+  `flow-trace/07`. The `interfold-bfv-v2` circuit identity uses `protocol_version = 4`. The later
+  mandatory runtime recovery release increases `node_generation` to 2.
+- Protocol 4 is also the coordinated fhe.rs l-BFV contribution-wire cutoff. Public-key and
+  relinearization-key contribution bytes use their typed envelope formats; old bare contribution
+  bytes are rejected by the typed decoders and must not be replayed or republished. Development
+  records from before this cutoff are disposable and require fresh key generation.
 
 ### Layering
 
@@ -127,21 +131,22 @@ every section.
   secrets before it redrives the saved failure. Existing threshold-keyshare snapshots remain
   unchanged. — `flow-trace/04`
 - Secure-16384 public-key publication uses the separate `//publickey_lbfv_publication/v1/{e3_id}`
-  snapshot. It validates the E3 identity and `DkgAggregatorV2` circuit, commits the
-  `LbfvPublicKeyAggregated` intent before emission, and redrives the intent after restart. The
-  registry writer adapts the local event to the existing public-key submission gate and passes the
-  V2 proof and attestation bundle to `publishCommittee`. The legacy public-key recovery schema
-  remains unchanged. — `flow-trace/04`
+  snapshot. Schema 2 rejects pending version-2 key envelopes. It validates the E3 identity and
+  `DkgAggregatorV2` circuit, commits the `LbfvPublicKeyAggregated` intent before emission, and
+  redrives the intent after restart. The registry writer adapts the local event to the existing
+  public-key submission gate and passes the V2 proof and attestation bundle to `publishCommittee`.
+  The legacy public-key recovery schema remains unchanged. — `flow-trace/04`
 - Secure-16384 l-BFV row aggregation uses `//publickey_lbfv_aggregation/v1/{e3_id}`. The sidecar
   binds the proof domain, the immutable ascending accepted-party set, both accepted document
-  families, five PK proofs, five RLK proofs, the fold cursor, the operational RLK, and the final V2
-  proof. The active aggregator derives the operational RLK only from those accepted documents after
-  the five-row fold completes. If C5 completes first, publication waits for the persisted
-  operational RLK. Restart must derive a missing operational RLK from the same durable documents
-  before it dispatches the final V2 proof. A persisted aggregation failure is terminal and
-  immutable. Restart must clear process-local correlations, publish `E3Failed(DKGInvalidShares)`,
-  and suppress all proof and publication work. — `LbfvAggregationStateV1`; `aggregate_lbfv.rs`;
-  `flow-trace/04`
+  families, five PK proofs, five RLK proofs, the fold cursor, both operational keys, and the final
+  V2 proof. The active aggregator derives the operational public key and RLK only from those
+  accepted documents after the five-row fold completes. If C5 completes first, publication waits for
+  both persisted keys. Restart must derive a missing operational key from the same durable documents
+  before it dispatches the final V2 proof. Schema 4 rejects schema-1 through schema-3 sidecars
+  because their operational-key bytes use the pre-cutover fhe.rs codec. A persisted aggregation
+  failure is terminal and immutable. Restart must clear process-local correlations, publish
+  `E3Failed(DKGInvalidShares)`, and suppress all proof and publication work. —
+  `LbfvAggregationStateV1`; `aggregate_lbfv.rs`; `flow-trace/04`
 
 ### Ordering, backpressure, effects
 

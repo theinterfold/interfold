@@ -183,6 +183,28 @@ impl LbfvKeyShareDocument {
         self.validate_with_row_count(Some(row_count))
     }
 
+    /// Reject contribution bytes from an unsupported fhe.rs wire format.
+    pub fn validate_share_codec(&self) -> Result<()> {
+        match self {
+            Self::PublicKeyV1(document) => {
+                e3_trbfv::aggregate_lbfv::validate_lbfv_public_key_share_bytes(&document.share)
+            }
+            Self::RelinearizationKeyV1(document) => {
+                e3_trbfv::aggregate_lbfv::validate_lbfv_relinearization_key_share_bytes(
+                    &document.share,
+                )
+            }
+            Self::PublicKeyV2(document) => {
+                e3_trbfv::aggregate_lbfv::validate_lbfv_public_key_share_bytes(&document.share)
+            }
+            Self::RelinearizationKeyV2(document) => {
+                e3_trbfv::aggregate_lbfv::validate_lbfv_relinearization_key_share_bytes(
+                    &document.share,
+                )
+            }
+        }
+    }
+
     fn validate_with_row_count(&self, expected_row_count: Option<usize>) -> Result<Address> {
         self.context().validate()?;
         match self {

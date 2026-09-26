@@ -108,6 +108,7 @@ impl Round {
                     .map(|(i, b)| (b, i as u64))
                     .collect(),
                 params: encode_bfv_params(&self.params),
+                committee_key: Vec::new(),
             },
             published,
         }
@@ -121,6 +122,7 @@ impl Round {
         fhe_processor(&FHEProcessorInput {
             ciphertexts: &inputs.ciphertexts,
             params: &self.params,
+            relinearization_key: None,
         })
     }
 

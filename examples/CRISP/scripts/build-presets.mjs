@@ -60,7 +60,7 @@ for (const preset of PRESETS) {
 
   // Switches the tree to this preset. This is the step that also regenerates the parity matrices
   // and ActiveCryptoConfig.sol, which a bare `nargo compile` would leave describing the old one.
-  run('pnpm', ['tsx', 'scripts/build-circuits.ts', '--preset', preset, '--group', 'threshold'], REPO)
+  run('pnpm', ['tsx', 'scripts/build-circuits.ts', '--preset', preset, '--group', 'threshold', '--no-clean', '--no-clean-targets'], REPO)
 
   // Compiles the CRISP circuits and writes the generated Solidity verifiers into
   // packages/crisp-contracts/contracts/verifiers/. It recompiles the threshold circuits on

@@ -144,16 +144,18 @@ opentelemetry/tracing.
   the first durable H-party ready quorum. A failed candidate is durably replaced with the next ready
   party before the aggregator seals the accepted quorum and starts the legacy C5 path. A separate
   secure-16384 recursive family verifies the generation rows, aggregation rows, and legacy C0-C5
-  chain. Rust recursive request/prover wiring and the local document-to-node-fold handoff, row
-  aggregation, and operational RLK storage are implemented. Restart reconstructs a missing
-  operational RLK from the durable accepted documents after the row fold completes. A terminal
-  row-aggregation failure suppresses later proof and publication work. The active aggregator also
-  persists and redrives a secure-16384 `LbfvPublicKeyAggregated` publication intent. The registry
-  writer adapts that local intent to the existing replay-safe publication gate and submits the V2
-  proof and attestation bundle. The `secure-16384/minimum` PK and RLK tests each generate five
-  recursive limb proofs and one terminal row proof. The PK terminal has seven public fields. The RLK
-  terminal has nine public fields. Both finalizers bind the checksum-verified leaf VK hash. The
-  measured RLK compilation used 26,388,774,912 bytes maximum RSS for the limb and 8,039,219,200
+  chain. Rust recursive request/prover wiring and the local document-to-node-fold handoff are
+  implemented. The active aggregator persists the complete operational public key and RLK. Restart
+  reconstructs a missing key from the durable accepted documents after the row fold completes. A
+  terminal row-aggregation failure suppresses later proof and publication work. The aggregator
+  publishes a version-3 envelope that reconstructs the public key from the RLK. Its SAFE commitment
+  binds both keys and replaces the legacy published-key commitment output. The active aggregator
+  also persists and redrives a secure-16384 `LbfvPublicKeyAggregated` publication intent. The
+  registry writer adapts that local intent to the existing replay-safe publication gate and submits
+  the V2 proof and attestation bundle. The `secure-16384/minimum` PK and RLK tests each generate
+  five recursive limb proofs and one terminal row proof. The PK terminal has seven public fields.
+  The RLK terminal has nine public fields. Both finalizers bind the checksum-verified leaf VK hash.
+  The measured RLK compilation used 26,388,774,912 bytes maximum RSS for the limb and 8,039,219,200
   bytes for the terminal. The prior equation-wide RLK circuit did not complete compilation after
   more than 31 minutes.
 - **Recursive aggregation** (`circuits/bin/recursive_aggregation/`): fold kernels

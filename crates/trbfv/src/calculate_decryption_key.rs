@@ -12,8 +12,9 @@ use anyhow::Result;
 /// This module defines event payloads that will generate the decryption key material to create a decryption share
 use anyhow::*;
 use e3_crypto::{Cipher, SensitiveBytes};
-use fhe::trbfv::ShareManager;
+use fhe::trbfv::{SecretKeyShare, ShareManager, SmudgingShare};
 use fhe_math::rq::{Poly, PowerBasis};
+use fhe_math::zq::Modulus;
 use fhe_traits::Serialize;
 use ndarray::Array2;
 use tracing::info;
@@ -118,8 +119,7 @@ pub fn calculate_decryption_key(
     let share_manager = ShareManager::new(num_ciphernodes, threshold, params.clone())?;
 
     info!("Calculating sk_poly_sum...");
-    let sk_poly_sum =
-        share_manager.aggregate_collected_shares(&req.sk_sss_collected.to_array_data())?;
+    let sk_poly_sum = aggregate_secret_key_to_poly(&share_manager, &req.sk_sss_collected)?;
 
     info!("Calculating es_poly_sum...");
     let es_poly_sum = req
@@ -127,8 +127,7 @@ pub fn calculate_decryption_key(
         .into_iter()
         .map(|shares| -> Result<_> {
             let share_manager = ShareManager::new(num_ciphernodes, threshold, params.clone())?;
-            share_manager
-                .aggregate_collected_shares(&shares.to_array_data())
+            aggregate_smudging_to_poly(&share_manager, &shares)
                 .context("Failed to aggregate es_sss")
         })
         .collect::<Result<Vec<_>>>()?;
@@ -143,4 +142,75 @@ pub fn calculate_decryption_key(
         },
     )
         .try_into()
+}
+
+/// Validate secret-key shares with fhe.rs, then materialize the legacy polynomial transport used
+/// by the circuit and decryption-share messages.
+fn aggregate_secret_key_to_poly(
+    manager: &ShareManager,
+    shares: &[ShamirShare],
+) -> Result<Poly<PowerBasis>> {
+    let transport = shares.to_array_data();
+    manager.aggregate_secret_key_shares(
+        transport
+            .iter()
+            .cloned()
+            .map(SecretKeyShare::from_transport)
+            .collect(),
+    )?;
+    sum_validated_transport(manager, &transport)
+}
+
+/// Validate smudging shares with fhe.rs, then materialize the legacy polynomial transport used by
+/// the circuit and decryption-share messages.
+fn aggregate_smudging_to_poly(
+    manager: &ShareManager,
+    shares: &[ShamirShare],
+) -> Result<Poly<PowerBasis>> {
+    let transport = shares.to_array_data();
+    manager.aggregate_smudging_shares(
+        transport
+            .iter()
+            .cloned()
+            .map(SmudgingShare::from_transport)
+            .collect(),
+    )?;
+    sum_validated_transport(manager, &transport)
+}
+
+fn sum_validated_transport(
+    manager: &ShareManager,
+    transport: &[Array2<u64>],
+) -> Result<Poly<PowerBasis>> {
+    let params = manager.params();
+    let ctx = params.context_at_level(0)?;
+    let shape = (params.moduli().len(), params.degree());
+    let mut sum = Array2::<u64>::zeros(shape);
+    for share in transport {
+        if share.dim() != shape {
+            bail!(
+                "share matrix has shape {:?}, expected {shape:?}",
+                share.dim()
+            );
+        }
+        for (row, mut target) in sum.outer_iter_mut().enumerate() {
+            let modulus = Modulus::new(
+                *params
+                    .moduli()
+                    .get(row)
+                    .ok_or_else(|| anyhow!("missing modulus for share row {row}"))?,
+            )?;
+            let target = target
+                .as_slice_mut()
+                .ok_or_else(|| anyhow!("share accumulator is not contiguous"))?;
+            let source_row = share.row(row);
+            let source = source_row
+                .as_slice()
+                .ok_or_else(|| anyhow!("share row is not contiguous"))?;
+            modulus.add_vec(target, source);
+        }
+    }
+    let mut poly = Poly::zero(ctx);
+    poly.set_coefficients(sum);
+    Ok(poly)
 }

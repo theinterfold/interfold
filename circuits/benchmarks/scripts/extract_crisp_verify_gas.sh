@@ -184,9 +184,10 @@ if [ -z "$CRISP_STALE_NOTE" ] && [ "$CRISP_BUNDLE_REFRESH_NEEDED" = true ]; then
     fi
 fi
 
-# The CRISP preset builder leaves the global Noir tree on insecure. Restore the benchmark pair
-# before the secure integration and verifier replay stages.
-if [ "$CRISP_TREE_SWITCHED" = true ] && [ "$PRESET_NAME" != "insecure" ]; then
+# The CRISP preset builder leaves a threshold-only root artifact set and the global Noir tree on
+# insecure. Restore the complete benchmark pair before integration and verifier replay. This is
+# required for insecure too because its DKG and decryption aggregation artifacts were removed.
+if [ "$CRISP_TREE_SWITCHED" = true ]; then
     echo "  [gas] Restoring ${PRESET_NAME}/${COMMITTEE} circuit artifacts after the CRISP refresh..."
     RESTORE_ARGS=("$PRESET_NAME" --committee "$COMMITTEE")
     if [ "$VERBOSE" = true ]; then

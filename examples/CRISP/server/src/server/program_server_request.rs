@@ -19,6 +19,8 @@ pub struct ComputeRequest {
     #[serde(serialize_with = "serialize_as_hex")]
     pub committee_public_key_hash: Vec<u8>,
     #[serde(serialize_with = "serialize_as_hex")]
+    pub committee_public_key: Vec<u8>,
+    #[serde(serialize_with = "serialize_as_hex")]
     pub params: Vec<u8>,
     #[serde(serialize_with = "serialize_hex_tuple")]
     pub ciphertext_inputs: Vec<(Vec<u8>, u64)>,
@@ -110,6 +112,7 @@ pub async fn run_compute(
     interfold_address: String,
     encryption_scheme_id: Vec<u8>,
     committee_public_key_hash: Vec<u8>,
+    committee_public_key: Vec<u8>,
     params: Vec<u8>,
     inputs: RoundInputs,
     webhook_url: String,
@@ -120,6 +123,7 @@ pub async fn run_compute(
         interfold_address,
         encryption_scheme_id,
         committee_public_key_hash,
+        committee_public_key,
         callback_url: Some(webhook_url),
         params,
         ciphertext_inputs: inputs.ciphertexts,
@@ -168,6 +172,7 @@ mod tests {
             interfold_address: "0x1111111111111111111111111111111111111111".to_string(),
             encryption_scheme_id: vec![0x22; 32],
             committee_public_key_hash: vec![0x33; 32],
+            committee_public_key: vec![0x44; 32],
             params: vec![1, 2, 3],
             ciphertext_inputs: vec![],
             input_commitments: vec![],
@@ -195,6 +200,7 @@ mod tests {
             interfold_address: "0x1111111111111111111111111111111111111111".to_string(),
             encryption_scheme_id: vec![0x22; 32],
             committee_public_key_hash: vec![0x33; 32],
+            committee_public_key: vec![0x44; 32],
             params: vec![1, 2, 3],
             ciphertext_inputs: vec![(vec![0xaa], 0), (vec![0xbb], 1)],
             input_commitments: vec![[0x11; 32], [0x22; 32]],
