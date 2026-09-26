@@ -154,6 +154,14 @@ it refuses while a node runs, copies both secrets out as ciphertext without the 
 up at mode `0600`, removes the event logs and the key/value store, then restores and reads them back
 to confirm.
 
+Before it deletes anything, the command reads the `//e3_lifecycle` stage map. It refuses when an E3
+that is not `Complete` has a `//threshold_keyshare/{e3_id}` record, and it lists each such E3 with
+its stage, because the chain cannot restore that key share. A `Failed` stage also refuses: the node
+records its own local failures, such as a DKG timeout, as `Failed` while the E3 can continue on
+chain. The check reads only whether the record exists and does not decode it, so it also protects a
+store that an older schema wrote. The command also refuses when it cannot read the stage map.
+`--allow-active-e3s` overrides both refusals (`crates/entrypoint/src/nodes/reset_data.rs`).
+
 The event log is not one file. `EventSystem::persisted` passes `config.log_file()` through
 `enumerate_path`, which inserts a per-aggregate index before the extension, so the durable logs are
 `log.<aggregate>` rather than `log`. `AggregateId` is the chain id, with `0` reserved for events
@@ -187,7 +195,7 @@ place.
 A schema raise is an upgrade-window action. `assertUpgradeWindow` already requires paused requests,
 zero active E3s, and zero unreleased committees, so no in-flight round loses state to this. The
 command is not a general repair tool: a node in a live committee that resets loses its keyshare and
-fails that E3.
+fails that E3. The stage-map check refuses that case unless the operator overrides it.
 
 ## Failure and rollback
 

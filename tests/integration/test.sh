@@ -21,7 +21,7 @@ parse_integration_args() {
         ;;
       *)
         echo "Unknown integration argument: $1" >&2
-        echo "Usage: ./test.sh [base|persist|net|prebuild] [--skip-proof-aggregation true|false] [--no-prebuild]" >&2
+        echo "Usage: ./test.sh [base|persist|net|upgrade|prebuild] [--skip-proof-aggregation true|false] [--no-prebuild]" >&2
         exit 1
         ;;
     esac

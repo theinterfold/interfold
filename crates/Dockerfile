@@ -148,6 +148,11 @@ COPY --from=ciphernode-builder --chmod=755 --chown=ciphernode:ciphernode /build/
 # Environment variables for configuration
 ENV CONFIG_DIR=/home/ciphernode/.config/interfold
 ENV DATA_DIR=/home/ciphernode/.local/share/interfold
+# Keep node state on the volume. Without these, the node keeps its key file, database, and event log
+# beside the config file, inside the container. The entrypoint unsets them when config.yaml sets its
+# own location or state already exists at the old location, so existing state is never moved.
+ENV E3_CONFIG_DIR=/home/ciphernode/.local/share/interfold/config
+ENV E3_DATA_DIR=/home/ciphernode/.local/share/interfold/data
 
 # Add entrypoint script
 ENTRYPOINT ["ciphernode-entrypoint.sh"]

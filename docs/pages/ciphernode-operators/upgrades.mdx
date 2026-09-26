@@ -61,6 +61,35 @@ Keep the node stopped, pull the exact versioned image, run the offline validatio
 startup log includes `Ciphernode release is accepted`. If the release is below the required value,
 leave the node stopped and contact the protocol team.
 
+### Upgrade a node that serves an active E3
+
+Use this procedure when the new release keeps storage schema 7. The node keeps its state, so it
+keeps its key share for each active E3.
+
+1. Stop the node gracefully, and wait until the process exits. Do not send `SIGKILL`. For Docker,
+   run `docker stop --time 300 <container>`.
+2. Back up the complete data directory and the complete configuration directory.
+   `interfold config get db_file` shows a path in the data directory.
+   `interfold config get key_file` shows a path in the configuration directory. For Docker, back up
+   the complete volume. A container from an image earlier than v0.19.0 keeps its state inside the
+   container, not on the volume. For such a container, see
+   [Move State from an Earlier Image](/ciphernode-operators/running#move-state-from-an-earlier-image).
+3. Run `interfold node validate` with the new binary. Continue only if the report shows
+   `on-disk schema version 7 matches this binary` and ends with
+   `VALIDATION PASSED — state is intact and consistent.` The line `empty store will be initialized`
+   means that the command found no state at this location. In that case, do not start the new
+   binary.
+4. Start the new binary. Make sure that the log shows `Ciphernode release is accepted`.
+
+To roll back, stop the node, restore both directories from the backup, and start the previous
+binary.
+
+Never run `interfold node reset-data` or `interfold nodes purge` on a committee member. Both
+commands delete its key shares, and the chain cannot restore them.
+
+A v0.17.0 node uses storage schema 6. Schema 7 binaries, such as v0.18.0, halt on schema 6 state.
+Keep a v0.17.0 node on v0.17.0 until each E3 that it serves is complete or failed.
+
 ### Persistent-state compatibility
 
 The current protocol-v4 binary uses storage schema 7. It accepts only an exact schema match because
@@ -73,9 +102,9 @@ for validation, but requires a controlled chain resync to rebuild their eligibil
 history. Old `BondOwnerSet` records in the local event log do not contain a trusted chain timestamp.
 Replaying only that log cannot restore the owner shortlist. The resync must read the configured
 contract deployment range, not start at the latest block. Do not change the stored schema marker to
-bypass this check. Do not reset during a live DKG: the reset discards the local keyshare. Schema 7
-also changes the plaintext recovery format to retain backup decryption shares and batch-bound
-verification results. Complete active work before this upgrade.
+bypass this check. Do not reset a node that serves an active E3: the reset discards the local
+keyshare. Schema 7 also changes the plaintext recovery format to retain backup decryption shares and
+batch-bound verification results. Complete active work before this upgrade.
 
 The protocol-v4 rollout has no automatic migration from earlier pre-release state. Before that
 cutover, governance must pause requests and drain active work. Operators must then:
@@ -128,6 +157,12 @@ log, and the node halts with `On-disk state has no schema marker` instead of sta
 
 Use this command only when a release note instructs you to. It is not a general repair tool: a node
 that is a member of a live committee loses its keyshare and fails that E3.
+
+The command refuses when the node holds key-share state for an E3 that it has not seen complete. It
+also refuses for an E3 that shows `Failed`, because the node records its own local failures that way
+while the E3 can continue on chain. The refusal lists each E3 and its stage, and the command deletes
+nothing. `--allow-active-e3s` overrides the refusal. Use it only after you confirm on chain that
+each listed E3 is complete or failed.
 
 To move a node to a different server, see [migrating a ciphernode](/ciphernode-operators/migrating).
 Migrate and verify the identity first, then reset.
