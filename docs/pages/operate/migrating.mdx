@@ -1,155 +1,239 @@
 ---
-title: 'Migrating a Ciphernode'
-description: 'Move a ciphernode to a new server and keep the operator address, peer id, and history'
+title: 'Migrate a Node'
+description:
+  'Move a ciphernode to a new server and keep its operator address, peer ID, and event history,
+  without an on-chain transaction.'
 ---
 
-# Migrating a Ciphernode
+import { Callout, FileTree, Steps } from 'nextra/components'
+import { LinkCard, LinkCards } from '@/components/ui'
 
-This guide moves a running ciphernode to a different server without changing its identity. The
-operator address keeps the bond, the peer id keeps existing connections, and the event log keeps the
-node from re-syncing the whole chain.
+# Migrate a Node
 
-No on-chain action is needed. Bonding follows the operator address, which does not change, so the
-registry needs no update.
+This page moves a ciphernode to a different server without a change of identity. It is for operators
+who replace a host. At the end, the new server runs the node with the same operator address, peer
+ID, and event history. The old server is stopped.
 
-For a release change, follow the [upgrade procedure](/ciphernode-operators/upgrades) instead. If you
-are doing both, migrate first, verify, then upgrade.
+The migration needs no on-chain transaction. The bond, the tickets, and the registration belong to
+the operator address, and the address does not change. To install a new release, read
+[Upgrades](/operate/upgrades). If you do both, migrate first, verify the identity, and then upgrade.
 
 ## What identifies a node
 
-A ciphernode has three durable pieces, in two directories:
+A ciphernode keeps its identity and its state in two directories. By default, both directories are
+in a `.interfold` directory next to the configuration file.
 
-| Item                            | Location                                 | Lost if not copied                    |
-| ------------------------------- | ---------------------------------------- | ------------------------------------- |
-| Cipher key file                 | `.interfold/config/<node>/key`           | Nothing decrypts; identity unreadable |
-| Operator key and libp2p keypair | inside `.interfold/data/<node>/db`       | Bonded identity and peer id           |
-| Event history                   | `.interfold/data/<node>/log.<aggregate>` | Full re-sync from each `deploy_block` |
+<FileTree>
+  <FileTree.File name='interfold.config.yaml' />
+  <FileTree.Folder name='.interfold' defaultOpen>
+    <FileTree.Folder name='config' defaultOpen>
+      <FileTree.Folder name='<node>' defaultOpen>
+        <FileTree.File name='key' />
+      </FileTree.Folder>
+    </FileTree.Folder>
+    <FileTree.Folder name='data' defaultOpen>
+      <FileTree.Folder name='<node>' defaultOpen>
+        <FileTree.Folder name='db' />
+        <FileTree.File name='log.0' />
+        <FileTree.File name='log.<chain_id>' />
+        <FileTree.File name='ciphernode.jsonl' />
+        <FileTree.File name='interfold.lock' />
+      </FileTree.Folder>
+    </FileTree.Folder>
+    <FileTree.Folder name='noir' />
+  </FileTree.Folder>
+</FileTree>
 
-Both keys live **inside the key/value store**, encrypted with the cipher from the key file. Copying
-only the data directory therefore produces `Failed to get metadata for keyfile`, and copying only
-the config directory leaves nothing to decrypt. The two directories must travel together.
+`<node>` is the node name. The default node, which the `node` key configures, is `_default`.
 
-The libp2p keypair is derived from the operator private key, so the peer id follows the operator key
-and is not separately generated. A node re-keyed with the same operator key reports the same peer
-id.
+| Item               | Path                             | Contents                                                                      | If it is missing                                                                                        |
+| ------------------ | -------------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| Key file           | `.interfold/config/<node>/key`   | The encryption password. The node derives the encryption key from it.         | The node cannot decrypt its keys. `interfold password set` with the same password makes the file again. |
+| Key/value store    | `.interfold/data/<node>/db`      | The encrypted operator key, the encrypted libp2p keypair, and protocol state. | The identity is lost, unless you have another copy of the operator private key.                         |
+| Event log          | `.interfold/data/<node>/log.<n>` | The durable events: `log.0` and one file for each chain ID.                   | The key/value store and the event log no longer match.                                                  |
+| Configuration file | `interfold.config.yaml`          | Chains, contract addresses, peers, and ports.                                 | The node cannot start. You can write the file again.                                                    |
+
+The other files are not part of the identity:
+
+- `ciphernode.jsonl` is the operational log. The node writes it but never reads it.
+- `interfold.lock` is the process lock. The operating system releases it when the process exits.
+- `.interfold/noir` holds the prover files. At startup, the node downloads them when they are
+  missing.
+
+The paths change when the configuration sets `config_dir`, `data_dir`, `key_file`, `db_file`, or
+`log_file`. See [Storage paths](/reference/configuration#storage-paths). To see the paths that the
+node uses, run `interfold config get key_file`, `interfold config get db_file`, and
+`interfold config get log_file` with `--name <node>`. The log file path is the base name. The real
+event-log files add an index, for example `log.0`.
+
+### Why both directories must move together
+
+Both keys are in the key/value store, encrypted with the key from the key file. A copy of only the
+data directory fails with `Failed to get metadata for keyfile`. A copy of only the configuration
+directory has no keys to decrypt.
+
+The libp2p keypair comes from the operator private key. `interfold wallet set` derives both keys
+from the same private key, so the peer ID follows the operator key.
 
 ## Before you start
 
-You need the node's **encryption password**. The key file is derived from it, and there is no
-recovery path without it.
+- **Know the encryption password.** The key file contains it. Without the password, a lost key file
+  cannot be made again.
+- **Know how the operator key was made.** No CLI command exports a private key. If the node
+  generated its own key (`autowallet`), the archive of this procedure is the only copy of the
+  identity.
+- **Install the same release on the new server.** Use `interfold --version` on both servers.
+- **Keep the old data.** Do not delete the data on the old server until the new node runs correctly.
 
-Keep the old server's data until the new one is verified and running.
+<Callout type='warning'>
+  Two servers that run the same node at the same time put the position at risk. See [Do not run both
+  servers](#do-not-run-both-servers).
+</Callout>
 
-## Procedure
+## Move the node
 
-### 1. Stop the old node
+<Steps>
 
-Stop the node with whatever supervises it: a service manager, a process manager, a container
-runtime, or the terminal it runs in. What matters is that the process exits, which releases its
-exclusive lock on the data directory.
+### Wait for active work to finish
+
+Make sure that the node has no active E3. The **Updates** view of the
+[local dashboard](/operate/dashboard) shows the number of active E3s.
+
+### Stop the old node
+
+Stop the process with the tool that supervises it, for example `systemctl stop <unit>`,
+`pm2 stop <node>`, or `docker stop <container>`.
+
+Do not copy the key/value store while a node writes to it. A copy from a running node can open
+without an error and still be inconsistent.
+
+### Confirm that the node is stopped
+
+Run `interfold node validate --name <node>`.
+
+The command takes the same process lock as the node. While a node runs, it fails with
+`another interfold instance is already running for node '<node>'`.
+
+### Record the identity
+
+Run these commands and write down the results:
 
 ```bash
-# examples; use whatever runs your node
-systemctl stop <unit>
-pm2 stop <node>
-docker stop <container>
-```
-
-Confirm the process is gone before copying:
-
-```bash
+interfold wallet get --name <node>
+interfold net get-peer-id --name <node>
 interfold node validate --name <node>
 ```
 
-The command takes the same lock the node holds, so it fails while a node still runs.
+The validation report includes a line such as `read 1234 event(s) across 2 aggregate(s)`. Use the
+event count as a second check after the move.
 
-The key/value store is not safe to copy while a node writes to it. A copy taken from a running node
-can open successfully and still be inconsistent.
+### Make an archive
 
-### 2. Record what the new server must reproduce
-
-```bash
-interfold wallet get      --name <node>
-interfold net get-peer-id --name <node>
-interfold node validate   --name <node>
-```
-
-Write down the address and peer id. The validation report also gives the event count, which is a
-useful second check after the move.
-
-### 3. Archive both directories
+Go to the directory that contains `interfold.config.yaml`. Then run:
 
 ```bash
-tar czpf node-migration.tgz \
-  .interfold/config \
-  .interfold/data \
-  interfold.config.yaml
+tar czpf node-migration.tgz .interfold/config .interfold/data interfold.config.yaml
 ```
 
-Run this from the directory holding `interfold.config.yaml`. The `p` flag preserves the key file
-permissions.
+The `p` flag keeps the file permissions. The key file must stay readable only by its owner.
 
-Transfer the archive over a channel you trust. It contains the encrypted operator key.
+### Transfer the archive
 
-### 4. Unpack on the new server
+Copy the archive to the new server over a channel that you trust, for example `scp`.
 
-Install the same Interfold release first, then unpack in the same relative location:
+The archive contains the encrypted operator key and the password that decrypts it.
+
+### Unpack the archive on the new server
+
+Install the same Interfold release. Then unpack the archive in the node directory:
 
 ```bash
 tar xzpf node-migration.tgz
 ```
 
-If the new server uses different paths, keep `interfold.config.yaml` at the root of the node
-directory so the `.interfold/` tree is found beside it.
+Keep `interfold.config.yaml` next to the `.interfold` directory, so that the node finds its
+directories.
 
-### 5. Verify before starting
+### Verify before you start
+
+Run the same commands on the new server:
 
 ```bash
-interfold wallet get      --name <node>   # must match the recorded address
-interfold net get-peer-id --name <node>   # must match the recorded peer id
-interfold node validate   --name <node>   # expect VALIDATION PASSED
+interfold wallet get --name <node>
+interfold net get-peer-id --name <node>
+interfold node validate --name <node>
 ```
 
-`node validate` reads the event log and reports a corrupt or truncated copy, so it catches an
-incomplete transfer before the node joins the network. Do not start the node until all three agree
-with what you recorded.
+The address, the peer ID, and the event count must be equal to the values that you recorded. The
+report must end with `VALIDATION PASSED`. Do not start the node if a value is different.
 
-### 6. Start the new node, then decommission the old one
+### Update the network settings
 
-Start the node the same way you run it elsewhere. Interfold does not require a particular service
-manager.
+Open the QUIC port (`quic_port`, UDP) in the firewall of the new server.
 
-Update the peer list on any node that reaches this one by address. The peer id is unchanged, but a
-new IP or port needs a new multiaddr.
+If other nodes dial this node by address, update their peer lists. The peer ID stays the same, but a
+new IP address or port needs a new multiaddr.
+
+### Start the new node
+
+Start the node the same way as on the old server.
+
+Run `interfold ciphernode status` and make sure that `Active` is `true`.
+
+### Decommission the old server
+
+Keep the old node stopped. Delete its data only after the new node works correctly.
+
+</Steps>
 
 ## Do not run both servers
 
-Two processes sharing one operator address and one peer id is equivocation. The protocol treats the
-conflicting messages as misbehavior, and the bond is at risk. Keep the old node stopped from step 1
-until it is decommissioned.
+<Callout type='warning'>
+  Two processes with one operator key sign conflicting protocol messages and transactions for the
+  same operator. The process lock protects only one data directory on one host, so it cannot stop a
+  second server. Peers can reject the conflicting messages or accuse the operator, and the E3 can
+  fail. A confirmed accusation can slash the bond and the tickets of the position when the slash
+  policy is enabled.
+</Callout>
 
-## Notes
+Keep the old node stopped from the first step of the procedure until you decommission it. Make sure
+that no supervisor, for example a service manager or a container restart policy, starts it again.
 
-- `interfold.lock` in the data directory is an operating-system advisory lock. Copying it is
-  harmless; it is released when the process exits.
-- `ciphernode.jsonl` is the operational log. Copy it to keep the diagnostic history, or leave it
-  behind. It is never read by the node.
-- Changing the node name changes the directory layout. Keep `--name` identical, or move the `<node>`
-  directories to match the new name in both `config` and `data`.
+## Docker and DAppNode
 
-## Migrating and upgrading together
+For a Docker installation, the `.interfold` directory is next to the configuration file in the
+mounted volume. Stop the container, then copy the complete volume. The Docker entrypoint sets the
+password and the operator key from the credentials secret at each start. Use the same credentials
+secret on the new server.
 
-An incompatible release requires clearing the durable state, which discards the event history a
-migration preserves. Do them in this order:
+The DAppNode package keeps its configuration and its `.interfold` directory in the `/data` volume.
+The package declares a backup named `ciphernode-data` for this volume. Use the same credentials file
+on the new server.
 
-1. Migrate as above and verify the address and peer id on the new server.
-2. Follow the [upgrade procedure](/ciphernode-operators/upgrades), including
-   `interfold node reset-data`.
+## Migrate and upgrade together
 
-Verifying before the reset proves the identity arrived intact. `reset-data` preserves that identity
-while clearing the incompatible state, so the node keeps its bond and peer id and re-syncs from each
-contract `deploy_block`.
+A release that changes the storage schema needs a state reset, which deletes the event history that
+a migration keeps. Do the steps in this order:
 
-This order matters when the operator key was generated by the node rather than imported. There is no
-command that exports a private key, so for such a node the archive is the only copy of that
-identity: verify it on the new server before anything deletes state.
+1. Migrate the node with the procedure on this page.
+2. Verify the address and the peer ID on the new server.
+3. Follow the [upgrade procedure](/operate/upgrades#upgrade-a-ciphernode), including
+   [Reset node state](/operate/upgrades#reset-node-state) if the release needs it.
+
+The verification before the reset proves that the identity arrived complete.
+`interfold node reset-data` keeps the identity, so the node keeps its bond and peer ID. The node
+then syncs again from the `deploy_block` of each contract.
+
+## Next steps
+
+<LinkCards min={230}>
+  <LinkCard title='Upgrades' href='/operate/upgrades' icon='upgrade' tag='Maintain'>
+    Install a new release and reset the state when a release needs it.
+  </LinkCard>
+  <LinkCard title='Troubleshooting' href='/operate/troubleshooting' icon='wrench' tag='Fix'>
+    Check peers and connectivity after the node starts on the new server.
+  </LinkCard>
+  <LinkCard title='Running a ciphernode' href='/operate/running' icon='node' tag='Set up'>
+    Installation methods, configuration, and data directories.
+  </LinkCard>
+</LinkCards>
