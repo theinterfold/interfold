@@ -15,7 +15,6 @@ use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField};
 use clap::Parser;
 use e3_zk_helpers::compute_vk_hash;
-use num_bigint::BigUint;
 use std::fs;
 use std::path::PathBuf;
 
@@ -33,13 +32,11 @@ fn field_from_vk_hash_file(path: &std::path::Path) -> Result<Fr> {
     if bytes.len() != 32 {
         bail!("{}: expected 32 bytes, got {}", path.display(), bytes.len());
     }
-    let n = BigUint::from_bytes_be(&bytes);
-    let bigint = <Fr as PrimeField>::BigInt::try_from(n).map_err(|_| {
-        anyhow::anyhow!(
-            "{}: vk_hash integer does not fit the field's BigInt representation",
-            path.display()
-        )
-    })?;
+    let limbs = std::array::from_fn(|i| {
+        let start = (3 - i) * 8;
+        u64::from_be_bytes(bytes[start..start + 8].try_into().unwrap())
+    });
+    let bigint = ark_ff::BigInt::<4>::new(limbs);
     Fr::from_bigint(bigint).ok_or_else(|| {
         anyhow::anyhow!(
             "{}: vk_hash is not in the canonical range [0, p)",

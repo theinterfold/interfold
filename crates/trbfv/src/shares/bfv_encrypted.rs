@@ -101,7 +101,7 @@ impl BfvEncryptedShare {
 
     /// Encrypt a Shamir share and return encryption randomness for ZK proofs.
     ///
-    /// Same as `encrypt` but uses `try_encrypt_extended` to capture the
+    /// Same as `encrypt` but uses `try_encrypt_with_intermediates` to capture the
     /// encryption randomness (u, e0, e1) needed for C3a/C3b share encryption proofs.
     pub fn encrypt_extended<R: RngCore + CryptoRng>(
         share: &ShamirShare,
@@ -122,17 +122,17 @@ impl BfvEncryptedShare {
             let pt = Plaintext::try_encode(&share_vec, Encoding::poly(), params)
                 .context("Failed to encode share as plaintext")?;
 
-            let (ct, u_rns, e0_rns, e1_rns) = recipient_pk
-                .try_encrypt_extended(&pt, rng)
+            let (ct, intermediates) = recipient_pk
+                .try_encrypt_with_intermediates(&pt, rng)
                 .context("Failed to encrypt share (extended)")?;
 
             ciphertexts.push(ArcBytes::from_bytes(&ct.to_bytes()));
             witnesses.push(BfvEncryptionWitness {
                 share_row: share_vec,
                 ciphertext: ct,
-                u_rns,
-                e0_rns,
-                e1_rns,
+                u_rns: intermediates.randomness().clone(),
+                e0_rns: intermediates.error_0().clone(),
+                e1_rns: intermediates.error_1().clone(),
             });
         }
 

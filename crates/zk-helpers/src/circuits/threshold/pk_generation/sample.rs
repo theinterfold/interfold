@@ -35,10 +35,10 @@ impl PkGenerationCircuitData {
         let secret_key = SecretKey::random(&threshold_params, &mut rng);
         let crp = create_deterministic_crp_from_default_seed(&threshold_params);
 
-        let (pk0_share, _, sk, e) =
-            PublicKeyShare::new_extended(&secret_key, crp.clone(), &mut rng).map_err(|e| {
-                CircuitsErrors::Sample(format!("Failed to create public key share: {:?}", e))
-            })?;
+        let (pk_share, intermediates) =
+            PublicKeyShare::new_with_intermediates(&secret_key, crp.clone(), &mut rng).map_err(
+                |e| CircuitsErrors::Sample(format!("Failed to create public key share: {:?}", e)),
+            )?;
 
         let num_parties = committee.n;
         let threshold = committee.threshold;
@@ -57,7 +57,7 @@ impl PkGenerationCircuitData {
 
         // Generate smudging error coefficients
         let esi_coeffs =
-            trbfv.generate_smudging_error(num_ciphertexts as usize, lambda, &mut rng)?;
+            trbfv.generate_smudging_error(num_ciphertexts as usize, 0, lambda, &mut rng)?;
 
         // Convert to polynomial in RNS representation
         // bigints_to_poly returns Zeroizing<Poly>, we need to clone the inner Poly
@@ -67,10 +67,10 @@ impl PkGenerationCircuitData {
 
         Ok(PkGenerationCircuitData {
             committee,
-            pk0_share: CrtPolynomial::from_fhe_polynomial(&pk0_share),
-            eek: CrtPolynomial::from_fhe_polynomial(&e),
+            pk0_share: CrtPolynomial::from_fhe_polynomial(pk_share.p0_share()),
+            eek: CrtPolynomial::from_fhe_polynomial(intermediates.error()),
             e_sm: CrtPolynomial::from_fhe_polynomial(&e_sm),
-            sk: CrtPolynomial::from_fhe_polynomial(&sk),
+            sk: CrtPolynomial::from_fhe_polynomial(intermediates.secret_key()),
         })
     }
 }

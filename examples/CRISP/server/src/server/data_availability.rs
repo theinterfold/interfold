@@ -112,7 +112,7 @@ fn crypto_config_id_for_params(params: &BfvParameters) -> B256 {
         (
             keccak256(b"fhe.rs:BFV"),
             keccak256(encode_bfv_params(params)),
-            keccak256(b"interfold-bfv-v1"),
+            keccak256(b"interfold-bfv-v2"),
         )
             .abi_encode(),
     )
@@ -3248,23 +3248,24 @@ mod tests {
         let (insecure, insecure_config_id) = bfv_parameters_for_param_set(0).unwrap();
         assert_eq!(
             insecure_config_id,
-            "0x04f3677e73b0f5066d6caf5cbd92e3fb2e38338edaf5cfc971ab28f7b684da78"
+            "0x19921c8c12f93c3013be57d0859f4ddcdb4464ac856a0c62be1ad617fbbd2e7d"
                 .parse::<B256>()
                 .unwrap(),
             "insecure-512 must reproduce ActiveCryptoConfig.INSECURE_CONFIG_ID"
         );
 
-        let (_, secure_config_id) = bfv_parameters_for_param_set(1).unwrap();
+        let (_, secure_config_id) = bfv_parameters_for_param_set(2).unwrap();
         assert_eq!(
             secure_config_id,
-            "0xd9c86e581f8291ffb5b63595600e8d096ed30b16e2e0a6634a76c22b1f58fb4e"
+            "0xac5490c59e158cbb104642bba0ab7b3fd11ca49dd4bb05ce7bec8089ce3c8c31"
                 .parse::<B256>()
                 .unwrap(),
             "secure-8192 must reproduce ActiveCryptoConfig.SECURE_CONFIG_ID"
         );
         assert_ne!(insecure_config_id, secure_config_id);
 
-        assert!(bfv_parameters_for_param_set(2).is_err());
+        assert!(bfv_parameters_for_param_set(1).is_err());
+        assert!(bfv_parameters_for_param_set(3).is_err());
 
         // The cache returns the same tables, so intake does not rebuild them for every ballot.
         assert!(Arc::ptr_eq(

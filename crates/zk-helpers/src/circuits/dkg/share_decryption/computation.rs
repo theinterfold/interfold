@@ -350,11 +350,13 @@ mod tests {
     fn test_recipient_outside_dealer_set_decrypts_every_row() {
         let committee = CiphernodesCommitteeSize::Small.values();
         let preset = BfvPreset::InsecureThreshold512;
-        let mut sample =
-            ShareDecryptionCircuitData::generate_sample(preset, committee, DkgInputType::SecretKey)
-                .unwrap();
+        let (mut sample, dkg_params) = ShareDecryptionCircuitData::generate_sample_with_params(
+            preset,
+            committee,
+            DkgInputType::SecretKey,
+        )
+        .unwrap();
         let expected = Inputs::compute(preset, &sample).unwrap();
-        let (_, dkg_params) = build_pair_for_preset(preset).unwrap();
         let mut rng = rand::rng();
         let public_key = PublicKey::new(&sample.secret_key, &mut rng);
         let own_idx = sample

@@ -13,7 +13,7 @@ e3-fhe-params = { workspace = true }
 
 [dev-dependencies]
 hex = "=0.4.3"
-num-bigint = "=0.4.6"
+num-bigint = "0.5.1"
 serde_json = "=1.0.145"
 e3-bfv-client = { workspace = true }
 rand = { workspace = true }

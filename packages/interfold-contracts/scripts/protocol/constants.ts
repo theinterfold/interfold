@@ -3,6 +3,8 @@ import { ethers as ethersLib } from "ethers";
 
 export const ZERO = ethersLib.ZeroAddress;
 export const ADDRESS_ONE = "0x0000000000000000000000000000000000000001";
+export const LEGACY_MAINNET_SECURE_PARAM_SET_HASH =
+  "0xd7068fdcc1910f5e49c8b05530cf74f876cadee2a1caf797a40b1ae53ae143ec";
 
 export const abi = ethersLib.AbiCoder.defaultAbiCoder();
 
@@ -21,7 +23,7 @@ export const BFV_PARAMS = {
   secure8192: {
     degree: 8192n,
     plaintextModulus: 1000000n,
-    moduli: [0x02000000015a0001n, 0x0200000001460001n, 0x0200000001210001n],
-    error1Variance: "18148392902450051384713312396360971277653333",
+    moduli: [0x0400000000c00001n, 0x0400000000a40001n, 0x0400000000990001n],
+    error1Variance: "17723039943798878305460955570711717478400",
   },
 } as const;

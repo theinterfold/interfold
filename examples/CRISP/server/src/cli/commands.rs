@@ -306,7 +306,7 @@ pub async fn initialize_crisp_round(
         }
     };
     let param_set = match CONFIG.e3_param_set {
-        0 | 1 => CONFIG.e3_param_set,
+        0 | 2 => CONFIG.e3_param_set,
         invalid => {
             return Err(anyhow::anyhow!("Invalid param set: {}", invalid).into());
         }
@@ -539,7 +539,7 @@ pub async fn decrypt_and_publish_result(
 #[allow(dead_code)]
 fn generate_bfv_parameters() -> Arc<BfvParameters> {
     let preset = BfvPreset::from_on_chain_param_set(CONFIG.e3_param_set)
-        .expect("E3_PARAM_SET must be 0 or 1");
+        .expect("E3_PARAM_SET must be 0 or 2");
     build_bfv_params_from_set_arc(BfvParamSet::from(preset))
 }
 

@@ -9,7 +9,11 @@ import {
   availVectorXForChain,
 } from "../dataAvailability";
 import { connect, hasFlag } from "../protocol/cli";
-import { BFV_PARAMS, ZERO } from "../protocol/constants";
+import {
+  BFV_PARAMS,
+  LEGACY_MAINNET_SECURE_PARAM_SET_HASH,
+  ZERO,
+} from "../protocol/constants";
 import {
   deploymentPath,
   protocolDir,
@@ -131,7 +135,11 @@ export async function validateSecureCrispUpgrade(): Promise<void> {
     PRODUCTION_BFV_CONFIG.configId,
     "upgrade plan crypto config",
   );
-  equalValue(plan.paramSet, 1, "upgrade plan BFV parameter set");
+  equalValue(
+    plan.paramSet,
+    PRODUCTION_BFV_CONFIG.paramSet,
+    "upgrade plan BFV parameter set",
+  );
   equalAddress(plan.interfoldProxy, deployment.interfold, "Interfold proxy");
   equalAddress(
     plan.interfoldProxyAdmin,
@@ -635,10 +643,17 @@ export async function validateSecureCrispUpgrade(): Promise<void> {
     "active crypto config",
   );
   equalValue(
-    await interfold.paramSetRegistry(1),
+    await interfold.paramSetRegistry(PRODUCTION_BFV_CONFIG.paramSet),
     encodeBfvParams(BFV_PARAMS.secure8192),
     "secure BFV parameter set",
   );
+  if (chainId === 1) {
+    equalValue(
+      ethersLib.keccak256(await interfold.paramSetRegistry(1)),
+      LEGACY_MAINNET_SECURE_PARAM_SET_HASH,
+      "historical secure BFV parameter set hash",
+    );
+  }
   equalValue(
     plan.minimumCommitteeSize,
     config.interfold.pricing.minCommitteeSize,

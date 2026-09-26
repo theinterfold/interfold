@@ -126,21 +126,20 @@ pub fn gen_pk_share_and_sk_sss<R: RngCore + CryptoRng>(
         num_ciphernodes, threshold
     );
     let sk_share = SecretKey::random(&params, rng);
-    let (pk0_share, _, _, eek) = PublicKeyShare::new_extended(&sk_share, crp.clone(), rng)?;
-
-    let pk_share = PublicKeyShare::deserialize(&pk0_share.to_bytes(), &params, crp.clone())?;
+    let (pk_share, intermediates) =
+        PublicKeyShare::new_with_intermediates(&sk_share, crp.clone(), rng)?;
 
     // Generate smudging noise
     let trbfv = TRBFV::new(num_ciphernodes as usize, threshold as usize, params.clone())?;
     let share_manager_for_esm =
         ShareManager::new(num_ciphernodes as usize, threshold as usize, params.clone())?;
     let lambda = req.lambda.into_lambda()?;
-    let esi_coeffs = trbfv.generate_smudging_error(req.num_ciphertexts, lambda, rng)?;
+    let esi_coeffs = trbfv.generate_smudging_error(req.num_ciphertexts, 0, lambda, rng)?;
     let e_sm_rns = share_manager_for_esm.bigints_to_poly(&esi_coeffs)?;
     let e_sm_raw = ArcBytes::from_bytes(&e_sm_rns.deref().to_bytes());
 
-    let pk0_share_raw = ArcBytes::from_bytes(&pk0_share.to_bytes());
-    let eek_raw = ArcBytes::from_bytes(&eek.to_bytes());
+    let pk0_share_raw = ArcBytes::from_bytes(&pk_share.to_bytes());
+    let eek_raw = ArcBytes::from_bytes(&intermediates.error().to_bytes());
 
     let mut share_manager =
         ShareManager::new(num_ciphernodes as usize, threshold as usize, params.clone())?;

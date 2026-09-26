@@ -9,7 +9,7 @@ use crisp_lib::ecdsa::{address_to_field, derive_address, digest_from_halves, val
 use crisp_lib::merkle_tree::get_merkle_root;
 use crisp_lib::utils::{check_coefficient_values_with_balance, check_coefficient_zero};
 use interfold_lib::configs::default::threshold::{
-    L, N, Q_MOD_T_CENTERED, QIS, USER_DATA_ENCRYPTION_BIT_CT, USER_DATA_ENCRYPTION_BIT_K,
+    L, N, Q_MOD_T, QIS, USER_DATA_ENCRYPTION_BIT_CT, USER_DATA_ENCRYPTION_BIT_K,
 };
 use interfold_lib::math::{
     commitments::{
@@ -204,7 +204,7 @@ fn main(
     //     tally
     //   - No signature is required, which is what lets a third party mask a slot at all
     let valid_vote =
-        check_coefficient_values_with_balance(k1, Q_MOD_T_CENTERED, balance, num_options);
+        check_coefficient_values_with_balance(k1, Q_MOD_T, balance, num_options);
 
     // The digest is a public input, so the prover cannot select the message that the signature
     // covers. The contract computes the digest from the round, the slot, and this ballot, which

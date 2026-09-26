@@ -149,7 +149,7 @@ The SDK preset and the `paramSet` in the request must agree, and both must match
 network runs. Sepolia is a functional testnet: it exercises the full E3 lifecycle, but it gives no
 cryptographic security, so do not put real secrets in it.
 
-`SECURE_THRESHOLD_8192` (`paramSet: 1`) is the production preset. It uses a larger polynomial ring
+`SECURE_THRESHOLD_8192` (`paramSet: 2`) is the production preset. It uses a larger polynomial ring
 (N=8192 instead of N=512), so proof generation is much slower, and it needs `secure-8192` circuit
 artifacts that do not ship in `@interfold/sdk` — see
 [Proving: embedded circuits or your own](../sdk#proving-embedded-circuits-or-your-own).

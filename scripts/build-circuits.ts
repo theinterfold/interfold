@@ -307,7 +307,7 @@ class NoirCircuitBuilder {
 
   private bfvConfig(preset: CircuitPreset, committee: CircuitCommittee) {
     const { h, t, n } = COMMITTEE_PARAMS[committee]
-    const paramSet = preset === CIRCUIT_PRESETS.INSECURE_512 ? 0 : 1
+    const paramSet = preset === CIRCUIT_PRESETS.INSECURE_512 ? 0 : 2
     const committeeSize = ALL_COMMITTEES.indexOf(committee)
     const params = paramSet === 0 ? BFV_PARAMS.insecure512 : BFV_PARAMS.secure8192
     const encodedParams = AbiCoder.defaultAbiCoder().encode(
@@ -316,7 +316,7 @@ class NoirCircuitBuilder {
     )
     const paramSetHash = keccak256(encodedParams)
     const configId = keccak256(
-      AbiCoder.defaultAbiCoder().encode(['bytes32', 'bytes32', 'bytes32'], [id('fhe.rs:BFV'), paramSetHash, id('interfold-bfv-v1')]),
+      AbiCoder.defaultAbiCoder().encode(['bytes32', 'bytes32', 'bytes32'], [id('fhe.rs:BFV'), paramSetHash, id('interfold-bfv-v2')]),
     )
     return { h, t, n, paramSet, committeeSize, paramSetHash, configId }
   }
@@ -403,6 +403,78 @@ class NoirCircuitBuilder {
     this.writeActiveCryptoConfig(preset, committee)
   }
 
+  /** Regenerates each circuit's preset constants from the Rust parameter set. */
+  syncPresetConfigs(preset: CircuitPreset, committee: CircuitCommittee): void {
+    const tier = PRESET_NOIR_CONFIG[preset]
+    const configDir = join(this.rootDir, 'circuits', 'lib', 'src', 'configs', tier)
+    const temporaryDir = mkdtempSync(join(tmpdir(), 'interfold-preset-config-'))
+    const sources = [
+      { circuit: 'pk', file: 'dkg.nr', prefix: 'PK_', common: [] },
+      { circuit: 'share-computation', file: 'dkg.nr', prefix: 'SHARE_COMPUTATION_', common: [] },
+      {
+        circuit: 'share-encryption',
+        file: 'dkg.nr',
+        prefix: 'SHARE_ENCRYPTION_',
+        common: ['N', 'L', 'QIS', 'PLAINTEXT_MODULUS', 'Q_MOD_T', 'Q_MOD_T_CENTERED'],
+      },
+      { circuit: 'share-decryption', file: 'dkg.nr', prefix: 'SHARE_DECRYPTION_', common: [] },
+      { circuit: 'user-data-encryption', file: 'threshold.nr', prefix: 'USER_DATA_ENCRYPTION_', common: [] },
+      { circuit: 'pk-generation', file: 'threshold.nr', prefix: 'PK_GENERATION_', common: ['N', 'L', 'QIS', 'PLAINTEXT_MODULUS', 'CRP'] },
+      { circuit: 'pk-aggregation', file: 'threshold.nr', prefix: 'PK_AGGREGATION_', common: [] },
+      { circuit: 'threshold-share-decryption', file: 'threshold.nr', prefix: 'THRESHOLD_SHARE_DECRYPTION_', common: [] },
+      {
+        circuit: 'decrypted-shares-aggregation',
+        file: 'threshold.nr',
+        prefix: 'DECRYPTED_SHARES_AGGREGATION_',
+        common: ['Q_MOD_T', 'Q_MOD_T_CENTERED', 'Q_INVERSE_MOD_T'],
+      },
+    ]
+    const pending = new Map<string, string>()
+
+    try {
+      for (const source of sources) {
+        const outputDir = join(temporaryDir, source.circuit)
+        mkdirSync(outputDir)
+        execFileSync(
+          'cargo',
+          [
+            'run',
+            '--quiet',
+            '-p',
+            'e3-zk-helpers',
+            '--bin',
+            'zk_cli',
+            '--',
+            '--circuit',
+            source.circuit,
+            '--preset',
+            tier,
+            '--committee',
+            committee,
+            '--output',
+            outputDir,
+          ],
+          { cwd: this.rootDir, stdio: 'pipe' },
+        )
+        const targetPath = join(configDir, source.file)
+        const generated = readFileSync(join(outputDir, 'configs.nr'), 'utf8')
+        let updated = pending.get(targetPath) ?? readFileSync(targetPath, 'utf8')
+        for (const match of generated.matchAll(/^pub global ([A-Z0-9_]+):[\s\S]*?;(?=\r?\n|$)/gm)) {
+          const name = match[1]
+          if (!name.startsWith(source.prefix) && !source.common.includes(name)) continue
+          const declaration = new RegExp(`^pub global ${name}:[\\s\\S]*?;(?=\\r?\\n|$)`, 'm')
+          if (!declaration.test(updated)) continue
+          updated = updated.replace(declaration, match[0])
+        }
+        pending.set(targetPath, updated)
+      }
+      for (const [targetPath, updated] of pending) writeFileSync(targetPath, updated)
+      console.log(`   📋 Regenerated BFV circuit constants for ${preset}/${committee}`)
+    } finally {
+      rmSync(temporaryDir, { recursive: true, force: true })
+    }
+  }
+
   /** Writes the circuit-bound constants consumed by Interfold. */
   private writeActiveCryptoConfig(preset: CircuitPreset, committee: CircuitCommittee): void {
     const production = this.bfvConfig(CIRCUIT_PRESETS.SECURE_8192, CIRCUIT_COMMITTEES.SMALL)
@@ -424,7 +496,7 @@ import { IInterfold } from "../interfaces/IInterfold.sol";
 // support insecure and secure BFV with every committee size.
 library ActiveCryptoConfig {
     bytes32 internal constant ENCRYPTION_SCHEME_ID = keccak256("fhe.rs:BFV");
-    bytes32 internal constant CIRCUIT_VERSION = keccak256("interfold-bfv-v1");
+    bytes32 internal constant CIRCUIT_VERSION = keccak256("interfold-bfv-v2");
 
     bytes32 internal constant INSECURE_CONFIG_ID =
         ${testnet.configId};
@@ -772,10 +844,10 @@ library ActiveCryptoConfig {
         const original = readFileSync(targetPath, 'utf8')
         let updated = original
         let count = 0
-        for (const match of generated.matchAll(/^pub global ([A-Z0-9_]+):[^;]*;/gm)) {
+        for (const match of generated.matchAll(/^pub global ([A-Z0-9_]+):[\s\S]*?;(?=\r?\n|$)/gm)) {
           const name = match[1]
           if (!name.startsWith(source.prefix)) continue
-          const declaration = new RegExp(`^pub global ${name}:[^;]*;`, 'm')
+          const declaration = new RegExp(`^pub global ${name}:[\\s\\S]*?;(?=\\r?\\n|$)`, 'm')
           if (!declaration.test(updated)) {
             throw new Error(`Missing ${name} in ${targetPath}`)
           }
@@ -1345,7 +1417,7 @@ library ActiveCryptoConfig {
           source = Buffer.from(
             source
               .toString()
-              .replace(/^pub global ((?:PK_GENERATION|SHARE_COMPUTATION)_[A-Z0-9_]+):[^;]*;/gm, 'pub global $1:<generated>;'),
+              .replace(/^pub global ((?:PK_GENERATION|SHARE_COMPUTATION)_[A-Z0-9_]+):[\s\S]*?;(?=\r?\n|$)/gm, 'pub global $1:<generated>;'),
           )
         }
         hash.update(entry.endsWith('.rs') ? stripRustTestModules(source) : source)
@@ -1403,7 +1475,7 @@ async function main() {
       }
       options.committee = val as CircuitCommittee | 'all'
     } else if (arg === '--skip-utils-patch') options.skipUtilsPatch = true
-    else if (['hash', 'build', 'sync-config'].includes(arg)) command = arg
+    else if (['hash', 'build', 'sync-config', 'sync-preset'].includes(arg)) command = arg
   }
 
   const builder = new NoirCircuitBuilder(undefined, options)
@@ -1419,6 +1491,11 @@ async function main() {
       throw new Error('sync-config requires one preset and one committee')
     }
     builder.syncProtocolConfig(options.preset ?? CIRCUIT_PRESETS.INSECURE_512, options.committee ?? CIRCUIT_COMMITTEES.MINIMUM)
+  } else if (command === 'sync-preset') {
+    if (options.preset === 'all' || options.committee === 'all') {
+      throw new Error('sync-preset requires one preset and one committee')
+    }
+    builder.syncPresetConfigs(options.preset ?? CIRCUIT_PRESETS.INSECURE_512, options.committee ?? CIRCUIT_COMMITTEES.MINIMUM)
   } else {
     const result = await builder.buildAll()
     builder.writeGitHubOutput(result)
@@ -1430,7 +1507,7 @@ function showHelp() {
   console.log(`
 Usage: build-circuits [command] [options]
 
-Commands: build (default), hash, sync-config
+Commands: build (default), hash, sync-config, sync-preset
 
 Options:
   --group <groups>    Circuit groups (comma-separated: dkg,threshold)

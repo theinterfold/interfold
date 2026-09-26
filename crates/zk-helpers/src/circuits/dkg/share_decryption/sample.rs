@@ -12,13 +12,14 @@ use crate::CiphernodesCommittee;
 use crate::CircuitsErrors;
 use e3_fhe_params::build_pair_for_preset;
 use e3_fhe_params::BfvPreset;
-use fhe::bfv::Ciphertext;
 use fhe::bfv::Encoding;
 use fhe::bfv::Plaintext;
+use fhe::bfv::{BfvParameters, Ciphertext};
 use fhe::bfv::{PublicKey, SecretKey};
 use fhe::trbfv::{ShareManager, TRBFV};
 use fhe_traits::FheEncoder;
 use fhe_traits::FheEncrypter;
+use std::sync::Arc;
 
 impl ShareDecryptionCircuitData {
     /// Generates sample data for the share-decryption circuit (decrypts a sum of honest ciphertexts under DKG secret key).
@@ -27,6 +28,16 @@ impl ShareDecryptionCircuitData {
         committee: CiphernodesCommittee,
         dkg_input_type: DkgInputType,
     ) -> Result<Self, CircuitsErrors> {
+        Self::generate_sample_with_params(preset, committee, dkg_input_type)
+            .map(|(sample, _)| sample)
+    }
+
+    /// Returns the sample and its DKG parameters so callers can encode with the same parameter instance.
+    pub(crate) fn generate_sample_with_params(
+        preset: BfvPreset,
+        committee: CiphernodesCommittee,
+        dkg_input_type: DkgInputType,
+    ) -> Result<(Self, Arc<BfvParameters>), CircuitsErrors> {
         let (threshold_params, dkg_params) = build_pair_for_preset(preset).map_err(|e| {
             CircuitsErrors::Sample(format!("Failed to build pair for preset: {:?}", e))
         })?;
@@ -87,7 +98,7 @@ impl ShareDecryptionCircuitData {
                     }
                     DkgInputType::SmudgingNoise => {
                         let esi_coeffs = trbfv
-                            .generate_smudging_error(sd.z as usize, lambda, &mut rng)
+                            .generate_smudging_error(sd.z as usize, 0, lambda, &mut rng)
                             .map_err(|e| {
                                 CircuitsErrors::Sample(format!(
                                     "Failed to generate smudging error: {:?}",
@@ -149,12 +160,15 @@ impl ShareDecryptionCircuitData {
             }
         }
 
-        Ok(ShareDecryptionCircuitData {
-            honest_ciphertexts,
-            own_plaintext_share,
-            secret_key: dkg_secret_key,
-            dkg_input_type,
-        })
+        Ok((
+            ShareDecryptionCircuitData {
+                honest_ciphertexts,
+                own_plaintext_share,
+                secret_key: dkg_secret_key,
+                dkg_input_type,
+            },
+            dkg_params,
+        ))
     }
 }
 
