@@ -74,7 +74,7 @@ mod tests {
         let cipher = Cipher::from_password("test-password")
             .await
             .expect("cipher");
-        let preset = BfvPreset::InsecureThreshold512;
+        let preset = BfvPreset::InsecureThreshold;
         let material = generate_bfv_keypair(&preset, &cipher).expect("keypair");
 
         // Public key bytes must deserialize against the same params.

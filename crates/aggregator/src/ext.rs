@@ -1284,7 +1284,7 @@ mod tests {
     #[actix::test]
     async fn secure_hydration_reconstructs_a_missing_initial_collection() -> Result<()> {
         let (bus, rng, seed, params, crp, _errors, _history) =
-            get_common_setup(Some(BfvPreset::InsecureThreshold512.into()))?;
+            get_common_setup(Some(BfvPreset::InsecureThreshold.into()))?;
         let e3_id = E3id::new("42", 1);
         let signer = address!("0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC");
         let committee = vec![Address::ZERO, signer, Address::repeat_byte(0xff)];
@@ -1348,7 +1348,7 @@ mod tests {
     #[actix::test]
     async fn secure_hydration_rejects_a_mismatched_proof_domain() -> Result<()> {
         let (bus, rng, seed, params, crp, _errors, _history) =
-            get_common_setup(Some(BfvPreset::InsecureThreshold512.into()))?;
+            get_common_setup(Some(BfvPreset::InsecureThreshold.into()))?;
         let e3_id = E3id::new("42", 1);
         let signer = address!("0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC");
         let committee = vec![Address::ZERO, signer, Address::repeat_byte(0xff)];
@@ -1452,7 +1452,7 @@ mod tests {
     #[actix::test]
     async fn publickey_hydration_restores_committee_dependencies_first() -> Result<()> {
         let (bus, rng, seed, params, crp, _errors, _history) =
-            get_common_setup(Some(BfvPreset::InsecureThreshold512.into()))?;
+            get_common_setup(Some(BfvPreset::InsecureThreshold.into()))?;
         let e3_id = E3id::new("42", 1);
         let store = DataStore::from_in_mem(&InMemStore::new(false).start());
         let mut ctx = E3Context::from_params(E3ContextParams {
@@ -1467,7 +1467,7 @@ mod tests {
                 threshold_m: 1,
                 threshold_n: 3,
                 seed,
-                params_preset: BfvPreset::InsecureThreshold512,
+                params_preset: BfvPreset::InsecureThreshold,
                 params: ArcBytes::from_bytes(&[]),
                 error_size: ArcBytes::from_bytes(&[]),
             },

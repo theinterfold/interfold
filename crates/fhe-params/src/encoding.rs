@@ -237,7 +237,7 @@ mod tests {
     fn test_encode_decode_arc_roundtrip() {
         use crate::presets::BfvParamSet;
 
-        let preset = BfvPreset::InsecureThreshold512;
+        let preset = BfvPreset::InsecureThreshold;
         let param_set: BfvParamSet = preset.into();
         let params = param_set.build_arc();
 

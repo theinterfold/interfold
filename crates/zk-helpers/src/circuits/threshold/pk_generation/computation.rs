@@ -378,7 +378,7 @@ mod tests {
 
     #[test]
     fn bounds_compute_rejects_non_canonical_committee_h() {
-        let preset = BfvPreset::InsecureThreshold512;
+        let preset = BfvPreset::InsecureThreshold;
         let bad = CiphernodesCommittee {
             n: 3,
             h: 8,
@@ -393,7 +393,7 @@ mod tests {
 
     #[test]
     fn bounds_compute_rejects_unknown_threshold_pair() {
-        let preset = BfvPreset::InsecureThreshold512;
+        let preset = BfvPreset::InsecureThreshold;
         let bad = CiphernodesCommittee {
             n: 5,
             h: 5,
@@ -404,7 +404,7 @@ mod tests {
 
     #[test]
     fn test_bound_and_bits_computation_consistency() {
-        let preset = BfvPreset::InsecureThreshold512;
+        let preset = BfvPreset::InsecureThreshold;
         use crate::ciphernodes_committee::CiphernodesCommitteeSize;
         let committee = CiphernodesCommitteeSize::Micro.values();
         let bounds = Bounds::compute(preset, &committee).unwrap();
@@ -420,7 +420,7 @@ mod tests {
     #[test]
     fn test_constants_json_roundtrip() {
         let committee = crate::ciphernodes_committee::CiphernodesCommitteeSize::Micro.values();
-        let constants = Configs::compute(BfvPreset::InsecureThreshold512, &committee).unwrap();
+        let constants = Configs::compute(BfvPreset::InsecureThreshold, &committee).unwrap();
 
         let json = constants.to_json().unwrap();
         let decoded: Configs = serde_json::from_value(json).unwrap();

@@ -48,7 +48,7 @@ pub fn generate_shares_hash_map(
     let threshold_n = trbfv_config.num_parties() as usize;
 
     // First, generate BFV encryption keys for all parties
-    let bfv_params = BfvParamSet::from(BfvPreset::InsecureDkg512).build_arc();
+    let bfv_params = BfvParamSet::from(BfvPreset::InsecureDkg).build_arc();
     let mut bfv_rng = rand::rng();
     let mut bfv_secret_keys = Vec::with_capacity(threshold_n);
     let mut bfv_public_keys = Vec::with_capacity(threshold_n);

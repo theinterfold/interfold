@@ -28,7 +28,7 @@ pub async fn setup_compiled_circuit(backend: &ZkBackend, group: &str, circuit_na
         backend,
         group,
         circuit_name,
-        BfvPreset::InsecureThreshold512,
+        BfvPreset::InsecureThreshold,
         "minimum",
     )
     .await;
@@ -44,7 +44,7 @@ pub async fn setup_compiled_circuit_for_committee(
         backend,
         group,
         circuit_name,
-        BfvPreset::InsecureThreshold512,
+        BfvPreset::InsecureThreshold,
         committee,
     )
     .await;
@@ -169,7 +169,7 @@ pub async fn setup_recursive_aggregation_fold_circuit(backend: &ZkBackend, circu
     setup_recursive_aggregation_fold_circuit_for_preset(
         backend,
         circuit,
-        BfvPreset::InsecureThreshold512,
+        BfvPreset::InsecureThreshold,
         "minimum",
     )
     .await;

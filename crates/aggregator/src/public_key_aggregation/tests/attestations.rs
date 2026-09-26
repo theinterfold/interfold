@@ -13,7 +13,7 @@ async fn c1_result_waits_for_replayed_inputs() -> Result<()> {
     use fhe_traits::Serialize;
 
     let (bus, rng, _seed, params, crp, _errors, _history) =
-        get_common_setup(Some(BfvPreset::InsecureThreshold512.into()))?;
+        get_common_setup(Some(BfvPreset::InsecureThreshold.into()))?;
     let e3_id = E3id::new("42", 1);
     let fhe = Arc::new(Fhe::new(params, crp, rng));
     let committee = CiphernodesCommitteeSize::Minimum.values();
@@ -59,7 +59,7 @@ async fn c1_result_waits_for_replayed_inputs() -> Result<()> {
             fhe,
             bus,
             e3_id: e3_id.clone(),
-            params_preset: BfvPreset::InsecureThreshold512,
+            params_preset: BfvPreset::InsecureThreshold,
             committee_size: CiphernodesCommitteeSize::Minimum,
             dkg_fold_attestation_context: None,
             recovery: test_state(PublicKeyAggregatorRecoveryState::default()),
@@ -243,7 +243,7 @@ async fn honest_dkg_fold_without_attestation_is_not_buffered() -> Result<()> {
 #[actix::test]
 async fn pk_aggregation_proof_pending_carries_canonical_committee_dims() -> Result<()> {
     let (bus, rng, _seed, params, crp, _errors, history) =
-        get_common_setup(Some(BfvPreset::InsecureThreshold512.into()))?;
+        get_common_setup(Some(BfvPreset::InsecureThreshold.into()))?;
     let e3_id = E3id::new("42", 1);
     let fhe = Arc::new(Fhe::new(params, crp, rng));
     let (initial_state, threshold_n, threshold_m, circuit_h) =
@@ -253,7 +253,7 @@ async fn pk_aggregation_proof_pending_carries_canonical_committee_dims() -> Resu
             fhe,
             bus,
             e3_id: e3_id.clone(),
-            params_preset: BfvPreset::InsecureThreshold512,
+            params_preset: BfvPreset::InsecureThreshold,
             committee_size: CiphernodesCommitteeSize::Micro,
             dkg_fold_attestation_context: None,
             recovery: test_state(PublicKeyAggregatorRecoveryState::default()),
@@ -306,7 +306,7 @@ async fn pk_aggregation_proof_pending_carries_canonical_committee_dims() -> Resu
 #[actix::test]
 async fn early_exclusion_keeps_full_committee_for_final_proof_binding() -> Result<()> {
     let (bus, rng, _seed, params, crp, _errors, _history) =
-        get_common_setup(Some(BfvPreset::InsecureThreshold512.into()))?;
+        get_common_setup(Some(BfvPreset::InsecureThreshold.into()))?;
     let e3_id = E3id::new("42", 1);
     let fhe = Arc::new(Fhe::new(params, crp, rng));
     let (mut state, threshold_n, _threshold_m, circuit_h) =
@@ -327,7 +327,7 @@ async fn early_exclusion_keeps_full_committee_for_final_proof_binding() -> Resul
             fhe,
             bus,
             e3_id: e3_id.clone(),
-            params_preset: BfvPreset::InsecureThreshold512,
+            params_preset: BfvPreset::InsecureThreshold,
             committee_size: CiphernodesCommitteeSize::Micro,
             dkg_fold_attestation_context: None,
             recovery: test_state(PublicKeyAggregatorRecoveryState::default()),

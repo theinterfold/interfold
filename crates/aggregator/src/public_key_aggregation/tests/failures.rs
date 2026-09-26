@@ -21,7 +21,7 @@ async fn dkg_aggregation_compute_error_preserves_pending_work() -> Result<()> {
             committee_addresses: vec!["0x0000000000000000000000000000000000000001"
                 .parse()
                 .expect("test address")],
-            params_preset: BfvPreset::InsecureThreshold512,
+            params_preset: BfvPreset::InsecureThreshold,
             committee_size: CiphernodesCommitteeSize::Minimum,
         }),
         correlation_id,

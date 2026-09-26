@@ -199,7 +199,7 @@ fn lbfv_documents() -> (LbfvKeyShareDocument, LbfvKeyShareDocument) {
 }
 
 fn lbfv_share_bytes(public_key: bool, minimum_len: usize) -> Vec<u8> {
-    let preset = BfvPreset::InsecureThreshold512;
+    let preset = BfvPreset::InsecureThreshold;
     let (params, _) = build_pair_for_preset(preset).unwrap();
     let crs = CommonRandomPolyVec::from_seed(&params, lbfv_crs_seed(preset).unwrap()).unwrap();
     let urs = CommonRandomPolyVec::from_seed(&params, lbfv_urs_seed(preset).unwrap()).unwrap();

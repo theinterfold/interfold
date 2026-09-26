@@ -40,7 +40,7 @@ impl Default for E3Requested {
         E3Requested {
             e3_id: E3id::new("99", 0),
             error_size: ArcBytes::from_bytes(&[]),
-            params_preset: BfvPreset::InsecureThreshold512,
+            params_preset: BfvPreset::InsecureThreshold,
             params: ArcBytes::from_bytes(&[]),
             seed: Seed([0u8; 32]),
             request_block: 0,

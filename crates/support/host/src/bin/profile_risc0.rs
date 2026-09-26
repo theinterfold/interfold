@@ -20,17 +20,17 @@ fn main() {
     //   INSECURE_THRESHOLD | INSECURE_DKG |
     //   SECURE_THRESHOLD_BFV_8192  | SECURE_DKG_BFV_8192
     let param_set: BfvPreset = match std::env::var("BFV_PRESET").ok().as_deref() {
-        Some("INSECURE_DKG") => BfvPreset::InsecureDkg512,
+        Some("INSECURE_DKG") => BfvPreset::InsecureDkg,
         Some("SECURE_THRESHOLD_BFV_8192") => BfvPreset::SecureThreshold8192,
         Some("SECURE_DKG_8192") => BfvPreset::SecureDkg8192,
         Some(other) => {
             eprintln!(
-                "Warning: unknown BFV_PRESET={}, using default InsecureThreshold512",
+                "Warning: unknown BFV_PRESET={}, using default InsecureThreshold",
                 other
             );
-            BfvPreset::InsecureThreshold512
+            BfvPreset::InsecureThreshold
         }
-        None => BfvPreset::InsecureThreshold512,
+        None => BfvPreset::InsecureThreshold,
     };
     println!("Using BFV preset: {:?}", param_set);
 

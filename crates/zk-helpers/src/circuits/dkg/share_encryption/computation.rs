@@ -608,18 +608,18 @@ mod tests {
 
     #[test]
     fn test_bound_and_bits_computation_consistency() {
-        let sd = BfvPreset::InsecureThreshold512.search_defaults().unwrap();
+        let sd = BfvPreset::InsecureThreshold.search_defaults().unwrap();
         let committee = CiphernodesCommitteeSize::Small.values();
         let sample = ShareEncryptionCircuitData::generate_sample(
-            BfvPreset::InsecureThreshold512,
+            BfvPreset::InsecureThreshold,
             committee,
             DkgInputType::SecretKey,
             sd.z,
         )
         .unwrap();
 
-        let bounds = Bounds::compute(BfvPreset::InsecureThreshold512, &sample).unwrap();
-        let bits = Bits::compute(BfvPreset::InsecureThreshold512, &bounds).unwrap();
+        let bounds = Bounds::compute(BfvPreset::InsecureThreshold, &sample).unwrap();
+        let bits = Bits::compute(BfvPreset::InsecureThreshold, &bounds).unwrap();
 
         let max_pk_bound = bounds.pk_bounds.iter().max().unwrap();
         let expected_bits = calculate_bit_width(BigInt::from(max_pk_bound.clone()));
@@ -630,16 +630,16 @@ mod tests {
 
     #[test]
     fn test_constants_json_roundtrip() {
-        let sd = BfvPreset::InsecureThreshold512.search_defaults().unwrap();
+        let sd = BfvPreset::InsecureThreshold.search_defaults().unwrap();
         let committee = CiphernodesCommitteeSize::Small.values();
         let sample = ShareEncryptionCircuitData::generate_sample(
-            BfvPreset::InsecureThreshold512,
+            BfvPreset::InsecureThreshold,
             committee,
             DkgInputType::SecretKey,
             sd.z,
         )
         .unwrap();
-        let constants = Configs::compute(BfvPreset::InsecureThreshold512, &sample).unwrap();
+        let constants = Configs::compute(BfvPreset::InsecureThreshold, &sample).unwrap();
 
         let json = constants.to_json().unwrap();
         let decoded: Configs = serde_json::from_value(json).unwrap();
@@ -654,16 +654,16 @@ mod tests {
 
     #[test]
     fn test_input_message_consistency() {
-        let sd = BfvPreset::InsecureThreshold512.search_defaults().unwrap();
+        let sd = BfvPreset::InsecureThreshold.search_defaults().unwrap();
         let committee = CiphernodesCommitteeSize::Small.values();
         let sample = ShareEncryptionCircuitData::generate_sample(
-            BfvPreset::InsecureThreshold512,
+            BfvPreset::InsecureThreshold,
             committee,
             DkgInputType::SecretKey,
             sd.z,
         )
         .unwrap();
-        let inputs = Inputs::compute(BfvPreset::InsecureThreshold512, &sample).unwrap();
+        let inputs = Inputs::compute(BfvPreset::InsecureThreshold, &sample).unwrap();
 
         // inputs.message is plaintext coefficients (reversed, as used in circuit)
         let expected_message =

@@ -32,7 +32,7 @@ fn redrive_fixture(
     let e3_id = fixture.state.e3_id.clone();
     let proof_domain = fixture.state.proof_domain;
     let (bus, rng, _seed, params, crp, _errors, history) =
-        get_common_setup(Some(BfvPreset::InsecureThreshold512.into()))?;
+        get_common_setup(Some(BfvPreset::InsecureThreshold.into()))?;
     let aggregator = PublicKeyAggregator::new_with_lbfv_retry_clock(
         PublicKeyAggregatorParams {
             fhe: Arc::new(Fhe::new(params, crp, rng)),

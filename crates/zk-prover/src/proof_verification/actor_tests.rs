@@ -111,7 +111,7 @@ fn signed_c0_key(
 async fn restored_context_dispatches_c0_without_replayed_lifecycle_events() {
     let bus = test_bus();
     let e3_id = E3id::new("7", 31_337);
-    let preset = BfvPreset::InsecureThreshold512;
+    let preset = BfvPreset::InsecureThreshold;
     let signer = PrivateKeySigner::random();
     let mut committee_members = vec![
         signer.address().to_string(),

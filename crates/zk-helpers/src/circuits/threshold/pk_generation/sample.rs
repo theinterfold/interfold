@@ -100,10 +100,10 @@ mod tests {
     fn test_generate_sample() {
         let committee = CiphernodesCommitteeSize::Small.values();
         let sample =
-            PkGenerationCircuitData::generate_sample(BfvPreset::InsecureThreshold512, committee)
+            PkGenerationCircuitData::generate_sample(BfvPreset::InsecureThreshold, committee)
                 .unwrap();
-        let inputs = Inputs::compute(BfvPreset::InsecureThreshold512, &sample).unwrap();
-        let bounds = Bounds::compute(BfvPreset::InsecureThreshold512, &sample.committee).unwrap();
+        let inputs = Inputs::compute(BfvPreset::InsecureThreshold, &sample).unwrap();
+        let bounds = Bounds::compute(BfvPreset::InsecureThreshold, &sample.committee).unwrap();
 
         assert_eq!(inputs.pk0is.limbs.len(), 3);
         assert_eq!(inputs.e_sm.limbs.len(), 3);

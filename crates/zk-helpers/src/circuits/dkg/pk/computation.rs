@@ -174,10 +174,10 @@ mod tests {
 
     #[test]
     fn test_bound_and_bits_computation_consistency() {
-        let (_, dkg_params) = build_pair_for_preset(BfvPreset::InsecureThreshold512).unwrap();
+        let (_, dkg_params) = build_pair_for_preset(BfvPreset::InsecureThreshold).unwrap();
 
-        let bounds = Bounds::compute(BfvPreset::InsecureThreshold512, &()).unwrap();
-        let bits = Bits::compute(BfvPreset::InsecureThreshold512, &()).unwrap();
+        let bounds = Bounds::compute(BfvPreset::InsecureThreshold, &()).unwrap();
+        let bits = Bits::compute(BfvPreset::InsecureThreshold, &()).unwrap();
         let expected_bits = compute_modulus_bit(&dkg_params);
 
         assert_eq!(bounds.pk_bound, BigUint::from(72057594037914240u128));
@@ -186,7 +186,7 @@ mod tests {
 
     #[test]
     fn test_constants_json_roundtrip() {
-        let constants = Configs::compute(BfvPreset::InsecureThreshold512, &()).unwrap();
+        let constants = Configs::compute(BfvPreset::InsecureThreshold, &()).unwrap();
 
         let json = constants.to_json().unwrap();
         let decoded: Configs = serde_json::from_value(json).unwrap();

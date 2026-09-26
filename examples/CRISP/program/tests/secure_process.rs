@@ -25,7 +25,7 @@ use fhe_traits::{
 use rand::{rngs::StdRng, SeedableRng};
 use std::sync::Arc;
 
-const PRESET: BfvPreset = BfvPreset::InsecureThreshold512;
+const PRESET: BfvPreset = BfvPreset::InsecureThreshold;
 
 struct Round {
     params: Arc<BfvParameters>,

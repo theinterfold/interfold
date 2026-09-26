@@ -183,12 +183,11 @@ mod tests {
 
     #[test]
     fn test_bfv_public_key_to_greco() {
-        let (threshold_params, _) = build_pair_for_preset(BfvPreset::InsecureThreshold512).unwrap();
+        let (threshold_params, _) = build_pair_for_preset(BfvPreset::InsecureThreshold).unwrap();
         let sample =
-            UserDataEncryptionCircuitData::generate_sample(BfvPreset::InsecureThreshold512)
-                .unwrap();
+            UserDataEncryptionCircuitData::generate_sample(BfvPreset::InsecureThreshold).unwrap();
 
-        let inputs = Inputs::compute(BfvPreset::InsecureThreshold512, &sample).unwrap();
+        let inputs = Inputs::compute(BfvPreset::InsecureThreshold, &sample).unwrap();
 
         // Convert using our function
         let (actual_pk0is, actual_pk1is) =
@@ -207,11 +206,10 @@ mod tests {
     /// *something*, and the circuit would reject the ballot with no indication why.
     #[test]
     fn conversion_centers_both_components_and_is_repeatable() {
-        let (threshold_params, _) = build_pair_for_preset(BfvPreset::InsecureThreshold512).unwrap();
+        let (threshold_params, _) = build_pair_for_preset(BfvPreset::InsecureThreshold).unwrap();
         let sample =
-            UserDataEncryptionCircuitData::generate_sample(BfvPreset::InsecureThreshold512)
-                .unwrap();
-        let inputs = Inputs::compute(BfvPreset::InsecureThreshold512, &sample).unwrap();
+            UserDataEncryptionCircuitData::generate_sample(BfvPreset::InsecureThreshold).unwrap();
+        let inputs = Inputs::compute(BfvPreset::InsecureThreshold, &sample).unwrap();
         let ciphertext = Ciphertext::from_bytes(&inputs.ciphertext, &threshold_params).unwrap();
 
         let moduli = threshold_params.moduli();
@@ -244,11 +242,10 @@ mod tests {
     /// decryption then rejects the padded ciphertext and the round fails.
     #[test]
     fn ciphertext_with_more_than_two_components_is_rejected() {
-        let (threshold_params, _) = build_pair_for_preset(BfvPreset::InsecureThreshold512).unwrap();
+        let (threshold_params, _) = build_pair_for_preset(BfvPreset::InsecureThreshold).unwrap();
         let sample =
-            UserDataEncryptionCircuitData::generate_sample(BfvPreset::InsecureThreshold512)
-                .unwrap();
-        let inputs = Inputs::compute(BfvPreset::InsecureThreshold512, &sample).unwrap();
+            UserDataEncryptionCircuitData::generate_sample(BfvPreset::InsecureThreshold).unwrap();
+        let inputs = Inputs::compute(BfvPreset::InsecureThreshold, &sample).unwrap();
         let ciphertext = Ciphertext::from_bytes(&inputs.ciphertext, &threshold_params).unwrap();
 
         let padded = Ciphertext::new(
@@ -277,13 +274,12 @@ mod tests {
 
     #[test]
     fn test_bfv_ciphertext_to_greco() {
-        let (threshold_params, _) = build_pair_for_preset(BfvPreset::InsecureThreshold512).unwrap();
+        let (threshold_params, _) = build_pair_for_preset(BfvPreset::InsecureThreshold).unwrap();
 
         let sample =
-            UserDataEncryptionCircuitData::generate_sample(BfvPreset::InsecureThreshold512)
-                .unwrap();
+            UserDataEncryptionCircuitData::generate_sample(BfvPreset::InsecureThreshold).unwrap();
 
-        let inputs = Inputs::compute(BfvPreset::InsecureThreshold512, &sample).unwrap();
+        let inputs = Inputs::compute(BfvPreset::InsecureThreshold, &sample).unwrap();
 
         let ciphertext = Ciphertext::from_bytes(&inputs.ciphertext, &threshold_params).unwrap();
 

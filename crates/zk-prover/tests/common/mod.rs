@@ -15,7 +15,7 @@ use e3_fhe_params::BfvPreset;
 /// Returns `None` when the compiled circuits use a different preset or committee.
 #[allow(dead_code)]
 pub fn require_minimum_circuits() -> Option<()> {
-    require_minimum_circuits_for_preset(BfvPreset::InsecureThreshold512)
+    require_minimum_circuits_for_preset(BfvPreset::InsecureThreshold)
 }
 
 use std::path::PathBuf;

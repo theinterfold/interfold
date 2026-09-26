@@ -489,8 +489,8 @@ mod tests {
     #[test]
     fn targeted_lbfv_document_roundtrip_binds_identity_and_content_hash() {
         for document in [
-            lbfv_public_key_document(BfvPreset::InsecureThreshold512),
-            lbfv_relinearization_key_document(BfvPreset::InsecureThreshold512),
+            lbfv_public_key_document(BfvPreset::InsecureThreshold),
+            lbfv_relinearization_key_document(BfvPreset::InsecureThreshold),
         ] {
             let request =
                 EventConversionService::lbfv_key_share_to_request(LbfvKeyShareDocumentCreated {
@@ -516,7 +516,7 @@ mod tests {
 
     #[test]
     fn targeted_lbfv_fetch_rejects_stale_contribution_bytes() {
-        let mut document = lbfv_public_key_document(BfvPreset::InsecureThreshold512);
+        let mut document = lbfv_public_key_document(BfvPreset::InsecureThreshold);
         let LbfvKeyShareDocument::PublicKeyV1(document) = &mut document else {
             unreachable!();
         };
@@ -532,7 +532,7 @@ mod tests {
 
     #[test]
     fn local_lbfv_publication_rejects_stale_contribution_bytes() {
-        let mut document = lbfv_public_key_document(BfvPreset::InsecureThreshold512);
+        let mut document = lbfv_public_key_document(BfvPreset::InsecureThreshold);
         let LbfvKeyShareDocument::PublicKeyV1(public_key) = &mut document else {
             unreachable!();
         };
@@ -549,7 +549,7 @@ mod tests {
 
     #[test]
     fn generic_lbfv_conversion_is_suppressed() {
-        let document = lbfv_public_key_document(BfvPreset::InsecureThreshold512);
+        let document = lbfv_public_key_document(BfvPreset::InsecureThreshold);
         let bytes = document.to_bytes().unwrap();
         let meta = DocumentMeta::new(
             document.e3_id().clone(),
@@ -565,7 +565,7 @@ mod tests {
 
     #[test]
     fn targeted_lbfv_document_rejects_wrong_identity() {
-        let document = lbfv_public_key_document(BfvPreset::InsecureThreshold512);
+        let document = lbfv_public_key_document(BfvPreset::InsecureThreshold);
         let bytes = document.to_bytes().unwrap();
         let mut wrong_e3 = lbfv_fetch_request(&document);
         let LbfvKeyShareDocumentFetchRequested::V1(identity) = &mut wrong_e3;
