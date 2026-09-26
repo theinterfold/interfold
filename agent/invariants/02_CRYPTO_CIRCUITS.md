@@ -135,6 +135,14 @@ every section.
   range check. A value that no upstream commitment bounds still needs its own bound: C1's `pk0`,
   because C1 originates it and the key equation absorbs `+q` against `r1`; and C5's `pk0_agg`,
   because `verify_pk_for_basis` pins it only modulo `q_l`. — `flow-trace/04`
+- The class is "every circuit that opens a commitment it did not create", and it has seven members:
+  C2a, C2b, C4, C5 and C6 (three). All open through `pack_checked`. A new commitment opened from
+  elsewhere joins that list and needs either the checked helper or its own bound. Naming the class
+  matters: the first two instances were found while optimising the circuits that held them, and the
+  other five only by enumerating the pattern. — `flow-trace/04`
+- A bound that is not tight enough for the slot is no bound for this purpose. C2b's `as u64` cast
+  limited coefficients to `2^64` while the slot was `radix = 2^64` with `base = 2^60`, so a digit
+  could still overflow. — `flow-trace/04`
 - A derived value that the circuit reduces itself needs no opened-witness bound. C4's aggregate is
   canonicalised by `normalize_aggregated`, and `reduce_mod` pins its quotient to `u64`, which stays
   sound for sums far above the slot width. — `flow-trace/04`
