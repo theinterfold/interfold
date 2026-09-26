@@ -31,11 +31,11 @@ use e3_events::{
 };
 use e3_evm::{
     ensure_node_release, fetch_accusation_vote_validity, fetch_randomness_providers,
-    read_canonical_dkg_timing, BondingRegistrySolReader, CiphernodeRegistrySol,
-    CiphernodeRegistrySolReader, DataAvailabilityCoordinator, DataAvailabilityRepositoryFactory,
-    EvmChainGatewayHandle, GatewayFailureReceiver, InterfoldSolReader, InterfoldSolWriter,
-    ProviderConfig, RandomnessProviderSolReader, SlashingManagerSolReader,
-    SlashingManagerSolWriter, SlashingWriterRepositoryFactory,
+    fetch_slashing_manager, read_canonical_dkg_timing, BondingRegistrySolReader,
+    CiphernodeRegistrySol, CiphernodeRegistrySolReader, DataAvailabilityCoordinator,
+    DataAvailabilityRepositoryFactory, EvmChainGatewayHandle, GatewayFailureReceiver,
+    InterfoldSolReader, InterfoldSolWriter, ProviderConfig, RandomnessProviderSolReader,
+    SlashingManagerSolReader, SlashingManagerSolWriter, SlashingWriterRepositoryFactory,
 };
 use e3_fhe::ext::FheExtension;
 use e3_keyshare::ext::ThresholdKeyshareExtension;
@@ -287,20 +287,69 @@ impl CiphernodeBuilder {
         self
     }
 
-    /// Resolve the slashing manager address from ChainConfig. All chains are
-    /// checked (enabled or not) since this is just config, not RPC-dependent.
-    fn resolve_slashing_manager(&self) -> Result<Address> {
-        self.chains
-            .iter()
-            .find_map(|c| c.contracts.slashing_manager.as_ref())
-            .map(|c| c.address())
-            .transpose()?
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "`slashing_manager` contract address is required in chain config — \
-                     it is the EIP-712 `verifyingContract` for accusation vote signatures"
-                )
-            })
+    /// Resolve the SlashingManager address of each configured chain, in `self.chains` order.
+    ///
+    /// An enabled chain reads `Interfold.slashingManager()`. A disabled chain has no provider, so
+    /// only its configured address applies. `choose_slashing_manager` decides the address.
+    async fn resolve_slashing_managers(
+        &self,
+        provider_cache: &mut ProviderCache<WriteEnabled>,
+    ) -> Result<Vec<Option<Address>>> {
+        let mut slashing_managers = Vec::with_capacity(self.chains.len());
+        for chain in &self.chains {
+            let configured = chain
+                .contracts
+                .slashing_manager
+                .as_ref()
+                .map(|contract| contract.address())
+                .transpose()?;
+            let mut on_chain = None;
+            if chain.enabled.unwrap_or(true) {
+                let provider = provider_cache.ensure_read_provider(chain).await?;
+                let interfold = chain.contracts.interfold.address()?;
+                // A configured address can be a retired manager, so a transient read failure should
+                // not decide the signing domain for the whole run.
+                let mut read = fetch_slashing_manager(provider.provider(), interfold).await;
+                for delay_secs in SLASHING_MANAGER_READ_RETRY_DELAYS {
+                    if read.is_ok() {
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_secs(delay_secs)).await;
+                    read = fetch_slashing_manager(provider.provider(), interfold).await;
+                }
+                match read {
+                    Ok(Some(address)) => on_chain = Some(address),
+                    Ok(None) => warn!(
+                        chain = %chain.name,
+                        configured = ?configured,
+                        "Interfold.slashingManager() is not set; the configured SlashingManager applies"
+                    ),
+                    Err(error) => error!(
+                        chain = %chain.name,
+                        configured = ?configured,
+                        error = %error,
+                        "Could not read Interfold.slashingManager(); the configured SlashingManager \
+                         applies until the next restart. Check that it is the live manager"
+                    ),
+                }
+            }
+            let choice = choose_slashing_manager(configured, on_chain);
+            if let Some(SlashingManagerChoice::ChainOverridesConfig {
+                chain: on_chain,
+                configured,
+            }) = choice
+            {
+                warn!(
+                    chain = %chain.name,
+                    configured = %configured,
+                    interfold = %on_chain,
+                    "Configured SlashingManager differs from Interfold.slashingManager(); \
+                     using the Interfold value"
+                );
+            }
+            slashing_managers.push(choice.map(SlashingManagerChoice::address));
+        }
+        Ok(slashing_managers)
     }
 
     /// Fetch `CiphernodeRegistry.accusationVoteValidity()` for one chain (off-chain
@@ -715,12 +764,15 @@ impl CiphernodeBuilder {
             .await?;
         }
 
+        let slashing_managers = self.resolve_slashing_managers(&mut provider_cache).await?;
+
         // Setup EVM contract event listeners
         let (evm_config, evm_gateways) = self
             .setup_evm_system(
                 &mut provider_cache,
                 &bus,
                 &repositories,
+                &slashing_managers,
                 EvmStartupRecovery {
                     dkg_fold_contexts_by_e3: &dkg_fold_contexts_by_e3,
                     active_aggregators: &selector_state.is_aggregator,
@@ -746,6 +798,7 @@ impl CiphernodeBuilder {
                 &dkg_fold_context_by_chain,
                 &dkg_fold_contexts_by_e3,
                 &accusation_vote_validity_by_chain,
+                &slashing_managers,
                 &selector_state,
                 &lifecycle_stages,
             )
@@ -938,10 +991,12 @@ impl CiphernodeBuilder {
         provider_cache: &mut ProviderCache<WriteEnabled>,
         bus: &BusHandle,
         repositories: &e3_data::Repositories,
+        slashing_managers: &[Option<Address>],
         recovery: EvmStartupRecovery<'_>,
     ) -> Result<(EvmEventConfig, Vec<EvmChainGatewayHandle>)> {
         setup_evm_system(
             &self.chains,
+            slashing_managers,
             provider_cache,
             bus,
             repositories,
@@ -1014,6 +1069,7 @@ impl CiphernodeBuilder {
         dkg_fold_context_by_chain: &HashMap<u64, Option<DkgFoldAttestationContext>>,
         dkg_fold_contexts_by_e3: &HashMap<e3_events::E3id, DkgFoldAttestationContext>,
         accusation_vote_validity_by_chain: &HashMap<u64, u64>,
+        slashing_managers: &[Option<Address>],
         selector_state: &CiphernodeSelectorState,
         lifecycle_stages: &HashMap<E3id, E3Stage>,
     ) -> Result<e3_request::E3RouterBuilder> {
@@ -1160,7 +1216,17 @@ impl CiphernodeBuilder {
         {
             let accusation_deadline_skew_secs = parse_env_u64("ACCUSATION_DEADLINE_SKEW_SECS", 30);
             let signer = provider_cache.ensure_signer().await?;
-            let slashing_manager_addr = self.resolve_slashing_manager()?;
+            let slashing_manager_addr = slashing_managers
+                .iter()
+                .flatten()
+                .next()
+                .copied()
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "`slashing_manager` contract address is required in chain config — \
+                         it is the EIP-712 `verifyingContract` for accusation vote signatures"
+                    )
+                })?;
             info!(
                 chains = accusation_vote_validity_by_chain.len(),
                 accusation_deadline_skew_secs, "Setting up AccusationManagerExtension"
@@ -1321,6 +1387,48 @@ fn validate_chain_id(chain: &ChainConfig, actual_chain_id: u64) -> Result<()> {
     Ok(())
 }
 
+/// Delays before the startup retries of `Interfold.slashingManager()`.
+const SLASHING_MANAGER_READ_RETRY_DELAYS: [u64; 2] = [1, 3];
+
+/// The SlashingManager address that startup chose for one chain.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SlashingManagerChoice {
+    /// `Interfold.slashingManager()`. The configured address is absent or equal.
+    Chain(Address),
+    /// `Interfold.slashingManager()`, which replaces a different configured address.
+    ChainOverridesConfig { chain: Address, configured: Address },
+    /// The configured address, because the chain gave no address.
+    Configured(Address),
+}
+
+impl SlashingManagerChoice {
+    fn address(self) -> Address {
+        match self {
+            Self::Chain(address)
+            | Self::ChainOverridesConfig { chain: address, .. }
+            | Self::Configured(address) => address,
+        }
+    }
+}
+
+/// Decide the SlashingManager for one chain.
+///
+/// `Interfold.slashingManager()` is authoritative: the contracts call that manager, and accusation
+/// votes sign its address as the EIP-712 `verifyingContract`. The configured address applies only
+/// when the chain gives no address. `None` means that neither source gives an address.
+fn choose_slashing_manager(
+    configured: Option<Address>,
+    on_chain: Option<Address>,
+) -> Option<SlashingManagerChoice> {
+    match (on_chain, configured) {
+        (Some(chain), Some(configured)) if chain != configured => {
+            Some(SlashingManagerChoice::ChainOverridesConfig { chain, configured })
+        }
+        (Some(chain), _) => Some(SlashingManagerChoice::Chain(chain)),
+        (None, configured) => configured.map(SlashingManagerChoice::Configured),
+    }
+}
+
 fn validate_vrf_chain_id(chain_id: u64) -> Result<()> {
     ensure!(
         matches!(chain_id, 1 | 1_337 | 31_337 | 11_155_111),
@@ -1367,8 +1475,10 @@ fn create_aggregate_delays(
     Ok(delays)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn setup_evm_system(
     chains: &[ChainConfig],
+    slashing_managers: &[Option<Address>],
     provider_cache: &mut ProviderCache<WriteEnabled>,
     bus: &BusHandle,
     repositories: &e3_data::Repositories,
@@ -1385,7 +1495,11 @@ async fn setup_evm_system(
     } = recovery;
     let mut evm_config = EvmEventConfig::new();
     let mut gateways = Vec::new();
-    for chain in chains.iter().filter(|chain| chain.enabled.unwrap_or(true)) {
+    for (chain, slashing_manager) in chains
+        .iter()
+        .zip(slashing_managers.iter().copied())
+        .filter(|(chain, _)| chain.enabled.unwrap_or(true))
+    {
         let provider = provider_cache.ensure_read_provider(chain).await?;
         let chain_id = provider.chain_id();
         if contract_components.interfold && chain.data_availability.is_none() {
@@ -1567,7 +1681,7 @@ async fn setup_evm_system(
         }
 
         if contract_components.slashing_manager {
-            let contract = chain.contracts.slashing_manager.as_ref().ok_or_else(|| {
+            let contract_addr = slashing_manager.ok_or_else(|| {
                 anyhow::anyhow!(
                     "Slashing manager is enabled but no contract address configured for chain {}",
                     chain.name
@@ -1575,7 +1689,6 @@ async fn setup_evm_system(
             })?;
 
             // Reader: read SlashExecuted events from chain
-            let contract_addr = contract.address()?;
             system.with_contract(contract_addr, move |next| {
                 SlashingManagerSolReader::setup(&next).recipient()
             });
@@ -1625,8 +1738,9 @@ async fn wait_for_evm_gateways(gateways: Vec<EvmChainGatewayHandle>) -> Result<(
 #[cfg(test)]
 mod tests {
     use super::{
-        create_aggregate_delay, event_clock, reconcile_committee_snapshots,
-        recovered_ciphernode_selections, validate_vrf_chain_id,
+        choose_slashing_manager, create_aggregate_delay, event_clock,
+        reconcile_committee_snapshots, recovered_ciphernode_selections, validate_vrf_chain_id,
+        SlashingManagerChoice,
     };
     use e3_config::{
         chain_config::ChainConfig,
@@ -2040,6 +2154,41 @@ mod tests {
         let error = validate_vrf_chain_id(42_161).expect_err("Arbitrum must be rejected");
 
         assert!(error.to_string().contains("Ethereum mainnet"));
+    }
+
+    #[test]
+    fn slashing_manager_uses_the_interfold_dependency() {
+        let live = Address::repeat_byte(0x75);
+        let retired = Address::repeat_byte(0x97);
+
+        let choice = choose_slashing_manager(Some(retired), Some(live));
+        assert_eq!(
+            choice,
+            Some(SlashingManagerChoice::ChainOverridesConfig {
+                chain: live,
+                configured: retired,
+            })
+        );
+        assert_eq!(choice.map(SlashingManagerChoice::address), Some(live));
+        assert_eq!(
+            choose_slashing_manager(Some(live), Some(live)),
+            Some(SlashingManagerChoice::Chain(live))
+        );
+        assert_eq!(
+            choose_slashing_manager(None, Some(live)),
+            Some(SlashingManagerChoice::Chain(live))
+        );
+    }
+
+    #[test]
+    fn slashing_manager_uses_the_configured_address_without_a_chain_value() {
+        let configured = Address::repeat_byte(0x97);
+
+        assert_eq!(
+            choose_slashing_manager(Some(configured), None),
+            Some(SlashingManagerChoice::Configured(configured))
+        );
+        assert_eq!(choose_slashing_manager(None, None), None);
     }
 
     #[test]

@@ -101,3 +101,35 @@ pub fn calculate_best_ticket_for_node(
 
     best.ok_or_else(|| anyhow!("no winning ticket found"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy::primitives::{address, b256};
+
+    #[test]
+    fn score_matches_registry_ticket_score() {
+        let seed = Seed::from(U256::from_be_bytes(
+            b256!("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f").0,
+        ));
+        let e3_id = E3id::new(
+            "18458939420885977824981152629962741023865184457287647280899939019117062782978",
+            1,
+        );
+
+        // keccak256(abi.encodePacked(node, ticketNumber, e3Id, seed)), computed with
+        // ethers `solidityPackedKeccak256` for the same inputs.
+        let expected = BigUint::from_bytes_be(
+            &b256!("54839d0ce89af4ea0767d9ea472d9129c58222e25a0e38a65c2ba3ef522e758b").0,
+        );
+        assert_eq!(
+            hash_to_score(
+                address!("1111111111111111111111111111111111111111"),
+                1,
+                e3_id,
+                seed
+            ),
+            expected
+        );
+    }
+}
