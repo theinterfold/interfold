@@ -1,119 +1,70 @@
 ---
-title: 'Running a Ciphernode'
-description: 'Three ways to run a ciphernode: DAppNode, Interfold CLI, or Docker'
+title: 'Run a Ciphernode'
+description:
+  'Install and start a ciphernode with DAppNode, the interfold CLI, or Docker, then check its
+  configuration, logs, and data.'
 ---
 
-# Running a Ciphernode
+import { Callout, Steps, Tabs } from 'nextra/components'
+import { LinkCard, LinkCards } from '@/components/ui'
 
-This guide covers three methods to run a ciphernode, from easiest to most flexible. Choose the
-method that best fits your infrastructure.
+# Run a Ciphernode
 
-For a release change, follow the [ciphernode upgrade procedure](/ciphernode-operators/upgrades).
+This page shows three ways to install and start a ciphernode: DAppNode, the `interfold` CLI, and
+Docker. It is for operators who have a host that meets the [requirements](/operate/requirements). At
+the end, the node runs, syncs the contract history, and waits for
+[registration](/operate/registration). For a release change, follow [Upgrades](/operate/upgrades).
 
-## Method 1: DAppNode (Easiest)
+## Before you start
 
-DAppNode provides a user-friendly interface for running a ciphernode with minimal configuration.
+Prepare these items before you install the node:
 
-### Installation
+- A host that meets the [requirements](/operate/requirements), with the QUIC UDP port open.
+- An Ethereum WebSocket endpoint that keeps the full log history. Test it on
+  [RPC Endpoints](/operate/rpc-endpoints) first.
+- An Avail HTTP endpoint for data availability. The examples on this page use the defaults of the
+  DAppNode package.
+- An operator key: a dedicated Ethereum private key for this node. The node signs ticket submissions
+  and release acknowledgments with it, so it needs ETH for gas.
+- A bond owner wallet or Safe that holds the FOLD and the ticket collateral. A wallet that is
+  separate from the operator key is recommended. See
+  [Registration & Bonding](/operate/registration).
 
-1. Open your DAppNode UI (`http://my.dappnode`)
-2. Search for **"Interfold Ciphernode"** (the current package name for the Interfold ciphernode) and
-   install the package
-3. The setup wizard will prompt you for:
-   - `RPC_URL` - WebSocket RPC endpoint
-   - `NETWORK` and `CHAIN_ID`
-   - Contract addresses and deploy blocks
-   - Ciphernode credentials JSON file
-   - Optional bootstrap peers
+Use a fixed release version on an operator node. Do not use a moving version such as the `latest`
+Docker tag.
 
-4. Confirm and complete the installation
-5. Check **Packages → interfold-ciphernode → Logs** to verify the node started
+## Choose a method
 
-### Configuration via Environment Variables
+| Method   | Best for                                | Configuration                                   | Where the state lives                  |
+| -------- | --------------------------------------- | ----------------------------------------------- | -------------------------------------- |
+| DAppNode | A DAppNode box with a setup form        | The setup wizard renders `/data/config.yaml`.   | The `ciphernode_data` volume (`/data`) |
+| CLI      | A Linux or macOS server that you manage | You write `interfold.config.yaml`.              | `.interfold/` next to the config file  |
+| Docker   | Container hosts (Linux x86-64)          | You write `config.yaml` and mount it read-only. | A named Docker volume                  |
 
-| Variable                           | Description                                  | Required |
-| ---------------------------------- | -------------------------------------------- | -------- |
-| `RPC_URL`                          | WebSocket RPC endpoint                       | Yes      |
-| `NETWORK`                          | Network name (mainnet, sepolia, etc.)        | Yes      |
-| `CHAIN_ID`                         | EIP-155 chain ID                             | Yes      |
-| `NODE_ADDRESS`                     | Your Ethereum address                        | Yes      |
-| `INTERFOLD_CONTRACT`               | Interfold coordinator contract               | Yes      |
-| `CIPHERNODE_REGISTRY_CONTRACT`     | Ciphernode registry contract                 | Yes      |
-| `BONDING_REGISTRY_CONTRACT`        | Bonding registry contract                    | Yes      |
-| `SLASHING_MANAGER_CONTRACT`        | Slashing manager contract                    | Yes      |
-| `FEE_TOKEN_CONTRACT`               | Fee token contract                           | Yes      |
-| `INTERFOLD_DEPLOY_BLOCK`           | Interfold contract deploy block              | Yes      |
-| `CIPHERNODE_REGISTRY_DEPLOY_BLOCK` | Ciphernode registry deploy block             | Yes      |
-| `BONDING_REGISTRY_DEPLOY_BLOCK`    | Bonding registry deploy block                | Yes      |
-| `SLASHING_MANAGER_DEPLOY_BLOCK`    | Slashing manager deploy block                | Yes      |
-| `FEE_TOKEN_DEPLOY_BLOCK`           | Fee token deploy block                       | Yes      |
-| `QUIC_PORT`                        | UDP port for P2P networking (default: 37173) | No       |
-| `PEERS`                            | Comma-separated peer multiaddresses          | No       |
+The CLI and Docker methods use the same configuration file. Write it first, as shown in the next
+section. The DAppNode package writes its own file from the wizard values.
 
-Upload the credentials JSON file through the DAppNode setup wizard. The package copies it to
-`/run/secrets/secrets.json` before startup.
+## Write the configuration file
 
----
+The configuration file sets the node profile and one entry for each chain. Copy the example for your
+network and replace the placeholders. The addresses come from the deployment manifest. See
+[Contract addresses](/operate#contract-addresses).
 
-## Method 2: Interfold CLI (Recommended)
+<Tabs items={['Mainnet', 'Sepolia']}>
+  <Tabs.Tab unmount={false}>
 
-The Interfold CLI provides the most control and is recommended for production deployments.
-
-### Install the CLI
-
-```bash
-# Quick install
-curl -fsSL https://raw.githubusercontent.com/theinterfold/interfold/main/install | bash
-
-# Then install the CLI
-interfoldup install
-```
-
-### Initialize Configuration
-
-```bash
-interfold ciphernode setup
-```
-
-This creates `~/.config/interfold/interfold.config.yaml`. You'll be prompted for a password to
-encrypt sensitive data.
-
-### Set Up Credentials
-
-```bash
-# Set encryption password (encrypts local keystore)
-interfold password set
-
-# Generate or set network keypair (for libp2p)
-interfold net keypair generate
-# Or import an existing key:
-# interfold net keypair set --net-keypair 0x...
-
-# Set your wallet private key (for on-chain transactions)
-interfold wallet set --private-key 0xYourPrivateKey
-```
-
-### Configure Your Node
-
-Edit `~/.config/interfold/interfold.config.yaml`:
-
-```yaml
+```yaml filename="interfold.config.yaml"
 node:
   network: mainnet
-  address: '0xYourAddress'
   quic_port: 9091
-  autonetkey: true
-  autopassword: true
-  multithread_reserve_threads: 2
-  multithread_concurrent_jobs: 2
 
 chains:
   - name: mainnet
-    rpc_url: 'wss://eth-mainnet.g.alchemy.com/v2/YOUR_KEY'
     chain_id: 1
+    rpc_url: 'wss://YOUR_MAINNET_ENDPOINT'
     data_availability:
       mode: avail
-      rpc_url: 'https://mainnet-rpc.avail.so/rpc'
+      rpc_url: 'https://avail-rpc.publicnode.com/'
     contracts:
       interfold:
         address: '0x28cF63B459e6218C69EA97ea7D90541cf648c715'
@@ -130,11 +81,27 @@ chains:
       fee_token:
         address: '0xdC035D45d973E3EC169d2276DDab16f1e407384F'
         deploy_block: 20663730
+```
 
+  </Tabs.Tab>
+  <Tabs.Tab unmount={false}>
+
+<Callout type='warning'>
+  On 25 September 2026, the Sepolia protocol contracts predate the node release gate.
+  `nodeReleaseRegistry()` on the Sepolia `Interfold` contract reverts. A 0.18.0 ciphernode reads
+  this value at startup, so it stops with `failed to read Interfold release dependencies`. Until the
+  Sepolia deployment is upgraded, a Sepolia node on this release does not start.
+</Callout>
+
+```yaml filename="interfold.config.yaml"
+node:
+  network: sepolia
+  quic_port: 9091
+
+chains:
   - name: sepolia
-    enabled: false
-    rpc_url: 'wss://ethereum-sepolia-rpc.publicnode.com'
     chain_id: 11155111
+    rpc_url: 'wss://YOUR_SEPOLIA_ENDPOINT'
     data_availability:
       mode: avail
       rpc_url: 'https://turing-rpc.avail.so/rpc'
@@ -159,403 +126,533 @@ chains:
         deploy_block: 11534982
 ```
 
-The compute scheduler defaults to these `2/2` values. It can reduce concurrent jobs when the
-detected host or cgroup memory limit is too small. Each secure prover job has a 13 GiB admission
-budget, and the scheduler reserves 4 GiB for the node and host. The node refuses to start when the
-detected limit cannot cover the node reserve and one prover budget. Do not increase the job count
-unless the host has enough memory for all node processes.
+  </Tabs.Tab>
+</Tabs>
 
-If local proof work fails because of memory or another worker error, the node retries it with
-backoff and uses Barretenberg low-memory mode after the first failure. A warning that says automatic
-recovery remains active is not a failed E3. The node stops those retries when it observes a terminal
-E3 event. A non-retryable local error is logged as an error and leaves the durable work available
-for repair and restart; it does not accuse another committee member.
+The node applies these rules when it loads the file:
 
-Use one coherent provider for the WebSocket subscription and its RPC requests. Do not place a
-round-robin pool of independently synchronized providers behind one local URL. A subscription can
-announce a block before another pool member can return that block or its logs.
+- Every enabled chain must belong to the `node.network` profile. `chain_id: 1` belongs to `mainnet`
+  and `chain_id: 11155111` belongs to `sepolia`. One node serves one network. To keep an entry for
+  another network in the file, set `enabled: false` on it.
+- Each contract must have a nonzero `deploy_block` when `rpc_url` is not a local address. Otherwise,
+  startup stops with
+  `Misconfiguration: Attempted to query historical events from genesis on a non-local node`.
+- A ciphernode needs `interfold`, `ciphernode_registry`, `bonding_registry`, `slashing_manager`, and
+  a `data_availability` entry on each enabled chain. The node refuses to start without them.
+- Each `$NAME` or `${NAME}` in the file is replaced with the value of that environment variable. Use
+  this to keep an API key out of the file, for example
+  `rpc_url: 'wss://example.invalid/v2/${RPC_API_KEY}'`.
 
-Chain ingestion waits for one confirmation by default. This default also applies when `rpc_url` uses
-`localhost` or `127.0.0.1`, because that URL can be a proxy to a live chain. Set
-`ingestion_confirmations: 0` only for a single-process development chain such as Anvil. Do not set
-it to zero for Mainnet or Sepolia.
+Keep the chain `name` as `mainnet` or `sepolia`. The `interfold config check` command matches chains
+to the manifest by name, and it skips other names. Also set `chain_id`, because `config check`
+compares it with the manifest. The command does not query the endpoint.
 
-### Check Your Addresses Are Current
+<Callout type='info'>
+  The first sync starts at the lowest `deploy_block` of all configured contracts. On mainnet, the
+  `fee_token` deploy block (20663730) is about 4.8 million blocks before the `bonding_registry`
+  deploy block (25473398). The node does not use `fee_token`, so you can remove that entry to
+  shorten the first sync. `interfold config check` then prints a note for it, but the check passes.
+</Callout>
 
-Contract addresses change when the protocol is redeployed, and a node pointed at an old address
-fails silently — it syncs nothing and reports no error. Before starting, and after any redeploy
-announcement, compare your config against the published deployment manifest:
+### Main configuration keys
+
+The keys below matter most on an operator node. The
+[Configuration Reference](/reference/configuration#node-keys) lists every node key, and
+[Chain keys](/reference/configuration#chain-keys) lists every chain key.
+
+| Key (under `node:`)           | Default                       | Meaning                                                                                         |
+| ----------------------------- | ----------------------------- | ----------------------------------------------------------------------------------------------- |
+| `network`                     | Inferred from the chains      | P2P profile: `mainnet`, `sepolia`, or `local`.                                                  |
+| `quic_port`                   | `9091`                        | UDP port of the QUIC listener.                                                                  |
+| `peers`                       | Empty (profile DNS bootstrap) | libp2p addresses to dial. See [Networking](#networking).                                        |
+| `multithread_concurrent_jobs` | `2`                           | Requested prover jobs. The node lowers it to fit memory.                                        |
+| `startup_timeout_secs`        | `1800`                        | Time limit for startup and the first sync. After it, the node exits with an error.              |
+| `autowallet`                  | `false`                       | `true` generates a random wallet when none is stored. That key is not your registered operator. |
+
+| Key (under each `chains:` entry) | Default  | Meaning                                                                                                   |
+| -------------------------------- | -------- | --------------------------------------------------------------------------------------------------------- |
+| `rpc_url`                        | Required | WebSocket URL (`ws://` or `wss://`). The node needs it for log subscriptions.                             |
+| `rpc_auth`                       | No auth  | `Basic` or `Bearer` credentials. See [RPC authentication](/reference/configuration#rpc-authentication).   |
+| `data_availability`              | Required | `mode: avail` and an HTTP `rpc_url`. See [Data availability](/reference/configuration#data-availability). |
+| `ingestion_confirmations`        | `1`      | Confirmations before the node applies a log.                                                              |
+| `enabled`                        | `true`   | `false` makes the node ignore the entry.                                                                  |
+
+The default of one confirmation also applies when `rpc_url` uses `localhost` or `127.0.0.1`, because
+that URL can be a proxy to a live chain. Set `ingestion_confirmations: 0` only on a single-process
+development chain such as Anvil. Do not set it to zero on mainnet or Sepolia.
+
+The `autonetkey` key has no effect in this release. The node derives its libp2p key from the wallet
+key.
+
+## Start the node
+
+<Tabs items={['DAppNode', 'CLI', 'Docker']}>
+  <Tabs.Tab unmount={false}>
+
+The DAppNode package wraps the released `interfold` binary. Its setup wizard collects the values,
+renders `/data/config.yaml`, stores the credentials, and runs `interfold start`.
+
+<Steps>
+
+### Install the package
+
+Open the DAppNode UI (`http://my.dappnode`) and search the DAppStore for **Interfold Ciphernode**.
+If the package is not listed, open **Installer** and use **Install from IPFS hash** with the hash of
+a published release.
+
+### Prepare the credentials file
+
+Create a JSON file with exactly these two fields. The private key is the operator key.
+
+```json filename="secrets.json"
+{
+  "password": "<strong encryption password>",
+  "private_key": "0x<64 hex characters>"
+}
+```
+
+The file must be 16 KiB or smaller. Keep an encrypted offline backup of it.
+
+### Fill in the setup wizard
+
+Enter the values from the table below, and upload the credentials file as **Ciphernode Credentials
+JSON**. For contract addresses and deploy blocks, use
+[Contract addresses](/operate#contract-addresses).
+
+### Check the logs
+
+Open **Packages → interfold-ciphernode.public.dappnode.eth → Logs**. On the first start, the log
+shows `Credential setup completed.` and then `Starting Interfold ciphernode.`
+
+</Steps>
+
+| Wizard field                          | Variable                       | Required | Default in the package                                 |
+| ------------------------------------- | ------------------------------ | -------- | ------------------------------------------------------ |
+| Network                               | `NETWORK`                      | Yes      | `mainnet` (choices: `mainnet`, `sepolia`, `localhost`) |
+| RPC URL                               | `RPC_URL`                      | Yes      | None. Must start with `ws://` or `wss://`.             |
+| Chain ID                              | `CHAIN_ID`                     | Yes      | `1`                                                    |
+| Node Address                          | `NODE_ADDRESS`                 | Yes      | None. Must match the key in the credentials file.      |
+| Interfold Contract Address            | `INTERFOLD_CONTRACT`           | Yes      | The mainnet address                                    |
+| Ciphernode Registry Contract          | `CIPHERNODE_REGISTRY_CONTRACT` | Yes      | The mainnet address                                    |
+| Bonding Registry Contract             | `BONDING_REGISTRY_CONTRACT`    | Yes      | The mainnet address                                    |
+| Slashing Manager Contract             | `SLASHING_MANAGER_CONTRACT`    | Yes      | The mainnet address                                    |
+| Fee Token Contract                    | `FEE_TOKEN_CONTRACT`           | Yes      | The mainnet address                                    |
+| Deploy blocks (one for each contract) | `*_DEPLOY_BLOCK`               | Yes      | The mainnet values                                     |
+| Bootstrap Peers                       | `PEERS`                        | No       | Empty: use the DNS bootstrap of `NETWORK`              |
+| Log Level                             | `LOG_LEVEL`                    | No       | `info` (choices: `info`, `debug`, `trace`)             |
+| Extra Options                         | `EXTRA_OPTS`                   | No       | Empty. Added to the `interfold start` arguments.       |
+
+Two more variables are set in the package configuration, not in the wizard. `AVAIL_RPC_URL` defaults
+to `https://avail-rpc.publicnode.com/` for chain ID 1 and `https://turing-rpc.avail.so/rpc` for
+chain ID 11155111. `QUIC_PORT` defaults to `37173`, and the package publishes UDP port 37173.
+
+The package keeps its state in `/data`, on the `ciphernode_data` volume. DAppNode lists this volume
+as a backup target. The wallet key and the libp2p key are encrypted there. The password file is also
+there, so backups of `/data` must be encrypted and access-controlled.
+
+After it stores the credentials, the package deletes the uploaded file. A restart uses the stored
+state and does not need a new upload. An upload with a different password stops startup.
+
+The package health check confirms that the process runs, the files exist, and the QUIC listener is
+bound. It does not prove that the node is synced or registered. Read the logs and the
+[on-chain status](/operate/registration) to confirm that.
+
+  </Tabs.Tab>
+  <Tabs.Tab unmount={false}>
+
+<Steps>
+
+### Install the CLI
+
+Install `interfoldup`, then use it to install a fixed `interfold` release.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/theinterfold/interfold/main/install | bash
+interfoldup install --version v0.18.0
+interfold --version
+```
+
+The last command prints the installed version, for example `interfold 0.18.0`. Add `--system` to
+install into `/usr/local/bin` instead of `~/.local/bin`.
+
+### Save the configuration file
+
+Save the file from [Write the configuration file](#write-the-configuration-file) as
+`interfold.config.yaml` in the default configuration directory:
+
+- Linux: `~/.config/interfold/`
+- macOS: `~/Library/Application Support/interfold/`
+
+The CLI first looks for `interfold.config.yaml` in the current directory and its parent directories,
+then in the default directory. Use `--config <path>` to select a file.
+
+### Store the encryption password
+
+```bash
+interfold password set
+```
+
+The command asks for the password two times. It fails when a password is already set.
+
+### Store the operator key
+
+```bash
+interfold wallet set
+```
+
+The command asks for the private key without showing it. It prints
+`Wallet key has been successfully stored and encrypted.` The node derives its libp2p identity from
+the same key.
+
+### Check the configuration
 
 ```bash
 interfold config check
 ```
 
-```
-Deployment manifest: release v0.12.1
-sepolia:
-  STALE interfold: config has 0x38A8A686…, published is 0x3E856E24…
-  warn  ciphernode_registry: deploy_block 11508403, published is 11534965
-```
+The command must end without a `STALE` line. See
+[Check the configuration](#check-the-configuration).
 
-The command exits non-zero when any address is wrong, so it can gate a restart in a supervisor or a
-CI job. A stale `deploy_block` or an unconfigured optional contract is reported but does not fail
-the check. Use `--chain <name>` to check a single chain, and `--manifest-url <url>` to check against
-a specific manifest instead of the latest release.
-
-### Start Your Node
+### Start the node
 
 ```bash
-# Start in foreground with verbose logging
 interfold start -v
-
-# Or use the node supervisor for multiple nodes
-interfold nodes up --detach
-interfold nodes ps          # Check status
-interfold nodes logs cn1    # View logs
-interfold nodes down        # Stop all nodes
 ```
 
-### CLI Commands Reference
+The log shows `Ciphernode multithread` and `Configured memory-aware compute scheduler`, then the
+first sync. The node runs in the foreground until it gets `SIGINT` or `SIGTERM`.
 
-| Command                            | Description                                          |
-| ---------------------------------- | ---------------------------------------------------- |
-| `interfold start`                  | Start the node in foreground                         |
-| `interfold start -v`               | Start with INFO logging (`-vv`=DEBUG, `-vvv`=TRACE)  |
-| `interfold nodes up`               | Start all configured nodes                           |
-| `interfold nodes up --detach`      | Start all nodes in background                        |
-| `interfold nodes up --exclude x`   | Start all nodes except `x`                           |
-| `interfold nodes down`             | Stop all nodes                                       |
-| `interfold nodes ps`               | List running nodes and their status                  |
-| `interfold nodes start <name>`     | Start an individual node                             |
-| `interfold nodes stop <name>`      | Stop an individual node                              |
-| `interfold nodes status <name>`    | Check specific node status                           |
-| `interfold nodes restart <name>`   | Restart a specific node                              |
-| `interfold nodes purge`            | Purge all local ciphernode data                      |
-| `interfold node validate`          | Check stopped-node state without changing it         |
-| `interfold node validate --repair` | Repair a safe log tail or stale sortition projection |
-| `interfold ciphernode status`      | Show on-chain registration status                    |
-| `interfold config check`           | Compare configured addresses against the manifest    |
-| `interfold net get-peer-id`        | Show your libp2p peer ID                             |
-| `interfold wallet get`             | Show your wallet address                             |
-| `interfold rev`                    | Show the git SHA the CLI was built from              |
-| `interfold purge-all`              | Wipe all local data (use with caution)               |
-| `interfold print-env`              | Print contract addresses as env vars                 |
-| `interfold print-env --vite`       | Print env vars with `VITE_` prefix                   |
-| `interfold print-env --chain x`    | Print env vars for chain `x`                         |
-| `interfold noir status`            | Check ZK prover status                               |
-| `interfold noir setup`             | Install/update ZK prover components                  |
+</Steps>
 
----
+For scripts, `password set --password-stdin` and `wallet set --private-key-stdin` read one line from
+standard input. Do not put secrets in command arguments.
 
-## Method 3: Docker
+<Callout type='info'>
+  On Sepolia, `interfold ciphernode setup --network sepolia` does the file, password, and key steps
+  in one command. It asks for the password, the WebSocket RPC URL, the private key, and the
+  configuration directory. It writes the Sepolia addresses that the CLI was built with. It does not
+  write `data_availability`, so add that entry before you start the node. The command supports only
+  `sepolia` and `local`, and it refuses to run when a configuration file already exists.
+</Callout>
 
-For containerized deployments, you can run the ciphernode Docker image directly.
+Run the node under a process manager, for example systemd. The node exits with an error when a chain
+gateway or the event storage fails, and when startup takes longer than `startup_timeout_secs`. The
+process manager restarts it. Give the node more than 60 seconds to stop (see
+[Stop and restart](#stop-and-restart)).
 
-### Pull the Image
+  </Tabs.Tab>
+  <Tabs.Tab unmount={false}>
 
-Pull and run an explicit versioned release tag for an operator node. Do not use the mutable `latest`
-tag:
+The release image `ghcr.io/theinterfold/ciphernode` contains the `interfold` binary at
+`/usr/local/bin/interfold`. It runs as the user `ciphernode` (UID 1000) and is built for
+`linux/amd64`. The steps below run the binary directly with a persistent volume.
+
+<Steps>
+
+### Pull a versioned image
 
 ```bash
-export CIPHERNODE_IMAGE='ghcr.io/theinterfold/ciphernode:<release-version>'
+export CIPHERNODE_IMAGE='ghcr.io/theinterfold/ciphernode:0.18.0'
 docker pull "$CIPHERNODE_IMAGE"
 ```
 
-### Create Configuration
+Image tags use the release version without a `v` prefix.
 
-Create a `config.yaml` file:
+### Save the configuration file
 
-```yaml
-node:
-  network: sepolia
-  address: '0xYourAddress'
-  quic_port: 9091
-  autonetkey: true
-  autopassword: true
+Save the file from [Write the configuration file](#write-the-configuration-file) as `config.yaml` in
+the current directory. The commands below mount it into the container.
 
-chains:
-  - name: sepolia
-    rpc_url: 'wss://ethereum-sepolia-rpc.publicnode.com'
-    chain_id: 11155111
-    contracts:
-      interfold:
-        address: '0x3E856E24c7a95d0e04d387f847DA6FA9f6F6c20C'
-        deploy_block: 11534993
-      ciphernode_registry:
-        address: '0x374F4542eC634d5437Dd65020781A9D9Df9c2AB8'
-        deploy_block: 11534965
-      bonding_registry:
-        address: '0x90250Dc48CBe109fFaA02AeAFbFBdbF12D7BD4d4'
-        deploy_block: 11534966
-      slashing_manager:
-        address: '0x489FB674B143E48eaCAaC999B3DF9EA6E95eA79f'
-        deploy_block: 11534963
-      fee_token:
-        address: '0xC35B783cA97710be47Fc81D10dADc895EfcD865c'
-        deploy_block: 11534960
-      faucet:
-        address: '0x6e281411C055BEEbD74bDFcB9aB095aa98907F85'
-        deploy_block: 11534982
+### Create a data volume
+
+```bash
+docker volume create ciphernode-data
 ```
 
-### Create the Credentials Secret
+The volume holds the encryption password, the encrypted keys, the event log, and the circuit files.
 
-The image entrypoint requires a JSON secret mounted at `/run/secrets/secrets.json`. It does not read
-wallet credentials from `PRIVATE_KEY` or `ENCRYPTION_PASSWORD` environment variables. Create this
-file on the host with restrictive permissions; do not commit it, paste it into shell history, or
-reuse the example/development keys from the repository:
+### Prepare the secrets
+
+Create two files that each contain one line: the password and the operator private key.
 
 ```bash
 umask 077
-install -m 600 /dev/null secrets.json
-${EDITOR:-vi} secrets.json
+${EDITOR:-vi} password.txt
+${EDITOR:-vi} operator-key.txt
 ```
 
-```json
-{
-  "password": "<strong-key-encryption-password>",
-  "private_key": "<operator-wallet-private-key>"
-}
+### Store the password and the key
+
+```bash
+docker run --rm -i \
+  -v ciphernode-data:/home/ciphernode/.config/interfold \
+  -v "$PWD/config.yaml":/home/ciphernode/.config/interfold/config.yaml:ro \
+  --entrypoint interfold "$CIPHERNODE_IMAGE" \
+  --config /home/ciphernode/.config/interfold/config.yaml \
+  password set --password-stdin < password.txt
+
+docker run --rm -i \
+  -v ciphernode-data:/home/ciphernode/.config/interfold \
+  -v "$PWD/config.yaml":/home/ciphernode/.config/interfold/config.yaml:ro \
+  --entrypoint interfold "$CIPHERNODE_IMAGE" \
+  --config /home/ciphernode/.config/interfold/config.yaml \
+  wallet set --private-key-stdin < operator-key.txt
 ```
 
-Both values are required. The wallet command derives the libp2p identity from the operator wallet
-key. Back up the encrypted node data and this password through your secret-management system. Keep
-the wallet key in the project-approved signing system.
+The commands print `Password successfully set.` and
+`Wallet key has been successfully stored and encrypted.`
 
-### Run the Container
+### Remove the plaintext files
+
+```bash
+rm password.txt operator-key.txt
+```
+
+Keep the password and the key in your secret management system. You need the password again only to
+restore the volume on a new host.
+
+### Start the container
 
 ```bash
 docker run -d \
   --name ciphernode \
   --restart unless-stopped \
-  --stop-timeout 300 \
-  -v $(pwd)/config.yaml:/home/ciphernode/.config/interfold/config.yaml:ro \
-  -v $(pwd)/secrets.json:/run/secrets/secrets.json:ro \
-  -v ciphernode-data:/home/ciphernode/.local/share/interfold \
+  --stop-timeout 65 \
+  -v ciphernode-data:/home/ciphernode/.config/interfold \
+  -v "$PWD/config.yaml":/home/ciphernode/.config/interfold/config.yaml:ro \
   -p 9091:9091/udp \
-  "$CIPHERNODE_IMAGE"
+  --entrypoint interfold "$CIPHERNODE_IMAGE" \
+  --config /home/ciphernode/.config/interfold/config.yaml \
+  start -v
 ```
 
-### Docker Compose
-
-For a more manageable setup, use Docker Compose:
-
-```yaml
-services:
-  ciphernode:
-    image: ${CIPHERNODE_IMAGE:?CIPHERNODE_IMAGE-must-use-a-versioned-release-tag}
-    restart: unless-stopped
-    stop_grace_period: 5m
-    volumes:
-      - ./config.yaml:/home/ciphernode/.config/interfold/config.yaml:ro
-      - ciphernode-data:/home/ciphernode/.local/share/interfold
-    secrets:
-      - source: ciphernode_credentials
-        target: secrets.json
-    ports:
-      - '9091:9091/udp'
-
-secrets:
-  ciphernode_credentials:
-    file: ./secrets.json
-
-volumes:
-  ciphernode-data:
-```
-
-Before starting after a crash, restore, or binary upgrade, keep the container stopped and run the
-same release's offline integrity check against the mounted configuration and data:
-
-```bash
-docker run --rm \
-  -v $(pwd)/config.yaml:/home/ciphernode/.config/interfold/config.yaml:ro \
-  -v ciphernode-data:/home/ciphernode/.local/share/interfold \
-  --entrypoint interfold \
-  "$CIPHERNODE_IMAGE" \
-  node validate --config /home/ciphernode/.config/interfold/config.yaml
-```
-
-Do not start the node when validation reports `FAIL`; preserve a copy of the volume before repair,
-restore, or controlled resynchronization.
-
-If validation reports only a recoverable uncommitted event-log tail, or a stale sortition projection
-while the event log, schema, and snapshot cursor checks all pass, keep the node stopped and run the
-same command with `--repair`. This repair can re-index complete uncommitted frames, truncate a torn
-physical suffix, or rebuild the derived sortition projection from intact events. It never removes an
-indexed event and cannot repair committed corruption or an unsupported storage schema.
-
-### Persistent Event Data
-
-The node's append-only event log is its durable source of truth. Events below the 32 MiB framed
-commit-log limit stay inline. Larger local events, including proof work plans, are stored as
-content-addressed files in an `event-blobs-v1` directory inside the event-log directory. Each blob
-is limited to 512 MiB. The node checks its recorded length and SHA-256 hash whenever it opens the
-log.
-
-Startup removes only orphan blob files that have no committed event-log reference. A blob referenced
-by protocol history remains part of the node's durable state after an E3 completes. Back up the full
-data volume, including `event-blobs-v1`, and monitor disk growth. Do not delete individual blob
-files to reclaim space; that makes the referenced event history unreadable.
-
-An unrecoverable event-log write or flush failure stops the node so its supervisor can restart it.
-Treat repeated storage failures as an infrastructure incident. Stop the node, preserve the volume,
-and run the offline validator before another restart.
-
-### View Logs
+### Read the logs
 
 ```bash
 docker logs -f ciphernode
 ```
 
----
+</Steps>
 
-## Configuration Reference
+The same service in Docker Compose:
 
-### Node Configuration
+```yaml filename="docker-compose.yml"
+services:
+  ciphernode:
+    image: ${CIPHERNODE_IMAGE:?set CIPHERNODE_IMAGE to a versioned release tag}
+    restart: unless-stopped
+    stop_grace_period: 65s
+    entrypoint: ['interfold']
+    command: ['--config', '/home/ciphernode/.config/interfold/config.yaml', 'start', '-v']
+    volumes:
+      - ciphernode-data:/home/ciphernode/.config/interfold
+      - ./config.yaml:/home/ciphernode/.config/interfold/config.yaml:ro
+    ports:
+      - '9091:9091/udp'
 
-| Field          | Description                                    | Default                    |
-| -------------- | ---------------------------------------------- | -------------------------- |
-| `network`      | P2P profile: `mainnet`, `sepolia`, or `local`  | Inferred from chain ID     |
-| `network_id`   | Stable 32-byte hex ID for a custom P2P network | Required for custom names  |
-| `address`      | Your Ethereum address                          | Required                   |
-| `quic_port`    | UDP port for QUIC/libp2p networking            | `9091`                     |
-| `peers`        | Explicit bootstrap overrides                   | Profile DNS bootstrap      |
-| `autopassword` | Auto-generate password if missing              | `false`                    |
-| `autowallet`   | Auto-load wallet from environment              | `false`                    |
-| `data_dir`     | Override data directory                        | `~/.local/share/interfold` |
-| `config_dir`   | Override config directory                      | `~/.config/interfold`      |
-
-### Chain Configuration
-
-| Field       | Description                          | Required |
-| ----------- | ------------------------------------ | -------- |
-| `name`      | Chain identifier                     | Yes      |
-| `rpc_url`   | WebSocket RPC endpoint               | Yes      |
-| `chain_id`  | EIP-155 chain ID                     | No       |
-| `contracts` | Contract addresses and deploy blocks | Yes      |
-
-Set `chain_id` even though it is optional: `interfold config check` compares it against the manifest
-rather than querying the endpoint, so it is the only thing that catches an `rpc_url` pointing at the
-wrong network. Without it, a config whose addresses all match but whose RPC points elsewhere passes
-the check.
-
-### Contract Addresses
-
-Each chain requires these contract addresses:
-
-| Contract              | Description                          | Required for ciphernode |
-| --------------------- | ------------------------------------ | ----------------------- |
-| `interfold`           | Main Interfold coordinator contract  | Yes                     |
-| `ciphernode_registry` | Tracks registered operators          | Yes                     |
-| `bonding_registry`    | Manages bonds and tickets            | Yes                     |
-| `slashing_manager`    | Manages slashing penalties           | Yes                     |
-| `e3_program`          | E3 Program contract address          | No                      |
-| `fee_token`           | Fee token address for E3 requests    | No                      |
-| `faucet`              | Testnet faucet for FOLD + fee tokens | No                      |
-
-Each contract can be specified as a simple address string or with a deploy block for faster syncing:
-
-```yaml
-contracts:
-  interfold:
-    address: '0x3E856E24c7a95d0e04d387f847DA6FA9f6F6c20C'
-    deploy_block: 11534993
-  ciphernode_registry: '0x374F4542eC634d5437Dd65020781A9D9Df9c2AB8'
-  faucet:
-    address: '0x6e281411C055BEEbD74bDFcB9aB095aa98907F85'
-    deploy_block: 11534982
+volumes:
+  ciphernode-data:
 ```
 
----
+<Callout type='warning'>
+  Do not use the default entrypoint of the image (`ciphernode-entrypoint.sh`) with a mounted secrets
+  file. That script reads `/run/secrets/secrets.json` and then deletes it. Docker cannot delete a
+  bind-mounted file, so the script stops before it starts the node. The script also needs the
+  secrets file again at each container start.
+</Callout>
 
-## Networking Requirements
+The node refuses to start when the container has less than 17 GiB of memory. On Docker Desktop,
+increase the memory of the Docker virtual machine. See [Requirements](/operate/requirements).
 
-### Firewall Configuration
+  </Tabs.Tab>
+</Tabs>
 
-Open the following ports:
+## Check the configuration
 
-| Port   | Protocol | Purpose                    |
-| ------ | -------- | -------------------------- |
-| `9091` | UDP      | QUIC/libp2p P2P networking |
+Contract addresses change when the protocol is deployed again. A node that points at an old address
+syncs nothing and reports no error. Before the first start, and after each deployment notice,
+compare your configuration with the published deployment manifest:
 
-> **Important:** Port `50505` (TCP) is used for local CLI commands and binds to `localhost` only.
-> **Do not expose this port externally** - it provides control plane access to your node.
-
-### Bootstrap Peers
-
-Set the network profile and omit `peers` to use its DNS bootstrap address:
-
-```yaml
-node:
-  network: mainnet
+```bash
+interfold config check
 ```
 
-Mainnet uses `/dnsaddr/bootstrap.interfold.network`. Sepolia uses
-`/dnsaddr/bootstrap-sepolia.interfold.network`. The profile scopes every libp2p protocol, so a node
-cannot join the other network even if DNS or an explicit peer address is wrong.
+The command downloads `manifest.json` from the latest GitHub release and compares each chain entry.
+Example output for a current Sepolia entry:
 
-Or specify individual peers:
+```text
+Deployment manifest: release v0.18.0
+sepolia: up to date
+  note  sepolia is a mock deployment - proofs are accepted without being verified
+```
+
+Example output for a stale entry:
+
+```text
+sepolia:
+  STALE interfold: config has 0x38A8A686…, published is 0x3E856E24…
+  warn  ciphernode_registry: deploy_block 11508403, published is 11534965
+```
+
+| Line    | Meaning                                                            | Fails the check |
+| ------- | ------------------------------------------------------------------ | --------------- |
+| `STALE` | A contract address or the `chain_id` does not match the manifest.  | Yes             |
+| `warn`  | A `deploy_block` does not match the manifest.                      | No              |
+| `note`  | A published contract is not configured, or the network uses mocks. | No              |
+
+The command exits with a non-zero status when a line is `STALE`. You can use it as a gate before a
+restart in a process manager or a CI job. Use `--chain <name>` to check one chain. Use
+`--manifest-url <url>` to check against a specific manifest file.
+
+## Watch the node
+
+The `-v` flag sets the log level. The flags are global, so they work with every command.
+
+| Flag   | Level | Output                   |
+| ------ | ----- | ------------------------ |
+| (none) | WARN  | Warnings and errors only |
+| `-v`   | INFO  | Normal operation         |
+| `-vv`  | DEBUG | Detailed debug output    |
+| `-vvv` | TRACE | Full trace               |
+| `-q`   | ERROR | Errors only              |
+
+Logs at `-vv` and higher can contain the endpoint URL. If the URL contains an API key, remove it
+before you share logs.
+
+These events show the progress of an E3 in the node log:
+
+| Event                       | Meaning                                                   |
+| --------------------------- | --------------------------------------------------------- |
+| `E3Requested`               | The node saw a new E3 request.                            |
+| `TicketGenerated`           | The node calculated its best sortition ticket for the E3. |
+| `CiphernodeSelected`        | The node is a member of the committee.                    |
+| `KeyshareCreated`           | The node made its key share.                              |
+| `PublicKeyAggregated`       | The committee public key is ready to publish.             |
+| `CommitteePublished`        | The committee public key is on-chain.                     |
+| `CiphertextOutputPublished` | The encrypted output is on-chain. Decryption starts.      |
+| `DecryptionshareCreated`    | The node made its decryption share.                       |
+| `PlaintextAggregated`       | The decrypted result is ready to publish.                 |
+| `PlaintextOutputPublished`  | The result is on-chain.                                   |
+| `E3RequestComplete`         | The node started its cleanup for the E3.                  |
+
+When the node runs, some commands run inside the node through the local control port:
+`ciphernode status`, `wallet get`, `net get-peer-id`, `config get`, `rev`,
+`print-env --chain <name>`, `noir status`, and `events query`. See
+[Commands that run inside a running node](/reference/cli#commands-that-run-inside-a-running-node).
+For a visual view, turn on the [node dashboard](/operate/dashboard).
+
+## Stop and restart
+
+On `SIGINT` or `SIGTERM`, the node stops its actors and writes its event log and store to disk. This
+shutdown has a limit of 60 seconds. Set the stop timeout of your process manager above 60 seconds.
+The DAppNode package and the examples on this page use 65 seconds.
+
+The node locks its data directory (`interfold.lock`) while it runs. A second node process with the
+same data directory does not start.
+
+After a crash, a restore, or a binary upgrade, check the stored state before you start the node. Do
+these steps with the node stopped:
+
+<Steps>
+
+### Validate the state
+
+```bash
+interfold node validate
+```
+
+The command changes no files. It ends with `VALIDATION PASSED` or reports `FAIL` lines, and it exits
+with a non-zero status on a failure. In Docker, run it with the same volume and
+`--entrypoint interfold`, as in the steps above.
+
+### Repair a recoverable tail
+
+If the report shows only an uncommitted event-log tail, or a stale sortition projection, run:
+
+```bash
+interfold node validate --repair
+```
+
+The repair indexes complete uncommitted frames again, cuts a torn tail, or rebuilds the sortition
+projection from intact events. It never removes an indexed event.
+
+### Start the node
+
+Start the node only when the validation passes.
+
+</Steps>
+
+<Callout type='warning'>
+  Do not start a node when validation reports `FAIL` and the repair cannot fix it. Copy the data
+  directory before you try a restore or a new sync. The repair cannot fix corruption in committed
+  records or a storage schema that the binary does not support.
+</Callout>
+
+When the node cannot write or flush its event log, it stops so that the process manager can restart
+it. Repeated storage failures are an infrastructure problem. Stop the node, keep a copy of the data,
+and run the validation before the next start. When a release changes the storage schema, see
+[Upgrades](/operate/upgrades).
+
+## Data and backups
+
+The node keeps all state in a `.interfold` directory next to its configuration file. The password
+file is in `.interfold/config/<name>/`. The key store and the event log are in
+`.interfold/data/<name>/`. Run `interfold config get db_file` to print the path on your host. The
+[requirements](/operate/requirements#disk-and-storage) page lists the contents.
+
+Back up the complete `.interfold` directory as one unit, while the node is stopped. The event log
+refers to files in its `event-blobs-v1` directory. Do not delete those files to free space.
+
+<Callout type='warning'>
+  The key store holds the encrypted operator key, and the password file is next to it. A copy of the
+  directory can sign as your operator. Encrypt backups and control access to them. Do not run two
+  nodes from copies of the same directory. See [Migrate a Node](/operate/migrating).
+</Callout>
+
+## Networking
+
+Open the QUIC UDP port (default `9091`) for inbound traffic. Do not open the control port `50505`.
+[Requirements](/operate/requirements#network-ports) lists all ports.
+
+When `peers` is empty, the node dials the DNS bootstrap address of its network profile. Mainnet uses
+`/dnsaddr/bootstrap.interfold.network`. Sepolia uses `/dnsaddr/bootstrap-sepolia.interfold.network`.
+The profile also sets a network ID that every Interfold libp2p protocol uses. A mainnet node and a
+Sepolia node therefore cannot join the same network, also when a peer address is wrong.
+
+To dial specific peers, list them in the configuration:
 
 ```yaml
 node:
   network: mainnet
   peers:
     - '/dns4/node1.example.com/udp/9091/quic-v1'
-    - '/ip4/192.168.1.100/udp/9091/quic-v1'
+    - '/ip4/192.0.2.10/udp/9091/quic-v1'
 ```
 
----
+You can also add a peer at start with `interfold start --peer <multiaddr>`. A mainnet profile
+refuses the Sepolia bootstrap address. A Sepolia profile replaces the mainnet bootstrap address with
+the Sepolia one.
 
-## Data Directories
+## Command reference
 
-| Directory                        | Contents                          |
-| -------------------------------- | --------------------------------- |
-| `~/.config/interfold/`           | Configuration files, network keys |
-| `~/.local/share/interfold/`      | Databases, job data, keystores    |
-| `~/.local/share/interfold/jobs/` | Per-E3 secret shares and state    |
+The commands on this page are `start`, `config check`, `password set`, `wallet set`,
+`node validate`, and `ciphernode setup`. Global flags work with every command: `--config <path>`,
+`--name <profile>`, `-v`, and `-q`. The [CLI Reference](/reference/cli) lists every command and
+flag. For a schema change that needs `interfold node reset-data`, see [Upgrades](/operate/upgrades).
 
-> Back up these directories regularly. The `jobs/` directory contains encrypted key shares for
-> active E3s - losing this data while participating in a committee may result in slashing.
+## Next steps
 
----
-
-## Monitoring
-
-### Log Levels
-
-Control verbosity with the `-v` flag:
-
-| Flag   | Level | Description              |
-| ------ | ----- | ------------------------ |
-| (none) | WARN  | Warnings and errors only |
-| `-v`   | INFO  | Normal operation logs    |
-| `-vv`  | DEBUG | Detailed debug output    |
-| `-vvv` | TRACE | Full trace logging       |
-
-### Key Events to Watch
-
-| Event                       | Meaning                               |
-| --------------------------- | ------------------------------------- |
-| `E3Requested`               | New computation request detected      |
-| `TicketGenerated`           | Your sortition ticket was calculated  |
-| `CiphernodeSelected`        | You were selected for a committee     |
-| `KeyshareCreated`           | Your key share was generated          |
-| `PublicKeyAggregated`       | Local public key is ready to publish  |
-| `CommitteePublished`        | Public key is confirmed on-chain      |
-| `CiphertextOutputPublished` | Time to generate decryption share     |
-| `DecryptionshareCreated`    | Your decryption share was published   |
-| `PlaintextAggregated`       | Local result is ready for publication |
-| `PlaintextOutputPublished`  | Result is confirmed on-chain          |
-| `E3RequestComplete`         | Confirmed request cleanup started     |
-
----
-
-## Next Steps
-
-Once your node is running:
-
-1. **[Register & Ciphernode bond](./registration)** - Bond FOLD and register as an operator
-2. **[Add Tickets](./tickets-and-sortition)** - Purchase tickets to participate in sortition
-
-For setup and operator support, join the
-[Interfold technical chat](https://t.me/interfoldhq_technical).
+<LinkCards min={230}>
+  <LinkCard title='Registration & Bonding' href='/operate/registration' icon='coin' tag='Set up'>
+    Authorize a bond owner, bond FOLD, register the operator, and buy tickets.
+  </LinkCard>
+  <LinkCard title='RPC Endpoints' href='/operate/rpc-endpoints' icon='network' tag='Set up'>
+    Test the log history of an endpoint and read the sync messages.
+  </LinkCard>
+  <LinkCard title='Node Dashboard' href='/operate/dashboard' icon='dashboard' tag='Operate'>
+    Watch the node events and status in a local web page.
+  </LinkCard>
+  <LinkCard title='Upgrades' href='/operate/upgrades' icon='upgrade' tag='Maintain'>
+    Install a new release without a gap in committee work.
+  </LinkCard>
+</LinkCards>
