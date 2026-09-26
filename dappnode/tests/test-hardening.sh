@@ -284,7 +284,7 @@ assert_contains "$ROOT_DIR/docker-compose.yml" "UPSTREAM_VERSION: $DAPPNODE_UPST
 assert_contains "$ROOT_DIR/docker-compose.yml" "ciphernode.interfold-ciphernode.public.dappnode.eth:$DAPPNODE_VERSION"
 assert_contains "$ROOT_DIR/Dockerfile" "ARG UPSTREAM_VERSION=$DAPPNODE_UPSTREAM_VERSION"
 assert_contains "$ROOT_DIR/docker-compose.yml" "INTERFOLD_CONTRACT: '0x28cF63B459e6218C69EA97ea7D90541cf648c715'"
-assert_contains "$ROOT_DIR/docker-compose.yml" "SLASHING_MANAGER_CONTRACT: '0x974E865B1BB24AF2a9ef8204AdEA9251Cc7C5FD9'"
+assert_contains "$ROOT_DIR/docker-compose.yml" "SLASHING_MANAGER_CONTRACT: '0x753109Ee36Dc65cC178875AddA30C6433e5bEEe4'"
 assert_contains "$ROOT_DIR/healthcheck.sh" '/data/.interfold/data/_default/db'
 
 # Health probe regression: require the exact process/config, protected files,

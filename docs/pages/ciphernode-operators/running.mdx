@@ -125,8 +125,8 @@ chains:
         address: '0x0ec90465095C21830BEcED07e032809A2Bd2915F'
         deploy_block: 25473398
       slashing_manager:
-        address: '0x974E865B1BB24AF2a9ef8204AdEA9251Cc7C5FD9'
-        deploy_block: 25786375
+        address: '0x753109Ee36Dc65cC178875AddA30C6433e5bEEe4'
+        deploy_block: 25998899
       fee_token:
         address: '0xdC035D45d973E3EC169d2276DDab16f1e407384F'
         deploy_block: 20663730
@@ -271,7 +271,6 @@ node:
   address: '0xYourAddress'
   quic_port: 9091
   autonetkey: true
-  autopassword: true
 
 chains:
   - name: sepolia
@@ -300,10 +299,11 @@ chains:
 
 ### Create the Credentials Secret
 
-The image entrypoint requires a JSON secret mounted at `/run/secrets/secrets.json`. It does not read
-wallet credentials from `PRIVATE_KEY` or `ENCRYPTION_PASSWORD` environment variables. Create this
-file on the host with restrictive permissions; do not commit it, paste it into shell history, or
-reuse the example/development keys from the repository:
+On the first boot, the image entrypoint requires a JSON secret mounted at
+`/run/secrets/secrets.json`. It does not read wallet credentials from `PRIVATE_KEY` or
+`ENCRYPTION_PASSWORD` environment variables. Create this file on the host with restrictive
+permissions; do not commit it, paste it into shell history, or reuse the example/development keys
+from the repository:
 
 ```bash
 umask 077
@@ -321,6 +321,12 @@ ${EDITOR:-vi} secrets.json
 Both values are required. The wallet command derives the libp2p identity from the operator wallet
 key. Back up the encrypted node data and this password through your secret-management system. Keep
 the wallet key in the project-approved signing system.
+
+The entrypoint reads this file only when the volume has no key file or no wallet key. After it uses
+the file, it tries to delete it. A read-only mount stays in place, and the boot continues.
+
+Do not set `autopassword` in `config.yaml` for the image. With `autopassword`, the node creates a
+random password before the entrypoint can set the password from this file.
 
 ### Run the Container
 
@@ -370,7 +376,6 @@ same release's offline integrity check against the mounted configuration and dat
 docker run --rm \
   -v $(pwd)/config.yaml:/home/ciphernode/.config/interfold/config.yaml:ro \
   -v ciphernode-data:/home/ciphernode/.local/share/interfold \
-  --entrypoint interfold \
   "$CIPHERNODE_IMAGE" \
   node validate --config /home/ciphernode/.config/interfold/config.yaml
 ```
@@ -383,6 +388,121 @@ while the event log, schema, and snapshot cursor checks all pass, keep the node 
 same command with `--repair`. This repair can re-index complete uncommitted frames, truncate a torn
 physical suffix, or rebuild the derived sortition projection from intact events. It never removes an
 indexed event and cannot repair committed corruption or an unsupported storage schema.
+
+### Where the Node Stores Its State
+
+The image sets `E3_CONFIG_DIR=/home/ciphernode/.local/share/interfold/config` and
+`E3_DATA_DIR=/home/ciphernode/.local/share/interfold/data`. Thus the node keeps all of its state on
+the volume at `/home/ciphernode/.local/share/interfold`:
+
+| Path on the volume    | Contents                                                                        |
+| --------------------- | ------------------------------------------------------------------------------- |
+| `config/_default/key` | Key file with the password that encrypts the stored keys                        |
+| `data/_default/db`    | Key/value store: wallet key, libp2p keypair, key shares, and protocol snapshots |
+| `data/_default/log.*` | Event logs                                                                      |
+
+A restart, a new container, and a new image all keep this state. `docker rm` does not delete a named
+volume.
+
+These variables override `config.yaml`, so the entrypoint never uses them to move state that exists.
+If `config.yaml` sets `config_dir`, `data_dir`, `key_file`, or `db_file`, the node uses that
+location. If a key file or database exists at the location that earlier images used, for example on
+a directory that is mounted there, the node keeps using it. If state exists both there and on the
+volume, the container does not start. Keep only the state that the node last used, and start the
+container again. You can also set your own `E3_CONFIG_DIR` and `E3_DATA_DIR` for the container.
+
+In these cases the node does not use the image variables, so run other `interfold` commands through
+the entrypoint, which chooses the same location. For example, run
+`docker exec ciphernode ciphernode-entrypoint.sh wallet get --config /home/ciphernode/.config/interfold/config.yaml`.
+The validation command above also runs through the entrypoint.
+
+### Move State from an Earlier Image
+
+Earlier images did not set these variables. A node that started from such an image keeps its state
+inside the container, in `/home/ciphernode/.config/interfold/.interfold`. That directory is not on
+the volume. When you remove or recreate that container, you lose the key file, the key/value store,
+and the event log. The key/value store holds the key shares of the node, and the chain cannot
+restore them.
+
+> **Warning:** Do not remove or recreate the old container before you copy its state. `docker rm`,
+> `docker compose down`, and `docker compose up` with a new image all remove the old container.
+> Never do this migration with `interfold node reset-data` or `interfold nodes purge`. These
+> commands delete the state that you must keep.
+
+Do this procedure one time for each node. Do it only when the new image accepts the stored schema. A
+node that serves an active E3 on v0.17.0 must stay on v0.17.0. See
+[Upgrade a node that serves an active E3](/ciphernode-operators/upgrades#upgrade-a-node-that-serves-an-active-e3).
+
+The commands use the container name `ciphernode` and the volume name `ciphernode-data`. For Docker
+Compose, use the names that `docker ps -a` and `docker volume ls` show.
+
+1. Stop the old container. Do not remove it.
+
+   ```bash
+   docker stop --time 300 ciphernode
+   ```
+
+2. Make sure that the volume has no `data` or `config` directory. If the output shows either name,
+   stop and contact the protocol team.
+
+   ```bash
+   docker run --rm \
+     -v ciphernode-data:/home/ciphernode/.local/share/interfold \
+     --entrypoint ls \
+     "$CIPHERNODE_IMAGE" \
+     -A /home/ciphernode/.local/share/interfold
+   ```
+
+3. Copy the `data` and `config` directories from the old container to the volume. `docker cp` sends
+   each directory as a tar stream, so the key file does not go to the host disk.
+
+   ```bash
+   for dir in data config; do
+     docker cp "ciphernode:/home/ciphernode/.config/interfold/.interfold/$dir" - |
+       docker run --rm -i \
+         -v ciphernode-data:/home/ciphernode/.local/share/interfold \
+         --entrypoint tar \
+         "$CIPHERNODE_IMAGE" \
+         -xf - -C /home/ciphernode/.local/share/interfold
+   done
+   ```
+
+4. Make sure that the copy is complete. The output must show `key`, `db`, and `log.0`. If a name is
+   missing, stop and contact the protocol team.
+
+   ```bash
+   docker run --rm \
+     -v ciphernode-data:/home/ciphernode/.local/share/interfold \
+     --entrypoint ls \
+     "$CIPHERNODE_IMAGE" \
+     /home/ciphernode/.local/share/interfold/config/_default \
+     /home/ciphernode/.local/share/interfold/data/_default
+   ```
+
+5. Run the offline validation command from [Docker Compose](#docker-compose) with the new image.
+   Continue only if the report shows `on-disk schema version 7 matches this binary` and ends with
+   `VALIDATION PASSED — state is intact and consistent.` If validation fails, or if it shows
+   `empty store will be initialized`, do not start the new image. Keep the old container and the
+   volume, and contact the protocol team.
+
+6. Start the new image. For `docker run`, rename the old container first, then use the command in
+   [Run the Container](#run-the-container):
+
+   ```bash
+   docker rename ciphernode ciphernode-old
+   ```
+
+   For Docker Compose, set the new image and run `docker compose up -d`. This command replaces the
+   old container.
+
+7. Make sure that the log shows `Ciphernode release is accepted`, and that this command shows the
+   operator address:
+
+   ```bash
+   docker exec ciphernode ciphernode-entrypoint.sh wallet get --config /home/ciphernode/.config/interfold/config.yaml
+   ```
+
+8. For `docker run`, remove the old container only after step 7 succeeds.
 
 ### Persistent Event Data
 

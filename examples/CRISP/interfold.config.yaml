@@ -50,8 +50,8 @@ chains:
         address: "0x0ec90465095C21830BEcED07e032809A2Bd2915F"
         deploy_block: 25473398
       slashing_manager:
-        address: "0x974E865B1BB24AF2a9ef8204AdEA9251Cc7C5FD9"
-        deploy_block: 25786375
+        address: "0x753109Ee36Dc65cC178875AddA30C6433e5bEEe4"
+        deploy_block: 25998899
       fee_token:
         address: "0xdC035D45d973E3EC169d2276DDab16f1e407384F"
         deploy_block: 20663730

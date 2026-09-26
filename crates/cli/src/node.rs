@@ -37,10 +37,20 @@ pub enum NodeCommands {
     ///
     /// Takes the node's exclusive process fence, so it refuses while the node
     /// is running. Stop the node first.
+    ///
+    /// Refuses when this node holds key-share state for an E3 that it has not
+    /// seen complete. The chain cannot restore a deleted key share.
     ResetData {
         /// Confirm the deletion.
         #[arg(long)]
         yes: bool,
+
+        /// Delete the state even when this node holds key-share state for an
+        /// E3 that it has not seen complete. The node permanently loses its
+        /// key share for that E3. Check first that each listed E3 is complete
+        /// or failed on chain.
+        #[arg(long)]
+        allow_active_e3s: bool,
     },
 }
 
@@ -58,15 +68,23 @@ pub async fn execute(out: Console, command: NodeCommands, config: &AppConfig) ->
                 bail!("node validation failed");
             }
         }
-        NodeCommands::ResetData { yes } => {
-            reset_data(out, config, yes).await?;
+        NodeCommands::ResetData {
+            yes,
+            allow_active_e3s,
+        } => {
+            reset_data(out, config, yes, allow_active_e3s).await?;
         }
     }
     Ok(())
 }
 
 /// Clear durable state for one node, keeping the operator identity.
-async fn reset_data(out: Console, config: &AppConfig, yes: bool) -> Result<()> {
+async fn reset_data(
+    out: Console,
+    config: &AppConfig,
+    yes: bool,
+    allow_active_e3s: bool,
+) -> Result<()> {
     if !yes {
         bail!(
             "This deletes the durable state for node '{}' at {}. The operator key and libp2p \
@@ -79,7 +97,7 @@ async fn reset_data(out: Console, config: &AppConfig, yes: bool) -> Result<()> {
 
     // The fence is taken inside the entrypoint, which holds it across the whole
     // delete-and-restore so a concurrent start cannot interleave.
-    let outcome = e3_entrypoint::nodes::reset_data::execute(config).await?;
+    let outcome = e3_entrypoint::nodes::reset_data::execute(config, allow_active_e3s).await?;
 
     log!(out, "Removed {}", outcome.db_file.display());
     for path in &outcome.log_paths {

@@ -226,18 +226,18 @@
       }
     },
     "SlashingEvidenceLib": {
-      "address": "0x689Ac1548f2943d5B29DF4E0260518F2871eb4cE",
-      "blockNumber": 25786373
+      "address": "0x09E5b1B964Bd523aA121b20Ba6a7D40305A84BB8",
+      "blockNumber": 25998898
     },
     "SlashingManager": {
-      "address": "0x974E865B1BB24AF2a9ef8204AdEA9251Cc7C5FD9",
-      "blockNumber": 25786375,
+      "address": "0x753109Ee36Dc65cC178875AddA30C6433e5bEEe4",
+      "blockNumber": 25998899,
       "constructorArgs": {
         "initialDelay": "172800",
         "admin": "0x652a31c669f9AB37f6040f279139a75D04F2679e"
       },
       "libraries": {
-        "SlashingEvidenceLib": "0x689Ac1548f2943d5B29DF4E0260518F2871eb4cE"
+        "SlashingEvidenceLib": "0x09E5b1B964Bd523aA121b20Ba6a7D40305A84BB8"
       }
     },
     "PoseidonT3": {
