@@ -17,8 +17,9 @@ General FOLD transferability started on Aug 19, 2026, as part of the Interfold l
   2026 at 14:00:23 UTC. `tgeTimestamp()` on the FOLD contract returns `1787148023`.
 </Callout>
 
-This guide explains when transferability can be enabled and what changes when it is active. It also
-tells auction participants how to claim FOLD, and where to find official Interfold resources.
+This guide explains how general transferability was enabled and what changed when it became active.
+It also tells auction participants how to claim FOLD, and where to find official Interfold
+resources.
 
 <Callout type='warning'>
   Use only official Interfold links and verified contract addresses. Do not trust unsolicited DMs,
@@ -27,24 +28,22 @@ tells auction participants how to claim FOLD, and where to find official Interfo
 
 ## Timing
 
-### When does general FOLD transferability begin?
+### When did general FOLD transferability begin?
 
-General FOLD transferability can be enabled at or after:
+General FOLD transferability could be enabled at or after:
 
 **Aug 19 at 14:00 UTC (10 AM ET)**
 
 **Unix timestamp:** `1787148000`
 
-At or after that timestamp, anyone can call the `tge()` function on the FOLD contract to enable
+At or after that timestamp, anyone could call the `tge()` function on the FOLD contract to enable
 general transferability.
 
-The timestamp does not automatically enable transfers by itself. General transferability begins when
-the `tge()` transaction has successfully executed on-chain.
+The timestamp did not enable transfers by itself. General transferability began when the `tge()`
+transaction executed on-chain. That transaction ran on Aug 19, 2026 at 14:00:23 UTC.
 
-The function is permissionless: anyone can call it when the timestamp has passed. It does not depend
+The function is permissionless. Anyone could call it after the timestamp passed. It did not depend
 on a specific Interfold-controlled account.
-
-Official Interfold channels will confirm when general transferability has been enabled.
 
 The FOLD contract (`InterfoldToken`) enforces these rules for `tge()`:
 
@@ -107,13 +106,13 @@ For currently published allocation and unlock information, see [FOLD Tokenomics]
 
 ### I participated in the FOLD auction. When can I claim?
 
-Claiming for FOLD Auction 2 is expected to open immediately after the auction closes on Aug 19 at
+Claiming for FOLD Auction 2 was scheduled to open immediately after the auction closed on Aug 19 at
 **13:06 UTC (9:06 AM ET)**.
 
-You can then claim allocated FOLD and any unspent USDC through the verified auction interface.
+You can claim allocated FOLD and any unspent USDC through the verified auction interface.
 
-Claiming and general FOLD transferability are separate actions. Auction 2 closes shortly before
-general FOLD transferability can be enabled.
+Claiming and general FOLD transferability are separate actions. Auction 2 closed shortly before
+general FOLD transferability was enabled.
 
 Start from the official [FOLD Auction page](https://www.theinterfold.com/fold-auction).
 
