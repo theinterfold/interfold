@@ -190,6 +190,15 @@ pub fn compute_threshold_pk_commitment<let N: u32, let L: u32, let BIT_PK: u32>(
     compute_commitment(payload, DS_PK_GENERATION)
 }
 
+/// [`compute_multiple_polynomial_commitment`] for a circuit that **opens** this commitment.
+pub fn compute_multiple_polynomial_commitment_checked<let N: u32, let L: u32, let BIT: u32>(
+    polynomials: [Polynomial<N>; L],
+    domain_separator: [u8; 64],
+) -> Field {
+    let payload = multiple_polynomial_payload_checked::<N, L, BIT>([].as_vector(), polynomials);
+    compute_commitment(payload, domain_separator)
+}
+
 /// [`compute_threshold_pk_commitment`] for a circuit that **opens** this commitment rather than
 /// creating it (C5). Asserts each packed digit fits its slot, which makes the opening unique and so
 /// forces the opened `pk0` to equal the `pk0` C1 committed. Produces the same value as the plain
@@ -205,6 +214,16 @@ pub fn compute_share_computation_sk_commitment<let N: u32, let BIT_SK: u32>(
     sk: Polynomial<N>,
 ) -> Field {
     let payload = single_polynomial_payload::<N, BIT_SK>([].as_vector(), sk);
+    compute_commitment(payload, DS_SHARE_COMPUTATION)
+}
+
+/// [`compute_share_computation_sk_commitment`] for a circuit that **opens** this commitment rather
+/// than creating it (C2a). C1 creates it and bounds `sk` to the trinary range, so making the opening
+/// unique forces the witness to equal that `sk`.
+pub fn compute_share_computation_sk_commitment_checked<let N: u32, let BIT_SK: u32>(
+    sk: Polynomial<N>,
+) -> Field {
+    let payload = single_polynomial_payload_checked::<N, BIT_SK>([].as_vector(), sk);
     compute_commitment(payload, DS_SHARE_COMPUTATION)
 }
 
@@ -252,6 +271,15 @@ pub fn compute_threshold_decryption_share_commitment<let K: u32, let L: u32, let
     compute_commitment(payload, DS_THRESHOLD_DECRYPTION_SHARE)
 }
 
+/// [`compute_share_computation_e_sm_commitment`] for a circuit that **opens** this commitment rather
+/// than creating it (C2b). C1 creates it and bounds each `e_sm` limb to a centered residue.
+pub fn compute_share_computation_e_sm_commitment_checked<let N: u32, let L: u32, let BIT_E_SM: u32>(
+    e_sm: [Polynomial<N>; L],
+) -> Field {
+    let payload = multiple_polynomial_payload_checked::<N, L, BIT_E_SM>([].as_vector(), e_sm);
+    compute_commitment(payload, DS_SHARE_COMPUTATION)
+}
+
 pub fn compute_pk_aggregation_commitment<let N: u32, let L: u32, let BIT_PK: u32>(
     pk0: [Polynomial<N>; L],
     pk1: [Polynomial<N>; L],
@@ -270,6 +298,34 @@ pub fn compute_recursive_aggregation_commitment(payload: [Field]) -> Field {
 
 pub fn compute_vk_hash(vk_hashes: [Field]) -> Field {
     compute_commitment(vk_hashes, DS_VK_HASH)
+}
+
+/// [`compute_aggregated_shares_commitment`] for a circuit that **opens** this commitment rather than
+/// creating it (C6). C4 creates it after `normalize_aggregated` has reduced and centered the
+/// aggregate, so making the opening unique forces the witness to equal that canonical value.
+pub fn compute_aggregated_shares_commitment_checked<let N: u32, let L: u32, let BIT_MSG: u32>(
+    agg_shares: [Polynomial<N>; L],
+) -> Field {
+    let payload = multiple_polynomial_payload_checked::<N, L, BIT_MSG>([].as_vector(), agg_shares);
+    compute_commitment(payload, DS_AGGREGATED_SHARES)
+}
+
+/// [`compute_ciphertext_commitment`] for a circuit that **opens** this commitment rather than
+/// creating it (C6). No upstream circuit bounds the ciphertext limbs, so this buys injectivity
+/// rather than canonicality — which is the property wanted here: it forces C6 to decrypt exactly
+/// the ciphertext that was committed, whatever its representation.
+pub fn compute_ciphertext_commitment_checked<let N: u32, let L: u32, let BIT_CT: u32>(
+    ct0: [Polynomial<N>; L],
+    ct1: [Polynomial<N>; L],
+) -> Field {
+    let commit_ct0 =
+        compute_multiple_polynomial_commitment_checked::<N, L, BIT_CT>(ct0, DS_CIPHERTEXT);
+    let commit_ct1 =
+        compute_multiple_polynomial_commitment_checked::<N, L, BIT_CT>(ct1, DS_CIPHERTEXT);
+
+    let inputs = [commit_ct0, commit_ct1].as_vector();
+
+    compute_commitment(inputs, DS_CIPHERTEXT)
 }
 
 pub fn compute_ciphertext_commitment<let N: u32, let L: u32, let BIT_CT: u32>(
