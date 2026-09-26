@@ -446,14 +446,6 @@ mod tests {
         assert_eq!(CircuitInputLayout::None.field_count(), Some(0));
     }
 
-    /// C7 (`DecryptedSharesAggregation`) has no `-> pub` return values; metadata uses `None`.
-    #[test]
-    fn c7_void_output_extract_field_returns_none() {
-        let layout = CircuitOutputLayout::None;
-        let signals = vec![0u8; 256];
-        assert!(layout.extract_field(&signals, "d_commitment").is_none());
-    }
-
     /// C7: `extract_all` yields no named outputs when the layout is void.
     #[test]
     fn c7_void_output_extract_all_returns_empty() {

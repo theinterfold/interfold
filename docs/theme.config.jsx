@@ -33,11 +33,23 @@ export default {
   nextThemes: {
     defaultTheme: 'light',
   },
-  primaryHue: 203,
-  primarySaturation: 100,
+  // Brand green, shared with the node dashboard (--accent-deep #1f6b4a).
+  primaryHue: 153,
+  primarySaturation: 55,
 
   sidebar: {
     defaultMenuCollapseLevel: 1,
+    toggleButton: true,
+  },
+  toc: {
+    backToTop: true,
+  },
+  editLink: {
+    text: 'Edit this page on GitHub →',
+  },
+  feedback: {
+    content: 'Question or correction? Open an issue →',
+    labels: 'documentation',
   },
   useNextSeoProps() {
     const { asPath } = useRouter()

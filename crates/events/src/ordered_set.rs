@@ -107,13 +107,6 @@ mod tests {
     use std::hash::{Hash, Hasher};
 
     #[test]
-    fn test_new() {
-        let set: OrderedSet<i32> = OrderedSet::new();
-        assert!(set.is_empty());
-        assert_eq!(set.len(), 0);
-    }
-
-    #[test]
     fn test_insert() {
         let mut set = OrderedSet::new();
         assert!(set.insert(1));

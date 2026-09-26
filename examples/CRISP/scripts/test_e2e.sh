@@ -19,4 +19,4 @@ fi
 
 echo "TEST E2E SCRIPT STARTING..."
 # The client starts only after the ciphernodes are running and registered.
-pnpm concurrently -krs first ./scripts/dev.sh "wait-on tcp:3000 file:./.interfold/ready && ${PLAYWRIGHT_CMD}"
+pnpm concurrently -krs command-1 ./scripts/dev.sh "wait-on tcp:3000 file:./.interfold/ready && ${PLAYWRIGHT_CMD}"

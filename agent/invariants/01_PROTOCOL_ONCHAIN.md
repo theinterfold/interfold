@@ -11,31 +11,37 @@ every section.
 ### Tokens and bonding
 
 - Ticket deposits/withdrawals use **raw stablecoin base units**, never `× ticketPrice`;
-  `ticketPrice` is used only in the activation check and sortition eligibility. tFOLD is minted 1:1
-  with its underlying asset. — `BondingRegistry.sol` (`addTicketBalance`, `removeTicketBalance`);
+  `ticketPrice` is used only in the activation check, sortition eligibility, and the
+  `availableTickets` view. tFOLD is minted 1:1 with its underlying asset. —
+  `BondingRegistry.addTicketBalanceFor`, `removeTicketBalanceFor`;
+  `InterfoldTicketToken.depositFrom`; `flow-trace/02`
+- Tickets (tFOLD) are **non-transferable**: `_update` accepts only mints and burns. `approve`,
+  `delegateBySig`, and delegation to another address revert, and tFOLD has no `permit`. Collateral
+  cannot be moved to dodge slashing; snapshot eligibility at `requestBlock-1` stays attributable.
+  The FOLD pre-TGE transfer gate is a different rule (`InterfoldToken._isTransferRestricted`). —
+  `InterfoldTicketToken.sol`; `flow-trace/02`
+- `totalBonded(owner)` sums the active and queued ciphernode bond of every operator that `owner`
+  owns. Unbonding does not change it; bond, slash, exit claim, and bond-owner transfer do. FOLD
+  limits outgoing transfers through `transferableBalanceOf`; a slash can leave an existing lock
+  uncovered. — `BondingRegistry.sol`; `InterfoldToken.sol`; `flow-trace/02`
+- A bond-owner transfer of a nonzero active or queued bond must preserve the previous owner's
+  locked-FOLD coverage. The wallet balance plus remaining bonds must equal or exceed
+  `lockedBalanceOf(previousOwner)`. — `BondingRegistry.acceptBondOwner`; `flow-trace/01`, `02`
+- **Bonded-voting history mirrors the mapping, never a delta.** While `BondedCheckpoints` is
+  attached, every write to `_bondedByOwner` records the owner's new total in the same transaction.
+  Bond, slash, and exit claim use `BondingRegistry._syncBondedCheckpoint` (exit claim mutates
+  through a storage pointer inside `BondingAssetLib`, so the caller takes the checkpoint). Both
+  sides of a bond-owner transfer call `checkpoints.sync` in `BondingOwnershipLib`. Unbonding is
+  deliberately not a write site — the FOLD stays with the registry until claimed. A missed site is
+  caught by `bonded(owner) == totalBonded(owner)`, which compares the checkpoint's current value
+  against the mapping at the same instant, and holds for every owner that has been synchronized at
+  least once — configuring `BondedCheckpoints` does not backfill, so an owner that bonded beforehand
+  reads as zero until its next mutation or a `resyncBondedCheckpoint` call. A delta-derived history
+  would drift silently instead, and it would drift in voting weight. `sync` skips a write that
+  records the value already latest — exact, because a lookup at the skipped timepoint resolves to
+  the preceding entry — so the permissionless `resyncBondedCheckpoint` cannot be used to grow an
+  owner's history by a checkpoint per block. — `BondingRegistry.sol`; `BondedCheckpoints.sol`;
   `flow-trace/02`
-- Tickets (tFOLD) are **non-transferable**: `permit`/`delegateBySig` always revert; transfers
-  restricted to mint/burn/bonding/whitelist. Collateral cannot be moved to dodge slashing; snapshot
-  eligibility at `requestBlock-1` stays attributable. — `flow-trace/02`
-- `totalBonded(account)` = active FOLD ciphernode bond + pending-but-still-slashable exits; FOLD
-  `_update` enforces locked-floor accounting. — `flow-trace/02`
-- A bond-owner transfer must preserve the previous owner's locked-FOLD coverage. The wallet balance
-  plus remaining bonds must equal or exceed `lockedBalanceOf(previousOwner)`. —
-  `BondingRegistry.acceptBondOwner`; `flow-trace/01`, `02`
-- **Bonded-voting history mirrors the mapping, never a delta.**
-  `BondingRegistry._syncBondedCheckpoint` sends the owner's current `_bondedByOwner` total to
-  `BondedCheckpoints`, and must be called from every site that mutates it: bond, slash, both sides
-  of a bond-owner transfer, and exit claim (which mutates through a storage pointer inside
-  `BondingAssetLib`, so the checkpoint is taken by the caller). Unbonding is deliberately not a
-  write site — the FOLD stays with the registry until claimed. A missed site is caught by
-  `bonded(owner) == totalBonded(owner)`, which compares the checkpoint's current value against the
-  mapping at the same instant, and holds for every owner that has been synchronized at least once —
-  configuring `BondedCheckpoints` does not backfill, so an owner that bonded beforehand reads as
-  zero until its next mutation or a `resyncBondedCheckpoint` call. A delta-derived history would
-  drift silently instead, and it would drift in voting weight. `sync` skips a write that records the
-  value already latest — exact, because a lookup at the skipped timepoint resolves to the preceding
-  entry — so the permissionless `resyncBondedCheckpoint` cannot be used to grow an owner's history
-  by a checkpoint per block. — `BondingRegistry.sol`; `BondedCheckpoints.sol`; `flow-trace/02`
 - **The numerator comes from the votes source; the denominator is always the token.**
   `BondedVotes.getPastVotes` sums whatever `votesSource` attributes to the account and that
   account's bonded FOLD, while `getPastTotalSupply` passes the **token's** supply through unchanged.
@@ -61,8 +67,9 @@ every section.
 - **The lock schedule is present-state, not history.** `lockedBalanceAt` walks an account's
   **current** locks and evaluates them against the timestamp given, so a lock created after a
   governance snapshot appears in that snapshot's answer — unlike the bonded history, which is
-  checkpointed. Sound for vesting locks, which are minted or claimed rather than acquired at will;
-  it must not be treated as a general past balance. — `BondedVotes.sol`; `InterfoldToken.sol`
+  checkpointed. A lock or claim lock added after a snapshot, and a later wallet balance, can change
+  that snapshot's answer. Do not treat it as a past balance. — `BondedVotes.sol`;
+  `InterfoldToken.sol`
 - **An escrow votes source requires a token with a lock schedule.** `_bindVotesSource` staticcalls
   `lockedBalanceAt` once at construction and reverts `LockedBalancesUnsupported` if it cannot
   answer. Tolerating the failure at read time would return zero and disenfranchise exactly the
@@ -90,8 +97,9 @@ every section.
   view divides by. The registry's entry subtracts `totalCiphernodeBondLiability`, saturating at
   zero, and the escrow's own entry is netted to zero for the same reason — every unit it holds is
   attributed to a locker, and it publishes no liability total to subtract instead; locked FOLD is
-  added per account via the escrow's `votingPowerForAccount`, which is delegation-blind, rather than
-  the adapter's own `balanceOf`, which counts lock NFTs rather than tokens. `getVotes` needs no such
+  added per account via the escrow's `votingPowerForAccount`, which must report
+  delegation-independent FOLD amounts (the repository has only a mock escrow), rather than the
+  adapter's own `balanceOf`, which counts lock NFTs rather than tokens. `getVotes` needs no such
   adjustment: the registry never delegates, so bonded FOLD carries no wallet votes to double. —
   `BondedVotes.sol`; `flow-trace/02`
 - **`setBondedCheckpoints` is one-shot per ciphernode bond token, and self-verifying.** It requires
@@ -110,23 +118,27 @@ every section.
   settled history. The detached contract stays correct for the timepoints it covers; a new era needs
   a fresh `BondedCheckpoints` and a fresh `BondedVotes` bound to the new token. —
   `BondingRegistry._setBondingAssetConfig`; `flow-trace/02`
-- **`BondingRegistry` is at its EIP-170 ceiling.** It is gated at 128 bytes of headroom by
-  `scripts/checkContractSize.ts`, and logic is kept in `BondingAssetLib`, `BondingEligibilityLib`,
-  `BondingSlashingLib`, `BondingRegistrationLib` and `BondingOwnershipLib` for that reason. Every
-  library must be linked in all deploy paths (ignition, `deployAndSave`, `protocol/deployContracts`,
-  `upgrade/safeProxyUpgrade`, `deploymentRecords`, `protocol/types`) — a missing link fails at
-  deployment, not at compile. The `Operator` struct stays declared in `BondingRegistry`: the upgrade
-  baseline compares type labels, so relocating it reads as a type change on an unchanged layout. —
-  `BondingRegistry.sol`; INDEX concern #22
+- **`BondingRegistry` is close to the EIP-170 limit.** `scripts/checkContractSize.ts` fails CI when
+  `Interfold`, `BondingRegistry`, `CiphernodeRegistryOwnable`, or either canonical aggregator
+  verifier has less than 128 bytes of headroom. BondingRegistry logic is kept in `BondingAssetLib`,
+  `BondingEligibilityLib`, `BondingSlashingLib`, `BondingRegistrationLib` and `BondingOwnershipLib`
+  for that reason. Link every library in each deploy path (ignition, `deployAndSave`,
+  `protocol/deployContracts`, `upgrade/safeProxyUpgrade`) and keep `deploymentRecords` and
+  `protocol/types` in step — a missing link fails at deployment, not at compile. The `Operator`
+  struct stays declared in `BondingRegistry`: the upgrade baseline compares type labels, so
+  relocating it reads as a type change on an unchanged layout. — `BondingRegistry.sol`; INDEX
+  concern #22
 - Ticket and ciphernode bond tokens, expected decimals, `ticketPrice`, and `requiredCiphernodeBond`
   change as one configuration. Asset identity changes only after old balances, E3 assignments, slash
   locks, and pending slash routes fully drain. Replacement assets must be deployed contracts, and a
   replacement ciphernode bond token must return a valid value from `lockedBalanceOf`. Slash policies
-  are bound to the exact BondingRegistry and asset-configuration version. Asset activation requires
-  the ticket token to authorize the BondingRegistry. A later mismatch makes operators inactive
-  without blocking ciphernode bond slashes, bans, or exit bookkeeping. Ciphernode-bond-token
-  rotation atomically sends any balance above `totalCiphernodeBondLiability` to the treasury before
-  validating the replacement, so an unsolicited transfer cannot interleave with rotation. —
+  are bound to the exact BondingRegistry and asset-configuration version. Operator activation, each
+  E3 request, and asset rotation require `ticketToken.registry()` to equal this BondingRegistry;
+  `initialize` does not check it. A later mismatch makes operators inactive without blocking
+  ciphernode bond slashes, bans, or exit bookkeeping. Every asset-configuration call first sends any
+  balance above `totalCiphernodeBondLiability` to the treasury, before it validates a replacement,
+  so an unsolicited transfer cannot interleave with rotation. —
+  `BondingRegistry._setBondingAssetConfig`; `BondingAssetLib.sol`; `SlashingManager.sol`;
   `flow-trace/02`, `05`; INDEX concern #23
 - The fee token, expected decimals, and every raw-unit service price change as one configuration.
   `setRandomnessFlatFee` is the only narrow pricing update: it changes only the nonzero flat fee and
@@ -142,12 +154,15 @@ every section.
   other pooled liabilities. — `InterfoldPricing.sol`; `InterfoldTicketToken.sol`;
   `BondingAssetLib.sol`; `E3RefundManager.sol`; `flow-trace/02`, `03`, `05`
 
-### Activation (auto-evaluated in `_updateOperatorStatus`, never a standalone call)
+### Activation (computed in `_updateOperatorStatus`; anyone can re-run it with `refreshOperatorStatus`; no `activate` entry point exists)
 
-- Operator active ⇔ its acknowledged release has exactly the required `protocolVersion`, meets the
-  minimum `nodeGeneration`, AND `registered` AND
-  `ciphernodeBond >= requiredCiphernodeBond × ciphernodeBondActiveBps/10000` (default 80%) AND
-  `ticketBalance / ticketPrice >= minTicketBalance`. — `BondingRegistry.sol`; `flow-trace/01`, `02`
+- Operator active ⇔ `ticketToken.registry()` is this BondingRegistry AND the release registry has
+  code and reports the operator's acknowledged release as ready (exact `protocolVersion`,
+  `nodeGeneration` at least the minimum) AND `registered` AND not banned AND
+  `ciphernodeBond >= ceil(requiredCiphernodeBond × ciphernodeBondActiveBps / 10000)` (default 8000
+  bps) AND `ticketBalance / ticketPrice >= minTicketBalance`. A cached status is valid only for the
+  current `eligibilityConfigurationVersion`. — `BondingEligibilityLib.updateOperator`;
+  `flow-trace/01`, `02`
 - `minTicketBalance` must remain nonzero. — `flow-trace/02`
 - **Eligibility policy version is monotonic and fail-closed:** any effective change to `ticketPrice`
   / `requiredCiphernodeBond` / `ciphernodeBondActiveBps` / `minTicketBalance` bumps
@@ -155,8 +170,13 @@ every section.
   statuses in O(1). New committee requests wait for a check of every registration captured at that
   change, including inactive results. Duplicates and later registrations cannot settle another
   member's check. Deregistration settles the departing member. Rust uses source block seconds from
-  `ConfigurationUpdatedAt` and `OperatorActivationChangedAt`, never the merged event clock. —
-  `BondingRegistry.sol`; INDEX concern #24
+  `ConfigurationUpdatedAt` and `OperatorActivationChangedAt`, never the merged event clock, and must
+  invalidate its activity view on every version bump. **Gap:** of these parameters only
+  `ciphernodeBondActiveBps` and `minTicketBalance` emit `ConfigurationUpdated`. Asset-configuration
+  and node-release changes bump the version through `BondingAssetConfigUpdated` and
+  `EligibilityConfigurationVersionUpdated`, which Rust does not consume
+  (`crates/evm/src/bonding_registry/events.rs`, `crates/sortition/src/sortition/node_registry.rs`).
+  — `BondingRegistry.sol`; INDEX concern #24
 - **Mandatory release policy changes are paused, drained, and monotonic:** governance may raise the
   required protocol version or node generation only while requests are paused, `activeE3Count == 0`,
   and `unreleasedCommitteeCount == 0`. The change invalidates every cached operator status in O(1).
@@ -171,7 +191,8 @@ every section.
 
 - E3 IDs include the Interfold controller address in their high 160 bits. The low 96 bits form the
   controller-local sequence. On-chain snapshots, signed payloads, Rust persistence, and indexer keys
-  must preserve the complete `uint256`. — `Interfold.initialize`; `flow-trace/03`
+  must preserve the complete `uint256`. Public-key chunk publication resolves the controller from
+  `e3Id >> 96`. — `Interfold.initialize`; `RegistrySortitionLib.sol`; `flow-trace/03`
 - A request can select only the parameter set and committee shape in `ActiveCryptoConfig.sol`.
   Mainnet supports `secure-8192` with `minimum`, `micro`, and `small` committees. Sepolia and local
   chains support `insecure-512` and `secure-8192` with `minimum`, `micro`, and `small` committees.
@@ -181,9 +202,12 @@ every section.
   snapshotted separately. Solidity snapshots the ID, and Rust rejects an event or stored E3 when
   `cryptoConfigId != expectedCryptoConfigId`. BFV verifier mappings may point at routers, which
   dispatch by public-input length and VK hash anchors to the concrete verifier for the generated
-  pair. Pricing uses circuit threshold `T`, not on-chain viability value `H`.
-  `N <= numActiveOperators` at `requestCommittee`. New requests also require N counted active bond
-  owners at `T-1`, under the current eligibility policy, before a VRF draw. — `flow-trace/03`
+  pair. `committeeThresholds[size]` stores `[H, N]`, and index 0 is always H. Pricing charges
+  decryption by H, not by circuit threshold T. For request time `t_req`, N must not exceed the
+  active-operator checkpoint at `t_req − 1`, and `committeeOwnerCapacity(t_req − 1)` must be at
+  least N under the current eligibility policy before the VRF request. —
+  `ActiveCryptoConfig.validateCommittee`; `InterfoldPricing.sol`; `CiphernodeRegistryOwnable.sol`;
+  `flow-trace/03`
 - Mainnet CRISP activation is one paused and drained governance batch. It upgrades Interfold to the
   secure crypto configuration, installs every secure BFV verifier route, registers secure BFV
   parameters at index 2 without changing historical index 1, wires the receipt verifier, registers
@@ -193,12 +217,15 @@ every section.
   same release source. Requests remain paused until the activation validator succeeds and enough
   matching release-ready nodes are online. — `scripts/upgrade/secureCrisp.ts`;
   `scripts/upgrade/validateSecureCrisp.ts`; `flow-trace/07`
-- Sortition score is deterministic and identical on- and off-chain:
-  `score = keccak256(address ‖ ticket ‖ e3Id ‖ seed)`, where
-  `seed = keccak256(randomWord ‖ chainId ‖ registry ‖ e3Id ‖ requestId)`. New requests keep the best
-  submission per request-time bond owner, then the lowest N owner scores. Ties use ascending
-  operator address. Each E3 freezes one `IRandomnessProvider` request, response deadline, and
-  submission window after the paid request is stored. The production provider uses Chainlink VRF
+- Sortition score must be byte-identical on- and off-chain:
+  `score = keccak256(abi.encodePacked(operator, ticketNumber, e3Id, seed))` with `seed` as a
+  `uint256`, where `seed = keccak256(abi.encode(randomWord, chainid, registry, e3Id, requestId))`.
+  **Gap:** Rust builds the VRF-path `Seed` with `to_be_bytes` and decodes it with `from_le_bytes`,
+  so it scores a byte-reversed seed (`crates/evm/src/randomness_provider/events.rs`,
+  `crates/sortition/src/sortition/ticket.rs`). New requests keep the best submission per
+  request-time bond owner, then the lowest N owner scores. Owner-capped requests break ties by
+  ascending operator address. Each E3 freezes one `IRandomnessProvider` request, response deadline,
+  and submission window after the paid request is stored. The production provider uses Chainlink VRF
   v2.5 subscription funding. It never re-requests an E3, checks the configured subscription balance
   floor before requesting, and the Registry rejects responses from the Ethereum request block,
   future-dated responses, and late responses. This release supports Ethereum mainnet, Sepolia, and
@@ -226,10 +253,11 @@ every section.
   pre-upgrade timestamps. Existing requests retain uncapped selection through an appended zero
   policy field. Solidity enforces the cap, independently of the submitting binary. Rust shortlists
   N-plus-buffer distinct owners and retains their eligible operators as backups. An operator-count
-  cutoff must not exclude necessary owners. Missing owner history permits all submissions. Formation
-  requires N distinct snapshot owners, not merely N submissions. The cap does not establish human
-  uniqueness, prevent pre-request wallet splitting, or prevent later collusion. —
-  `BondingOwnershipLib.sol`; `RegistrySortitionLib.sol`; `flow-trace/03`
+  cutoff must not exclude necessary owners. In Rust, missing owner history for any eligible operator
+  turns off the owner shortlist, so every eligible operator ranks; Solidity still rejects a ticket
+  whose snapshot owner is zero. Formation requires N distinct snapshot owners, not merely N
+  submissions. The cap does not establish human uniqueness, prevent pre-request wallet splitting, or
+  prevent later collusion. — `BondingOwnershipLib.sol`; `RegistrySortitionLib.sol`; `flow-trace/03`
 - **Owner-capacity admission is shared by every requester:** activity refreshes and owner transfers
   maintain an epoch-scoped count through `BondOwnerCapacityLib`. A configuration change resets the
   count. After upgrade, unrefreshed legacy operators do not count. Permissionless status refreshes
@@ -244,8 +272,10 @@ every section.
   context and the accepted seed remain readable for replay. — `RegistrySortitionLib.sol`;
   `flow-trace/06`
 - `finalizeCommittee()` requires the submission window to have closed. The first successful call
-  locks the canonical on-chain committee order. A ready committee must finalize by its absolute
-  request-time DKG cutoff. Delayed finalization cannot extend the paid lifecycle. — `flow-trace/03`
+  locks the canonical on-chain committee order. A ready committee must finalize by
+  `committeeDeadline + dkgWindow`, inclusive, where `committeeDeadline` is the VRF fulfillment time
+  plus the frozen submission window. Delayed finalization cannot extend the paid lifecycle. —
+  `CiphernodeRegistryOwnable.finalizeCommittee`; `InterfoldLifecycle.sol`; `flow-trace/03`
 - **Exit timing strictly covers sortition:** `BondingRegistry.exitDelay` must remain greater than
   `CiphernodeRegistryOwnable.randomnessRequestTimeout + sortitionSubmissionWindow`. Value setters
   and registry-pointer setters enforce the relationship; equality is invalid because ticket
@@ -276,20 +306,21 @@ every section.
   owner-only. Retirement closes only new request admission; existing E3s keep their snapshotted
   program. Every registered address must contain runtime code and must advertise both `IE3Program`
   and `IE3ProgramDataAvailability` through ERC-165. Interfold calls `verifyDataAvailability` on
-  every output publication, so a program that omits the selector could otherwise brick its own
-  rounds after the requester paid. `MockE3Program` is the stateless bootstrap option. It has no
-  administrative controls and applies no application rules. Its deterministic test receipt is not
-  production data availability, so requests remain paused until a production program is registered
-  and wired. The request-time BFV ciphertext verifier and decryption verifier remain mandatory. Its
-  mutable failure controls live only in `MockE3ProgramHarness`. A protocol upgrade that makes the
-  program interface incompatible must retire every incompatible bootstrap program before requests
-  resume. — `Interfold.sol`; `MockE3Program.sol`; `flow-trace/03`
+  every ciphertext output publication, so a program that omits the selector could otherwise brick
+  its own rounds after the requester paid. `MockE3Program` is the stateless bootstrap option. It has
+  no administrative controls and applies no application rules. Its deterministic test receipt is not
+  production data availability, so keep requests paused until a production program is registered and
+  wired; no contract enforces this. The request-time BFV ciphertext verifier and decryption verifier
+  remain mandatory. Its mutable failure controls live only in `MockE3ProgramHarness`. A protocol
+  upgrade that makes the program interface incompatible must retire every incompatible bootstrap
+  program before requests resume. — `Interfold.sol`; `MockE3Program.sol`; `flow-trace/03`
 - **Data availability binds per program and per round:** Interfold holds no protocol-level
-  data-availability verifier; it delegates to `IE3ProgramDataAvailability(e3Program)`, and a program
-  holds its verifier as an immutable. The Avail adapter re-checks `bridge.vectorx() == vectorx` on
-  every call, so an external pointer rotation fails closed instead of silently changing a live
-  round's trust root. Containment is `unregisterE3Program` for the affected programs only. —
-  `flow-trace/08`; INDEX concerns ZEN2-08
+  data-availability verifier; it delegates to `IE3ProgramDataAvailability(e3Program)`. A production
+  program must freeze each round's data-availability binding; CRISP holds its verifier as an
+  immutable, and ERC-165 admission does not check this. The Avail adapter re-checks
+  `bridge.vectorx() == vectorx` on every call, so an external pointer rotation fails closed instead
+  of silently changing a live round's trust root. Containment is `unregisterE3Program` for the
+  affected programs, which blocks new requests only. — `flow-trace/08`; INDEX concerns ZEN2-08
 - **One round, one data-availability provider.** A verified receipt is a
   `DataReference{contentHash, blockNumber, leafIndex}`. Only `contentHash` reaches storage, as
   `e3.ciphertextOutput`; `blockNumber` and `leafIndex` exist solely in the
@@ -302,30 +333,38 @@ every section.
   providers. A timelock does not help: the defect is the missing provider binding, not the authority
   to rotate. Supporting more than one provider per round requires a persisted provider identifier in
   the reference first. — `flow-trace/08`; INDEX concerns ZEN2-08
-- **Do not extend `computeDeadline` to survive a data-availability outage.** `SlashingManager`
-  snapshots `slashSubmissionDeadline` from `getE3LifecycleDeadline(e3Id)` at proposal
-  initialization, so extending the compute deadline alone lets a round outlive the accusation window
-  sized for it, and `releaseCommittee` gates on that same deadline (ZEN2-09). An extension also
-  cannot change who pays: `FailurePayerLib.getFailurePayer` reads the failure reason only, and the
-  reason follows the stage the round stalled in, so a longer clock yields the same `ComputeTimeout`
-  and the same requester-paid settlement. Reallocating that cost is a failure attribution and
-  funding decision, not a deadline change. — `flow-trace/05`, `flow-trace/08`; INDEX concerns
-  ZEN2-08
+- **Do not extend `computeDeadline` to survive a data-availability outage.**
+  `SlashingManager.snapshotE3Dependencies` freezes
+  `slashSubmissionDeadline = getE3LifecycleDeadline(e3Id) + 1 day` when the committee is requested,
+  so extending the compute deadline alone lets a round outlive the accusation window sized for it,
+  and `releaseCommittee` gates on that same deadline (ZEN2-09). An extension also cannot change who
+  pays: `FailurePayerLib.getFailurePayer` reads the failure reason only, and the reason follows the
+  stage the round stalled in, so a longer clock yields the same `ComputeTimeout` and the same
+  requester-paid settlement. Reallocating that cost is a failure attribution and funding decision,
+  not a deadline change. — `flow-trace/05`, `flow-trace/08`; INDEX concerns ZEN2-08
 
 ### Deadlines
 
-- Every stage has a deadline. Once a deadline is missed, **anyone** may call `markE3Failed(e3Id)`.
+- Every nonterminal stage has a deadline. A `Requested` E3 fails at its committee deadline, or at
+  the committee deadline plus the DKG window when its committee threshold is met. Once a deadline is
+  missed, `markE3Failed(e3Id)` can succeed, subject to the failure grace period caller rule below.
   The request snapshots all timeout windows. The randomness response starts the full ticket
   submission window; the DKG deadline equals that resolved committee deadline plus the DKG window.
   The compute deadline starts at the later of key publication and the end of the input window.
   Request validation reserves the full worst-case randomness, sortition, DKG, compute, and
   decryption lifecycle. — `flow-trace/03`
 - **The threshold-share checkpoint is not a DKG deadline.** At 75% of the frozen DKG window, a node
-  may close collection when it has at least H−1 external shares. Below H−1, it must keep collecting.
-  Only the request-frozen on-chain DKG deadline may turn missing threshold shares into `DKGTimeout`.
-  Restart must preserve the remaining deadline. — `flow-trace/04`; INDEX concern #54
-- Known open issue: `gracePeriod` is stored/validated but never applied in any deadline check (dead
-  code). — `Interfold.sol`; INDEX concern #3
+  with at least H−1 external shares may take a snapshot and continue. It keeps collecting the
+  remaining shares until collection completes or the on-chain DKG deadline passes. Below H−1, it
+  keeps collecting. Only the request-frozen on-chain DKG deadline may turn missing threshold shares
+  into `DKGTimeout`. Restart must preserve the remaining deadline. —
+  `crates/keyshare/src/threshold_keyshare/collect_threshold_shares.rs`; `flow-trace/04`; INDEX
+  concern #54
+- Failure checks compare `block.timestamp` with the raw stage deadline. `E3TimeoutConfig` has no
+  grace field. `markFailedGracePeriod` does not move a deadline. Before
+  `deadline + markFailedGracePeriod`, only the requester, the owner, or an active committee member
+  can call `markE3Failed`. At or after that time, any caller can. — `Interfold.sol` `markE3Failed`;
+  `InterfoldLifecycle.validateMarkFailedCaller`; INDEX concern #3
 
 ### Slashing and failure settlement
 
@@ -338,15 +377,16 @@ every section.
 - Slash assets keep their own ERC-20 denomination — independent pull claims, no conversion;
   different decimals never mix. — `flow-trace/05`
 - Slashed **ticket** funds are always escrowed first; destination depends on terminal outcome
-  (failure → honest nodes; none → snapshotted treasury; success → split by `successSlashedNodeBps`).
+  (failed E3 → eligible honest nodes; successful E3 → `successSlashedNodeBps` to eligible nodes and
+  the rest to the snapshotted treasury; no eligible node → all to the snapshotted treasury).
   **Ciphernode-bond** slashes do not leave the registry at execution: the amount is recorded in
   `slashedCiphernodeBond` and the FOLD stays in registry custody. Only `withdrawSlashedFunds`
   (owner-called) moves it to `slashedFundsTreasury`, releasing the matching
   `totalCiphernodeBondLiability` as it goes — so custody and liability are retired together. —
   `BondingRegistry.slashCiphernodeBond`, `BondingRegistry.withdrawSlashedFunds`; `flow-trace/05`
-- Requester refunds are decoupled from slash execution; `protocolShareBps` and per-node payouts are
-  snapshotted at `calculateRefund` and never altered by slashed assets; base refunds never consume
-  the protected reserve. — `flow-trace/05`
+- Slash execution never changes a requester refund. The failed-E3 protocol cut uses the request-time
+  `WorkValueAllocation.protocolBps` snapshot, `calculateRefund` fixes `perNodeAmount`, and a base
+  refund never consumes the protected reserve. — `E3RefundManager.sol`; `flow-trace/05`
 - Only the original requester can cancel an E3, and only after its request-bound randomness deadline
   passes without a usable seed. Cancellation records `CommitteeFormationTimeout`, releases the
   Registry obligation, and leaves refund processing permissionless. A timely or pending VRF result
@@ -418,12 +458,15 @@ every section.
   committee members, and all votes must agree. Lane A is **attestation-based** (ECDSA per voter),
   not on-chain ZK re-verification. Vote digest / EIP-712 type hashes must match the Solidity
   constants exactly (Rust ↔ Solidity). — `flow-trace/05`; `SlashingManager.sol`
-- Staggered slash submission: agreeing voters ranked by ascending address, rank N waits `N × skew`
-  (default 30 s); restarts must not reset the fallback delay. — `flow-trace/05`
+- Staggered slash submission: agreeing voters rank by ascending address. Ranks 0–2 submit, and rank
+  N waits N × 30 s. Restarts must not reset the fallback delay. **Gap:** the slashing writer
+  persists the intent but not its due time, so a restart waits the full delay again
+  (`crates/evm/src/slashing_writing/handlers.rs`). — `flow-trace/05`
 - **Deferred-slash collateral gate:** every manager atomically records proposal locks in
   `BondingRegistry`. Ticket withdrawal, ciphernode bond unbonding, deregistration, and exit claims
   read the registry's aggregate lock count and stay blocked until resolution. User exits must not
   call a slashing manager. A retained manager cannot be revoked until its E3 assignments, locks,
   bans, and fund routes are clear. — INDEX concerns #1, #26, Z-44; `flow-trace/06`
-- Exit queue caps explicit non-empty tranche count; drained single-asset tranches release capacity.
-  — INDEX concern #18
+- `ExitQueueLib` allows at most 64 live tranches per operator, and the scan span from the earlier
+  asset head is at most 64 entries. Head advancement and tail pruning free capacity; drained holes
+  between live tranches do not. — `ExitQueueLib.sol`; INDEX concern #18

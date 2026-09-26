@@ -800,14 +800,12 @@ mod tests {
 
     // ── Event size reporting ─────────────────────────────────────────────────
     //
-    // Run with `cargo test -p e3-data report_event_sizes -- --nocapture` to see
-    // the full size table. Sizes are for minimal (empty-bytes) instances, so
-    // they represent structural overhead only; real events with proof/key
-    // payloads will be larger.
+    // This budget covers minimal structural overhead. Variable proof, key, and ciphertext
+    // payloads have separate byte-bounded replay coverage.
 
     #[allow(clippy::too_many_lines)]
     #[test]
-    fn report_event_sizes() {
+    fn minimal_event_encodings_stay_within_the_structural_budget() {
         use alloy_primitives::{Address, Bytes};
         use e3_events::{
             AccusationOutcome, AccusationQuorumReached, AccusationVote, AggregatorChanged,
@@ -1074,6 +1072,14 @@ mod tests {
                 (*name, bytes.len())
             })
             .collect();
+
+        const MAX_STRUCTURAL_EVENT_BYTES: usize = 4 * 1024;
+        for (name, size) in &rows {
+            assert!(
+                *size <= MAX_STRUCTURAL_EVENT_BYTES,
+                "{name} structural encoding is {size} bytes; budget is {MAX_STRUCTURAL_EVENT_BYTES}"
+            );
+        }
 
         rows.sort_by(|a, b| b.1.cmp(&a.1));
 

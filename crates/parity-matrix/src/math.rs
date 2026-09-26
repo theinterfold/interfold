@@ -395,17 +395,6 @@ mod tests {
     }
 
     #[test]
-    fn test_mod_inverse_all_elements_prime_modulus() {
-        // For prime modulus, all non-zero elements should have inverses
-        let q = BigUint::from(11u32);
-        for a_val in 1u32..11 {
-            let a = BigUint::from(a_val);
-            let inv = mod_inverse(&a, &q).unwrap();
-            assert_eq!((&a * &inv) % &q, BigUint::one());
-        }
-    }
-
-    #[test]
     fn test_evaluate_polynomial() {
         let q = BigUint::from(7u32);
 

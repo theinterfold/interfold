@@ -1,0 +1,54 @@
+{
+  "-- Get started": {
+    "type": "separator",
+    "title": "Get started"
+  },
+  "installation": {
+    "title": "Installation"
+  },
+  "quick-start": {
+    "title": "Quick Start"
+  },
+  "hello-world": {
+    "title": "Hello World"
+  },
+  "project-template": {
+    "title": "Project Template"
+  },
+  "-- Build an E3 program": {
+    "type": "separator",
+    "title": "Build an E3 program"
+  },
+  "e3-program": {
+    "title": "E3 Program Anatomy"
+  },
+  "interfold-contract": {
+    "title": "The Interfold Contract"
+  },
+  "requesting-an-e3": {
+    "title": "Request an E3"
+  },
+  "-- Integrate": {
+    "type": "separator",
+    "title": "Integrate"
+  },
+  "sdk": {
+    "title": "SDK"
+  },
+  "client-and-server": {
+    "title": "Client and Server"
+  },
+  "noir-circuits": {
+    "title": "Noir Circuits"
+  },
+  "best-practices": {
+    "title": "Best Practices"
+  },
+  "-- Tutorials": {
+    "type": "separator",
+    "title": "Tutorials"
+  },
+  "tutorials": {
+    "title": "Tutorials"
+  }
+}

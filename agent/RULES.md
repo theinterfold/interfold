@@ -14,7 +14,7 @@ file rather than duplicating its content.
 | `ARCHITECTURE.md`        | Rust contribution rules (target design, layering, durability, testing)                                       |
 | `CRATES_ARCHITECTURE.md` | The implemented Rust runtime, persistence, and protocol topology                                             |
 | `flow-trace/00_INDEX.md` | Protocol behavior questions; known bugs & concerns                                                           |
-| `prompts/`               | Canonical bodies for reusable agents/commands — tool wrappers in `.claude/`, `.opencode/` point here         |
+| `prompts/`               | Canonical bodies for reusable agents/commands — tool wrappers in `.claude/` and `.agents/skills/` point here |
 | `.agents/skills/`        | Portable task skills; load `asd-ste100` before writing or reviewing technical prose                          |
 
 Maintenance rule: these docs are part of the codebase. When a change invalidates a statement in any
@@ -29,8 +29,10 @@ reverts the file to its base content; anything else needs `[skip-doc-sync]` in a
 
 - Run builds/tests/lint through the root pnpm scripts (`pnpm test`, `pnpm rust:test`, `pnpm lint`,
   ...) — not raw cargo/nargo/hardhat. Full command table: `CONTEXT.md`.
-- Commits: Conventional Commits, types `feat`/`fix`/`chore` only, description ≤ 72 chars, `!` for
-  breaking changes.
+- Commits and PR titles: Conventional Commits, `!` for breaking changes. The PR title is the default
+  squash-commit title; the person who merges can edit it. CI checks only the PR title
+  (`.github/workflows/validate-commits.yml`): type `feat`, `fix`, `chore`, `refactor`, `docs`, or
+  `test`; lower-case scope; whole header ≤ 72 characters.
 - Never hand-edit generated files (committee/preset files, parity matrices, verifier contracts,
   `.active-preset.json`, `deployments/manifest.json`) — see `invariants/04_BUILD_CONFIG.md`.
 - Every new `.rs`/`.sol`/`.ts` file needs the SPDX `LGPL-3.0-only` header.
@@ -38,11 +40,46 @@ reverts the file to its base content; anything else needs `[skip-doc-sync]` in a
   `.agents/skills/asd-ste100/SKILL.md`. Apply it to code comments, doc comments, documentation,
   requirements, procedures, help text, error text, release notes, and PR prose. Preserve protected
   code and exact interface literals.
-- Before assuming current behavior is correct, check the "Verified Bugs & Protocol Concerns" table
-  in `flow-trace/00_INDEX.md` and the open-issues list in `invariants/00_INDEX.md`.
+- Before assuming current behavior is correct, read the open-issues list in
+  `invariants/00_INDEX.md`. Then search the "Verified Bugs & Protocol Concerns" table in
+  `flow-trace/00_INDEX.md` for the contract, actor, or function you touch. The table is large and
+  most rows are resolved history, so do not read it whole.
 - Invariant review is one sequential pass. Do not spawn a subagent per invariant or per section
   unless the user explicitly asks for a per-invariant or per-section audit. —
   `invariants/00_INDEX.md` §Review budget
+
+### Change discipline
+
+These rules apply to every change task, with one agent or with several.
+
+1. Start from current `origin/main` on a new `<type>/<topic>` branch, unless the user names another
+   base. Do not start the branch name with a tool or agent name (`agent/`, `claude/`, `codex/`).
+   When several agents or tasks run at the same time, give each one its own worktree.
+2. Change only the requested scope. Report other findings as follow-ups. Do not fix them in the same
+   diff.
+3. Before you add a helper, wrapper, guard, flag, or fallback, name its production caller and the
+   need. Before you add migration or legacy-format support, show that deployed data or a released
+   artifact needs it.
+4. A regression test must run the changed production path and fail when you revert the fix. Do not
+   copy production logic into `#[cfg(test)]` or other test-only code.
+5. Report the commands you ran and their results for the final HEAD, with its commit SHA. Run the
+   affected checks again after later edits. Do not push with `--no-verify` or set `SKIP_DOC_SYNC=1`.
+   If a gate cannot run, stop and report which gate and why.
+6. If a change touches `SCHEMA_VERSION`, `GOSSIP_WIRE_MAJOR`, `SYNC_WIRE_MAJOR`, a persisted type,
+   an `InterfoldEventData` variant, a contract event or ABI, or
+   `crates/config/protocol-release.toml`, state the upgrade class in the PR body: rolling,
+   drain-and-resync, or governance. Also state whether `protocol_version` or `node_generation` must
+   change. Use `!` when operators must reset or resync.
+7. In code comments and `agent/` docs, write current behavior and its reason. Do not narrate history
+   ("now", "previously", "used to") or PR context. Do not add audit-round addendum sections. Put
+   history in the commit message.
+8. Do not commit plans, audit notes, review transcripts, rollout checklists, or other working files,
+   unless the task requires that file.
+9. Verify each reviewer or review-bot finding against the code before you change anything. If a
+   finding is wrong, reply with the evidence and make no change.
+10. Do not merge, mark a PR ready for review, or create a tag unless the user asks. Report a change
+    as ready only when the required CI jobs and the jobs that cover your paths are green on the
+    final HEAD. Name each covering job that the CI path filters skipped.
 
 ## Verification ladder
 
@@ -58,8 +95,32 @@ reporting done. Escalate only as needed:
 
 Cross-layer changes (contracts ↔ Rust ↔ circuits) need at least one integration scenario, not just
 unit tests. CI additionally runs things pre-push does not: full integration suites, circuit builds,
-zk-prover e2e, contract storage/size gates, and commit-message validation — a green pre-push is not
-a green CI.
+zk-prover e2e, contract storage/size gates, and PR-title validation — a green pre-push is not a
+green CI. The reverse also applies: `check:addresses`, `check:pnpm`, and the root `eslint` run only
+in pre-push. CI path filters skip jobs whose paths did not change. For example, a change to
+`scripts/*.ts` alone does not run `build_circuits`, which runs `check:verifiers`.
+
+## Review before you report done
+
+Review every protocol-bearing diff before you report it as done. Protocol-bearing means contracts,
+circuits, runtime crates, durable schemas, or build configuration.
+
+1. Use the procedure in `prompts/invariant-reviewer.md`. Review `git diff`, not your memory of the
+   change.
+2. Run the review in a fresh context that does not share the writer's conversation. Use the first
+   option that your tool supports:
+   - a second model or tool, read-only;
+   - a read-only subagent (Claude Code `invariant-reviewer`, OpenCode `invariant-reviewer`);
+   - a new session in the same tool.
+3. If none of these is available, do the review yourself as a separate step after the change is
+   complete. Read the procedure again, then read the full diff and each changed file at HEAD.
+4. Handle each finding with Change discipline rule 9: fix it or rebut it with evidence.
+5. Normally, run one sequential review pass. For changes to durable schemas, wire formats, circuits,
+   verification keys, source hashes, contract ABIs, contract storage, upgrades, or release counters,
+   run a second pass. Apply steps 2 and 3 to each pass; a second model is not required.
+
+A review does not replace the gates in the verification ladder, and the gates do not replace the
+review. Most invariants have no mechanical check.
 
 ## Project Structure
 
@@ -80,18 +141,23 @@ Two orthogonal axes pick what gets compiled into `circuits/bin/`:
 - **Committee** (`--committee minimum` [default] | `micro` | `small`): `(N, T, H)` for the
   secret-sharing committee. Mirrors `e3_zk_helpers::CiphernodesCommitteeSize`.
 
-The current selection is the single source of truth at three places that **must** stay in sync:
+`scripts/build-circuits.ts` writes the selection. Never hand-edit the values it writes:
 
-| File                                                          | Owner                                      |
-| ------------------------------------------------------------- | ------------------------------------------ |
-| `circuits/lib/src/configs/committee/active.nr`                | regenerated by `scripts/build-circuits.ts` |
-| `packages/interfold-contracts/scripts/utils.ts` (`BFV_DKG_H`) | regenerated by `scripts/build-circuits.ts` |
-| `circuits/bin/.active-preset.json`                            | written by `scripts/build-circuits.ts`     |
+| File                                                                | What the build script writes                                          |
+| ------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `circuits/lib/src/configs/committee/active.nr`                      | Committed production committee for the Noir circuits                  |
+| `packages/interfold-contracts/scripts/utils.ts`                     | `BFV_DKG_H`, `BFV_THRESHOLD_T`, and the BFV parameter-hash constants  |
+| `packages/interfold-contracts/contracts/lib/ActiveCryptoConfig.sol` | The whole file                                                        |
+| `circuits/bin/.active-preset.json`                                  | Local cache stamp only. It can name a different pair than `active.nr` |
 
-`scripts/check-committee.sh` (pre-push hook: `pnpm check:committee`) enforces consistency. Always
-switch with `pnpm build:circuits --committee <name>`; never hand-edit the three files above.
-Supported `(preset, committee)` pairs live in `scripts/circuit-constants.ts`. See
-`scripts/README.md#circuit-builder` and `circuits/benchmarks/README.md` for the full recipe.
+`scripts/check-committee.sh` (`pnpm check:committee`, pre-push and the Agent Harness CI workflow)
+compares the BFV tuples, committee values, and configuration IDs across TypeScript, Rust, Noir, and
+Solidity. The file list is at the top of the script. It regenerates and compares the parity matrices
+only when `target/release/generate_parity_matrices` is executable and `nargo` is on PATH. A
+different `.active-preset.json` only prints a note. Always switch with
+`pnpm build:circuits --committee <name>`. Supported `(preset, committee)` pairs live in
+`scripts/circuit-constants.ts`. See `scripts/README.md#circuit-builder` and
+`circuits/benchmarks/README.md` for the full recipe.
 
 ## Contract addresses
 
@@ -152,8 +218,8 @@ Update flow-trace docs **in the same PR** when any of these happen:
 
 - Edit the specific file that covers the changed area — keep changes scoped
 - If a change spans multiple files, update all affected files
-- Update `00_INDEX.md` only when adding/removing/renaming a file, or when the end-to-end flow
-  summaries or the contract interaction map change
+- Update `00_INDEX.md` only for file additions, removals, or renames; end-to-end summary changes;
+  contract-map changes; or updates to the Verified Bugs & Protocol Concerns table
 - Preserve the existing format: step-by-step traces with `File:` references pointing to actual
   source paths
 - Keep the "Verified Bugs" table in `00_INDEX.md` current — mark fixed bugs, add new ones

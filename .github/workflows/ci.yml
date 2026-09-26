@@ -97,6 +97,8 @@ jobs:
             circuits:
               - 'circuits/**'
               - 'scripts/*-circuits.sh'
+              - 'scripts/generate-verifiers*.ts'
+              - 'scripts/circuit-constants.ts'
               - '!**/*.md'
               - '!**/*.mdx'
             crisp:
@@ -126,6 +128,13 @@ jobs:
               - '!**/*.mdx'
             ci:
               - '.github/**'
+            # Root manifests define the workspace and every `pnpm <script>` a job
+            # runs. A change here can retarget or remove a test command, so it
+            # must reach every job that installs from the lockfile.
+            tooling:
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'pnpm-workspace.yaml'
       - name: Compute job filters
         id: jobs
         run: |
@@ -138,41 +147,53 @@ jobs:
           INTEGRATION="${{ steps.filter.outputs.integration_tests }}"
           DOCKER="${{ steps.filter.outputs.docker }}"
           CI="${{ steps.filter.outputs.ci }}"
+          TOOLING="${{ steps.filter.outputs.tooling }}"
           FORCE="${{ github.event_name == 'workflow_dispatch' || inputs.release_candidate }}"
 
           any() { for v in "$@"; do [ "$v" = "true" ] && echo "true" && return; done; echo "false"; }
 
-          echo "rust_unit_tests=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $CI)" >> $GITHUB_OUTPUT
-          echo "rust_integration_tests=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $CI)" >> $GITHUB_OUTPUT
-          echo "ciphernode_e2e=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $INTEGRATION $CI)" >> $GITHUB_OUTPUT
-          echo "build_sdk=$(any $FORCE $RUST $CONTRACTS $SDK $INTEGRATION $CIRCUITS $CI $TEMPLATES)" >> $GITHUB_OUTPUT
+          echo "rust_unit_tests=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $CI $TOOLING)" >> $GITHUB_OUTPUT
+          echo "rust_integration_tests=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $CI $TOOLING)" >> $GITHUB_OUTPUT
+          echo "ciphernode_e2e=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $INTEGRATION $CI $TOOLING)" >> $GITHUB_OUTPUT
+          echo "build_sdk=$(any $FORCE $RUST $CONTRACTS $SDK $INTEGRATION $CIRCUITS $CI $TEMPLATES $TOOLING)" >> $GITHUB_OUTPUT
           # CRISP jobs (unit legs and e2e alike) only guard CRISP's own layers.
           # Cross-cutting ciphernode coverage comes from template_integration,
           # which drives the same full E3 lifecycle with the same interfold
           # binary and circuit preset, minus the CRISP-specific app layers.
-          echo "crisp=$(any $FORCE $CRISP $CI)" >> $GITHUB_OUTPUT
+          echo "crisp=$(any $FORCE $CRISP $CI $TOOLING)" >> $GITHUB_OUTPUT
           # template_integration is the repo's cross-cutting end-to-end test: it
           # runs a full E3 round against real ciphernodes, so it must run on any
           # change to the stack it drives, not just template changes.
-          echo "templates=$(any $FORCE $TEMPLATES $RUST $CONTRACTS $CIRCUITS $SDK $CI)" >> $GITHUB_OUTPUT
-          echo "zk=$(any $FORCE $RUST $CIRCUITS $CI)" >> $GITHUB_OUTPUT
-          echo "contracts=$(any $FORCE $CONTRACTS $CI)" >> $GITHUB_OUTPUT
+          echo "templates=$(any $FORCE $TEMPLATES $RUST $CONTRACTS $CIRCUITS $SDK $CI $TOOLING)" >> $GITHUB_OUTPUT
+          echo "zk=$(any $FORCE $RUST $CIRCUITS $CI $TOOLING)" >> $GITHUB_OUTPUT
+          echo "contracts=$(any $FORCE $CONTRACTS $CI $TOOLING)" >> $GITHUB_OUTPUT
           echo "docker_support=$(any $FORCE $DOCKER $CI)" >> $GITHUB_OUTPUT
           # The rust jobs already compile the workspace, so the image build only
           # needs to run when the Dockerfiles or their build context change.
           echo "docker_ciphernode=$(any $FORCE $DOCKER $CI)" >> $GITHUB_OUTPUT
-          echo "net=$(any $FORCE $INTEGRATION $CI)" >> $GITHUB_OUTPUT
-          echo "init=$(any $FORCE $TEMPLATES $RUST $CONTRACTS $CI)" >> $GITHUB_OUTPUT
+          echo "net=$(any $FORCE $INTEGRATION $CI $TOOLING)" >> $GITHUB_OUTPUT
+          echo "init=$(any $FORCE $TEMPLATES $RUST $CONTRACTS $CI $TOOLING)" >> $GITHUB_OUTPUT
           # Both feed template_integration, so each must cover every path that
           # triggers it — a skipped dependency silently skips the e2e job.
-          echo "build_e3_support_dev=$(any $FORCE $TEMPLATES $RUST $CONTRACTS $CIRCUITS $SDK $CI)" >> $GITHUB_OUTPUT
-          echo "build_circuits=$(any $FORCE $RUST $CIRCUITS $CI)" >> $GITHUB_OUTPUT
-          echo "integration_prebuild=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $INTEGRATION $CI)" >> $GITHUB_OUTPUT
-          echo "zk_prover_integration=$(any $FORCE $RUST $CIRCUITS $CI)" >> $GITHUB_OUTPUT
-          echo "build_interfold_cli=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $INTEGRATION $TEMPLATES $CRISP $SDK $CI)" >> $GITHUB_OUTPUT
+          echo "build_e3_support_dev=$(any $FORCE $TEMPLATES $RUST $CONTRACTS $CIRCUITS $SDK $CI $TOOLING)" >> $GITHUB_OUTPUT
+          echo "build_circuits=$(any $FORCE $RUST $CIRCUITS $CI $TOOLING)" >> $GITHUB_OUTPUT
+          echo "integration_prebuild=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $INTEGRATION $CI $TOOLING)" >> $GITHUB_OUTPUT
+          echo "zk_prover_integration=$(any $FORCE $RUST $CIRCUITS $CI $TOOLING)" >> $GITHUB_OUTPUT
+          echo "build_interfold_cli=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $INTEGRATION $TEMPLATES $CRISP $SDK $CI $TOOLING)" >> $GITHUB_OUTPUT
 
       - name: Check release promotion safeguards
         run: node --test scripts/release.test.mjs
+
+      - name: Check test runner dispatch and results
+        run: node --test scripts/test-harnesses.test.mjs
+
+  test_dappnode:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - name: Test DAppNode credentials and health checks
+        run: sudo apt-get update && sudo apt-get install -y gettext-base && bash dappnode/tests/test-hardening.sh
 
   rust_unit_tests:
     needs: [detect_changes]
@@ -257,6 +278,10 @@ jobs:
       - name: Run compute-provider Unit Tests with parallel batching
         if: matrix.suite == 'lib'
         run: 'cargo test -p e3-compute-provider --features parallel'
+
+      - name: Run Rust-to-Solidity slashing assertions
+        if: matrix.suite == 'lib'
+        run: pnpm rust:test:slashing
 
       - name: Cancel workflow on failure
         if: failure()
@@ -1174,7 +1199,7 @@ jobs:
             packages/interfold-contracts/contracts/lib/ActiveCryptoConfig.sol \
             packages/interfold-contracts/scripts/utils.ts
 
-      - name: Test circuit artifact validation
+      - name: Test circuit artifact validation and verifier selection
         run: pnpm test:circuit-tooling
 
       # The generated verifier contracts must match the freshly built verification keys. A drift
@@ -1242,6 +1267,10 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: compiled-circuits
+          # `.active-preset.json` is a hidden file, and upload-artifact v4 drops hidden files
+          # unless told otherwise. Without it zk_prover_e2e cannot tell which committee the
+          # circuits were built for, and the minimum-committee proof tests fail.
+          include-hidden-files: true
           path: |
             circuits/bin/.active-preset.json
             circuits/bin/dkg/target/
@@ -1259,7 +1288,7 @@ jobs:
   zk_prover_e2e:
     needs: [detect_changes, build_circuits]
     if: needs.detect_changes.outputs.zk == 'true'
-    timeout-minutes: 30
+    timeout-minutes: 60
     runs-on:
       ${{ github.repository == 'theinterfold/interfold' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' ||
       github.ref == 'refs/heads/dev') && format('runs-on={0}-{1}-{2}/runner=4cpu-linux-x64/ram=16', github.run_id, github.run_attempt,
@@ -1339,6 +1368,12 @@ jobs:
 
       - name: Run ZK prover e2e tests
         run: cargo test -p e3-zk-prover --test local_e2e_tests -- --nocapture --test-threads=1
+
+      - name: Verify fold accumulators and the correlated node proof
+        timeout-minutes: 30
+        run:
+          cargo test --locked -p e3-zk-prover --test fold_accumulators_e2e_tests --test node_fold_correlated_e2e_tests -- --include-ignored
+          --nocapture --test-threads=1
 
   build_e3_support_dev:
     needs: [detect_changes]
@@ -1438,6 +1473,10 @@ jobs:
 
       - name: Run the tests
         run: pnpm sdk:test
+
+      - name: Verify SDK encryption proofs and reject altered bindings
+        timeout-minutes: 15
+        run: pnpm sdk:test:proofs:prepared
 
       - name: Upload SDK artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

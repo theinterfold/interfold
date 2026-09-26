@@ -2,6 +2,11 @@
 
 This directory contains utility scripts for the Interfold project.
 
+## CRISP end-to-end test
+
+`bash scripts/run-crisp-test.sh [test args]` tests committed `HEAD` in a temporary Git worktree and
+refuses to run with pending changes. A failed run keeps the worktree and prints its path.
+
 ## Version Bumper
 
 `bump-versions.ts` - Bumps the versions of all packages and crates in the project.
@@ -286,9 +291,9 @@ pnpm store:circuits pull
 `pnpm build:circuits hash` prints the hash that gates the published artifacts. It covers the Noir
 circuits, the Noir config for the selected preset and committee, the Rust sources that generate the
 C1/C2 bounds and the parity matrices, the circuit build scripts, and the external crate pins in
-`Cargo.lock`. It ignores the generated bound values, the workspace release version, and the
-dependency graph between workspace crates. A change outside that set does not need a circuit
-rebuild.
+`Cargo.lock`. It ignores the generated bound values, Rust `#[cfg(test)]` modules, the workspace
+release version, and the dependency graph between workspace crates. A change outside that set does
+not need a circuit rebuild.
 
 ### What it does
 
@@ -504,7 +509,7 @@ Generated verifiers are automatically:
 ## Guest provenance
 
 Two commands cover the RISC Zero compute guest. The full reviewer-facing procedure is
-`docs/pages/verifying-the-compute-provider.mdx`.
+`docs/pages/build/e3-program/verify-compute-provider.mdx`.
 
 ### `generate-provenance-manifest.ts`
 

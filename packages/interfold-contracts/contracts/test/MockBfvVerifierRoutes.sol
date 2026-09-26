@@ -11,10 +11,13 @@ import {
 import { IBfvPkVerifierRoute } from "../verifiers/bfv/BfvPkVerifierRouter.sol";
 
 contract MockBfvPkVerifierRoute is IBfvPkVerifierRoute {
+    error UnexpectedCall();
+
     uint256 public immutable override h;
     bytes32 public immutable override expectedNodesFoldKeyHash;
     bytes32 public immutable override expectedC5KeyHash;
     bool private immutable result;
+    bytes32 private expectedCallHash;
 
     constructor(
         uint256 _h,
@@ -28,6 +31,11 @@ contract MockBfvPkVerifierRoute is IBfvPkVerifierRoute {
         result = _result;
     }
 
+    /// @dev Makes `verify` revert unless its calldata equals `data`.
+    function expectCall(bytes calldata data) external {
+        expectedCallHash = keccak256(data);
+    }
+
     function verify(
         uint256,
         uint256,
@@ -36,15 +44,20 @@ contract MockBfvPkVerifierRoute is IBfvPkVerifierRoute {
         bytes32,
         bytes calldata
     ) external view override returns (bool success) {
+        if (expectedCallHash != 0 && keccak256(msg.data) != expectedCallHash)
+            revert UnexpectedCall();
         success = result;
     }
 }
 
 contract MockBfvDecryptionVerifierRoute is IBfvDecryptionVerifierRoute {
+    error UnexpectedCall();
+
     uint256 public immutable override threshold;
     bytes32 public immutable override expectedC6FoldKeyHash;
     bytes32 public immutable override expectedC7KeyHash;
     bool private immutable result;
+    bytes32 private expectedCallHash;
 
     constructor(
         uint256 _threshold,
@@ -58,6 +71,11 @@ contract MockBfvDecryptionVerifierRoute is IBfvDecryptionVerifierRoute {
         result = _result;
     }
 
+    /// @dev Makes `verify` revert unless its calldata equals `data`.
+    function expectCall(bytes calldata data) external {
+        expectedCallHash = keccak256(data);
+    }
+
     function verify(
         uint256,
         bytes32,
@@ -66,6 +84,8 @@ contract MockBfvDecryptionVerifierRoute is IBfvDecryptionVerifierRoute {
         bytes32,
         bytes calldata
     ) external view override returns (bool success) {
+        if (expectedCallHash != 0 && keccak256(msg.data) != expectedCallHash)
+            revert UnexpectedCall();
         success = result;
     }
 }

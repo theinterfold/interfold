@@ -20,27 +20,14 @@ export const SDK_CIRCUIT_COMMITTEE = 'minimum'
 // runtime (not in browsers or web workers, even when `process` is polyfilled).
 const isNode = typeof process !== 'undefined' && process.versions != null && process.versions.node != null
 
-let checked = false
-
 /**
- * SDK encryption artifacts are built for the minimum committee preset by default.
- * Fail fast when `circuits/bin/.active-preset.json` points at another committee
- * (e.g. after benchmark runs with `--committee small`).
- *
- * In browser environments this is a no-op (circuit files don't exist client-side).
- *
- * The Node-only check runs asynchronously (fire-and-forget) so this function can
- * stay synchronous for its module-load-time caller while keeping the browser
- * bundle free of Node builtins. In Node a mismatch surfaces as an unhandled
- * rejection, which still terminates the process — preserving the fail-fast.
+ * Check the local SDK artifact selection before proof generation.
+ * Browser bundles contain their artifacts and do not use the local stamp.
+ * Await this check so a missing or mismatched stamp rejects the proof request.
  */
-export function assertSdkMinimumCircuits(): void {
-  if (checked || !isNode) {
-    checked = true
-    return
-  }
-  checked = true
-  void assertNodeCircuits()
+export async function assertSdkMinimumCircuits(): Promise<void> {
+  if (!isNode) return
+  await assertNodeCircuits()
 }
 
 async function assertNodeCircuits(): Promise<void> {
@@ -84,9 +71,10 @@ async function assertNodeCircuits(): Promise<void> {
     )
   }
 
-  let active: { committee?: string }
+  let active: { committee?: string; preset?: string }
   try {
-    active = JSON.parse(raw) as { committee?: string }
+    active = JSON.parse(raw) as { committee?: string; preset?: string }
+    if (active === null || typeof active !== 'object' || Array.isArray(active)) throw new Error('Invalid stamp object')
   } catch {
     throw new SDKError(
       `Could not parse ${activePresetPath} — run \`pnpm -C packages/interfold-sdk compile:circuits\`.`,
@@ -100,5 +88,9 @@ async function assertNodeCircuits(): Promise<void> {
         `Run \`pnpm build:circuits --committee ${SDK_CIRCUIT_COMMITTEE}\`.`,
       'SDK_CIRCUIT_COMMITTEE_MISMATCH',
     )
+  }
+
+  if (active.preset !== 'insecure-512') {
+    throw new SDKError('SDK encryption circuits require the insecure-512 preset.', 'SDK_CIRCUIT_PRESET_MISMATCH')
   }
 }

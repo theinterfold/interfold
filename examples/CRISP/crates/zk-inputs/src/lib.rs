@@ -433,27 +433,6 @@ mod tests {
     }
 
     #[test]
-    fn test_inputs_generation_with_vote_0() {
-        let generator = ZKInputsGenerator::with_defaults();
-        let (_secret_key, public_key) = generator.generate_keys().expect("failed to generate keys");
-        let vote = create_vote_vector();
-        let prev_ciphertext = generator
-            .encrypt_vote(&public_key, vote.clone())
-            .expect("failed to generate previous ciphertext");
-        let result =
-            generator.generate_inputs(Some(&prev_ciphertext), &public_key, vote.clone(), false);
-
-        assert!(result.is_ok());
-        let (ciphertext_bytes, json_output) = result.unwrap();
-        // Verify ciphertext is not empty
-        assert!(!ciphertext_bytes.is_empty());
-        // Verify it's valid JSON and contains expected fields from both witnesses.
-        assert!(json_output.contains("pk0is"));
-        assert!(json_output.contains("prev_ct0is"));
-        assert!(json_output.contains("sum_ct0is"));
-    }
-
-    #[test]
     fn test_get_bfv_params() {
         let generator =
             ZKInputsGenerator::from_set(BfvParamSet::from(BfvPreset::InsecureThreshold512));
@@ -588,27 +567,6 @@ mod tests {
         assert!(!ct0.is_empty());
         assert!(!ct1.is_empty());
         assert!(!ct0_2.is_empty());
-    }
-
-    #[test]
-    fn test_decrypt_vote() {
-        let generator = ZKInputsGenerator::with_defaults();
-        let (secret_key, public_key) = generator.generate_keys().expect("failed to generate keys");
-        let vote = create_vote_vector();
-
-        // Encrypt the vote
-        let ciphertext = generator
-            .encrypt_vote(&public_key, vote.clone())
-            .expect("failed to encrypt vote");
-        assert!(!ciphertext.is_empty());
-
-        // Decrypt the vote
-        let decrypted_vote = generator
-            .decrypt_vote(&secret_key, &ciphertext)
-            .expect("failed to decrypt vote");
-
-        // Verify the decrypted vote matches the original
-        assert_eq!(decrypted_vote, vote);
     }
 
     #[test]

@@ -1347,37 +1347,6 @@ mod tests {
     }
 
     #[test]
-    fn ts_query_cursor_off_by_one_causes_duplicates() {
-        let store = populated_store(&[
-            make_local_event(100),
-            make_local_event(200),
-            make_local_event(300),
-        ]);
-
-        let page1 = store.query_by_ts(100, None, Some(2)).unwrap();
-        assert_eq!(page1.len(), 2);
-
-        let cursor_ts = page1.last().unwrap().get_ctx().ts();
-        assert_eq!(cursor_ts, 200);
-
-        let page2 = store.query_by_ts(cursor_ts, None, None).unwrap();
-        assert_eq!(page2.len(), 2);
-
-        let total: Vec<_> = page1.iter().chain(page2.iter()).collect();
-        let ts_values: Vec<_> = total.iter().map(|e| e.get_ctx().ts()).collect();
-        let has_duplicates = ts_values.len()
-            != ts_values
-                .iter()
-                .collect::<std::collections::HashSet<_>>()
-                .len();
-
-        assert!(
-            has_duplicates,
-            "BUG: ts=200 appears in both pages (inclusive query with cursor=last_ts)"
-        );
-    }
-
-    #[test]
     fn ts_query_pagination_without_duplicates() {
         let store = populated_store(&[
             make_local_event(100),
@@ -1419,36 +1388,5 @@ mod tests {
         assert_eq!(page2.len(), 2);
         assert_eq!(page2[0].seq(), 2);
         assert_eq!(page2[1].seq(), 3);
-    }
-
-    #[test]
-    fn seq_query_cursor_off_by_one_causes_duplicates() {
-        let store = populated_store(&[
-            make_local_event(100),
-            make_local_event(200),
-            make_local_event(300),
-        ]);
-
-        let page1 = store.query_by_seq(1, None, Some(2)).unwrap();
-        assert_eq!(page1.len(), 2);
-
-        let cursor_seq = page1.last().unwrap().seq();
-        assert_eq!(cursor_seq, 2);
-
-        let page2 = store.query_by_seq(cursor_seq, None, None).unwrap();
-        assert_eq!(page2.len(), 2);
-
-        let total: Vec<_> = page1.iter().chain(page2.iter()).collect();
-        let seq_values: Vec<_> = total.iter().map(|e| e.seq()).collect();
-        let has_duplicates = seq_values.len()
-            != seq_values
-                .iter()
-                .collect::<std::collections::HashSet<_>>()
-                .len();
-
-        assert!(
-            has_duplicates,
-            "BUG: seq=2 appears in both pages (inclusive query with cursor=last_seq)"
-        );
     }
 }

@@ -44,6 +44,37 @@ fn vote_digest_is_deterministic() {
     );
 }
 
+#[test]
+fn production_vote_signature_binds_every_admitted_field() {
+    let me = signer(1);
+    let voting = voting_with(&me, vec![me.address()], 1, 1);
+    let mut vote = AccusationVote {
+        e3_id: voting.e3_id.clone(),
+        accusation_id: [0x07; 32],
+        voter: me.address(),
+        data_hash: [0x08; 32],
+        issued_at: NOW,
+        deadline: NOW + VALIDITY,
+        signature: ArcBytes::default(),
+    };
+    vote.signature = ArcBytes::from_bytes(&voting.sign_vote_digest(&vote).unwrap());
+    assert!(voting.verify_vote_signature(&vote));
+
+    let tampers: [fn(&mut AccusationVote); 6] = [
+        |vote| vote.e3_id = E3id::new("43", CHAIN_ID),
+        |vote| vote.accusation_id[0] ^= 1,
+        |vote| vote.voter = signer(2).address(),
+        |vote| vote.data_hash[0] ^= 1,
+        |vote| vote.issued_at += 1,
+        |vote| vote.deadline += 1,
+    ];
+    for tamper in tampers {
+        let mut tampered = vote.clone();
+        tamper(&mut tampered);
+        assert!(!voting.verify_vote_signature(&tampered));
+    }
+}
+
 /// A second agreeing vote that reaches `vote_quorum_h` must produce a single
 /// AccusedFaulted quorum decision and remove the pending accusation.
 #[test]
