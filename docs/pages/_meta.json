@@ -1,104 +1,35 @@
 {
-  "-- Overview": {
-    "type": "separator",
-    "title": "Overview"
-  },
   "index": {
-    "title": "Interfold"
+    "title": "Home",
+    "theme": {
+      "layout": "full",
+      "toc": false,
+      "breadcrumb": false,
+      "pagination": false,
+      "timestamp": false
+    }
   },
-  "introduction": {
-    "title": "Introduction"
+  "learn": {
+    "title": "Learn"
   },
-  "what-is-e3": {
-    "title": "What is an E3?"
-  },
-  "architecture-overview": {
-    "title": "Architecture Overview"
-  },
-  "computation-flow": {
-    "title": "E3 Computation Flow"
-  },
-  "cryptography": {
-    "title": "Cryptography"
-  },
-  "use-cases": {
-    "title": "Use Cases"
-  },
-
-  "-- Getting Started": {
-    "type": "separator",
-    "title": "Getting Started"
-  },
-  "requirements": {
-    "title": "System Requirements"
-  },
-  "installation": {
-    "title": "Installation"
-  },
-  "quick-start": {
-    "title": "Quick Start"
-  },
-  "hello-world-tutorial": {
-    "title": "Hello World"
-  },
-
-  "-- Build": {
-    "type": "separator",
+  "build": {
     "title": "Build"
   },
-  "building-with-interfold": {
-    "title": "Building with Interfold"
+  "operate": {
+    "title": "Run a Ciphernode"
   },
-  "best-practices": {
-    "title": "Best Practices"
+  "CRISP": {
+    "title": "CRISP"
   },
-  "project-template": {
-    "title": "Project Template"
+  "internals": {
+    "title": "Protocol Internals"
   },
-  "sdk": {
-    "title": "SDK"
-  },
-  "setting-up-server": {
-    "title": "Server Setup"
-  },
-  "noir-circuits": {
-    "title": "Noir Circuits"
-  },
-
-  "-- Build an E3": {
+  "-- FOLD & Governance": {
     "type": "separator",
-    "title": "Build an E3 Program"
+    "title": "FOLD & Governance"
   },
-  "getting-started": {
-    "title": "Getting Started"
-  },
-  "write-secure-program": {
-    "title": "Secure Process"
-  },
-  "write-e3-contract": {
-    "title": "E3 Program Contract"
-  },
-  "compute-provider": {
-    "title": "Compute Provider Setup"
-  },
-  "verifying-the-compute-provider": {
-    "title": "Verify Compute Provider"
-  },
-  "putting-it-together": {
-    "title": "Putting It All Together"
-  },
-
-  "-- Tutorials": {
-    "type": "separator",
-    "title": "Tutorials"
-  },
-  "tutorials": {
-    "title": "Tutorials"
-  },
-
-  "-- Participate": {
-    "type": "separator",
-    "title": "Participate"
+  "tokenomics": {
+    "title": "Tokenomics"
   },
   "governance": {
     "title": "Governance"
@@ -106,45 +37,17 @@
   "constitution": {
     "title": "DAO Constitution"
   },
-  "tokenomics": {
-    "title": "Tokenomics"
-  },
   "faq": {
     "title": "FOLD FAQ"
   },
-  "requestor-guide": {
-    "title": "Requestor Guide"
-  },
-
-  "-- Operators": {
+  "-- Archive": {
     "type": "separator",
-    "title": "Operators"
-  },
-  "ciphernode-operators": {
-    "title": "Ciphernode Operators"
-  },
-
-  "-- Applications": {
-    "type": "separator",
-    "title": "Applications"
-  },
-  "CRISP": {
-    "title": "CRISP"
-  },
-
-  "-- Internals": {
-    "type": "separator",
-    "title": "Internals"
-  },
-  "internals": {
-    "title": "Technical Deep Dives"
-  },
-
-  "-- Reference": {
-    "type": "separator",
-    "title": "Reference"
+    "title": "Archive"
   },
   "whitepaper": {
-    "title": "Whitepaper"
+    "title": "Whitepaper (2024)"
+  },
+  "404": {
+    "display": "hidden"
   }
 }
