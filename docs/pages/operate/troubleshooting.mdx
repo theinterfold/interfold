@@ -1,232 +1,341 @@
 ---
-title: 'Troubleshoot Common Ciphernode Issues'
+title: 'Troubleshooting'
 description:
-  'Diagnose and fix the most common problems ciphernode operators encounter — selection failures,
-  connectivity, syncing, and key log messages'
+  'Find the cause of a ciphernode problem from its symptom: selection, ticket submission, DHT
+  publication, peer connectivity, chain events, startup errors, and memory.'
 ---
 
-# Troubleshoot Common Ciphernode Issues
+import { Callout, Steps } from 'nextra/components'
+import { LinkCard, LinkCards } from '@/components/ui'
 
-This guide covers the most frequent problems operators encounter and how to resolve them.
+# Troubleshooting
 
-> **What you'll learn:** How to diagnose a node that isn't being selected, isn't connecting to
-> peers, isn't syncing, or is missing its submission window — and how to read the key log messages
-> the node emits at each stage.
->
-> **Prerequisites:** A registered and running ciphernode. If you haven't set one up yet, see
-> [Running a Ciphernode](/ciphernode-operators/running).
+This page helps operators find the cause of a ciphernode problem from what they see. Each section
+starts with the symptom, explains what it means, and gives the checks in order. At the end of a
+section, you know if the node needs an action from you or if it recovers without one.
 
----
+## Symptoms
 
-## Not Being Selected for Committees
+| Symptom                                                          | Section                                                                   |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `This node was NOT selected for sortition` for each E3           | [Not selected for committees](#not-selected-for-committees)               |
+| `Failed to submit ticket: …`                                     | [Ticket submission fails](#ticket-submission-fails)                       |
+| `DHT put record failed: the quorum failed; needed 1 peers`       | [DHT put record fails](#dht-put-record-fails)                             |
+| No connected peers, or `Rejected an incompatible Interfold peer` | [No connected peers](#no-connected-peers)                                 |
+| E3 requests appear on-chain, but the node logs nothing           | [The node does not follow the chain](#the-node-does-not-follow-the-chain) |
+| The node exits at startup with an error                          | [Startup fails](#startup-fails)                                           |
+| The operating system kills the node or the prover during a DKG   | [Out of memory](#out-of-memory)                                           |
 
-**Symptom:** Your node logs `"This node was NOT selected for sortition"` on every E3 request.
+## Read the logs
 
-### Check your status
+The CLI sets the log level with flags. It does not read `RUST_LOG`. See
+[Global options](/reference/cli#global-options).
+
+| Flag            | Level   | Use                                                            |
+| --------------- | ------- | -------------------------------------------------------------- |
+| None            | `WARN`  | Warnings and errors only                                       |
+| `-v`            | `INFO`  | Normal operation. Most log lines on this page need this level. |
+| `-vv`           | `DEBUG` | Detailed diagnosis of one problem                              |
+| `-vvv`          | `TRACE` | Very large output. Use it only for a short time.               |
+| `-q`, `--quiet` | `ERROR` | Errors only                                                    |
+
+The node writes readable log lines to standard output. Your supervisor collects them, for example
+the terminal, `journalctl`, or `docker logs`. The Docker image starts the node with `-v`.
+
+The node also writes each log entry as JSON to `ciphernode.jsonl` in the node data directory, the
+directory that contains `db`. The file rotates at 25 MiB and keeps four old files,
+`ciphernode.jsonl.1` to `ciphernode.jsonl.4`. The **Logs** view of the
+[local dashboard](/operate/dashboard) shows the same entries.
+
+<Callout type='info'>
+  `interfold config get log_file` returns the base path of the event log, not a text log. The event
+  log files (`log.0` and one for each chain) are binary. The data directory is the parent directory
+  of the path that `interfold config get db_file` returns.
+</Callout>
+
+## Not selected for committees
+
+**Symptom:** the node logs `This node was NOT selected for sortition` for each E3.
+
+This line means that the node has no ticket to submit for the E3. The node is not eligible, all its
+tickets are in use, or its bond owner is not ranked high enough. The last cause is normal: the
+committee has a fixed number of seats.
+
+<Steps>
+
+### Check the on-chain status
+
+Run `interfold ciphernode status --operator 0xOPERATOR`.
+
+| Field             | Expected value                                  | If not                                                                 |
+| ----------------- | ----------------------------------------------- | ---------------------------------------------------------------------- |
+| `Registered`      | `true`                                          | Register the operator. See [Registration](/operate/registration).      |
+| `Active`          | `true`                                          | Continue with the next rows.                                           |
+| `Exit pending`    | `false`                                         | A deregistration is in progress. The operator cannot enter committees. |
+| `Ticket balance`  | The available count is at least `minTickets`    | [Buy tickets](/operate/manage-tickets#buy-tickets).                    |
+| `Ciphernode bond` | At least 80 % of `ciphernodeBond` (the default) | Bond more FOLD.                                                        |
+
+### Check the causes that the status does not show
+
+If `Active` is `false` but the balances are correct, check these causes:
+
+- The release of the node does not meet the on-chain release policy. See
+  [Upgrades](/operate/upgrades#the-on-chain-release-gate).
+- Governance changed a parameter, and the operator status needs a refresh. See
+  [After a governance change](/operate/tickets-and-sortition#after-a-governance-change).
+- A slashing manager banned the operator. Call `isBanned(operator)` on `SlashingManager`.
+
+### Read the sortition log lines
+
+Look for these `INFO` lines before `This node was NOT selected for sortition`:
+
+- `Node is not active`: the operator was not active at `requestBlock - 1`.
+- `Node has no tickets in the request-time sortition view`: the snapshot balance gave 0 tickets.
+
+Tickets that you add after a request count only for later requests.
+
+### Check the local capacity
+
+The node takes part in one E3 for each ticket at the same time. If all tickets are in use by active
+E3s, the node does not submit. Add tickets to serve more E3s in parallel.
+
+</Steps>
+
+`Node not in finalized committee` is a different case. The node submitted a ticket, but the best
+tickets of other bond owners took the seats. This result is normal.
+
+## Ticket submission fails
+
+**Symptom:** the node logs `This node was SELECTED for sortition`, and then
+`Failed to submit ticket: …` at the `ERROR` level.
+
+The message includes the decoded contract error.
+
+| Error in the message       | Cause                                                           | Action                                                                                       |
+| -------------------------- | --------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `CommitteeDeadlineReached` | The transaction arrived after the committee deadline.           | Use a faster RPC endpoint. The window is `sortitionSubmissionWindow` after the VRF response. |
+| `NodeNotEligible`          | The operator was not active, or had no tickets at the snapshot. | Check the status as in [Not selected for committees](#not-selected-for-committees).          |
+| `InvalidTicketNumber`      | The ticket number is not in the snapshot range.                 | Check that the node syncs from a correct RPC endpoint.                                       |
+
+At deployment, `sortitionSubmissionWindow` was 600 s on mainnet and 60 s on Sepolia. The operator
+wallet must have ETH for gas. A slow or rate-limited RPC endpoint delays the transaction. See
+[RPC endpoints](/operate/rpc-endpoints).
+
+When the ticket is already on-chain, the node logs
+`Ticket already recorded on chain; skipping submission`. No action is necessary.
+
+## DHT put record fails
+
+**Symptom:** the node logs these lines during a DKG:
+
+```text
+ERROR DHT put record failed: the quorum failed; needed 1 peers
+ERROR Operation failed after 4 attempts: DHT put record failed: PutRecordError(QuorumFailed { key: …, success: [], quorum: 1 })
+```
+
+Before the second line, the node also logs `Attempt 1/4 failed, retrying in 1000ms: …` and two more
+attempts at the `WARN` level.
+
+### What the error means
+
+During a DKG, the node stores each DKG document that it makes in the Kademlia DHT. The documents are
+its threshold shares, its encryption key, and its decryption key share. The node stores each
+document with `Quorum::One`, so at least one remote peer must acknowledge it. The node gossips a
+notification to the committee only after the store succeeds.
+
+- **The retry sequence.** Each publication makes 4 attempts. The node waits 1 s, 2 s, and 4 s
+  between the attempts.
+- **`success: []`.** Remote peers receive records with record filtering on
+  (`StoreInserts::FilterBoth`). With this setting, a remote peer sends a response even when its
+  filter rejects the record. An empty `success` list therefore means that no peer acknowledged the
+  request at all.
+- **`QuorumFailed`, not `Timeout`.** The Kademlia query timeout is 30 s. A `QuorumFailed` result
+  before the timeout means that the query had no reachable peers to send the record to.
+
+The node therefore had no admitted and reachable Kademlia peers at that time.
+
+### What happens next
+
+The node retries a failed publication 15 s after each failed round of 4 attempts. It continues until
+the document expires or the DKG ends. The DKG ends when the chain reports the E3 stage
+`KeyPublished`, `CiphertextReady`, `Complete`, or `Failed`.
+
+- If the connectivity comes back in time, a later round succeeds and the node recovers without
+  action.
+- If the connectivity does not come back in time, the committee does not receive the documents of
+  this node for that E3.
+
+### Causes
+
+1. **No connectivity.** A firewall or NAT blocks the QUIC port, or the configured peers are down.
+   After 3 failed dials in a row, the node logs
+   `Evicting unreachable peer <peer> after 3 consecutive failures`. The node then keeps that peer
+   out of its Kademlia routing table for 30 minutes.
+2. **A network identity mismatch.** The Identify protocol string is
+   `interfold/<network_id>/protocol/<protocol_version>/deployments/<hash>/1`. The hash is a SHA-256
+   over the chain ID and the Interfold contract address of every enabled chain. A different
+   `protocol_version`, one more enabled chain, or a different `interfold` address changes the
+   string. Every peer then rejects the node, and the node logs
+   `Rejected an incompatible Interfold peer` with the reason.
+3. **Short churn.** Peers restarted at the same time. The errors stop after the peers reconnect.
+
+### Checks
+
+<Steps>
+
+### Check the release
+
+Run `interfold --version`.
+
+The release must have the same `protocol_version` as the network. See
+[Recent releases](/operate/upgrades#recent-releases).
+
+### Check if the errors repeat
+
+Look at the times of the `Operation failed after 4 attempts` lines.
+
+If the lines repeat for each round, the node is isolated. If they stopped, the problem was short.
+
+### Search the log for the peer lines
+
+Search the log for these lines. Most are `INFO` lines, so the node must run with `-v`:
+
+| Log line                                                        | Level   | Meaning                                                        |
+| --------------------------------------------------------------- | ------- | -------------------------------------------------------------- |
+| `Found <n> peer(s) to dial:`                                    | `INFO`  | The peers from the configuration and the network profile.      |
+| `Peer admitted`                                                 | `INFO`  | A peer passed the Identify check.                              |
+| `Rejected an incompatible Interfold peer`                       | `INFO`  | The Identify check failed. The `reason` field gives the cause. |
+| `Evicting unreachable peer <peer> after 3 consecutive failures` | `INFO`  | Three dials to the peer failed in a row.                       |
+| `Incoming connection error: …`                                  | `WARN`  | An inbound connection failed.                                  |
+| `Peer did not complete Identify before the admission deadline`  | `DEBUG` | A connected peer did not send Identify in time. Needs `-vv`.   |
+
+The `Starting the scoped Interfold P2P network` line shows the `identify` string of the node.
+Compare it with the string of a node that works.
+
+### Read the peer state from the dashboard API
+
+If `dashboard_port` is set, run this command on the host of the node:
 
 ```bash
-interfold ciphernode status
+curl -s http://127.0.0.1:<port>/api/snapshot | jq '.network'
 ```
 
-Look for:
+An empty `connected_peers` list confirms that the node has no admitted peers. `last_error` shows the
+latest network error.
 
-| Field             | Expected                   | Problem if                                  |
-| ----------------- | -------------------------- | ------------------------------------------- |
-| `isActive`        | `true`                     | `false` — you're not eligible for selection |
-| `Ticket balance`  | ≥ `minTicketBalance`       | Below minimum — buy more tickets            |
-| `Ciphernode bond` | ≥ `requiredCiphernodeBond` | Below minimum — top up your bond            |
-| `Exit pending`    | `false`                    | `true` — you've requested deregistration    |
-| `Banned`          | `false`                    | `true` — you've been slashed and banned     |
+### Check the chain configuration
 
-### Common causes
+Run `interfold config check`.
 
-**Low ticket count.** Selection probability scales linearly with tickets. If the network has 1000
-total tickets and you hold 10, you'll be selected ~1% of the time. The bond owner can top up:
+The command compares each configured address with the published deployment manifest and reports
+`STALE` lines. Make sure that only the chains that you use are enabled, because each enabled chain
+changes the Identify string. A chain entry with `enabled: false` does not count.
 
-```bash
-interfold --config /path/to/owner.yaml ciphernode tickets \
-  --operator 0xOPERATOR buy --amount 100
-```
+### Check the QUIC port
 
-**Bond dropped below minimum.** If you were slashed, your bond may have fallen below
-`requiredCiphernodeBond`. The bond owner can top it up:
+Run `interfold config get quic_port`. The default is 9091.
 
-```bash
-interfold --config /path/to/owner.yaml ciphernode bond \
-  --operator 0xOPERATOR bond --amount 100
-```
+Make sure that the firewall, the cloud security group, and the NAT allow inbound UDP on this port.
 
-**Inactive status.** Both bond AND tickets must be above their minimums for `isActive` to be `true`.
-Check both.
+</Steps>
 
-**Balance snapshot timing.** The stored `requestBlock` field is a timestamp checkpoint. Balances are
-snapshotted at `requestBlock - 1`. Ticket changes at the request timestamp do not count for that
-round. They apply to later requests.
+## No connected peers
 
----
+**Symptom:** the **Overview** of the local dashboard shows 0 connected peers, or the log shows peer
+errors.
 
-## Missed Ticket Submissions
+The node uses QUIC over UDP. The node admits a peer only after the Identify check passes. The check
+compares the network identity and the supported Kademlia and sync protocols.
 
-**Symptom:** You were selected in the local sortition but the on-chain submission didn't go through.
-Look for `"SubmissionWindowClosed"` errors or missing `TicketSubmitted` events.
+| Log line                                                                                      | Cause                                                                        | Action                                                                   |
+| --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `Found 0 peers to dial`                                                                       | The configuration and the network profile give no peers.                     | Set `node.peers`, or check `node.network`.                               |
+| `Rejected an incompatible Interfold peer` with `peer network identity '…' does not match '…'` | A different protocol version or a different set of enabled deployments.      | Compare the release and the enabled chains with the peer.                |
+| `Rejected an incompatible Interfold peer` with `peer does not support …`                      | The peer runs an incompatible release.                                       | Compare the releases.                                                    |
+| `Evicting unreachable peer <peer> after 3 consecutive failures`                               | The peer does not answer at its address.                                     | Check the address and that the peer runs.                                |
+| `Rejected a configured peer whose pinned identity changed`                                    | The peer ID in the configured multiaddr is not the ID at that address.       | Update the `/p2p/<peer-id>` part of the multiaddr.                       |
+| `Some bootstrap peers are unavailable; background retries will continue`                      | A bootstrap peer did not answer.                                             | The node retries every 60 s. Check the address if the warning continues. |
+| `Replacing peer connections that did not establish the gossip subscription`                   | A peer connected but did not subscribe to the protocol gossip topic in 30 s. | The node reconnects. Compare the releases if the warning continues.      |
 
-### Common causes
+The dashboard API shows `configured_peers`, `connected_peers`, and `gossip_subscribed_peers`. A peer
+that is connected but not subscribed to the gossip topic cannot take part in committee work. For the
+full check sequence, follow [the DHT checks](#checks).
 
-**RPC latency.** The full sortition submission window starts when the registry accepts the VRF
-response. A slow RPC endpoint can delay detection or prevent the ticket transaction from being mined
-before the deadline.
+## The node does not follow the chain
 
-**Fix:** Use a faster RPC endpoint. Avoid free-tier endpoints that throttle under load.
+**Symptom:** E3 requests appear on-chain, but the node logs nothing about them.
 
-**Nonce conflicts.** If your node is submitting other transactions simultaneously, nonce conflicts
-can delay the ticket submission.
+<Steps>
 
-**Gas price too low.** During network congestion, your transaction may sit in the mempool past the
-deadline.
+### Check the live subscription
 
----
+Search the log for `Live event subscription active`. The node logs this line for each chain.
 
-## Peer Connectivity Issues
+The node reads live events with a log subscription, so `rpc_url` must be a `ws://` or `wss://` URL.
 
-**Symptom:** The node starts but doesn't receive events from peers. Look for:
+### Check the contract addresses
 
-- `"No peers connected"` or low peer count
-- Missing `EncryptionKeyReceived` events from other committee members
+Run `interfold config check`.
 
-### Check your networking
+A `STALE` line means that the configuration has an address that the published deployment does not
+use. Update the configuration.
 
-The Interfold uses **QUIC** (UDP-based) for P2P networking.
+### Check the RPC endpoint
 
-1. **Firewall**: Ensure your QUIC port (default from config) is open for **UDP** traffic, not just
-   TCP
-2. **NAT**: If behind NAT, configure port forwarding for the QUIC port
-3. **Cloud firewalls**: AWS Security Groups, GCP firewall rules, etc. must allow UDP inbound on your
-   QUIC port
+Make sure that the endpoint returns recent blocks, serves the full log history, and does not
+rate-limit the node.
 
-### Verify connectivity
+See [RPC endpoints](/operate/rpc-endpoints).
 
-Check your node logs for:
+</Steps>
 
-- `"Listening on /ip4/0.0.0.0/udp/<port>/quic-v1"` — confirms the listener started
-- `"Peer connected: <peer_id>"` — confirms at least one peer is reachable
+## Startup fails
 
-If no peers connect, verify that your `quic_port` in `interfold.config.yaml` matches what's open in
-your firewall.
+| Message                                                                                         | Cause                                                                                                                 | Action                                                                              |
+| ----------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| ``Configuration file not found. Run `interfold ciphernode setup` to create a configuration.``   | The CLI did not find `interfold.config.yaml`.                                                                         | Run the command from the node directory, or use `--config`.                         |
+| `another interfold instance is already running for node '<node>' against this data directory …` | A second process uses the same data directory.                                                                        | Stop the other process first.                                                       |
+| `ciphernode protocol version <x> does not match required version <y>`                           | The release is for a different protocol version.                                                                      | Install the release that the chain requires. See [Upgrades](/operate/upgrades).     |
+| `ciphernode generation <x> is below required generation <y>`                                    | Governance requires a newer node release.                                                                             | Install the new release.                                                            |
+| `On-disk schema version <v> is older than this binary's supported version …`                    | The release raised the storage schema.                                                                                | [Reset node state](/operate/upgrades#reset-node-state).                             |
+| `On-disk state has no schema marker …`                                                          | The event log exists without the matching key/value store.                                                            | Restore the stopped backup, or reset the state.                                     |
+| `chain '<name>' has Interfold enabled but no data_availability reader; …`                       | The chain entry has no `data_availability` block. A configuration from `interfold ciphernode setup` does not have it. | Add the block. See [Data availability](/reference/configuration#data-availability). |
+| `failed to read Interfold release dependencies`                                                 | The `Interfold` contract has no `nodeReleaseRegistry()`. On 25 September 2026, the Sepolia deployment is an example.  | Use a chain whose deployment includes the node release gate.                        |
+| `ciphernode startup did not complete within …`                                                  | The startup sync took longer than `node.startup_timeout_secs`.                                                        | Use a faster RPC endpoint, or increase `node.startup_timeout_secs` (default 1800).  |
 
----
+## Out of memory
 
-## Node Not Syncing
+**Symptom:** the operating system kills the node or its prover processes during a DKG. The kernel
+log shows an out-of-memory kill.
 
-**Symptom:** The node is running but missing on-chain events. E3 requests appear on-chain but your
-node doesn't react.
+DKG proofs use much memory. `multithread_concurrent_jobs` sets the number of proof and TrBFV jobs
+that run at the same time. The default is 2, and the node can use fewer jobs when the host or
+container memory is small. `multithread_reserve_threads` (default 2) keeps CPU threads free for the
+network and the RPC connection. At startup, the node logs the values in a line that starts with
+`Ciphernode multithread:`.
 
-### Check your RPC endpoint
+To reduce the peak memory, set a lower `multithread_concurrent_jobs` under `node`, or add memory.
+See [Compute and startup limits](/reference/configuration#compute-and-startup-limits) and
+[Requirements](/operate/requirements).
 
-**WebSocket required.** The node uses WebSocket subscriptions for real-time event listening. If your
-RPC URL starts with `https://` instead of `wss://`, the node will fall back to polling which can
-miss events.
+## Still stuck
 
-**Fix:** Use a WebSocket RPC endpoint:
+- Read [Tickets and sortition](/operate/tickets-and-sortition) for the selection parameters.
+- Ask in the [Interfold technical chat](https://t.me/interfoldhq_technical) or the community
+  [Telegram group](https://t.me/enclave_e3).
+- If you suspect a bug, open an issue on [GitHub](https://github.com/theinterfold/interfold/issues).
+  Include the release, the log lines, and the output of `interfold node validate`.
 
-```yaml
-# interfold.config.yaml
-chains:
-  - name: sepolia
-    rpc_url: wss://eth-sepolia.g.alchemy.com/v2/YOUR_KEY
-```
+## Next steps
 
-**Rate limiting.** Free-tier RPC endpoints may throttle your requests. If you see HTTP 429 errors in
-logs, upgrade your RPC plan or switch providers.
-
-**Block lag.** Check that your RPC is returning recent blocks. Compare the block number in your logs
-to a block explorer.
-
----
-
-## Reading the Logs
-
-### Verbosity
-
-The CLI uses `-v` flags, not `RUST_LOG`. Each additional `v` goes one level deeper:
-
-| Flag          | Level   | When to use                                                     |
-| ------------- | ------- | --------------------------------------------------------------- |
-| (default)     | `WARN`  | Normal operation                                                |
-| `-v`          | `INFO`  | Standard operator monitoring                                    |
-| `-vv`         | `DEBUG` | Diagnosing a specific issue (protocol messages, state)          |
-| `-vvv`        | `TRACE` | Deep diagnostics (extremely verbose — don't run long with this) |
-| `-q, --quiet` | `ERROR` | Only log errors                                                 |
-
-```bash
-interfold start -vv
-```
-
-### Log file location
-
-To find the current log file path:
-
-```bash
-interfold config get log_file
-```
-
-The default lives under your platform's state directory (e.g. `~/.local/state/interfold/` on Linux,
-`~/Library/Application Support/interfold/` on macOS). Tail it while reproducing an issue:
-
-```bash
-tail -f "$(interfold config get log_file)"
-```
-
----
-
-## System Resources
-
-A mainnet-grade ciphernode should have:
-
-- **CPU:** 8+ modern cores (x86-64 with AVX2). DKG and ZK proving are CPU-heavy.
-- **Memory:** 32 GB DDR5 minimum. Proof generation during DKG peaks well above idle.
-- **Disk:** 500 GB NVMe SSD for the node data directory, more if you retain historical events. Use
-  SSD — spinning disks will miss submission windows under load.
-- **Network:** Stable residential or cloud link. UDP must be unfiltered for QUIC (see below).
-
-If your node starts OOM-killing during DKG, that's a memory problem, not a bug — add RAM or move to
-a bigger instance.
-
----
-
-## Key Log Messages
-
-| Log message                                  | Meaning                                                    | Action                                                   |
-| -------------------------------------------- | ---------------------------------------------------------- | -------------------------------------------------------- |
-| `"This node was SELECTED for sortition"`     | You have a winning ticket for an E3                        | Normal — node will auto-submit                           |
-| `"This node was NOT selected for sortition"` | Your tickets didn't score low enough                       | Normal — try more tickets for higher odds                |
-| `"Performing Sortition with buffer"`         | Sortition started (shows threshold_m, threshold_n, buffer) | Informational                                            |
-| `"Node is in finalized committee"`           | Committee confirmed, DKG starting                          | Normal — node is participating                           |
-| `"Ciphernode was not selected"`              | Node wasn't in the final selection set                     | Normal                                                   |
-| `"Ticket generated for score sortition"`     | Winning ticket emitted to event bus                        | Normal                                                   |
-| `"SubmissionWindowClosed"`                   | Transaction didn't land before the deadline                | Check RPC latency                                        |
-| `"Failed to verify proof"`                   | A peer's ZK proof failed verification                      | The peer may be slashed — your node is working correctly |
-| `"CommitmentConsistencyViolation"`           | A peer's cross-circuit commitments don't match             | The peer may be accused — your node detected dishonesty  |
-
----
-
-## Dashboard
-
-For real-time monitoring, enable the [node dashboard](./using-the-dashboard):
-
-```yaml
-# interfold.config.yaml
-node:
-  dashboard_port: 8080
-```
-
-Then open `http://localhost:8080` to see live events, filter by E3 ID or severity, and inspect error
-details.
-
----
-
-## Still Stuck?
-
-- Check the [Tickets & Sortition](/ciphernode-operators/tickets-and-sortition) reference for
-  parameter details
-- Join the community [Telegram group](https://t.me/enclave_e3) for help
-- If you suspect a bug, open an issue on [GitHub](https://github.com/theinterfold/interfold/issues)
+<LinkCards min={230}>
+  <LinkCard title='Node dashboard' href='/operate/dashboard' icon='dashboard' tag='Monitor'>
+    Peers, E3 traces, events, and logs of one node in a browser.
+  </LinkCard>
+  <LinkCard title='RPC endpoints' href='/operate/rpc-endpoints' icon='network' tag='Set up'>
+    What the node needs from an RPC endpoint, and how to test one.
+  </LinkCard>
+  <LinkCard title='Upgrades' href='/operate/upgrades' icon='upgrade' tag='Maintain'>
+    Release versions, the release gate, and the state reset.
+  </LinkCard>
+</LinkCards>
