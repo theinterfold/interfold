@@ -1,26 +1,74 @@
 ---
-title: 'Interfold SDK'
-description: 'Use the TypeScript + React SDKs to drive E3 programs from clients and services'
+title: 'SDK'
+description:
+  'Reference for @interfold/sdk and @interfold/react: the client, contract calls, BFV encryption,
+  events, enums, utilities, and error codes.'
 ---
 
-# Interfold SDK Overview
+import { Callout } from 'nextra/components'
+import { Layers, LinkCards, LinkCard } from '@/components/ui'
 
-The Interfold SDK (`@interfold/sdk`) and React helpers (`@interfold/react`) provide a
-batteries-included client stack for requesting E3 computations, subscribing to protocol events, and
-coordinating custom frontends or backend services. Both packages ship in this repository (see
-`packages/interfold-sdk` and `packages/interfold-react`).
+# SDK
 
-## Installation
+This page is the reference for the TypeScript SDK (`@interfold/sdk`) and the React hook package
+(`@interfold/react`). It is for developers who write an E3 client or a coordination server. It
+covers installation, the client class, requests, the committee public key, encryption, events,
+enums, utilities, and errors. The samples come from the default template (`templates/default`) and
+the SDK README. Every export on this page exists in version 0.18.0.
+
+## Packages
+
+Both packages are in this repository.
+
+| Package            | Source                         | Import paths                                                                                   |
+| ------------------ | ------------------------------ | ---------------------------------------------------------------------------------------------- |
+| `@interfold/sdk`   | `packages/interfold-sdk/src`   | `@interfold/sdk`, `@interfold/sdk/crypto`, `@interfold/sdk/contracts`, `@interfold/sdk/events` |
+| `@interfold/react` | `packages/interfold-react/src` | `@interfold/react`                                                                             |
+
+<Layers
+  layers={[
+    {
+      name: 'Your application',
+      note: 'Browser or Node.js',
+      items: ['React client', 'Coordination server'],
+    },
+    { name: '@interfold/react', note: 'Optional', items: ['useInterfoldSDK'] },
+    {
+      name: '@interfold/sdk',
+      note: 'Core',
+      items: ['InterfoldSDK', 'ContractClient', 'EventListener', 'Encryption functions'],
+    },
+    {
+      name: 'Dependencies',
+      note: 'Installed with the SDK',
+      items: [
+        '@interfold/wasm',
+        '@interfold/contracts',
+        'viem',
+        '@aztec/bb.js',
+        '@noir-lang/noir_js',
+      ],
+    },
+  ]}
+/>
+
+## Install
+
+Add the SDK. Add the React package only if you use React.
 
 ```bash
-pnpm add @interfold/sdk           # TypeScript SDK
-pnpm add @interfold/react         # React hooks (optional)
+pnpm add @interfold/sdk
+pnpm add @interfold/react
 ```
 
-For browser projects using WASM (encryption helpers, FHE keygen), configure Vite per the SDK README:
+`@interfold/react` has two peer dependencies: `react` (`^18.2.0`) and `wagmi` (`^2.14.16`).
 
-```ts
-// vite.config.ts
+The encryption functions use WebAssembly. In a Vite project, add `vite-plugin-wasm` and
+`vite-plugin-top-level-await`, and exclude `@interfold/wasm` from dependency optimization. This
+configuration comes from the SDK README:
+
+```ts filename="vite.config.ts"
+import { defineConfig } from 'vite'
 import wasm from 'vite-plugin-wasm'
 import topLevelAwait from 'vite-plugin-top-level-await'
 
@@ -32,294 +80,330 @@ export default defineConfig({
 })
 ```
 
-## Core client
+The template client uses the same two plugins in `client/vite.config.ts`.
+
+## Create a client
+
+### With viem clients
+
+`new InterfoldSDK(config)` creates the client. No separate initialize call is necessary.
+
+| `SDKConfig` field              | Type                           | Required | Content                                                      |
+| ------------------------------ | ------------------------------ | -------- | ------------------------------------------------------------ |
+| `publicClient`                 | `PublicClient`                 | Yes      | A viem public client for reads and events.                   |
+| `walletClient`                 | `WalletClient`                 | No       | A viem wallet client with an account. Write calls need it.   |
+| `contracts`                    | `ContractAddresses`            | Yes      | `interfold`, `ciphernodeRegistry`, and `feeToken` addresses. |
+| `chain`                        | `Chain`                        | No       | The viem chain.                                              |
+| `thresholdBfvParamsPresetName` | `ThresholdBfvParamsPresetName` | No       | The BFV preset. The default is `INSECURE_THRESHOLD_512`.     |
+
+The constructor throws an `SDKError` with the code `MISSING_PUBLIC_CLIENT`, `INVALID_ADDRESS`, or
+`INVALID_THRESHOLD_BFV_PARAMS_PRESET_NAME` when the configuration is not valid.
 
 ```ts
-import { InterfoldSDK, InterfoldEventType, RegistryEventType } from '@interfold/sdk'
-import { createPublicClient, createWalletClient, http, custom } from 'viem'
+import { InterfoldSDK } from '@interfold/sdk'
+import { createPublicClient, createWalletClient, custom, http } from 'viem'
 import { sepolia } from 'viem/chains'
 
-const publicClient = createPublicClient({
+const publicClient = createPublicClient({ chain: sepolia, transport: http(RPC_URL) })
+
+// The SDK signs with walletClient.account, so create the wallet client with an account.
+const [account] = await createWalletClient({
   chain: sepolia,
-  transport: http(import.meta.env.VITE_RPC_URL),
-})
+  transport: custom(window.ethereum!),
+}).requestAddresses()
 const walletClient = createWalletClient({
+  account,
   chain: sepolia,
-  transport: custom(window.ethereum),
+  transport: custom(window.ethereum!),
 })
 
 const sdk = new InterfoldSDK({
   publicClient,
   walletClient,
   contracts: {
-    interfold: import.meta.env.VITE_INTERFOLD_ADDRESS,
-    ciphernodeRegistry: import.meta.env.VITE_REGISTRY_ADDRESS,
-    feeToken: import.meta.env.VITE_FEE_TOKEN_ADDRESS,
+    interfold: INTERFOLD_ADDRESS,
+    ciphernodeRegistry: REGISTRY_ADDRESS,
+    feeToken: FEE_TOKEN_ADDRESS,
   },
   chain: sepolia,
-  // Match the parameter set selected by the target E3.
-  thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_512',
+  thresholdBfvParamsPresetName: 'SECURE_THRESHOLD_8192',
 })
 ```
 
-For server-side or simpler setups, use the factory method:
+### With the factory
+
+`InterfoldSDK.create(options)` creates the viem clients for you. It is useful on a server.
+
+| Option                         | Required | Content                                                                    |
+| ------------------------------ | -------- | -------------------------------------------------------------------------- |
+| `rpcUrl`                       | Yes      | An `http://`, `https://`, `ws://`, or `wss://` URL.                        |
+| `contracts`                    | Yes      | `interfold`, `ciphernodeRegistry`, and `feeToken` addresses.               |
+| `chain`                        | Yes      | The viem chain.                                                            |
+| `privateKey`                   | No       | A private key for a local signing account. Omit it for a read-only client. |
+| `thresholdBfvParamsPresetName` | No       | The BFV preset.                                                            |
+
+A `ws://` or `wss://` URL gives a WebSocket transport with a 30-second keep-alive and five reconnect
+attempts at 2-second intervals. Other URLs give an HTTP transport. This sample comes from
+`templates/default/server/index.ts`:
 
 ```ts
 import { InterfoldSDK } from '@interfold/sdk'
-import { sepolia } from 'viem/chains'
+import { hardhat } from 'viem/chains'
 
 const sdk = InterfoldSDK.create({
-  rpcUrl: import.meta.env.VITE_RPC_URL,
+  rpcUrl: RPC_URL,
+  privateKey: PRIVATE_KEY as `0x${string}`,
   contracts: {
-    interfold: import.meta.env.VITE_INTERFOLD_ADDRESS,
-    ciphernodeRegistry: import.meta.env.VITE_REGISTRY_ADDRESS,
-    feeToken: import.meta.env.VITE_FEE_TOKEN_ADDRESS,
+    interfold: INTERFOLD_CONTRACT as `0x${string}`,
+    ciphernodeRegistry: CIPHERNODE_REGISTRY_CONTRACT as `0x${string}`,
+    feeToken: FEE_TOKEN_CONTRACT as `0x${string}`,
   },
-  chain: sepolia,
-  privateKey: '0x...', // optional — omit for read-only
-  // Match the parameter set selected by the target E3.
+  chain: hardhat,
   thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_512',
 })
 ```
 
-### BFV Parameter Presets
+## BFV presets
 
-The `thresholdBfvParamsPresetName` field selects the BFV encryption parameters used by the client.
-It must match the `paramSet` index registered in the on-chain `Interfold` contract:
+The preset selects the BFV parameters that the client uses to encrypt. It must match the `paramSet`
+of the E3.
 
-| Preset Name              | On-chain `paramSet` | Degree | CRT moduli (L) | Security | Use case                   |
-| ------------------------ | ------------------- | ------ | -------------- | -------- | -------------------------- |
-| `INSECURE_THRESHOLD_512` | `0`                 | 512    | 2              | ❌ None  | Fast local or testnet work |
-| `SECURE_THRESHOLD_8192`  | `1`                 | 8192   | 3              | ✅ Full  | Production-equivalent work |
+| Preset name              | `paramSet` | Ring degree | Where the contracts accept it    |
+| ------------------------ | ---------- | ----------- | -------------------------------- |
+| `INSECURE_THRESHOLD_512` | 0          | 512         | Sepolia and local chains only    |
+| `SECURE_THRESHOLD_8192`  | 1          | 8192        | Ethereum mainnet, Sepolia, local |
 
-#### Which preset to use on which network
+The insecure preset has no production security. Use it only for tests.
+`ThresholdBfvParamsPresetNames` lists both names, and `DEFAULT_THRESHOLD_BFV_PARAMS_PRESET_NAME` is
+`INSECURE_THRESHOLD_512`.
 
-| Network           | Supported presets                                    |
-| ----------------- | ---------------------------------------------------- |
-| Local development | `INSECURE_THRESHOLD_512` and `SECURE_THRESHOLD_8192` |
-| Sepolia testnet   | `INSECURE_THRESHOLD_512` and `SECURE_THRESHOLD_8192` |
-| Ethereum mainnet  | `SECURE_THRESHOLD_8192` only                         |
+<Callout type='warning'>
+  The SDK does not compare the preset with the `paramSet` of the E3. A mismatch encrypts inputs
+  under the wrong parameters, and the committee cannot decrypt the result.
+</Callout>
 
-Use the preset that the target E3 selects. A Sepolia deployment can use the insecure preset for fast
-tests or the secure preset for production-equivalent tests. Mainnet rejects the insecure preset.
+## Request an E3
 
-**Use `SECURE_THRESHOLD_8192` in production.** The insecure preset uses a small polynomial ring
-(N=512) with no cryptographic security guarantees. The secure preset (N=8192) meets standard FHE
-security targets. It also needs `secure-8192` circuit artifacts on the prover and the verifier — see
-[Proving: embedded circuits or your own](#proving-embedded-circuits-or-your-own).
-
-The `paramSet` index in the E3 request must match the preset used by the ciphernode network. If you
-request an E3 with `paramSet: 1` but initialise the SDK with `INSECURE_THRESHOLD_512`, the
-ciphertext will be encrypted under the wrong parameters and decryption will fail.
-
-### Requesting computations
+The request takes three calls: quote the fee, approve the fee token, and send the request. This
+sample is trimmed from `templates/default/client/src/pages/steps/RequestComputation.tsx`. It adds
+`maxFee`.
 
 ```ts
+import {
+  DEFAULT_COMPUTE_PROVIDER_PARAMS,
+  DEFAULT_E3_CONFIG,
+  calculateInputWindow,
+  encodeComputeProviderParams,
+} from '@interfold/sdk'
+
+const publicClient = sdk.getPublicClient()
+const inputWindow = await calculateInputWindow(publicClient, 100) // 100 seconds
+
 const requestParams = {
-  committeeSize: 0, // CommitteeSize.Minimum (N=3)
-  inputWindow: [
-    BigInt(Math.floor(Date.now() / 1000)),
-    BigInt(Math.floor(Date.now() / 1000) + 5 * 60),
-  ] as const,
-  e3Program: '0x...',
-  paramSet: 0, // ParamSet.Insecure512. Use 1 for a secure-8192 E3.
-  computeProviderParams: '0x',
-  customParams: '0x',
+  committeeSize: DEFAULT_E3_CONFIG.committeeSize, // CommitteeSize.Minimum
+  inputWindow,
+  e3Program: E3_PROGRAM_ADDRESS,
+  paramSet: 0, // insecure-512, for local development
+  computeProviderParams: encodeComputeProviderParams(DEFAULT_COMPUTE_PROVIDER_PARAMS),
 }
-const quote = await sdk.getE3Quote(requestParams)
-const approvalHash = await sdk.approveFeeToken(quote)
-await sdk.waitForTransaction(approvalHash)
-const hash = await sdk.requestE3({ ...requestParams, maxFee: quote })
+
+const fee = await sdk.getE3Quote(requestParams)
+const approveTx = await sdk.approveFeeToken(fee)
+await publicClient.waitForTransactionReceipt({ hash: approveTx })
+
+const hash = await sdk.requestE3({ ...requestParams, maxFee: fee })
 ```
 
-### Event subscriptions
+`E3RequestParams` in the SDK has these fields:
+
+| Field                   | Type                        | Default           |
+| ----------------------- | --------------------------- | ----------------- |
+| `committeeSize`         | `number` (`CommitteeSize`)  | Required          |
+| `inputWindow`           | `readonly [bigint, bigint]` | Required          |
+| `e3Program`             | `` `0x${string}` ``         | Required          |
+| `paramSet`              | `number`                    | Required          |
+| `computeProviderParams` | `` `0x${string}` ``         | Required          |
+| `customParams`          | `` `0x${string}` ``         | `'0x'`            |
+| `maxFee`                | `bigint`                    | A fresh quote     |
+| `gasLimit`              | `bigint`                    | Estimated by viem |
+
+`requestE3` fills the fields that the contract needs and the SDK knows:
+
+- `expectedFeeToken` is the `feeToken` address from the SDK configuration.
+- `expectedCryptoConfigId` is the configuration ID for `paramSet` 0 or 1. Other values fail.
+- `committeeSize` must be 0, 1, or 2.
+
+`requestE3` simulates the call first, then sends it, and returns the transaction hash. To get the E3
+ID, watch `InterfoldEventType.E3_REQUESTED` and read `event.data.e3Id`. For the contract rules
+behind each field, see [The Interfold Contract](/build/interfold-contract#request-an-e3).
+
+## Get the committee public key
+
+The registry does not store the full public key. Committee members publish the serialized key in
+`CommitteePublicKeyChunkPublished` events. Each event carries the proven public key commitment
+(`pkCommitment`). The client joins the chunks, then checks the key against the commitment.
+
+This sample comes from `templates/default/server/index.ts`:
 
 ```ts
-const e3Handler = (event) => {
-  console.log('New request', event.data)
-}
+import { CommitteePublicKeyAssembler } from '@interfold/sdk'
+import { RegistryEventType } from '@interfold/sdk/events'
+import { hexToBytes } from 'viem'
 
-sdk.onInterfoldEvent(InterfoldEventType.E3_REQUESTED, e3Handler)
+const committeeKeyAssembler = new CommitteePublicKeyAssembler()
 
-sdk.onInterfoldEvent(RegistryEventType.COMMITTEE_REQUESTED, (event) => {
-  console.log('Committee requested', event.data)
-})
+await sdk.onInterfoldEvent(
+  RegistryEventType.COMMITTEE_PUBLIC_KEY_CHUNK_PUBLISHED,
+  async (event) => {
+    const assembled = committeeKeyAssembler.add(event.data)
+    if (!assembled) return
 
-// Later, remember to clean up
-sdk.off(InterfoldEventType.E3_REQUESTED, e3Handler)
-```
+    const isBoundKey = await sdk.validatePublicKeyCommitment(
+      assembled.publicKey,
+      hexToBytes(assembled.pkCommitment),
+    )
+    if (!isBoundKey) return
 
-### React hook
-
-```tsx
-import { useInterfoldSDK } from '@interfold/react'
-
-export function Dashboard() {
-  const {
-    sdk,
-    isInitialized,
-    error,
-    requestE3,
-    getThresholdBfvParamsSet,
-    onInterfoldEvent,
-    off,
-    InterfoldEventType,
-    RegistryEventType,
-  } = useInterfoldSDK({
-    autoConnect: true,
-    contracts: {
-      interfold: import.meta.env.VITE_INTERFOLD_ADDRESS,
-      ciphernodeRegistry: import.meta.env.VITE_REGISTRY_ADDRESS,
-      feeToken: import.meta.env.VITE_FEE_TOKEN_ADDRESS,
-    },
-    // 'INSECURE_THRESHOLD_512' for local dev and Sepolia; 'SECURE_THRESHOLD_8192' for production.
-    thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_512',
-  })
-
-  useEffect(() => {
-    if (!isInitialized) return
-    const handle = (event) => console.log('E3 Requested', event.data)
-    onInterfoldEvent(InterfoldEventType.E3_REQUESTED, handle)
-    return () => off(InterfoldEventType.E3_REQUESTED, handle)
-  }, [isInitialized])
-
-  if (error) return <div>Error: {error}</div>
-
-  return <button onClick={() => requestE3(/* params */)}>Request E3</button>
-}
-```
-
-The hook uses wagmi's `usePublicClient` and `useWalletClient` internally, so your app must be inside
-a wagmi provider.
-
-## Encryption functions
-
-The SDK includes standalone FHE encryption functions that can be called via the SDK instance or
-imported directly:
-
-```ts
-// Via SDK instance (uses the configured preset name automatically)
-const publicKey = await sdk.generatePublicKey()
-const encrypted = await sdk.encryptNumber(42n, publicKey)
-const encryptedVec = await sdk.encryptVector(new BigUint64Array([1n, 2n, 3n]), publicKey)
-const { encryptedData, proof } = await sdk.encryptNumberAndGenProof(42n, publicKey)
-const { encryptedData: vecData, proof: vecProof } = await sdk.encryptVectorAndGenProof(
-  new BigUint64Array([1n, 2n]),
-  publicKey,
+    committeeKeyAssembler.clear(assembled.e3Id)
+    // assembled.publicKey is the committee public key for assembled.e3Id.
+  },
 )
-
-// Generate circuit inputs without proof (useful for debugging)
-const { encryptedData, circuitInputs } = await sdk.encryptNumberAndGenInputs(42n, publicKey)
-
-// Standalone import (pass preset name explicitly)
-import { generatePublicKey, encryptNumber } from '@interfold/sdk'
-
-const pk = await generatePublicKey('INSECURE_THRESHOLD_512')
-const ct = await encryptNumber(42n, pk, 'INSECURE_THRESHOLD_512')
 ```
 
-### Full encryption method reference
+`CommitteePublicKeyAssembler` works as follows:
 
-| Method                             | Description                                           |
-| ---------------------------------- | ----------------------------------------------------- |
-| `generatePublicKey()`              | Generate a BFV public key                             |
-| `computePublicKeyCommitment(pk)`   | Compute a commitment for a public key                 |
-| `encryptNumber(n, pk)`             | Encrypt a single bigint                               |
-| `encryptVector(vec, pk)`           | Encrypt a `BigUint64Array`                            |
-| `encryptNumberAndGenInputs(n, pk)` | Encrypt and return circuit inputs for ZK verification |
-| `encryptNumberAndGenProof(n, pk)`  | Encrypt and generate a ZK proof of valid encryption   |
-| `encryptVectorAndGenInputs(v, pk)` | Vector version of `encryptNumberAndGenInputs`         |
-| `encryptVectorAndGenProof(v, pk)`  | Vector version of `encryptNumberAndGenProof`          |
-| `getThresholdBfvParamsSet()`       | Get the parameter set for the configured preset       |
-| `generateProof(circuitInputs)`     | Generate a ZK proof from circuit inputs directly      |
+- `add(event.data)` returns an `AssembledCommitteePublicKey` (`e3Id`, `nodes`, `pkCommitment`,
+  `publicKey`) when a candidate is complete and its Keccak-256 hash matches. Otherwise it returns
+  `undefined`.
+- It accepts only the first candidate from each publisher.
+- It rejects keys larger than `MAX_COMMITTEE_PUBLIC_KEY_BYTES` (512 KiB). Each chunk is at most
+  `MAX_COMMITTEE_PUBLIC_KEY_CHUNK_BYTES` (90 KiB).
+- It tracks 128 E3s by default. `clear(e3Id)` removes the state for one E3.
 
-### Proving: embedded circuits or your own
+`sdk.getE3PublicKey(e3Id)` returns the 32-byte public key commitment from the registry. It is not
+the key. The call fails with `GET_E3_PUBLIC_KEY_FAILED` before the committee publishes.
 
-`generateProof()` — and the `*AndGenProof` helpers that call it — run the user-data-encryption (UDE)
-circuits that are embedded in the package. Those artifacts are compiled with
-`--preset insecure-512 --committee minimum` (see
-`packages/interfold-sdk/scripts/compile-circuits.sh`), so they only match `INSECURE_THRESHOLD_512`
-and a minimum-size committee.
+## Encrypt inputs
 
-This has two consequences:
+The SDK has each encryption function in two forms. The instance method uses the preset from the
+configuration. The standalone function takes the preset name as its last argument.
 
-- **`generateProof()` is a convenience for the embedded insecure path.** It is enough for local
-  development, for Sepolia, and for tests. Secure (N=8192) artifacts do not ship in the SDK today.
-- **The secure preset gives witnesses the embedded circuits cannot execute.** With
-  `SECURE_THRESHOLD_8192`, `encryptNumberAndGenInputs()` returns N=8192 circuit inputs, while the
-  embedded UDE circuits are N=512. Proof generation fails on the shape mismatch.
+| Instance method                         | Standalone function                             | Returns                                                                |
+| --------------------------------------- | ----------------------------------------------- | ---------------------------------------------------------------------- |
+| `generatePublicKey()`                   | `generatePublicKey(preset)`                     | A new BFV public key (`Uint8Array`). For tests only.                   |
+| `computePublicKeyCommitment(pk)`        | `computePublicKeyCommitment(pk, preset)`        | The public key commitment (`Uint8Array`).                              |
+| `validatePublicKeyCommitment(pk, c)`    | None                                            | `true` when the commitment of `pk` equals `c`.                         |
+| `computeCiphertextCommitment(ct)`       | `computeCiphertextCommitment(ct, preset)`       | The SAFE commitment of a ciphertext (`Uint8Array`).                    |
+| `encryptNumber(value, pk)`              | `encryptNumber(value, pk, preset)`              | The ciphertext of one `bigint` (`Uint8Array`).                         |
+| `encryptVector(values, pk)`             | `encryptVector(values, pk, preset)`             | The ciphertext of a `BigUint64Array` (`Uint8Array`).                   |
+| `encryptNumberAndGenInputs(value, pk)`  | `encryptNumberAndGenInputs(value, pk, preset)`  | `{ encryptedData, circuitInputs }`                                     |
+| `encryptVectorAndGenInputs(values, pk)` | `encryptVectorAndGenInputs(values, pk, preset)` | `{ encryptedData, circuitInputs }`                                     |
+| `encryptNumberAndGenProof(value, pk)`   | `encryptNumberAndGenProof(value, pk, preset)`   | `{ encryptedData, proof }`                                             |
+| `encryptVectorAndGenProof(values, pk)`  | `encryptVectorAndGenProof(values, pk, preset)`  | `{ encryptedData, proof }`                                             |
+| `getThresholdBfvParamsSet()`            | `getThresholdBfvParamsSet(preset)`              | `BfvParams` (`degree`, `plaintextModulus`, `moduli`, `error1Variance`) |
+| None                                    | `generateProof(circuitInputs)`                  | A `ProofData` proof from `@aztec/bb.js`.                               |
 
-**For on-chain Honk verification of encryption, bring your own compiled circuits.** Most E3 programs
-already need a custom proving pipeline on top of Greco — an app circuit and a fold circuit that
-wraps the UDE proof — so compile the UDE, app, and fold circuits for the preset and committee your
-deployment uses, then emit the Solidity verifier from them. `examples/CRISP` shows the whole flow.
-See [Noir Circuits](./noir-circuits) for the build commands and the verifier interface.
+A key from `generatePublicKey` is not a committee key. The committee cannot decrypt data that is
+encrypted to it. For the full encrypt and submit flow, see
+[Encrypt and submit](/build/tutorials/encrypt-and-submit).
 
-Use `encryptNumberAndGenInputs()` (or `encryptVectorAndGenInputs()`) to get the circuit inputs, and
-feed them to your own prover instead of `generateProof()`.
+### Encryption proofs
 
-Secure artifacts may ship in the SDK in a later release. Until they do, treat your own compiled
-circuits as the supported path for production.
+The `*AndGenProof` functions and `generateProof` use circuits that ship in the SDK. The SDK compiles
+them with the `insecure-512` preset and the `minimum` committee
+(`packages/interfold-sdk/scripts/compile-circuits.sh`). The proofs target recursive verification
+(`noir-recursive-no-zk`), not a Solidity verifier.
 
-## Modular submodule imports
+In Node.js, `generateProof` checks the circuit stamp file (`.active-preset.json`) when it finds one.
+It fails with one of these codes when the stamp does not match:
 
-The SDK is organized into three submodules (`contracts`, `events`, `crypto`) that can be imported
-independently for tree-shaking:
+- `SDK_CIRCUIT_STAMP_MISSING` or `SDK_CIRCUIT_STAMP_INVALID`: the stamp file is missing or broken.
+- `SDK_CIRCUIT_COMMITTEE_MISMATCH`: the circuits are not for the `minimum` committee.
+- `SDK_CIRCUIT_PRESET_MISMATCH`: the circuits are not for `insecure-512`.
+
+For another preset, another committee size, or an on-chain verifier, compile your own circuits. Use
+`encryptNumberAndGenInputs` or `encryptVectorAndGenInputs` to get the witness for your prover. See
+[Noir circuits](/build/noir-circuits). `examples/CRISP` shows a complete custom pipeline.
+
+## Submodule imports
+
+Each subpath exports part of the SDK. The main entry point exports everything, except the type
+`CiphertextOutputReferencePublishedData`, which only `@interfold/sdk/events` exports.
+
+| Import path                | Exports                                                                                                                                                                                                         |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@interfold/sdk/crypto`    | The standalone encryption functions, `generateProof`, `ThresholdBfvParamsPresetNames`, and the types `BfvParams`, `ThresholdBfvParamsPresetName`, `VerifiableEncryptionResult`, `EncryptedValueAndPublicInputs` |
+| `@interfold/sdk/contracts` | `ContractClient`, `E3Stage`, `FailureReason`, and the types `ContractClientConfig`, `ContractAddresses`, `E3`, `E3RequestParams`                                                                                |
+| `@interfold/sdk/events`    | `EventListener`, `InterfoldEventType`, `RegistryEventType`, `RandomnessProviderEventType`, and the event data types                                                                                             |
 
 ```ts
-import { generatePublicKey, encryptNumber } from '@interfold/sdk/crypto'
+import { encryptNumber, generatePublicKey } from '@interfold/sdk/crypto'
 import { ContractClient } from '@interfold/sdk/contracts'
 import { EventListener, InterfoldEventType } from '@interfold/sdk/events'
 ```
 
-All exports are also available from the main `@interfold/sdk` entry point.
+## Events
 
-## Event types
+The SDK watches events with viem `watchContractEvent`. It sends registry-only event names to the
+`ciphernodeRegistry` address and all other names to the `interfold` address. The shared names
+`OwnershipTransferred` and `Initialized` therefore go to the `interfold` address, also for a
+`RegistryEventType` key.
 
-The SDK provides three event type enums for subscribing to on-chain events:
+| Method                                                             | Effect                                                                                                |
+| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
+| `onInterfoldEvent(type, callback)`                                 | Watches an Interfold or registry event.                                                               |
+| `off(type, callback)`                                              | Removes a callback. The watcher stops when no callback remains.                                       |
+| `once(type, callback)`                                             | Runs the callback for the first event only.                                                           |
+| `getHistoricalEvents(type, fromBlock?, toBlock?)`                  | Reads past logs. With `fromBlock`, it reads in ranges of 10,000 blocks.                               |
+| `onRandomnessProviderEvent(provider, type, callback, fromBlock?)`  | Watches a randomness provider.                                                                        |
+| `offRandomnessProviderEvent(provider, type, callback)`             | Removes a randomness provider callback.                                                               |
+| `getHistoricalRandomnessProviderEvents(provider, type, from, to?)` | Reads past provider logs. It needs `fromBlock`.                                                       |
+| `startEventPolling()`, `stopEventPolling()`                        | Starts or stops a loop that reads the block number every 5 seconds. The loop does not deliver events. |
+| `cleanup()`                                                        | Stops polling, stops every watcher, and removes every callback.                                       |
+
+Each callback gets an `InterfoldEvent` with `type`, `data` (the decoded event arguments), `log`,
+`timestamp`, `blockNumber`, and `transactionHash`. `timestamp` is the local time when the SDK got
+the log. Live watchers skip a log that they already delivered.
 
 ### `InterfoldEventType`
 
-| Enum Key                      | Solidity Event Name         |
-| ----------------------------- | --------------------------- |
-| `E3_REQUESTED`                | `E3Requested`               |
-| `CIPHERTEXT_OUTPUT_PUBLISHED` | `CiphertextOutputPublished` |
-| `PLAINTEXT_OUTPUT_PUBLISHED`  | `PlaintextOutputPublished`  |
-| `E3_PROGRAM_REGISTERED`       | `E3ProgramRegistered`       |
-| `ENCRYPTION_SCHEME_ENABLED`   | `EncryptionSchemeEnabled`   |
-| `CIPHERNODE_REGISTRY_SET`     | `CiphernodeRegistrySet`     |
-| `MAX_DURATION_SET`            | `MaxDurationSet`            |
-| `PARAM_SET_REGISTERED`        | `ParamSetRegistered`        |
-| `OWNERSHIP_TRANSFERRED`       | `OwnershipTransferred`      |
-| `INITIALIZED`                 | `Initialized`               |
+| Key                                     | Event                                | Emitted by the current contracts |
+| --------------------------------------- | ------------------------------------ | -------------------------------- |
+| `E3_REQUESTED`                          | `E3Requested`                        | Yes                              |
+| `CIPHERTEXT_OUTPUT_REFERENCE_PUBLISHED` | `CiphertextOutputReferencePublished` | Yes                              |
+| `CIPHERTEXT_OUTPUT_PUBLISHED`           | `CiphertextOutputPublished`          | No. Use the reference event.     |
+| `PLAINTEXT_OUTPUT_PUBLISHED`            | `PlaintextOutputPublished`           | Yes                              |
+| `E3_PROGRAM_REGISTERED`                 | `E3ProgramRegistered`                | Yes                              |
+| `ENCRYPTION_SCHEME_ENABLED`             | `EncryptionSchemeEnabled`            | Yes                              |
+| `CIPHERNODE_REGISTRY_SET`               | `CiphernodeRegistrySet`              | Yes                              |
+| `MAX_DURATION_SET`                      | `MaxDurationSet`                     | Yes                              |
+| `PARAM_SET_REGISTERED`                  | `ParamSetRegistered`                 | Yes                              |
+| `OWNERSHIP_TRANSFERRED`                 | `OwnershipTransferred`               | Yes                              |
+| `INITIALIZED`                           | `Initialized`                        | Yes                              |
 
 ### `RegistryEventType`
 
-| Enum Key                             | Solidity Event Name               |
-| ------------------------------------ | --------------------------------- |
-| `COMMITTEE_REQUESTED`                | `CommitteeRequested`              |
-| `COMMITTEE_RANDOMNESS_REQUESTED`     | `CommitteeRandomnessRequested`    |
-| `RANDOMNESS_CIRCUIT_BREAKER_TRIPPED` | `RandomnessCircuitBreakerTripped` |
-| `COMMITTEE_PUBLISHED`                | `CommitteePublished`              |
-| `COMMITTEE_FINALIZED`                | `SortitionCommitteeFinalized`     |
-| `INTERFOLD_SET`                      | `InterfoldSet`                    |
-| `OWNERSHIP_TRANSFERRED`              | `OwnershipTransferred`            |
-| `INITIALIZED`                        | `Initialized`                     |
-
-`CommitteeRequested` is retained for pre-VRF registry logs. The ciphernode runtime creates its own
-durable event with the same name after the registry accepts a VRF result.
+| Key                                    | Event                              | Emitted by the current contracts |
+| -------------------------------------- | ---------------------------------- | -------------------------------- |
+| `COMMITTEE_RANDOMNESS_REQUESTED`       | `CommitteeRandomnessRequested`     | Yes                              |
+| `RANDOMNESS_CIRCUIT_BREAKER_TRIPPED`   | `RandomnessCircuitBreakerTripped`  | Yes                              |
+| `COMMITTEE_FINALIZED`                  | `SortitionCommitteeFinalized`      | Yes                              |
+| `COMMITTEE_PUBLIC_KEY_CHUNK_PUBLISHED` | `CommitteePublicKeyChunkPublished` | Yes                              |
+| `INTERFOLD_SET`                        | `InterfoldSet`                     | Yes                              |
+| `OWNERSHIP_TRANSFERRED`                | `OwnershipTransferred`             | Yes                              |
+| `INITIALIZED`                          | `Initialized`                      | Yes                              |
+| `COMMITTEE_REQUESTED`                  | `CommitteeRequested`               | No. It is kept for old logs.     |
+| `COMMITTEE_PUBLISHED`                  | `CommitteePublished`               | No. Use the chunk event.         |
 
 ### `RandomnessProviderEventType`
 
-| Enum Key               | Solidity Event Name   |
-| ---------------------- | --------------------- |
-| `RANDOMNESS_FULFILLED` | `RandomnessFulfilled` |
+`RANDOMNESS_FULFILLED` maps to `RandomnessFulfilled`. The registry freezes a provider for each
+request. Read `provider`, `requestId`, and `e3Id` from `CommitteeRandomnessRequested`, then watch
+that provider:
 
-The Registry freezes a provider address for each request. Use the address, request ID, and E3 ID
-from `CommitteeRandomnessRequested` to watch and correlate the provider response. These methods are
-available on the main `InterfoldSDK` object:
+```ts
+import { RandomnessProviderEventType } from '@interfold/sdk'
 
-```typescript
 await sdk.onRandomnessProviderEvent(
   provider,
   RandomnessProviderEventType.RANDOMNESS_FULFILLED,
@@ -329,172 +413,171 @@ await sdk.onRandomnessProviderEvent(
 )
 ```
 
-`getHistoricalRandomnessProviderEvents` requires an explicit `fromBlock` unless the listener config
-defines one. It reads fulfillment logs in bounded block ranges. To join history to a live watcher
-without overlap, read through a fixed head and start the watcher at the next block:
+A fulfillment shows only that the provider stored a response. The registry decides whether the
+response was on time and usable. Callers that share one provider watcher must use the same
+`fromBlock`, or omit it. A different explicit `fromBlock` fails with `INVALID_EVENT_CONFIG`.
 
-```typescript
-const historicalHead = await sdk.getPublicClient().getBlockNumber({ cacheTime: 0 })
-const logs = await sdk.getHistoricalRandomnessProviderEvents(
-  provider,
-  RandomnessProviderEventType.RANDOMNESS_FULFILLED,
-  providerDeployBlock,
-  historicalHead,
-)
-await sdk.onRandomnessProviderEvent(
-  provider,
-  RandomnessProviderEventType.RANDOMNESS_FULFILLED,
-  handleFulfillment,
-  historicalHead + 1n,
-)
-```
+## Lifecycle enums
 
-A fulfillment means that the provider stored a response. Query the Registry to determine whether the
-response was timely and usable. Live watchers also suppress repeated delivery of the same block,
-transaction, and log index. Calls that share one provider and event watcher must use the same
-explicit `fromBlock`; omit it to join the active watcher. The SDK rejects a conflicting explicit
-start block instead of silently dropping it.
+| Enum            | Values                                                                                                                                                                                                                                                                                                                                            |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `E3Stage`       | `None` (0), `Requested` (1), `CommitteeFinalized` (2), `KeyPublished` (3), `CiphertextReady` (4), `Complete` (5), `Failed` (6)                                                                                                                                                                                                                    |
+| `FailureReason` | `None` (0), `CommitteeFormationTimeout` (1), `InsufficientCommitteeMembers` (2), `DKGTimeout` (3), `DKGInvalidShares` (4), `NoInputsReceived` (5), `ComputeTimeout` (6), `ComputeProviderExpired` (7), `ComputeProviderFailed` (8), `RequesterCancelled` (9), `DecryptionTimeout` (10), `DecryptionInvalidShares` (11), `VerificationFailed` (12) |
+| `CommitteeSize` | `Minimum` (0), `Micro` (1), `Small` (2)                                                                                                                                                                                                                                                                                                           |
 
-## E3 lifecycle enums
+`validateCommitteeSize(value)` returns the value or throws `INVALID_COMMITTEE_SIZE`. Read the stage
+with `sdk.getE3Stage(e3Id)` and the reason with `sdk.getFailureReason(e3Id)`.
 
-### `E3Stage`
+## Contract calls
 
-| Value | Stage                |
-| ----- | -------------------- |
-| 0     | `None`               |
-| 1     | `Requested`          |
-| 2     | `CommitteeFinalized` |
-| 3     | `KeyPublished`       |
-| 4     | `CiphertextReady`    |
-| 5     | `Complete`           |
-| 6     | `Failed`             |
+These `InterfoldSDK` methods call the contracts. The write methods need a wallet client with an
+account.
 
-### `FailureReason`
+| Method                                                      | Contract call                                                                   |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `getE3Quote(params)`                                        | `Interfold.getE3Quote`                                                          |
+| `approveFeeToken(amount)`                                   | `approve(interfold, amount)` on the fee token                                   |
+| `requestE3(params)`                                         | `Interfold.request`                                                             |
+| `cancelE3(e3Id)`                                            | `Interfold.cancelE3`                                                            |
+| `publishCiphertextOutput(e3Id, outputReference, gasLimit?)` | `Interfold.publishCiphertextOutput` with an encoded `CiphertextOutputReference` |
+| `getE3(e3Id)`, `getE3Stage(e3Id)`, `getFailureReason(e3Id)` | The matching Interfold read functions                                           |
+| `getE3PublicKey(e3Id)`                                      | `CiphernodeRegistry.committeePublicKey`                                         |
+| `estimateGas(functionName, args, address, abi, value?)`     | viem `estimateContractGas`                                                      |
+| `waitForTransaction(hash)`                                  | viem `waitForTransactionReceipt` with one confirmation                          |
+| `getPublicClient()`                                         | Returns the viem public client                                                  |
 
-| Value | Reason                         |
-| ----- | ------------------------------ |
-| 0     | `None`                         |
-| 1     | `CommitteeFormationTimeout`    |
-| 2     | `InsufficientCommitteeMembers` |
-| 3     | `DKGTimeout`                   |
-| 4     | `DKGInvalidShares`             |
-| 5     | `NoInputsReceived`             |
-| 6     | `ComputeTimeout`               |
-| 7     | `ComputeProviderExpired`       |
-| 8     | `ComputeProviderFailed`        |
-| 9     | Reserved                       |
-| 10    | `DecryptionTimeout`            |
-| 11    | `DecryptionInvalidShares`      |
-| 12    | `VerificationFailed`           |
+The SDK does not call the E3 program. Call `publishInput` on your program with viem. See
+[Encrypt and submit](/build/tutorials/encrypt-and-submit#submit-the-input).
 
-## Utility exports
+## Utilities
 
-The SDK also exports several utility functions and constants from the main entry point:
+The main entry point exports these utilities.
+
+| Export                                                                                             | Content                                                                                                    |
+| -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `calculateInputWindow(publicClient, duration?, startBuffer?)`                                      | `[now + startBuffer, now + startBuffer + duration]` from the latest block time. Defaults: 1800 s and 15 s. |
+| `getCurrentTimestamp(publicClient)`                                                                | The timestamp of the latest block.                                                                         |
+| `encodeComputeProviderParams(params, mock?)`                                                       | The JSON of `params` as hex bytes. With `mock` set to `true`, 32 zero bytes.                               |
+| `encodeCustomParams(params)`                                                                       | The JSON of an object as hex bytes.                                                                        |
+| `encodeBfvParams(params)`                                                                          | ABI-encoded BFV parameters. It throws `MISSING_ERROR1_VARIANCE` without `error1Variance`.                  |
+| `decodePlaintextOutput(hex)`                                                                       | The first 8 bytes as a little-endian unsigned integer, as a `number`. `null` when the input is too short.  |
+| `DEFAULT_COMPUTE_PROVIDER_PARAMS`                                                                  | `{ name: 'risc0', parallel: false, batch_size: 2 }`                                                        |
+| `DEFAULT_E3_CONFIG`                                                                                | `{ committeeSize: 0, duration: 1800, payment_amount: '0' }`                                                |
+| `isValidAddress(value)`, `isValidHash(value)`                                                      | Format checks for a 20-byte address and a 32-byte hash.                                                    |
+| `sleep(ms)`, `formatBigInt`, `parseBigInt`, `formatEventName`, `parseEventData`, `generateEventId` | Small helpers.                                                                                             |
+
+## Contract addresses
+
+`ContractAddresses` has three fields: `interfold`, `ciphernodeRegistry`, and `feeToken`. Create one
+SDK instance for each chain.
+
+The template reads the addresses from `interfold.config.yaml`.
+`interfold print-env --chain localhost` prints them as `INTERFOLD_ADDRESS`, `REGISTRY_ADDRESS`,
+`E3_PROGRAM_ADDRESS`, `FEE_TOKEN_ADDRESS`, and more. With `--vite`, the names start with `VITE_`.
+For live networks, see [Contracts & Addresses](/reference/contracts).
+
+## Errors
+
+The SDK throws `SDKError`, a subclass of `Error` with `name` set to `SDKError` and an optional
+`code`.
+
+| Codes                                                                                                                     | Source                                        |
+| ------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
+| `MISSING_PUBLIC_CLIENT`, `INVALID_ADDRESS`, `INVALID_THRESHOLD_BFV_PARAMS_PRESET_NAME`                                    | The constructor                               |
+| `NO_WALLET`, `NO_ACCOUNT`                                                                                                 | A write method without a wallet or an account |
+| `APPROVE_FEE_TOKEN_FAILED`, `REQUEST_E3_FAILED`, `CANCEL_E3_FAILED`, `PUBLISH_CIPHERTEXT_OUTPUT_FAILED`                   | The write methods                             |
+| `GET_E3_FAILED`, `GET_E3_PUBLIC_KEY_FAILED`, `GET_E3_QUOTE_FAILED`, `GET_E3_STAGE_FAILED`, `GET_FAILURE_REASON_FAILED`    | The read methods                              |
+| `GAS_ESTIMATION_FAILED`, `TRANSACTION_WAIT_FAILED`                                                                        | Gas estimation and receipts                   |
+| `WATCH_EVENT_FAILED`, `WATCH_LOGS_FAILED`, `HISTORICAL_EVENTS_FAILED`, `POLLING_START_FAILED`, `INVALID_EVENT_CONFIG`     | The event listener                            |
+| `INVALID_COMMITTEE_SIZE`, `UNSUPPORTED_CRYPTO_CONFIG`, `MISSING_ERROR1_VARIANCE`                                          | Parameter checks                              |
+| `SDK_CIRCUIT_STAMP_MISSING`, `SDK_CIRCUIT_STAMP_INVALID`, `SDK_CIRCUIT_COMMITTEE_MISMATCH`, `SDK_CIRCUIT_PRESET_MISMATCH` | Proof generation in Node.js                   |
+
+A write method wraps the original error in its own code. The contract revert reason is in `message`.
+`getE3Quote`, `getE3Stage`, and `getFailureReason` return the viem read directly. A contract revert
+from these calls therefore reaches you as a viem error, not as an `SDKError`.
 
 ```ts
-import {
-  SDKError,
-  encodeBfvParams,
-  encodeComputeProviderParams,
-  encodeCustomParams,
-  calculateInputWindow,
-  decodePlaintextOutput,
-  getCurrentTimestamp,
-  DEFAULT_COMPUTE_PROVIDER_PARAMS,
-  DEFAULT_E3_CONFIG,
-} from '@interfold/sdk'
+import { SDKError } from '@interfold/sdk'
+
+try {
+  await sdk.requestE3({ ...requestParams, maxFee: fee })
+} catch (error) {
+  if (error instanceof SDKError && error.code === 'REQUEST_E3_FAILED') {
+    console.error(error.message) // Contains the revert, for example FeeExceedsMaximum
+  }
+}
 ```
 
-| Export                            | Description                                                       |
-| --------------------------------- | ----------------------------------------------------------------- |
-| `SDKError`                        | Custom error class with an error `code` property                  |
-| `encodeBfvParams(params)`         | ABI-encode BFV parameters for smart contract calls                |
-| `encodeComputeProviderParams`     | Encode compute provider params (supports mock mode)               |
-| `encodeCustomParams(params)`      | Encode arbitrary custom parameters as hex                         |
-| `calculateInputWindow`            | Compute an input window `[start, end]` from current on-chain time |
-| `decodePlaintextOutput(hex)`      | Decode a plaintext output hex string to a number                  |
-| `getCurrentTimestamp(client)`     | Fetch the current block timestamp from the chain                  |
-| `DEFAULT_COMPUTE_PROVIDER_PARAMS` | Default compute provider configuration object                     |
-| `DEFAULT_E3_CONFIG`               | Default E3 config (threshold, duration, payment)                  |
+## React hook
 
-## Configuration contract map
+`useInterfoldSDK(config)` creates an `InterfoldSDK` from the wagmi public client and wallet client.
+The component must be inside a `WagmiProvider`.
 
-Provide the Interfold, CiphernodeRegistry, and FeeToken addresses. The template exposes these via
-`.env` / `interfold.config.yaml`. For multi-chain apps, instantiate separate SDK instances per
-chain.
+| `UseInterfoldSDKConfig` field  | Content                                                                  |
+| ------------------------------ | ------------------------------------------------------------------------ |
+| `contracts`                    | `interfold`, `ciphernodeRegistry`, and `feeToken` addresses.             |
+| `autoConnect`                  | When `true`, the hook creates the SDK as soon as a public client exists. |
+| `thresholdBfvParamsPresetName` | The BFV preset.                                                          |
 
-## Working with the template
+The hook returns `sdk`, `isInitialized`, `error` (a string), `requestE3`,
+`getThresholdBfvParamsSet`, `onInterfoldEvent`, `off`, `InterfoldEventType`, and
+`RegistryEventType`. It creates the SDK again when the wallet client changes, and it calls
+`cleanup()` on unmount. The helper functions throw `SDK not initialized` before the SDK exists.
 
-`interfold init` generates the default template (see [Project Template](/project-template)). The
-client already wires `@interfold/sdk` and `@interfold/react`:
+The template memoizes the configuration, because the hook creates a new SDK when the `contracts`
+object changes. This sample follows `client/src/context/WizardContext.tsx` and
+`client/src/utils/sdk-config.ts`:
 
-- `client/src/sdk.ts` builds the shared SDK instance
-- `client/src/hooks/useE3.ts` uses `useInterfoldSDK` to expose helper hooks throughout the UI
-- `server/src/services/interfold.ts` instantiates the SDK with a server wallet using
-  `createWalletClient`
+```tsx
+import { useMemo } from 'react'
+import { useInterfoldSDK } from '@interfold/react'
 
-When you add new contracts or E3 programs, update `client/.env` and `server/.env` with the new
-addresses, then restart the dev server so the SDK reconnects.
+export function useTemplateSdk() {
+  const sdkConfig = useMemo(
+    () => ({
+      autoConnect: true,
+      contracts: {
+        interfold: import.meta.env.VITE_INTERFOLD_ADDRESS,
+        ciphernodeRegistry: import.meta.env.VITE_REGISTRY_ADDRESS,
+        feeToken: import.meta.env.VITE_FEE_TOKEN_ADDRESS,
+      },
+      thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_512' as const,
+    }),
+    [],
+  )
+  return useInterfoldSDK(sdkConfig)
+}
+```
 
-## Application-specific SDKs
+`@interfold/react` also exports `InterfoldEventType`, `RegistryEventType`,
+`RandomnessProviderEventType`, and the common event data types from the SDK.
 
-For complex E3 programs with specialized requirements, you may want to build an application-specific
-SDK on top of or alongside the Interfold SDK. For example,
-[CRISP](https://github.com/theinterfold/interfold/tree/main/examples/CRISP) uses `@crisp-e3/sdk`,
-which provides:
+## Application SDKs
 
-- Zero-knowledge proof generation for votes using Noir circuits
-- Merkle tree utilities for voter eligibility verification
-- Vote encryption helpers using FHE
-- Round management and token operations
-- CRISP server interaction APIs
+A complex E3 program can ship its own SDK next to the Interfold SDK. CRISP uses `@crisp-e3/sdk`
+(`examples/CRISP/packages/crisp-sdk`). It exports `CrispSDK`, vote functions such as `encryptVote`,
+`prepareBallot`, and `decodeTally`, and Merkle helpers such as `generateMerkleProof`.
 
-If your E3 program requires specialized cryptographic operations, domain-specific logic, or
-application-level abstractions beyond basic protocol interactions, consider building a dedicated SDK
-that wraps or complements the core Interfold SDK.
+## Next steps
 
-## Advanced usage
-
-- **Historical events**: `sdk.getHistoricalEvents(type, fromBlock, toBlock)` fetches logs without a
-  WebSocket provider; useful for CRON jobs or health checks.
-- **Publish ciphertext output**:
-  `sdk.publishCiphertextOutput(e3Id, { contentHash, ciphertextCommitment, computeProof, availabilityProof }, gasLimit?)`
-  submits a proof-backed reference to an aggregate ciphertext published on the configured DA layer.
-- **Gas controls**: pass `gasLimit` to `requestE3`, `publishCiphertextOutput`, or other write
-  methods if you want fixed limits when interacting with Interfold on L2s.
-- **Gas estimation**: `sdk.estimateGas(functionName, args, contractAddress, abi)` returns the
-  estimated gas for a contract call before sending.
-- **Transaction confirmation**: `sdk.waitForTransaction(hash)` blocks until a transaction is mined
-  and returns the `TransactionReceipt`.
-- **One-shot events**: `sdk.once(eventType, callback)` listens for an event and automatically
-  unsubscribes after the first occurrence.
-- **Event polling**: `sdk.startEventPolling()` / `sdk.stopEventPolling()` are handy in serverless
-  environments where websockets are unavailable.
-- **Custom transports**: on the server, call `createWalletClient({ account, transport: http(rpc) })`
-  and load the private key from Vaults/KMS.
-- **Get E3 quote**: call `sdk.getE3Quote(requestParams)` to get the fee amount required for an E3
-  request.
-- **Fee token approval**: call `sdk.approveFeeToken(amount)` before `requestE3` to approve the fee
-  token spend.
-- **Cancel an E3**: call `sdk.cancelE3(e3Id)` from the original requester account only after the VRF
-  deadline expires without a usable result. A valid result disables cancellation. The failed-E3
-  claim returns all service fee escrow, while the flat randomness fee remains charged.
-- **Query E3 data**: use `sdk.getE3(e3Id)` to read the full E3 struct, `sdk.getE3Stage(e3Id)` for
-  the current lifecycle stage (returns `E3Stage` enum), and `sdk.getFailureReason(e3Id)` if the E3
-  has failed (returns `FailureReason` enum).
-- **Public key retrieval**: `sdk.getE3PublicKey(e3Id)` returns the committee's aggregated public key
-  for a given E3.
-- **Access the public client**: `sdk.getPublicClient()` returns the underlying viem `PublicClient`.
-- **Cleanup**: call `sdk.cleanup()` when shutting down to unsubscribe all event listeners and stop
-  polling.
-
-## Troubleshooting
-
-| Symptom                        | Triage                                                                                                                         |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
-| `MISSING_PUBLIC_CLIENT` errors | Ensure `createPublicClient` uses an HTTP or WebSocket RPC reachable from the app.                                              |
-| `INVALID_ADDRESS`              | Double-check contract addresses passed into the SDK match the current chain.                                                   |
-| Hooks never initialize         | Confirm `autoConnect` is true, wallet is connected, and React component is inside a wagmi provider that renders on the client. |
-| No events arrive               | Switch to a WebSocket RPC or call `sdk.startEventPolling()` so logs are polled over HTTP.                                      |
-
-For additional API surface details see `packages/interfold-sdk/README.md` inside this repo.
+<LinkCards min={230}>
+  <LinkCard
+    title='Encrypt and submit'
+    href='/build/tutorials/encrypt-and-submit'
+    icon='lock'
+    tag='Tutorial'
+  >
+    Get the committee key, encrypt an input, and send it to the E3 program.
+  </LinkCard>
+  <LinkCard title='Client and server' href='/build/client-and-server' icon='network' tag='Build'>
+    How the template client and coordination server use the SDK.
+  </LinkCard>
+  <LinkCard
+    title='The Interfold Contract'
+    href='/build/interfold-contract'
+    icon='contract'
+    tag='Build'
+  >
+    The contract functions that the SDK calls.
+  </LinkCard>
+</LinkCards>
