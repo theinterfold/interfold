@@ -9,6 +9,9 @@ use crate::merkle_tree_builder::Batching;
 use crate::policy::InputPolicy;
 use crate::secure_process::{absorb_all, SecureProcess};
 use fhe::bfv::BfvParameters;
+use fhe::trlbfv::LBFVRelinearizationKey;
+use fhe_traits::DeserializeParametrized;
+use sha3::{Digest, Keccak256};
 use std::sync::Arc;
 
 pub type FHEProcessor = for<'a> fn(FHEProcessorInput<'a>) -> Vec<u8>;
@@ -29,6 +32,8 @@ pub struct FHEProcessorInput<'a> {
     /// output must not depend on it; the ciphertext's position in the round is what the root binds.
     pub ciphertexts: &'a mut dyn Iterator<Item = (Vec<u8>, u64)>,
     pub params: &'a Arc<BfvParameters>,
+    /// The proof-bound l-BFV relinearization key, when the preset requires one.
+    pub relinearization_key: Option<&'a LBFVRelinearizationKey>,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -40,6 +45,9 @@ pub struct FHEInputs {
     /// event delivery is not ordered, and getting it wrong produces a root the E3 program rejects.
     pub ciphertexts: Vec<(Vec<u8>, u64)>,
     pub params: Vec<u8>,
+    /// The published versioned committee-key envelope.
+    #[serde(default)]
+    pub committee_key: Vec<u8>,
 }
 
 /// What an E3 program published alongside a ciphertext, in the same order as `ciphertexts`.
@@ -90,14 +98,8 @@ pub enum ComputeError {
     #[error("failed to build the input Merkle tree: {0}")]
     MerkleTree(String),
 
-    #[error("the round has {expected} inputs, but {actual} were read")]
-    InputCount { expected: usize, actual: usize },
-
-    #[error("input {index} differs from the ciphertext read in the first pass")]
-    InputChanged { index: usize },
-
-    #[error("the processor returned before reading {remaining} selected inputs")]
-    Unread { remaining: usize },
+    #[error("failed to validate the committee key: {0}")]
+    CommitteeKey(String),
 }
 
 impl ComputeInput {
@@ -114,6 +116,17 @@ impl ComputeInput {
         self.run(fhe_processor, policy).map(|(result, _)| result)
     }
 
+    /// Run the Secure Process and bind its l-BFV key to the on-chain commitment.
+    pub fn process_bound(
+        &self,
+        fhe_processor: FHEProcessor,
+        policy: InputPolicy,
+        expected_commitment: [u8; 32],
+    ) -> Result<ComputeResult, ComputeError> {
+        self.run_bound(fhe_processor, policy, Some(expected_commitment))
+            .map(|(result, _)| result)
+    }
+
     /// As [`Self::process`], and also returns the output ciphertext.
     ///
     /// A caller that publishes the ciphertext must take it from here rather than running the
@@ -125,8 +138,44 @@ impl ComputeInput {
         fhe_processor: FHEProcessor,
         policy: InputPolicy,
     ) -> Result<(ComputeResult, Vec<u8>), ComputeError> {
-        self.run_batched(fhe_processor, policy, Batching::Sequential)
+        self.run_bound(fhe_processor, policy, None)
     }
+
+    fn run_bound(
+        &self,
+        fhe_processor: FHEProcessor,
+        policy: InputPolicy,
+        expected_commitment: Option<[u8; 32]>,
+    ) -> Result<(ComputeResult, Vec<u8>), ComputeError> {
+        let params = decode_bfv_params_arc(&self.fhe_inputs.params)
+            .map_err(|e| ComputeError::DecodeParams(e.to_string()))?;
+        let preset = e3_fhe_params::BfvPreset::from_threshold_parameters(
+            params.degree(),
+            params.plaintext(),
+            params.moduli(),
+        );
+        let relinearization_key = if preset == Some(e3_fhe_params::BfvPreset::SecureThreshold16384)
+        {
+            let expected_commitment = expected_commitment.ok_or_else(|| {
+                ComputeError::CommitteeKey(
+                    "secure-16384 computation requires a committee-key commitment".to_string(),
+                )
+            })?;
+            let (_, _) = e3_bfv_client::validate_lbfv_key_envelope(
+                &self.fhe_inputs.committee_key,
+                expected_commitment,
+                e3_fhe_params::BfvPreset::SecureThreshold16384,
+            )
+            .map_err(|error| ComputeError::CommitteeKey(error.to_string()))?;
+            let envelope = e3_bfv_client::decode_lbfv_key_envelope(&self.fhe_inputs.committee_key)
+                .map_err(|error| ComputeError::CommitteeKey(error.to_string()))?;
+            Some(
+                LBFVRelinearizationKey::from_bytes(&envelope.relinearization_key, &params)
+                    .map_err(|error| ComputeError::CommitteeKey(error.to_string()))?,
+            )
+        } else {
+            None
+        };
 
     /// As [`Self::run`], choosing how the per-input commitments are scheduled.
     ///
@@ -168,23 +217,46 @@ impl ComputeInput {
         // The processor sees only what the policy selected. Both the root and this set are
         // functions of values the root binds, so any prover over the same published inputs reaches
         // the same result.
-        let (result, ciphertext) =
-            selected.finish(fhe_processor, |index| Ok(ciphertexts[index].0.clone()))?;
-        Ok((result, ciphertext, indices))
+        let processed_ciphertext = (fhe_processor)(&FHEProcessorInput {
+            ciphertexts: &selected,
+            params: &params,
+            relinearization_key: relinearization_key.as_ref(),
+        });
+        let processed_hash = Keccak256::digest(&processed_ciphertext).to_vec();
+        let ciphertext_commitment =
+            compute_ct_commitment_with_params(&processed_ciphertext, &params)
+                .map_err(|e| ComputeError::OutputCommitment(e.to_string()))?
+                .to_vec();
+        let params_hash = Keccak256::digest(&self.fhe_inputs.params).to_vec();
+
+        Ok((
+            ComputeResult {
+                ciphertext_hash: processed_hash,
+                ciphertext_commitment,
+                params_hash,
+                merkle_root: hex::decode(merkle_root)
+                    .map_err(|e| ComputeError::MerkleTree(e.to_string()))?,
+            },
+            processed_ciphertext,
+        ))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::merkle_tree_builder::MerkleTreeBuilder;
-    use crate::policy::{all_inputs, commitment_leaf, InputRecord, PublishedInput};
-    use e3_bfv_client::client::compute_ct_commitment;
+    use crate::policy::{all_inputs, commitment_leaf, PublishedInput};
     use e3_fhe_params::{
-        build_pair_for_preset, decode_bfv_params_arc, encode_bfv_params, BfvPreset,
+        build_pair_for_preset, encode_bfv_params, lbfv_crs_seed, lbfv_urs_seed, BfvPreset,
     };
-    use fhe::bfv::{Ciphertext, Encoding, Plaintext, PublicKey, SecretKey};
-    use fhe_traits::{FheEncoder, FheEncrypter, Serialize as FheSerialize};
+    use fhe::aggregate::AggregateIter;
+    use fhe::bfv::{Ciphertext, CommonRandomPolyVec, Encoding, Plaintext, PublicKey, SecretKey};
+    use fhe::trlbfv::{
+        aggregate_relinearization_key, LBFVPublicKey, PublicKeyShare, RelinKeyShare,
+    };
+    use fhe_traits::{
+        FheDecoder, FheDecrypter, FheEncoder, FheEncrypter, Serialize as FheSerialize,
+    };
     use rand::SeedableRng;
     use rand_chacha::ChaCha8Rng;
     use sha3::{Digest, Keccak256};
@@ -196,6 +268,74 @@ mod tests {
             sum += &Ciphertext::from_bytes(&bytes, inputs.params).unwrap();
         }
         sum.to_bytes()
+    }
+
+    fn square_and_relinearize_processor(inputs: &FHEProcessorInput<'_>) -> Vec<u8> {
+        let ciphertext = Ciphertext::from_bytes(&inputs.ciphertexts[0].0, inputs.params).unwrap();
+        let mut square = &ciphertext * &ciphertext;
+        inputs
+            .relinearization_key
+            .expect("secure computation must receive the proof-bound RLK")
+            .relinearizes(&mut square)
+            .unwrap();
+        square.to_bytes()
+    }
+
+    struct SecureComputeFixture {
+        input: ComputeInput,
+        substituted_rlk_envelope: Vec<u8>,
+        commitment: [u8; 32],
+        secret_key: Vec<u8>,
+    }
+
+    fn secure_compute_fixture() -> Result<SecureComputeFixture, Box<dyn std::error::Error>> {
+        let preset = BfvPreset::SecureThreshold16384;
+        let (params, _) = build_pair_for_preset(preset)?;
+        let crs = CommonRandomPolyVec::from_seed(
+            &params,
+            lbfv_crs_seed(preset).expect("the secure preset has an l-BFV CRS"),
+        )?;
+        let urs = CommonRandomPolyVec::from_seed(
+            &params,
+            lbfv_urs_seed(preset).expect("the secure preset has an l-BFV URS"),
+        )?;
+        let mut rng = ChaCha8Rng::seed_from_u64(17);
+        let secret_key = SecretKey::random(&params, &mut rng);
+        let public_key_share = PublicKeyShare::contribute_with_crp(&secret_key, &crs, &mut rng)?;
+        let public_key: LBFVPublicKey = [public_key_share].into_iter().aggregate()?;
+        let rlk_share =
+            RelinKeyShare::contribution_with_crp(&secret_key, &urs, &crs, 0, 0, &mut rng)?;
+        let substituted_rlk_share =
+            RelinKeyShare::contribution_with_crp(&secret_key, &urs, &crs, 0, 0, &mut rng)?;
+        let rlk = aggregate_relinearization_key(&[rlk_share], &public_key)?;
+        let substituted_rlk = aggregate_relinearization_key(&[substituted_rlk_share], &public_key)?;
+        let committee_key = e3_bfv_client::encode_lbfv_key_envelope(
+            &public_key.to_bytes(),
+            &rlk.to_bytes(),
+            preset,
+        )?;
+        let substituted_rlk_envelope = e3_bfv_client::encode_lbfv_key_envelope(
+            &public_key.to_bytes(),
+            &substituted_rlk.to_bytes(),
+            preset,
+        )?;
+        let (commitments, _) = e3_bfv_client::inspect_lbfv_key_envelope(&committee_key, preset)?;
+        let plaintext = Plaintext::try_encode(&[3u64], Encoding::poly(), &params)?;
+        let ciphertext = public_key.try_encrypt(&plaintext, &mut rng)?;
+
+        Ok(SecureComputeFixture {
+            input: ComputeInput {
+                fhe_inputs: FHEInputs {
+                    ciphertexts: vec![(ciphertext.to_bytes(), 0)],
+                    params: encode_bfv_params(&params),
+                    committee_key,
+                },
+                published: Vec::new(),
+            },
+            substituted_rlk_envelope,
+            commitment: commitments.envelope,
+            secret_key: secret_key.to_bytes(),
+        })
     }
 
     fn encrypted_inputs(values: &[u64]) -> FHEInputs {
@@ -218,6 +358,7 @@ mod tests {
         FHEInputs {
             ciphertexts,
             params: encode_bfv_params(&params),
+            committee_key: Vec::new(),
         }
     }
 
@@ -258,6 +399,40 @@ mod tests {
             .root()
             .unwrap();
         hex::decode(root).unwrap()
+    }
+
+    #[test]
+    fn secure_computation_uses_only_the_proof_bound_relinearization_key(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let fixture = secure_compute_fixture()?;
+        let params = decode_bfv_params_arc(&fixture.input.fhe_inputs.params)?;
+        let (_, output) = fixture.input.run_bound(
+            square_and_relinearize_processor,
+            InputPolicy::default(),
+            Some(fixture.commitment),
+        )?;
+        let square = Ciphertext::from_bytes(&output, &params)?;
+        assert_eq!(square.len(), 2, "the processor must relinearize the square");
+        let secret_key = SecretKey::from_bytes(&fixture.secret_key, &params)?;
+        let decoded = Vec::<u64>::try_decode(&secret_key.try_decrypt(&square)?, Encoding::poly())?;
+        assert_eq!(decoded.first(), Some(&9));
+
+        let mut substituted = fixture.input;
+        substituted.fhe_inputs.committee_key = fixture.substituted_rlk_envelope;
+        let (substituted_commitments, _) = e3_bfv_client::inspect_lbfv_key_envelope(
+            &substituted.fhe_inputs.committee_key,
+            BfvPreset::SecureThreshold16384,
+        )?;
+        assert_ne!(substituted_commitments.envelope, fixture.commitment);
+        let error = substituted
+            .run_bound(
+                square_and_relinearize_processor,
+                InputPolicy::default(),
+                Some(fixture.commitment),
+            )
+            .expect_err("a substituted RLK must not reach the processor");
+        assert!(matches!(error, ComputeError::CommitteeKey(_)));
+        Ok(())
     }
 
     /// The journal's input root must be a function of the ciphertexts consumed. Before this, the
@@ -524,6 +699,7 @@ mod tests {
         let over_everything = sum_processor(FHEProcessorInput {
             ciphertexts: &mut inputs.ciphertexts.iter().cloned(),
             params: &params,
+            relinearization_key: None,
         });
         assert_ne!(
             ciphertext, over_everything,

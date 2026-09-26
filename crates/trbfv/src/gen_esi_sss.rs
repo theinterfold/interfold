@@ -86,11 +86,12 @@ pub fn gen_esi_sss<R: RngCore + CryptoRng>(
     let e_sm_poly = try_poly_pb_from_bytes(&e_sm_raw, &params)?;
     let share_manager = ShareManager::new(num_ciphernodes, threshold, params.clone())?;
 
-    info!("gen_esi_sss:generate_secret_shares_from_poly...");
+    info!("gen_esi_sss:generate_secret_key_shares...");
 
     let esi_sss = vec![SharedSecret::from(
         share_manager
-            .generate_secret_shares_from_poly(e_sm_poly.into(), rng)
+            .generate_secret_key_shares(e_sm_poly.into(), rng)
+            .map(|shares| shares.into_transport())
             .context("Failed to generate secret shares from poly")?,
     )];
 

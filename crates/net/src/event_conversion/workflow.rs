@@ -152,6 +152,9 @@ impl EventConversionService {
         msg: LbfvKeyShareDocumentCreated,
     ) -> Result<PublishDocumentRequested> {
         msg.document.validate()?;
+        msg.document
+            .validate_share_codec()
+            .context("local l-BFV document uses a stale fhe.rs contribution wire format")?;
         let meta = DocumentMeta::new(
             msg.document.e3_id().clone(),
             DocumentKind::LbfvKeyShare,
@@ -240,6 +243,9 @@ impl EventConversionService {
             "l-BFV DHT document role does not match the targeted fetch"
         );
         document.validate()?;
+        document
+            .validate_share_codec()
+            .context("l-BFV DHT document uses a stale fhe.rs contribution wire format")?;
 
         Ok(LbfvKeyShareDocumentReceived {
             document,
@@ -286,6 +292,11 @@ mod tests {
         LbfvKeyShareDocumentRole, LbfvPublicKeyShareDocumentV1,
         LbfvRelinearizationKeyShareDocumentV1, Proof, ProofPayload, ProofType, SignedProofPayload,
     };
+    use e3_fhe_params::{build_pair_for_preset, lbfv_crs_seed, lbfv_urs_seed, BfvPreset};
+    use fhe::bfv::{CommonRandomPolyVec, SecretKey};
+    use fhe::trlbfv::{PublicKeyShare, RelinKeyShare};
+    use fhe_traits::Serialize as FheSerialize;
+    use rand::rng;
     use std::sync::Arc;
 
     fn encryption_key_document(e3_id: E3id) -> ReceivableDocument {
@@ -364,7 +375,7 @@ mod tests {
         .unwrap()
     }
 
-    fn lbfv_public_key_document(share_len: usize) -> LbfvKeyShareDocument {
+    fn lbfv_public_key_document(preset: BfvPreset) -> LbfvKeyShareDocument {
         let signer: PrivateKeySigner =
             "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
                 .parse()
@@ -372,7 +383,7 @@ mod tests {
         let context = lbfv_context();
         LbfvKeyShareDocument::PublicKeyV1(LbfvPublicKeyShareDocumentV1 {
             context: context.clone(),
-            share: ArcBytes::from_bytes(&vec![7; share_len]),
+            share: ArcBytes::from_bytes(&lbfv_share_bytes(true, preset)),
             signed_c1_proof: signed_proof(&context, ProofType::C1PkGeneration, 0, &signer),
             signed_row_proofs: std::array::from_fn(|row| {
                 signed_proof(&context, ProofType::LbfvPkGeneration, row as u32, &signer)
@@ -380,7 +391,7 @@ mod tests {
         })
     }
 
-    fn lbfv_relinearization_key_document(share_len: usize) -> LbfvKeyShareDocument {
+    fn lbfv_relinearization_key_document(preset: BfvPreset) -> LbfvKeyShareDocument {
         let signer: PrivateKeySigner =
             "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
                 .parse()
@@ -388,11 +399,36 @@ mod tests {
         let context = lbfv_context();
         LbfvKeyShareDocument::RelinearizationKeyV1(LbfvRelinearizationKeyShareDocumentV1 {
             context: context.clone(),
-            share: ArcBytes::from_bytes(&vec![7; share_len]),
+            share: ArcBytes::from_bytes(&lbfv_share_bytes(false, preset)),
             signed_row_proofs: std::array::from_fn(|row| {
                 signed_proof(&context, ProofType::RlkGeneration, row as u32, &signer)
             }),
         })
+    }
+
+    fn lbfv_share_bytes(public_key: bool, preset: BfvPreset) -> Vec<u8> {
+        let (params, _) = build_pair_for_preset(preset).unwrap();
+        let crs = CommonRandomPolyVec::from_seed(&params, lbfv_crs_seed(preset).unwrap()).unwrap();
+        let urs = CommonRandomPolyVec::from_seed(&params, lbfv_urs_seed(preset).unwrap()).unwrap();
+        let mut random = rng();
+        let secret_key = SecretKey::random(&params, &mut random);
+        if public_key {
+            PublicKeyShare::contribute_with_crp(&secret_key, &crs, &mut random)
+                .unwrap()
+                .to_bytes()
+        } else {
+            RelinKeyShare::contribution_with_crp_extended(
+                &secret_key,
+                &urs,
+                &crs,
+                0,
+                0,
+                &mut random,
+            )
+            .unwrap()
+            .0
+            .to_bytes()
+        }
     }
 
     fn lbfv_fetch_request(document: &LbfvKeyShareDocument) -> LbfvKeyShareDocumentFetchRequested {
@@ -449,8 +485,8 @@ mod tests {
     #[test]
     fn targeted_lbfv_document_roundtrip_binds_identity_and_content_hash() {
         for document in [
-            lbfv_public_key_document(64),
-            lbfv_relinearization_key_document(64),
+            lbfv_public_key_document(BfvPreset::InsecureThreshold512),
+            lbfv_relinearization_key_document(BfvPreset::InsecureThreshold512),
         ] {
             let request =
                 EventConversionService::lbfv_key_share_to_request(LbfvKeyShareDocumentCreated {
@@ -475,8 +511,41 @@ mod tests {
     }
 
     #[test]
+    fn targeted_lbfv_fetch_rejects_stale_contribution_bytes() {
+        let mut document = lbfv_public_key_document(BfvPreset::InsecureThreshold512);
+        let LbfvKeyShareDocument::PublicKeyV1(document) = &mut document else {
+            unreachable!();
+        };
+        document.share = ArcBytes::from_bytes(&[7; 64]);
+        let document = LbfvKeyShareDocument::PublicKeyV1(document.clone());
+        let bytes = document.to_bytes().unwrap();
+        let request = lbfv_fetch_request(&document);
+        let error = EventConversionService::decode_lbfv_fetch(&request, &bytes).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("stale fhe.rs contribution wire format"));
+    }
+
+    #[test]
+    fn local_lbfv_publication_rejects_stale_contribution_bytes() {
+        let mut document = lbfv_public_key_document(BfvPreset::InsecureThreshold512);
+        let LbfvKeyShareDocument::PublicKeyV1(public_key) = &mut document else {
+            unreachable!();
+        };
+        public_key.share = ArcBytes::from_bytes(&[7; 64]);
+        let error =
+            EventConversionService::lbfv_key_share_to_request(LbfvKeyShareDocumentCreated {
+                document,
+            })
+            .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("stale fhe.rs contribution wire format"));
+    }
+
+    #[test]
     fn generic_lbfv_conversion_is_suppressed() {
-        let document = lbfv_public_key_document(64);
+        let document = lbfv_public_key_document(BfvPreset::InsecureThreshold512);
         let bytes = document.to_bytes().unwrap();
         let meta = DocumentMeta::new(
             document.e3_id().clone(),
@@ -492,7 +561,7 @@ mod tests {
 
     #[test]
     fn targeted_lbfv_document_rejects_wrong_identity() {
-        let document = lbfv_public_key_document(64);
+        let document = lbfv_public_key_document(BfvPreset::InsecureThreshold512);
         let bytes = document.to_bytes().unwrap();
         let mut wrong_e3 = lbfv_fetch_request(&document);
         let LbfvKeyShareDocumentFetchRequested::V1(identity) = &mut wrong_e3;
@@ -546,8 +615,8 @@ mod tests {
     #[test]
     fn secure_lbfv_share_fits_one_dht_document() {
         for document in [
-            lbfv_public_key_document(5_222_596),
-            lbfv_relinearization_key_document(5_222_618),
+            lbfv_public_key_document(BfvPreset::SecureThreshold16384),
+            lbfv_relinearization_key_document(BfvPreset::SecureThreshold16384),
         ] {
             let request =
                 EventConversionService::lbfv_key_share_to_request(LbfvKeyShareDocumentCreated {
@@ -559,13 +628,9 @@ mod tests {
     }
 
     #[test]
-    fn oversized_lbfv_document_is_rejected_before_publication() {
-        let document = lbfv_public_key_document(MAX_DHT_DOCUMENT_BYTES);
-        let error =
-            EventConversionService::lbfv_key_share_to_request(LbfvKeyShareDocumentCreated {
-                document,
-            })
-            .unwrap_err();
+    fn oversized_dht_document_is_rejected_before_publication() {
+        let bytes = vec![0; MAX_DHT_DOCUMENT_BYTES + 1];
+        let error = encode_bounded(&bytes).unwrap_err();
         assert!(error.to_string().contains("exceeds the"));
     }
 }

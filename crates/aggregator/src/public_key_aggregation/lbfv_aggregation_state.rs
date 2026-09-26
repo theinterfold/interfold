@@ -6,7 +6,7 @@
 
 //! Durable secure-16384 l-BFV row aggregation state.
 
-use anyhow::{ensure, Result};
+use anyhow::{ensure, Context, Result};
 use e3_committee_hash::LbfvProofDomainContext;
 use e3_events::{CorrelationId, E3id, LbfvKeyShareDocument, LbfvPublicKeyAggregated, Proof};
 use e3_fhe_params::{lbfv_row_count, BfvPreset};
@@ -14,8 +14,8 @@ use e3_utils::ArcBytes;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-pub const LBFV_AGGREGATION_SCHEMA_VERSION: u32 = 2;
-pub const LBFV_PUBLICATION_SCHEMA_VERSION: u32 = 1;
+pub const LBFV_AGGREGATION_SCHEMA_VERSION: u32 = 4;
+pub const LBFV_PUBLICATION_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LbfvPublicKeyPublicationStateV1 {
@@ -48,6 +48,8 @@ impl LbfvPublicKeyPublicationStateV1 {
                 event.dkg_aggregator_v2_proof.circuit == e3_events::CircuitName::DkgAggregatorV2,
                 "l-BFV publication intent has the wrong recursive circuit"
             );
+            e3_bfv_client::decode_lbfv_key_envelope(&event.pubkey)
+                .context("l-BFV publication intent has an unsupported key envelope")?;
         }
         Ok(())
     }
@@ -60,8 +62,13 @@ mod publication_tests {
     use e3_events::{CircuitName, OrderedSet};
 
     fn publication(e3_id: E3id, circuit: CircuitName) -> LbfvPublicKeyAggregated {
+        let mut key_envelope = Vec::from(*b"IFLBFVKE");
+        key_envelope.extend_from_slice(&3_u16.to_be_bytes());
+        key_envelope.extend_from_slice(&0_u32.to_be_bytes());
+        key_envelope.extend_from_slice(&1_u32.to_be_bytes());
+        key_envelope.push(1);
         LbfvPublicKeyAggregated {
-            pubkey: ArcBytes::from_bytes(&[1]),
+            pubkey: ArcBytes::from_bytes(&key_envelope),
             e3_id,
             nodes: OrderedSet::from_iter(["node".to_owned()]),
             committee_addresses: vec![Address::repeat_byte(1)],
@@ -77,7 +84,7 @@ mod publication_tests {
     }
 
     #[test]
-    fn publication_state_accepts_the_v2_intent() {
+    fn publication_state_accepts_the_v3_envelope_intent() {
         let e3_id = E3id::new("42", 1);
         let state = LbfvPublicKeyPublicationStateV1 {
             schema_version: LBFV_PUBLICATION_SCHEMA_VERSION,
@@ -86,6 +93,22 @@ mod publication_tests {
         };
 
         assert!(state.validate_loaded().is_ok());
+    }
+
+    #[test]
+    fn publication_state_rejects_the_pre_cutover_schema() {
+        let state = LbfvPublicKeyPublicationStateV1 {
+            schema_version: 1,
+            e3_id: E3id::new("42", 1),
+            pending: None,
+        };
+
+        let error = state
+            .validate_loaded()
+            .expect_err("the version-2 envelope publication state must be rejected");
+        assert!(error
+            .to_string()
+            .contains("unsupported l-BFV publication schema version 1"));
     }
 
     #[test]
@@ -103,6 +126,25 @@ mod publication_tests {
 
         state.pending = Some(publication(e3_id, CircuitName::PkAggregation));
         assert!(state.validate_loaded().is_err());
+    }
+
+    #[test]
+    fn publication_state_rejects_the_version_two_envelope() {
+        let e3_id = E3id::new("42", 1);
+        let mut event = publication(e3_id.clone(), CircuitName::DkgAggregatorV2);
+        let mut key_envelope = event.pubkey.to_vec();
+        key_envelope[8..10].copy_from_slice(&2_u16.to_be_bytes());
+        event.pubkey = ArcBytes::from_bytes(&key_envelope);
+        let state = LbfvPublicKeyPublicationStateV1 {
+            schema_version: LBFV_PUBLICATION_SCHEMA_VERSION,
+            e3_id,
+            pending: Some(event),
+        };
+
+        let error = state
+            .validate_loaded()
+            .expect_err("the version-2 envelope must be rejected");
+        assert!(error.to_string().contains("unsupported key envelope"));
     }
 }
 
@@ -123,6 +165,7 @@ pub struct LbfvAggregationStateV1 {
     pub aggregation_fold_completed_rows: u32,
     pub dkg_aggregation_correlation: Option<CorrelationId>,
     pub dkg_aggregated_proof: Option<Proof>,
+    pub operational_public_key: Option<ArcBytes>,
     pub operational_rlk: Option<ArcBytes>,
     pub failure: Option<String>,
     pub params_preset: BfvPreset,
@@ -134,7 +177,7 @@ impl Serialize for LbfvAggregationStateV1 {
         S: serde::Serializer,
     {
         use serde::ser::SerializeStruct;
-        let mut state = serializer.serialize_struct("LbfvAggregationStateV1", 18)?;
+        let mut state = serializer.serialize_struct("LbfvAggregationStateV1", 19)?;
         state.serialize_field("schema_version", &self.schema_version)?;
         state.serialize_field("e3_id", &self.e3_id)?;
         state.serialize_field("proof_domain", &self.proof_domain)?;
@@ -171,6 +214,7 @@ impl Serialize for LbfvAggregationStateV1 {
         state.serialize_field("operational_rlk", &self.operational_rlk)?;
         state.serialize_field("failure", &self.failure)?;
         state.serialize_field("params_preset", &self.params_preset)?;
+        state.serialize_field("operational_public_key", &self.operational_public_key)?;
         state.end()
     }
 }
@@ -197,7 +241,7 @@ impl<'de> Deserialize<'de> for LbfvAggregationStateV1 {
                 let schema_version: u32 = sequence
                     .next_element()?
                     .ok_or_else(|| A::Error::custom("missing l-BFV aggregation schema version"))?;
-                if !matches!(schema_version, 1 | LBFV_AGGREGATION_SCHEMA_VERSION) {
+                if schema_version != LBFV_AGGREGATION_SCHEMA_VERSION {
                     return Err(A::Error::custom(format!(
                         "unsupported l-BFV aggregation schema version {schema_version}"
                     )));
@@ -258,6 +302,13 @@ impl<'de> Deserialize<'de> for LbfvAggregationStateV1 {
                         A::Error::custom("missing l-BFV aggregation parameter preset")
                     })?
                 };
+                let operational_public_key = if schema_version >= 3 {
+                    sequence
+                        .next_element()?
+                        .ok_or_else(|| A::Error::custom("missing l-BFV operational public key"))?
+                } else {
+                    None
+                };
                 Ok(LbfvAggregationStateV1 {
                     schema_version: LBFV_AGGREGATION_SCHEMA_VERSION,
                     e3_id,
@@ -274,6 +325,7 @@ impl<'de> Deserialize<'de> for LbfvAggregationStateV1 {
                     aggregation_fold_completed_rows,
                     dkg_aggregation_correlation,
                     dkg_aggregated_proof,
+                    operational_public_key,
                     operational_rlk,
                     failure,
                     params_preset,
@@ -302,6 +354,7 @@ impl<'de> Deserialize<'de> for LbfvAggregationStateV1 {
                 "operational_rlk",
                 "failure",
                 "params_preset",
+                "operational_public_key",
             ],
             AggregationVisitor,
         )
@@ -333,6 +386,7 @@ impl LbfvAggregationStateV1 {
             aggregation_fold_completed_rows: 0,
             dkg_aggregation_correlation: None,
             dkg_aggregated_proof: None,
+            operational_public_key: None,
             operational_rlk: None,
             failure: None,
             params_preset,
@@ -596,9 +650,21 @@ impl LbfvAggregationStateV1 {
         Ok(())
     }
 
-    pub fn set_operational_rlk(&mut self, rlk: ArcBytes) -> Result<()> {
+    pub fn set_operational_keys(&mut self, public_key: ArcBytes, rlk: ArcBytes) -> Result<()> {
         self.validate_loaded()?;
+        ensure!(
+            !public_key.is_empty(),
+            "operational l-BFV public key is empty"
+        );
         ensure!(!rlk.is_empty(), "operational l-BFV RLK is empty");
+        if let Some(existing) = &self.operational_public_key {
+            ensure!(
+                existing == &public_key,
+                "conflicting operational l-BFV public key"
+            );
+        } else {
+            self.operational_public_key = Some(public_key);
+        }
         if let Some(existing) = &self.operational_rlk {
             ensure!(existing == &rlk, "conflicting operational l-BFV RLK");
         } else {
@@ -693,6 +759,8 @@ mod aggregation_tests {
 
     const LEGACY_AGGREGATION_STATE: &[u8] =
         include_bytes!("fixtures/lbfv_aggregation_state_v1.bincode");
+    const SCHEMA_TWO_AGGREGATION_STATE: &[u8] =
+        include_bytes!("fixtures/lbfv_aggregation_state_v2.bincode");
 
     #[derive(Serialize)]
     struct LegacyLbfvAggregationStateV1 {
@@ -713,6 +781,28 @@ mod aggregation_tests {
         dkg_aggregated_proof: Option<Proof>,
         operational_rlk: Option<ArcBytes>,
         failure: Option<String>,
+    }
+
+    #[derive(Serialize)]
+    struct LegacyLbfvAggregationStateV2 {
+        schema_version: u32,
+        e3_id: E3id,
+        proof_domain: LbfvProofDomainContext,
+        accepted_party_ids: Vec<u32>,
+        public_key_documents: BTreeMap<u32, LbfvKeyShareDocument>,
+        rlk_documents: BTreeMap<u32, LbfvKeyShareDocument>,
+        public_key_aggregation_proofs: Vec<Option<Proof>>,
+        rlk_aggregation_proofs: Vec<Option<Proof>>,
+        public_key_aggregation_correlations: Vec<Option<CorrelationId>>,
+        rlk_aggregation_correlations: Vec<Option<CorrelationId>>,
+        aggregation_fold_proof: Option<Proof>,
+        aggregation_fold_correlation: Option<CorrelationId>,
+        aggregation_fold_completed_rows: u32,
+        dkg_aggregation_correlation: Option<CorrelationId>,
+        dkg_aggregated_proof: Option<Proof>,
+        operational_rlk: Option<ArcBytes>,
+        failure: Option<String>,
+        params_preset: BfvPreset,
     }
 
     fn aggregation_state() -> LbfvAggregationStateV1 {
@@ -758,18 +848,56 @@ mod aggregation_tests {
         }
     }
 
+    fn schema_two_state() -> LegacyLbfvAggregationStateV2 {
+        let state = aggregation_state();
+        LegacyLbfvAggregationStateV2 {
+            schema_version: 2,
+            e3_id: state.e3_id,
+            proof_domain: state.proof_domain,
+            accepted_party_ids: state.accepted_party_ids,
+            public_key_documents: state.public_key_documents,
+            rlk_documents: state.rlk_documents,
+            public_key_aggregation_proofs: state.public_key_aggregation_proofs,
+            rlk_aggregation_proofs: state.rlk_aggregation_proofs,
+            public_key_aggregation_correlations: state.public_key_aggregation_correlations,
+            rlk_aggregation_correlations: state.rlk_aggregation_correlations,
+            aggregation_fold_proof: state.aggregation_fold_proof,
+            aggregation_fold_correlation: state.aggregation_fold_correlation,
+            aggregation_fold_completed_rows: state.aggregation_fold_completed_rows,
+            dkg_aggregation_correlation: state.dkg_aggregation_correlation,
+            dkg_aggregated_proof: state.dkg_aggregated_proof,
+            operational_rlk: state.operational_rlk,
+            failure: state.failure,
+            params_preset: state.params_preset,
+        }
+    }
+
     #[test]
-    fn legacy_aggregation_fixture_migrates_to_schema_two() {
+    fn legacy_aggregation_fixture_is_rejected_after_codec_cutover() {
         assert_eq!(
             bincode::serialize(&legacy_state()).unwrap(),
             LEGACY_AGGREGATION_STATE
         );
 
-        let restored: LbfvAggregationStateV1 =
-            bincode::deserialize(LEGACY_AGGREGATION_STATE).unwrap();
-        assert_eq!(restored.schema_version, LBFV_AGGREGATION_SCHEMA_VERSION);
-        assert_eq!(restored.params_preset, BfvPreset::SecureThreshold16384);
-        restored.validate_loaded().unwrap();
+        let error = bincode::deserialize::<LbfvAggregationStateV1>(LEGACY_AGGREGATION_STATE)
+            .expect_err("pre-cutover aggregation state must be rejected");
+        assert!(error
+            .to_string()
+            .contains("unsupported l-BFV aggregation schema version 1"));
+    }
+
+    #[test]
+    fn schema_two_aggregation_fixture_is_rejected_after_codec_cutover() {
+        assert_eq!(
+            bincode::serialize(&schema_two_state()).unwrap(),
+            SCHEMA_TWO_AGGREGATION_STATE
+        );
+
+        let error = bincode::deserialize::<LbfvAggregationStateV1>(SCHEMA_TWO_AGGREGATION_STATE)
+            .expect_err("pre-cutover aggregation state must be rejected");
+        assert!(error
+            .to_string()
+            .contains("unsupported l-BFV aggregation schema version 2"));
     }
 
     #[test]

@@ -234,24 +234,17 @@ impl Computation for Bounds {
 
         let t = BigInt::from(threshold_params.plaintext());
 
-        // CBD bound
-        let cbd_bound = (threshold_params.variance() * 2) as u64;
-        // Uniform bound
-        let uniform_bound = crate::utils::ceil_sqrt(
-            &(threshold_params.get_error1_variance() * BigUint::from(3u32)),
-        )
-        .to_bigint()
-        .ok_or_else(|| CircuitsErrors::Other("Failed to convert uniform bound to BigInt".into()))?;
+        let error_bound = crate::utils::error_sampler_bound(threshold_params.get_error1_variance())
+            .to_bigint()
+            .ok_or_else(|| {
+                CircuitsErrors::Other("Failed to convert error bound to BigInt".into())
+            })?;
 
         let u_bound = SecretKey::sk_bound() as u128; // u_bound is the same as sk_bound
 
-        // e0 = e1 in the fhe.rs
-        let e0_bound: u128 = if threshold_params.get_error1_variance() <= &BigUint::from(16u32) {
-            cbd_bound as u128
-        } else {
-            uniform_bound.to_u128().unwrap()
-        };
-        let e1_bound = cbd_bound; // e1 = e2 in the fhe.rs
+        // e0 = e1 in fhe.rs; e1 = e2 in fhe.rs.
+        let e0_bound = error_bound.to_u128().unwrap();
+        let e1_bound = (threshold_params.variance() * 2) as u64;
 
         // Plaintext coefficients are encoded in [0, t), not centered around zero.
         let ptxt_low_bound = BigInt::from(0);
@@ -287,15 +280,14 @@ impl Computation for Bounds {
             let e0_bound_i = e0_bound % qi_bigint.clone();
 
             // R1 bounds (more complex calculation)
-            let r1_low: BigInt = (&ptxt_low_bound * k0qi.abs()
-                - &((&n * u_bound + BigInt::from(2)) * &qi_bound + e0_bound_i.clone()))
-                / &qi_bigint;
-            let r1_up: BigInt = (&ptxt_up_bound * k0qi.abs()
-                + ((&n * u_bound + BigInt::from(2)) * &qi_bound + e0_bound_i.clone()))
-                / &qi_bigint;
+            let r1_residual_bound =
+                (&n * u_bound + BigInt::from(2)) * &qi_bound + e0_bound_i.clone();
+            let r1_low_numerator = &ptxt_up_bound * k0qi.abs() + &r1_residual_bound;
+            let r1_low_magnitude = (&r1_low_numerator + &qi_bigint - BigInt::from(1)) / &qi_bigint;
+            let r1_up = (&r1_residual_bound + &qi_bigint - BigInt::from(1)) / &qi_bigint;
 
-            r1_low_bounds.push(BigInt::from(-1) * r1_low.clone());
-            r1_up_bounds.push(r1_up.clone());
+            r1_low_bounds.push(r1_low_magnitude);
+            r1_up_bounds.push(r1_up);
 
             // P1 and P2 bounds
             let p1_bound: BigInt =
@@ -633,6 +625,31 @@ mod tests {
 
         assert_eq!(max_pk_bound.clone(), BigUint::from(36028797018956544u64));
         assert_eq!(bits.pk_bit, expected_bits);
+    }
+
+    #[test]
+    fn secure_8192_sample_fits_user_data_encryption_bounds() {
+        let sample =
+            UserDataEncryptionCircuitData::generate_sample(BfvPreset::SecureThreshold8192).unwrap();
+        let bounds = Bounds::compute(BfvPreset::SecureThreshold8192, &()).unwrap();
+        let inputs = Inputs::compute(BfvPreset::SecureThreshold8192, &sample).unwrap();
+
+        for (limb_index, (limb, (low, up))) in inputs
+            .r1is
+            .limbs
+            .iter()
+            .zip(bounds.r1_low_bounds.iter().zip(bounds.r1_up_bounds.iter()))
+            .enumerate()
+        {
+            let low = BigInt::from(low.clone());
+            let up = BigInt::from(up.clone());
+            for coefficient in limb.coefficients() {
+                assert!(
+                    -&low <= *coefficient && *coefficient <= up,
+                    "r1 limb {limb_index} coefficient {coefficient} exceeds [-{low}, {up}]"
+                );
+            }
+        }
     }
 
     #[test]

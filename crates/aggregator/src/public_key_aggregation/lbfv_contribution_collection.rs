@@ -24,7 +24,7 @@ use e3_fhe_params::{lbfv_row_count, BfvPreset};
 use e3_zk_helpers::CiphernodesCommitteeSize;
 use serde::{Deserialize, Serialize};
 
-pub const LBFV_CONTRIBUTION_COLLECTION_SCHEMA_VERSION: u32 = 2;
+pub const LBFV_CONTRIBUTION_COLLECTION_SCHEMA_VERSION: u32 = 3;
 
 /// The collection phase for one E3 proof session.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -182,13 +182,10 @@ impl<'de> Deserialize<'de> for LbfvContributionCollectionStateV1 {
                 A: serde::de::SeqAccess<'de>,
             {
                 use serde::de::Error;
-                let schema_version = sequence
+                let schema_version: u32 = sequence
                     .next_element()?
                     .ok_or_else(|| A::Error::custom("missing l-BFV collection schema version"))?;
-                if !matches!(
-                    schema_version,
-                    1 | LBFV_CONTRIBUTION_COLLECTION_SCHEMA_VERSION
-                ) {
+                if schema_version != LBFV_CONTRIBUTION_COLLECTION_SCHEMA_VERSION {
                     return Err(A::Error::custom(format!(
                         "unsupported l-BFV contribution collection schema version {schema_version}"
                     )));
@@ -1244,20 +1241,18 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn legacy_collection_fixture_migrates_to_schema_two() {
+    fn legacy_collection_fixture_is_rejected_after_codec_cutover() {
         assert_eq!(
             bincode::serialize(&legacy_state()).unwrap(),
             LEGACY_COLLECTION_STATE
         );
 
-        let restored: LbfvContributionCollectionStateV1 =
-            bincode::deserialize(LEGACY_COLLECTION_STATE).unwrap();
-        assert_eq!(
-            restored.schema_version,
-            LBFV_CONTRIBUTION_COLLECTION_SCHEMA_VERSION
-        );
-        assert_eq!(restored.params_preset, BfvPreset::SecureThreshold16384);
-        restored.validate_loaded().unwrap();
+        let error =
+            bincode::deserialize::<LbfvContributionCollectionStateV1>(LEGACY_COLLECTION_STATE)
+                .expect_err("pre-cutover collection state must be rejected");
+        assert!(error
+            .to_string()
+            .contains("unsupported l-BFV contribution collection schema version 1"));
     }
 
     fn context(
@@ -1772,7 +1767,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn v2_schema_fixture_has_stable_hash() {
+    fn v3_schema_fixture_has_stable_hash() {
         let fixture = fixture();
         let mut state = fixture.state.clone();
         let (public_key, relinearization_key, manifest) = bundle(&fixture, 0);
@@ -1808,7 +1803,7 @@ pub(crate) mod tests {
         let encoded = bincode::serialize(&state).unwrap();
         assert_eq!(
             keccak256(&encoded),
-            "0x3df12da6ef7908e55089b39a29b54951932245b379155ea80f7f7eb9481d5c70"
+            "0x5f62757bc796b6ca5e4bc3051a2bd26ded6d74122d00dd0316d74f49bd0a6478"
                 .parse::<B256>()
                 .unwrap()
         );

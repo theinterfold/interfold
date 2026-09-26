@@ -553,27 +553,22 @@ fn verify_user_data_encryption_bounds() {
         let neg_one = THRESHOLD_QIS[i] - 1;
         assert(product == neg_one, "USER_DATA_ENCRYPTION_K0IS mismatch");
 
-        // ct0_r_bounds[i] = (k1_max * k0i + (n * u_bound + 2) * qi_bound + e0_bound) / q_i
-        //
-        // Same shape as ct1 plus the `k0is * k1` term. This takes the *lifted* `e0_bound`, not its
-        // residue at q_i: the reduced identity reads the lifted `e0` directly now that the CRT split
-        // and `e0is` are gone. `k1` lies in `[0, t - 1]`, so `k1_max` is `expected_k1_up`.
-        let expected_ct0_r: u128 = (
-            expected_k1_up * k0i
-                + (n * u_bound + 2) * qi_bound
-                + (USER_DATA_ENCRYPTION_E0_BOUND as u128)
-        )
-            / qi;
-        assert(
-            USER_DATA_ENCRYPTION_R1_UP_BOUNDS[i] as u128 == expected_r1_up,
-            "USER_DATA_ENCRYPTION_R1_UP_BOUNDS mismatch",
-        );
+        // e0_bound mod qi for r1 calculation
+        // Use Field arithmetic since e0_bound is ~107 bits
+        let e0_bound_i: u128 = (USER_DATA_ENCRYPTION_E0_BOUND as u128) % qi;
 
-        // r1_low_bounds[i] uses the lower plaintext bound of zero.
-        let expected_r1_low: u128 = ((n * u_bound + 2) * qi_bound + e0_bound_i) / qi;
+        // Round each magnitude up so the bound includes all possible integer coefficients.
+        let r1_residual_bound: u128 = (n * u_bound + 2) * qi_bound + e0_bound_i;
+        let expected_r1_low: u128 = (ptxt_up_bound * k0i + r1_residual_bound + qi - 1) / qi;
         assert(
             USER_DATA_ENCRYPTION_R1_LOW_BOUNDS[i] as u128 == expected_r1_low,
             "USER_DATA_ENCRYPTION_R1_LOW_BOUNDS mismatch",
+        );
+
+        let expected_r1_up: u128 = (r1_residual_bound + qi - 1) / qi;
+        assert(
+            USER_DATA_ENCRYPTION_R1_UP_BOUNDS[i] as u128 == expected_r1_up,
+            "USER_DATA_ENCRYPTION_R1_UP_BOUNDS mismatch",
         );
     }
 }

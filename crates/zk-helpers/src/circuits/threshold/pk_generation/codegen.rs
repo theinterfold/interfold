@@ -18,8 +18,6 @@ use crate::CircuitCodegen;
 use crate::CircuitsErrors;
 use crate::{Artifacts, CodegenToml};
 use crate::{Circuit, CodegenConfigs};
-use num_bigint::BigUint;
-
 /// Implementation of [`CircuitCodegen`] for [`PkGenerationCircuit`].
 impl CircuitCodegen for PkGenerationCircuit {
     type Preset = BfvPreset;
@@ -60,9 +58,7 @@ pub fn generate_configs(
 
     let crp_matrix_str = crp_matrix_constant_string(&threshold_params)?;
 
-    // B_enc is the ceiling of sqrt(3 * error1_variance).
-    let b_enc =
-        crate::utils::ceil_sqrt(&(BigUint::from(3u32) * threshold_params.get_error1_variance()));
+    let b_enc = crate::utils::error_sampler_bound(threshold_params.get_error1_variance());
 
     Ok(format!(
         r#"use crate::core::threshold::pk_generation::Configs as PkGenerationConfigs;

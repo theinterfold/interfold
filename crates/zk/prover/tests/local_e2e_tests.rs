@@ -59,7 +59,7 @@ use e3_zk_witness::threshold::{
 use e3_zk_helpers::CiphernodesCommitteeSize;
 use e3_zk_helpers::{compute_pk_aggregation_commitment, compute_threshold_pk_commitment};
 use e3_zk_prover::{CircuitVariant, Provable, ZkBackend, ZkProver};
-use fhe::trbfv::TRBFV;
+use fhe::trbfv::{SecretKeyShare, ShareManager, SmudgingShare};
 
 /// Sum per-modulus decrypted shares across honest parties (matches C4 `compute_aggregated_shares`).
 /// Coefficients are summed in the BN254 field, not reduced mod each CRT modulus (see `share_decryption.nr`).
@@ -985,32 +985,34 @@ async fn test_c4_c6_sk_commitment_aligned_transcript_e2e() {
         e3_zk_witness::dkg::share_decryption::Inputs::compute(&dkg_config, &dkg_sample).unwrap();
     let agg_sk = aggregate_dkg_decrypted_shares_to_crt(&dkg_inputs.decrypted_shares);
 
-    // Rebuild the native FHE inputs for this cross-circuit transcript fixture.
-    let to_fhe = |crt: &CrtPolynomial| {
-        use fhe_math::rq::{traits::TryConvertFrom, Poly, PowerBasis};
-        use num_integer::Integer;
-        use num_traits::ToPrimitive;
-        let coefficients: Vec<u64> = crt
-            .limbs
-            .iter()
-            .zip(moduli)
-            .flat_map(|(limb, &qi)| {
-                let qi = num_bigint::BigInt::from(qi);
-                limb.coefficients()
-                    .iter()
-                    .map(move |c| c.mod_floor(&qi).to_u64().unwrap())
-            })
-            .collect();
-        Poly::<PowerBasis>::try_convert_from(coefficients, ctx, false).unwrap()
-    };
-    let sk_poly = to_fhe(&agg_sk).into_ntt();
-    let es_poly = to_fhe(&c6_sample.e);
+    let sk_poly = agg_sk
+        .to_fhe_polynomial(ctx, moduli)
+        .expect("agg_sk -> Poly");
+    let es_poly = c6_sample
+        .e
+        .to_fhe_polynomial(ctx, moduli)
+        .expect("e -> Poly");
 
-    let trbfv =
-        TRBFV::new(committee.n, committee.threshold, threshold_params.clone()).expect("TRBFV::new");
+    let share_manager =
+        ShareManager::new(committee.n, committee.threshold, threshold_params.clone())
+            .expect("ShareManager::new");
+    let sk_aggregate = share_manager
+        .aggregate_secret_key_shares(vec![SecretKeyShare::from_transport(
+            sk_poly.coefficients().to_owned(),
+        )])
+        .expect("aggregate secret key share");
+    let es_aggregate = share_manager
+        .aggregate_smudging_shares(vec![SmudgingShare::from_transport(
+            es_poly.coefficients().to_owned(),
+        )])
+        .expect("aggregate smudging share");
 
-    let d_share_rns = trbfv
-        .decryption_share(Arc::new(c6_sample.ciphertext.clone()), sk_poly, es_poly)
+    let d_share_rns = share_manager
+        .decryption_share(
+            Arc::new(c6_sample.ciphertext.clone()),
+            &sk_aggregate,
+            es_aggregate,
+        )
         .expect("decryption_share");
 
     c6_sample.s = agg_sk.clone();

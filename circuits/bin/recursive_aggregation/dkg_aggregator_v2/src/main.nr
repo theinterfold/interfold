@@ -10,7 +10,10 @@ use bb_proof_verification::{UltraHonkProof, UltraHonkVerificationKey, verify_hon
 use keccak256::keccak256;
 use lib::configs::default::dkg::L_THRESHOLD;
 use lib::configs::default::{H, N_PARTIES};
-use lib::math::commitments::compute_vk_hash;
+use lib::math::commitments::{
+    compute_lbfv_key_envelope_commitment, compute_lbfv_public_key_commitment,
+    compute_lbfv_rlk_commitment, compute_vk_hash,
+};
 use lib::math::committee_hash::committee_hash_limbs;
 
 pub use lib::configs::default::threshold::L as LBFV_ROWS;
@@ -416,12 +419,17 @@ fn main(
         aggregate_d0[row] = aggregation_fold_public[AF_AGGREGATE_D0_START + row];
         aggregate_d2[row] = aggregation_fold_public[AF_AGGREGATE_D2_START + row];
     }
+    let public_key_commitment = compute_lbfv_public_key_commitment(aggregate_pk);
+    let rlk_commitment = compute_lbfv_rlk_commitment(aggregate_d0, aggregate_d2);
+    let key_envelope_commitment =
+        compute_lbfv_key_envelope_commitment(public_key_commitment, rlk_commitment);
 
     (
         legacy_key_hash, nodes_fold_public[NODES_FOLD_V2_PREFIX_LEN + NF_C2A_CHUNK_HASH_IDX],
         nodes_fold_public[NODES_FOLD_V2_PREFIX_LEN + NF_C2B_CHUNK_HASH_IDX], sk_agg_commits,
-        esm_agg_commits, c5_public[H], v2_key_hash, aggregation_fold_public[AF_SESSION_HI_IDX],
-        aggregation_fold_public[AF_SESSION_LO_IDX], aggregation_fold_public[AF_AGGREGATOR_ID_IDX],
+        esm_agg_commits, key_envelope_commitment, v2_key_hash,
+        aggregation_fold_public[AF_SESSION_HI_IDX], aggregation_fold_public[AF_SESSION_LO_IDX],
+        aggregation_fold_public[AF_AGGREGATOR_ID_IDX],
         aggregation_fold_public[AF_ACCEPTED_SET_HI_IDX],
         aggregation_fold_public[AF_ACCEPTED_SET_LO_IDX], aggregate_pk, aggregate_d0, aggregate_d2,
         v2_vk_binding,

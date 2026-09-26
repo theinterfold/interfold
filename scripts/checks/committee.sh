@@ -158,22 +158,19 @@ hex_csv_to_decimal() {
 error_bound_for_variance() {
   node -e '
 const variance = BigInt(process.argv[1]);
-if (variance < 16n) {
+if (variance <= 16n) {
   process.stdout.write((2n * variance).toString());
-  process.exit(0);
-}
-const value = 3n * variance;
-if (value < 2n) {
-  process.stdout.write(value.toString());
 } else {
-  let current = value;
-  let next = (current + value / current) / 2n;
-  while (next < current) {
-    current = next;
-    next = (current + value / current) / 2n;
+  const target = 3n * variance;
+  let bound = target;
+  let next = (bound + target / bound) / 2n;
+  while (next < bound) {
+    bound = next;
+    next = (bound + target / bound) / 2n;
   }
-  if (current * current < value) current += 1n;
-  process.stdout.write(current.toString());
+  while (bound * (bound + 1n) < target) bound += 1n;
+  while (bound > 0n && (bound - 1n) * bound >= target) bound -= 1n;
+  process.stdout.write(bound.toString());
 }
 ' "$1"
 }

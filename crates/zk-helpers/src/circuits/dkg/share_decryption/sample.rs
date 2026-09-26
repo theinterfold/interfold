@@ -73,7 +73,8 @@ impl ShareDecryptionCircuitData {
                             })?;
 
                         let sk_sss_u64 = share_manager
-                            .generate_secret_shares_from_poly(sk_poly.clone(), &mut rng)
+                            .generate_secret_key_shares(sk_poly.clone(), &mut rng)
+                            .map(|shares| shares.into_transport())
                             .map_err(|e| {
                                 CircuitsErrors::Sample(format!(
                                     "Failed to generate secret shares: {:?}",
@@ -120,7 +121,8 @@ impl ShareDecryptionCircuitData {
                             ))
                         })?;
                         let esi_sss_u64 = share_manager
-                            .generate_secret_shares_from_poly(esi_poly.clone(), &mut rng.clone())
+                            .generate_secret_key_shares(esi_poly.clone(), &mut rng.clone())
+                            .map(|shares| shares.into_transport())
                             .map_err(|e| {
                                 CircuitsErrors::Sample(format!(
                                     "Failed to generate error shares: {:?}",

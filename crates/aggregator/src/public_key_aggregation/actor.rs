@@ -6,14 +6,15 @@
 
 use crate::domain::committee::committee_addresses_in_party_order;
 use crate::workflow::publickey_aggregation::{
-    check_c1_keyshare_commitments, extract_pk_commitment, verify_dkg_fold_attestation, C1Dispatch,
-    HonestSelection, PublicKeyAggregation,
+    check_c1_keyshare_commitments, extract_lbfv_key_envelope_commitment, extract_pk_commitment,
+    verify_dkg_fold_attestation, C1Dispatch, HonestSelection, PublicKeyAggregation,
 };
 use crate::{
     LbfvAggregationStateV1, LbfvContributionVerificationStateV1, LbfvPublicKeyPublicationStateV1,
 };
 use actix::prelude::*;
 use anyhow::Result;
+use e3_committee::CiphernodesCommitteeSize;
 use e3_data::{Persistable, Repositories};
 use e3_events::DkgFoldAttestationContext;
 use e3_events::{
@@ -33,7 +34,6 @@ use e3_fhe::{Fhe, GetAggregatePublicKey};
 use e3_fhe_params::BfvPreset;
 use e3_utils::NotifySync;
 use e3_utils::{ArcBytes, MAILBOX_LIMIT};
-use e3_zk_helpers::CiphernodesCommitteeSize;
 use std::{
     collections::{BTreeSet, HashMap},
     sync::Arc,
@@ -93,6 +93,10 @@ pub struct PublicKeyAggregator {
     effects_enabled: bool,
     lbfv_retry_clock: Arc<dyn LbfvRetryClock>,
     lbfv_retry_timer: Option<SpawnHandle>,
+    /// Canonical publication is independent of this node's local DKG phase.
+    key_published: bool,
+    /// C1 verification can finish during restart before replayed keyshares restore VerifyingC1.
+    early_c1_verification: Option<(BTreeSet<u64>, TypedEvent<ShareVerificationComplete>)>,
     /// DKG recursive aggregation events received before entering GeneratingC5Proof.
     early_dkg_proofs: Vec<TypedEvent<DKGRecursiveAggregationComplete>>,
     /// Secure-16384 row aggregation sidecar. The repository is the recovery source.
@@ -155,7 +159,12 @@ impl PublicKeyAggregator {
             // actor's serialized in-memory view without issuing duplicate asynchronous writes.
             collection.stage();
         }
-        PublicKeyAggregator {
+        let started_as_aggregator = state.get().as_ref().is_some_and(aggregation_started)
+            || params
+                .recovery
+                .get()
+                .is_some_and(|recovery| recovery.started_as_aggregator);
+        let mut actor = PublicKeyAggregator {
             fhe: params.fhe,
             bus: params.bus,
             e3_id: params.e3_id,
@@ -171,13 +180,24 @@ impl PublicKeyAggregator {
             effects_enabled: params.effects_enabled,
             lbfv_retry_clock,
             lbfv_retry_timer: None,
+            key_published: false,
+            early_c1_verification: None,
             early_dkg_proofs: Vec::new(),
             lbfv_aggregation: params.lbfv_aggregation,
             lbfv_publication: params.lbfv_publication,
             lbfv_aggregation_dispatch_at: HashMap::new(),
             lbfv_aggregation_redrive_timer: None,
             local_party_id: params.local_party_id,
-        }
+        };
+        actor.observe_stage(&params.initial_stage);
+        actor
+    }
+
+    fn observe_stage(&mut self, stage: &E3Stage) {
+        self.key_published |= matches!(
+            stage,
+            E3Stage::KeyPublished | E3Stage::CiphertextReady | E3Stage::Complete
+        );
     }
 
     fn aggregation_inputs_ready(&self) -> bool {

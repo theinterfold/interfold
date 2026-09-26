@@ -47,9 +47,21 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
                     );
                     return;
                 }
+                let Some(preset) = self.share_enc_preset.threshold_counterpart() else {
+                    warn!(e3_id = %data.e3_id, "Ignoring l-BFV key envelope for a non-threshold preset");
+                    return;
+                };
+                let Ok((_, encryption_key)) = e3_bfv_client::validate_lbfv_key_envelope(
+                    &data.pubkey,
+                    data.pk_commitment,
+                    preset,
+                ) else {
+                    warn!(e3_id = %data.e3_id, "Ignoring an invalid l-BFV key envelope");
+                    return;
+                };
                 let committee_hash =
                     e3_committee_hash::hash_committee_addresses(&data.committee_addresses);
-                let pk = ArcBytes::from_bytes(&data.pubkey);
+                let pk = ArcBytes::from_bytes(&encryption_key);
                 let _ = self.state.try_mutate(&ec, |mut s| {
                     s.aggregated_pk = Some(pk);
                     s.decryption_domain = Some(e3_committee_hash::DecryptionDomainContext {
@@ -163,9 +175,7 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
             InterfoldEventData::ComputeRequestError(data) => {
-                if let Err(err) = self.handle_lbfv_compute_error(TypedEvent::new(data, ec)) {
-                    error!("Failed to handle l-BFV compute error: {err}");
-                }
+                self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
             InterfoldEventData::CommitteeMemberExpelled(data) => {
                 trap(EType::KeyGeneration, &self.bus.with_ec(&ec), || {

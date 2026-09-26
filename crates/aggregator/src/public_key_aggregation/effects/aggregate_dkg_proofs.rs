@@ -223,6 +223,7 @@ impl PublicKeyAggregator {
         };
         let row_count = aggregation.row_count()?;
         if aggregation.is_failed()
+            || aggregation.operational_public_key.is_none()
             || aggregation.operational_rlk.is_none()
             || aggregation.dkg_aggregation_correlation.is_some()
             || aggregation.dkg_aggregated_proof.is_some()

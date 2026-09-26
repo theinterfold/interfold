@@ -1,0 +1,36 @@
+{
+  "verify_gas": {
+    "dkg": null,
+    "user": null,
+    "dec": null
+  },
+  "source": "folded_proof_export_plus_crisp_verify_test",
+  "artifact_sizes_bytes": {
+    "dkg": {
+      "proof": 0,
+      "public_inputs": 0
+    },
+    "dec": {
+      "proof": 0,
+      "public_inputs": 0
+    }
+  },
+  "calldata_gas": {
+    "dkg": {
+      "proof": 0,
+      "public_inputs": 0,
+      "total": 0
+    },
+    "dec": {
+      "proof": 0,
+      "public_inputs": 0,
+      "total": 0
+    }
+  },
+  "integration_summary": null,
+  "test_exit_code": {
+    "crisp": 2,
+    "folded_export": 143,
+    "interfold_contracts": 0
+  }
+}
