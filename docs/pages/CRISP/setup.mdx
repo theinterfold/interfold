@@ -1,182 +1,420 @@
 ---
-title: 'Setup - CRISP'
+title: 'Set up CRISP'
 description:
-  'Install dependencies, configure your environment, and start the full CRISP stack locally'
+  'Install the prerequisites, build CRISP, configure it, and start the local stack: Anvil,
+  ciphernodes, the program server, the CRISP server, and the client.'
 ---
 
-import { Steps } from 'nextra/components'
+import { Callout, Steps } from 'nextra/components'
+import { LinkCard, LinkCards } from '@/components/ui'
 
-# Getting Started with CRISP
+# Set up CRISP
 
-This guide will walk you through the steps to set up and run CRISP locally. CRISP is a full
-reference implementation of an E3 Program, built with a modern architecture that includes smart
-contracts, zero-knowledge circuits, frontend applications, and secure computation components.
+This page shows how to build CRISP and run it on a local chain. It is for developers who want to run
+the reference application or change it. At the end, the full CRISP stack runs on your computer and
+the client is at `http://localhost:3000`.
+
+CRISP runs inside the Interfold monorepo. `pnpm dev:setup` builds workspace packages and installs
+the `interfold` CLI from the repository source. For this reason, you need a full clone of the
+repository. Run all `pnpm` commands on this page from `examples/CRISP`.
 
 ## Prerequisites
 
-Before getting started, ensure you have installed:
+| Tool                                                            | Version                                     | Used by                                                                    |
+| --------------------------------------------------------------- | ------------------------------------------- | -------------------------------------------------------------------------- |
+| Git                                                             | Any                                         | Clone and submodules                                                       |
+| [Rust](https://rust-lang.org/tools/install/)                    | 1.91.1 (`rust-toolchain.toml`)              | Server, CLI, program, and the `interfold` CLI                              |
+| [Node.js](https://nodejs.org/en/download)                       | 22.x (CI uses `NODE_VERSION: 22`)           | Client, SDK, contracts, and scripts                                        |
+| [pnpm](https://pnpm.io)                                         | 10.7.1 (`packageManager` in `package.json`) | All JavaScript packages                                                    |
+| [Foundry](https://getfoundry.sh)                                | Any                                         | `anvil`, the local chain that `scripts/dev.sh` starts                      |
+| [`yq`](https://github.com/mikefarah/yq)                         | Any                                         | `scripts/dev_cipher.sh` reads node addresses from the config               |
+| [`nargo`](https://noir-lang.org/docs/installation)              | `v1.0.0-beta.26` (`NOIR_TOOLCHAIN` in CI)   | Circuit builds in `pnpm dev:setup` and `pnpm compile:circuits`             |
+| [`bb`](https://barretenberg.aztec.network/docs/getting_started) | 5.1.0 (`crates/zk-prover/versions.json`)    | Verification keys and generated verifiers                                  |
+| Python 3                                                        | Any                                         | `scripts/compile_circuits.sh` patches the generated verifiers              |
+| A browser wallet, for example [MetaMask](https://metamask.io)   | Any                                         | The client                                                                 |
+| Docker                                                          | Any                                         | Only for real RISC Zero proofs and `interfold program compile` or `upload` |
 
-- [Rust](https://rust-lang.org/tools/install/)
-- [Foundry](https://getfoundry.sh)
-- [RISC Zero](https://dev.risczero.com/api/zkvm/install)
-- [Node.js](https://nodejs.org/en/download)
-- [pnpm](https://pnpm.io)
-- [MetaMask](https://metamask.io)
-- Noir toolchain ([`nargo`](https://noir-lang.org/docs/installation),
-  [`bb`](https://barretenberg.aztec.network/docs/getting_started))
+Install `nargo` with `noirup -v v1.0.0-beta.26`. Other `nargo` versions can fail to compile the
+circuits. A RISC Zero installation is not necessary for local development, because
+`scripts/dev_program.sh` starts the program server in dev mode.
 
-## Quick Start
+## Build and start CRISP
 
-The simplest way to run CRISP is:
+<Steps>
+
+### Clone the repository
 
 ```bash
-# Install dependencies and build everything
-pnpm dev:setup
+git clone https://github.com/theinterfold/interfold.git
+cd interfold
+git submodule update --init --recursive
+cd examples/CRISP
+```
 
-# Start all services (Hardhat, contracts, ciphernodes, program server, coordination server, and UI)
+The CRISP contracts import the `risc0-ethereum` submodule at
+`examples/CRISP/packages/crisp-contracts/lib/risc0-ethereum`.
+
+### Choose a local profile
+
+This step is optional. `pnpm dev:setup` copies the example file when `crisp.dev.env` does not exist.
+
+```bash
+cp crisp.dev.env.example crisp.dev.env
+```
+
+The default profile uses the `insecure-512` BFV preset and skips DKG proof aggregation. See
+[Local profile](#local-profile) for the two settings.
+
+### Build everything
+
+```bash
+pnpm dev:setup
+```
+
+`scripts/setup.sh` does these tasks in sequence:
+
+1. Installs the workspace dependencies (`pnpm install --frozen-lockfile`) and runs `pnpm build:ts`
+   at the repository root.
+2. Builds the CRISP SDK (`pnpm build:sdk`). This step compiles the CRISP circuits.
+3. Builds the recursive Interfold circuits, only when `CRISP_SKIP_PROOF_AGGREGATION=false`.
+4. Compiles the Interfold contracts and the CRISP contracts.
+5. Copies `server/.env.example` to `server/.env` when `server/.env` does not exist. Then it builds
+   the `cli` and `server` binaries.
+6. Writes the `E3_PARAM_SET` that matches the profile into `server/.env`.
+7. Copies `client/.env.example` to `client/.env` when `client/.env` does not exist.
+8. Runs `cargo install --locked --path crates/cli --bin interfold -f`. When the profile skips proof
+   aggregation, it adds `--features test-only-skip-proof-aggregation`.
+
+At the end, the script prints the active profile under the heading `CRISP dev profile`.
+
+### Check the `interfold` binary
+
+```bash
+which interfold
+```
+
+Make sure that the path is `~/.cargo/bin/interfold` (or the `bin` folder of your `CARGO_HOME`). The
+CRISP scripts run the first `interfold` on your `PATH`.
+
+### Start all services
+
+```bash
 pnpm dev:up
 ```
 
-`dev:up` runs `scripts/dev.sh`, which:
+`scripts/dev.sh` starts the services in this order. The ciphernodes, the program server, the CRISP
+server, and the client start after the contract deployment is complete.
 
-1. Starts the Hardhat node in `packages/crisp-contracts`
-2. Deploys all contracts (Interfold, CRISPProgram, verifiers, registries) via
-   `scripts/crisp_deploy.sh`
-3. Watches the configured local randomness provider and fulfills each request in a later block. This
-   supports both the direct mock and the Chainlink adapter with the local coordinator mock.
-4. Starts Ciphernodes using `interfold.config.yaml` via `scripts/dev_cipher.sh`
-5. Launches the program server via `scripts/dev_program.sh`
-6. Starts the coordination server (Rust) via `scripts/dev_server.sh` on port `4000`
-7. Starts the React client via `scripts/dev_client.sh` on port `3000`
+| Service                    | Started by                                                      | Port                                    |
+| -------------------------- | --------------------------------------------------------------- | --------------------------------------- |
+| Anvil (chain ID 31337)     | `scripts/dev.sh`                                                | 8545                                    |
+| Local randomness helper    | `scripts/anvil-randomness.mjs`                                  | None                                    |
+| Contract deployment        | `scripts/crisp_deploy.sh`                                       | None                                    |
+| Ciphernodes `cn1` to `cn5` | `scripts/dev_cipher.sh` (`interfold nodes up`)                  | QUIC 9201 to 9205. `cn1` dashboard 8080 |
+| Program server             | `scripts/dev_program.sh` (`interfold program start --dev true`) | 13151                                   |
+| CRISP server               | `scripts/dev_server.sh` (`cargo run --bin server`)              | 4000                                    |
+| Client                     | `scripts/dev_client.sh` (`pnpm dev-static`)                     | 3000                                    |
 
-All services run concurrently and will automatically restart if needed.
+When `dev_cipher.sh` has registered the ciphernodes, it prints `CIPHERNODES HAVE BEEN ADDED.` and
+writes the file `.interfold/ready`. The client starts after port 4000 is open and that file exists.
+The client is then available at `http://localhost:3000`.
 
-### Additional Commands
+</Steps>
 
-```bash
-# Recompile Noir circuits and generate verifiers
-pnpm compile:circuits
+<Callout type='warning'>
+  Each `pnpm dev:up` starts from an empty state. Anvil starts a new chain, `dev_cipher.sh` deletes
+  `.interfold/data` and `.interfold/config`, and `dev_server.sh` deletes `server/database`. When you
+  press Ctrl+C, the cleanup in `dev.sh` stops every process whose command line contains `anvil` or
+  `interfold start`. This includes processes that CRISP did not start.
+</Callout>
 
-# Open the interactive CLI to start voting rounds
-pnpm cli
+<Callout type='info'>
+  The program server listens on `0.0.0.0:13151` and does not authenticate callers. It is a
+  development service. It must not be reachable from production or untrusted networks.
+</Callout>
 
-# Run end-to-end tests
-pnpm test:e2e
-```
+## What the deployment does
 
-### Deployed Contract Addresses
+`scripts/crisp_deploy.sh` sets `PRIVATE_KEY` to the first Anvil account, `USE_MOCKS=true`, and
+`DEPLOY_INTERFOLD=true`. Then it runs `pnpm deploy:contracts --network localhost`. The deployment
+includes these contracts:
 
-The contract addresses are automatically configured in `interfold.config.yaml` and the server `.env`
-file. After running `pnpm dev:up`, the deployment logs will show the deployed contract addresses,
-which are also saved in `packages/crisp-contracts/deployed_contracts.json`.
+- The Interfold contracts, with mock BFV verifiers for the DKG. With
+  `CRISP_SKIP_PROOF_AGGREGATION=false`, the script sets `ENABLE_ZK_VERIFICATION=true`, and the
+  deployment uses the real BFV verifiers.
+- `CRISPProgram`, the two generated Noir ballot verifiers, and `SelfRegistry`.
+- `MockRISC0Verifier`, `MockVotingToken`, and `MockCrispDataAvailabilityVerifier`.
 
-### Using the Application
+After the deployment, the script writes the new contract addresses into three files. You do not copy
+addresses by hand:
 
-Once everything is running, you can:
+- `interfold.config.yaml`: the `contracts` of the `localhost` chain.
+- `server/.env`: `INTERFOLD_ADDRESS`, `E3_PROGRAM_ADDRESS`, `CIPHERNODE_REGISTRY_ADDRESS`,
+  `FEE_TOKEN_ADDRESS`, `CRISP_VOTING_TOKEN`, and the mock contract references.
+- `client/.env`: `VITE_CRISP_TOKEN`.
 
-1. Navigate `http://localhost:3000` for the client interface
-2. Add the Hardhat private key to your wallet:
-   `0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80`
-3. Press `Connect Wallet` button and complete the association with your MetaMask account
-4. Switch to `Hardhat` local network (this will be handled automatically by the app. You just need
-   to press on the connected account on the frontend and select the network. Then, complete the
-   configuration on MetaMask pop-up).
-5. Open a new terminal, run `pnpm cli` and start a new E3 Round.
-6. Refresh and interact with the round following the Client interface.
+The deployment records are in `packages/crisp-contracts/deployed_contracts.json`. For the addresses
+of the public networks, see [Contract addresses](/reference/contracts).
 
 ## Configuration
 
-### Ciphernode Configuration
+| File                    | Created by                                         | Purpose                                               |
+| ----------------------- | -------------------------------------------------- | ----------------------------------------------------- |
+| `crisp.dev.env`         | Copied from `crisp.dev.env.example` by the scripts | Local profile: BFV preset and proof aggregation mode  |
+| `interfold.config.yaml` | Tracked in Git. The deployment updates addresses.  | Ciphernode chains, contracts, program mode, and nodes |
+| `server/.env`           | Copied from `server/.env.example` by `dev:setup`   | Settings for the CRISP server and the CLI             |
+| `client/.env`           | Copied from `client/.env.example` by `dev:setup`   | Settings for the client                               |
+| `.env`                  | Copied by hand from `.env.example`                 | Keys for `scripts/setup_testnet.sh` only              |
 
-The `interfold.config.yaml` file in the CRISP root directory configures the ciphernode network. By
-default, it runs in development mode with fake proofs for fast local development:
+### Local profile
 
-```yaml
+`scripts/lib/dev_config.sh` reads `crisp.dev.env`:
+
+| Variable                       | Default        | Values                        | Effect                                                                                                                       |
+| ------------------------------ | -------------- | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `CRISP_BFV_PRESET`             | `insecure-512` | `insecure-512`, `secure-8192` | BFV preset. Sets `E3_PARAM_SET` in `server/.env` to `0` or `1`.                                                              |
+| `CRISP_SKIP_PROOF_AGGREGATION` | `true`         | `true`, `false`               | `true`: mock verifiers and no recursive DKG proofs. `false`: real verifiers, recursive circuits, and full proof aggregation. |
+
+After you change `crisp.dev.env`, run `pnpm dev:setup` again, then `pnpm dev:up`. The ciphernodes
+refuse the skip setting unless the `interfold` binary has the `test-only-skip-proof-aggregation`
+Cargo feature. `pnpm dev:setup` selects that feature from the profile. With
+`CRISP_SKIP_PROOF_AGGREGATION=false`, DKG takes minutes for each committee, because the ciphernodes
+make recursive proofs.
+
+<Callout type='warning'>
+  `~/.cargo/bin/interfold` is shared. A `pnpm dev:setup` in `templates/default` or in another
+  example replaces the binary that this profile installed. When the ciphernodes then exit at
+  startup, `dev_cipher.sh` stops and prints the node status table.
+</Callout>
+
+### interfold.config.yaml
+
+This file configures the local ciphernodes and the program server. The excerpt shows the local chain
+and the first two nodes. The deployment updates the contract addresses.
+
+```yaml filename="interfold.config.yaml (excerpt)"
+chains:
+  - name: localhost
+    enabled: true
+    rpc_url: ws://localhost:8545
+    ingestion_confirmations: 0
+    data_availability:
+      mode: mock_http
+      rpc_url: http://127.0.0.1:4000/availability
+    contracts:
+      # e3_program, interfold, ciphernode_registry, bonding_registry,
+      # slashing_manager, and fee_token: updated by the deployment
 program:
-  dev: true # Uses fake zkVM proofs (fast for development)
+  dev: true
+nodes:
+  cn1:
+    quic_port: 9201
+    ctrl_port: 50501
+    autonetkey: true
+    autopassword: true
+    dashboard_port: 8080
+  cn2:
+    quic_port: 9202
+    ctrl_port: 50502
+    autonetkey: true
+    autopassword: true
+    peers:
+      - /ip4/127.0.0.1/udp/9201/quic-v1
 ```
 
-### Boundless Configuration
+- The file also has `mainnet` and `sepolia` chains with `enabled: false`. Their data-availability
+  mode is `avail`.
+- Nodes `cn3` to `cn5` use QUIC ports 9203 to 9205 and control ports 50503 to 50505. Each node peers
+  with `cn1`.
+- `scripts/dev_program.sh` always passes `--dev true`. For this reason, `program.dev` has no effect
+  on `pnpm dev:up`.
 
-For production-grade zero-knowledge proofs with [Boundless](https://docs.boundless.network/), update
-`interfold.config.yaml`:
+For all node configuration keys, see [Configuration](/reference/configuration).
 
-```yaml
+### Server settings
+
+The CRISP server and the CLI read `server/.env`. Each value can also come from the process
+environment (`server/src/config.rs`).
+
+| Variable                                                                                                            | Local value or default                                  | Purpose                                                                                                                                                       |
+| ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PRIVATE_KEY`                                                                                                       | First Anvil account                                     | Server key. The CLI uses it to request rounds. The server uses it to relay inputs, post census roots, and sign availability promises.                         |
+| `INTERFOLD_SERVER_URL`                                                                                              | `http://127.0.0.1:4000`                                 | URL of this server. Remote cron targets must use HTTPS.                                                                                                       |
+| `HTTP_RPC_URL`, `WS_RPC_URL`, `CHAIN_ID`                                                                            | `http://127.0.0.1:8545`, `ws://127.0.0.1:8545`, `31337` | Chain access                                                                                                                                                  |
+| `PROGRAM_SERVER_URL`                                                                                                | `http://127.0.0.1:13151`                                | Program server that runs the computation                                                                                                                      |
+| `INTERFOLD_ADDRESS`, `E3_PROGRAM_ADDRESS`, `CIPHERNODE_REGISTRY_ADDRESS`, `FEE_TOKEN_ADDRESS`, `CRISP_VOTING_TOKEN` | Written by the deployment                               | Contract addresses                                                                                                                                            |
+| `E3_DURATION`                                                                                                       | `300` in the example file                               | Length of the input window in seconds. On Avail networks, it includes the finalization tail.                                                                  |
+| `VOTING_START_BUFFER_SECONDS`                                                                                       | `20` in the example file. Default `120`.                | Time for the request transaction to be mined before the input window starts                                                                                   |
+| `E3_PARAM_SET`                                                                                                      | `0`                                                     | `0` is `insecure-512`, `1` is `secure-8192`. Ethereum mainnet requires `1`.                                                                                   |
+| `E3_COMMITTEE_SIZE`                                                                                                 | `0`                                                     | `0` is `minimum` (N = 3, T = 1), `1` is `micro` (N = 9, T = 4), `2` is `small` (N = 19, T = 9)                                                                |
+| `E3_COMPUTE_PROVIDER_NAME`, `E3_COMPUTE_PROVIDER_PARALLEL`, `E3_COMPUTE_PROVIDER_BATCH_SIZE`                        | `RISC0`, `false`, `4`                                   | Compute provider parameters sent with the request. The batch size must be a power of 2.                                                                       |
+| `DATA_AVAILABILITY_MODE`                                                                                            | `mock`                                                  | `mock` or `avail`. Without a value, the mode is `mock` for chain IDs 31337 and 1337 and `avail` for other chains. `mock` is allowed only on those two chains. |
+| `AVAIL_RPC_URL`, `AVAIL_BRIDGE_API_URL`, `AVAIL_APP_ID`, `AVAIL_SEED`                                               | Empty                                                   | Avail access and the funded Avail account that pays for `submit_data`                                                                                         |
+| `AVAIL_PROOF_LEAD_SECONDS`                                                                                          | `10800`                                                 | Minimum time before the input deadline when an Avail publication starts. In Avail mode, it must equal `CRISPProgram.availabilityFinalizationWindow()`.        |
+| `DATA_AVAILABILITY_MAX_PENDING_BYTES`                                                                               | `1073741824` (1 GiB)                                    | Limit for bytes held by unfinished availability jobs                                                                                                          |
+| `CRON_API_KEY`                                                                                                      | Empty                                                   | Secret for `POST /rounds/request` and the cron client. When it is empty, the endpoint is disabled.                                                            |
+| `ETHERSCAN_API_KEY`                                                                                                 | Empty                                                   | Token holder lookup on non-local chains                                                                                                                       |
+| `INDEX_START_BLOCK`, `INDEX_CHUNK_SIZE`, `INDEX_CONTRACTS`, `INDEX_LOG_CONTRACTS`                                   | Not set                                                 | Indexer backfill and the contracts that the read-only `/chain/*` routes serve. An empty `INDEX_CONTRACTS` denies all `/chain/*` reads.                        |
+
+<Callout type='warning'>
+  The local `PRIVATE_KEY` is a public Anvil test key. Never use it on a live network. Funds sent to
+  its address on a live network can be lost.
+</Callout>
+
+### Client settings
+
+Vite reads `client/.env` when the client starts or builds.
+
+| Variable                        | Local value               | Purpose                                                                                   |
+| ------------------------------- | ------------------------- | ----------------------------------------------------------------------------------------- |
+| `VITE_INTERFOLD_API`            | `http://127.0.0.1:4000`   | CRISP server URL                                                                          |
+| `VITE_CHAIN_ID`                 | `31337`                   | Chain that the client asks the wallet to use                                              |
+| `VITE_RPC_URL`                  | `http://127.0.0.1:8545`   | Chain RPC                                                                                 |
+| `VITE_WALLETCONNECT_PROJECT_ID` | Empty                     | WalletConnect. Without it, only injected wallets work.                                    |
+| `VITE_CRISP_TOKEN`              | Written by the deployment | Voting eligibility token (`MockVotingToken` locally)                                      |
+| `VITE_E3_REQUESTERS`            | First two Anvil accounts  | Comma-separated requester addresses. The client shows rounds from these requesters.       |
+| `VITE_ENABLE_TEST_TOKEN_MINT`   | `true`                    | Shows the `+ Mint test tokens` button on test networks. It is always off on mainnet.      |
+| `VITE_DIRECT_VOTE`              | `false`                   | `true` sends inputs from the voter wallet instead of the relay. Mainnet always does this. |
+
+### Real proofs with Boundless
+
+By default, the program server runs without a proving backend. To make real RISC Zero proofs with
+[Boundless](https://docs.boundless.network/), set the `program` section of `interfold.config.yaml`:
+
+```yaml filename="interfold.config.yaml"
 program:
-  dev: false # Disable dev mode to use real proofs
+  dev: false
   risc0:
-    risc0_dev_mode: 0 # 0 = production (Boundless), 1 = dev mode
+    risc0_dev_mode: 0 # 0 = Boundless, 1 = dev mode (the default)
     boundless:
-      rpc_url: 'https://sepolia.infura.io/v3/YOUR_KEY' # RPC endpoint
-      private_key: 'YOUR_PRIVATE_KEY' # Wallet with funds for proving
-      pinata_jwt: 'YOUR_PINATA_JWT' # Required for uploading programs to IPFS
-      program_url: 'https://gateway.pinata.cloud/ipfs/YOUR_CID' # Pre-uploaded program URL
-      onchain: true # true = onchain requests, false = offchain
+      rpc_url: 'https://sepolia.infura.io/v3/YOUR_KEY'
+      private_key: 'YOUR_PRIVATE_KEY' # wallet that pays for proofs
+      pinata_jwt: 'YOUR_PINATA_JWT' # uploads programs to IPFS
+      ipfs_gateway_url: 'https://your-gateway.mypinata.cloud'
+      program_url: 'https://your-gateway.mypinata.cloud/ipfs/YOUR_CID'
+      onchain: true # the default. false sends off-chain requests.
 ```
 
-> **_Note:_** For production proving with Boundless, you need:
->
-> - An RPC endpoint (e.g., Infura, Alchemy) with funds
-> - A private key with sufficient ETH/tokens for proof generation
-> - A Pinata JWT for uploading programs to IPFS (get one at [pinata.cloud](https://pinata.cloud))
-> - Pre-uploaded program URL to avoid uploading the ~40MB program at runtime
+The gateway must allow full, unauthenticated downloads by Boundless provers. These offer settings
+are optional (`crates/config/src/program_config.rs`):
 
-#### Uploading Your Program to IPFS
+| Key                   | Default       |
+| --------------------- | ------------- |
+| `min_price_eth`       | `0.00005`     |
+| `max_price_eth`       | `0.004`       |
+| `timeout_secs`        | `28800` (8 h) |
+| `lock_timeout_secs`   | `14400` (4 h) |
+| `ramp_up_secs`        | `7200` (2 h)  |
+| `lock_collateral_zkc` | `100.0`       |
 
-When you make changes to the guest program in `program/`, you need to upload it to IPFS to get a
-program URL:
+`pnpm dev:up` always starts the program server in dev mode. To use Boundless, start the program
+server with `interfold program start` from `examples/CRISP`. This command runs the program server in
+a Docker container.
 
-1. First, configure your Pinata JWT in `interfold.config.yaml` (as shown above)
+When you change the guest program, upload it again and update `program_url`:
 
-2. Build and upload your program:
+1. Run `interfold program compile`. The command builds the guest in a Docker container.
+2. Run `interfold program upload`. The command reads `pinata_jwt` and `ipfs_gateway_url` from the
+   configuration and uploads the guest to Pinata.
+3. Copy the `Program URL` from the output into `program_url`.
 
-   ```bash
-   # This compiles the guest program and uploads it to IPFS via Pinata
-   interfold program upload
-   ```
+## Run single components
 
-3. The command will output an IPFS hash like `QmXxx...`. Update your `interfold.config.yaml` with
-   the full URL:
-
-   ```yaml
-   program_url: 'https://gateway.pinata.cloud/ipfs/QmXxx...'
-   ```
-
-> **_Important:_** Every time you modify the guest program code in `program/`, you must rebuild and
-> re-upload it to IPFS, then update the `program_url` in your configuration. This ensures Boundless
-> uses your latest program version.
-
-### Environment Variables
-
-The `pnpm dev:setup` command automatically creates `.env` files for the server and client from the
-`.env.example` templates. The server's `.env` file is automatically populated with contract
-addresses after deployment.
-
-## Running Individual Components
-
-While `pnpm dev:up` runs everything together, you can also run components separately:
+`pnpm dev:up` runs all services together. To run them one at a time, open a terminal for each
+command and run the commands in this order from `examples/CRISP`:
 
 ```bash
-# Start only the Hardhat node
-cd packages/crisp-contracts && pnpm hardhat node
+# 1. Local chain
+anvil --host 0.0.0.0 --chain-id 31337 --block-time 1 --mnemonic 'test test test test test test test test test test test junk'
 
-# Start only the ciphernodes (requires Hardhat running)
-./scripts/dev_cipher.sh
+# 2. Fulfill randomness requests of the mock provider in a later block
+node ./scripts/anvil-randomness.mjs
 
-# Start only the program server (requires ciphernodes)
+# 3. Deploy the contracts and sync the addresses
+./scripts/crisp_deploy.sh
+
+# 4. Start and register the ciphernodes. The argument is the ready file.
+./scripts/dev_cipher.sh ./.interfold/ready
+
+# 5. Program server (port 13151)
 ./scripts/dev_program.sh
 
-# Start only the coordination server (requires program server)
+# 6. CRISP server (port 4000)
 ./scripts/dev_server.sh
 
-# Start only the client (requires coordination server)
+# 7. Client (port 3000)
 ./scripts/dev_client.sh
-
-# Run the CLI (requires all services)
-pnpm cli
 ```
 
-## Next Steps
+Without step 2, the committee is not selected, because the mock randomness provider does not fulfill
+its own requests.
 
-Once you have completed the setup, you can proceed to [Running an E3 Program](/CRISP/running-e3) to
-learn how to interact with CRISP and run voting rounds.
+## Scripts
+
+These scripts are defined in `examples/CRISP/package.json`.
+
+| Script                                                                                                                 | What it does                                                                                                                                                 |
+| ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `pnpm dev:setup`                                                                                                       | Runs `scripts/setup.sh`: installs, builds, and creates the `.env` files                                                                                      |
+| `pnpm dev:up`                                                                                                          | Runs `scripts/dev.sh`: starts the full local stack                                                                                                           |
+| `pnpm cli`                                                                                                             | Runs `target/debug/cli` with the arguments that you give                                                                                                     |
+| `pnpm compile:circuits`                                                                                                | Compiles the Noir circuits and writes the verifiers to `packages/crisp-contracts/contracts/verifiers`                                                        |
+| `pnpm compute:vk-hash`                                                                                                 | Compiles the circuits and prints the fold key hash for each ballot stack                                                                                     |
+| `pnpm compile:contracts`                                                                                               | Compiles the CRISP contracts with Hardhat                                                                                                                    |
+| `pnpm build:sdk`, `pnpm build:presets`                                                                                 | Builds the SDK, or compiles and stages the circuit presets                                                                                                   |
+| `pnpm deploy:contracts`, `pnpm deploy:contracts:mock`, `pnpm deploy:contracts:full`, `pnpm deploy:contracts:full:mock` | Deploys the CRISP contracts. `mock` sets `USE_MOCKS=true`. `full` also deploys the Interfold contracts.                                                      |
+| `pnpm ciphernode:add`, `pnpm ciphernode:add:self`, `pnpm ciphernode:mint:tokens`                                       | Hardhat tasks that register ciphernodes or mint tokens for them                                                                                              |
+| `pnpm setup:testnet`                                                                                                   | Starts `cn1` to `cn5`, mints tokens for them, and registers them on Sepolia with the keys in `.env`. Then it starts the program server and the CRISP server. |
+| `pnpm publish:packages`                                                                                                | Publishes the CRISP packages to npm (`--channel prod` or `--channel testing`)                                                                                |
+| `pnpm lint`                                                                                                            | Runs ESLint                                                                                                                                                  |
+
+## Run the tests
+
+| Command                                                                                                                                                                       | What it tests                                                                                                |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `pnpm test:e2e` (also `pnpm test`)                                                                                                                                            | The full stack in a browser. See [End-to-end test](#end-to-end-test).                                        |
+| `pnpm test:contracts`                                                                                                                                                         | All CRISP contract tests (Hardhat and Mocha)                                                                 |
+| `pnpm test:contracts:unit`                                                                                                                                                    | Census modes, journal, input availability, input leaf, Interfold binding, `SelfRegistry`, and tally decoding |
+| `pnpm test:contracts:input-tree`, `pnpm test:contracts:input-tree:forged-input`, `pnpm test:contracts:input-tree:poisoned-parent`, `pnpm test:contracts:input-tree:canonical` | The end-to-end input tree test, in full or in parts                                                          |
+| `pnpm test:contracts:ballots:program`, `pnpm test:contracts:ballots:census`                                                                                                   | Ballots against `CRISPProgram`, and ballots in an on-chain census round                                      |
+| `pnpm test:circuits`                                                                                                                                                          | `nargo test` in `circuits/lib`                                                                               |
+| `pnpm test:sdk`, `pnpm test:sdk:core-and-ballot-proofs`, `pnpm test:sdk:mask-proofs`                                                                                          | SDK tests with Vitest. Each script first stages the `insecure-512` preset.                                   |
+
+### End-to-end test
+
+`pnpm test:e2e` runs `scripts/test_e2e.sh`. The script starts `scripts/dev.sh`, waits for port 3000
+and the `.interfold/ready` file, and then runs Synpress and Playwright. The test does these steps:
+
+1. Requests a round with `target/debug/cli init`.
+2. Connects MetaMask to the client and waits for the committee key.
+3. Casts a vote and waits until `CRISPProgram` records it.
+4. Moves the Anvil time past the input deadline.
+5. Waits until the E3 stage is `Complete`, then checks the result on the `All Polls` page.
+
+Set `CRISP_E2E_DURATION_SECS` to change the input window of the test (default `300` seconds). Add
+`--ui` (`pnpm test:e2e --ui`) to run the Synpress wallet setup without `--headless`. On Linux, the
+script runs Playwright with `xvfb-run`. Run `pnpm report` to open the Playwright report.
+
+## Common setup errors
+
+| Symptom                                                                                                    | Cause                                                                     | Fix                                                                                            |
+| ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `pnpm dev:setup` fails with `HHE902` and `RiscZeroGroth16Verifier.sol doesn't exist`                       | The `risc0-ethereum` submodule is missing.                                | Run `git submodule update --init --recursive` from the repository root.                        |
+| `dev_cipher.sh` prints `ERROR: only <n>/<m> ciphernodes stayed up`                                         | The `interfold` binary does not match the profile, or another node error. | Read the node output above the table. For a missing Cargo feature, run `pnpm dev:setup` again. |
+| `Invalid CRISP_BFV_PRESET` or `Invalid CRISP_SKIP_PROOF_AGGREGATION`                                       | A value in `crisp.dev.env` is not allowed.                                | Use `insecure-512` or `secure-8192`, and `true` or `false`.                                    |
+| The server stops at startup with `DATA_AVAILABILITY_MODE=mock is allowed only on local development chains` | `CHAIN_ID` is not 31337 or 1337 and the mode is `mock`.                   | Set `DATA_AVAILABILITY_MODE=avail` and the Avail settings.                                     |
+| The server stops at startup with `Ethereum mainnet requires E3_PARAM_SET=1 (secure-8192)`                  | `CHAIN_ID=1` with `E3_PARAM_SET=0`.                                       | Set `E3_PARAM_SET=1`.                                                                          |
+
+## Next steps
+
+<LinkCards min={230}>
+  <LinkCard title='Run a voting round' href='/CRISP/running-e3' icon='vote' tag='CRISP'>
+    Request a round with the CLI, vote in the client, and decode the tally.
+  </LinkCard>
+  <LinkCard title='Introduction to CRISP' href='/CRISP/introduction' icon='book' tag='CRISP'>
+    The problem that CRISP solves and how its parts map onto an E3.
+  </LinkCard>
+  <LinkCard title='CLI reference' href='/reference/cli' icon='terminal' tag='Reference'>
+    All `interfold` commands, including `nodes`, `program`, and `noir`.
+  </LinkCard>
+</LinkCards>
