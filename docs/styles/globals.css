@@ -2,21 +2,183 @@
   font-family: 'Barlow';
   src: url(/Barlow-Regular.woff) format('woff');
   font-weight: 400;
+  font-display: swap;
+}
+
+/* ─── Design tokens ─────────────────────────────────────────────────────────
+   Shared with the node dashboard (packages/interfold-dashboard) and the tokenomics charts:
+   deep ink, warm paper, mint and forest accents. */
+:root {
+  --if-ink: #14201b;
+  --if-ink-2: #2c3833;
+  --if-ink-3: #5b6864;
+  --if-ink-4: #8b9893;
+  --if-rule: #e3e7e2;
+  --if-rule-soft: #eef1ec;
+  --if-paper: #fffaf0;
+  --if-card: #ffffff;
+  --if-mint: #82f5ad;
+  --if-mint-bg: #e8faf0;
+  --if-mint-soft: #cdeede;
+  --if-forest: #3a7d44;
+  --if-deep: #1f6b4a;
+  --if-deep-ink: #163d2c;
+  --if-sage: #687d71;
+  --if-danger: #b42318;
+  --if-danger-bg: #fff1f0;
+  --if-serif: Georgia, 'Times New Roman', serif;
+  --if-mono: ui-monospace, 'SFMono-Regular', 'Menlo', 'Consolas', monospace;
 }
 
 body {
   font-family: 'Barlow', sans-serif;
   letter-spacing: 0.02em;
-
-  background-color: #fffaf0;
+  background-color: var(--if-paper);
 }
 
+::selection {
+  color: var(--if-ink);
+  background: var(--if-mint);
+}
+
+/* Heading ids sit on this anchor. Hide the "#" mark but keep the box, so that the browser can
+   scroll to #links and the table of contents works. */
 .subheading-anchor {
-  display: none;
+  visibility: hidden;
 }
 
 img {
   border-radius: 10px;
+}
+
+/* ─── Page content ────────────────────────────────────────────────────────── */
+
+/* Each page eases in on navigation. */
+article main {
+  animation: if-page-in 0.45s ease both;
+}
+
+/* Serif display headings echo the wordmark. Body text stays in Barlow. */
+article main h1 {
+  font-family: var(--if-serif);
+  font-weight: 400 !important;
+  letter-spacing: -0.02em;
+  color: var(--if-ink);
+}
+
+article main h2 {
+  position: relative;
+  font-family: var(--if-serif);
+  font-weight: 400 !important;
+  letter-spacing: -0.01em;
+  color: var(--if-ink);
+  border-bottom-color: var(--if-rule) !important;
+}
+
+article main h2::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  bottom: -1px;
+  width: 48px;
+  height: 2px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, var(--if-deep), var(--if-mint));
+}
+
+article main h3,
+article main h4 {
+  color: var(--if-ink);
+}
+
+/* Inline links: an underline that grows on hover. */
+article main p a:not([class]),
+article main li a:not([class]),
+article main td a:not([class]) {
+  text-decoration: none;
+  background-image: linear-gradient(currentColor, currentColor);
+  background-size: 100% 1px;
+  background-position: 0 100%;
+  background-repeat: no-repeat;
+  transition: background-size 0.25s ease;
+}
+
+article main p a:not([class]):hover,
+article main li a:not([class]):hover,
+article main td a:not([class]):hover {
+  background-size: 100% 2px;
+}
+
+/* Tables */
+/* Nextra renders tables as scrollable blocks. Keep overflow-x: auto so that wide tables scroll. */
+article main table {
+  border-collapse: separate;
+  border-spacing: 0;
+  overflow-x: auto;
+  border: 1px solid var(--if-rule);
+  border-radius: 12px;
+  background: var(--if-card);
+}
+
+article main table tr {
+  border-top: 0 !important;
+  background: transparent !important;
+}
+
+article main table th {
+  font-weight: 600;
+  text-align: left;
+  color: var(--if-ink-2);
+  background: #f5f7f3;
+}
+
+article main table th,
+article main table td {
+  border: 0 !important;
+  border-bottom: 1px solid var(--if-rule-soft) !important;
+}
+
+article main table tr:last-child td {
+  border-bottom: 0 !important;
+}
+
+article main table tbody tr {
+  transition: background-color 0.2s ease;
+}
+
+article main table tbody tr:hover {
+  background: #f8fbf7 !important;
+}
+
+/* Code blocks */
+article main pre {
+  border: 1px solid var(--if-rule);
+  box-shadow: 0 10px 30px -24px rgba(20, 32, 27, 0.5);
+}
+
+/* Blockquotes */
+article main blockquote {
+  border-left-color: var(--if-mint) !important;
+  color: var(--if-ink-2);
+}
+
+/* Steps: a mint rail and numbered rings. */
+article main .nextra-steps {
+  border-left-color: var(--if-mint-soft) !important;
+}
+
+article main .nextra-steps h3::before {
+  color: var(--if-deep) !important;
+  background: var(--if-mint-bg) !important;
+  border: 3px solid var(--if-paper);
+  box-shadow: 0 0 0 1px var(--if-mint-soft);
+}
+
+/* Sidebar: the active page gets the brand accent. */
+.nextra-sidebar-container li.active > a {
+  color: var(--if-deep-ink) !important;
+  background: var(--if-mint-bg) !important;
+  box-shadow: inset 2px 0 0 var(--if-deep);
 }
 
 /* On mobile, Nextra merges the active page's in-page heading anchors (#...) into
@@ -29,5 +191,27 @@ img {
   }
   .nextra-sidebar-container ul:has(> li > a[href^='#']) {
     display: none;
+  }
+}
+
+@keyframes if-page-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }
