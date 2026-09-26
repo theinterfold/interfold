@@ -734,7 +734,12 @@ function PositionPanel({ config, status, operator }: { config: BondingConfig; st
         <dd className='mono'>
           {status.availableTickets.toString()} <span className='insp-stat__of'>/ {config.minTicketBalance.toString()} required</span>
         </dd>
+        <dt>Eligible for new committees</dt>
+        <dd>{status.eligible === null ? <span className='dl__muted'>Unknown</span> : status.eligible ? 'Yes' : 'No'}</dd>
       </dl>
+      {status.active && status.eligible === false && (
+        <Note>Active, but not eligible for new committees yet. The admission cooldown or admission policy still applies.</Note>
+      )}
     </section>
   )
 }

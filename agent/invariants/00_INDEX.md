@@ -83,8 +83,6 @@ The "Verified Bugs & Protocol Concerns" table in `flow-trace/00_INDEX.md` record
 wrong. This list and the **Gap:** notes in the section files are the open-issue list. Verify each
 item in code before you rely on it.
 
-- Sortition: Rust scores tickets against a byte-reversed VRF seed, so its shortlist can differ from
-  the on-chain scores. — `01_PROTOCOL_ONCHAIN.md` §E3 request and committee selection
 - Eligibility: asset-configuration and node-release changes bump the eligibility version, but Rust
   does not consume those events and keeps a stale activity view. — `01_PROTOCOL_ONCHAIN.md`
   §Activation

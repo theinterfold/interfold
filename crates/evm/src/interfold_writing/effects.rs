@@ -15,6 +15,9 @@ pub(in crate::actors::interfold_sol_writer) enum MarkFailureOutcome {
 pub(in crate::actors::interfold_sol_writer) enum FailureSettlementOutcome {
     Submitted(Box<TransactionReceipt>),
     Pending,
+    /// The refund manager rejects settlement with `SettlementBlocked` until the accusation
+    /// window closes and no committee-affecting proposal is open.
+    Blocked,
     Completed,
 }
 
@@ -264,6 +267,15 @@ pub(in crate::actors::interfold_sol_writer) async fn process_e3_failure<
         SettlementPreflight::Ready => {}
     }
 
+    // Simulate first, so that a settlement that is not open yet does not hold the nonce guard.
+    if let Err(error) = contract.processE3Failure(e3_id).call().await {
+        let error = anyhow::Error::from(error);
+        if failure_settlement_is_blocked(&error) {
+            return Ok(FailureSettlementOutcome::Blocked);
+        }
+        return Err(error);
+    }
+
     let _nonce_guard = transaction_nonce_guard(&provider).await;
     let from_address = provider.provider().default_signer_address();
     let current_nonce = provider
@@ -288,15 +300,35 @@ pub(in crate::actors::interfold_sol_writer) fn failure_settlement_error_is_termi
     )
 }
 
+/// Return true when the refund manager does not accept settlement for this E3 yet.
+fn failure_settlement_is_blocked(error: &anyhow::Error) -> bool {
+    contains_error_selector(
+        &format!("{error:?}"),
+        IInterfold::SettlementBlocked::SELECTOR,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        failure_settlement_error_is_terminal, failure_stage_code, requested_failure_deadline,
-        settlement_preflight, SettlementPreflight,
+        failure_settlement_error_is_terminal, failure_settlement_is_blocked, failure_stage_code,
+        requested_failure_deadline, settlement_preflight, SettlementPreflight,
     };
     use crate::contracts::IInterfold;
     use alloy::sol_types::SolError;
+    use alloy::transports::TransportError;
     use e3_events::E3Stage;
+
+    /// Build the error that `eth_call` returns for a contract revert with this revert data.
+    fn eth_call_revert(selector: [u8; 4], words: usize) -> anyhow::Error {
+        let response = format!(
+            r#"{{"code":3,"message":"execution reverted","data":"0x{}{}"}}"#,
+            hex::encode(selector),
+            "00".repeat(32 * words)
+        );
+        let error = TransportError::ErrorResp(serde_json::from_str(&response).unwrap());
+        alloy::contract::Error::TransportError(error).into()
+    }
 
     #[test]
     fn local_failure_cannot_start_chain_settlement() {
@@ -338,5 +370,32 @@ mod tests {
         assert!(!failure_settlement_error_is_terminal(&anyhow::anyhow!(
             "RPC connection reset"
         )));
+    }
+
+    #[test]
+    fn settlement_simulation_separates_blocked_settled_and_other_reverts() {
+        let blocked = eth_call_revert(IInterfold::SettlementBlocked::SELECTOR, 0);
+        assert!(failure_settlement_is_blocked(&blocked));
+        assert!(!failure_settlement_error_is_terminal(&blocked));
+
+        let settled = eth_call_revert(IInterfold::NoPaymentToRefund::SELECTOR, 1);
+        assert!(failure_settlement_error_is_terminal(&settled));
+        assert!(!failure_settlement_is_blocked(&settled));
+
+        let other = eth_call_revert(IInterfold::E3NotFailed::SELECTOR, 1);
+        assert!(!failure_settlement_is_blocked(&other));
+        assert!(!failure_settlement_error_is_terminal(&other));
+
+        let transport = anyhow::anyhow!("RPC connection reset");
+        assert!(!failure_settlement_is_blocked(&transport));
+        assert!(!failure_settlement_error_is_terminal(&transport));
+    }
+
+    #[test]
+    fn settlement_blocked_uses_the_refund_manager_selector() {
+        assert_eq!(
+            IInterfold::SettlementBlocked::SELECTOR,
+            [0xf5, 0x11, 0x25, 0xbb]
+        );
     }
 }

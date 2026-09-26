@@ -403,6 +403,9 @@
   font-size: 12px;
   text-overflow: ellipsis;
 }
+.chain-card .alert {
+  margin-top: 12px;
+}
 .event-timeline {
   display: flex;
   flex-direction: column;

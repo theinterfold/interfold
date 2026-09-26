@@ -2074,6 +2074,9 @@ button {
 .opposition__addr {
   margin-top: 4px;
 }
+.opposition .opnote {
+  margin-top: 18px;
+}
 
 /* Step list */
 .opsteps {

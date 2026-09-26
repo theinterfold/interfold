@@ -4,7 +4,8 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Ciphernode release compatibility and on-chain acknowledgement.
+//! Ciphernode release compatibility, on-chain acknowledgement, and startup reads of Interfold
+//! dependencies.
 
 use crate::{
     contracts::{IBondingRegistry, IInterfold, INodeReleaseRegistry},
@@ -40,6 +41,20 @@ fn validate_release_policy(policy: ReleasePolicy) -> Result<()> {
         policy.required_node_generation
     );
     Ok(())
+}
+
+/// Read the SlashingManager that Interfold calls. `Ok(None)` means that Interfold has no
+/// SlashingManager yet, as before deployment wiring sets one.
+pub async fn fetch_slashing_manager<P: Provider + Clone>(
+    provider: &P,
+    interfold_address: Address,
+) -> Result<Option<Address>> {
+    let slashing_manager = IInterfold::new(interfold_address, provider)
+        .slashingManager()
+        .call()
+        .await
+        .context("failed to read Interfold.slashingManager()")?;
+    Ok((slashing_manager != Address::ZERO).then_some(slashing_manager))
 }
 
 /// Verify this binary and acknowledge it before contract readers start.
@@ -184,5 +199,29 @@ mod tests {
             ..base
         })
         .is_err());
+    }
+
+    #[tokio::test]
+    async fn slashing_manager_read_treats_zero_as_unset() -> Result<()> {
+        use alloy::{
+            primitives::Bytes, providers::ProviderBuilder, sol_types::SolValue,
+            transports::mock::Asserter,
+        };
+
+        let live = Address::repeat_byte(0x75);
+        let asserter = Asserter::new();
+        let provider = ProviderBuilder::new().connect_mocked_client(asserter.clone());
+        asserter.push_success(&Bytes::from(live.abi_encode()));
+        asserter.push_success(&Bytes::from(Address::ZERO.abi_encode()));
+
+        assert_eq!(
+            fetch_slashing_manager(&provider, Address::ZERO).await?,
+            Some(live)
+        );
+        assert_eq!(
+            fetch_slashing_manager(&provider, Address::ZERO).await?,
+            None
+        );
+        Ok(())
     }
 }
