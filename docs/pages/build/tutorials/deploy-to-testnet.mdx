@@ -1,220 +1,432 @@
 ---
 title: 'Deploy to Sepolia'
 description:
-  'Move your E3 program from local development to the Sepolia testnet — contracts, server
-  configuration, and BFV parameter switching'
+  'Deploy an E3 program contract against the Interfold contracts on Sepolia, get it registered, and
+  point the coordination server and the client at the testnet.'
 ---
 
-# Deploy Your E3 to Sepolia
+import { Callout, Steps } from 'nextra/components'
+import { Badge, LinkCard, LinkCards } from '@/components/ui'
 
-This tutorial takes you from a working local E3 (from [Quick Start](/quick-start) or CRISP) to a
-live deployment on Sepolia testnet.
+# Deploy to Sepolia
 
-> **What you'll build:** Your E3 program contract deployed to Sepolia, a coordination server pointed
-> at a Sepolia RPC, and a verified end-to-end E3 round against the live testnet ciphernode
-> committee.
->
-> **Prerequisites:** A working local E3, Sepolia ETH for gas, a WebSocket RPC endpoint (e.g.
-> Alchemy, Infura), and your deployer private key funded.
+<Badge tone='testnet'>Testnet</Badge>
 
----
+This tutorial moves an E3 program from the local stack to the Sepolia testnet. It is for developers
+who have a working program from the default template. On Sepolia, you use the Interfold contracts
+that the Interfold team deployed and the ciphernodes that operators run. You deploy only your
+program contract. At the end, your program is on Sepolia, the owner of the Interfold contract can
+register it, and your server and client use the testnet.
 
-## 1. Get Testnet Tokens
+<Callout type='warning'>
+  Do not submit real private data on Sepolia. The `insecure-512` preset is not secure, and the
+  manifest marks the Sepolia deployment with `mocks: true`, which means that it records mock
+  verifier contracts.
+</Callout>
 
-You'll need:
+<Callout type='warning'>
+  On 25 September 2026, the Sepolia protocol contracts predate the node release gate.
+  `nodeReleaseRegistry()` on the Sepolia `Interfold` contract reverts. A 0.18.0 ciphernode reads
+  this value at startup, so it stops with `failed to read Interfold release dependencies`.
+  Ciphernodes on this release cannot serve Sepolia E3s until the Sepolia deployment is upgraded.
+</Callout>
 
-- **Sepolia ETH** — for gas. Any public Sepolia faucet works, e.g.
-  [sepoliafaucet.com](https://sepoliafaucet.com),
-  [Google Cloud faucet](https://cloud.google.com/application/web3/faucet/ethereum/sepolia), or
-  [PoW faucet](https://sepolia-faucet.pk910.de).
-- **Test FOLD** — for ciphernode bonding (only if you're running your own nodes). The InterfoldToken
-  (FOLD) is deployed at `0x9752444A6a955D420402EaFf5f818afCddb9c340`.
-- **Test USDC** — for E3 fees and tickets. Mock USDC at
-  `0xC35B783cA97710be47Fc81D10dADc895EfcD865c`.
+## Sepolia protocol contracts
 
-> **Faucet:** the quickest way to get both test tokens is the on-chain faucet at
-> `0x6e281411C055BEEbD74bDFcB9aB095aa98907F85`. Run `interfold faucet` (with the `faucet` address
-> set in your config) and it sends a fixed amount of FOLD and mock USDC to your signer. Each token
-> is only topped up if your balance is below the per-token threshold. If the faucet runs dry, reach
-> out on the [community Telegram](https://t.me/enclave_e3).
+These addresses come from `deployments/manifest.json` (chain ID 11155111). The
+[Contract Addresses](/reference/contracts) page has the full list for each network.
 
-> The full list of deployed Sepolia addresses lives in
+| Contract                       | Address                                      | Deploy block | Role                                                       |
+| ------------------------------ | -------------------------------------------- | ------------ | ---------------------------------------------------------- |
+| `Interfold`                    | `0x3E856E24c7a95d0e04d387f847DA6FA9f6F6c20C` | 11534993     | Requests, stages, fees, and outputs of each E3             |
+| `CiphernodeRegistry`           | `0x374F4542eC634d5437Dd65020781A9D9Df9c2AB8` | 11534965     | `CiphernodeRegistryOwnable`: committees and committee keys |
+| `BondingRegistry`              | `0x90250Dc48CBe109fFaA02AeAFbFBdbF12D7BD4d4` | 11534966     | Operator bonds and tickets                                 |
+| `SlashingManager`              | `0x489FB674B143E48eaCAaC999B3DF9EA6E95eA79f` | 11534963     | Slashing of ciphernodes that break protocol rules          |
+| `MockUSDC` (fee token)         | `0xC35B783cA97710be47Fc81D10dADc895EfcD865c` | 11534960     | The token that pays E3 fees                                |
+| `Faucet`                       | `0x6e281411C055BEEbD74bDFcB9aB095aa98907F85` | 11534982     | Sends test FOLD and fee tokens                             |
+| `InterfoldToken` (FOLD)        | `0x9752444A6a955D420402EaFf5f818afCddb9c340` | 11534976     | Governance and utility token. Operators bond FOLD.         |
+| `InterfoldTicketToken` (tFOLD) | `0xfFFFc3BB04aEe950c0ed5DEe3214408f09fff488` | 11534961     | Non-transferable operator tickets for sortition            |
+| `E3RefundManager`              | `0x79f9EA83Db0fbe3a2cEB765b18285915331A9dc2` | 11534995     | Refunds for failed E3s                                     |
+| `MockE3Program`                | `0x5874CD49929ffcf380C82cDE1e74188dEaff9791` | 11534990     | A test E3 program                                          |
 
-> [Ciphernode Operators → Sepolia Contract Addresses](/ciphernode-operators#sepolia-contract-addresses)
-> and in `packages/interfold-contracts/deployed_contracts.json` inside the repo.
+## What changes on Sepolia
 
----
+Locally, `pnpm dev:all` deploys its own Interfold contracts, and the deployer owns them. On Sepolia,
+the Interfold team owns the protocol contracts. This changes four steps of the local flow.
 
-## 2. Configure Environment
+| Step                         | Local (`pnpm dev:all`)                                             | Sepolia                                                                                          |
+| ---------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
+| Program registration         | `deployTemplate` calls `registerE3Program`.                        | `registerE3Program` is `onlyOwner`. The owner of the Interfold contract must call it.            |
+| Protocol ciphertext verifier | `deployTemplate` calls `setCiphertextVerifier` with your image ID. | `setCiphertextVerifier` is `onlyOwner`. One verifier serves every BFV program on the deployment. |
+| Data availability            | The coordination server stores the output (`mode: mock_http`).     | Ciphernodes read the output from Avail (`mode: avail`).                                          |
+| Ciphernodes                  | Five local nodes from `scripts/dev_ciphernodes.sh`.                | The nodes of registered operators. Sortition needs enough of them for the committee size.        |
 
-Create or update your `.env` file with Sepolia settings:
+The first two rows mean that you cannot run `deployTemplate` on Sepolia unchanged. The owner-only
+calls revert for any other signer. The last two rows decide if an E3 of your program can complete.
+The procedure below covers each row.
+
+## Before you start
+
+- A project from the default template. See
+  [Build a Complete E3 Program](/build/tutorials/write-e3-program).
+- A deployer account with Sepolia ETH. Use any public Sepolia faucet.
+- A Sepolia RPC endpoint. Hardhat uses HTTPS. The server and the client can use HTTPS or WebSocket.
+- Foundry (`cast`) for the checks.
+
+<Steps>
+
+### Set the Sepolia variables
+
+The Hardhat configuration of the template reads `RPC_URL`, `PRIVATE_KEY`, and `MNEMONIC` from `.env`
+through `dotenv`. Create `.env` in the project root. The template `.gitignore` excludes it.
+
+```bash filename=".env"
+RPC_URL=https://<your Sepolia HTTPS RPC>
+PRIVATE_KEY=0x<deployer private key>
+```
+
+Set the same values in your shell for the `cast` commands, and add the Interfold address:
 
 ```bash
-# Sepolia RPC (WebSocket required for event listening)
-WS_RPC_URL=wss://eth-sepolia.g.alchemy.com/v2/YOUR_KEY
-HTTP_RPC_URL=https://eth-sepolia.g.alchemy.com/v2/YOUR_KEY
-
-# Deployer private key (has Sepolia ETH)
-PRIVATE_KEY=0x...
-
-# Chain
-CHAIN_ID=11155111
-
-# Deployed Interfold contract addresses (Sepolia)
+source .env
 INTERFOLD_ADDRESS=0x3E856E24c7a95d0e04d387f847DA6FA9f6F6c20C
-CIPHERNODE_REGISTRY_ADDRESS=0x374F4542eC634d5437Dd65020781A9D9Df9c2AB8
-FEE_TOKEN_ADDRESS=0xC35B783cA97710be47Fc81D10dADc895EfcD865c
 ```
 
----
+### Get test tokens
 
-## 3. Deploy Your E3 Program Contract
-
-If you're deploying your own E3 program contract (not using an already-deployed one):
+E3 fees are paid in the fee token (`MockUSDC`). Call `faucet()` on the Faucet contract:
 
 ```bash
-# From your project root
-pnpm deploy:contracts --network sepolia
+cast send 0x6e281411C055BEEbD74bDFcB9aB095aa98907F85 "faucet()" --rpc-url $RPC_URL --private-key $PRIVATE_KEY
 ```
 
-This uses Hardhat to deploy your contracts to Sepolia. Make sure `hardhat.config.ts` has the Sepolia
-network configured:
+The faucet sends 200 FOLD and 200 fee tokens (`contracts/test/Faucet.sol`). It sends each token only
+if your balance of that token is below 200. It reverts with `You have enough tokens` if you need
+neither. An operator with a configured node can run `interfold faucet` instead.
 
-```typescript
-// hardhat.config.ts
-networks: {
-  sepolia: {
-    url: process.env.HTTP_RPC_URL,
-    accounts: [process.env.PRIVATE_KEY],
-  },
+### Record the Interfold address for the deploy script
+
+The template deploy helpers read addresses from `deployed_contracts.json`, one object for each
+Hardhat network name (`readDeploymentArgs`). Add a `sepolia` object next to `localhost`:
+
+```json filename="deployed_contracts.json"
+{
+  "localhost": { "...": "..." },
+  "sepolia": {
+    "Interfold": {
+      "address": "0x3E856E24c7a95d0e04d387f847DA6FA9f6F6c20C",
+      "blockNumber": 11534993
+    }
+  }
 }
 ```
 
-Note the deployed contract address — you'll need it for the E3 request and the server config.
+### Add the Sepolia chain to interfold.config.yaml
 
-### Verify on Etherscan
+`interfold print-env` reads addresses from `interfold.config.yaml`. Add a `sepolia` entry to
+`chains`. The deploy script adds `e3_program` to it.
 
-Publishing source makes your contract inspectable and lets users interact with it from Etherscan's
-UI. Set an Etherscan API key and run:
-
-```bash
-# .env
-ETHERSCAN_API_KEY=your_key
-
-# Verify
-pnpm hardhat verify --network sepolia <YOUR_PROGRAM_ADDRESS> <constructor-arg-1> <constructor-arg-2>
+```yaml filename="interfold.config.yaml"
+chains:
+  # - name: 'localhost' ... (keep the local entry)
+  - name: 'sepolia'
+    rpc_url: 'wss://<your Sepolia WebSocket RPC>'
+    chain_id: 11155111
+    contracts:
+      interfold:
+        address: '0x3E856E24c7a95d0e04d387f847DA6FA9f6F6c20C'
+        deploy_block: 11534993
+      ciphernode_registry:
+        address: '0x374F4542eC634d5437Dd65020781A9D9Df9c2AB8'
+        deploy_block: 11534965
+      bonding_registry:
+        address: '0x90250Dc48CBe109fFaA02AeAFbFBdbF12D7BD4d4'
+        deploy_block: 11534966
+      fee_token:
+        address: '0xC35B783cA97710be47Fc81D10dADc895EfcD865c'
+        deploy_block: 11534960
 ```
 
-Constructor args are whatever you passed to your program's constructor — typically the Interfold
-contract address and any verifier addresses.
+### Write a Sepolia deploy script
 
-### Save the address
+Create `scripts/deploy-sepolia.ts`. It is `deploy/default.ts` without the two owner-only calls. Like
+the CRISP deploy script, it deploys `PoseidonT3` when the network has no record for it.
 
-Persist the deployed address in `.env` so your server and frontend pick it up automatically:
+```ts filename="scripts/deploy-sepolia.ts"
+import {
+  getDeploymentChain,
+  readDeploymentArgs,
+  storeDeploymentArgs,
+  updateE3Config,
+} from '@interfold/contracts/scripts'
+import hre from 'hardhat'
 
-```bash
-# Append the fresh address — don't forget this step
-echo "E3_PROGRAM_ADDRESS=<deployed_address>" >> .env
+async function main() {
+  const { MyProgram__factory: MyProgramFactory } = await import('../types/factories/contracts')
+  const { ensureTemplateCwd, INTERFOLD_CONFIG_FILE } = await import('./template-paths')
+  ensureTemplateCwd()
+  const { ethers } = await hre.network.connect()
+  const [owner] = await ethers.getSigners()
+  const chain = getDeploymentChain(hre)
+
+  const interfoldAddress = readDeploymentArgs('Interfold', chain)?.address
+  if (!interfoldAddress)
+    throw new Error(`No Interfold record for ${chain} in deployed_contracts.json`)
+
+  let poseidonT3Address = readDeploymentArgs('PoseidonT3', chain)?.address
+  if (!poseidonT3Address || (await ethers.provider.getCode(poseidonT3Address)) === '0x') {
+    const poseidonT3 = await ethers.deployContract('PoseidonT3')
+    await poseidonT3.waitForDeployment()
+    poseidonT3Address = await poseidonT3.getAddress()
+    storeDeploymentArgs(
+      { address: poseidonT3Address, blockNumber: await ethers.provider.getBlockNumber() },
+      'PoseidonT3',
+      chain,
+    )
+  }
+
+  // MockRISC0Verifier accepts every seal. Use a real RISC Zero verifier for real proofs.
+  const verifier = await ethers.deployContract('MockRISC0Verifier')
+  await verifier.waitForDeployment()
+  const imageId = await ethers.deployContract('ImageID')
+  await imageId.waitForDeployment()
+  const programId = await imageId.PROGRAM_ID()
+
+  const factory = await ethers.getContractFactory(
+    MyProgramFactory.abi,
+    MyProgramFactory.linkBytecode({
+      'npm/poseidon-solidity@0.0.5/PoseidonT3.sol:PoseidonT3': poseidonT3Address,
+    }),
+    owner,
+  )
+  const program = await factory.deploy(interfoldAddress, await verifier.getAddress(), programId)
+  await program.waitForDeployment()
+  const programAddress = await program.getAddress()
+
+  storeDeploymentArgs(
+    { address: programAddress, blockNumber: await ethers.provider.getBlockNumber() },
+    'MyProgram',
+    chain,
+  )
+  updateE3Config(chain, INTERFOLD_CONFIG_FILE, { MyProgram: 'e3_program' })
+  console.log(`MyProgram deployed at ${programAddress}`)
+}
+
+main().catch((error) => {
+  console.error(error)
+  process.exit(1)
+})
 ```
 
----
+If your `MyProgram` constructor has more arguments (for example an input verifier), deploy them
+first and add them to `factory.deploy`.
 
-## 4. Keep the Insecure BFV Preset on Sepolia
+### Deploy the program
 
-Sepolia runs the insecure preset. Keep `INSECURE_THRESHOLD_512` in your SDK initialisation, and
-request E3s with `paramSet: 0`:
+Compile, then run the script on the `sepolia` network of `hardhat.config.ts`:
 
-```typescript
-const sdk = new InterfoldSDK({
-  // ... other config
+```bash
+pnpm compile
+pnpm exec hardhat run scripts/deploy-sepolia.ts --network sepolia
+```
+
+The script prints `MyProgram deployed at 0x...`. It records the address in `deployed_contracts.json`
+and adds `e3_program` to the `sepolia` entry of `interfold.config.yaml`.
+
+### Get the program registered
+
+Check the registration and the owner of the Interfold contract:
+
+```bash
+cast call $INTERFOLD_ADDRESS "e3Programs(address)(bool)" <MyProgram address> --rpc-url $RPC_URL
+cast call $INTERFOLD_ADDRESS "owner()(address)" --rpc-url $RPC_URL
+```
+
+The first call returns `false` until the owner calls `registerE3Program`. Send the program address
+to the Interfold team and ask for registration. The task `interfold:enableE3` in
+`packages/interfold-contracts` (`pnpm e3:enable --e3-address <address> --network sepolia`) makes the
+call when its signer is the owner. For any other signer, it stops with
+`Submit registerE3Program through the owner Safe.`
+
+At registration, the Interfold contract checks with ERC-165 that the program supports `IE3Program`
+and `IE3ProgramDataAvailability`. The template does. A request for an unregistered program reverts
+with `E3ProgramNotAllowed`.
+
+### Check the protocol ciphertext verifier
+
+Every output proof must pass the ciphertext verifier that the owner set for BFV. Read it:
+
+```bash
+cast call $INTERFOLD_ADDRESS "getCiphertextVerifier(bytes32)(address)" $(cast keccak "fhe.rs:BFV") --rpc-url $RPC_URL
+```
+
+If the address is a `Risc0BfvCiphertextVerifier`, read its image ID and its RISC Zero verifier:
+
+```bash
+cast call <verifier address> "imageId()(bytes32)" --rpc-url $RPC_URL
+cast call <verifier address> "risc0Verifier()(address)" --rpc-url $RPC_URL
+```
+
+Your output proofs must pass that RISC Zero verifier for that image ID. The program server in dev
+mode (`program.dev: true`) makes mock proofs, which only a mock RISC Zero verifier accepts. The
+Interfold contract copies the current verifier into each E3 at request time, so a later change
+applies only to new requests. See
+[Verify the Compute Provider](/build/e3-program/verify-compute-provider).
+
+### Replace the local data-availability check
+
+Sepolia ciphernodes read the output ciphertext from Avail (`data_availability.mode: avail` in the
+Sepolia configurations). They use the block and leaf index that `verifyDataAvailability` returns.
+The template version returns zero for both, so a Sepolia committee cannot read your output.
+
+Delegate the check to `AvailVectorXDataAvailabilityVerifier` from `@interfold/contracts`, as
+`CRISPProgram` does:
+
+```solidity filename="contracts/MyProgram.sol"
+IDataAvailabilityVerifier public immutable dataAvailabilityVerifier;
+
+function verifyDataAvailability(
+  bytes32 expectedContentHash,
+  bytes calldata proof
+) external view override returns (IDataAvailabilityVerifier.DataReference memory receipt) {
+  receipt = dataAvailabilityVerifier.verifyDataAvailability(expectedContentHash, proof);
+  if (receipt.contentHash != expectedContentHash) revert DataAvailabilityHashMismatch(expectedContentHash, receipt.contentHash);
+}
+```
+
+Set `dataAvailabilityVerifier` in the constructor. Deploy the verifier with the Sepolia bridge and
+VectorX addresses from `AVAIL_VECTORX.sepolia` in `@interfold/contracts/scripts`. Add
+`@interfold/contracts/contracts/verifiers/AvailVectorXDataAvailabilityVerifier.sol` to
+`npmFilesToBuild` in `hardhat.config.ts` so that Hardhat compiles it.
+
+The coordination server must then publish the output bytes to Avail and pass the VectorX proof as
+`availabilityProof` to `publishCiphertextOutput`. The template server does not do this. The CRISP
+server in `examples/CRISP/server` does, and
+[`agent/flow-trace/08_DATA_AVAILABILITY.md`](https://github.com/theinterfold/interfold/blob/main/agent/flow-trace/08_DATA_AVAILABILITY.md)
+describes the flow.
+
+### Point the server at Sepolia
+
+In `server/index.ts`, change the chain of the SDK from `hardhat` to `sepolia`:
+
+```ts filename="server/index.ts"
+import { sepolia } from 'viem/chains'
+
+// in createPrivateSDK()
+sdkInstance = InterfoldSDK.create({
+  rpcUrl: RPC_URL,
+  privateKey: PRIVATE_KEY as `0x${string}`,
+  contracts: {
+    interfold: INTERFOLD_CONTRACT as `0x${string}`,
+    ciphernodeRegistry: CIPHERNODE_REGISTRY_CONTRACT as `0x${string}`,
+    feeToken: FEE_TOKEN_CONTRACT as `0x${string}`,
+  },
+  chain: sepolia,
   thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_512',
 })
 ```
 
-```typescript
-const requestParams = {
-  committeeSize: CommitteeSize.Minimum,
-  inputWindow: [startTime, endTime] as const,
-  e3Program: YOUR_PROGRAM_ADDRESS,
-  computeProviderParams: '0x...',
-  paramSet: 0, // ParamSet.Insecure512
-}
-const quote = await sdk.getE3Quote(requestParams)
-const approvalHash = await sdk.approveFeeToken(quote)
-await sdk.waitForTransaction(approvalHash)
-const hash = await sdk.requestE3({ ...requestParams, maxFee: quote })
-```
+`runProgram` reads the `InputPublished` events from block 0. Some RPC providers limit the block
+range of a log query. If yours does, set `fromBlock` to the deploy block of your program.
 
-The SDK preset and the `paramSet` in the request must agree, and both must match what the ciphernode
-network runs. Sepolia is a functional testnet: it exercises the full E3 lifecycle, but it gives no
-cryptographic security, so do not put real secrets in it.
-
-`SECURE_THRESHOLD_8192` (`paramSet: 1`) is the production preset. It uses a larger polynomial ring
-(N=8192 instead of N=512), so proof generation is much slower, and it needs `secure-8192` circuit
-artifacts that do not ship in `@interfold/sdk` — see
-[Proving: embedded circuits or your own](../sdk#proving-embedded-circuits-or-your-own).
-
----
-
-## 5. Configure the Server
-
-Update your coordination server to point to Sepolia:
+Start the program server and the coordination server. `interfold print-env` prints `RPC_URL`,
+`INTERFOLD_ADDRESS`, `REGISTRY_ADDRESS`, `BONDING_REGISTRY_ADDRESS`, `E3_PROGRAM_ADDRESS`, and
+`FEE_TOKEN_ADDRESS` for the chain:
 
 ```bash
-# .env for the server
-WS_RPC_URL=wss://eth-sepolia.g.alchemy.com/v2/YOUR_KEY
-HTTP_RPC_URL=https://eth-sepolia.g.alchemy.com/v2/YOUR_KEY
-INTERFOLD_ADDRESS=0x3E856E24c7a95d0e04d387f847DA6FA9f6F6c20C
-E3_PROGRAM_ADDRESS=<your deployed program address>
-CHAIN_ID=11155111
+interfold program start
 ```
-
-Start the server:
 
 ```bash
-pnpm dev:server
+export $(interfold print-env --chain sepolia)
+export PRIVATE_KEY=0x<server key> CHAIN_ID=11155111
+pnpm tsx ./server/index.ts
 ```
 
-The server will connect to Sepolia via WebSocket and begin listening for E3 events.
+The server account pays gas for `publishCiphertextOutput`, so it needs Sepolia ETH.
 
----
+### Point the client at Sepolia
 
-## 6. Test End-to-End
+The client already includes the `sepolia` chain in its wagmi configuration. Start it with the
+Sepolia addresses:
 
-1. **Request an E3** — via the SDK or your frontend
-2. **Wait for committee formation** — the Sepolia ciphernode committee will perform sortition and
-   DKG (this takes longer than local dev due to real block times)
-3. **Submit encrypted inputs** — your frontend encrypts under the threshold public key and submits
-4. **Wait for computation** — the compute provider runs the FHE program
-5. **Check the result** — the committee decrypts and publishes the plaintext
+```bash
+cd client
+export $(interfold print-env --vite --chain sepolia)
+pnpm dev
+```
 
-Monitor progress by watching for events:
+The client requests E3s with `paramSet: 0`, and the SDK uses `INSECURE_THRESHOLD_512` by default
+(`VITE_THRESHOLD_BFV_PARAMS_PRESET_NAME`). Keep the two values in agreement. Sepolia accepts the
+param sets 0 (`insecure-512`) and 1 (`secure-8192`). The mainnet contracts accept only 1.
 
-```typescript
-sdk.onInterfoldEvent(InterfoldEventType.E3_REQUESTED, (e) => console.log('E3 requested'))
-sdk.onInterfoldEvent(RegistryEventType.COMMITTEE_PUBLISHED, (e) => console.log('Committee ready'))
-sdk.onInterfoldEvent(InterfoldEventType.CIPHERTEXT_OUTPUT_PUBLISHED, (e) =>
-  console.log('Output ready'),
+### Request an E3
+
+Open `http://localhost:3000`, connect a wallet on Sepolia with fee tokens, and request an E3. Each
+stage waits for Sepolia blocks, so an E3 takes longer than on the local chain, where `anvil` makes
+one block each second. To follow the E3 from a script, listen to the same events as the template:
+
+```ts
+await sdk.onInterfoldEvent(InterfoldEventType.E3_REQUESTED, (event) =>
+  console.log('requested', event.data.e3Id),
 )
-sdk.onInterfoldEvent(InterfoldEventType.PLAINTEXT_OUTPUT_PUBLISHED, (e) =>
-  console.log('Result:', e.data),
+await sdk.onInterfoldEvent(RegistryEventType.COMMITTEE_PUBLIC_KEY_CHUNK_PUBLISHED, (event) =>
+  console.log('key chunk', event.data.e3Id),
+)
+await sdk.onInterfoldEvent(InterfoldEventType.CIPHERTEXT_OUTPUT_REFERENCE_PUBLISHED, (event) =>
+  console.log('output', event.data.e3Id),
+)
+await sdk.onInterfoldEvent(InterfoldEventType.PLAINTEXT_OUTPUT_PUBLISHED, (event) =>
+  console.log('result', event.data.plaintextOutput),
 )
 ```
 
----
+</Steps>
+
+## Deploy scripts and tasks
+
+| Location                       | Command                                                                                | What it does                                                                                                                   |
+| ------------------------------ | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Template                       | `pnpm dev:all`                                                                         | Runs `scripts/deploy-local.ts` on `localhost`: `deployInterfold(true, false)`, then `deployTemplate()`.                        |
+| Template                       | `pnpm hardhat ciphernode:admin-add --ciphernode-address <address> --network localhost` | Adds a ciphernode with admin privileges. It needs account impersonation (Anvil or Hardhat), so it works only on a local chain. |
+| `packages/interfold-contracts` | `pnpm e3:enable --e3-address <address> --network <name>`                               | Registers an E3 program. The signer must be the owner of the Interfold contract.                                               |
+| `packages/interfold-contracts` | `pnpm run deploy --network <name>`                                                     | Deploys the protocol contracts (`scripts/run.ts`, `deployInterfold`). This is for the protocol owner.                          |
+| `packages/crisp-contracts`     | `pnpm deploy:contracts --network sepolia`                                              | Deploys CRISP and its verifiers, and wires them only when the signer owns the Interfold contract.                              |
+
+`deployInterfold` accepts mock contracts on chain ID 11155111. On other chains it refuses mocks
+unless `ALLOW_MOCKS_ON_PRODUCTION=true` is set.
 
 ## Troubleshooting
 
-| Issue                       | Possible cause                           | Fix                                                                          |
-| --------------------------- | ---------------------------------------- | ---------------------------------------------------------------------------- |
-| E3 request reverts          | Insufficient fee token approval          | Call `sdk.approveFeeToken()` first                                           |
-| Committee never forms       | Not enough active ciphernodes on Sepolia | Check the registry for active operators                                      |
-| Proof generation fails      | Preset mismatch with the SDK's circuits  | The embedded circuits are `insecure-512`; compile your own for other presets |
-| Decryption produces garbage | BFV preset mismatch                      | Verify both SDK and E3 request use `INSECURE_THRESHOLD_512` / `paramSet: 0`  |
+| Error or symptom                             | Cause                                                                   | Fix                                                                                   |
+| -------------------------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `OwnableUnauthorizedAccount` from the deploy | The script calls `registerE3Program` or `setCiphertextVerifier`.        | Use `scripts/deploy-sepolia.ts`, which leaves out the owner-only calls.               |
+| `E3ProgramNotAllowed` on request             | The program is not registered.                                          | Ask the owner of the Interfold contract to call `registerE3Program`.                  |
+| `ERC20InsufficientAllowance` on request      | The fee token allowance is lower than the fee.                          | Call `approveFeeToken(fee)` with the fee from `getE3Quote`, and wait for the receipt. |
+| `FeeExceedsMaximum` on request               | The fee changed after the quote.                                        | Get a new quote and request again.                                                    |
+| `InvalidInputDeadlineStart` on request       | `inputWindow[0]` is earlier than the block time.                        | Compute the window with `calculateInputWindow(publicClient, duration)`.               |
+| No committee key                             | Sortition did not select a full committee, or the DKG did not finish.   | Read the stage with `getE3Stage`. If it is `Failed`, request a new E3.                |
+| `InvalidOutput` on output publication        | The protocol verifier or `MyProgram.verify` rejected the compute proof. | Check the protocol ciphertext verifier and your image ID (see the steps above).       |
+| The E3 does not finish after the output      | The committee cannot read the output from Avail.                        | Replace the local data-availability check, and publish the output to Avail.           |
 
----
+## Next steps
 
-## Next Steps
-
-- [Manage Tickets](./manage-tickets) — if you're also running a ciphernode on Sepolia
-- [Troubleshoot Your Node](./operator-troubleshooting) — debugging ciphernode issues on testnet
+<LinkCards min={230}>
+  <LinkCard title='Contract addresses' href='/reference/contracts' icon='contract' tag='Reference'>
+    Every deployed contract for each network.
+  </LinkCard>
+  <LinkCard
+    title='Compute provider'
+    href='/build/e3-program/compute-provider'
+    icon='chip'
+    tag='Build'
+  >
+    Run the program server with real RISC Zero proofs.
+  </LinkCard>
+  <LinkCard title='Request an E3' href='/build/requesting-an-e3' icon='rocket' tag='Build'>
+    Request parameters, quotes, and fees in detail.
+  </LinkCard>
+  <LinkCard title='Run a ciphernode' href='/operate' icon='node' tag='Operators'>
+    Join the Sepolia network as an operator.
+  </LinkCard>
+</LinkCards>
