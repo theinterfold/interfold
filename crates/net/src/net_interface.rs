@@ -62,6 +62,7 @@ use tracing::{debug, error, info, trace, warn};
 
 const MAX_KADEMLIA_PAYLOAD_BYTES: usize = 26 * 1024 * 1024;
 const DHT_MAX_RECORDS: usize = 1024;
+const BOOTSTRAP_MAX_RECORDS: usize = 8;
 const DHT_MAX_RECORDS_PER_PEER: usize = 64;
 const DHT_MAX_TTL: Duration = Duration::from_secs(31 * 24 * 60 * 60);
 const DHT_MAX_PROVIDERS_PER_KEY: usize = 20;
@@ -71,11 +72,18 @@ const CONFIGURED_PEER_REDIAL_INTERVAL: Duration = Duration::from_secs(15);
 const GOSSIP_HEALTH_INTERVAL: Duration = Duration::from_secs(5);
 const GOSSIP_SUBSCRIPTION_GRACE: Duration = Duration::from_secs(30);
 pub(crate) const EVENT_CHANNEL_SIZE: usize = 1000;
+const BOOTSTRAP_EVENT_CHANNEL_SIZE: usize = 16;
 const CMD_CHANNEL_SIZE: usize = 1000;
 const LIBP2P_ESTABLISHED_PER_PEER_LIMIT_TEXT: &str = "established connections per peer";
 
 type GossipBehaviour =
     gossipsub::Behaviour<gossipsub::IdentityTransform, gossipsub::WhitelistSubscriptionFilter>;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NetworkRole {
+    Ciphernode,
+    Bootstrap,
+}
 
 /// Independent failure counters used to recover peer connectivity.
 ///
@@ -324,6 +332,7 @@ pub struct Libp2pNetInterface {
     status: NetworkStatus,
     /// Immutable identity and deployment policy for this process.
     network: NetworkPolicy,
+    role: NetworkRole,
 }
 
 impl Libp2pNetInterface {
@@ -349,10 +358,53 @@ impl Libp2pNetInterface {
         network: NetworkPolicy,
         application_event_capacity: usize,
     ) -> Result<Self> {
+        Self::with_role(
+            id,
+            peers,
+            udp_port,
+            network,
+            application_event_capacity,
+            NetworkRole::Ciphernode,
+        )
+    }
+
+    /// Start peer discovery and gossip forwarding without a protocol event consumer.
+    pub fn new_bootstrap(
+        id: Libp2pKeypair,
+        peers: Vec<String>,
+        udp_port: Option<u16>,
+        network: NetworkPolicy,
+    ) -> Result<Self> {
+        let peer_id = id.peer_id();
+        let peers = peers
+            .into_iter()
+            .filter(|address| {
+                address
+                    .parse::<Multiaddr>()
+                    .map(|address| address.iter().last() != Some(Protocol::P2p(peer_id)))
+                    .unwrap_or(true)
+            })
+            .collect();
+        Self::with_role(id, peers, udp_port, network, 1, NetworkRole::Bootstrap)
+    }
+
+    fn with_role(
+        id: Libp2pKeypair,
+        peers: Vec<String>,
+        udp_port: Option<u16>,
+        network: NetworkPolicy,
+        application_event_capacity: usize,
+        role: NetworkRole,
+    ) -> Result<Self> {
         if application_event_capacity == 0 {
             bail!("application event channel capacity must be greater than zero");
         }
-        let event_tx = NetEventSender::new(EVENT_CHANNEL_SIZE, application_event_capacity);
+        let event_capacity = if role == NetworkRole::Bootstrap {
+            BOOTSTRAP_EVENT_CHANNEL_SIZE
+        } else {
+            EVENT_CHANNEL_SIZE
+        };
+        let event_tx = NetEventSender::new(event_capacity, application_event_capacity);
         let (cmd_tx, cmd_rx) = mpsc::channel(CMD_CHANNEL_SIZE);
         let status = NetworkStatus::new(peers.len());
 
@@ -361,7 +413,7 @@ impl Libp2pNetInterface {
             .with_quic()
             .with_dns()
             .map_err(|e| anyhow::anyhow!("Failed to enable DNS: {e}"))?
-            .with_behaviour(|key| create_behaviour(key, &network))?
+            .with_behaviour(|key| create_behaviour(key, &network, role))?
             .build();
 
         let topic = gossipsub::IdentTopic::new(network.protocols().gossip_topic());
@@ -376,6 +428,7 @@ impl Libp2pNetInterface {
             cmd_rx,
             status,
             network,
+            role,
         })
     }
 
@@ -445,7 +498,8 @@ impl Libp2pNetInterface {
                 info!("  -> {}", peer);
             }
         }
-        tokio::spawn({
+        let mut dial_tasks = tokio::task::JoinSet::new();
+        dial_tasks.spawn({
             let event_tx = event_tx.clone();
             let cmd_tx = cmd_tx.clone();
             let peers = self.peers.clone();
@@ -542,6 +596,7 @@ impl Libp2pNetInterface {
                         &mut dht_records_by_peer,
                         &self.network,
                         &self.status,
+                        self.role,
                         event,
                     ).await {
                         Ok(_) => (),
@@ -639,6 +694,7 @@ fn redial_disconnected_configured_peers(
 fn create_behaviour(
     key: &Keypair,
     network: &NetworkPolicy,
+    role: NetworkRole,
 ) -> std::result::Result<NodeBehaviour, Box<dyn std::error::Error + Send + Sync + 'static>> {
     let peer_id = key.public().to_peer_id();
     let connection_limits = connection_limits::Behaviour::new(
@@ -653,7 +709,12 @@ fn create_behaviour(
     let identify = IdentifyBehaviour::new(
         IdentifyConfig::new(network.protocols().identify_protocol().into(), key.public())
             .with_agent_version(format!(
-                "interfold-ciphernode/{}",
+                "interfold-{}/{}",
+                if role == NetworkRole::Bootstrap {
+                    "bootstrap"
+                } else {
+                    "ciphernode"
+                },
                 env!("CARGO_PKG_VERSION")
             ))
             .with_interval(Duration::from_secs(60)),
@@ -705,7 +766,12 @@ fn create_behaviour(
         .set_query_timeout(Duration::from_secs(30))
         .set_record_filtering(StoreInserts::FilterBoth);
     let store_config = MemoryStoreConfig {
-        max_records: DHT_MAX_RECORDS,
+        // Bootstrap peers retain at most 200 MiB of document values (8 × 25 MiB).
+        max_records: if role == NetworkRole::Bootstrap {
+            BOOTSTRAP_MAX_RECORDS
+        } else {
+            DHT_MAX_RECORDS
+        },
         max_value_bytes: MAX_DHT_DOCUMENT_BYTES,
         max_providers_per_key: DHT_MAX_PROVIDERS_PER_KEY,
         max_provided_keys: DHT_MAX_RECORDS,
@@ -735,6 +801,7 @@ async fn process_swarm_event(
     dht_records_by_peer: &mut HashMap<libp2p::PeerId, HashSet<Vec<u8>>>,
     network: &NetworkPolicy,
     status: &NetworkStatus,
+    role: NetworkRole,
     event: SwarmEvent<NodeBehaviourEvent>,
 ) -> Result<()> {
     match event {
@@ -1119,6 +1186,15 @@ async fn process_swarm_event(
         )) => {
             if !peer_admission.is_admitted(&peer) {
                 debug!(%peer, "Ignoring a historical-sync request from a peer that has not passed Identify");
+                return Ok(());
+            }
+            if role == NetworkRole::Bootstrap {
+                let response = crate::bootstrap::history_response(request, network)?;
+                swarm
+                    .behaviour_mut()
+                    .request_response
+                    .send_response(channel, response)
+                    .map_err(|_| anyhow::anyhow!("bootstrap history response channel closed"))?;
                 return Ok(());
             }
             debug!(
@@ -1742,6 +1818,47 @@ mod tests {
     use libp2p::{Multiaddr, PeerId};
     use std::collections::HashSet;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn bootstrap_excludes_its_own_pinned_identity_from_configured_peers() -> anyhow::Result<()> {
+        use super::*;
+
+        let identity = Libp2pKeypair::generate();
+        let own_address = format!("/ip4/127.0.0.1/udp/9501/quic-v1/p2p/{}", identity.peer_id());
+        let other_address = format!("/ip4/127.0.0.1/udp/9502/quic-v1/p2p/{}", PeerId::random());
+        let unpinned_address = "/ip4/127.0.0.1/udp/9503/quic-v1".to_string();
+        let interface = Libp2pNetInterface::new_bootstrap(
+            identity,
+            vec![own_address, other_address.clone(), unpinned_address.clone()],
+            None,
+            NetworkPolicy::local_unrestricted(),
+        )?;
+        assert_eq!(interface.peers, [other_address, unpinned_address]);
+        Ok(())
+    }
+
+    #[test]
+    fn bootstrap_keeps_wire_protocols_and_bounds_the_document_cache() -> anyhow::Result<()> {
+        use super::*;
+
+        let network = NetworkPolicy::local_unrestricted();
+        let key = Keypair::generate_ed25519();
+        let mut bootstrap = create_behaviour(&key, &network, NetworkRole::Bootstrap)
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        let ciphernode = create_behaviour(&key, &network, NetworkRole::Ciphernode)
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        assert_eq!(
+            bootstrap.kademlia.protocol_names(),
+            ciphernode.kademlia.protocol_names()
+        );
+        let store = bootstrap.kademlia.store_mut();
+        for n in 0..8u8 {
+            store.put(Record::new(vec![n], vec![n]))?;
+        }
+        assert!(store.put(Record::new(vec![8], vec![8])).is_err());
+        assert_eq!(store.records().count(), 8);
+        Ok(())
+    }
 
     #[test]
     fn missing_gossip_subscription_becomes_stale_after_grace_period() {

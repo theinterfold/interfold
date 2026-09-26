@@ -12,6 +12,7 @@ use e3_daemon_server::{connect_daemon, run_on_daemon};
 use e3_utils::{colorize, Color};
 use tracing::info;
 
+mod bootstrap;
 mod ciphernode;
 mod cli;
 mod config;

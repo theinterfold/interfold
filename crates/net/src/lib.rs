@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 mod actors;
+mod bootstrap;
 mod cid;
 mod dialer;
 pub mod direct_requester;
