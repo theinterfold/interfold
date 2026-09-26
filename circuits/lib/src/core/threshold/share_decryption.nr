@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::math::commitments::{
-    compute_aggregated_shares_commitment, compute_ciphertext_commitment,
+    compute_aggregated_shares_commitment_checked, compute_ciphertext_commitment_checked,
     compute_threshold_decryption_share_commitment, compute_threshold_share_decryption_challenge,
 };
 use crate::math::helpers::flatten;
@@ -141,7 +141,7 @@ impl<let N: u32, let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let BIT_CT: u32, 
     /// Verifies that aggregated secret shares hash to expected_sk_commitment
     fn verify_agg_sk_commitment(self) {
         assert(
-            compute_aggregated_shares_commitment::<N, L, BIT_SK>(self.sk)
+            compute_aggregated_shares_commitment_checked::<N, L, BIT_SK>(self.sk)
                 == self.expected_sk_commitment,
             "S commitment mismatch",
         );
@@ -150,14 +150,14 @@ impl<let N: u32, let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let BIT_CT: u32, 
     /// Verifies that aggregated noise shares hash to expected_e_sm_commitment
     fn verify_agg_e_sm_commitment(self) {
         assert(
-            compute_aggregated_shares_commitment::<N, L, BIT_E_SM>(self.e_sm)
+            compute_aggregated_shares_commitment_checked::<N, L, BIT_E_SM>(self.e_sm)
                 == self.expected_e_sm_commitment,
             "E commitment mismatch",
         );
     }
 
     fn verify_ct_commitment(self) {
-        let computed = compute_ciphertext_commitment::<N, L, BIT_CT>(self.ct0, self.ct1);
+        let computed = compute_ciphertext_commitment_checked::<N, L, BIT_CT>(self.ct0, self.ct1);
         assert(computed == self.ct_commitment, "Ciphertext commitment mismatch");
     }
 
@@ -242,9 +242,13 @@ impl<let N: u32, let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let BIT_CT: u32, 
     /// attacks where malicious provers provide out-of-range values that could break the
     /// security properties of the Threshold scheme.
     ///
-    /// Note: `sk` / `e_sm` coefficients are not range-checked again here:
-    /// - `verify_agg_sk_commitment` / `verify_agg_e_sm_commitment` bind to the C4 aggregate commitments.
-    /// - C4 formed those aggregates from per-party shares verified against C2 in `dkg/share_decryption`.
+    /// Note: `sk` / `e_sm` coefficients carry no bound of their own here, and do not need one:
+    /// - `verify_agg_sk_commitment` / `verify_agg_e_sm_commitment` open the C4 aggregate commitments
+    ///   with the checked packing helper, which makes the opening unique and so forces the witness to
+    ///   equal the value C4 committed after `normalize_aggregated` reduced and centered it.
+    /// - Binding to the commitment alone was not enough: without the digit assert the same
+    ///   commitment opened to other coefficient vectors, so a prover could decrypt under a key share
+    ///   C4 never anchored.
     /// - This step only range-checks fresh quotient witnesses `r1`, `r2`.
     ///
     /// # Panics
