@@ -1,5 +1,38 @@
-import { NotFoundPage } from 'nextra-theme-docs'
+---
+title: 'Page not found'
+description:
+  'The page that you asked for is not at this address. Use the links on this page to find the
+  correct section of the Interfold docs.'
+---
 
-# 404: Page Not Found
+import { NotFoundPage } from 'nextra-theme-docs'
+import { LinkCard, LinkCards } from '@/components/ui'
+
+# Page not found
+
+The page that you asked for is not at this address. The link can be old, or the address can contain
+a typing error. Use the cards below to go to the main sections of the docs, or go to the
+[home page](/).
+
+<LinkCards min={230}>
+  <LinkCard title='Learn' href='/learn' icon='book' tag='Concepts'>
+    What an E3 is, how the architecture fits together, and the cryptography that protects the
+    inputs.
+  </LinkCard>
+  <LinkCard title='Build' href='/build/quick-start' icon='build' tag='Developers'>
+    Install the CLI, make a project from the template, and write an E3 program.
+  </LinkCard>
+  <LinkCard title='Run a ciphernode' href='/operate' icon='node' tag='Operators'>
+    Set up a ciphernode, bond FOLD, get tickets, and serve on committees.
+  </LinkCard>
+  <LinkCard title='Reference' href='/reference/cli' icon='terminal' tag='Lookup'>
+    CLI commands, node configuration, contract addresses, and a glossary of protocol terms.
+  </LinkCard>
+</LinkCards>
+
+## Report a broken link
+
+If a link on this site sent you here, report the broken link. The link below opens a new GitHub
+issue form that contains the address of this page.
 
 <NotFoundPage />
