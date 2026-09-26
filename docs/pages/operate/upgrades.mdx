@@ -239,7 +239,37 @@ If the startup fails with a release error, leave the node stopped. Install the r
 chain requires, or wait for the protocol upgrade to complete.
 
 For Docker, run the `interfold` commands of this procedure in a one-off container from the new
-image. Mount the same volumes, and use `--entrypoint interfold`.
+image, through the image entrypoint. Mount the same volumes, as in
+[Validate the state](/operate/running#validate-the-state). Do not use `--entrypoint interfold`.
+
+### Upgrade a node that serves an active E3
+
+Use this procedure when the new release keeps storage schema 7. The node keeps its state, so it
+keeps its key share for each active E3.
+
+1. Stop the node gracefully, and wait until the process exits. Do not send `SIGKILL`. For Docker,
+   run `docker stop --time 65 <container>`.
+2. Back up the complete data directory and the complete configuration directory.
+   `interfold config get db_file` shows a path in the data directory.
+   `interfold config get key_file` shows a path in the configuration directory. For Docker, back up
+   the complete volume. A container from an image earlier than v0.19.0 keeps its state inside the
+   container, not on the volume. For such a container, see
+   [Move state from an earlier image](/operate/running#move-state-from-an-earlier-image).
+3. Run `interfold node validate` with the new binary. Continue only if the report shows
+   `on-disk schema version 7 matches this binary` and ends with
+   `VALIDATION PASSED — state is intact and consistent.` The line `empty store will be initialized`
+   means that the command found no state at this location. In that case, do not start the new
+   binary.
+4. Start the new binary. Make sure that the log shows `Ciphernode release is accepted`.
+
+To roll back, stop the node, restore both directories from the backup, and start the previous
+binary.
+
+Never run `interfold node reset-data` or `interfold nodes purge` on a committee member. Both
+commands delete its key shares, and the chain cannot restore them.
+
+A v0.17.0 node uses storage schema 6. Schema 7 binaries, such as v0.18.0, halt on schema 6 state.
+Keep a v0.17.0 node on v0.17.0 until each E3 that it serves is complete or failed.
 
 ## Reset node state
 
@@ -263,6 +293,12 @@ manual delete of the data directory therefore also deletes the identity that hol
   A reset deletes the local key share of every E3 on this node. If the node is on a committee with
   an active E3, that E3 loses the share of this node. A reset is not a general repair tool.
 </Callout>
+
+`reset-data` refuses when the node holds key-share state for an E3 that it has not seen complete. It
+also refuses for an E3 that shows `Failed`, because the node records its own local failures that way
+while the E3 can continue on chain. The refusal lists each E3 and its stage, and the command deletes
+nothing. `--allow-active-e3s` overrides the refusal. Use it only after you confirm on chain that
+each listed E3 is complete or failed.
 
 <Steps>
 
