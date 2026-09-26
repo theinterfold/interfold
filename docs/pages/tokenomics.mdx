@@ -96,14 +96,14 @@ chart gives the unlock schedule of each allocation.
 
 The FOLD token contract (`InterfoldToken`) applies these rules to all FOLD:
 
-| Rule             | What the contract does                                                                                                 |
-| ---------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| Name and symbol  | `Interfold` and `FOLD`. An ERC-20 token with the ERC-20 Permit and ERC-20 Votes extensions.                            |
-| Supply cap       | `MAX_SUPPLY` is 1,200,000,000 FOLD. A mint above the cap reverts with `MaxSupplyExceeded`.                             |
-| Minting          | Only the admin and minter roles can mint, and only before the TGE. After the TGE, a mint reverts with `MintingClosed`. |
-| TGE              | Anyone can call `tge()` after the cooldown that follows the auction window. The call succeeds one time only.           |
-| Allocation locks | An allocation can have a lock policy with an unlock curve. A wallet can transfer only its unlocked balance.            |
-| Bonded FOLD      | Bonded FOLD counts toward the amount that a wallet with locked FOLD must keep. Locked FOLD can be bonded.              |
+| Rule             | What the contract does                                                                                                                           |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Name and symbol  | `Interfold` and `FOLD`. An ERC-20 token with the ERC-20 Permit and ERC-20 Votes extensions.                                                      |
+| Supply cap       | `MAX_SUPPLY` is 1,200,000,000 FOLD. A mint above the cap reverts with `MaxSupplyExceeded`.                                                       |
+| Minting          | Only the admin and minter roles can mint, and only before the TGE. After the TGE, a mint reverts with `MintingClosed`.                           |
+| TGE              | Anyone can call `tge()` after the cooldown that follows the auction window. The call succeeds one time only.                                     |
+| Allocation locks | An allocation can have a lock policy with an unlock curve. A wallet must keep its locked amount minus its bonded FOLD. It can transfer the rest. |
+| Bonded FOLD      | Locked FOLD can be bonded. Bonding moves FOLD to the bonding registry, and that FOLD still counts toward the lock.                               |
 
 For the TGE date and what changes after it, see [FOLD Transferability](/faq/transferability). For
 the address of the FOLD contract, see [Contract addresses](/reference/contracts).
