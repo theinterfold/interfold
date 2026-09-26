@@ -2,10 +2,10 @@
 
 Scripts to compile and time Nargo packages listed in `config.json` (`results_*/report.md`).
 
-|                       |                                                     |
-| --------------------- | --------------------------------------------------- |
-| **Circuits overview** | [README](../README.md)                              |
-| **Docs**              | [Noir Circuits](../../docs/pages/noir-circuits.mdx) |
+|                       |                                                           |
+| --------------------- | --------------------------------------------------------- |
+| **Circuits overview** | [README](../README.md)                                    |
+| **Docs**              | [Noir Circuits](../../docs/pages/build/noir-circuits.mdx) |
 
 ## Run
 

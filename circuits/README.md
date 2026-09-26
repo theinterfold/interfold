@@ -40,8 +40,8 @@ Workspace manifests also exist at `dkg/` and `threshold/` for grouped builds.
 The tables below map **`circuits/bin/` paths** to **circuit labels** (C0–C7) and **`CircuitName`**
 values used in Rust. Phases **P1–P4** are a product-level grouping of the same protocol steps; for
 how phases, commitments, and circuit IDs line up end to end, read
-[Cryptography](https://docs.theinterfold.com/cryptography) (source:
-[`docs/pages/cryptography.mdx`](../docs/pages/cryptography.mdx)).
+[Cryptography](https://docs.theinterfold.com/learn/cryptography) (source:
+[`docs/pages/learn/cryptography.mdx`](../docs/pages/learn/cryptography.mdx)).
 
 **C2** uses chunk proofs and recursive aggregation: `sk_share_computation_chunk` (**C2a**) and
 `esm_share_computation_chunk` (**C2b**) prove the Shamir-share computation one coefficient chunk at a
@@ -102,14 +102,14 @@ pnpm tsx scripts/build-circuits.ts   # compile circuits, verification keys, arti
 Pin **nargo** and **bb** to the versions in `crates/zk-prover` and `versions.json`. For local work,
 **`interfold noir setup`** installs a toolchain that lines up with the prover and the artifacts CI
 produces. Install options and CLI flags are on the
-[Noir Circuits](https://docs.theinterfold.com/noir-circuits) page
-([`docs/pages/noir-circuits.mdx`](../docs/pages/noir-circuits.mdx)).
+[Noir Circuits](https://docs.theinterfold.com/build/noir-circuits) page
+([`docs/pages/build/noir-circuits.mdx`](../docs/pages/build/noir-circuits.mdx)).
 
 ## Related documentation
 
 | Topic                                                                  | Location                                                                                                                                |
 | ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| Cryptographic model (PV-TBFV, phases P1–P4, circuit identifiers C0–C7) | [Cryptography](https://docs.theinterfold.com/cryptography) · [source](../docs/pages/cryptography.mdx)                                   |
-| Toolchain, repository layout, `interfold noir`, compilation            | [Noir Circuits](https://docs.theinterfold.com/noir-circuits) · [source](../docs/pages/noir-circuits.mdx)                                |
+| Cryptographic model (PV-TBFV, phases P1–P4, circuit identifiers C0–C7) | [Cryptography](https://docs.theinterfold.com/learn/cryptography) · [source](../docs/pages/learn/cryptography.mdx)                       |
+| Toolchain, repository layout, `interfold noir`, compilation            | [Noir Circuits](https://docs.theinterfold.com/build/noir-circuits) · [source](../docs/pages/build/noir-circuits.mdx)                    |
 | Rust types (`ProofType`, `CircuitName`)                                | [`signed_proof.rs`](../crates/events/src/interfold_event/signed_proof.rs) · [`proof.rs`](../crates/events/src/interfold_event/proof.rs) |
 | Protocol execution (actors, events, proof ordering)                    | [`agent/flow-trace/04_DKG_AND_COMPUTATION.md`](../agent/flow-trace/04_DKG_AND_COMPUTATION.md)                                           |

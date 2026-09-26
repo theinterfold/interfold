@@ -510,7 +510,7 @@ This repo created under the [LGPL-3.0+ license](LICENSE.md).
 [license-badge]: https://img.shields.io/badge/License-LGPLv3.0-blue.svg
 [docs]: https://docs.theinterfold.com
 [docs-badge]: https://img.shields.io/badge/Documentation-blue.svg
-[quick-start]: https://docs.theinterfold.com/quick-start
+[quick-start]: https://docs.theinterfold.com/build/quick-start
 [crisp]: https://docs.theinterfold.com/CRISP/introduction
 [telegram]: https://t.me/+raYAZgrwgOw2ODJh
 [contributing]: CONTRIBUTING.md

@@ -514,7 +514,7 @@ Generated verifiers are automatically:
 ## Guest provenance
 
 Two commands cover the RISC Zero compute guest. The full reviewer-facing procedure is
-`docs/pages/verifying-the-compute-provider.mdx`.
+`docs/pages/build/e3-program/verify-compute-provider.mdx`.
 
 ### `generate-provenance-manifest.ts`
 

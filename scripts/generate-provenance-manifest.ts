@@ -23,7 +23,7 @@
  * The manifest is a record, not a check: it describes what was built and where it was deployed.
  * Nothing in this repository verifies that the recorded image ID is the one the committed sources
  * produce — that takes a reproducible Docker rebuild of the guest, and the reviewer-facing
- * procedure is documented at docs/pages/verifying-the-compute-provider.mdx.
+ * procedure is documented at docs/pages/build/e3-program/verify-compute-provider.mdx.
  */
 
 import { execFileSync } from 'child_process'
@@ -330,7 +330,7 @@ async function main() {
     console.error(
       `\n⚠️  incomplete manifest. Unresolved: ${unresolved.join(', ')}\n` +
         `   An incomplete manifest records an unfinished verification, not a passing result.\n` +
-        `   See docs/pages/verifying-the-compute-provider.mdx.`,
+        `   See docs/pages/build/e3-program/verify-compute-provider.mdx.`,
     )
   }
 }

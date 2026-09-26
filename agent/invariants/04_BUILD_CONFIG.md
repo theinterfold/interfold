@@ -31,8 +31,8 @@ every section.
   `complete: false` with the unresolved fields rather than emitting a partial record that reads as
   verified. The ELF SHA-256 is **not** the image ID: SHA-256 checks binary integrity, the image ID
   is computed from the loaded memory image. Procedure:
-  `docs/pages/verifying-the-compute-provider.mdx`. **Gap:** the release workflow does not generate
-  or attach this manifest (`.github/workflows/releases.yml`); a maintainer runs
+  `docs/pages/build/e3-program/verify-compute-provider.mdx`. **Gap:** the release workflow does not
+  generate or attach this manifest (`.github/workflows/releases.yml`); a maintainer runs
   `pnpm provenance:manifest` by hand.
 - Upgradeable-contract storage baselines are committed and CI-gated (missing baselines, compiler
   drift, layout incompatibility, bad gap consumption all fail); baseline creation is an explicit

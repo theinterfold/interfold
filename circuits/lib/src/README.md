@@ -7,8 +7,8 @@ BFV** constraint logic: polynomials, commitments, SAFE hashing, modular arithmet
 For **which** binary package maps to **C0–C7** and **`CircuitName`**, see the
 [**circuit package index**](../../README.md#circuit-package-index) in
 [`circuits/README.md`](../../README.md); for protocol phases and the PV-TBFV picture, read
-[Cryptography](https://docs.theinterfold.com/cryptography)
-([`docs/pages/cryptography.mdx`](../../../docs/pages/cryptography.mdx)).
+[Cryptography](https://docs.theinterfold.com/learn/cryptography)
+([`docs/pages/learn/cryptography.mdx`](../../../docs/pages/learn/cryptography.mdx)).
 
 ```text
 lib/src/
@@ -57,8 +57,8 @@ preset defines `N`, `L`, `QIS`, bounds, `PARITY_MATRIX`, per-circuit `Configs`, 
 
 ## Related documentation
 
-| Topic                                          | Location                                                                                                       |
-| ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| Binary packages, `CircuitName`, build and test | [`circuits/README.md`](../../README.md)                                                                        |
-| Phases, PV-TBFV, circuit identifiers           | [Cryptography](https://docs.theinterfold.com/cryptography) · [source](../../../docs/pages/cryptography.mdx)    |
-| Toolchain, `interfold noir`, compile scripts   | [Noir Circuits](https://docs.theinterfold.com/noir-circuits) · [source](../../../docs/pages/noir-circuits.mdx) |
+| Topic                                          | Location                                                                                                                   |
+| ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Binary packages, `CircuitName`, build and test | [`circuits/README.md`](../../README.md)                                                                                    |
+| Phases, PV-TBFV, circuit identifiers           | [Cryptography](https://docs.theinterfold.com/learn/cryptography) · [source](../../../docs/pages/learn/cryptography.mdx)    |
+| Toolchain, `interfold noir`, compile scripts   | [Noir Circuits](https://docs.theinterfold.com/build/noir-circuits) · [source](../../../docs/pages/build/noir-circuits.mdx) |
