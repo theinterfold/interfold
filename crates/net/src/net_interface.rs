@@ -24,6 +24,7 @@ use crate::{
     keypair::Libp2pKeypair,
     net_interface_handle::{NetEventSender, NetInterfaceHandle},
     peer_admission::PeerAdmission,
+    seen_messages::SeenIds,
     NetworkPolicy, NetworkStatus,
 };
 use anyhow::{bail, Context, Result};
@@ -61,6 +62,20 @@ use tokio::{select, sync::mpsc, time::MissedTickBehavior};
 use tracing::{debug, error, info, trace, warn};
 
 const MAX_KADEMLIA_PAYLOAD_BYTES: usize = 26 * 1024 * 1024;
+/// Kademlia timeout for each query phase (closest-peer lookup, then the put or get).
+const DHT_QUERY_TIMEOUT: Duration = Duration::from_secs(60);
+/// Time allowed for one Kademlia request on one stream. A put sends the whole document, up to
+/// 20 at once, so the library default of 10 s fails every put on a slow uplink.
+const DHT_SUBSTREAM_TIMEOUT: Duration = Duration::from_secs(60);
+/// gossipsub heartbeat. The library's tick-based defaults (message history, gossip windows,
+/// graft timing) assume one second.
+const GOSSIP_HEARTBEAT: Duration = Duration::from_secs(1);
+/// How long, and for how many IDs, the node ignores a gossip message from an admitted peer that it
+/// has already handled. This covers copies that return after the gossipsub duplicate cache (60 s)
+/// has expired. The duplicate cache keeps its default: it also holds messages that arrived before
+/// the sender was admitted, and a longer cache would delay a later copy of such a message.
+const SEEN_GOSSIP_TTL: Duration = Duration::from_secs(6 * 60 * 60);
+const SEEN_GOSSIP_CAPACITY: usize = 100_000;
 const DHT_MAX_RECORDS: usize = 1024;
 const DHT_MAX_RECORDS_PER_PEER: usize = 64;
 const DHT_MAX_TTL: Duration = Duration::from_secs(31 * 24 * 60 * 60);
@@ -391,6 +406,7 @@ impl Libp2pNetInterface {
         let mut peer_failures = PeerConnectionFailures::new();
         let mut peer_admission = PeerAdmission::default();
         let mut dht_records_by_peer: HashMap<libp2p::PeerId, HashSet<Vec<u8>>> = HashMap::new();
+        let mut seen_gossip = SeenIds::new(SEEN_GOSSIP_TTL, SEEN_GOSSIP_CAPACITY);
         let mut admission_tick = tokio::time::interval(Duration::from_secs(5));
         admission_tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
         let mut configured_peer_tick = tokio::time::interval(CONFIGURED_PEER_REDIAL_INTERVAL);
@@ -540,6 +556,7 @@ impl Libp2pNetInterface {
                         &mut peer_admission,
                         &mut configured_peers,
                         &mut dht_records_by_peer,
+                        &mut seen_gossip,
                         &self.network,
                         &self.status,
                         event,
@@ -660,7 +677,7 @@ fn create_behaviour(
     );
 
     let gossipsub_config = gossipsub::ConfigBuilder::default()
-        .heartbeat_interval(Duration::from_secs(10))
+        .heartbeat_interval(GOSSIP_HEARTBEAT)
         .max_transmit_size(MAX_GOSSIP_BYTES)
         .validation_mode(gossipsub::ValidationMode::Strict)
         .validate_messages()
@@ -700,10 +717,23 @@ fn create_behaviour(
         request_response_config,
     );
     let mut config = KademliaConfig::new(network.protocols().kademlia_protocol());
+    // New routing-table entries come only from the filtered `add_address` calls for admitted
+    // peers. Automatic inserts would store the dialed address of every connection, including
+    // loopback addresses between nodes on one host, and FIND_NODE responses would pass those to
+    // remote peers, which then dial themselves. Kademlia still adds a dialed address to an existing
+    // entry; `RoutingUpdated` removes loopback addresses again.
+    //
+    // The library's record jobs are off. The replication job would put every stored record, which
+    // includes every peer's DKG documents, to 20 peers each hour, and the publication job would
+    // republish this node's records. The document publisher refreshes its own documents instead.
     config
         .set_max_packet_size(MAX_KADEMLIA_PAYLOAD_BYTES)
-        .set_query_timeout(Duration::from_secs(30))
-        .set_record_filtering(StoreInserts::FilterBoth);
+        .set_query_timeout(DHT_QUERY_TIMEOUT)
+        .set_substreams_timeout(DHT_SUBSTREAM_TIMEOUT)
+        .set_record_filtering(StoreInserts::FilterBoth)
+        .set_kbucket_inserts(kad::BucketInserts::Manual)
+        .set_replication_interval(None)
+        .set_publication_interval(None);
     let store_config = MemoryStoreConfig {
         max_records: DHT_MAX_RECORDS,
         max_value_bytes: MAX_DHT_DOCUMENT_BYTES,
@@ -733,6 +763,7 @@ async fn process_swarm_event(
     peer_admission: &mut PeerAdmission,
     configured_peers: &mut [ConfiguredPeer],
     dht_records_by_peer: &mut HashMap<libp2p::PeerId, HashSet<Vec<u8>>>,
+    seen_gossip: &mut SeenIds<gossipsub::MessageId>,
     network: &NetworkPolicy,
     status: &NetworkStatus,
     event: SwarmEvent<NodeBehaviourEvent>,
@@ -805,6 +836,24 @@ async fn process_swarm_event(
                 } = error
                 {
                     let remote_addr = address.clone();
+                    if obtained == *swarm.local_peer_id() {
+                        // Another peer advertised an address of ours (usually loopback) for
+                        // `failed_peer`. Drop that address only; the peer itself is not at fault.
+                        swarm
+                            .behaviour_mut()
+                            .kademlia
+                            .remove_address(failed_peer, &strip_peer_id(remote_addr.clone()));
+                        debug!(
+                            %failed_peer,
+                            %remote_addr,
+                            "Dialed this node through an address advertised for another peer; removed the address"
+                        );
+                        event_tx.send(NetEvent::OutgoingConnectionError {
+                            connection_id,
+                            error: Arc::new(error),
+                        })?;
+                        return Ok(());
+                    }
                     let mismatch_count =
                         peer_failures.identity_mismatch.record_failure(failed_peer);
                     peer_failures.quarantine_identity(failed_peer);
@@ -899,11 +948,23 @@ async fn process_swarm_event(
 
         SwarmEvent::Behaviour(NodeBehaviourEvent::Kademlia(kad::Event::RoutingUpdated {
             peer,
+            addresses,
             ..
         })) => {
             if peer_failures.is_quarantined(&peer) {
                 swarm.behaviour_mut().kademlia.remove_peer(&peer);
                 debug!(%peer, "Ignored a quarantined Kademlia routing update");
+            } else if should_filter_loopback(swarm) {
+                // Kademlia adds a dialed address to an existing entry without the filter that
+                // `add_address` applies. Remote peers would receive a loopback address in
+                // FIND_NODE responses and dial themselves.
+                for address in addresses.iter().filter(|address| is_loopback_addr(address)) {
+                    swarm
+                        .behaviour_mut()
+                        .kademlia
+                        .remove_address(&peer, address);
+                    debug!(%peer, %address, "Removed a loopback address from the routing table");
+                }
             }
         }
 
@@ -1044,7 +1105,19 @@ async fn process_swarm_event(
             message,
         })) => {
             trace!("Got message with id: {id} from peer: {peer_id}");
-            if !peer_admission.is_admitted(&peer_id) {
+            if peer_admission.is_admitted(&peer_id)
+                && seen_gossip.check_and_record(&id, Instant::now())
+            {
+                swarm
+                    .behaviour_mut()
+                    .gossipsub
+                    .report_message_validation_result(
+                        &id,
+                        &peer_id,
+                        gossipsub::MessageAcceptance::Ignore,
+                    );
+                trace!(%peer_id, %id, "Ignored a gossip message this node already handled");
+            } else if !peer_admission.is_admitted(&peer_id) {
                 swarm
                     .behaviour_mut()
                     .gossipsub

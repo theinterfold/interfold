@@ -263,6 +263,49 @@ impl NetCommand {
         }
     }
 
+    /// Short description for logs and errors. It never formats payload bytes, which can be
+    /// megabytes for DHT documents.
+    pub fn summary(&self) -> String {
+        use NetCommand as N;
+        match self {
+            N::GossipPublish {
+                topic,
+                correlation_id,
+                data,
+                ..
+            } => {
+                let kind = match data {
+                    GossipData::GossipBytes(bytes) => format!("event, {} bytes", bytes.len()),
+                    GossipData::DocumentPublishedNotification(_) => "document notification".into(),
+                };
+                format!("GossipPublish {{ topic: {topic}, correlation_id: {correlation_id}, {kind} }}")
+            }
+            N::DhtPutRecord {
+                correlation_id,
+                key,
+                value,
+                ..
+            } => format!(
+                "DhtPutRecord {{ correlation_id: {correlation_id}, key: {key:?}, value_bytes: {} }}",
+                value.size()
+            ),
+            N::DhtGetRecord {
+                correlation_id,
+                key,
+            } => format!("DhtGetRecord {{ correlation_id: {correlation_id}, key: {key:?} }}"),
+            N::DhtRemoveRecords { keys } => format!("DhtRemoveRecords {{ keys: {} }}", keys.len()),
+            N::OutgoingRequest(OutgoingRequest { correlation_id, .. }) => {
+                format!("OutgoingRequest {{ correlation_id: {correlation_id} }}")
+            }
+            N::Dial(_) => "Dial".into(),
+            N::ConfiguredPeerAdmitted { peer_id, .. } => {
+                format!("ConfiguredPeerAdmitted {{ peer_id: {peer_id} }}")
+            }
+            N::Shutdown => "Shutdown".into(),
+            N::IncomingResponse(_) => "IncomingResponse".into(),
+        }
+    }
+
     pub fn correlation_id(&self) -> Option<CorrelationId> {
         use NetCommand as N;
         match self {
@@ -500,19 +543,19 @@ where
 
     // Extract correlation_id from command
     let Some(id) = command.correlation_id() else {
-        return Err(anyhow::anyhow!(format!(
-            "Command must have a correlation_id but this does not: {:?}",
-            command
-        )));
+        return Err(anyhow::anyhow!(
+            "Command must have a correlation_id but this does not: {}",
+            command.summary()
+        ));
     };
 
-    // We don't have access to this later and we cannot clone command
-    let debug_cmd = format!("{:?}", command);
+    // The command moves into the channel, so keep its description for the timeout error.
+    let command_summary = command.summary();
 
     // Send the command to Libp2pNetInterface
     trace!(
-        "call_and_await_response: sending command {:?} with timeout {:?}",
-        command,
+        "call_and_await_response: sending command {} with timeout {:?}",
+        command_summary,
         timeout
     );
     net_cmds.send(command).await?;
@@ -541,7 +584,7 @@ where
         }
     })
     .await
-    .map_err(|_| anyhow::anyhow!(format!("Timed out waiting for response from {}", debug_cmd)))?;
+    .map_err(|_| anyhow::anyhow!("Timed out waiting for response from {command_summary}"))?;
     result
 }
 
@@ -584,11 +627,28 @@ pub fn estimate_hashmap_size<K, V>(map: &HashMap<K, V>) -> usize {
 #[cfg(test)]
 mod tests {
     use e3_events::{
-        EventConstructorWithTimestamp, EventSource, InterfoldEvent, Sequenced, TestEvent,
-        Unsequenced,
+        CorrelationId, EventConstructorWithTimestamp, EventSource, InterfoldEvent, Sequenced,
+        TestEvent, Unsequenced,
     };
+    use e3_utils::ArcBytes;
 
-    use super::GossipData;
+    use super::{GossipData, NetCommand};
+    use crate::ContentHash;
+
+    #[test]
+    fn command_summary_reports_sizes_without_payload_bytes() {
+        let value = ArcBytes::from_bytes(&vec![0x5a; 1_776_213]);
+        let key = ContentHash::from_content(&value);
+        let summary = NetCommand::DhtPutRecord {
+            correlation_id: CorrelationId::new(),
+            expires: None,
+            value,
+            key,
+        }
+        .summary();
+        assert!(summary.contains("value_bytes: 1776213"), "{summary}");
+        assert!(summary.len() < 256, "{summary}");
+    }
 
     #[test]
     fn test_interfold_event_gossip_lifecycle() -> anyhow::Result<()> {

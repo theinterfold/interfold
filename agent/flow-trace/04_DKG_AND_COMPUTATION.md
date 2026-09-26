@@ -515,9 +515,12 @@ ends that phase and clears its local failover skips. The later C5 public-key agg
 new failover budget only after its own inputs are durable.
 
 The network actor keeps the latest local Ready and Roster message for each open E3. It sends the
-same signed protocol event in a fresh transport envelope every 30 seconds. The fresh delivery ID
-bypasses the libp2p duplicate cache. The stable embedded event ID preserves EventBus deduplication.
-Key publication or a terminal E3 removes the cached messages.
+same signed protocol event in a fresh transport envelope 30 seconds after the message is cached,
+then doubles the wait up to 5 minutes, with up to 10 % jitter. A newer message for the same E3,
+party, and kind replaces the cached one and restarts the schedule. The fresh delivery ID bypasses
+the libp2p duplicate cache. The stable embedded event ID preserves EventBus deduplication, and a
+receiver does not store a copy of an event that it has already stored. Key publication or a terminal
+E3 removes the cached messages. A cached message is also dropped 8 hours after it was cached.
 
 Dealer identity binds the E3, proof type, circuit, and public signals. It excludes randomized proof
 bytes, so replaying the same valid statement cannot create a second dealer identity. Replacing a
@@ -1118,6 +1121,9 @@ InterfoldSolReader decodes CiphertextOutputPublished event
     │     node: address
     │   }
     │   → Broadcast via P2P to committee members for buffering
+    │   → The network actor re-sends the node's own share in a fresh transport envelope
+    │     60 seconds later, then doubles the wait up to 10 minutes, until the E3 fails or
+    │     completes (at most 8 hours). Receivers keep the first share from each party.
     │
     └─ State: Decrypting → Completed
 ```
@@ -1546,14 +1552,23 @@ intent.
 
 The document publisher rebuilds its active outbox and received-document set from the durable event
 log before network effects start. Document publication and receipt events use their E3's chain
-aggregate. Recovery scans one event at a time to bound memory. During DKG, it repeats DHT
-publication and gossip announcements after transient failures, including when no peer subscribed to
-the topic at the first attempt. A receiver holds early notifications until its committee slot is
-known, retries failed DHT reads, and suppresses duplicate documents. A canonical `KeyPublished`
-stage stops DKG-document announcements and prunes local DHT records. C4 `DecryptionKeyShared` is a
-DKG document; later `DecryptionshareCreated` events use event gossip, not the DHT document path.
-Recovery retains the DKG closure across restart. A local `E3RequestComplete` does not mean that the
-contract has reached a terminal stage.
+aggregate. Recovery scans one event at a time to bound memory. During DKG, the publisher stores each
+document on the DHT once and then gossips a small notification that names it. It announces the
+document again 30 seconds later, doubling the wait up to 5 minutes; these announcements send only
+the notification. The publisher stores the full document again only after 30 minutes. It starts one
+document replication at a time, and each put has two attempts. A put returns after one peer stores
+the record, so its uploads to other peers can overlap the next replication. The Kademlia library's
+own hourly replication of stored records is disabled. A failed put or announcement is retried after
+15 seconds, doubling up to 5 minutes, including when no peer subscribed to the topic at the first
+attempt. A failed announcement does not upload the document again. A receiver holds early
+notifications until its committee slot is known. It fetches documents outside the network ingress
+loop, with at most 8 fetches in flight and at most 512 documents waiting. A failed fetch is retried
+with the same back-off, up to 6 attempts; a later announcement queues the document again. It
+suppresses duplicate documents. A canonical `KeyPublished` stage stops DKG-document announcements
+and prunes local DHT records. C4 `DecryptionKeyShared` is a DKG document; later
+`DecryptionshareCreated` events use event gossip, not the DHT document path. Recovery retains the
+DKG closure across restart. A local `E3RequestComplete` does not mean that the contract has reached
+a terminal stage.
 
 The CRISP server writes its request record at `E3Requested` and writes the generic E3 record only
 after the indexer verifies the committee public key against the on-chain commitment. Current-round

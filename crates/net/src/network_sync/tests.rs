@@ -10,12 +10,12 @@ use crate::{
     direct_responder::ChannelType,
     events::{IncomingRequest, NetCommand},
 };
-use actix::{Actor, Context as ActixContext, Handler};
+use actix::{Actor, Context as ActixContext, Handler, Message, MessageResult};
 use e3_ciphernode_builder::EventSystem;
 use e3_config::NetworkProfile;
 use e3_events::{
-    DkgCoordination, DkgCoordinationKind, DkgDealer, E3id, EventSource, InterfoldEvent,
-    KeyshareCreated, TestEvent, Unsequenced,
+    AggregateConfig, DecryptionshareCreated, DkgCoordination, DkgCoordinationKind, DkgDealer, E3id,
+    EventSource, InterfoldEvent, KeyshareCreated, TestEvent, Unsequenced,
 };
 use e3_utils::ArcBytes;
 use tokio::sync::{broadcast, mpsc, mpsc::UnboundedSender};
@@ -290,7 +290,14 @@ async fn periodic_dkg_reannouncement_uses_the_latest_ready_superset() {
         manager.remember_dkg_coordination(event, &message);
     }
 
-    manager.reannounce_dkg_coordination();
+    let start = Instant::now();
+    manager.reannounce_due(start);
+    assert!(
+        rx.try_recv().is_err(),
+        "nothing is due before the first interval"
+    );
+
+    manager.reannounce_due(start + DKG_REANNOUNCE_BASE);
     let command = tokio::time::timeout(Duration::from_secs(1), rx.recv())
         .await
         .expect("timed out waiting for DKG re-announcement")
@@ -310,7 +317,13 @@ async fn periodic_dkg_reannouncement_uses_the_latest_ready_superset() {
     };
     assert_eq!(message.dealers.len(), 3);
 
-    manager.reannounce_dkg_coordination();
+    manager.reannounce_due(start + DKG_REANNOUNCE_BASE + Duration::from_secs(1));
+    assert!(
+        rx.try_recv().is_err(),
+        "the second re-send waits for the backoff"
+    );
+
+    manager.reannounce_due(start + DKG_REANNOUNCE_BASE * 4);
     let second = tokio::time::timeout(Duration::from_secs(1), rx.recv())
         .await
         .expect("timed out waiting for the second DKG re-announcement")
@@ -325,6 +338,187 @@ async fn periodic_dkg_reannouncement_uses_the_latest_ready_superset() {
     assert!(second_delivery_id.is_some());
     assert_ne!(first_delivery_id, second_delivery_id);
     assert!(rx.try_recv().is_err());
+}
+
+fn local_decryption_share(e3_id: &E3id, party_id: u64) -> (InterfoldEvent, DecryptionshareCreated) {
+    let share = DecryptionshareCreated {
+        party_id,
+        decryption_share: vec![ArcBytes::from_bytes(&[7; 16])],
+        e3_id: e3_id.clone(),
+        node: "node-1".to_string(),
+        signed_decryption_proofs: vec![],
+    };
+    let event = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+        share.clone().into(),
+        None,
+        20,
+        None,
+        EventSource::Local,
+    )
+    .into_sequenced(3);
+    (event, share)
+}
+
+fn ready_manager() -> (NetSyncManager, mpsc::Receiver<NetCommand>) {
+    let system = EventSystem::new().with_fresh_bus();
+    let bus = system.handle().unwrap().enable("test");
+    let (tx, rx) = mpsc::channel::<NetCommand>(100);
+    let (evt_tx, _evt_rx) = broadcast::channel::<NetEvent>(100);
+    let evt_rx = NetEventSubscriber::from(&evt_tx);
+    let eventstore = NoopEventStore.start().recipient();
+    let mut manager = NetSyncManager::new(
+        &bus,
+        &tx,
+        &evt_rx,
+        eventstore,
+        "my-topic",
+        NetworkPolicy::local_unrestricted(),
+    );
+    manager.net_ready = true;
+    (manager, rx)
+}
+
+async fn next_gossiped_share(rx: &mut mpsc::Receiver<NetCommand>) -> DecryptionshareCreated {
+    let command = tokio::time::timeout(Duration::from_secs(1), rx.recv())
+        .await
+        .expect("timed out waiting for a re-announcement")
+        .expect("network command channel closed");
+    let NetCommand::GossipPublish {
+        data,
+        delivery_id: Some(_),
+        ..
+    } = command
+    else {
+        panic!("expected a fresh GossipPublish, got {command:?}");
+    };
+    let event: InterfoldEvent<Unsequenced> = data.try_into().unwrap();
+    let InterfoldEventData::DecryptionshareCreated(share) = event.into_data() else {
+        panic!("expected DecryptionshareCreated");
+    };
+    share
+}
+
+/// Lists the messages that a running manager will re-send.
+#[derive(Message)]
+#[rtype(result = "Vec<AnnouncementKey>")]
+struct ScheduledAnnouncements;
+
+impl Handler<ScheduledAnnouncements> for NetSyncManager {
+    type Result = MessageResult<ScheduledAnnouncements>;
+    fn handle(&mut self, _: ScheduledAnnouncements, _: &mut Self::Context) -> Self::Result {
+        MessageResult(self.announcements.keys().cloned().collect())
+    }
+}
+
+#[actix::test]
+async fn a_published_decryption_share_is_scheduled_for_resending() {
+    let system = EventSystem::new()
+        .with_fresh_bus()
+        .with_aggregate_config(AggregateConfig::new(HashMap::from([(
+            AggregateId::new(1),
+            Duration::ZERO,
+        )])));
+    let bus = system.handle().unwrap().enable("test");
+    let (tx, _rx) = mpsc::channel::<NetCommand>(100);
+    let (evt_tx, _evt_rx) = broadcast::channel::<NetEvent>(100);
+    let manager = NetSyncManager::setup(
+        &bus,
+        &tx,
+        &NetEventSubscriber::from(&evt_tx),
+        NoopEventStore.start().recipient(),
+        "my-topic",
+        NetworkPolicy::local_unrestricted(),
+    );
+    let e3_id = E3id::new("decrypting", 1);
+    let (_, share) = local_decryption_share(&e3_id, 4);
+    bus.publish_without_context(share).unwrap();
+
+    let expected = AnnouncementKey::DecryptionShare(e3_id, 4);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let scheduled = manager.send(ScheduledAnnouncements).await.unwrap();
+        if scheduled.contains(&expected) {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the manager did not receive the published share: {scheduled:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+#[actix::test]
+async fn own_decryption_share_is_resent_with_backoff_until_the_e3_ends() {
+    let (mut manager, mut rx) = ready_manager();
+    let e3_id = E3id::new("decrypting", 1);
+    let (event, share) = local_decryption_share(&e3_id, 4);
+    manager.remember_decryption_share(event, &share);
+
+    let start = Instant::now();
+    manager.reannounce_due(start + SHARE_REANNOUNCE_BASE);
+    assert_eq!(next_gossiped_share(&mut rx).await, share);
+    manager.reannounce_due(start + SHARE_REANNOUNCE_BASE * 2);
+    assert!(
+        rx.try_recv().is_err(),
+        "the second re-send waits for the backoff"
+    );
+    manager.reannounce_due(start + SHARE_REANNOUNCE_BASE * 4);
+    assert_eq!(next_gossiped_share(&mut rx).await, share);
+
+    manager.forget_e3_announcements(&e3_id);
+    manager.reannounce_due(start + Duration::from_secs(60 * 60));
+    assert!(rx.try_recv().is_err(), "a finished E3 is not re-sent");
+}
+
+#[actix::test]
+async fn key_publication_keeps_decryption_shares_and_drops_dkg_messages() {
+    let (mut manager, mut rx) = ready_manager();
+    let e3_id = E3id::new("mixed", 1);
+    let (event, share) = local_decryption_share(&e3_id, 2);
+    manager.remember_decryption_share(event, &share);
+    let ready = DkgCoordination {
+        e3_id: e3_id.clone(),
+        interfold_address: Default::default(),
+        party_id: 2,
+        kind: DkgCoordinationKind::Ready,
+        dealers: vec![],
+        signature: ArcBytes::from_bytes(&[]),
+    };
+    let ready_event = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+        ready.clone().into(),
+        None,
+        21,
+        None,
+        EventSource::Local,
+    )
+    .into_sequenced(4);
+    manager.remember_dkg_coordination(ready_event, &ready);
+
+    manager.forget_dkg_coordination(&e3_id);
+    manager.reannounce_due(Instant::now() + SHARE_REANNOUNCE_BASE);
+    assert_eq!(next_gossiped_share(&mut rx).await, share);
+    assert!(rx.try_recv().is_err(), "the DKG message was forgotten");
+}
+
+#[actix::test]
+async fn remote_decryption_shares_and_expired_messages_are_not_resent() {
+    let (mut manager, mut rx) = ready_manager();
+    let e3_id = E3id::new("remote", 1);
+    let (event, share) = local_decryption_share(&e3_id, 3);
+    manager.remember_decryption_share(event.clone().with_source(EventSource::Net), &share);
+    manager.reannounce_due(Instant::now() + SHARE_REANNOUNCE_BASE);
+    assert!(
+        rx.try_recv().is_err(),
+        "a peer's share is not re-sent by this node"
+    );
+
+    manager.remember_decryption_share(event, &share);
+    manager.reannounce_due(Instant::now() + REANNOUNCE_LIFETIME);
+    assert!(
+        rx.try_recv().is_err(),
+        "a message past its lifetime is dropped"
+    );
 }
 
 #[actix::test]

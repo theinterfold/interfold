@@ -9,8 +9,8 @@ impl Actor for NetSyncManager {
     type Context = actix::Context<Self>;
     fn started(&mut self, ctx: &mut Self::Context) {
         ctx.set_mailbox_capacity(MAILBOX_LIMIT);
-        ctx.run_interval(DKG_COORDINATION_REANNOUNCE_INTERVAL, |this, _| {
-            this.reannounce_dkg_coordination();
+        ctx.run_interval(REANNOUNCE_TICK, |this, _| {
+            this.reannounce_due(Instant::now());
         });
     }
 }
@@ -33,6 +33,9 @@ impl Handler<InterfoldEvent> for NetSyncManager {
             InterfoldEventData::DkgCoordination(data) => {
                 self.remember_dkg_coordination(original, &data);
             }
+            InterfoldEventData::DecryptionshareCreated(data) => {
+                self.remember_decryption_share(original, &data);
+            }
             InterfoldEventData::E3StageChanged(data) => {
                 if matches!(
                     data.new_stage,
@@ -43,12 +46,15 @@ impl Handler<InterfoldEvent> for NetSyncManager {
                 ) {
                     self.forget_dkg_coordination(&data.e3_id);
                 }
+                if data.new_stage.is_terminal() {
+                    self.forget_e3_announcements(&data.e3_id);
+                }
             }
             InterfoldEventData::E3Failed(data) => {
-                self.forget_dkg_coordination(&data.e3_id);
+                self.forget_e3_announcements(&data.e3_id);
             }
             InterfoldEventData::E3RequestComplete(data) => {
-                self.forget_dkg_coordination(&data.e3_id);
+                self.forget_e3_announcements(&data.e3_id);
             }
             _ => {}
         }

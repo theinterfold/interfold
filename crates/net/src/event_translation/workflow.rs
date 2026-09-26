@@ -4,17 +4,26 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use std::collections::{HashSet, VecDeque};
+use std::{
+    collections::{HashSet, VecDeque},
+    time::{Duration, Instant},
+};
 
 use anyhow::{ensure, Result};
 use e3_events::{
-    prelude::*, Event, EventId, InterfoldEvent, InterfoldEventData, SeqState, Unsequenced,
+    prelude::*, Event, EventId, EventSource, InterfoldEvent, InterfoldEventData, SeqState,
+    Unsequenced,
 };
 use tracing::{debug, trace};
 
-use crate::{events::GossipData, NetworkPolicy};
+use crate::{events::GossipData, seen_messages::SeenIds, NetworkPolicy};
 
 const EVENT_DEDUP_CAPACITY: usize = 10_000;
+/// How long, and for how many IDs, an event from the peer network is not stored again. Peers
+/// re-send DKG coordination and decryption shares in new gossip messages, and every stored copy
+/// adds a record to the event log. The EventBus already stops repeated domain delivery.
+const STORED_REMOTE_TTL: Duration = Duration::from_secs(6 * 60 * 60);
+const STORED_REMOTE_CAPACITY: usize = 20_000;
 
 /// Pure translation/dedup logic backing the `NetEventTranslator` actor.
 ///
@@ -26,6 +35,7 @@ pub struct EventTranslationService {
     sent_events: HashSet<EventId>,
     sent_order: VecDeque<EventId>,
     pending_events: HashSet<EventId>,
+    stored_remote: SeenIds<EventId>,
     topic: String,
     network: NetworkPolicy,
 }
@@ -41,6 +51,7 @@ impl EventTranslationService {
             sent_events: HashSet::with_capacity(EVENT_DEDUP_CAPACITY),
             sent_order: VecDeque::with_capacity(EVENT_DEDUP_CAPACITY),
             pending_events: HashSet::new(),
+            stored_remote: SeenIds::new(STORED_REMOTE_TTL, STORED_REMOTE_CAPACITY),
             topic: topic.to_string(),
             network,
         }
@@ -111,6 +122,27 @@ impl EventTranslationService {
         self.pending_events.remove(&id);
     }
 
+    /// Whether an event with this ID from the peer network was stored locally within the window.
+    pub fn is_stored_remote_event(&mut self, id: &EventId, now: Instant) -> bool {
+        self.stored_remote.contains(id, now)
+    }
+
+    /// Record a gossip event that was handed to the event store. A failed append stops the event
+    /// store and the node, so recording before the commit cannot hide an event from a running
+    /// node. Recording here, not only on bus delivery, also covers an event that the EventBus
+    /// already knows from replay: the bus does not deliver such an event again.
+    pub fn record_remote_event(&mut self, id: EventId, now: Instant) {
+        self.stored_remote.record(id, now);
+    }
+
+    /// Record a protocol event from the peer network that the EventBus delivered, for example
+    /// one that historical sync stored. The bus delivers an event only after it is stored.
+    pub fn record_stored_event(&mut self, event: &InterfoldEvent, now: Instant) {
+        if event.source() == EventSource::Net && Self::is_forwardable_event(event) {
+            self.stored_remote.record(event.event_id(), now);
+        }
+    }
+
     /// Decode an inbound gossip payload into the internal event to publish locally, recording it
     /// for dedup so it is not later rebroadcast.
     pub fn prepare_inbound(&mut self, data: GossipData) -> Result<InterfoldEvent<Unsequenced>> {
@@ -121,8 +153,9 @@ impl EventTranslationService {
             event.event_type()
         );
         self.network.validate_event(&event)?;
-        let id = event.id();
-        self.mark_published(id);
+        // Use the ID that the event store derives from the payload, not the peer-supplied context
+        // ID, so a mislabeled event cannot mark another event as sent.
+        self.mark_published(EventId::hash(event.get_data()));
         Ok(event)
     }
 }
@@ -132,7 +165,7 @@ mod tests {
     use super::*;
     use e3_events::{
         DkgCoordination, DkgCoordinationKind, DkgDealer, E3id, EventConstructorWithTimestamp,
-        EventSource, KeyshareCreated, PlaintextAggregated, TestEvent,
+        KeyshareCreated, PlaintextAggregated, TestEvent,
     };
     use e3_utils::ArcBytes;
 
@@ -179,6 +212,30 @@ mod tests {
             EventSource::Local,
         );
         unsequenced.into_sequenced(1)
+    }
+
+    #[test]
+    fn stored_remote_events_are_reported_until_the_window_ends() {
+        let mut svc = EventTranslationService::new("topic");
+        let remote = local_forwardable_event().with_source(EventSource::Net);
+        let id = remote.event_id();
+        let start = Instant::now();
+        assert!(!svc.is_stored_remote_event(&id, start));
+        svc.record_stored_event(&remote, start);
+        assert!(svc.is_stored_remote_event(&id, start + STORED_REMOTE_TTL / 2));
+        assert!(!svc.is_stored_remote_event(&id, start + STORED_REMOTE_TTL));
+    }
+
+    #[test]
+    fn local_and_non_protocol_events_are_not_recorded_as_stored_remote_events() {
+        let mut svc = EventTranslationService::new("topic");
+        let start = Instant::now();
+        let local = local_forwardable_event();
+        svc.record_stored_event(&local, start);
+        assert!(!svc.is_stored_remote_event(&local.event_id(), start));
+        let internal = local_test_event().with_source(EventSource::Net);
+        svc.record_stored_event(&internal, start);
+        assert!(!svc.is_stored_remote_event(&internal.event_id(), start));
     }
 
     #[test]

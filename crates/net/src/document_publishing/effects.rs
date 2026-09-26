@@ -6,7 +6,19 @@ use super::*;
 use crate::domain::EventConversionService;
 use crate::net_interface_handle::NetEventSubscriber;
 
-/// Called when we receive a PublishDocumentRequested event
+/// A fetched document does not match the metadata of the notification that named it.
+#[derive(Debug)]
+pub(super) struct DocumentMetadataMismatch(anyhow::Error);
+
+impl std::fmt::Display for DocumentMetadataMismatch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:#}", self.0)
+    }
+}
+
+impl std::error::Error for DocumentMetadataMismatch {}
+
+/// Replicate a document to the DHT, then announce it over gossip.
 pub async fn handle_publish_document_requested(
     tx: mpsc::Sender<NetCommand>,
     rx: NetEventSubscriber,
@@ -14,7 +26,17 @@ pub async fn handle_publish_document_requested(
     topic: impl Into<String>,
     bus: BusHandle,
 ) -> Result<()> {
-    let value = event.value;
+    replicate_document(tx.clone(), rx.clone(), &event).await?;
+    announce_document(tx, rx, event, topic, bus).await
+}
+
+/// Store the full document on the DHT peers closest to its content hash.
+pub(super) async fn replicate_document(
+    tx: mpsc::Sender<NetCommand>,
+    rx: NetEventSubscriber,
+    event: &PublishDocumentRequested,
+) -> Result<()> {
+    let value = event.value.clone();
     let key = ContentHash::from_content(&value);
     let expires = Some(
         datetime_to_instant_from_now(event.meta.expires_at)
@@ -26,13 +48,23 @@ pub async fn handle_publish_document_requested(
             put_record(tx.clone(), rx.clone(), expires, value.clone(), key.clone())
                 .map_err(to_retry)
         },
-        4,
+        DHT_PUT_ATTEMPTS,
         1000,
     )
-    .await?;
+    .await
+}
+
+/// Gossip a small notification that names an already replicated document.
+pub(super) async fn announce_document(
+    tx: mpsc::Sender<NetCommand>,
+    rx: NetEventSubscriber,
+    event: PublishDocumentRequested,
+    topic: impl Into<String>,
+    bus: BusHandle,
+) -> Result<()> {
+    let key = ContentHash::from_content(&event.value);
     let notification = DocumentPublishedNotification::new(event.meta, key, bus.ts()?);
-    broadcast_document_published_notification(tx, rx, notification, topic).await?;
-    Ok(())
+    broadcast_document_published_notification(tx, rx, notification, topic).await
 }
 
 /// Called when we receive a notification from the net_interface
@@ -62,7 +94,10 @@ pub async fn handle_document_published_notification(
     // The gossiped metadata is not covered by the DHT content hash. Bind it to the decoded
     // payload before persisting DocumentReceived; otherwise a notification for an E3 this node is
     // interested in can inject a content-addressed document for a different E3 or party route.
-    EventConversionService::validate_received(&event.meta, &value)?;
+    // A mismatch is final for this metadata, so the caller does not retry it; a correct
+    // notification for the same document is fetched on its own.
+    EventConversionService::validate_received(&event.meta, &value)
+        .map_err(|error| anyhow::Error::new(DocumentMetadataMismatch(error)))?;
 
     Ok(Some(DocumentReceived {
         meta: event.meta,

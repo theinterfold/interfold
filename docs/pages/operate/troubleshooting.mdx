@@ -28,8 +28,7 @@ section, you know if the node needs an action from you or if it recovers without
 
 ## Read the logs
 
-The CLI sets the log level with flags. It does not read `RUST_LOG`. See
-[Global options](/reference/cli#global-options).
+The CLI sets the log level with flags. See [Global options](/reference/cli#global-options).
 
 | Flag            | Level   | Use                                                            |
 | --------------- | ------- | -------------------------------------------------------------- |
@@ -38,6 +37,14 @@ The CLI sets the log level with flags. It does not read `RUST_LOG`. See
 | `-vv`           | `DEBUG` | Detailed diagnosis of one problem                              |
 | `-vvv`          | `TRACE` | Very large output. Use it only for a short time.               |
 | `-q`, `--quiet` | `ERROR` | Errors only                                                    |
+
+By default the node logs libp2p gossipsub only at `ERROR`, because its routine warnings can fill
+gigabytes during one E3. `RUST_LOG` directives apply on top of the flag level and change only the
+targets they name. For example, this also shows gossipsub warnings:
+
+```bash
+RUST_LOG=libp2p_gossipsub=warn interfold start -v
+```
 
 The node writes readable log lines to standard output. Your supervisor collects them, for example
 the terminal, `journalctl`, or `docker logs`. The Docker image starts the node with `-v`.

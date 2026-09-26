@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     convert::TryInto,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
@@ -69,7 +69,17 @@ const INCOMING_SYNC_REQUEST_TIMEOUT: Duration = Duration::from_secs(25);
 const MAX_SYNC_SCAN_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_REBROADCAST_SCAN_EVENTS: u64 = 2_048;
 const MAX_REBROADCAST_SCAN_BYTES: u64 = 256 * 1024 * 1024;
-const DKG_COORDINATION_REANNOUNCE_INTERVAL: Duration = Duration::from_secs(30);
+/// How often the manager checks for due re-announcements.
+const REANNOUNCE_TICK: Duration = Duration::from_secs(15);
+/// First re-send of a DKG Ready or Roster message. Later re-sends back off up to the cap.
+const DKG_REANNOUNCE_BASE: Duration = Duration::from_secs(30);
+const DKG_REANNOUNCE_CAP: Duration = Duration::from_secs(5 * 60);
+/// First re-send of this node's decryption share. Later re-sends back off up to the cap.
+const SHARE_REANNOUNCE_BASE: Duration = Duration::from_secs(60);
+const SHARE_REANNOUNCE_CAP: Duration = Duration::from_secs(10 * 60);
+/// Longest time one message is re-sent. It bounds the work when the node misses the event that
+/// ends the phase, for example after a restart.
+const REANNOUNCE_LIFETIME: Duration = Duration::from_secs(8 * 60 * 60);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncResponseValue {
@@ -130,10 +140,35 @@ pub struct NetSyncManager {
     net_ready: bool,
     /// Guard so the post-restart re-broadcast fires at most once per process.
     rebroadcast_started: bool,
-    /// Latest locally signed Ready and Roster messages. These small control messages are sent
-    /// directly to libp2p on a timer because EventBus stable-ID dedup intentionally suppresses
-    /// identical re-publications.
-    dkg_announcements: HashMap<(E3id, u64, DkgCoordinationKind), InterfoldEvent<Sequenced>>,
+    /// Local messages that are gossiped again until their phase ends: the latest signed Ready and
+    /// Roster messages, and this node's decryption shares. They go directly to libp2p with a new
+    /// delivery ID because EventBus stable-ID dedup suppresses identical re-publications.
+    announcements: HashMap<AnnouncementKey, Reannouncement>,
+}
+
+/// Identifies one message that the node keeps re-sending.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum AnnouncementKey {
+    Dkg(E3id, u64, DkgCoordinationKind),
+    DecryptionShare(E3id, u64),
+}
+
+impl AnnouncementKey {
+    fn e3_id(&self) -> &E3id {
+        match self {
+            Self::Dkg(e3_id, ..) | Self::DecryptionShare(e3_id, _) => e3_id,
+        }
+    }
+}
+
+/// Re-send schedule for one message.
+struct Reannouncement {
+    event: InterfoldEvent<Sequenced>,
+    base: Duration,
+    cap: Duration,
+    sent: u32,
+    next_due: Instant,
+    expires: Instant,
 }
 
 impl NetSyncManager {
@@ -158,7 +193,7 @@ impl NetSyncManager {
             rebroadcast_query_ids: HashSet::new(),
             net_ready: false,
             rebroadcast_started: false,
-            dkg_announcements: HashMap::new(),
+            announcements: HashMap::new(),
         }
     }
 }

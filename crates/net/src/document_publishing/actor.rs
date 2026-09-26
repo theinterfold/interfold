@@ -6,7 +6,10 @@
 
 use crate::net_interface_handle::NetEventSubscriber;
 use crate::{
-    domain::{datetime_to_instant_from_now, DocumentPublishingService},
+    domain::{
+        datetime_to_instant_from_now, notification_is_well_formed, DocumentPublishingService,
+        FetchQueue, PublicationSchedule,
+    },
     events::{
         call_and_await_response, DocumentPublishedNotification, GossipData, NetCommand, NetEvent,
     },
@@ -28,23 +31,37 @@ use e3_utils::{
 use futures::{future::AbortHandle, TryFutureExt};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::sync::mpsc;
 use tracing::{debug, info};
 
 use super::event_converter::EventConverter;
 
-const KADEMLIA_PUT_TIMEOUT: Duration = Duration::from_secs(30);
-const KADEMLIA_GET_TIMEOUT: Duration = Duration::from_secs(30);
+/// Covers the Kademlia closest-peer lookup and the put that follows it; each has its own query
+/// timeout in the network interface.
+const KADEMLIA_PUT_TIMEOUT: Duration = Duration::from_secs(150);
+const KADEMLIA_GET_TIMEOUT: Duration = Duration::from_secs(90);
 const KADEMLIA_BROADCAST_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_PENDING_PUBLICATIONS: usize = 256;
 const MAX_PENDING_PUBLICATION_BYTES: usize = 256 * 1024 * 1024;
 const MAX_BUFFERED_NOTIFICATIONS: usize = 1_024;
 const MAX_RECEIVED_DOCUMENTS: usize = 8_192;
+/// Concurrent document fetches.
 const MAX_INFLIGHT_TRANSFERS: usize = 8;
-const ANNOUNCE_INTERVAL: Duration = Duration::from_secs(30);
-const RETRY_INTERVAL: Duration = Duration::from_secs(15);
+/// Notified documents that wait for a fetch slot or for a retry.
+const MAX_WAITING_FETCHES: usize = 512;
+/// Fetch attempts per notification. A later announcement of the document queues it again.
+const MAX_FETCH_ATTEMPTS: u32 = 6;
+/// Interval at which waiting fetches whose retry time has passed are started.
+const FETCH_QUEUE_POLL: Duration = Duration::from_secs(5);
+/// Concurrent full-document DHT replications. Each one uploads the document to up to 20 peers,
+/// so more than one at a time can exceed a home uplink and time every upload out.
+const MAX_INFLIGHT_REPLICATIONS: usize = 1;
+/// Attempts per replication before the publication waits for its retry backoff.
+const DHT_PUT_ATTEMPTS: u32 = 2;
+/// Delay before a publication that waits for a replication slot checks again.
+const REPLICATION_QUEUE_POLL: Duration = Duration::from_secs(5);
 
 type DocumentId = (E3id, ContentHash);
 
@@ -77,10 +94,14 @@ pub struct DocumentPublisher {
     effects_enabled: bool,
     publications: HashMap<DocumentId, PublishDocumentRequested>,
     publication_bytes: usize,
+    schedules: HashMap<DocumentId, PublicationSchedule>,
     publishing: HashSet<DocumentId>,
+    replicating: HashSet<DocumentId>,
     publish_aborts: HashMap<DocumentId, AbortHandle>,
     received: HashSet<DocumentId>,
-    fetching: HashSet<DocumentId>,
+    /// Documents being fetched, with the failed attempts before the current one.
+    fetching: HashMap<DocumentId, u32>,
+    fetch_queue: FetchQueue,
     fetch_aborts: HashMap<DocumentId, AbortHandle>,
     early_notifications: VecDeque<DocumentPublishedNotification>,
     closed_e3s: VecDeque<E3id>,
@@ -138,10 +159,13 @@ impl DocumentPublisher {
             effects_enabled,
             publications: HashMap::new(),
             publication_bytes: 0,
+            schedules: HashMap::new(),
             publishing: HashSet::new(),
+            replicating: HashSet::new(),
             publish_aborts: HashMap::new(),
             received: recovered.received,
-            fetching: HashSet::new(),
+            fetching: HashMap::new(),
+            fetch_queue: FetchQueue::new(MAX_WAITING_FETCHES, MAX_FETCH_ATTEMPTS),
             fetch_aborts: HashMap::new(),
             early_notifications: VecDeque::new(),
             closed_e3s: recovered.closed_e3s,
@@ -289,6 +313,13 @@ impl DocumentPublisher {
         Ok(())
     }
 
+    fn remove_publication(&mut self, id: &DocumentId) {
+        if let Some(event) = self.publications.remove(id) {
+            self.publication_bytes = self.publication_bytes.saturating_sub(event.value.size());
+        }
+        self.schedules.remove(id);
+    }
+
     fn handle_canonical_dkg_end(&mut self, e3_id: &E3id) -> Result<()> {
         for (id, abort) in &self.publish_aborts {
             if &id.0 == e3_id {
@@ -315,9 +346,12 @@ impl DocumentPublisher {
                 true
             }
         });
+        self.schedules.retain(|(id, _), _| id != e3_id);
         self.publishing.retain(|(id, _)| id != e3_id);
+        self.replicating.retain(|(id, _)| id != e3_id);
         self.received.retain(|(id, _)| id != e3_id);
-        self.fetching.retain(|(id, _)| id != e3_id);
+        self.fetching.retain(|(id, _), _| id != e3_id);
+        self.fetch_queue.remove_e3(e3_id);
         self.early_notifications
             .retain(|item| &item.meta.e3_id != e3_id);
         if !keys.is_empty() {
@@ -339,6 +373,7 @@ mod handlers;
 #[path = "recovery.rs"]
 mod recovery;
 
+use effects::{announce_document, replicate_document, DocumentMetadataMismatch};
 pub use effects::{handle_document_published_notification, handle_publish_document_requested};
 pub use recovery::recover_document_state;
 
