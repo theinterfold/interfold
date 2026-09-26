@@ -2977,6 +2977,217 @@ async fn test_p2p_actor_forwards_events_to_network() -> Result<()> {
 }
 
 #[actix::test]
+async fn test_p2p_actor_stores_a_repeated_gossip_event_once() -> Result<()> {
+    use e3_events::{EventBus, EventBusConfig, KeyshareCreated};
+
+    // With delivery dedup off, the bus history shows every stored copy of an event.
+    let (cmd_tx, _) = mpsc::channel(100);
+    let (event_tx, _event_rx) = broadcast::channel(100);
+    let aggregate_config =
+        AggregateConfig::new(HashMap::from([(AggregateId::new(1), Duration::ZERO)]));
+    let system = EventSystem::new()
+        .with_event_bus(EventBus::new(EventBusConfig { deduplicate: false }).start())
+        .with_aggregate_config(aggregate_config);
+    let bus = system.handle()?.enable("test");
+    let history_collector = bus.history();
+
+    NetEventTranslator::setup(
+        &bus,
+        &cmd_tx,
+        &e3_net::NetEventSubscriber::from(&event_tx),
+        "mytopic",
+        e3_net::NetworkPolicy::local_unrestricted(),
+    );
+
+    let keyshare = |party_id: u64| KeyshareCreated {
+        e3_id: E3id::new("1235", 1),
+        pubkey: ArcBytes::from_bytes(&[1, 2, 3, 4]),
+        node: format!("node-{party_id}"),
+        party_id,
+        signed_pk_generation_proof: None,
+    };
+    let gossip = |event: KeyshareCreated| -> Result<NetEvent> {
+        Ok(NetEvent::GossipData(GossipData::GossipBytes(
+            bus.event_from(event, None)?.to_bytes()?,
+        )))
+    };
+
+    event_tx.send(gossip(keyshare(0))?)?;
+    let first = history_collector
+        .send(TakeEvents::<InterfoldEvent>::new(1))
+        .await?;
+    assert_eq!(first.events.len(), 1, "the first copy must be stored");
+
+    // A peer re-sends the same event in a new gossip message, then sends another event.
+    event_tx.send(gossip(keyshare(0))?)?;
+    event_tx.send(gossip(keyshare(1))?)?;
+    let next = history_collector
+        .send(TakeEvents::<InterfoldEvent>::new(1))
+        .await?;
+
+    assert_eq!(
+        next.events
+            .into_iter()
+            .map(|e| e.into_data())
+            .collect::<Vec<InterfoldEventData>>(),
+        vec![keyshare(1).into()],
+        "the repeated copy must not be stored again"
+    );
+
+    Ok(())
+}
+
+/// Collects the response of one event-store query.
+struct StoredEvents(Option<tokio::sync::oneshot::Sender<Vec<InterfoldEvent>>>);
+
+impl actix::Actor for StoredEvents {
+    type Context = actix::Context<Self>;
+}
+
+impl actix::Handler<e3_events::EventStoreQueryResponse> for StoredEvents {
+    type Result = ();
+    fn handle(&mut self, msg: e3_events::EventStoreQueryResponse, _: &mut Self::Context) {
+        if let Some(tx) = self.0.take() {
+            let _ = tx.send(msg.into_events().expect("event-store query failed"));
+        }
+    }
+}
+
+#[actix::test]
+async fn test_p2p_actor_stores_a_replayed_event_at_most_once_more() -> Result<()> {
+    use e3_events::{CorrelationId, EventSource, EventStoreQueryBy, KeyshareCreated, TsAgg};
+
+    // The default bus: it does not deliver an event ID twice, as after replay.
+    let (cmd_tx, _) = mpsc::channel(100);
+    let (event_tx, _event_rx) = broadcast::channel(100);
+    let aggregate_config =
+        AggregateConfig::new(HashMap::from([(AggregateId::new(1), Duration::ZERO)]));
+    let system = EventSystem::new()
+        .with_fresh_bus()
+        .with_aggregate_config(aggregate_config);
+    let bus = system.handle()?.enable("test");
+
+    let keyshare = |party_id: u64| KeyshareCreated {
+        e3_id: E3id::new("1235", 1),
+        pubkey: ArcBytes::from_bytes(&[1, 2, 3, 4]),
+        node: format!("node-{party_id}"),
+        party_id,
+        signed_pk_generation_proof: None,
+    };
+    let gossip = |event: KeyshareCreated| -> Result<NetEvent> {
+        Ok(NetEvent::GossipData(GossipData::GossipBytes(
+            bus.event_from(event, None)?.to_bytes()?,
+        )))
+    };
+
+    // The event is already stored and known to the bus before the translator starts.
+    bus.publish_from_remote(keyshare(0), 1, None, EventSource::Net)?;
+    bus.flush_event_pipeline().await?;
+    let history_collector = bus.history();
+    NetEventTranslator::setup(
+        &bus,
+        &cmd_tx,
+        &e3_net::NetEventSubscriber::from(&event_tx),
+        "mytopic",
+        e3_net::NetworkPolicy::local_unrestricted(),
+    );
+
+    // A peer re-sends it three times, then sends another event.
+    for _ in 0..3 {
+        event_tx.send(gossip(keyshare(0))?)?;
+    }
+    event_tx.send(gossip(keyshare(1))?)?;
+    let next = history_collector
+        .send(TakeEvents::<InterfoldEvent>::new(1))
+        .await?;
+    assert_eq!(next.events.len(), 1, "the other event must be delivered");
+    bus.flush_event_pipeline().await?;
+
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let collector = StoredEvents(Some(tx)).start();
+    system
+        .in_mem_eventstore_router()?
+        .send(EventStoreQueryBy::<TsAgg>::new(
+            CorrelationId::new(),
+            HashMap::from([(AggregateId::new(1), 0)]),
+            collector.recipient(),
+        ))
+        .await?;
+    let stored = tokio::time::timeout(Duration::from_secs(5), rx).await??;
+    let copies = stored
+        .iter()
+        .filter(|event| event.get_data() == &InterfoldEventData::from(keyshare(0)))
+        .count();
+    assert_eq!(
+        copies, 2,
+        "one copy from before the translator started and one re-sent copy"
+    );
+
+    Ok(())
+}
+
+#[actix::test]
+async fn test_p2p_actor_mislabeled_event_does_not_suppress_the_real_one() -> Result<()> {
+    use e3_events::{EventContext, EventSource, KeyshareCreated, Unsequenced};
+
+    let (cmd_tx, _) = mpsc::channel(100);
+    let (event_tx, _event_rx) = broadcast::channel(100);
+    let aggregate_config =
+        AggregateConfig::new(HashMap::from([(AggregateId::new(1), Duration::ZERO)]));
+    let system = EventSystem::new()
+        .with_fresh_bus()
+        .with_aggregate_config(aggregate_config);
+    let bus = system.handle()?.enable("test");
+    let history_collector = bus.history();
+    NetEventTranslator::setup(
+        &bus,
+        &cmd_tx,
+        &e3_net::NetEventSubscriber::from(&event_tx),
+        "mytopic",
+        e3_net::NetworkPolicy::local_unrestricted(),
+    );
+
+    let keyshare = |party_id: u64| KeyshareCreated {
+        e3_id: E3id::new("1235", 1),
+        pubkey: ArcBytes::from_bytes(&[1, 2, 3, 4]),
+        node: format!("node-{party_id}"),
+        party_id,
+        signed_pk_generation_proof: None,
+    };
+    let genuine = bus.event_from(keyshare(0), None)?;
+
+    // A peer sends party 1's keyshare labeled with the ID of party 0's keyshare.
+    let payload: InterfoldEventData = keyshare(1).into();
+    let context = EventContext::<Unsequenced>::new_origin(
+        genuine.id(),
+        1,
+        AggregateId::new(1),
+        None,
+        EventSource::Local,
+    );
+    let forged = bincode::serialize(&(payload, context))?;
+    event_tx.send(NetEvent::GossipData(GossipData::GossipBytes(forged)))?;
+    event_tx.send(NetEvent::GossipData(GossipData::GossipBytes(
+        genuine.to_bytes()?,
+    )))?;
+
+    let history = history_collector
+        .send(TakeEvents::<InterfoldEvent>::new(2))
+        .await?;
+    assert_eq!(
+        history
+            .events
+            .into_iter()
+            .map(|e| e.into_data())
+            .collect::<Vec<InterfoldEventData>>(),
+        vec![keyshare(1).into(), keyshare(0).into()],
+        "the genuine event must still be stored after a mislabeled one"
+    );
+
+    Ok(())
+}
+
+#[actix::test]
 async fn test_p2p_actor_forwards_events_to_bus() -> Result<()> {
     use e3_events::KeyshareCreated;
 

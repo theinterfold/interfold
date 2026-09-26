@@ -198,6 +198,23 @@ the code does not meet yet.
 - A network event cannot create a request context for an unknown E3. Only chain events or restored
   snapshots admit an E3; peer events can only contribute to an admitted one. —
   `crates/request/src/routing/workflow.rs`
+- A periodic network re-send backs off to a cap, stops when its phase ends, and has a lifetime
+  bound. Re-announcing a DHT document sends only its notification; the full document is stored again
+  only by a bounded refresh (once per 30 minutes, one replication started at a time). Library-driven
+  record replication stays disabled. — INDEX concerns #60, #62, #63;
+  `crates/net/src/document_publishing/workflow.rs`;
+  `crates/net/src/network_sync/effects/rebroadcast.rs`
+- A node does not accept or forward a gossip message ID that it has already handled, including after
+  the gossipsub duplicate cache expires. It does not store a peer event again while that event ID is
+  in the translator's stored window. The ID is recorded when the event is handed to the event store,
+  whose failed append stops the node. Waiting document fetches are bounded by count. — INDEX
+  concerns #61, #62; `crates/net/src/net_interface.rs`; `crates/net/src/event_translation/`
+- Network ingress loops do not wait for long I/O such as a DHT fetch. They hand the work to the
+  actor, which bounds its concurrency. — `crates/net/src/document_publishing/handlers.rs`
+- Log volume must not scale with payload size or redelivery count. Byte payloads format through
+  `hexf` (length and edge digits), network commands log `NetCommand::summary`, and the default log
+  filter drops libp2p gossipsub warnings. — INDEX concern #65; `crates/utils/src/formatters.rs`;
+  `crates/cli/src/helpers/telemetry.rs`
 
 ### Schema evolution
 

@@ -30,7 +30,10 @@ pub(crate) mod sync_coordinator;
 #[path = "network_sync/wire.rs"]
 pub(crate) mod wire;
 
-pub use document_publishing::{datetime_to_instant_from_now, DocumentPublishingService};
+pub use document_publishing::{
+    datetime_to_instant_from_now, notification_is_well_formed, DocumentPublishingService,
+    FetchQueue, PublicationSchedule,
+};
 pub use event_conversion::{EventConversionService, IncomingDocument};
 pub use event_translation::EventTranslationService;
 pub use network_status::{ConnectedPeer, NetworkSnapshot, NetworkStatus};

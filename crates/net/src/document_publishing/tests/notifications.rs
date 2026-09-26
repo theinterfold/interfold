@@ -104,7 +104,7 @@ async fn test_notified_of_document() -> Result<()> {
 
 #[actix::test]
 async fn notification_cannot_relabel_payload_for_another_e3() -> Result<()> {
-    let (_guard, bus, _net_cmd_tx, mut net_cmd_rx, net_evt_tx, _rx, history, errors, _) =
+    let (_guard, bus, _net_cmd_tx, mut net_cmd_rx, net_evt_tx, _rx, history, errors, publisher) =
         setup_test()?;
     let interested_e3 = E3id::new("100", 1);
     let payload_e3 = E3id::new("200", 1);
@@ -160,6 +160,11 @@ async fn notification_cannot_relabel_payload_for_another_e3() -> Result<()> {
             .iter()
             .any(|event| matches!(event.get_data(), InterfoldEventData::DocumentReceived(_))),
         "mismatched document must not be persisted"
+    );
+    assert_eq!(
+        publisher.send(FetchBacklog).await?,
+        (0, 0),
+        "a metadata mismatch is final and is not queued for another fetch"
     );
     Ok(())
 }
@@ -285,5 +290,133 @@ async fn terminal_stage_cancels_an_inflight_document_fetch() -> Result<()> {
     assert!(!events
         .iter()
         .any(|event| matches!(event.get_data(), InterfoldEventData::DocumentReceived(_))));
+    Ok(())
+}
+
+#[actix::test]
+async fn notification_ingress_does_not_wait_for_the_fetch() -> Result<()> {
+    let (_guard, bus, _net_cmd_tx, mut commands, _net_events, _, _, _, publisher) = setup_test()?;
+    let e3_id = E3id::new("ingress", 1);
+    bus.publish_without_context(CiphernodeSelected {
+        e3_id: e3_id.clone(),
+        threshold_m: 2,
+        threshold_n: 3,
+        ..CiphernodeSelected::default()
+    })?;
+    let notification = |document: &[u8]| DocumentPublishedNotification {
+        key: ContentHash::from_content(document),
+        meta: DocumentMeta::new(
+            e3_id.clone(),
+            DocumentKind::TrBFV,
+            vec![],
+            Some(Utc::now() + chrono::Duration::hours(1)),
+        ),
+        ts: 100,
+    };
+
+    timeout(
+        Duration::from_secs(1),
+        publisher.send(notification(b"first")),
+    )
+    .await??;
+    timeout(
+        Duration::from_secs(1),
+        publisher.send(notification(b"second")),
+    )
+    .await??;
+
+    let mut requested = Vec::new();
+    for _ in 0..2 {
+        let Some(NetCommand::DhtGetRecord { key, .. }) =
+            timeout(Duration::from_secs(1), commands.recv()).await?
+        else {
+            bail!("expected a DHT get");
+        };
+        requested.push(key);
+    }
+    assert!(requested.contains(&ContentHash::from_content(b"first".as_ref())));
+    assert!(requested.contains(&ContentHash::from_content(b"second".as_ref())));
+    Ok(())
+}
+
+#[actix::test]
+async fn a_notification_flood_keeps_the_fetch_backlog_bounded() -> Result<()> {
+    let (_guard, bus, _net_cmd_tx, mut commands, _net_events, _, _, _, publisher) = setup_test()?;
+    let e3_id = E3id::new("flood", 1);
+    bus.publish_without_context(CiphernodeSelected {
+        e3_id: e3_id.clone(),
+        threshold_m: 2,
+        threshold_n: 3,
+        ..CiphernodeSelected::default()
+    })?;
+    publisher.send(PublisherBarrier).await?;
+
+    let notifications = MAX_WAITING_FETCHES * 4;
+    for index in 0..notifications {
+        let notification = DocumentPublishedNotification {
+            key: ContentHash::from_content(format!("document {index}").as_bytes()),
+            meta: DocumentMeta::new(
+                e3_id.clone(),
+                DocumentKind::TrBFV,
+                vec![],
+                Some(Utc::now() + chrono::Duration::hours(1)),
+            ),
+            ts: 100,
+        };
+        timeout(Duration::from_secs(1), publisher.send(notification)).await??;
+    }
+
+    // No fetch completes, so only the in-flight limit of reads starts.
+    for _ in 0..MAX_INFLIGHT_TRANSFERS {
+        let Some(NetCommand::DhtGetRecord { .. }) =
+            timeout(Duration::from_secs(1), commands.recv()).await?
+        else {
+            bail!("expected a DHT get");
+        };
+    }
+    assert!(
+        timeout(Duration::from_millis(200), commands.recv())
+            .await
+            .is_err(),
+        "no fetch starts beyond the in-flight limit"
+    );
+    let (fetching, waiting) = publisher.send(FetchBacklog).await?;
+    assert_eq!(fetching, MAX_INFLIGHT_TRANSFERS);
+    assert_eq!(waiting, MAX_WAITING_FETCHES);
+    Ok(())
+}
+
+#[actix::test]
+async fn a_malformed_notification_is_not_fetched() -> Result<()> {
+    let (_guard, bus, _net_cmd_tx, mut commands, _net_events, _, _, _, publisher) = setup_test()?;
+    let e3_id = E3id::new("malformed", 1);
+    bus.publish_without_context(CiphernodeSelected {
+        e3_id: e3_id.clone(),
+        threshold_m: 2,
+        threshold_n: 3,
+        ..CiphernodeSelected::default()
+    })?;
+    publisher.send(PublisherBarrier).await?;
+
+    publisher
+        .send(DocumentPublishedNotification {
+            key: ContentHash(vec![7; 1024]),
+            meta: DocumentMeta::new(
+                e3_id,
+                DocumentKind::TrBFV,
+                vec![],
+                Some(Utc::now() + chrono::Duration::hours(1)),
+            ),
+            ts: 100,
+        })
+        .await?;
+
+    assert!(
+        timeout(Duration::from_millis(200), commands.recv())
+            .await
+            .is_err(),
+        "a key that is not a SHA-256 hash is not fetched"
+    );
+    assert_eq!(publisher.send(FetchBacklog).await?, (0, 0));
     Ok(())
 }

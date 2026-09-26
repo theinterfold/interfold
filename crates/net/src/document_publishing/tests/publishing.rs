@@ -264,33 +264,40 @@ async fn test_publishes_document() -> Result<()> {
     Ok(())
 }
 
-#[actix::test]
-async fn unavailable_gossip_peer_does_not_lose_the_publication() -> Result<()> {
-    tokio::time::pause();
-    let (_guard, bus, _net_cmd_tx, mut commands, net_events, _, _, _, _) = setup_test()?;
-    let value = ArcBytes::from_bytes(b"retryable document");
-    let key = ContentHash::from_content(&value);
-    bus.publish_without_context(PublishDocumentRequested {
+fn publish_request(e3: &str, value: &[u8]) -> PublishDocumentRequested {
+    PublishDocumentRequested {
         meta: DocumentMeta::new(
-            E3id::new("retry", 1),
+            E3id::new(e3, 1),
             DocumentKind::TrBFV,
             vec![],
             Some(Utc::now() + chrono::Duration::hours(1)),
         ),
-        value,
-    })?;
+        value: ArcBytes::from_bytes(value),
+    }
+}
 
-    let Some(NetCommand::DhtPutRecord { correlation_id, .. }) =
-        timeout(Duration::from_secs(1), commands.recv()).await?
-    else {
+async fn next_command(commands: &mut mpsc::Receiver<NetCommand>) -> Result<NetCommand> {
+    timeout(Duration::from_secs(600), commands.recv())
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("command channel closed"))
+}
+
+#[actix::test]
+async fn failed_announcement_is_retried_without_another_upload() -> Result<()> {
+    tokio::time::pause();
+    let (_guard, bus, _net_cmd_tx, mut commands, net_events, _, _, _, _) = setup_test()?;
+    let request = publish_request("retry", b"retryable document");
+    let key = ContentHash::from_content(&request.value);
+    bus.publish_without_context(request)?;
+
+    let NetCommand::DhtPutRecord { correlation_id, .. } = next_command(&mut commands).await? else {
         bail!("expected DHT put");
     };
     net_events.send(NetEvent::DhtPutRecordSucceeded {
         correlation_id,
         key: key.clone(),
     })?;
-    let Some(NetCommand::GossipPublish { correlation_id, .. }) =
-        timeout(Duration::from_secs(1), commands.recv()).await?
+    let NetCommand::GossipPublish { correlation_id, .. } = next_command(&mut commands).await?
     else {
         bail!("expected gossip announcement");
     };
@@ -300,8 +307,95 @@ async fn unavailable_gossip_peer_does_not_lose_the_publication() -> Result<()> {
     })?;
 
     assert!(matches!(
-        timeout(Duration::from_secs(20), commands.recv()).await?,
-        Some(NetCommand::DhtPutRecord { key: next_key, .. }) if next_key == key
+        next_command(&mut commands).await?,
+        NetCommand::GossipPublish {
+            data: GossipData::DocumentPublishedNotification(notification),
+            ..
+        } if notification.key == key
+    ));
+    Ok(())
+}
+
+#[actix::test]
+async fn replicated_document_is_announced_again_without_another_upload() -> Result<()> {
+    tokio::time::pause();
+    let (_guard, bus, _net_cmd_tx, mut commands, net_events, _, _, _, _) = setup_test()?;
+    let request = publish_request("announce", b"replicated document");
+    let key = ContentHash::from_content(&request.value);
+    bus.publish_without_context(request)?;
+
+    let NetCommand::DhtPutRecord { correlation_id, .. } = next_command(&mut commands).await? else {
+        bail!("expected DHT put");
+    };
+    net_events.send(NetEvent::DhtPutRecordSucceeded {
+        correlation_id,
+        key: key.clone(),
+    })?;
+    for _ in 0..3 {
+        let NetCommand::GossipPublish {
+            correlation_id,
+            data: GossipData::DocumentPublishedNotification(notification),
+            ..
+        } = next_command(&mut commands).await?
+        else {
+            bail!("expected only gossip announcements after the first replication");
+        };
+        assert_eq!(notification.key, key);
+        net_events.send(NetEvent::GossipPublished {
+            correlation_id,
+            message_id: libp2p::gossipsub::MessageId::new(&[1]),
+        })?;
+    }
+    Ok(())
+}
+
+#[actix::test]
+async fn only_one_document_replicates_at_a_time() -> Result<()> {
+    tokio::time::pause();
+    let (_guard, bus, _net_cmd_tx, mut commands, net_events, _, _, _, _) = setup_test()?;
+    let first = publish_request("queue", b"first document");
+    let second = publish_request("queue", b"second document");
+    let first_key = ContentHash::from_content(&first.value);
+    let second_key = ContentHash::from_content(&second.value);
+    bus.publish_without_context(first)?;
+    bus.publish_without_context(second)?;
+
+    let NetCommand::DhtPutRecord {
+        correlation_id,
+        key,
+        ..
+    } = next_command(&mut commands).await?
+    else {
+        bail!("expected DHT put");
+    };
+    let (active, waiting) = if key == first_key {
+        (first_key, second_key)
+    } else {
+        (second_key, first_key)
+    };
+    assert_eq!(key, active);
+    assert!(
+        timeout(Duration::from_secs(60), commands.recv())
+            .await
+            .is_err(),
+        "a second replication started while the first one was in flight"
+    );
+
+    net_events.send(NetEvent::DhtPutRecordSucceeded {
+        correlation_id,
+        key: active,
+    })?;
+    let NetCommand::GossipPublish { correlation_id, .. } = next_command(&mut commands).await?
+    else {
+        bail!("expected gossip announcement");
+    };
+    net_events.send(NetEvent::GossipPublished {
+        correlation_id,
+        message_id: libp2p::gossipsub::MessageId::new(&[2]),
+    })?;
+    assert!(matches!(
+        next_command(&mut commands).await?,
+        NetCommand::DhtPutRecord { key, .. } if key == waiting
     ));
     Ok(())
 }
@@ -410,7 +504,7 @@ async fn test_publishes_document_fails_with_exponential_backoff() -> Result<()> 
         value: value.clone(),
     })?;
 
-    for _ in 0..4 {
+    for _ in 0..2 {
         // Expect retry
         let Some(NetCommand::DhtPutRecord { correlation_id, .. }) =
             timeout(Duration::from_secs(15), net_cmd_rx.recv())
@@ -436,7 +530,7 @@ async fn test_publishes_document_fails_with_exponential_backoff() -> Result<()> 
     let error: InterfoldError = errors.events.first().unwrap().try_into()?;
     assert_eq!(
             error.message,
-            "Operation failed after 4 attempts. Last error: DHT put record failed: PutRecordError(QuorumFailed { key: Key(b\"I got the secret\"), success: [], quorum: 1 })"
+            "Operation failed after 2 attempts. Last error: DHT put record failed: PutRecordError(QuorumFailed { key: Key(b\"I got the secret\"), success: [], quorum: 1 })"
         );
 
     Ok(())
