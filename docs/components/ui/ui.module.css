@@ -1,0 +1,1320 @@
+/* SPDX-License-Identifier: LGPL-3.0-only */
+
+/* Shared visual kit for the docs. Design tokens live in styles/globals.css (:root, --if-*). */
+
+/* ─── Hero ─────────────────────────────────────────────────────────────── */
+
+.hero {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+  gap: 2rem;
+  align-items: center;
+  margin: 1.5rem 0 0.5rem;
+  padding: 3.5rem 3rem;
+  border-radius: 28px;
+  color: #f4f1e8;
+  background:
+    radial-gradient(120% 90% at 100% 0%, rgba(130, 245, 173, 0.14), transparent 55%),
+    radial-gradient(90% 80% at 0% 100%, rgba(58, 125, 68, 0.35), transparent 60%), var(--if-ink);
+  box-shadow: 0 30px 80px -40px rgba(20, 32, 27, 0.7);
+}
+
+.heroGrid {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background-image:
+    linear-gradient(rgba(244, 241, 232, 0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(244, 241, 232, 0.06) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: radial-gradient(ellipse at 70% 40%, black 10%, transparent 70%);
+  animation: gridDrift 28s linear infinite;
+}
+
+.heroOrb {
+  position: absolute;
+  z-index: -1;
+  width: 380px;
+  height: 380px;
+  border-radius: 50%;
+  filter: blur(70px);
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.heroOrbA {
+  top: -140px;
+  right: -60px;
+  background: #82f5ad;
+  animation: orbFloat 16s ease-in-out infinite;
+}
+
+.heroOrbB {
+  bottom: -180px;
+  left: -120px;
+  background: #3a7d44;
+  animation: orbFloat 20s ease-in-out infinite reverse;
+}
+
+.heroEyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.8rem;
+  border: 1px solid rgba(130, 245, 173, 0.35);
+  border-radius: 999px;
+  font-size: 0.8rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #bff8d4;
+  background: rgba(130, 245, 173, 0.08);
+}
+
+.heroEyebrow::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #82f5ad;
+  box-shadow: 0 0 0 0 rgba(130, 245, 173, 0.6);
+  animation: livePulse 2.4s ease-out infinite;
+}
+
+.heroTitle {
+  margin: 1.1rem 0 1rem;
+  font-family: var(--if-serif);
+  font-size: clamp(2.3rem, 4.6vw, 3.6rem);
+  font-weight: 400;
+  line-height: 1.04;
+  letter-spacing: -0.02em;
+  color: #fbf9f3;
+}
+
+.heroAccent {
+  color: #82f5ad;
+}
+
+.heroLead {
+  max-width: 36rem;
+  margin: 0;
+  font-size: 1.12rem;
+  line-height: 1.6;
+  color: rgba(244, 241, 232, 0.78);
+}
+
+.heroActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 2rem;
+}
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1.25rem;
+  border-radius: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  text-decoration: none !important;
+  transition:
+    transform 0.2s ease,
+    box-shadow 0.2s ease,
+    background-color 0.2s ease,
+    border-color 0.2s ease;
+}
+
+.button:hover {
+  transform: translateY(-2px);
+}
+
+.button svg {
+  transition: transform 0.2s ease;
+}
+
+.button:hover svg {
+  transform: translateX(3px);
+}
+
+.buttonPrimary {
+  color: var(--if-ink) !important;
+  background: #82f5ad;
+  box-shadow: 0 10px 30px -12px rgba(130, 245, 173, 0.8);
+}
+
+.buttonPrimary:hover {
+  background: #a6f9c6;
+}
+
+.buttonGhost {
+  color: #f4f1e8 !important;
+  border: 1px solid rgba(244, 241, 232, 0.25);
+  background: rgba(244, 241, 232, 0.04);
+}
+
+.buttonGhost:hover {
+  border-color: rgba(130, 245, 173, 0.6);
+  background: rgba(130, 245, 173, 0.08);
+}
+
+.heroVisual {
+  display: flex;
+  justify-content: center;
+}
+
+@media (max-width: 900px) {
+  .hero {
+    grid-template-columns: 1fr;
+    padding: 2.5rem 1.5rem;
+  }
+
+  .heroVisual > div {
+    max-width: 260px;
+    margin: 0 auto;
+  }
+
+  .heroEyebrow {
+    font-size: 0.7rem;
+    letter-spacing: 0.06em;
+  }
+}
+
+/* ─── Decrypt text effect ──────────────────────────────────────────────── */
+
+.decrypt {
+  position: relative;
+  display: inline-block;
+  white-space: nowrap;
+}
+
+.decryptSizer {
+  visibility: hidden;
+}
+
+.decryptLive {
+  position: absolute;
+  inset: 0;
+}
+
+.decryptGlyph {
+  font-family: var(--if-mono);
+  font-size: 0.82em;
+  opacity: 0.7;
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ─── Link cards ───────────────────────────────────────────────────────── */
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--card-min, 230px)), 1fr));
+  gap: 1rem;
+  margin: 1.5rem 0;
+}
+
+.card {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 1.25rem 1.25rem 1.1rem;
+  overflow: hidden;
+  border: 1px solid var(--if-rule);
+  border-radius: 16px;
+  color: var(--if-ink) !important;
+  text-decoration: none !important;
+  background: var(--if-card);
+  transition:
+    transform 0.25s ease,
+    box-shadow 0.25s ease,
+    border-color 0.25s ease;
+}
+
+.card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: radial-gradient(420px circle at var(--mx, 0%) var(--my, 0%), rgba(130, 245, 173, 0.28), transparent 45%);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.card:hover {
+  transform: translateY(-3px);
+  border-color: rgba(31, 107, 74, 0.35);
+  box-shadow: 0 18px 40px -24px rgba(20, 32, 27, 0.45);
+}
+
+.card:hover::before {
+  opacity: 1;
+}
+
+.card:focus-visible {
+  outline: 2px solid var(--if-deep);
+  outline-offset: 2px;
+}
+
+.cardIcon {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  margin-bottom: 0.25rem;
+  border-radius: 11px;
+  color: var(--if-deep);
+  background: var(--if-mint-bg);
+  box-shadow: inset 0 0 0 1px var(--if-mint-soft);
+  transition:
+    transform 0.3s ease,
+    background-color 0.3s ease;
+}
+
+.card:hover .cardIcon {
+  transform: rotate(-6deg) scale(1.06);
+  background: #d9fce8;
+}
+
+.cardTitle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-weight: 600;
+  font-size: 1.02rem;
+  line-height: 1.3;
+}
+
+.cardArrow {
+  flex: none;
+  color: var(--if-ink-4);
+  transition:
+    transform 0.25s ease,
+    color 0.25s ease;
+}
+
+.card:hover .cardArrow {
+  color: var(--if-deep);
+  transform: translateX(4px);
+}
+
+.cardBody {
+  margin: 0;
+  font-size: 0.93rem;
+  line-height: 1.5;
+  color: var(--if-ink-3);
+}
+
+.cardTag {
+  align-self: flex-start;
+  margin-top: auto;
+  padding-top: 0.5rem;
+  font-family: var(--if-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--if-sage);
+}
+
+/* ─── Badge ────────────────────────────────────────────────────────────── */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.12rem 0.55rem;
+  border-radius: 999px;
+  font-family: var(--if-mono);
+  font-size: 0.72rem;
+  font-weight: 500;
+  line-height: 1.6;
+  letter-spacing: 0.03em;
+  vertical-align: middle;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+
+.badge::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.badge_mainnet {
+  color: var(--if-deep);
+  background: var(--if-mint-bg);
+  border-color: var(--if-mint-soft);
+}
+
+.badge_testnet {
+  color: #6d4327;
+  background: #fdf4ef;
+  border-color: #f0ddd0;
+}
+
+.badge_local {
+  color: var(--if-ink-3);
+  background: var(--if-rule-soft);
+  border-color: var(--if-rule);
+}
+
+.badge_new {
+  color: var(--if-ink);
+  background: #d9fce8;
+  border-color: #82f5ad;
+}
+
+.badge_warning {
+  color: var(--if-danger);
+  background: var(--if-danger-bg);
+  border-color: #f2c5c1;
+}
+
+.badge_neutral {
+  color: var(--if-ink-2);
+  background: var(--if-card);
+  border-color: var(--if-rule);
+}
+
+.badge_neutral::before {
+  display: none;
+}
+
+/* ─── Lifecycle stepper ────────────────────────────────────────────────── */
+
+.lifecycle {
+  margin: 1.75rem 0;
+  padding: 1.25rem;
+  border: 1px solid var(--if-rule);
+  border-radius: 20px;
+  background: linear-gradient(180deg, var(--if-card), #fbfcf9);
+}
+
+.lifecycleHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.lifecycleLabel {
+  font-family: var(--if-mono);
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--if-sage);
+}
+
+.iconButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.65rem;
+  border: 1px solid var(--if-rule);
+  border-radius: 999px;
+  font-size: 0.8rem;
+  color: var(--if-ink-2);
+  background: var(--if-card);
+  cursor: pointer;
+  transition:
+    border-color 0.2s ease,
+    background-color 0.2s ease;
+}
+
+.iconButton:hover {
+  border-color: var(--if-deep);
+  background: var(--if-mint-bg);
+}
+
+.lifecycleTrack {
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.stageButton {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.35rem;
+  width: 100%;
+  padding: 0.7rem 0.75rem 0.85rem;
+  overflow: hidden;
+  border: 1px solid var(--if-rule);
+  border-radius: 12px;
+  font: inherit;
+  text-align: left;
+  color: var(--if-ink-3);
+  background: var(--if-card);
+  cursor: pointer;
+  transition:
+    border-color 0.25s ease,
+    background-color 0.25s ease,
+    color 0.25s ease,
+    transform 0.25s ease;
+}
+
+.stageButton:hover {
+  transform: translateY(-2px);
+  border-color: rgba(31, 107, 74, 0.35);
+}
+
+.stageButton:focus-visible {
+  outline: 2px solid var(--if-deep);
+  outline-offset: 2px;
+}
+
+.stageIndex {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  font-family: var(--if-mono);
+  font-size: 0.72rem;
+  color: var(--if-ink-3);
+  background: var(--if-rule-soft);
+  transition:
+    background-color 0.25s ease,
+    color 0.25s ease;
+}
+
+.stageTitle {
+  max-width: 100%;
+  font-size: 0.86rem;
+  font-weight: 600;
+  line-height: 1.25;
+  overflow-wrap: break-word;
+}
+
+.stageDone {
+  color: var(--if-ink-2);
+}
+
+.stageDone .stageIndex {
+  color: var(--if-deep);
+  background: var(--if-mint-bg);
+}
+
+.stageActive {
+  color: var(--if-ink);
+  border-color: var(--if-deep);
+  background: var(--if-mint-bg);
+}
+
+.stageActive .stageIndex {
+  color: #fff;
+  background: var(--if-deep);
+}
+
+.stageFail.stageActive {
+  border-color: var(--if-danger);
+  background: var(--if-danger-bg);
+}
+
+.stageFail.stageActive .stageIndex {
+  background: var(--if-danger);
+}
+
+.stageProgress {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 3px;
+  width: 100%;
+  transform-origin: left;
+  transform: scaleX(0);
+  background: linear-gradient(90deg, var(--if-deep), #82f5ad);
+}
+
+.stageActive .stageProgress {
+  transform: scaleX(1);
+}
+
+.stageProgressRunning {
+  animation: progressFill var(--duration, 6000ms) linear forwards;
+}
+
+.stageProgressPaused {
+  animation-play-state: paused;
+}
+
+.lifecyclePanel {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 1.1rem;
+  margin-top: 1rem;
+  padding: 1.25rem 1.35rem;
+  border-radius: 14px;
+  background: var(--if-card);
+  box-shadow: inset 0 0 0 1px var(--if-rule-soft);
+  animation: panelIn 0.45s ease both;
+}
+
+.panelNumber {
+  font-family: var(--if-serif);
+  font-size: 2.6rem;
+  line-height: 1;
+  color: var(--if-mint-soft);
+  -webkit-text-stroke: 1px var(--if-deep);
+}
+
+.panelMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 0.4rem;
+}
+
+.panelTitle {
+  margin: 0 0 0.35rem;
+  font-family: var(--if-serif);
+  font-size: 1.35rem;
+  font-weight: 400;
+  color: var(--if-ink);
+}
+
+.panelBody {
+  color: var(--if-ink-2);
+  line-height: 1.65;
+}
+
+.panelBody > :first-child {
+  margin-top: 0;
+}
+
+.panelBody > :last-child {
+  margin-bottom: 0;
+}
+
+@media (max-width: 760px) {
+  .lifecycleTrack {
+    grid-auto-flow: row;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .lifecyclePanel {
+    grid-template-columns: 1fr;
+  }
+
+  .panelNumber {
+    display: none;
+  }
+}
+
+/* ─── Threshold ring ───────────────────────────────────────────────────── */
+
+.ring {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 1.5rem auto;
+  max-width: 360px;
+}
+
+.ringSvg {
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.ringOrbit {
+  fill: none;
+  stroke: var(--ring-rule);
+  stroke-dasharray: 2 7;
+  animation: spin 60s linear infinite;
+  transform-origin: 160px 160px;
+}
+
+.ringSpoke {
+  stroke: var(--ring-rule);
+  stroke-width: 1.2;
+  stroke-dasharray: 3 5;
+  transition:
+    stroke 0.5s ease,
+    opacity 0.5s ease;
+}
+
+.ringSpokeActive {
+  stroke: var(--ring-accent);
+  stroke-width: 1.6;
+  animation: dashFlow 1.2s linear infinite;
+}
+
+.ringSpokeDim {
+  opacity: 0.25;
+}
+
+.ringNode {
+  fill: var(--ring-node);
+  stroke: var(--ring-rule);
+  stroke-width: 1.5;
+  transition:
+    fill 0.5s ease,
+    stroke 0.5s ease,
+    transform 0.5s ease;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.ringNodeActive {
+  fill: var(--ring-accent);
+  stroke: var(--ring-accent);
+  transform: scale(1.12);
+}
+
+.ringNodeDim {
+  opacity: 0.45;
+}
+
+.ringParticle {
+  fill: var(--ring-accent);
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.ringParticleRun {
+  animation: particleIn 1.6s cubic-bezier(0.55, 0, 0.35, 1) infinite;
+  animation-delay: var(--delay, 0ms);
+}
+
+.ringCore {
+  fill: var(--ring-core);
+  stroke: var(--ring-accent);
+  stroke-width: 1.5;
+  transition: fill 0.6s ease;
+}
+
+.ringCoreGlow {
+  fill: var(--ring-accent);
+  opacity: 0.12;
+  transform-origin: 160px 160px;
+  animation: breathe 3s ease-in-out infinite;
+}
+
+.ringCoreText {
+  font-family: var(--if-mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  fill: var(--ring-text);
+  text-anchor: middle;
+  dominant-baseline: middle;
+}
+
+.ringCaption {
+  min-height: 3em;
+  margin: 0;
+  font-size: 0.92rem;
+  line-height: 1.5;
+  text-align: center;
+  color: var(--ring-caption);
+  animation: panelIn 0.45s ease both;
+}
+
+.ringCaption strong {
+  color: var(--ring-strong);
+}
+
+.ringLight {
+  --ring-rule: #c9d3cc;
+  --ring-node: #ffffff;
+  --ring-accent: #1f6b4a;
+  --ring-core: #e8faf0;
+  --ring-text: #163d2c;
+  --ring-caption: #5b6864;
+  --ring-strong: #14201b;
+}
+
+.ringDark {
+  --ring-rule: rgba(244, 241, 232, 0.28);
+  --ring-node: #1d2b25;
+  --ring-accent: #82f5ad;
+  --ring-core: #14201b;
+  --ring-text: #d9fce8;
+  --ring-caption: rgba(244, 241, 232, 0.7);
+  --ring-strong: #fbf9f3;
+}
+
+.ringPhases {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.ringPhaseDot {
+  width: 22px;
+  height: 4px;
+  border: 0;
+  border-radius: 999px;
+  padding: 0;
+  background: var(--ring-rule);
+  cursor: pointer;
+  transition:
+    background-color 0.3s ease,
+    width 0.3s ease;
+}
+
+.ringPhaseDotActive {
+  width: 36px;
+  background: var(--ring-accent);
+}
+
+/* ─── Flow ─────────────────────────────────────────────────────────────── */
+
+.flow {
+  display: flex;
+  align-items: stretch;
+  margin: 1.75rem 0;
+  padding: 0;
+  list-style: none;
+}
+
+.flowStep {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 1rem;
+  border: 1px solid var(--if-rule);
+  border-radius: 14px;
+  background: var(--if-card);
+  transition:
+    transform 0.25s ease,
+    border-color 0.25s ease,
+    box-shadow 0.25s ease;
+}
+
+.flowStep:hover {
+  transform: translateY(-3px);
+  border-color: rgba(31, 107, 74, 0.35);
+  box-shadow: 0 16px 34px -24px rgba(20, 32, 27, 0.5);
+}
+
+.flowStepIcon {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  color: var(--if-deep);
+  background: var(--if-mint-bg);
+}
+
+.flowStepLabel {
+  font-weight: 600;
+  font-size: 0.95rem;
+  line-height: 1.3;
+  color: var(--if-ink);
+}
+
+.flowStepSub {
+  font-size: 0.84rem;
+  line-height: 1.45;
+  color: var(--if-ink-3);
+}
+
+.flowStepSub code {
+  font-size: 0.78rem;
+}
+
+.flowLink {
+  position: relative;
+  flex: 0 0 38px;
+  align-self: center;
+  height: 2px;
+  background-image: linear-gradient(90deg, var(--if-sage) 50%, transparent 50%);
+  background-size: 8px 2px;
+  animation: marchX 0.9s linear infinite;
+  opacity: 0.7;
+}
+
+.flowLink::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 8px;
+  height: 8px;
+  margin-top: -4px;
+  border-radius: 50%;
+  background: #82f5ad;
+  box-shadow: 0 0 0 3px rgba(130, 245, 173, 0.25);
+  animation: packetX 1.8s ease-in-out infinite;
+  animation-delay: var(--delay, 0ms);
+}
+
+@media (max-width: 760px) {
+  .flow {
+    flex-direction: column;
+  }
+
+  .flowLink {
+    flex-basis: 28px;
+    width: 2px;
+    height: 28px;
+    background-image: linear-gradient(180deg, var(--if-sage) 50%, transparent 50%);
+    background-size: 2px 8px;
+    animation-name: marchY;
+  }
+
+  .flowLink::after {
+    top: 0;
+    left: 50%;
+    margin-top: 0;
+    margin-left: -4px;
+    animation-name: packetY;
+  }
+}
+
+/* ─── Layers (architecture stack) ──────────────────────────────────────── */
+
+.layers {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin: 1.75rem 0;
+}
+
+.layer {
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr);
+  gap: 1rem;
+  align-items: center;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--if-rule);
+  border-radius: 14px;
+  background: var(--if-card);
+  transition:
+    border-color 0.25s ease,
+    transform 0.25s ease,
+    box-shadow 0.25s ease;
+}
+
+.layer:hover {
+  transform: translateX(4px);
+  border-color: rgba(31, 107, 74, 0.35);
+  box-shadow: -4px 0 0 0 var(--if-deep);
+}
+
+.layerTitle {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.layerName {
+  font-weight: 600;
+  color: var(--if-ink);
+}
+
+.layerNote {
+  font-size: 0.8rem;
+  color: var(--if-ink-4);
+}
+
+.layerItems {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.layerItem {
+  padding: 0.25rem 0.6rem;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  color: var(--if-deep-ink);
+  background: var(--if-mint-bg);
+  box-shadow: inset 0 0 0 1px var(--if-mint-soft);
+}
+
+@media (max-width: 640px) {
+  .layer {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ─── Stats ────────────────────────────────────────────────────────────── */
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 0.75rem;
+  margin: 1.5rem 0;
+}
+
+.stat {
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--if-rule);
+  border-radius: 14px;
+  background: var(--if-card);
+}
+
+.statValue {
+  font-family: var(--if-serif);
+  font-size: 2rem;
+  line-height: 1.1;
+  color: var(--if-ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.statLabel {
+  margin-top: 0.25rem;
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--if-ink-2);
+}
+
+.statHint {
+  margin-top: 0.2rem;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  color: var(--if-ink-4);
+}
+
+/* ─── Terminal ─────────────────────────────────────────────────────────── */
+
+.terminal {
+  margin: 1.5rem 0;
+  overflow: hidden;
+  border-radius: 16px;
+  background: #101a16;
+  box-shadow:
+    0 24px 60px -30px rgba(20, 32, 27, 0.8),
+    inset 0 0 0 1px rgba(244, 241, 232, 0.08);
+}
+
+.terminalBar {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.7rem 0.9rem;
+  border-bottom: 1px solid rgba(244, 241, 232, 0.08);
+}
+
+.terminalDot {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: rgba(244, 241, 232, 0.18);
+}
+
+.terminalTitle {
+  flex: 1;
+  font-family: var(--if-mono);
+  font-size: 0.75rem;
+  text-align: center;
+  color: rgba(244, 241, 232, 0.5);
+}
+
+.terminalCopy {
+  padding: 0.2rem 0.55rem;
+  border: 1px solid rgba(244, 241, 232, 0.16);
+  border-radius: 7px;
+  font-family: var(--if-mono);
+  font-size: 0.7rem;
+  color: rgba(244, 241, 232, 0.7);
+  background: transparent;
+  cursor: pointer;
+}
+
+.terminalCopy:hover {
+  border-color: #82f5ad;
+  color: #82f5ad;
+}
+
+.terminalBody {
+  margin: 0;
+  padding: 1rem 1.1rem 1.2rem;
+  overflow-x: auto;
+  font-family: var(--if-mono);
+  font-size: 0.86rem;
+  line-height: 1.75;
+  color: #d8e3dd;
+  background: transparent !important;
+}
+
+.terminalLine {
+  display: block;
+  min-height: 1.75em;
+  white-space: pre;
+}
+
+.terminalPrompt {
+  color: #82f5ad;
+  user-select: none;
+}
+
+.terminalOutput {
+  color: rgba(216, 227, 221, 0.55);
+}
+
+.terminalComment {
+  color: rgba(216, 227, 221, 0.4);
+}
+
+.terminalCursor {
+  display: inline-block;
+  width: 0.55em;
+  height: 1.1em;
+  margin-left: 1px;
+  vertical-align: text-bottom;
+  background: #82f5ad;
+  animation: blink 1s steps(1) infinite;
+}
+
+/* ─── Reveal ───────────────────────────────────────────────────────────── */
+
+.reveal {
+  transition:
+    opacity 0.7s ease,
+    transform 0.7s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.revealHidden {
+  opacity: 0;
+  transform: translateY(18px);
+}
+
+/* ─── Section heading (landing) ────────────────────────────────────────── */
+
+.sectionHead {
+  margin: 3.5rem 0 0.5rem;
+}
+
+.sectionKicker {
+  font-family: var(--if-mono);
+  font-size: 0.75rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--if-sage);
+}
+
+.sectionTitle {
+  margin: 0.35rem 0 0.4rem;
+  font-family: var(--if-serif);
+  font-size: clamp(1.6rem, 3vw, 2.2rem);
+  font-weight: 400;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+  color: var(--if-ink);
+}
+
+.sectionLead {
+  max-width: 44rem;
+  margin: 0;
+  color: var(--if-ink-3);
+  line-height: 1.6;
+}
+
+/* ─── Keyframes ────────────────────────────────────────────────────────── */
+
+@keyframes gridDrift {
+  to {
+    background-position:
+      44px 44px,
+      44px 44px;
+  }
+}
+
+@keyframes orbFloat {
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1);
+  }
+  50% {
+    transform: translate(-40px, 30px) scale(1.08);
+  }
+}
+
+@keyframes livePulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(130, 245, 173, 0.6);
+  }
+  70% {
+    box-shadow: 0 0 0 9px rgba(130, 245, 173, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(130, 245, 173, 0);
+  }
+}
+
+@keyframes progressFill {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+@keyframes panelIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes dashFlow {
+  to {
+    stroke-dashoffset: -16;
+  }
+}
+
+@keyframes particleIn {
+  0% {
+    opacity: 0;
+    transform: translate(0, 0) scale(0.6);
+  }
+  15% {
+    opacity: 1;
+  }
+  85% {
+    opacity: 1;
+    transform: translate(var(--dx), var(--dy)) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(var(--dx), var(--dy)) scale(0.4);
+  }
+}
+
+@keyframes breathe {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.1;
+  }
+  50% {
+    transform: scale(1.18);
+    opacity: 0.22;
+  }
+}
+
+@keyframes marchX {
+  to {
+    background-position: 8px 0;
+  }
+}
+
+@keyframes marchY {
+  to {
+    background-position: 0 8px;
+  }
+}
+
+@keyframes packetX {
+  0% {
+    left: 0;
+    opacity: 0;
+  }
+  20% {
+    opacity: 1;
+  }
+  80% {
+    opacity: 1;
+  }
+  100% {
+    left: calc(100% - 8px);
+    opacity: 0;
+  }
+}
+
+@keyframes packetY {
+  0% {
+    top: 0;
+    opacity: 0;
+  }
+  20% {
+    opacity: 1;
+  }
+  80% {
+    opacity: 1;
+  }
+  100% {
+    top: calc(100% - 8px);
+    opacity: 0;
+  }
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .heroGrid,
+  .heroOrbA,
+  .heroOrbB,
+  .heroEyebrow::before,
+  .ringOrbit,
+  .ringSpokeActive,
+  .ringCoreGlow,
+  .flowLink,
+  .flowLink::after,
+  .terminalCursor {
+    animation: none !important;
+  }
+
+  .ringParticle,
+  .flowLink::after {
+    display: none;
+  }
+
+  .lifecyclePanel,
+  .ringCaption {
+    animation: none;
+  }
+
+  .reveal,
+  .revealHidden {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+
+  .card,
+  .button,
+  .flowStep,
+  .layer,
+  .stageButton {
+    transition: none;
+  }
+}

@@ -30,3 +30,5 @@ Disallow: /
 # Allow everything else (other search engines)
 User-agent: *
 Allow: /
+
+Sitemap: https://docs.theinterfold.com/sitemap.xml
