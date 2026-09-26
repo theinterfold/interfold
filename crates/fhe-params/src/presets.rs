@@ -51,14 +51,14 @@ pub enum BfvPreset {
     ///
     /// Used for threshold encryption (GRECO) and threshold decryption operations.
     /// These parameters define the threshold public key that data providers use to encrypt inputs.
-    #[serde(rename = "InsecureThreshold512")]
+    #[serde(alias = "InsecureThreshold512")]
     InsecureThreshold,
     /// Insecure DKG parameters (degree 128) - DO NOT USE IN PRODUCTION
     ///
     /// Used during Phase 0-1 (BFV Key Setup and DKG) where each ciphernode generates
     /// a standard BFV key-pair to encrypt secret shares. These are temporary keys used
     /// only during the key generation process.
-    #[serde(rename = "InsecureDkg512")]
+    #[serde(alias = "InsecureDkg512")]
     InsecureDkg,
     /// Secure threshold BFV parameters (degree 8192) - PRODUCTION READY
     ///
@@ -635,10 +635,20 @@ mod tests {
     use crate::constants::{insecure, secure_16384, secure_16384_search_defaults, secure_8192};
 
     #[test]
-    fn insecure_preset_rename_preserves_serialized_identity() {
-        for (preset, name, index) in [
-            (BfvPreset::InsecureThreshold, "InsecureThreshold512", 0u32),
-            (BfvPreset::InsecureDkg, "InsecureDkg512", 1u32),
+    fn insecure_preset_rename_keeps_legacy_json_readable_and_bincode_stable() {
+        for (preset, name, legacy_name, index) in [
+            (
+                BfvPreset::InsecureThreshold,
+                "InsecureThreshold",
+                "InsecureThreshold512",
+                0u32,
+            ),
+            (
+                BfvPreset::InsecureDkg,
+                "InsecureDkg",
+                "InsecureDkg512",
+                1u32,
+            ),
         ] {
             assert_eq!(
                 serde_json::to_string(&preset).unwrap(),
@@ -646,6 +656,10 @@ mod tests {
             );
             assert_eq!(
                 serde_json::from_str::<BfvPreset>(&format!("\"{name}\"")).unwrap(),
+                preset
+            );
+            assert_eq!(
+                serde_json::from_str::<BfvPreset>(&format!("\"{legacy_name}\"")).unwrap(),
                 preset
             );
             assert_eq!(bincode::serialize(&preset).unwrap(), index.to_le_bytes());

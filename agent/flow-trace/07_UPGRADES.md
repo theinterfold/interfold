@@ -91,11 +91,13 @@ A node with an older store halts before replay. Archive that drained store and p
 controlled resync before starting the protocol-4 process. Start protocol-4 nodes and deploy the
 matching circuit archive before requests resume.
 
-The insecure BFV preset has degree 128. Its Rust variants are `InsecureThreshold` and
-`InsecureDkg`. Serde maps them to the persisted names `InsecureThreshold512` and
-`InsecureDkg512`. The enum positions stay fixed, so existing JSON and bincode data remain readable.
-The preset's public names are `INSECURE_THRESHOLD`, `INSECURE_DKG`, and `insecure`. These stable
-identities require no protocol-version, node-generation, wire-major, or storage-schema increase.
+The insecure BFV preset has degree 128. Its Rust and Serde names are `InsecureThreshold` and
+`InsecureDkg`. Serde accepts the legacy JSON names `InsecureThreshold512` and `InsecureDkg512`.
+The enum positions stay fixed, so existing JSON and bincode data remain readable. Older binaries
+cannot read JSON written with the suffix-free names. The preset's public names are
+`INSECURE_THRESHOLD`, `INSECURE_DKG`, and `insecure`. The node event log and P2P payloads use
+bincode, so this change requires no protocol-version, node-generation, wire-major, or storage-schema
+increase.
 Circuit source hashes include the Rust preset declarations. Rebuild affected circuit artifacts when
 their source hash changes, even if the BFV parameters do not change.
 
