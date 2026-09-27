@@ -7,8 +7,8 @@
 use crate::net_interface_handle::NetEventSubscriber;
 use crate::{
     domain::{
-        datetime_to_instant_from_now, notification_is_well_formed, DocumentPublishingService,
-        FetchQueue, PublicationSchedule,
+        add_candidate, datetime_to_instant_from_now, notification_is_well_formed,
+        DocumentPublishingService, FetchQueue, PublicationSchedule,
     },
     events::{
         call_and_await_response, DocumentPublishedNotification, GossipData, NetCommand, NetEvent,
@@ -51,8 +51,6 @@ const MAX_RECEIVED_DOCUMENTS: usize = 8_192;
 const MAX_INFLIGHT_TRANSFERS: usize = 8;
 /// Notified documents that wait for a fetch slot or for a retry.
 const MAX_WAITING_FETCHES: usize = 512;
-/// Fetch attempts per notification. A later announcement of the document queues it again.
-const MAX_FETCH_ATTEMPTS: u32 = 6;
 /// Interval at which waiting fetches whose retry time has passed are started.
 const FETCH_QUEUE_POLL: Duration = Duration::from_secs(5);
 /// Concurrent full-document DHT replications. Each one uploads the document to up to 20 peers,
@@ -103,6 +101,9 @@ pub struct DocumentPublisher {
     fetching: HashMap<DocumentId, u32>,
     fetch_queue: FetchQueue,
     fetch_aborts: HashMap<DocumentId, AbortHandle>,
+    /// Notifications that arrived while their document was being fetched. They become candidates
+    /// for the next fetch if the current one does not deliver the document.
+    late_notifications: HashMap<DocumentId, Vec<DocumentPublishedNotification>>,
     early_notifications: VecDeque<DocumentPublishedNotification>,
     closed_e3s: VecDeque<E3id>,
 }
@@ -165,8 +166,9 @@ impl DocumentPublisher {
             publish_aborts: HashMap::new(),
             received: recovered.received,
             fetching: HashMap::new(),
-            fetch_queue: FetchQueue::new(MAX_WAITING_FETCHES, MAX_FETCH_ATTEMPTS),
+            fetch_queue: FetchQueue::new(MAX_WAITING_FETCHES),
             fetch_aborts: HashMap::new(),
+            late_notifications: HashMap::new(),
             early_notifications: VecDeque::new(),
             closed_e3s: recovered.closed_e3s,
         };
@@ -351,6 +353,7 @@ impl DocumentPublisher {
         self.replicating.retain(|(id, _)| id != e3_id);
         self.received.retain(|(id, _)| id != e3_id);
         self.fetching.retain(|(id, _), _| id != e3_id);
+        self.late_notifications.retain(|(id, _), _| id != e3_id);
         self.fetch_queue.remove_e3(e3_id);
         self.early_notifications
             .retain(|item| &item.meta.e3_id != e3_id);
