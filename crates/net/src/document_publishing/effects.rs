@@ -6,13 +6,23 @@ use super::*;
 use crate::domain::EventConversionService;
 use crate::net_interface_handle::NetEventSubscriber;
 
-/// A fetched document does not match the metadata of the notification that named it.
+/// A fetched document does not match the metadata of the notifications that named it. It keeps
+/// the fetched bytes, so notifications that arrive later can be checked without fetching again.
 #[derive(Debug)]
-pub(super) struct DocumentMetadataMismatch(anyhow::Error);
+pub(super) struct DocumentMetadataMismatch {
+    error: anyhow::Error,
+    value: ArcBytes,
+}
+
+impl DocumentMetadataMismatch {
+    pub(super) fn value(&self) -> &ArcBytes {
+        &self.value
+    }
+}
 
 impl std::fmt::Display for DocumentMetadataMismatch {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:#}", self.0)
+        write!(f, "{:#}", self.error)
     }
 }
 
@@ -101,13 +111,28 @@ pub async fn handle_document_published_notification(
     )
     .await?;
 
-    // The gossiped metadata is not covered by the DHT content hash. Bind it to the decoded
-    // payload before persisting DocumentReceived; otherwise a notification for an E3 this node is
-    // interested in can inject a content-addressed document for a different E3 or party route.
     // When no candidate matches, the mismatch is final for these notifications, so the caller does
-    // not retry them; a correct notification for the same document is fetched on its own.
+    // not fetch the document again for them. It checks later notifications against these bytes.
+    bind_to_candidate(&ids, relevant, value.clone())
+        .map_err(|error| anyhow::Error::new(DocumentMetadataMismatch { error, value }))
+}
+
+/// Accept `value` under the first relevant candidate whose metadata matches its payload.
+///
+/// The gossiped metadata is not covered by the DHT content hash. Binding it to the decoded payload
+/// before persisting DocumentReceived stops a notification for an E3 this node is interested in
+/// from injecting a content-addressed document for a different E3 or party route. Returns
+/// `Ok(None)` when no candidate is relevant to this node, and the last mismatch otherwise.
+pub(super) fn bind_to_candidate(
+    ids: &HashMap<E3id, PartyId>,
+    candidates: Vec<DocumentPublishedNotification>,
+    value: ArcBytes,
+) -> Result<Option<(DocumentReceived, DocumentPublishedNotification)>> {
     let mut mismatch = None;
-    for notification in relevant {
+    for notification in candidates {
+        if DocumentPublishingService::interest_in(ids, &notification).is_none() {
+            continue;
+        }
         match EventConversionService::validate_received(&notification.meta, &value) {
             Ok(()) => {
                 let document = DocumentReceived {
@@ -119,8 +144,10 @@ pub async fn handle_document_published_notification(
             Err(error) => mismatch = Some(error),
         }
     }
-    let error = mismatch.unwrap_or_else(|| anyhow::anyhow!("no candidate notification"));
-    Err(anyhow::Error::new(DocumentMetadataMismatch(error)))
+    match mismatch {
+        Some(error) => Err(error),
+        None => Ok(None),
+    }
 }
 
 /// Call DhtPutRecord Command on the Libp2pNetInterface and handle the results
