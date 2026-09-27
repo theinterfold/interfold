@@ -65,6 +65,12 @@ the code does not meet yet.
   each snapshot cursor, so current recovery needs the matching snapshots, and no test compares full
   replay with hydration. — `ARCHITECTURE.md`; `CRATES_ARCHITECTURE.md`;
   `crates/sync/src/sync/service.rs`
+- A data directory belongs to one node role. All readers of a chain share one block cursor, so a
+  node with fewer readers advances it past events that a node with more readers still needs.
+  `preflight_node_role` stamps the role on first boot and refuses a directory of the other role; an
+  unmarked directory that holds events is a full node's. **Gap:** releases before the marker share
+  schema version 7 and do not check it. — `crates/sync/src/sync/node_role.rs`;
+  `crates/sync/src/sync/preflight.rs`
 - Before startup enables the event bus, its HLC must be greater than the greatest timestamp in all
   durable event logs. A snapshot timestamp alone is not a sufficient clock floor because the log can
   contain a newer post-snapshot suffix. — INDEX concern #56

@@ -140,6 +140,9 @@ pub struct NetSyncManager {
     net_ready: bool,
     /// Guard so the post-restart re-broadcast fires at most once per process.
     rebroadcast_started: bool,
+    /// Start without peer history when no peer can serve it, instead of failing the fetch. A
+    /// bootstrap node sets this because it uses no E3 history.
+    peer_history_optional: bool,
     /// Local messages that are gossiped again until their phase ends: the latest signed Ready and
     /// Roster messages, and this node's decryption shares. They go directly to libp2p with a new
     /// delivery ID because EventBus stable-ID dedup suppresses identical re-publications.
@@ -193,6 +196,7 @@ impl NetSyncManager {
             rebroadcast_query_ids: HashSet::new(),
             net_ready: false,
             rebroadcast_started: false,
+            peer_history_optional: false,
             announcements: HashMap::new(),
         }
     }

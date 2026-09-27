@@ -58,7 +58,10 @@ use e3_sortition::{
     NodeStateRepositoryFactory, Sortition, SortitionAttachParams, SortitionBackend,
     SortitionRecoveryRepositoryFactory, SortitionRepositoryFactory,
 };
-use e3_sync::{preflight_schema_version, reconcile_request_router_checkpoint, sync_with_net_ready};
+use e3_sync::{
+    preflight_node_role, preflight_schema_version, reconcile_request_router_checkpoint,
+    sync_with_net_ready, NodeRole,
+};
 use e3_utils::SharedRng;
 use e3_zk_prover::{setup_zk_actors, ZkActorRecovery, ZkBackend};
 use libp2p::PeerId;
@@ -116,6 +119,7 @@ pub struct CiphernodeBuilder {
     proof_aggregation_enabled: bool,
     pubkey_agg: bool,
     rng: SharedRng,
+    role: NodeRole,
     sortition_backend: SortitionBackend,
     source_bus: Option<BusMode<Addr<EventBus<InterfoldEvent>>>>,
     task_pool: Option<TaskPool>,
@@ -194,6 +198,7 @@ impl CiphernodeBuilder {
             proof_aggregation_enabled: true,
             pubkey_agg: false,
             rng,
+            role: NodeRole::Full,
             sortition_backend: SortitionBackend::score(),
             source_bus: None,
             task_pool: None,
@@ -227,6 +232,14 @@ impl CiphernodeBuilder {
     /// Set the node name for dashboard display and log attribution.
     pub fn with_name(mut self, name: &str) -> Self {
         self.name = Some(name.to_string());
+        self
+    }
+
+    /// Build a bootstrap node. It installs no accusation or commitment-check extensions, so it
+    /// signs no protocol messages. It starts without peer history when no peer can serve it. Its
+    /// data directory is stamped as a bootstrap node's, and a full node refuses to start on it.
+    pub fn with_bootstrap_role(mut self) -> Self {
+        self.role = NodeRole::Bootstrap;
         self
     }
 
@@ -677,6 +690,13 @@ impl CiphernodeBuilder {
         // make a fresh store non-empty and cause it to look like unversioned legacy data.
         preflight_schema_version(&repositories, &eventstore_aggregate_config, &seq_eventstore)
             .await?;
+        preflight_node_role(
+            &repositories,
+            &eventstore_aggregate_config,
+            &seq_eventstore,
+            self.role,
+        )
+        .await?;
         ensure_request_router_checkpoint(&repositories, aggregate_config.aggregates()).await?;
         reconcile_request_router_checkpoint(
             &repositories,
@@ -830,6 +850,9 @@ impl CiphernodeBuilder {
             self.max_buffered_net_bytes,
             selected_party_ids,
             recovered_documents,
+            // A bootstrap node uses no E3 history, so it starts without it when no peer can serve
+            // it. A lone seed would otherwise wait for its startup deadline while an E3 is open.
+            self.role == NodeRole::Bootstrap,
         )?;
 
         // Attach the request router after network startup is registered. Recovered local
@@ -1048,6 +1071,10 @@ impl CiphernodeBuilder {
                 let provider = provider_cache.ensure_read_provider(chain).await?;
                 let chain_id = provider.chain_id();
                 validate_chain_id(chain, chain_id)?;
+                // Only the accusation manager uses the vote validity, and a bootstrap node has none.
+                if self.role == NodeRole::Bootstrap {
+                    continue;
+                }
                 let validity =
                     Self::fetch_accusation_vote_validity_from_registry(provider_cache, chain)
                         .await?;
@@ -1210,6 +1237,12 @@ impl CiphernodeBuilder {
                 sortition,
                 self.proof_aggregation_enabled,
             ));
+        }
+
+        // A bootstrap node verifies no proofs and must not sign accusation votes, so it gets
+        // neither slashing extension.
+        if self.role == NodeRole::Bootstrap {
+            return Ok(e3_builder);
         }
 
         // ── Accusation manager ──

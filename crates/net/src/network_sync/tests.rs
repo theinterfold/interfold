@@ -428,6 +428,7 @@ async fn a_published_decryption_share_is_scheduled_for_resending() {
         NoopEventStore.start().recipient(),
         "my-topic",
         NetworkPolicy::local_unrestricted(),
+        false,
     );
     let e3_id = E3id::new("decrypting", 1);
     let (_, share) = local_decryption_share(&e3_id, 4);
@@ -652,4 +653,64 @@ async fn timed_out_sync_request_releases_its_in_flight_slot() {
         protocol_response(response),
         ProtocolResponse::Error(reason) if reason.contains("timed out")
     ));
+}
+
+/// Starts a manager with no peer, then asks it for the history of an open aggregate.
+fn start_history_fetch_without_peers(
+    peer_history_optional: bool,
+) -> impl std::future::Future<Output = anyhow::Result<InterfoldEvent<Sequenced>>> {
+    let system = EventSystem::new().with_fresh_bus();
+    let bus = system.handle().unwrap().enable("test");
+    let (tx, rx) = mpsc::channel::<NetCommand>(100);
+    let (evt_tx, _evt_rx) = broadcast::channel::<NetEvent>(100);
+    NetSyncManager::setup(
+        &bus,
+        &tx,
+        &NetEventSubscriber::from(&evt_tx),
+        NoopEventStore.start().recipient(),
+        "my-topic",
+        NetworkPolicy::local_unrestricted(),
+        peer_history_optional,
+    );
+    let received = bus.wait_for(EventType::HistoricalNetSyncEventsReceived);
+    bus.publish_without_context(HistoricalNetSyncStart::new(BTreeMap::from([(
+        AggregateId::new(1),
+        0,
+    )])))
+    .unwrap();
+    async move {
+        // Keep the channels and the system alive until the caller has its answer.
+        let _keep = (system, tx, rx, evt_tx);
+        received.await
+    }
+}
+
+#[actix::test]
+async fn optional_peer_history_lets_startup_continue_when_no_peer_serves_it() {
+    tokio::time::pause();
+    let received = tokio::time::timeout(
+        Duration::from_secs(10 * 60),
+        start_history_fetch_without_peers(true),
+    )
+    .await
+    .expect("startup must not wait for history that no peer serves")
+    .unwrap();
+    let InterfoldEventData::HistoricalNetSyncEventsReceived(history) = received.into_data() else {
+        panic!("expected the historical net events");
+    };
+    assert!(history.events.is_empty());
+}
+
+#[actix::test]
+async fn required_peer_history_still_holds_startup_when_no_peer_serves_it() {
+    tokio::time::pause();
+    let received = tokio::time::timeout(
+        Duration::from_secs(10 * 60),
+        start_history_fetch_without_peers(false),
+    )
+    .await;
+    assert!(
+        received.is_err(),
+        "a full node must not continue without the history of its open E3s"
+    );
 }

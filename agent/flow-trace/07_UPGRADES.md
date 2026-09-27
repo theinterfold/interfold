@@ -200,6 +200,10 @@ leaves an unmarked event log; `has_existing_state` is then true and the prefligh
 `no schema marker` instead of starting. `preflight.rs` treats the complete identity pair as the one
 exception that still counts as a fresh store, which is what the reset relies on.
 
+The node role marker (`//node_role`) is in the same key/value store, so a reset also clears it. The
+next start stamps the role that it runs with. This is the supported way to turn a full node into a
+bootstrap node, or the reverse, on the same data directory.
+
 `ciphernode.jsonl` sits beside the logs in the same directory but is not durable state. It is the
 append-only operational log written by `LogCollector`, never read back, and a reset leaves it in
 place.

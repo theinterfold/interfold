@@ -3,6 +3,7 @@
 //! Durable schema admission before runtime state is loaded.
 
 use super::*;
+use e3_data::DataStore;
 
 /// Validate or initialize the durable schema marker before runtime actors can write state.
 pub async fn preflight_schema_version(
@@ -27,6 +28,37 @@ pub async fn preflight_schema_version(
         }
         SchemaVersionDecision::Halt(reason) => {
             bail!("Schema version check failed: {reason}");
+        }
+    }
+}
+
+/// Stamp the node role on a new data directory, or refuse a directory that another role wrote.
+///
+/// Run this after schema admission and before runtime actors can write events.
+pub async fn preflight_node_role(
+    repositories: &Repositories,
+    aggregate_config: &AggregateConfig,
+    eventstore: &Recipient<EventStoreQueryBy<SeqAgg>>,
+    role: NodeRole,
+) -> Result<()> {
+    let repo = repositories.node_role();
+    // A storage error must not read as an absent marker, or a failed read could let a full node
+    // restamp a bootstrap node's directory.
+    let persisted = DataStore::from(&repo).read_checked::<NodeRole>().await?;
+    let has_existing_events = if persisted.is_none() {
+        event_logs_have_events(aggregate_config, eventstore).await?
+    } else {
+        false
+    };
+    match decide_node_role(persisted, role, has_existing_events) {
+        NodeRoleDecision::Proceed => Ok(()),
+        NodeRoleDecision::Write => {
+            info!("Stamping node role {role} on the data directory.");
+            repo.write_sync(&role).await?;
+            Ok(())
+        }
+        NodeRoleDecision::Halt(reason) => {
+            bail!("Node role check failed: {reason}");
         }
     }
 }

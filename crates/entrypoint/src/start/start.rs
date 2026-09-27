@@ -38,8 +38,9 @@ fn validate_proof_aggregation_mode(skip_proof_aggregation: bool) -> Result<()> {
 }
 
 /// Start the node. With `bootstrap`, the node only runs networking and chain reads, so peers can
-/// use it to discover each other. It does not join committees, generate proofs, or send
-/// transactions, so it needs neither the prover's memory nor ETH.
+/// use it to discover each other. It does not join committees, generate proofs, sign votes, or
+/// send transactions, so it needs neither the prover's memory nor ETH. Its data directory is
+/// stamped as a bootstrap node's, and a full node refuses to start on it (and the reverse).
 #[instrument(name = "app", skip_all)]
 pub async fn execute(config: &AppConfig, bootstrap: bool) -> Result<CiphernodeHandle> {
     validate_proof_aggregation_mode(config.skip_proof_aggregation())?;
@@ -62,6 +63,7 @@ pub async fn execute(config: &AppConfig, bootstrap: bool) -> Result<CiphernodeHa
         );
         let builder = CiphernodeBuilder::new(rng, cipher)
             .with_name(&config.name())
+            .with_bootstrap_role()
             .with_logging()
             .with_persistence(&config.log_file(), &config.db_file())
             .with_chains(config.chains())

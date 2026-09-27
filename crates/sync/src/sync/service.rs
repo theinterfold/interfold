@@ -5,8 +5,8 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::domain::{
-    decide_schema_version, CollectOutcome, HistoricalEvmCollector, SchemaVersionDecision,
-    SnapshotMeta, SyncPlanner, SCHEMA_VERSION,
+    decide_node_role, decide_schema_version, CollectOutcome, HistoricalEvmCollector, NodeRole,
+    NodeRoleDecision, SchemaVersionDecision, SnapshotMeta, SyncPlanner, SCHEMA_VERSION,
 };
 use crate::replay_spool::ReplaySpool;
 use crate::SyncRepositoryFactory;
@@ -519,7 +519,7 @@ mod historical;
 mod preflight;
 
 pub use historical::collect_historical_evm_events;
-pub use preflight::{has_schema_governed_kv_state, preflight_schema_version};
+pub use preflight::{has_schema_governed_kv_state, preflight_node_role, preflight_schema_version};
 
 #[derive(Message)]
 #[rtype("()")]

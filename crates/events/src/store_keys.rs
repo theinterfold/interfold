@@ -163,6 +163,12 @@ impl StoreKeys {
         String::from("//schema_version")
     }
 
+    /// Role of the node that owns this data directory (full or bootstrap). Written on first boot;
+    /// a node refuses to start on a directory that another role wrote.
+    pub fn node_role() -> String {
+        String::from("//node_role")
+    }
+
     pub fn finalized_committees() -> String {
         String::from("//finalized_committees")
     }

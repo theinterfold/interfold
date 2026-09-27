@@ -46,9 +46,12 @@ impl NetSyncManager {
         eventstore: Recipient<EventStoreQueryBy<TsAgg>>,
         topic: &str,
         network: NetworkPolicy,
+        peer_history_optional: bool,
     ) -> Addr<Self> {
         let mut events = rx.subscribe();
-        let addr = Self::new(bus, tx, rx, eventstore, topic, network).start();
+        let mut manager = Self::new(bus, tx, rx, eventstore, topic, network);
+        manager.peer_history_optional = peer_history_optional;
+        let addr = manager.start();
 
         bus.subscribe(EventType::HistoricalNetSyncStart, addr.clone().recipient());
         bus.subscribe(EventType::DkgCoordination, addr.clone().recipient());

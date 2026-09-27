@@ -300,15 +300,16 @@ then does a controlled shutdown.
 interfold start [--peer <PEER>]... [--bootstrap]
 ```
 
-| Flag          | Value    | Default                    | Description                                                                                                                                                           |
-| ------------- | -------- | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--peer`      | `<PEER>` | The peers from the profile | libp2p multiaddr of a peer to dial. Repeat the flag for more peers. The node adds these peers to `peers` from the config.                                             |
-| `--bootstrap` | None     | Off                        | Run as a bootstrap node: no committee work, proofs, or transactions, and no memory for the prover. See [Run a bootstrap node](/operate/running#run-a-bootstrap-node). |
+| Flag          | Value    | Default                    | Description                                                                                                                                                                  |
+| ------------- | -------- | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--peer`      | `<PEER>` | The peers from the profile | libp2p multiaddr of a peer to dial. Repeat the flag for more peers. The node adds these peers to `peers` from the config.                                                    |
+| `--bootstrap` | None     | Off                        | Run as a bootstrap node: no committee work, proofs, votes, or transactions, and no memory for the prover. See [Run a bootstrap node](/operate/running#run-a-bootstrap-node). |
 
 The command holds a lock on the data folder of the profile, so a second process cannot use the same
-data. It also opens the control port and, when `dashboard_port` is set, a dashboard at
-`http://127.0.0.1:<dashboard_port>`. The node stops with an error when its chain connection fails or
-when its event store fails.
+data. A data folder keeps the role, full or bootstrap, of the first node that used it, and the
+command does not start a node of the other role on it. It also opens the control port and, when
+`dashboard_port` is set, a dashboard at `http://127.0.0.1:<dashboard_port>`. The node stops with an
+error when its chain connection fails or when its event store fails.
 
 ### `interfold nodes`
 

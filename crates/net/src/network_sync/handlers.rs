@@ -70,18 +70,37 @@ impl Handler<TypedEvent<HistoricalNetSyncStart>> for NetSyncManager {
         ctx: &mut Self::Context,
     ) -> Self::Result {
         info!("HISTORICAL_NET_SYNC_START");
-        trap_fut(
-            EType::Net,
-            &self.bus.with_ec(msg.get_ctx()),
-            handle_sync_request_event(
-                self.tx.clone(),
-                self.rx.clone(),
-                msg,
-                ctx.address(),
-                !self.readiness_all_peers_dialed(),
-                self.network.clone(),
-            ),
-        )
+        let bus = self.bus.with_ec(msg.get_ctx());
+        let event_context = msg.get_ctx().clone();
+        let address = ctx.address();
+        let fetch = handle_sync_request_event(
+            self.tx.clone(),
+            self.rx.clone(),
+            msg,
+            address.clone(),
+            !self.readiness_all_peers_dialed(),
+            self.network.clone(),
+        );
+        if !self.peer_history_optional {
+            return trap_fut(EType::Net, &bus, fetch);
+        }
+        // Without history, startup would wait for its deadline. A node that uses no E3 history
+        // continues with none when no peer can serve it.
+        Box::pin(async move {
+            let Err(error) = fetch.await else {
+                return;
+            };
+            warn!("No peer served the startup history; continuing without it: {error:#}");
+            let empty = SyncRequestSucceeded {
+                response: SyncResponseValue {
+                    events: vec![],
+                    ts: 0,
+                },
+            };
+            if let Err(error) = address.try_send(TypedEvent::new(empty, event_context)) {
+                bus.err(EType::Net, anyhow::anyhow!("{error}"));
+            }
+        })
     }
 }
 
