@@ -14,71 +14,56 @@ async fn node_role_preflight_stamps_a_new_directory_and_refuses_the_other_role(
     let eventstore = system.eventstore_reader()?.seq();
     let aggregate_config = system.aggregate_config();
 
-    preflight_node_role(
-        &repositories,
-        &aggregate_config,
-        &eventstore,
-        NodeRole::Bootstrap,
-    )
-    .await?;
+    let new_directory =
+        preflight_schema_version(&repositories, &aggregate_config, &eventstore).await?;
+    assert!(new_directory);
+    preflight_node_role(&repositories, new_directory, NodeRole::Bootstrap).await?;
     assert_eq!(
         repositories.node_role().read().await?,
         Some(NodeRole::Bootstrap)
     );
 
-    let error = preflight_node_role(
-        &repositories,
-        &aggregate_config,
-        &eventstore,
-        NodeRole::Full,
-    )
-    .await
-    .unwrap_err();
+    // The next start finds a stamped directory.
+    let new_directory =
+        preflight_schema_version(&repositories, &aggregate_config, &eventstore).await?;
+    assert!(!new_directory);
+    let error = preflight_node_role(&repositories, new_directory, NodeRole::Full)
+        .await
+        .unwrap_err();
     assert!(error.to_string().contains("belongs to a bootstrap node"));
     assert_eq!(
         repositories.node_role().read().await?,
         Some(NodeRole::Bootstrap)
     );
-
-    preflight_node_role(
-        &repositories,
-        &aggregate_config,
-        &eventstore,
-        NodeRole::Bootstrap,
-    )
-    .await?;
+    preflight_node_role(&repositories, new_directory, NodeRole::Bootstrap).await?;
     Ok(())
 }
 
 #[actix::test]
-async fn node_role_preflight_treats_an_unmarked_directory_with_events_as_a_full_node(
-) -> anyhow::Result<()> {
+async fn node_role_preflight_treats_an_unmarked_directory_as_a_full_node() -> anyhow::Result<()> {
     let system = EventSystem::new().with_fresh_bus();
     let repositories = Repositories::from(&system.store()?);
-    let bus = system.handle()?.enable("unmarked-full-node");
-    bus.publish_without_context(e3_events::TestEvent::new("before the role marker", 1))?;
-    bus.flush_event_pipeline().await?;
+    // A release without the role marker left a schema marker and a chain cursor, but no events.
+    repositories
+        .schema_version()
+        .write_sync(&SCHEMA_VERSION)
+        .await?;
+    repositories
+        .aggregate_block(AggregateId::new(1))
+        .write_sync(&42)
+        .await?;
     let eventstore = system.eventstore_reader()?.seq();
-    let aggregate_config = system.aggregate_config();
 
-    let error = preflight_node_role(
-        &repositories,
-        &aggregate_config,
-        &eventstore,
-        NodeRole::Bootstrap,
-    )
-    .await
-    .unwrap_err();
+    let new_directory =
+        preflight_schema_version(&repositories, &system.aggregate_config(), &eventstore).await?;
+    assert!(!new_directory);
+    let error = preflight_node_role(&repositories, new_directory, NodeRole::Bootstrap)
+        .await
+        .unwrap_err();
     assert!(error.to_string().contains("belongs to a full node"));
     assert_eq!(repositories.node_role().read().await?, None);
 
-    preflight_node_role(
-        &repositories,
-        &aggregate_config,
-        &eventstore,
-        NodeRole::Full,
-    )
-    .await?;
+    preflight_node_role(&repositories, new_directory, NodeRole::Full).await?;
     assert_eq!(repositories.node_role().read().await?, Some(NodeRole::Full));
     Ok(())
 }

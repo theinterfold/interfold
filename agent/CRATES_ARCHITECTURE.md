@@ -252,14 +252,17 @@ full node, but `NetSyncManager` continues without that history when no peer serv
 full node keeps waiting for that history. It serves discovery, gossip, DHT documents, and history
 like a full node (`crates/entrypoint/src/start/start.rs`).
 
-After schema admission, `preflight_node_role` stamps `//node_role` on a new data directory. A
-directory without the marker that holds events belongs to a full node, because bootstrap mode and
-the marker ship together. A node refuses a directory of the other role. A bootstrap node advances
-the per-chain block cursor with only the Interfold reader, so a full node started on its directory
-would skip earlier registry events. A bootstrap node started on a full node's directory would
-restore that node's committees. The marker is read with `read_checked`, so a storage error cannot
-pass as an unmarked directory. Releases without the marker share schema version 7 and do not check
-it (`crates/sync/src/sync/preflight.rs`).
+After schema admission, `preflight_node_role` stamps `//node_role` on a new data directory, which is
+one whose schema marker this startup wrote. A directory without the role marker that existed before
+this startup belongs to a full node, because releases without the marker ran only full nodes; its
+key/value store can hold chain cursors even when its event log is empty. A node refuses a directory
+of the other role, and `ensure_role_components` rejects a bootstrap builder that also enables
+keyshare, aggregation, registry, or contract-writer components. A bootstrap node advances the
+per-chain block cursor with only the Interfold reader, so a full node started on its directory would
+skip earlier registry events. A bootstrap node started on a full node's directory would restore that
+node's committees. The marker is read with `read_checked`, so a storage error cannot pass as an
+unmarked directory. Releases without the marker share schema version 7 and do not check it
+(`crates/sync/src/sync/preflight.rs`).
 
 Startup has a configured outer deadline. The EVM and network startup buffers expose readiness
 failures; a bound overflow fails startup instead of silently discarding protocol observations.

@@ -630,6 +630,7 @@ impl CiphernodeBuilder {
     }
 
     pub async fn build(mut self) -> anyhow::Result<CiphernodeHandle> {
+        self.ensure_role_components()?;
         ensure!(
             self.multithread_concurrent_jobs != Some(0),
             "the detected memory limit cannot safely run one prover job in addition to the node; increase the host or cgroup memory limit"
@@ -688,15 +689,10 @@ impl CiphernodeBuilder {
         // Establish storage compatibility before signers, actors, or forked runtime events can
         // create durable state. Running this only inside `sync` is too late: actor startup can
         // make a fresh store non-empty and cause it to look like unversioned legacy data.
-        preflight_schema_version(&repositories, &eventstore_aggregate_config, &seq_eventstore)
-            .await?;
-        preflight_node_role(
-            &repositories,
-            &eventstore_aggregate_config,
-            &seq_eventstore,
-            self.role,
-        )
-        .await?;
+        let new_directory =
+            preflight_schema_version(&repositories, &eventstore_aggregate_config, &seq_eventstore)
+                .await?;
+        preflight_node_role(&repositories, new_directory, self.role).await?;
         ensure_request_router_checkpoint(&repositories, aggregate_config.aggregates()).await?;
         reconcile_request_router_checkpoint(
             &repositories,
@@ -907,6 +903,27 @@ impl CiphernodeBuilder {
     }
 
     // ── build() sub-functions ──────────────────────────────────────────
+
+    /// A bootstrap node must not run anything that joins a committee, signs, or sends a
+    /// transaction. It reads only the Interfold contract.
+    fn ensure_role_components(&self) -> Result<()> {
+        if self.role == NodeRole::Full {
+            return Ok(());
+        }
+        let components = &self.contract_components;
+        ensure!(
+            self.keyshare.is_none()
+                && !self.pubkey_agg
+                && !self.threshold_plaintext_agg
+                && !components.interfold
+                && !components.ciphernode_registry
+                && !components.bonding_registry
+                && !components.slashing_manager,
+            "a bootstrap node cannot run keyshare, aggregation, registry, or contract-writer \
+             components"
+        );
+        Ok(())
+    }
 
     fn resolve_bus(&self) -> Addr<EventBus<InterfoldEvent>> {
         match self.source_bus {
@@ -2380,5 +2397,39 @@ mod tests {
             .unwrap_err();
 
         assert!(error.to_string().contains("snapshots disagree"));
+    }
+
+    #[actix::test]
+    async fn a_bootstrap_node_rejects_committee_components() -> anyhow::Result<()> {
+        let cipher =
+            std::sync::Arc::new(e3_crypto::Cipher::from_password("test-only-bootstrap").await?);
+        let node = || {
+            super::CiphernodeBuilder::new(e3_test_helpers::derive_shared_rng(1, 1), cipher.clone())
+        };
+        let bootstrap = || node().with_bootstrap_role();
+
+        assert!(bootstrap()
+            .with_contract_interfold_reader()
+            .ensure_role_components()
+            .is_ok());
+        for builder in [
+            bootstrap().with_trbfv(),
+            bootstrap().with_pubkey_aggregation(),
+            bootstrap().with_threshold_plaintext_aggregation(),
+            bootstrap().with_contract_interfold_full(),
+            bootstrap().with_contract_ciphernode_registry(),
+            bootstrap().with_contract_bonding_registry(),
+            bootstrap().with_contract_slashing_manager(),
+        ] {
+            let error = builder.ensure_role_components().unwrap_err();
+            assert!(error.to_string().contains("a bootstrap node cannot run"));
+        }
+        assert!(node()
+            .with_trbfv()
+            .with_pubkey_aggregation()
+            .with_contract_interfold_full()
+            .ensure_role_components()
+            .is_ok());
+        Ok(())
     }
 }

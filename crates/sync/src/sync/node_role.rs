@@ -43,21 +43,21 @@ pub enum NodeRoleDecision {
     Halt(String),
 }
 
-/// Pure decision: given the stamped role (if any), the requested role, and whether the directory
-/// already holds events, decide whether to proceed, stamp the role, or halt.
+/// Pure decision: given the stamped role (if any), the requested role, and whether schema admission
+/// created the directory in this startup, decide whether to proceed, stamp the role, or halt.
 ///
-/// Data directories that predate the role marker come from full nodes, because a bootstrap node
-/// stamps its role before it writes any event. An unmarked directory that holds events is
-/// therefore a full node's.
+/// A directory that existed before this startup but has no role marker was used by a release
+/// without the marker, and those releases ran only full nodes. Such a directory is a full node's
+/// even if its event log is empty, because its key/value store can still hold chain cursors.
 pub fn decide_node_role(
     persisted: Option<NodeRole>,
     requested: NodeRole,
-    has_existing_events: bool,
+    new_directory: bool,
 ) -> NodeRoleDecision {
     let owner = match persisted {
         Some(role) => role,
-        None if has_existing_events => NodeRole::Full,
-        None => return NodeRoleDecision::Write,
+        None if new_directory => return NodeRoleDecision::Write,
+        None => NodeRole::Full,
     };
     if owner != requested {
         return NodeRoleDecision::Halt(format!(
@@ -78,9 +78,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_fresh_directory_takes_the_requested_role() {
+    fn a_new_directory_takes_the_requested_role() {
         for role in [NodeRole::Full, NodeRole::Bootstrap] {
-            assert_eq!(decide_node_role(None, role, false), NodeRoleDecision::Write);
+            assert_eq!(decide_node_role(None, role, true), NodeRoleDecision::Write);
         }
     }
 
@@ -88,7 +88,7 @@ mod tests {
     fn a_directory_proceeds_with_its_own_role() {
         for role in [NodeRole::Full, NodeRole::Bootstrap] {
             assert_eq!(
-                decide_node_role(Some(role), role, true),
+                decide_node_role(Some(role), role, false),
                 NodeRoleDecision::Proceed
             );
         }
@@ -100,7 +100,7 @@ mod tests {
             (NodeRole::Full, NodeRole::Bootstrap),
             (NodeRole::Bootstrap, NodeRole::Full),
         ] {
-            let NodeRoleDecision::Halt(reason) = decide_node_role(Some(owner), requested, true)
+            let NodeRoleDecision::Halt(reason) = decide_node_role(Some(owner), requested, false)
             else {
                 panic!("{requested} must not start on a {owner} node's directory");
             };
@@ -118,13 +118,13 @@ mod tests {
     }
 
     #[test]
-    fn an_unmarked_directory_with_events_belongs_to_a_full_node() {
+    fn an_unmarked_directory_from_an_earlier_startup_belongs_to_a_full_node() {
         assert_eq!(
-            decide_node_role(None, NodeRole::Full, true),
+            decide_node_role(None, NodeRole::Full, false),
             NodeRoleDecision::Write
         );
         assert!(matches!(
-            decide_node_role(None, NodeRole::Bootstrap, true),
+            decide_node_role(None, NodeRole::Bootstrap, false),
             NodeRoleDecision::Halt(_)
         ));
     }
