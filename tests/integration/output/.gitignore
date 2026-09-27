@@ -7,3 +7,5 @@ events.txt
 *.pid
 *.json
 *.validate.txt
+*.identity.before
+data-availability/
