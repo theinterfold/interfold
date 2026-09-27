@@ -293,10 +293,7 @@ pub(in crate::actors::interfold_sol_writer) async fn process_e3_failure<
 pub(in crate::actors::interfold_sol_writer) fn failure_settlement_error_is_terminal(
     error: &anyhow::Error,
 ) -> bool {
-    contains_error_selector(
-        &format!("{error:?}"),
-        IInterfold::NoPaymentToRefund::SELECTOR,
-    )
+    reverted_with::<IInterfold::NoPaymentToRefund>(error)
 }
 
 /// Return true when the refund manager does not accept settlement for this E3 yet.
@@ -307,6 +304,18 @@ fn failure_settlement_is_blocked(error: &alloy::contract::Error) -> bool {
     error
         .as_decoded_error::<IInterfold::SettlementBlocked>()
         .is_some()
+}
+
+/// Whether `error` is a contract call that reverted with the custom error `E`.
+///
+/// Only the structured revert data of the call counts. A selector that merely appears in an
+/// error message, for example in an RPC quota error, does not.
+fn reverted_with<E: SolError>(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause
+            .downcast_ref::<alloy::contract::Error>()
+            .is_some_and(|error| error.as_decoded_error::<E>().is_some())
+    })
 }
 
 #[cfg(test)]
@@ -367,15 +376,27 @@ mod tests {
 
     #[test]
     fn settled_failure_stops_retries() {
-        let error = anyhow::anyhow!(
-            "execution reverted: 0x{}{}",
-            hex::encode(IInterfold::NoPaymentToRefund::SELECTOR),
-            "00".repeat(32)
-        );
+        let error: anyhow::Error =
+            eth_call_revert(IInterfold::NoPaymentToRefund::SELECTOR, 1).into();
         assert!(failure_settlement_error_is_terminal(&error));
+        assert!(failure_settlement_error_is_terminal(
+            &error.context("process E3 failure")
+        ));
         assert!(!failure_settlement_error_is_terminal(&anyhow::anyhow!(
             "RPC connection reset"
         )));
+    }
+
+    /// A `NoPaymentToRefund` selector in the text of an error that is not a revert must not stop
+    /// the retries.
+    #[test]
+    fn a_selector_in_an_error_message_is_not_a_revert() {
+        let message = anyhow::anyhow!(
+            "RPC rate limited; request tag 0x{}{}",
+            hex::encode(IInterfold::NoPaymentToRefund::SELECTOR),
+            "00".repeat(32)
+        );
+        assert!(!failure_settlement_error_is_terminal(&message));
     }
 
     #[test]
