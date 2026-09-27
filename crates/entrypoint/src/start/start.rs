@@ -37,14 +37,46 @@ fn validate_proof_aggregation_mode(skip_proof_aggregation: bool) -> Result<()> {
     Ok(())
 }
 
+/// Start the node. With `bootstrap`, the node only runs networking and chain reads, so peers can
+/// use it to discover each other. It does not join committees, generate proofs, or send
+/// transactions, so it needs neither the prover's memory nor ETH.
 #[instrument(name = "app", skip_all)]
-pub async fn execute(config: &AppConfig) -> Result<CiphernodeHandle> {
+pub async fn execute(config: &AppConfig, bootstrap: bool) -> Result<CiphernodeHandle> {
     validate_proof_aggregation_mode(config.skip_proof_aggregation())?;
 
     let rng = Arc::new(Mutex::new(
         ChaCha20Rng::try_from_os_rng().context("failed to seed ChaCha20 RNG from OS")?,
     ));
     let cipher = Arc::new(Cipher::from_file(&config.key_file()).await?);
+
+    let startup_timeout = Duration::from_secs(config.startup_timeout_secs());
+    info!(
+        startup_timeout_secs = startup_timeout.as_secs(),
+        "Ciphernode startup deadline configured"
+    );
+
+    if bootstrap {
+        info!(
+            "Bootstrap mode: networking and chain reads only; no committee work, proofs, or \
+             transactions"
+        );
+        let builder = CiphernodeBuilder::new(rng, cipher)
+            .with_name(&config.name())
+            .with_logging()
+            .with_persistence(&config.log_file(), &config.db_file())
+            .with_chains(config.chains())
+            .with_contract_interfold_reader()
+            .with_max_buffered_evm_events(config.max_buffered_evm_events())
+            .with_network_buffer_limits(
+                config.max_buffered_net_events(),
+                config.max_buffered_net_bytes(),
+            )
+            .with_network(config.network().clone(), config.peers(), config.quic_port())
+            .with_shared_store()
+            .with_shared_eventstore();
+        return await_startup(builder.build(), startup_timeout).await;
+    }
+
     let backend = ZkBackend::new(config.bb_binary(), config.circuits_dir(), config.work_dir());
 
     let reserve = config.multithread_reserve_threads();
@@ -54,12 +86,6 @@ pub async fn execute(config: &AppConfig) -> Result<CiphernodeHandle> {
         concurrent_jobs
             .map(|n| n.to_string())
             .unwrap_or_else(|| "2 (default)".to_string())
-    );
-
-    let startup_timeout = Duration::from_secs(config.startup_timeout_secs());
-    info!(
-        startup_timeout_secs = startup_timeout.as_secs(),
-        "Ciphernode startup deadline configured"
     );
 
     let builder = CiphernodeBuilder::new(rng.clone(), cipher.clone())

@@ -292,16 +292,18 @@ not contain a `data_availability` block, and `interfold start` needs one. See
 ### `interfold start`
 
 Starts the ciphernode in the foreground. The node syncs chain events, joins the P2P network, and
-serves on committees. Stop it with `SIGINT` (Ctrl+C) or `SIGTERM`. The node then does a controlled
-shutdown.
+serves on committees. With `--bootstrap`, it only syncs chain events and joins the network, so that
+other nodes can find each other through it. Stop it with `SIGINT` (Ctrl+C) or `SIGTERM`. The node
+then does a controlled shutdown.
 
 ```bash
-interfold start [--peer <PEER>]...
+interfold start [--peer <PEER>]... [--bootstrap]
 ```
 
-| Flag     | Value    | Default                    | Description                                                                                                               |
-| -------- | -------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `--peer` | `<PEER>` | The peers from the profile | libp2p multiaddr of a peer to dial. Repeat the flag for more peers. The node adds these peers to `peers` from the config. |
+| Flag          | Value    | Default                    | Description                                                                                                                                                           |
+| ------------- | -------- | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--peer`      | `<PEER>` | The peers from the profile | libp2p multiaddr of a peer to dial. Repeat the flag for more peers. The node adds these peers to `peers` from the config.                                             |
+| `--bootstrap` | None     | Off                        | Run as a bootstrap node: no committee work, proofs, or transactions, and no memory for the prover. See [Run a bootstrap node](/operate/running#run-a-bootstrap-node). |
 
 The command holds a lock on the data folder of the profile, so a second process cannot use the same
 data. It also opens the control port and, when `dashboard_port` is set, a dashboard at

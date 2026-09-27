@@ -238,6 +238,13 @@ sequenceDiagram
     EP-->>CLI: ready node
 ```
 
+`interfold start --bootstrap` builds a bootstrap node with the same builder but only persistence,
+the Interfold contract reader, and the libp2p interface. It has no compute scheduler (so no
+prover-memory check), TrBFV keyshare, ZK prover, aggregators, registry components, or contract
+writers. It serves discovery, gossip, DHT documents, and history like a full node, but it never
+joins a committee or sends a transaction. It still needs a wallet key, because the builder derives
+the node address from it (`crates/entrypoint/src/start/start.rs`).
+
 Startup has a configured outer deadline. The EVM and network startup buffers expose readiness
 failures; a bound overflow fails startup instead of silently discarding protocol observations.
 Effects remain disabled until durable replay and both historical sources have been merged in HLC

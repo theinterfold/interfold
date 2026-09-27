@@ -764,6 +764,19 @@ You can also add a peer at start with `interfold start --peer <multiaddr>`. A ma
 refuses the Sepolia bootstrap address. A Sepolia profile replaces the mainnet bootstrap address with
 the Sepolia one.
 
+### Run a bootstrap node
+
+A bootstrap node is a peer that other nodes dial first to find each other. Start it with
+`interfold start --bootstrap`. The node reads chain events and joins the network like a full node,
+but it does not serve on committees, generate proofs, or send transactions. It therefore does not
+need the memory of the prover, and its address needs no ETH.
+
+It needs the same setup as a full node: a configuration with the network profile and the chains, a
+password, and a wallet key. The wallet key only sets the node address. Use a key that no other node
+uses; it does not have to belong to a registered operator. Open its QUIC UDP port, and add its
+address to the `peers` of the other nodes, for example
+`/dns4/bootstrap.example.com/udp/9091/quic-v1`.
+
 ## Command reference
 
 The commands on this page are `start`, `config check`, `password set`, `wallet set`,

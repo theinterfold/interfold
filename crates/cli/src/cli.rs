@@ -180,7 +180,9 @@ impl Cli {
         }
 
         match self.command {
-            Commands::Start { peers } => start::execute(config, peers).await?,
+            Commands::Start { peers, bootstrap } => {
+                start::execute(config, peers, bootstrap).await?
+            }
             Commands::Init { .. } => {
                 bail!("Cannot run `interfold init` when a configuration exists.");
             }
@@ -249,6 +251,12 @@ pub enum Commands {
             help = "Sets a peer URL",
         )]
         peers: Vec<String>,
+        #[arg(
+            long,
+            help = "Run as a bootstrap peer: networking and chain reads only, without committee \
+                    work, proofs, transactions, or the prover's memory requirement"
+        )]
+        bootstrap: bool,
     },
 
     /// Print the config env
@@ -549,5 +557,32 @@ mod tests {
             } if param == "key_file"
         ));
         Ok(())
+    }
+
+    #[test]
+    fn start_runs_a_full_node_unless_bootstrap_is_set() {
+        let cli = Cli::parse_from(["interfold", "start"]);
+        assert!(matches!(
+            cli.command,
+            Commands::Start {
+                bootstrap: false,
+                ..
+            }
+        ));
+
+        let cli = Cli::parse_from([
+            "interfold",
+            "start",
+            "--bootstrap",
+            "--peer",
+            "/ip4/127.0.0.1/udp/9091/quic-v1",
+        ]);
+        assert!(matches!(
+            cli.command,
+            Commands::Start {
+                bootstrap: true,
+                ref peers,
+            } if peers.len() == 1
+        ));
     }
 }
