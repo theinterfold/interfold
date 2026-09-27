@@ -108,7 +108,10 @@ prepare_switch() {
   if [[ ! -f "$SCRIPT_DIR/output/$name.before.json" ]]; then
     # shellcheck disable=SC2046
     python3 "$INVENTORY" snapshot "$SCRIPT_DIR/output/$name.before.json" $(node_state_dirs "$name")
-    identity_of "$INTERFOLD_BIN_OLD" "$name" > "$SCRIPT_DIR/output/$name.identity.before"
+    if ! identity_of "$INTERFOLD_BIN_OLD" "$name" > "$SCRIPT_DIR/output/$name.identity.before"; then
+      echo "Could not read the operator address and peer ID of $name before the switch" >&2
+      return 1
+    fi
   fi
   heading "Validate $name state with the $label binary"
   "$bin" node validate --name "$name" --config "$CONFIG" \
@@ -129,17 +132,28 @@ registry_address() {
 }
 
 # The operator address and the libp2p peer ID, as the given binary reads them from the node state.
+# Fails when a lookup fails or prints nothing, so an unreadable identity never compares as equal.
 identity_of() {
-  local bin="$1" name="$2"
-  echo "$("$bin" wallet get --name "$name" --config "$CONFIG" 2>/dev/null | tail -n 1)" \
-    "$("$bin" net get-peer-id --name "$name" --config "$CONFIG" 2>/dev/null | tail -n 1)"
+  local bin="$1" name="$2" address peer_id
+  address=$("$bin" wallet get --name "$name" --config "$CONFIG" 2>/dev/null) || return 1
+  peer_id=$("$bin" net get-peer-id --name "$name" --config "$CONFIG" 2>/dev/null) || return 1
+  # A log line can come before the value, so keep only the last line.
+  address=${address##*$'\n'}
+  peer_id=${peer_id##*$'\n'}
+  if [[ -z "$address" || -z "$peer_id" ]]; then
+    echo "$name: the operator address or the peer ID is empty" >&2
+    return 1
+  fi
+  echo "$address $peer_id"
 }
 
-# Count the logs of one event on the local chain.
+# Count the logs of one event on the local chain. A failed query fails, so it never reads as zero
+# events.
 count_logs() {
-  local address="$1" signature="$2"
-  cast logs --from-block 0 --address "$address" "$signature" --rpc-url http://localhost:8545 2>/dev/null |
-    grep -c "blockNumber" || true
+  local address="$1" signature="$2" logs
+  logs=$(cast logs --from-block 0 --address "$address" "$signature" --rpc-url http://localhost:8545) ||
+    return 1
+  grep -c "blockNumber" <<<"$logs" || true
 }
 
 committee_node_names() {
@@ -365,10 +379,12 @@ if [[ "$E3_STAGE" != "5" ]]; then
   echo "E3 $E3_ID is at stage $E3_STAGE, not Complete (5)" >&2
   FAILED=1
 fi
-FAILED_E3S=$(count_logs "$(contract_address interfold)" "E3Failed(uint256,uint8,uint8)")
-SLASH_PROPOSALS=$(count_logs "$(contract_address slashing_manager)" \
-  "SlashProposed(uint256,uint256,address,bytes32,uint256,uint256,uint256,address,uint8)")
-if [[ "$FAILED_E3S" != "0" || "$SLASH_PROPOSALS" != "0" ]]; then
+if ! FAILED_E3S=$(count_logs "$(contract_address interfold)" "E3Failed(uint256,uint8,uint8)") ||
+  ! SLASH_PROPOSALS=$(count_logs "$(contract_address slashing_manager)" \
+    "SlashProposed(uint256,uint256,address,bytes32,uint256,uint256,uint256,address,uint8)"); then
+  echo "could not read the E3Failed and SlashProposed logs from the chain" >&2
+  FAILED=1
+elif [[ "$FAILED_E3S" != "0" || "$SLASH_PROPOSALS" != "0" ]]; then
   echo "chain shows $FAILED_E3S E3Failed and $SLASH_PROPOSALS SlashProposed events" >&2
   FAILED=1
 fi
@@ -379,7 +395,10 @@ done
 LAST_BIN="$INTERFOLD_BIN_NEW"
 [[ "$UPGRADE_SCENARIO" == "rollback" ]] && LAST_BIN="$INTERFOLD_BIN_OLD"
 for name in $UPGRADED; do
-  if [[ "$(identity_of "$LAST_BIN" "$name")" != "$(cat "$SCRIPT_DIR/output/$name.identity.before")" ]]; then
+  if ! identity_after=$(identity_of "$LAST_BIN" "$name"); then
+    echo "$name: could not read the operator address and peer ID after the switch" >&2
+    FAILED=1
+  elif [[ "$identity_after" != "$(cat "$SCRIPT_DIR/output/$name.identity.before")" ]]; then
     echo "$name: the operator address or peer ID changed across the switch" >&2
     FAILED=1
   fi
