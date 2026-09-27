@@ -510,9 +510,11 @@ records with their protocol snapshots. These records retain collector inputs, pe
 verified proof bundles, terminal publication intents, and causal event contexts. Public-key and
 plaintext standbys persist the same validated inputs as the active aggregator. After replay,
 `EffectsEnabled` publishes readiness for resumable phases and recreates proof or compute jobs only
-on the active party, with new process-local correlation IDs. It re-publishes determined outputs
-idempotently. Startup fails closed if an active phase requires a recovery record that is missing or
-has an unsupported schema version.
+on the active party, with new process-local correlation IDs. A plaintext aggregator that a failover
+demoted after it had started the aggregation also resumes its own work from `Computing`,
+`GeneratingC7Proof`, or `Complete`. It re-publishes determined outputs idempotently. Startup fails
+closed if an active phase requires a recovery record that is missing or has an unsupported schema
+version.
 
 Plaintext recovery schema 2 also retains C6 verification results by dispatch ID. The collection
 snapshot stores rejected parties and late backup shares without changing the in-flight batch. Replay

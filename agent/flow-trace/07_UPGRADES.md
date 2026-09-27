@@ -162,13 +162,17 @@ it refuses while a node runs, copies both secrets out as ciphertext without the 
 up at mode `0600`, removes the event logs and the key/value store, then restores and reads them back
 to confirm.
 
-Before it deletes anything, the command reads the `//e3_lifecycle` stage map. It refuses when an E3
-that is not `Complete` has a `//threshold_keyshare/{e3_id}` record, and it lists each such E3 with
-its stage, because the chain cannot restore that key share. A `Failed` stage also refuses: the node
-records its own local failures, such as a DKG timeout, as `Failed` while the E3 can continue on
-chain. The check reads only whether the record exists and does not decode it, so it also protects a
-store that an older schema wrote. The command also refuses when it cannot read the stage map.
-`--allow-active-e3s` overrides both refusals (`crates/entrypoint/src/nodes/reset_data.rs`).
+Before it deletes anything, the command lists every key-share record by key prefix
+(`//threshold_keyshare/`, `//threshold_keyshare_recovery/v1/`, and
+`//threshold_keyshare_recovery_payloads/v1/`) and reads the `//e3_lifecycle` stage map. It refuses
+when the E3 of such a record is not `Complete` in that map, including an E3 that the map does not
+list, and it lists each such E3 with its stage, because the chain cannot restore that key share. A
+`Failed` stage also refuses: the node records its own local failures, such as a DKG timeout, as
+`Failed` while the E3 can continue on chain. The check reads only whether a record exists and does
+not decode it, so it also protects a store that an older schema wrote. Both reads fail on a storage
+error, which the ordinary read path reports as an absent record, and a key that does not parse fails
+the check. `--allow-active-e3s` overrides the refusals
+(`crates/entrypoint/src/nodes/reset_data.rs`).
 
 The event log is not one file. `EventSystem::persisted` passes `config.log_file()` through
 `enumerate_path`, which inserts a per-aggregate index before the extension, so the durable logs are

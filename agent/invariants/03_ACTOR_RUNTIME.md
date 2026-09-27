@@ -209,6 +209,11 @@ the code does not meet yet.
   in the translator's stored window. The ID is recorded when the event is handed to the event store,
   whose failed append stops the node. Waiting document fetches are bounded by count. — INDEX
   concerns #61, #62; `crates/net/src/net_interface.rs`; `crates/net/src/event_translation/`
+- A notification adds a fetch candidate only for its own party filter, and a waiting or
+  early-buffered document keeps one notification per filter with the latest expiry, so a forged or
+  expired notification cannot displace a correct one. A DHT GET accepts only the record for the
+  requested key. — INDEX concern #69; `crates/net/src/document_publishing/workflow.rs`;
+  `crates/net/src/document_publishing/effects.rs`
 - Network ingress loops do not wait for long I/O such as a DHT fetch. They hand the work to the
   actor, which bounds its concurrency. — `crates/net/src/document_publishing/handlers.rs`
 - Log volume must not scale with payload size or redelivery count. Byte payloads format through

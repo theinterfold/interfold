@@ -1148,7 +1148,10 @@ InterfoldSolReader decodes CiphertextOutputPublished event
   ├─ Once T+1 distinct roster shares are durable (10 for Small, not all 14):
   │   ├─ Persist VerifyingC6 before publishing AggregationInputsReady(Plaintext)
   │   ├─ Start the 10-minute failover budget only at this readiness boundary
-  │   └─ A promoted standby resumes the persisted phase
+  │   ├─ A promoted standby resumes the persisted phase
+  │   └─ A demoted node that dispatched C6 verification finishes that work and publishes the
+  │      plaintext; after a restart it resumes from Computing, GeneratingC7Proof, or Complete
+  │      File: crates/aggregator/src/plaintext_aggregation/actor.rs (started_as_aggregator)
   │
   ├─ Shares that arrive during C6 verification remain in a durable backup queue:
   │   ├─ The in-flight batch stays unchanged
@@ -1163,7 +1166,8 @@ InterfoldSolReader decodes CiphertextOutputPublished event
 │   └─ On pass: ProofVerificationPassed (cached)
 │   Local completion results are bound to the exact dispatch event ID. Equal verdicts for
 │   different batches have different delivery IDs. Results persist through replay and standby;
-│   only the active aggregator can apply them after EffectsEnabled.
+│   only the active aggregator, or a demoted node that dispatched them, can apply them after
+│   EffectsEnabled.
 │   A saved result resumes through a fresh PlaintextVerificationResumed event in the E3's
 │   chain aggregate. Its new sequence permits snapshot writes after the recovery watermark.
 │   Admission and post-verification checks use the same C6ShareVerifier for raw-share commitments.
@@ -1561,11 +1565,14 @@ the record, so its uploads to other peers can overlap the next replication. The 
 own hourly replication of stored records is disabled. A failed put or announcement is retried after
 15 seconds, doubling up to 5 minutes, including when no peer subscribed to the topic at the first
 attempt. A failed announcement does not upload the document again. A receiver holds early
-notifications until its committee slot is known. It fetches documents outside the network ingress
-loop, with at most 8 fetches in flight and at most 512 documents waiting. A failed fetch is retried
-with the same back-off, up to 6 attempts; a later announcement queues the document again. It
-suppresses duplicate documents. A canonical `KeyPublished` stage stops DKG-document announcements
-and prunes local DHT records. C4 `DecryptionKeyShared` is a DKG document; later
+notifications until its committee slot is known, one per document and party filter with the latest
+expiry, and it ignores expired notifications. It fetches documents outside the network ingress loop,
+with at most 8 fetches in flight and at most 512 documents waiting. A failed fetch is retried with
+the same back-off until the document arrives, its E3 closes, or its notifications expire. A fetch
+accepts only the record for the requested key, and the document is accepted under the first waiting
+notification whose metadata matches its payload, so a forged notification cannot displace a correct
+one. It suppresses duplicate documents. A canonical `KeyPublished` stage stops DKG-document
+announcements and prunes local DHT records. C4 `DecryptionKeyShared` is a DKG document; later
 `DecryptionshareCreated` events use event gossip, not the DHT document path. Recovery retains the
 DKG closure across restart. A local `E3RequestComplete` does not mean that the contract has reached
 a terminal stage.
