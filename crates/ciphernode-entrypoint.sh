@@ -66,8 +66,8 @@ exists() {
     [ -n "$1" ] && [ -e "$1" ]
 }
 
-# The image sets E3_CONFIG_DIR and E3_DATA_DIR to the volume. They override config.yaml, so they
-# decide only the paths that config.yaml leaves to the directories. Never move state that exists:
+# The entrypoint sets E3_CONFIG_DIR and E3_DATA_DIR to the volume unless the container sets them.
+# They override config.yaml, so they decide only the paths that config.yaml leaves to the directories. Never move state that exists:
 # for each of the key file and the database, compare where it resolves with and without the
 # variables, and use the location that already holds state. Only a path that the variables change
 # can exist at two locations. A new node keeps its state on the volume, unless config.yaml sets its
@@ -75,6 +75,11 @@ exists() {
 LEGACY_STATE_DIR="$CONFIG_DIR/.interfold"
 VOLUME_CONFIG_DIR="$DATA_DIR/config"
 VOLUME_DATA_DIR="$DATA_DIR/data"
+# Only this entrypoint uses the volume defaults. The image does not set them, because they would also
+# apply to a container that runs the binary directly, and move its state off its volume.
+if [ -z "${E3_CONFIG_DIR:-}" ] && [ -z "${E3_DATA_DIR:-}" ]; then
+    export E3_CONFIG_DIR="$VOLUME_CONFIG_DIR" E3_DATA_DIR="$VOLUME_DATA_DIR"
+fi
 if [ "${E3_CONFIG_DIR:-}" = "$VOLUME_CONFIG_DIR" ] && [ "${E3_DATA_DIR:-}" = "$VOLUME_DATA_DIR" ]; then
     OWN_KEY_FILE="$(resolve_own_path key_file)" || OWN_KEY_FILE=""
     OWN_DB_FILE="$(resolve_own_path db_file)" || OWN_DB_FILE=""

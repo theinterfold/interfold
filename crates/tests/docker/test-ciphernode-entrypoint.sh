@@ -79,11 +79,12 @@ run_case() {
     rm -f "$dir/result"
     local secrets_file="$dir/secrets/secrets.json"
     sed "s#/run/secrets/secrets.json#$secrets_file#" "$ENTRYPOINT" > "$dir/entrypoint.sh"
-    env PATH="$dir/bin:$PATH" \
+    env -u E3_CONFIG_DIR -u E3_DATA_DIR \
+        PATH="$dir/bin:$PATH" \
         CONFIG_DIR="$dir/config" \
         DATA_DIR="$dir/data" \
-        E3_CONFIG_DIR="$dir/data/config" \
-        E3_DATA_DIR="$dir/data/data" \
+        ${CASE_E3_CONFIG_DIR:+E3_CONFIG_DIR="$CASE_E3_CONFIG_DIR"} \
+        ${CASE_E3_DATA_DIR:+E3_DATA_DIR="$CASE_E3_DATA_DIR"} \
         RESULT_FILE="$dir/result" \
         MOCK_KEY_FILE="${MOCK_KEY_FILE:-}" \
         MOCK_DB_FILE="${MOCK_DB_FILE:-}" \
@@ -161,5 +162,17 @@ case_dir="$TEST_ROOT/named-node-equals"
 mkdir -p "$case_dir/data/data/cn2/db"
 run_case "$case_dir" start --name=cn2 --config "$case_dir/config/config.yaml"
 expect_location "$case_dir" volume
+
+# The container sets its own directories: the entrypoint keeps them and does not probe.
+case_dir="$TEST_ROOT/own-directories"
+mkdir -p "$case_dir/custom"
+CASE_E3_CONFIG_DIR="$case_dir/custom/config" CASE_E3_DATA_DIR="$case_dir/custom/data" run_case "$case_dir"
+result=$(cut -d'|' -f1-2 < "$case_dir/result")
+[ "$result" = "$case_dir/custom/config|$case_dir/custom/data" ] ||
+    fail "own-directories: expected the container's directories, got $result"
+
+# The image does not set the variables, so running the binary directly is unaffected.
+grep -q '^ENV E3_' "$ROOT_DIR/crates/Dockerfile" &&
+    fail "the image must not set E3_CONFIG_DIR or E3_DATA_DIR: they would apply to --entrypoint interfold"
 
 echo "ciphernode-entrypoint.sh: all cases passed"
