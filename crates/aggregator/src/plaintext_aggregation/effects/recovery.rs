@@ -9,7 +9,12 @@ impl ThresholdPlaintextAggregator {
         &mut self,
         effects_context: EventContext<Sequenced>,
     ) -> Result<()> {
-        if !self.can_run_aggregation_effects() {
+        // The active aggregator resumes any phase. A demoted node resumes only the work that it
+        // started, which is every phase after C6 verification.
+        let started = self.state.get().as_ref().is_some_and(aggregation_started);
+        if !(self.can_run_aggregation_effects()
+            || (started && self.can_continue_aggregation_effects()))
+        {
             return Ok(());
         }
         self.mark_started_as_aggregator();
