@@ -200,22 +200,29 @@ impl Handler<DocumentPublishedNotification> for DocumentPublisher {
             debug!("Ignored a malformed document notification");
             return;
         }
+        // An expired notification cannot lead to the document. This also drops the early
+        // notifications that expired while the node waited for selection.
+        if msg.meta.expires_at <= chrono::Utc::now() {
+            return;
+        }
         let id = (msg.meta.e3_id.clone(), msg.key.clone());
         if self.closed_e3s.contains(&msg.meta.e3_id) {
             return;
         }
         let ids = self.service.interest_snapshot();
         if !ids.contains_key(&msg.meta.e3_id) {
-            // Keep one notification per document and party filter. Only the filter decides
-            // whether a notification can match the payload, so a forged copy that arrives first
-            // must not hide a correct one with another filter.
-            if msg.meta.expires_at > chrono::Utc::now()
-                && !self.early_notifications.iter().any(|item| {
-                    item.meta.e3_id == msg.meta.e3_id
-                        && item.key == msg.key
-                        && item.meta.filter == msg.meta.filter
-                })
-            {
+            // Keep one notification per document and party filter, with the latest expiry. Only
+            // the filter decides whether a notification can match the payload, so a forged copy
+            // that arrives first must not hide a correct one with another filter or outlive it.
+            if let Some(item) = self.early_notifications.iter_mut().find(|item| {
+                item.meta.e3_id == msg.meta.e3_id
+                    && item.key == msg.key
+                    && item.meta.filter == msg.meta.filter
+            }) {
+                if msg.meta.expires_at > item.meta.expires_at {
+                    *item = msg;
+                }
+            } else {
                 if self.early_notifications.len() == MAX_BUFFERED_NOTIFICATIONS {
                     self.early_notifications.pop_front();
                 }

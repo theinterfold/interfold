@@ -611,3 +611,72 @@ async fn a_forged_notification_before_selection_does_not_hide_the_correct_one() 
     assert!(received.meta.filter.is_empty());
     Ok(())
 }
+
+/// Before selection, a forged notification with the correct filter must not hide the correct one
+/// by expiring first: the buffer keeps the notification with the latest expiry per filter, and
+/// selection does not deliver notifications that expired while the node waited.
+#[actix::test]
+async fn an_early_forged_notification_that_expires_first_does_not_hide_the_correct_one(
+) -> Result<()> {
+    let (_guard, bus, _net_cmd_tx, mut commands, net_events, _, history, _, publisher) =
+        setup_test()?;
+    let e3_id = E3id::new("early-expiring", 1);
+    let value = EventConversionService::encryption_key_to_request(EncryptionKeyCreated {
+        e3_id: e3_id.clone(),
+        key: Arc::new(EncryptionKey::new(1, ArcBytes::from_bytes(b"public key"))),
+        external: false,
+    })?
+    .expect("local key should produce a document")
+    .value;
+    let key = ContentHash::from_content(&value);
+    let notification = |filter, lifetime| DocumentPublishedNotification {
+        key: key.clone(),
+        meta: DocumentMeta::new(
+            e3_id.clone(),
+            DocumentKind::TrBFV,
+            filter,
+            Some(Utc::now() + lifetime),
+        ),
+        ts: 100,
+    };
+    publisher
+        .send(notification(
+            vec![e3_events::Filter::Item(0)],
+            chrono::Duration::hours(1),
+        ))
+        .await?;
+    publisher
+        .send(notification(vec![], chrono::Duration::milliseconds(300)))
+        .await?;
+    publisher
+        .send(notification(vec![], chrono::Duration::hours(1)))
+        .await?;
+    sleep(Duration::from_millis(500)).await;
+
+    bus.publish_without_context(CiphernodeSelected {
+        e3_id: e3_id.clone(),
+        threshold_m: 2,
+        threshold_n: 3,
+        ..CiphernodeSelected::default()
+    })?;
+    let Some(NetCommand::DhtGetRecord { correlation_id, .. }) =
+        timeout(Duration::from_secs(1), commands.recv()).await?
+    else {
+        bail!("expected a fetch after selection");
+    };
+    net_events.send(NetEvent::DhtGetRecordSucceeded {
+        key,
+        correlation_id,
+        value: value.clone(),
+    })?;
+    sleep(Duration::from_millis(200)).await;
+
+    let events = history.send(GetEvents::new()).await?;
+    let received = events.iter().find_map(|event| match event.get_data() {
+        InterfoldEventData::DocumentReceived(document) => Some(document.clone()),
+        _ => None,
+    });
+    let received = received.expect("the correct notification delivers the document");
+    assert!(received.meta.filter.is_empty());
+    Ok(())
+}
