@@ -113,7 +113,8 @@ prepare_switch() {
   heading "Validate $name state with the $label binary"
   "$bin" node validate --name "$name" --config "$CONFIG" \
     | tee "$SCRIPT_DIR/output/$name.$label.validate.txt"
-  if ! grep -q "VALIDATION PASSED" "$SCRIPT_DIR/output/$name.$label.validate.txt"; then
+  # A report with warnings ends with "VALIDATION PASSED WITH WARNINGS"; only a clean report passes.
+  if ! grep -qF "VALIDATION PASSED —" "$SCRIPT_DIR/output/$name.$label.validate.txt"; then
     echo "The $label binary rejected the state of $name" >&2
     return 1
   fi
