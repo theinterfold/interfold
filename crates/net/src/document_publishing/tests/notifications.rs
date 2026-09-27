@@ -445,14 +445,14 @@ async fn a_forged_notification_does_not_block_the_correct_one() -> Result<()> {
     })?;
     publisher.send(PublisherBarrier).await?;
     let expires_at = Some(Utc::now() + chrono::Duration::hours(1));
-    // A broadcast key document carries no party filter. A range that matches every party passes
-    // the relevance check, but not the payload check.
+    // A broadcast key document carries no party filter. A filter that names this node's party
+    // (0) passes the relevance check, but not the payload check.
     let forged = DocumentPublishedNotification {
         key: key.clone(),
         meta: DocumentMeta::new(
             e3_id.clone(),
             DocumentKind::TrBFV,
-            vec![e3_events::Filter::Range(None, None)],
+            vec![e3_events::Filter::Item(0)],
             expires_at,
         ),
         ts: 100,
