@@ -1216,25 +1216,45 @@ impl CiphernodeBuilder {
         {
             let accusation_deadline_skew_secs = parse_env_u64("ACCUSATION_DEADLINE_SKEW_SECS", 30);
             let signer = provider_cache.ensure_signer().await?;
-            let slashing_manager_addr = slashing_managers
-                .iter()
-                .flatten()
-                .next()
-                .copied()
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "`slashing_manager` contract address is required in chain config — \
-                         it is the EIP-712 `verifyingContract` for accusation vote signatures"
-                    )
-                })?;
+            // Each E3 signs and checks accusation votes with the SlashingManager of its own chain,
+            // because that address is the EIP-712 `verifyingContract` of the vote domain.
+            let mut slashing_managers_by_chain = HashMap::new();
+            for (chain, slashing_manager) in self.chains.iter().zip(slashing_managers) {
+                let Some(slashing_manager) = *slashing_manager else {
+                    continue;
+                };
+                let chain_id = if chain.enabled.unwrap_or(true) {
+                    Some(provider_cache.ensure_read_provider(chain).await?.chain_id())
+                } else {
+                    chain.chain_id
+                };
+                match chain_id {
+                    Some(chain_id) => {
+                        slashing_managers_by_chain.insert(chain_id, slashing_manager);
+                    }
+                    None => warn!(
+                        chain = %chain.name,
+                        "Disabled chain has no chain_id; accusation votes do not use its \
+                         SlashingManager"
+                    ),
+                }
+            }
+            if slashing_managers_by_chain.is_empty() {
+                anyhow::bail!(
+                    "`slashing_manager` contract address is required in chain config — \
+                     it is the EIP-712 `verifyingContract` for accusation vote signatures"
+                );
+            }
             info!(
                 chains = accusation_vote_validity_by_chain.len(),
-                accusation_deadline_skew_secs, "Setting up AccusationManagerExtension"
+                slashing_manager_chains = slashing_managers_by_chain.len(),
+                accusation_deadline_skew_secs,
+                "Setting up AccusationManagerExtension"
             );
             e3_builder = e3_builder.with(AccusationManagerExtension::create(
                 bus,
                 signer,
-                slashing_manager_addr,
+                slashing_managers_by_chain,
                 accusation_vote_validity_by_chain.clone(),
                 accusation_deadline_skew_secs,
                 persisted_committees,

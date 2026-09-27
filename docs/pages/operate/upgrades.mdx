@@ -120,6 +120,12 @@ A compatible release keeps both values. Old and new nodes stay eligible, so you 
 release when you want. If you run several nodes, restart one node at a time. Keep enough committee
 members online so that each active committee keeps its threshold.
 
+A release that changes the sortition seed or the ticket score that nodes compute is an exception.
+While old and new nodes run together, they select different nodes to submit tickets. Fewer nodes
+than the committee size can then submit, and the E3 fails with `InsufficientCommitteeMembers`. No
+honest node is slashed for this. For such a release, governance pauses new E3 requests until the
+operators have upgraded, then resumes them.
+
 ### Mandatory release
 
 Governance uses a cutover for a mandatory node release or a protocol release:

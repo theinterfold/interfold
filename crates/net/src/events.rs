@@ -12,6 +12,7 @@ use crate::{
 };
 use actix::Message;
 use anyhow::{anyhow, bail, Context, Result};
+use derivative::Derivative;
 use e3_events::{
     CorrelationId, DocumentMeta, EventContextAccessors, EventSource, InterfoldEvent, Sequenced,
     Unsequenced,
@@ -85,9 +86,11 @@ pub enum PeerTarget {
 }
 
 /// Incoming/Outgoing GossipData. We disambiguate on concerns relative to the net package.
-#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Derivative, Clone, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derivative(Debug)]
 pub enum GossipData {
-    GossipBytes(Vec<u8>), // Serialized InterfoldEvent
+    // Serialized InterfoldEvent
+    GossipBytes(#[derivative(Debug(format_with = "e3_utils::formatters::hexf"))] Vec<u8>),
     DocumentPublishedNotification(DocumentPublishedNotification),
 }
 
@@ -123,9 +126,10 @@ impl TryFrom<GossipData> for InterfoldEvent<Unsequenced> {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Derivative, Clone, serde::Serialize, serde::Deserialize)]
+#[derivative(Debug)]
 pub enum ProtocolResponse {
-    Ok(Vec<u8>),
+    Ok(#[derivative(Debug(format_with = "e3_utils::formatters::hexf"))] Vec<u8>),
     BadRequest(String),
     Error(String),
 }
@@ -632,7 +636,7 @@ mod tests {
     };
     use e3_utils::ArcBytes;
 
-    use super::{GossipData, NetCommand};
+    use super::{GossipData, NetCommand, NetEvent, ProtocolResponse};
     use crate::ContentHash;
 
     #[test]
@@ -648,6 +652,21 @@ mod tests {
         .summary();
         assert!(summary.contains("value_bytes: 1776213"), "{summary}");
         assert!(summary.len() < 256, "{summary}");
+    }
+
+    #[test]
+    fn net_event_debug_formats_payload_bytes_through_hexf() {
+        let bytes = vec![0x5a; 1_776_213];
+        for text in [
+            format!(
+                "{:?}",
+                NetEvent::GossipData(GossipData::GossipBytes(bytes.clone()))
+            ),
+            format!("{:?}", ProtocolResponse::Ok(bytes)),
+        ] {
+            assert!(text.contains("1776213"), "{text}");
+            assert!(text.len() < 256, "{text}");
+        }
     }
 
     #[test]

@@ -29,6 +29,14 @@ Use `pnpm --dir packages/interfold-contracts upgrade:node-release --action prepa
 the release needs no governance transaction. Do not change either compatibility counter in this
 path. A compatible contract-only change also needs no node policy change.
 
+A release that changes the off-chain ticket ranking is compatible on chain but not in a mixed
+fleet. Example: the VRF `CommitteeRequested.seed` byte order
+(`crates/evm/src/randomness_provider/events.rs`, `Seed::from`). Old and new nodes shortlist
+different submitters, so fewer than N distinct owners can submit and
+`CiphernodeRegistryOwnable` fails the E3 with `InsufficientCommitteeMembers`. The registry scores
+each submitted ticket itself, so no honest node is slashed. Pause new E3 requests for such a rollout
+and resume after the operators have upgraded.
+
 ## Mandatory node-only release
 
 ```text
