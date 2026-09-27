@@ -183,7 +183,7 @@ impl Handler<TypedEvent<ComputeResponse>> for ThresholdPlaintextAggregator {
         msg: TypedEvent<ComputeResponse>,
         ctx: &mut Self::Context,
     ) -> Self::Result {
-        if !self.can_run_aggregation_effects() {
+        if !self.can_continue_aggregation_effects() {
             return;
         }
         trap(
@@ -202,7 +202,7 @@ impl Handler<TypedEvent<ComputeRequestError>> for ThresholdPlaintextAggregator {
         msg: TypedEvent<ComputeRequestError>,
         _: &mut Self::Context,
     ) -> Self::Result {
-        if !self.can_run_aggregation_effects() {
+        if !self.can_continue_aggregation_effects() {
             return;
         }
         trap(
@@ -309,7 +309,7 @@ impl Handler<TypedEvent<AggregationProofSigned>> for ThresholdPlaintextAggregato
         msg: TypedEvent<AggregationProofSigned>,
         ctx: &mut Self::Context,
     ) -> Self::Result {
-        if !self.can_run_aggregation_effects() {
+        if !self.can_continue_aggregation_effects() {
             return;
         }
         trap(

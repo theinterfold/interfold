@@ -244,9 +244,17 @@ pub(in crate::actors::interfold_sol_writer) async fn should_publish_plaintext<
 ) -> Result<bool> {
     let e3_id: U256 = e3_id.try_into()?;
     let contract = IInterfold::new(contract_address, provider.provider());
+    // Only an E3 that waits for its plaintext accepts one. Any node that computed a result
+    // submits it, so a completed or failed E3 must end the retries instead of reverting forever.
+    if contract.getE3Stage(e3_id).call().await? != CIPHERTEXT_READY_STAGE {
+        return Ok(false);
+    }
     let e3 = contract.getE3(e3_id).call().await?;
     Ok(e3.plaintextOutput.is_empty())
 }
+
+/// `E3Stage.CiphertextReady` in the Interfold contract.
+const CIPHERTEXT_READY_STAGE: u8 = 4;
 
 pub(in crate::actors::interfold_sol_writer) async fn process_e3_failure<
     P: Provider + WalletProvider + Clone,

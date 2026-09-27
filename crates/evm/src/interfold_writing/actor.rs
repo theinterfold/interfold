@@ -156,10 +156,6 @@ impl<P: Provider + WalletProvider + Clone + 'static> InterfoldSolWriter<P> {
         );
     }
 
-    fn is_active_aggregator_for(&self, e3_id: &E3id) -> bool {
-        self.active_aggregators.get(e3_id).copied().unwrap_or(false)
-    }
-
     fn now_unix_secs() -> u64 {
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
