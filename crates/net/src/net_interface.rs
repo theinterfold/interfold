@@ -733,9 +733,10 @@ fn create_behaviour(
     // remote peers, which then dial themselves. Kademlia still adds a dialed address to an existing
     // entry; `RoutingUpdated` removes loopback addresses again.
     //
-    // The library's record jobs are off. The replication job would put every stored record, which
-    // includes every peer's DKG documents, to 20 peers each hour, and the publication job would
-    // republish this node's records. The document publisher refreshes its own documents instead.
+    // The library's record jobs are off. Each hour the replication job would put every stored record
+    // that no peer put again since its last run to up to 20 peers; after a DKG ends, that includes
+    // the other peers' DKG documents. The publication job would republish this node's records. The
+    // document publisher refreshes its own documents instead.
     config
         .set_max_packet_size(MAX_KADEMLIA_PAYLOAD_BYTES)
         .set_query_timeout(DHT_QUERY_TIMEOUT)
