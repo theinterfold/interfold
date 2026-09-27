@@ -108,6 +108,7 @@ prepare_switch() {
   if [[ ! -f "$SCRIPT_DIR/output/$name.before.json" ]]; then
     # shellcheck disable=SC2046
     python3 "$INVENTORY" snapshot "$SCRIPT_DIR/output/$name.before.json" $(node_state_dirs "$name")
+    identity_of "$INTERFOLD_BIN_OLD" "$name" > "$SCRIPT_DIR/output/$name.identity.before"
   fi
   heading "Validate $name state with the $label binary"
   "$bin" node validate --name "$name" --config "$CONFIG" \
@@ -118,8 +119,26 @@ prepare_switch() {
   fi
 }
 
+contract_address() {
+  grep -A1 "$1:" "$CONFIG" | sed -n 's/.*address: *"\{0,1\}\(0x[0-9a-fA-F]*\)"\{0,1\}.*/\1/p' | head -n 1
+}
+
 registry_address() {
-  grep -A1 "ciphernode_registry:" "$CONFIG" | sed -n 's/.*address: *"\{0,1\}\(0x[0-9a-fA-F]*\)"\{0,1\}.*/\1/p' | head -n 1
+  contract_address ciphernode_registry
+}
+
+# The operator address and the libp2p peer ID, as the given binary reads them from the node state.
+identity_of() {
+  local bin="$1" name="$2"
+  echo "$("$bin" wallet get --name "$name" --config "$CONFIG" 2>/dev/null | tail -n 1)" \
+    "$("$bin" net get-peer-id --name "$name" --config "$CONFIG" 2>/dev/null | tail -n 1)"
+}
+
+# Count the logs of one event on the local chain.
+count_logs() {
+  local address="$1" signature="$2"
+  cast logs --from-block 0 --address "$address" "$signature" --rpc-url http://localhost:8545 2>/dev/null |
+    grep -c "blockNumber" || true
 }
 
 committee_node_names() {
@@ -239,12 +258,19 @@ for name in $UPGRADED; do
 done
 
 if [[ "$UPGRADE_SCENARIO" == "rollback" ]]; then
-  # Make sure that each candidate enabled effects, then let the candidates write state before the
-  # rollback.
+  # Roll back only a candidate that replayed its state, joined the network, and enabled effects.
+  # Let the candidates write state first, so the old binary must read state that a candidate wrote.
   for name in $UPGRADED; do
     wait_for_effects "$name" new
   done
   sleep 30
+  for name in $UPGRADED; do
+    if grep -E -n "Halting|panicked at|Failed to deserialize|failed to decode" \
+      "$SCRIPT_DIR/output/$name.new.log"; then
+      echo "$name: the candidate log shows a load or decode failure before the rollback" >&2
+      exit 1
+    fi
+  done
   for name in $UPGRADED; do
     prepare_switch "$name" "$INTERFOLD_BIN_OLD" rollback
     start_node "$INTERFOLD_BIN_OLD" "$name" rollback
@@ -331,8 +357,31 @@ if ((SHARES_SENT == 0)); then
   FAILED=1
 fi
 
+heading "Check the chain for failures and slashing"
+E3_STAGE=$(cast call "$(contract_address interfold)" "getE3Stage(uint256)(uint8)" "$E3_ID" \
+  --rpc-url http://localhost:8545)
+if [[ "$E3_STAGE" != "5" ]]; then
+  echo "E3 $E3_ID is at stage $E3_STAGE, not Complete (5)" >&2
+  FAILED=1
+fi
+FAILED_E3S=$(count_logs "$(contract_address interfold)" "E3Failed(uint256,uint8,uint8)")
+SLASH_PROPOSALS=$(count_logs "$(contract_address slashing_manager)" \
+  "SlashProposed(uint256,uint256,address,bytes32,uint256,uint256,uint256,address,uint8)")
+if [[ "$FAILED_E3S" != "0" || "$SLASH_PROPOSALS" != "0" ]]; then
+  echo "chain shows $FAILED_E3S E3Failed and $SLASH_PROPOSALS SlashProposed events" >&2
+  FAILED=1
+fi
+
 for name in $ALL_NODES; do
   stop_node "$name"
+done
+LAST_BIN="$INTERFOLD_BIN_NEW"
+[[ "$UPGRADE_SCENARIO" == "rollback" ]] && LAST_BIN="$INTERFOLD_BIN_OLD"
+for name in $UPGRADED; do
+  if [[ "$(identity_of "$LAST_BIN" "$name")" != "$(cat "$SCRIPT_DIR/output/$name.identity.before")" ]]; then
+    echo "$name: the operator address or peer ID changed across the switch" >&2
+    FAILED=1
+  fi
 done
 for name in $UPGRADED; do
   # shellcheck disable=SC2046
