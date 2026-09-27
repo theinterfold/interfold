@@ -12,6 +12,7 @@ impl ThresholdPlaintextAggregator {
         if !self.can_run_aggregation_effects() {
             return Ok(());
         }
+        self.mark_started_as_aggregator();
         let recovery = self.recovery.try_get()?;
         ensure!(
             recovery.schema_version == THRESHOLD_PLAINTEXT_RECOVERY_SCHEMA_VERSION,
