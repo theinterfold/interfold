@@ -4,7 +4,9 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::{ShutdownStore, SledDb, StoreHasExactKeys, StoreIsEmpty};
+use crate::{
+    ShutdownStore, SledDb, StoreGetChecked, StoreHasExactKeys, StoreIsEmpty, StoreKeysWithPrefix,
+};
 use actix::{Actor, ActorContext, Addr, Handler, ResponseFuture};
 use anyhow::{Context, Result};
 use e3_events::{BusHandle, EType, ErrorDispatcher, Flush, InterfoldEvent, Unsequenced};
@@ -170,6 +172,24 @@ impl Handler<StoreHasExactKeys> for SledStore {
     fn handle(&mut self, message: StoreHasExactKeys, _: &mut Self::Context) -> Self::Result {
         let db = self.db.as_ref().context("SledStore is closed")?;
         db.has_exact_keys(message.keys())
+    }
+}
+
+impl Handler<StoreKeysWithPrefix> for SledStore {
+    type Result = Result<Vec<Vec<u8>>>;
+
+    fn handle(&mut self, message: StoreKeysWithPrefix, _: &mut Self::Context) -> Self::Result {
+        let db = self.db.as_ref().context("SledStore is closed")?;
+        db.keys_with_prefix(message.prefix())
+    }
+}
+
+impl Handler<StoreGetChecked> for SledStore {
+    type Result = Result<Option<Vec<u8>>>;
+
+    fn handle(&mut self, message: StoreGetChecked, _: &mut Self::Context) -> Self::Result {
+        let db = self.db.as_ref().context("SledStore is closed")?;
+        db.get(Get::new(message.key().to_vec()))
     }
 }
 

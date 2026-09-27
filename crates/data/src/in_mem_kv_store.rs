@@ -82,6 +82,19 @@ impl InMemKvStore {
                 .all(|key| entries.iter().any(|(entry_key, _)| entry_key == key))
     }
 
+    /// Every key that starts with `prefix`, in key order.
+    pub fn keys_with_prefix(&self, prefix: &[u8]) -> Vec<Vec<u8>> {
+        let mut keys: Vec<Vec<u8>> = self
+            .db
+            .entries()
+            .into_iter()
+            .map(|(key, _)| key)
+            .filter(|key| key.starts_with(prefix))
+            .collect();
+        keys.sort();
+        keys
+    }
+
     /// Returns the captured operation log.
     pub fn log(&self) -> Vec<DataOp> {
         self.log.clone()
