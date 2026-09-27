@@ -165,6 +165,14 @@ where
     drop(_nonce_guard);
     let receipt = pending.get_receipt().await?;
     require_successful_receipt("acknowledge ciphernode release", &receipt)?;
+    // Operators check for this line after an upgrade, so log it on the first start too.
+    info!(
+        version = release.version(),
+        protocol_version = release.protocol_version,
+        node_generation = release.node_generation,
+        tx = %receipt.transaction_hash,
+        "Ciphernode release is accepted"
+    );
     Ok(())
 }
 
