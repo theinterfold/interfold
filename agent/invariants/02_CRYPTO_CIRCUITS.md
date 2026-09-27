@@ -101,8 +101,10 @@ every section.
   unresponsive-party set. — `ARCHITECTURE.md`; `flow-trace/04`
 - Every committee member persists validated aggregation inputs. Failover starts only after
   `AggregationInputsReady` confirms that the phase can resume from durable state. Standbys keep
-  their local C6 outcomes for failover. Only the active party can launch aggregation effects or
-  apply their results to advance the phase. — `flow-trace/04`; INDEX concern #42
+  their local C6 outcomes for failover. Only the active party can launch aggregation effects. Only
+  it applies their results, except that a plaintext aggregator demoted by failover finishes the work
+  that it started (C6 verification onward) and publishes the result; the first valid result on chain
+  wins. — `flow-trace/04`; INDEX concerns #42, #68
 - The active aggregator proposes a canonical H-dealer DKG roster only after it derives `H` mutually
   ready dealers from signed Ready reports; a promoted aggregator reuses an already accepted roster.
   A receiver keeps one authenticated roster per proposer. It accepts a roster only from a proposer

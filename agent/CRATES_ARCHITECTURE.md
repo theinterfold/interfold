@@ -520,30 +520,36 @@ the event store and the node, so recording before the commit cannot hide an even
 node. After a restart, the first copy of an already stored event is stored once more. The document
 publisher fetches documents in spawned tasks, so a slow DHT read does not hold its ingress loop. At
 most 8 fetches run and at most 512 notified documents wait; a new notification replaces the waiting
-document with the most failed fetches, and a document is dropped after 6 failed fetches until it is
-announced again. Each publish attempt has a result timeout. No-peer failures use a longer retry
-window than other transient failures. The network producer sends all events to the raw channel. It
-also sends gossip payloads and publish or DHT results to a separate application channel. The startup
-buffer subscribes only to the application channel. Historical-sync and connection-control bursts
-cannot lag the application receiver or consume its actor mailbox. The application buffer is bounded
-by both event count and estimated bytes and fails readiness on overflow or broadcast lag; after
-`SyncEnded`, broadcast lag is warned and skipped without stopping the ingress loop. Historical
-direct sync requires advancing cursors and enforces one cumulative page, event, byte, and time
-budget across all aggregate fetches and recovery retries in a startup attempt. Bootstrap dialing
-makes three bounded startup attempts and then retries unavailable peers every 60 seconds in the
-background. Kademlia peers are evicted after three consecutive dial failures and quarantined from
-discovery-based routing-table reinsertion for up to 30 minutes. An admitted connection clears the
-cooldown early. A peer-ID mismatch quarantines the stale identity immediately. A dial that reaches
-this node's own identity is not a mismatch: the node removes that address from Kademlia and does not
-quarantine the peer it was advertised for. Kademlia adds new routing-table entries only through the
-filtered addresses of admitted peers, not automatically for every connection. Kademlia still adds a
-dialed address to an existing entry, so the node removes loopback addresses when Kademlia reports a
-routing update. Loopback addresses between nodes on one host are therefore not passed on to remote
-peers. The library's record replication and republication jobs are disabled: the replication job
-would put every stored record, including every peer's DKG documents, to 20 peers each hour. Kademlia
-queries time out after 60 seconds, and each request stream after 60 seconds. Peer health and
-quarantine state are process-local and are rebuilt after restart. A peer ID supplied in explicit
-configuration is pinned and cannot rebind to the identity obtained during a failed dial. A
+document with the most failed fetches. A failed fetch is retried at the back-off cap until the
+document arrives, its E3 closes, or its notifications expire. A waiting document keeps one candidate
+notification per party filter (`[]` or `[Item(party)]`, the only shapes that any release publishes),
+with the latest expiry, and the fetched document is accepted under the first candidate whose
+metadata matches its payload. A notification that arrives during the fetch is checked against the
+fetched bytes without another GET, and a DHT GET accepts only the record for the requested key. Each
+publish attempt has a result timeout. No-peer failures use a longer retry window than other
+transient failures. The network producer sends all events to the raw channel. It also sends gossip
+payloads and publish or DHT results to a separate application channel. The startup buffer subscribes
+only to the application channel. Historical-sync and connection-control bursts cannot lag the
+application receiver or consume its actor mailbox. The application buffer is bounded by both event
+count and estimated bytes and fails readiness on overflow or broadcast lag; after `SyncEnded`,
+broadcast lag is warned and skipped without stopping the ingress loop. Historical direct sync
+requires advancing cursors and enforces one cumulative page, event, byte, and time budget across all
+aggregate fetches and recovery retries in a startup attempt. Bootstrap dialing makes three bounded
+startup attempts and then retries unavailable peers every 60 seconds in the background. Kademlia
+peers are evicted after three consecutive dial failures and quarantined from discovery-based
+routing-table reinsertion for up to 30 minutes. An admitted connection clears the cooldown early. A
+peer-ID mismatch quarantines the stale identity immediately. A dial that reaches this node's own
+identity is not a mismatch: the node removes that address from Kademlia and does not quarantine the
+peer it was advertised for. Kademlia adds new routing-table entries only through the filtered
+addresses of admitted peers, not automatically for every connection. Kademlia still adds a dialed
+address to an existing entry, so the node removes loopback addresses when Kademlia reports a routing
+update. Loopback addresses between nodes on one host are therefore not passed on to remote peers.
+The library's record replication and republication jobs are disabled: each hour the replication job
+would put every stored record that no peer put again since its last run to up to 20 peers, which
+after a DKG includes the other peers' DKG documents. Expired records are pruned every minute
+instead. Kademlia queries time out after 60 seconds, and each request stream after 60 seconds. Peer
+health and quarantine state are process-local and are rebuilt after restart. A peer ID supplied in
+explicit configuration is pinned and cannot rebind to the identity obtained during a failed dial. A
 discovered address without an explicit identity can adopt the authenticated remote peer ID. An
 admitted QUIC connection is not sufficient evidence that gossip is ready. Network status reports how
 many admitted peers advertise the protocol topic. If a connected peer does not advertise the topic
@@ -719,10 +725,14 @@ therefore retry, while completed C1-C4 proof work and randomized TrBFV output ar
 `InterfoldSolWriter` and `CiphernodeRegistrySolWriter` subscribe before EventStore replay. Locally
 produced `PlaintextAggregated` and `PublicKeyAggregated` events form durable publication intents.
 Their process-local gates are rebuilt from replay, coalesce by E3, and release work only after
-`EffectsEnabled`. Live admission requires the active aggregator role. Replay can retain a local
-intent while the persisted role is restored, but the writer starts a submission only while the node
-is the active aggregator. Contract-state preflights provide cross-restart idempotency. Terminal
-outcomes remove the intent; retryable failures retain it and retry after 30 seconds.
+`EffectsEnabled`. For `PublicKeyAggregated`, live admission requires the active aggregator role;
+replay can retain a local intent while the persisted role is restored, but the writer starts a
+submission only while the node is the active aggregator. A `PlaintextAggregated` intent has no role
+gate: failover demotes an aggregator after a fixed budget even while it is still proving, so the
+node that computed the plaintext submits it after a demotion too. It submits only while the E3 is at
+`CiphertextReady` with no plaintext, so the first valid result wins. Contract-state preflights
+provide cross-restart idempotency. Terminal outcomes remove the intent; retryable failures retain it
+and retry after 30 seconds.
 
 Only locally sourced result events cross these EVM write boundaries. A remote result cannot make a
 node submit a transaction. `E3RequestComplete` does not discard an unfinished publication intent,
