@@ -857,8 +857,10 @@ makes a repeated proposal safe.
 
 At startup, `CiphernodeBuilder` reads `Interfold.slashingManager()` on each enabled chain. That
 chain's `SlashExecuted` reader and proposal writer use the resolved address, and the chain's log
-filter contains only that SlashingManager address. The accusation manager signs every vote with one
-EIP-712 `verifyingContract`: the resolved address of the first configured chain that has one. A
+filter contains only that SlashingManager address. The accusation manager signs and checks the votes
+of each E3 with the resolved address of that E3's chain as the EIP-712 `verifyingContract`. It does
+not start for an E3 whose chain has no SlashingManager, and it logs an error. It ignores the address
+of a disabled chain that has no `chain_id`. Startup fails when no chain has a SlashingManager. A
 different configured `slashing_manager` causes a warning and is not used. The configured address
 applies only when the read still fails after two retries or returns zero, or when the chain is
 disabled and has no provider; a failed read logs an error because the configured address can be a

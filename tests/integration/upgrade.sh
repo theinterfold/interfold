@@ -239,7 +239,11 @@ for name in $UPGRADED; do
 done
 
 if [[ "$UPGRADE_SCENARIO" == "rollback" ]]; then
-  # Let the candidate write state before the rollback.
+  # Make sure that each candidate enabled effects, then let the candidates write state before the
+  # rollback.
+  for name in $UPGRADED; do
+    wait_for_effects "$name" new
+  done
   sleep 30
   for name in $UPGRADED; do
     prepare_switch "$name" "$INTERFOLD_BIN_OLD" rollback

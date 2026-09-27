@@ -136,10 +136,12 @@ impl EventTranslationService {
     }
 
     /// Record a protocol event from the peer network that the EventBus delivered, for example
-    /// one that historical sync stored. The bus delivers an event only after it is stored.
+    /// one that historical sync stored. The bus delivers an event only after it is stored. The ID
+    /// comes from the payload, because a sync peer supplies the context ID.
     pub fn record_stored_event(&mut self, event: &InterfoldEvent, now: Instant) {
         if event.source() == EventSource::Net && Self::is_forwardable_event(event) {
-            self.stored_remote.record(event.event_id(), now);
+            self.stored_remote
+                .record(EventId::hash(event.get_data()), now);
         }
     }
 
@@ -164,8 +166,9 @@ impl EventTranslationService {
 mod tests {
     use super::*;
     use e3_events::{
-        DkgCoordination, DkgCoordinationKind, DkgDealer, E3id, EventConstructorWithTimestamp,
-        KeyshareCreated, PlaintextAggregated, TestEvent,
+        AggregateId, DkgCoordination, DkgCoordinationKind, DkgDealer, E3id,
+        EventConstructorWithTimestamp, EventContext, KeyshareCreated, PlaintextAggregated,
+        TestEvent,
     };
     use e3_utils::ArcBytes;
 
@@ -236,6 +239,38 @@ mod tests {
         let internal = local_test_event().with_source(EventSource::Net);
         svc.record_stored_event(&internal, start);
         assert!(!svc.is_stored_remote_event(&internal.event_id(), start));
+    }
+
+    #[test]
+    fn a_mislabeled_stored_event_records_its_payload_id() -> Result<()> {
+        let mut svc = EventTranslationService::new("topic");
+        let genuine = local_forwardable_event();
+        let payload: InterfoldEventData = KeyshareCreated {
+            pubkey: ArcBytes::from_bytes(&[9]),
+            e3_id: E3id::new("1", 1),
+            node: "node-2".to_string(),
+            party_id: 2,
+            signed_pk_generation_proof: None,
+        }
+        .into();
+        // A sync peer labels another event with the ID of the genuine event.
+        let context = EventContext::<Unsequenced>::new_origin(
+            genuine.event_id(),
+            1,
+            AggregateId::new(1),
+            None,
+            EventSource::Net,
+        );
+        let forged: InterfoldEvent<Unsequenced> =
+            GossipData::GossipBytes(bincode::serialize(&(payload, context))?).try_into()?;
+        let forged = forged.into_sequenced(1);
+        assert_eq!(forged.event_id(), genuine.event_id());
+
+        let now = Instant::now();
+        svc.record_stored_event(&forged, now);
+        assert!(!svc.is_stored_remote_event(&genuine.event_id(), now));
+        assert!(svc.is_stored_remote_event(&EventId::hash(forged.get_data()), now));
+        Ok(())
     }
 
     #[test]

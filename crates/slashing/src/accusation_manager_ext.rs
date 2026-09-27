@@ -43,13 +43,15 @@ fn accusation_vote_quorum(threshold_t: usize, committee_n: usize) -> Result<usiz
 pub struct AccusationManagerExtension {
     bus: BusHandle,
     signer: PrivateKeySigner,
-    /// On-chain `SlashingManager` address (EIP-712 `verifyingContract` for vote sigs).
-    slashing_manager: Address,
+    /// Per-chain on-chain `SlashingManager` address (EIP-712 `verifyingContract`
+    /// for vote signatures). Looked up by `e3_id.chain_id()` when each per-E3
+    /// actor starts.
+    slashing_managers_by_chain: HashMap<u64, Address>,
     /// Per-chain off-chain freshness window (seconds), read from
     /// `CiphernodeRegistry.accusationVoteValidity()` at process startup.
     /// Looked up by `e3_id.chain_id()` when each per-E3 actor starts;
     /// governance changes require a node restart to take effect (same lifecycle
-    /// contract as `slashing_manager`).
+    /// contract as `slashing_managers_by_chain`).
     vote_validity_secs_by_chain: HashMap<u64, u64>,
     /// Clock-skew allowance for peer accusation deadlines.
     accusation_deadline_skew_secs: u64,
@@ -61,7 +63,7 @@ impl AccusationManagerExtension {
     pub fn create(
         bus: &BusHandle,
         signer: PrivateKeySigner,
-        slashing_manager: Address,
+        slashing_managers_by_chain: HashMap<u64, Address>,
         vote_validity_secs_by_chain: HashMap<u64, u64>,
         accusation_deadline_skew_secs: u64,
         persisted_committees: HashMap<E3id, Committee>,
@@ -69,7 +71,7 @@ impl AccusationManagerExtension {
         Box::new(Self {
             bus: bus.clone(),
             signer: signer.clone(),
-            slashing_manager,
+            slashing_managers_by_chain,
             vote_validity_secs_by_chain,
             accusation_deadline_skew_secs,
             persisted_committees,
@@ -116,6 +118,17 @@ impl AccusationManagerExtension {
             return;
         }
 
+        // The vote domain names the SlashingManager of the E3's own chain. The manager of
+        // another chain gives signatures that this chain's contract rejects.
+        let Some(&slashing_manager) = self.slashing_managers_by_chain.get(&e3_id.chain_id()) else {
+            error!(
+                %e3_id,
+                chain_id = e3_id.chain_id(),
+                "Cannot start AccusationManager because the E3 chain has no SlashingManager"
+            );
+            return;
+        };
+
         let Some(meta) = ctx.get_dependency(META_KEY) else {
             error!(%e3_id, "Cannot start AccusationManager because E3 metadata is unavailable");
             return;
@@ -150,7 +163,7 @@ impl AccusationManagerExtension {
             &self.bus,
             e3_id,
             self.signer.clone(),
-            self.slashing_manager,
+            slashing_manager,
             committee_addresses,
             circuit_threshold_t,
             vote_quorum_h,
@@ -256,8 +269,11 @@ mod tests {
     }
 
     #[actix::test]
-    async fn hydration_recreates_the_accusation_manager() -> Result<()> {
+    async fn hydration_recreates_the_accusation_manager_only_on_chains_with_a_slashing_manager(
+    ) -> Result<()> {
         let e3_id = E3id::new("7", 31337);
+        // Same E3 index on a chain that has no SlashingManager.
+        let unmapped_e3_id = E3id::new("7", 11155111);
         let committee = Committee::new(vec![
             "0x1111111111111111111111111111111111111111".to_string(),
             "0x2222222222222222222222222222222222222222".to_string(),
@@ -266,22 +282,32 @@ mod tests {
         let extension = AccusationManagerExtension::create(
             &test_bus(),
             PrivateKeySigner::random(),
-            Address::repeat_byte(0x44),
-            HashMap::from([(31337, 300)]),
+            HashMap::from([(31337, Address::repeat_byte(0x44))]),
+            HashMap::from([(31337, 300), (11155111, 300)]),
             30,
-            HashMap::from([(e3_id.clone(), committee)]),
+            HashMap::from([
+                (e3_id.clone(), committee.clone()),
+                (unmapped_e3_id.clone(), committee),
+            ]),
         );
-        let mut context = test_context(e3_id.clone());
-        context.set_dependency(META_KEY, test_meta());
-        let snapshot = E3ContextSnapshot {
-            e3_id,
-            recipients: Vec::new(),
-            dependencies: vec!["meta".to_string()],
-        };
 
-        extension.hydrate(&mut context, &snapshot).await?;
+        for (id, expect_manager) in [(e3_id, true), (unmapped_e3_id, false)] {
+            let mut context = test_context(id.clone());
+            context.set_dependency(META_KEY, test_meta());
+            let snapshot = E3ContextSnapshot {
+                e3_id: id.clone(),
+                recipients: Vec::new(),
+                dependencies: vec!["meta".to_string()],
+            };
 
-        assert!(context.get_event_recipient("accusation_manager").is_some());
+            extension.hydrate(&mut context, &snapshot).await?;
+
+            assert_eq!(
+                context.get_event_recipient("accusation_manager").is_some(),
+                expect_manager,
+                "unexpected accusation_manager recipient for {id}"
+            );
+        }
         Ok(())
     }
 }

@@ -398,8 +398,10 @@ the password and the key in your secret management system.
 The entrypoint reads this file only when the volume has no key file or no wallet key. After it uses
 the file, it tries to delete it. A read-only mount stays in place, and the boot continues.
 
-Do not set `autopassword` in `config.yaml` for the image. With `autopassword`, the node creates a
-random password before the entrypoint can set the password from this file.
+Do not set `autopassword` or `autowallet` in `config.yaml` for the image. With `autopassword`, the
+node creates a random password before the entrypoint can set the password from this file. With
+`autowallet`, the node tries to create a random wallet key before the entrypoint can set the key
+from this file.
 
 ### Start the container
 
