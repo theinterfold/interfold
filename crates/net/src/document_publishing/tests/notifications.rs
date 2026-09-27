@@ -557,3 +557,57 @@ async fn a_document_for_another_key_is_not_accepted() -> Result<()> {
     );
     Ok(())
 }
+
+/// A forged notification that arrives before this node knows it is on the committee must not hide
+/// the correct one: both are buffered, and the fetch accepts the document under the correct one.
+#[actix::test]
+async fn a_forged_notification_before_selection_does_not_hide_the_correct_one() -> Result<()> {
+    let (_guard, bus, _net_cmd_tx, mut commands, net_events, _, history, _, publisher) =
+        setup_test()?;
+    let e3_id = E3id::new("early-forged", 1);
+    let value = EventConversionService::encryption_key_to_request(EncryptionKeyCreated {
+        e3_id: e3_id.clone(),
+        key: Arc::new(EncryptionKey::new(1, ArcBytes::from_bytes(b"public key"))),
+        external: false,
+    })?
+    .expect("local key should produce a document")
+    .value;
+    let key = ContentHash::from_content(&value);
+    let expires_at = Some(Utc::now() + chrono::Duration::hours(1));
+    let notification = |filter| DocumentPublishedNotification {
+        key: key.clone(),
+        meta: DocumentMeta::new(e3_id.clone(), DocumentKind::TrBFV, filter, expires_at),
+        ts: 100,
+    };
+    publisher
+        .send(notification(vec![e3_events::Filter::Item(0)]))
+        .await?;
+    publisher.send(notification(vec![])).await?;
+
+    bus.publish_without_context(CiphernodeSelected {
+        e3_id: e3_id.clone(),
+        threshold_m: 2,
+        threshold_n: 3,
+        ..CiphernodeSelected::default()
+    })?;
+    let Some(NetCommand::DhtGetRecord { correlation_id, .. }) =
+        timeout(Duration::from_secs(1), commands.recv()).await?
+    else {
+        bail!("expected a fetch after selection");
+    };
+    net_events.send(NetEvent::DhtGetRecordSucceeded {
+        key,
+        correlation_id,
+        value: value.clone(),
+    })?;
+    sleep(Duration::from_millis(200)).await;
+
+    let events = history.send(GetEvents::new()).await?;
+    let received = events.iter().find_map(|event| match event.get_data() {
+        InterfoldEventData::DocumentReceived(document) => Some(document.clone()),
+        _ => None,
+    });
+    let received = received.expect("the buffered correct notification delivers the document");
+    assert!(received.meta.filter.is_empty());
+    Ok(())
+}

@@ -206,11 +206,15 @@ impl Handler<DocumentPublishedNotification> for DocumentPublisher {
         }
         let ids = self.service.interest_snapshot();
         if !ids.contains_key(&msg.meta.e3_id) {
+            // Keep one notification per document and party filter. Only the filter decides
+            // whether a notification can match the payload, so a forged copy that arrives first
+            // must not hide a correct one with another filter.
             if msg.meta.expires_at > chrono::Utc::now()
-                && !self
-                    .early_notifications
-                    .iter()
-                    .any(|item| item.meta.e3_id == msg.meta.e3_id && item.key == msg.key)
+                && !self.early_notifications.iter().any(|item| {
+                    item.meta.e3_id == msg.meta.e3_id
+                        && item.key == msg.key
+                        && item.meta.filter == msg.meta.filter
+                })
             {
                 if self.early_notifications.len() == MAX_BUFFERED_NOTIFICATIONS {
                     self.early_notifications.pop_front();
