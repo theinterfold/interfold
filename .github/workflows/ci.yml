@@ -267,6 +267,11 @@ jobs:
         if: matrix.suite == 'lib'
         run: cargo nextest run --lib
 
+      # The reset-data guard test is its own test target, so the library run above skips it.
+      - name: Run the reset-data guard test
+        if: matrix.suite == 'lib'
+        run: cargo nextest run -p e3-entrypoint --test reset_data_guard
+
       - name: Run doc-tests
         if: matrix.suite == 'doc'
         run: cargo test --doc
