@@ -127,6 +127,22 @@ impl SledDb {
         self.db.is_empty()
     }
 
+    /// Every key that starts with `prefix`, in key order. Any read error fails the scan, so a
+    /// caller cannot mistake a failed read for a missing record.
+    pub fn keys_with_prefix(&self, prefix: &[u8]) -> Result<Vec<Vec<u8>>> {
+        self.db
+            .scan_prefix(prefix)
+            .keys()
+            .map(|key| key.map(|key| key.to_vec()))
+            .collect::<sled::Result<Vec<_>>>()
+            .with_context(|| {
+                format!(
+                    "Failed to scan keys with prefix {}",
+                    String::from_utf8_lossy(prefix)
+                )
+            })
+    }
+
     /// Return whether the tree contains exactly the supplied keys and no others.
     pub fn has_exact_keys(&self, keys: &[Vec<u8>]) -> Result<bool> {
         let mut expected = keys.to_vec();
@@ -158,6 +174,32 @@ impl SledDb {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keys_with_prefix_lists_only_matching_keys_in_order() -> Result<()> {
+        let temp_dir = tempfile::tempdir().expect("Failed to create temporary directory");
+        let mut db = SledDb::new(&temp_dir.path().join("prefix.db"), "datastore")?;
+        for key in [
+            "//threshold_keyshare/1:2",
+            "//threshold_keyshare_recovery/v1/1:2",
+            "//threshold_keyshare/1:10",
+            "//e3_lifecycle",
+        ] {
+            db.insert(Insert::new(key.as_bytes().to_vec(), vec![1]))?;
+        }
+
+        let keys = db.keys_with_prefix(b"//threshold_keyshare/")?;
+
+        assert_eq!(
+            keys,
+            vec![
+                b"//threshold_keyshare/1:10".to_vec(),
+                b"//threshold_keyshare/1:2".to_vec(),
+            ]
+        );
+        assert!(db.keys_with_prefix(b"//absent/")?.is_empty());
+        Ok(())
+    }
 
     #[test]
     fn test_sled_db_caching() -> Result<()> {

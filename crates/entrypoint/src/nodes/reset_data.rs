@@ -14,19 +14,19 @@
 //! The identity is copied out as ciphertext. The password is never required, so the key material
 //! is not decrypted here.
 //!
-//! The command refuses to delete key-share state for an active E3, that is, an E3 that is not
-//! complete or failed. The chain cannot restore a key share.
+//! The command refuses to delete key-share state for an E3 that this node has not seen complete.
+//! The chain cannot restore a key share.
 
 use anyhow::{bail, Context, Result};
 use e3_ciphernode_builder::get_interfold_bus_handle;
 use e3_config::AppConfig;
 use e3_data::{DataStore, Repositories, RepositoriesFactory, SledDb};
-use e3_events::{E3Stage, E3id, Get};
+use e3_events::{E3Stage, E3id, StoreKeys};
 use e3_evm::EthPrivateKeyRepositoryFactory;
-use e3_keyshare::ThresholdKeyshareRepositoryFactory;
 use e3_net::NetRepositoryFactory;
 use e3_request::E3LifecycleRepositoryFactory;
 use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use tokio::fs;
 use tracing::{info, warn};
@@ -84,48 +84,75 @@ async fn read_identity(repositories: &Repositories) -> Result<PreservedIdentity>
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ActiveE3 {
     e3_id: E3id,
-    stage: E3Stage,
+    /// The stage in the lifecycle map, or `None` when the map has no entry for this E3.
+    stage: Option<E3Stage>,
 }
 
-/// Find each E3 that is not terminal and for which this node holds key-share state.
+/// Key prefixes of the records that hold one E3's key-share state. The E3 ID follows each prefix.
+const KEY_SHARE_PREFIXES: [&str; 3] = [
+    StoreKeys::THRESHOLD_KEYSHARE_PREFIX,
+    StoreKeys::THRESHOLD_KEYSHARE_RECOVERY_PREFIX,
+    StoreKeys::THRESHOLD_KEYSHARE_RECOVERY_PAYLOADS_PREFIX,
+];
+
+/// Find each E3 that has key-share state on this node and that this node has not seen complete.
 ///
-/// The lifecycle stage map (`//e3_lifecycle`) names every E3 that the node observed. The
-/// `//threshold_keyshare/{e3_id}` record exists only on a node that the committee selected, and it
-/// holds the key share of that node.
+/// The E3s come from the key-share records themselves, found by key prefix, and not from the
+/// lifecycle stage map (`//e3_lifecycle`). A record whose E3 is missing from the map therefore
+/// still counts, with no stage. Only a `Complete` entry shows that the E3 is over.
 ///
-/// The check reads only whether the key-share record exists. It does not decode the record,
-/// because a store that an older release wrote can hold an older layout, and a decode failure
-/// must not hide a key share.
+/// Both reads fail on a storage error. The ordinary read path reports a storage error and returns
+/// `None`, and a failed read must never look like an absent key share. The records are not
+/// decoded, because a store that an older release wrote can hold an older layout.
 async fn active_e3s_with_key_shares(repositories: &Repositories) -> Result<Vec<ActiveE3>> {
-    let stages = repositories
-        .e3_lifecycle()
-        .read()
+    let stages: HashMap<E3id, E3Stage> = DataStore::from(repositories.e3_lifecycle())
+        .read_checked()
         .await
         .context("failed to read the E3 lifecycle stage map")?
         .unwrap_or_default();
-    let mut active = Vec::new();
-    for (e3_id, stage) in stages {
-        // Only `Complete` shows that the E3 is over. The node records `Failed` also for its own
-        // local failures, such as a DKG timeout, while the E3 can continue on chain.
-        if stage == E3Stage::Complete {
-            continue;
-        }
-        if has_record(&repositories.threshold_keyshare(&e3_id).into()).await? {
-            active.push(ActiveE3 { e3_id, stage });
+    let mut e3_ids = BTreeMap::new();
+    for prefix in KEY_SHARE_PREFIXES {
+        let keys = repositories
+            .store
+            .keys_with_prefix(prefix)
+            .await
+            .with_context(|| format!("failed to list the key-share records under {prefix}"))?;
+        for key in keys {
+            let e3_id = e3_id_after_prefix(&key, prefix)?;
+            e3_ids.insert(e3_id.to_string(), e3_id);
         }
     }
-    active.sort_by_cached_key(|e3| e3.e3_id.to_string());
-    Ok(active)
+    Ok(e3_ids
+        .into_values()
+        .filter_map(|e3_id| {
+            let stage = stages.get(&e3_id).cloned();
+            // The node records `Failed` also for its own local failures, such as a DKG timeout,
+            // while the E3 can continue on chain. So only `Complete` ends the protection.
+            (stage != Some(E3Stage::Complete)).then_some(ActiveE3 { e3_id, stage })
+        })
+        .collect())
 }
 
-/// Whether `store` holds any value at its scope. The value is not decoded.
-async fn has_record(store: &DataStore) -> Result<bool> {
-    let value = store
-        .get_recipient()
-        .send(Get::new(store.scope_bytes().to_vec()))
-        .await
-        .context("the data store stopped before it answered a read")?;
-    Ok(value.is_some())
+/// The E3 ID in a key-share record key: the first path segment after `prefix`, written as
+/// `<chain_id>:<id>`. A key that does not parse fails the check instead of being skipped.
+fn e3_id_after_prefix(key: &[u8], prefix: &str) -> Result<E3id> {
+    let unreadable = || {
+        anyhow::anyhow!(
+            "found a key-share record whose E3 this binary cannot read: {}",
+            String::from_utf8_lossy(key)
+        )
+    };
+    let rest = std::str::from_utf8(key)
+        .ok()
+        .and_then(|key| key.strip_prefix(prefix))
+        .ok_or_else(unreadable)?;
+    let segment = rest.split('/').next().unwrap_or_default();
+    let (chain_id, id) = segment.split_once(':').ok_or_else(unreadable)?;
+    let chain_id = chain_id.parse::<u64>().map_err(|_| unreadable())?;
+    if id.is_empty() {
+        return Err(unreadable());
+    }
+    Ok(E3id::new(id, chain_id))
 }
 
 /// Refuse the reset when it would delete a key share that an active E3 needs.
@@ -155,7 +182,10 @@ fn guard_active_e3s(active_e3s: Result<Vec<ActiveE3>>, allow_active_e3s: bool) -
 
     let list = active
         .iter()
-        .map(|e3| format!("  - E3 {} at stage {:?}", e3.e3_id, e3.stage))
+        .map(|e3| match &e3.stage {
+            Some(stage) => format!("  - E3 {} at stage {stage:?}", e3.e3_id),
+            None => format!("  - E3 {}, which the lifecycle map does not list", e3.e3_id),
+        })
         .collect::<Vec<_>>()
         .join("\n");
     if allow_active_e3s {
@@ -519,19 +549,104 @@ mod tests {
             vec![
                 ActiveE3 {
                     e3_id: key_published,
-                    stage: E3Stage::KeyPublished,
+                    stage: Some(E3Stage::KeyPublished),
                 },
                 ActiveE3 {
                     e3_id: ciphertext_ready,
-                    stage: E3Stage::CiphertextReady,
+                    stage: Some(E3Stage::CiphertextReady),
                 },
                 ActiveE3 {
                     e3_id: failed,
-                    stage: E3Stage::Failed,
+                    stage: Some(E3Stage::Failed),
                 },
             ]
         );
         Ok(())
+    }
+
+    /// Key-share state counts even when the lifecycle map has no entry for its E3, or when only
+    /// the recovery records remain. The map is not the source of truth for what a reset deletes.
+    #[actix::test]
+    async fn finds_key_share_state_that_the_lifecycle_map_does_not_list() -> anyhow::Result<()> {
+        let repositories = Repositories::in_mem();
+        let listed_complete = E3id::new("1", 1);
+        let unlisted = E3id::new("2", 1);
+        let recovery_only = E3id::new("3", 31337);
+        repositories
+            .e3_lifecycle()
+            .write_sync(&HashMap::from([(
+                listed_complete.clone(),
+                E3Stage::Complete,
+            )]))
+            .await?;
+        for e3_id in [&listed_complete, &unlisted] {
+            DataStore::from(repositories.threshold_keyshare(e3_id))
+                .write_sync(vec![1_u8, 2, 3])
+                .await?;
+        }
+        DataStore::from(repositories.threshold_keyshare_recovery(&recovery_only))
+            .write_sync(vec![4_u8, 5, 6])
+            .await?;
+
+        let active = active_e3s_with_key_shares(&repositories).await?;
+
+        assert_eq!(
+            active,
+            vec![
+                ActiveE3 {
+                    e3_id: unlisted,
+                    stage: None,
+                },
+                ActiveE3 {
+                    e3_id: recovery_only,
+                    stage: None,
+                },
+            ]
+        );
+        let error = guard_active_e3s(Ok(active), false).expect_err("unlisted state must block");
+        assert!(
+            error
+                .to_string()
+                .contains("which the lifecycle map does not list"),
+            "the refusal must say why the E3 is listed, got: {error}"
+        );
+        Ok(())
+    }
+
+    /// A missing lifecycle map does not make the store look empty of key shares.
+    #[actix::test]
+    async fn a_missing_lifecycle_map_does_not_hide_key_shares() -> anyhow::Result<()> {
+        let repositories = Repositories::in_mem();
+        let e3_id = E3id::new("7", 1);
+        DataStore::from(repositories.threshold_keyshare(&e3_id))
+            .write_sync(vec![1_u8])
+            .await?;
+
+        let active = active_e3s_with_key_shares(&repositories).await?;
+
+        assert_eq!(active, vec![ActiveE3 { e3_id, stage: None }]);
+        Ok(())
+    }
+
+    /// A key-share key that does not name an E3 fails the check. Skipping it could hide a share.
+    #[test]
+    fn a_key_share_key_without_an_e3_id_fails() {
+        let prefix = super::StoreKeys::THRESHOLD_KEYSHARE_PREFIX;
+        for key in [
+            prefix.to_string(),
+            format!("{prefix}not-an-e3"),
+            format!("{prefix}x:1"),
+            format!("{prefix}1:"),
+        ] {
+            assert!(
+                super::e3_id_after_prefix(key.as_bytes(), prefix).is_err(),
+                "{key:?} must not parse as an E3 ID"
+            );
+        }
+        assert_eq!(
+            super::e3_id_after_prefix(format!("{prefix}1:42/sub").as_bytes(), prefix).unwrap(),
+            E3id::new("42", 1)
+        );
     }
 
     /// A stage map that this binary cannot read blocks the reset, because the reset cannot show
