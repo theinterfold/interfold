@@ -1223,14 +1223,22 @@ impl CiphernodeBuilder {
                 let Some(slashing_manager) = *slashing_manager else {
                     continue;
                 };
-                let chain_id = if chain.enabled.unwrap_or(true) {
+                let enabled = chain.enabled.unwrap_or(true);
+                let chain_id = if enabled {
                     Some(provider_cache.ensure_read_provider(chain).await?.chain_id())
                 } else {
                     chain.chain_id
                 };
                 match chain_id {
-                    Some(chain_id) => {
+                    // The enabled chain's reader and writer use its resolved address, so a
+                    // disabled entry with the same chain_id must not replace it.
+                    Some(chain_id) if enabled => {
                         slashing_managers_by_chain.insert(chain_id, slashing_manager);
+                    }
+                    Some(chain_id) => {
+                        slashing_managers_by_chain
+                            .entry(chain_id)
+                            .or_insert(slashing_manager);
                     }
                     None => warn!(
                         chain = %chain.name,
