@@ -422,7 +422,8 @@ async fn a_malformed_notification_is_not_fetched() -> Result<()> {
 }
 
 /// A forged notification that reaches the node first must not cost it the document: the correct
-/// notification that arrives during the forged fetch is tried next.
+/// notification that arrives during the forged fetch is checked against the fetched bytes, without
+/// fetching the document again.
 #[actix::test]
 async fn a_forged_notification_does_not_block_the_correct_one() -> Result<()> {
     let (_guard, bus, _net_cmd_tx, mut commands, net_events, _, history, _, publisher) =
@@ -474,22 +475,14 @@ async fn a_forged_notification_does_not_block_the_correct_one() -> Result<()> {
         correlation_id,
         value: value.clone(),
     })?;
+    sleep(Duration::from_millis(200)).await;
 
-    let Some(NetCommand::DhtGetRecord {
-        correlation_id,
-        key: fetched,
-    }) = timeout(Duration::from_secs(1), commands.recv()).await?
-    else {
-        bail!("expected a second fetch with the correct notification");
-    };
-    assert_eq!(fetched, key);
-    net_events.send(NetEvent::DhtGetRecordSucceeded {
-        key,
-        correlation_id,
-        value: value.clone(),
-    })?;
-    sleep(Duration::from_millis(100)).await;
-
+    assert!(
+        timeout(Duration::from_millis(200), commands.recv())
+            .await
+            .is_err(),
+        "the document must not be fetched again for the correct notification"
+    );
     let events = history.send(GetEvents::new()).await?;
     let received = events.iter().find_map(|event| match event.get_data() {
         InterfoldEventData::DocumentReceived(document) => Some(document.clone()),

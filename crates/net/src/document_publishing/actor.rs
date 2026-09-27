@@ -376,7 +376,7 @@ mod handlers;
 #[path = "recovery.rs"]
 mod recovery;
 
-use effects::{announce_document, replicate_document, DocumentMetadataMismatch};
+use effects::{announce_document, bind_to_candidate, replicate_document, DocumentMetadataMismatch};
 pub use effects::{handle_document_published_notification, handle_publish_document_requested};
 pub use recovery::recover_document_state;
 

@@ -244,6 +244,26 @@ impl Handler<DocumentPublishedNotification> for DocumentPublisher {
 }
 
 impl DocumentPublisher {
+    /// Publish a fetched document that is bound to a matching notification.
+    fn accept_document(
+        &mut self,
+        id: DocumentId,
+        document: DocumentReceived,
+        notification: DocumentPublishedNotification,
+    ) {
+        if self.closed_e3s.contains(&document.meta.e3_id) {
+            return;
+        }
+        if let Err(error) =
+            self.bus
+                .publish_from_remote(document, notification.ts, None, EventSource::Net)
+        {
+            self.bus.err(EType::IO, error);
+        } else {
+            self.received.insert(id);
+        }
+    }
+
     /// Start waiting fetches whose retry time has passed, up to the concurrency limit.
     fn start_due_fetches(&mut self, ctx: &mut actix::Context<Self>) {
         let now = Instant::now();
@@ -280,53 +300,58 @@ impl DocumentPublisher {
             .map(move |result, actor, ctx| {
                 actor.fetching.remove(&id);
                 actor.fetch_aborts.remove(&id);
-                let late = actor.late_notifications.remove(&id).unwrap_or_default();
+                let now = chrono::Utc::now();
+                let late: Vec<_> = actor
+                    .late_notifications
+                    .remove(&id)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|notification| notification.meta.expires_at > now)
+                    .collect();
                 match result {
                     Ok(Ok(Some((document, notification)))) => {
-                        if actor.closed_e3s.contains(&document.meta.e3_id) {
-                            return;
-                        }
-                        if let Err(error) = actor.bus.publish_from_remote(
-                            document,
-                            notification.ts,
-                            None,
-                            EventSource::Net,
-                        ) {
-                            actor.bus.err(EType::IO, error);
-                        } else {
-                            actor.received.insert(id);
-                        }
+                        actor.accept_document(id, document, notification);
                     }
                     Ok(Ok(None)) => {}
                     Ok(Err(error)) => {
-                        // A metadata mismatch rules out these notifications, not the document:
-                        // notifications that arrived during the fetch are tried next, at once.
-                        let final_error = error.is::<DocumentMetadataMismatch>();
+                        let fetched = error
+                            .downcast_ref::<DocumentMetadataMismatch>()
+                            .map(|mismatch| mismatch.value().clone());
                         actor.bus.err(EType::IO, error);
-                        let now = chrono::Utc::now();
-                        let mut candidates = if final_error {
-                            Vec::new()
-                        } else {
-                            notifications
-                        };
-                        for notification in late {
-                            add_candidate(&mut candidates, notification);
-                        }
-                        candidates.retain(|notification| notification.meta.expires_at > now);
-                        let queued = if final_error {
-                            candidates.into_iter().fold(false, |queued, notification| {
-                                actor
-                                    .fetch_queue
-                                    .push(id.clone(), notification, Instant::now())
-                                    || queued
-                            })
-                        } else {
-                            actor
-                                .fetch_queue
-                                .retry(id, candidates, failures + 1, Instant::now())
-                        };
-                        if !queued {
-                            debug!("Stopped fetching a document until it is announced again");
+                        match fetched {
+                            // The document arrived, but its metadata matched none of these
+                            // notifications. Check the notifications that arrived during the fetch
+                            // against the same bytes, and do not fetch it again for them.
+                            Some(value) => {
+                                let ids = actor.service.interest_snapshot();
+                                if let Ok(Some((document, notification))) =
+                                    bind_to_candidate(&ids, late, value)
+                                {
+                                    actor.accept_document(id, document, notification);
+                                } else {
+                                    debug!(
+                                        "Dropped a document whose metadata matched no notification"
+                                    );
+                                }
+                            }
+                            None => {
+                                let mut candidates = notifications;
+                                for notification in late {
+                                    add_candidate(&mut candidates, notification);
+                                }
+                                candidates
+                                    .retain(|notification| notification.meta.expires_at > now);
+                                if !actor.fetch_queue.retry(
+                                    id,
+                                    candidates,
+                                    failures + 1,
+                                    Instant::now(),
+                                ) {
+                                    debug!(
+                                        "Stopped fetching a document until it is announced again"
+                                    );
+                                }
+                            }
                         }
                     }
                     Err(_) => return,
