@@ -11,7 +11,7 @@ use std::{
 };
 
 use chrono::{DateTime, Utc};
-use e3_events::{E3id, PartyId};
+use e3_events::{E3id, Filter, PartyId};
 use e3_utils::ArcBytes;
 
 use crate::{backoff::backoff_delay, events::DocumentPublishedNotification, ContentHash};
@@ -71,17 +71,17 @@ pub fn fetch_retry_delay(failures: u32) -> Duration {
     backoff_delay(RETRY_INTERVAL, failures, MAX_ANNOUNCE_BACKOFF)
 }
 
-/// Most party filters that a document notification can carry. Documents name no party or one.
-const MAX_NOTIFICATION_FILTERS: usize = 8;
 /// Longest E3 identifier in a notification: a decimal `uint256` has at most 78 digits.
 const MAX_NOTIFICATION_E3_ID_LEN: usize = 78;
 
-/// Whether a notification has a shape this node can act on: a SHA-256 content hash, a small party
-/// filter, and a `uint256` E3 identifier. Peers choose every field, so the node checks the sizes
+/// Whether a notification has a shape this node can act on: a SHA-256 content hash, a party filter
+/// that names no party or one party, and a `uint256` E3 identifier. Every release publishes a
+/// threshold share with `[Item(target)]` and a key document with `[]`, and a document is accepted
+/// only under one of those two filters. Peers choose every field, so the node checks the shape
 /// before it buffers or queues a notification.
 pub fn notification_is_well_formed(notification: &DocumentPublishedNotification) -> bool {
     notification.key.0.len() == 32
-        && notification.meta.filter.len() <= MAX_NOTIFICATION_FILTERS
+        && matches!(notification.meta.filter.as_slice(), [] | [Filter::Item(_)])
         && notification.meta.e3_id.e3_id().len() <= MAX_NOTIFICATION_E3_ID_LEN
 }
 
@@ -121,15 +121,23 @@ impl WaitingFetch {
 }
 
 /// Add `notification` to `candidates` under the rules of [`WaitingFetch::add`].
+///
+/// Only the party filter decides whether a notification can match the payload (the E3 and the
+/// content hash are the queue key), so the list keeps one notification per filter, the one that
+/// expires last, which a copy cannot shorten. A well-formed notification that is relevant to this
+/// node has one of two filters, `[]` or `[Item(own party)]`, so forged copies cannot push a correct
+/// notification out of the list.
 pub fn add_candidate(
     candidates: &mut Vec<DocumentPublishedNotification>,
     notification: DocumentPublishedNotification,
 ) {
     if let Some(existing) = candidates
         .iter_mut()
-        .find(|existing| existing.meta == notification.meta)
+        .find(|existing| existing.meta.filter == notification.meta.filter)
     {
-        *existing = notification;
+        if notification.meta.expires_at > existing.meta.expires_at {
+            *existing = notification;
+        }
         return;
     }
     if candidates.len() >= MAX_NOTIFICATION_CANDIDATES {
@@ -535,7 +543,35 @@ mod tests {
         assert_eq!(waiting.failures, 2);
     }
 
-    /// A peer that sends notifications with other metadata cannot push out the first one, and the
+    /// Copies with the same filter do not take extra places, and a copy cannot shorten the expiry,
+    /// so a forged-first sequence cannot push the correct notification out of the list.
+    #[test]
+    fn candidates_are_one_per_filter_and_keep_the_latest_expiry() {
+        let now = Instant::now();
+        let mut queue = FetchQueue::new(4);
+        let (a, genuine) = document("1", b"a");
+        let genuine = with_filter(&genuine, vec![Filter::Item(3)]);
+        let forged = |filter: Vec<Filter<u64>>, minutes: i64| DocumentPublishedNotification {
+            meta: DocumentMeta::new(
+                genuine.meta.e3_id.clone(),
+                DocumentKind::TrBFV,
+                filter,
+                Some(chrono::Utc::now() + chrono::Duration::minutes(minutes)),
+            ),
+            ..genuine.clone()
+        };
+        assert!(queue.push(a.clone(), forged(vec![], 60), now));
+        assert!(queue.push(a.clone(), genuine.clone(), now));
+        for minutes in 1..10 {
+            assert!(queue.push(a.clone(), forged(vec![], minutes), now));
+            assert!(queue.push(a.clone(), forged(vec![Filter::Item(3)], minutes), now));
+        }
+        let (_, waiting) = queue.pop_due(now).unwrap();
+        assert_eq!(waiting.notifications.len(), 2);
+        assert!(waiting.notifications.contains(&genuine));
+    }
+
+    /// A peer that sends notifications with other filters cannot push out the first one, and the
     /// newest ones are kept.
     #[test]
     fn candidates_keep_the_first_notification_and_the_newest_others() {
@@ -580,8 +616,14 @@ mod tests {
             ..good.clone()
         };
         assert!(!notification_is_well_formed(&long_key));
-        let many_filters = notification("1", vec![Filter::Item(1); MAX_NOTIFICATION_FILTERS + 1]);
-        assert!(!notification_is_well_formed(&many_filters));
+        let two_parties = notification("1", vec![Filter::Item(1), Filter::Item(2)]);
+        assert!(!notification_is_well_formed(&two_parties));
+        let range = notification("1", vec![Filter::Range(None, None)]);
+        assert!(!notification_is_well_formed(&range));
+        assert!(notification_is_well_formed(&notification(
+            "1",
+            vec![Filter::Item(1)]
+        )));
         let long_e3 = notification(&"9".repeat(MAX_NOTIFICATION_E3_ID_LEN + 1), vec![]);
         assert!(!notification_is_well_formed(&long_e3));
     }
