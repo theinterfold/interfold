@@ -221,8 +221,11 @@ impl Handler<DocumentPublishedNotification> for DocumentPublisher {
         }
         if DocumentPublishingService::interest_in(&ids, &msg).is_none()
             || self.received.contains(&id)
-            || self.fetching.contains_key(&id)
         {
+            return;
+        }
+        if self.fetching.contains_key(&id) {
+            add_candidate(self.late_notifications.entry(id).or_default(), msg);
             return;
         }
         if self.received.len() >= MAX_RECEIVED_DOCUMENTS {
@@ -251,14 +254,14 @@ impl DocumentPublisher {
             if self.closed_e3s.contains(&id.0) || self.received.contains(&id) {
                 continue;
             }
-            self.start_fetch(id, waiting.notification, waiting.failures, ctx);
+            self.start_fetch(id, waiting.notifications, waiting.failures, ctx);
         }
     }
 
     fn start_fetch(
         &mut self,
         id: DocumentId,
-        msg: DocumentPublishedNotification,
+        notifications: Vec<DocumentPublishedNotification>,
         failures: u32,
         ctx: &mut actix::Context<Self>,
     ) {
@@ -270,23 +273,25 @@ impl DocumentPublisher {
         self.fetch_aborts.insert(id.clone(), abort);
         ctx.spawn(
             Abortable::new(
-                handle_document_published_notification(tx, rx, ids, msg.clone()),
+                handle_document_published_notification(tx, rx, ids, notifications.clone()),
                 registration,
             )
             .into_actor(self)
             .map(move |result, actor, ctx| {
                 actor.fetching.remove(&id);
                 actor.fetch_aborts.remove(&id);
+                let late = actor.late_notifications.remove(&id).unwrap_or_default();
                 match result {
-                    Ok(Ok(Some(document))) => {
+                    Ok(Ok(Some((document, notification)))) => {
                         if actor.closed_e3s.contains(&document.meta.e3_id) {
                             return;
                         }
-                        if let Err(error) =
-                            actor
-                                .bus
-                                .publish_from_remote(document, msg.ts, None, EventSource::Net)
-                        {
+                        if let Err(error) = actor.bus.publish_from_remote(
+                            document,
+                            notification.ts,
+                            None,
+                            EventSource::Net,
+                        ) {
                             actor.bus.err(EType::IO, error);
                         } else {
                             actor.received.insert(id);
@@ -294,15 +299,34 @@ impl DocumentPublisher {
                     }
                     Ok(Ok(None)) => {}
                     Ok(Err(error)) => {
+                        // A metadata mismatch rules out these notifications, not the document:
+                        // notifications that arrived during the fetch are tried next, at once.
                         let final_error = error.is::<DocumentMetadataMismatch>();
                         actor.bus.err(EType::IO, error);
-                        if !final_error
-                            && msg.meta.expires_at > chrono::Utc::now()
-                            && !actor
+                        let now = chrono::Utc::now();
+                        let mut candidates = if final_error {
+                            Vec::new()
+                        } else {
+                            notifications
+                        };
+                        for notification in late {
+                            add_candidate(&mut candidates, notification);
+                        }
+                        candidates.retain(|notification| notification.meta.expires_at > now);
+                        let queued = if final_error {
+                            candidates.into_iter().fold(false, |queued, notification| {
+                                actor
+                                    .fetch_queue
+                                    .push(id.clone(), notification, Instant::now())
+                                    || queued
+                            })
+                        } else {
+                            actor
                                 .fetch_queue
-                                .retry(id, msg, failures + 1, Instant::now())
-                        {
-                            debug!("Stopped retrying a document fetch until it is announced again");
+                                .retry(id, candidates, failures + 1, Instant::now())
+                        };
+                        if !queued {
+                            debug!("Stopped fetching a document until it is announced again");
                         }
                     }
                     Err(_) => return,
