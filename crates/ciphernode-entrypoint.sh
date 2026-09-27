@@ -32,27 +32,46 @@ require_secrets() {
     SECRETS_USED=true
 }
 
+# `--name` selects the node profile, and the profile name is part of every state path. Probe the
+# same profile that the command below runs.
+NAME_ARGS=()
+previous_arg=""
+for arg in "$@"; do
+    case "$arg" in
+        --name=*) NAME_ARGS=(--name "${arg#--name=}") ;;
+    esac
+    if [ "$previous_arg" = "--name" ]; then
+        NAME_ARGS=(--name "$arg")
+    fi
+    previous_arg="$arg"
+done
+
 # Print the path that the node resolves for a setting. A log line can come before the path, so keep
 # only the last line that is an absolute path.
 resolve_path() {
-    interfold config get "$1" --config "$CONFIG_FILE" | grep '^/' | tail -n 1
+    interfold config get "$1" ${NAME_ARGS[@]+"${NAME_ARGS[@]}"} --config "$CONFIG_FILE" |
+        grep '^/' | tail -n 1
 }
 
 # Print the path that the node resolves without E3_CONFIG_DIR and E3_DATA_DIR.
 resolve_own_path() {
-    env -u E3_CONFIG_DIR -u E3_DATA_DIR interfold config get "$1" --config "$CONFIG_FILE" |
+    env -u E3_CONFIG_DIR -u E3_DATA_DIR \
+        interfold config get "$1" ${NAME_ARGS[@]+"${NAME_ARGS[@]}"} --config "$CONFIG_FILE" |
         grep '^/' | tail -n 1
 }
 
-# `interfold config get` creates the log directory, so look for the key file and the database.
-has_state() {
-    [ -n "$1" ] && [ -n "$2" ] && { [ -e "$1" ] || [ -e "$2" ]; }
+# Whether $1 names a path that exists. `interfold config get` creates the log directory, so the
+# checks below look only at the key file and the database.
+exists() {
+    [ -n "$1" ] && [ -e "$1" ]
 }
 
-# The image sets E3_CONFIG_DIR and E3_DATA_DIR to the volume. They override config.yaml, so keep them
-# only for a node whose state belongs there. Never move state that exists: when config.yaml sets its
-# own location, or a key file or database exists at the location that earlier images used (beside
-# the config file, for example on a mounted directory), the node keeps using that location.
+# The image sets E3_CONFIG_DIR and E3_DATA_DIR to the volume. They override config.yaml, so they
+# decide only the paths that config.yaml leaves to the directories. Never move state that exists:
+# for each of the key file and the database, compare where it resolves with and without the
+# variables, and use the location that already holds state. Only a path that the variables change
+# can exist at two locations. A new node keeps its state on the volume, unless config.yaml sets its
+# own location.
 LEGACY_STATE_DIR="$CONFIG_DIR/.interfold"
 VOLUME_CONFIG_DIR="$DATA_DIR/config"
 VOLUME_DATA_DIR="$DATA_DIR/data"
@@ -61,25 +80,38 @@ if [ "${E3_CONFIG_DIR:-}" = "$VOLUME_CONFIG_DIR" ] && [ "${E3_DATA_DIR:-}" = "$V
     OWN_DB_FILE="$(resolve_own_path db_file)" || OWN_DB_FILE=""
     VOLUME_KEY_FILE="$(resolve_path key_file)" || VOLUME_KEY_FILE=""
     VOLUME_DB_FILE="$(resolve_path db_file)" || VOLUME_DB_FILE=""
-    case "$OWN_KEY_FILE" in "$LEGACY_STATE_DIR"/*) OWN_AT_LEGACY=true ;; *) OWN_AT_LEGACY=false ;; esac
-    case "$OWN_DB_FILE" in "$LEGACY_STATE_DIR"/*) ;; *) OWN_AT_LEGACY=false ;; esac
-    if [ "$OWN_AT_LEGACY" != true ] || [ "$VOLUME_KEY_FILE" = "$OWN_KEY_FILE" ] ||
-        [ "$VOLUME_DB_FILE" = "$OWN_DB_FILE" ]; then
-        # config.yaml sets the key file, the database, or their directories.
+    OWN_STATE=false
+    VOLUME_STATE=false
+    OWN_AT_LEGACY=true
+    for pair in "$OWN_KEY_FILE|$VOLUME_KEY_FILE" "$OWN_DB_FILE|$VOLUME_DB_FILE"; do
+        own="${pair%%|*}"
+        volume="${pair#*|}"
+        [ "$own" != "$volume" ] || continue
+        if exists "$own"; then OWN_STATE=true; fi
+        if exists "$volume"; then VOLUME_STATE=true; fi
+        case "$own" in "$LEGACY_STATE_DIR"/*) ;; *) OWN_AT_LEGACY=false ;; esac
+    done
+    if [ "$OWN_KEY_FILE" = "$VOLUME_KEY_FILE" ] && [ "$OWN_DB_FILE" = "$VOLUME_DB_FILE" ]; then
+        # config.yaml sets both paths, so the variables change nothing.
         unset E3_CONFIG_DIR E3_DATA_DIR
         echo "Using the node state location that $CONFIG_FILE sets"
-        echo "Run other interfold commands in this container as: ciphernode-entrypoint.sh <command>"
-    elif has_state "$OWN_KEY_FILE" "$OWN_DB_FILE"; then
-        if has_state "$VOLUME_KEY_FILE" "$VOLUME_DB_FILE"; then
-            echo "Error: Node state exists at $LEGACY_STATE_DIR and on the volume at $DATA_DIR!"
-            echo "Keep only the state that the node last used, then start the container again."
-            exit 1
-        fi
+    elif [ "$OWN_STATE" = true ] && [ "$VOLUME_STATE" = true ]; then
+        echo "Error: Node state exists at two locations: key $OWN_KEY_FILE, database $OWN_DB_FILE"
+        echo "and key $VOLUME_KEY_FILE, database $VOLUME_DB_FILE on the volume at $DATA_DIR!"
+        echo "Keep only the state that the node last used, then start the container again."
+        exit 1
+    elif [ "$OWN_STATE" = true ]; then
         unset E3_CONFIG_DIR E3_DATA_DIR
-        echo "Using the existing node state at $LEGACY_STATE_DIR"
-        echo "Run other interfold commands in this container as: ciphernode-entrypoint.sh <command>"
-    else
+        echo "Using the existing node state: key $OWN_KEY_FILE, database $OWN_DB_FILE"
+    elif [ "$VOLUME_STATE" = true ] || [ "$OWN_AT_LEGACY" = true ]; then
         echo "Keeping node state on the volume at $DATA_DIR"
+    else
+        # A new node, and config.yaml sets its own location.
+        unset E3_CONFIG_DIR E3_DATA_DIR
+        echo "Using the node state location that $CONFIG_FILE sets"
+    fi
+    if [ -z "${E3_DATA_DIR:-}" ]; then
+        echo "Run other interfold commands in this container as: ciphernode-entrypoint.sh <command>"
     fi
 fi
 
