@@ -454,11 +454,13 @@ volumes:
 ```
 
 <Callout type='warning'>
-  Do not start this image with `--entrypoint interfold`. The image sets `E3_CONFIG_DIR` and
-  `E3_DATA_DIR`, and only the entrypoint decides whether to keep them. A node that runs with
-  `--entrypoint interfold` and a volume at `/home/ciphernode/.config/interfold` does not find its
-  state. Remove `--entrypoint interfold` (or `entrypoint` in Compose) and keep the same volumes. The
-  entrypoint finds the state at `/home/ciphernode/.config/interfold/.interfold` and keeps using it.
+  Run this image with its entrypoint. Only the entrypoint sets `E3_CONFIG_DIR` and `E3_DATA_DIR` to
+  the volume and stores the password and the key from `secrets.json`. A container that runs with
+  `--entrypoint interfold` gets neither, so it keeps its state where the binary stores it by
+  default, for example in `/home/ciphernode/.config/interfold/.interfold` on a volume at
+  `/home/ciphernode/.config/interfold`. To change such a container to the steps above, remove
+  `--entrypoint interfold` (or `entrypoint` in Compose) and keep the same volumes. The entrypoint
+  finds the state at `/home/ciphernode/.config/interfold/.interfold` and keeps using it.
 </Callout>
 
 The node refuses to start when the container has less than 17 GiB of memory. On Docker Desktop,
@@ -622,9 +624,9 @@ refers to files in its `event-blobs-v1` directory. Do not delete those files to 
 
 ### Where the node stores its state
 
-The image sets `E3_CONFIG_DIR=/home/ciphernode/.local/share/interfold/config` and
-`E3_DATA_DIR=/home/ciphernode/.local/share/interfold/data`. Thus the node keeps all of its state on
-the volume at `/home/ciphernode/.local/share/interfold`:
+The image entrypoint sets `E3_CONFIG_DIR=/home/ciphernode/.local/share/interfold/config` and
+`E3_DATA_DIR=/home/ciphernode/.local/share/interfold/data`, unless the container sets them. Thus the
+node keeps all of its state on the volume at `/home/ciphernode/.local/share/interfold`:
 
 | Path on the volume    | Contents                                                                        |
 | --------------------- | ------------------------------------------------------------------------------- |
@@ -643,8 +645,8 @@ it. If state exists both there and on the volume, the container does not start. 
 that the node last used, and start the container again. You can also set your own `E3_CONFIG_DIR`
 and `E3_DATA_DIR` for the container.
 
-In these cases the node does not use the image variables, so run other `interfold` commands through
-the entrypoint, which chooses the same location. For example, run
+In these cases the node does not use the entrypoint's variables, so run other `interfold` commands
+through the entrypoint, which chooses the same location. For example, run
 `docker exec ciphernode ciphernode-entrypoint.sh wallet get --config /home/ciphernode/.config/interfold/config.yaml`.
 The command in [Validate the state](#validate-the-state) also runs through the entrypoint.
 
