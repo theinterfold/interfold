@@ -12,7 +12,7 @@ const INTERFOLD_ABI = parseAbi([
 ])
 
 const CRISP_PROGRAM_ABI = parseAbi([
-  'function ballotDigest(uint256 e3Id, address slot, bytes32 ciphertextCommitment) view returns (bytes32)',
+  'function ballotAuthorization(uint256 e3Id, address slot, bytes32 ciphertextCommitment) view returns (bool safe, bytes32 digest, bytes32 ownersCommitment)',
 ])
 
 /**
@@ -47,32 +47,35 @@ export const getCrispProgramAddress = async (client: PublicClient, interfoldAddr
   (await getCrispRoundConfig(client, interfoldAddress, e3Id)).crispProgram
 
 /**
- * Read the digest a voter signs to authorise one ballot.
+ * Read what one ballot is proved against: the digest to sign and the owner commitment.
  *
- * Read from the contract rather than rebuilt here. `CRISPProgram.publishInput` recomputes this
- * digest and the circuit proves the signature covers it, so a locally built EIP-712 struct that
- * drifted from the contract would produce ballots that every node rejects.
+ * Read from the contract rather than rebuilt here. `CRISPProgram.publishInput` recomputes both
+ * values and the circuit proves against them, so a locally built EIP-712 struct that drifted from
+ * the contract would produce ballots that every node rejects. For a wallet, `digest` is the
+ * `Ballot` typed data that `ballotTypedData` describes. For a Safe slot of an ONCHAIN round, it is
+ * the Safe's `SafeMessage` hash, and the owners sign it together.
  *
  * @param client The public client.
  * @param crispProgram The CRISP program address.
  * @param e3Id The round the ballot belongs to.
  * @param slot The slot address the ballot is written to.
  * @param ciphertextCommitment The commitment from `prepareBallot`.
- * @returns The digest to sign.
+ * @returns Whether the slot is a Safe, the digest, and the owner commitment (zero in a census round).
  */
-export const getBallotDigest = async (
+export const getBallotAuthorization = async (
   client: PublicClient,
   crispProgram: Address,
   e3Id: bigint,
   slot: Address,
   ciphertextCommitment: `0x${string}`,
-): Promise<`0x${string}`> => {
-  return client.readContract({
+): Promise<{ safe: boolean; digest: `0x${string}`; ownersCommitment: `0x${string}` }> => {
+  const [safe, digest, ownersCommitment] = await client.readContract({
     address: crispProgram,
     abi: CRISP_PROGRAM_ABI,
-    functionName: 'ballotDigest',
+    functionName: 'ballotAuthorization',
     args: [e3Id, slot, ciphertextCommitment],
   })
+  return { safe, digest, ownersCommitment }
 }
 
 /**

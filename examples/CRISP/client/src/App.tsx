@@ -16,6 +16,7 @@ import AllPolls from '@/pages/AllPolls/AllPolls'
 import About from '@/pages/About/About'
 import PollResult from '@/pages/PollResult/PollResult'
 import RoundPoll from '@/pages/RoundPoll'
+import SafeSign from '@/pages/SafeSign/SafeSign'
 import useScrollToTop from '@/hooks/generic/useScrollToTop'
 import { useVoteManagementContext } from '@/context/voteManagement'
 import { useNotificationAlertContext } from '@/context/NotificationAlert'
@@ -61,6 +62,7 @@ const App: React.FC = () => {
             <Route path='/all' element={<AllPolls />} />
             <Route path='/historic' element={<Navigate to='/all' replace />} />
             <Route path='/result/:roundId/:type?' element={<PollResult />} />
+            <Route path='/safe-sign/:request' element={<SafeSign />} />
             <Route path='*' element={<Navigate to='/' replace />} />
           </Routes>
         </div>

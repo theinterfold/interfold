@@ -402,6 +402,27 @@
   cursor: not-allowed;
 }
 
+.crisp-editorial .field {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--f-mono);
+  font-size: 12px;
+  padding: 12px 14px;
+  background: var(--paper);
+  color: var(--ink);
+  border: 1px solid var(--rule-strong);
+}
+.crisp-editorial .field:focus {
+  outline: none;
+  border-color: var(--ink);
+}
+/* Addresses and hashes: mono, but in their own case, so a checksummed address stays readable. */
+.crisp-editorial .hex {
+  font-family: var(--f-mono);
+  font-size: 12px;
+  word-break: break-all;
+}
+
 .crisp-editorial .linkish {
   font-family: var(--f-mono);
   font-size: 11px;
@@ -817,6 +838,12 @@
   letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--ink-soft);
+}
+/* After `.cap`, so an error caption keeps the case of the message. */
+.crisp-editorial .error {
+  color: var(--danger);
+  text-transform: none;
+  letter-spacing: normal;
 }
 
 @keyframes crisp-encrypt-pop {
