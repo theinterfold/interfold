@@ -165,7 +165,11 @@ the code does not meet yet.
   policy. **Gap:** 84 `.do_send(` call sites remain (the count covers all sites, not only
   correctness paths), including `BusHandle` publication, `Sequencer`, `DataStore::write`, snapshot
   batches, EVM routing, and keyshare collectors. `pnpm check:invariants` blocks growth of the total
-  only. — `ARCHITECTURE.md`; `scripts/invariant-baselines.env`
+  only. The request router's `EventBuffer` has no bound either: it keeps every event of an E3 for
+  each expected recipient that does not exist yet, until the recipient starts or the E3 ends. A
+  bound must not drop events for a recipient that an extension registers, because a decryption share
+  can arrive before the node creates its plaintext aggregator. — `ARCHITECTURE.md`;
+  `scripts/invariant-baselines.env`; `crates/request/src/context.rs`
 - Timers: persist the absolute deadline + purpose, not an in-memory handle; on restart, compare to
   the injected clock and deterministically re-arm or fire overdue. **Gap:** accusation timers are
   memory-only `run_later` handles; keyshare collectors read `SystemTime::now()` instead of an

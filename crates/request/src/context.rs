@@ -18,9 +18,11 @@ use std::{collections::HashMap, sync::Arc};
 /// Initialize the HashMap with a list of expected Recipients. In order to know whether or not we
 /// should buffer we need to iterate over this list and determine which recipients are missing based
 /// on the recipient value is why we set it here to have keys with empty values.
+///
+/// List only keys that an extension registers. Every event of the E3 is buffered for a key until its
+/// recipient exists, so a key that nothing registers holds all of them until the E3 ends.
 fn init_recipients() -> HashMap<String, Option<Recipient<InterfoldEvent>>> {
     HashMap::from([
-        ("keyshare".to_owned(), None),
         ("threshold_keyshare".to_owned(), None),
         ("plaintext".to_owned(), None),
         ("publickey".to_owned(), None),
@@ -245,8 +247,8 @@ mod tests {
         let recorded = Arc::new(Mutex::new(Vec::new()));
         let recorder = Recorder(recorded).start();
         let mut buffer = EventBuffer::default();
-        buffer.add(&e3_id, "keyshare", event(&e3_id, "older", 1));
-        context.set_event_recipient("keyshare", Some(recorder.clone().recipient()));
+        buffer.add(&e3_id, "threshold_keyshare", event(&e3_id, "older", 1));
+        context.set_event_recipient("threshold_keyshare", Some(recorder.clone().recipient()));
 
         context.forward_message(&event(&e3_id, "current", 2), &mut buffer);
 
@@ -263,10 +265,29 @@ mod tests {
             extensions: Arc::new(Vec::new()),
         });
         let recorder = Recorder(Arc::new(Mutex::new(Vec::new()))).start();
-        context.set_event_recipient("keyshare", Some(recorder.recipient()));
+        context.set_event_recipient("threshold_keyshare", Some(recorder.recipient()));
 
         let snapshot = context.snapshot().unwrap();
 
-        assert_eq!(snapshot.recipients, ["keyshare"]);
+        assert_eq!(snapshot.recipients, ["threshold_keyshare"]);
+    }
+
+    #[actix::test]
+    async fn events_are_buffered_only_for_recipients_that_extensions_register() {
+        let e3_id = E3id::new("7", 1);
+        let store = DataStore::from_in_mem(&InMemStore::new(false).start());
+        let context = E3Context::from_params(E3ContextParams {
+            repository: store.repositories().context(&e3_id),
+            e3_id: e3_id.clone(),
+            extensions: Arc::new(Vec::new()),
+        });
+        let mut buffer = EventBuffer::default();
+
+        context.forward_message(&event(&e3_id, "early decryption share", 1), &mut buffer);
+
+        // A decryption share can arrive before this node creates its plaintext aggregator.
+        assert_eq!(buffer.take(&e3_id, "plaintext").len(), 1);
+        // No extension registers `keyshare`, so nothing may accumulate for it.
+        assert!(buffer.take(&e3_id, "keyshare").is_empty());
     }
 }
