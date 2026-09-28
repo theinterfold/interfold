@@ -34,8 +34,8 @@ use serde::Serialize;
 use std::collections::HashSet;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
-/// Grace counted from the local failure: one day, the length of the contract's
-/// `ACCUSATION_REPORTING_WINDOW`, plus 5 minutes for accusation votes in flight.
+/// Grace counted from the local failure: one day, longer than the deployed DKG and
+/// decryption windows in which peers can still raise an accusation, plus 5 minutes for votes.
 pub const SLASHABLE_FAILURE_GRACE: Duration = Duration::from_secs(24 * 60 * 60 + 5 * 60);
 
 /// An Extension interface for the E3Router system that listens and responds to InterfoldEvents.

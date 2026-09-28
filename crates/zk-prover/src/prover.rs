@@ -25,7 +25,7 @@ static BB_WORK_JOB_COUNTER: AtomicU64 = AtomicU64::new(0);
 const PROCESS_OUTPUT_LIMIT: usize = 4 * 1024;
 
 /// A running compute job cannot be cancelled, so a hung bb would hold its pool slot forever.
-/// The cap matches the DKG window: a proof that finishes later is useless.
+/// Two hours is far longer than an honest bb run.
 const BB_TIMEOUT: Duration = Duration::from_secs(7200);
 
 struct JobDirGuard(PathBuf);

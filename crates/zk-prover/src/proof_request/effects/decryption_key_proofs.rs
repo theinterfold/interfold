@@ -15,6 +15,7 @@ impl ProofRequestActor {
         let c4_base_seq = match self.node_agg_meta.get(&msg.e3_id) {
             Some(meta) => meta.c4_base_seq(),
             None if self.proof_aggregation_enabled => {
+                warn!(e3_id = %msg.e3_id, "Holding C4 proof requests until ThresholdSharePending");
                 self.held_decryption_pending.insert(msg.e3_id.clone(), msg);
                 return;
             }
