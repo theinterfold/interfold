@@ -72,6 +72,10 @@ pub struct Bits {
     pub noise_bit: u32,
     /// Native \([0, q_l)\) width for hashing decryption-share coefficients (C6/C7 `d_commitment`).
     pub d_native_bit: u32,
+    /// Width of the C7 CRT quotients: `max_l ceil(log2(Q / q_l))`. Bounding the quotients keeps
+    /// `u_crt + r * q_l` below `2Q`, far under the proof-system prime, so the CRT reconstruction
+    /// holds over the integers instead of only modulo the prime.
+    pub crt_quotient_bit: u32,
 }
 
 /// Circuit config: moduli count, plaintext modulus, q_inverse_mod_t, bits, bounds, and message polynomial length.
@@ -139,13 +143,24 @@ impl Computation for Bits {
             .context_at_level(0)
             .map_err(|e| CircuitsErrors::Other(format!("context_at_level: {:?}", e)))?;
         let mut d_native_bit = 0u32;
+        let mut modulus_product = BigInt::from(1u32);
         for qi in ctx.moduli_operators() {
             let q = BigInt::from(**qi);
-            d_native_bit = d_native_bit.max(calculate_bit_width(q - 1));
+            d_native_bit = d_native_bit.max(calculate_bit_width(q.clone() - 1));
+            modulus_product *= q;
+        }
+        // ceil(log2(Q / q_l)), maximised over limbs: the honest quotient is floor(u / q_l), so it
+        // is strictly below Q / q_l.
+        let mut crt_quotient_bit = 0u32;
+        for qi in ctx.moduli_operators() {
+            let q = BigInt::from(**qi);
+            let cofactor = &modulus_product / &q;
+            crt_quotient_bit = crt_quotient_bit.max(calculate_bit_width(cofactor));
         }
         Ok(Bits {
             noise_bit,
             d_native_bit,
+            crt_quotient_bit,
         })
     }
 }

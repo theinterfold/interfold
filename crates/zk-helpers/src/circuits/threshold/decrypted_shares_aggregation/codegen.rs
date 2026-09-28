@@ -73,6 +73,7 @@ decrypted_shares_aggregation (CIRCUIT 7)
 
 pub global {}_BIT_NOISE: u32 = {};
 pub global {}_BIT_D_NATIVE: u32 = {};
+pub global {}_BIT_CRT_QUOTIENT: u32 = {};
 
 pub global {}_CONFIGS: DecryptedSharesAggregationConfigs<L> =
     DecryptedSharesAggregationConfigs::new(QIS, PLAINTEXT_MODULUS, Q_INVERSE_MOD_T);
@@ -87,6 +88,8 @@ pub global {}_CONFIGS: DecryptedSharesAggregationConfigs<L> =
         configs.bits.noise_bit,
         prefix,
         configs.bits.d_native_bit,
+        prefix,
+        configs.bits.crt_quotient_bit,
         prefix,
     )
 }
