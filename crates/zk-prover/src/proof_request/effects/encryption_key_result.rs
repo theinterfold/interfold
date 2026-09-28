@@ -66,6 +66,7 @@ impl ProofRequestActor {
                 ec.clone(),
             ) {
                 error!("Failed to publish DKGInnerProofReady for C0: {err}");
+                return;
             }
         }
 
