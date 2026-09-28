@@ -169,6 +169,13 @@ every section.
   range check. A value that no upstream commitment bounds still needs its own bound: C1's `pk0`,
   because C1 originates it and the key equation absorbs `+q` against `r1`; and C5's `pk0_agg`,
   because `verify_pk_for_basis` pins it only modulo `q_l`. — `flow-trace/04`
+- The CRT-quotient class has four members: ct0, C3, C1 (`e_sm`) and C7. Any equation of the form
+  `lifted == residue + quotient * q` needs a bounded quotient, and the residue side bounded or
+  derived. Enumerate this class as well as the commitment-opening one: C7 belongs to it and not to
+  the other, and was missed because only the latter had been enumerated. — `flow-trace/04`
+- Where one side of a CRT equation is already provably small, the other side needs no bound of its
+  own: the equality makes it derived. C7 bounds only its quotients, because `u_crt < q_l` comes from
+  `reduce_mod` and `u_global` is then forced to equal a small expression. — `flow-trace/04`
 - The class is "every circuit that opens a commitment it did not create", and it has seven members:
   C2a, C2b, C4, C5 and C6 (three). All open through `pack_checked`. A new commitment opened from
   elsewhere joins that list and needs either the checked helper or its own bound. Naming the class
