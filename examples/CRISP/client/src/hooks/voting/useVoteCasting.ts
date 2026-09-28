@@ -76,6 +76,28 @@ const clearAvailabilityJob = (key: string): void => {
   }
 }
 
+/// How often, and for how long, the client waits for the server to decide who sends a queued
+/// commitment. The server worker can take minutes to reach a job when many jobs are pending.
+const COMMITMENT_DECISION_POLL_MS = 10_000
+const COMMITMENT_DECISION_WAIT_MS = 600_000
+
+/// Wait until a `pending_commitment` job has a sender: the relay, or this wallet, which must then
+/// send the commitment before its availability promise expires. Returns the first other view, or
+/// `undefined` when the wait ends or the server no longer has the job.
+const waitForCommitmentDecision = async (
+  jobId: string,
+  getVoteAvailability: (jobId: string) => Promise<BroadcastVoteResponse | null | undefined>,
+): Promise<BroadcastVoteResponse | undefined> => {
+  const deadline = Date.now() + COMMITMENT_DECISION_WAIT_MS
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, COMMITMENT_DECISION_POLL_MS))
+    const view = await getVoteAvailability(jobId)
+    if (view === null) return undefined
+    if (view && view.status !== 'pending_commitment') return view
+  }
+  return undefined
+}
+
 /// The end of the slot's chain of usable entries, with the tree index the new input will name as
 /// its parent. Not simply the newest entry published: one whose bytes do not reproduce its
 /// commitment is never selected by the Secure Process and is never a valid parent, so the server
@@ -428,10 +450,17 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
 
         if (response.status === 'pending_commitment') {
           setVotingStep('confirming')
-          setStepMessage('Your proof is queued for commitment. You can safely leave and check again later.')
+          setStepMessage('Your proof is queued. Waiting for the server to send the commitment or to ask your wallet to send it...')
+          const decided = response.job_id ? await waitForCommitmentDecision(response.job_id, getVoteAvailability) : undefined
+          if (decided) {
+            if (decided.status === 'failed_broadcast') clearAvailabilityJob(pendingJobKey)
+            return finishCommitment(decided, operationIsMask)
+          }
+
+          setStepMessage('Your proof is still queued. Come back later and repeat the action to finish it.')
           showToast({
             type: 'success',
-            message: 'Vote proof queued. The relay will keep retrying it.',
+            message: 'Proof queued. Repeat the action later: your wallet may need to send the commitment.',
           })
           return false
         }
@@ -585,10 +614,8 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
         // small delay for UX
         await new Promise((resolve) => setTimeout(resolve, 500))
 
-        // Step 4: Broadcasting — through the relay where it runs, straight from the wallet where
-        // it does not (mainnet, or a deployment that forces the direct path). The relay's uniform
-        // sender is what hides *who* submitted an input; a direct transaction gives that up, so
-        // the relay stays the default wherever it exists.
+        // Step 4: Broadcasting. The server either relays the commitment or answers
+        // `ready_for_commitment`, and `finishCommitment` then sends it from the wallet.
         setVotingStep('broadcasting')
         setLastActiveStep('broadcasting')
 

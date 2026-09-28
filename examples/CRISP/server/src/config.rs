@@ -12,6 +12,7 @@ use serde::Deserialize;
 const AVAIL_FINALIZATION_WINDOW_SECONDS: u64 = 10_800;
 const DEFAULT_DA_PENDING_BYTES: u64 = 1024 * 1024 * 1024;
 const DEFAULT_VOTING_START_BUFFER_SECONDS: u64 = 120;
+const DEFAULT_RELAY_MAX_INPUTS_PER_SLOT: u32 = 3;
 
 // Do not derive `Debug`: this structure owns private keys and other secrets.
 #[derive(Deserialize)]
@@ -108,6 +109,16 @@ pub struct Config {
     /// latency.
     #[serde(default)]
     pub index_log_contracts: Option<String>,
+
+    /// Relay input commitments on Ethereum mainnet. Off by default; other chains always relay.
+    #[serde(default)]
+    pub mainnet_relay: bool,
+    /// Relayed input commitments per voting slot per round. Zero relays none.
+    #[serde(default = "default_relay_max_inputs_per_slot")]
+    pub relay_max_inputs_per_slot: u32,
+    /// Relayed input commitments per round. Absent means no limit.
+    #[serde(default)]
+    pub relay_max_inputs_per_round: Option<u32>,
 }
 
 impl Config {
@@ -154,7 +165,29 @@ impl Config {
                 .unwrap_or(AVAIL_FINALIZATION_WINDOW_SECONDS),
             config.data_availability_max_pending_bytes,
         )?;
+        Self::validate_relay(
+            config.chain_id,
+            config.mainnet_relay,
+            config.relay_max_inputs_per_round,
+        )?;
         Ok(config)
+    }
+
+    /// Refuse a mainnet relay that has no round limit.
+    ///
+    /// Mainnet relay spends real funds, and the slot limit alone does not bound the spend of one
+    /// round. The operator must choose the round limit explicitly.
+    fn validate_relay(
+        chain_id: u64,
+        mainnet_relay: bool,
+        max_inputs_per_round: Option<u32>,
+    ) -> Result<(), ConfigError> {
+        if chain_id == 1 && mainnet_relay && max_inputs_per_round.is_none() {
+            return Err(ConfigError::Message(
+                "MAINNET_RELAY=true requires RELAY_MAX_INPUTS_PER_ROUND".to_owned(),
+            ));
+        }
+        Ok(())
     }
 
     fn validate_data_availability(
@@ -214,6 +247,10 @@ const fn default_voting_start_buffer_seconds() -> u64 {
     DEFAULT_VOTING_START_BUFFER_SECONDS
 }
 
+const fn default_relay_max_inputs_per_slot() -> u32 {
+    DEFAULT_RELAY_MAX_INPUTS_PER_SLOT
+}
+
 pub static CONFIG: Lazy<Config> =
     Lazy::new(|| Config::from_env().expect("Failed to load configuration"));
 
@@ -260,6 +297,16 @@ mod tests {
         assert!(Config::validate_data_availability(11_155_111, "mock", 0, 0).is_err());
         assert!(Config::validate_data_availability(1_337, "mock", 0, 0).is_ok());
         assert!(Config::validate_data_availability(31_337, "mock", 0, 0).is_ok());
+    }
+
+    #[test]
+    fn mainnet_relay_requires_a_round_limit() {
+        assert!(Config::validate_relay(1, true, None).is_err());
+        assert!(Config::validate_relay(1, true, Some(500)).is_ok());
+        // Without the flag, mainnet does not relay, so it needs no round limit.
+        assert!(Config::validate_relay(1, false, None).is_ok());
+        // Other chains relay without the flag and can leave the round unlimited.
+        assert!(Config::validate_relay(11_155_111, false, None).is_ok());
     }
 
     #[test]

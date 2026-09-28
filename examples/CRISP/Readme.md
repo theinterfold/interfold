@@ -261,11 +261,13 @@ as an explicit acknowledgement that CRISP is unusable until the DAO batch is exe
 Keep E3 requests paused throughout that interval.
 
 The server first validates the Noir proof and durably stores the exact encrypted bytes. It signs a
-compact proof commitment only after storage succeeds. On mainnet, the voter submits that commitment
-from their wallet and can then leave. The server publishes the ciphertext to Avail, waits for the
-official VectorX proof, and finalizes the input without the voter. The proof transaction reserves
-the input's tree index immediately, so masks and revotes can still extend it during the VectorX
-wait. CRISP refuses the aggregate computation while any input is not finalized.
+compact proof commitment only after storage succeeds. The server relays that commitment, or the
+voter submits it from their wallet, and the voter can then leave. Relaying is configurable in
+`server/.env.example`, and it is off on Ethereum mainnet by default. The server publishes the
+ciphertext to Avail, waits for the official VectorX proof, and finalizes the input without the
+voter. The proof transaction reserves the input's tree index immediately, so masks and revotes can
+still extend it during the VectorX wait. CRISP refuses the aggregate computation while any input is
+not finalized.
 
 The service accepts only one not-yet-committed input per round and voting slot. It also limits the
 total bytes held by unfinished jobs. These controls bound abandoned signed inputs without deleting

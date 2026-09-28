@@ -28,13 +28,13 @@ vote to a third party, bribery and coercion still work. That proof is called a r
 
 CRISP keeps the ballot secret and removes the receipt:
 
-| Property          | How CRISP provides it                                                                                                                                                                                               |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Secret ballot     | The client encrypts each ballot with BFV under the committee public key. Only the encrypted sum is decrypted. Decryption needs T + 1 key shares, so no single ciphernode can decrypt.                               |
-| No receipt        | A voter can replace their ballot in the same slot. Anyone can add a mask (an encrypted zero ballot) to any eligible slot. An observer cannot tell a vote, an update, and a mask apart.                              |
-| Eligibility       | A Noir proof shows that the slot is in the round census, or that the slot has on-chain voting power.                                                                                                                |
-| Verifiable result | `CRISPProgram.verify` checks a RISC Zero proof of the sum. The Interfold contract checks the decryption proof when the committee publishes the result.                                                              |
-| Sender privacy    | The CRISP server can relay inputs, so the chain shows the relay address instead of the voter address. On Ethereum mainnet, the client always sends the input from the voter wallet (`client/src/utils/methods.ts`). |
+| Property          | How CRISP provides it                                                                                                                                                                  |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Secret ballot     | The client encrypts each ballot with BFV under the committee public key. Only the encrypted sum is decrypted. Decryption needs T + 1 key shares, so no single ciphernode can decrypt.  |
+| No receipt        | A voter can replace their ballot in the same slot. Anyone can add a mask (an encrypted zero ballot) to any eligible slot. An observer cannot tell a vote, an update, and a mask apart. |
+| Eligibility       | A Noir proof shows that the slot is in the round census, or that the slot has on-chain voting power.                                                                                   |
+| Verifiable result | `CRISPProgram.verify` checks a RISC Zero proof of the sum. The Interfold contract checks the decryption proof when the committee publishes the result.                                 |
+| Sender privacy    | The CRISP server can relay inputs, so the chain shows the relay address instead of the voter address. Relaying is configurable, and it is off on Ethereum mainnet by default.          |
 
 A mask adds an encryption of zero to the ciphertext that is already in a slot. The result is a new
 ciphertext that decrypts to the same value. For this reason, a voter cannot prove which ciphertext
