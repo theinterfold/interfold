@@ -82,20 +82,19 @@ const COMMITMENT_DECISION_POLL_MS = 10_000
 const COMMITMENT_DECISION_WAIT_MS = 600_000
 
 /// Wait until a `pending_commitment` job has a sender: the relay, or this wallet, which must then
-/// send the commitment before its availability promise expires. Returns the first other view, or
-/// `undefined` when the wait ends or the server no longer has the job.
+/// send the commitment before its availability promise expires. Returns the first other view,
+/// `null` when the server no longer has the job, or `undefined` when the wait ends.
 const waitForCommitmentDecision = async (
   jobId: string,
   getVoteAvailability: (jobId: string) => Promise<BroadcastVoteResponse | null | undefined>,
-): Promise<BroadcastVoteResponse | undefined> => {
+): Promise<BroadcastVoteResponse | null | undefined> => {
   const deadline = Date.now() + COMMITMENT_DECISION_WAIT_MS
-  while (Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, COMMITMENT_DECISION_POLL_MS))
+  for (;;) {
     const view = await getVoteAvailability(jobId)
-    if (view === null) return undefined
-    if (view && view.status !== 'pending_commitment') return view
+    if (view === null || (view && view.status !== 'pending_commitment')) return view
+    if (Date.now() >= deadline) return undefined
+    await new Promise((resolve) => setTimeout(resolve, COMMITMENT_DECISION_POLL_MS))
   }
-  return undefined
 }
 
 /// The end of the slot's chain of usable entries, with the tree index the new input will name as
@@ -443,7 +442,11 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
 
       const pendingJobKey = availabilityJobKey(chainId, roundState.id, user.address)
 
-      const finishCommitment = async (response: BroadcastVoteResponse, operationIsMask: boolean): Promise<boolean> => {
+      const finishCommitment = async (
+        response: BroadcastVoteResponse,
+        operationIsMask: boolean,
+        afterRestage = false,
+      ): Promise<boolean> => {
         if (response.status === 'failed_broadcast') {
           throw new Error(extractCleanErrorMessage(response.message ?? undefined))
         }
@@ -452,9 +455,16 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
           setVotingStep('confirming')
           setStepMessage('Your proof is queued. Waiting for the server to send the commitment or to ask your wallet to send it...')
           const decided = response.job_id ? await waitForCommitmentDecision(response.job_id, getVoteAvailability) : undefined
+          if (decided === null) {
+            // The server lost the job while this page waited. Stage the stored bytes again once;
+            // a second loss in the same action is left to the next one.
+            const stored = readAvailabilityJob(pendingJobKey)
+            if (!afterRestage && stored) return restagePendingJob(stored)
+            throw new Error('The server lost the pending proof. Repeat the action to submit it again.')
+          }
           if (decided) {
             if (decided.status === 'failed_broadcast') clearAvailabilityJob(pendingJobKey)
-            return finishCommitment(decided, operationIsMask)
+            return finishCommitment(decided, operationIsMask, afterRestage)
           }
 
           setStepMessage('Your proof is still queued. Come back later and repeat the action to finish it.')
@@ -515,6 +525,20 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
         return true
       }
 
+      // The server lost its job database. Re-stage the same bytes: a fresh ciphertext could leave
+      // an earlier on-chain commitment unresolved and stop the complete round.
+      const restagePendingJob = async (pendingJob: PendingAvailabilityJob): Promise<boolean> => {
+        if (!pendingJob.encodedProof) {
+          throw new Error('The server lost this legacy vote job. An operator must recover it before another vote is submitted.')
+        }
+        const restaged = await broadcastVote({ round_id: roundState.id, encoded_proof: pendingJob.encodedProof }, (jobId) =>
+          writeAvailabilityJob(pendingJobKey, { ...pendingJob, jobId }),
+        )
+        if (!restaged) throw new Error('Could not restore the pending data-availability job.')
+        if (restaged.status === 'failed_broadcast') clearAvailabilityJob(pendingJobKey)
+        return finishCommitment(restaged, pendingJob.isMask, true)
+      }
+
       try {
         const pendingJob = readAvailabilityJob(pendingJobKey)
         if (pendingJob) {
@@ -526,17 +550,7 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
 
           const resumed = await getVoteAvailability(pendingJob.jobId)
           if (resumed === null) {
-            // The server lost its job database. Re-stage the same bytes: a fresh ciphertext could
-            // leave an earlier on-chain commitment unresolved and stop the complete round.
-            if (!pendingJob.encodedProof) {
-              throw new Error('The server lost this legacy vote job. An operator must recover it before another vote is submitted.')
-            }
-            const restaged = await broadcastVote({ round_id: roundState.id, encoded_proof: pendingJob.encodedProof }, (jobId) =>
-              writeAvailabilityJob(pendingJobKey, { ...pendingJob, jobId }),
-            )
-            if (!restaged) throw new Error('Could not restore the pending data-availability job.')
-            if (restaged.status === 'failed_broadcast') clearAvailabilityJob(pendingJobKey)
-            if (await finishCommitment(restaged, pendingJob.isMask)) {
+            if (await restagePendingJob(pendingJob)) {
               clearAvailabilityJob(pendingJobKey)
             }
             return

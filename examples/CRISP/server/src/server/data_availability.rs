@@ -2017,10 +2017,15 @@ impl AvailabilityService {
 
     /// Decide whether this service relays the commitment of an input job, and record a relay.
     ///
-    /// A relay decision holds for the life of the job: a failed send that the worker retries, and
-    /// a relayed transaction that a reorganization removes, keep the place of the job. The
-    /// decision reads only the slot and the earlier relays, so votes, updates, and masks get the
-    /// same answer. The record is durable before the relay transaction is sent.
+    /// While the relay is on, a relay decision holds for the life of the job: a failed send that
+    /// the worker retries, and a relayed transaction that a reorganization removes, keep the place
+    /// of the job. The decision reads only the slot and the earlier relays, so votes, updates, and
+    /// masks get the same answer. The record is durable before the relay transaction is sent.
+    ///
+    /// Turning `MAINNET_RELAY` off stops the relay for every job that has no relayed transaction
+    /// yet, and those jobs move to the wallet path. This is how an operator stops relay spending,
+    /// for example when the relay key has no funds. If an earlier send did land, the contract
+    /// refuses the wallet's second commitment of the same statement.
     fn reserve_relay(&self, job: &AvailabilityJob) -> anyhow::Result<bool> {
         if !self.relay.enabled {
             return Ok(false);
