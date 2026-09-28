@@ -286,6 +286,9 @@ importers:
       '@openzeppelin/contracts':
         specifier: ^5.0.2
         version: 5.3.0
+      '@safe-global/safe-contracts':
+        specifier: 1.4.1
+        version: 1.4.1(ethers@6.17.0(bufferutil@4.1.0)(utf-8-validate@5.0.10))
       '@typechain/ethers-v6':
         specifier: ^0.5.0
         version: 0.5.1(ethers@6.17.0(bufferutil@4.1.0)(utf-8-validate@5.0.10))(typechain@8.3.2(typescript@5.8.3))(typescript@5.8.3)
@@ -3584,6 +3587,11 @@ packages:
 
   '@safe-global/safe-apps-sdk@9.1.0':
     resolution: {integrity: sha512-N5p/ulfnnA2Pi2M3YeWjULeWbjo7ei22JwU/IXnhoHzKq3pYCN6ynL9mJBOlvDVv892EgLPCWCOwQk/uBT2v0Q==}
+
+  '@safe-global/safe-contracts@1.4.1':
+    resolution: {integrity: sha512-fP1jewywSwsIniM04NsqPyVRFKPMAuirC3ftA/TA4X3Zc5EnwQp/UCJUU2PL/37/z/jMo8UUaJ+pnFNWmMU7dQ==}
+    peerDependencies:
+      ethers: 5.4.0
 
   '@safe-global/safe-deployments@1.37.60':
     resolution: {integrity: sha512-PS+VLRm+FikrUNOutsIEE4Ytbtb+O57SHo8VSzYynR7lcSY1gfZ+7DUnKKLVDGCspoJIgh99jqJWGh9eqfn46Q==}
@@ -14637,6 +14645,10 @@ snapshots:
       - typescript
       - utf-8-validate
       - zod
+
+  '@safe-global/safe-contracts@1.4.1(ethers@6.17.0(bufferutil@4.1.0)(utf-8-validate@5.0.10))':
+    dependencies:
+      ethers: 6.17.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)
 
   '@safe-global/safe-deployments@1.37.60':
     dependencies:

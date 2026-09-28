@@ -7,7 +7,17 @@
 import { network } from 'hardhat'
 import type { HardhatEthers } from '@nomicfoundation/hardhat-ethers/types'
 import { zeroHash } from 'viem'
-import { CRISPProgram, HonkVerifier, MockInterfold, MockRISC0Verifier, PoseidonT3 } from '../types'
+import type { BaseContract } from 'ethers'
+import type {
+  CompatibilityFallbackHandler,
+  CRISPProgram,
+  HonkVerifier,
+  MockInterfold,
+  MockRISC0Verifier,
+  PoseidonT3,
+  Safe,
+  SafeProxyFactory,
+} from '../types'
 import { verifierNames } from '../scripts/verifiers'
 
 // Non-zero address used in the tests.
@@ -199,6 +209,8 @@ export async function deployCRISPProgram(
     mockInterfold?: MockInterfold
     honkVerifier?: HonkVerifier
     onchainHonkVerifier?: HonkVerifier
+    safeProxyCodehashes?: string[]
+    safeSingletons?: string[]
     poseidonT3?: PoseidonT3
     risc0Verifier?: MockRISC0Verifier
     bindInterfold?: boolean
@@ -227,7 +239,11 @@ export async function deployCRISPProgram(
     await owner.getAddress(),
     risc0Verifier,
     await honkVerifier.getAddress(),
-    await onchainHonkVerifier.getAddress(),
+    {
+      verifier: await onchainHonkVerifier.getAddress(),
+      safeProxyCodehashes: contracts.safeProxyCodehashes ?? [],
+      safeSingletons: contracts.safeSingletons ?? [],
+    },
     await dataAvailabilityVerifier.getAddress(),
     contracts.availabilityFinalizationWindow ?? 0,
     contracts.inputAvailabilitySigner ?? (await owner.getAddress()),
@@ -242,4 +258,43 @@ export async function deployCRISPProgram(
   }
 
   return program as unknown as CRISPProgram
+}
+
+/** Real Safe 1.4.1 contracts: the singleton, the proxy factory and the fallback handler. */
+export type SafeDeployment = { singleton: Safe; factory: SafeProxyFactory; handler: CompatibilityFallbackHandler }
+
+export async function deploySafeContracts(): Promise<SafeDeployment> {
+  return {
+    singleton: (await ethers.deployContract('@safe-global/safe-contracts/contracts/Safe.sol:Safe')) as unknown as Safe,
+    factory: (await ethers.deployContract('SafeProxyFactory')) as unknown as SafeProxyFactory,
+    handler: (await ethers.deployContract('CompatibilityFallbackHandler')) as unknown as CompatibilityFallbackHandler,
+  }
+}
+
+let safeSaltNonce = 0n
+
+/**
+ * Create a Safe proxy with the given owners and threshold, as the Safe factory does on chain.
+ * @param safeContracts - The deployment from `deploySafeContracts`.
+ * @param owners - The owner addresses.
+ * @param threshold - The number of owner signatures the Safe requires.
+ * @param singleton - The singleton the proxy delegates to. Defaults to the deployment's.
+ * @returns The Safe address.
+ */
+export async function createSafe(safeContracts: SafeDeployment, owners: string[], threshold: number, singleton?: BaseContract) {
+  const { factory, handler } = safeContracts
+  const setup = safeContracts.singleton.interface.encodeFunctionData('setup', [
+    owners,
+    threshold,
+    ethers.ZeroAddress,
+    '0x',
+    await handler.getAddress(),
+    ethers.ZeroAddress,
+    0,
+    ethers.ZeroAddress,
+  ])
+  const target = await (singleton ?? safeContracts.singleton).getAddress()
+  const receipt = await (await factory.createProxyWithNonce(target, setup, safeSaltNonce++)).wait()
+  const created = receipt!.logs.map((log) => factory.interface.parseLog(log)).find((event) => event?.name === 'ProxyCreation')
+  return created!.args.proxy as string
 }

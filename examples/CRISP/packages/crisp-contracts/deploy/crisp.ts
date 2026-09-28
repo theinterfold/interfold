@@ -29,6 +29,25 @@ if (!IMAGE_ID) {
   throw new Error('IMAGE_ID not found')
 }
 
+// The Safe accounts that `CRISPProgram` accepts as ballot signers for a slot. A slot is a Safe only
+// when its runtime code hash is in the first list and its proxy delegates to a singleton in the
+// second. The canonical Safe deployments use the same addresses and bytecode on every chain; both
+// lists were read from mainnet and Sepolia.
+const SAFE_PROXY_CODEHASHES = [
+  // GnosisSafeProxy 1.3.0 (canonical and EIP-155 factories)
+  '0xb89c1b3bdf2cf8827818646bce9a8f6e372885f8c55e5c07acbd307cb133b000',
+  // SafeProxy 1.4.1
+  '0xd7d408ebcd99b2b70be43e20253d6d92a8ea8fab29bd3be7f55b10032331fb4c',
+]
+const SAFE_SINGLETONS = [
+  '0xd9Db270c1B5E3Bd161E8c8503c55cEABeE709552', // GnosisSafe 1.3.0
+  '0x3E5c63644E683549055b9Be8653de26E0B4CD36E', // GnosisSafeL2 1.3.0
+  '0x69f4D1788e39c87893C980c06EdF4b7f686e2938', // GnosisSafe 1.3.0 (EIP-155)
+  '0xfb1bffC9d739B8D520DaF37dF666da4C687191EA', // GnosisSafeL2 1.3.0 (EIP-155)
+  '0x41675C099F32341bf84BFc5382aF534df5C7461a', // Safe 1.4.1
+  '0x29fcB43b46531BcA003ddC8FCB67FFE91900C762', // SafeL2 1.4.1
+]
+
 export interface CRISPDeploymentResult {
   governanceComplete: boolean
 }
@@ -162,6 +181,11 @@ export const deployCRISPContracts = async (): Promise<CRISPDeploymentResult> => 
     'OnchainHonkVerifier',
     chain,
   )
+  const onchainVerification = {
+    verifier: onchainHonkVerifierAddress,
+    safeProxyCodehashes: SAFE_PROXY_CODEHASHES,
+    safeSingletons: SAFE_SINGLETONS,
+  }
 
   const useMockDataAvailability = useMocks || chain === 'localhost'
   const dataAvailabilityContract = useMockDataAvailability ? 'MockCrispDataAvailabilityVerifier' : 'AvailVectorXDataAvailabilityVerifier'
@@ -204,7 +228,7 @@ export const deployCRISPContracts = async (): Promise<CRISPDeploymentResult> => 
     initialOwner,
     verifier,
     honkVerifierAddress,
-    onchainHonkVerifierAddress,
+    onchainVerification,
     dataAvailabilityVerifierAddress,
     useMockDataAvailability ? 0 : AVAIL_FINALIZATION_WINDOW_SECONDS,
     inputAvailabilitySigner,
@@ -221,7 +245,7 @@ export const deployCRISPContracts = async (): Promise<CRISPDeploymentResult> => 
         initialOwner,
         verifierAddress: verifier,
         honkVerifierAddress,
-        onchainHonkVerifierAddress,
+        onchainVerification,
         dataAvailabilityVerifierAddress,
         availabilityFinalizationWindow: useMockDataAvailability ? 0 : AVAIL_FINALIZATION_WINDOW_SECONDS,
         inputAvailabilitySigner,

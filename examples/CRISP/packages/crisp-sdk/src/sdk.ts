@@ -96,9 +96,10 @@ export class CrispSDK {
    * Phase one: encrypt a ballot, before the voter signs anything.
    *
    * A ballot has to be encrypted before it can be signed, because the digest binds the ciphertext.
-   * Take `ctCommitment` from the result, read the digest from
-   * `CRISPProgram.ballotDigest(e3Id, slot, ctCommitment)`, have the voter sign it, then call
-   * {@link finishBallot}.
+   * Take `ctCommitment` from the result and read `digest` and `ownersCommitment` from
+   * `CRISPProgram.ballotAuthorization(e3Id, slot, ctCommitment)`. For a wallet the digest equals
+   * `ballotDigest`; have the voter sign it, then call {@link finishBallot}. Pass `ownersCommitment`
+   * when you mask.
    *
    * Masks and real votes take the same path. This method calls the same server API
    * (previous-ciphertext) for both, so the server cannot infer the ballot type from the request
@@ -119,16 +120,24 @@ export class CrispSDK {
   /**
    * Phase two: prove a prepared ballot.
    *
-   * A mask passes no signature and gets the placeholder. It still carries the same digest as a
-   * real vote, because the contract computes the digest for every input.
+   * A mask passes no signature and gets the placeholder. It still carries the same public inputs as
+   * a real vote, because the contract computes them for every input. For a Safe slot, prove a vote
+   * with {@link finishSafeBallotProof}.
    *
    * @param prepared - The output of {@link prepareBallot}.
-   * @param digest - The digest read from `CRISPProgram.ballotDigest`.
+   * @param digest - The `digest` read from `CRISPProgram.ballotAuthorization`.
    * @param signature - The voter signature, omitted for a mask.
+   * @param ownersCommitment - For a mask, the `ownersCommitment` read from
+   * `CRISPProgram.ballotAuthorization`. Required when the slot is a Safe.
    * @returns A promise that resolves to the generated proof data.
    */
-  async finishBallot(prepared: PreparedBallot, digest: `0x${string}`, signature?: `0x${string}`): Promise<ProofData> {
-    return signature ? finishBallotProof(prepared, digest, signature) : finishMaskProof(prepared, digest)
+  async finishBallot(
+    prepared: PreparedBallot,
+    digest: `0x${string}`,
+    signature?: `0x${string}`,
+    ownersCommitment?: `0x${string}`,
+  ): Promise<ProofData> {
+    return signature ? finishBallotProof(prepared, digest, signature) : finishMaskProof(prepared, digest, ownersCommitment)
   }
 
   /**
