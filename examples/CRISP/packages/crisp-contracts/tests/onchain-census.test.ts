@@ -4,8 +4,19 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-import { generateBFVKeys, prepareBallot, finishBallotProof, encodeSolidityProof, destroyBBApi } from '@crisp-e3/sdk'
+import {
+  generateBFVKeys,
+  prepareBallot,
+  finishBallotProof,
+  finishMaskProof,
+  finishSafeBallotProof,
+  encodeSolidityProof,
+  destroyBBApi,
+  ciphertextCommitment,
+  withBallotParent,
+} from '@crisp-e3/sdk'
 import type { ProofData } from '@crisp-e3/sdk'
+import type { Wallet } from 'ethers'
 import { setCircuits } from '@crisp-e3/sdk'
 import { loadCircuits } from '@crisp-e3/sdk/insecure-512'
 
@@ -16,14 +27,16 @@ before(async () => {
 })
 import { expect } from 'chai'
 import {
+  createSafe,
   deployCRISPProgram,
   deployHonkVerifier,
   deployMockInterfold,
   deployOnchainHonkVerifier,
+  deploySafeContracts,
   ethers,
   publishAvailableInput,
 } from './utils'
-import type { CRISPProgram, HonkVerifier, MockInterfold } from '../types'
+import type { CRISPProgram, HonkVerifier, MockInterfold, Safe } from '../types'
 
 const CUSTOM = 1
 const ONCHAIN = 2
@@ -34,7 +47,7 @@ const ONCHAIN = 2
 /// because the constructor only needs a non-zero address until a real ONCHAIN ballot is verified.
 /// That substitution means nothing here was ever exercised: the `crisp_onchain` circuit, the
 /// verifier generated from it, and the path in `publishInput` that reads voting power from the
-/// token and hands it to the circuit as public input 4.
+/// token and hands it to the circuit as public input 4, and the owner check that lets a Safe vote.
 ///
 /// It also means a swapped constructor argument would be invisible — passing the same address
 /// twice cannot detect an order mistake. The last test in this file pins that.
@@ -70,6 +83,11 @@ describe('CRISP on-chain census', function () {
   let divisor: bigint
   let rawPower: bigint
   let voteProof: ProofData
+  let safe: string
+  let safeOwners: Wallet[]
+  let safeContract: Safe
+  let safeVoteProof: ProofData
+  let safeMaskProof: ProofData
 
   const numOptions = 2
   const vote = [7, 0]
@@ -94,7 +112,24 @@ describe('CRISP on-chain census', function () {
     mockInterfold = await deployMockInterfold()
     honkVerifier = await deployHonkVerifier()
     onchainHonkVerifier = await deployOnchainHonkVerifier()
-    crispProgram = await deployCRISPProgram({ mockInterfold, honkVerifier, onchainHonkVerifier })
+
+    // A 2-of-3 Safe, from real Safe 1.4.1 contracts.
+    const safeContracts = await deploySafeContracts()
+    safeOwners = [0, 1, 2].map((i) => new ethers.Wallet(ethers.id(`census safe owner ${i}`)))
+    safe = await createSafe(
+      safeContracts,
+      safeOwners.map((owner) => owner.address),
+      2,
+    )
+    safeContract = safeContracts.singleton.attach(safe) as Safe
+
+    crispProgram = await deployCRISPProgram({
+      mockInterfold,
+      honkVerifier,
+      onchainHonkVerifier,
+      safeProxyCodehashes: [ethers.keccak256(await ethers.provider.getCode(safe))],
+      safeSingletons: [await safeContracts.singleton.getAddress()],
+    })
 
     voter = (await ethers.getSigners())[0]
     slotAddress = await voter.getAddress()
@@ -104,6 +139,7 @@ describe('CRISP on-chain census', function () {
     token = await ethers.deployContract('MockVotesToken')
     await token.waitForDeployment()
     await (await token.mint(slotAddress, ethers.parseEther('50'))).wait()
+    await (await token.mint(safe, ethers.parseEther('50'))).wait()
     // Move the clock so the mint lands at a settled timepoint.
     await ethers.provider.send('evm_mine', [])
 
@@ -210,9 +246,9 @@ describe('CRISP on-chain census', function () {
     expect(isValid).to.be.true
   })
 
-  /// The two circuits agree on every public input except index 4, so this is the one position that
-  /// distinguishes them. Pinning it means a future layout change names the field instead of
-  /// surfacing as an opaque verifier revert.
+  /// The two circuits agree on public inputs 0 to 7 except index 4, so this is the one position
+  /// there that distinguishes them. Pinning it means a future layout change names the field
+  /// instead of surfacing as an opaque verifier revert.
   it('puts the token voting power at public input 4', async function () {
     const pi = voteProof.publicInputs.map((v: string) => BigInt(v))
 
@@ -233,9 +269,104 @@ describe('CRISP on-chain census', function () {
   })
 
   it('publishes an ONCHAIN ballot end to end', async function () {
-    await (await mockInterfold.setCommitteePublicKey(voteProof.publicInputs[8])).wait()
+    await (await mockInterfold.setCommitteePublicKey(voteProof.publicInputs[10])).wait()
 
     await publishAvailableInput(crispProgram, e3Id, encodeSolidityProof(voteProof))
+  })
+
+  /// The same circuit serves a Safe. Two of the three owners sign the Safe's `SafeMessage` hash in
+  /// their own wallets, and the proof checks them against the owner list the contract reads from
+  /// the Safe when the ballot is published.
+  it('publishes a 2-of-3 Safe ballot end to end', async function () {
+    const prepared = await prepareBallot({
+      censusMode: 'onchain',
+      vote,
+      publicKey,
+      votingPower: await crispProgram.votingPowerOf(e3Id, safe),
+      slotAddress: safe,
+      isMaskVote: false,
+      numOptions,
+    })
+    const authorization = await crispProgram.ballotAuthorization(e3Id, safe, prepared.ctCommitment)
+    expect(authorization.safe).to.equal(true)
+
+    // Owner 2 and owner 0 sign, out of address order; the SDK sorts them.
+    const signatures = [safeOwners[2], safeOwners[0]].map(
+      (owner) => owner.signingKey.sign(authorization.digest).serialized as `0x${string}`,
+    )
+    const owners = (await safeContract.getOwners()) as `0x${string}`[]
+    safeVoteProof = await finishSafeBallotProof(prepared, authorization.digest as `0x${string}`, { owners, threshold: 2 }, signatures)
+
+    await (await mockInterfold.setCommitteePublicKey(safeVoteProof.publicInputs[10])).wait()
+    await publishAvailableInput(crispProgram, e3Id, encodeSolidityProof(safeVoteProof))
+  })
+
+  /// Anyone can mask a Safe slot from the public values alone: no owner signs, and the prover does
+  /// not need the owner list. The mask carries the same public inputs a vote by the Safe would.
+  it('masks the Safe slot without any owner signature', async function () {
+    const prepared = await prepareBallot({
+      censusMode: 'onchain',
+      vote: [0, 0],
+      publicKey,
+      votingPower: await crispProgram.votingPowerOf(e3Id, safe),
+      slotAddress: safe,
+      isMaskVote: true,
+      numOptions,
+      previousCiphertext: safeVoteProof.encryptedVote,
+      previousIndex: Number(await crispProgram.getSlotIndex(e3Id, safe)),
+    })
+    const { digest, ownersCommitment } = await crispProgram.ballotAuthorization(e3Id, safe, prepared.ctCommitment)
+    safeMaskProof = await finishMaskProof(prepared, digest as `0x${string}`, ownersCommitment as `0x${string}`)
+
+    await (await mockInterfold.setCommitteePublicKey(safeMaskProof.publicInputs[10])).wait()
+    await publishAvailableInput(crispProgram, e3Id, encodeSolidityProof(safeMaskProof))
+  })
+
+  /// How the client collects owner signatures. The ballot is encrypted and signed with no slot
+  /// head, so collecting signatures takes no request to the CRISP server. The parent is named only
+  /// right before proving, from the head bytes, which here is the mask that landed after the
+  /// Safe's first vote. The owners' signatures do not depend on the head.
+  it('re-votes with a Safe ballot signed before the slot head was read', async function () {
+    const prepared = await prepareBallot({
+      censusMode: 'onchain',
+      vote: [0, 7],
+      publicKey,
+      votingPower: await crispProgram.votingPowerOf(e3Id, safe),
+      slotAddress: safe,
+      isMaskVote: false,
+      numOptions,
+    })
+    const { digest } = await crispProgram.ballotAuthorization(e3Id, safe, prepared.ctCommitment)
+
+    // The owners sign in their wallets, with `eth_signTypedData_v4` over the typed data the
+    // client's co-signer page builds: the Safe's `SafeMessage` over the CRISP ballot digest.
+    const safeMessage = {
+      domain: { chainId: (await ethers.provider.getNetwork()).chainId, verifyingContract: safe },
+      types: { SafeMessage: [{ name: 'message', type: 'bytes' }] },
+      message: { message: await crispProgram.ballotDigest(e3Id, safe, prepared.ctCommitment) },
+    }
+    expect(ethers.TypedDataEncoder.hash(safeMessage.domain, safeMessage.types, safeMessage.message)).to.equal(digest)
+    const signatures = await Promise.all(
+      [safeOwners[1], safeOwners[2]].map(
+        async (owner) => (await owner.signTypedData(safeMessage.domain, safeMessage.types, safeMessage.message)) as `0x${string}`,
+      ),
+    )
+
+    // The head is the mask. Its commitment, computed from its bytes, is the one the contract
+    // recorded, so the proof needs no extra contract read.
+    const index = Number(await crispProgram.getSlotIndex(e3Id, safe))
+    const commitment = ciphertextCommitment(safeMaskProof.encryptedVote)
+    expect(commitment).to.equal(await crispProgram.inputCommitmentOf(e3Id, safe, index))
+
+    const revote = await finishSafeBallotProof(
+      withBallotParent(prepared, { index, commitment }),
+      digest as `0x${string}`,
+      { owners: (await safeContract.getOwners()) as `0x${string}`[], threshold: 2 },
+      signatures,
+    )
+
+    await (await mockInterfold.setCommitteePublicKey(revote.publicInputs[10])).wait()
+    await publishAvailableInput(crispProgram, e3Id, encodeSolidityProof(revote))
   })
 
   /// The contract reads the power from the token rather than trusting the ballot. A proof built
@@ -248,13 +379,13 @@ describe('CRISP on-chain census', function () {
     const round = await openRound()
 
     const inflated = await buildOnchainProof(votingPower * 2n, round)
-    await (await mockInterfold.setCommitteePublicKey(inflated.publicInputs[8])).wait()
+    await (await mockInterfold.setCommitteePublicKey(inflated.publicInputs[10])).wait()
     await expect(publishAvailableInput(crispProgram, round, encodeSolidityProof(inflated))).to.be.revert(ethers)
 
     // Positive control in the same round and the same slot: the honest power publishes. The only
     // difference between the two ballots is the power, so the revert above is attributable to it.
     const honest = await buildOnchainProof(votingPower, round)
-    await (await mockInterfold.setCommitteePublicKey(honest.publicInputs[8])).wait()
+    await (await mockInterfold.setCommitteePublicKey(honest.publicInputs[10])).wait()
     await publishAvailableInput(crispProgram, round, encodeSolidityProof(honest))
   })
 

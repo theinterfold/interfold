@@ -110,6 +110,17 @@ request `TOKEN` rounds and `ONCHAIN` rounds. For an `ONCHAIN` round, the CLI use
 by default. Any account can call `register()` on it once, and a registered account has a voting
 power of 1.
 
+In an `ONCHAIN` round, the slot owners authorise a ballot. A wallet is its own single owner. A slot
+can also be a Safe 1.3.0 or 1.4.1 account, which has no private key, so its owners sign instead.
+`ballotAuthorization(e3Id, slot, ciphertextCommitment)` returns the digest to sign and a commitment
+to the current owners and threshold, and the `crisp_onchain` proof checks the owner signatures
+privately. On chain, a Safe ballot and a mask therefore look the same. A Safe can have at most 10
+owners and a threshold of at most 3. Only owners that sign with a private key can sign a ballot.
+
+The SDK proves a Safe ballot with `finishSafeBallotProof` and masks any slot with `finishMaskProof`.
+The owners must sign in their own wallets. Do not collect the signatures through the Safe
+Transaction Service, because it publishes the digest.
+
 ### Two-step inputs
 
 Secure BFV ciphertexts are too large for one Ethereum transaction. For this reason, each input goes

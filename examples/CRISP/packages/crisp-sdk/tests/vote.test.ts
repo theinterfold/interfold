@@ -7,7 +7,17 @@ import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll, vi } 
 import { Vote } from '../src/types'
 import { MAX_MSG_NON_ZERO_COEFFS, MAX_VOTE_OPTIONS, SIGNATURE_MESSAGE_HASH, SIGNATURE_MESSAGE } from '../src/constants'
 import { getZeroVote } from '../src/utils'
-import { decodeTally, verifyProof, encodeVote, generateBFVKeys, encryptVote, decryptVote, destroyBBApi } from '../src/vote'
+import {
+  decodeTally,
+  verifyProof,
+  encodeVote,
+  generateBFVKeys,
+  encryptVote,
+  decryptVote,
+  destroyBBApi,
+  ownersCommitment,
+  splitDigest,
+} from '../src/vote'
 import { publicKeyToAddress, sign, signMessage } from 'viem/accounts'
 import { Hex, concat, keccak256, numberToHex, recoverPublicKey } from 'viem'
 import { CRISP_SERVER_URL, ECDSA_PRIVATE_KEY, SLOT_ADDRESS } from './constants'
@@ -318,6 +328,11 @@ describe('Vote', () => {
 
       expect(BigInt(proof.publicInputs[7])).toBe(BigInt(prepared.ctCommitment))
       expect(decryptVote(proof.encryptedVote, secretKey, vote.length)).toEqual(vote.map(BigInt))
+
+      // A wallet slot is its own single owner. `CRISPProgram.ballotAuthorization` returns the same
+      // commitment, and the contract places it at 8 and 9.
+      const { digestHi, digestLo } = splitDigest(ownersCommitment({ owners: [address as Hex], threshold: 1 }))
+      expect(proof.publicInputs.slice(8, 10).map(BigInt)).toEqual([BigInt(digestHi), BigInt(digestLo)])
 
       // Verified against the onchain fold circuit. Passing 'merkle' here would fail, which is the
       // point: the two stacks have different verification keys.

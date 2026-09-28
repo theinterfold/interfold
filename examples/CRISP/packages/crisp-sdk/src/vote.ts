@@ -4,12 +4,11 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-import { type Vote, type CensusVariant, type PrepareBallotInputs, type PreparedBallot, ProofData } from './types'
+import { type Vote, type CensusVariant, type PrepareBallotInputs, type PreparedBallot, type SlotOwners, ProofData } from './types'
 import { getMaxVoteValue, proofToFields } from './utils'
-import { attachSignatureImpl, prepareCircuitInputsImpl } from './circuitInputs'
-import { MASK_SIGNATURE } from './constants'
+import { attachMaskImpl, attachOwnerSignaturesImpl, attachSignatureImpl, prepareCircuitInputsImpl } from './circuitInputs'
 export { encodeVote, encryptVote, decodeTally, decryptVote, generateBFVKeys } from './encoding'
-export { splitDigest } from './circuitInputs'
+export { splitDigest, ownersCommitment, withBallotParent, ciphertextCommitment } from './circuitInputs'
 import { Noir, type CompiledCircuit } from '@noir-lang/noir_js'
 import { Barretenberg, BackendType, UltraHonkBackend } from '@aztec/bb.js'
 // Only the aggregation circuits are imported here. Their ABI is proof and verification-key shaped
@@ -133,17 +132,31 @@ export const generateProof = async (circuitInputs: any, censusMode: CensusVarian
     p1is: circuitInputs.p1is,
     p2is: circuitInputs.p2is,
   })
-  // The two stacks share every input except how eligibility reaches the circuit: a census round
-  // proves a Merkle path, an on-chain round takes the voting power the contract read.
-  const eligibilityInputs =
+  // The two stacks share every input except eligibility and authorisation. A census round proves
+  // a Merkle path and one slot signature. An on-chain round takes the voting power the contract
+  // read, and the signatures of the slot owners against the owner commitment the contract made.
+  const stackInputs =
     censusMode === 'onchain'
-      ? { voting_power: circuitInputs.voting_power }
+      ? {
+          voting_power: circuitInputs.voting_power,
+          owners: circuitInputs.owners,
+          threshold: circuitInputs.threshold,
+          public_keys_x: circuitInputs.public_keys_x,
+          public_keys_y: circuitInputs.public_keys_y,
+          signatures: circuitInputs.signatures,
+          owner_indices: circuitInputs.owner_indices,
+          owners_commitment_hi: circuitInputs.owners_commitment_hi,
+          owners_commitment_lo: circuitInputs.owners_commitment_lo,
+        }
       : {
           merkle_root: circuitInputs.merkle_root,
           balance: circuitInputs.balance,
           merkle_proof_length: circuitInputs.merkle_proof_length,
           merkle_proof_indices: circuitInputs.merkle_proof_indices,
           merkle_proof_siblings: circuitInputs.merkle_proof_siblings,
+          public_key_x: circuitInputs.public_key_x,
+          public_key_y: circuitInputs.public_key_y,
+          signature: circuitInputs.signature,
         }
 
   const { witness: crispWitness, returnValue: crispReturnValue } = await executeCircuit(ballotCircuit as CompiledCircuit, {
@@ -157,13 +170,10 @@ export const generateProof = async (circuitInputs: any, censusMode: CensusVarian
     ct0is: circuitInputs.ct0is,
     ct1is: circuitInputs.ct1is,
     k1: circuitInputs.k1,
-    public_key_x: circuitInputs.public_key_x,
-    public_key_y: circuitInputs.public_key_y,
-    signature: circuitInputs.signature,
     digest_hi: circuitInputs.digest_hi,
     digest_lo: circuitInputs.digest_lo,
     slot_address: circuitInputs.slot_address,
-    ...eligibilityInputs,
+    ...stackInputs,
     is_first_vote: circuitInputs.is_first_vote,
     is_mask_vote: circuitInputs.is_mask_vote,
     num_options: circuitInputs.num_options,
@@ -242,8 +252,15 @@ export const generateProof = async (circuitInputs: any, censusMode: CensusVarian
     digest_hi: circuitInputs.digest_hi,
     digest_lo: circuitInputs.digest_lo,
     slot_address: circuitInputs.slot_address,
-    // Position 4 of the public inputs, and the only slot the two stacks disagree on.
-    ...(censusMode === 'onchain' ? { voting_power: circuitInputs.voting_power } : { merkle_root: circuitInputs.merkle_root }),
+    // Position 4 of the public inputs is the Merkle root or the voting power. An on-chain round
+    // also exposes the owner commitment after `final_ct_commitment`.
+    ...(censusMode === 'onchain'
+      ? {
+          voting_power: circuitInputs.voting_power,
+          owners_commitment_hi: circuitInputs.owners_commitment_hi,
+          owners_commitment_lo: circuitInputs.owners_commitment_lo,
+        }
+      : { merkle_root: circuitInputs.merkle_root }),
     is_first_vote: circuitInputs.is_first_vote,
     num_options: circuitInputs.num_options,
     final_ct_commitment: crispReturnValue[0].toString(),
@@ -297,8 +314,10 @@ export const validateVote = (vote: Vote, balance: bigint): void => {
  * Phase one: encrypt a ballot, before the voter signs anything.
  *
  * A ballot must be encrypted before it can be signed, because the digest binds the ciphertext.
- * Take `ctCommitment` from the result, read the digest from `CRISPProgram.ballotDigest`, have the
- * voter sign it, then call {@link finishBallotProof}.
+ * Take `ctCommitment` from the result and read `digest` and `ownersCommitment` from
+ * `CRISPProgram.ballotAuthorization`. For a wallet, the digest equals `ballotDigest`: have the voter
+ * sign it, then call {@link finishBallotProof}. For a Safe, call {@link finishSafeBallotProof}. For a
+ * mask, pass both values to {@link finishMaskProof}.
  *
  * @param inputs - The ballot to encrypt.
  * @returns The prepared ballot.
@@ -314,43 +333,74 @@ export const prepareBallot = async (inputs: PrepareBallotInputs): Promise<Prepar
   return prepareCircuitInputs(inputs)
 }
 
+/** Attach the proof to what `encodeSolidityProof` needs besides it. */
+const proveBallot = async (prepared: PreparedBallot, circuitInputs: unknown): Promise<ProofData> => ({
+  ...(await generateProof(circuitInputs, prepared.censusMode)),
+  encryptedVote: prepared.encryptedVote,
+  parentIndexPlusOne: prepared.parentIndexPlusOne,
+})
+
 /**
- * Phase two: prove a prepared ballot, given the signature over its digest.
+ * Phase two: prove a prepared ballot, given the wallet signature over its digest.
  *
  * Get the digest from `CRISPProgram.ballotDigest(e3Id, slot, prepared.ctCommitment)` and have the
  * voter sign it. Reading it from the contract rather than rebuilding the EIP-712 struct here means
- * there is only one implementation of the domain to keep correct.
+ * there is only one implementation of the domain to keep correct. In an ONCHAIN round this is the
+ * one-owner case of {@link finishSafeBallotProof}; for a Safe slot, use that function instead.
  *
  * @param prepared The output of `prepareBallot`.
  * @param digest The ballot digest.
  * @param signature The voter signature over that digest.
  * @returns The proof.
  */
-export const finishBallotProof = async (prepared: PreparedBallot, digest: `0x${string}`, signature: `0x${string}`): Promise<ProofData> => {
-  const circuitInputs = await attachSignatureImpl(prepared, digest, signature)
+export const finishBallotProof = async (prepared: PreparedBallot, digest: `0x${string}`, signature: `0x${string}`): Promise<ProofData> =>
+  proveBallot(prepared, await attachSignatureImpl(prepared, digest, signature))
 
-  return {
-    ...(await generateProof(circuitInputs, prepared.censusMode)),
-    encryptedVote: prepared.encryptedVote,
-    parentIndexPlusOne: prepared.parentIndexPlusOne,
-  }
-}
+/**
+ * Phase two for a Safe slot of an ONCHAIN round: prove the ballot with the owners' signatures.
+ *
+ * Get `digest` from `CRISPProgram.ballotAuthorization(e3Id, slot, prepared.ctCommitment)`. It is
+ * the Safe's EIP-712 `SafeMessage` hash of the ballot digest. Each owner signs the `SafeMessage`
+ * typed data in their own wallet, which gives an ECDSA signature over that hash; the Safe's own
+ * `isValidSignature` accepts the same signatures. `eth_sign` signatures do not work. Do not collect
+ * the signatures through the Safe Transaction Service: it publishes the digest, and anyone who
+ * recomputes the digest could then tell this vote from a mask.
+ *
+ * @param prepared The output of `prepareBallot`, for an ONCHAIN round.
+ * @param digest The `digest` from `CRISPProgram.ballotAuthorization`.
+ * @param slotOwners The Safe's owners, in `getOwners()` order, and its threshold.
+ * @param signatures At least `threshold` owner signatures over `digest`, in any order.
+ * @returns The proof.
+ */
+export const finishSafeBallotProof = async (
+  prepared: PreparedBallot,
+  digest: `0x${string}`,
+  slotOwners: SlotOwners,
+  signatures: readonly `0x${string}`[],
+): Promise<ProofData> => proveBallot(prepared, await attachOwnerSignaturesImpl(prepared, digest, slotOwners, signatures))
 
 /**
  * Phase two for a mask.
  *
- * A mask carries the same digest as a real vote, because `CRISPProgram.publishInput` computes it
- * for every input regardless of branch. Only the signature is a placeholder, and the circuit does
- * not check it on the mask branch. Passing a real digest here is what keeps a mask and a vote
- * indistinguishable in the published public inputs.
+ * A mask carries the same public inputs as a real vote for the slot, because
+ * `CRISPProgram.publishInput` computes them for every input regardless of branch. Only the
+ * signatures are placeholders, and the circuit does not check them on the mask branch. Passing the
+ * real values here is what keeps a mask and a vote indistinguishable in the published inputs.
+ *
+ * Read both values from `CRISPProgram.ballotAuthorization(e3Id, slot, prepared.ctCommitment)`. The
+ * owner commitment is required for a Safe slot of an ONCHAIN round. For any other ONCHAIN slot the
+ * SDK derives it from the slot, and a census round has none.
  *
  * @param prepared The output of `prepareBallot` with `isMaskVote: true`.
- * @param digest The ballot digest, from the same contract call a real vote would use.
+ * @param digest The `digest` from `CRISPProgram.ballotAuthorization`.
+ * @param ownersCommitment The `ownersCommitment` from `CRISPProgram.ballotAuthorization`.
  * @returns The proof.
  */
-export const finishMaskProof = async (prepared: PreparedBallot, digest: `0x${string}`): Promise<ProofData> => {
-  return finishBallotProof(prepared, digest, MASK_SIGNATURE)
-}
+export const finishMaskProof = async (
+  prepared: PreparedBallot,
+  digest: `0x${string}`,
+  ownersCommitment?: `0x${string}`,
+): Promise<ProofData> => proveBallot(prepared, await attachMaskImpl(prepared, digest, ownersCommitment))
 
 /**
  * Locally verify a Noir proof.
@@ -375,7 +425,8 @@ export const encodeSolidityProof = ({ publicInputs, proof, encryptedVote, parent
   // Indices follow the fold circuit public inputs:
   //   0 prev_ct_commitment, 1 digest_hi, 2 digest_lo, 3 slot_address,
   //   4 merkle_root | voting_power, 5 is_first_vote, 6 num_options,
-  //   7 final_ct_commitment, 8 committee public key
+  //   7 final_ct_commitment, then the committee public key at 8 for a census round, or the owner
+  //   commitment halves at 8 and 9 and the committee public key at 10 for an on-chain round
   const slotAddress = getAddress(numberToHex(BigInt(publicInputs[3]), { size: 20 }))
   const encryptedVoteCommitment = publicInputs[7] as `0x${string}`
   const encryptedVoteBytes = bytesToHex(encryptedVote)
