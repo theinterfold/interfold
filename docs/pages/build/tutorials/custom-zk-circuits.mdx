@@ -559,13 +559,13 @@ package. CRISP does this in `examples/CRISP/circuits/lib/src/merkle_tree.nr` and
 
 ## Compare with CRISP
 
-| Part           | This tutorial                       | CRISP                                                                                           |
-| -------------- | ----------------------------------- | ----------------------------------------------------------------------------------------------- |
-| Rule circuit   | `binary_input`: the value is 0 or 1 | `crisp`: census membership, signature, vote rules, and the ciphertext addition                  |
-| Fold circuit   | 2 public inputs                     | 9 public inputs, from `prev_ct_commitment` to the committee public key                          |
-| Key-hash check | One constant                        | Two constants, one for each BFV preset, so one verifier serves both presets                     |
-| Verifiers      | `BinaryInputVerifier.sol`           | `CRISPVerifier.sol` (census Merkle tree) and `CRISPOnchainVerifier.sol` (on-chain voting power) |
-| Input flow     | One `publishInput` transaction      | `publishInput`, then `finalizeInput` after the ciphertext is available on Avail                 |
+| Part           | This tutorial                       | CRISP                                                                                                                                           |
+| -------------- | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Rule circuit   | `binary_input`: the value is 0 or 1 | `crisp`: census membership, signature, vote rules, and the ciphertext addition                                                                  |
+| Fold circuit   | 2 public inputs                     | 9 public inputs, from `prev_ct_commitment` to the committee public key. `fold_onchain` adds the two halves of the slot owner commitment, for 11 |
+| Key-hash check | One constant                        | Two constants, one for each BFV preset, so one verifier serves both presets                                                                     |
+| Verifiers      | `BinaryInputVerifier.sol`           | `CRISPVerifier.sol` (census Merkle tree) and `CRISPOnchainVerifier.sol` (on-chain voting power)                                                 |
+| Input flow     | One `publishInput` transaction      | `publishInput`, then `finalizeInput` after the ciphertext is available on Avail                                                                 |
 
 For small checks, you do not always need a circuit. A contract can check public data itself, for
 example an allow list of submitters.

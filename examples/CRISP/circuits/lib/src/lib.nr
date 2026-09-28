@@ -15,3 +15,4 @@ pub mod ciphertext_addition;
 pub mod ecdsa;
 pub mod merkle_tree;
 pub mod utils;
+pub mod safe_auth;
