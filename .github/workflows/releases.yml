@@ -33,7 +33,7 @@ jobs:
     outputs:
       version: ${{ steps.release.outputs.version }}
       is_prerelease: ${{ steps.release.outputs.is_prerelease }}
-      npm_tag: ${{ steps.release.outputs.npm_tag }}
+      channel: ${{ steps.release.outputs.channel }}
       candidate_sha: ${{ steps.release.outputs.candidate_sha }}
     steps:
       - name: Checkout code
@@ -238,22 +238,22 @@ jobs:
         run: pnpm prepare-publish
 
       - name: Publish @interfold/config
-        run: node scripts/release.mjs publish-npm packages/interfold-config ${{ needs.validate-and-prepare.outputs.npm_tag }}
+        run: node scripts/release.mjs publish-npm packages/interfold-config ${{ needs.validate-and-prepare.outputs.channel }}
 
       - name: Publish @interfold/contracts
-        run: node scripts/release.mjs publish-npm packages/interfold-contracts ${{ needs.validate-and-prepare.outputs.npm_tag }}
+        run: node scripts/release.mjs publish-npm packages/interfold-contracts ${{ needs.validate-and-prepare.outputs.channel }}
 
       - name: Publish @interfold/wasm
-        run: node scripts/release.mjs publish-npm crates/wasm ${{ needs.validate-and-prepare.outputs.npm_tag }}
+        run: node scripts/release.mjs publish-npm crates/wasm ${{ needs.validate-and-prepare.outputs.channel }}
 
       - name: Publish @interfold/sdk
-        run: node scripts/release.mjs publish-npm packages/interfold-sdk ${{ needs.validate-and-prepare.outputs.npm_tag }}
+        run: node scripts/release.mjs publish-npm packages/interfold-sdk ${{ needs.validate-and-prepare.outputs.channel }}
 
       - name: Publish @interfold/react
-        run: node scripts/release.mjs publish-npm packages/interfold-react ${{ needs.validate-and-prepare.outputs.npm_tag }}
+        run: node scripts/release.mjs publish-npm packages/interfold-react ${{ needs.validate-and-prepare.outputs.channel }}
 
       - name: Publish @interfold/mcp
-        run: node scripts/release.mjs publish-npm packages/interfold-mcp ${{ needs.validate-and-prepare.outputs.npm_tag }}
+        run: node scripts/release.mjs publish-npm packages/interfold-mcp ${{ needs.validate-and-prepare.outputs.channel }}
 
   download-circuits:
     name: Download Circuit Artifacts
@@ -374,27 +374,27 @@ jobs:
           CIRCUIT_SOURCE_HASH: ${{ needs.download-circuits.outputs.source_hash }}
         run: node scripts/release.mjs prepare-assets
 
-      - name: Set up Buildx for stable aliases
-        if: needs.validate-and-prepare.outputs.is_prerelease == 'false'
+      - name: Set up Buildx for channel aliases
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to GitHub Container Registry
-        if: needs.validate-and-prepare.outputs.is_prerelease == 'false'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Promote stable container aliases
-        if: needs.validate-and-prepare.outputs.is_prerelease == 'false'
+      # A stable release moves the `latest` aliases. A pre-release moves the `dev` aliases.
+      - name: Promote channel container aliases
+        env:
+          CHANNEL: ${{ needs.validate-and-prepare.outputs.channel }}
+          VERSION: ${{ needs.validate-and-prepare.outputs.version }}
         run: |
-          VERSION="${{ needs.validate-and-prepare.outputs.version }}"
           docker buildx imagetools create \
-            --tag "${CIPHERNODE_IMAGE_NAME}:latest" \
+            --tag "${CIPHERNODE_IMAGE_NAME}:${CHANNEL}" \
             "${CIPHERNODE_IMAGE_NAME}:${VERSION}"
           docker buildx imagetools create \
-            --tag "${SUPPORT_IMAGE_NAME}:latest" \
+            --tag "${SUPPORT_IMAGE_NAME}:${CHANNEL}" \
             "${SUPPORT_IMAGE_NAME}:${VERSION}"
 
       - name: Update stable tag (for stable releases only)

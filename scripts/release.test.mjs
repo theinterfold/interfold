@@ -93,17 +93,17 @@ test('changelog policy excludes mechanical release commits', () => {
 })
 
 describe('npm publication recovery', () => {
-  function fixture() {
+  function fixture(version = '1.2.3') {
     const rootDir = temporaryDirectory('interfold-npm-publish')
     const packageDir = join(rootDir, 'package')
     mkdirSync(packageDir)
-    writeFileSync(join(packageDir, 'package.json'), '{"name":"@interfold/release-test","version":"1.2.3"}\n')
+    writeFileSync(join(packageDir, 'package.json'), `${JSON.stringify({ name: '@interfold/release-test', version })}\n`)
 
     const state = {
       published: false,
       remoteIntegrity: 'sha512-candidate',
       remoteMissing: false,
-      tagVersion: '1.2.3',
+      tagVersion: version,
       viewError: '',
       packOutput: [
         {
@@ -171,15 +171,22 @@ describe('npm publication recovery', () => {
   test('publishes a package only when npm confirms that it is missing', () => {
     const { execute, packageDir, rootDir, state } = fixture()
     state.remoteMissing = true
-    assert.equal(publishNpmPackage(packageDir, 'next', { execute, rootDir }), 'published')
+    assert.equal(publishNpmPackage(packageDir, 'latest', { execute, rootDir }), 'published')
     assert.equal(state.published, true)
   })
 
   test('does not treat a registry outage as an unpublished package', () => {
     const { execute, packageDir, rootDir, state } = fixture()
     state.viewError = 'npm error code EAI_AGAIN'
-    assert.throws(() => publishNpmPackage(packageDir, 'next', { execute, rootDir }), /EAI_AGAIN/)
+    assert.throws(() => publishNpmPackage(packageDir, 'latest', { execute, rootDir }), /EAI_AGAIN/)
     assert.equal(state.published, false)
+  })
+
+  test('publishes a pre-release only with the dev tag', () => {
+    const { execute, packageDir, rootDir, state } = fixture('1.2.3-dev.1')
+    state.remoteMissing = true
+    assert.throws(() => publishNpmPackage(packageDir, 'latest', { execute, rootDir }), /belongs to the dev channel/)
+    assert.equal(publishNpmPackage(packageDir, 'dev', { execute, rootDir }), 'published')
   })
 })
 

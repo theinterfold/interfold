@@ -129,10 +129,12 @@ Downloads the `interfold` binary for this platform from a GitHub release and ins
 interfoldup install [--system] [--version <TAG>]
 ```
 
-| Flag        | Value   | Default        | Description                                                         |
-| ----------- | ------- | -------------- | ------------------------------------------------------------------- |
-| `--system`  | None    | Off            | Installs to `/usr/local/bin` instead of `~/.local/bin`.             |
-| `--version` | `<TAG>` | Latest release | Release tag to install. The command accepts `0.18.0` and `v0.18.0`. |
+| Flag        | Value   | Default        | Description                                                        |
+| ----------- | ------- | -------------- | ------------------------------------------------------------------ |
+| `--system`  | None    | Off            | Installs to `/usr/local/bin` instead of `~/.local/bin`.            |
+| `--version` | `<TAG>` | Latest release | `latest`, `dev`, or a release tag. Accepts `0.18.0` and `v0.18.0`. |
+
+The value `dev` selects the most recently published pre-release.
 
 The command prints a warning when the install folder is not in `PATH`.
 
@@ -148,7 +150,7 @@ interfoldup update [--system] [--version <TAG>]
 | Flag        | Value   | Default        | Description                                                             |
 | ----------- | ------- | -------------- | ----------------------------------------------------------------------- |
 | `--system`  | None    | Off            | Updates `/usr/local/bin/interfold` instead of `~/.local/bin/interfold`. |
-| `--version` | `<TAG>` | Latest release | Release tag to move to.                                                 |
+| `--version` | `<TAG>` | Latest release | Release to move to: `latest`, `dev`, or a release tag.                  |
 
 ### `interfoldup uninstall`
 

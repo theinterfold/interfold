@@ -10,6 +10,7 @@ use directories::BaseDirs;
 use flate2::read::GzDecoder;
 use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::Client;
+use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use std::fs;
 use std::io;
@@ -38,7 +39,8 @@ enum Commands {
         /// Install to /usr/local/bin instead of ~/.local/bin
         #[arg(long)]
         system: bool,
-        /// Release tag to install, for example `v0.13.0`. Default: the latest release
+        /// Release to install: `latest` (default), `dev` (the most recently published
+        /// pre-release), or a release tag, for example `v0.13.0`
         #[arg(long, value_name = "TAG")]
         version: Option<String>,
     },
@@ -47,7 +49,8 @@ enum Commands {
         /// Install to /usr/local/bin instead of ~/.local/bin
         #[arg(long)]
         system: bool,
-        /// Release tag to move to, for example `v0.13.0`. Default: the latest release
+        /// Release to move to: `latest` (default), `dev` (the most recently published
+        /// pre-release), or a release tag, for example `v0.13.0`
         #[arg(long, value_name = "TAG")]
         version: Option<String>,
     },
@@ -62,6 +65,8 @@ enum Commands {
 #[derive(Debug, Deserialize)]
 struct GitHubRelease {
     tag_name: String,
+    prerelease: bool,
+    published_at: Option<String>,
     assets: Vec<GitHubAsset>,
 }
 
@@ -138,6 +143,18 @@ impl Installer {
         self.fetch_release(&url, "latest").await
     }
 
+    /// Get the most recently published pre-release. GitHub lists the newest releases first, so
+    /// the first page holds it.
+    async fn get_dev_release(&self) -> Result<GitHubRelease> {
+        let url = format!(
+            "https://api.github.com/repos/{}/releases?per_page=100",
+            GITHUB_REPO
+        );
+        let releases: Vec<GitHubRelease> = self.fetch_release(&url, "list").await?;
+
+        newest_prerelease(releases).ok_or_else(|| anyhow!("No dev release is published"))
+    }
+
     /// Get a release by its tag. The leading `v` is optional: `0.13.0` and
     /// `v0.13.0` both resolve, because release tags carry the `v` prefix.
     async fn get_release_by_tag(&self, tag: &str) -> Result<GitHubRelease> {
@@ -158,7 +175,7 @@ impl Installer {
         Err(last_error.unwrap_or_else(|| anyhow!("Release {} not found", tag)))
     }
 
-    async fn fetch_release(&self, url: &str, label: &str) -> Result<GitHubRelease> {
+    async fn fetch_release<T: DeserializeOwned>(&self, url: &str, label: &str) -> Result<T> {
         let response = self
             .client
             .get(url)
@@ -174,19 +191,18 @@ impl Installer {
             ));
         }
 
-        let release: GitHubRelease = response
+        response
             .json()
             .await
-            .context("Failed to parse GitHub release response")?;
-
-        Ok(release)
+            .context("Failed to parse GitHub release response")
     }
 
-    /// Get the release to install: the requested tag, or the latest release.
+    /// Get the release to install: `latest` (the default), `dev`, or a release tag.
     async fn resolve_release(&self, version: Option<&str>) -> Result<GitHubRelease> {
-        match version {
+        match version.map(str::trim) {
+            None | Some("latest") => self.get_latest_release().await,
+            Some("dev") => self.get_dev_release().await,
             Some(tag) => self.get_release_by_tag(tag).await,
-            None => self.get_latest_release().await,
         }
     }
 
@@ -415,6 +431,15 @@ fn tags_match(a: &str, b: &str) -> bool {
     a.trim().trim_start_matches('v') == b.trim().trim_start_matches('v')
 }
 
+/// Select the most recently published pre-release. GitHub writes `published_at` as an RFC 3339
+/// UTC time, so the text order is the time order.
+fn newest_prerelease(releases: Vec<GitHubRelease>) -> Option<GitHubRelease> {
+    releases
+        .into_iter()
+        .filter(|release| release.prerelease)
+        .max_by(|a, b| a.published_at.cmp(&b.published_at))
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -439,7 +464,27 @@ async fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{tag_candidates, tags_match};
+    use super::{newest_prerelease, tag_candidates, tags_match, GitHubRelease};
+
+    #[test]
+    fn dev_selects_the_most_recently_published_prerelease() {
+        let release = |tag: &str, prerelease: bool, published_at: &str| GitHubRelease {
+            tag_name: tag.to_string(),
+            prerelease,
+            published_at: Some(published_at.to_string()),
+            assets: Vec::new(),
+        };
+        let releases = vec![
+            release("v0.20.0", false, "2026-10-09T00:00:00Z"),
+            release("v0.19.0-dev.2", true, "2026-10-01T00:00:00Z"),
+            release("v0.18.1-dev.1", true, "2026-10-03T00:00:00Z"),
+        ];
+
+        let newest = newest_prerelease(releases).map(|release| release.tag_name);
+        assert_eq!(newest.as_deref(), Some("v0.18.1-dev.1"));
+        let stable_only = vec![release("v0.18.0", false, "2026-09-24T16:37:54Z")];
+        assert!(newest_prerelease(stable_only).is_none());
+    }
 
     #[test]
     fn prefixed_tag_is_used_as_is() {
