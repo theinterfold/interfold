@@ -11,10 +11,12 @@ use interfold_lib::math::commitments::compute_vk_hash;
 /// `examples/CRISP` after changing ct0 / ct1 / user_data_encryption / crisp_onchain (or the lib
 /// preset). Insecure: `lib::configs::default` uses `insecure::*`; secure: uses `secure::*`.
 pub global CRISP_ONCHAIN_FOLD_EXPECTED_KEY_HASH_INSECURE: Field =
-    0x06c830801c0712d55b8095ea55a13d5122694f33969a2dfd8694575d37a22b48;
+    0x145103da5e2e5e442dc60fe6c41b957cf90b5978dc24a8ceaf5b9c7eaa6b8b00;
 pub global CRISP_ONCHAIN_FOLD_EXPECTED_KEY_HASH_SECURE: Field =
-    0x16818150403cb64eb84e5dccc9d68d33c5a8c8e70fb40de649e6b758db10e7fa;
+    0x044c52411c9a896533b1cc3fa1565a6e36e5cfb30e11fda07492eaba4b272505;
 
+/// The public inputs are `prev_ct_commitment` to `final_ct_commitment`, the two halves of the owner
+/// commitment of the slot, and the committee public key. `CRISPProgram` builds the same list.
 fn main(
     // User Data Encryption Section.
     user_data_encryption_verification_key: UltraHonkVerificationKey,
@@ -33,6 +35,8 @@ fn main(
     is_first_vote: pub bool,
     num_options: pub u32,
     final_ct_commitment: pub Field,
+    owners_commitment_hi: pub Field,
+    owners_commitment_lo: pub Field,
     ct_commitment: Field,
     k1_commitment: Field,
 ) -> pub Field {
@@ -53,6 +57,8 @@ fn main(
             voting_power,
             if is_first_vote { 1 } else { 0 },
             num_options as Field,
+            owners_commitment_hi,
+            owners_commitment_lo,
             final_ct_commitment,
             ct_commitment,
             k1_commitment,

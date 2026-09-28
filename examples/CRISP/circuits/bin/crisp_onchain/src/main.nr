@@ -5,7 +5,9 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crisp_lib::ciphertext_addition::{CiphertextAddition, select_addend};
-use crisp_lib::ecdsa::{address_to_field, derive_address, digest_from_halves, validate_signature};
+use crisp_lib::constants::{MAX_SAFE_OWNERS, MAX_SAFE_SIGNERS};
+use crisp_lib::ecdsa::digest_from_halves;
+use crisp_lib::safe_auth::validate_safe_signatures;
 use crisp_lib::utils::{check_coefficient_values_with_balance, check_coefficient_zero};
 use interfold_lib::configs::default::threshold::{
     L, N, Q_MOD_T_CENTERED, QIS, USER_DATA_ENCRYPTION_BIT_CT, USER_DATA_ENCRYPTION_BIT_K,
@@ -35,10 +37,20 @@ use interfold_lib::math::{
 ///
 /// Votes are stored in an on-chain Merkle tree, where each vote ciphertext is stored at a specific
 /// index. A mapping stores the slot address (Ethereum address) to the index in the Merkle tree.
-///   - For actual votes: the slot address must match the address derived from the signature
-///   - For mask votes: the slot address can be any address (no address match required)
+///   - For actual votes: the owners of the slot must sign the ballot digest
+///   - For mask votes: the slot address can be any address (no signature required)
 /// In both cases, the contract must confirm that the slot has voting power before it accepts the
 /// input. The circuit cannot make that check, because it has no view of the token.
+///
+/// # Who authorises a ballot
+///
+/// The contract supplies a commitment to the owners of the slot and their threshold, and the
+/// digest that they sign. See `crisp_lib::safe_auth`.
+///   - A wallet slot has one owner, the slot address itself, and a threshold of one. The owner
+///     signs `CRISPProgram.ballotDigest`, as with a single ECDSA check.
+///   - A Safe slot has the owners and threshold that the contract reads from the Safe when the
+///     ballot is published. The owners sign the Safe's `SafeMessage` hash of the ballot digest.
+/// The proof always has `MAX_SAFE_SIGNERS` signature slots, so it does not show how many signed.
 ///
 /// Mask votes prevent receipt sharing attacks by creating ambiguity: anyone can submit a zero vote
 /// to any slot, creating a different ciphertext that decrypts to the same value. This makes it
@@ -80,10 +92,14 @@ fn main(
     ct0is: [Polynomial<N>; L],
     ct1is: [Polynomial<N>; L],
     k1: Polynomial<N>,
-    // ECDSA Section.
-    public_key_x: [u8; 32],
-    public_key_y: [u8; 32],
-    signature: [u8; 64],
+    // Authorisation Section. The contract commits to `owners` and `threshold`, and supplies the
+    // digest that they sign.
+    owners: [Field; MAX_SAFE_OWNERS],
+    threshold: u32,
+    public_keys_x: [[u8; 32]; MAX_SAFE_SIGNERS],
+    public_keys_y: [[u8; 32]; MAX_SAFE_SIGNERS],
+    signatures: [[u8; 64]; MAX_SAFE_SIGNERS],
+    owner_indices: [u32; MAX_SAFE_SIGNERS],
     digest_hi: pub Field,
     digest_lo: pub Field,
     // Eligibility Section. The contract supplies both values.
@@ -93,6 +109,9 @@ fn main(
     is_first_vote: pub bool,
     is_mask_vote: bool,
     num_options: pub u32,
+    // The owner commitment of the slot. The contract supplies it.
+    owners_commitment_hi: pub Field,
+    owners_commitment_lo: pub Field,
 ) -> pub (Field, Field, Field) {
     // ============================================================================
     // STEP 1: Pre-compute Commitments
@@ -119,6 +138,11 @@ fn main(
     // The contract must reject an input when the slot has no voting power. That check applies to
     // actual votes and to mask votes, and it replaces the tree membership proof of the `crisp`
     // circuit.
+    //
+    // The circuit does not read `slot_address`. The contract derives the digest and the owner
+    // commitment from the slot, and those two values bind the signatures to it. The value stays
+    // public so that the proof commits to the slot that it writes to.
+    let _ = slot_address;
 
     // ============================================================================
     // STEP 3: The Previous Ciphertext
@@ -182,9 +206,8 @@ fn main(
     // CASE 1: ACTUAL VOTE (is_mask_vote == false)
     //   - This is an eligible voter casting or replacing a ballot
     //   - Verify the ballot is well formed and worth no more than the voting power (valid_vote)
-    //   - Validate the signature over the public digest (valid_signature) to authenticate the
-    //     voter for this ballot
-    //   - Verify the signing address matches the slot address (valid_address)
+    //   - Verify that `threshold` distinct committed owners of the slot signed the public digest
+    //     (valid_signatures)
     //
     // CASE 2: MASK VOTE (is_mask_vote == true)
     //   - This is anyone adding a zero ballot to mask slot activity
@@ -195,13 +218,21 @@ fn main(
     let valid_vote =
         check_coefficient_values_with_balance(k1, Q_MOD_T_CENTERED, voting_power, num_options);
 
-    // The digest is a public input, so the prover cannot select the message that the signature
-    // covers. The contract computes the digest from the round, the slot, and this ballot, which
-    // binds the signature to all three.
+    // The digest is a public input, so the prover cannot select the message that the signatures
+    // cover. The contract computes the digest from the round, the slot, and this ballot, which
+    // binds the signatures to all three.
     let hashed_message = digest_from_halves(digest_hi, digest_lo);
-    let valid_signature = validate_signature(hashed_message, public_key_x, public_key_y, signature);
-    let valid_address =
-        slot_address == address_to_field(derive_address(public_key_x, public_key_y));
+    let valid_signatures = validate_safe_signatures(
+        hashed_message,
+        owners,
+        threshold,
+        owners_commitment_hi,
+        owners_commitment_lo,
+        public_keys_x,
+        public_keys_y,
+        signatures,
+        owner_indices,
+    );
 
     let valid_zero_vote = check_coefficient_zero(k1, num_options);
 
@@ -209,8 +240,7 @@ fn main(
         assert(valid_zero_vote);
     } else {
         assert(valid_vote);
-        assert(valid_signature);
-        assert(valid_address);
+        assert(valid_signatures);
     }
 
     (sum_ct_commitment, ct_commitment, k1_commitment)
