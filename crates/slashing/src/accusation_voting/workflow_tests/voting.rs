@@ -218,9 +218,10 @@ fn concurrent_accusers_converge_on_one_vote_window() {
     let data_hash = [0x11; 32];
 
     // I saw the fault first: my own accusation with my window.
-    let own = signed_vote(&me, sm, &v.e3_id, [0u8; 32], data_hash, NOW + VALIDITY);
-    let id = insert_pending(&mut v, &me, accused, data_hash, NOW + VALIDITY, own);
-    v.pending.get_mut(&id).unwrap().votes_for[0].accusation_id = id;
+    let mine = signed_accusation(&me, &v.e3_id, accused, data_hash, NOW, NOW + VALIDITY);
+    let id = AccusationVoting::accusation_id(&mine);
+    let own = signed_vote(&me, sm, &v.e3_id, id, data_hash, NOW + VALIDITY);
+    insert_pending(&mut v, &me, accused, data_hash, NOW + VALIDITY, own);
     v.received_data.insert(
         (accused, ProofType::C1PkGeneration),
         ReceivedProofData {
@@ -247,6 +248,16 @@ fn concurrent_accusers_converge_on_one_vote_window() {
     let my_revote = my_revote.expect("must re-vote against the peer's window");
     assert_eq!(my_revote.deadline, later + VALIDITY);
     assert_eq!(my_revote.issued_at, later);
+    assert_eq!(my_revote.accusation_id, id);
+    // The adopted window starts a new vote collection, so the old timeout must not end it.
+    let restarts_timeout = actions.windows(2).any(|pair| match pair {
+        [VoteAction::CancelTimeout(a), VoteAction::StartTimeout(b)] => *a == id && *b == id,
+        _ => false,
+    });
+    assert!(
+        restarts_timeout,
+        "the adopted window must get a full vote timeout"
+    );
 
     let vote_b = signed_vote(&b, sm, &v.e3_id, id, data_hash, later + VALIDITY);
     actions.extend(v.on_vote_received(vote_b, &ctx()));
@@ -276,12 +287,20 @@ fn vote_window_moves_once_per_peer_and_never_for_the_accused() {
     let mut v = voting_with(&me, committee, 1, 3);
     let (sm, e3_id, target) = (v.slashing_manager, v.e3_id.clone(), accused.address());
     let data_hash = [0x11; 32];
-    let own = signed_vote(&me, sm, &e3_id, [0; 32], data_hash, NOW + VALIDITY);
-    let id = insert_pending(&mut v, &me, target, data_hash, NOW + VALIDITY, own);
     let accuse = |who: &PrivateKeySigner, issued_at: u64, deadline: u64| {
         signed_accusation(who, &e3_id, target, data_hash, issued_at, deadline)
     };
-    let mut moved = |accusation| !v.on_accusation_received(accusation, &ctx()).is_empty();
+    let id = AccusationVoting::accusation_id(&accuse(&me, NOW, NOW + VALIDITY));
+    let own = signed_vote(&me, sm, &e3_id, id, data_hash, NOW + VALIDITY);
+    insert_pending(&mut v, &me, target, data_hash, NOW + VALIDITY, own);
+    // A move publishes my vote for this accusation, re-signed for the new window.
+    let mut moved = |accusation| {
+        let actions = v.on_accusation_received(accusation, &ctx());
+        actions.iter().any(|a| match a {
+            VoteAction::PublishVote { vote, .. } => vote.accusation_id == id,
+            _ => false,
+        })
+    };
 
     assert!(!moved(accuse(&accused, NOW + 5, NOW + VALIDITY + 5)));
     assert!(!moved(accuse(&b, NOW + 5, NOW + 10)));

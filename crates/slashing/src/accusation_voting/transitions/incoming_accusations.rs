@@ -329,6 +329,9 @@ impl AccusationVoting {
         let pending = self.pending.get_mut(&accusation_id).expect("checked above");
         pending.accusation = incoming;
         pending.votes_for = own_vote.into_iter().collect();
+        // The adopted window starts a new vote collection with a full timeout.
+        actions.push(VoteAction::CancelTimeout(accusation_id));
+        actions.push(VoteAction::StartTimeout(accusation_id));
 
         // Replay peer votes that were signed for this window before we adopted it
         if let Some(buffered) = self.buffered_votes.remove(&accusation_id) {
