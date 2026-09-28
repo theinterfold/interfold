@@ -156,7 +156,7 @@ impl NodeProofAggregator {
         let Some(state) = self.states.get_mut(&e3_id) else {
             let pending = self.pending_inner_proofs.entry(e3_id.clone()).or_default();
             pending.insert(msg.seq, msg.proof);
-            warn!(
+            debug!(
                 "NodeProofAggregator: received DKGInnerProofReady for E3 {} before ThresholdSharePending — prebuffered seq={} (have {})",
                 e3_id,
                 msg.seq,

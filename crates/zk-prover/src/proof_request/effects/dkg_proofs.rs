@@ -72,33 +72,15 @@ impl ProofRequestActor {
         let e_sm_enc_count = msg.e_sm_share_encryption_requests.len();
 
         let total_expected = total_expected_for(sk_enc_count, e_sm_enc_count);
-        let pending_c0 = self
-            .node_agg_meta
-            .get(&e3_id)
-            .and_then(|m| m.pending_c0.clone());
         self.node_agg_meta.insert(
             e3_id.clone(),
             NodeAggregationMeta {
                 party_id: msg.full_share.party_id,
                 total_expected,
-                pending_c0: None,
             },
         );
-        // If C0 proof arrived before meta, emit DKGInnerProofReady now
-        if self.proof_aggregation_enabled {
-            if let Some(c0_proof) = pending_c0 {
-                if let Err(err) = self.bus.publish(
-                    DKGInnerProofReady {
-                        e3_id: e3_id.clone(),
-                        party_id: msg.full_share.party_id,
-                        proof: c0_proof,
-                        seq: 0,
-                    },
-                    ec.clone(),
-                ) {
-                    error!("Failed to publish DKGInnerProofReady for C0: {err}");
-                }
-            }
+        if let Some(held) = self.held_decryption_pending.remove(&e3_id) {
+            self.handle_decryption_share_proofs_pending(held);
         }
 
         let mut pending = PendingThresholdProofs::new(

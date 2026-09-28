@@ -176,3 +176,135 @@ fn quorum_boundary() {
         "quorum must fire at the M-th vote"
     );
 }
+
+/// Build and sign an accusation as `who` with an explicit vote window.
+fn signed_accusation(
+    who: &PrivateKeySigner,
+    e3_id: &E3id,
+    accused: Address,
+    data_hash: [u8; 32],
+    issued_at: u64,
+    deadline: u64,
+) -> ProofFailureAccusation {
+    let mut accusation = ProofFailureAccusation {
+        e3_id: e3_id.clone(),
+        accuser: who.address(),
+        accused,
+        accused_party_id: 1,
+        proof_type: ProofType::C1PkGeneration,
+        data_hash,
+        issued_at,
+        deadline,
+        signed_payload: None,
+        signature: ArcBytes::default(),
+    };
+    let digest = AccusationVoting::accusation_digest(&accusation);
+    let sig = who.sign_message_sync(&digest).unwrap();
+    accusation.signature = ArcBytes::from_bytes(&sig.as_bytes());
+    accusation
+}
+
+/// Two honest accusers of the same fault sign different vote windows; the
+/// committee must converge on the later one so a single-window quorum forms.
+#[test]
+fn concurrent_accusers_converge_on_one_vote_window() {
+    let me = signer(1);
+    let b = signer(2);
+    let c = signer(3);
+    let accused = signer(9).address();
+    let committee = vec![me.address(), b.address(), c.address(), accused];
+    let mut v = voting_with(&me, committee, 1, 3);
+    let sm = v.slashing_manager;
+    let data_hash = [0x11; 32];
+
+    // I saw the fault first: my own accusation with my window.
+    let own = signed_vote(&me, sm, &v.e3_id, [0u8; 32], data_hash, NOW + VALIDITY);
+    let id = insert_pending(&mut v, &me, accused, data_hash, NOW + VALIDITY, own);
+    v.pending.get_mut(&id).unwrap().votes_for[0].accusation_id = id;
+    v.received_data.insert(
+        (accused, ProofType::C1PkGeneration),
+        ReceivedProofData {
+            data_hash,
+            verification_passed: false,
+            evidence: Bytes::new(),
+        },
+    );
+
+    // B accused 5 s later. C votes on B's window before B's accusation reaches me.
+    let later = NOW + 5;
+    let vote_c = signed_vote(&c, sm, &v.e3_id, id, data_hash, later + VALIDITY);
+    let mut actions = v.on_vote_received(vote_c, &ctx());
+
+    let b_accusation = signed_accusation(&b, &v.e3_id, accused, data_hash, later, later + VALIDITY);
+    assert_eq!(AccusationVoting::accusation_id(&b_accusation), id);
+    actions.extend(v.on_accusation_received(b_accusation, &ctx()));
+
+    // I must re-vote against B's window so my vote is valid alongside B's and C's.
+    let my_revote = actions.iter().find_map(|a| match a {
+        VoteAction::PublishVote { vote, .. } if vote.voter == me.address() => Some(vote),
+        _ => None,
+    });
+    let my_revote = my_revote.expect("must re-vote against the peer's window");
+    assert_eq!(my_revote.deadline, later + VALIDITY);
+    assert_eq!(my_revote.issued_at, later);
+
+    let vote_b = signed_vote(&b, sm, &v.e3_id, id, data_hash, later + VALIDITY);
+    actions.extend(v.on_vote_received(vote_b, &ctx()));
+
+    let quorum = actions.iter().find_map(|a| match a {
+        VoteAction::PublishQuorum { quorum, .. } => Some(quorum),
+        _ => None,
+    });
+    let quorum = quorum.expect("3 votes on the same window must reach the 3-vote quorum");
+    assert_eq!(quorum.votes_for.len(), 3);
+    assert!(
+        quorum
+            .votes_for
+            .iter()
+            .all(|vote| vote.deadline == later + VALIDITY),
+        "every vote in the attestation must share one deadline or the contract rejects it"
+    );
+}
+
+/// The accused cannot move a pending window, and no peer can shorten it.
+#[test]
+fn vote_window_ignores_the_accused_and_an_earlier_deadline() {
+    let me = signer(1);
+    let b = signer(2);
+    let accused = signer(9);
+    let committee = vec![me.address(), b.address(), accused.address()];
+    let mut v = voting_with(&me, committee, 1, 3);
+    let data_hash = [0x11; 32];
+    let own = signed_vote(
+        &me,
+        v.slashing_manager,
+        &v.e3_id,
+        [0; 32],
+        data_hash,
+        NOW + VALIDITY,
+    );
+    let id = insert_pending(
+        &mut v,
+        &me,
+        accused.address(),
+        data_hash,
+        NOW + VALIDITY,
+        own,
+    );
+
+    let (e3_id, target) = (v.e3_id.clone(), accused.address());
+    for accusation in [
+        signed_accusation(
+            &accused,
+            &e3_id,
+            target,
+            data_hash,
+            NOW + 5,
+            NOW + VALIDITY + 5,
+        ),
+        signed_accusation(&b, &e3_id, target, data_hash, NOW + 5, NOW + 10),
+    ] {
+        assert!(v.on_accusation_received(accusation, &ctx()).is_empty());
+    }
+    assert_eq!(v.pending[&id].accusation.deadline, NOW + VALIDITY);
+}

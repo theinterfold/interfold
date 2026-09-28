@@ -14,6 +14,13 @@ impl ThresholdKeyshare {
         let (msg, ec) = msg.into_components();
         info!("AllThresholdSharesCollected");
         let state = self.state.try_get()?;
+        // Verification needs own shares; the recorded batch is verified after the transition.
+        if matches!(
+            state.state,
+            KeyshareState::CollectingEncryptionKeys(_) | KeyshareState::GeneratingThresholdShare(_)
+        ) {
+            return Ok(());
+        }
         let e3_id = state.get_e3_id();
         let own_party_id = state.party_id;
         let recovery = self.recovery.try_get()?;

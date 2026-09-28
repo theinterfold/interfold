@@ -499,6 +499,10 @@ ProofFailureAccusation arrives via P2P from another committee member
 ├─ 4. Compute accusation_id:
 │     keccak256(abi.encodePacked(chainId, e3Id, accused, proofType))
 │     → Deterministic: all nodes compute same ID for same accusation
+│     → Already pending: each accuser signs its own window, but one quorum must share one
+│       window. Adopt the incoming window only if it starts and ends later and its accuser is
+│       not the accused. Re-sign our vote for it, replay the buffered votes, and check quorum.
+│       A vote for such a later window waits in that buffer.
 │
 ├─ 5. Determine own vote based on local verification cache:
 │     │
@@ -1388,9 +1392,13 @@ When CommitteeMemberExpelled event arrives from EVM:
     │   │   DecryptionTimeout, NoInputsReceived, ComputeProviderExpired,
     │   │   ComputeProviderFailed, RequesterCancelled) → publishes E3RequestComplete
     │   │   → Single cleanup signal for all per-E3 actors
-    │   │   NOTE: E3Failed with a misbehaviour reason (DKGInvalidShares, etc.) does
-    │   │   NOT trigger E3RequestComplete — the accusation/slashing lifecycle must
-    │   │   complete first.
+    │   │   E3Failed with a misbehaviour reason (DKGInvalidShares, etc.) keeps the
+    │   │   context for the accusation/slashing lifecycle. The router publishes
+    │   │   E3RequestComplete after a grace, counted from the local failure, of one day
+    │   │   plus the largest accusationVoteValidity plus 5 minutes. The timer is in
+    │   │   memory: at EffectsEnabled the router completes every restored context whose
+    │   │   lifecycle stage is Failed, because startup pruned its finalized committee and
+    │   │   no accusation work resumes for it.
     │   └─ E3StageChanged(Failed) and the same non-slashing E3Failed arriving after teardown
     │       are silently ignored (expected on-chain lag)
     │

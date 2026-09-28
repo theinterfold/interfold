@@ -53,6 +53,22 @@ impl ProofRequestActor {
         self.pending.remove(correlation_id);
 
         let local_party_id = key.party_id;
+        // Seq 0 precedes EncryptionKeyCreated so its snapshot commits first: keyshare
+        // re-requests C0 only while it collects keys, and that event can end collection.
+        if self.proof_aggregation_enabled {
+            if let Err(err) = self.bus.publish(
+                DKGInnerProofReady {
+                    e3_id: e3_id.clone(),
+                    party_id: local_party_id,
+                    proof: proof.clone(),
+                    seq: 0,
+                },
+                ec.clone(),
+            ) {
+                error!("Failed to publish DKGInnerProofReady for C0: {err}");
+            }
+        }
+
         if let Err(err) = self.bus.publish(
             EncryptionKeyCreated {
                 e3_id: e3_id.clone(),
@@ -90,33 +106,6 @@ impl ProofRequestActor {
             ) {
                 error!("Failed to publish local C0 ProofVerificationPassed: {err}");
             }
-        }
-
-        // Emit DKGInnerProofReady for C0, or buffer if meta not yet available
-        if let Some(meta) = self.node_agg_meta.get(&e3_id) {
-            if self.proof_aggregation_enabled {
-                if let Err(err) = self.bus.publish(
-                    DKGInnerProofReady {
-                        e3_id: e3_id.clone(),
-                        party_id: meta.party_id,
-                        proof: proof.clone(),
-                        seq: 0,
-                    },
-                    ec.clone(),
-                ) {
-                    error!("Failed to publish DKGInnerProofReady for C0: {err}");
-                }
-            }
-        } else {
-            // ThresholdSharePending hasn't arrived yet — buffer C0 proof
-            self.node_agg_meta.insert(
-                e3_id.clone(),
-                NodeAggregationMeta {
-                    party_id: 0,
-                    total_expected: 0,
-                    pending_c0: Some(proof),
-                },
-            );
         }
     }
 }

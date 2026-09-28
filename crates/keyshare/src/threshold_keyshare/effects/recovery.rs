@@ -154,6 +154,21 @@ impl ThresholdKeyshare {
         Ok(AllThresholdSharesCollected::new(shares, proofs))
     }
 
+    /// Verify a recorded C2/C3 batch that has no verification result yet.
+    pub(in crate::actors::threshold_keyshare) fn verify_recorded_threshold_shares(
+        &mut self,
+        ec: EventContext<Sequenced>,
+    ) -> Result<()> {
+        let recovery = self.recovery.try_get()?;
+        if recovery.collected_threshold_share_ids.is_none()
+            || recovery.share_verification_complete.is_some()
+        {
+            return Ok(());
+        }
+        let batch = Self::rebuild_collected_threshold_shares(&recovery, &self.recovery_payloads)?;
+        self.handle_all_threshold_shares_collected(TypedEvent::new(batch, ec))
+    }
+
     pub(in crate::actors::threshold_keyshare) fn dispatch_expanded_threshold_share_batch(
         &mut self,
         ec: EventContext<Sequenced>,
@@ -328,7 +343,8 @@ impl ThresholdKeyshare {
                     signed_e_sm_share_encryption_proofs: Vec::new(),
                 },
             ))
-        })
+        })?;
+        self.verify_recorded_threshold_shares(ec)
     }
 
     /// Re-create interrupted collectors and process-local jobs from their persisted inputs.
@@ -398,12 +414,7 @@ impl ThresholdKeyshare {
                         return self.dispatch_expanded_threshold_share_batch(ec);
                     }
                     if recovery.collected_threshold_share_ids.is_some() {
-                        let batch = Self::rebuild_collected_threshold_shares(
-                            &recovery,
-                            &self.recovery_payloads,
-                        )?;
-                        return self
-                            .handle_all_threshold_shares_collected(TypedEvent::new(batch, ec));
+                        return self.verify_recorded_threshold_shares(ec);
                     }
                     return self.replay_threshold_shares(self_addr);
                 }
@@ -416,11 +427,7 @@ impl ThresholdKeyshare {
                     return self.propose_dkg_roster(ec);
                 }
                 if recovery.collected_threshold_share_ids.is_some() {
-                    let batch = Self::rebuild_collected_threshold_shares(
-                        &recovery,
-                        &self.recovery_payloads,
-                    )?;
-                    return self.handle_all_threshold_shares_collected(TypedEvent::new(batch, ec));
+                    return self.verify_recorded_threshold_shares(ec);
                 }
                 self.replay_threshold_shares(self_addr)
             }

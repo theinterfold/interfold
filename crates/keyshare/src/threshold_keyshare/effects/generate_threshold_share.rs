@@ -132,6 +132,7 @@ impl ThresholdKeyshare {
                     },
                 ))
             })?;
+            self.verify_recorded_threshold_shares(ec)?;
         }
         Ok(())
     }

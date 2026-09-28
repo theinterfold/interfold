@@ -85,8 +85,9 @@ impl AccusationVoting {
 
         let accusation_id = Self::accusation_id(&accusation);
 
-        // Don't process duplicate accusations
+        // Peers that detect the same fault accuse with their own windows; converge on the latest.
         if self.pending.contains_key(&accusation_id) {
+            self.adopt_later_vote_window(accusation_id, accusation, ec, actions);
             return;
         }
 
@@ -280,6 +281,60 @@ impl AccusationVoting {
         }
 
         // Check quorum
+        self.check_quorum(accusation_id, ec, actions);
+    }
+
+    /// Moves a pending accusation to a peer's later vote window, re-signing our vote,
+    /// so every vote in the quorum shares the one window the contract verifies.
+    fn adopt_later_vote_window(
+        &mut self,
+        accusation_id: [u8; 32],
+        incoming: ProofFailureAccusation,
+        ec: &EventContext<Sequenced>,
+        actions: &mut Vec<VoteAction>,
+    ) {
+        let Some(pending) = self.pending.get(&accusation_id) else {
+            return;
+        };
+        let held = &pending.accusation;
+        // Only a later start and end from a peer other than the accused moves the window, so no
+        // one can shorten it and the accused cannot reset the votes already collected.
+        if incoming.accuser == incoming.accused
+            || incoming.issued_at <= held.issued_at
+            || incoming.deadline <= held.deadline
+        {
+            return;
+        }
+        let mut own_vote = pending
+            .votes_for
+            .iter()
+            .find(|v| v.voter == self.my_address)
+            .cloned();
+        if let Some(vote) = own_vote.as_mut() {
+            vote.issued_at = incoming.issued_at;
+            vote.deadline = incoming.deadline;
+            match self.sign_vote_digest(vote) {
+                Ok(sig) => vote.signature = ArcBytes::from_bytes(&sig),
+                Err(err) => {
+                    error!("Failed to re-sign AccusationVote: {err}");
+                    return;
+                }
+            }
+            actions.push(VoteAction::PublishVote {
+                vote: vote.clone(),
+                ec: ec.clone(),
+            });
+        }
+        let pending = self.pending.get_mut(&accusation_id).expect("checked above");
+        pending.accusation = incoming;
+        pending.votes_for = own_vote.into_iter().collect();
+
+        // Replay peer votes that were signed for this window before we adopted it
+        if let Some(buffered) = self.buffered_votes.remove(&accusation_id) {
+            for vote in buffered {
+                self.on_vote_received_inner(vote, ec, actions);
+            }
+        }
         self.check_quorum(accusation_id, ec, actions);
     }
 }
