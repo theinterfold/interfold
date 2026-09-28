@@ -35,7 +35,7 @@ impl<let L: u32> Configs<L> {
 /// **Consumes:** C6 `d` commitments for each reconstructing party (same order as shares).
 ///
 /// **Verifies:** Share binding to C6; Lagrange combine per limb; CRT glue; decode mod `t`.
-pub struct DecryptedSharesAggregation<let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let T: u32, let BIT_NOISE: u32, let BIT_D_NATIVE: u32> {
+pub struct DecryptedSharesAggregation<let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let T: u32, let BIT_NOISE: u32, let BIT_D_NATIVE: u32, let BIT_CRT_QUOTIENT: u32> {
     /// Circuit parameters including crypto constants
     configs: Configs<L>,
 
@@ -59,7 +59,7 @@ pub struct DecryptedSharesAggregation<let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u
     crt_quotients: [Polynomial<MAX_MSG_NON_ZERO_COEFFS>; L],
 }
 
-impl<let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let T: u32, let BIT_NOISE: u32, let BIT_D_NATIVE: u32> DecryptedSharesAggregation<MAX_MSG_NON_ZERO_COEFFS, L, T, BIT_NOISE, BIT_D_NATIVE> {
+impl<let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let T: u32, let BIT_NOISE: u32, let BIT_D_NATIVE: u32, let BIT_CRT_QUOTIENT: u32> DecryptedSharesAggregation<MAX_MSG_NON_ZERO_COEFFS, L, T, BIT_NOISE, BIT_D_NATIVE, BIT_CRT_QUOTIENT> {
     pub fn new(
         configs: Configs<L>,
         expected_d_commitments: [Field; T + 1],
@@ -100,7 +100,7 @@ impl<let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let T: u32, let BIT_NOISE: u3
         );
 
         // Step 3: Verify CRT reconstruction: u^{(l)} + r^{(l)} * q_l = u_global
-        verify_crt_reconstruction::<MAX_MSG_NON_ZERO_COEFFS, L>(
+        verify_crt_reconstruction::<MAX_MSG_NON_ZERO_COEFFS, L, BIT_CRT_QUOTIENT>(
             self.configs.qis,
             self.u_global,
             self.crt_quotients,
@@ -277,7 +277,21 @@ pub fn compute_crt_components<let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let 
 }
 
 /// Verifies CRT reconstruction: u^{(l)} + r^{(l)} * q_l = u_global for all bases l
-pub fn verify_crt_reconstruction<let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32>(
+/// Verifies that `u_global` is the CRT reconstruction of the per-limb residues.
+///
+/// Each quotient must fit `BIT_CRT_QUOTIENT` bits, which is `max_l ceil(log2(Q / q_l))`. Without
+/// that bound the check is empty: every `q_l` is invertible modulo the proof-system prime, so for
+/// any target `u*` there is an `r` satisfying `u_crt + r * q_l == u*`, and the prover could publish
+/// any plaintext for the same committed shares.
+///
+/// With it, `u_crt < q_l` (enforced by `reduce_mod` in `compute_crt_components`) and
+/// `r < 2^BIT_CRT_QUOTIENT` give `u_crt + r * q_l < 2Q`, far below the prime, so the equation holds
+/// over the integers. `u_global` then needs no bound of its own: the equality forces it to equal a
+/// provably small expression. It follows that `u_global = u_crt (mod q_l)` for every limb, so
+/// `u_global mod Q` is the unique reconstruction, and the decode step already reduces mod `Q`.
+///
+/// The check is one-sided because the honest quotient is `floor(u_global / q_l)`, never negative.
+pub fn verify_crt_reconstruction<let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let BIT_CRT_QUOTIENT: u32>(
     qis: [Field; L],
     u_global: Polynomial<MAX_MSG_NON_ZERO_COEFFS>,
     crt_quotients: [Polynomial<MAX_MSG_NON_ZERO_COEFFS>; L],
@@ -285,6 +299,12 @@ pub fn verify_crt_reconstruction<let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32>(
 ) {
     for basis_idx in 0..L {
         let q_l = qis[basis_idx];
+
+        // Bound each quotient so the equality below holds over the integers, not just mod p.
+        for coeff_idx in 0..MAX_MSG_NON_ZERO_COEFFS {
+            crt_quotients[basis_idx].coefficients[coeff_idx]
+                .assert_max_bit_size::<BIT_CRT_QUOTIENT>();
+        }
 
         // Compute r^{(l)} * q_l
         let r_times_q = crt_quotients[basis_idx].mul_scalar(q_l);
