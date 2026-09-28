@@ -292,21 +292,24 @@ not contain a `data_availability` block, and `interfold start` needs one. See
 ### `interfold start`
 
 Starts the ciphernode in the foreground. The node syncs chain events, joins the P2P network, and
-serves on committees. Stop it with `SIGINT` (Ctrl+C) or `SIGTERM`. The node then does a controlled
-shutdown.
+serves on committees. With `--bootstrap`, it only syncs chain events and joins the network, so that
+other nodes can find each other through it. Stop it with `SIGINT` (Ctrl+C) or `SIGTERM`. The node
+then does a controlled shutdown.
 
 ```bash
-interfold start [--peer <PEER>]...
+interfold start [--peer <PEER>]... [--bootstrap]
 ```
 
-| Flag     | Value    | Default                    | Description                                                                                                               |
-| -------- | -------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `--peer` | `<PEER>` | The peers from the profile | libp2p multiaddr of a peer to dial. Repeat the flag for more peers. The node adds these peers to `peers` from the config. |
+| Flag          | Value    | Default                    | Description                                                                                                                                                                  |
+| ------------- | -------- | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--peer`      | `<PEER>` | The peers from the profile | libp2p multiaddr of a peer to dial. Repeat the flag for more peers. The node adds these peers to `peers` from the config.                                                    |
+| `--bootstrap` | None     | Off                        | Run as a bootstrap node: no committee work, proofs, votes, or transactions, and no memory for the prover. See [Run a bootstrap node](/operate/running#run-a-bootstrap-node). |
 
 The command holds a lock on the data folder of the profile, so a second process cannot use the same
-data. It also opens the control port and, when `dashboard_port` is set, a dashboard at
-`http://127.0.0.1:<dashboard_port>`. The node stops with an error when its chain connection fails or
-when its event store fails.
+data. A data folder keeps the role, full or bootstrap, of the first node that used it, and the
+command does not start a node of the other role on it. It also opens the control port and, when
+`dashboard_port` is set, a dashboard at `http://127.0.0.1:<dashboard_port>`. The node stops with an
+error when its chain connection fails or when its event store fails.
 
 ### `interfold nodes`
 
@@ -642,14 +645,17 @@ the storage schema and the binary refuses to load the old data folder.
 interfold node reset-data --yes
 ```
 
-| Flag    | Value | Default | Description                                                                                     |
-| ------- | ----- | ------- | ----------------------------------------------------------------------------------------------- |
-| `--yes` | None  | Off     | Confirms the deletion. Without it, the command stops with a message that lists what it deletes. |
+| Flag                 | Value | Default | Description                                                                                                                     |
+| -------------------- | ----- | ------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `--yes`              | None  | Off     | Confirms the deletion. Without it, the command stops with a message that lists what it deletes.                                 |
+| `--allow-active-e3s` | None  | Off     | Deletes the state even when this node holds a key share for an E3 that it has not seen complete. The node loses that key share. |
 
 The command first writes an encrypted backup of the wallet key and libp2p key to
 `identity-backup-<name>-<timestamp>.json` next to the database. Then it deletes the key/value store
 and the event log, writes the identity back, and reads it again to confirm. The command refuses to
-run while the node runs.
+run while the node runs. It also refuses, and deletes nothing, while the node holds a key share for
+an E3 that it has not seen complete, including an E3 that shows `Failed`. See
+[Reset node state](/operate/upgrades#reset-node-state).
 
 <Callout type='warning'>
   Do not delete the data folder by hand. The wallet key and the libp2p key are in the same store as

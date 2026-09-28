@@ -3,13 +3,16 @@
 //! Durable schema admission before runtime state is loaded.
 
 use super::*;
+use e3_data::DataStore;
 
 /// Validate or initialize the durable schema marker before runtime actors can write state.
+///
+/// Returns whether this call stamped the marker, which happens only for a new data directory.
 pub async fn preflight_schema_version(
     repositories: &Repositories,
     aggregate_config: &AggregateConfig,
     eventstore: &Recipient<EventStoreQueryBy<SeqAgg>>,
-) -> Result<()> {
+) -> Result<bool> {
     let repo = repositories.schema_version();
     let persisted = repo.read().await?;
     let has_existing_state = if persisted.is_none() {
@@ -19,14 +22,40 @@ pub async fn preflight_schema_version(
         false
     };
     match decide_schema_version(persisted, SCHEMA_VERSION, has_existing_state) {
-        SchemaVersionDecision::Proceed => Ok(()),
+        SchemaVersionDecision::Proceed => Ok(false),
         SchemaVersionDecision::WriteCurrent => {
             info!("Stamping on-disk schema version {SCHEMA_VERSION}.");
             repo.write_sync(&SCHEMA_VERSION).await?;
-            Ok(())
+            Ok(true)
         }
         SchemaVersionDecision::Halt(reason) => {
             bail!("Schema version check failed: {reason}");
+        }
+    }
+}
+
+/// Stamp the node role on a new data directory, or refuse a directory that another role wrote.
+///
+/// Run this right after schema admission, before runtime actors can write state. `new_directory`
+/// is the result of `preflight_schema_version`: true only when that call stamped the directory.
+pub async fn preflight_node_role(
+    repositories: &Repositories,
+    new_directory: bool,
+    role: NodeRole,
+) -> Result<()> {
+    let repo = repositories.node_role();
+    // A storage error must not read as an absent marker, or a failed read could let a full node
+    // restamp a bootstrap node's directory.
+    let persisted = DataStore::from(&repo).read_checked::<NodeRole>().await?;
+    match decide_node_role(persisted, role, new_directory) {
+        NodeRoleDecision::Proceed => Ok(()),
+        NodeRoleDecision::Write => {
+            info!("Stamping node role {role} on the data directory.");
+            repo.write_sync(&role).await?;
+            Ok(())
+        }
+        NodeRoleDecision::Halt(reason) => {
+            bail!("Node role check failed: {reason}");
         }
     }
 }

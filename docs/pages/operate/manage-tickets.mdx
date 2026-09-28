@@ -1,147 +1,268 @@
 ---
-title: 'Manage Tickets & Optimise Selection'
+title: 'Manage Tickets'
 description:
-  'How to buy, burn, and manage your ciphernode tickets for optimal committee selection probability'
+  'Buy, check, and redeem ciphernode tickets with the interfold CLI or direct contract calls, and
+  keep the ticket balance above the active minimum.'
 ---
 
-# Manage Tickets & Optimise Selection
+import { Callout, Steps, Tabs } from 'nextra/components'
+import { LinkCard, LinkCards } from '@/components/ui'
 
-Tickets determine how often your ciphernode is selected for E3 committees. This tutorial covers the
-practical aspects of managing your ticket balance.
+# Manage Tickets
 
-> **What you'll learn:** How ticket balances map to selection probability, how the bond owner funds
-> and removes tickets, the snapshot rule that decides which tickets count for a given E3 request,
-> and a simple strategy for keeping your node eligible.
->
-> **Prerequisites:** A registered ciphernode with a ciphernode bond (see
-> [Registration](/ciphernode-operators/registration)).
+This page gives the procedures to buy, check, and redeem the tickets of a ciphernode. It is for the
+bond owner of a registered operator. At the end, you can change the ticket balance with the CLI or
+with contract calls, and you know which errors stop each step.
 
----
+For the concepts behind tickets, read [Tickets and sortition](/operate/tickets-and-sortition). For
+every flag, see [`interfold ciphernode tickets`](/reference/cli#interfold-ciphernode-tickets).
 
-## How Tickets Affect Selection
+## Before you start
 
-Each ticket gives you one entry in the sortition lottery. For each E3 request, your node computes a
-score for every ticket it holds:
+You need these items:
 
-```text
-score = keccak256(your_address, ticket_number, e3Id, seed)
+- A registered operator. `addTicketBalanceFor` reverts with `NotRegistered` before registration. See
+  [Registration](/operate/registration).
+- The bond owner wallet, with the ticket collateral and ETH for gas.
+- For the CLI: an interfold configuration whose wallet is the bond owner. The examples use
+  `/path/to/owner.yaml`. The ticket commands send each transaction from the wallet of the
+  configuration. The `--operator` flag selects the operator position.
+
+If the operator is its own bond owner, use the node configuration and omit `--operator`. The CLI
+then uses the address of the configured wallet. If the bond owner is a Safe, use the
+[contract calls](#buy-tickets) through the Safe interface.
+
+On Sepolia, `interfold faucet` sends test FOLD and the fee token to the wallet of the configuration.
+On Sepolia, the fee token is the same mock USDC that the ticket token uses as collateral. The
+command needs the `faucet` contract in the chain configuration.
+
+<Callout type='info'>
+  The `--amount` values are token amounts, not ticket counts. `tickets buy` takes an amount of
+  ticket collateral. `tickets burn` takes an amount of tFOLD. The CLI converts the value with the
+  decimals of the token, so `--amount 1000` means 1,000 whole tokens.
+</Callout>
+
+## Check the ticket balance
+
+Run the status command for the operator:
+
+```bash
+interfold ciphernode status --operator 0xOPERATOR
 ```
 
-Only your **best** (lowest) score is submitted. More tickets means more draws from the lottery,
-which means a better best score on average.
+Add `--chain <name>` when the configuration has more than one chain. Without `--chain`, the CLI uses
+the first chain entry. The output has this format:
 
-**Selection probability scales linearly.** If the network has 1000 total tickets and you hold 100,
-you'll be selected roughly 10% of the time (assuming no buffer effects).
+```text
+Ciphernode status on mainnet:
+  Operator key: 0xOPERATOR
+  Bond owner: 0xBOND_OWNER
+  Registered: true
+  Active: true
+  Exit pending: false
+  Ticket balance: 2000 (2 available)
+  Ciphernode bond: 32000
+  Pending exits: tickets=0, bond=0
+  Requirements: minTickets=1, ticketPrice=1000 tFOLD, ciphernodeBond=32000 FOLD
+```
 
----
+| Field            | Meaning                                                                                                                            |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `Ticket balance` | The tFOLD balance in token units. The number in parentheses is `availableTickets`.                                                 |
+| `Active`         | The result of `isActive(operator)`. See [When a ciphernode is active](/operate/tickets-and-sortition#when-a-ciphernode-is-active). |
+| `Exit pending`   | `true` while a deregistration waits for its exit delay.                                                                            |
+| `Pending exits`  | Ticket collateral and FOLD in the exit queue that the bond owner did not claim yet.                                                |
+| `Requirements`   | The live `minTicketBalance`, `ticketPrice`, and `requiredCiphernodeBond`.                                                          |
 
-## Buying Tickets
+The same values are available from `BondingRegistry` with `getTicketBalance(operator)`,
+`availableTickets(operator)`, `pendingExits(operator)`, and `previewClaimable(operator)`. For the
+balance that an E3 used, call `getTicketBalanceAtBlock(operator, timepoint)` with the
+`requestBlock - 1` timepoint of that E3.
 
-From an EOA bond-owner config, fund the operator:
+## Buy tickets
+
+To calculate the deposit, multiply the number of tickets by `ticketPrice`. For example, 2 tickets on
+mainnet at 1,000 sUSDS shares each need a deposit of 2,000 sUSDS shares. A remainder below one
+`ticketPrice` stays in the balance but does not give a ticket.
+
+<Tabs items={['CLI', 'Contract calls']}>
+<Tabs.Tab unmount={false}>
+
+<Steps>
+
+### Read the ticket price
+
+Run `interfold ciphernode status --operator 0xOPERATOR`.
+
+Read `ticketPrice` in the `Requirements` line.
+
+### Deposit the collateral
+
+Run the buy command from the bond owner configuration:
 
 ```bash
 interfold --config /path/to/owner.yaml ciphernode tickets \
-  --operator 0xOPERATOR buy --amount 100
+  --operator 0xOPERATOR buy --amount 2000
 ```
 
-This:
-
-1. Approves the ticket contract to spend your ticket collateral, if needed
-2. Deposits the ticket collateral
-3. Mints equivalent tFOLD to your balance
-
-Your available ticket count is:
+The CLI reads the ticket token and its collateral token from `BondingRegistry`. If the allowance is
+too low, the CLI first approves the ticket token contract for the amount. Then it calls
+`addTicketBalanceFor(operator, amount)`. The output shows the new ticket count, read back from the
+chain:
 
 ```text
-availableTickets = floor(ticketTokenBalance / ticketPrice)
+Deposited 2000 <SYMBOL> for operator 0xOPERATOR. Ticket balance is now 2 tickets (tx: 0x…)
 ```
 
-Check `ticketPrice` with `interfold ciphernode status` — it's set by governance and may change.
+### Verify the status
 
----
+Run `interfold ciphernode status --operator 0xOPERATOR`.
 
-## Burning Tickets
+Make sure that `Active` is `true` and that the available ticket count is correct.
 
-Queue underlying ticket collateral for withdrawal:
+</Steps>
+
+</Tabs.Tab>
+<Tabs.Tab unmount={false}>
+
+Send both transactions from the bond owner wallet or Safe. Get the addresses from
+[Contracts and addresses](/reference/contracts), or read them from `BondingRegistry` with
+`getTicketToken()` and from the ticket token with `underlying()`.
+
+<Steps>
+
+### Approve the ticket token
+
+On the collateral token, call `approve(<InterfoldTicketToken>, amount)`.
+
+The spender is the ticket token contract, not `BondingRegistry`. The ticket token pulls the
+collateral during the deposit.
+
+### Add the ticket balance
+
+On `BondingRegistry`, call `addTicketBalanceFor(operator, amount)`.
+
+The registry emits `TicketBalanceUpdated` with the reason `DEPOSIT`. If the operator becomes active,
+it also emits `OperatorActivationChanged`.
+
+### Verify the status
+
+Run `interfold ciphernode status --operator 0xOPERATOR`, or call `availableTickets(operator)`.
+
+</Steps>
+
+The **Buy tickets** step of the
+[hosted operator guide](https://dashboard.theinterfold.com/#operator) sends the same two
+transactions from a browser wallet. It calculates the amount from the number of tickets that you
+enter.
+
+</Tabs.Tab>
+</Tabs>
+
+## Redeem tickets
+
+A redemption has three parts. The burn removes the tickets at once. The collateral then waits in the
+exit queue for `exitDelay`. After the delay, a claim pays the collateral to the bond owner.
+
+<Callout type='warning'>
+  A burn takes effect in the same transaction and you cannot cancel it. If the balance drops below
+  `minTicketBalance`, the operator becomes inactive and cannot enter new committees. The collateral
+  in the exit queue stays slashable until the claim.
+</Callout>
+
+<Steps>
+
+### Burn the tickets
+
+Run the burn command from the bond owner configuration. The amount is in tFOLD units:
 
 ```bash
 interfold --config /path/to/owner.yaml ciphernode tickets \
-  --operator 0xOPERATOR burn --amount 25
+  --operator 0xOPERATOR burn --amount 1000
 ```
 
-Burning takes effect **immediately**. If it drops you below `minTicketBalance`, your node becomes
-inactive and won't be selected for any further committees until the owner tops it up. After the exit
-delay, the owner receives the ticket collateral through `claimExitsFor`.
+The CLI calls `removeTicketBalanceFor(operator, amount)`. The registry burns the tFOLD and queues
+the same amount of collateral for `exitDelay` seconds. The output shows the new ticket count:
 
----
+```text
+Burned 1000 tFOLD from operator 0xOPERATOR. Ticket balance is now 1 tickets (tx: 0x…)
+```
 
-## The Snapshot Rule
+`interfold ciphernode deactivate --tickets <amount>` sends the same transaction.
 
-Balances are snapshotted at **`requestBlock - 1`**. The field name is retained for compatibility,
-but it stores the EIP-6372 request timestamp. This means:
+### Wait for the exit delay
 
-- Tickets added **before** the request timestamp count for that round
-- Tickets added **at the request timestamp or later** do not count. They apply to future rounds
-- You cannot front-run a request by depositing tickets at the last moment
+Run `interfold ciphernode status --operator 0xOPERATOR` to see the `Pending exits` amounts.
 
-**Practical tip:** Add tickets well ahead of anticipated demand. Don't wait for a specific E3
-request.
+To see the amount that is ready now, call `previewClaimable(operator)` on `BondingRegistry`.
 
----
+### Claim the collateral
 
-## Minimum Balance
-
-Your node must hold at least `minTicketBalance` tickets to be active. If your balance drops below
-this (e.g. after burning or after a slashing penalty), your node transitions to **Inactive** and
-stops being eligible for selection.
-
-Check the current minimum:
+Run the claim command:
 
 ```bash
-interfold ciphernode status
+interfold --config /path/to/owner.yaml ciphernode bond \
+  --operator 0xOPERATOR claim --max-bond 0
 ```
 
----
+`--max-bond 0` claims only ticket collateral. Any account can send this claim, and the collateral
+always goes to the bond owner. Without `--max-ticket` and `--max-bond`, the command claims all the
+unlocked ticket collateral and FOLD, and only the bond owner can send it. The output is
+`Claimed exits for operator 0xOPERATOR (tx: 0x…)`.
 
-## Strategy Tips
+</Steps>
 
-### Keep a buffer
+The contract call for the claim is
+`claimExitsFor(operator, maxTicketAmount, maxCiphernodeBondAmount)` on `BondingRegistry`. To claim
+everything with a contract call, the bond owner sets both maximums to the largest `uint256` value.
 
-Maintain a balance above the minimum — slashing deductions or governance changes to `ticketPrice`
-could temporarily drop you below the threshold. A buffer of 2-3x the minimum is reasonable.
+## Keep the balance healthy
 
-### Add tickets before demand spikes
+- **Deposit before demand.** An E3 uses the balance at `requestBlock - 1`. A deposit counts only for
+  E3s that are requested after the deposit block.
+- **Keep a margin above the minimum.** A ticket slash burns tFOLD from the active balance first. A
+  governance increase of `ticketPrice` also reduces the ticket count of the same collateral. Either
+  change can make the operator inactive.
+- **Match tickets to capacity.** The node takes part in at most one E3 for each ticket at the same
+  time. More tickets let the node serve more E3s in parallel, so the host needs the resources for
+  them. See [Requirements](/operate/requirements).
+- **Watch the events.** `TicketBalanceUpdated` reports each balance change, and
+  `OperatorActivationChanged` reports each change of the active status.
 
-If you know a high-value E3 is coming (or you see increased request frequency), add tickets one or
-two requests ahead so they're captured in the snapshot.
+## Errors
 
-### Monitor the economics
+| Error                                         | Cause                                                        | Action                                                              |
+| --------------------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------- |
+| `NotRegistered`                               | The operator is not registered.                              | Register the operator first.                                        |
+| `NotBondOwner(caller, operator)`              | The wallet that sent the transaction is not the bond owner.  | Use the bond owner configuration or wallet.                         |
+| `ExitInProgress`                              | A deregistration waits for its exit delay.                   | Wait until the exit delay ends.                                     |
+| `OperatorUnderSlash`                          | A slash proposal against the operator is open.               | Wait until the proposal is executed, cancelled, or expired.         |
+| `InsufficientBalance`                         | The burn amount is larger than the tFOLD balance.            | Burn a smaller amount.                                              |
+| `ZeroAmount`                                  | The amount is 0.                                             | Use an amount larger than 0.                                        |
+| `ExitNotReady`                                | No queued amount is unlocked yet.                            | Wait for the exit delay, then claim again.                          |
+| `OperatorInActiveCommittee`                   | The operator is on a committee whose E3 is not terminal yet. | Wait until the E3 completes or fails and the committee is released. |
+| `Fractional precision exceeds token decimals` | The CLI amount has more decimal places than the token.       | Use fewer decimal places.                                           |
 
-| Parameter             | What it means                 | How to check                  |
-| --------------------- | ----------------------------- | ----------------------------- |
-| `ticketPrice`         | Ticket collateral per ticket  | `interfold ciphernode status` |
-| `minTicketBalance`    | Minimum to stay active        | `interfold ciphernode status` |
-| `availableTickets`    | Your current ticket count     | `interfold ciphernode status` |
-| Total network tickets | Sum of all operators' tickets | On-chain query (registry)     |
+## Next steps
 
-## What Happens When You're Selected
-
-When the sortition algorithm picks your node:
-
-1. Your node auto-submits its winning ticket on-chain
-2. After enough tickets are submitted, the committee is finalised
-3. Your node participates in DKG → computation → decryption
-4. On successful completion, you earn rewards
-
-If you miss the submission window (10s on Sepolia), your ticket isn't counted and another node takes
-the slot. See [Troubleshooting](./operator-troubleshooting) for common causes.
-
----
-
-## Related
-
-- [Tickets & Sortition](/ciphernode-operators/tickets-and-sortition) — full reference on the ticket
-  system
-- [Sortition Internals](/internals/sortition) — technical deep dive on the scoring algorithm
-- [Exits & Slashing](/ciphernode-operators/exits-and-slashing) — what happens if something goes
-  wrong
+<LinkCards min={230}>
+  <LinkCard
+    title='Tickets and sortition'
+    href='/operate/tickets-and-sortition'
+    icon='ticket'
+    tag='Concepts'
+  >
+    How the ticket balance at the request time feeds committee selection.
+  </LinkCard>
+  <LinkCard title='Node dashboard' href='/operate/dashboard' icon='dashboard' tag='Monitor'>
+    See the ticket balance and the active status of the node in a browser.
+  </LinkCard>
+  <LinkCard
+    title='Exits and slashing'
+    href='/operate/exits-and-slashing'
+    icon='gavel'
+    tag='Maintain'
+  >
+    Leave the network, claim collateral, and respond to a slash proposal.
+  </LinkCard>
+</LinkCards>

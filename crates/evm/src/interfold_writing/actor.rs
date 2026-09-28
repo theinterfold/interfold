@@ -7,10 +7,11 @@
 //! Interfold contract publication boundary.
 
 use crate::contracts::{ICiphernodeRegistry, IInterfold};
-use crate::domain::error_decoder::{contains_error_selector, format_evm_error};
+use crate::domain::error_decoder::format_evm_error;
 use crate::domain::plaintext_publication::validate_plaintext_output;
 use crate::domain::plaintext_publication::{
-    failure_watch_delay, failure_watch_party_id, FailureStageDiscoveryGate,
+    failure_watch_delay, failure_watch_party_id, BlockedSettlementBackoff,
+    FailureStageDiscoveryGate,
 };
 use crate::domain::publication_replay::ReplaySubmissionGate;
 use crate::helpers::{encode_zk_proof, transaction_nonce_guard, EthProvider};
@@ -52,6 +53,7 @@ pub struct InterfoldSolWriter<P> {
     failure_timers: HashMap<E3id, SpawnHandle>,
     failure_stage_discoveries: FailureStageDiscoveryGate,
     failure_settlements: ReplaySubmissionGate<E3id, ()>,
+    blocked_settlements: BlockedSettlementBackoff,
 }
 
 impl<P: Provider + WalletProvider + Clone + 'static> InterfoldSolWriter<P> {
@@ -100,6 +102,7 @@ impl<P: Provider + WalletProvider + Clone + 'static> InterfoldSolWriter<P> {
             failure_timers: HashMap::new(),
             failure_stage_discoveries: FailureStageDiscoveryGate::default(),
             failure_settlements,
+            blocked_settlements: BlockedSettlementBackoff::default(),
         })
     }
 
@@ -151,10 +154,6 @@ impl<P: Provider + WalletProvider + Clone + 'static> InterfoldSolWriter<P> {
             ],
             addr.into(),
         );
-    }
-
-    fn is_active_aggregator_for(&self, e3_id: &E3id) -> bool {
-        self.active_aggregators.get(e3_id).copied().unwrap_or(false)
     }
 
     fn now_unix_secs() -> u64 {

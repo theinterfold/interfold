@@ -6,16 +6,18 @@ use super::effects::*;
 use super::*;
 use e3_events::EventSource;
 use std::collections::HashSet;
+use tracing::debug;
 
 const PUBLICATION_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(30);
 const FAILURE_RETRY_DELAY: Duration = Duration::from_secs(30);
 const FAILURE_PARTY_STAGGER_SECS: u64 = 15;
 
 impl<P: Provider + WalletProvider + Clone + 'static> InterfoldSolWriter<P> {
+    /// Submit a locally computed plaintext. The node that computed it submits it even after a
+    /// failover demoted it: failover promotes a standby after a fixed budget, also while an
+    /// honest aggregator is still proving. The submission skips a plaintext that is already on
+    /// chain, so the first valid result wins.
     fn try_start_plaintext(&mut self, e3_id: &E3id, ctx: &mut actix::Context<Self>) {
-        if !self.is_active_aggregator_for(e3_id) {
-            return;
-        }
         if let Some(intent) = self.publication.start(e3_id) {
             ctx.notify(SubmitPlaintext(intent));
         }
@@ -239,13 +241,8 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<PlaintextAggregated
 
     fn handle(&mut self, msg: PlaintextAggregated, ctx: &mut Self::Context) -> Self::Result {
         let e3_id = msg.e3_id.clone();
-        // Replay retains the durable local intent while the persisted aggregator role is restored.
-        // Live results still require the active role when they enter the outbox, and every
-        // submission attempt is role-gated by `try_start_plaintext`.
-        if self.effects_enabled && !self.is_active_aggregator_for(&e3_id) {
-            info!(e3_id = %e3_id, "Ignoring plaintext result while this node is not the active aggregator");
-            return;
-        }
+        // Only this node's own result reaches here (see the router above). The aggregator that
+        // computed it may have been demoted by failover since; it still publishes it.
         self.publication.record(e3_id.clone(), msg);
         self.try_start_plaintext(&e3_id, ctx);
     }
@@ -262,7 +259,7 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<SubmitPlaintext>
 
     fn handle(&mut self, command: SubmitPlaintext, _ctx: &mut Self::Context) -> Self::Result {
         let msg = command.0;
-        if !self.is_active_aggregator_for(&msg.e3_id) || !self.publication.contains(&msg.e3_id) {
+        if !self.publication.contains(&msg.e3_id) {
             self.publication.finish(&msg.e3_id, false);
             return Box::pin(async {}.into_actor(self));
         }
@@ -413,10 +410,15 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<ProcessFailedE3>
                 let terminal = match &result {
                     Ok(FailureSettlementOutcome::Submitted(_)
                     | FailureSettlementOutcome::Completed) => true,
-                    Ok(FailureSettlementOutcome::Pending) => false,
+                    Ok(FailureSettlementOutcome::Pending | FailureSettlementOutcome::Blocked) => {
+                        false
+                    }
                     Err(error) => failure_settlement_error_is_terminal(error),
                 };
                 actor.failure_settlements.finish(&e3_id, terminal);
+                if terminal {
+                    actor.blocked_settlements.clear(&e3_id);
+                }
 
                 match result {
                     Ok(FailureSettlementOutcome::Submitted(receipt)) => {
@@ -431,6 +433,24 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<ProcessFailedE3>
                     }
                     Ok(FailureSettlementOutcome::Pending) => {
                         ctx.notify_later(ProcessFailedE3 { e3_id }, FAILURE_RETRY_DELAY);
+                    }
+                    Ok(FailureSettlementOutcome::Blocked) => {
+                        let (delay, first) = actor.blocked_settlements.record(&e3_id);
+                        if first {
+                            info!(
+                                e3_id = %e3_id,
+                                retry_in_secs = delay.as_secs(),
+                                "Failure settlement is blocked until the accusation window closes \
+                                 and committee proposals resolve"
+                            );
+                        } else {
+                            debug!(
+                                e3_id = %e3_id,
+                                retry_in_secs = delay.as_secs(),
+                                "Failure settlement is still blocked"
+                            );
+                        }
+                        ctx.notify_later(ProcessFailedE3 { e3_id }, delay);
                     }
                     Err(_) if terminal => {
                         info!(e3_id = %e3_id, "Failure settlement was already processed");
@@ -575,5 +595,69 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<MarkFailedAtDeadlin
                 }
             }),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy::{
+        network::EthereumWallet, providers::ProviderBuilder, signers::local::PrivateKeySigner,
+        sol_types::SolValue, transports::mock::Asserter,
+    };
+    use e3_ciphernode_builder::EventSystem;
+    use e3_events::TakeEvents;
+
+    #[actix::test]
+    async fn blocked_settlement_sends_no_transaction_and_no_error() -> Result<()> {
+        let system = EventSystem::new().with_fresh_bus();
+        let bus = system.handle()?.enable("blocked-settlement");
+        let errors = bus.errors();
+
+        let asserter = Asserter::new();
+        asserter.push_success(&"0x1");
+        let provider = EthProvider::new(
+            ProviderBuilder::new()
+                .wallet(EthereumWallet::from(PrivateKeySigner::random()))
+                .connect_mocked_client(asserter.clone()),
+        )
+        .await?;
+        // `getE3Stage` reports Failed, then the `processE3Failure` simulation reverts with
+        // `SettlementBlocked()`. The mock has no response for a nonce read or a transaction.
+        asserter.push_success(&Bytes::from(U256::from(6).abi_encode()));
+        asserter.push_failure(serde_json::from_str(
+            r#"{"code":3,"message":"execution reverted","data":"0xf51125bb"}"#,
+        )?);
+
+        let writer = InterfoldSolWriter::new_with_recovery(
+            &bus,
+            provider,
+            Address::ZERO,
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+            HashSet::from([E3id::new("7", 1)]),
+        )?
+        .start();
+        writer.send(EffectsEnabled::new()).await?;
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let consumed = asserter.read_q().is_empty();
+                if consumed {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await?;
+        let received = errors.send(TakeEvents::new(1)).await?;
+        assert!(
+            received.timed_out,
+            "a blocked settlement must not emit InterfoldError: {:?}",
+            received.events
+        );
+        Ok(())
     }
 }

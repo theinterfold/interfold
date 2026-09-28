@@ -145,7 +145,9 @@ WORKDIR /home/ciphernode
 COPY --from=ciphernode-builder --chown=ciphernode:ciphernode /build/target/release/interfold /usr/local/bin/
 COPY --from=ciphernode-builder --chmod=755 --chown=ciphernode:ciphernode /build/crates/ciphernode-entrypoint.sh /usr/local/bin/
 
-# Environment variables for configuration
+# Environment variables for configuration. The entrypoint keeps node state on the volume at
+# DATA_DIR. It sets E3_CONFIG_DIR and E3_DATA_DIR itself, so a container that runs the binary with
+# `--entrypoint interfold` keeps the state location that its config file implies.
 ENV CONFIG_DIR=/home/ciphernode/.config/interfold
 ENV DATA_DIR=/home/ciphernode/.local/share/interfold
 

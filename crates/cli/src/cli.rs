@@ -168,16 +168,21 @@ impl Cli {
         setup_tracing(&config, log_level)?;
         info!("Config loaded from: {:?}", config.config_file());
 
-        if config.autopassword() {
+        // Config commands only read configuration, so they do not create a password or a wallet.
+        let creates_secrets = !matches!(self.command, Commands::Config { .. });
+
+        if creates_secrets && config.autopassword() {
             e3_entrypoint::password::set::autopassword(&config).await?;
         }
 
-        if config.autowallet() {
+        if creates_secrets && config.autowallet() {
             e3_entrypoint::wallet::set::autowallet(&config).await?;
         }
 
         match self.command {
-            Commands::Start { peers } => start::execute(config, peers).await?,
+            Commands::Start { peers, bootstrap } => {
+                start::execute(config, peers, bootstrap).await?
+            }
             Commands::Init { .. } => {
                 bail!("Cannot run `interfold init` when a configuration exists.");
             }
@@ -246,6 +251,12 @@ pub enum Commands {
             help = "Sets a peer URL",
         )]
         peers: Vec<String>,
+        #[arg(
+            long,
+            help = "Run as a bootstrap peer: networking and chain reads only, without committee \
+                    work, proofs, transactions, or the prover's memory requirement"
+        )]
+        bootstrap: bool,
     },
 
     /// Print the config env
@@ -398,6 +409,8 @@ pub enum RemoteCommand {
         vite: bool,
         chain: String,
     },
+    /// The client runs `config get` locally with its own environment. The daemon accepts this
+    /// command only from older clients.
     ConfigGet {
         param: Option<String>,
     },
@@ -428,9 +441,6 @@ impl TryFrom<Commands> for RemoteCommand {
             Commands::Wallet {
                 command: WalletCommands::Get,
             } => Ok(RemoteCommand::WalletGet),
-            Commands::Config {
-                command: ConfigCommands::Get { param },
-            } => Ok(RemoteCommand::ConfigGet { param }),
             _ => bail!("Command not allowed while node is running."),
         }
     }
@@ -491,5 +501,88 @@ impl TryFrom<RemoteCommand> for Commands {
         };
         // We might have to hold this stuff on RemoteCommand
         Ok(command)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn config_get_does_not_create_secrets() -> Result<()> {
+        let dir = std::env::temp_dir().join(format!("e3-cli-config-get-{}", std::process::id()));
+        std::fs::create_dir_all(&dir)?;
+        let config_file = dir.join("config.yaml");
+        std::fs::write(
+            &config_file,
+            format!(
+                "node:\n  network: local\n  autopassword: true\n  autowallet: true\n  config_dir: {}\n  data_dir: {}\n",
+                dir.join("config").display(),
+                dir.join("data").display()
+            ),
+        )?;
+        let config_arg = config_file.to_string_lossy().into_owned();
+        let cli = Cli::parse_from(["interfold", "config", "get", "key_file", "-c", &config_arg]);
+        let config = cli.load_config()?;
+        let key_file = config.key_file();
+        let db_file = config.db_file();
+        assert!(key_file.starts_with(&dir) && db_file.starts_with(&dir));
+
+        let (out, _rx) = Console::channel();
+        let result = cli.execute(out, Ok(config)).await;
+        let created = (key_file.exists(), db_file.exists());
+        std::fs::remove_dir_all(&dir)?;
+
+        result?;
+        assert_eq!(
+            created,
+            (false, false),
+            "config get created the key file or the database"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn config_get_runs_locally_and_the_daemon_accepts_older_clients() -> Result<()> {
+        let cli = Cli::parse_from(["interfold", "config", "get", "key_file"]);
+        assert!(RemoteCli::try_from(cli).is_err());
+
+        let remote: RemoteCli =
+            serde_json::from_str(r#"{"command":{"ConfigGet":{"param":"key_file"}}}"#)?;
+        let cli = Cli::try_from(remote)?;
+        assert!(matches!(
+            cli.command,
+            Commands::Config {
+                command: ConfigCommands::Get { param: Some(param) },
+            } if param == "key_file"
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn start_runs_a_full_node_unless_bootstrap_is_set() {
+        let cli = Cli::parse_from(["interfold", "start"]);
+        assert!(matches!(
+            cli.command,
+            Commands::Start {
+                bootstrap: false,
+                ..
+            }
+        ));
+
+        let cli = Cli::parse_from([
+            "interfold",
+            "start",
+            "--bootstrap",
+            "--peer",
+            "/ip4/127.0.0.1/udp/9091/quic-v1",
+        ]);
+        assert!(matches!(
+            cli.command,
+            Commands::Start {
+                bootstrap: true,
+                ref peers,
+            } if peers.len() == 1
+        ));
     }
 }

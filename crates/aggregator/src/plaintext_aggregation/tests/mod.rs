@@ -369,6 +369,56 @@ async fn standby_persists_and_resumes_plaintext_work() -> Result<()> {
     Ok(())
 }
 
+/// Failover demotes an aggregator after a fixed budget, also while it is still proving. The
+/// demoted node must finish the work it started, or slow proving would discard every result.
+#[actix::test]
+async fn a_demoted_aggregator_finishes_the_work_it_started() -> Result<()> {
+    let (mut aggregator, history, e3_id) =
+        build_plaintext_aggregator(computing_state(), false).await?;
+    aggregator.resume_in_flight_work(test_ctx(EffectsEnabled::new()))?;
+    let request = next_event(&history).await?;
+    assert!(matches!(
+        request.get_data(),
+        InterfoldEventData::ComputeRequest(data) if data.e3_id == e3_id
+    ));
+
+    aggregator.is_aggregator = false;
+
+    assert!(!aggregator.can_run_aggregation_effects());
+    assert!(aggregator.can_continue_aggregation_effects());
+    Ok(())
+}
+
+/// After a restart, a node whose persisted phase shows that it ran the aggregation resumes it,
+/// even when failover has made another party the aggregator.
+#[actix::test]
+async fn a_restarted_node_resumes_aggregation_it_started_after_a_demotion() -> Result<()> {
+    let (mut aggregator, history, e3_id) =
+        build_plaintext_aggregator_with_role(computing_state(), false, false).await?;
+    assert!(aggregator.can_continue_aggregation_effects());
+
+    aggregator.resume_in_flight_work(test_ctx(EffectsEnabled::new()))?;
+
+    let event = next_event(&history).await?;
+    assert!(matches!(
+        event.into_data(),
+        InterfoldEventData::ComputeRequest(data) if data.e3_id == e3_id
+    ));
+    Ok(())
+}
+
+/// A standby that never started the work does not act on responses meant for another node.
+#[actix::test]
+async fn a_standby_does_not_continue_work_it_did_not_start() -> Result<()> {
+    let (mut aggregator, _history, _e3_id) =
+        build_plaintext_aggregator_with_role(collecting_state(), false, false).await?;
+    aggregator.resume_in_flight_work(test_ctx(EffectsEnabled::new()))?;
+
+    assert!(!aggregator.can_run_aggregation_effects());
+    assert!(!aggregator.can_continue_aggregation_effects());
+    Ok(())
+}
+
 #[actix::test]
 async fn decryption_share_after_collection_closed_is_ignored() -> Result<()> {
     let (mut aggregator, history, e3_id) =

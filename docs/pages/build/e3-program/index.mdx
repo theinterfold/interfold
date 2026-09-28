@@ -1,42 +1,162 @@
 ---
-title: 'Getting Started'
-description: 'Start building E3 programs on the Interfold protocol'
+title: 'E3 Program Anatomy'
+description:
+  'The parts of an E3 program (secure process, program contract, compute provider, verifiers, client
+  and server) and how data moves between them.'
 ---
 
-# Build an E3 Program
+import { Flow, LinkCard, LinkCards } from '@/components/ui'
 
-The Interfold's Encrypted Execution Environments (E3s) allow programs to run over encrypted inputs,
-producing meaningful combined outputs without exposing sensitive data. This guide walks you through
-building an E3 Program, covering:
+# E3 Program Anatomy
 
-1. Setting up a Compute Provider.
-2. Writing the Secure Process for your E3 Program.
-3. Implementing the required smart contract components.
-4. Exploring possible client implementations.
+An E3 program is the application code that runs on the Interfold. This page names each part of an E3
+program, the file that holds it in the default template, and how the parts connect. It is for
+developers who have run the [Quick Start](/build/quick-start) and want to change the computation. At
+the end, you know which file to edit for each change and which page explains it.
 
-The Interfold network of Ciphernodes and client-side encryption tools handle much of the complexity,
-allowing you to focus on the logic of your specific E3 Program.
+## The parts
 
-## Quick Navigation
+An E3 program has five parts. You write the secure process, the program contract, and the client and
+server. The compute provider and the protocol verifiers come from the Interfold repository.
 
-| Step                               | Guide                                                      |
-| ---------------------------------- | ---------------------------------------------------------- |
-| 1. Set up your environment         | [Installation](/installation)                              |
-| 2. Create a new E3 project         | [Quick Start](/quick-start)                                |
-| 3. Choose a compute provider       | [Compute Provider Setup](/compute-provider)                |
-| 4. Write the secure process        | [Writing the Secure Process](/write-secure-program)        |
-| 5. Build the E3 contract           | [Writing an E3 Contract](/write-e3-contract)               |
-| 6. Encrypt and submit data         | [Encrypt & Submit Data](/tutorials/encrypt-and-submit)     |
-| 7. Build a complete E3 (reference) | [Build a Complete E3 Program](/tutorials/write-e3-program) |
+| Part                | What it does                                                                                     | Default template                                                        | CRISP example                                                        |
+| ------------------- | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| Secure process      | The FHE computation. It combines encrypted inputs into one encrypted output.                     | `program/src/lib.rs` (`fhe_processor`, `policy`)                        | `examples/CRISP/program/src/lib.rs`                                  |
+| E3 program contract | Implements `IE3Program`. It accepts inputs, keeps the input tree, and verifies the output proof. | `contracts/MyProgram.sol`                                               | `examples/CRISP/packages/crisp-contracts/contracts/CRISPProgram.sol` |
+| Compute provider    | Runs the secure process off-chain and proves the run.                                            | `crates/support-scripts/dev` (dev mode) or `crates/support` (RISC Zero) | `crates/support` (RISC Zero with Boundless)                          |
+| Verifiers           | Check the compute proof on-chain before the Interfold contract accepts the output.               | `Risc0BfvCiphertextVerifier` and the check in `MyProgram.verify`        | `Risc0BfvCiphertextVerifier` and `CRISPProgram.verify`               |
+| Client and server   | The client encrypts and submits inputs. The server starts the compute and publishes the output.  | `client/src/`, `server/index.ts`                                        | `examples/CRISP/client`, `examples/CRISP/server`                     |
 
-## Reference Implementation
+Template paths are relative to the project root. CRISP paths and `crates/` paths are relative to the
+root of the Interfold repository.
 
-For a complete working example, study [CRISP](/CRISP/introduction) — a private voting application
-that demonstrates every component of an E3 program: Noir circuits for input validation, a RISC Zero
-guest for FHE computation, smart contracts implementing `IE3Program`, a React frontend, and a Rust
-coordination server.
+The Interfold contract (`Interfold.sol`) and the ciphernodes are not part of your E3 program. The
+Interfold contract records each E3 and calls your program contract. The ciphernodes generate the
+committee key and decrypt the output. See [The Interfold Contract](/build/interfold-contract).
 
-## Next Steps
+## How the parts connect
 
-Start with [Compute Provider Setup](/compute-provider) to choose your execution backend, then move
-on to [Writing the Secure Process](/write-secure-program) to define your FHE computation logic.
+<Flow
+  label='Data path of one E3'
+  steps={[
+    {
+      label: 'Request',
+      icon: 'contract',
+      sub: 'The requester calls request. The Interfold contract calls validate on the program contract.',
+    },
+    {
+      label: 'Inputs',
+      icon: 'lock',
+      sub: 'The client encrypts to the committee key and calls publishInput on the program contract.',
+    },
+    {
+      label: 'Compute',
+      icon: 'chip',
+      sub: 'After the input window closes, the server sends the inputs to the compute provider.',
+    },
+    {
+      label: 'Verify',
+      icon: 'shield',
+      sub: 'The server calls publishCiphertextOutput. Two verifiers check the proof.',
+    },
+    {
+      label: 'Decrypt',
+      icon: 'key',
+      sub: 'T + 1 ciphernodes decrypt the output and publish the plaintext.',
+    },
+  ]}
+/>
+
+1. **Request.** A requester calls `request` on the Interfold contract. The Interfold contract calls
+   `validate` on your program contract. Your contract records the parameter hash, starts an empty
+   input tree, and returns the encryption scheme ID.
+2. **Inputs.** The committee publishes its public key. The client encrypts each input to that key
+   and calls `publishInput` on your program contract. The Interfold contract does not see this call.
+   Your contract inserts one leaf per input in its input tree.
+3. **Compute.** After the input window closes, the server reads the inputs from the program contract
+   events. It sends them to the compute provider. The compute provider runs the secure process and
+   returns the output ciphertext and a proof.
+4. **Verify.** The server calls `publishCiphertextOutput` on the Interfold contract. The protocol
+   verifier checks the proof first. Then the Interfold contract calls `verify` on your program
+   contract. The E3 moves to `CiphertextReady` only when both checks pass.
+5. **Decrypt.** The ciphernodes decrypt the output. The Interfold contract needs T + 1 decryption
+   shares. The E3 moves to `Complete`, and the client reads the plaintext from the
+   `PlaintextOutputPublished` event.
+
+## Calls between the parts
+
+| Caller                 | Called contract or service   | Function or endpoint              | When                                     |
+| ---------------------- | ---------------------------- | --------------------------------- | ---------------------------------------- |
+| Requester              | Interfold contract           | `request`                         | Once, to start the E3                    |
+| Interfold contract     | Program contract             | `validate`                        | Inside `request`                         |
+| Client (data provider) | Program contract             | `publishInput`                    | During the input window                  |
+| Server                 | Compute provider             | `POST /run_compute`               | After the input window closes            |
+| Compute provider       | Server                       | Webhook callback (`callback_url`) | When the proof is ready                  |
+| Server                 | Interfold contract           | `publishCiphertextOutput`         | Before the compute deadline              |
+| Interfold contract     | Program contract             | `verifyDataAvailability`          | Inside `publishCiphertextOutput`, first  |
+| Interfold contract     | `Risc0BfvCiphertextVerifier` | `verify`                          | Inside `publishCiphertextOutput`, second |
+| Interfold contract     | Program contract             | `verify`                          | Inside `publishCiphertextOutput`, third  |
+
+Two values connect the secure process to the program contract. The first is the input root: the
+compute provider and the program contract must build the same input tree from the same inputs. The
+second is the image ID: the program contract and the protocol verifier accept only proofs from the
+guest program that the image ID names.
+
+## Read the pages in order
+
+<LinkCards min={230}>
+  <LinkCard
+    title='1. Secure process'
+    href='/build/e3-program/secure-process'
+    icon='chip'
+    tag='Rust'
+  >
+    The FHE function, the BFV parameters it receives, and the input policy.
+  </LinkCard>
+  <LinkCard
+    title='2. Program contract'
+    href='/build/e3-program/program-contract'
+    icon='contract'
+    tag='Solidity'
+  >
+    Each `IE3Program` function, when the Interfold contract calls it, and what it must check.
+  </LinkCard>
+  <LinkCard
+    title='3. Compute provider'
+    href='/build/e3-program/compute-provider'
+    icon='layers'
+    tag='Off-chain'
+  >
+    How the program server runs the secure process and returns a RISC Zero proof.
+  </LinkCard>
+  <LinkCard
+    title='4. Verify the compute provider'
+    href='/build/e3-program/verify-compute-provider'
+    icon='shield'
+    tag='Audit'
+  >
+    How the proof is checked on-chain, and how to check the image ID of a deployment.
+  </LinkCard>
+  <LinkCard
+    title='5. Complete example'
+    href='/build/e3-program/complete-example'
+    icon='flow'
+    tag='Walkthrough'
+  >
+    One E3 in the template, from request to decrypted result, with the file for each step.
+  </LinkCard>
+</LinkCards>
+
+## Next steps
+
+<LinkCards min={230}>
+  <LinkCard title='Project template' href='/build/project-template' icon='build'>
+    The folder layout and scripts of a project that `interfold init` makes.
+  </LinkCard>
+  <LinkCard title='The Interfold contract' href='/build/interfold-contract' icon='contract'>
+    The stages, deadlines, and functions of `Interfold.sol`.
+  </LinkCard>
+  <LinkCard title='CRISP' href='/CRISP/introduction' icon='vote'>
+    A complete E3 program for private voting, with ZK input proofs.
+  </LinkCard>
+</LinkCards>

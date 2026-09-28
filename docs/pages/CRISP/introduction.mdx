@@ -1,197 +1,207 @@
 ---
-title: 'CRISP Introduction'
-description: 'Coercion-Resistant Impartial Selection Protocol - A complete E3 program example'
+title: 'Introduction to CRISP'
+description:
+  'CRISP is the reference E3 application for private, coercion-resistant voting. Learn the problem
+  it solves, how its parts map onto an E3, and where each part lives in the repository.'
 ---
+
+import { FileTree } from 'nextra/components'
+import { Flow, LinkCard, LinkCards } from '@/components/ui'
 
 # Introduction to CRISP
 
-CRISP (Coercion-Resistant Impartial Selection Protocol) is a secure protocol for digital
-decision-making, leveraging fully homomorphic encryption (FHE) and distributed threshold
-cryptography (DTC) to enable verifiable secret ballots. Built with Interfold, CRISP safeguards
-democratic systems and decision-making applications against coercion, manipulation, and other
-vulnerabilities.
+This page explains what CRISP is, the problem that it solves, and how its parts map onto an E3. It
+is for developers who want to study a complete E3 application before they build their own. At the
+end, you know what each folder in `examples/CRISP` contains and which page to read next.
 
-This project serves as a comprehensive example of an E3 Program, demonstrating secure and impartial
-decision-making processes with a modern Hardhat-based architecture. It showcases a complete
-full-stack implementation including frontend, backend, smart contracts, and zero-knowledge
-components.
+CRISP (Coercion-Resistant Impartial Selection Protocol) is a private voting application that runs on
+the Interfold. Voters encrypt their ballots, the E3 program adds the encrypted ballots, and a
+committee of ciphernodes decrypts only the final tally. The code is in
+[`examples/CRISP`](https://github.com/theinterfold/interfold/tree/main/examples/CRISP). CRISP has
+its own release cycle, separate from the protocol release.
 
-## Why CRISP?
+## The problem
 
-Open ballots are known to produce suboptimal outcomes, exposing participants to bribery and
-coercion. CRISP mitigates these risks through:
+An open ballot shows how each person votes. A briber can then pay for a vote, and a coercer can
+punish a voter who does not obey. A secret ballot hides the vote. But when a voter can prove the
+vote to a third party, bribery and coercion still work. That proof is called a receipt.
 
-- **Secret ballots**: Votes remain encrypted throughout the process
-- **Receipt-free voting**: No proof of vote can be generated for coercion
-- **Verifiable results**: Zero-knowledge proofs ensure computation integrity
-- **Distributed trust**: No single point of failure or control
+CRISP keeps the ballot secret and removes the receipt:
+
+| Property          | How CRISP provides it                                                                                                                                                                                               |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Secret ballot     | The client encrypts each ballot with BFV under the committee public key. Only the encrypted sum is decrypted. Decryption needs T + 1 key shares, so no single ciphernode can decrypt.                               |
+| No receipt        | A voter can replace their ballot in the same slot. Anyone can add a mask (an encrypted zero ballot) to any eligible slot. An observer cannot tell a vote, an update, and a mask apart.                              |
+| Eligibility       | A Noir proof shows that the slot is in the round census, or that the slot has on-chain voting power.                                                                                                                |
+| Verifiable result | `CRISPProgram.verify` checks a RISC Zero proof of the sum. The Interfold contract checks the decryption proof when the committee publishes the result.                                                              |
+| Sender privacy    | The CRISP server can relay inputs, so the chain shows the relay address instead of the voter address. On Ethereum mainnet, the client always sends the input from the voter wallet (`client/src/utils/methods.ts`). |
+
+A mask adds an encryption of zero to the ciphertext that is already in a slot. The result is a new
+ciphertext that decrypts to the same value. For this reason, a voter cannot prove which ciphertext
+holds their final vote (`circuits/bin/crisp/src/main.nr`).
+
+## How CRISP maps onto an E3
+
+Each ballot goes through the same path. The client encrypts it, the CRISP program contract accepts
+it, the E3 program adds all ballots, and the committee decrypts the sum.
+
+<Flow
+  label='Path of one ballot'
+  steps={[
+    {
+      label: 'Encrypt',
+      icon: 'lock',
+      sub: 'The client encrypts the ballot and makes a Noir proof.',
+    },
+    {
+      label: 'Commit',
+      icon: 'contract',
+      sub: (
+        <>
+          The server stores the bytes. <code>publishInput</code> checks the proof.
+        </>
+      ),
+    },
+    { label: 'Sum', icon: 'chip', sub: 'The E3 program adds one ciphertext per slot.' },
+    { label: 'Decrypt', icon: 'key', sub: 'T + 1 ciphernodes decrypt the sum.' },
+    { label: 'Decode', icon: 'vote', sub: 'The server decodes one total per option.' },
+  ]}
+/>
+
+The table shows which CRISP component fills each part of an E3. The
+[E3 program overview](/build/e3-program) describes these parts in general.
+
+| E3 part             | CRISP component                                                                                                                                                      | Path                        |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------- |
+| Client              | React and Vite application. It connects the wallet, encrypts and proves ballots, and shows results.                                                                  | `client/`                   |
+| SDK                 | `@crisp-e3/sdk`. Ballot encryption, proof generation, server API calls, and `decodeTally`.                                                                           | `packages/crisp-sdk/`       |
+| Input circuits      | Noir circuits that prove a ballot is valid. `crisp` and `fold` serve a census Merkle tree. `crisp_onchain` and `fold_onchain` serve on-chain voting power.           | `circuits/`                 |
+| E3 program contract | `CRISPProgram.sol`. It implements `validate`, `publishInput`, and `verify`, and adds `finalizeInput` and `decodeTally`.                                              | `packages/crisp-contracts/` |
+| Secure process      | `fhe_processor` adds the BFV ciphertexts. `policy` defines the input leaf and selects one entry per slot.                                                            | `program/`                  |
+| Coordination server | Rust crate `crisp` with three binaries: `server` (indexer, relay, and REST API on port 4000), `cli` (requests rounds), and `cron` (requests a round every 24 hours). | `server/`                   |
+
+### The program contract
+
+`CRISPProgram.sol` holds the state of each round. The Interfold contract calls it when an E3 is
+requested and when the encrypted output is published. The
+[program contract guide](/build/e3-program/program-contract) explains the `IE3Program` interface.
+
+| Function        | Caller                             | What it does                                                                                                                                                               |
+| --------------- | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `validate`      | Interfold contract, at the request | Decodes the round parameters and starts an input Merkle tree of depth 20. A round must have 2 to 10 options. On Avail deployments, it also checks the input window timing. |
+| `setMerkleRoot` | Owner (the CRISP server key)       | Stores the census Merkle root for a round that uses a census tree.                                                                                                         |
+| `publishInput`  | Voter wallet or server relay       | Verifies the Noir proof and the availability signature of the server. Reserves the input leaf and emits `InputCommitted`.                                                  |
+| `finalizeInput` | Any account (usually the server)   | Verifies the data-availability receipt for the committed ciphertext hash. Emits `InputPublished`.                                                                          |
+| `verify`        | Interfold contract, at the output  | Reverts with `InputAvailabilityPending` while an input waits for finalization. Checks the RISC Zero proof against the parameters hash and the input root.                  |
+| `decodeTally`   | Anyone (view)                      | Decodes the plaintext output into one count per option.                                                                                                                    |
+
+The round parameters include a census mode. The census mode selects who can vote and which Noir
+verifier `publishInput` uses:
+
+| Census mode    | Eligibility source                                                          | Verifier                   |
+| -------------- | --------------------------------------------------------------------------- | -------------------------- |
+| `TOKEN`        | Token holders at a snapshot. The server builds the tree and posts its root. | `CRISPVerifier.sol`        |
+| `BY_REQUESTER` | The requesting contract returns the list from `getCensus(uint256 e3Id)`.    | `CRISPVerifier.sol`        |
+| `ONCHAIN`      | The contract reads voting power with `getPastVotes` for each input.         | `CRISPOnchainVerifier.sol` |
+
+Both verifier files are Honk verifiers generated from the compiled Noir circuits. Both declare a
+contract named `HonkVerifier`, so the deploy script selects them by file name. The CRISP CLI can
+request `TOKEN` rounds and `ONCHAIN` rounds. For an `ONCHAIN` round, the CLI uses `SelfRegistry.sol`
+by default. Any account can call `register()` on it once, and a registered account has a voting
+power of 1.
+
+### Two-step inputs
+
+Secure BFV ciphertexts are too large for one Ethereum transaction. For this reason, each input goes
+on-chain in two transactions, `publishInput` and `finalizeInput`. The sequence is
+(`agent/flow-trace/08_DATA_AVAILABILITY.md`):
+
+1. The server validates the Noir proof, stores the exact ciphertext bytes, and signs an availability
+   promise. The promise is valid for 10 minutes at most (`INPUT_AVAILABILITY_ATTESTATION_TTL`).
+2. The relay or the voter wallet sends `publishInput`. The contract reserves the tree position of
+   the input immediately.
+3. The server publishes the bytes to a data-availability layer. When the receipt is ready, the
+   server sends `finalizeInput`. The voter does not need to stay online for this step.
+
+The computation cannot start while a committed input waits for its receipt.
+
+| Network             | Data availability                                                                                                              |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Local chain (31337) | `mock`. The server keeps the bytes and completes both transactions in the same request. `availabilityFinalizationWindow` is 0. |
+| Sepolia             | Avail Turing. VectorX anchors the Avail data on Ethereum.                                                                      |
+| Ethereum mainnet    | Avail. VectorX anchors the Avail data on Ethereum.                                                                             |
+
+For contract addresses, see [Contract addresses](/reference/contracts).
 
 ## Project Structure
 
-CRISP, whose implementation is available in the
-[Interfold repository](https://github.com/theinterfold/interfold/tree/main/examples/CRISP), follows
-a modern structure with clear separation of concerns:
+The tree shows the top-level content of `examples/CRISP` that is tracked in Git.
 
-```
-CRISP/
-├── client/                  # React frontend application (Vite + @crisp-e3/sdk)
-├── server/                  # Rust coordination server & CLI
-├── program/                 # FHE program for encrypted computation + RISC Zero verification
-├── packages/
-│   ├── crisp-contracts/     # CRISP program contract + Hardhat deployment scripts
-│   └── crisp-sdk/           # TypeScript helpers to generate a ZK proof
-├── crates/                  # Rust libraries used by the server
-├── circuits/                # Noir zero-knowledge circuits
-├── scripts/                 # Development scripts for running, testing, and deployment
-├── interfold.config.yaml      # Ciphernodes + aggregator config
-└── docker-compose.yaml      # Optional multi-node deployment
-```
+<FileTree>
+  <FileTree.Folder name='examples/CRISP' defaultOpen>
+    <FileTree.Folder name='.interfold' />
+    <FileTree.Folder name='circuits' />
+    <FileTree.Folder name='client' />
+    <FileTree.Folder name='crates' />
+    <FileTree.Folder name='docs' />
+    <FileTree.Folder name='packages' />
+    <FileTree.Folder name='program' />
+    <FileTree.Folder name='scripts' />
+    <FileTree.Folder name='server' />
+    <FileTree.Folder name='test' />
+    <FileTree.File name='.env.example' />
+    <FileTree.File name='Cargo.toml' />
+    <FileTree.File name='crisp.dev.env.example' />
+    <FileTree.File name='docker-compose.yaml' />
+    <FileTree.File name='Dockerfile' />
+    <FileTree.File name='interfold.config.yaml' />
+    <FileTree.File name='package.json' />
+    <FileTree.File name='playwright.config.ts' />
+    <FileTree.File name='Readme.md' />
+    <FileTree.File name='RELEASING.md' />
+    <FileTree.File name='rust-toolchain.toml' />
+  </FileTree.Folder>
+</FileTree>
 
-### Client Application
+| Path                    | Contents                                                                                                                                                 |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `.interfold/`           | Links to the program support scripts. At run time, it also holds ciphernode data and configuration, which `scripts/dev_cipher.sh` deletes at each start. |
+| `circuits/`             | Noir ballot circuits in `bin/` (`crisp`, `crisp_onchain`, `fold`, `fold_onchain`) and the shared library in `lib/`.                                      |
+| `client/`               | The React and Vite voting client.                                                                                                                        |
+| `crates/`               | Rust libraries: `crisp-utils` (`decode_tally`), `evm_helpers` (contract bindings), `zk-inputs` and `zk-inputs-wasm` (circuit input generation).          |
+| `docs/`                 | `PROOF_AGGREGATION_AND_ZK.md`: local modes for DKG proof aggregation.                                                                                    |
+| `packages/`             | `crisp-contracts` (Hardhat project with `CRISPProgram.sol`), `crisp-sdk` (`@crisp-e3/sdk`), and `crisp-zk-inputs` (WASM bindings).                       |
+| `program/`              | The E3 program crate `e3-user-program`: `fhe_processor` and the input `policy`.                                                                          |
+| `scripts/`              | Shell and Node scripts for setup, local services, circuits, tests, and publication.                                                                      |
+| `server/`               | The coordination server, the CLI, and the cron client.                                                                                                   |
+| `test/`                 | The Playwright and Synpress end-to-end test.                                                                                                             |
+| `interfold.config.yaml` | Ciphernode configuration: chains, contract addresses, program mode, and the five local nodes `cn1` to `cn5`.                                             |
+| `crisp.dev.env.example` | Template for the local development profile (`crisp.dev.env`).                                                                                            |
+| `.env.example`          | Template for the keys that `scripts/setup_testnet.sh` reads.                                                                                             |
+| `docker-compose.yaml`   | An optional development container that mounts the repository and publishes ports 8545, 3000, and 4000.                                                   |
 
-The [client](https://github.com/theinterfold/interfold/tree/main/examples/CRISP/client) is a React
-application built with TypeScript that provides the user a voting interface. It uses the CRISP
-[SDK](/CRISP/introduction#javascript-sdk) and [server](/CRISP/introduction#coordination-server)
-endpoints to deliver the following capabilities:
+The production RISC Zero guest is in `crates/support` at the repository root. It includes the same
+`fhe_processor` and `policy` code as `program/`. The CRISP deploy script reads the image ID from
+`crates/support/contracts/ImageID.sol`.
 
-- Connecting wallets via MetaMask
-- Encrypting votes using FHE encryption before submission
-- Generating Noir zero-knowledge proofs for vote validation
-- Displaying real-time updates on voting status and results
+## Further reading
 
-### Coordination Server
+- [The CRISP blog post](https://blog.theinterfold.com/crisp-private-voting-secret-ballot-fhe-zkp-mpc/)
+- [The vote masking blog post](https://blog.theinterfold.com/vote-masking-receipt-freeness-secret-ballots/)
 
-The [server](https://github.com/theinterfold/interfold/tree/main/examples/CRISP/server) is a
-Rust-based coordination service that manages the E3 lifecycle and drives the same SDK from a
-privileged wallet. It acts as a relayer and facilitator, handling blockchain interactions on behalf
-of clients. However, clients can bypass the server entirely and interact directly with the
-blockchain if they prefer.
+## Next steps
 
-The server's key responsibilities include:
-
-- Monitoring blockchain events and coordinating protocol progression
-- Collecting encrypted votes from smart contracts
-- Triggering FHE computations after voting rounds are closed
-- Publishing computation results back to the blockchain
-- Providing a RESTful API for client interactions
-
-### FHE Program
-
-The [FHE program](https://github.com/theinterfold/interfold/tree/main/examples/CRISP/program) is a
-Rust guest program that runs inside the RISC Zero zkVM to perform homomorphic addition on encrypted
-votes (BFV ciphertexts). It computes the encrypted tally without decrypting individual votes,
-ensuring voter privacy throughout the process.
-
-The program decodes BFV parameters and ciphertexts, then sums all encrypted votes homomorphically to
-produce a single encrypted ciphertext containing the total. RISC Zero generates zero-knowledge
-proofs that verify the computation was executed correctly, enabling trustless verification of the
-tally results.
-
-### Zero-knowledge Circuits
-
-[Noir circuits](https://github.com/theinterfold/interfold/tree/main/examples/CRISP/circuits) provide
-zero-knowledge proofs for vote validation before votes are accepted into the system. These circuits
-verify that votes are correctly encrypted using BFV fully homomorphic encryption under a valid
-public key, check that the voter's address is included in the eligibility Merkle tree, and ensure
-votes conform to the expected structure and values. The circuits also support mask votes, allowing
-anyone to submit zero votes to mask slot activity and reduce the risk of collusion and coercion.
-
-For detailed documentation on how the circuit works, see the
-[main circuit implementation](https://github.com/theinterfold/interfold/blob/main/examples/CRISP/circuits/bin/crisp/src/main.nr).
-
-### Smart Contracts
-
-The CRISP smart contracts implement the E3 program interface and handle the on-chain logic for
-voting rounds. The main contract is
-[CRISPProgram.sol](https://github.com/theinterfold/interfold/tree/main/examples/CRISP/packages/crisp-contracts/contracts/CRISPProgram.sol),
-which orchestrates the entire voting process.
-
-When a new voting round is initialized, the `validate()` function sets up round parameters and
-initializes a Merkle tree to store votes efficiently. A vote then uses two transactions.
-`publishInput()` verifies the Noir proof and a 10-minute availability promise from the service,
-commits the encrypted vote's hash, and reserves its exact Merkle-tree position. The promise starts
-only after the service stores the complete ciphertext. If the wallet does not commit it before the
-promise expires, the voter can stage the same vote again. The large ciphertext is stored on Avail
-instead of Ethereum. After VectorX anchors the relevant Avail range on Ethereum, `finalizeInput()`
-verifies the inclusion proof for that exact hash and marks the vote available. Computation cannot
-start while a committed vote is waiting for finalization.
-
-### Proposal timing
-
-A CRISP proposal does not accept encrypted votes immediately. Chainlink VRF selects the committee,
-the ticket window closes, and the committee completes DKG first. Every round has three explicit
-boundaries:
-
-- `S`: encrypted voting starts
-- `V`: new ballot commitments close
-- `A`: Avail finalization ends
-
-The proposal stores `S` and `V`. It requests the Interfold input window as `[S, A]`, where
-`A = V + availabilityFinalizationWindow`. An early committee key does not open voting before `S`,
-and a late key does not silently move the scheduled vote.
-
-The mainnet launch permits one hour for VRF, 10 minutes for tickets, and six hours for DKG. A
-request mined at `R` can therefore schedule voting no earlier than `R + 25,800 seconds`, plus a
-transaction mining buffer. `CRISPProgram.earliestVotingStart()` returns the current lower bound.
-CRISP then requires at least one hour between `S` and `V` and reserves three hours between `V` and
-`A` for Avail finalization. A one-hour vote therefore has a 14,400-second Interfold input window,
-separate from the 25,800-second setup period before it.
-
-The Interfold DAO launch configuration uses a five-day ballot interval from `S` to `V`. The input
-window ends three hours later. The proposal form reads the live committee timeouts and CRISP timing
-rules, shows the earliest valid start, and rejects an invalid schedule. Governance can change these
-settings, so an application must not keep a separate hard-coded minimum.
-
-The round's census decides which Noir verifier `publishInput()` uses: `CRISPVerifier.sol` for a
-census posted as a Merkle root, and `CRISPOnchainVerifier.sol` for one read from token balances on
-chain. Both declare a contract named `HonkVerifier`, so they are distinguished by file. Votes are
-stored in the Merkle tree with slot addresses mapping to vote indices, allowing updates while
-maintaining uniqueness.
-
-After the voting period ends and FHE computation completes, the `verify()` function validates the
-RISC Zero proof attesting to the correctness of the homomorphic tally computation, verifying it
-corresponds to the correct input Merkle root, parameters hash, and ciphertext output. Once verified,
-`decodeTally()` decodes the encrypted results into readable yes and no vote counts.
-
-The
-[CRISPVerifier.sol](https://github.com/theinterfold/interfold/tree/main/examples/CRISP/packages/crisp-contracts/contracts/verifiers/CRISPVerifier.sol)
-contract is a Honk verifier generated from compiled Noir circuits that verifies zero-knowledge
-proofs demonstrating votes are correctly encrypted using BFV fully homomorphic encryption under the
-valid public key.
-
-### JavaScript SDK
-
-The
-[CRISP SDK](https://github.com/theinterfold/interfold/tree/main/examples/CRISP/packages/crisp-sdk)
-is a TypeScript library that abstracts away the complex cryptographic operations required for vote
-submission and proof generation. It fetches round details from the coordination server, queries
-token balances at snapshot blocks to verify eligibility, and generates Merkle proofs demonstrating
-voter inclusion in the eligibility tree.
-
-When casting a vote, the SDK encrypts votes using BFV fully homomorphic encryption under the
-committee's public key and generates zero-knowledge proofs using compiled Noir circuits. These
-proofs demonstrate that votes are correctly encrypted and that voters are eligible to participate.
-The SDK stages the encrypted bytes with the coordination server and returns the compact commitment
-that the voter signs and publishes from their wallet. The server then publishes the stored bytes to
-Avail and finalizes the vote with its VectorX proof. The voter does not need to remain online for
-that second step. The SDK also supports mask votes, generating proofs for zero-value votes that help
-reduce the risk of collusion and coercion. Before submission, proofs are verified locally to prevent
-failed transactions, and after voting concludes, the SDK decodes encrypted tally results into
-readable vote counts.
-
-## Next Steps
-
-To get started with CRISP:
-
-1. **[Setup](/CRISP/setup)**: Install dependencies and configure your environment
-2. **[Running E3](/CRISP/running-e3)**: Deploy and run the complete CRISP protocol
-3. **Study the code**: Examine the implementation for your own E3 programs
-
-CRISP demonstrates how E3 programs can be used for privacy-preserving applications, providing a
-complete reference implementation for developers building with the Interfold.
-
-## References
-
-Want to learn more about CRISP? Read our blogposts:
-
-- [vote masking](https://blog.theinterfold.com/vote-masking-receipt-freeness-secret-ballots/)
+<LinkCards min={230}>
+  <LinkCard title='Set up CRISP' href='/CRISP/setup' icon='wrench' tag='CRISP'>
+    Install the prerequisites, build CRISP, and start the local stack.
+  </LinkCard>
+  <LinkCard title='Run a voting round' href='/CRISP/running-e3' icon='vote' tag='CRISP'>
+    Request a round, vote in the client, and decode the tally.
+  </LinkCard>
+  <LinkCard title='E3 program anatomy' href='/build/e3-program' icon='layers' tag='Build'>
+    The parts that every E3 program has, and how they connect.
+  </LinkCard>
+  <LinkCard title='Noir circuits' href='/build/noir-circuits' icon='circuit' tag='Build'>
+    How input circuits prove that an encrypted input is valid.
+  </LinkCard>
+</LinkCards>

@@ -1,95 +1,208 @@
 ---
-title: 'Verifying the Compute Provider'
-description: 'Reproduce the RISC Zero guest image ID and check it against the deployed verifier'
+title: 'Verify the Compute Provider'
+description:
+  'How the Interfold contract checks a RISC Zero compute proof, what each check binds, and how to
+  confirm that a deployed verifier accepts the guest built from a given source.'
 ---
 
-# Verifying the Compute Provider
+import { Callout, Steps } from 'nextra/components'
+import { LinkCard, LinkCards } from '@/components/ui'
 
-A RISC Zero proof tells you **which guest ran**. It does not tell you **which source produced that
-guest**. This page closes that gap: it is the procedure for going from a source commit to the image
-ID a deployed `Risc0BfvCiphertextVerifier` accepts, and for checking that the two agree.
+# Verify the Compute Provider
 
-Read this if you are auditing an E3, operating a ciphernode, or deciding whether to trust a
-deployment you did not build.
+A RISC Zero proof shows which guest program ran and what it committed. This page explains how the
+Interfold contract checks that proof, which values each check binds, and how to confirm the image ID
+of a deployment. It is for E3 program developers, auditors, and operators who did not build the
+deployment. At the end, you can tie a deployed verifier to a source commit.
 
-## What the chain already gives you
+## Two checks on one proof
 
-Three properties hold without any work on your part:
+`publishCiphertextOutput` checks the compute proof two times, in this order
+(`InterfoldLifecycle.publishCiphertext` and `_isValidCiphertextHash`):
 
-1. **The verifier is frozen per E3.** Interfold snapshots the ciphertext verifier for an E3's
-   encryption scheme at request time. A later `setCiphertextVerifier` does not affect an E3 already
-   in flight.
-2. **The image ID is immutable.** `Risc0BfvCiphertextVerifier.imageId` is set in the constructor and
-   is `public`. Read it from the deployed contract; nobody can change it.
-3. **The journal is rebuilt from chain state.** The verifier reconstructs eight of the nine journal
-   fields — chain ID, calling program, E3 ID, scheme ID, committee public key, output hash, SAFE
-   commitment, parameter hash — from values the compute provider does not control.
+1. The protocol ciphertext verifier of the encryption scheme. For BFV this is
+   `Risc0BfvCiphertextVerifier` (`contracts/verifiers/bfv/Risc0BfvCiphertextVerifier.sol`).
+2. `verify` on the program contract of the E3.
 
-The ninth field, the input root, comes from the proof envelope. The protocol verifier does not
-constrain it. **The E3 program must compare it against its own on-chain input root**, and both
-shipped programs do. See [Writing the Secure Process](/write-secure-program).
+Before these checks, the Interfold contract calls `verifyDataAvailability` on the program contract.
+If a verifier returns `false`, the call reverts with `InvalidOutput`. After the program check, the
+Interfold contract reads the stage again and checks committee viability again. Then it stores the
+output hash and commitment and moves the E3 to `CiphertextReady`.
 
-What none of this tells you is whether `imageId` corresponds to the source you are reading. That is
-what the rest of this page is for.
+Both verifiers rebuild the same journal and call the RISC Zero verifier:
 
-## The procedure
-
-### 1. Read the deployed value
-
-```bash
-cast call <verifier-address> "imageId()(bytes32)" --rpc-url <rpc>
+```solidity
+risc0Verifier.verify(proof.seal, imageId, sha256(journal));
 ```
 
-Compare it against `crates/support/contracts/ImageID.sol` in the released source. They must be
-identical. If they are not, the deployment does not correspond to this source — stop and find out
-why.
+The RISC Zero verifier reverts when the seal does not prove that the guest with `imageId` committed
+that journal.
 
-Note that this compares the deployed value against a **committed** one. Nothing in the repository
-reproduces the image ID from the guest source any more, so a match here shows the deployment agrees
-with what was committed, not that what was committed is what the source builds.
+## What each check binds
 
-Also read `risc0Verifier()` and confirm the underlying RISC Zero verifier is the one you expect for
-that chain.
+The journal has nine 32-byte fields (`lib/Risc0ComputeProof.sol`). The table shows where each
+verifier gets each field. A call argument is a value from the caller of `publishCiphertextOutput`.
 
-### 2. Generate the manifest
+| Field                     | `Risc0BfvCiphertextVerifier`               | `MyProgram.verify` (template)                            |
+| ------------------------- | ------------------------------------------ | -------------------------------------------------------- |
+| Chain ID                  | `block.chainid`                            | `block.chainid`                                          |
+| Interfold contract        | `msg.sender` (the Interfold proxy)         | `address(interfold)`                                     |
+| E3 ID                     | Call argument                              | Call argument                                            |
+| Encryption scheme ID      | `e3.encryptionSchemeId`                    | `e3.encryptionSchemeId`                                  |
+| Committee public key hash | `e3.committeePublicKey`                    | `e3.committeePublicKey`                                  |
+| Output ciphertext hash    | Call argument                              | Call argument                                            |
+| Output SAFE commitment    | Call argument                              | Call argument                                            |
+| BFV parameter hash        | Request-time hash, compared with the proof | Hash that `validate` stored, compared with the proof     |
+| Input root                | **Proof** (not checked)                    | Root of the on-chain input tree, compared with the proof |
+
+The caller supplies the output hash and the commitment, and the Interfold contract stores them in
+the E3. The proof binds them to this chain, this Interfold contract, this E3, this committee key,
+and these parameters. The prover cannot change these other fields.
+
+<Callout type='error'>
+  The protocol verifier does not check the input root. The program contract must compare the input
+  root in the proof with its own tree root. If it does not, a prover can publish an output that it
+  computed over inputs that nobody submitted. `MyProgram.verify` and `CRISPProgram.verify` both make
+  this comparison.
+</Callout>
+
+The guest derives the input root from the ciphertexts it processes. `ComputeInput` has no root field
+(`crates/compute-provider/src/compute_input.rs`). The root in the journal is therefore a function of
+the inputs that the output used.
+
+## The verifier is fixed for each E3
+
+These properties hold without any action from you:
+
+- **The verifier is fixed at request time.** `bindCryptoConfig` copies the current ciphertext
+  verifier of the scheme and the parameter hash into a per-E3 record. A later
+  `setCiphertextVerifier` changes only future requests.
+- **The image ID cannot change.** `Risc0BfvCiphertextVerifier.imageId` and `risc0Verifier` are
+  `immutable` and `public`. The constructor refuses a zero image ID and a verifier address with no
+  code.
+- **One verifier for each scheme.** The Interfold contract keeps one current ciphertext verifier for
+  each encryption scheme. Every BFV E3 program on a deployment must use the guest that it names.
+
+An E3 program can keep its own image ID and RISC Zero verifier. The template sets them in the
+constructor and has no setter. `CRISPProgram` has `setImageId` and `setRisc0Verifier`, which only
+its owner can call. A change to these values cannot replace an output that the Interfold contract
+already accepted. It can make an E3 in progress fail, because `verify` then checks the proof against
+a different guest.
+
+## Check a deployment
+
+Use this procedure to compare a deployed verifier with the released source. You need Foundry
+(`cast`), an RPC URL, and the Interfold contract address from
+[Contract Addresses](/reference/contracts).
+
+<Steps>
+
+### Read the verifier address
 
 ```bash
-pnpm provenance:manifest --rpc <rpc> --verifier <verifier-address> --out manifest.json
+cast call <INTERFOLD_ADDRESS> "getCiphertextVerifier(bytes32)(address)" \
+  $(cast keccak "fhe.rs:BFV") --rpc-url <RPC_URL>
 ```
 
-The manifest records source commit, lockfile digests, pinned revisions, RISC Zero version, builder
-image tag and digest, guest ELF SHA-256, image ID, the deployed verifier address and runtime code
-digest, the underlying RISC Zero verifier, and the on-chain `imageId()`.
+The result is the ciphertext verifier for new BFV requests.
 
-It prints `"complete": false` and lists what is missing when any field could not be resolved. **A
-release manifest must be complete.** An incomplete manifest is a record of an unfinished
-verification, not a passing result.
+### Read the image ID
 
-## One correctness point
+```bash
+cast call <VERIFIER_ADDRESS> "imageId()(bytes32)" --rpc-url <RPC_URL>
+```
 
-**The SHA-256 of the published ELF is not the image ID.**
+### Read the RISC Zero verifier
 
-SHA-256 checks that a binary arrived intact. The RISC Zero image ID is computed from the _loaded
-memory image_, not from the file bytes. Two artifacts can share an image ID and differ in SHA-256,
-and a matching SHA-256 does not by itself establish that a proof will verify.
+```bash
+cast call <VERIFIER_ADDRESS> "risc0Verifier()(address)" --rpc-url <RPC_URL>
+```
 
-The manifest records both, for different purposes: the SHA-256 for transport integrity, the image ID
-for proof acceptance. Never substitute one for the other.
+Make sure that this address is the RISC Zero verifier that you expect for this chain.
 
-## What this does not cover
+### Compare with the source
 
-- **Governance of the proxy.** The Safe owns Interfold's `ProxyAdmin`. The per-E3 verifier snapshot
-  protects an E3 in flight from a `setCiphertextVerifier` call, but it is not protection against a
-  proxy upgrade. That is a governance property, not a build property.
-- **Application-level image IDs.** An E3 program may store its own image ID and verifier — CRISP has
-  `setImageId` and `setRisc0Verifier`, both `onlyOwner`. Because the protocol wrapper stays pinned,
-  changing those cannot replace a computation the protocol already accepted, but it can make an E3
-  in flight fail. Verify the E3 program's values separately from the protocol verifier's.
-- **The ciphernode image.** Reproducible builds for the ciphernode container are a separate concern.
+Open `crates/support/contracts/ImageID.sol` at the release tag. Compare `PROGRAM_ID` with the image
+ID from the chain. The two values must be equal. If they are different, the deployment does not
+match this source.
 
-## Related
+### Check the program contract
 
-- [Writing the Secure Process](/write-secure-program) — why the Secure Process derives its input
-  root rather than receiving it
-- [Compute Provider Setup](/compute-provider) — choosing a provider
-- `agent/invariants/04_BUILD_CONFIG.md` — the rules the gates enforce
+Read `imageId()` on the program contract. Read `verifier()` on a template program or
+`risc0Verifier()` on `CRISPProgram`. Compare them with the values from the previous steps.
+
+### Generate the provenance manifest
+
+From the repository root, run:
+
+```bash
+pnpm provenance:manifest --rpc <RPC_URL> --verifier <VERIFIER_ADDRESS> --out manifest.json
+```
+
+Make sure that the manifest shows `"complete": true`. The `unresolved` list names each field that
+the script did not resolve.
+
+</Steps>
+
+The manifest (`scripts/generate-provenance-manifest.ts`) records these values:
+
+- The source commit, and whether the working tree is clean
+- The RISC Zero version, the guest toolchain, the host toolchain, and the guest builder image tag
+  and digest
+- The Interfold revision pins of the guest workspace, and the digests of the two lockfiles
+- The guest ELF path and SHA-256, and the image ID from `ImageID.sol`
+- The chain ID, the verifier address and the SHA-256 of its code, the RISC Zero verifier address,
+  and the on-chain image ID
+
+The manifest is `complete: false` when a field is missing, or when the on-chain image ID is not
+equal to `ImageID.sol`. An incomplete manifest records an unfinished check. It is not a passing
+result.
+
+## Reproduce the image ID from source
+
+The manifest compares the chain with the committed `ImageID.sol`. It does not rebuild the guest. To
+check that `ImageID.sol` matches the source, rebuild the guest in the pinned Docker builder.
+
+1. Check out the release tag.
+2. Go to `crates/support`.
+3. Run `RISC0_USE_DOCKER=1 cargo build --locked -p methods`.
+4. Run `git diff contracts/ImageID.sol`. The diff must be empty.
+
+Only the Docker build writes `ImageID.sol` (`crates/support/methods/build.rs`). A native build can
+give a different image ID on a different toolchain, so the build script skips the Solidity output
+for it.
+
+The guest reads `e3-compute-provider` and `e3-fhe-params` through git revision pins. Three pins must
+name the same revision: `e3-fhe-params` and `e3-compute-provider` in `crates/support/Cargo.toml`,
+and `e3-compute-provider` in `crates/support/methods/guest/Cargo.toml`. A new revision gives a new
+image ID, so a guest change needs a new `Risc0BfvCiphertextVerifier`.
+
+<Callout type='info'>
+  The SHA-256 of the ELF is not the image ID. SHA-256 checks that a file arrived intact. The RISC
+  Zero image ID comes from the loaded memory image. The manifest records both values for these two
+  different purposes.
+</Callout>
+
+## Limits of these checks
+
+- **Proxy upgrades.** The Interfold contract is an upgradeable proxy. The per-E3 verifier record
+  protects an E3 from `setCiphertextVerifier`. It does not protect against an upgrade of the proxy.
+  That control belongs to [governance](/governance).
+- **Program values.** The protocol verifier and each program contract keep separate values. The
+  procedure above reads both.
+- **Local mocks.** The template deploys `MockRISC0Verifier`, which accepts every seal. Its dev
+  runner returns a placeholder seal. A local E3 therefore proves nothing about the computation.
+
+## Next steps
+
+<LinkCards min={230}>
+  <LinkCard title='Contract addresses' href='/reference/contracts' icon='contract'>
+    The deployed Interfold contract and verifier addresses for each network.
+  </LinkCard>
+  <LinkCard title='Compute provider' href='/build/e3-program/compute-provider' icon='layers'>
+    How the guest makes the journal and the proof.
+  </LinkCard>
+  <LinkCard title='Program contract' href='/build/e3-program/program-contract#verify' icon='shield'>
+    The `verify` function that makes the input root comparison.
+  </LinkCard>
+</LinkCards>

@@ -14,7 +14,10 @@ use e3_events::{
     EventType, InterfoldEvent,
 };
 use e3_utils::MAILBOX_LIMIT;
-use std::{collections::HashMap, time::Duration};
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 
@@ -130,6 +133,7 @@ impl NetEventTranslator {
         msg: InterfoldEvent,
         ctx: &mut Context<Self>,
     ) -> Result<()> {
+        self.service.record_stored_event(&msg, Instant::now());
         if let Some((event_id, data)) = self.service.prepare_outbound(msg)? {
             self.queue_publish(event_id, data, 1, ctx);
         }
@@ -224,8 +228,15 @@ impl NetEventTranslator {
     fn handle_remote_event(&mut self, msg: LibP2pEvent) -> Result<()> {
         let event = self.service.prepare_inbound(msg.0)?;
         let (data, ec) = event.into_components();
+        // The peer supplies the context ID; the event store derives the ID from the payload.
+        let id = EventId::hash(&data);
+        let now = Instant::now();
+        if self.service.is_stored_remote_event(&id, now) {
+            return Ok(());
+        }
         self.bus
             .publish_from_remote(data, ec.ts(), None, EventSource::Net)?;
+        self.service.record_remote_event(id, now);
         Ok(())
     }
 }

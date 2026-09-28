@@ -1,61 +1,122 @@
 ---
 title: 'Commitment Consistency'
 description:
-  'How the Interfold protocol detects dishonest ciphernodes by cross-checking commitment values
-  across ZK circuit proofs.'
+  'How ciphernodes cross-check commitments between circuit proofs, blame the party that used
+  inconsistent values, and turn the mismatch into a signed accusation and a slash proposal.'
 ---
+
+import { Callout } from 'nextra/components'
+import { Flow, LinkCard, LinkCards } from '@/components/ui'
 
 # Commitment Consistency
 
-The [ZK proof pipeline](./dkg) ensures each individual circuit execution is correct. But a dishonest
-node could still cheat by using **different inputs** across circuits — for example, committing to
-one set of shares in C2 but using different shares in C4. Each proof would verify in isolation, but
-the overall protocol output would be wrong.
+This page describes the commitment consistency checks in `crates/slashing` and the accusation flow
+that follows a mismatch. It is for auditors and core contributors. It lists every registered link
+with its scope and its public-signal fields. At the end, you can predict which party the checker
+blames for a mismatch and what the chain requires before it slashes that party.
 
-The **commitment consistency checker** closes this gap by cross-referencing public signals across
-circuit proofs. If a commitment value produced by one circuit doesn't match the expected value in
-another, the offending party is flagged and excluded.
+## Why the check exists
 
----
+Each ZK proof shows that one circuit ran correctly on its own inputs. A dishonest node can still use
+one value in C2 and a different value in C4. Each proof then verifies alone, but the link between
+the proofs breaks. The recursive circuits reject such a result when they fold the proofs. They do
+not tell the committee which party caused the failure.
 
-## Architecture
+The commitment consistency checker compares public signals across proofs. When a commitment from one
+circuit does not match the value that another circuit consumes, the checker blames one party and
+starts an accusation.
 
-The checker is a per-E3 actor (`CommitmentConsistencyChecker`) that:
+## Where links are enforced
 
-1. **Caches** verified proof outputs keyed by `(Address, ProofType)`
-2. **Evaluates** a set of registered **commitment links** on every new proof arrival
-3. **Emits** `CommitmentConsistencyViolation` events for the accusation pipeline on mismatch
+The protocol checks commitment links at several layers. Only the off-chain checker assigns blame.
 
-It operates in two modes:
+| Layer                                            | What it checks                                                    | Result of a mismatch                                    |
+| ------------------------------------------------ | ----------------------------------------------------------------- | ------------------------------------------------------- |
+| Inner circuits                                   | Each circuit recomputes the commitments that it consumes.         | The proof does not verify. `SignedProofFailed`.         |
+| `node_fold`                                      | Same-party links: C1 to C2, C2 to C3, and equal C3a and C3b keys. | The node cannot make its fold proof.                    |
+| `dkg_aggregator`                                 | Cross-party links: C0 to C3, C2 to C4, and C1 to C5.              | The DKG proof fails. `publishCommittee` cannot succeed. |
+| `decryption_aggregator`, `BfvDecryptionVerifier` | C6 to C7, and C6 commitments against the DKG anchors.             | The decryption proof is rejected.                       |
+| Off-chain checker (`crates/slashing`)            | The 12 registered links in this page.                             | `CommitmentConsistencyViolation` and an accusation.     |
 
-**Pre-ZK Gating (fast path)**
+For the circuit-level links, see [PVDKG and ZK proofs](/internals/dkg#what-the-dkg-proof-enforces).
 
-Before expensive ZK verification, the `ShareVerificationActor` sends all received proofs to the
-checker in a batch via `CommitmentConsistencyCheckRequested`. The checker evaluates all links and
-returns a set of `inconsistent_parties` that are **excluded from ZK verification entirely**.
+## Checker architecture
 
-This is a significant optimization — a dishonest party caught by commitment checks never wastes
-resources on ZK verification.
+Each E3 has one `CommitmentConsistencyChecker` actor
+(`crates/slashing/src/commitment_consistency/actor.rs`). The actor is a thin shell. The logic is in
+the synchronous `CommitmentConsistency` service (`commitment_consistency/workflow.rs`), which
+performs no I/O. `CommitmentConsistencyCheckerExtension` creates the actor with the links from
+`e3_zk_prover::commitment_links::default_links(preset)` and the committee roster size H.
 
-**Post-ZK Cross-Check (defense in depth)**
-
-After ZK verification passes, the checker receives `ProofVerificationPassed` events and re-evaluates
-links. This catches cases where a proof from one phase arrives after the initial batch, or where a
-cross-party link couldn't be evaluated earlier because the counterparty's proof hadn't arrived yet.
-
----
-
-## Link Types
-
-Each commitment link defines a relationship between a **source** circuit (which produces a
-commitment value) and a **target** circuit (which must consume or agree with that value).
+The service keeps one cache:
 
 ```rust
-trait CommitmentLink {
-    fn source_proof_type(&self) -> ProofType;
-    fn target_proof_type(&self) -> ProofType;
+// (address, proof_type) -> entries. One sender can have many entries, for example N - 1 C3a proofs.
+verified: HashMap<(Address, ProofType), Vec<VerifiedProofData>>
+
+struct VerifiedProofData {
+    party_id: u64,
+    address: Address,
+    public_signals: ArcBytes,
+    data_hash: [u8; 32],   // keccak256(abi.encode(proof.data, public_signals))
+    proof_data: ArcBytes,  // raw proof bytes, kept for slashing evidence
+}
+```
+
+| Input event                           | Action                                                                   |
+| ------------------------------------- | ------------------------------------------------------------------------ |
+| `CommitmentConsistencyCheckRequested` | Pre-ZK gating. Cache the batch, check every link, reply with the result. |
+| `ProofVerificationPassed`             | Post-ZK check. Cache the proof, check the links for its proof type.      |
+| `CommitmentRosterSelected`            | Store the accepted H-party roster, then check the C2 to C4 links.        |
+| `E3RequestComplete`                   | Clear the persisted state of the E3.                                     |
+
+| Output event                         | Consumer                 |
+| ------------------------------------ | ------------------------ |
+| `CommitmentConsistencyCheckComplete` | `ShareVerificationActor` |
+| `CommitmentConsistencyViolation`     | `AccusationManager`      |
+
+The service persists `CommitmentConsistencySnapshot` (version 1), which holds the roster and every
+cache entry. It writes the snapshot with the event that changed the state. Event replay starts after
+the snapshot cursor, so a restarted checker needs this snapshot to make the same decisions.
+
+### Pre-ZK gating
+
+`ShareVerificationActor` checks the signatures of a batch first. It then publishes
+`CommitmentConsistencyCheckRequested { e3_id, kind, correlation_id, party_proofs }`. Each
+`PartyProofData` entry carries `(proof_type, public_signals, data_hash, proof_data)` tuples.
+
+The checker caches every proof in the batch and checks every link. It replies with
+`CommitmentConsistencyCheckComplete { e3_id, kind, correlation_id, inconsistent_parties }`. It also
+emits a violation for each mismatch, so that parties excluded before ZK still start an accusation.
+Then it removes the cache entries of the inconsistent parties. `ShareVerificationActor` adds those
+parties to the dishonest set, and they skip ZK verification.
+
+### Post-ZK check
+
+After ZK verification, `ProofVerificationPassed` delivers each verified proof. The checker caches it
+and checks each link whose source or target type equals the new proof type. This path covers proofs
+from a later phase and cross-party links whose counterparty proof was not yet present.
+
+### Deduplication
+
+One proof can arrive twice: in the pre-ZK batch and in `ProofVerificationPassed`. `insert_verified`
+keeps one entry for each `data_hash` under a given `(address, proof_type)` key. A second arrival
+does not change the cache and does not repeat a check. `AccusationManager` also creates at most one
+accusation for each `(accused, proof_type)` pair.
+
+## Link model
+
+Each link implements the `CommitmentLink` trait in `crates/events/src/commitment_link.rs`. A
+`FieldValue` is a 32-byte field element.
+
+```rust
+pub trait CommitmentLink: Send + Sync {
+    fn name(&self) -> &'static str;
+    fn source_proof_type(&self) -> ProofType; // produces the commitment
+    fn target_proof_type(&self) -> ProofType; // consumes or agrees with it
     fn scope(&self) -> LinkScope;
     fn extract_source_values(&self, public_signals: &[u8]) -> Vec<FieldValue>;
+    fn check_signals(&self, source_values: &[FieldValue], target_public_signals: &[u8]) -> bool;
     fn check_consistency(
         &self,
         source_values: &[FieldValue],
@@ -66,136 +127,275 @@ trait CommitmentLink {
 }
 ```
 
-### Scoping Rules
+The `LinkScope` decides which targets a source is compared with. Blame always goes to the source
+party.
 
-The **scope** determines how source and target proofs are matched and where blame is attributed:
+| Scope                      | Matching rule in `find_mismatches`                                                                                     |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `SameParty`                | Compare each source entry with each target entry from the same address. The first failed comparison blames the source. |
+| `CrossParty`               | A source passes if it matches at least one cached target from any party. With no cached target, the check waits.       |
+| `SourceMustExistInTargets` | The same rule as `CrossParty`, with two special cases: C3 to C0 never blames, and C2 to C4 waits for the full roster.  |
 
-| Scope                        | Matching rule                                                       | Blame  | Example                                                         |
-| ---------------------------- | ------------------------------------------------------------------- | ------ | --------------------------------------------------------------- |
-| **SameParty**                | Source and target must come from the same Ethereum address          | Source | C1→C2: same node's sk commitment must match                     |
-| **CrossParty**               | Each source must match at least one target from any party           | Source | C1→C5: per-node pk must appear in aggregator's C5               |
-| **SourceMustExistInTargets** | Each source claims a value that must exist in some target's signals | Source | C2→C4: sender's share commitments must appear in recipient's C4 |
+## Registered links
 
-Blame always falls on the **source** party. If C2's commitments don't match C4's expectations, the
-C2 sender is accused — not the C4 recipient.
+`default_links(preset)` in `crates/zk-prover/src/commitment_links/mod.rs` registers 12 links. The C2
+to C4 links take `l = preset.metadata().num_moduli`. The preset is the E3 threshold preset, so `l`
+is 2 for `insecure-512` and 3 for `secure-8192`.
 
----
+### DKG links
 
-## Registered Links
+| Struct                        | `name()`                               | Source to target | Scope                      | Check                                                                                    |
+| ----------------------------- | -------------------------------------- | ---------------- | -------------------------- | ---------------------------------------------------------------------------------------- |
+| `C3aToC0PkCommitmentLink`     | `C3a->C0 pk_commitment`                | C3a to C0        | `SourceMustExistInTargets` | C3 `expected_pk_commitment` equals a C0 `pk_commitment`. Never blames (see below).       |
+| `C3bToC0PkCommitmentLink`     | `C3b->C0 pk_commitment`                | C3b to C0        | `SourceMustExistInTargets` | The same for C3b. Never blames.                                                          |
+| `C1ToC2aSkCommitmentLink`     | `C1->C2a sk_commitment`                | C1 to C2a        | `SameParty`                | C1 `sk_commitment` equals the first C2a signal, `expected_secret_commitment`.            |
+| `C1ToC2bESmCommitmentLink`    | `C1->C2b e_sm_commitment`              | C1 to C2b        | `SameParty`                | C1 `e_sm_commitment` equals the first C2b signal.                                        |
+| `C1ToC5PkCommitmentLink`      | `C1->C5 pk_commitment`                 | C1 to C5         | `CrossParty`               | C1 `pk_commitment` is one of the first H C5 signals, the expected key share commitments. |
+| `C3aToC2aShareEncryptionLink` | `C3a->C2a expected_message_commitment` | C3a to C2a       | `SameParty`                | C3 `expected_message_commitment` is one of the C2a share commitments.                    |
+| `C3bToC2bShareEncryptionLink` | `C3b->C2b expected_message_commitment` | C3b to C2b       | `SameParty`                | The same for C3b and C2b.                                                                |
+| `C2aToC4aShareCommitmentLink` | `C2a->C4a share commitments`           | C2a to C4a       | `SourceMustExistInTargets` | See [the C2 to C4 link](#the-c2-to-c4-link).                                             |
+| `C2bToC4bShareCommitmentLink` | `C2b->C4b share commitments`           | C2b to C4b       | `SourceMustExistInTargets` | The same for the smudging noise branch.                                                  |
 
-The protocol registers 12 commitment links at startup. The `l` parameter (number of CRT moduli) is
-derived from the E3's BFV preset:
+### Threshold decryption links
 
-### DKG Phase Links
+| Struct                     | `name()`                  | Source to target | Scope        | Check                                                                            |
+| -------------------------- | ------------------------- | ---------------- | ------------ | -------------------------------------------------------------------------------- |
+| `C4aToC6SkCommitmentLink`  | `C4a->C6 sk_commitment`   | C4a to C6        | `SameParty`  | The C4a output `commitment` equals the C6 input `expected_sk_commitment`.        |
+| `C4bToC6ESmCommitmentLink` | `C4b->C6 e_sm_commitment` | C4b to C6        | `SameParty`  | The C4b output `commitment` equals the C6 input `expected_e_sm_commitment`.      |
+| `C6ToC7DCommitmentLink`    | `C6->C7 d_commitment`     | C6 to C7         | `CrossParty` | The C6 `d_commitment` is one of the expected `d` commitments at the start of C7. |
 
-| Link          | Scope                    | What it checks                                                         |
-| ------------- | ------------------------ | ---------------------------------------------------------------------- |
-| **C1 → C2a**  | SameParty                | C1's `sk_commitment` matches C2a's `expected_secret_commitment`        |
-| **C1 → C2b**  | SameParty                | C1's `e_sm_commitment` matches C2b's `expected_secret_commitment`      |
-| **C1 → C5**   | CrossParty               | C1's `pk_commitment` appears in C5's expected pk inputs                |
-| **C3a → C0**  | SourceMustExistInTargets | C3a's `expected_pk_commitment` must exist in some C0's `pk_commitment` |
-| **C3b → C0**  | SourceMustExistInTargets | Same for C3b                                                           |
-| **C3a → C2a** | SameParty                | C3a's `expected_message_commitment` matches C2a's share commitments    |
-| **C3b → C2b** | SameParty                | Same for the smudging noise branch                                     |
-| **C2a → C4a** | SourceMustExistInTargets | C2a's L share commitments for recipient R match C4a's row for sender X |
-| **C2b → C4b** | SourceMustExistInTargets | Same for smudging noise                                                |
+The public-signal field names come from `crates/zk-helpers/src/circuits/output_layout.rs`. Inputs
+sit at the start of `public_signals` and outputs at the end. C3 inputs are `expected_pk_commitment`
+and `expected_message_commitment`. C6 inputs are `expected_sk_commitment`,
+`expected_e_sm_commitment`, `ct_commitment`, `domain_hi`, and `domain_lo`. For the C6 to C7 link,
+the checker derives the number of `d` commitments as $(F - 100) / 2$, where $F$ is the number of C7
+fields.
 
-### Threshold Decryption Links
+### The disabled C3 to C0 links
 
-| Link         | Scope      | What it checks                                                             |
-| ------------ | ---------- | -------------------------------------------------------------------------- |
-| **C4a → C6** | SameParty  | C4a's aggregated `sk_commitment` matches C6's `expected_sk_commitment`     |
-| **C4b → C6** | SameParty  | C4b's aggregated `e_sm_commitment` matches C6's `expected_e_sm_commitment` |
-| **C6 → C7**  | CrossParty | C6's `d_commitment` matches C7's `expected_d_commitment`                   |
+The two C3 to C0 links are registered, but `find_mismatches` returns no mismatch for them. The C0
+set is not closed when members are absent, because an omitted C0 key can arrive later. A missing key
+in the local cache therefore cannot prove that a C3 recipient key is wrong.
 
----
+Two other checks cover this relation. Each recipient compares every C3 proof addressed to it with
+its own C0 `pk_commitment`. A dealer that encrypted for a different key leaves the readiness set of
+that recipient, without an accusation. The `dkg_aggregator` circuit also requires each roster C3 key
+slot to equal the recipient's C0 commitment.
 
-## The C2→C4 Link (Most Complex)
+## The C2 to C4 link
 
-This link is the most technically interesting because it bridges two **different parties**: the
-sender (who computed shares in C2) and the recipient/aggregator (who decrypted shares in C4).
+This link crosses two parties: the dealer that made C2 and the recipient that made C4. It is the
+only link that depends on the accepted roster.
 
-### Public Signal Layouts
+### Public signal layouts
 
-**C2 inner circuit** (row-major: party first, modulus second):
+C2 (`sk_share_computation` or `e_sm_share_computation`) has $1 + N \cdot L$ fields in party-major
+order:
 
-```
-[expected_secret_commitment (32 B)]  ← skipped
-[party_0_mod_0] [party_0_mod_1] ... [party_0_mod_{L-1}]
+```text
+[expected_secret_commitment]                        <- skipped by extract_share_commitments
+[party_0_mod_0] ... [party_0_mod_{L-1}]
 [party_1_mod_0] ...
 [party_{N-1}_mod_{L-1}]
 ```
 
-**C4 public signals** (the accepted H-dealer roster, L moduli):
+C4 (`share_decryption`) has $H \cdot L + 1$ fields. The rows follow the accepted roster order, not
+the full committee order:
 
-```
+```text
 [expected_commitments[0][0]] ... [expected_commitments[0][L-1]]
-[expected_commitments[1][0]] ...
-[expected_commitments[H-1][L-1]]
-[aggregated_commitment (32 B)]  ← tail, excluded from check
+...
+[expected_commitments[H-1][0]] ... [expected_commitments[H-1][L-1]]
+[commitment]                                        <- aggregate, not compared
 ```
 
-### Check Logic
+### Check logic
 
-Given C2 sender `X` (original committee `party_id`) and C4 recipient `R` (original committee
-`party_id`):
+Let $X$ be a dealer and $R$ a C4 producer, both named by full-committee party IDs. Let $k_X$ be the
+position of $X$ in the accepted roster. `check_exact_l_commitments` compares $L$ values:
 
-1. **From C2_X**: Extract L commitments at slot R → `source_values[R*L .. (R+1)*L]` — these are the
-   L commitments that sender X computed for recipient R
-2. **Map X into the roster**: Find sender X's position `k` in the accepted H-member roster. C4 is
-   H-wide and follows roster order; it is not indexed by the original committee ID
-3. **From C4_R**: Extract row `k` → `target_signals[k*L*32 .. (k+1)*L*32]` — these are the L
-   commitments that recipient R expects from sender X
-4. **Compare**: All L values must match exactly
+$$
+\text{match}(X, R) \iff C2_X[R \cdot L + \ell] = C4_R[k_X \cdot L + \ell] \quad \text{for all } 0 \le \ell < L
+$$
 
-If any modulus commitment differs, sender X is accused.
+The checker evaluates the link only after three conditions are true:
 
-The checker persists the accepted roster with its proof cache. It waits until every selected C4
-target is present before it treats a missing C2→C4 match as a violation. This avoids confusing a
-late selected proof with a mismatched commitment.
+1. `CommitmentRosterSelected` delivered an accepted roster of exactly H ascending party IDs.
+2. The dealer $X$ is in the roster. A C2 source outside the roster is skipped.
+3. The cache holds C4 targets from all H roster members.
 
-## Deduplication
+The checker then blames $X$ only if no cached C4 target matches. Waiting for every roster target
+keeps a late C4 proof from looking like a mismatch.
 
-The same proof can arrive via two paths:
+<Callout type='info'>
+  A dealer passes when at least one C4 target matches. The checker therefore blames a dealer whose
+  commitments match no recipient. The `dkg_aggregator` circuit is stricter: it requires every roster
+  pair to match before the key can be published.
+</Callout>
 
-1. **Pre-ZK batch**: `CommitmentConsistencyCheckRequested` from `ShareVerificationActor`
-2. **Post-ZK event**: `ProofVerificationPassed` after ZK verification
+The roster is persisted in the checker snapshot. A conflicting roster, a roster of the wrong size,
+or a roster that is not in ascending order is ignored.
 
-The checker deduplicates by `data_hash` — a hash of the proof's public signals. If a proof with the
-same hash is already cached, it's silently ignored. This prevents double-counting or re-triggering
-link evaluations.
+## Accusation flow
 
----
+A violation becomes a slash proposal only after enough committee members confirm it with signed
+votes.
 
-## Accusation Flow
+<Flow
+  label='Accusation pipeline'
+  steps={[
+    { label: 'Detect', icon: 'eye', sub: 'The checker emits a violation.' },
+    { label: 'Accuse', icon: 'gavel', sub: 'The node signs and broadcasts an accusation.' },
+    { label: 'Vote', icon: 'vote', sub: 'Members with the same local failure vote.' },
+    { label: 'Decide', icon: 'shield', sub: 'H matching votes give AccusedFaulted.' },
+    { label: 'Slash', icon: 'coin', sub: 'A voter submits the evidence on-chain.' },
+  ]}
+/>
 
-When a commitment inconsistency is detected:
+### Violation event
 
+```rust
+pub struct CommitmentConsistencyViolation {
+    pub e3_id: E3id,
+    pub accused_party_id: u64,
+    pub accused_address: Address,
+    pub proof_type: ProofType,  // the source proof type
+    pub data_hash: [u8; 32],    // keccak256(abi.encode(proof.data, public_signals))
+    pub evidence: Bytes,        // abi.encode(proof.data, public_signals), the preimage of data_hash
+}
 ```
-CommitmentConsistencyChecker detects mismatch
-  │
-  ├─ Emits CommitmentConsistencyViolation {
-  │     accused_party_id,
-  │     accused_address,
-  │     proof_type,       // which proof was inconsistent
-  │     data_hash,        // identifies the specific proof
-  │   }
-  │
-  ▼
-AccusationManager receives violation
-  │
-  ├─ Initiates off-chain accusation quorum protocol
-  ├─ Other committee members independently verify
-  └─ If quorum reached → on-chain slashing via SlashingManager
+
+### Off-chain voting
+
+`AccusationManager` (`crates/slashing/src/accusation_voting/`) handles the violation:
+
+1. It records the local failure for `(accused, proof_type)` with the data hash and the evidence.
+2. It creates a `ProofFailureAccusation` with an issue time and a deadline, signs it, and broadcasts
+   it. It refuses when the local vote validity is 0.
+3. It casts its own `AccusationVote` and starts a 300-second vote timeout.
+
+A peer that receives the accusation checks the deadline window, the committee membership of the
+accuser and the accused, and the accuser's signature. The peer votes only if its own record for
+`(accused, proof_type)` is a failure. It abstains if its own check passed or if it has no record.
+For C3a and C3b, the accusation can carry the signed proof, and the peer verifies that proof again.
+The wire has no disagree vote. Every vote is an agreement.
+
+An accusation needs H agreeing votes. H is the roster size from `CiphernodesCommitteeSize`:
+
+| Votes and data hashes                       | Outcome          | Slashable |
+| ------------------------------------------- | ---------------- | --------- |
+| At least H votes, one data hash             | `AccusedFaulted` | Yes       |
+| At least H votes, more than one data hash   | `Equivocation`   | No        |
+| Fewer than H votes when the timeout expires | `Inconclusive`   | No        |
+
+`Equivocation` means that the accused sent different data to different nodes. The current evidence
+format carries one preimage, so it cannot prove every payload.
+
+A process restart does not rebuild a partial vote tally or its timers.
+
+### Submission
+
+`SlashingManagerSolWriter` acts only on `AccusedFaulted`. It first reads the slash policy for
+`reason = keccak256(abi.encodePacked(uint256(proofType)))`:
+
+- If the policy is disabled, the node sends no transaction. It publishes `CommitteeMemberExcluded`,
+  and the member is excluded from local work for this E3 only.
+- If the policy is enabled, the three lowest-address voters can submit. Rank $r$ waits $30r$
+  seconds. The on-chain `DuplicateEvidence` check limits execution to one proposal.
+- The writer calls `proposeSlashByDkgParty(e3Id, partyId, proof)` when the party ID resolves in the
+  DKG anchors. Otherwise it calls `proposeSlash(e3Id, operator, proof)`.
+
+### Signed values
+
+Solidity and Rust derive the same accusation ID and vote digest:
+
+```text
+accusationId = keccak256(abi.encodePacked(chainId, e3Id, accused, uint256(proofType)))
+
+EIP-712 domain: name "InterfoldSlashing", version "1", chainId, verifyingContract = SlashingManager
+AccusationVote(uint256 e3Id,bytes32 accusationId,address voter,bytes32 dataHash,uint256 issuedAt,uint256 deadline)
 ```
 
-Pre-ZK inconsistent parties are also excluded from the `CommitmentConsistencyCheckComplete`
-response, preventing them from consuming ZK verification resources.
+The Rust constants are `VOTE_DOMAIN_NAME`, `VOTE_DOMAIN_VERSION`, and `VOTE_TYPEHASH_STR` in
+`crates/events/src/interfold_event/accusation_vote.rs`. The Solidity constants are
+`EIP712_DOMAIN_NAME` and `EIP712_DOMAIN_VERSION` in `SlashingManager.sol`.
 
----
+## On-chain evidence checks
 
-## Related
+`SlashingManager` decodes the `proof` argument as:
 
-- [ZK Proof Pipeline](./dkg) — the circuits whose commitments are being cross-checked
-- [DKG & Threshold Cryptography](./dkg) — the protocol that generates the proofs
-- [Sortition](./sortition) — committee selection before any of this begins
+```solidity
+abi.encode(
+    uint256 proofType,
+    address[] voters,
+    bytes32[] dataHashes,
+    bytes evidence,
+    uint256 issuedAt,
+    uint256 deadline,
+    bytes[] signatures
+)
+```
+
+`_proposeSlash` and `SlashingEvidenceLib.verifyAttestationEvidence` require these conditions:
+
+| Check                                                                                  | Error                                  |
+| -------------------------------------------------------------------------------------- | -------------------------------------- |
+| The policy for `keccak256(abi.encodePacked(proofType))` is enabled and requires proof. | `SlashReasonDisabled`, `InvalidPolicy` |
+| The operator is a committee member of the E3.                                          | `OperatorNotInCommittee`               |
+| This `(chainId, e3Id, operator, proofType)` was not used before.                       | `DuplicateEvidence`                    |
+| The E3 snapshot and the live registry `accusationVoteValidity` are not zero.           | `AccusationSlashingDisabled`           |
+| The time is at or before the E3 slash submission deadline.                             | `SlashSubmissionDeadlinePassed`        |
+| `issuedAt` is at most 30 seconds in the future.                                        | `AccusationIssuedInFuture`             |
+| `deadline - issuedAt` is at most the E3 snapshot of the vote validity.                 | `InvalidAccusationWindow`              |
+| The time is at or before `deadline`.                                                   | `SignatureExpired`                     |
+| The vote count is at least H.                                                          | `InsufficientAttestations`             |
+| `keccak256(evidence)` equals the shared data hash.                                     | `InvalidProof`                         |
+| Voters are strictly ascending, and none is the accused.                                | `DuplicateVoter`, `VoterIsAccused`     |
+| Every data hash is equal.                                                              | `EquivocationDetected`                 |
+| Every voter is an active committee member.                                             | `VoterNotInCommittee`                  |
+| Every signature recovers to its voter over the EIP-712 `AccusationVote` digest.        | `InvalidVoteSignature`                 |
+
+The slash submission deadline is the E3 lifecycle deadline plus `ACCUSATION_REPORTING_WINDOW` (1
+day). When all checks pass, the manager records a proposal with
+`executableAt = block.timestamp + appealWindow`. Before that time, the operator or its bond owner
+can call `fileAppeal` once. If the policy's `appealWindow` is 0, the slash executes in the same
+transaction and cannot be appealed.
+
+### Vote validity window
+
+`CiphernodeRegistryOwnable.accusationVoteValidity` is the longest signed window for an accusation
+vote. `initialize` sets it to `DEFAULT_ACCUSATION_VOTE_VALIDITY` (30 minutes). Each E3 snapshots the
+value at request time.
+
+- `setAccusationVoteValidity` can keep or increase the value. It also cancels a pending reduction.
+- A reduction uses `proposeAccusationVoteValidity`, waits `ACCUSATION_VOTE_VALIDITY_TIMELOCK` (2
+  days), and then uses `commitAccusationVoteValidity` within the next 2 days.
+- A value of 0 stops new attestation slashes. Nodes stop creating votes, and the manager rejects
+  proposals, also with signatures from an older window.
+
+Each ciphernode reads the value for each enabled chain at startup. A running node uses a changed
+nonzero value only after a restart.
+
+<Callout type='warning'>
+  An executed slash takes the ticket and bond penalties of the slash policy. The policy can also ban
+  the operator and expel it from the E3 committee.
+</Callout>
+
+## Next steps
+
+<LinkCards min={230}>
+  <LinkCard title='PVDKG and ZK proofs' href='/internals/dkg' icon='circuit' tag='Internals'>
+    The circuits and the recursive proofs whose commitments these links compare.
+  </LinkCard>
+  <LinkCard
+    title='Exits, rewards, and slashing'
+    href='/operate/exits-and-slashing'
+    icon='gavel'
+    tag='Operators'
+  >
+    What a slash does to an operator's collateral, and how to avoid it.
+  </LinkCard>
+  <LinkCard title='Sortition' href='/internals/sortition' icon='ticket' tag='Internals'>
+    How the committee and its party IDs are selected.
+  </LinkCard>
+</LinkCards>

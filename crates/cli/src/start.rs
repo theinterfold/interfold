@@ -19,7 +19,7 @@ use tokio::signal::unix::{signal, SignalKind};
 use tracing::{error, info, instrument};
 
 #[instrument(skip_all)]
-pub async fn execute(mut config: AppConfig, peers: Vec<String>) -> Result<()> {
+pub async fn execute(mut config: AppConfig, peers: Vec<String>, bootstrap: bool) -> Result<()> {
     // Register signal listeners immediately at startup
     let shutdown = shutdown_signal();
     tokio::pin!(shutdown);
@@ -36,7 +36,7 @@ pub async fn execute(mut config: AppConfig, peers: Vec<String>) -> Result<()> {
 
     let node = tokio::select! {
         // build the ciphernode and if it completes first return the result
-        result = build_ciphernode(&mut config, peers) => result,
+        result = build_ciphernode(&mut config, peers, bootstrap) => result,
         // if the shutdown signal completes first then do shutdown without the node
         _ = &mut shutdown => {
             graceful_shutdown(None).await?;
@@ -151,11 +151,12 @@ pub fn launch_socket_server(ctrl_port: u16) {
 pub async fn build_ciphernode(
     config: &mut AppConfig,
     peers: Vec<String>,
+    bootstrap: bool,
 ) -> Result<CiphernodeHandle> {
     // add cli peers to the config
     config.add_peers(peers)?;
 
-    let node = e3_entrypoint::start::start::execute(config).await?;
+    let node = e3_entrypoint::start::start::execute(config, bootstrap).await?;
 
     Ok(node)
 }

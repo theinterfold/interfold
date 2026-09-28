@@ -83,6 +83,12 @@ pub struct ThresholdPlaintextAggregator {
     /// supply shares; T+1 valid shares suffice for decryption.
     honest_committee_addresses: Vec<Address>,
     is_aggregator: bool,
+    /// Whether this node started aggregation work for this E3 as the active aggregator. Failover
+    /// demotes an aggregator after a fixed budget even while it is still proving, so a demoted node
+    /// finishes the work it started. The first valid result on chain wins, and a later one is
+    /// skipped. Only a node that ran the aggregation leaves `VerifyingC6`, so a persisted later
+    /// phase restores this after a restart.
+    started_as_aggregator: bool,
     effects_enabled: bool,
     pending: PendingDecryptionWork,
 }
@@ -114,6 +120,17 @@ pub(crate) fn new_threshold_plaintext_recovery(
     }
 }
 
+/// Whether `state` is a phase that only the node running the aggregation reaches: standbys stay in
+/// `Collecting` or `VerifyingC6`.
+pub(crate) fn aggregation_started(state: &ThresholdPlaintextAggregatorState) -> bool {
+    matches!(
+        state,
+        ThresholdPlaintextAggregatorState::Computing(_)
+            | ThresholdPlaintextAggregatorState::GeneratingC7Proof(_)
+            | ThresholdPlaintextAggregatorState::Complete(_)
+    )
+}
+
 fn node_owns_committee_party_slot(
     committee: &[Address],
     honest_committee: &[Address],
@@ -137,6 +154,7 @@ impl ThresholdPlaintextAggregator {
         state: Persistable<ThresholdPlaintextAggregatorState>,
     ) -> Self {
         let recovered = params.recovery.get().unwrap_or_default();
+        let started_as_aggregator = state.get().as_ref().is_some_and(aggregation_started);
         ThresholdPlaintextAggregator {
             bus: params.bus,
             sortition: params.sortition,
@@ -149,6 +167,7 @@ impl ThresholdPlaintextAggregator {
             committee_addresses: params.committee_addresses,
             honest_committee_addresses: params.honest_committee_addresses,
             is_aggregator: params.initial_is_aggregator,
+            started_as_aggregator,
             effects_enabled: params.effects_enabled,
             pending: PendingDecryptionWork {
                 honest_c6_proofs_for_agg: (!recovered.honest_c6_proofs.is_empty())
@@ -185,8 +204,22 @@ impl ThresholdPlaintextAggregator {
         )
     }
 
+    /// Whether this node may start aggregation work: only the active aggregator does.
     fn can_run_aggregation_effects(&self) -> bool {
         self.effects_enabled && self.is_aggregator
+    }
+
+    /// Whether this node may continue aggregation work that is already in flight. A node that
+    /// started the work as the active aggregator continues it after a failover demotes it.
+    fn can_continue_aggregation_effects(&self) -> bool {
+        self.effects_enabled && (self.is_aggregator || self.started_as_aggregator)
+    }
+
+    /// Record that this node, as the active aggregator, starts aggregation work.
+    fn mark_started_as_aggregator(&mut self) {
+        if self.can_run_aggregation_effects() {
+            self.started_as_aggregator = true;
+        }
     }
 
     fn publish_inputs_ready(&self, ec: EventContext<Sequenced>) -> Result<()> {

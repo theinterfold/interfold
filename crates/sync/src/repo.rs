@@ -4,6 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+use crate::NodeRole;
 use e3_data::{Repositories, Repository};
 use e3_events::StoreKeys;
 use e3_events::{AggregateId, E3id, RequestRouterCheckpoint};
@@ -16,6 +17,7 @@ pub trait SyncRepositoryFactory {
     fn request_router_checkpoint(&self) -> Repository<RequestRouterCheckpoint>;
     fn restart_input_cursors(&self) -> Repository<HashMap<E3id, u64>>;
     fn schema_version(&self) -> Repository<u32>;
+    fn node_role(&self) -> Repository<NodeRole>;
 }
 
 impl SyncRepositoryFactory for Repositories {
@@ -41,5 +43,9 @@ impl SyncRepositoryFactory for Repositories {
 
     fn schema_version(&self) -> Repository<u32> {
         Repository::new(self.store.scope(StoreKeys::schema_version()))
+    }
+
+    fn node_role(&self) -> Repository<NodeRole> {
+        Repository::new(self.store.scope(StoreKeys::node_role()))
     }
 }

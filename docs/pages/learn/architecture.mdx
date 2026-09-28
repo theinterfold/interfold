@@ -1,163 +1,215 @@
-This section provides a breakdown of the Interfold protocol architecture, focusing on the core
-components and workflows involved in executing E3 computations.
+---
+title: 'Architecture'
+description:
+  'The on-chain contracts and off-chain services of the Interfold, and how they interact during one
+  E3.'
+---
 
-## Core Components
+import { Callout } from 'nextra/components'
+import { Layers, LinkCards, LinkCard } from '@/components/ui'
 
-### 1. Key Actors
+# Architecture
 
-#### Requesters
+This page describes the parts of the Interfold and how they work together. It is for developers who
+build an E3 program and for operators who run a ciphernode. At the end, you know which contract or
+service does each job, and the order of the calls in one E3.
 
-- Initiate and define computation requests, including parameters and requirements
-- Retrieve and utilize final computation results
-- Can be applications, protocols, or other systems
+## The stack
 
-#### Data Providers
+The Interfold has four layers. All E3 programs share the protocol contracts and the ciphernode
+network. Each application brings its own program contract, servers, and client.
 
-- Supply private inputs required for computation
-- Encrypt their inputs before submission
-- Can be end users, systems, or other applications
+<Layers
+  layers={[
+    {
+      name: 'Application',
+      note: 'One set for each E3 program',
+      items: ['Client', 'Coordination server', 'Program server', 'E3 program contract'],
+    },
+    {
+      name: 'Compute',
+      note: 'Off-chain',
+      items: ['Compute provider (RISC Zero zkVM)', 'Data-availability layer'],
+    },
+    {
+      name: 'Ciphernode network',
+      note: 'Off-chain, libp2p',
+      items: ['Sortition', 'DKG and decryption shares', 'Aggregator role', 'Proofs', 'Accusations'],
+    },
+    {
+      name: 'Protocol contracts',
+      note: 'On-chain',
+      items: [
+        'Interfold',
+        'CiphernodeRegistry',
+        'BondingRegistry',
+        'SlashingManager',
+        'E3RefundManager',
+        'Verifiers',
+        'Randomness provider',
+      ],
+    },
+  ]}
+/>
 
-#### Ciphernodes
+## On-chain contracts
 
-- Provide distributed cryptographic services as staked network operators
-- Perform distributed key generation and threshold decryption
-- Form Ciphernode Committees (CiCos) for individual computations
+All paths are relative to `packages/interfold-contracts/contracts/`. The deployed addresses are on
+the [Contracts](/reference/contracts) reference page.
 
-### 2. Smart Contracts
+| Contract                       | Source                                                  | Responsibility                                                                                                                     |
+| ------------------------------ | ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| Interfold                      | `Interfold.sol`                                         | Accepts requests and fees, holds the service fee in escrow, records stages and deadlines, verifies outputs, and credits rewards.   |
+| CiphernodeRegistry             | `registry/CiphernodeRegistryOwnable.sol`                | Keeps the ciphernode set in an incremental Merkle tree (IMT). Runs committee requests, tickets, finalization, and key publication. |
+| BondingRegistry                | `registry/BondingRegistry.sol`                          | Holds FOLD bonds and tFOLD ticket balances, registers operators, runs the exit queue, and executes slashes.                        |
+| SlashingManager                | `slashing/SlashingManager.sol`                          | Accepts slash proposals, applies penalties, bans operators, and expels committee members.                                          |
+| E3RefundManager                | `E3RefundManager.sol`                                   | Splits the escrow of a failed E3, holds success rewards for claims, and routes slashed funds.                                      |
+| E3 program                     | For example `templates/default/contracts/MyProgram.sol` | Validates requests, accepts inputs, and verifies the compute proof and the data-availability receipt.                              |
+| ChainlinkVrfRandomnessProvider | `randomness/ChainlinkVrfRandomnessProvider.sol`         | Connects one Chainlink VRF v2.5 subscription to the registry. Supplies one random word for each E3.                                |
+| NodeReleaseRegistry            | `registry/NodeReleaseRegistry.sol`                      | Sets which ciphernode release versions can take part in new E3s.                                                                   |
+| InterfoldToken (FOLD)          | `token/InterfoldToken.sol`                              | The token for ciphernode bonds.                                                                                                    |
+| InterfoldTicketToken (tFOLD)   | `token/InterfoldTicketToken.sol`                        | The non-transferable ticket balance, backed by deposited collateral.                                                               |
 
-#### Interfold Contract
+The Interfold contract links two libraries, `InterfoldLifecycle` and `InterfoldPricing`. They hold
+the lifecycle checks and the fee math and run in the context of the Interfold contract.
 
-- Central coordinator of the E3 ecosystem
-- Manages computation requests and lifecycle
-- Coordinates Ciphernode selection and CiCo formation
-- Maintains input integrity via Merkle trees
-- Emits events for off-chain services
+Each E3 records the registry, bonding registry, slashing manager, and refund manager at request
+time. Governance can replace these contracts only after it pauses requests and all active E3s end.
 
-#### E3 Program (E3P) Contract
+### Verifiers
 
-- Defines computation logic for the E3
-- Validates program parameters
-- Verifies computation proofs
-- Interfaces with the Interfold contract
-- Ensures correct execution of the E3P
-- Validates and sanitizes input data
-  - this might involve verifying a Zero-Knowledge Proof (ZKP) to ensure input integrity and
-    authenticity
-  - prevents malformed or malicious input injection that could compromise the computation
+| Verifier                               | Checks                                                                                     | Called from               |
+| -------------------------------------- | ------------------------------------------------------------------------------------------ | ------------------------- |
+| `BfvPkVerifier`                        | The recursive DKG proof. It calls the generated Honk verifier `DkgAggregatorVerifier`.     | `publishCommittee`        |
+| `DkgFoldAttestationVerifier`           | One signed fold attestation from each accepted DKG party                                   | `publishCommittee`        |
+| `BfvDecryptionVerifier`                | The recursive decryption proof. It calls the Honk verifier `DecryptionAggregatorVerifier`. | `publishPlaintextOutput`  |
+| `Risc0BfvCiphertextVerifier`           | The protocol fields in the RISC Zero compute receipt                                       | `publishCiphertextOutput` |
+| `AvailVectorXDataAvailabilityVerifier` | Avail blob inclusion through the VectorX bridge, for E3 programs that use Avail            | The E3 program            |
 
-#### Decryption Verifier Contract
+`BfvPkVerifierRouter` and `BfvDecryptionVerifierRouter` can sit in front of the BFV verifiers. A
+router sends each proof to the verifier for its parameter set and committee size.
 
-- Validates Ciphernode decryption shares
-- Ensures correct result decryption
-- Verifies threshold signature schemes
+## Off-chain components
 
-#### Bonding Registry Contract
+### Ciphernode
 
-- Manages operator ciphernode bonds (FOLD tokens) and ticket balances (tFOLD)
-- Handles operator registration and deregistration
-- Enforces minimum bond and ticket requirements for active status
-- Processes exit queues with configurable delay periods
-- Distributes rewards to committee members on successful E3 completion
+A ciphernode is the `interfold` binary that runs with `interfold start`. It reads contract events,
+talks to other ciphernodes over libp2p, and sends transactions. Its main parts are actors:
 
-#### Slashing Manager Contract
+| Part                           | Crate               | Job                                                                  |
+| ------------------------------ | ------------------- | -------------------------------------------------------------------- |
+| EVM readers and writers        | `crates/evm`        | Read contract events and send transactions                           |
+| `Sortition`                    | `crates/sortition`  | Score tickets, submit tickets, and track committee membership        |
+| `CommitteeFinalizer`           | `crates/aggregator` | Call `finalizeCommittee` after the ticket window closes              |
+| `ThresholdKeyshare`            | `crates/keyshare`   | Run DKG and compute decryption shares for one E3                     |
+| `PublicKeyAggregator`          | `crates/aggregator` | Aggregate the public key and the DKG proofs                          |
+| `ThresholdPlaintextAggregator` | `crates/aggregator` | Combine decryption shares and fold the decryption proofs             |
+| Proof actors                   | `crates/zk-prover`  | Generate and verify ZK proofs with Barretenberg (`bb`)               |
+| `AccusationManager`            | `crates/slashing`   | Start an accusation after a failed proof and collect committee votes |
+| Network                        | `crates/net`        | libp2p gossip between ciphernodes                                    |
+| Storage                        | `crates/data`       | sled storage and event replay after a restart                        |
 
-- Processes slashing proposals against misbehaving operators
-- Supports two lanes: attestation-based (immediate) and evidence-based (with appeal window)
-- Manages appeals and governance resolution
-- Can expel committee members and trigger E3 failure if viability drops below threshold
-- Enforces ban policies for repeat offenders
+Ciphernodes exchange their proofs over gossip and verify each other's proofs. Individual proofs do
+not go on-chain. Only the aggregated proofs do.
 
-#### E3 Refund Manager Contract
+### Aggregator role
 
-- Calculates refund distributions when an E3 fails at any stage
-- Distributes refunds proportionally based on work completed (committee formation, DKG, decryption)
-- Manages escrow of slashed funds for redistribution
-- Ensures honest node operators receive compensation for completed work
+Each committee has one active aggregator. The runtime sorts the finalized committee by address. The
+active aggregator is the eligible member with the lowest party ID. It sends two permissionless
+transactions: `publishCommittee` with the DKG proof and `publishPlaintextOutput` with the decryption
+proof.
 
-### 3. Compute Infrastructure
+The on-chain proof check protects both transactions, so the caller does not need special rights. If
+the expected result does not appear on-chain within 10 minutes, the next eligible member takes the
+role.
 
-#### Compute Provider (CP)
+### Compute provider
 
-- Runs the E3 Program over the published inputs
-- Reports computation results of the E3P to the Interfold contract
+The compute provider runs the secure process over the ciphertexts. In the current code, it is the
+RISC Zero zkVM. The zkVM receipt binds the E3, the committee public key, the input Merkle root, and
+the output hash. See [Compute Provider](/build/e3-program/compute-provider).
 
-The Interfold supports multiple CPs with different trust, scalability, and cost tradeoffs.
+### Program server
 
-**Supported systems:**
+`interfold program start` starts the program server (`crates/program-server`). It accepts a compute
+request over HTTP, runs the FHE computation, and posts the result to a callback URL. It runs one job
+at a time by default.
 
-1. **Verifiable systems**
-   - [RISC Zero zkVM](https://www.risczero.com/)
-   - [Succinct SP1](https://docs.succinct.xyz/) (coming soon)
-   - [Jolt](https://jolt.a16zcrypto.com/) (coming soon)
+<Callout type='warning'>
+  The program server is development tooling. It does not authenticate callers or limit callback
+  destinations. Any client that can reach it can start a computation.
+</Callout>
 
-2. **Oracle-based systems**
-   - zkTLS VMs (coming soon)
-   - Committee-based oracles (coming soon)
-   - Game theory-based oracles (coming soon)
+### Coordination server
 
-## Interaction Flow
+The template and CRISP each include a coordination server. The template server is in
+`templates/default/server`, and the CRISP server is in `examples/CRISP/server`. The template server
+does these tasks:
 
-The following steps outline how these components interact in a typical computation:
-![E3 Flow](/e3-flow.png)
+1. It rebuilds the committee public key from its chunks and checks the key commitment.
+2. It waits until the input window closes on-chain.
+3. It sends the compute request to the program server.
+4. It stores the ciphertext output on the data-availability layer.
+5. It calls `publishCiphertextOutput` with the output reference and the compute proof.
 
-1. **Computation Request**: A Requester submits a computation request with specific parameters.
-2. **Node Selection**: Ciphernodes are selected via sortition to form a Ciphernode Committee (CiCo).
-3. **Key Generation**: The CiCo generates and publishes a shared public key for encryption.
-4. **Data Submission**: Data Providers encrypt their inputs using the CiCo's shared public key and
-   publish commitments to the encrypted inputs onchain.
-5. **Computation Execution**: The Compute Provider (CP) runs the E3 Program (E3P) over the published
-   inputs.
-6. **Decryption**: The CiCo collectively decrypts the final result.
-7. **Result Retrieval**: The Requester retrieves and consumes the decrypted output of the E3P.
+### Client
 
-## E3 Lifecycle Stages
+The client uses `@interfold/sdk` or `@interfold/react`. It reads the committee public key, encrypts
+inputs, and can generate an input proof. It submits inputs to the E3 program and reads the output.
+See [SDK](/build/sdk) and [Client and Server](/build/client-and-server).
 
-Every E3 transitions through a well-defined state machine managed by the Interfold contract:
+## Interaction flow
 
-| Stage                  | Description                                                     |
-| ---------------------- | --------------------------------------------------------------- |
-| **None**               | Default state; E3 does not yet exist                            |
-| **Requested**          | E3 submitted and committee selection initiated                  |
-| **CommitteeFinalized** | Sortition complete; selected nodes begin DKG                    |
-| **KeyPublished**       | Committee public key published; inputs and computation accepted |
-| **CiphertextReady**    | Encrypted output published; awaiting decryption                 |
-| **Complete**           | Plaintext output published and rewards distributed              |
-| **Failed**             | Timeout or fault detected; refund process initiated             |
+The diagram shows the main calls in one successful E3.
 
-Timeout deadlines are configured per-deployment via `E3TimeoutConfig` (DKG window, compute window,
-decryption window) on the Interfold contract. The committee formation window is managed separately
-by the CiphernodeRegistry. If any deadline passes without the expected action, the E3 can be marked
-as failed and the refund manager distributes funds to honest participants.
+```mermaid
+sequenceDiagram
+    participant R as Requester
+    participant I as Interfold
+    participant CR as CiphernodeRegistry
+    participant CN as Ciphernodes
+    participant DP as Data provider
+    participant P as E3 program
+    participant S as Application server
+    R->>I: request(params)
+    I->>CR: requestCommittee
+    CN->>CR: submitTicket
+    CN->>CR: finalizeCommittee
+    CR->>I: onCommitteeFinalized
+    Note over CN: DKG and proofs C0 to C5
+    CN->>CR: publishCommittee
+    CR->>I: onCommitteePublished
+    DP->>P: publishInput
+    Note over S: The compute provider runs the secure process
+    S->>I: publishCiphertextOutput
+    I->>P: verify
+    Note over CN: Decryption shares and proofs C6, C7
+    CN->>I: publishPlaintextOutput
+    R->>I: getE3
+```
 
-Current Sepolia timeout configuration:
+1. The requester calls `request`. The Interfold contract asks the registry for a committee.
+2. Ciphernodes submit tickets after the VRF result arrives, then a ciphernode finalizes the
+   committee.
+3. The committee runs DKG. The active aggregator publishes the key commitment and the DKG proof.
+4. Data providers submit encrypted inputs to the E3 program during the input window.
+5. After the input window closes, the compute output goes to `publishCiphertextOutput`.
+6. The committee computes decryption shares. The active aggregator publishes the plaintext and the
+   decryption proof.
+7. The requester reads the result with `getE3`.
 
-| Window                     | Duration |
-| -------------------------- | -------- |
-| Committee Formation Window | 3,600s   |
-| DKG Window                 | 7,200s   |
-| Compute Window             | 86,400s  |
-| Decryption Window          | 3,600s   |
+The [E3 lifecycle](/learn/e3-lifecycle) page gives the events and deadlines for each step.
 
-### Failure Reasons
+## Next steps
 
-When an E3 fails, a specific reason is recorded:
-
-- `CommitteeFormationTimeout` / `InsufficientCommitteeMembers`
-- `DKGTimeout` / `DKGInvalidShares`
-- `NoInputsReceived`
-- `ComputeTimeout` / `ComputeProviderExpired` / `ComputeProviderFailed`
-- `DecryptionTimeout` / `DecryptionInvalidShares`
-- `VerificationFailed`
-
-## Developer's Perspective
-
-As a developer, you'll interact with:
-
-- **Interfold smart contracts**: To submit computation requests and retrieve results.
-- **Compute Providers**: To run your E3P using verifiable or oracle-based systems.
-- **E3 Smart Contracts**: To verify the inputs and computation result.
-
-For how DKG, threshold BFV, and ZK circuits (**C0–C7**) fit the protocol story, see
-[Cryptography](/cryptography). For the `circuits/` tree, scripts, and toolchain, see
-[Noir Circuits](/noir-circuits) and the repo’s
-[`circuits/README.md`](https://github.com/theinterfold/interfold/blob/main/circuits/README.md).
+<LinkCards min={230}>
+  <LinkCard title='E3 lifecycle' href='/learn/e3-lifecycle' icon='flow' tag='Learn'>
+    Each stage, the call that enters it, its events, and its deadline.
+  </LinkCard>
+  <LinkCard title='Cryptography' href='/learn/cryptography' icon='lock' tag='Learn'>
+    Threshold BFV, the DKG, and the circuits behind each proof.
+  </LinkCard>
+  <LinkCard title='Contracts' href='/reference/contracts' icon='contract' tag='Reference'>
+    Deployed addresses and contract interfaces.
+  </LinkCard>
+</LinkCards>

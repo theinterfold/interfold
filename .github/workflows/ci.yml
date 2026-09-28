@@ -194,6 +194,8 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
       - name: Test DAppNode credentials and health checks
         run: sudo apt-get update && sudo apt-get install -y gettext-base && bash dappnode/tests/test-hardening.sh
+      - name: Test the ciphernode image state location
+        run: bash crates/tests/docker/test-ciphernode-entrypoint.sh
 
   rust_unit_tests:
     needs: [detect_changes]
@@ -264,6 +266,11 @@ jobs:
       - name: Run library tests
         if: matrix.suite == 'lib'
         run: cargo nextest run --lib
+
+      # The reset-data guard test is its own test target, so the library run above skips it.
+      - name: Run the reset-data guard test
+        if: matrix.suite == 'lib'
+        run: cargo nextest run -p e3-entrypoint --test reset_data_guard
 
       - name: Run doc-tests
         if: matrix.suite == 'doc'

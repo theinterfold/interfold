@@ -4456,6 +4456,7 @@ dependencies = [
  "e3-request",
  "e3-test-helpers",
  "e3-utils",
+ "serde",
  "tempfile",
  "tokio",
  "tracing",

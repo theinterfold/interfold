@@ -50,6 +50,14 @@ Use `pnpm --dir packages/interfold-contracts upgrade:node-release --action prepa
 the release needs no governance transaction. Do not change either compatibility counter in this
 path. A compatible contract-only change also needs no node policy change.
 
+A release that changes the off-chain ticket ranking is compatible on chain but not in a mixed
+fleet. Example: the VRF `CommitteeRequested.seed` byte order
+(`crates/evm/src/randomness_provider/events.rs`, `Seed::from`). Old and new nodes shortlist
+different submitters, so fewer than N distinct owners can submit and
+`CiphernodeRegistryOwnable` fails the E3 with `InsufficientCommitteeMembers`. The registry scores
+each submitted ticket itself, so no honest node is slashed. Pause new E3 requests for such a rollout
+and resume after the operators have upgraded.
+
 ## Mandatory node-only release
 
 ```text
@@ -175,6 +183,18 @@ it refuses while a node runs, copies both secrets out as ciphertext without the 
 up at mode `0600`, removes the event logs and the key/value store, then restores and reads them back
 to confirm.
 
+Before it deletes anything, the command lists every key-share record by key prefix
+(`//threshold_keyshare/`, `//threshold_keyshare_recovery/v1/`, and
+`//threshold_keyshare_recovery_payloads/v1/`) and reads the `//e3_lifecycle` stage map. It refuses
+when the E3 of such a record is not `Complete` in that map, including an E3 that the map does not
+list, and it lists each such E3 with its stage, because the chain cannot restore that key share. A
+`Failed` stage also refuses: the node records its own local failures, such as a DKG timeout, as
+`Failed` while the E3 can continue on chain. The check reads only whether a record exists and does
+not decode it, so it also protects a store that an older schema wrote. Both reads fail on a storage
+error, which the ordinary read path reports as an absent record, and a key that does not parse fails
+the check. `--allow-active-e3s` overrides the refusals
+(`crates/entrypoint/src/nodes/reset_data.rs`).
+
 The event log is not one file. `EventSystem::persisted` passes `config.log_file()` through
 `enumerate_path`, which inserts a per-aggregate index before the extension, so the durable logs are
 `log.<aggregate>` rather than `log`. `AggregateId` is the chain id, with `0` reserved for events
@@ -201,6 +221,10 @@ leaves an unmarked event log; `has_existing_state` is then true and the prefligh
 `no schema marker` instead of starting. `preflight.rs` treats the complete identity pair as the one
 exception that still counts as a fresh store, which is what the reset relies on.
 
+The node role marker (`//node_role`) is in the same key/value store, so a reset also clears it. The
+next start stamps the role that it runs with. This is the supported way to turn a full node into a
+bootstrap node, or the reverse, on the same data directory.
+
 `ciphernode.jsonl` sits beside the logs in the same directory but is not durable state. It is the
 append-only operational log written by `LogCollector`, never read back, and a reset leaves it in
 place.
@@ -208,7 +232,7 @@ place.
 A schema raise is an upgrade-window action. `assertUpgradeWindow` already requires paused requests,
 zero active E3s, and zero unreleased committees, so no in-flight round loses state to this. The
 command is not a general repair tool: a node in a live committee that resets loses its keyshare and
-fails that E3.
+fails that E3. The stage-map check refuses that case unless the operator overrides it.
 
 ## Failure and rollback
 

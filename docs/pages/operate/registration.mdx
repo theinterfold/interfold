@@ -1,58 +1,139 @@
 ---
 title: 'Registration & Bonding'
-description: 'Authorize a bond owner, fund an operator, and register the node'
+description:
+  'Authorize a bond owner, bond FOLD, register the operator, and buy tickets, with the activation
+  rules and the economic parameters.'
 ---
+
+import { Callout, Steps } from 'nextra/components'
+import { Flow, LinkCard, LinkCards } from '@/components/ui'
 
 # Registration & Bonding
 
-This guide walks you through the complete registration process to become an active ciphernode
-operator. Make sure your node is already [running](./running) before proceeding.
+This page shows the on-chain steps that make a ciphernode an active operator. It is for operators
+who installed the node as shown on [Run a Ciphernode](/operate/running). You authorize a bond owner,
+bond FOLD, register the operator, and buy tickets. At the end, `interfold ciphernode status` shows
+`Active: true`.
 
-> **Browser-based setup:** the dashboard can do every step on this page in your browser. It shows
-> the live bond size, ticket price, and operator status, and it sends each transaction from the
-> connected wallet. Open [Run a ciphernode](https://dashboard.theinterfold.com/#operator). The
-> commands below remain the reference path for automated or headless setups.
+<Callout type='info'>
+  The dashboard does the same steps in a browser at [Run a
+  ciphernode](https://dashboard.theinterfold.com/#operator). It shows the live bond size, ticket
+  price, and operator status, and it sends each transaction from the connected wallet. The CLI
+  commands on this page are the reference path for automated and headless setups.
+</Callout>
 
-## Prerequisites
+## Operator key and bond owner
 
-Registration supports one or two wallets:
+An operator position uses two roles. They can be the same wallet, but a separate cold wallet or Safe
+as the bond owner is recommended. Then the node never holds the key that controls the collateral.
 
-- The **operator key** runs the node and authorizes its initial bond owner.
-- The **bond owner** holds FOLD and the ticket collateral token. It controls the position lifecycle.
+- The **operator key** is the key that the node loads. It is the identity in the registry, holds the
+  tFOLD ticket balance, submits sortition tickets, and signs DKG proofs. Bans and slashes apply to
+  it. It calls `setBondOwner` one time.
+- The **bond owner** is the wallet or Safe that holds FOLD and the ticket collateral. It sends every
+  collateral and registration call (the `...For(operator)` functions). Exit payouts go to the bond
+  owner. The registry also sends rewards to the bond owner, or to the operator when no owner is set.
 
-Using a separate cold wallet or Safe as the bond owner is strongly recommended so the running node
-does not hold the key controlling collateral. Self-ownership is supported if an operator prefers a
-single-wallet setup. Ensure the selected bond-owner wallet has:
+One bond owner can fund several operator keys. `totalBonded(owner)` returns the active and pending
+FOLD of that owner across all its operators. A committee takes at most one operator from each bond
+owner (see [Committee limits](#committee-limits-for-each-bond-owner)).
 
-| Token     | Amount Required                          | Purpose                      |
-| --------- | ---------------------------------------- | ---------------------------- |
-| **FOLD**  | Mainnet: `32,000 FOLD`                   | Ciphernode bond collateral   |
-| **sUSDS** | Mainnet: `1,000 sUSDS` shares per ticket | Ticket balance for sortition |
-| **ETH**   | Sufficient for gas                       | Transaction fees             |
+| Function (`BondingRegistry`)                  | Caller                     | CLI command                                  |
+| --------------------------------------------- | -------------------------- | -------------------------------------------- |
+| `setBondOwner(bondOwner)`                     | Operator key               | `ciphernode set-bond-owner`                  |
+| `proposeBondOwner(operator, newOwner)`        | Current bond owner         | `ciphernode propose-bond-owner`              |
+| `acceptBondOwner(operator)`                   | Proposed bond owner        | `ciphernode accept-bond-owner`               |
+| `bondCiphernodeFor(operator, amount)`         | Bond owner                 | `ciphernode bond ... bond`                   |
+| `registerOperatorFor(operator)`               | Bond owner                 | `ciphernode register`, `ciphernode activate` |
+| `addTicketBalanceFor(operator, amount)`       | Bond owner                 | `ciphernode tickets ... buy`                 |
+| `removeTicketBalanceFor(operator, amount)`    | Bond owner                 | `ciphernode tickets ... burn`                |
+| `unbondCiphernodeFor(operator, amount)`       | Bond owner                 | `ciphernode bond ... unbond`                 |
+| `deregisterOperatorFor(operator)`             | Bond owner or operator key | `ciphernode deregister`                      |
+| `claimExitsFor(operator, maxTicket, 0)`       | Anyone                     | `ciphernode bond ... claim --max-bond 0`     |
+| `claimExitsFor(operator, maxTicket, maxBond)` | Bond owner                 | `ciphernode bond ... claim`                  |
+| `refreshOperatorStatus(operator)`             | Anyone                     | None. Use `cast send`.                       |
 
-> **Testnet tokens:** on Sepolia you can self-serve test FOLD and mock USDC from the faucet with
-> `interfold faucet` (requires the `faucet` contract address in your config — see
-> [Running a Node → Contract Addresses](/ciphernode-operators/running#contract-addresses)). Each
-> call tops up FOLD and the fee token independently, only when your balance for that token is below
-> the faucet threshold. One call dispenses enough FOLD to meet the default Sepolia ciphernode bond.
-> If the faucet runs dry, reach out in the
-> [Interfold technical chat](https://t.me/interfoldhq_technical).
+A call from the wrong wallet reverts with `NotBondOwner(caller, operator)`.
 
-## Registration Steps
+## Before you start
 
-### Step 1: Check Current Status
+Make sure that you have these items:
 
-First, verify your current on-chain status:
+- A node configuration with the operator key stored in it. See [Run a Ciphernode](/operate/running).
+  The node must run before the operator can become active, because the node acknowledges its release
+  on-chain when it starts. The operator key needs ETH for that transaction and for ticket
+  submissions.
+- A bond owner that holds at least `requiredCiphernodeBond` FOLD, the ticket collateral for at least
+  `minTicketBalance` tickets, and ETH for gas. See [Economic parameters](#economic-parameters).
+- For a bond owner that is an EOA: a second configuration file whose stored wallet is the bond owner
+  key. Copy the node configuration into another directory, then run `interfold password set` and
+  `interfold wallet set` with `--config` for that file. The key store is created next to that file,
+  apart from the node keys. This page calls the file `owner.yaml`.
+
+For a Safe bond owner, send the same `BondingRegistry` calls through the Safe. Before
+`bondCiphernodeFor`, approve FOLD for the `BondingRegistry`. Before `addTicketBalanceFor`, approve
+the ticket collateral for the `InterfoldTicketToken` contract, not for the `BondingRegistry`. Safe
+amounts are in token base units.
+
+<Callout type='info'>
+  On Sepolia, `interfold faucet` sends test FOLD and the mock fee token to the configured signer.
+  Run it with the bond owner configuration. The configuration must include the `faucet` contract.
+  The faucet sends 200 of a token only when the signer holds less than 200 of that token. If the
+  faucet is empty, ask in the [Interfold technical chat](https://t.me/interfoldhq_technical).
+</Callout>
+
+### Read the token addresses
+
+The CLI reads the token addresses from the `BondingRegistry`, so you do not need them for the CLI
+steps. A Safe or a wallet needs them for the approvals. Read them with Foundry `cast`. Take the
+`BondingRegistry` address from [Contract addresses](/operate#contract-addresses).
+
+```bash
+BONDING=<BondingRegistry address>
+RPC=https://your-endpoint.example
+
+# FOLD, the bond token
+cast call "$BONDING" "getCiphernodeBondToken()(address)" --rpc-url "$RPC"
+
+# InterfoldTicketToken (tFOLD), the spender for the collateral approval
+TICKET=$(cast call "$BONDING" "getTicketToken()(address)" --rpc-url "$RPC")
+echo "$TICKET"
+
+# The ticket collateral token that tFOLD wraps (sUSDS on mainnet)
+cast call "$TICKET" "underlying()(address)" --rpc-url "$RPC"
+```
+
+## Register the operator
+
+<Flow
+  label='Operator onboarding'
+  steps={[
+    { label: 'Authorize', icon: 'key', sub: 'The operator key sets the bond owner.' },
+    { label: 'Bond', icon: 'coin', sub: 'The bond owner bonds FOLD.' },
+    { label: 'Register', icon: 'contract', sub: 'The bond owner registers the operator.' },
+    { label: 'Tickets', icon: 'ticket', sub: 'The bond owner deposits ticket collateral.' },
+    { label: 'Active', icon: 'shield', sub: 'The registry marks the operator active.' },
+  ]}
+/>
+
+The order is fixed. `registerOperatorFor` needs the full bond, so the bond comes first.
+`addTicketBalanceFor` reverts with `NotRegistered()` before registration, so tickets come last.
+
+<Steps>
+
+### Check the current status
+
+Run this command with the node configuration:
 
 ```bash
 interfold ciphernode status
 ```
 
-Example output:
+A new operator shows this output:
 
-```
+```text
 Ciphernode status on mainnet:
-  Operator key: 0x70997970C51812dc3A010C7d01b50e0d17dc79C8
+  Operator key: 0xOPERATOR
   Bond owner: not configured
   Registered: false
   Active: false
@@ -63,61 +144,84 @@ Ciphernode status on mainnet:
   Requirements: minTickets=1, ticketPrice=1000 tFOLD, ciphernodeBond=32000 FOLD
 ```
 
-### Step 2: Authorize the Bond Owner
+The `Requirements` line shows the live values of `minTicketBalance`, `ticketPrice`, and
+`requiredCiphernodeBond`.
 
-From the node's operator key, authorize the wallet or Safe that will control collateral:
+### Authorize the bond owner
+
+Run this command with the node configuration (the operator key):
 
 ```bash
 interfold ciphernode set-bond-owner --owner 0xBOND_OWNER
 ```
 
-The owner must be nonzero and may equal the operator address, although a separate cold wallet or
-Safe is recommended. The operator can correct the address before the position is funded. Once it
-holds collateral or is registered, owner changes use the two-step proposal and acceptance flow
-described below.
+The command prints `Authorized bond owner 0x… for operator 0x… (tx: 0x…)`. The owner must not be the
+zero address. It can be the operator address.
 
-### Step 3: Fund and Register the Operator
+<Callout type='warning'>
+  The bond owner receives every exit payout of this position. While the position is empty, the
+  operator key can call `set-bond-owner` again to correct the address. After the first bond, ticket
+  deposit, or registration, the call reverts with `BondOwnerAlreadySet`. Then only the current bond
+  owner can start a transfer (see [Change the bond owner](#change-the-bond-owner)).
+</Callout>
 
-For an EOA bond owner, run the owner-aware CLI commands using a config whose encrypted signer is
-that owner:
+### Bond FOLD
+
+Run this command with the bond owner configuration:
 
 ```bash
 interfold --config /path/to/owner.yaml ciphernode bond \
   --operator 0xOPERATOR bond --amount 32000
+```
+
+`--amount` is in whole FOLD, and decimals are allowed. When the FOLD allowance of the
+`BondingRegistry` is too low, the CLI first sends an approval for this amount. The command prints
+`Bonded 32000 FOLD for operator 0x… (tx: 0x…)`.
+
+<Callout type='warning'>
+  This transaction moves FOLD from the bond owner to the `BondingRegistry`. The FOLD comes back only
+  through an unbond or a deregistration, then the `exitDelay` (30 days on mainnet), then a claim.
+  Bonded and queued FOLD can be slashed.
+</Callout>
+
+### Register the operator
+
+```bash
 interfold --config /path/to/owner.yaml ciphernode register --operator 0xOPERATOR
+```
+
+The command prints `Registered operator 0x… on mainnet (tx: 0x…)`. The registry adds the operator to
+`CiphernodeRegistry` and emits `CiphernodeAdded`.
+
+### Buy tickets
+
+```bash
 interfold --config /path/to/owner.yaml ciphernode tickets \
   --operator 0xOPERATOR buy --amount 1000
 ```
 
-The CLI submits any required token approval first. Safe owners can submit the same
-`bondCiphernodeFor`, `registerOperatorFor`, and `addTicketBalanceFor` calls through the Safe
-interface. The owner supplies the assets, while the operator address is added to the registry Merkle
-tree and receives non-transferable tFOLD. With the recommended separate-owner setup, the hot
-operator key does not control FOLD or ticket collateral withdrawals, and protocol rewards are
-credited to the bond owner.
+`--amount` is an amount of the collateral token, not a number of tickets. When the collateral
+allowance of the `InterfoldTicketToken` is too low, the CLI first sends an approval. After the
+deposit, the CLI reads `availableTickets(operator)` and prints the ticket count, for example
+`Ticket balance is now 1 tickets`.
 
-The number of usable tickets is calculated as:
+<Callout type='warning'>
+  This transaction moves the collateral from the bond owner into the `InterfoldTicketToken`
+  contract. The registry mints non-transferable tFOLD to the operator key. The collateral comes back
+  only through the exit queue, after `exitDelay`.
+</Callout>
 
-```
-availableTickets = floor(ticketTokenBalance / ticketPrice)
-```
-
-With a ticket price of 1,000 sUSDS shares and a 1,000 sUSDS share deposit, you get one available
-ticket.
-
-### Step 4: Verify Active Status
-
-Confirm your registration is complete:
+### Confirm the active status
 
 ```bash
-interfold ciphernode status
+interfold ciphernode status --operator 0xOPERATOR
 ```
 
-Expected output for an active operator:
+An active operator shows this output:
 
-```
+```text
 Ciphernode status on mainnet:
-  Operator key: 0x70997970C51812dc3A010C7d01b50e0d17dc79C8
+  Operator key: 0xOPERATOR
   Bond owner: 0xBOND_OWNER
   Registered: true
   Active: true
@@ -128,58 +232,64 @@ Ciphernode status on mainnet:
   Requirements: minTickets=1, ticketPrice=1000 tFOLD, ciphernodeBond=32000 FOLD
 ```
 
-## Operator CLI Commands
+If `Active` is `false`, see [Troubleshooting](#troubleshooting).
+
+</Steps>
+
+The available tickets are `floor(ticket balance / ticketPrice)`. With a ticket price of 1,000 sUSDS
+shares, a deposit of 1,000 sUSDS shares gives one ticket, and 1,999 shares still give one ticket.
+
+For a self-owned position, use one configuration for all steps. Set the owner to your own address,
+and omit `--operator`: the CLI then uses the address of the configured signer.
+
+## CLI commands
+
+All commands below accept `--chain <name>`. It selects the chain entry by its `name`. Without it,
+the CLI uses the first entry in `chains`. For `bond` and `tickets`, put `--operator` and `--chain`
+before the inner command (`bond`, `unbond`, `claim`, `buy`, or `burn`). The
+[CLI Reference](/reference/cli#operator-on-chain-lifecycle) lists every flag.
+
+| Command                                                                      | Signer                                    | What it does                                             |
+| ---------------------------------------------------------------------------- | ----------------------------------------- | -------------------------------------------------------- |
+| `ciphernode set-bond-owner --owner <address>`                                | Operator key                              | Authorizes the first bond owner.                         |
+| `ciphernode propose-bond-owner --operator <a> --new-owner <b>`               | Current bond owner                        | Proposes a new bond owner.                               |
+| `ciphernode accept-bond-owner --operator <address>`                          | Proposed bond owner                       | Accepts the position.                                    |
+| `ciphernode bond [--operator <a>] bond --amount <FOLD>`                      | Bond owner                                | Approves FOLD if needed, then bonds it.                  |
+| `ciphernode bond [--operator <a>] unbond --amount <FOLD>`                    | Bond owner                                | Queues FOLD for exit.                                    |
+| `ciphernode bond [--operator <a>] claim [--max-ticket <n>] [--max-bond <n>]` | Bond owner, or anyone with `--max-bond 0` | Claims matured exits. Without limits, it claims all.     |
+| `ciphernode tickets [--operator <a>] buy --amount <collateral>`              | Bond owner                                | Approves the collateral if needed, then deposits it.     |
+| `ciphernode tickets [--operator <a>] burn --amount <tFOLD>`                  | Bond owner                                | Burns tFOLD and queues the collateral for exit.          |
+| `ciphernode register [--operator <a>]`                                       | Bond owner                                | Registers the operator.                                  |
+| `ciphernode activate [--operator <a>]`                                       | Bond owner                                | Sends the same `registerOperatorFor` call as `register`. |
+| `ciphernode deactivate [--operator <a>] [--tickets <n>] [--bond <n>]`        | Bond owner                                | Burns tickets and unbonds FOLD without a deregistration. |
+| `ciphernode deregister [--operator <a>]`                                     | Bond owner or operator key                | Deregisters the operator and queues all collateral.      |
+| `ciphernode status [--operator <a>]`                                         | Any                                       | Prints the on-chain status.                              |
+
+### Activate and deactivate
+
+`activate` is the same call as `register`. Use it to register an operator again after a full exit.
+It reverts with `AlreadyRegistered` when the operator is still registered.
+
+`deactivate` needs `--tickets`, `--bond`, or both. It calls `removeTicketBalanceFor` for the ticket
+amount and `unbondCiphernodeFor` for the bond amount. `--tickets` is a tFOLD amount, not a ticket
+count. The operator stays registered. For a full exit, use `deregister`, as shown on
+[Exits, Rewards & Slashing](/operate/exits-and-slashing).
 
 ```bash
-# Authorize the bond owner from the hot operator key
-interfold ciphernode set-bond-owner --owner 0xBOND_OWNER
-
-# Fund and register from an EOA bond-owner config
-interfold --config /path/to/owner.yaml ciphernode bond \
-  --operator 0xOPERATOR bond --amount 32000
-interfold --config /path/to/owner.yaml ciphernode register --operator 0xOPERATOR
-interfold --config /path/to/owner.yaml ciphernode tickets \
-  --operator 0xOPERATOR buy --amount 1000
-
-# The owner or operator can stop participation
-interfold ciphernode deregister --operator 0xOPERATOR
-
-# Check status
-interfold ciphernode status --operator 0xOPERATOR
-```
-
-Omit `--operator` for a self-owned position. In the recommended two-wallet setup, run financial
-commands with the bond-owner config and pass the node's operator address explicitly.
-
-### Activation Controls
-
-Two commands adjust the activation state of an operator without a full exit:
-
-```bash
-# Register an operator again after a full exit
-interfold --config /path/to/owner.yaml ciphernode activate --operator 0xOPERATOR
-
-# Queue collateral for exit and drop below the active thresholds
 interfold --config /path/to/owner.yaml ciphernode deactivate \
-  --operator 0xOPERATOR --tickets 50 --bond 25
+  --operator 0xOPERATOR --tickets 1000 --bond 32000
 ```
 
-`activate` sends the same registration call as `register`. Use it only to register an operator again
-after a [deregister](./exits-and-slashing#step-1-deregister). The call reverts with
-`AlreadyRegistered` for an operator that is still registered.
+<Callout type='warning'>
+  `deactivate`, `unbond`, `tickets burn`, and `deregister` start the exit delay (30 days on
+  mainnet). The collateral cannot be claimed before the delay ends. It stays slashable while it is
+  queued. A position with an open slash proposal cannot unbond, burn, or deregister until the
+  proposal is resolved (`OperatorUnderSlash`).
+</Callout>
 
-To restore the active status of a registered operator after an eligibility parameter changes
-on-chain, call `refreshOperatorStatus(operator)` on the BondingRegistry. The call is permissionless.
-The CLI has no command for it.
+### Change the bond owner
 
-`deactivate` requires `--tickets`, `--bond`, or both. It calls `removeTicketBalanceFor` for the
-ticket amount and `unbondCiphernodeFor` for the ciphernode bond amount. Both amounts enter the exit
-queue and become claimable after the exit delay. The operator stays registered, so use
-[deregister](./exits-and-slashing#step-1-deregister) for a full exit.
-
-### Rotate the Bond Owner
-
-The current owner proposes a replacement, then the new owner accepts:
+The current bond owner proposes a new owner. The new owner then accepts:
 
 ```bash
 interfold --config /path/to/current-owner.yaml ciphernode propose-bond-owner \
@@ -188,76 +298,152 @@ interfold --config /path/to/new-owner.yaml ciphernode accept-bond-owner \
   --operator 0xOPERATOR
 ```
 
-Active and pending FOLD ownership accounting moves atomically on acceptance. The operator key is not
-involved in rotation.
+The acceptance moves the ownership of the active and pending FOLD of the position to the new owner
+in one transaction. The FOLD stays in the `BondingRegistry`. The operator key does not take part.
+The acceptance reverts with `BondOwnerTransferViolatesLock` when the move leaves the old owner with
+less wallet-plus-bonded FOLD than its locked FOLD balance. A change of owner starts the
+[admission cooldown](#admission-cooldown) again.
 
-### Multi-Chain Support
+## Activation rules
 
-Specify a chain when operating on multiple networks:
+The `BondingRegistry` marks an operator active only when all of these conditions are true:
+
+- The operator is registered.
+- No authorized slashing manager has banned the operator.
+- The bond is at least `ceil(requiredCiphernodeBond × ciphernodeBondActiveBps / 10,000)`.
+- `floor(ticket balance / ticketPrice)` is at least `minTicketBalance`.
+- The acknowledged node release matches the required protocol version, and its node generation is at
+  least the required generation (`isNodeReleaseReady`).
+
+`ciphernodeBondActiveBps` is 8,000 (80%) after initialization. On mainnet, an operator therefore
+stays active with at least 25,600 FOLD.
+
+Registration and active status use different bond thresholds. `registerOperatorFor` needs the full
+`requiredCiphernodeBond`. `isCiphernodeBonded` tests only the 80% floor. An operator between the two
+reads as bonded, but registration reverts with `NotCiphernodeBonded()`. To test registration,
+compare `getCiphernodeBond(operator)` with `requiredCiphernodeBond()`.
+
+### Refresh a cached status
+
+Governance can change `ticketPrice`, `requiredCiphernodeBond`, `ciphernodeBondActiveBps`, and
+`minTicketBalance`. Each change makes every cached status read as inactive until a refresh. Anyone
+can refresh a registered operator:
 
 ```bash
-interfold ciphernode status --chain mainnet
-interfold ciphernode set-bond-owner --owner 0xBOND_OWNER --chain sepolia
+cast send "$BONDING" "refreshOperatorStatus(address)" 0xOPERATOR \
+  --rpc-url "$RPC" --interactive
 ```
 
-The `--chain` parameter matches the `name` field in your config's `chains` array.
+`--interactive` makes `cast` ask for the private key of any wallet that can pay the gas.
 
-## Economic Parameters
+The call reverts with `NotRegistered()` for an operator that is not registered.
+`refreshOperatorStatuses(address[])` refreshes a batch, and it reverts when one operator in the list
+is not registered. The CLI has no command for these calls. A node start also refreshes a registered
+operator that is not active, because its release acknowledgment calls `refreshOperatorStatus`.
 
-Current Ethereum Mainnet launch values (verify on-chain before depositing):
+## Committee limits for each bond owner
 
-| Parameter                | Value                | Description                         |
-| ------------------------ | -------------------- | ----------------------------------- |
-| `ticketPrice`            | 1,000 sUSDS shares   | Ticket collateral needed per ticket |
-| `requiredCiphernodeBond` | 32,000 FOLD          | Minimum FOLD needed to register     |
-| `minTicketBalance`       | 1 ticket             | Minimum tickets to be active        |
-| `exitDelay`              | 2,592,000s (30 days) | Wait time before claiming exits     |
+Sortition counts bond owners, not operator keys. For each new E3 request:
 
-Sepolia test deployments can use different mock-token values.
+- A committee takes at most one operator from each bond owner. The owner is the owner at the
+  timestamp before the request (`bondOwnerAt(operator, requestBlock - 1)`). When two operators of
+  one owner submit tickets, the better score replaces the other.
+- The request reverts with `InsufficientBondOwners` when the counted active bond owners are fewer
+  than the committee size N.
 
-Query these values on-chain:
+Extra operator keys under one bond owner therefore do not give more committee seats in one E3.
+[Tickets & Sortition](/operate/tickets-and-sortition) explains the scores.
+
+### Admission cooldown
+
+The `BondingRegistry` owner can set an admission policy with
+`setAdmissionPolicy(cooldownEnabled, cooldownDuration, admissionsPaused)`. When the cooldown is on,
+a new registration or a bond owner change must wait `cooldownDuration` seconds before the position
+counts for new committees. Funding tickets later does not restart the wait. When admissions are
+paused, positions that were not eligible before the pause cannot enter. An unset policy has no
+cooldown.
+
+Read the current policy:
 
 ```bash
-# Using cast (foundry)
-cast call $BONDING "ticketPrice()" --rpc-url $RPC
-cast call $BONDING "requiredCiphernodeBond()" --rpc-url $RPC
-cast call $BONDING "minTicketBalance()" --rpc-url $RPC
-cast call $BONDING "exitDelay()" --rpc-url $RPC
+cast call "$BONDING" \
+  "admissionPolicyAt(uint256)((bool,bool,uint48,uint48,bool,uint48))" "$(date +%s)" \
+  --rpc-url "$RPC"
 ```
 
-## Best Practices
+The first three values are `cooldownEnabled`, `admissionsPaused`, and `cooldownDuration`. On 25
+September 2026, mainnet returned `(true, false, 259200, 0, false, 0)`: a cooldown of 3 days.
 
-### Maintain Buffer Amounts
+## Economic parameters
 
-- **Ciphernode bond**: Keep 10-20% above the minimum to absorb potential slashing without losing
-  active status
-- **Tickets**: Maintain extra tickets so you're not deactivated if one is consumed or slashed
+The values below are from the mainnet deployment configuration
+(`packages/interfold-contracts/deploy/protocol/mainnet-protocol.config.json`). On 25 September 2026,
+the on-chain values were the same. Governance can change them, so read them on-chain before you
+deposit. Sepolia uses different values and mock tokens.
 
-### Monitor Your Status
+| Parameter                   | Mainnet value                   | Meaning                                           |
+| --------------------------- | ------------------------------- | ------------------------------------------------- |
+| `requiredCiphernodeBond`    | 32,000 FOLD                     | FOLD needed to register.                          |
+| `ciphernodeBondActiveBps`   | 8,000 (80%)                     | Share of the required bond needed to stay active. |
+| `ticketPrice`               | 1,000 sUSDS shares              | Collateral for one ticket.                        |
+| `minTicketBalance`          | 1 ticket                        | Tickets needed to be active.                      |
+| `exitDelay`                 | 2,592,000 s (30 days)           | Wait before a queued exit can be claimed.         |
+| `sortitionSubmissionWindow` | 600 s (on `CiphernodeRegistry`) | Time for nodes to submit tickets for one E3.      |
 
-Set up alerts for:
+The contract limits `exitDelay` to between 1 day and 90 days. Read the values with `cast`:
 
-- `isActive` changing to `false`
-- `SlashProposed` events targeting your address
-- Low ticket balance approaching minimum
+```bash
+cast call "$BONDING" "requiredCiphernodeBond()(uint256)" --rpc-url "$RPC"
+cast call "$BONDING" "ciphernodeBondActiveBps()(uint256)" --rpc-url "$RPC"
+cast call "$BONDING" "ticketPrice()(uint256)" --rpc-url "$RPC"
+cast call "$BONDING" "minTicketBalance()(uint256)" --rpc-url "$RPC"
+cast call "$BONDING" "exitDelay()(uint64)" --rpc-url "$RPC"
+```
 
-### Monitor Activation Events
+`requiredCiphernodeBond` and `ticketPrice` are in token base units (18 decimals on mainnet).
 
-Watch for `OperatorActivationChanged` events targeting your address. These fire whenever your active
-status changes due to balance or bond updates.
+## Good practice
+
+- Keep the bond above the 80% floor with a margin, so that a slash does not make the operator
+  inactive.
+- Keep more than `minTicketBalance` tickets, so that a ticket slash does not make the operator
+  inactive.
+- Watch for `OperatorActivationChanged` events for your operator. The registry emits one each time
+  the active status changes.
+- Watch for `SlashProposed` events for your operator, and for `isActive` changes to `false`.
 
 ## Troubleshooting
 
-| Issue                     | Cause                                          | Solution                                                |
-| ------------------------- | ---------------------------------------------- | ------------------------------------------------------- |
-| `isActive` is false       | Below minimum ciphernode bond (80%) or tickets | Add more FOLD or tickets                                |
-| Registration fails        | Already registered, banned, or unbonded        | Check `isRegistered()`, ban status, and ciphernode bond |
-| Ticket purchase fails     | Insufficient stablecoin or allowance           | Ensure balance and approve spending                     |
-| "NodeNotEligible" in logs | Not registered before E3 request               | Register before requests are made                       |
+| Problem                                   | Cause                                                                           | Action                                                                                           |
+| ----------------------------------------- | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `NotBondOwner` on a position call         | The signer is not `bondOwnerOf(operator)`, or no owner is set.                  | Run `set-bond-owner` first, or use the bond owner configuration.                                 |
+| `NotCiphernodeBonded` on registration     | The bond is below the full `requiredCiphernodeBond`.                            | Bond more FOLD.                                                                                  |
+| `NotRegistered` when you buy tickets      | The operator is not registered.                                                 | Register first.                                                                                  |
+| `AlreadyRegistered` or `CiphernodeBanned` | The operator is registered already, or banned.                                  | Check `isRegistered(operator)` and the slashing status.                                          |
+| `ExitInProgress`                          | A deregistration is still in its exit delay.                                    | Wait until `exitDelay` ends.                                                                     |
+| `Active: false` with bond and tickets     | The release is not acknowledged, the bond is below 80%, or the status is stale. | Start or upgrade the node, add collateral, or refresh the status.                                |
+| The node is never selected                | The node missed events, or it registered after the E3 request.                  | Test the [RPC endpoint](/operate/rpc-endpoints). Eligibility uses the state before each request. |
 
-## Next Steps
+## Next steps
 
-Once registered and active:
-
-1. **[Tickets & Sortition](./tickets-and-sortition)** - Learn how committee selection works
-2. **[Exits & Slashing](./exits-and-slashing)** - Understand rewards and exit procedures
+<LinkCards min={230}>
+  <LinkCard
+    title='Tickets & Sortition'
+    href='/operate/tickets-and-sortition'
+    icon='ticket'
+    tag='Operate'
+  >
+    How the node scores its tickets and how the committee is selected.
+  </LinkCard>
+  <LinkCard title='Manage Tickets' href='/operate/manage-tickets' icon='coin' tag='Operate'>
+    Buy and burn tickets, and keep the balance above the minimum.
+  </LinkCard>
+  <LinkCard
+    title='Exits, Rewards & Slashing'
+    href='/operate/exits-and-slashing'
+    icon='gavel'
+    tag='Maintain'
+  >
+    Deregister, claim exits, and respond to a slash proposal.
+  </LinkCard>
+</LinkCards>

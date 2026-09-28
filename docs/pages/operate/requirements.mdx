@@ -1,153 +1,207 @@
 ---
-title: 'System Requirements'
-description: 'Hardware, software, and network requirements for running Interfold components'
+title: 'Ciphernode Requirements'
+description:
+  'Hardware, platforms, network ports, RPC endpoints, and disk space that a ciphernode needs, with
+  the limits that the node enforces.'
 ---
 
-# System Requirements
+import { Callout } from 'nextra/components'
+import { LinkCard, LinkCards, Stats } from '@/components/ui'
 
-This page covers the hardware, software, and network requirements for running the various components
-of the Interfold protocol: ciphernodes, compute providers, and development environments.
+# Ciphernode Requirements
 
-## Ciphernode Requirements
+This page lists what a host needs to run a ciphernode. It is for operators who plan a new node or
+size a server. Some limits are enforced by the node code, and this page says so. Other numbers are
+guidance from earlier deployments, and the node does not check them. At the end, you can choose a
+host and open the correct ports.
 
-A ciphernode participates in threshold cryptography (DKG, decryption) and generates zero-knowledge
-proofs. The workload is CPU and memory intensive, especially during DKG and proof generation.
+<Stats
+  items={[
+    {
+      value: '17',
+      label: 'GiB minimum memory',
+      hint: 'Enforced on Linux: a 4 GiB reserve plus one 13 GiB prover job.',
+    },
+    { value: '9091', label: 'default QUIC port (UDP)', hint: 'Set with node.quic_port.' },
+    {
+      value: '2',
+      label: 'concurrent prover jobs',
+      hint: 'The default. The node lowers it to fit memory.',
+    },
+  ]}
+/>
 
-### Minimum (Development / Testnet)
+## Hardware
 
-| Component   | Specification                            |
-| ----------- | ---------------------------------------- |
-| **CPU**     | 4+ modern cores (x86-64)                 |
-| **RAM**     | 16 GB                                    |
-| **Disk**    | 100 GB SSD                               |
-| **Network** | Stable broadband, UDP port open for QUIC |
+A ciphernode runs threshold cryptography and makes zero-knowledge proofs. The work uses a lot of CPU
+and memory during DKG and proof generation. Memory is the only hardware value that the node checks.
 
-### Recommended (Production / Mainnet)
+| Resource | Enforced by the node                                                                                  | Guidance (not enforced)                                           |
+| -------- | ----------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| Memory   | On Linux, the node does not start with less than 17 GiB. The default of two prover jobs needs 30 GiB. | 32 GB for mainnet.                                                |
+| CPU      | No minimum. The node keeps `multithread_reserve_threads` (default `2`) logical CPUs for other work.   | 8 or more modern x86-64 cores for mainnet. 4 or more for testnet. |
+| Disk     | No minimum.                                                                                           | SSD. Start with 100 GB for testnet and 500 GB NVMe for mainnet.   |
+| Network  | One inbound UDP port for QUIC.                                                                        | A stable, low-latency connection that does not filter UDP.        |
 
-| Component   | Specification                         |
-| ----------- | ------------------------------------- |
-| **CPU**     | 8+ modern cores (x86-64, AVX2)        |
-| **RAM**     | 32 GB DDR5 (or DDR4 ECC)              |
-| **Disk**    | 500 GB NVMe SSD                       |
-| **Network** | Low-latency broadband, unfiltered UDP |
+### How the node sizes its prover work
 
-### Operating System
+The node runs CPU-heavy jobs (zero-knowledge proofs and threshold BFV work) in a shared pool. The
+number of concurrent jobs is the smallest of three values:
 
-| Platform | Status                       |
-| -------- | ---------------------------- |
-| Linux    | ✅ Fully supported (x86_64)  |
-| macOS    | ✅ Supported (Apple Silicon) |
-| Windows  | ⚠️ Via WSL2 or Docker        |
+- The requested value, `node.multithread_concurrent_jobs` (default `2`).
+- The number of logical CPUs minus `node.multithread_reserve_threads` (default `2`).
+- The memory limit: one job for each 13 GiB after a 4 GiB reserve for the node and the host.
 
-> **Note:** The Linux binary is the primary target. macOS Apple Silicon binaries are available.
-> Windows users should use WSL2 or the Docker image.
+On Linux, the node reads the host memory (`MemTotal` in `/proc/meminfo`) and the cgroup memory
+limit, and it uses the smaller value. A container memory limit is a cgroup limit. When the result is
+lower than the requested value, the node logs
+`Reduced compute concurrency to fit detected CPU and memory limits`.
 
-### Software Dependencies
+| Detected memory limit      | Prover jobs that the node admits |
+| -------------------------- | -------------------------------- |
+| Less than 17 GiB           | None. The node does not start.   |
+| 17 GiB to less than 30 GiB | 1                                |
+| 30 GiB or more             | 2 (the default request)          |
 
-| Dependency        | Minimum Version | Purpose                                |
-| ----------------- | --------------- | -------------------------------------- |
-| **Interfold CLI** | Latest release  | Node management and CLI operations     |
-| **Rust**          | 1.91.1+         | Building from source                   |
-| **WebSocket RPC** | —               | Real-time event listening (wss:// URL) |
+When the memory limit is too small for one job, startup stops with this error:
 
-### Network Requirements
+```text
+the detected memory limit cannot safely run one prover job in addition to the node; increase the host or cgroup memory limit
+```
 
-- **QUIC port**: UDP must be unfiltered. Default QUIC port is set in your config
-  (`interfold.config.yaml`). Cloud firewalls (AWS Security Groups, GCP firewall rules) must allow
-  UDP inbound on this port.
-- **WebSocket RPC**: The node subscribes to on-chain events via WebSocket. An HTTP-only RPC endpoint
-  will fall back to polling and may miss events. Always use a `wss://` URL.
-- **RPC log history**: The first sync replays every event from the contract deploy block, so the
-  endpoint must still serve those logs. An endpoint that has dropped them answers with an empty
-  result and no error, and the node then syncs successfully while missing events. Historical _state_
-  is a separate capability and the node does not need it, so test log retention directly rather than
-  with `eth_getCode`. See [RPC Endpoints](/ciphernode-operators/rpc-endpoints) for the check to run
-  before you start a node.
-- **NAT**: If behind NAT, configure port forwarding for the QUIC UDP port.
+The node never admits more jobs than the memory limit allows, also when you set a higher
+`multithread_concurrent_jobs`. You can set the value in the configuration file or with the
+`E3_NODE__MULTITHREAD_CONCURRENT_JOBS` environment variable.
 
-### Disk Usage
+### When a proof job fails
 
-| Data                      | Sizing behavior                                                          |
-| ------------------------- | ------------------------------------------------------------------------ |
-| Event log and proof blobs | Grows with retained E3 history; completed E3 records are not auto-pruned |
-| Circuit artifacts         | Several gigabytes per built preset and committee combination             |
-| Logs                      | Depends on log level and rotation policy                                 |
+The node retries a failed proof job or key-share job. The wait between attempts is 5 s, 15 s, 60 s,
+and then 300 s for each later attempt. From the second attempt, proof jobs run Barretenberg in
+low-memory mode (`--slow_low_memory`). The node stops the retries when the E3 reaches a terminal
+stage. The warning `Compute worker failed; automatic recovery remains active` does not mean that the
+E3 failed.
 
-Large local events are stored in content-addressed `event-blobs-v1` files beside the event log.
-Referenced blobs remain part of durable history after an E3 completes. Startup removes only files
-that were synced but never referenced by a committed log record.
+## Operating systems and platforms
 
-Use the 100 GB testnet and 500 GB production values above as initial allocations, not retention
-estimates. Monitor free space and growth per E3, configure log rotation, and expand the volume
-before it reaches capacity. Back up the event log and blob directory together. Use SSD storage
-because slow I/O can cause missed protocol windows.
+Each release publishes two `interfold` binaries and one Docker image. Other platforms must build the
+CLI from source.
 
-## Compute Provider Requirements
+| Platform               | Release binary                  | Docker image (`ghcr.io/theinterfold/ciphernode`) |
+| ---------------------- | ------------------------------- | ------------------------------------------------ |
+| Linux x86-64           | Yes (`interfold-linux-x86_64`)  | Yes (`linux/amd64`)                              |
+| macOS on Apple silicon | Yes (`interfold-macos-aarch64`) | Only with x86-64 emulation                       |
+| Linux on ARM (aarch64) | No. Build from source.          | Only with x86-64 emulation                       |
+| macOS on Intel         | No. Build from source.          | Yes (`linux/amd64`)                              |
+| Windows                | No. Use WSL 2 (Linux x86-64).   | Yes, with Docker Desktop on x86-64               |
 
-Running a compute provider (e.g., RISC Zero with Boundless) requires additional resources beyond the
-ciphernode baseline.
+The memory check reads Linux interfaces. On macOS, the node does not detect a memory limit, so the
+check does not stop startup. To build from source, use the Rust toolchain in `rust-toolchain.toml`
+(Rust 1.91.1). The DAppNode package is built for `linux/amd64`.
 
-### RISC Zero / Boundless
+## Network ports
 
-| Component | Specification                   |
-| --------- | ------------------------------- |
-| **CPU**   | 16+ cores (more is better)      |
-| **RAM**   | 64 GB+                          |
-| **Disk**  | 200 GB+ SSD                     |
-| **GPU**   | Not required (CPU proving only) |
+| Port             | Protocol | Bind address | Purpose                                                         | Open to the internet |
+| ---------------- | -------- | ------------ | --------------------------------------------------------------- | -------------------- |
+| `9091` (default) | UDP      | `0.0.0.0`    | QUIC transport for libp2p. Set with `node.quic_port`.           | Yes, inbound         |
+| `50505`          | TCP      | `127.0.0.1`  | Local control port for CLI commands. Set with `node.ctrl_port`. | No                   |
+| Not set          | TCP      | `127.0.0.1`  | Optional node dashboard. Set with `node.dashboard_port`.        | No                   |
 
-For production proving, Boundless offloads proof generation to a decentralized market. Local
-resources are only needed for development and testing.
+The DAppNode package uses UDP port `37173` for QUIC. Cloud firewalls (for example, AWS security
+groups or GCP firewall rules) must allow inbound UDP on the QUIC port. Behind NAT, forward the same
+UDP port to the host.
 
-## Development Environment
+<Callout type='warning'>
+  The control port accepts CLI commands for the running node. The node binds it to `127.0.0.1`. Do
+  not forward or publish it.
+</Callout>
 
-For local development with CRISP or a project template:
+The node finds its first peers through a DNS bootstrap address for its network:
+`/dnsaddr/bootstrap.interfold.network` on mainnet and `/dnsaddr/bootstrap-sepolia.interfold.network`
+on Sepolia. See [Run a Ciphernode](/operate/running#networking) to set peers.
 
-| Component   | Specification                                            |
-| ----------- | -------------------------------------------------------- |
-| **CPU**     | 4+ cores                                                 |
-| **RAM**     | 16 GB                                                    |
-| **Disk**    | 50 GB free                                               |
-| **Node.js** | 22.10.0+                                                 |
-| **pnpm**    | 10.7.1+                                                  |
-| **Rust**    | 1.91.1+                                                  |
-| **Foundry** | Latest (for contracts)                                   |
-| **Noir**    | See `crates/zk-prover/Cargo.toml` for compatible version |
-| **Docker**  | Optional (for containerized dev)                         |
+## RPC endpoints
 
-## Resource Scaling Guide
+A ciphernode needs two endpoints for each chain:
 
-| Workload         | Committee `(N,T,H)` | Relative load | Notes                                    |
-| ---------------- | ------------------- | ------------- | ---------------------------------------- |
-| Idle ciphernode  | —                   | Low           | Event sync, P2P, and health checks       |
-| Minimum DKG      | `(3,1,2)`           | Lowest        | Default local and integration-test shape |
-| Micro DKG        | `(9,4,5)`           | Intermediate  | More C3 fan-out and recursive proof work |
-| Small DKG        | `(19,9,14)`         | Highest       | Largest supported committee shape        |
-| Compute provider | Program-specific    | Variable      | Depends on FHE and proving backend       |
+- An Ethereum endpoint with a WebSocket URL (`ws://` or `wss://`). The node subscribes to contract
+  logs with `eth_subscribe`. The endpoint must keep the log history from the contract deploy blocks.
+- An Avail HTTP endpoint (`http://` or `https://`) for data availability. The node refuses to start
+  when a chain has no `data_availability` entry.
 
-Committee size and BFV preset are separate build choices. `secure-8192` uses much larger polynomials
-than `insecure-512`, and C3 fan-out grows quadratically with N. Do not infer production sizing from
-a Minimum insecure test. Benchmark the exact preset, committee, proof concurrency, and hardware with
-`circuits/benchmarks/run_benchmarks.sh` before deployment.
+An endpoint that dropped old logs can return an empty result without an error. Test your Ethereum
+endpoint on [RPC Endpoints](/operate/rpc-endpoints) before the first sync.
 
-> **Memory tip:** If your node starts OOM-killing during DKG, this is a resource constraint, not a
-> software bug. Add more RAM or reduce parallelism settings.
+## Disk and storage
 
-## Monitoring Resource Usage
+The node keeps its state in a `.interfold` directory next to its configuration file. Run
+`interfold config get db_file` to print the exact path.
 
-Use the [embedded dashboard](/tutorials/using-the-dashboard) to monitor node health. For
-system-level monitoring:
+| Path under `.interfold/` | Contents                                                                 |
+| ------------------------ | ------------------------------------------------------------------------ |
+| `config/<name>/key`      | The file that holds the encryption password for the local key store.     |
+| `data/<name>/db`         | The key/value store, with the encrypted wallet key and libp2p key.       |
+| `data/<name>/log.*`      | The append-only event log, with its `event-blobs-v1` directory.          |
+| `noir/`                  | The Barretenberg binary, circuit artifacts, and prover work directories. |
+
+`<name>` is the node profile name. The default profile is `_default`. The `data_dir` and
+`config_dir` keys move the data and key directories.
+
+Disk use grows with the E3 history that the node keeps. Events up to 32 MiB stay inside the event
+log. A larger local event, for example a proof work plan, goes to a separate file in
+`event-blobs-v1`. Each blob file is limited to 512 MiB. The node checks the length and SHA-256 hash
+of each blob when it reads it.
+
+At startup, the node deletes only blob files that no committed event references. Blob files that the
+event log references stay on disk, also after their E3 completes.
+
+<Callout type='warning'>
+  Do not delete files in `event-blobs-v1` to free space. The event history that refers to them
+  becomes unreadable. Expand the volume instead.
+</Callout>
+
+The disk values in the hardware table are first allocations, not retention estimates. Monitor free
+space and growth for each E3, and expand the volume before it is full. Back up the complete
+`.interfold` directory as one unit. Use SSD storage, because slow disk access can make the node miss
+protocol windows. [Migrate a Node](/operate/migrating) explains how to move this directory.
+
+## Software
+
+| Software         | Version                                             | Purpose                                            |
+| ---------------- | --------------------------------------------------- | -------------------------------------------------- |
+| `interfold` CLI  | The current release. Install it with `interfoldup`. | Runs the node and sends the operator transactions. |
+| Rust             | 1.91.1 (`rust-toolchain.toml`)                      | Only to build the CLI from source.                 |
+| Foundry (`cast`) | Any recent version                                  | Optional. Reads contract values from a terminal.   |
+
+This page covers ciphernodes only. For a development environment, see
+[Installation](/build/installation). For compute provider hosts, see
+[Compute Provider](/build/e3-program/compute-provider).
+
+## Check resource use
+
+The [node dashboard](/operate/dashboard) shows node health. On a Linux host, these commands show the
+system resources:
 
 ```bash
-# Check memory usage
+# Memory
 free -h
 
-# Monitor CPU and memory per process
+# CPU and memory for each process
 htop
 
-# Check disk usage
+# Free disk space
 df -h
 
-# Monitor network connections (QUIC uses UDP)
-ss -ulnp | grep <quic_port>
+# The QUIC listener (UDP). Replace 9091 if you changed node.quic_port.
+ss -ulnp | grep 9091
 ```
+
+## Next steps
+
+<LinkCards min={230}>
+  <LinkCard title='Run a Ciphernode' href='/operate/running' icon='terminal' tag='Set up'>
+    Install the node, write its configuration, and start it.
+  </LinkCard>
+  <LinkCard title='RPC Endpoints' href='/operate/rpc-endpoints' icon='network' tag='Set up'>
+    Test that an endpoint keeps the log history before the first sync.
+  </LinkCard>
+</LinkCards>

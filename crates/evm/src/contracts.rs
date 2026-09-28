@@ -84,6 +84,7 @@ sol! {
         function nodeReleaseRegistry() external view returns (address);
         function bondingRegistry() external view returns (address);
         function ciphernodeRegistry() external view returns (address);
+        function slashingManager() external view returns (address);
 
         // ── Events ──────────────────────────────────────────────────────────
         event E3Requested(uint256 e3Id, E3 e3, bytes32 indexed cryptoConfigId);
@@ -117,6 +118,8 @@ sol! {
         error E3AlreadyComplete(uint256 e3Id);
         error MarkE3FailedInGracePeriod(uint256 e3Id, uint256 gracePeriodEnds);
         error DKGDeadlinePassed(uint256 e3Id, uint256 deadline);
+        // Declared by IE3RefundManager. `processE3Failure` forwards it unchanged.
+        error SettlementBlocked();
     }
 }
 
@@ -447,6 +450,10 @@ sol! {
         function availableTickets(address operator) external view returns (uint256);
         function isRegistered(address operator) external view returns (bool);
         function isActive(address operator) external view returns (bool);
+        function eligibilityAt(
+            address operator,
+            uint256 timepoint
+        ) external view returns (bool active, uint256 activeOperatorCount);
         function numActiveOperators() external view returns (uint256);
         function hasExitInProgress(address operator) external view returns (bool);
 

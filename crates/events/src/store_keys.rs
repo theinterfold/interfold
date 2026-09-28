@@ -14,16 +14,30 @@ impl StoreKeys {
     }
 
     pub fn threshold_keyshare(e3_id: &E3id) -> String {
-        format!("//threshold_keyshare/{e3_id}")
+        format!("{}{e3_id}", Self::THRESHOLD_KEYSHARE_PREFIX)
     }
 
     pub fn threshold_keyshare_recovery(e3_id: &E3id) -> String {
-        format!("//threshold_keyshare_recovery/v1/{e3_id}")
+        format!("{}{e3_id}", Self::THRESHOLD_KEYSHARE_RECOVERY_PREFIX)
     }
 
     pub fn threshold_keyshare_recovery_payloads(e3_id: &E3id) -> String {
-        format!("//threshold_keyshare_recovery_payloads/v1/{e3_id}")
+        format!(
+            "{}{e3_id}",
+            Self::THRESHOLD_KEYSHARE_RECOVERY_PAYLOADS_PREFIX
+        )
     }
+
+    /// Key prefix of the key-share state of one E3. The E3 ID follows it.
+    pub const THRESHOLD_KEYSHARE_PREFIX: &'static str = "//threshold_keyshare/";
+
+    /// Key prefix of the key-share recovery state of one E3. The E3 ID follows it.
+    pub const THRESHOLD_KEYSHARE_RECOVERY_PREFIX: &'static str =
+        "//threshold_keyshare_recovery/v1/";
+
+    /// Key prefix of the key-share recovery payloads of one E3. The E3 ID follows it.
+    pub const THRESHOLD_KEYSHARE_RECOVERY_PAYLOADS_PREFIX: &'static str =
+        "//threshold_keyshare_recovery_payloads/v1/";
 
     pub fn plaintext(e3_id: &E3id) -> String {
         format!("//plaintext/{e3_id}")
@@ -147,6 +161,12 @@ impl StoreKeys {
     /// downgrades loudly instead of silently loading garbage (H19/H20).
     pub fn schema_version() -> String {
         String::from("//schema_version")
+    }
+
+    /// Role of the node that owns this data directory (full or bootstrap). Written on first boot;
+    /// a node refuses to start on a directory that another role wrote.
+    pub fn node_role() -> String {
+        String::from("//node_role")
     }
 
     pub fn finalized_committees() -> String {

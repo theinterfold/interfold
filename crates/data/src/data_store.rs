@@ -60,6 +60,32 @@ impl StoreHasExactKeys {
     }
 }
 
+/// List every key in the whole store that starts with a prefix. Storage errors fail the request.
+#[derive(Message, Debug)]
+#[rtype(result = "Result<Vec<Vec<u8>>>")]
+pub(crate) struct StoreKeysWithPrefix {
+    prefix: Vec<u8>,
+}
+
+impl StoreKeysWithPrefix {
+    pub(crate) fn prefix(&self) -> &[u8] {
+        &self.prefix
+    }
+}
+
+/// Read one key. Unlike `Get`, a storage error fails the request instead of reading as absent.
+#[derive(Message, Debug)]
+#[rtype(result = "Result<Option<Vec<u8>>>")]
+pub(crate) struct StoreGetChecked {
+    key: Vec<u8>,
+}
+
+impl StoreGetChecked {
+    pub(crate) fn key(&self) -> &[u8] {
+        &self.key
+    }
+}
+
 impl StoreAddr {
     pub fn to_maybe_in_mem(&self) -> Option<&Addr<InMemStore>> {
         match self {
@@ -114,6 +140,20 @@ impl DataStore {
         }
     }
 
+    /// Every key in the backing store that starts with `prefix`, in key order.
+    ///
+    /// This intentionally ignores the current scope, like `has_exact_keys`. A storage error fails
+    /// the call, so a safety check cannot read a failed scan as "no records".
+    pub async fn keys_with_prefix(&self, prefix: impl IntoKey) -> Result<Vec<Vec<u8>>> {
+        let message = StoreKeysWithPrefix {
+            prefix: prefix.into_key(),
+        };
+        match &self.addr {
+            StoreAddr::InMem(store) => Ok(store.send(message).await??),
+            StoreAddr::Sled(store) => Ok(store.send(message).await??),
+        }
+    }
+
     /// Read data at the scope location
     pub async fn read<T>(&self) -> Result<Option<T>>
     where
@@ -122,7 +162,35 @@ impl DataStore {
         let Some(bytes) = self.get.send(Get::new(&self.scope)).await? else {
             return Ok(None);
         };
+        Self::decode(bytes)
+    }
 
+    /// Read data at the scope location, and fail on a storage error.
+    ///
+    /// `read` reports a storage error on the bus and returns `None`, which is right for actors
+    /// that treat missing state as "not started". A safety check must not treat a failed read as
+    /// an absent record, so it uses this instead.
+    pub async fn read_checked<T>(&self) -> Result<Option<T>>
+    where
+        T: for<'de> Deserialize<'de>,
+    {
+        let message = StoreGetChecked {
+            key: self.scope.clone(),
+        };
+        let bytes = match &self.addr {
+            StoreAddr::InMem(store) => store.send(message).await??,
+            StoreAddr::Sled(store) => store.send(message).await??,
+        };
+        match bytes {
+            Some(bytes) => Self::decode(bytes),
+            None => Ok(None),
+        }
+    }
+
+    fn decode<T>(bytes: Vec<u8>) -> Result<Option<T>>
+    where
+        T: for<'de> Deserialize<'de>,
+    {
         // If we get a null value return None as this doesn't deserialize correctly
         if bytes == [0] {
             return Ok(None);

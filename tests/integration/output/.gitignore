@@ -3,3 +3,9 @@ plaintext.txt
 *.hex
 *.db
 events.txt
+*.log
+*.pid
+*.json
+*.validate.txt
+*.identity.before
+data-availability/

@@ -8,7 +8,8 @@ use futures::future::Abortable;
 impl Actor for DocumentPublisher {
     type Context = actix::Context<Self>;
     fn started(&mut self, ctx: &mut Self::Context) {
-        ctx.set_mailbox_capacity(MAILBOX_LIMIT)
+        ctx.set_mailbox_capacity(MAILBOX_LIMIT);
+        ctx.run_interval(FETCH_QUEUE_POLL, |actor, ctx| actor.start_due_fetches(ctx));
     }
 }
 
@@ -108,155 +109,266 @@ impl Handler<TypedEvent<CiphernodeSelected>> for DocumentPublisher {
 }
 
 impl Handler<AnnounceDocument> for DocumentPublisher {
-    type Result = ResponseActFuture<Self, ()>;
+    type Result = ();
 
-    fn handle(
-        &mut self,
-        AnnounceDocument(id): AnnounceDocument,
-        ctx: &mut Self::Context,
-    ) -> Self::Result {
+    fn handle(&mut self, AnnounceDocument(id): AnnounceDocument, ctx: &mut Self::Context) {
         let Some(event) = self.publications.get(&id).cloned() else {
-            return Box::pin(async {}.into_actor(self));
+            return;
         };
         if event.meta.expires_at <= chrono::Utc::now() {
-            self.publications.remove(&id);
-            self.publication_bytes = self.publication_bytes.saturating_sub(event.value.size());
-            return Box::pin(async {}.into_actor(self));
+            self.remove_publication(&id);
+            return;
         }
         if !self.effects_enabled || self.publishing.contains(&id) {
-            return Box::pin(async {}.into_actor(self));
+            return;
         }
-        if self.publishing.len() >= MAX_INFLIGHT_TRANSFERS {
-            ctx.notify_later(AnnounceDocument(id), RETRY_INTERVAL);
-            return Box::pin(async {}.into_actor(self));
+        let replicate = self
+            .schedules
+            .entry(id.clone())
+            .or_default()
+            .needs_replication(Instant::now());
+        if replicate && self.replicating.len() >= MAX_INFLIGHT_REPLICATIONS {
+            ctx.notify_later(AnnounceDocument(id), REPLICATION_QUEUE_POLL);
+            return;
         }
         self.publishing.insert(id.clone());
+        if replicate {
+            self.replicating.insert(id.clone());
+        }
         let (abort, registration) = AbortHandle::new_pair();
         self.publish_aborts.insert(id.clone(), abort);
         let tx = self.tx.clone();
         let rx = self.rx.clone();
         let bus = self.bus.clone();
         let topic = self.topic.clone();
-        Box::pin(
-            Abortable::new(
-                handle_publish_document_requested(tx, rx, event, topic, bus),
-                registration,
+        let operation = async move {
+            if replicate {
+                if let Err(error) = replicate_document(tx.clone(), rx.clone(), &event).await {
+                    return (false, Err(error));
+                }
+            }
+            (
+                replicate,
+                announce_document(tx, rx, event, topic, bus).await,
             )
-            .into_actor(self)
-            .map(move |result, actor, ctx| {
-                actor.publishing.remove(&id);
-                actor.publish_aborts.remove(&id);
-                if actor
-                    .publications
-                    .get(&id)
-                    .is_some_and(|event| event.meta.expires_at <= chrono::Utc::now())
-                {
-                    if let Some(event) = actor.publications.remove(&id) {
-                        actor.publication_bytes =
-                            actor.publication_bytes.saturating_sub(event.value.size());
+        };
+        ctx.spawn(
+            Abortable::new(operation, registration)
+                .into_actor(self)
+                .map(move |result, actor, ctx| {
+                    actor.publishing.remove(&id);
+                    actor.replicating.remove(&id);
+                    actor.publish_aborts.remove(&id);
+                    let Ok((replicated, outcome)) = result else {
+                        return;
+                    };
+                    if actor
+                        .publications
+                        .get(&id)
+                        .is_some_and(|event| event.meta.expires_at <= chrono::Utc::now())
+                    {
+                        actor.remove_publication(&id);
+                        return;
                     }
-                    return;
-                }
-                let delay = match result {
-                    Ok(Ok(())) => ANNOUNCE_INTERVAL,
-                    Ok(Err(error)) => {
-                        actor.bus.err(EType::IO, error);
-                        RETRY_INTERVAL
+                    let Some(schedule) = actor.schedules.get_mut(&id) else {
+                        return;
+                    };
+                    if replicated {
+                        schedule.record_replicated(Instant::now());
                     }
-                    Err(_) => return,
-                };
-                if actor.publications.contains_key(&id) {
-                    ctx.notify_later(AnnounceDocument(id), delay);
-                }
-            }),
-        )
+                    let delay = match outcome {
+                        Ok(()) => schedule.record_announced(),
+                        Err(error) => {
+                            actor.bus.err(EType::IO, error);
+                            schedule.record_failed()
+                        }
+                    };
+                    if actor.publications.contains_key(&id) {
+                        ctx.notify_later(AnnounceDocument(id), delay);
+                    }
+                }),
+        );
     }
 }
 
-/// Receiving DocumentPublishedNotification from libp2p
+/// Receiving DocumentPublishedNotification from libp2p. The fetch runs in the actor context, so
+/// the network receive loop does not wait for it.
 impl Handler<DocumentPublishedNotification> for DocumentPublisher {
-    type Result = ResponseActFuture<Self, ()>;
-    fn handle(
-        &mut self,
-        msg: DocumentPublishedNotification,
-        ctx: &mut Self::Context,
-    ) -> Self::Result {
+    type Result = ();
+    fn handle(&mut self, msg: DocumentPublishedNotification, ctx: &mut Self::Context) {
+        if !notification_is_well_formed(&msg) {
+            debug!("Ignored a malformed document notification");
+            return;
+        }
+        // An expired notification cannot lead to the document. This also drops the early
+        // notifications that expired while the node waited for selection.
+        if msg.meta.expires_at <= chrono::Utc::now() {
+            return;
+        }
         let id = (msg.meta.e3_id.clone(), msg.key.clone());
         if self.closed_e3s.contains(&msg.meta.e3_id) {
-            return Box::pin(async {}.into_actor(self));
+            return;
         }
         let ids = self.service.interest_snapshot();
         if !ids.contains_key(&msg.meta.e3_id) {
-            if msg.meta.expires_at > chrono::Utc::now()
-                && !self
-                    .early_notifications
-                    .iter()
-                    .any(|item| item.meta.e3_id == msg.meta.e3_id && item.key == msg.key)
-            {
+            // Keep one notification per document and party filter, with the latest expiry. Only
+            // the filter decides whether a notification can match the payload, so a forged copy
+            // that arrives first must not hide a correct one with another filter or outlive it.
+            if let Some(item) = self.early_notifications.iter_mut().find(|item| {
+                item.meta.e3_id == msg.meta.e3_id
+                    && item.key == msg.key
+                    && item.meta.filter == msg.meta.filter
+            }) {
+                if msg.meta.expires_at > item.meta.expires_at {
+                    *item = msg;
+                }
+            } else {
                 if self.early_notifications.len() == MAX_BUFFERED_NOTIFICATIONS {
                     self.early_notifications.pop_front();
                 }
                 self.early_notifications.push_back(msg);
             }
-            return Box::pin(async {}.into_actor(self));
+            return;
         }
         if DocumentPublishingService::interest_in(&ids, &msg).is_none()
             || self.received.contains(&id)
-            || !self.fetching.insert(id.clone())
         {
-            return Box::pin(async {}.into_actor(self));
+            return;
+        }
+        if self.fetching.contains_key(&id) {
+            add_candidate(self.late_notifications.entry(id).or_default(), msg);
+            return;
         }
         if self.received.len() >= MAX_RECEIVED_DOCUMENTS {
-            self.fetching.remove(&id);
             self.bus.err(
                 EType::DocumentPublishing,
                 anyhow::anyhow!("received-document cache is full"),
             );
-            return Box::pin(async {}.into_actor(self));
+            return;
         }
-        if self.fetching.len() > MAX_INFLIGHT_TRANSFERS {
-            self.fetching.remove(&id);
-            ctx.notify_later(msg, RETRY_INTERVAL);
-            return Box::pin(async {}.into_actor(self));
+        if !self.fetch_queue.push(id, msg, Instant::now()) {
+            debug!("Dropped a document notification because the fetch queue is full");
+            return;
         }
+        self.start_due_fetches(ctx);
+    }
+}
+
+impl DocumentPublisher {
+    /// Publish a fetched document that is bound to a matching notification.
+    fn accept_document(
+        &mut self,
+        id: DocumentId,
+        document: DocumentReceived,
+        notification: DocumentPublishedNotification,
+    ) {
+        if self.closed_e3s.contains(&document.meta.e3_id) {
+            return;
+        }
+        if let Err(error) =
+            self.bus
+                .publish_from_remote(document, notification.ts, None, EventSource::Net)
+        {
+            self.bus.err(EType::IO, error);
+        } else {
+            self.received.insert(id);
+        }
+    }
+
+    /// Start waiting fetches whose retry time has passed, up to the concurrency limit.
+    fn start_due_fetches(&mut self, ctx: &mut actix::Context<Self>) {
+        let now = Instant::now();
+        while self.fetching.len() < MAX_INFLIGHT_TRANSFERS {
+            let Some((id, waiting)) = self.fetch_queue.pop_due(now) else {
+                break;
+            };
+            if self.closed_e3s.contains(&id.0) || self.received.contains(&id) {
+                continue;
+            }
+            self.start_fetch(id, waiting.notifications, waiting.failures, ctx);
+        }
+    }
+
+    fn start_fetch(
+        &mut self,
+        id: DocumentId,
+        notifications: Vec<DocumentPublishedNotification>,
+        failures: u32,
+        ctx: &mut actix::Context<Self>,
+    ) {
+        let ids = self.service.interest_snapshot();
         let tx = self.tx.clone();
         let rx = self.rx.clone();
         let (abort, registration) = AbortHandle::new_pair();
+        self.fetching.insert(id.clone(), failures);
         self.fetch_aborts.insert(id.clone(), abort);
-        Box::pin(
+        ctx.spawn(
             Abortable::new(
-                handle_document_published_notification(tx, rx, ids, msg.clone()),
+                handle_document_published_notification(tx, rx, ids, notifications.clone()),
                 registration,
             )
             .into_actor(self)
             .map(move |result, actor, ctx| {
                 actor.fetching.remove(&id);
                 actor.fetch_aborts.remove(&id);
+                let now = chrono::Utc::now();
+                let late: Vec<_> = actor
+                    .late_notifications
+                    .remove(&id)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|notification| notification.meta.expires_at > now)
+                    .collect();
                 match result {
-                    Ok(Ok(Some(document))) => {
-                        if actor.closed_e3s.contains(&document.meta.e3_id) {
-                            return;
-                        }
-                        if let Err(error) =
-                            actor
-                                .bus
-                                .publish_from_remote(document, msg.ts, None, EventSource::Net)
-                        {
-                            actor.bus.err(EType::IO, error);
-                        } else {
-                            actor.received.insert(id);
-                        }
+                    Ok(Ok(Some((document, notification)))) => {
+                        actor.accept_document(id, document, notification);
                     }
                     Ok(Ok(None)) => {}
                     Ok(Err(error)) => {
+                        let fetched = error
+                            .downcast_ref::<DocumentMetadataMismatch>()
+                            .map(|mismatch| mismatch.value().clone());
                         actor.bus.err(EType::IO, error);
-                        if msg.meta.expires_at > chrono::Utc::now() {
-                            ctx.notify_later(msg, RETRY_INTERVAL);
+                        match fetched {
+                            // The document arrived, but its metadata matched none of these
+                            // notifications. Check the notifications that arrived during the fetch
+                            // against the same bytes, and do not fetch it again for them.
+                            Some(value) => {
+                                let ids = actor.service.interest_snapshot();
+                                if let Ok(Some((document, notification))) =
+                                    bind_to_candidate(&ids, late, value)
+                                {
+                                    actor.accept_document(id, document, notification);
+                                } else {
+                                    debug!(
+                                        "Dropped a document whose metadata matched no notification"
+                                    );
+                                }
+                            }
+                            None => {
+                                let mut candidates = notifications;
+                                for notification in late {
+                                    add_candidate(&mut candidates, notification);
+                                }
+                                candidates
+                                    .retain(|notification| notification.meta.expires_at > now);
+                                if !actor.fetch_queue.retry(
+                                    id,
+                                    candidates,
+                                    failures + 1,
+                                    Instant::now(),
+                                ) {
+                                    debug!(
+                                        "Stopped fetching a document until it is announced again"
+                                    );
+                                }
+                            }
                         }
                     }
-                    Err(_) => {}
+                    Err(_) => return,
                 }
+                actor.start_due_fetches(ctx);
             }),
-        )
+        );
     }
 }

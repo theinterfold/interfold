@@ -1,279 +1,308 @@
 ---
-title: 'Tickets & Sortition'
-description: 'How ticket balances influence committee selection'
+title: 'Tickets and Sortition'
+description:
+  'How tFOLD tickets, ticket collateral, and the request-time snapshot decide whether a ciphernode
+  can take a seat on an E3 committee.'
 ---
 
-# Tickets & Sortition
+import { Callout } from 'nextra/components'
+import { Flow, LinkCard, LinkCards, Stats } from '@/components/ui'
 
-Tickets influence your probability of selection for E3 committees. New requests admit at most one
-operator per bond owner. Multiple machines under one owner compete for that owner's single seat.
+# Tickets and Sortition
 
-## Ticket Overview
+This page explains tickets from the operator view. It covers what a ticket is, what a ticket costs
+on each network, and how the ticket balance of a ciphernode feeds committee selection. It is for
+operators who registered a ciphernode. At the end, you know which values to watch, and which events
+and log lines show each selection step.
 
-| Token     | Purpose                                            | Transferable |
-| --------- | -------------------------------------------------- | ------------ |
-| **FOLD**  | Ciphernode bond - required to register             | Yes          |
-| **tFOLD** | Ticket token - determines committee selection odds | No           |
-| **sUSDS** | Mainnet ticket collateral token                    | Yes          |
-| **USDS**  | Mainnet fee token for E3 requests                  | Yes          |
+To buy, check, or redeem tickets, read [Manage tickets](/operate/manage-tickets). For the scoring
+algorithm in detail, read [Sortition internals](/internals/sortition).
 
-Tickets are priced in the configured ticket collateral token and minted into non-transferable tFOLD
-balances:
+## Tokens and collateral
 
-```
-availableTickets = floor(ticketTokenBalance / ticketPrice)
-```
+A ciphernode position uses two kinds of collateral. The bond owner supplies both. The operator
+address is the identity that the registry, sortition, and slashing use.
 
-## Managing Tickets
+| Asset             | Contract                                           | Role                                                                                                              | Transferable                               |
+| ----------------- | -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| FOLD              | `InterfoldToken`                                   | Ciphernode bond. Registration needs the full `requiredCiphernodeBond`.                                            | Yes. See [FOLD FAQ](/faq/transferability). |
+| tFOLD             | `InterfoldTicketToken`                             | Ticket balance of the operator. The ticket token mints 1 tFOLD unit for each deposited unit of ticket collateral. | No                                         |
+| Ticket collateral | The `underlying()` token of `InterfoldTicketToken` | The asset that the bond owner deposits. The ticket token holds it until an exit claim pays it to the bond owner.  | Yes                                        |
+| Fee token         | Configured on the Interfold contract               | Requesters pay E3 fees in this token. Committee rewards for an E3 are paid in the fee token of that E3.           | Yes                                        |
 
-### Buy Tickets
+tFOLD is non-transferable. Transfers and approvals revert. Delegation is locked to the operator
+itself, and the first deposit delegates the balance to the operator automatically. The
+non-transferable balance keeps each ticket attributable to one operator, so a slash cannot miss it.
 
-The bond owner approves the ticket wrapper and funds the operator:
+### Values per network
 
-```bash
-interfold --config /path/to/owner.yaml ciphernode tickets \
-  --operator 0xOPERATOR buy --amount 100
-```
+The table shows the values at deployment. Governance can change each value, so always read the live
+values before you fund a position (see [Parameters](#parameters)).
 
-This:
+| Value                       | Mainnet                    | Sepolia                               |
+| --------------------------- | -------------------------- | ------------------------------------- |
+| Ticket collateral           | sUSDS shares (18 decimals) | Mock USDC, symbol `USDC` (6 decimals) |
+| `ticketPrice`               | 1,000 sUSDS shares         | 10 USDC                               |
+| `minTicketBalance`          | 1 ticket                   | 1 ticket                              |
+| `requiredCiphernodeBond`    | 32,000 FOLD                | 100 FOLD                              |
+| `exitDelay`                 | 2,592,000 s (30 days)      | 604,800 s (7 days)                    |
+| `sortitionSubmissionWindow` | 600 s                      | 60 s                                  |
+| `randomnessRequestTimeout`  | 3,600 s                    | 3,600 s (contract default)            |
 
-1. Pulls ticket collateral from the bond owner
-2. Mints equivalent tFOLD to the operator address
-3. Re-evaluates the operator's active status
+On mainnet, a fixed `ticketPrice` is a fixed number of sUSDS shares. It is not a fixed USDS amount.
 
-To buy tickets from a wallet instead of the CLI, use step 5 of the
-[interactive operator guide](https://dashboard.theinterfold.com/#operator). It prices the purchase
-from the live `ticketPrice` and handles the approval.
+## How a ticket balance becomes a committee seat
 
-### Burn Tickets
+Selection runs once for each E3. The request fixes the ticket balances, the seed arrives later, and
+each ciphernode submits its own best ticket.
 
-The bond owner queues ticket collateral for withdrawal:
+<Flow
+  label='From ticket balance to committee seat'
+  steps={[
+    {
+      label: 'Deposit',
+      icon: 'coin',
+      sub: 'The bond owner deposits collateral. The operator receives tFOLD.',
+    },
+    {
+      label: 'Snapshot',
+      icon: 'eye',
+      sub: 'The request fixes balances and eligibility at requestBlock - 1.',
+    },
+    {
+      label: 'Seed',
+      icon: 'sparkle',
+      sub: 'A verified VRF response gives the seed and opens the submission window.',
+    },
+    {
+      label: 'Submit',
+      icon: 'ticket',
+      sub: 'Each eligible node submits its lowest-scoring ticket.',
+    },
+    {
+      label: 'Finalize',
+      icon: 'network',
+      sub: 'After the deadline, the best N bond owners form the committee.',
+    },
+  ]}
+/>
 
-```bash
-interfold --config /path/to/owner.yaml ciphernode tickets \
-  --operator 0xOPERATOR burn --amount 25
-```
+### 1. Ticket count
 
-> Burning tickets takes effect immediately. Dropping below the minimum ticket balance makes you
-> inactive until the owner tops it up again. Underlying ticket collateral is paid to the bond owner
-> only after the exit delay and `claimExitsFor`.
+The number of tickets comes from the tFOLD balance:
 
-### Check Balance
-
-```bash
-interfold ciphernode status
-```
-
-Look for the "Ticket balance" and "available" fields in the output.
-
-## Ticket Economics
-
-- **More eligible tickets improve your owner's best-score distribution**, with at most one seat per
-  owner. Doubling tickets does not generally double the probability of a committee seat.
-- **Balances are snapshotted** at `requestBlock - 1` - adding tickets after a request won't help
-  that round
-- **Idle tickets have opportunity cost** - rewards only accrue when you're selected and complete
-  duties
-
-### Rebalancing Tips
-
-- Add tickets **one or two requests ahead** of anticipated demand to avoid gas spikes
-- Keep a **small buffer** so slashing or removals don't instantly deactivate you
-- Monitor `ticketPrice()` and `minTicketBalance()` before automating deposits on multiple networks
-
-## Sortition Algorithm
-
-The sortition process selects committees deterministically from a committee seed that becomes
-available only after the paid E3 request is committed:
-
-```mermaid
-flowchart TD
-    A[E3Requested event] --> B[Wait for a verified VRF response]
-    B --> C[Registry accepts the request-bound seed]
-    C --> D[Snapshot balances at requestBlock - 1 timestamp]
-    D --> E[Filter eligible operators]
-    E --> F[Calculate ticket scores]
-    F --> G[Submit winning tickets on-chain]
-    G --> H[Finalize committee after deadline]
-    H --> I[Generate and publish key shares]
+```text
+availableTickets = floor(tFOLD balance / ticketPrice)
 ```
 
-### 1. Eligibility Check
+A deposit amount is an amount of collateral, not a number of tickets. A remainder below one
+`ticketPrice` does not count. For example, a mainnet deposit of 2,500 sUSDS shares gives 2 tickets.
+The other 500 shares count only after a later deposit completes a third ticket.
 
-After the registry accepts the VRF response, the runtime creates a durable `CommitteeRequested`
-event. Nodes then check whether they are eligible:
+### 2. The request-time snapshot
 
-- Registered and not banned
-- `isActive` (bond + ticket minimums satisfied)
-- Admitted under the cooldown and pause policy at the request snapshot
-- No exit in progress
-- At least one unreserved local workload slot
+When a requester asks for an E3, the registry stores `requestBlock`. The field name is kept for
+compatibility, but the value is the request timestamp (an EIP-6372 timepoint). Sortition reads the
+tFOLD balance, the eligibility, and the bond owner of each operator at `requestBlock - 1`. The
+ticket price for the E3 is also frozen at the request.
 
-Governance can configure an admission delay for new registrations and bond-owner changes. A transfer
-proposal does not start the delay; acceptance does. Re-registration starts a new delay. These times
-are recorded even when governance disables the cooldown.
+Tickets that you add at the request timestamp or later do not count for that E3. They count for
+later requests. A deposit in the same block as the request does not count, because that block has
+the request timestamp.
 
-An admission pause is different from disabling the cooldown. A pause keeps waiting, new, and
-owner-changed positions out while already eligible positions can continue. The waiting time
-continues during a pause. Disabling the cooldown while admissions are open removes the waiting
-requirement, but does not bypass the owner seat cap, collateral, or slash restrictions. Existing E3s
-keep their request-time policy.
+### 3. The seed and the submission window
 
-After a policy change, call the permissionless `refreshOperatorStatus(operator)` or batch
-`refreshOperatorStatuses(operators)` before requesting an E3. Refresh a waiting position after its
-delay expires so it counts toward committee capacity. Expiry does not send a transaction
-automatically. `isActive` reports collateral/release readiness; `eligibilityAt` includes admission.
-An unchanged pre-upgrade position keeps admission because its original registration time is not
-available.
+After the request, the registry asks the randomness provider for a verified VRF response
+(`CommitteeRandomnessRequested`). The registry waits at most `randomnessRequestTimeout` for a usable
+response. When the response arrives (`RandomnessFulfilled`), the committee deadline is the
+fulfillment time plus `sortitionSubmissionWindow`. If no usable response arrives in time, the
+committee cannot form and the E3 fails. The failure path then emits
+`RandomnessCircuitBreakerTripped`.
 
-Changes to collateral, ticket, or required-release rules require a check of every existing
-registration before another E3 request. Anyone can run the batch refresh, including for an offline
-operator. An inactive result still completes that operator's check. Checking the same operator again
-or registering a new operator cannot skip an existing one. After the last check, wait for a later
-block timestamp and check `committeeOwnerCapacity(latest.timestamp - 1)`.
+### 4. Scores and submission
 
-Before governance pauses admissions after an eligibility configuration change:
+Each ticket number from 1 to `availableTickets` has a score:
 
-1. Refresh every registered operator, including operators expected to remain inactive.
-2. Wait for a later block timestamp.
-3. Check that `committeeOwnerCapacity(latest.timestamp - 1)` covers the required committee size.
-4. Pause admissions.
-5. Refresh the frozen eligible pool, then wait for a later timestamp before requesting an E3.
-
-An operator that was inactive at the pause cutoff cannot enter through a later refresh. If the
-pre-pause refresh was missed, governance must unpause, refresh, and pause again in the order above.
-
-The runtime treats each available ticket as one local concurrent-work slot. A node with one ticket
-does not volunteer for a second E3 while its first slot is reserved or active. This is a local
-liveness rule; the contract still recognizes the full request-time ticket balance.
-
-### 2. Score Calculation
-
-For each ticket you hold, a score is calculated:
-
-```
-score = keccak256(node, ticketNumber, e3Id, seed)
+```text
+score = keccak256(abi.encodePacked(node, ticketNumber, e3Id, seed))
 ```
 
-Each eligible node submits its best (lowest-scoring) ticket. The contract keeps the best submission
-per bond owner, then selects the best `N` owners. Equal scores use the lower operator address. The
-E3 computation seed is separate and does not affect ticket ranking.
+The ciphernode computes its scores off-chain and submits its lowest score with
+`submitTicket(e3Id, ticketNumber)`. The node sends this transaction automatically. The contract
+recomputes the score and rejects the ticket in these conditions:
 
-The owner comes from `bondOwnerAt(operator, requestBlock - 1)`. A transfer after that snapshot does
-not create another seat for the old owner in that E3. Requests created before the cap upgrade keep
-their previous selection rule.
+| Error                      | Condition                                                                            |
+| -------------------------- | ------------------------------------------------------------------------------------ |
+| `CommitteeDeadlineReached` | The committee deadline passed.                                                       |
+| `NodeAlreadySubmitted`     | The operator already submitted a ticket for this E3.                                 |
+| `NodeNotEligible`          | The operator is not active now, was not eligible at the snapshot, or had no tickets. |
+| `InvalidTicketNumber`      | The ticket number is 0 or larger than the ticket count at the snapshot.              |
 
-This is an address-based cap, not proof of an independent person. One controller can use several
-owners before the snapshot, buy control later, or collude with other owners.
+A successful submission emits `TicketSubmitted(e3Id, node, ticketId, score)`.
 
-### 3. Ticket Submission
+### 5. One seat for each bond owner
 
-Operators submit their winning tickets during the configured submission window:
+A new request emits `CommitteeBondOwnerCapEnabled`. For such a request, the contract keeps only the
+best submission of each bond owner, and then keeps the best `N` bond owners. The owner comes from
+`bondOwnerAt(operator, requestBlock - 1)`. Several machines under one bond owner therefore compete
+for one seat. A bond-owner transfer after the snapshot does not give the old owner another seat.
 
-```bash
-# The CLI handles this automatically when running
-submitTicket(e3Id, ticketNumber)
-```
+This cap is based on addresses. It does not prove that two bond owners are independent people.
 
-Each submission emits `TicketSubmitted(e3Id, node, ticketId, score)`. The first submission also
-stores the seed that the registry derived from the verified VRF result. The submission deadline is
-the fulfillment time plus `sortitionSubmissionWindow`. A separate seed transaction is not needed.
+More tickets give more draws, so a better best score is more likely. The chance of a seat increases
+with the ticket count, but it is not proportional to it. Each bond owner gets at most one seat, and
+the committee has a fixed number of seats.
 
-Before a winning ticket leaves the sortition actor, the node persists a provisional capacity
-reservation for that E3. This prevents two concurrent requests from using the same local slot. If
-the ticket transaction fails, the E3 becomes terminal, or the node is not in the finalized
-committee, the runtime releases the reservation.
+### 6. Local capacity
 
-The runtime shortlists `N + buffer` distinct owners by their best ticket scores. Each operator in
-those groups can submit if it has local capacity, so an owner's best node being offline does not
-exclude its backups. The contract keeps at most one seat per owner. A submission does not guarantee
-a seat or reward. If owner history is incomplete, nodes submit without this shortlist and log a
-warning; the contract still enforces the cap.
+A ciphernode treats each ticket as one concurrent E3. The node volunteers for a new E3 only while
+its number of active E3s is less than its ticket count at the snapshot. A node with one ticket does
+not submit for a second E3 while its first E3 is active. The contract still accepts any ticket
+number in the snapshot range, because this rule is local to the node.
 
-### 4. Committee Finalization
+Before the node submits a ticket, it stores a capacity reservation for that E3. The node releases
+the reservation in three cases: the ticket transaction fails, the node is not in the final
+committee, or the E3 reaches a terminal stage. The node rebuilds its reservations from stored state
+after a restart.
 
-After the window closes:
+The node also ranks the `N` plus a buffer of distinct bond owners by their best tickets. Each
+operator of a ranked bond owner can submit, so a backup machine can take the place of an offline
+machine of the same owner. A submission does not guarantee a seat or a reward.
 
-1. Anyone can call `finalizeCommittee(e3Id)`
-2. If at least `N` distinct request-time owners submitted eligible tickets, the registry emits
-   `SortitionCommitteeFinalized(e3Id, committee, scores)`
-3. If the threshold isn't met, `CommitteeFormationFailed` is emitted and the E3 fails
-4. Each node reconciles its provisional reservation: selected nodes keep it, and unselected nodes
-   release it
-5. Selected nodes generate and publish key shares
-6. Aggregated public key is published via `publishCommittee`
+### 7. Finalization
 
-The reservation stays active until the E3 reaches a terminal stage. It is also reconstructed from
-durable state after a restart, so restarting a node does not make an in-flight slot appear free.
+After the deadline, any account can call `finalizeCommittee(e3Id)`. The ciphernodes that submitted
+tickets send this call automatically, at staggered times. The result depends on the number of
+accepted bond owners:
 
-Small needs 19 distinct eligible owners to form its committee, even though its DKG roster has 14
-members. `committee:new` checks distinct eligible owners before fee approval and payment. Direct
-contract callers must do this check themselves. The request-time active-node guard does not measure
-distinct owners; an underfilled round fails at finalization. The preflight cannot establish that
-owners are independent or that their machines will remain online.
+- At least `N`: the registry emits `SortitionCommitteeFinalized(e3Id, committee, scores)`. The
+  selected ciphernodes start the DKG.
+- Fewer than `N`: the registry emits
+  `CommitteeFormationFailed(e3Id, nodesSubmitted, thresholdRequired)`, and the E3 fails.
+
+## Committee sizes
+
+The committee size of the E3 sets `N`. Each seat needs a different eligible bond owner.
+
+<Stats
+  items={[
+    { value: '3', label: 'minimum', hint: 'N = 3, T = 1, H = 2' },
+    { value: '9', label: 'micro', hint: 'N = 9, T = 4, H = 5' },
+    { value: '19', label: 'small', hint: 'N = 19, T = 9, H = 14' },
+  ]}
+/>
+
+| Size      | Committee size N | Threshold T | DKG roster H |
+| --------- | ---------------- | ----------- | ------------ |
+| `minimum` | 3                | 1           | 2            |
+| `micro`   | 9                | 4           | 5            |
+| `small`   | 19               | 9           | 14           |
+
+Decryption needs T + 1 valid shares. A `small` E3 needs 19 distinct eligible bond owners to form its
+committee, although its DKG roster has 14 members.
+
+## When a ciphernode is active
+
+`BondingRegistry.isActive(operator)` is true only when all of these conditions are true:
+
+- The operator is registered.
+- No authorized slashing manager banned the operator.
+- The ciphernode bond is at least `requiredCiphernodeBond × ciphernodeBondActiveBps / 10000`,
+  rounded up. The default `ciphernodeBondActiveBps` is 8000 (80 %). On mainnet, the operator stays
+  active with 25,600 FOLD, but registration needs the full 32,000 FOLD.
+- `availableTickets` is at least `minTicketBalance`.
+- The operator acknowledged a release that meets the on-chain release policy. See
+  [Upgrades](/operate/upgrades).
+- The operator status was refreshed under the current eligibility policy.
+
+For sortition, the operator must also be eligible at the snapshot (`eligibilityAt`). This check adds
+the admission policy. Governance can set a cooldown that starts at registration and at each change
+of bond owner. Governance can also pause admissions. A pause keeps new, waiting, and owner-changed
+positions out of new committees.
+
+### After a governance change
+
+A change to `ticketPrice`, `requiredCiphernodeBond`, `ciphernodeBondActiveBps`, or
+`minTicketBalance` advances `eligibilityConfigurationVersion`. After the change, every operator
+counts as inactive until its status is refreshed. Any account can refresh a status with
+`refreshOperatorStatus(operator)` or `refreshOperatorStatuses(operators)`. A ciphernode also
+refreshes its own status when it acknowledges its release at startup.
+
+<Callout type='info'>
+  An expired cooldown does not send a transaction. The status of a waiting position changes only
+  when someone calls `refreshOperatorStatus` for it.
+</Callout>
 
 ## Parameters
 
-| Parameter                               | Mainnet Launch Value | Description                                   |
-| --------------------------------------- | -------------------- | --------------------------------------------- |
-| `ticketPrice`                           | 1,000 sUSDS shares   | Ticket collateral needed per ticket           |
-| `minTicketBalance`                      | 1 ticket             | Minimum to be active                          |
-| `randomnessRequestTimeout`              | 3,600 seconds        | Maximum wait for a usable VRF response        |
-| `sortitionSubmissionWindow`             | 600 seconds          | Time to submit after an accepted VRF response |
-| Minimum committee `[H,N]`               | `[2,3]`              | DKG roster and finalized committee sizes      |
-| Micro committee `[H,N]`                 | `[5,9]`              | DKG roster and finalized committee sizes      |
-| Small committee `[H,N]`                 | `[14,19]`            | DKG roster and finalized committee sizes      |
-| Runtime threshold `T` by committee enum | `1 / 4 / 9`          | Decryption requires `T+1` valid shares        |
+| Parameter                   | Contract             | How to read it                                                          |
+| --------------------------- | -------------------- | ----------------------------------------------------------------------- |
+| `ticketPrice`               | `BondingRegistry`    | `interfold ciphernode status`, the `Requirements` line                  |
+| `minTicketBalance`          | `BondingRegistry`    | `interfold ciphernode status`, the `Requirements` line                  |
+| `requiredCiphernodeBond`    | `BondingRegistry`    | `interfold ciphernode status`, the `Requirements` line                  |
+| `ciphernodeBondActiveBps`   | `BondingRegistry`    | `cast call <BondingRegistry> "ciphernodeBondActiveBps()(uint256)"`      |
+| `exitDelay`                 | `BondingRegistry`    | `cast call <BondingRegistry> "exitDelay()(uint64)"`                     |
+| `sortitionSubmissionWindow` | `CiphernodeRegistry` | `cast call <CiphernodeRegistry> "sortitionSubmissionWindow()(uint256)"` |
+| `randomnessRequestTimeout`  | `CiphernodeRegistry` | `cast call <CiphernodeRegistry> "randomnessRequestTimeout()(uint256)"`  |
 
-## Monitoring
+Add `--rpc-url <RPC_URL>` to each `cast` command. The contract addresses are in
+[Contracts and addresses](/reference/contracts).
 
-### Events to Watch
+## Monitor selection
 
-| Event                             | Meaning                                      |
-| --------------------------------- | -------------------------------------------- |
-| `CommitteeRandomnessRequested`    | A request-bound VRF request was created      |
-| `RandomnessFulfilled`             | The provider stored a verified VRF response  |
-| `RandomnessCircuitBreakerTripped` | A request's VRF window expired               |
-| `TicketSubmitted`                 | A ticket was submitted for selection         |
-| `CommitteeBondOwnerCapEnabled`    | The request uses one seat per snapshot owner |
-| `SortitionCommitteeFinalized`     | Committee members were confirmed             |
-| `CommitteeFormationFailed`        | Not enough operators submitted tickets       |
-| `CommitteePublished`              | The aggregated public key is ready           |
+### Events
 
-This release supports Ethereum mainnet and Sepolia. Do not configure the ciphernode Registry reader
-for Arbitrum until a later protocol release adds that deployment path.
+| Event                             | Contract             | Meaning                                                                          |
+| --------------------------------- | -------------------- | -------------------------------------------------------------------------------- |
+| `TicketBalanceUpdated`            | `BondingRegistry`    | The tFOLD balance changed. `reason` is `DEPOSIT`, `WITHDRAW`, or a slash reason. |
+| `OperatorActivationChanged`       | `BondingRegistry`    | The active status of the operator changed.                                       |
+| `ConfigurationUpdated`            | `BondingRegistry`    | Governance changed a parameter.                                                  |
+| `CommitteeRandomnessRequested`    | `CiphernodeRegistry` | The registry requested the VRF seed for an E3.                                   |
+| `RandomnessFulfilled`             | Randomness provider  | The provider recorded a VRF response.                                            |
+| `RandomnessCircuitBreakerTripped` | `CiphernodeRegistry` | The VRF wait expired without a usable response.                                  |
+| `CommitteeBondOwnerCapEnabled`    | `CiphernodeRegistry` | The E3 gives at most one seat to each snapshot bond owner.                       |
+| `TicketSubmitted`                 | `CiphernodeRegistry` | A ciphernode submitted a ticket.                                                 |
+| `SortitionCommitteeFinalized`     | `CiphernodeRegistry` | The committee is final.                                                          |
+| `CommitteeFormationFailed`        | `CiphernodeRegistry` | Fewer than N bond owners submitted eligible tickets.                             |
+| `CommitteePublished`              | `CiphernodeRegistry` | The committee published the aggregated public key.                               |
 
-### Log Messages
+### Log lines
 
-Watch your node logs for:
+The node writes these lines at the `INFO` level, so start it with `-v` or more to see them. The
+`ERROR` line appears at every verbosity level.
 
-- `"This node was SELECTED for sortition"` - Your node can submit a candidate ticket
-- `"This node was NOT selected for sortition"` - Your node lacks eligibility or local capacity, or
-  its owner is outside the shortlist
-- `"Ticket generated for score sortition"` - Winning ticket emitted to the event bus
-- `"Ciphernode was not selected"` - Node wasn't in the selection set
-- `"Ranking bond owners and their fallback operators for ticket submission"` - Candidate ranking
-  started
-- `"Node is in finalized committee"` - Committee confirmed, CiphernodeSelected emitted
+| Log line                                                                 | Meaning                                                                        |
+| ------------------------------------------------------------------------ | ------------------------------------------------------------------------------ |
+| `Waiting for the delayed sortition seed`                                 | The E3 is known, but the VRF seed is not available yet.                        |
+| `Ranking bond owners and their fallback operators for ticket submission` | Local selection started for an E3.                                             |
+| `Node is not active`                                                     | The operator was not active at the snapshot.                                   |
+| `Node has no tickets in the request-time sortition view`                 | The snapshot balance gives 0 tickets.                                          |
+| `This node was SELECTED for sortition`                                   | The node has a candidate ticket to submit.                                     |
+| `This node was NOT selected for sortition`                               | The node is not eligible, has no free capacity, or its owner is not ranked.    |
+| `Ticket generated for score sortition`                                   | The node sends its best ticket to the chain writer.                            |
+| `Ticket submitted to registry`                                           | The `submitTicket` transaction succeeded.                                      |
+| `Failed to submit ticket: …` (`ERROR`)                                   | The `submitTicket` transaction failed. The message includes the decoded error. |
+| `Node is in finalized committee, emitting CiphernodeSelected`            | The node has a seat and starts the DKG.                                        |
+| `Node not in finalized committee`                                        | The node submitted, but another bond owner took the seat.                      |
 
-## Troubleshooting
+For problems with selection, read
+[Troubleshooting](/operate/troubleshooting#not-selected-for-committees).
 
-| Symptom                                    | Possible Cause                           | Solution                                      |
-| ------------------------------------------ | ---------------------------------------- | --------------------------------------------- |
-| Never being selected                       | Low ticket count relative to peers       | Add more tickets                              |
-| `isActive` is false                        | Below minimum tickets or ciphernode bond | Top up tickets or bond more FOLD              |
-| `SubmissionWindowClosed` errors            | RPC latency or slow submission           | Use faster RPC and check the network          |
-| Committee missing your operator            | Submission did not succeed               | Check logs and retry on the next round        |
-| `RandomnessCircuitBreakerTripped` observed | The VRF request expired without a result | Wait for governance to configure the provider |
+## Next steps
 
-## Best Practices
-
-1. **Stagger ticket top-ups** - Avoid last-minute gas competition
-2. **Alert on missed submissions** - Human intervention before committee deadlines
-3. **Batch networks separately** - Run separate CLI instances per chain
-4. **Track governance changes** - `randomnessProvider`, `randomnessRequestTimeout`,
-   `sortitionSubmissionWindow`, `ticketPrice`, and `requiredCiphernodeBond` may change
-
-## Next Steps
-
-- **[Exits, Rewards & Slashing](./exits-and-slashing)** - Understand rewards and how to exit safely
+<LinkCards min={230}>
+  <LinkCard title='Manage tickets' href='/operate/manage-tickets' icon='ticket' tag='Procedure'>
+    Buy, check, and redeem tickets with the CLI or a wallet.
+  </LinkCard>
+  <LinkCard title='Sortition internals' href='/internals/sortition' icon='layers' tag='Internals'>
+    The seed, the scoring function, and the finalization rules in detail.
+  </LinkCard>
+  <LinkCard
+    title='Exits and slashing'
+    href='/operate/exits-and-slashing'
+    icon='gavel'
+    tag='Maintain'
+  >
+    Rewards, slash penalties on tickets and bonds, and the exit queue.
+  </LinkCard>
+</LinkCards>

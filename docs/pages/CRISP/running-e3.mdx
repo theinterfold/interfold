@@ -1,158 +1,340 @@
 ---
-title: Running an E3 Program
+title: 'Run a voting round'
 description:
-  'Run a complete CRISP voting round — request an E3, submit votes, and verify election results'
+  'Request a CRISP voting round with the CLI, vote in the client, follow each E3 stage, and decode
+  the tally.'
 ---
 
-import { Steps } from 'nextra/components'
+import { Callout, Steps, Tabs } from 'nextra/components'
+import { Lifecycle, LinkCard, LinkCards, Stage } from '@/components/ui'
 
-# Running an E3 Program
+# Run a voting round
 
-In this section, we will walk through how to run an E3 Program using CRISP. We will run a complete
-voting round of CRISP and do the following:
+This page shows how to run one CRISP voting round on a local chain, from the request to the result.
+It is for developers who have the CRISP stack running. At the end, you have a completed E3 and a
+decoded tally, and you know what CRISP does at each E3 stage.
 
-- Request an E3 Voting Round
-- Submit votes through the web interface
-- Compute and verify results
+Before you start, complete [Set up CRISP](/CRISP/setup). `pnpm dev:up` must run in a terminal, and
+the client must be available at `http://localhost:3000`. Run the `pnpm cli` commands from
+`examples/CRISP` in a second terminal.
 
-Please make sure you have followed the [CRISP Setup](/CRISP/setup) guide and
-[started the application](/CRISP/setup#using-the-application) before proceeding.
+## Run the round
 
 <Steps>
 
-### Initialize a New Voting Round
+### Set up the wallet
 
-As explained in the previous section, you can launch the CLI from the example root with the
-following command:
+1. Add a network to your wallet with the RPC URL `http://localhost:8545`, the chain ID `31337`, and
+   the currency symbol `ETH`.
+2. Import the first Anvil account with this private key:
+   `0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80`.
 
-```sh
+The account has test ETH on the local chain. For chain ID 31337, the server does not read token
+balances. It uses a fixed census of the first ten Anvil accounts, so this account can vote
+(`get_mock_token_holders` in `server/src/server/token_holders/etherscan.rs`).
+
+<Callout type='warning'>
+  This private key is public. Never use it on a live network. Funds sent to its address on a live
+  network can be lost.
+</Callout>
+
+### Request a round
+
+<Tabs items={['Flags', 'Interactive']}>
+<Tabs.Tab unmount={false}>
+
+```bash
+pnpm cli init
+```
+
+The CLI prints its log and then the E3 ID alone on the last line.
+
+| Flag                  | Default                                                                                        | Meaning                                                                                                        |
+| --------------------- | ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `--token-address`     | `CRISP_VOTING_TOKEN` from `server/.env`, then `MockVotingToken` from `deployed_contracts.json` | Voting eligibility token. With `--onchain`, the registry or votes token.                                       |
+| `--balance-threshold` | `1000000000000000000` for a token census. `1` with `--onchain`.                                | Minimum balance to vote, in the raw units of the token                                                         |
+| `--onchain`           | Off                                                                                            | Requests an open-registration round (census mode `ONCHAIN`). The default token is the deployed `SelfRegistry`. |
+
+</Tabs.Tab>
+<Tabs.Tab unmount={false}>
+
+```bash
 pnpm cli
 ```
 
-You can initialize a round using the interactive menu or directly via command-line flags:
+1. Select `Initialize new E3 round.`
+2. Select the token census option.
+3. Press Enter to accept the default token address.
+4. Press Enter to accept the default balance threshold.
 
-**Interactive Menu:**
+The CLI prints `E3 ID: <id>`. To request an open-registration round, select the open registration
+option in step 2.
 
-1. Select `Initialize new E3 round`
-2. Enter the token contract address
-3. Enter the balance threshold for the voting round
+</Tabs.Tab>
+</Tabs>
 
-**Command-Line (Direct):**
+The CLI does these tasks (`server/src/cli/commands.rs`):
+
+1. Registers `CRISPProgram` on the Interfold contract with `registerE3Program` if it is not
+   registered.
+2. Encodes the round parameters: 2 options, constant credits of 1 for each voter, and the census
+   mode.
+3. Calculates the input window from `VOTING_START_BUFFER_SECONDS` and `E3_DURATION` in
+   `server/.env`. See [Round timing](#round-timing).
+4. Gets the fee with `getE3Quote`, approves the fee token, and calls `request` on the Interfold
+   contract. The committee size comes from `E3_COMMITTEE_SIZE`, and the parameter set comes from
+   `E3_PARAM_SET`.
+
+### Wait for the committee key
+
+1. Open `http://localhost:3000`.
+2. Click `Connect Wallet` and select your wallet.
+3. Click `Try the demo →`.
+
+While the committee runs DKG, the page shows `Round #<id> is preparing its encryption key.` To check
+the key from the terminal, run this command:
 
 ```bash
-cargo run --bin cli init --token-address 0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512 --balance-threshold 1000
+pnpm cli check-e3-ready --e3id <id>
 ```
 
-**Command-line flags:**
+The command prints `true` when the CRISP server has the committee public key. Then reload the page.
+The poll shows the `Live` tag and a `Closes in` countdown.
 
-- `--token-address`: ERC20 token address for voting eligibility
-- `--balance-threshold`: Balance threshold for the voting round
+### Cast a vote
 
-You should see output similar to:
+1. Select one of the two options.
+2. Click `Cast →`.
+3. Sign the ballot request in your wallet.
 
-```sh
-[2025-12-16 13:41:37] [commands.rs:77] - Starting new CRISP round with token address: 0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512 and balance threshold: 1000000000000000000
-[2025-12-16 13:41:37] [commands.rs:90] - Enabling E3 Program with address: 0x67d269191c92Caf3cD7723F116c85e6E9bf55933
-[2025-12-16 13:41:37] [commands.rs:94] - E3 Program enabled. TxHash: 0xa391a4cd2dcc59f4bc6dd1f5ed1c78006dbba4556ea633f4b6a53e2271538682
-[2025-12-16 13:41:37] [commands.rs:118] - E3 request sent. TxHash: 0xe7998b9748e3526f6ca992c9bb498beabe4f387b02240a23d0f42a2386d3c305
-```
+The client encrypts the ballot, makes the proof, and sends it to the CRISP server. The page then
+shows `Vote finalized successfully!` and the `You voted` tag. With the relay, the wallet signs only
+the EIP-712 `Ballot` message and sends no transaction.
 
-For an Avail-backed round, the CLI reads `CRISPProgram.earliestVotingStart()` and schedules a fixed
-voting start after the worst-case VRF, ticket, and DKG windows. It adds
-`VOTING_START_BUFFER_SECONDS` for transaction mining. Publishing the committee key early does not
-open the vote early. `E3_DURATION` begins at the scheduled start and includes the voting period plus
-the Avail finalization tail.
+You can also do these actions while the poll is live:
 
-### Set Up MetaMask
+- Select another option and click `Update vote →`. The new ballot replaces the old ballot in your
+  slot.
+- Click `Mask a voter` or `Mask my slot`. A mask adds an encrypted zero ballot to a slot. A mask
+  needs no signature.
 
-Whether you used `pnpm dev:up` or the manual flow, you will interact with the Hardhat chain running
-at `http://localhost:8545` (chain ID `31337`). Configure MetaMask once:
+### Wait for the result
 
-1. Import the Hardhat deployer key so you have funds available:
-   ```
-   0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
-   ```
-2. Add a custom network pointing to `http://localhost:8545` with symbol `ETH` and chain ID `31337`.
+1. Wait until the countdown ends. The page shows `Over · Tallying…`.
+2. Wait until the page shows `Closed` and `View results →`.
+3. Click `View results →`.
 
-### Submit Votes via Web Interface
-
-1. Navigate to `http://localhost:3000` (started by `pnpm dev:up`)
-2. Connect your MetaMask wallet when prompted
-3. You should see the active voting round seeded by the CLI request
-4. Cast a vote, approve the transaction, and wait for the confirmation toast
-
-### Monitor the Process
-
-You can monitor the entire process through the various terminal outputs:
-
-**Server logs will show:**
-
-- Vote submissions being received
-- Computation starting when the voting period ends
-- Results being computed and published
-
-**Example server output:**
-
-```sh
-[2024-10-22 11:59:12] [handlers.rs:95] - Vote Count: 1
-[2024-10-22 11:59:12] [handlers.rs:101] - Starting computation for E3: 0
-Prove function execution time: 2 minutes and 37 seconds
-[2024-10-22 12:01:49] [handlers.rs:109] - Computation completed for E3: 0
-[2024-10-22 12:01:49] [handlers.rs:110] - RISC0 Output: Risc0Output { result: ComputeResult } ...
-[2024-10-22 12:01:49] [handlers.rs:111] - Publishing ciphertext...
-```
-
-**Ciphernode logs will show:**
-
-```sh
-INFO Extracted log from evm sending now.
-INFO evt=CiphertextOutputPublished(e3_id: 0) e3_id=0
-INFO evt=DecryptionshareCreated(e3_id: 0, node: 0x90F79bf6EB2c4f870365E785982E1f101E93b906) e3_id=0
-INFO evt=PlaintextAggregated(e3_id: 0, src_chain_id: 31337) e3_id=0
-INFO Plaintext published. tx=0x320dd95358cc86c2a709b6fec0c6865b43fa063cb61dfcb8a748005d4886f040
-INFO evt=PlaintextOutputPublished(e3_id: 0) e3_id=0
-INFO evt=E3RequestComplete(e3_id: 0)
-```
-
-**Final result logs:**
-
-```sh
-[2024-10-22 12:01:49] [handlers.rs:171] - Handling PlaintextOutputPublished event...
-[2024-10-22 12:01:49] [handlers.rs:181] - Vote Count: 1
-[2024-10-22 12:01:49] [handlers.rs:182] - Votes Option 1: 0
-[2024-10-22 12:01:49] [handlers.rs:183] - Votes Option 2: 1
-[2024-10-22 12:01:49] [handlers.rs:187] - PlaintextOutputPublished event handled.
-```
+The result page shows the share of the votes for each option. The `All Polls` page shows all rounds.
 
 </Steps>
 
-## Understanding the Process
+<Callout type='info'>
+  With the example values in `server/.env`, the input window starts 20 seconds after the request and
+  stays open for 300 seconds. The committee key and your vote must both arrive inside that window.
+  The end-to-end test does not wait. It moves the Anvil time past the input deadline.
+</Callout>
 
-The CRISP voting process involves several key steps:
+## What happens at each stage
 
-1. **Initialization**: A new E3 round is created on the blockchain
-2. **Vote Submission**: Users submit encrypted votes through the web interface
-3. **Computation**: After the voting period, RISC Zero computes the results using FHE
-4. **Decryption**: Ciphernodes collaboratively decrypt the results
-5. **Publication**: Final results are published to the blockchain and displayed
+The Interfold contract records the stage of each E3 (`E3Stage` in `IInterfold.sol`). The CRISP
+server keeps its own round status and follows the chain events.
+
+<Lifecycle label='CRISP voting round'>
+<Stage title='Requested' actor='CRISP CLI' event='E3Requested'>
+
+The CLI calls `request`. `CRISPProgram.validate` records the round. For a token census, the server
+builds the census tree and posts its root with `setMerkleRoot`.
+
+</Stage>
+<Stage title='CommitteeFinalized' actor='Ciphernodes' event='CommitteeFinalized'>
+
+The randomness provider returns a seed. The ciphernodes submit tickets, and sortition selects the
+committee.
+
+</Stage>
+<Stage title='KeyPublished' actor='Committee' event='CommitteePublished'>
+
+The committee runs DKG and publishes one public key. The server activates the round, and voting
+opens at the start of the input window.
+
+</Stage>
+<Stage title='Voting' actor='Voters and server' event='InputPublished'>
+
+Each ballot goes on-chain with `publishInput` and `finalizeInput`. The E3 stage stays
+`KeyPublished`.
+
+</Stage>
+<Stage title='CiphertextReady' actor='CRISP server' event='CiphertextOutputPublished'>
+
+After the input window, the program server adds the ballots. The server publishes the encrypted sum
+with `publishCiphertextOutput`.
+
+</Stage>
+<Stage title='Complete' actor='Ciphernodes' event='PlaintextOutputPublished'>
+
+T + 1 ciphernodes decrypt the sum and publish the plaintext. The server decodes the tally.
+
+</Stage>
+<Stage title='Failed' event='E3Failed' tone='fail'>
+
+A stage that misses its deadline makes the E3 fail. See the E3 lifecycle page.
+
+</Stage>
+</Lifecycle>
+
+| E3 stage                               | What CRISP does                                                                                                                                                                                                                                                                                     | Server round status                                      |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| `Requested`                            | `CRISPProgram.validate` records the token, threshold, options, credit mode, and census mode, and starts the input tree. On `E3Requested`, the server builds the census. For a token census, it calls `setMerkleRoot`. The local randomness helper fulfills the randomness request in a later block. | `Requested`                                              |
+| `CommitteeFinalized`                   | The ciphernodes submit tickets. With `E3_COMMITTEE_SIZE=0`, the committee is `minimum` (N = 3, T = 1).                                                                                                                                                                                              | `Requested`                                              |
+| `KeyPublished`                         | The committee publishes the public key. On `CommitteePublished`, the server activates the round and registers callbacks for the input deadline. Voters send inputs until the input window closes.                                                                                                   | `Active`                                                 |
+| `KeyPublished`, after the input window | The server checks that no input waits for finalization and that it holds every input that `CRISPProgram` accepted. Then it sends the inputs to the program server. The program server runs `fhe_processor` and calls back `/state/add-result`.                                                      | `Expired`, then `Computing`, then `PublishingCiphertext` |
+| `CiphertextReady`                      | The server publishes the encrypted sum with `publishCiphertextOutput`. `CRISPProgram.verify` checks the compute proof against the input root.                                                                                                                                                       | `CiphertextPublished`                                    |
+| `Complete`                             | T + 1 ciphernodes (2 for `minimum`) decrypt the sum and publish the plaintext. On `PlaintextOutputPublished`, the server decodes the tally and stores it.                                                                                                                                           | `Finished`                                               |
+| `Failed`                               | A stage missed its deadline. See [E3 lifecycle](/learn/e3-lifecycle).                                                                                                                                                                                                                               | The server has no `E3Failed` handler                     |
+
+If a round receives no votes, the server does not request a computation. It logs
+`E3 has no votes to decrypt. Setting status to Finished.` and sets the status to `Finished`.
+
+### Server log messages
+
+The CRISP server writes these messages to the `pnpm dev:up` terminal (`server/src/server/indexer.rs`
+and `server/src/server/routes/state.rs`). `<id>` is the E3 ID.
+
+| Message                                                                            | Meaning                                             |
+| ---------------------------------------------------------------------------------- | --------------------------------------------------- |
+| `[e3_id=<id>] Using mocked token holders for local network (chain_id: 31337)`      | The server uses the fixed local census.             |
+| `[e3_id=<id>] setMerkleRoot successful. TxHash: ...`                               | The census root is on-chain.                        |
+| `[e3_id=<id>] Activated CRISP round and registered deadline callbacks`             | The key is available and the round is active.       |
+| `[e3_id=<id>] Starting computation for E3 (<n> ciphertext input(s), <m> voter(s))` | The input window closed and the computation starts. |
+| `Received program server result for E3 ID: <id>, ...`                              | The program server returned the encrypted sum.      |
+| `[e3_id=<id>] Handling CiphertextOutputPublished`                                  | The encrypted sum is on-chain.                      |
+| `[e3_id=<id>] Option index: <i> votes: <count>`                                    | The decoded total for option `<i>`.                 |
+
+The ciphernode `cn1` also serves the node dashboard at `http://127.0.0.1:8080`. See
+[Node dashboard](/operate/dashboard).
+
+## Round timing
+
+The input window is `[start, end]` in the E3 request. `start` is the time when voting can start.
+`end` is `start + E3_DURATION`. The committee key alone does not open voting: `publishInput` reverts
+with `E3NotAcceptingInputs` before `start`.
+
+### Local chain
+
+The local deployment uses the mock data-availability verifier, and `availabilityFinalizationWindow`
+is 0. The CLI sets `start` to the latest block time plus `VOTING_START_BUFFER_SECONDS`.
+`CRISPProgram.validate` does no timing checks in this mode.
+
+### Avail networks
+
+On Sepolia and Ethereum mainnet, each round has three limits:
+
+| Limit   | Value                                                   | Rule                                                                                 |
+| ------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `start` | `earliestVotingStart()` + `VOTING_START_BUFFER_SECONDS` | Voting starts. `earliestVotingStart()` includes the worst-case committee setup time. |
+| `V`     | `end - availabilityFinalizationWindow`                  | `inputCommitmentDeadline(e3Id)`. No new `publishInput` at or after this time.        |
+| `end`   | `start + E3_DURATION`                                   | The target for the last Avail receipts                                               |
+
+`CRISPProgram.earliestVotingStart()` returns the current block time plus `randomnessRequestTimeout`,
+`sortitionSubmissionWindow`, and `dkgWindow`. The CLI and the server read it for each request. In
+the mainnet protocol configuration, these values are 3,600 seconds, 600 seconds, and 21,600 seconds,
+so `start` is at least 25,800 seconds after the request
+(`packages/interfold-contracts/deploy/protocol/mainnet-protocol.config.json`). The protocol owner
+can change these values. For this reason, an application must read `earliestVotingStart()` and not
+keep a fixed minimum.
+
+CRISP deployments on Avail set `availabilityFinalizationWindow` to 10,800 seconds (3 hours).
+`CRISPProgram.validate` rejects a request with these errors:
+
+| Error                           | Condition                                                                   |
+| ------------------------------- | --------------------------------------------------------------------------- |
+| `VotingStartsBeforeKeyDeadline` | `start` is before the worst-case key deadline of the request.               |
+| `InputWindowTooShort`           | `E3_DURATION` is not greater than `availabilityFinalizationWindow`.         |
+| `VotingWindowTooShort`          | `V` is less than 1 hour (`MIN_VOTING_DURATION`) after `start`.              |
+| `ComputeWindowTooShort`         | The protocol `computeWindow` is less than `availabilityFinalizationWindow`. |
+
+For this reason, `E3_DURATION` must be at least 14,400 seconds: 1 hour of voting and 3 hours of
+finalization. The server checks this sum at startup in Avail mode. A late Avail receipt is still
+accepted until the compute deadline of the E3. The computation waits until every committed input has
+its receipt.
+
+## Decode the tally
+
+The plaintext output is a list of polynomial coefficients. The first 100 coefficients
+(`MAX_MSG_NON_ZERO_COEFFS`) carry the result. Each option has `floor(100 / numOptions)` coefficients
+that hold a binary number, with the most significant coefficient first. Homomorphic addition adds
+the coefficients of all ballots, so each segment decodes to the total for its option. With 2
+options, each option has 50 coefficients.
+
+Three decoders give the same result (`packages/crisp-contracts/tests/tally.decoding.test.ts`):
+
+| Where    | Function                                                                      | Returns                    |
+| -------- | ----------------------------------------------------------------------------- | -------------------------- |
+| Contract | `CRISPProgram.decodeTally(uint256 e3Id)`                                      | `uint256[]`                |
+| Server   | `crisp_utils::decode_tally(tally_bytes: &[u8], num_choices: usize)`           | `Vec<BigUint>`             |
+| SDK      | `decodeTally(tallyBytes: string \| number[] \| bigint[], numChoices: number)` | `bigint[]` (`TallyResult`) |
+
+Use the SDK to decode the plaintext output yourself. `plaintextOutput` is the hex string of the
+`plaintextOutput` bytes of the E3, for example from the `PlaintextOutputPublished` event:
+
+```ts
+import { decodeTally } from '@crisp-e3/sdk'
+
+// One total per option. numChoices must be an integer from 2 to MAX_VOTE_OPTIONS (10).
+const [option0, option1] = decodeTally(plaintextOutput, 2)
+```
+
+To read the tally that the CRISP server decoded, use `getRoundResult`. After the round status is
+`Finished`, `tally` has one decimal string for each option:
+
+```ts
+import { CrispSDK } from '@crisp-e3/sdk'
+
+const sdk = new CrispSDK('http://127.0.0.1:4000')
+const result = await sdk.getRoundResult(1n)
+console.log(result.tally)
+```
+
+`decodeTally` throws an error when `numChoices` is outside 2 to 10 or is not an integer. It also
+throws an error when the output has fewer than 100 coefficients.
+
+## Other ways to request a round
+
+You can also request a round in these ways:
+
+- The CRISP server has a `POST /rounds/request` endpoint. It requires `CRON_API_KEY`. When the key
+  is empty, the endpoint is disabled.
+- The `cron` binary calls that endpoint, then waits 24 hours, in a loop. It reads `CRON_API_KEY` and
+  `INTERFOLD_SERVER_URL` from the process environment. A remote `INTERFOLD_SERVER_URL` must use
+  HTTPS.
+- `CrispSDK.requestNewRound` sends the same request from TypeScript.
+
+Do not put `CRON_API_KEY` in a browser bundle. Use it only from protected automation.
 
 ## Troubleshooting
 
-- **Ensure all terminals remain open** during the voting process
-- **MetaMask connection issues**: Check that you're connected to the correct network (Chain
-  ID: 31337)
-- **Transaction failures**: Verify you have sufficient ETH balance from the Hardhat faucet (the
-  account with the imported deployer key starts funded)
-- **Server errors**: Monitor the server logs for detailed error messages
-- **Ciphernode issues**: Ensure all ciphernode processes are running and connected
+| Symptom                                                                        | Cause                                                                                                                             | Fix                                                                                                                                                                |
+| ------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `request_e3 reverted: InsufficientCiphernodes`                                 | Fewer active operators than the committee size. `minimum` needs 3.                                                                | Wait until `dev_cipher.sh` prints `CIPHERNODES HAVE BEEN ADDED.`. Or register nodes with `pnpm ciphernode:add --ciphernode-address <address> --network localhost`. |
+| `request_e3 reverted: ...` with `stale E3_PROGRAM_ADDRESS` in the message      | The addresses in `server/.env` do not match the chain, the window start is in the past, or no ciphernodes are registered.         | Restart `pnpm dev:up`. The deployment writes the addresses again.                                                                                                  |
+| `Voting token address is unset.`                                               | No `--token-address`, no `CRISP_VOTING_TOKEN`, and no `MockVotingToken` record.                                                   | Pass `--token-address`, or restart `pnpm dev:up`.                                                                                                                  |
+| `No SelfRegistry found.`                                                       | `--onchain` without a token and without a `SelfRegistry` record.                                                                  | Pass `--token-address`, or restart `pnpm dev:up`.                                                                                                                  |
+| The page stays on `Round #<id> is preparing its encryption key.`               | The committee has not published its key. `pnpm cli check-e3-ready --e3id <id>` prints `false`.                                    | Read the ciphernode output in the `pnpm dev:up` terminal. Reload the page when the command prints `true`.                                                          |
+| The input window closes before you can vote                                    | DKG and voting took more time than `E3_DURATION`. A key that arrives too late fails with `InputWindowClosedBeforeKeyPublication`. | Increase `E3_DURATION` in `server/.env`, then request a new round.                                                                                                 |
+| `publishCommittee` reverts with `VkHashMismatch()` (`0x0c260259`)              | Full proof aggregation mode, and the circuits were built again after the deployment with other settings.                          | Run `pnpm dev:setup`, restart `pnpm dev:up`, and request a new round.                                                                                              |
+| `<n> input(s) still await data-availability finalization; refusing to compute` | Avail mode only. Some inputs wait for a VectorX proof.                                                                            | Wait. The server starts the computation again when each receipt arrives.                                                                                           |
+| `the indexer holds <n> input(s), but CRISPProgram accepted <m>`                | The server has not indexed all inputs yet.                                                                                        | Wait. The server tries again 60, 180, and 420 seconds after the input deadline.                                                                                    |
 
-## Next Steps
+## Next steps
 
-Once you've successfully run a voting round, you can:
-
-- **Experiment with different voting scenarios**: Try multiple votes and different options
-- **Modify voting parameters**: Adjust the configuration for different use cases
-- **Explore the codebase**: Understand the implementation details for your own E3 programs
-- **Deploy to testnet**: Move beyond local development to public testnets
-
-![Result](/poll-result.png)
+<LinkCards min={230}>
+  <LinkCard title='E3 lifecycle' href='/learn/e3-lifecycle' icon='flow' tag='Concepts'>
+    Each E3 stage, its events, and what happens when a stage times out.
+  </LinkCard>
+  <LinkCard title='Secure process' href='/build/e3-program/secure-process' icon='chip' tag='Build'>
+    Write the computation that runs over the encrypted inputs.
+  </LinkCard>
+  <LinkCard title='Client and server' href='/build/client-and-server' icon='network' tag='Build'>
+    Connect a client and a coordination server to your own E3 program.
+  </LinkCard>
+</LinkCards>

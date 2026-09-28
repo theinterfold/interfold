@@ -95,6 +95,38 @@ pub(crate) fn failure_watch_party_id(stage: &E3Stage, party_id: Option<u64>) -> 
     }
 }
 
+const BLOCKED_SETTLEMENT_FIRST_DELAY: Duration = Duration::from_secs(30);
+const BLOCKED_SETTLEMENT_MAX_DELAY: Duration = Duration::from_secs(30 * 60);
+
+/// Per-E3 retry delays for a failure settlement that the refund manager still blocks.
+///
+/// The first delay is 30 s. Each blocked attempt doubles the next delay, up to 30 min. The
+/// chain decides when settlement opens, so this state is process-local: after a restart the
+/// node reads the chain again from the first delay.
+#[derive(Debug, Default)]
+pub(crate) struct BlockedSettlementBackoff {
+    attempts: HashMap<E3id, u32>,
+}
+
+impl BlockedSettlementBackoff {
+    /// Record a blocked attempt. Return the delay before the next attempt, and `true` when the
+    /// E3 has no earlier blocked attempt since the last `clear`.
+    pub(crate) fn record(&mut self, e3_id: &E3id) -> (Duration, bool) {
+        let attempts = self.attempts.entry(e3_id.clone()).or_insert(0);
+        let first = *attempts == 0;
+        let factor = 1_u32.checked_shl(*attempts).unwrap_or(u32::MAX);
+        let delay = BLOCKED_SETTLEMENT_FIRST_DELAY
+            .saturating_mul(factor)
+            .min(BLOCKED_SETTLEMENT_MAX_DELAY);
+        *attempts = attempts.saturating_add(1);
+        (delay, first)
+    }
+
+    pub(crate) fn clear(&mut self, e3_id: &E3id) {
+        self.attempts.remove(e3_id);
+    }
+}
+
 /// Reject stage-discovery results that a newer lifecycle event has superseded.
 #[derive(Debug, Default)]
 pub(crate) struct FailureStageDiscoveryGate {
@@ -197,6 +229,48 @@ mod tests {
             failure_watch_party_id(&E3Stage::CommitteeFinalized, Some(2)),
             Some(2)
         );
+    }
+
+    #[test]
+    fn blocked_settlement_backs_off_from_thirty_seconds_to_thirty_minutes() {
+        let e3_id = E3id::new("9", 1);
+        let mut backoff = BlockedSettlementBackoff::default();
+
+        let delays: Vec<(u64, bool)> = (0..9)
+            .map(|_| {
+                let (delay, first) = backoff.record(&e3_id);
+                (delay.as_secs(), first)
+            })
+            .collect();
+        assert_eq!(
+            delays,
+            vec![
+                (30, true),
+                (60, false),
+                (120, false),
+                (240, false),
+                (480, false),
+                (960, false),
+                (1800, false),
+                (1800, false),
+                (1800, false),
+            ]
+        );
+    }
+
+    #[test]
+    fn blocked_settlement_backoff_is_per_e3_and_resets_when_cleared() {
+        let first_e3 = E3id::new("9", 1);
+        let second_e3 = E3id::new("10", 1);
+        let mut backoff = BlockedSettlementBackoff::default();
+
+        backoff.record(&first_e3);
+        backoff.record(&first_e3);
+        assert_eq!(backoff.record(&second_e3), (Duration::from_secs(30), true));
+
+        backoff.clear(&first_e3);
+        assert_eq!(backoff.record(&first_e3), (Duration::from_secs(30), true));
+        assert_eq!(backoff.record(&second_e3), (Duration::from_secs(60), false));
     }
 
     #[test]
