@@ -500,9 +500,10 @@ ProofFailureAccusation arrives via P2P from another committee member
 │     keccak256(abi.encodePacked(chainId, e3Id, accused, proofType))
 │     → Deterministic: all nodes compute same ID for same accusation
 │     → Already pending: each accuser signs its own window, but one quorum must share one
-│       window. Adopt the incoming window only if it starts and ends later and its accuser is
-│       not the accused. Re-sign our vote for it, replay the buffered votes, and check quorum.
-│       A vote for such a later window waits in that buffer.
+│       window. Adopt the incoming window only if it starts and ends later, its accuser is
+│       not the accused, and that accuser has not moved this window before. Re-sign our vote
+│       for it, replay the buffered votes, and check quorum. A vote for such a later window
+│       waits in that buffer.
 │
 ├─ 5. Determine own vote based on local verification cache:
 │     │

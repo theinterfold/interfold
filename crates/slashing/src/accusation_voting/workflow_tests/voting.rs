@@ -266,45 +266,26 @@ fn concurrent_accusers_converge_on_one_vote_window() {
     );
 }
 
-/// The accused cannot move a pending window, and no peer can shorten it.
+/// Only a later window from a peer other than the accused moves a pending window, once per peer.
 #[test]
-fn vote_window_ignores_the_accused_and_an_earlier_deadline() {
+fn vote_window_moves_once_per_peer_and_never_for_the_accused() {
     let me = signer(1);
     let b = signer(2);
     let accused = signer(9);
     let committee = vec![me.address(), b.address(), accused.address()];
     let mut v = voting_with(&me, committee, 1, 3);
+    let (sm, e3_id, target) = (v.slashing_manager, v.e3_id.clone(), accused.address());
     let data_hash = [0x11; 32];
-    let own = signed_vote(
-        &me,
-        v.slashing_manager,
-        &v.e3_id,
-        [0; 32],
-        data_hash,
-        NOW + VALIDITY,
-    );
-    let id = insert_pending(
-        &mut v,
-        &me,
-        accused.address(),
-        data_hash,
-        NOW + VALIDITY,
-        own,
-    );
+    let own = signed_vote(&me, sm, &e3_id, [0; 32], data_hash, NOW + VALIDITY);
+    let id = insert_pending(&mut v, &me, target, data_hash, NOW + VALIDITY, own);
+    let accuse = |who: &PrivateKeySigner, issued_at: u64, deadline: u64| {
+        signed_accusation(who, &e3_id, target, data_hash, issued_at, deadline)
+    };
+    let mut moved = |accusation| !v.on_accusation_received(accusation, &ctx()).is_empty();
 
-    let (e3_id, target) = (v.e3_id.clone(), accused.address());
-    for accusation in [
-        signed_accusation(
-            &accused,
-            &e3_id,
-            target,
-            data_hash,
-            NOW + 5,
-            NOW + VALIDITY + 5,
-        ),
-        signed_accusation(&b, &e3_id, target, data_hash, NOW + 5, NOW + 10),
-    ] {
-        assert!(v.on_accusation_received(accusation, &ctx()).is_empty());
-    }
-    assert_eq!(v.pending[&id].accusation.deadline, NOW + VALIDITY);
+    assert!(!moved(accuse(&accused, NOW + 5, NOW + VALIDITY + 5)));
+    assert!(!moved(accuse(&b, NOW + 5, NOW + 10)));
+    assert!(moved(accuse(&b, NOW + 6, NOW + VALIDITY + 6)));
+    assert!(!moved(accuse(&b, NOW + 7, NOW + VALIDITY + 7)));
+    assert_eq!(v.pending[&id].accusation.deadline, NOW + VALIDITY + 6);
 }

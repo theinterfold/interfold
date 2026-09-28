@@ -297,11 +297,12 @@ impl AccusationVoting {
             return;
         };
         let held = &pending.accusation;
-        // Only a later start and end from a peer other than the accused moves the window, so no
-        // one can shorten it and the accused cannot reset the votes already collected.
+        // Only a later start and end from a peer other than the accused moves the window, and
+        // each accuser moves it at most once: no one can shorten it or keep resetting the votes.
         if incoming.accuser == incoming.accused
             || incoming.issued_at <= held.issued_at
             || incoming.deadline <= held.deadline
+            || !self.window_movers.insert((accusation_id, incoming.accuser))
         {
             return;
         }

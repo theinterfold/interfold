@@ -33,6 +33,7 @@ impl AccusationVoting {
             accused_proofs: HashSet::new(),
             received_data: HashMap::new(),
             buffered_votes: HashMap::new(),
+            window_movers: HashSet::new(),
             pending_reverifications: HashMap::new(),
             vote_timeout: DEFAULT_VOTE_TIMEOUT,
             vote_validity_secs,
