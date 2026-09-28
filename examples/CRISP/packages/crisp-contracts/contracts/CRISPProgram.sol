@@ -19,6 +19,7 @@ import { ECDSA } from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import { IHonkVerifier } from "./interfaces/IHonkVerifier.sol";
 import { IVotesToken } from "./interfaces/IVotesToken.sol";
 import { IERC6372Clock } from "./interfaces/IERC6372Clock.sol";
+import { ISafe, ISafeProxy } from "./interfaces/ISafe.sol";
 import { IDataAvailabilityVerifier, IE3ProgramDataAvailability } from "@interfold/contracts/contracts/interfaces/IDataAvailabilityVerifier.sol";
 import { IERC165 } from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 
@@ -63,7 +64,8 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     /// @notice Read from the token by this contract, one input at a time. No list is enumerated
     /// and no root is posted, so there is no census producer to trust. `publishInput` calls
     /// `getPastVotes` for the slot and passes the result to the circuit as a public input, which
-    /// is why this mode uses the `crisp_onchain` verifier rather than the `crisp` one.
+    /// is why this mode uses the `crisp_onchain` verifier rather than the `crisp` one. The
+    /// `crisp_onchain` circuit checks the signatures of the slot owners; see `ballotAuthorization`.
     ONCHAIN
   }
 
@@ -130,6 +132,18 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     uint256 votingPowerDivisor;
   }
 
+  /// @notice How a deployment verifies `CensusMode.ONCHAIN` ballots.
+  /// @dev A slot is a Safe only when its runtime code hash is in `safeProxyCodehashes` and its proxy
+  /// reports a singleton in `safeSingletons`. Both lists are fixed at deployment, like the verifiers.
+  struct OnchainVerification {
+    /// @notice The verifier generated from the `crisp_onchain` and `fold_onchain` circuits.
+    IHonkVerifier verifier;
+    /// @notice Runtime code hashes of the Safe proxy contracts to accept.
+    bytes32[] safeProxyCodehashes;
+    /// @notice Safe singletons (implementations) to accept.
+    address[] safeSingletons;
+  }
+
   // Constants
   /// @notice Encryption scheme ID used for the CRISP program.
   bytes32 public constant ENCRYPTION_SCHEME_ID = keccak256("fhe.rs:BFV");
@@ -149,6 +163,18 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
   /// @notice Largest `decimals` a divisor can be derived from: `10 ** 77` is the last power of ten
   /// that fits in a uint256.
   uint8 constant MAX_DERIVABLE_DECIMALS = 78;
+  /// @notice Largest owner list of a Safe that can write to a slot.
+  /// @dev Must stay aligned with `MAX_SAFE_OWNERS` in `circuits/lib/src/constants.nr`. The owner
+  /// commitment pads the list to this length, so the circuit hashes a fixed number of bytes.
+  uint256 public constant MAX_SAFE_OWNERS = 10;
+  /// @notice Largest Safe threshold that can write to a slot.
+  /// @dev Must stay aligned with `MAX_SAFE_SIGNERS` in `circuits/lib/src/constants.nr`. The
+  /// circuit has this many signature slots.
+  uint256 public constant MAX_SAFE_SIGNERS = 3;
+  /// @notice The EIP-712 domain type of Safe 1.3.0 and later.
+  bytes32 private constant SAFE_DOMAIN_SEPARATOR_TYPEHASH = keccak256("EIP712Domain(uint256 chainId,address verifyingContract)");
+  /// @notice The EIP-712 type that Safe owners sign to authorise a message for the Safe.
+  bytes32 private constant SAFE_MSG_TYPEHASH = keccak256("SafeMessage(bytes message)");
   // State variables
   IInterfold public interfold;
   IRiscZeroVerifier public risc0Verifier;
@@ -183,6 +209,10 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
 
   // Mappings
   mapping(uint256 e3Id => RoundData) e3Data;
+  /// @notice Runtime code hashes of accepted Safe proxies. Set once, at deployment.
+  mapping(bytes32 codehash => bool accepted) public safeProxyCodehashAccepted;
+  /// @notice Accepted Safe singletons. Set once, at deployment.
+  mapping(address singleton => bool accepted) public safeSingletonAccepted;
 
   // Errors
   error CallerNotAuthorized();
@@ -255,6 +285,10 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
   error InvalidDataAvailabilityVerifier();
   error DataAvailabilityHashMismatch(bytes32 expected, bytes32 actual);
   error ZeroEncryptedVoteHash();
+  /// @notice A Safe has more owners or a larger threshold than a ballot proof can carry.
+  /// @dev Raised for votes and masks alike, so the revert discloses nothing that the Safe's own
+  /// public state does not.
+  error SafeShapeUnsupported(address safe, uint256 owners, uint256 threshold);
 
   // Events
   event InterfoldBound(address indexed interfold);
@@ -289,12 +323,13 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
   /// @param _initialOwner The account that can configure and bind this program.
   /// @param _risc0Verifier The RISC Zero verifier address
   /// @param _honkVerifier The honk verifier address
+  /// @param _onchain The verifiers for `CensusMode.ONCHAIN` ballots, and the Safes to accept
   /// @param _imageId The image ID for the guest program
   constructor(
     address _initialOwner,
     IRiscZeroVerifier _risc0Verifier,
     IHonkVerifier _honkVerifier,
-    IHonkVerifier _onchainHonkVerifier,
+    OnchainVerification memory _onchain,
     IDataAvailabilityVerifier _dataAvailabilityVerifier,
     uint256 _availabilityFinalizationWindow,
     address _inputAvailabilitySigner,
@@ -302,12 +337,18 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
   ) Ownable(_initialOwner) EIP712("CRISP", "1") {
     if (address(_risc0Verifier) == address(0)) revert Risc0VerifierAddressZero();
     if (address(_honkVerifier) == address(0)) revert InvalidHonkVerifier();
-    if (address(_onchainHonkVerifier) == address(0)) revert InvalidHonkVerifier();
+    if (address(_onchain.verifier) == address(0)) revert InvalidHonkVerifier();
     if (address(_dataAvailabilityVerifier).code.length == 0) revert InvalidDataAvailabilityVerifier();
 
     risc0Verifier = _risc0Verifier;
     honkVerifier = _honkVerifier;
-    onchainHonkVerifier = _onchainHonkVerifier;
+    onchainHonkVerifier = _onchain.verifier;
+    for (uint256 i = 0; i < _onchain.safeProxyCodehashes.length; i++) {
+      safeProxyCodehashAccepted[_onchain.safeProxyCodehashes[i]] = true;
+    }
+    for (uint256 i = 0; i < _onchain.safeSingletons.length; i++) {
+      safeSingletonAccepted[_onchain.safeSingletons[i]] = true;
+    }
     dataAvailabilityVerifier = _dataAvailabilityVerifier;
     availabilityFinalizationWindow = _availabilityFinalizationWindow;
     if (_inputAvailabilitySigner == address(0)) revert InputAvailabilitySignerAddressZero();
@@ -341,6 +382,73 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
   /// @return The EIP-712 digest.
   function ballotDigest(uint256 e3Id, address slot, bytes32 ciphertextCommitment) public view returns (bytes32) {
     return _hashTypedDataV4(keccak256(abi.encode(BALLOT_TYPEHASH, e3Id, slot, ciphertextCommitment)));
+  }
+
+  /// @notice Whether an account is a genuine Safe that this deployment accepts.
+  /// @dev A contract can answer `getOwners()` with any list, so the owner list is trusted only
+  /// from an accepted proxy that delegates to an accepted singleton. The proxy answers
+  /// `masterCopy()` from its own code, so the answer is the singleton that it really delegates to.
+  /// An EOA, an EIP-7702 account and any other contract return false.
+  /// @param account The account to check.
+  /// @return True when the account is an accepted Safe.
+  function isSafe(address account) public view returns (bool) {
+    if (!safeProxyCodehashAccepted[account.codehash]) return false;
+    return safeSingletonAccepted[ISafeProxy(account).masterCopy()];
+  }
+
+  /// @notice The values a ballot for one slot is proved against, apart from the ciphertext.
+  /// @dev A client calls this before it proves a vote or a mask, and proves against exactly these
+  /// values. `publishInput` computes the same values in the same way.
+  ///
+  /// In a `CensusMode.ONCHAIN` round, the `crisp_onchain` circuit checks that `threshold` owners of
+  /// the slot signed `digest`. `ownersCommitment` is `keccak256(abi.encode(address[MAX_SAFE_OWNERS]
+  /// owners, uint256 threshold))`, with the owner list padded with the zero address.
+  /// - A Safe slot has the Safe's current owners and threshold. The owners sign the Safe's EIP-712
+  ///   `SafeMessage` hash of the ballot digest, which the Safe's own `isValidSignature` accepts.
+  /// - Every other slot has one owner, the slot itself, and a threshold of one. The owner signs
+  ///   `ballotDigest`.
+  ///
+  /// In the other census modes, `digest` is `ballotDigest` and `ownersCommitment` is zero.
+  /// @param e3Id The round.
+  /// @param slot The slot address.
+  /// @param ciphertextCommitment The commitment to the ballot ciphertext.
+  /// @return safe True when the slot is an accepted Safe of an ONCHAIN round.
+  /// @return digest The digest that the owners sign.
+  /// @return ownersCommitment The owner commitment of an ONCHAIN slot, or zero.
+  function ballotAuthorization(
+    uint256 e3Id,
+    address slot,
+    bytes32 ciphertextCommitment
+  ) public view returns (bool safe, bytes32 digest, bytes32 ownersCommitment) {
+    digest = ballotDigest(e3Id, slot, ciphertextCommitment);
+    if (e3Data[e3Id].censusMode != CensusMode.ONCHAIN) return (false, digest, bytes32(0));
+
+    address[MAX_SAFE_OWNERS] memory owners;
+    uint256 threshold = 1;
+    safe = isSafe(slot);
+    if (safe) {
+      // The Safe's domain holds the chain and the Safe address, so a signature by the owners of
+      // one Safe cannot authorise a ballot of another Safe that has the same owners. The ballot
+      // digest already binds the round, the slot, the ciphertext and this deployment.
+      bytes32 domain = keccak256(abi.encode(SAFE_DOMAIN_SEPARATOR_TYPEHASH, block.chainid, slot));
+      bytes32 message = keccak256(abi.encode(SAFE_MSG_TYPEHASH, keccak256(abi.encode(digest))));
+      digest = keccak256(abi.encodePacked(bytes2(0x1901), domain, message));
+
+      // Read at publication, not at the round snapshot. This is the owner list that controls the
+      // Safe now, so an owner that the Safe removed cannot authorise a new ballot.
+      address[] memory safeOwners = ISafe(slot).getOwners();
+      threshold = ISafe(slot).getThreshold();
+      if (safeOwners.length > MAX_SAFE_OWNERS || threshold > MAX_SAFE_SIGNERS) {
+        revert SafeShapeUnsupported(slot, safeOwners.length, threshold);
+      }
+      for (uint256 i = 0; i < safeOwners.length; i++) {
+        owners[i] = safeOwners[i];
+      }
+    } else {
+      owners[0] = slot;
+    }
+
+    ownersCommitment = keccak256(abi.encode(owners, threshold));
   }
 
   /// @notice Sets the Merkle root for an E3 program. Can only be set once.
@@ -793,32 +901,62 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     // `validateInputProof` cannot accept a statement that `publishInput` rejects.
     if (encryptedVoteHash == bytes32(0)) revert ZeroEncryptedVoteHash();
 
-    uint256 leaf = inputLeaf(encryptedVoteHash, encryptedVoteCommitment, slotAddress, parentIndexPlusOne);
-    if (e3Data[e3Id].appendedLeaf[leaf]) revert InputAlreadyPublished(leaf);
-    bytes32 id = inputId(e3Id, encryptedVoteHash, encryptedVoteCommitment, slotAddress, parentIndexPlusOne);
-    if (e3Data[e3Id].inputStatus[id] != InputStatus.NONE) revert InputAlreadyCommitted(id);
+    {
+      uint256 leaf = inputLeaf(encryptedVoteHash, encryptedVoteCommitment, slotAddress, parentIndexPlusOne);
+      if (e3Data[e3Id].appendedLeaf[leaf]) revert InputAlreadyPublished(leaf);
+      bytes32 id = inputId(e3Id, encryptedVoteHash, encryptedVoteCommitment, slotAddress, parentIndexPlusOne);
+      if (e3Data[e3Id].inputStatus[id] != InputStatus.NONE) revert InputAlreadyCommitted(id);
+    }
 
     (bytes32 eligibility, IHonkVerifier verifier) = _eligibility(e3Id, slotAddress);
-    bytes32 parentCommitment = _parentCommitment(e3Id, slotAddress, parentIndexPlusOne);
-    bytes32[] memory noirPublicInputs = new bytes32[](9);
-    noirPublicInputs[0] = parentCommitment;
-    // A Keccak digest does not fit in one field element, so it enters the circuit as its two
-    // 16-byte halves. The circuit rebuilds the 32 bytes with `digest_from_halves`.
-    {
-      uint256 digest = uint256(ballotDigest(e3Id, slotAddress, encryptedVoteCommitment));
-      noirPublicInputs[1] = bytes32(digest >> 128);
-      noirPublicInputs[2] = bytes32(digest & type(uint128).max);
-    }
-    noirPublicInputs[3] = bytes32(uint256(uint160(slotAddress)));
-    noirPublicInputs[4] = eligibility;
-    noirPublicInputs[5] = bytes32(uint256(parentIndexPlusOne == 0 ? 1 : 0));
-    noirPublicInputs[6] = bytes32(e3Data[e3Id].numOptions);
-    noirPublicInputs[7] = encryptedVoteCommitment;
-    noirPublicInputs[8] = e3.committeePublicKey;
+    bytes32[] memory noirPublicInputs = _ballotPublicInputs(
+      e3Id,
+      slotAddress,
+      encryptedVoteCommitment,
+      parentIndexPlusOne,
+      eligibility,
+      e3.committeePublicKey
+    );
 
     // Check if the ciphertext was encrypted correctly
     if (!verifier.verify(noirProof, noirPublicInputs)) {
       revert InvalidNoirProof();
+    }
+  }
+
+  /// @notice The public inputs of the fold proof for one input, in the order of the fold circuit.
+  /// @dev Positions 0 to 7 are the same for both circuits. The `crisp` fold circuit ends with the
+  /// committee public key at position 8. The `fold_onchain` circuit puts the two halves of the
+  /// owner commitment at positions 8 and 9, and the committee public key at position 10.
+  /// @return inputs The public inputs.
+  function _ballotPublicInputs(
+    uint256 e3Id,
+    address slotAddress,
+    bytes32 encryptedVoteCommitment,
+    uint40 parentIndexPlusOne,
+    bytes32 eligibility,
+    bytes32 committeePublicKey
+  ) internal view returns (bytes32[] memory inputs) {
+    (, bytes32 digest, bytes32 ownersCommitment) = ballotAuthorization(e3Id, slotAddress, encryptedVoteCommitment);
+    bool onchain = e3Data[e3Id].censusMode == CensusMode.ONCHAIN;
+
+    inputs = new bytes32[](onchain ? 11 : 9);
+    inputs[0] = _parentCommitment(e3Id, slotAddress, parentIndexPlusOne);
+    // A Keccak digest does not fit in one field element, so it enters the circuit as its two
+    // 16-byte halves. The circuit rebuilds the 32 bytes with `digest_from_halves`.
+    inputs[1] = digest >> 128;
+    inputs[2] = bytes32(uint256(digest) & type(uint128).max);
+    inputs[3] = bytes32(uint256(uint160(slotAddress)));
+    inputs[4] = eligibility;
+    inputs[5] = bytes32(uint256(parentIndexPlusOne == 0 ? 1 : 0));
+    inputs[6] = bytes32(e3Data[e3Id].numOptions);
+    inputs[7] = encryptedVoteCommitment;
+    if (onchain) {
+      inputs[8] = ownersCommitment >> 128;
+      inputs[9] = bytes32(uint256(ownersCommitment) & type(uint128).max);
+      inputs[10] = committeePublicKey;
+    } else {
+      inputs[8] = committeePublicKey;
     }
   }
 
@@ -848,8 +986,8 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
 
   /// @notice Resolve the eligibility public input and the verifier for a round.
   /// @dev Returns the value that occupies index 4 of the circuit public inputs. The `crisp` and
-  /// `crisp_onchain` circuits agree on every other position, so this one value and the verifier
-  /// address are the whole difference between the two paths.
+  /// `crisp_onchain` circuits agree on positions 0 to 7, apart from this one. The `crisp_onchain`
+  /// circuit also takes the owner commitment of the slot; see `_ballotPublicInputs`.
   /// @param e3Id The E3 the input belongs to.
   /// @param slotAddress The slot the input is written to.
   /// @return eligibility The Merkle root of the census, or the voting power of the slot.

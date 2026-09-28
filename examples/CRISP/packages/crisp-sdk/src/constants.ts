@@ -48,3 +48,9 @@ export const SIGNATURE_MESSAGE_HASH = hashMessage(SIGNATURE_MESSAGE)
 // Placeholder signature for masking votes.
 export const MASK_SIGNATURE =
   '0x8e7d77112641d59e9409ec3052041703bb9d9e6ed39bfcf75aefbcafe829ac6b21dd7648116ad5db0466fcb4bd468dcb28f6c069def8bc47cd9d859c85a016e31b'
+
+/** Largest owner list of an ONCHAIN slot. Must match `MAX_SAFE_OWNERS` in `CRISPProgram.sol`. */
+export const MAX_SAFE_OWNERS = 10
+
+/** Signature slots in an ONCHAIN proof, and so the largest threshold. Must match `MAX_SAFE_SIGNERS`. */
+export const MAX_SAFE_SIGNERS = 3
