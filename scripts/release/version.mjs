@@ -26,6 +26,11 @@ export function normalizeVersion(input) {
   return version
 }
 
+// The release channel is the npm distribution tag and the container image alias of a release.
+export function releaseChannel(version) {
+  return version.includes('-') ? 'dev' : 'latest'
+}
+
 function workspaceVersion(rootDir) {
   const cargoToml = readFileSync(join(rootDir, 'Cargo.toml'), 'utf8')
   const workspacePackage = cargoToml.match(/\[workspace\.package\]([\s\S]*?)(?=\n\[|$)/)?.[1]

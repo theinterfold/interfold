@@ -4,7 +4,7 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { appendFileSync } from 'node:fs'
 
 import { ROOT_DIR, fail, gitSucceeds, resolveCommit, runGit } from './core.mjs'
-import { normalizeVersion, validateReleaseVersion } from './version.mjs'
+import { normalizeVersion, releaseChannel, validateReleaseVersion } from './version.mjs'
 
 export function verifyReleaseCandidate(tagRef, protectedRef, expectedRef, cwd = ROOT_DIR) {
   const tagCommit = resolveCommit(tagRef, cwd)
@@ -41,7 +41,7 @@ export function prepareRelease(environment = process.env, rootDir = ROOT_DIR) {
   const isPrerelease = version.includes('-')
   writeOutput('version', version, outputFile)
   writeOutput('is_prerelease', isPrerelease, outputFile)
-  writeOutput('npm_tag', isPrerelease ? 'next' : 'latest', outputFile)
+  writeOutput('channel', releaseChannel(version), outputFile)
   writeOutput('candidate_sha', candidateSha, outputFile)
 
   console.log(`Validated v${version} at ${candidateSha} in origin/main.`)

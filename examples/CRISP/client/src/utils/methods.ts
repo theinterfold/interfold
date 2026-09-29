@@ -31,24 +31,6 @@ export const getChain = (): Chain => {
 }
 
 /**
- * Whether votes are submitted straight from the voter's wallet instead of through the relay.
- *
- * Always true on mainnet, where the relay refuses to pay gas for callers — `publishInput` is
- * permissionless, so the wallet can call it directly. `VITE_DIRECT_VOTE=true` forces the direct
- * path on any network, for deployments that run without a relay.
- *
- * The trade is privacy, not correctness: a direct transaction publishes the submitter's address,
- * so a voter is seen writing to their own slot and a masker is seen masking. The proof still
- * hides *what* was submitted, but the relay's uniform sender is what hid *who* — prefer the relay
- * wherever it runs.
- */
-export const isDirectVoteEnabled = (): boolean => {
-  const chain = getChain()
-
-  return chain.id === mainnet.id || import.meta.env.VITE_DIRECT_VOTE === 'true'
-}
-
-/**
  * The block-explorer URL for a transaction on the configured chain, or undefined where the chain
  * has no explorer (anvil).
  */

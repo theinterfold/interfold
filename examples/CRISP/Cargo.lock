@@ -3384,6 +3384,7 @@ name = "evm-helpers"
 version = "0.1.0"
 dependencies = [
  "alloy",
+ "e3-evm-helpers",
  "eyre",
  "tokio",
 ]

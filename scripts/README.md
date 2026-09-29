@@ -17,8 +17,8 @@ refuses to run with pending changes. A failed run keeps the worktree and prints 
 # Prepare, commit, and push a release branch
 pnpm bump:versions 1.0.0
 
-# Pre-release version
-pnpm bump:versions 1.0.0-beta.1
+# Pre-release version (dev channel)
+pnpm bump:versions 1.0.0-dev.1
 
 # Commit locally without pushing the branch
 pnpm bump:versions --no-push 1.0.0
@@ -54,8 +54,8 @@ pnpm bump:versions 1.2.3
 # Open a pull request after this command finishes.
 
 # Pre-release for testing
-pnpm bump:versions 1.2.3-beta.1
-# The later release workflow publishes this version with the npm 'next' tag.
+pnpm bump:versions 1.2.3-dev.1
+# The later release workflow publishes this version with the npm 'dev' tag and 'dev' images.
 
 # Prepare and commit locally first
 pnpm bump:versions --no-push 1.2.3
@@ -94,7 +94,8 @@ The tag workflow then:
 
 - Confirms that the tag belongs to `origin/main`.
 - Requires the binaries and source-matched circuit archive.
-- Publishes versioned containers and npm packages.
+- Publishes versioned containers and npm packages. Moves the `dev` container aliases, and for a
+  stable release also the `latest` aliases.
 - Creates the GitHub release only after every required publication succeeds.
 
 Rust workspace crates are not published because they use unreleased git dependencies.

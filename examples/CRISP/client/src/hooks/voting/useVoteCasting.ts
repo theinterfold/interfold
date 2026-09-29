@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useSignTypedData, usePublicClient, useChainId, useWalletClient } from 'wagmi'
 import type { Address } from 'viem'
@@ -74,6 +74,30 @@ const clearAvailabilityJob = (key: string): void => {
   } catch {
     // The item is already harmless after the server job reaches a terminal state.
   }
+}
+
+/// How often, and for how long, the client waits for the server to decide who sends a queued
+/// commitment. The server worker can take minutes to reach a job when many jobs are pending.
+const COMMITMENT_DECISION_POLL_MS = 10_000
+const COMMITMENT_DECISION_WAIT_MS = 600_000
+
+/// Wait until a `pending_commitment` job has a sender: the relay, or this wallet, which must then
+/// send the commitment before its availability promise expires. Returns the first other view,
+/// `null` when the server no longer has the job, or `undefined` when the wait ends or
+/// `isCancelled` returns true.
+const waitForCommitmentDecision = async (
+  jobId: string,
+  getVoteAvailability: (jobId: string) => Promise<BroadcastVoteResponse | null | undefined>,
+  isCancelled: () => boolean,
+): Promise<BroadcastVoteResponse | null | undefined> => {
+  const deadline = Date.now() + COMMITMENT_DECISION_WAIT_MS
+  while (!isCancelled()) {
+    const view = await getVoteAvailability(jobId)
+    if (view === null || (view && view.status !== 'pending_commitment')) return view
+    if (Date.now() >= deadline) return undefined
+    await new Promise((resolve) => setTimeout(resolve, COMMITMENT_DECISION_POLL_MS))
+  }
+  return undefined
 }
 
 /// The end of the slot's chain of usable entries, with the tree index the new input will name as
@@ -176,6 +200,16 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
   const [lastActiveStep, setLastActiveStep] = useState<VotingStep | null>(null)
   const [stepMessage, setStepMessage] = useState<string>('')
   const submissionInProgress = useRef(false)
+  // A queued-commitment wait outlives the page that started it. Stop it on unmount, so that an
+  // abandoned wait cannot open a wallet prompt or navigate from another page, and cannot run beside
+  // the wait that a remounted page starts for the same job.
+  const unmounted = useRef(false)
+  useEffect(() => {
+    unmounted.current = false
+    return () => {
+      unmounted.current = true
+    }
+  }, [])
 
   /**
    * Encrypt the ballot, have the voter sign the digest that binds it, then prove it.
@@ -421,17 +455,39 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
 
       const pendingJobKey = availabilityJobKey(chainId, roundState.id, user.address)
 
-      const finishCommitment = async (response: BroadcastVoteResponse, operationIsMask: boolean): Promise<boolean> => {
+      const finishCommitment = async (
+        response: BroadcastVoteResponse,
+        operationIsMask: boolean,
+        afterRestage = false,
+      ): Promise<boolean> => {
         if (response.status === 'failed_broadcast') {
           throw new Error(extractCleanErrorMessage(response.message ?? undefined))
         }
 
         if (response.status === 'pending_commitment') {
           setVotingStep('confirming')
-          setStepMessage('Your proof is queued for commitment. You can safely leave and check again later.')
+          setStepMessage('Your proof is queued. Waiting for the server to send the commitment or to ask your wallet to send it...')
+          const decided = response.job_id
+            ? await waitForCommitmentDecision(response.job_id, getVoteAvailability, () => unmounted.current)
+            : undefined
+          // The page closed during the wait. Keep the job pointer so that the next action resumes it.
+          if (unmounted.current) return false
+          if (decided === null) {
+            // The server lost the job while this page waited. Stage the stored bytes again once;
+            // a second loss in the same action is left to the next one.
+            const stored = readAvailabilityJob(pendingJobKey)
+            if (!afterRestage && stored) return restagePendingJob(stored)
+            throw new Error('The server lost the pending proof. Repeat the action to submit it again.')
+          }
+          if (decided) {
+            if (decided.status === 'failed_broadcast') clearAvailabilityJob(pendingJobKey)
+            return finishCommitment(decided, operationIsMask, afterRestage)
+          }
+
+          setStepMessage('Your proof is still queued. Come back later and repeat the action to finish it.')
           showToast({
             type: 'success',
-            message: 'Vote proof queued. The relay will keep retrying it.',
+            message: 'Proof queued. Repeat the action later: your wallet may need to send the commitment.',
           })
           return false
         }
@@ -449,6 +505,9 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
           if (!response.encoded_proof) {
             throw new Error('Availability job is missing the input commitment payload')
           }
+          // The page closed while the program address loaded. Keep the job pointer so that the next
+          // action resumes it, and open no wallet prompt from a closed page.
+          if (unmounted.current) return false
           txHash = await submitInputCommitmentDirectly(
             walletClient,
             publicClient,
@@ -486,6 +545,20 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
         return true
       }
 
+      // The server lost its job database. Re-stage the same bytes: a fresh ciphertext could leave
+      // an earlier on-chain commitment unresolved and stop the complete round.
+      const restagePendingJob = async (pendingJob: PendingAvailabilityJob): Promise<boolean> => {
+        if (!pendingJob.encodedProof) {
+          throw new Error('The server lost this legacy vote job. An operator must recover it before another vote is submitted.')
+        }
+        const restaged = await broadcastVote({ round_id: roundState.id, encoded_proof: pendingJob.encodedProof }, (jobId) =>
+          writeAvailabilityJob(pendingJobKey, { ...pendingJob, jobId }),
+        )
+        if (!restaged) throw new Error('Could not restore the pending data-availability job.')
+        if (restaged.status === 'failed_broadcast') clearAvailabilityJob(pendingJobKey)
+        return finishCommitment(restaged, pendingJob.isMask, true)
+      }
+
       try {
         const pendingJob = readAvailabilityJob(pendingJobKey)
         if (pendingJob) {
@@ -497,17 +570,7 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
 
           const resumed = await getVoteAvailability(pendingJob.jobId)
           if (resumed === null) {
-            // The server lost its job database. Re-stage the same bytes: a fresh ciphertext could
-            // leave an earlier on-chain commitment unresolved and stop the complete round.
-            if (!pendingJob.encodedProof) {
-              throw new Error('The server lost this legacy vote job. An operator must recover it before another vote is submitted.')
-            }
-            const restaged = await broadcastVote({ round_id: roundState.id, encoded_proof: pendingJob.encodedProof }, (jobId) =>
-              writeAvailabilityJob(pendingJobKey, { ...pendingJob, jobId }),
-            )
-            if (!restaged) throw new Error('Could not restore the pending data-availability job.')
-            if (restaged.status === 'failed_broadcast') clearAvailabilityJob(pendingJobKey)
-            if (await finishCommitment(restaged, pendingJob.isMask)) {
+            if (await restagePendingJob(pendingJob)) {
               clearAvailabilityJob(pendingJobKey)
             }
             return
@@ -585,10 +648,8 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
         // small delay for UX
         await new Promise((resolve) => setTimeout(resolve, 500))
 
-        // Step 4: Broadcasting — through the relay where it runs, straight from the wallet where
-        // it does not (mainnet, or a deployment that forces the direct path). The relay's uniform
-        // sender is what hides *who* submitted an input; a direct transaction gives that up, so
-        // the relay stays the default wherever it exists.
+        // Step 4: Broadcasting. The server either relays the commitment or answers
+        // `ready_for_commitment`, and `finishCommitment` then sends it from the wallet.
         setVotingStep('broadcasting')
         setLastActiveStep('broadcasting')
 
@@ -608,8 +669,11 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
           clearAvailabilityJob(pendingJobKey)
         }
       } catch (error) {
-        setVotingStep('error')
         console.error('Vote processing failed:', error)
+        // A page that closed during the action shows no toast on the page that is open now. A kept
+        // job pointer lets the next action resume the job and report its state.
+        if (unmounted.current) return
+        setVotingStep('error')
         showToast({
           type: 'danger',
           message: `Vote failed: ${error instanceof Error ? error.message : String(error)}`,

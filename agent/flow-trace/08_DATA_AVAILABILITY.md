@@ -60,9 +60,9 @@ finalizeInput(tuple, VectorX proof)
         +--> emits InputPublished with Avail coordinates
 ```
 
-The voter does not stay online for VectorX. On Ethereum mainnet, the voter pays only for the compact
-`publishInput` transaction. The server owns the durable Avail and `finalizeInput` job. Sepolia and
-local development can relay the compact transaction for the voter.
+The voter does not stay online for VectorX. The server owns the durable Avail and `finalizeInput`
+job. The server can also relay the compact `publishInput` transaction (see
+[Relay limits](#relay-limits)); otherwise the voter's wallet sends it.
 
 The leaf is reserved in the first transaction so a revote or mask can name it as its parent while
 VectorX is still finalizing. The server that signed the input already has the exact bytes and
@@ -231,13 +231,13 @@ transaction:
 - An input leaves `AwaitingCommitment` only when a finalized block contains its commitment.
   `Committed` stops attestation renewal and starts the paid Avail publication, so an orphaned
   commitment would strand the input for the rest of its commitment window. This holds on both
-  submission paths. Where the service relays the commitment itself (every non-mainnet chain), the
-  receipt does not promote the job: the job stays in `AwaitingCommitment` with the relayed
-  transaction hash, the attestation renews on the same schedule as a wallet-submitted one, and a
-  relayed transaction that is absent from finalized state and from the chain head is relayed again
-  (`commitment_step`). The status endpoint reports a relayed provisional job as
-  `pending_availability`, not `ready_for_commitment`, so a client does not sign a second commitment
-  with its wallet.
+  submission paths. Where the service relays the commitment itself, the receipt does not promote the
+  job: the job stays in `AwaitingCommitment` with the relayed transaction hash, the attestation
+  renews on the same schedule as a wallet-submitted one, and a relayed transaction that is absent
+  from finalized state and from the chain head is relayed again while the relay may send, or takes
+  the wallet path when it may not (`commitment_step`, `relay_may_send`). The status endpoint reports
+  a relayed provisional job as `pending_availability`, not `ready_for_commitment`, so a client does
+  not sign a second commitment with its wallet.
 - A publication transaction moves to `AwaitingFinality`, not directly to success. That state keeps
   the Ethereum payload, the Avail coordinates, the compute proof or staged envelope, and the local
   object. When finalized state contains the publication, the job retires. When the publication is
@@ -251,6 +251,8 @@ The status endpoint takes the same per-job ownership as the worker. Both paths l
 for an Ethereum answer, and then save, so a status refresh that started before the worker made
 progress could otherwise write its older copy over that progress and discard saved Avail
 coordinates. A status request that finds the job busy returns the persisted view and writes nothing.
+The status endpoint answers a `Created` job from storage without the claim. Only the worker's
+`Created` step reconciles that state with Ethereum, and a client poll must not make it skip the job.
 
 The service does not release an expired promise based on its local clock or an unfinalized chain
 head. It waits for an Ethereum finalized block at or after `expiresAt`, then checks the historical
@@ -350,6 +352,37 @@ rules:
   that stops honest voters. The per-caller traffic window still bounds a replay loop. A failed job
   restarted under the same identifier does take a reservation, because it creates a fresh funding
   obligation.
+
+## Relay limits
+
+The server relays the `publishInput` commitment within two limits, `RELAY_MAX_INPUTS_PER_SLOT`
+(default 3) and `RELAY_MAX_INPUTS_PER_ROUND` (default: none). On Ethereum mainnet it relays only
+when `MAINNET_RELAY` is set, and that setting requires a round limit and a `RELAY_MIN_BALANCE_ETH`
+above zero. These chain rules read `CHAIN_ID`, so startup stops when `HTTP_RPC_URL` serves a
+different chain (`Config::validate_rpc_chain`). The relay counts are durable (`reserve_relay`), and
+the worker prunes the records of a round after its commitment cutoff.
+
+Every relay send first checks `relay_may_send`. Turning the relay off (the flag, or a limit of zero)
+stops every send, including jobs chosen for the relay earlier and relayed transactions that a
+reorganization removed. So does a server key balance below `RELAY_MIN_BALANCE_ETH`, which keeps
+funds for `finalizeInput`, and so does a balance that cannot be read. Those jobs take the wallet
+path. A send that the relay key cannot pay for also moves its job to the wallet path, with the same
+signed payload (`relay_input_commitment`, `is_insufficient_funds`).
+
+Every transaction from the server key takes its nonce from one sequence in the process
+(`e3_evm_helpers::nonce::send_with_next_nonce`). This includes `publishInput`, `finalizeInput`,
+`setMerkleRoot`, and the Interfold helper transactions. A send takes the lowest nonce, at or above
+the pending count of the chain, that no send of the last two minutes holds. Concurrent sends of the
+server therefore never share a nonce, and a nonce that the network dropped is used again.
+
+Past a limit, the server still signs the input and the voter's wallet sends the commitment. A
+refusal would reopen ZEN2-25, because a mask needs no signature from the slot owner. Anyone can use
+up the relays of a slot with masks. The owner's later inputs then show the owner's address, and the
+owner must confirm the wallet transaction before the commitment cutoff, on the page or on a later
+visit. Otherwise the input is lost.
+
+A `Created` job whose commitment is already at the chain head, because a relay step was interrupted
+after its send, moves to `AwaitingCommitment` and waits for finality there. It is not sent again.
 
 ## Remaining trust and operations
 
