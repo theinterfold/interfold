@@ -367,7 +367,12 @@ stops every send, including jobs chosen for the relay earlier and relayed transa
 reorganization removed. So does a server key balance below `RELAY_MIN_BALANCE_ETH`, which keeps
 funds for `finalizeInput`, and so does a balance that cannot be read. Those jobs take the wallet
 path. A send that the relay key cannot pay for also moves its job to the wallet path, with the same
-signed payload (`relay_input_commitment`, `is_insufficient_funds`).
+signed payload (`relay_input_commitment`, `is_insufficient_funds`). A node also refuses a send when
+the worst-case costs of the pending transactions of the key exceed its balance, and that refusal
+clears when they are mined. So a refusal while other transactions of the key are pending keeps the
+relay for a grace period of five minutes (`RELAY_FUNDING_GRACE_SECONDS`). The grace period also ends
+when the commitment cutoff is less than five minutes away, so the wallet path always comes before
+the cutoff, also behind a stuck transaction.
 
 A `POST /voting/broadcast` request with `send_from_wallet: true` takes the wallet path (`relays`,
 `JobKind::sends_from_wallet`). The server writes no relay record for it, reads no relay balance, and
@@ -377,8 +382,12 @@ of the statement keeps the choice of its existing job.
 Every transaction from the server key takes its nonce from one sequence in the process
 (`e3_evm_helpers::nonce::send_with_next_nonce`). This includes `publishInput`, `finalizeInput`,
 `setMerkleRoot`, and the Interfold helper transactions. A send takes the lowest nonce, at or above
-the pending count of the chain, that no send of the last two minutes holds. Concurrent sends of the
-server therefore never share a nonce, and a nonce that the network dropped is used again.
+the pending count of the chain, that no reservation holds, and it reserves that nonce before the
+broadcast. Concurrent sends in the server process therefore take different nonces, also while an RPC
+node lags. A send that ends with an error gives its nonce back. The reservation of the lowest nonce
+that the chain does not count expires after two minutes, so a nonce that the network dropped is used
+again. Two cases can still take a used nonce: a transaction from another process, and a send that
+ends with an error although the node took its transaction.
 
 Past a limit, the server still signs the input and the voter's wallet sends the commitment. A
 refusal would reopen ZEN2-25, because a mask needs no signature from the slot owner. Anyone can use
