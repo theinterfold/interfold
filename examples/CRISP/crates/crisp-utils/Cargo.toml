@@ -10,5 +10,4 @@ repository.workspace = true
 e3-sdk = { workspace = true, default-features = false, features=["bfv"] }
 e3-bfv-client = { workspace = true }
 eyre = { workspace = true }
-num-bigint = "=0.4.6"
-
+num-bigint = "0.5.1"

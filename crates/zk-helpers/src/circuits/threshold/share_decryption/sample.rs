@@ -113,7 +113,7 @@ impl ShareDecryptionCircuitData {
             all_party_sk_shares.push(sk_sss);
 
             let esi_coeffs = trbfv
-                .generate_smudging_error(num_ciphertexts, lambda, &mut rng)
+                .generate_smudging_error(num_ciphertexts, 0, lambda, &mut rng)
                 .map_err(|e| {
                     CircuitsErrors::Sample(format!("Failed to generate smudging error: {:?}", e))
                 })?;

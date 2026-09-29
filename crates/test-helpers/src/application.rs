@@ -20,7 +20,7 @@ pub fn generate_ciphertexts(
     num_voters: usize,
     num_votes_per_voter: usize,
 ) -> (Vec<Vec<Ciphertext>>, Vec<Vec<u64>>) {
-    let params = &pk.par;
+    let params = &pk.params;
     let dist = Uniform::new_inclusive(0, 1).expect("valid uniform range");
     let mut rng = rand::rng();
     println!("generating ciphertexts...");
@@ -64,7 +64,7 @@ pub fn run_application(
     }
 
     let mut sums: Vec<Ciphertext> = (0..num_votes_per_voter)
-        .map(|_| Ciphertext::zero(&pk.par))
+        .map(|_| Ciphertext::zero(&pk.params))
         .collect();
 
     for ct_group in ciphertexts {

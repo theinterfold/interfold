@@ -247,8 +247,8 @@ impl ZKInputsGenerator {
         let pt = Plaintext::try_encode(&vote, Encoding::poly(), &self.bfv_params)
             .with_context(|| "Failed to encode plaintext")?;
 
-        let (ct, _u_rns, _e0_rns, _e1_rns) = pk
-            .try_encrypt_extended(&pt, &mut rng())
+        let (ct, _intermediates) = pk
+            .try_encrypt_with_intermediates(&pt, &mut rng())
             .with_context(|| "Failed to encrypt plaintext")?;
 
         Ok(ct.to_bytes())

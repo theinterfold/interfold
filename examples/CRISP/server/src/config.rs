@@ -56,7 +56,7 @@ pub struct Config {
     #[serde(default)]
     pub cron_api_key: Option<String>,
     // E3 parameters
-    pub e3_param_set: u8,      // 0=InsecureThreshold512, 1=SecureThreshold8192
+    pub e3_param_set: u8,      // 0=InsecureThreshold512, 2=SecureThreshold8192
     pub e3_committee_size: u8, // 0=Minimum, 1=Micro, 2=Small
     pub e3_duration: u64,
     /// Time allowed for the E3 request transaction to be mined before voting can start.
@@ -192,14 +192,14 @@ impl Config {
     }
 
     fn validate_e3_param_set(chain_id: u64, param_set: u8) -> Result<(), ConfigError> {
-        if param_set > 1 {
+        if param_set != 0 && param_set != 2 {
             return Err(ConfigError::Message(format!(
-                "E3_PARAM_SET must be 0 (insecure-512) or 1 (secure-8192), got {param_set}"
+                "E3_PARAM_SET must be 0 (insecure-512) or 2 (secure-8192), got {param_set}"
             )));
         }
-        if chain_id == 1 && param_set != 1 {
+        if chain_id == 1 && param_set != 2 {
             return Err(ConfigError::Message(
-                "Ethereum mainnet requires E3_PARAM_SET=1 (secure-8192)".to_owned(),
+                "Ethereum mainnet requires E3_PARAM_SET=2 (secure-8192)".to_owned(),
             ));
         }
         Ok(())
@@ -232,18 +232,19 @@ mod tests {
     #[test]
     fn accepts_both_testnet_parameter_sets() {
         assert!(Config::validate_e3_param_set(11_155_111, 0).is_ok());
-        assert!(Config::validate_e3_param_set(11_155_111, 1).is_ok());
+        assert!(Config::validate_e3_param_set(11_155_111, 2).is_ok());
     }
 
     #[test]
     fn requires_secure_parameters_on_mainnet() {
-        assert!(Config::validate_e3_param_set(1, 1).is_ok());
+        assert!(Config::validate_e3_param_set(1, 2).is_ok());
         assert!(Config::validate_e3_param_set(1, 0).is_err());
     }
 
     #[test]
     fn rejects_unknown_parameter_sets() {
-        assert!(Config::validate_e3_param_set(31_337, 2).is_err());
+        assert!(Config::validate_e3_param_set(31_337, 1).is_err());
+        assert!(Config::validate_e3_param_set(31_337, 3).is_err());
     }
 
     #[test]

@@ -50,7 +50,7 @@ share_computation_e_sm (CIRCUIT 2b)
 -------------------------------------
 ************************************/
 
-pub global SHARE_COMPUTATION_E_SM_BIT_SECRET: u32 = 28;
+pub global SHARE_COMPUTATION_E_SM_BIT_SECRET: u32 = 38;
 
 pub global SHARE_COMPUTATION_E_SM_CONFIGS: ShareComputationConfigs<L_THRESHOLD> =
     ShareComputationConfigs::new(QIS_THRESHOLD);
@@ -68,7 +68,7 @@ pub global SHARE_ENCRYPTION_BIT_U: u32 = 1;
 pub global SHARE_ENCRYPTION_BIT_E0: u32 = 3;
 pub global SHARE_ENCRYPTION_BIT_E1: u32 = 3;
 pub global SHARE_ENCRYPTION_BIT_MSG: u32 = 36;
-pub global SHARE_ENCRYPTION_BIT_R1: u32 = 35;
+pub global SHARE_ENCRYPTION_BIT_R1: u32 = 36;
 pub global SHARE_ENCRYPTION_BIT_R2: u32 = 50;
 pub global SHARE_ENCRYPTION_BIT_P1: u32 = 9;
 pub global SHARE_ENCRYPTION_BIT_P2: u32 = 50;
@@ -78,8 +78,8 @@ pub global SHARE_ENCRYPTION_PK_BOUNDS: [Field; L] = [1125899906777088];
 pub global SHARE_ENCRYPTION_E0_BOUND: Field = 6;
 pub global SHARE_ENCRYPTION_E1_BOUND: Field = 6;
 pub global SHARE_ENCRYPTION_U_BOUND: Field = 1;
-pub global SHARE_ENCRYPTION_R1_LOW_BOUNDS: [Field; L] = [19605059183];
-pub global SHARE_ENCRYPTION_R1_UP_BOUNDS: [Field; L] = [19605059183];
+pub global SHARE_ENCRYPTION_R1_LOW_BOUNDS: [Field; L] = [39210118110];
+pub global SHARE_ENCRYPTION_R1_UP_BOUNDS: [Field; L] = [256];
 pub global SHARE_ENCRYPTION_R2_BOUNDS: [Field; L] = [1125899906777088];
 pub global SHARE_ENCRYPTION_P1_BOUNDS: [Field; L] = [256];
 pub global SHARE_ENCRYPTION_P2_BOUNDS: [Field; L] = [1125899906777088];

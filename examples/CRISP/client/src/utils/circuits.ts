@@ -22,7 +22,7 @@ let pending: Partial<Record<CircuitPreset, Promise<void>>> = {}
 
 const presetForParamSet = (paramSet: number): CircuitPreset | null => {
   if (paramSet === 0) return 'insecure-512'
-  if (paramSet === 1) return 'secure-8192'
+  if (paramSet === 2) return 'secure-8192'
   return null
 }
 

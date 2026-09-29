@@ -7,7 +7,7 @@ description = "A polynomial library with big integer coefficients for cryptograp
 repository.workspace = true
 
 [dependencies]
-num-bigint = { workspace = true, features = ["rand", "serde"] }
+num-bigint = { workspace = true, features = ["rand_0_9", "serde"] }
 num-traits = { workspace = true }
 serde = { workspace = true, optional = true, features = ["rc"] }
 bincode = { workspace = true, optional = true }

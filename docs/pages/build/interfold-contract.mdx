@@ -79,7 +79,7 @@ spend the quoted fee in the fee token. For the fee formula and the refund rules,
 | `committeeSize`          | `CommitteeSize` (`uint8`) | `Minimum` (0), `Micro` (1), or `Small` (2).                 | The size must have thresholds configured. The pricing minimums must accept it.           |
 | `inputWindow`            | `uint256[2]`              | Start and end timestamps of the input window, in seconds.   | The start must not be in the past. The end must not be before the start.                 |
 | `e3Program`              | `IE3Program`              | The E3 program contract.                                    | The contract owner must register the program first.                                      |
-| `paramSet`               | `uint8`                   | BFV parameter set. `0` is insecure-512, `1` is secure-8192. | The chain must support the set, and the set must be registered.                          |
+| `paramSet`               | `uint8`                   | BFV parameter set. `0` is insecure-512, `2` is secure-8192. | The chain must support the set, and the set must be registered.                          |
 | `computeProviderParams`  | `bytes`                   | Compute provider settings.                                  | Interfold passes the bytes to `e3Program.validate`.                                      |
 | `customParams`           | `bytes`                   | Application settings.                                       | Interfold stores the bytes on the E3 and passes them to `e3Program.validate`.            |
 | `expectedFeeToken`       | `IERC20`                  | The fee token that the requester accepts.                   | Must equal `feeToken()`. Otherwise the call reverts with `FeeTokenChanged`.              |

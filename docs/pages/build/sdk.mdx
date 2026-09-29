@@ -168,10 +168,10 @@ const sdk = InterfoldSDK.create({
 The preset selects the BFV parameters that the client uses to encrypt. It must match the `paramSet`
 of the E3.
 
-| Preset name              | `paramSet` | Ring degree | Where the contracts accept it    |
-| ------------------------ | ---------- | ----------- | -------------------------------- |
-| `INSECURE_THRESHOLD_512` | 0          | 512         | Sepolia and local chains only    |
-| `SECURE_THRESHOLD_8192`  | 1          | 8192        | Ethereum mainnet, Sepolia, local |
+| Preset name              | `paramSet` | Ring degree | CRT moduli (L) | Use                             |
+| ------------------------ | ---------- | ----------- | -------------- | ------------------------------- |
+| `INSECURE_THRESHOLD_512` | 0          | 512         | 2              | Local development and tests     |
+| `SECURE_THRESHOLD_8192`  | 2          | 8192        | 3              | Production and secure test runs |
 
 The insecure preset has no production security. Use it only for tests.
 `ThresholdBfvParamsPresetNames` lists both names, and `DEFAULT_THRESHOLD_BFV_PARAMS_PRESET_NAME` is
@@ -230,7 +230,7 @@ const hash = await sdk.requestE3({ ...requestParams, maxFee: fee })
 `requestE3` fills the fields that the contract needs and the SDK knows:
 
 - `expectedFeeToken` is the `feeToken` address from the SDK configuration.
-- `expectedCryptoConfigId` is the configuration ID for `paramSet` 0 or 1. Other values fail.
+- `expectedCryptoConfigId` is the configuration ID for `paramSet` 0 or 2. Other values fail.
 - `committeeSize` must be 0, 1, or 2.
 
 `requestE3` simulates the call first, then sends it, and returns the transaction hash. To get the E3

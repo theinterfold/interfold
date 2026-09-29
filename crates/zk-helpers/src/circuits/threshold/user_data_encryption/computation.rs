@@ -232,21 +232,17 @@ impl Computation for Bounds {
 
         // e0 = e1 in the fhe.rs
         let e0_bound: u128 = if threshold_params.get_error1_variance() <= &BigUint::from(16u32) {
-            cbd_bound as u128
+            threshold_params.get_error1_variance().to_u128().unwrap() * 2
         } else {
             uniform_bound.to_u128().unwrap()
         };
         let e1_bound = cbd_bound; // e1 = e2 in the fhe.rs
 
-        let ptxt_up_bound = (t.clone() - BigInt::from(1)) / BigInt::from(2);
-        let ptxt_low_bound: BigInt = if (t.clone() % BigInt::from(2)) == BigInt::from(1) {
-            -1 * ptxt_up_bound.clone()
-        } else {
-            -1 * ptxt_up_bound.clone() - BigInt::from(1)
-        };
+        let ptxt_up_bound = BigInt::from(0);
+        let ptxt_low_bound = BigInt::from(1) - &t;
 
-        let k1_low_bound: BigInt = BigInt::from(-1) * ptxt_low_bound.clone();
-        let k1_up_bound: BigInt = ptxt_up_bound.clone();
+        let k1_low_bound = BigInt::from(0);
+        let k1_up_bound: BigInt = &t - BigInt::from(1);
 
         // Calculate bounds for each CRT basis
         let moduli: Vec<u64> = ctx.moduli_operators().iter().map(|q| **q).collect();
@@ -343,6 +339,7 @@ impl Computation for Inputs {
         let moduli = threshold_params.moduli();
 
         let t = threshold_params.plaintext();
+        let k0is = compute_k0is(moduli, t)?;
         let n = threshold_params.degree() as u64;
         let q_mod_t = (&modulus_q % t)
             .to_u64()
@@ -350,12 +347,12 @@ impl Computation for Inputs {
         let cyclo = cyclotomic_polynomial(n);
 
         // Encrypt using the provided public key to ensure ciphertext matches the key.
-        let (ct, u, e0, e1) = data
+        let (ct, intermediates) = data
             .public_key
-            .try_encrypt_extended(&data.plaintext, &mut rand::rng())?;
+            .try_encrypt_with_intermediates(&data.plaintext, &mut rand::rng())?;
 
         // Reconstruct e0 coefficients mod Q (CRT) for e0_quotient computation.
-        let mut e0_mod_q = Polynomial::from_fhe_polynomial(&e0);
+        let mut e0_mod_q = Polynomial::from_fhe_polynomial(intermediates.error_0());
 
         e0_mod_q.reverse();
         e0_mod_q.center(&modulus_q);
@@ -370,11 +367,14 @@ impl Computation for Inputs {
         let mut k1 = Polynomial::from_u64_vector(k1_u64);
 
         k1.reverse();
-        k1.center(&BigInt::from(t));
 
         // Reconstruct u and e1 as polynomials (only the first limb is needed)
-        let mut u = CrtPolynomial::from_fhe_polynomial(&u).limb(0).clone();
-        let mut e1 = CrtPolynomial::from_fhe_polynomial(&e1).limb(0).clone();
+        let mut u = CrtPolynomial::from_fhe_polynomial(intermediates.randomness())
+            .limb(0)
+            .clone();
+        let mut e1 = CrtPolynomial::from_fhe_polynomial(intermediates.error_1())
+            .limb(0)
+            .clone();
 
         u.center(&BigInt::from(moduli[0]));
         u.reverse();
@@ -386,7 +386,7 @@ impl Computation for Inputs {
         let mut ct1 = CrtPolynomial::from_fhe_polynomial(&ct[1]);
         let mut pk0 = CrtPolynomial::from_fhe_polynomial(&pk.c[0]);
         let mut pk1 = CrtPolynomial::from_fhe_polynomial(&pk.c[1]);
-        let mut e0 = CrtPolynomial::from_fhe_polynomial(&e0);
+        let mut e0 = CrtPolynomial::from_fhe_polynomial(intermediates.error_0());
 
         ct0.reverse();
         ct1.reverse();
@@ -435,7 +435,7 @@ impl Computation for Inputs {
             );
 
             // k0qi = -t^{-1} mod qi
-            let k0qi = BigInt::from(qi.inv(qi.neg(t)).unwrap());
+            let k0qi = BigInt::from(k0is[i]);
 
             // ki = k1 * k0qi
             let ki = k1.scalar_mul(&k0qi);
@@ -615,5 +615,38 @@ mod tests {
         assert_eq!(decoded.moduli, constants.moduli);
         assert_eq!(decoded.bits, constants.bits);
         assert_eq!(decoded.bounds, constants.bounds);
+    }
+
+    #[test]
+    fn insecure_e0_bound_matches_error1_sampler() {
+        let preset = BfvPreset::InsecureThreshold512;
+        let bounds = Bounds::compute(preset, &()).unwrap();
+        let bits = Bits::compute(preset, &bounds).unwrap();
+
+        assert_eq!(bounds.e0_bound, BigUint::from(6u32));
+        assert_eq!(bounds.e1_bound, BigUint::from(20u32));
+        assert_eq!(bits.e0_bit, 3);
+    }
+
+    #[test]
+    fn encryption_witness_respects_r1_bounds() {
+        for preset in [
+            BfvPreset::InsecureThreshold512,
+            BfvPreset::SecureThreshold8192,
+        ] {
+            let sample = UserDataEncryptionCircuitData::generate_sample(preset).unwrap();
+            let bounds = Bounds::compute(preset, &()).unwrap();
+            let inputs = Inputs::compute(preset, &sample).unwrap();
+            for (i, limb) in inputs.r1is.limbs.iter().enumerate() {
+                let lower = -BigInt::from(bounds.r1_low_bounds[i].clone());
+                let upper = BigInt::from(bounds.r1_up_bounds[i].clone());
+                for (j, coefficient) in limb.coefficients().iter().enumerate() {
+                    assert!(
+                        coefficient >= &lower && coefficient <= &upper,
+                        "{preset:?} r1[{i}][{j}] = {coefficient} outside [{lower}, {upper}]"
+                    );
+                }
+            }
+        }
     }
 }

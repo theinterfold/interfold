@@ -307,22 +307,22 @@ The parameter set selects the BFV parameters. The SDK preset must match it.
 | `paramSet` | SDK preset name          | Ring degree | Use                                        |
 | ---------- | ------------------------ | ----------- | ------------------------------------------ |
 | 0          | `INSECURE_THRESHOLD_512` | 512         | Tests only. It has no production security. |
-| 1          | `SECURE_THRESHOLD_8192`  | 8192        | Production.                                |
+| 2          | `SECURE_THRESHOLD_8192`  | 8192        | Production.                                |
 
 Each network accepts different pairs:
 
 | Network                                | Parameter sets | Committee sizes                                                   |
 | -------------------------------------- | -------------- | ----------------------------------------------------------------- |
-| Ethereum mainnet                       | 1 only         | `Small` only. The launch pricing sets `minCommitteeSize` to 19.   |
-| Sepolia, local chains (31337 and 1337) | 0 and 1        | All three sizes, when the deployment configures their thresholds. |
+| Ethereum mainnet                       | 2 only         | `Small` only. The launch pricing sets `minCommitteeSize` to 19.   |
+| Sepolia, local chains (31337 and 1337) | 0 and 2        | All three sizes, when the deployment configures their thresholds. |
 
 A parameter set must also be registered on the chain. `paramSetRegistry(paramSet)` returns empty
 bytes for an unregistered set. The local deploy script registers set 0 and configures thresholds
-only for `Minimum`.
+only for `Minimum`. Mainnet retains index 1 for older E3s; version-5 requests use index 2.
 
 Use these rules to choose:
 
-- Choose `paramSet` 1 for any value that must stay private.
+- Choose `paramSet` 2 for any value that must stay private.
 - Choose a larger committee for more fault tolerance. It costs more.
 - Make sure that the network has enough eligible ciphernodes and bond owners. The request reverts
   when fewer than N are available.

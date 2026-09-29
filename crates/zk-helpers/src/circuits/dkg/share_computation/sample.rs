@@ -89,7 +89,7 @@ impl ShareComputationCircuitData {
                     .lambda()
                     .map_err(|e| CircuitsErrors::Sample(e.to_string()))?;
                 let esi_coeffs = trbfv
-                    .generate_smudging_error(committee.n, lambda, &mut rng)
+                    .generate_smudging_error(committee.n, 0, lambda, &mut rng)
                     .map_err(|e| {
                         CircuitsErrors::Sample(format!(
                             "Failed to generate smudging error: {:?}",

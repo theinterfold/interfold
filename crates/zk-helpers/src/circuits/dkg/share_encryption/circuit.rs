@@ -37,7 +37,7 @@ pub struct ShareEncryptionCircuitData {
     pub public_key: PublicKey,
     /// Secret key (for input; not revealed in proof).
     pub secret_key: SecretKey,
-    /// Encryption randomness u in RNS form (from try_encrypt_extended).
+    /// Encryption randomness u in RNS form (from try_encrypt_with_intermediates).
     pub u_rns: Poly<Ntt>,
     /// Encryption error e0 in RNS form.
     pub e0_rns: Poly<Ntt>,

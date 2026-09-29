@@ -20,7 +20,7 @@ checklist.
 - **Choose a supported committee size.** The committee enum fixes N, H, and T in
   `lib/ActiveCryptoConfig.sol`. On mainnet, the launch pricing sets `minCommitteeSize` to 19, so
   only `Small` is accepted. `getE3Quote` reverts with `CommitteeSizeTooSmall` for a smaller size.
-- **Use the secure parameter set for private data.** Mainnet accepts only `paramSet` 1
+- **Use the secure parameter set for private data.** Version-5 mainnet accepts only `paramSet` 2
   (secure-8192). The insecure-512 preset has no production security.
 - **Match the SDK preset to the parameter set.** The SDK does not compare them. A mismatch encrypts
   inputs under the wrong parameters.

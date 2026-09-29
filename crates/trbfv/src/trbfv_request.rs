@@ -157,6 +157,7 @@ pub enum ThresholdFailureKind {
     InsecureLambda,
     SmudgingBoundInfeasible,
     PartyCountExceedsModulus,
+    InvalidPartyCount,
 }
 
 impl ThresholdFailure {
@@ -190,6 +191,7 @@ impl ThresholdFailure {
             TE::InsecureLambda { .. } => (K::InsecureLambda, None),
             TE::SmudgingBoundInfeasible { .. } => (K::SmudgingBoundInfeasible, None),
             TE::PartyCountExceedsModulus { .. } => (K::PartyCountExceedsModulus, None),
+            TE::InvalidPartyCount { .. } => (K::InvalidPartyCount, None),
         };
         Self {
             kind,

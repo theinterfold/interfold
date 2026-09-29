@@ -199,7 +199,7 @@ impl Computation for Bounds {
             committee_n,
             sd.z as usize,
             lambda,
-        );
+        )?;
         let smudging_calculator = SmudgingBoundCalculator::new(smudging_config);
         let e_sm_bound = smudging_calculator.calculate_sm_bound().map_err(|e| {
             CircuitsErrors::Other(format!("Failed to calculate smudging bound: {:?}", e))

@@ -147,6 +147,7 @@ mod tests {
     use super::*;
     use crate::constants::{defaults, insecure_512, secure_8192};
     use crate::presets::BfvPreset;
+    use fhe::trbfv::{SmudgingBoundCalculator, SmudgingBoundCalculatorConfig};
     use num_bigint::BigUint;
     use std::str::FromStr;
 
@@ -210,6 +211,73 @@ mod tests {
             params.get_error1_variance(),
             &BigUint::from_str(error1_variance).unwrap()
         );
+    }
+
+    #[test]
+    fn secure_8192_matches_target_moduli_and_lambda() {
+        let (threshold, dkg) = build_pair_for_preset(BfvPreset::SecureThreshold8192).unwrap();
+        let threshold_q = threshold
+            .moduli()
+            .iter()
+            .fold(BigUint::from(1u8), |product, &qi| product * qi);
+        let dkg_q = dkg
+            .moduli()
+            .iter()
+            .fold(BigUint::from(1u8), |product, &qi| product * qi);
+
+        assert_eq!(threshold.degree(), 8192);
+        assert_eq!(threshold.plaintext(), 1000000);
+        assert_eq!(
+            threshold.moduli(),
+            &[0x0400000000c00001, 0x0400000000a40001, 0x0400000000990001]
+        );
+        assert_eq!(
+            threshold_q.to_string(),
+            "23945242828800773257389952748588677348507873795964929"
+        );
+        assert_eq!(
+            (&threshold_q / threshold.plaintext()).to_string(),
+            "23945242828800773257389952748588677348507873795"
+        );
+        assert_eq!(
+            &threshold_q % threshold.plaintext(),
+            BigUint::from(964929u64)
+        );
+        assert_eq!(
+            threshold.get_error1_variance().to_string(),
+            "17723039943798878305460955570711717478400"
+        );
+
+        assert_eq!(dkg.degree(), 8192);
+        assert_eq!(dkg.plaintext(), 288230376164294657);
+        assert_eq!(dkg.moduli(), &[0x1000000000024001, 0x1000000000054001]);
+        assert_eq!(dkg_q.to_string(), "1329227995785482559187594477654474753");
+        assert_eq!(
+            (&dkg_q / dkg.plaintext()).to_string(),
+            "4611686018228027384"
+        );
+        assert_eq!(&dkg_q % dkg.plaintext(), BigUint::from(2508586813587465u64));
+        assert_eq!(BfvPreset::SecureThreshold8192.metadata().lambda, 45);
+        assert_eq!(BfvPreset::SecureDkg8192.metadata().lambda, 45);
+
+        let defaults = BfvPreset::SecureThreshold8192.search_defaults().unwrap();
+        let config = SmudgingBoundCalculatorConfig::new(
+            threshold.clone(),
+            defaults.n as usize,
+            defaults.z as usize,
+            BfvPreset::SecureThreshold8192.lambda().unwrap(),
+        )
+        .unwrap();
+        let smudging_bound = SmudgingBoundCalculator::new(config)
+            .calculate_sm_bound()
+            .unwrap();
+        assert_eq!(
+            smudging_bound.to_string(),
+            "132922799578495921427264261134328266752000000"
+        );
+        let b_c = BigUint::parse_bytes(b"230584300921376913729000000", 10).unwrap();
+        let delta = &threshold_q / threshold.plaintext();
+        assert!(BigUint::from(2u8) * (b_c + BigUint::from(defaults.n) * smudging_bound) < delta);
     }
 
     #[test]

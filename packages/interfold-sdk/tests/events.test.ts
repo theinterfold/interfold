@@ -11,9 +11,19 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { EventListener } from '../src/events/event-listener'
 import { RandomnessProviderEventType, RegistryEventType, type InterfoldEvent } from '../src/events/types'
 import { InterfoldSDK } from '../src/interfold-sdk'
+import { ParamSet } from '../src/contracts/types'
+import { cryptoConfigIdForParamSet } from '../src/utils'
 
 afterEach(() => {
   vi.restoreAllMocks()
+})
+
+describe('secure parameter-set migration', () => {
+  it('routes new secure requests to slot 2 and rejects the historical slot', () => {
+    expect(ParamSet.Secure8192).toBe(2)
+    expect(cryptoConfigIdForParamSet(ParamSet.Secure8192)).toBe('0xac5490c59e158cbb104642bba0ab7b3fd11ca49dd4bb05ce7bec8089ce3c8c31')
+    expect(() => cryptoConfigIdForParamSet(1)).toThrow('Unsupported BFV parameter set: 1')
+  })
 })
 
 describe('RegistryEventType', () => {
