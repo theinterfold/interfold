@@ -1666,15 +1666,10 @@ impl AvailabilityService {
                         job.state = self.relay_input_commitment(&job).await?;
                     }
                     JobKind::Input { .. } => {
-                        // The relay is off, the relay key is below its balance floor, or a relay
-                        // limit is reached: the voter's wallet sends the commitment.
-                        let (ethereum_payload, attestation_expires_at) =
-                            self.commitment_payload(&job).await?;
-                        job.state = JobState::AwaitingCommitment {
-                            ethereum_payload,
-                            attestation_expires_at,
-                            relayed_transaction_hash: None,
-                        };
+                        // The relay is off, the relay key is below its balance floor or its
+                        // balance cannot be read, or a relay limit is reached: the voter's wallet
+                        // sends the commitment.
+                        job.state = self.wallet_commitment(&job).await?;
                     }
                     JobKind::Output { .. } => {
                         job.state = self.start_availability(&job, None).await?;
@@ -1697,7 +1692,14 @@ impl AvailabilityService {
                         self.save(&job)?;
                     }
                     CommitmentStep::Recommit => {
-                        job.state = self.relay_input_commitment(&job).await?;
+                        // A reorganization removed the relayed transaction. Send it again only
+                        // while the relay may spend. Otherwise the voter's wallet must send it,
+                        // so that turning the relay off stops every relay send.
+                        job.state = if self.relay_may_send().await {
+                            self.relay_input_commitment(&job).await?
+                        } else {
+                            self.wallet_commitment(&job).await?
+                        };
                         self.save(&job)?;
                     }
                     CommitmentStep::Wait => {}
@@ -2058,11 +2060,24 @@ impl AvailabilityService {
     }
 
     /// Decide whether this service relays the commitment of a `Created` input job.
-    ///
-    /// The balance floor is checked before the limits, so a key below its floor stops all relay
-    /// sends from this step, including jobs that were chosen for the relay earlier.
     async fn relays(&self, job: &AvailabilityJob) -> anyhow::Result<bool> {
-        Ok(self.relay.enabled && self.relay_has_funds().await? && self.reserve_relay(job)?)
+        Ok(self.relay_may_send().await && self.reserve_relay(job)?)
+    }
+
+    /// Whether the relay may send a commitment now: the relay is on, and the server key holds at
+    /// least `RELAY_MIN_BALANCE_ETH`. A balance that cannot be read counts as too low, so a failed
+    /// read neither spends nor stops the job: the job takes the wallet path.
+    async fn relay_may_send(&self) -> bool {
+        if !self.relay.enabled {
+            return false;
+        }
+        match self.relay_has_funds().await {
+            Ok(funded) => funded,
+            Err(error) => {
+                warn!(%error, "Could not read the relay balance; voters' wallets send new commitments");
+                false
+            }
+        }
     }
 
     /// Whether the server key holds at least `RELAY_MIN_BALANCE_ETH`. The same key pays for
@@ -2090,18 +2105,30 @@ impl AvailabilityService {
         Ok(true)
     }
 
+    /// Sign a fresh commitment payload for the voter's wallet to send.
+    async fn wallet_commitment(&self, job: &AvailabilityJob) -> anyhow::Result<JobState> {
+        let (ethereum_payload, attestation_expires_at) = self.commitment_payload(job).await?;
+        Ok(JobState::AwaitingCommitment {
+            ethereum_payload,
+            attestation_expires_at,
+            relayed_transaction_hash: None,
+        })
+    }
+
     /// Decide whether this service relays the commitment of an input job, and record a relay.
     ///
-    /// While the relay is on, a relay decision holds for the life of the job: a failed send that
-    /// the worker retries, and a relayed transaction that a reorganization removes, keep the place
-    /// of the job. The decision reads only the slot and the earlier relays, so votes, updates, and
-    /// masks get the same answer. The record is durable before the relay transaction is sent, and
-    /// it holds the commitment cutoff of the round, after which `prune_relay_records` removes it.
+    /// While the relay may send, a relay decision holds for the life of the job: a failed send
+    /// that the worker retries, and a relayed transaction that a reorganization removes, keep the
+    /// place of the job. The decision reads only the slot and the earlier relays, so votes,
+    /// updates, and masks get the same answer. The record is durable before the relay transaction
+    /// is sent, and it holds the commitment cutoff of the round, after which
+    /// `prune_relay_records` removes it.
     ///
-    /// Turning the relay off (`MAINNET_RELAY=false` on mainnet, or a limit of zero) stops the relay
-    /// for every job that has no relayed transaction yet, and those jobs move to the wallet path.
-    /// This is how an operator stops relay spending. If an earlier send did land, the contract
-    /// refuses the wallet's second commitment of the same statement.
+    /// Turning the relay off (`MAINNET_RELAY=false` on mainnet, or a limit of zero), or a key below
+    /// its balance floor, stops every relay send (`relay_may_send`). A job that has no relayed
+    /// transaction yet, and a relayed job whose transaction a reorganization removed, both move to
+    /// the wallet path. If an earlier send did land, the contract refuses the wallet's second
+    /// commitment of the same statement.
     fn reserve_relay(&self, job: &AvailabilityJob) -> anyhow::Result<bool> {
         if !self.relay.enabled {
             return Ok(false);
@@ -3274,6 +3301,28 @@ mod tests {
         assert!(!relays(RelayPolicy::new(1, false, 3, Some(100), None)));
         assert!(relays(RelayPolicy::new(1, true, 3, Some(100), None)));
         assert!(relays(RelayPolicy::new(11_155_111, false, 3, None, None)));
+    }
+
+    /// A balance that cannot be read counts as too low. The job takes the wallet path instead of
+    /// stopping, and it uses none of the relay allowance.
+    #[tokio::test]
+    async fn an_unreadable_relay_balance_takes_the_wallet_path() {
+        // A port with no listener, so the balance read fails at once.
+        let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let rpc = format!("http://{}", closed.local_addr().unwrap());
+        drop(closed);
+        let mut service = test_service_on(
+            &temporary_db(),
+            1024,
+            RelayPolicy::new(11_155_111, false, 3, None, Some(U256::from(1))),
+        );
+        service.http_rpc_url = rpc;
+        service.private_key =
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_owned();
+        let job = round_input_job("unreadable-balance", "1", Address::repeat_byte(0x77));
+
+        assert!(!service.relays(&job).await.unwrap());
+        assert!(service.relayed_inputs.is_empty());
     }
 
     /// A mask needs no signature from the slot owner, so an uncommitted job for a slot must not

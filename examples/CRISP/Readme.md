@@ -269,6 +269,11 @@ voter. The proof transaction reserves the input's tree index immediately, so mas
 still extend it during the VectorX wait. CRISP refuses the aggregate computation while any input is
 not finalized.
 
+The relay has per-slot and per-round limits, and anyone can use up the relayed inputs of a slot with
+masks. Past a limit, the voter's wallet sends the commitment, which shows the voter's address. The
+voter must confirm it before the commitment cutoff of the round: stay on the page, or come back and
+repeat the action. Otherwise the input is lost.
+
 Each distinct input gets its own job, so a pending mask cannot block a vote for the same slot. The
 service limits the total bytes held by unfinished jobs, which bounds abandoned signed inputs without
 deleting data that Ethereum already accepted. After Avail and Ethereum accept an object, the service

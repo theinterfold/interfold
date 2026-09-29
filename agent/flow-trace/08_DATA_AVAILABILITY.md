@@ -234,9 +234,10 @@ transaction:
   submission paths. Where the service relays the commitment itself, the receipt does not promote the
   job: the job stays in `AwaitingCommitment` with the relayed transaction hash, the attestation
   renews on the same schedule as a wallet-submitted one, and a relayed transaction that is absent
-  from finalized state and from the chain head is relayed again (`commitment_step`). The status
-  endpoint reports a relayed provisional job as `pending_availability`, not `ready_for_commitment`,
-  so a client does not sign a second commitment with its wallet.
+  from finalized state and from the chain head is relayed again while the relay may send, or takes
+  the wallet path when it may not (`commitment_step`, `relay_may_send`). The status endpoint reports
+  a relayed provisional job as `pending_availability`, not `ready_for_commitment`, so a client does
+  not sign a second commitment with its wallet.
 - A publication transaction moves to `AwaitingFinality`, not directly to success. That state keeps
   the Ethereum payload, the Avail coordinates, the compute proof or staged envelope, and the local
   object. When finalized state contains the publication, the job retires. When the publication is
@@ -357,14 +358,19 @@ rules:
 The server relays the `publishInput` commitment within two limits, `RELAY_MAX_INPUTS_PER_SLOT`
 (default 3) and `RELAY_MAX_INPUTS_PER_ROUND` (default: none). On Ethereum mainnet it relays only
 when `MAINNET_RELAY` is set, and that setting requires a round limit. The relay counts are durable
-(`reserve_relay`), and the worker prunes the records of a round after its commitment cutoff. Turning
-the relay off (the flag, or a limit of zero) also stops jobs chosen for the relay earlier. So does a
-server key balance below `RELAY_MIN_BALANCE_ETH`, which keeps funds for `finalizeInput`.
+(`reserve_relay`), and the worker prunes the records of a round after its commitment cutoff.
+
+Every relay send first checks `relay_may_send`. Turning the relay off (the flag, or a limit of zero)
+stops every send, including jobs chosen for the relay earlier and relayed transactions that a
+reorganization removed. So does a server key balance below `RELAY_MIN_BALANCE_ETH`, which keeps
+funds for `finalizeInput`, and so does a balance that cannot be read. Those jobs take the wallet
+path.
 
 Past a limit, the server still signs the input and the voter's wallet sends the commitment. A
-refusal would reopen ZEN2-25, because a mask needs no signature from the slot owner. The cost is
-sender privacy: masks can use up the relays of a slot, and the owner's later inputs then show the
-owner's address.
+refusal would reopen ZEN2-25, because a mask needs no signature from the slot owner. Anyone can use
+up the relays of a slot with masks. The owner's later inputs then show the owner's address, and the
+owner must confirm the wallet transaction before the commitment cutoff, on the page or on a later
+visit. Otherwise the input is lost.
 
 A `Created` job whose commitment is already at the chain head, because a relay step was interrupted
 after its send, moves to `AwaitingCommitment` and waits for finality there. It is not sent again.

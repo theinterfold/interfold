@@ -125,6 +125,10 @@ on-chain in two transactions, `publishInput` and `finalizeInput`. The sequence i
 
 The computation cannot start while a committed input waits for its receipt.
 
+The relay has per-slot and per-round limits, and anyone can use up the relayed inputs of a slot with
+masks. Past a limit, the voter wallet sends `publishInput`, which shows the voter address. The voter
+must confirm it before the commitment cutoff, on the page or on a later visit, or the input is lost.
+
 | Network             | Data availability                                                                                                              |
 | ------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | Local chain (31337) | `mock`. The server keeps the bytes and completes both transactions in the same request. `availabilityFinalizationWindow` is 0. |
