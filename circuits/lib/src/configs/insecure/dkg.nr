@@ -78,7 +78,7 @@ pub global SHARE_ENCRYPTION_E1_BOUND: Field = 6;
 pub global SHARE_ENCRYPTION_U_BOUND: Field = 1;
 pub global SHARE_ENCRYPTION_CT0_R_BOUNDS: [Field; L] = [19605059183];
 pub global SHARE_ENCRYPTION_CT1_R_BOUNDS: [Field; L] = [256];
-pub global SHARE_ENCRYPTION_MSG_BOUND: Field = 68719403008;
+pub global SHARE_ENCRYPTION_MSG_BOUND: Field = 68719403009;
 
 pub global SHARE_ENCRYPTION_CONFIGS: ShareEncryptionConfigs<L> = ShareEncryptionConfigs::new(
     PLAINTEXT_MODULUS,
