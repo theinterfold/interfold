@@ -116,7 +116,7 @@ pub struct CTRequest {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-/// A relay request: the round and the encoded input, nothing else.
+/// A relay request: the round, the encoded input, and the voter's choice of sender.
 ///
 /// Deliberately no address field. The slot is already inside the encoded proof, and the relay has
 /// no use for a caller-supplied copy — every byte the relay does not receive is a byte it cannot
@@ -125,6 +125,10 @@ pub struct CTRequest {
 pub struct VoteRequest {
     pub round_id: String,
     pub encoded_proof: String,
+    /// The voter asks that its own wallet send the commitment. The server then does not relay it
+    /// and uses no relay allowance for it. Clients that omit the field get `false`.
+    #[serde(default)]
+    pub send_from_wallet: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
