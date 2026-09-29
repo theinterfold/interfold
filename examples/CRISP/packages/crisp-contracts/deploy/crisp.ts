@@ -29,15 +29,11 @@ if (!IMAGE_ID) {
   throw new Error('IMAGE_ID not found')
 }
 
-// The Safe accounts that `CRISPProgram` accepts as ballot signers for a slot. A slot is a Safe only
-// when its runtime code hash is in the first list and its proxy delegates to a singleton in the
-// second. The canonical Safe deployments use the same addresses and bytecode on every chain; both
-// lists were read from mainnet and Sepolia.
+// The canonical Safe 1.3.0 and 1.4.1 proxy code hashes and singletons, the same on every chain (read
+// from mainnet and Sepolia). `CRISPProgram` treats a slot as a Safe only when both match.
 const SAFE_PROXY_CODEHASHES = [
-  // GnosisSafeProxy 1.3.0 (canonical and EIP-155 factories)
-  '0xb89c1b3bdf2cf8827818646bce9a8f6e372885f8c55e5c07acbd307cb133b000',
-  // SafeProxy 1.4.1
-  '0xd7d408ebcd99b2b70be43e20253d6d92a8ea8fab29bd3be7f55b10032331fb4c',
+  '0xb89c1b3bdf2cf8827818646bce9a8f6e372885f8c55e5c07acbd307cb133b000', // GnosisSafeProxy 1.3.0 (canonical and EIP-155 factories)
+  '0xd7d408ebcd99b2b70be43e20253d6d92a8ea8fab29bd3be7f55b10032331fb4c', // SafeProxy 1.4.1
 ]
 const SAFE_SINGLETONS = [
   '0xd9Db270c1B5E3Bd161E8c8503c55cEABeE709552', // GnosisSafe 1.3.0

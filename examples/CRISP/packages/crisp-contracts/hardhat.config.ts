@@ -158,8 +158,7 @@ const config: HardhatUserConfig = {
       '@interfold/contracts/contracts/verifiers/AvailVectorXDataAvailabilityVerifier.sol',
       '@interfold/contracts/contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol',
       '@interfold/contracts/contracts/verifiers/bfv/honk/DecryptionAggregatorVerifier.sol',
-      // Real Safe 1.4.1 code, so the tests check `CRISPProgram` against the proxy, singleton and
-      // message hash that a deployed Safe uses. Test-only; no deployment script deploys these.
+      // Real Safe 1.4.1 contracts for the Safe ballot tests. No deployment script deploys them.
       '@safe-global/safe-contracts/contracts/Safe.sol',
       '@safe-global/safe-contracts/contracts/proxies/SafeProxyFactory.sol',
       '@safe-global/safe-contracts/contracts/handler/CompatibilityFallbackHandler.sol',

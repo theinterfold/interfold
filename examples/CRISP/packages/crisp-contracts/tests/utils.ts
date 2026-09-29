@@ -8,16 +8,8 @@ import { network } from 'hardhat'
 import type { HardhatEthers } from '@nomicfoundation/hardhat-ethers/types'
 import { zeroHash } from 'viem'
 import type { BaseContract } from 'ethers'
-import type {
-  CompatibilityFallbackHandler,
-  CRISPProgram,
-  HonkVerifier,
-  MockInterfold,
-  MockRISC0Verifier,
-  PoseidonT3,
-  Safe,
-  SafeProxyFactory,
-} from '../types'
+import { CRISPProgram, HonkVerifier, MockInterfold, MockRISC0Verifier, PoseidonT3 } from '../types'
+import type { CompatibilityFallbackHandler, Safe, SafeProxyFactory } from '../types'
 import { verifierNames } from '../scripts/verifiers'
 
 // Non-zero address used in the tests.
@@ -273,17 +265,14 @@ export async function deploySafeContracts(): Promise<SafeDeployment> {
 
 let safeSaltNonce = 0n
 
-/**
- * Create a Safe proxy with the given owners and threshold, as the Safe factory does on chain.
- * @param safeContracts - The deployment from `deploySafeContracts`.
- * @param owners - The owner addresses.
- * @param threshold - The number of owner signatures the Safe requires.
- * @param singleton - The singleton the proxy delegates to. Defaults to the deployment's.
- * @returns The Safe address.
- */
-export async function createSafe(safeContracts: SafeDeployment, owners: string[], threshold: number, singleton?: BaseContract) {
-  const { factory, handler } = safeContracts
-  const setup = safeContracts.singleton.interface.encodeFunctionData('setup', [
+/** Create a Safe proxy of `target` (the deployed singleton by default), as the Safe factory does on chain. */
+export async function createSafe(
+  { singleton, factory, handler }: SafeDeployment,
+  owners: string[],
+  threshold: number,
+  target: BaseContract = singleton,
+) {
+  const setup = singleton.interface.encodeFunctionData('setup', [
     owners,
     threshold,
     ethers.ZeroAddress,
@@ -293,8 +282,7 @@ export async function createSafe(safeContracts: SafeDeployment, owners: string[]
     0,
     ethers.ZeroAddress,
   ])
-  const target = await (singleton ?? safeContracts.singleton).getAddress()
-  const receipt = await (await factory.createProxyWithNonce(target, setup, safeSaltNonce++)).wait()
+  const receipt = await (await factory.createProxyWithNonce(await target.getAddress(), setup, safeSaltNonce++)).wait()
   const created = receipt!.logs.map((log) => factory.interface.parseLog(log)).find((event) => event?.name === 'ProxyCreation')
   return created!.args.proxy as string
 }

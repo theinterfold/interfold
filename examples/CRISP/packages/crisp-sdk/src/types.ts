@@ -211,17 +211,8 @@ export type PreparedBallot = {
   censusMode: CensusVariant
 }
 
-/**
- * The owners of an ONCHAIN slot that is a Safe, and how many must sign.
- *
- * Read them from the Safe (`getOwners()`, `getThreshold()`) in the order it reports them.
- * `CRISPProgram` commits to the same list when the ballot is published, so a list that changed
- * after proving makes the proof fail.
- */
-export type SlotOwners = {
-  owners: readonly `0x${string}`[]
-  threshold: number
-}
+/** The owners of a Safe slot, in `getOwners()` order, and its threshold, as `CRISPProgram` reads them at publication. */
+export type SlotOwners = { owners: readonly `0x${string}`[]; threshold: number }
 
 /**
  * `Omit` that maps over each member of a union instead of collapsing it.

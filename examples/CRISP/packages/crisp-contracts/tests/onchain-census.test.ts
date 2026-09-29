@@ -4,18 +4,8 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-import {
-  generateBFVKeys,
-  prepareBallot,
-  finishBallotProof,
-  finishMaskProof,
-  finishSafeBallotProof,
-  encodeSolidityProof,
-  destroyBBApi,
-  verifyProof,
-  ciphertextCommitment,
-  withBallotParent,
-} from '@crisp-e3/sdk'
+import { generateBFVKeys, prepareBallot, finishBallotProof, encodeSolidityProof, destroyBBApi, verifyProof } from '@crisp-e3/sdk'
+import { ciphertextCommitment, finishMaskProof, finishSafeBallotProof, withBallotParent } from '@crisp-e3/sdk'
 import type { ProofData } from '@crisp-e3/sdk'
 import type { Wallet } from 'ethers'
 import { setCircuits } from '@crisp-e3/sdk'
@@ -87,7 +77,6 @@ describe('CRISP on-chain census', function () {
   let safe: string
   let safeOwners: Wallet[]
   let safeContract: Safe
-  let safeVoteProof: ProofData
   let safeMaskProof: ProofData
 
   const numOptions = 2
@@ -117,11 +106,8 @@ describe('CRISP on-chain census', function () {
     // A 2-of-3 Safe, from real Safe 1.4.1 contracts.
     const safeContracts = await deploySafeContracts()
     safeOwners = [0, 1, 2].map((i) => new ethers.Wallet(ethers.id(`census safe owner ${i}`)))
-    safe = await createSafe(
-      safeContracts,
-      safeOwners.map((owner) => owner.address),
-      2,
-    )
+    const ownerAddresses = safeOwners.map((owner) => owner.address)
+    safe = await createSafe(safeContracts, ownerAddresses, 2)
     safeContract = safeContracts.singleton.attach(safe) as Safe
 
     crispProgram = await deployCRISPProgram({
@@ -270,33 +256,6 @@ describe('CRISP on-chain census', function () {
     await publishAvailableInput(crispProgram, e3Id, encodeSolidityProof(voteProof))
   })
 
-  /// The same circuit serves a Safe. Two of the three owners sign the Safe's `SafeMessage` hash in
-  /// their own wallets, and the proof checks them against the owner list the contract reads from
-  /// the Safe when the ballot is published.
-  it('publishes a 2-of-3 Safe ballot end to end', async function () {
-    const prepared = await prepareBallot({
-      censusMode: 'onchain',
-      vote,
-      publicKey,
-      votingPower: await crispProgram.votingPowerOf(e3Id, safe),
-      slotAddress: safe,
-      isMaskVote: false,
-      numOptions,
-    })
-    const authorization = await crispProgram.ballotAuthorization(e3Id, safe, prepared.ctCommitment)
-    expect(authorization.safe).to.equal(true)
-
-    // Owner 2 and owner 0 sign, out of address order; the SDK sorts them.
-    const signatures = [safeOwners[2], safeOwners[0]].map(
-      (owner) => owner.signingKey.sign(authorization.digest).serialized as `0x${string}`,
-    )
-    const owners = (await safeContract.getOwners()) as `0x${string}`[]
-    safeVoteProof = await finishSafeBallotProof(prepared, authorization.digest as `0x${string}`, { owners, threshold: 2 }, signatures)
-
-    await (await mockInterfold.setCommitteePublicKey(safeVoteProof.publicInputs[10])).wait()
-    await publishAvailableInput(crispProgram, e3Id, encodeSolidityProof(safeVoteProof))
-  })
-
   /// Anyone can mask a Safe slot from the public values alone: no owner signs, and the prover does
   /// not need the owner list. The mask carries the same public inputs a vote by the Safe would.
   it('masks the Safe slot without any owner signature', async function () {
@@ -308,8 +267,6 @@ describe('CRISP on-chain census', function () {
       slotAddress: safe,
       isMaskVote: true,
       numOptions,
-      previousCiphertext: safeVoteProof.encryptedVote,
-      previousIndex: Number(await crispProgram.getSlotIndex(e3Id, safe)),
     })
     const { digest, ownersCommitment } = await crispProgram.ballotAuthorization(e3Id, safe, prepared.ctCommitment)
     safeMaskProof = await finishMaskProof(prepared, digest as `0x${string}`, ownersCommitment as `0x${string}`)
@@ -318,24 +275,23 @@ describe('CRISP on-chain census', function () {
     await publishAvailableInput(crispProgram, e3Id, encodeSolidityProof(safeMaskProof))
   })
 
-  /// How the client collects owner signatures. The ballot is encrypted and signed with no slot
-  /// head, so collecting signatures takes no request to the CRISP server. The parent is named only
-  /// right before proving, from the head bytes, which here is the mask that landed after the
-  /// Safe's first vote. The owners' signatures do not depend on the head.
-  it('re-votes with a Safe ballot signed before the slot head was read', async function () {
+  /// How the client collects owner signatures. The vote is encrypted and signed with no slot head,
+  /// so the parent (the mask above) is named only right before proving, from the head bytes. Two of
+  /// the three owners sign the Safe's `SafeMessage` in their own wallets, in any order.
+  it('publishes a 2-of-3 Safe vote signed before the slot head was read', async function () {
     const prepared = await prepareBallot({
       censusMode: 'onchain',
-      vote: [0, 7],
+      vote,
       publicKey,
       votingPower: await crispProgram.votingPowerOf(e3Id, safe),
       slotAddress: safe,
       isMaskVote: false,
       numOptions,
     })
-    const { digest } = await crispProgram.ballotAuthorization(e3Id, safe, prepared.ctCommitment)
+    const { safe: isSafe, digest } = await crispProgram.ballotAuthorization(e3Id, safe, prepared.ctCommitment)
+    expect(isSafe).to.equal(true)
 
-    // The owners sign in their wallets, with `eth_signTypedData_v4` over the typed data the
-    // client's co-signer page builds: the Safe's `SafeMessage` over the CRISP ballot digest.
+    // The typed data that each owner signs in their wallet: the Safe's `SafeMessage` over the ballot digest.
     const safeMessage = {
       domain: { chainId: (await ethers.provider.getNetwork()).chainId, verifyingContract: safe },
       types: { SafeMessage: [{ name: 'message', type: 'bytes' }] },
@@ -343,26 +299,24 @@ describe('CRISP on-chain census', function () {
     }
     expect(ethers.TypedDataEncoder.hash(safeMessage.domain, safeMessage.types, safeMessage.message)).to.equal(digest)
     const signatures = await Promise.all(
-      [safeOwners[1], safeOwners[2]].map(
+      [safeOwners[2], safeOwners[0]].map(
         async (owner) => (await owner.signTypedData(safeMessage.domain, safeMessage.types, safeMessage.message)) as `0x${string}`,
       ),
     )
 
-    // The head is the mask. Its commitment, computed from its bytes, is the one the contract
-    // recorded, so the proof needs no extra contract read.
+    // The head is the mask. Its commitment, computed from its bytes, is the one the contract recorded.
     const index = Number(await crispProgram.getSlotIndex(e3Id, safe))
     const commitment = ciphertextCommitment(safeMaskProof.encryptedVote)
     expect(commitment).to.equal(await crispProgram.inputCommitmentOf(e3Id, safe, index))
 
-    const revote = await finishSafeBallotProof(
+    const proof = await finishSafeBallotProof(
       withBallotParent(prepared, { index, commitment }),
       digest as `0x${string}`,
       { owners: (await safeContract.getOwners()) as `0x${string}`[], threshold: 2 },
       signatures,
     )
-
-    await (await mockInterfold.setCommitteePublicKey(revote.publicInputs[10])).wait()
-    await publishAvailableInput(crispProgram, e3Id, encodeSolidityProof(revote))
+    await (await mockInterfold.setCommitteePublicKey(proof.publicInputs[10])).wait()
+    await publishAvailableInput(crispProgram, e3Id, encodeSolidityProof(proof))
   })
 
   /// The divisor is what keeps token weighting meaningful. The circuit enforces

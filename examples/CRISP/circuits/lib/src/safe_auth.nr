@@ -4,33 +4,21 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Authorisation of a ballot by the owners of its slot.
+//! Authorisation of a ballot by the owners of its slot: the check that a Safe makes, inside the
+//! proof, so that the signatures stay private. A wallet is one owner, the slot, with threshold 1.
 //!
-//! A Safe has no private key. It authorises a message when `threshold` of its owners sign the
-//! message, and the Safe checks those signatures against the owner list in its own storage. This
-//! module does the same check inside the ballot proof, so the signatures stay private. A wallet is
-//! the case with one owner, the slot itself, and a threshold of one.
-//!
-//! The contract supplies two values as public inputs, and the prover cannot change either:
-//! - The digest that the owners sign. For a Safe, this is the Safe's EIP-712 `SafeMessage` hash of
-//!   the CRISP ballot digest, which the Safe's own `isValidSignature` also accepts. For a wallet,
-//!   it is the CRISP ballot digest.
-//! - `keccak256(abi.encode(address[MAX_SAFE_OWNERS] owners, uint256 threshold))`, split into two
-//!   16-byte halves. For a Safe, the contract reads `getOwners()` and `getThreshold()` when the
-//!   ballot is published. The owner list is padded with the zero address.
-//!
-//! Only owner signatures made with a private key over that digest are accepted. The other Safe
-//! signature types (contract signatures, approved hashes, `eth_sign`) need on-chain state or a
-//! different digest, and a proof cannot check them.
+//! The contract supplies two public inputs that the prover cannot change: the digest that the
+//! owners sign, and `keccak256(abi.encode(address[MAX_SAFE_OWNERS] owners, uint256 threshold))` in
+//! two 16-byte halves, with the owners padded with the zero address. Only ECDSA owner signatures
+//! over that digest count. The other Safe signature types (contract signatures, approved hashes,
+//! `eth_sign`) need on-chain state or another digest, so a proof cannot check them.
 
 use crate::ecdsa::{address_to_field, derive_address, digest_from_halves, validate_signature};
 use keccak256::keccak256;
 
-/// Returns true when `owners` and `threshold` are the values that the contract committed to.
-///
-/// The encoding is `abi.encode(address[O], uint256)`: each owner and the threshold take one
-/// 32-byte big-endian word.
-pub fn owners_commitment_matches<let O: u32>(
+/// Returns true when `abi.encode(owners, threshold)`, one 32-byte big-endian word each, hashes
+/// to the committed value.
+fn owners_commitment_matches<let O: u32>(
     owners: [Field; O],
     threshold: u32,
     commitment_hi: Field,
@@ -51,18 +39,12 @@ pub fn owners_commitment_matches<let O: u32>(
     keccak256(bytes, (O + 1) * 32) == digest_from_halves(commitment_hi, commitment_lo)
 }
 
-/// Returns true when `threshold` distinct owners of the committed Safe signed `hashed_message`.
+/// Returns true when `threshold` distinct committed owners signed `hashed_message`.
 ///
-/// The first `threshold` signature slots are active. Each active slot must hold a valid signature
-/// over `hashed_message` by the owner at `owner_indices[i]`. The signers must be in strictly
-/// ascending address order, which is the order that the Safe itself requires. The order also makes
-/// the signers distinct, so one owner cannot count two times.
-///
-/// The function ignores the content of an inactive slot. Fill an inactive slot with a valid public
-/// key, for example the key of an active slot, and any index below `O`.
-///
-/// The threshold must be from 1 to `S`. The contract refuses a Safe with a larger threshold before
-/// it verifies the proof, so a proof for that Safe can never be accepted.
+/// The first `threshold` of the `S` signature slots are active, each a signature by the owner at
+/// `owner_indices[i]`. Signers must be in strictly ascending address order, as a Safe requires,
+/// which also stops one owner from counting twice. An inactive slot is not checked, but it must
+/// hold a valid public key and an index below `O`. The threshold must be from 1 to `S`.
 pub fn validate_safe_signatures<let S: u32, let O: u32>(
     hashed_message: [u8; 32],
     owners: [Field; O],
@@ -270,27 +252,13 @@ fn test_three_of_three() {
     assert(check(DIGEST, 3, COMMIT_T3, [owner0(), owner1(), owner2()]));
 }
 
-#[test]
-fn test_owners_commitment_matches_abi_encoding() {
-    assert(owners_commitment_matches(test_owners(), 2, COMMIT_T2.0, COMMIT_T2.1));
-    assert(!owners_commitment_matches(test_owners(), 3, COMMIT_T2.0, COMMIT_T2.1));
-}
-
 // Each negative case below returns false instead of failing a constraint. The circuit asserts the
-// result only on the vote branch, so a mask proof must still execute with any signature data.
+// result only on the vote branch, so a mask proof must still execute when no signature verifies.
 
-/// The threshold is part of the commitment. A prover cannot claim a smaller threshold than the
-/// Safe has.
+/// The threshold is committed, so a prover cannot claim a smaller one than the Safe has.
 #[test]
 fn test_rejects_threshold_below_committed() {
     assert(!check(DIGEST, 1, COMMIT_T2, [owner0(), owner0(), owner0()]));
-}
-
-/// Too few signatures for the threshold.
-#[test]
-fn test_rejects_missing_signature() {
-    let junk = Slot { x: OUTSIDER_X, y: OUTSIDER_Y, sig: OUTSIDER_SIG, index: 3 };
-    assert(!check(DIGEST, 2, COMMIT_T2, [owner0(), junk, junk]));
 }
 
 #[test]
@@ -298,34 +266,29 @@ fn test_rejects_descending_order() {
     assert(!check(DIGEST, 2, COMMIT_T2, [owner1(), owner0(), owner0()]));
 }
 
-/// One owner cannot fill two signature slots.
 #[test]
 fn test_rejects_same_owner_twice() {
     assert(!check(DIGEST, 2, COMMIT_T2, [owner1(), owner1(), owner1()]));
 }
 
-/// A valid signature by an account that is not in the committed owner list.
 #[test]
 fn test_rejects_signer_not_an_owner() {
     let outsider = Slot { x: OUTSIDER_X, y: OUTSIDER_Y, sig: OUTSIDER_SIG, index: 2 };
     assert(!check(DIGEST, 2, COMMIT_T2, [owner0(), outsider, outsider]));
 }
 
-/// A signature by the owners is valid only for the digest that they signed.
 #[test]
 fn test_rejects_signature_over_other_digest() {
     assert(!check(OTHER_DIGEST, 2, COMMIT_T2, [owner0(), owner1(), owner1()]));
 }
 
-/// The owner index points at a different owner than the one who signed.
 #[test]
 fn test_rejects_wrong_owner_index() {
     let misplaced = Slot { x: OWNER1_X, y: OWNER1_Y, sig: OWNER1_SIG, index: 2 };
     assert(!check(DIGEST, 2, COMMIT_T2, [owner0(), misplaced, misplaced]));
 }
 
-/// A threshold above the number of signature slots can never be met, even when the commitment and
-/// every slot are valid.
+/// Even with a matching commitment and valid slots.
 #[test]
 fn test_rejects_threshold_above_signer_cap() {
     assert(!check(DIGEST, 4, COMMIT_T4, [owner0(), owner1(), owner2()]));

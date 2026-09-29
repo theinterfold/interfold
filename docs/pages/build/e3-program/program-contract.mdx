@@ -285,9 +285,9 @@ a Noir proof. It uses two transactions for each input.
 
 1. **`publishInput`** decodes the Noir proof, the slot address, the ciphertext commitment, the
    ciphertext content hash, the parent index, and a signed availability attestation. It verifies the
-   Noir proof with nine public inputs, or eleven in an `ONCHAIN` round, which adds the owner
-   commitment of the slot. The inputs include the commitment and the committee public key. It checks
-   the attestation signature and expiry. Then it appends the leaf and emits `InputCommitted`.
+   Noir proof with nine public inputs, which include the commitment and the committee public key. It
+   checks the attestation signature and expiry. Then it appends the leaf and emits `InputCommitted`.
+   An `ONCHAIN` round has eleven public inputs, which add the owner commitment of the slot.
 2. **`finalizeInput`** can be called by any account. It verifies the data-availability receipt for
    the exact content hash, and then emits `InputPublished`.
 

@@ -50,12 +50,11 @@ It exposes three main functions:
 - `publishInput` - accepts the compact proof commitment for an input. A voter or relay calls it
   after the CRISP availability service has durably stored the ciphertext and signed the input ID
   with a 10-minute expiry. The function checks the stage, commitment cutoff, signed expiry, voter
-  eligibility, service signature, and Noir proof over nine public inputs, or eleven in an on-chain
-  round, where the proof also checks the slot owners against `ballotAuthorization` (a Safe's owners
-  and threshold, or the wallet itself). It reserves the input's tree leaf and index immediately.
-  `finalizeInput` later verifies the VectorX receipt for the exact ciphertext hash without requiring
-  the voter to remain online. The proof establishes that the ciphertext was encrypted correctly
-  under the committee public key
+  eligibility, service signature, and Noir proof over nine public inputs (eleven in an on-chain
+  round, which adds the slot owner commitment). It reserves the input's tree leaf and index
+  immediately. `finalizeInput` later verifies the VectorX receipt for the exact ciphertext hash
+  without requiring the voter to remain online. The proof establishes that the ciphertext was
+  encrypted correctly under the committee public key
   (`examples/CRISP/packages/crisp-contracts/contracts/CRISPProgram.sol:493-554`, paths from the
   repository root). The verifier is the one the round's census selects: `CRISPVerifier.sol` for a
   census posted as a Merkle root, `CRISPOnchainVerifier.sol` for one read from token balances on

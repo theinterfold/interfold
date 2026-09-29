@@ -124,27 +124,49 @@ export const prepareCircuitInputsImpl = async (inputs: PrepareBallotInputs): Pro
 }
 
 /**
- * Name the slot entry that a prepared vote extends, after the vote was prepared.
+ * Phase two: attach the signed digest to a prepared ballot.
  *
- * A vote replaces the slot: the circuit adds the ballot to the zero ciphertext, so the published
- * ciphertext, its commitment and the digest the owners sign do not depend on the slot head. Only
- * three inputs do: the parent index, `is_first_vote`, and `prev_ct_commitment`, which the circuit
- * checks only for a mask. This lets the owners of a Safe sign a ballot over hours, with no request
- * to the CRISP server, and the coordinator reads the head only right before proving. The server
- * then sees the same head request, proof and submission sequence as for any other input, and a
- * mask that lands during the signing cannot leave the vote naming a stale parent.
+ * The digest is a public input in both branches, because `CRISPProgram.publishInput` computes it
+ * for every input. A mask carries the same digest as a real vote and only skips the signature
+ * check inside the circuit, which is what keeps the two indistinguishable on chain. In an ONCHAIN
+ * round, the wallet is the single owner of its slot; see {@link attachOwnerSignaturesImpl}.
  *
- * A mask adds to the head ciphertext itself, so it must be prepared against the head.
+ * @param prepared The output of `prepareCircuitInputsImpl`.
+ * @param digest The digest from `CRISPProgram.ballotDigest`.
+ * @param signature The signature over that digest. A mask passes the placeholder signature.
+ * @returns The complete circuit inputs.
+ */
+export const attachSignatureImpl = async (prepared: PreparedBallot, digest: `0x${string}`, signature: `0x${string}`): Promise<any> => {
+  if (prepared.censusMode === 'onchain') {
+    return attachOwnerSignaturesImpl(prepared, digest, { owners: [prepared.circuitInputs.slot_address], threshold: 1 }, [signature])
+  }
+
+  const { digestHi, digestLo } = splitDigest(digest)
+  const components = await extractSignatureComponents(signature, digest)
+
+  const circuitInputs = prepared.circuitInputs
+  circuitInputs.digest_hi = digestHi
+  circuitInputs.digest_lo = digestLo
+  circuitInputs.public_key_x = Array.from(components.publicKeyX).map((b) => b.toString())
+  circuitInputs.public_key_y = Array.from(components.publicKeyY).map((b) => b.toString())
+  circuitInputs.signature = Array.from(components.signature).map((b) => b.toString())
+
+  return circuitInputs
+}
+
+/**
+ * Name the slot head that a prepared vote extends.
+ *
+ * A vote replaces the slot, so its ciphertext, commitment and digest do not depend on the head. Its
+ * owners can sign before the head is read, and the prover names the head right before proving, as
+ * for any other input. A mask adds to the head, so it is prepared against the head instead.
  *
  * @param prepared A vote from `prepareBallot`.
- * @param parent The head entry: its tree index and the commitment `CRISPProgram.inputCommitmentOf`
- * returns for it. Omit it for an empty slot.
- * @returns A copy of the prepared ballot that names `parent`.
+ * @param parent The head's tree index and its {@link ciphertextCommitment}. Omit it for an empty slot.
+ * @returns A copy of `prepared` that names `parent`.
  */
 export const withBallotParent = (prepared: PreparedBallot, parent?: { index: number; commitment: `0x${string}` }): PreparedBallot => {
-  if (prepared.circuitInputs.is_mask_vote) {
-    throw new Error('A mask adds to the slot head, so prepare it against the head instead of naming the parent later.')
-  }
+  if (prepared.circuitInputs.is_mask_vote) throw new Error('A mask adds to the slot head, so prepare it against the head.')
   if (parent && (!Number.isSafeInteger(parent.index) || parent.index < 0 || parent.index + 1 > Number.MAX_SAFE_INTEGER)) {
     throw new Error(`The parent needs a non-negative safe integer index; got ${String(parent.index)}`)
   }
@@ -161,183 +183,113 @@ export const withBallotParent = (prepared: PreparedBallot, parent?: { index: num
 }
 
 /**
- * The commitment `CRISPProgram` records for a ciphertext, computed from its bytes.
- *
- * Use it on the slot head that `state/previous-ciphertext` returns, to name that entry with
- * {@link withBallotParent}. The server selects only entries whose bytes reproduce their stored
- * commitment, so this equals `CRISPProgram.inputCommitmentOf` for the head, and computing it here
- * avoids a contract read that no other input makes.
- *
- * @param ciphertext The serialized ciphertext.
- * @returns The commitment.
+ * The commitment that `CRISPProgram` records for a ciphertext. For the slot head that the server
+ * returns, this equals `CRISPProgram.inputCommitmentOf`: the server returns only a head whose bytes
+ * reproduce its commitment.
  */
 export const ciphertextCommitment = (ciphertext: Uint8Array): `0x${string}` =>
   bytesToHex(getZkInputsGenerator().computeCtCommitment(ciphertext))
 
-/** One ECDSA signature as the circuit takes it: the public key and `r || s`, as byte strings. */
-type SignatureSlot = { x: string[]; y: string[]; rs: string[]; signer: `0x${string}` }
-
-const toByteStrings = (bytes: Uint8Array) => Array.from(bytes).map((b) => b.toString())
-
-const signatureSlot = async (signature: `0x${string}`, digest: `0x${string}`): Promise<SignatureSlot> => {
-  const components = await extractSignatureComponents(signature, digest)
-  return {
-    x: toByteStrings(components.publicKeyX),
-    y: toByteStrings(components.publicKeyY),
-    rs: toByteStrings(components.signature),
-    signer: await recoverAddress({ hash: digest, signature }),
-  }
-}
-
 /**
- * The owner commitment of an ONCHAIN slot:
- * `keccak256(abi.encode(address[MAX_SAFE_OWNERS] owners, uint256 threshold))`, with the owner list
- * padded with the zero address. `CRISPProgram.ballotAuthorization` returns the same value, and the
- * `crisp_onchain` circuit recomputes it.
- *
- * @param slotOwners The owner list, in the order the Safe reports it, and the threshold.
- * @returns The commitment.
+ * `keccak256(abi.encode(address[MAX_SAFE_OWNERS] owners, uint256 threshold))`, with the owners
+ * padded with the zero address: what `CRISPProgram.ballotAuthorization` returns and `crisp_onchain`
+ * checks.
  */
 export const ownersCommitment = ({ owners, threshold }: SlotOwners): `0x${string}` => {
-  if (owners.length > MAX_SAFE_OWNERS) {
-    throw new Error(`A slot can have at most ${MAX_SAFE_OWNERS} owners; got ${owners.length}`)
-  }
-  const padded = [...owners.map((owner) => getAddress(owner)), ...Array(MAX_SAFE_OWNERS - owners.length).fill(zeroAddress)]
-  // Declared as plain `AbiParameter`s: the fixed-size type is built from the constant, and viem
-  // checks the array length at run time instead.
+  if (owners.length > MAX_SAFE_OWNERS) throw new Error(`A slot can have at most ${MAX_SAFE_OWNERS} owners; got ${owners.length}`)
+  // Plain `AbiParameter`s, because the array length comes from a constant.
   const params: AbiParameter[] = [{ type: `address[${MAX_SAFE_OWNERS}]` }, { type: 'uint256' }]
-  return keccak256(encodeAbiParameters(params, [padded, BigInt(threshold)]))
+  return keccak256(
+    encodeAbiParameters(params, [[...owners, ...Array(MAX_SAFE_OWNERS - owners.length).fill(zeroAddress)], BigInt(threshold)]),
+  )
 }
 
-/** A wallet slot is its own single owner, with a threshold of one. */
-const walletOwners = (prepared: PreparedBallot): SlotOwners => ({ owners: [getAddress(prepared.circuitInputs.slot_address)], threshold: 1 })
+const toByteStrings = (bytes: Uint8Array) => Array.from(bytes, (b) => b.toString())
 
 /**
- * Write the owner inputs of the `crisp_onchain` circuit.
- *
- * The proof always has `MAX_SAFE_SIGNERS` signature slots. Slots after the first `threshold` are
- * not checked, but each still needs a valid public key, so they repeat the first slot.
+ * Attach the digest and the `crisp_onchain` owner inputs. The proof always has `MAX_SAFE_SIGNERS`
+ * signature slots, and the circuit checks the first `threshold`. The others repeat the first
+ * signature, because every slot needs a valid public key.
  */
-const setOwnerInputs = (
-  circuitInputs: any,
-  owners: readonly `0x${string}`[],
+const attachOwnerInputs = async (
+  prepared: PreparedBallot,
+  digest: `0x${string}`,
+  owners: readonly string[],
   threshold: number,
   commitment: `0x${string}`,
-  active: { slot: SignatureSlot; index: number }[],
-) => {
-  const slots = Array.from({ length: MAX_SAFE_SIGNERS }, (_, i) => active[i] ?? active[0])
-  const { digestHi, digestLo } = splitDigest(commitment)
-
-  circuitInputs.owners = [...owners, ...Array(MAX_SAFE_OWNERS - owners.length).fill(zeroAddress)].map((owner) => BigInt(owner).toString())
-  circuitInputs.threshold = threshold.toString()
-  circuitInputs.public_keys_x = slots.map(({ slot }) => slot.x)
-  circuitInputs.public_keys_y = slots.map(({ slot }) => slot.y)
-  circuitInputs.signatures = slots.map(({ slot }) => slot.rs)
-  circuitInputs.owner_indices = slots.map(({ index }) => index.toString())
-  circuitInputs.owners_commitment_hi = digestHi
-  circuitInputs.owners_commitment_lo = digestLo
+  signers: { signature: `0x${string}`; index: number }[],
+): Promise<any> => {
+  const slots = await Promise.all(
+    Array.from({ length: MAX_SAFE_SIGNERS }, async (_, i) => {
+      const { signature, index } = signers[i] ?? signers[0]
+      return { ...(await extractSignatureComponents(signature, digest)), index }
+    }),
+  )
+  const { digestHi, digestLo } = splitDigest(digest)
+  const { digestHi: commitmentHi, digestLo: commitmentLo } = splitDigest(commitment)
+  return Object.assign(prepared.circuitInputs, {
+    digest_hi: digestHi,
+    digest_lo: digestLo,
+    owners: [...owners, ...Array(MAX_SAFE_OWNERS - owners.length).fill(zeroAddress)].map((owner) => BigInt(owner).toString()),
+    threshold: threshold.toString(),
+    public_keys_x: slots.map((slot) => toByteStrings(slot.publicKeyX)),
+    public_keys_y: slots.map((slot) => toByteStrings(slot.publicKeyY)),
+    signatures: slots.map((slot) => toByteStrings(slot.signature)),
+    owner_indices: slots.map((slot) => slot.index.toString()),
+    owners_commitment_hi: commitmentHi,
+    owners_commitment_lo: commitmentLo,
+  })
 }
 
 /**
- * Phase two for an ONCHAIN slot: attach the owners' signatures over the digest.
- *
- * The signers must be owners, and there must be at least `threshold` distinct ones. The circuit
- * takes the first `threshold` in ascending address order, which is the order a Safe requires.
+ * Phase two for an ONCHAIN slot: attach its owners' signatures over the digest. The circuit takes
+ * the first `threshold` distinct signers in ascending address order, as a Safe does.
  *
  * @param prepared The output of `prepareCircuitInputsImpl`, for an ONCHAIN round.
  * @param digest The `digest` from `CRISPProgram.ballotAuthorization`.
  * @param slotOwners The owners and threshold of the slot.
- * @param signatures 65-byte ECDSA signatures over `digest`, in any order.
+ * @param signatures Owner signatures over `digest`, in any order.
  * @returns The complete circuit inputs.
  */
 export const attachOwnerSignaturesImpl = async (
   prepared: PreparedBallot,
   digest: `0x${string}`,
-  slotOwners: SlotOwners,
+  { owners, threshold }: SlotOwners,
   signatures: readonly `0x${string}`[],
 ): Promise<any> => {
-  if (prepared.censusMode !== 'onchain') {
-    throw new Error('Owner signatures authorise ONCHAIN ballots only; a census ballot takes one signature.')
-  }
-  const owners = slotOwners.owners.map((owner) => getAddress(owner))
-  const { threshold } = slotOwners
-  if (!Number.isInteger(threshold) || threshold < 1 || threshold > MAX_SAFE_SIGNERS || threshold > owners.length) {
-    throw new Error(`The threshold must be from 1 to ${Math.min(MAX_SAFE_SIGNERS, owners.length)}; got ${threshold}`)
-  }
+  if (prepared.censusMode !== 'onchain') throw new Error('Owner signatures authorise ONCHAIN ballots only.')
+  if (!(threshold >= 1 && threshold <= MAX_SAFE_SIGNERS)) throw new Error(`Threshold ${threshold} is not from 1 to ${MAX_SAFE_SIGNERS}`)
 
-  const bySigner = new Map<string, SignatureSlot>()
+  const checksummed = owners.map((owner) => getAddress(owner))
+  const signers = new Map<`0x${string}`, `0x${string}`>()
   for (const signature of signatures) {
-    const slot = await signatureSlot(signature, digest)
-    if (!owners.includes(slot.signer)) throw new Error(`${slot.signer} signed, but it is not an owner of the slot`)
-    bySigner.set(slot.signer, slot)
+    const signer = await recoverAddress({ hash: digest, signature })
+    if (!checksummed.includes(signer)) throw new Error(`${signer} signed, but it is not an owner of the slot`)
+    signers.set(signer, signature)
   }
-  if (bySigner.size < threshold) {
-    throw new Error(`The slot needs ${threshold} owner signatures; got ${bySigner.size} distinct signers`)
-  }
-  const active = [...bySigner.values()]
-    .sort((a, b) => (BigInt(a.signer) < BigInt(b.signer) ? -1 : 1))
+  if (signers.size < threshold) throw new Error(`The slot needs ${threshold} owner signatures; got ${signers.size} distinct signers`)
+
+  const active = [...signers]
+    .sort(([a], [b]) => (BigInt(a) < BigInt(b) ? -1 : 1))
     .slice(0, threshold)
-    .map((slot) => ({ slot, index: owners.indexOf(slot.signer) }))
-
-  const { digestHi, digestLo } = splitDigest(digest)
-  const circuitInputs = prepared.circuitInputs
-  circuitInputs.digest_hi = digestHi
-  circuitInputs.digest_lo = digestLo
-  setOwnerInputs(circuitInputs, owners, threshold, ownersCommitment({ owners, threshold }), active)
-
-  return circuitInputs
+    .map(([signer, signature]) => ({ signature, index: checksummed.indexOf(signer) }))
+  return attachOwnerInputs(prepared, digest, owners, threshold, ownersCommitment({ owners, threshold }), active)
 }
 
 /**
- * Phase two for a wallet: attach its signature over the digest.
- *
- * In a census round the circuit checks this one signature against the slot key. In an ONCHAIN
- * round the slot is its own single owner, so this is `attachOwnerSignaturesImpl` with that owner.
- *
- * @param prepared The output of `prepareCircuitInputsImpl`.
- * @param digest The digest from `CRISPProgram.ballotDigest`.
- * @param signature The signature over that digest.
- * @returns The complete circuit inputs.
- */
-export const attachSignatureImpl = async (prepared: PreparedBallot, digest: `0x${string}`, signature: `0x${string}`): Promise<any> => {
-  if (prepared.censusMode === 'onchain') return attachOwnerSignaturesImpl(prepared, digest, walletOwners(prepared), [signature])
-
-  const { digestHi, digestLo } = splitDigest(digest)
-  const components = await extractSignatureComponents(signature, digest)
-
-  const circuitInputs = prepared.circuitInputs
-  circuitInputs.digest_hi = digestHi
-  circuitInputs.digest_lo = digestLo
-  circuitInputs.public_key_x = toByteStrings(components.publicKeyX)
-  circuitInputs.public_key_y = toByteStrings(components.publicKeyY)
-  circuitInputs.signature = toByteStrings(components.signature)
-
-  return circuitInputs
-}
-
-/**
- * Phase two for a mask: attach the digest and the owner commitment, with no real signature.
- *
- * The digest and the commitment are public inputs, because `CRISPProgram.publishInput` computes
- * them for every input. A mask carries the same values as a real vote for the slot and only skips
- * the signature check inside the circuit, which keeps the two indistinguishable on chain. The
- * signature slots hold a placeholder, and the owner list is not needed.
+ * Phase two for a mask: the same public inputs as a vote for the slot, which the contract computes
+ * for every input, with placeholder signatures that the circuit does not check for a mask.
  *
  * @param prepared The output of `prepareCircuitInputsImpl`.
  * @param digest The `digest` from `CRISPProgram.ballotAuthorization`.
- * @param commitment The `ownersCommitment` from `CRISPProgram.ballotAuthorization`. Required for an
- * ONCHAIN slot that is a Safe; for any other ONCHAIN slot, the SDK derives it from the slot.
+ * @param commitment The `ownersCommitment` from `CRISPProgram.ballotAuthorization`. Required in an
+ * ONCHAIN round.
  * @returns The complete circuit inputs.
  */
 export const attachMaskImpl = async (prepared: PreparedBallot, digest: `0x${string}`, commitment?: `0x${string}`): Promise<any> => {
   if (prepared.censusMode !== 'onchain') return attachSignatureImpl(prepared, digest, MASK_SIGNATURE)
+  if (!commitment) throw new Error('An ONCHAIN mask needs the ownersCommitment from CRISPProgram.ballotAuthorization.')
 
-  const { digestHi, digestLo } = splitDigest(digest)
-  const circuitInputs = prepared.circuitInputs
-  circuitInputs.digest_hi = digestHi
-  circuitInputs.digest_lo = digestLo
-  const placeholder = { slot: await signatureSlot(MASK_SIGNATURE, digest), index: 0 }
-  setOwnerInputs(circuitInputs, [], 1, commitment ?? ownersCommitment(walletOwners(prepared)), [placeholder])
-
-  return circuitInputs
+  const placeholder = { signature: MASK_SIGNATURE, index: 0 } as const
+  return attachOwnerInputs(prepared, digest, [], 1, commitment, [placeholder])
 }
