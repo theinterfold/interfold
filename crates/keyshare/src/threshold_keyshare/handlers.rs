@@ -17,6 +17,35 @@ impl ThresholdKeyshare {
             })
         })
     }
+
+    /// End this node's DKG because it cannot continue with H encryption keys.
+    pub(in crate::actors::threshold_keyshare) fn fail_encryption_key_collection(
+        &mut self,
+        failure: EncryptionKeyCollectionFailed,
+    ) -> Result<()> {
+        warn!(
+            e3_id = %failure.e3_id,
+            missing_parties = ?failure.missing_parties,
+            "Encryption key collection failed: {}",
+            failure.reason
+        );
+
+        // Clear the collector reference since it's stopped
+        self.encryption_key_collector = None;
+
+        self.persist_terminal_failure(E3Stage::CommitteeFinalized, FailureReason::DKGTimeout)?;
+
+        // Publish failure event to event bus for sync tracking
+        self.bus.publish_without_context(failure.clone())?;
+
+        self.bus.publish_without_context(E3Failed {
+            e3_id: failure.e3_id,
+            failed_at_stage: E3Stage::CommitteeFinalized,
+            reason: FailureReason::DKGTimeout,
+        })?;
+
+        Ok(())
+    }
 }
 
 impl Handler<TypedEvent<DecryptionShareProofSigned>> for ThresholdKeyshare {
@@ -225,28 +254,7 @@ impl Handler<EncryptionKeyCollectionFailed> for ThresholdKeyshare {
         _ctx: &mut Self::Context,
     ) -> Self::Result {
         trap(EType::KeyGeneration, &self.bus.clone(), || {
-            warn!(
-                e3_id = %msg.e3_id,
-                missing_parties = ?msg.missing_parties,
-                "Encryption key collection failed: {}",
-                msg.reason
-            );
-
-            // Clear the collector reference since it's stopped
-            self.encryption_key_collector = None;
-
-            self.persist_terminal_failure(E3Stage::CommitteeFinalized, FailureReason::DKGTimeout)?;
-
-            // Publish failure event to event bus for sync tracking
-            self.bus.publish_without_context(msg.clone())?;
-
-            self.bus.publish_without_context(E3Failed {
-                e3_id: msg.e3_id,
-                failed_at_stage: E3Stage::CommitteeFinalized,
-                reason: FailureReason::DKGTimeout,
-            })?;
-
-            Ok(())
+            self.fail_encryption_key_collection(msg)
         })
     }
 }

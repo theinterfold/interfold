@@ -32,34 +32,40 @@ CiphernodeSelected event arrives at ThresholdKeyshare
 │
 ├─ handle_ciphernode_selected():
 │   │
-│   ├─ 1. Generate fresh BFV keypair:
-│   │     (secret_key, public_key) = BFV::keygen(share_encryption_preset)
-│   │     → This is the node's SHARE ENCRYPTION key
-│   │     → Used to encrypt Shamir shares sent to this node
-│   │
-│   ├─ 2. Encrypt BFV secret key at rest:
-│   │     encrypted_sk = Cipher.encrypt(secret_key)
-│   │     → Stored locally, password-protected
-│   │
-│   ├─ 3. State transition: Init → CollectingEncryptionKeys
-│   │
-│   ├─ 4. Publish EncryptionKeyPending {
-│   │     e3_id, party_id, bfv_public_key
-│   │   }
-│   │   → ZK proof actor picks this up
-│   │
-│   ├─ 5. Create child actors:
+│   ├─ 1. Create child actors:
 │   │     ├─ EncryptionKeyCollector (accepts all N keys or at least H at cutoff)
 │   │     └─ ThresholdShareCollector (accepts all N−1 external shares or at least H−1 at cutoff)
 │   │     → These collectors start immediately so early peer keys/shares can
 │   │       be buffered while this node is still finishing earlier DKG phases
+│   │     → A peer key that arrives in `Init` is only recorded.
+│   │       `replay_encryption_keys` sends every recorded key to the new
+│   │       EncryptionKeyCollector, as restart recovery does
+│   │
+│   ├─ 2. Generate fresh BFV keypair:
+│   │     (secret_key, public_key) = BFV::keygen(share_encryption_preset)
+│   │     → This is the node's SHARE ENCRYPTION key
+│   │     → Used to encrypt Shamir shares sent to this node
+│   │
+│   ├─ 3. Encrypt BFV secret key at rest:
+│   │     encrypted_sk = Cipher.encrypt(secret_key)
+│   │     → Stored locally, password-protected
+│   │
+│   ├─ 4. State transition: Init → CollectingEncryptionKeys
+│   │
+│   ├─ 5. Publish EncryptionKeyPending {
+│   │     e3_id, party_id, bfv_public_key
+│   │   }
+│   │   → ZK proof actor picks this up
 │   │
 │   └─ Collector schedules use the frozen per-E3 window and absolute deadline:
 │         ├─ EncryptionKeyCollector: hard cutoff at 10% of the window
 │         ├─ ThresholdShareCollector: soft cutoff at 75% of the window
 │         └─ DecryptionKeySharedCollector: hard cutoff at the on-chain DKG deadline
-│      Restart uses the remaining time, not a new full window. Optional
-│      per-collector env values can advance a cutoff but cannot extend it.
+│      Restart uses the remaining time, not a new full window. A restart after
+│      the encryption-key cutoff but before the canonical deadline creates that
+│      collector without a timer, and the collector applies the cutoff to the
+│      recorded keys (Step 3). Optional per-collector env values can advance a
+│      cutoff but cannot extend it.
 │      At the threshold-share cutoff, a node that has at least H−1 external shares
 │      starts verification from that snapshot and keeps the collector open. Later
 │      shares extend the verified dealer set until all N−1 arrive or the on-chain
@@ -135,6 +141,28 @@ EncryptionKeyCollector collects verified EncryptionKeyCreated events
 ├─ On each arrival: store the first (party_id → bfv_public_key) message;
 │  replay keeps that same first message if a later duplicate arrives
 │
+├─ A key that arrives while the keyshare is in `Init` is only recorded in the
+│  recovery state: the collector needs the frozen DKG timing that the node reads
+│  at its own selection. `handle_ciphernode_selected` sends every recorded key to
+│  the collector. A key from an expelled party can count here; Step 4 removes it
+│
+├─ A live key after the cutoff does not reach the collector, even if the
+│  collector's relative timer has not fired yet
+│
+├─ Restart in CollectingEncryptionKeys (`resume_in_flight_work`):
+│   ├─ Sends every recorded key to the collector, then EncryptionKeysReplayed
+│   ├─ If the cutoff passed while the node was down, but the canonical deadline
+│   │  has not, the collector has no timer. It applies the cutoff when it
+│   │  receives EncryptionKeysReplayed, so only the keys recorded before the
+│   │  restart count. Historical sync does not carry keys: a missed key comes
+│   │  back only when its sender announces the document again, after
+│   │  EffectsEnabled. A key whose proof check had not finished also misses
+│   │  this cutoff
+│   └─ Rebuilds the ThresholdShareCollector, as every recovery state that
+│      replays shares does: it sends every expelled party
+│      (ExpelPartyFromShareCollection), then every recorded share. A peer can
+│      send its share while this node still collects encryption keys
+│
 ├─ On TIMEOUT (derived DKG-phase cutoff):
 │   ├─ With at least H keys, including this party's key:
 │   │    send AllEncryptionKeysCollected with the available keys
@@ -158,6 +186,11 @@ EncryptionKeyCollector collects verified EncryptionKeyCreated events
 
 ```
 ThresholdKeyshare receives AllEncryptionKeysCollected
+│
+├─ Removes keys from expelled parties: replay sends recorded keys from expelled
+│  parties, and an expulsion can reach the keyshare after the collector
+│  completes. With fewer than H keys, or without this node's key, the keyshare
+│  fails as at a cutoff with too few keys (Step 3)
 │
 ├─ State: CollectingEncryptionKeys → GeneratingThresholdShare
 ├─ Stores the verified BFV public keys available at the cutoff

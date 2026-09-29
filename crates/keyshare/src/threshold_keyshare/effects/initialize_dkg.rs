@@ -47,7 +47,9 @@ impl ThresholdKeyshare {
             return Ok(());
         }
 
-        self.ensure_encryption_key_collector(address.clone())?;
+        // `handle_encryption_key_created` only records a peer key that arrives in `Init`.
+        let collector = self.ensure_encryption_key_collector(address.clone())?;
+        self.replay_encryption_keys(&collector)?;
         self.ensure_collector(address.clone())?;
 
         let BfvKeypairMaterial {
@@ -104,6 +106,30 @@ impl ThresholdKeyshare {
                 .filter(|k| !state.expelled_parties.contains(&k.party_id))
                 .collect()
         };
+
+        // Share generation needs H keys, including this node's key. An expulsion can leave fewer:
+        // it can reach this actor after the collector completes, or empty the collector's wait list.
+        let minimum_keys = state.committee_h()?;
+        let has_own_key = filtered_keys
+            .iter()
+            .any(|key| key.party_id == state.party_id);
+        if filtered_keys.len() < minimum_keys || !has_own_key {
+            let missing_parties = (0..state.threshold_n)
+                .filter(|party_id| {
+                    !state.expelled_parties.contains(party_id)
+                        && !filtered_keys.iter().any(|key| key.party_id == *party_id)
+                })
+                .collect();
+            return self.fail_encryption_key_collection(EncryptionKeyCollectionFailed {
+                e3_id: state.e3_id.clone(),
+                reason: format!(
+                    "{} usable encryption keys; share generation needs {} including this node's key",
+                    filtered_keys.len(),
+                    minimum_keys
+                ),
+                missing_parties,
+            });
+        }
 
         self.state.try_mutate(&ec, |s| {
             s.new_state(KeyshareState::GeneratingThresholdShare(
