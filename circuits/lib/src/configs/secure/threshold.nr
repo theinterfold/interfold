@@ -24747,9 +24747,11 @@ decrypted_shares_aggregation (CIRCUIT 7)
 -------------------------------------
 ************************************/
 
-pub global DECRYPTED_SHARES_AGGREGATION_BIT_NOISE: u32 = 151;
 pub global DECRYPTED_SHARES_AGGREGATION_BIT_D_NATIVE: u32 = 58;
-pub global DECRYPTED_SHARES_AGGREGATION_BIT_CRT_QUOTIENT: u32 = 115;
+pub global DECRYPTED_SHARES_AGGREGATION_BIT_Q: u32 = 58;
+pub global DECRYPTED_SHARES_AGGREGATION_BIT_K: u32 = 64;
+pub global DECRYPTED_SHARES_AGGREGATION_BIT_T: u32 = 20;
+pub global DECRYPTED_SHARES_AGGREGATION_BIT_Q_TOTAL: u32 = 172;
 
 pub global DECRYPTED_SHARES_AGGREGATION_CONFIGS: DecryptedSharesAggregationConfigs<L> =
     DecryptedSharesAggregationConfigs::new(QIS, PLAINTEXT_MODULUS, Q_INVERSE_MOD_T);
