@@ -10,9 +10,12 @@ use e3_events::{CircuitName, CircuitVariant, Proof};
 use e3_fhe_params::BfvPreset;
 use e3_utils::utility_types::ArcBytes;
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
-use std::process::Command as StdCommand;
+use std::process::{Command as StdCommand, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::thread;
+use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 
 /// Unique bb job directories — shared [`ZkBackend::work_dir`] must not reuse the same paths
@@ -20,6 +23,11 @@ use tracing::{debug, info, warn};
 static BB_WORK_JOB_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 const PROCESS_OUTPUT_LIMIT: usize = 4 * 1024;
+
+/// A running compute job cannot be cancelled, so a hung bb would hold its pool slot forever.
+/// The cap stops only a hung bb. A secure proof can take hours on a slow host, and a retry
+/// after a kill runs slower with `--slow_low_memory`.
+const BB_TIMEOUT: Duration = Duration::from_secs(12 * 60 * 60);
 
 struct JobDirGuard(PathBuf);
 
@@ -58,6 +66,39 @@ fn bounded_process_output(output: &[u8]) -> String {
 
 fn verifier_reported_invalid_proof(stderr: &str, stdout: &str) -> bool {
     stderr.contains("Proof verification failed") || stdout.contains("Proof verification failed")
+}
+
+/// Runs bb and kills it at `timeout`. Output goes to files in `job_dir` so a full pipe
+/// cannot stall bb, and `JobDirGuard` removes them.
+fn run_bb(bb: &Path, args: &[&str], job_dir: &Path, timeout: Duration) -> io::Result<Output> {
+    let stdout_path = job_dir.join("bb.stdout");
+    let stderr_path = job_dir.join("bb.stderr");
+    let mut child = StdCommand::new(bb)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(fs::File::create(&stdout_path)?)
+        .stderr(fs::File::create(&stderr_path)?)
+        .spawn()?;
+    let deadline = Instant::now() + timeout;
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            child.wait()?;
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!("bb did not finish within {timeout:?}"),
+            ));
+        }
+        thread::sleep(Duration::from_millis(100));
+    };
+    Ok(Output {
+        status,
+        stdout: fs::read(stdout_path)?,
+        stderr: fs::read(stderr_path)?,
+    })
 }
 
 fn next_bb_work_subdir(prefix: &str) -> String {
@@ -251,7 +292,7 @@ impl ZkProver {
             args.push("--slow_low_memory");
         }
 
-        let output = StdCommand::new(&self.bb_binary).args(&args).output()?;
+        let output = run_bb(&self.bb_binary, &args, &job_dir, BB_TIMEOUT)?;
 
         if !output.status.success() {
             let stderr = bounded_process_output(&output.stderr);
@@ -410,7 +451,7 @@ impl ZkProver {
             verifier_target,
         ];
 
-        let output = StdCommand::new(&self.bb_binary).args(&args).output()?;
+        let output = run_bb(&self.bb_binary, &args, &job_dir, BB_TIMEOUT)?;
 
         if !output.status.success() {
             let stderr = bounded_process_output(&output.stderr);
@@ -534,5 +575,37 @@ mod tests {
             "failed to write temporary file",
             ""
         ));
+    }
+
+    #[test]
+    fn a_hung_bb_is_killed_at_the_wall_clock_cap() {
+        let temp = get_tempdir().unwrap();
+        let started = Instant::now();
+
+        let result = run_bb(
+            Path::new("/bin/sleep"),
+            &["30"],
+            temp.path(),
+            Duration::from_millis(300),
+        );
+
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::TimedOut);
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn a_finishing_bb_returns_its_output() {
+        let temp = get_tempdir().unwrap();
+
+        let output = run_bb(
+            Path::new("/bin/echo"),
+            &["proof-ok"],
+            temp.path(),
+            BB_TIMEOUT,
+        )
+        .unwrap();
+
+        assert!(output.status.success());
+        assert_eq!(output.stdout, b"proof-ok\n");
     }
 }

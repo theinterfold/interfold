@@ -9,9 +9,9 @@ use alloy::signers::local::PrivateKeySigner;
 use anyhow::Result;
 use e3_crypto::SensitiveBytes;
 use e3_events::{
-    CircuitName, ComputeRequestErrorKind, E3Failed, E3Stage, EncryptionKey, Event, FailureReason,
-    GetEvents, HistoryCollector, PkGenerationProofRequest, ShareComputationProofRequest,
-    ThresholdShare, ThresholdSharePending, Unsequenced, ZkError,
+    CircuitName, ComputeRequestErrorKind, DkgShareDecryptionProofRequest, E3Failed, E3Stage,
+    EncryptionKey, Event, FailureReason, GetEvents, HistoryCollector, PkGenerationProofRequest,
+    ShareComputationProofRequest, ThresholdShare, ThresholdSharePending, Unsequenced, ZkError,
 };
 use e3_fhe_params::BfvPreset;
 use e3_test_helpers::get_common_setup;
@@ -149,6 +149,50 @@ async fn c0_trbfv_compute_error_preserves_pending_work() -> Result<()> {
     assert_no_events(&history).await?;
     assert!(actor.pending.contains_key(&correlation_id));
 
+    Ok(())
+}
+
+#[actix::test]
+async fn own_c0_reaches_the_node_fold_before_encryption_key_created() -> Result<()> {
+    let (bus, _rng, _seed, _params, _crp, _errors, history) = get_common_setup(None)?;
+    let mut actor = ProofRequestActor::new(&bus, PrivateKeySigner::random(), true);
+    let e3_id = E3id::new("47", 1);
+    let correlation_id = CorrelationId::new();
+    actor.pending.insert(
+        correlation_id,
+        PendingProofRequest {
+            e3_id: e3_id.clone(),
+            key: Arc::new(EncryptionKey::new(7, ArcBytes::from_bytes(&[1]))),
+        },
+    );
+    let proof = Proof::new(
+        CircuitName::PkBfv,
+        ArcBytes::from_bytes(&[1]),
+        ArcBytes::from_bytes(&[2]),
+    );
+    let ec = test_ctx(E3Failed {
+        e3_id,
+        failed_at_stage: E3Stage::CommitteeFinalized,
+        reason: FailureReason::DKGInvalidShares,
+    });
+
+    // No ThresholdSharePending has arrived, so no seq layout exists yet.
+    actor.handle_pk_bfv_response(&correlation_id, proof.clone(), &ec);
+
+    actix::clock::sleep(std::time::Duration::from_millis(20)).await;
+    let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+    let c0 = events.iter().position(|event| {
+        matches!(event.get_data(), InterfoldEventData::DKGInnerProofReady(ready)
+            if ready.seq == 0 && ready.proof == proof)
+    });
+    let key = events.iter().position(|event| {
+        matches!(
+            event.get_data(),
+            InterfoldEventData::EncryptionKeyCreated(_)
+        )
+    });
+    // EncryptionKeyCreated can end key collection, so C0 must be logged before it.
+    assert!(matches!((c0, key), (Some(c0), Some(key)) if c0 < key));
     Ok(())
 }
 
@@ -297,5 +341,45 @@ async fn replayed_threshold_work_invalidates_old_correlations() -> Result<()> {
         &ec,
     );
     assert_eq!(actor.pending_threshold[&e3_id].total_received(), 0);
+    Ok(())
+}
+
+#[actix::test]
+async fn c4_dispatch_before_the_seq_layout_is_held_until_threshold_share_pending() -> Result<()> {
+    let (bus, _rng, _seed, _params, _crp, _errors, _history) = get_common_setup(None)?;
+    let mut actor = ProofRequestActor::new(&bus, PrivateKeySigner::random(), true);
+    let e3_id = E3id::new("held-c4", 1);
+    let request = |dkg_input_type| DkgShareDecryptionProofRequest {
+        sk_bfv: SensitiveBytes::from_encrypted(&[]),
+        honest_ciphertexts_raw: vec![],
+        num_honest_parties: 0,
+        num_moduli: 0,
+        own_plaintext_idx: None,
+        own_share_raw: None,
+        dkg_input_type,
+        params_preset: BfvPreset::InsecureThreshold512,
+        committee_size: CiphernodesCommitteeSize::Minimum,
+    };
+    let c4 = DecryptionShareProofsPending {
+        e3_id: e3_id.clone(),
+        party_id: 0,
+        node: "0x00".into(),
+        sk_request: request(DkgInputType::SecretKey),
+        esm_requests: vec![request(DkgInputType::SmudgingNoise)],
+    };
+    let layout = threshold_share_pending(e3_id, 0x11);
+
+    actor.handle_decryption_share_proofs_pending(TypedEvent::new(c4.clone(), test_ctx(c4)));
+    assert!(actor.decryption_correlation.is_empty());
+    actor.handle_threshold_share_pending(TypedEvent::new(layout.clone(), test_ctx(layout)));
+
+    // With no share encryptions C0-C3 take seqs 0-3, so C4a and C4b take 4 and 5.
+    let mut seqs: Vec<_> = actor
+        .decryption_correlation
+        .values()
+        .map(|(_, _, seq)| *seq)
+        .collect();
+    seqs.sort_unstable();
+    assert_eq!(seqs, vec![4, 5]);
     Ok(())
 }

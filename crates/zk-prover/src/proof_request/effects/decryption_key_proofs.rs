@@ -10,6 +10,17 @@ impl ProofRequestActor {
         &mut self,
         msg: TypedEvent<DecryptionShareProofsPending>,
     ) {
+        // C4 seqs follow C0-C3, whose count `ThresholdSharePending` sets; it releases this hold.
+        // Without proof aggregation the seqs are unused, so the request does not wait.
+        let c4_base_seq = match self.node_agg_meta.get(&msg.e3_id) {
+            Some(meta) => meta.c4_base_seq(),
+            None if self.proof_aggregation_enabled => {
+                warn!(e3_id = %msg.e3_id, "Holding C4 proof requests until ThresholdSharePending");
+                self.held_decryption_pending.insert(msg.e3_id.clone(), msg);
+                return;
+            }
+            None => 0,
+        };
         let (msg, ec) = msg.into_components();
         let e3_id = msg.e3_id.clone();
         let esm_count = msg.esm_requests.len();
@@ -37,11 +48,6 @@ impl ProofRequestActor {
         // C4a/C4b: dispatch share-decryption proof requests in canonical seq
         // order. The pure domain planner owns seq assignment; the actor only
         // allocates correlation ids, publishes, and rolls back on failure.
-        let c4_base_seq = self
-            .node_agg_meta
-            .get(&e3_id)
-            .map(NodeAggregationMeta::c4_base_seq)
-            .unwrap_or(0);
         for item in plan_decryption_dispatch(msg.sk_request, msg.esm_requests, c4_base_seq) {
             let corr = CorrelationId::new();
             self.decryption_correlation

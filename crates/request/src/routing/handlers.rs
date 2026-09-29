@@ -4,8 +4,10 @@
 
 use super::effects::advance_request_router_cursor;
 use super::*;
+use actix::AsyncContext;
 use anyhow::Context as _;
 use e3_events::{EventContext, InterfoldEventData, RequestRouterCheckpoint, Sequenced, SyncEffect};
+use tracing::info;
 
 impl E3Router {
     fn checkpoint_with_context(&mut self, context: &EventContext<Sequenced>) -> Result<()> {
@@ -67,7 +69,7 @@ impl Actor for E3Router {
 impl Handler<InterfoldEvent> for E3Router {
     type Result = ();
 
-    fn handle(&mut self, msg: InterfoldEvent, _: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: InterfoldEvent, ctx: &mut Self::Context) -> Self::Result {
         trap(EType::Event, &self.bus.with_ec(msg.get_ctx()), || {
             if matches!(msg.get_data(), InterfoldEventData::SyncEffect(SyncEffect)) {
                 let event_context = msg.get_ctx().clone();
@@ -85,6 +87,20 @@ impl Handler<InterfoldEvent> for E3Router {
                 RoutingDecision::Broadcast => {
                     for context in self.contexts.values() {
                         context.forward_message_now(&msg)
+                    }
+                    if matches!(msg.get_data(), InterfoldEventData::EffectsEnabled(_)) {
+                        // Startup pruned the finalized committee of a Failed E3, so no accusation
+                        // work resumes for its restored context.
+                        for e3_id in std::mem::take(&mut self.failed_on_restart) {
+                            if self.contexts.contains_key(&e3_id) {
+                                info!(
+                                    %e3_id,
+                                    "Completing a restored E3 whose lifecycle stage is Failed"
+                                );
+                                self.bus
+                                    .publish(E3RequestComplete { e3_id }, msg.get_ctx().clone())?;
+                            }
+                        }
                     }
                     Ok(())
                 }
@@ -129,15 +145,25 @@ impl Handler<InterfoldEvent> for E3Router {
                             .write_with_context(&context.snapshot()?, &event_context)?;
                     }
 
-                    let (_, ctx) = msg.into_components();
+                    let (_, ec) = msg.into_components();
                     match post_forward {
                         PostForward::PublishComplete => {
                             self.bus.publish(
                                 E3RequestComplete {
                                     e3_id: e3_id.clone(),
                                 },
-                                ctx,
+                                ec,
                             )?;
+                        }
+                        PostForward::ScheduleTeardown => {
+                            // Skip when the E3 completed another way during the grace.
+                            ctx.run_later(self.teardown_grace, move |act, _| {
+                                if act.contexts.contains_key(&e3_id) {
+                                    trap(EType::Event, &act.bus.with_ec(&ec), || {
+                                        act.bus.publish(E3RequestComplete { e3_id }, ec)
+                                    });
+                                }
+                            });
                         }
                         PostForward::Teardown => {
                             self.contexts.remove(&e3_id);

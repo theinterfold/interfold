@@ -102,7 +102,9 @@ the code does not meet yet.
   unknown canonical result must fail startup. If the E3 exists at chain head but not yet at the
   finalized block, recovery keeps the context and waits; finality lag is not an unknown E3. **Gap:**
   not implemented. Startup prunes terminal E3 state from the local event-log projection and the
-  lifecycle map; no code reads a finalized block. Concern #48 remains open. — INDEX concern #48
+  lifecycle map; no code reads a finalized block. The router completes a restored context whose
+  lifecycle stage is Failed at `EffectsEnabled`, because no accusation work resumes for it. Concern
+  #48 remains open. — INDEX concern #48
 - EventStore replay preserves durable sequence inside each aggregate. It uses HLC order only to
   choose between the next events of different aggregates. A late event can have an older remote HLC
   and must not move ahead of an earlier local sequence from the same aggregate. — INDEX concern #43
@@ -118,7 +120,10 @@ the code does not meet yet.
 - `NodeProofAggregator` persists ordered DKG inner proofs and fold metadata before it accepts them.
   It persists a completed fold before publication. Restart must restore inputs or the completed
   output and resume only after `EffectsEnabled`. `KeyPublished` and terminal E3 events release the
-  saved node-fold data. — `flow-trace/04`; `flow-trace/06`
+  saved node-fold data. `ProofRequestActor` publishes the own C0 (seq 0) before
+  `EncryptionKeyCreated`, so this store holds C0 before keyshare can leave key collection, the only
+  state that requests C0 again. With proof aggregation on, a C4 request waits for the seq layout
+  from `ThresholdSharePending`. — `flow-trace/04`; `flow-trace/06`
 - Replayed randomized DKG outputs must be reused exactly. If a TrBFV response arrives before a
   rebuilt collector restores its prerequisite state, hold the response until that state is ready; do
   not dispatch a replacement computation that would produce different shares and proofs. —
@@ -171,10 +176,10 @@ the code does not meet yet.
   can arrive before the node creates its plaintext aggregator. — `ARCHITECTURE.md`;
   `scripts/invariant-baselines.env`; `crates/request/src/context.rs`
 - Timers: persist the absolute deadline + purpose, not an in-memory handle; on restart, compare to
-  the injected clock and deterministically re-arm or fire overdue. **Gap:** accusation timers are
-  memory-only `run_later` handles; keyshare collectors read `SystemTime::now()` instead of an
-  injected clock; the slash fallback delay restarts in full (see `01_PROTOCOL_ONCHAIN.md`). —
-  `ARCHITECTURE.md`
+  the injected clock and deterministically re-arm or fire overdue. **Gap:** accusation timers and
+  the request router's slashable-failure teardown grace are memory-only `run_later` handles;
+  keyshare collectors read `SystemTime::now()` instead of an injected clock; the slash fallback
+  delay restarts in full (see `01_PROTOCOL_ONCHAIN.md`). — `ARCHITECTURE.md`
 - Effects stay disabled until durable replay completes and both historical sources merge in HLC
   order. Startup fences `EffectsEnabled` → `SyncEffect` → canonical history → `SyncEnded` in that
   order. `ComputeEffectGate` buffers and deduplicates until `EffectsEnabled`. It sends a live

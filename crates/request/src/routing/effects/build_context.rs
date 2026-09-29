@@ -10,6 +10,8 @@ pub struct E3RouterBuilder {
     pub recovered_selections: Vec<CiphernodeSelected>,
     pub recovery_store: Repository<RequestRouterCheckpoint>,
     pub store: Repository<E3RouterSnapshot>,
+    pub teardown_grace: Duration,
+    pub failed_on_restart: HashSet<E3id>,
 }
 
 impl E3RouterBuilder {
@@ -24,6 +26,18 @@ impl E3RouterBuilder {
         recovered_selections: Vec<CiphernodeSelected>,
     ) -> Self {
         self.recovered_selections = recovered_selections;
+        self
+    }
+
+    /// Set how long a slashably-failed E3 keeps its context before teardown.
+    pub fn with_teardown_grace(mut self, teardown_grace: Duration) -> Self {
+        self.teardown_grace = teardown_grace;
+        self
+    }
+
+    /// Set the E3s whose lifecycle stage is Failed; they are completed at `EffectsEnabled`.
+    pub fn with_failed_on_restart(mut self, failed_on_restart: HashSet<E3id>) -> Self {
+        self.failed_on_restart = failed_on_restart;
         self
     }
 
@@ -49,6 +63,8 @@ impl E3RouterBuilder {
             replay_cursors,
             recovery_store,
             recovered_selections,
+            teardown_grace: self.teardown_grace,
+            failed_on_restart: self.failed_on_restart,
         };
 
         let router = match snapshot {

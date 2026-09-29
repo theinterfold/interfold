@@ -49,6 +49,8 @@ pub struct ProofRequestActor {
     node_agg_meta: HashMap<E3id, NodeAggregationMeta>,
     /// C4 pending proofs per E3
     pending_decryption: HashMap<E3id, PendingDecryptionProofs>,
+    /// C4 dispatch that arrived before `ThresholdSharePending` set the seq layout.
+    held_decryption_pending: HashMap<E3id, TypedEvent<DecryptionShareProofsPending>>,
     /// C6 proof staging: correlation -> e3_id
     share_decryption_correlation: HashMap<CorrelationId, E3id>,
     /// C6 pending proofs per E3
@@ -80,6 +82,7 @@ impl ProofRequestActor {
             threshold_correlation: HashMap::new(),
             decryption_correlation: HashMap::new(),
             pending_decryption: HashMap::new(),
+            held_decryption_pending: HashMap::new(),
             node_agg_meta: HashMap::new(),
             share_decryption_correlation: HashMap::new(),
             pending_share_decryption: HashMap::new(),

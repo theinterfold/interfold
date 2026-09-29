@@ -17,9 +17,8 @@ use serde::{Deserialize, Serialize};
 /// Emitted for every inner circuit (C0–C4) when available. `seq` gives the deterministic ordering.
 ///
 /// The total count of expected proofs is communicated separately via
-/// [`ThresholdSharePending`]. The normal flow publishes that event first, but
-/// [`NodeProofAggregator`] also tolerates earlier `DKGInnerProofReady` arrivals
-/// by prebuffering them until collection state exists.
+/// [`ThresholdSharePending`]. The own C0 (seq 0) is published before that event, and
+/// [`NodeProofAggregator`] prebuffers every earlier arrival until collection state exists.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct DKGInnerProofReady {
     pub e3_id: E3id,

@@ -770,7 +770,9 @@ impl CiphernodeBuilder {
                 .filter(|chain| chain.enabled.unwrap_or(true))
             {
                 let provider = provider_cache.ensure_read_provider(chain).await?;
-                finalizer_providers.insert(provider.chain_id(), provider);
+                let factory = ProviderConfig::new(chain.rpc_url()?, chain.rpc_auth.clone())
+                    .into_read_provider_factory();
+                finalizer_providers.insert(provider.chain_id(), factory);
             }
             CommitteeFinalizer::attach_with_recovery(
                 &bus,
@@ -1118,8 +1120,19 @@ impl CiphernodeBuilder {
         lifecycle_stages: &HashMap<E3id, E3Stage>,
     ) -> Result<e3_request::E3RouterBuilder> {
         let recovered_selections = recovered_ciphernode_selections(selector_state, addr)?;
-        let mut e3_builder =
-            E3Router::builder(bus, store.clone()).with_recovered_selections(recovered_selections);
+        // A slashably-failed context also outlives the longest accusation vote.
+        let max_vote_validity = accusation_vote_validity_by_chain.values().max().copied();
+        let teardown_grace = e3_request::SLASHABLE_FAILURE_GRACE
+            .saturating_add(Duration::from_secs(max_vote_validity.unwrap_or_default()));
+        let failed_e3s = lifecycle_stages
+            .iter()
+            .filter(|(_, stage)| **stage == E3Stage::Failed)
+            .map(|(e3_id, _)| e3_id.clone())
+            .collect();
+        let mut e3_builder = E3Router::builder(bus, store.clone())
+            .with_recovered_selections(recovered_selections)
+            .with_teardown_grace(teardown_grace)
+            .with_failed_on_restart(failed_e3s);
         e3_builder = e3_builder.with(AggregatorRoleExtension::create(
             selector_state.is_aggregator.clone(),
         ));

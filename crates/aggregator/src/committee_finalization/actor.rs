@@ -13,7 +13,7 @@ use e3_events::{
     InterfoldEvent, InterfoldEventData, Shutdown, TicketGenerated, TypedEvent,
 };
 use e3_events::{E3id, EventContext, Sequenced};
-use e3_evm::helpers::{ConcreteReadProvider, EthProvider};
+use e3_evm::helpers::{ConcreteReadProvider, ProviderFactory};
 use e3_utils::{NotifySync, MAILBOX_LIMIT};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -85,7 +85,7 @@ pub struct CommitteeFinalizer {
     bus: BusHandle,
     pending_committees: HashMap<E3id, SpawnHandle>,
     recovery: Persistable<CommitteeFinalizerRecoveryState>,
-    chain_providers: HashMap<u64, EthProvider<ConcreteReadProvider>>,
+    chain_providers: HashMap<u64, ProviderFactory<ConcreteReadProvider>>,
     effects_enabled: bool,
 }
 
@@ -93,7 +93,7 @@ impl CommitteeFinalizer {
     fn from_recovery(
         bus: &BusHandle,
         recovery: Persistable<CommitteeFinalizerRecoveryState>,
-        chain_providers: HashMap<u64, EthProvider<ConcreteReadProvider>>,
+        chain_providers: HashMap<u64, ProviderFactory<ConcreteReadProvider>>,
     ) -> Self {
         Self {
             bus: bus.clone(),
@@ -107,7 +107,7 @@ impl CommitteeFinalizer {
     pub async fn attach_with_recovery(
         bus: &BusHandle,
         repository: Repository<CommitteeFinalizerRecoveryState>,
-        chain_providers: HashMap<u64, EthProvider<ConcreteReadProvider>>,
+        chain_providers: HashMap<u64, ProviderFactory<ConcreteReadProvider>>,
     ) -> Result<Addr<Self>> {
         let recovery = repository
             .load_or_default(CommitteeFinalizerRecoveryState::default())
@@ -152,13 +152,17 @@ impl CommitteeFinalizer {
         let ec = request.context.clone();
         let pending_key = e3_id.clone();
         let e3_id_for_async = e3_id.clone();
-        let provider = self.chain_providers.get(&e3_id.chain_id()).cloned();
+        let provider_factory = self.chain_providers.get(&e3_id.chain_id()).cloned();
 
         let fut = async move {
-            let timestamp = match provider {
-                Some(provider) => {
-                    e3_evm::helpers::get_current_timestamp_from_provider(provider).await
-                }
+            let timestamp = match provider_factory {
+                // Connect per attempt: a WebSocket past its reconnect budget stays dead.
+                Some(factory) => match factory().await {
+                    Ok(provider) => {
+                        e3_evm::helpers::get_current_timestamp_from_provider(provider).await
+                    }
+                    Err(e) => Err(e),
+                },
                 None => Err(anyhow::anyhow!(
                     "No RPC provider configured for chain {}",
                     e3_id_for_async.chain_id()

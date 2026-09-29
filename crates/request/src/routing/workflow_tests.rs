@@ -357,16 +357,16 @@ fn requester_and_provider_failures_publish_complete() {
 }
 
 #[test]
-fn e3_failed_invalid_shares_does_not_complete() {
-    // Slashable failures must NOT trigger E3RequestComplete — the accusation/slashing
-    // lifecycle must be allowed to finish first.
+fn e3_failed_invalid_shares_schedules_teardown() {
+    // Slashable failures keep the context for the accusation/slashing lifecycle and tear it
+    // down after the router's grace instead of completing at once.
     let id = e3id();
     let msg = e3_failed(id.clone(), FailureReason::DKGInvalidShares);
     assert_eq!(
         RequestRouter::route(&msg, &HashSet::new()),
         RoutingDecision::Process {
             e3_id: id,
-            post_forward: PostForward::None,
+            post_forward: PostForward::ScheduleTeardown,
         }
     );
 }

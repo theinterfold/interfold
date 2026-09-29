@@ -9,31 +9,19 @@ use crate::{
     ContextRepositoryFactory, DkgFoldAttestationContextRepositoryFactory, E3ContextSnapshot,
     E3MetaExtension, DKG_FOLD_ATTESTATION_CONTEXT_KEY,
 };
-use actix::{Actor, Handler};
+use actix::Actor;
 use async_trait::async_trait;
-use e3_data::{InMemStore, RepositoriesFactory};
+use e3_data::{InMemEventLog, InMemSequenceIndex, InMemStore, RepositoriesFactory};
 use e3_events::{
     hlc_factory::HlcFactory, BusHandle, CiphernodeSelected, DkgFoldAttestationContext,
-    DkgFoldAttestationContextEstablished, E3Requested, EventBus, InterfoldEventData,
-    RequestRouterCheckpoint, Sequencer, StoreEventRequested, SyncEffect, Unsequenced,
-    DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
+    DkgFoldAttestationContextEstablished, E3Failed, E3Requested, E3Stage, EffectsEnabled, EventBus,
+    EventStore, FailureReason, InterfoldEventData, RequestRouterCheckpoint, Sequencer, SyncEffect,
+    Unsequenced, DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
 };
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,
 };
-
-struct StoreSink;
-
-impl Actor for StoreSink {
-    type Context = Context<Self>;
-}
-
-impl Handler<StoreEventRequested> for StoreSink {
-    type Result = ();
-
-    fn handle(&mut self, _: StoreEventRequested, _: &mut Self::Context) {}
-}
 
 struct RecoveryExtension {
     hydrations: Arc<AtomicUsize>,
@@ -68,8 +56,11 @@ impl E3Extension for SelectionRecoveryExtension {
 
 fn test_bus() -> BusHandle {
     let event_bus = EventBus::<InterfoldEvent>::default().start();
-    let store = StoreSink.start();
-    let sequencer = Sequencer::new(&event_bus, store.recipient()).start();
+    let store = EventStore::new(InMemSequenceIndex::new(), InMemEventLog::new())
+        .expect("in-memory EventStore")
+        .start();
+    let sequencer =
+        Sequencer::new_with_flush(&event_bus, store.clone().recipient(), store.recipient()).start();
     BusHandle::new(event_bus, sequencer, HlcFactory::new()).enable("router-recovery-test")
 }
 
@@ -101,6 +92,8 @@ async fn mid_e3_context_and_completed_set_survive_hydration() -> Result<()> {
         replay_cursors: HashMap::new(),
         recovery_store,
         recovered_selections: Vec::new(),
+        teardown_grace: Duration::ZERO,
+        failed_on_restart: HashSet::new(),
     };
     let recovered = E3Router::from_snapshot(
         params,
@@ -135,6 +128,8 @@ async fn hydration_fails_when_an_active_context_snapshot_is_missing() -> Result<
         replay_cursors: HashMap::new(),
         recovery_store,
         recovered_selections: Vec::new(),
+        teardown_grace: Duration::ZERO,
+        failed_on_restart: HashSet::new(),
     };
 
     let error = match E3Router::from_snapshot(
@@ -192,6 +187,8 @@ async fn recovery_is_direct_and_uses_one_checkpoint() -> Result<()> {
         }],
         recovery_store: recovery_store.clone(),
         store: repositories.router(),
+        teardown_grace: Duration::ZERO,
+        failed_on_restart: HashSet::new(),
     }
     .build()
     .await?;
@@ -229,6 +226,54 @@ async fn recovery_is_direct_and_uses_one_checkpoint() -> Result<()> {
         HashSet::from([recovered_e3, live_e3])
     );
     assert_eq!(selections.load(Ordering::SeqCst), 1);
+    Ok(())
+}
+
+#[actix::test]
+async fn failed_contexts_are_torn_down_after_the_grace() -> Result<()> {
+    let (live, restored) = (E3id::new("21", 31337), E3id::new("22", 31337));
+    let store = DataStore::from_in_mem(&InMemStore::new(false).start());
+    let checkpoints = store.repositories().request_router_checkpoint();
+    let bus = test_bus();
+    let router = E3Router::builder(&bus, store)
+        .with_teardown_grace(Duration::from_millis(300))
+        .with_failed_on_restart(HashSet::from([restored.clone()]))
+        .build()
+        .await?;
+    let request = |e3_id: &E3id| E3Requested {
+        e3_id: e3_id.clone(),
+        ..Default::default()
+    };
+    let failed = E3Failed {
+        e3_id: live.clone(),
+        failed_at_stage: E3Stage::CommitteeFinalized,
+        reason: FailureReason::DKGInvalidShares,
+    };
+    let events: [InterfoldEventData; 4] = [
+        request(&live).into(),
+        request(&restored).into(),
+        failed.into(),
+        EffectsEnabled::new().into(),
+    ];
+    for (seq, data) in (1u64..).zip(events) {
+        let event = InterfoldEvent::<Unsequenced>::test_event("event")
+            .data(data)
+            .seq(seq);
+        router.send(event.build()).await?;
+    }
+    // A slashable failure keeps its context for the grace.
+    assert!(checkpoints
+        .read()
+        .await?
+        .expect("checkpoint")
+        .contexts
+        .contains(&live));
+
+    actix::clock::sleep(Duration::from_millis(600)).await;
+    bus.flush_event_pipeline().await?;
+    let checkpoint = checkpoints.read().await?.expect("checkpoint");
+    assert!(checkpoint.contexts.is_empty());
+    assert!(checkpoint.completed.contains(&live) && checkpoint.completed.contains(&restored));
     Ok(())
 }
 
@@ -299,6 +344,8 @@ async fn request_time_attestation_contexts_survive_router_snapshots() -> Result<
             replay_cursors: HashMap::new(),
             recovery_store,
             recovered_selections: Vec::new(),
+            teardown_grace: Duration::ZERO,
+            failed_on_restart: HashSet::new(),
         },
         E3RouterSnapshot {
             contexts: vec![old_e3.clone()],

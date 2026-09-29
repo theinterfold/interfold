@@ -299,6 +299,121 @@ async fn recovered_encryption_keys_reuse_the_replayed_key_output() -> Result<()>
     Ok(())
 }
 
+#[actix::test]
+async fn early_threshold_share_batch_is_verified_after_own_shares_exist() -> Result<()> {
+    let (bus, history) = test_bus();
+    let e3_id = E3id::new("early-batch", 1);
+    let cipher = Arc::new(Cipher::from_password("test-password").await?);
+    let (threshold_params, params) =
+        e3_fhe_params::build_pair_for_preset(BfvPreset::InsecureThreshold512)?;
+    let l = threshold_params.moduli().len();
+    let mut rng = rand::rng();
+    let sk = fhe::bfv::SecretKey::random(&params, &mut rng);
+    let pk_bfv = ArcBytes::from_bytes(&fhe::bfv::PublicKey::new(&sk, &mut rng).to_bytes());
+    let secret = SharedSecret::new(vec![ndarray::Array2::from_elem((3, params.degree()), 1); l]);
+    // The same 32-byte field is the C0 output and the C3 recipient-key input.
+    let proof = SignedProofPayload {
+        payload: ProofPayload {
+            e3_id: e3_id.clone(),
+            proof_type: ProofType::C3aSkShareEncryption,
+            proof: Proof::new(
+                CircuitName::PkBfv,
+                ArcBytes::from_bytes(&[]),
+                ArcBytes::from_bytes(&[7; 32]),
+            ),
+        },
+        signature: ArcBytes::from_bytes(&[]),
+    };
+    let keys = [0, 1].map(|party| Arc::new(EncryptionKey::new(party, pk_bfv.clone())));
+    let (state, _) = test_state(
+        &e3_id,
+        KeyshareState::GeneratingThresholdShare(GeneratingThresholdShareData {
+            pk_share: Some(ArcBytes::from_bytes(&[3])),
+            sk_sss: Some(e3_trbfv::shares::Encrypted::new(secret.clone(), &cipher)?),
+            esi_sss: None,
+            e_sm_raw: Some(SensitiveBytes::new([7], &cipher)?),
+            sk_bfv: SensitiveBytes::from_encrypted(&[1]),
+            pk_bfv: pk_bfv.clone(),
+            collected_encryption_keys: keys.to_vec(),
+            ciphernode_selected: None,
+            proof_request_data: Some(ProofRequestData {
+                pk0_share_raw: ArcBytes::from_bytes(&[4]),
+                sk_raw: SensitiveBytes::new([5], &cipher)?,
+                eek_raw: SensitiveBytes::new([6], &cipher)?,
+            }),
+        }),
+    );
+    let mut actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bus,
+        cipher: cipher.clone(),
+        state,
+        share_enc_preset: BfvPreset::InsecureDkg512,
+        interfold_address: Address::ZERO,
+        signer: alloy::signers::local::PrivateKeySigner::random(),
+        effects_enabled: true,
+        recovery: test_recovery(),
+        recovery_payloads: test_recovery_payloads(),
+        dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
+    });
+    let own_c0 = EncryptionKeyCreated {
+        e3_id: e3_id.clone(),
+        key: Arc::new(EncryptionKey::new(0, pk_bfv).with_signed_payload(proof.clone())),
+        external: false,
+    };
+    actor.record_encryption_key(&TypedEvent::new(own_c0, test_ec(1)))?;
+    let proofs = ReceivedShareProofs {
+        signed_c2a_proof: Some(proof.clone()),
+        signed_c2b_proof: Some(proof.clone()),
+        signed_c3a_proofs: vec![proof.clone(); l],
+        signed_c3b_proofs: vec![proof; l],
+    };
+    let peer = ThresholdShareCreated {
+        e3_id: e3_id.clone(),
+        share: Arc::new(ThresholdShare {
+            party_id: 1,
+            pk_share: ArcBytes::from_bytes(&[8]),
+            sk_sss: Default::default(),
+            esi_sss: vec![Default::default()],
+        }),
+        target_party_id: 0,
+        external: true,
+        signed_c2a_proof: proofs.signed_c2a_proof.clone(),
+        signed_c2b_proof: proofs.signed_c2b_proof.clone(),
+        signed_c3a_proofs: proofs.signed_c3a_proofs.clone(),
+        signed_c3b_proofs: proofs.signed_c3b_proofs.clone(),
+    };
+    actor.record_threshold_share(&TypedEvent::new(peer.clone(), test_ec(2)))?;
+
+    // The peer batch completes while own shares are still being generated.
+    let batch = TypedEvent::new(
+        AllThresholdSharesCollected::new(
+            HashMap::from([(1, peer.share)]),
+            HashMap::from([(1, proofs)]),
+        ),
+        test_ec(3),
+    );
+    assert!(actor.record_collected_threshold_shares(&batch)?);
+    actor.handle_all_threshold_shares_collected(batch)?;
+    actor.handle_gen_esi_sss_response(TypedEvent::new(
+        ComputeResponse::trbfv(
+            TrBFVResponse::GenEsiSss(GenEsiSssResponse {
+                esi_sss: vec![e3_trbfv::shares::Encrypted::new(secret, &cipher)?],
+            }),
+            CorrelationId::new(),
+            e3_id,
+        ),
+        test_ec(4),
+    ))?;
+
+    let events = next_events(&history, 2).await?;
+    assert!(events.into_iter().any(|event| matches!(
+        event.into_data(),
+        InterfoldEventData::ShareVerificationDispatched(data)
+            if data.kind == VerificationKind::ShareProofs
+    )));
+    Ok(())
+}
+
 fn aggregating_decryption_key_for_roster_test() -> AggregatingDecryptionKey {
     AggregatingDecryptionKey {
         pk_share: ArcBytes::from_bytes(&[1]),

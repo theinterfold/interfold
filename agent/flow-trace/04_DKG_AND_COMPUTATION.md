@@ -100,6 +100,9 @@ ProofRequestActor receives EncryptionKeyPending
 │     │   signature = ecSign(digest, operator_private_key)
 │     │   → 65-byte ECDSA signature (r||s||v)
 │     │
+│     ├─ With proof aggregation on, publishes DKGInnerProofReady { seq: 0 } (own C0) first,
+│     │   so NodeProofAggregator persists C0 before EncryptionKeyCreated can end key collection
+│     │
 │     └─ Publishes EncryptionKeyCreated {
 │          e3_id, party_id, bfv_public_key,
 │          signed_proof: SignedProofPayload { proof, signature }
@@ -263,6 +266,7 @@ Both GenPkShareAndSkSss and GenEsiSss complete
 │   │     → ProofRequestActor picks this up
 │   │
 │   └─ State: GeneratingThresholdShare → AggregatingDecryptionKey
+│       → Verifies a C2/C3 batch recorded before this transition (also on restart resume)
 ```
 
 ### Step 5a: C1 + C2 + C3 Proof Generation
@@ -334,9 +338,9 @@ implements `ZkRequest::NodeDkgFold` (full per-node pipeline to a `NodeFold` proo
 `ZkRequest::DkgAggregation` (`NodesFold` + C5 + `DkgAggregator`), and
 `ZkRequest::DecryptionAggregation` (per-ciphertext `C6Fold` + C7 + `DecryptionAggregator`).
 `NodeProofAggregator` prebuffers `DKGInnerProofReady` proofs that arrive before
-`ThresholdSharePending`, drains those buffered proofs into collection state once
-`ThresholdSharePending` arrives, and issues one `NodeDkgFold` request when the full ordered proof
-set is available. It persists each proof, the fold metadata, and a completed output before
+`ThresholdSharePending` (the own C0 always does), drains those buffered proofs into collection state
+once `ThresholdSharePending` arrives, and issues one `NodeDkgFold` request when the full ordered
+proof set is available. It persists each proof, the fold metadata, and a completed output before
 publication. Restart restores the ordered proofs and reissues an incomplete fold after
 `EffectsEnabled`. A local worker failure keeps the saved node-fold data. The compute scheduler
 retries the exact request until the E3 becomes terminal. A canonical `KeyPublished` stage or a
@@ -386,6 +390,7 @@ ThresholdShareCollector collects this recipient's shares from the other N−1 pa
 │
 └─ When all N−1 external shares arrive:
     ├─ Send AllThresholdSharesCollected to ThresholdKeyshare
+    │   → Before its own shares exist, ThresholdKeyshare only records the batch (see Step 5)
     │
     └─ DISPATCH C2/C3 VERIFICATION:
         ThresholdKeyshare.dispatch_c2_c3_verification()
@@ -587,6 +592,9 @@ ThresholdKeyshare accepts an H-dealer roster after C2/C3 verification
 │
 ├─ 4. C4 PROOF GENERATION (ProofRequestActor):
 │     │
+│     │  ├─ With proof aggregation on, holds the request until ThresholdSharePending sets
+│     │  │   the seq layout, so C4a/C4b take the seqs after C0-C3
+│     │  │
 │     │  ├─ Creates PendingDecryptionProofs:
 │     │  │   expected = 1 (C4a for SK) + num_esi (C4b for each ESM)
 │     │  │
@@ -1402,6 +1410,7 @@ participation when the detected limit cannot cover the 4 GiB node reserve and on
 | The configured job count exceeds the CPU or memory limit.              | Startup computes CPU and memory job limits.                                        | The scheduler uses the smallest safe limit. It refuses startup if no prover fits.                           | `memory::tests::*` and the configuration default test cover 16 GiB, 32 GiB, and 122 GiB limits. |
 | `bb prove` exits, receives a signal, or reports an allocation failure. | `ZkProver` returns `ProofGenerationFailed`.                                        | The scheduler retries the same request. Attempts after the first use `--slow_low_memory`.                   | The retry-policy and low-memory flag tests cover this path.                                     |
 | `bb verify` does not report the explicit invalid-proof result.         | `ZkProver` returns a verifier-process error instead of `false`.                    | The scheduler retries locally and does not accuse the proof sender.                                         | Prover and share-verification tests separate process errors from invalid proofs.                |
+| `bb prove` or `bb verify` runs longer than 12 hours.                   | `ZkProver` kills the process and returns a timeout error.                          | The scheduler retries the same request, as for any other prover process failure.                            | A prover test kills a hung stand-in process at its time limit.                                  |
 | A keyshare-owned TrBFV operation returns a local error.                | The worker returns a typed TrBFV error.                                            | The scheduler retries the same live request before any successful response becomes durable.                 | Retry-policy and keyshare-routing tests cover this path.                                        |
 | A Rayon task panics or its result channel closes.                      | `TaskPool` returns a structured pool error.                                        | The scheduler retries ZK and keyshare-owned TrBFV work with the same E3 task group.                         | Task-pool panic and retry-policy tests cover this path.                                         |
 | Resource pressure continues.                                           | The retry delay reaches a five-minute cap.                                         | Retries continue until success or a terminal E3 event cancels the task group and interrupts the delay.      | The capped delay and task-group cancellation tests cover this path.                             |
