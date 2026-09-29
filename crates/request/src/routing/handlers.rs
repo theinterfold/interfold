@@ -7,6 +7,7 @@ use super::*;
 use actix::AsyncContext;
 use anyhow::Context as _;
 use e3_events::{EventContext, InterfoldEventData, RequestRouterCheckpoint, Sequenced, SyncEffect};
+use tracing::info;
 
 impl E3Router {
     fn checkpoint_with_context(&mut self, context: &EventContext<Sequenced>) -> Result<()> {
@@ -92,6 +93,10 @@ impl Handler<InterfoldEvent> for E3Router {
                         // work resumes for its restored context.
                         for e3_id in std::mem::take(&mut self.failed_on_restart) {
                             if self.contexts.contains_key(&e3_id) {
+                                info!(
+                                    %e3_id,
+                                    "Completing a restored E3 whose lifecycle stage is Failed"
+                                );
                                 self.bus
                                     .publish(E3RequestComplete { e3_id }, msg.get_ctx().clone())?;
                             }
