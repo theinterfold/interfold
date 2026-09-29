@@ -44,9 +44,8 @@ use lib::configs::secure::threshold::{
     // user_data_encryption bounds
     USER_DATA_ENCRYPTION_K0IS, USER_DATA_ENCRYPTION_PK_BOUNDS, USER_DATA_ENCRYPTION_E0_BOUND,
     USER_DATA_ENCRYPTION_E1_BOUND, USER_DATA_ENCRYPTION_U_BOUND, USER_DATA_ENCRYPTION_K1_LOW_BOUND,
-    USER_DATA_ENCRYPTION_K1_UP_BOUND, USER_DATA_ENCRYPTION_R1_LOW_BOUNDS,
-    USER_DATA_ENCRYPTION_R1_UP_BOUNDS, USER_DATA_ENCRYPTION_R2_BOUNDS,
-    USER_DATA_ENCRYPTION_P1_BOUNDS, USER_DATA_ENCRYPTION_P2_BOUNDS,
+    USER_DATA_ENCRYPTION_K1_UP_BOUND, USER_DATA_ENCRYPTION_CT0_R_BOUNDS,
+    USER_DATA_ENCRYPTION_CT1_R_BOUNDS,
 };
 
 use lib::math::modulo::U128::ModU128;
@@ -471,9 +470,6 @@ fn verify_user_data_encryption_bounds() {
         "USER_DATA_ENCRYPTION_K1_LOW_BOUND mismatch",
     );
 
-    // ptxt_up_bound for r1 calculations
-    let ptxt_up_bound: u128 = (t - 1) / 2;
-
     for i in 0..THRESHOLD_L {
         let qi: u128 = THRESHOLD_QIS[i] as u128;
         let qi_bound: u128 = (qi - 1) / 2;
@@ -486,51 +482,39 @@ fn verify_user_data_encryption_bounds() {
         );
 
         // r2_bounds[i] = (q_i - 1) / 2
+        // ct1_r_bounds[i] = ((n * u_bound + 2) * qi_bound + e1_bound) / q_i
+        //
+        // `r` is the quotient of the mod-q reduction in `ct = pk * u + e + q * r` (mod X^N + 1).
+        // Bounding `|pk * u| <= n * qi_bound`, `|ct| <= qi_bound` and `|e1| <= e1_bound`, then
+        // dividing by q_i, bounds it. ct1 has no `k0is * k1` term.
+        let expected_ct1_r: u128 = ((n * u_bound + 2) * qi_bound + e1_bound) / qi;
         assert(
-            USER_DATA_ENCRYPTION_R2_BOUNDS[i] as u128 == qi_bound,
-            "USER_DATA_ENCRYPTION_R2_BOUNDS mismatch",
+            USER_DATA_ENCRYPTION_CT1_R_BOUNDS[i] as u128 == expected_ct1_r,
+            "USER_DATA_ENCRYPTION_CT1_R_BOUNDS mismatch",
         );
-
-        // p2_bounds[i] = (q_i - 1) / 2
-        assert(
-            USER_DATA_ENCRYPTION_P2_BOUNDS[i] as u128 == qi_bound,
-            "USER_DATA_ENCRYPTION_P2_BOUNDS mismatch",
-        );
-
-        // p1_bounds[i] = ((n * u_bound + 2) * qi_bound + e1_bound) / q_i
-        let expected_p1: u128 = ((n * u_bound + 2) * qi_bound + e1_bound) / qi;
-        assert(
-            USER_DATA_ENCRYPTION_P1_BOUNDS[i] as u128 == expected_p1,
-            "USER_DATA_ENCRYPTION_P1_BOUNDS mismatch",
-        );
-
-        // k0is[i] verification: k0i * t = -1 mod q_i
         let m = ModU128::new(THRESHOLD_QIS[i]);
         let product = m.mul_mod(USER_DATA_ENCRYPTION_K0IS[i], THRESHOLD_PLAINTEXT_MODULUS);
         let neg_one = THRESHOLD_QIS[i] - 1;
         assert(product == neg_one, "USER_DATA_ENCRYPTION_K0IS mismatch");
 
-        // e0_bound mod qi for r1 calculation
-        // Use Field arithmetic since e0_bound is ~107 bits
-        let e0_bound_i: u128 = (USER_DATA_ENCRYPTION_E0_BOUND as u128) % qi;
-
-        // r1_up_bounds[i] = (ptxt_up * k0i + ((n * u + 2) * qi_bound + e0_i)) / q_i
-        let expected_r1_up: u128 =
-            (ptxt_up_bound * k0i + ((n * u_bound + 2) * qi_bound + e0_bound_i)) / qi;
-        assert(
-            USER_DATA_ENCRYPTION_R1_UP_BOUNDS[i] as u128 == expected_r1_up,
-            "USER_DATA_ENCRYPTION_R1_UP_BOUNDS mismatch",
-        );
-
-        // r1_low_bounds[i] for even t
-        let expected_r1_low: u128 = if t_is_even {
-            ((ptxt_up_bound + 1) * k0i + ((n * u_bound + 2) * qi_bound + e0_bound_i)) / qi
+        // ct0_r_bounds[i] = (k1_max * k0i + (n * u_bound + 2) * qi_bound + e0_bound) / q_i
+        //
+        // Same shape as ct1 plus the `k0is * k1` term. This takes the *lifted* `e0_bound`, not its
+        // residue at q_i: the reduced identity reads the lifted `e0` directly now that the CRT split
+        // and `e0is` are gone. Both k1 bounds are positive magnitudes, so for even `t` the wider one
+        // is the low side.
+        let k1_max: u128 = if expected_k1_up > expected_k1_low {
+            expected_k1_up
         } else {
-            expected_r1_up
+            expected_k1_low
         };
+        let expected_ct0_r: u128 = (
+            k1_max * k0i + (n * u_bound + 2) * qi_bound + (USER_DATA_ENCRYPTION_E0_BOUND as u128)
+        )
+            / qi;
         assert(
-            USER_DATA_ENCRYPTION_R1_LOW_BOUNDS[i] as u128 == expected_r1_low,
-            "USER_DATA_ENCRYPTION_R1_LOW_BOUNDS mismatch",
+            USER_DATA_ENCRYPTION_CT0_R_BOUNDS[i] as u128 == expected_ct0_r,
+            "USER_DATA_ENCRYPTION_CT0_R_BOUNDS mismatch",
         );
     }
 }
