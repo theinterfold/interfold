@@ -384,18 +384,20 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # A stable release moves the `latest` aliases. A pre-release moves the `dev` aliases.
+      # Every release moves the `dev` aliases, so `dev` is the most recently published release. A
+      # stable release also moves the `latest` aliases.
       - name: Promote channel container aliases
         env:
           CHANNEL: ${{ needs.validate-and-prepare.outputs.channel }}
           VERSION: ${{ needs.validate-and-prepare.outputs.version }}
         run: |
-          docker buildx imagetools create \
-            --tag "${CIPHERNODE_IMAGE_NAME}:${CHANNEL}" \
-            "${CIPHERNODE_IMAGE_NAME}:${VERSION}"
-          docker buildx imagetools create \
-            --tag "${SUPPORT_IMAGE_NAME}:${CHANNEL}" \
-            "${SUPPORT_IMAGE_NAME}:${VERSION}"
+          for image in "${CIPHERNODE_IMAGE_NAME}" "${SUPPORT_IMAGE_NAME}"; do
+            aliases=(--tag "${image}:dev")
+            if [ "${CHANNEL}" = latest ]; then
+              aliases+=(--tag "${image}:latest")
+            fi
+            docker buildx imagetools create "${aliases[@]}" "${image}:${VERSION}"
+          done
 
       - name: Update stable tag (for stable releases only)
         if: needs.validate-and-prepare.outputs.is_prerelease == 'false'

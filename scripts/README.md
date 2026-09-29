@@ -94,7 +94,8 @@ The tag workflow then:
 
 - Confirms that the tag belongs to `origin/main`.
 - Requires the binaries and source-matched circuit archive.
-- Publishes versioned containers and npm packages, and moves the `latest` or `dev` aliases.
+- Publishes versioned containers and npm packages. Moves the `dev` container aliases, and for a
+  stable release also the `latest` aliases.
 - Creates the GitHub release only after every required publication succeeds.
 
 Rust workspace crates are not published because they use unreleased git dependencies.

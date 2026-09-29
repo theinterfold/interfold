@@ -353,7 +353,9 @@ commit and starts the release workflow.
 7. Wait for the Release workflow.
 
 For a dev release, use a pre-release version. Every pre-release publishes to the `dev` channel: the
-npm tag `dev` and the `ciphernode:dev` and `e3-support:dev` images. It does not change `latest`.
+npm tag `dev` and the `ciphernode:dev` and `e3-support:dev` images. It does not change `latest`. A
+stable release moves the `dev` images and `interfoldup --version dev` to itself too, so they are
+never older than `latest`. The npm tag `dev` changes only with a pre-release.
 
 ```bash
 pnpm bump:versions 1.0.0-dev.1
@@ -370,10 +372,10 @@ Publication cannot start until these release checks succeed:
 - The `circuit-artifacts` branch contains the complete source-matched release matrix.
 
 After qualification, the workflow publishes versioned container images and npm packages. A stable
-release also builds the DAppNode package. It then promotes the container aliases of its channel
-(`latest` or `dev`) and, for a stable release, the `stable` Git tag. The GitHub release is the final
-step. Rust workspace crates are not published to crates.io because the workspace uses unreleased git
-dependencies.
+release also builds the DAppNode package. It then promotes the `dev` container aliases, the `latest`
+aliases for a stable release, and, for a stable release, the `stable` Git tag. The GitHub release is
+the final step. Rust workspace crates are not published to crates.io because the workspace uses
+unreleased git dependencies.
 
 ## 🏷️ Version Strategy
 
@@ -403,7 +405,7 @@ interfoldup install --version v1.0.0    # Specific stable version
 You can use pre-release versions. `install` without `--version` always selects the latest release:
 
 ```bash
-interfoldup install --version dev           # Most recently published pre-release
+interfoldup install --version dev           # Most recently published release, stable or pre-release
 interfoldup install --version v1.0.0-dev.1  # Specific pre-release
 ```
 

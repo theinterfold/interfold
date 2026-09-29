@@ -39,8 +39,8 @@ enum Commands {
         /// Install to /usr/local/bin instead of ~/.local/bin
         #[arg(long)]
         system: bool,
-        /// Release to install: `latest` (default), `dev` (the most recently published
-        /// pre-release), or a release tag, for example `v0.13.0`
+        /// Release to install: `latest` (default), `dev` (the most recently published release,
+        /// stable or pre-release), or a release tag, for example `v0.13.0`
         #[arg(long, value_name = "TAG")]
         version: Option<String>,
     },
@@ -49,8 +49,8 @@ enum Commands {
         /// Install to /usr/local/bin instead of ~/.local/bin
         #[arg(long)]
         system: bool,
-        /// Release to move to: `latest` (default), `dev` (the most recently published
-        /// pre-release), or a release tag, for example `v0.13.0`
+        /// Release to move to: `latest` (default), `dev` (the most recently published release,
+        /// stable or pre-release), or a release tag, for example `v0.13.0`
         #[arg(long, value_name = "TAG")]
         version: Option<String>,
     },
@@ -65,7 +65,6 @@ enum Commands {
 #[derive(Debug, Deserialize)]
 struct GitHubRelease {
     tag_name: String,
-    prerelease: bool,
     published_at: Option<String>,
     assets: Vec<GitHubAsset>,
 }
@@ -143,7 +142,8 @@ impl Installer {
         self.fetch_release(&url, "latest").await
     }
 
-    /// Get the most recently published pre-release. GitHub lists the newest releases first, so
+    /// Get the most recently published release, stable or pre-release. After a stable release,
+    /// `dev` selects it until the next pre-release. GitHub lists the newest releases first, so
     /// the first page holds it.
     async fn get_dev_release(&self) -> Result<GitHubRelease> {
         let url = format!(
@@ -152,7 +152,7 @@ impl Installer {
         );
         let releases: Vec<GitHubRelease> = self.fetch_release(&url, "list").await?;
 
-        newest_prerelease(releases).ok_or_else(|| anyhow!("No dev release is published"))
+        newest_release(releases).ok_or_else(|| anyhow!("No release is published"))
     }
 
     /// Get a release by its tag. The leading `v` is optional: `0.13.0` and
@@ -431,12 +431,11 @@ fn tags_match(a: &str, b: &str) -> bool {
     a.trim().trim_start_matches('v') == b.trim().trim_start_matches('v')
 }
 
-/// Select the most recently published pre-release. GitHub writes `published_at` as an RFC 3339
-/// UTC time, so the text order is the time order.
-fn newest_prerelease(releases: Vec<GitHubRelease>) -> Option<GitHubRelease> {
+/// Select the most recently published release, stable or pre-release. GitHub writes
+/// `published_at` as an RFC 3339 UTC time, so the text order is the time order.
+fn newest_release(releases: Vec<GitHubRelease>) -> Option<GitHubRelease> {
     releases
         .into_iter()
-        .filter(|release| release.prerelease)
         .max_by(|a, b| a.published_at.cmp(&b.published_at))
 }
 
@@ -464,26 +463,37 @@ async fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{newest_prerelease, tag_candidates, tags_match, GitHubRelease};
+    use super::{newest_release, tag_candidates, tags_match, GitHubRelease};
 
     #[test]
-    fn dev_selects_the_most_recently_published_prerelease() {
-        let release = |tag: &str, prerelease: bool, published_at: &str| GitHubRelease {
+    fn dev_selects_the_most_recently_published_release() {
+        let release = |tag: &str, published_at: &str| GitHubRelease {
             tag_name: tag.to_string(),
-            prerelease,
             published_at: Some(published_at.to_string()),
             assets: Vec::new(),
         };
-        let releases = vec![
-            release("v0.20.0", false, "2026-10-09T00:00:00Z"),
-            release("v0.19.0-dev.2", true, "2026-10-01T00:00:00Z"),
-            release("v0.18.1-dev.1", true, "2026-10-03T00:00:00Z"),
-        ];
+        let newest = |releases: Vec<GitHubRelease>| newest_release(releases).map(|r| r.tag_name);
 
-        let newest = newest_prerelease(releases).map(|release| release.tag_name);
-        assert_eq!(newest.as_deref(), Some("v0.18.1-dev.1"));
-        let stable_only = vec![release("v0.18.0", false, "2026-09-24T16:37:54Z")];
-        assert!(newest_prerelease(stable_only).is_none());
+        // Publication time decides, not the version.
+        let dev_releases = vec![
+            release("v0.19.0-dev.2", "2026-10-01T00:00:00Z"),
+            release("v0.18.1-dev.1", "2026-10-03T00:00:00Z"),
+        ];
+        assert_eq!(newest(dev_releases).as_deref(), Some("v0.18.1-dev.1"));
+
+        // A stable release is the dev release until the next pre-release.
+        let after_stable = vec![
+            release("v0.19.0-dev.2", "2026-10-01T00:00:00Z"),
+            release("v0.19.0", "2026-10-09T00:00:00Z"),
+        ];
+        assert_eq!(newest(after_stable).as_deref(), Some("v0.19.0"));
+        let after_next_dev = vec![
+            release("v0.19.0", "2026-10-09T00:00:00Z"),
+            release("v0.20.0-dev.1", "2026-10-12T00:00:00Z"),
+        ];
+        assert_eq!(newest(after_next_dev).as_deref(), Some("v0.20.0-dev.1"));
+
+        assert!(newest(Vec::new()).is_none());
     }
 
     #[test]
