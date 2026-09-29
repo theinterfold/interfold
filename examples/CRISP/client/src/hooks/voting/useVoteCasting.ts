@@ -505,6 +505,9 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
           if (!response.encoded_proof) {
             throw new Error('Availability job is missing the input commitment payload')
           }
+          // The page closed while the program address loaded. Keep the job pointer so that the next
+          // action resumes it, and open no wallet prompt from a closed page.
+          if (unmounted.current) return false
           txHash = await submitInputCommitmentDirectly(
             walletClient,
             publicClient,
@@ -666,8 +669,11 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
           clearAvailabilityJob(pendingJobKey)
         }
       } catch (error) {
-        setVotingStep('error')
         console.error('Vote processing failed:', error)
+        // A page that closed during the action shows no toast on the page that is open now. A kept
+        // job pointer lets the next action resume the job and report its state.
+        if (unmounted.current) return
+        setVotingStep('error')
         showToast({
           type: 'danger',
           message: `Vote failed: ${error instanceof Error ? error.message : String(error)}`,

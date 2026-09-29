@@ -2075,8 +2075,15 @@ impl AvailabilityService {
             .private_key
             .parse()
             .map_err(|error| anyhow::anyhow!("invalid relay signer key: {error}"))?;
-        let provider = ProviderBuilder::new().connect(&self.http_rpc_url).await?;
-        if provider.get_balance(signer.address()).await? < floor {
+        // Bound the read like the other raw provider reads, so a stalled RPC cannot hold a job
+        // slot until the step timeout.
+        let balance = tokio::time::timeout(Duration::from_secs(15), async {
+            let provider = ProviderBuilder::new().connect(&self.http_rpc_url).await?;
+            provider.get_balance(signer.address()).await
+        })
+        .await
+        .map_err(|_| anyhow::anyhow!("timed out while reading the relay balance"))??;
+        if balance < floor {
             warn!("The relay key is below RELAY_MIN_BALANCE_ETH; voters' wallets send new commitments");
             return Ok(false);
         }
