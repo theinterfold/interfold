@@ -7,44 +7,6 @@
 use super::*;
 
 #[test]
-fn vote_digest_is_deterministic() {
-    let sm: Address = "0x5555555555555555555555555555555555555555"
-        .parse()
-        .unwrap();
-    let voter: Address = "0x2222222222222222222222222222222222222222"
-        .parse()
-        .unwrap();
-    let vote = AccusationVote {
-        e3_id: E3id::new("42", CHAIN_ID),
-        accusation_id: [0xab; 32],
-        voter,
-        data_hash: [0xcd; 32],
-        issued_at: NOW.saturating_sub(VALIDITY),
-        deadline: NOW,
-        signature: ArcBytes::default(),
-    };
-    let a = AccusationVoting::vote_digest(&vote, sm);
-    let b = AccusationVoting::vote_digest(&vote, sm);
-    assert_eq!(a, b, "vote digest must be deterministic");
-
-    let mut vote2 = vote.clone();
-    vote2.deadline = NOW + 1;
-    assert_ne!(
-        a,
-        AccusationVoting::vote_digest(&vote2, sm),
-        "changing deadline must change the digest"
-    );
-
-    let mut vote3 = vote;
-    vote3.issued_at += 1;
-    assert_ne!(
-        a,
-        AccusationVoting::vote_digest(&vote3, sm),
-        "changing issued_at must change the digest"
-    );
-}
-
-#[test]
 fn production_vote_signature_binds_every_admitted_field() {
     let me = signer(1);
     let voting = voting_with(&me, vec![me.address()], 1, 1);

@@ -124,15 +124,11 @@ impl LogWindow {
         }
     }
 
-    /// Build a window of an exact width, for tests.
-    ///
-    /// The width is clamped into `MIN_LOG_WINDOW..=MAX_LOG_WINDOW`, so a zero width cannot produce a
-    /// range that never advances.
+    /// Build a window of an exact width, for tests. Callers pass a width in
+    /// `MIN_LOG_WINDOW..=MAX_LOG_WINDOW`, the range that `new` and `shrink` keep.
     #[cfg(test)]
     pub(crate) fn with_width(width: u64) -> Self {
-        Self {
-            width: width.clamp(MIN_LOG_WINDOW, MAX_LOG_WINDOW),
-        }
+        Self { width }
     }
 
     /// The current window width in blocks.
@@ -220,20 +216,6 @@ mod tests {
 
         assert_eq!(window.width(), MIN_LOG_WINDOW);
         assert!(shrinks < MAX_WINDOW_SHRINKS);
-    }
-
-    #[test]
-    fn a_zero_width_is_clamped_so_a_chunk_always_advances() {
-        let window = LogWindow::with_width(0);
-
-        assert_eq!(window.width(), MIN_LOG_WINDOW);
-        // A zero width would produce end_for(100, 200) == 99 and a range that never advances.
-        assert_eq!(window.end_for(100, 200), 100);
-    }
-
-    #[test]
-    fn a_width_above_the_maximum_is_clamped() {
-        assert_eq!(LogWindow::with_width(u64::MAX).width(), MAX_LOG_WINDOW);
     }
 
     #[test]

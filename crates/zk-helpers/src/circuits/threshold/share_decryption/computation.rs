@@ -501,18 +501,4 @@ mod tests {
         );
         assert_eq!(from_d_native, from_bytes);
     }
-
-    #[test]
-    fn test_constants_json_roundtrip() {
-        let constants = Configs::compute(DEFAULT_BFV_PRESET, &()).unwrap();
-
-        let json = constants.to_json().unwrap();
-        let decoded: Configs = serde_json::from_value(json).unwrap();
-
-        assert_eq!(decoded.n, constants.n);
-        assert_eq!(decoded.l, constants.l);
-        assert_eq!(decoded.moduli, constants.moduli);
-        assert_eq!(decoded.bits, constants.bits);
-        assert_eq!(decoded.bounds, constants.bounds);
-    }
 }

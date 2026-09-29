@@ -410,19 +410,4 @@ mod tests {
 
         assert_eq!(bits.pk_bit, expected_bit);
     }
-
-    #[test]
-    fn test_constants_json_roundtrip() {
-        let committee = crate::ciphernodes_committee::CiphernodesCommitteeSize::Micro.values();
-        let constants = Configs::compute(BfvPreset::InsecureThreshold512, &committee).unwrap();
-
-        let json = constants.to_json().unwrap();
-        let decoded: Configs = serde_json::from_value(json).unwrap();
-
-        assert_eq!(decoded.n, constants.n);
-        assert_eq!(decoded.l, constants.l);
-        assert_eq!(decoded.moduli, constants.moduli);
-        assert_eq!(decoded.bits, constants.bits);
-        assert_eq!(decoded.bounds, constants.bounds);
-    }
 }

@@ -50,11 +50,6 @@ impl HetrogenousMap {
         self.storage.get(key.name)?.downcast_ref()
     }
 
-    /// Search for data that holds data under the given key name
-    pub fn contains(&self, name: &'static str) -> bool {
-        self.storage.contains_key(name)
-    }
-
     /// Get a list of all key names
     pub fn keys(&self) -> Vec<String> {
         self.storage.keys().map(|&k| k.to_string()).collect()
@@ -95,15 +90,6 @@ mod tests {
     fn test_get_nonexistent_key() {
         let map = HetrogenousMap::new();
         assert_eq!(map.get(STRING_KEY), None);
-    }
-
-    #[test]
-    fn test_contains() {
-        let mut map = HetrogenousMap::new();
-        map.insert(STRING_KEY, "test".to_string());
-
-        assert!(map.contains("string_value"));
-        assert!(!map.contains("nonexistent"));
     }
 
     #[test]

@@ -12,7 +12,6 @@ mod public_key_writer;
 pub mod usecase_helpers;
 mod utils;
 use actix::prelude::*;
-use alloy::primitives::Address;
 use anyhow::Result;
 use e3_ciphernode_builder::{CiphernodeHandle, EventSystem};
 use e3_events::{
@@ -24,14 +23,12 @@ use e3_fhe_params::BfvParamSet;
 use e3_fhe_params::DEFAULT_BFV_PRESET;
 use e3_fhe_params::{build_bfv_params_arc, create_deterministic_crp_from_default_seed};
 use e3_utils::SharedRng;
-use fhe::bfv::{BfvParameters, Ciphertext, Encoding, Plaintext, PublicKey};
+use fhe::bfv::BfvParameters;
 use fhe::mbfv::CommonRandomPoly;
 use fhe_traits::Serialize;
-use fhe_traits::{FheEncoder, FheEncrypter};
 use libp2p_mock::Libp2pMock;
 pub use plaintext_writer::*;
 pub use public_key_writer::*;
-use rand::Rng;
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 use std::{collections::HashMap, sync::Arc, time::Duration};
@@ -112,10 +109,6 @@ pub fn create_seed_from_u64(value: u64) -> Seed {
     Seed(ChaCha20Rng::seed_from_u64(value).get_seed())
 }
 
-pub fn create_rng_from_seed(seed: Seed) -> SharedRng {
-    Arc::new(std::sync::Mutex::new(ChaCha20Rng::from_seed(seed.into())))
-}
-
 pub fn create_crp_bytes_params(
     moduli: &[u64],
     degree: usize,
@@ -179,14 +172,6 @@ pub(crate) async fn simulate_libp2p_net(nodes: &[CiphernodeHandle]) -> Libp2pMoc
     mock
 }
 
-/// Creates test eth addresses
-/// NOTE: THESE ARE NOT ACTUAL ADDRESSES JUST RANDOM DATA
-pub fn create_random_eth_addrs(how_many: u32) -> Vec<String> {
-    (0..how_many)
-        .map(|_| Address::from_slice(&rand::rng().random::<[u8; 20]>()).to_string())
-        .collect()
-}
-
 /// Test helper to add addresses to the committee by creating events on the event bus
 #[derive(Clone, Debug)]
 pub struct AddToCommittee {
@@ -217,26 +202,4 @@ impl AddToCommittee {
 
         Ok(evt.into())
     }
-}
-
-pub fn encrypt_ciphertext(
-    params: &Arc<BfvParameters>,
-    pubkey: PublicKey,
-    raw_plaintext: Vec<Vec<u64>>,
-) -> Result<(Vec<Ciphertext>, Vec<Plaintext>)> {
-    let mut rng = ChaCha20Rng::seed_from_u64(42);
-    let plaintext: Vec<_> = raw_plaintext
-        .into_iter()
-        .map(|raw| Ok(Plaintext::try_encode(&raw, Encoding::poly(), params)?))
-        .collect::<Result<_>>()?;
-
-    let ciphertext = plaintext
-        .iter()
-        .map(|pt| {
-            pubkey
-                .try_encrypt(pt, &mut rng)
-                .map_err(|e| anyhow::anyhow!("{e}"))
-        })
-        .collect::<Result<Vec<Ciphertext>>>()?;
-    Ok((ciphertext, plaintext))
 }

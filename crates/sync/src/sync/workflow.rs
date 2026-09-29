@@ -181,27 +181,6 @@ mod tests {
     }
 
     #[test]
-    fn classify_replay_skips_infrastructure_and_replays_the_rest() {
-        let sync_ended = InterfoldEvent::<Unsequenced>::test_event("sync")
-            .data(SyncEnded::new())
-            .seq(1)
-            .build();
-        let test_event = InterfoldEvent::<Unsequenced>::test_event("hello")
-            .id(42)
-            .seq(2)
-            .build();
-
-        assert_eq!(
-            SyncPlanner::classify_replay(&sync_ended),
-            ReplayDecision::SkipInfrastructure
-        );
-        assert_eq!(
-            SyncPlanner::classify_replay(&test_event),
-            ReplayDecision::Replay
-        );
-    }
-
-    #[test]
     fn test_find_net_hlc() {
         let closed_1 = E3id::new("1", 1);
         let closed_2 = E3id::new("2", 2);

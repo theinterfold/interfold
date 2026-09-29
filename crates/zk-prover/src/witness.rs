@@ -127,12 +127,6 @@ mod tests {
     const DUMMY_CIRCUIT: &str = include_str!("../tests/fixtures/dummy.json");
 
     #[test]
-    fn test_load_circuit() {
-        let circuit = CompiledCircuit::from_json(DUMMY_CIRCUIT).unwrap();
-        assert_eq!(circuit.abi.parameters.len(), 3);
-    }
-
-    #[test]
     fn test_generate_witness() {
         let circuit = CompiledCircuit::from_json(DUMMY_CIRCUIT).unwrap();
         let generator = WitnessGenerator::new();

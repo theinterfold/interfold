@@ -205,30 +205,6 @@ where
     requester.request(request).await
 }
 
-#[cfg(test)]
-async fn fetch_all_batched_events<E>(
-    requester: DirectRequester<WithoutPeer>,
-    peer: PeerTarget,
-    aggregate_id: AggregateId,
-    since: u128,
-    batch_size: usize,
-) -> Result<Vec<E>>
-where
-    E: Debug + Serialize + TryFrom<Vec<u8>> + Send + Sync + 'static,
-    EventBatch<E>: TryFrom<Vec<u8>>,
-{
-    let mut budget = SyncFetchBudget::production();
-    fetch_all_batched_events_with_budget(
-        requester,
-        peer,
-        aggregate_id,
-        since,
-        batch_size,
-        &mut budget,
-    )
-    .await
-}
-
 pub(crate) async fn fetch_all_batched_events_with_budget<E>(
     requester: DirectRequester<WithoutPeer>,
     peer: PeerTarget,

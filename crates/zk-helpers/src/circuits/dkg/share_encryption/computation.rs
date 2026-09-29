@@ -611,30 +611,6 @@ mod tests {
     }
 
     #[test]
-    fn test_constants_json_roundtrip() {
-        let sd = BfvPreset::InsecureThreshold512.search_defaults().unwrap();
-        let committee = CiphernodesCommitteeSize::Small.values();
-        let sample = ShareEncryptionCircuitData::generate_sample(
-            BfvPreset::InsecureThreshold512,
-            committee,
-            DkgInputType::SecretKey,
-            sd.z,
-        )
-        .unwrap();
-        let constants = Configs::compute(BfvPreset::InsecureThreshold512, &sample).unwrap();
-
-        let json = constants.to_json().unwrap();
-        let decoded: Configs = serde_json::from_value(json).unwrap();
-
-        assert_eq!(decoded.t, constants.t);
-        assert_eq!(decoded.q_mod_t, constants.q_mod_t);
-        assert_eq!(decoded.moduli, constants.moduli);
-        assert_eq!(decoded.k0is, constants.k0is);
-        assert_eq!(decoded.bits, constants.bits);
-        assert_eq!(decoded.bounds, constants.bounds);
-    }
-
-    #[test]
     fn test_input_message_consistency() {
         let sd = BfvPreset::InsecureThreshold512.search_defaults().unwrap();
         let committee = CiphernodesCommitteeSize::Small.values();

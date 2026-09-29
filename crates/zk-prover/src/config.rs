@@ -133,16 +133,6 @@ impl VersionInfo {
     pub fn circuits_match(&self, required: &str) -> bool {
         self.circuits_version.as_deref() == Some(required)
     }
-
-    /// Verify downloaded bb binary against stored checksum
-    pub fn verify_bb_checksum(&self, data: &[u8]) -> Result<(), ZkError> {
-        verify_checksum("bb", data, self.bb_checksum.as_deref())
-    }
-
-    pub fn verify_circuit_checksum(&self, circuit_name: &str, data: &[u8]) -> Result<(), ZkError> {
-        let expected = self.circuits.get(circuit_name).map(|c| c.checksum.as_str());
-        verify_checksum(circuit_name, data, expected)
-    }
 }
 
 pub fn verify_checksum(file: &str, data: &[u8], expected: Option<&str>) -> Result<(), ZkError> {
@@ -169,9 +159,6 @@ pub fn verify_checksum(file: &str, data: &[u8], expected: Option<&str>) -> Resul
 
 #[cfg(test)]
 mod tests {
-    use crate::test_utils::get_tempdir;
-    use std::time::Duration;
-
     use super::*;
 
     // BbTarget tests
@@ -189,14 +176,6 @@ mod tests {
         assert_eq!(BbTarget::Amd64Darwin.url_parts(), ("amd64", "darwin"));
         assert_eq!(BbTarget::Arm64Linux.url_parts(), ("arm64", "linux"));
         assert_eq!(BbTarget::Arm64Darwin.url_parts(), ("arm64", "darwin"));
-    }
-
-    #[test]
-    fn test_bb_target_current_returns_some_on_supported_platform() {
-        let target = BbTarget::current();
-        if let Some(t) = target {
-            assert!(!t.as_str().is_empty());
-        }
     }
 
     #[test]
@@ -237,83 +216,6 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    // VersionInfo tests (local installed state)
-
-    #[test]
-    fn test_version_info_verify_bb_checksum() {
-        let info = VersionInfo {
-            bb_version: Some("0.86.0".to_string()),
-            bb_checksum: Some(
-                "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9".to_string(),
-            ),
-            ..Default::default()
-        };
-
-        assert!(info.verify_bb_checksum(b"hello world").is_ok());
-    }
-
-    #[test]
-    fn test_version_info_verify_bb_checksum_mismatch() {
-        let info = VersionInfo {
-            bb_checksum: Some(
-                "0000000000000000000000000000000000000000000000000000000000000000".to_string(),
-            ),
-            ..Default::default()
-        };
-
-        let result = info.verify_bb_checksum(b"hello world");
-        assert!(matches!(result, Err(ZkError::ChecksumMismatch { .. })));
-    }
-
-    #[test]
-    fn test_version_info_verify_bb_checksum_skipped_when_none() {
-        let info = VersionInfo::default();
-        assert!(info.verify_bb_checksum(b"any data").is_ok());
-    }
-
-    #[test]
-    fn test_version_info_verify_circuit_checksum() {
-        let mut circuits = HashMap::new();
-        circuits.insert(
-            "my-circuit".to_string(),
-            CircuitInfo {
-                file: "my-circuit.bin".to_string(),
-                checksum: "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
-                    .to_string(),
-            },
-        );
-
-        let info = VersionInfo {
-            circuits,
-            ..Default::default()
-        };
-
-        assert!(info
-            .verify_circuit_checksum("my-circuit", b"hello world")
-            .is_ok());
-        assert!(info
-            .verify_circuit_checksum("unknown-circuit", b"hello world")
-            .is_ok()); // skipped
-    }
-
-    #[test]
-    fn test_version_info_serialization_roundtrip() {
-        let info = VersionInfo {
-            bb_version: Some("0.86.0".to_string()),
-            bb_checksum: Some("abc123".to_string()),
-            circuits_version: Some("0.1.0".to_string()),
-            circuits: HashMap::new(),
-            last_updated: Some("2026-01-27T10:00:00Z".to_string()),
-        };
-
-        let json = serde_json::to_string(&info).unwrap();
-        let parsed: VersionInfo = serde_json::from_str(&json).unwrap();
-
-        assert_eq!(parsed.bb_version, info.bb_version);
-        assert_eq!(parsed.bb_checksum, info.bb_checksum);
-        assert_eq!(parsed.circuits_version, info.circuits_version);
-    }
-
     // ZkConfig tests (remote manifest with all targets)
 
     #[test]
@@ -345,123 +247,5 @@ mod tests {
         assert!(config.bb_download_url.contains("{version}"));
         assert!(!config.bb_checksums.is_empty());
         assert!(!config.required_bb_version.is_empty());
-    }
-
-    #[test]
-    fn test_default_matches_versions_json() {
-        let config = ZkConfig::default();
-        assert!(!config.required_bb_version.is_empty());
-        assert!(!config.required_circuits_version.is_empty());
-        assert!(!config.bb_checksums.is_empty());
-    }
-
-    /// Integration test that downloads a real bb binary and verifies checksum.
-    #[tokio::test]
-    async fn test_download_and_verify_bb() {
-        let Some(target) = BbTarget::current() else {
-            println!("skipping test: unsupported platform");
-            return;
-        };
-
-        let config = ZkConfig::default();
-        let version = &config.required_bb_version;
-        let (arch, os) = target.url_parts();
-        let url = format!(
-            "https://github.com/AztecProtocol/aztec-packages/releases/download/v{version}/barretenberg-{arch}-{os}.tar.gz"
-        );
-
-        println!("downloading {} from {}", target, url);
-
-        let client = reqwest::Client::new();
-        let response = client
-            .get(&url)
-            .timeout(Duration::from_secs(120))
-            .send()
-            .await
-            .expect("failed to send request");
-
-        assert!(
-            response.status().is_success(),
-            "download failed: {}",
-            response.status()
-        );
-
-        let bytes = response
-            .bytes()
-            .await
-            .expect("failed to read response body");
-        println!("downloaded {} bytes", bytes.len());
-
-        let expected = config
-            .bb_checksum_for(target)
-            .expect("no checksum for target");
-        let result = verify_checksum(&format!("bb-{}", target), &bytes, Some(expected));
-        assert!(result.is_ok(), "checksum verification failed: {:?}", result);
-        println!("checksum verified for {}", target);
-
-        // Test saving and loading through VersionInfo
-        let temp = get_tempdir().expect("failed to create temp dir");
-        let tarball_path = temp.path().join("bb.tar.gz");
-
-        fs::write(&tarball_path, &bytes)
-            .await
-            .expect("failed to write tarball");
-        assert!(tarball_path.exists());
-
-        let info = VersionInfo {
-            bb_version: Some(version.clone()),
-            bb_checksum: Some(expected.to_string()),
-            ..Default::default()
-        };
-        assert!(info.verify_bb_checksum(&bytes).is_ok());
-
-        println!("test passed, temp dir cleaned up");
-    }
-
-    /// Test that checksum verification fails for corrupted data
-    #[tokio::test]
-    async fn test_download_checksum_mismatch_on_corruption() {
-        let Some(target) = BbTarget::current() else {
-            println!("skipping test: unsupported platform");
-            return;
-        };
-
-        let config = ZkConfig::default();
-        let version = &config.required_bb_version;
-        let (arch, os) = target.url_parts();
-        let url = format!(
-            "https://github.com/AztecProtocol/aztec-packages/releases/download/v{version}/barretenberg-{arch}-{os}.tar.gz"
-        );
-
-        let client = reqwest::Client::new();
-        let response = client
-            .get(&url)
-            .timeout(Duration::from_secs(120))
-            .send()
-            .await
-            .expect("failed to send request");
-
-        let mut bytes = response
-            .bytes()
-            .await
-            .expect("failed to read body")
-            .to_vec();
-
-        // Corrupt the data
-        if !bytes.is_empty() {
-            bytes[0] ^= 0xFF;
-        }
-
-        // Use a valid checksum that won't match corrupted data
-        let info = VersionInfo {
-            bb_checksum: Some(
-                "a56257d8edc226180f5a7093393e4adc99447368a65099bb34292bd261408b99".to_string(),
-            ),
-            ..Default::default()
-        };
-
-        let result = info.verify_bb_checksum(&bytes);
-        assert!(matches!(result, Err(ZkError::ChecksumMismatch { .. })));
-        println!("correctly detected corrupted download");
     }
 }

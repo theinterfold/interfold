@@ -262,7 +262,7 @@ fn generic_event_with_e3_id_has_no_completion() {
     );
 }
 
-// --- timeout-triggered E3Failed tests ---
+// --- E3Failed tests ---
 
 fn e3_failed(id: E3id, reason: FailureReason) -> InterfoldEvent {
     from_data(E3Failed {
@@ -273,85 +273,26 @@ fn e3_failed(id: E3id, reason: FailureReason) -> InterfoldEvent {
 }
 
 #[test]
-fn e3_failed_dkg_timeout_publishes_complete() {
-    let id = e3id();
-    let msg = e3_failed(id.clone(), FailureReason::DKGTimeout);
-    assert_eq!(
-        RequestRouter::route(&msg, &HashSet::new()),
-        RoutingDecision::Process {
-            e3_id: id,
-            post_forward: PostForward::PublishComplete,
-        }
-    );
-}
-
-#[test]
-fn e3_failed_committee_formation_timeout_publishes_complete() {
-    let id = e3id();
-    let msg = e3_failed(id.clone(), FailureReason::CommitteeFormationTimeout);
-    assert_eq!(
-        RequestRouter::route(&msg, &HashSet::new()),
-        RoutingDecision::Process {
-            e3_id: id,
-            post_forward: PostForward::PublishComplete,
-        }
-    );
-}
-
-#[test]
-fn e3_failed_compute_timeout_publishes_complete() {
-    let id = e3id();
-    let msg = e3_failed(id.clone(), FailureReason::ComputeTimeout);
-    assert_eq!(
-        RequestRouter::route(&msg, &HashSet::new()),
-        RoutingDecision::Process {
-            e3_id: id,
-            post_forward: PostForward::PublishComplete,
-        }
-    );
-}
-
-#[test]
-fn e3_failed_decryption_timeout_publishes_complete() {
-    let id = e3id();
-    let msg = e3_failed(id.clone(), FailureReason::DecryptionTimeout);
-    assert_eq!(
-        RequestRouter::route(&msg, &HashSet::new()),
-        RoutingDecision::Process {
-            e3_id: id,
-            post_forward: PostForward::PublishComplete,
-        }
-    );
-}
-
-#[test]
-fn requester_cancellation_publishes_complete() {
-    let id = e3id();
-    let msg = e3_failed(id.clone(), FailureReason::RequesterCancelled);
-    assert_eq!(
-        RequestRouter::route(&msg, &HashSet::new()),
-        RoutingDecision::Process {
-            e3_id: id,
-            post_forward: PostForward::PublishComplete,
-        }
-    );
-}
-
-#[test]
-fn requester_and_provider_failures_publish_complete() {
+fn failures_that_end_without_slashing_publish_complete() {
     for reason in [
+        FailureReason::DKGTimeout,
+        FailureReason::CommitteeFormationTimeout,
+        FailureReason::ComputeTimeout,
+        FailureReason::DecryptionTimeout,
+        FailureReason::RequesterCancelled,
         FailureReason::NoInputsReceived,
         FailureReason::ComputeProviderExpired,
         FailureReason::ComputeProviderFailed,
     ] {
         let id = e3id();
-        let msg = e3_failed(id.clone(), reason);
+        let msg = e3_failed(id.clone(), reason.clone());
         assert_eq!(
             RequestRouter::route(&msg, &HashSet::new()),
             RoutingDecision::Process {
                 e3_id: id,
                 post_forward: PostForward::PublishComplete,
-            }
+            },
+            "{reason:?}"
         );
     }
 }

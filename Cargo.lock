@@ -4160,11 +4160,6 @@ dependencies = [
 [[package]]
 name = "e3-hamt"
 version = "0.18.0"
-dependencies = [
- "anyhow",
- "bincode",
- "serde",
-]
 
 [[package]]
 name = "e3-indexer"
@@ -4476,7 +4471,6 @@ name = "e3-test-helpers"
 version = "0.18.0"
 dependencies = [
  "actix",
- "alloy",
  "anyhow",
  "bincode",
  "clap",

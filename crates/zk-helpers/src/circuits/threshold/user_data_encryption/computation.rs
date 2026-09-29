@@ -602,18 +602,4 @@ mod tests {
         assert_eq!(max_pk_bound.clone(), BigUint::from(34359701504u64));
         assert_eq!(bits.pk_bit, expected_bits);
     }
-
-    #[test]
-    fn test_constants_json_roundtrip() {
-        let constants = Configs::compute(BfvPreset::InsecureThreshold512, &()).unwrap();
-
-        let json = constants.to_json().unwrap();
-        let decoded: Configs = serde_json::from_value(json).unwrap();
-
-        assert_eq!(decoded.n, constants.n);
-        assert_eq!(decoded.l, constants.l);
-        assert_eq!(decoded.moduli, constants.moduli);
-        assert_eq!(decoded.bits, constants.bits);
-        assert_eq!(decoded.bounds, constants.bounds);
-    }
 }

@@ -10,12 +10,15 @@ use std::{fmt, marker::PhantomData, time::Duration};
 use anyhow::{anyhow, Result};
 use e3_events::CorrelationId;
 use e3_utils::{retry_with_backoff, to_retry};
-use tokio::sync::{broadcast, mpsc};
+#[cfg(test)]
+use tokio::sync::broadcast;
+use tokio::sync::mpsc;
 
 use crate::events::{
-    call_and_await_response, NetCommand, NetEvent, OutgoingRequest, OutgoingRequestFailed,
-    OutgoingRequestSucceeded, PeerTarget, ProtocolResponse,
+    call_and_await_response, NetCommand, NetEvent, OutgoingRequest, PeerTarget, ProtocolResponse,
 };
+#[cfg(test)]
+use crate::events::{OutgoingRequestFailed, OutgoingRequestSucceeded};
 
 pub trait DirectRequesterOutput: TryFrom<Vec<u8>> + Send + Sync + 'static {}
 
@@ -237,53 +240,43 @@ async fn do_request(
     Ok(response)
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 struct Expectation {
     expected_request: Vec<u8>,
-    response: Result<Vec<u8>, String>,
+    response: Vec<u8>,
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 pub(crate) struct DirectRequesterTester {
     net_cmds_rx: mpsc::Receiver<NetCommand>,
     net_events_tx: broadcast::Sender<NetEvent>,
     respond_with: Option<Vec<u8>>,
-    responses: Vec<Vec<u8>>,
     expectations: Vec<Expectation>,
     error_on: Option<String>,
     num_requests: Option<usize>,
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 pub(crate) struct ExpectationBuilder {
     tester: DirectRequesterTester,
     expected_request: Vec<u8>,
 }
 
+#[cfg(test)]
 impl ExpectationBuilder {
-    #[allow(dead_code)]
     pub fn respond_with<T: TryInto<Vec<u8>>>(mut self, payload: T) -> DirectRequesterTester
     where
         <T as TryInto<Vec<u8>>>::Error: std::fmt::Debug,
     {
         self.tester.expectations.push(Expectation {
             expected_request: self.expected_request,
-            response: Ok(payload.try_into().unwrap()),
-        });
-        self.tester
-    }
-
-    #[allow(dead_code)]
-    pub fn error_with(mut self, error: impl Into<String>) -> DirectRequesterTester {
-        self.tester.expectations.push(Expectation {
-            expected_request: self.expected_request,
-            response: Err(error.into()),
+            response: payload.try_into().unwrap(),
         });
         self.tester
     }
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 impl DirectRequesterTester {
     pub fn new(
         net_cmds_rx: mpsc::Receiver<NetCommand>,
@@ -293,7 +286,6 @@ impl DirectRequesterTester {
             net_cmds_rx,
             net_events_tx,
             respond_with: None,
-            responses: Vec::new(),
             expectations: Vec::new(),
             error_on: None,
             num_requests: None,
@@ -318,20 +310,6 @@ impl DirectRequesterTester {
         self
     }
 
-    pub fn respond_with_each<T: TryInto<Vec<u8>>>(
-        mut self,
-        payloads: impl IntoIterator<Item = T>,
-    ) -> Self
-    where
-        <T as TryInto<Vec<u8>>>::Error: std::fmt::Debug,
-    {
-        self.responses = payloads
-            .into_iter()
-            .map(|p| p.try_into().unwrap())
-            .collect();
-        self
-    }
-
     pub fn error_with(mut self, error: impl Into<String>) -> Self {
         self.error_on = Some(error.into());
         self
@@ -352,7 +330,6 @@ impl DirectRequesterTester {
         });
         // Reverse expectations so we can pop from the back in order.
         self.expectations.reverse();
-        self.responses.reverse();
 
         tokio::spawn(async move {
             let mut remaining = num_requests;
@@ -366,26 +343,11 @@ impl DirectRequesterTester {
                                 "DirectRequesterTester: expected request {:?} but got {:?}",
                                 expectation.expected_request, req.payload,
                             );
-                            match expectation.response {
-                                Ok(payload) => {
-                                    NetEvent::OutgoingRequestSucceeded(OutgoingRequestSucceeded {
-                                        payload: ProtocolResponse::Ok(payload),
-                                        correlation_id: req.correlation_id,
-                                    })
-                                }
-                                Err(error) => {
-                                    NetEvent::OutgoingRequestFailed(OutgoingRequestFailed {
-                                        error,
-                                        correlation_id: req.correlation_id,
-                                    })
-                                }
-                            }
-                        } else if let Some(payload) = self.respond_with.clone() {
                             NetEvent::OutgoingRequestSucceeded(OutgoingRequestSucceeded {
-                                payload: ProtocolResponse::Ok(payload),
+                                payload: ProtocolResponse::Ok(expectation.response),
                                 correlation_id: req.correlation_id,
                             })
-                        } else if let Some(payload) = self.responses.pop() {
+                        } else if let Some(payload) = self.respond_with.clone() {
                             NetEvent::OutgoingRequestSucceeded(OutgoingRequestSucceeded {
                                 payload: ProtocolResponse::Ok(payload),
                                 correlation_id: req.correlation_id,
@@ -436,28 +398,6 @@ mod tests {
         handle.await.unwrap();
 
         assert_eq!(response, b"world");
-    }
-
-    #[tokio::test]
-    async fn test_request_with_peer_target() {
-        let (net_cmds_tx, net_cmds_rx) = mpsc::channel::<NetCommand>(16);
-        let (net_events_tx, _net_events_rx) = broadcast::channel::<NetEvent>(16);
-        let net_events = NetEventSubscriber::from(&net_events_tx);
-
-        let requester = DirectRequester::builder(net_cmds_tx, net_events).build();
-
-        let handle = DirectRequesterTester::new(net_cmds_rx, net_events_tx)
-            .respond_with(b"pong".to_vec())
-            .num_requests(1)
-            .spawn();
-
-        let _: Vec<u8> = requester
-            .to(PeerTarget::Random)
-            .request(b"ping".to_vec())
-            .await
-            .unwrap();
-
-        handle.await.unwrap();
     }
 
     #[tokio::test]
@@ -541,35 +481,5 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("connection refused"));
-    }
-
-    #[tokio::test]
-    async fn test_respond_with_each() {
-        let (net_cmds_tx, net_cmds_rx) = mpsc::channel::<NetCommand>(16);
-        let (net_events_tx, _net_events_rx) = broadcast::channel::<NetEvent>(16);
-        let net_events = NetEventSubscriber::from(&net_events_tx);
-
-        let requester = DirectRequester::builder(net_cmds_tx, net_events).build();
-
-        let handle = DirectRequesterTester::new(net_cmds_rx, net_events_tx)
-            .respond_with_each(vec![
-                b"first_response".to_vec(),
-                b"second_response".to_vec(),
-                b"third_response".to_vec(),
-            ])
-            .num_requests(3)
-            .spawn();
-
-        let peer = requester.to(PeerTarget::Random);
-
-        let r1: Vec<u8> = peer.request(b"req1".to_vec()).await.unwrap();
-        let r2: Vec<u8> = peer.request(b"req2".to_vec()).await.unwrap();
-        let r3: Vec<u8> = peer.request(b"req3".to_vec()).await.unwrap();
-
-        handle.await.unwrap();
-
-        assert_eq!(r1, b"first_response");
-        assert_eq!(r2, b"second_response");
-        assert_eq!(r3, b"third_response");
     }
 }

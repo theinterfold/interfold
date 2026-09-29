@@ -82,34 +82,4 @@ impl ZkBackend {
 
         Ok(Self::new(bb_binary, circuits_dir, work_dir))
     }
-
-    fn sanitize_e3_id(e3_id: &str) -> Result<&str, ZkError> {
-        // Sanitize e3_id to prevent path traversal
-        if e3_id.is_empty()
-            || e3_id.contains('\0')
-            || e3_id.contains("..")
-            || e3_id.contains('/')
-            || e3_id.contains('\\')
-        {
-            return Err(ZkError::IoError(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "e3_id contains invalid characters",
-            )));
-        }
-
-        Ok(e3_id)
-    }
-
-    pub fn work_dir_for(&self, e3_id: &str) -> Result<PathBuf, ZkError> {
-        let sanitized = Self::sanitize_e3_id(e3_id)?;
-        Ok(self.work_dir.join(sanitized))
-    }
-
-    pub async fn cleanup_work_dir(&self, e3_id: &str) -> Result<(), ZkError> {
-        let work_dir = self.work_dir_for(e3_id)?;
-        if work_dir.exists() {
-            tokio::fs::remove_dir_all(&work_dir).await?;
-        }
-        Ok(())
-    }
 }

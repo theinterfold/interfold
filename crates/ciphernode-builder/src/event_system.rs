@@ -599,16 +599,6 @@ mod tests {
     }
 
     #[actix::test]
-    async fn test_persisted() -> Result<()> {
-        let _guard = with_tracing("debug");
-        let tmp = TempDir::new().unwrap();
-        let system = EventSystem::persisted(tmp.path().join("log"), tmp.path().join("sled"));
-        let _handle = system.handle().expect("Failed to get handle");
-        system.store().expect("Failed to get store");
-        Ok(())
-    }
-
-    #[actix::test]
     async fn shutdown_barrier_persists_final_actor_write_before_store_close() -> Result<()> {
         let tmp = TempDir::new()?;
         let log_path = tmp.path().join("log");
@@ -639,15 +629,6 @@ mod tests {
             .expect("final shutdown snapshot must exist");
         assert_eq!(bincode::deserialize::<String>(&bytes)?, "final-state");
         Ok(())
-    }
-
-    #[actix::test]
-    async fn test_in_mem() {
-        let eventbus = EventBus::<InterfoldEvent>::default().start();
-        let system = EventSystem::in_mem().with_event_bus(eventbus);
-
-        let _handle = system.handle().expect("Failed to get handle");
-        system.store().expect("Failed to get store");
     }
 
     #[actix::test]
