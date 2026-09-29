@@ -24,7 +24,7 @@ use e3_data_availability::{
 };
 use e3_evm_helpers::contracts::{E3Stage, InterfoldContractFactory, InterfoldRead, InterfoldWrite};
 use e3_fhe_params::{build_bfv_params_from_set_arc, encode_bfv_params, BfvParamSet, BfvPreset};
-use evm_helpers::{CRISPContract, InputPublished, SimulateError};
+use evm_helpers::{is_insufficient_funds, CRISPContract, InputPublished, SimulateError};
 use fhe::bfv::BfvParameters;
 use serde::{Deserialize, Serialize};
 use sled::{transaction::Transactional, Db, Tree};
@@ -74,6 +74,11 @@ struct InputRejected(&'static str);
 fn reject_input(message: &'static str) -> anyhow::Error {
     anyhow::Error::new(InputRejected(message))
 }
+
+/// The relay key cannot pay for a `publishInput` transaction.
+#[derive(Debug, thiserror::Error)]
+#[error("the relay key cannot pay for the input commitment: {0}")]
+struct RelayUnfunded(String);
 
 fn duration_u64(value: U256, name: &str) -> anyhow::Result<u64> {
     value
@@ -2119,10 +2124,11 @@ impl AvailabilityService {
     ///
     /// While the relay may send, a relay decision holds for the life of the job: a failed send
     /// that the worker retries, and a relayed transaction that a reorganization removes, keep the
-    /// place of the job. The decision reads only the slot and the earlier relays, so votes,
-    /// updates, and masks get the same answer. The record is durable before the relay transaction
-    /// is sent, and it holds the commitment cutoff of the round, after which
-    /// `prune_relay_records` removes it.
+    /// place of the job. A send that the relay key cannot pay for is different. That job moves to
+    /// the wallet path (`relay_input_commitment`), and its record stays and counts against the
+    /// limits. The decision reads only the slot and the earlier relays, so votes, updates, and
+    /// masks get the same answer. The record is durable before the relay transaction is sent, and
+    /// it holds the commitment cutoff of the round, after which `prune_relay_records` removes it.
     ///
     /// Turning the relay off (`MAINNET_RELAY=false` on mainnet, or a limit of zero), or a key below
     /// its balance floor, stops every relay send (`relay_may_send`). A job that has no relayed
@@ -2209,15 +2215,31 @@ impl AvailabilityService {
     ///
     /// The attestation expiry is the one the relayed payload was signed with, so the expiry
     /// handler renews this job on the same schedule as a wallet-submitted one.
+    ///
+    /// If the relay key cannot pay for the transaction, the job takes the wallet path with the same
+    /// signed payload, and the voter's wallet sends the commitment before the cutoff. A retry with
+    /// the same key would fail until the cutoff and lose the vote.
     async fn relay_input_commitment(&self, job: &AvailabilityJob) -> anyhow::Result<JobState> {
         let (ethereum_payload, attestation_expires_at) = self.commitment_payload(job).await?;
-        let receipt = self
+        let relayed_transaction_hash = match self
             .submit_input_commitment_payload(job, ethereum_payload.clone())
-            .await?;
+            .await
+        {
+            Ok(receipt) => Some(receipt.transaction_hash.to_string()),
+            Err(error) if error.is::<RelayUnfunded>() => {
+                warn!(
+                    job_id = job.id.as_str(),
+                    %error,
+                    "The relay key cannot pay; the voter's wallet sends the commitment"
+                );
+                None
+            }
+            Err(error) => return Err(error),
+        };
         Ok(JobState::AwaitingCommitment {
             ethereum_payload,
             attestation_expires_at,
-            relayed_transaction_hash: Some(receipt.transaction_hash.to_string()),
+            relayed_transaction_hash,
         })
     }
 
@@ -2245,7 +2267,13 @@ impl AvailabilityService {
         contract
             .publish_input(e3_id, payload)
             .await
-            .map_err(|error| anyhow::anyhow!(error.to_string()))
+            .map_err(|error| {
+                if is_insufficient_funds(&error) {
+                    anyhow::Error::new(RelayUnfunded(error.to_string()))
+                } else {
+                    anyhow::anyhow!(error.to_string())
+                }
+            })
     }
 
     async fn finalize_input(

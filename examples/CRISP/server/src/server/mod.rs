@@ -36,6 +36,8 @@ use crate::logger::init_logger;
 pub async fn start() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     init_logger();
 
+    CONFIG.validate_rpc_chain().await?;
+
     let pathdb = std::env::current_dir()?.join("database/server");
     let pathdb = pathdb.to_str().ok_or_eyre("Path could not be determined")?;
     let sled_db = SledDB::new(pathdb)?;

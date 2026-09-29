@@ -4,9 +4,12 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use alloy::primitives::{
-    utils::{ParseUnits, Unit},
-    U256,
+use alloy::{
+    primitives::{
+        utils::{ParseUnits, Unit},
+        U256,
+    },
+    providers::{Provider, ProviderBuilder},
 };
 use config::{Config as ConfigManager, ConfigError, Environment};
 use dotenvy::dotenv;
@@ -177,9 +180,27 @@ impl Config {
             config.chain_id,
             config.mainnet_relay,
             config.relay_max_inputs_per_round,
+            config.relay_min_balance()?,
         )?;
-        config.relay_min_balance()?;
         Ok(config)
+    }
+
+    /// Refuse an `HTTP_RPC_URL` that serves a chain other than `CHAIN_ID`.
+    ///
+    /// The chain rules of this server use `CHAIN_ID`: the mainnet relay flag, the secure parameter
+    /// set, and the local-only mock data availability. All transactions go to the chain of the
+    /// RPC. If the two chains are different, the server applies the rules of one chain on another
+    /// chain. For example, `CHAIN_ID=11155111` with a mainnet RPC relays on mainnet without
+    /// `MAINNET_RELAY`.
+    pub async fn validate_rpc_chain(&self) -> anyhow::Result<()> {
+        let provider = ProviderBuilder::new().connect(&self.http_rpc_url).await?;
+        let rpc_chain_id = provider.get_chain_id().await?;
+        anyhow::ensure!(
+            rpc_chain_id == self.chain_id,
+            "CHAIN_ID ({}) does not match the chain of HTTP_RPC_URL ({rpc_chain_id})",
+            self.chain_id
+        );
+        Ok(())
     }
 
     /// The relay balance floor in wei, from `RELAY_MIN_BALANCE_ETH`.
@@ -201,18 +222,28 @@ impl Config {
         }
     }
 
-    /// Refuse a mainnet relay that has no round limit.
+    /// Refuse a mainnet relay that has no round limit or no balance floor.
     ///
-    /// Mainnet relay spends real funds, and the slot limit alone does not bound the spend of one
-    /// round. The operator must choose the round limit explicitly.
+    /// Mainnet relay spends real funds. The slot limit alone does not bound the spend of one
+    /// round, and the relay key also pays for `finalizeInput`. The operator must choose the round
+    /// limit and the balance floor explicitly.
     fn validate_relay(
         chain_id: u64,
         mainnet_relay: bool,
         max_inputs_per_round: Option<u32>,
+        min_balance: Option<U256>,
     ) -> Result<(), ConfigError> {
-        if chain_id == 1 && mainnet_relay && max_inputs_per_round.is_none() {
+        if chain_id != 1 || !mainnet_relay {
+            return Ok(());
+        }
+        if max_inputs_per_round.is_none() {
             return Err(ConfigError::Message(
                 "MAINNET_RELAY=true requires RELAY_MAX_INPUTS_PER_ROUND".to_owned(),
+            ));
+        }
+        if min_balance.is_none_or(|floor| floor.is_zero()) {
+            return Err(ConfigError::Message(
+                "MAINNET_RELAY=true requires RELAY_MIN_BALANCE_ETH greater than zero".to_owned(),
             ));
         }
         Ok(())
@@ -328,13 +359,20 @@ mod tests {
     }
 
     #[test]
-    fn mainnet_relay_requires_a_round_limit() {
-        assert!(Config::validate_relay(1, true, None).is_err());
-        assert!(Config::validate_relay(1, true, Some(500)).is_ok());
-        // Without the flag, mainnet does not relay, so it needs no round limit.
-        assert!(Config::validate_relay(1, false, None).is_ok());
-        // Other chains relay without the flag and can leave the round unlimited.
-        assert!(Config::validate_relay(11_155_111, false, None).is_ok());
+    fn mainnet_relay_requires_a_round_limit_and_a_balance_floor() {
+        let floor = Some(alloy::primitives::U256::from(1));
+        assert!(Config::validate_relay(1, true, None, floor).is_err());
+        assert!(Config::validate_relay(1, true, Some(500), None).is_err());
+        // A zero floor never stops the relay, so it is not a floor.
+        assert!(
+            Config::validate_relay(1, true, Some(500), Some(alloy::primitives::U256::ZERO))
+                .is_err()
+        );
+        assert!(Config::validate_relay(1, true, Some(500), floor).is_ok());
+        // Without the flag, mainnet does not relay, so it needs no round limit and no floor.
+        assert!(Config::validate_relay(1, false, None, None).is_ok());
+        // Other chains relay without the flag and can leave the round and the balance unlimited.
+        assert!(Config::validate_relay(11_155_111, false, None, None).is_ok());
     }
 
     #[test]
