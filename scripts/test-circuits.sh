@@ -19,8 +19,9 @@ trap restore_active_config EXIT
 (cd "$REPO_ROOT/circuits/lib" && nargo test)
 (cd "$REPO_ROOT/circuits/bin/recursive_aggregation/decryption_aggregator" && nargo test)
 
-# The dkg_aggregator tests read only H, N_PARTIES, and L_THRESHOLD, and the preset changes only
-# L_THRESHOLD (insecure 2, secure 3). These pairs run each committee once and cover both values.
+# The dkg_aggregator and node_fold tests read only H, N_PARTIES, and L_THRESHOLD, and the preset
+# changes only L_THRESHOLD (insecure 2, secure 3). These pairs run each committee once and cover
+# both values.
 for pair in minimum:insecure micro:secure small:secure; do
   committee="${pair%%:*}"
   preset="${pair##*:}"
@@ -39,6 +40,9 @@ for pair in minimum:insecure micro:secure small:secure; do
     "$BACKUP_DIR/default.nr" > "$ACTIVE_PRESET"
   echo "Testing DKG aggregation for $preset_name/$committee"
   (cd "$REPO_ROOT/circuits/bin/recursive_aggregation/dkg_aggregator" && nargo test)
+  # node_fold's recipient-key constraints are indexed by N_PARTIES and L_THRESHOLD, the same
+  # values these pairs cover.
+  (cd "$REPO_ROOT/circuits/bin/recursive_aggregation/node_fold" && nargo test)
 done
 
 echo "Noir circuits tested successfully"
