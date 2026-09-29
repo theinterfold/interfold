@@ -9,6 +9,7 @@
 //! This module provides a `ModU128` struct that implements modular arithmetic operations
 //! with full constraint generation for zero-knowledge proof circuits. All operations
 //! are verified in-circuit to ensure correctness.
+use crate::math::helpers::assert_in_range;
 use super::unconstrained_U128::{
     __compute_mod_reduction, __div_mod, __inv_mod, __neg, __sub_with_underflow,
 };
@@ -206,6 +207,46 @@ impl ModU128 {
 
         result
     }
+}
+
+/// `n mod q` in `[0, q)`, with the quotient **bounded** so the remainder is unique.
+///
+/// This exists alongside [`ModU128::reduce_mod`] rather than replacing it. That one asserts only
+/// `n == q * quotient + remainder` with `remainder < q`; because the equation is over the field and
+/// the quotient is unbounded, a prover can pick any `remainder` in `[0, q)` and solve for a matching
+/// quotient. That is harmless where it is used — `bin/config` reduces compile-time constants and has
+/// no prover-supplied input — but it is not safe for a witness a prover controls.
+///
+/// Bounding the quotient closes it: with `quotient < 2^BIT_K` and `remainder` in `[0, q)`, the sum
+/// `q * quotient + remainder` stays far below the field prime, so the field equation implies the
+/// integer one and the pair is the unique Euclidean division.
+///
+/// `BIT_K` must cover `n / q`, and `n` itself must fit 128 bits for the hint to be correct.
+pub fn reduce_mod_bounded<let BIT_Q: u32, let BIT_K: u32>(n: Field, q: Field) -> Field {
+    // Safety: the quotient bound and the canonical remainder interval below fix the division, so a
+    // wrong hint cannot satisfy both.
+    let (quotient, _) = unsafe { __compute_mod_reduction(n, q) };
+    quotient.assert_max_bit_size::<BIT_K>();
+    let remainder = n - q * quotient;
+    assert_in_range::<BIT_Q>(remainder, q);
+    remainder
+}
+
+/// The inverse of `a` modulo prime `q`, proven by `a * inverse == 1 (mod q)`.
+///
+/// Uses [`reduce_mod_bounded`] for the verification, so unlike [`ModU128::inv_mod`] the reduction
+/// behind the check pins its remainder. `a` is reduced first to keep the product under 128 bits.
+pub fn inv_mod_bounded<let BIT_Q: u32, let BIT_K: u32>(a: Field, q: Field) -> Field {
+    // Safety: the range check and the product below pin the inverse.
+    let inverse = unsafe { __inv_mod(a, q) };
+    assert_in_range::<BIT_Q>(inverse, q);
+    a.assert_max_bit_size::<128>();
+    let reduced = reduce_mod_bounded::<BIT_Q, BIT_K>(a, q);
+    assert(
+        reduce_mod_bounded::<BIT_Q, BIT_K>(reduced * inverse, q) == 1,
+        "modular inverse mismatch",
+    );
+    inverse
 }
 
 #[test]

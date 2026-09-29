@@ -5,6 +5,8 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::math::commitments::compute_threshold_decryption_share_commitment;
+use crate::math::helpers::assert_in_range;
+use crate::math::modulo::U128::{inv_mod_bounded, reduce_mod_bounded};
 use crate::math::polynomial::Polynomial;
 use ::bignum::BigNum;
 use ::bignum::bignum::to_field;
@@ -112,7 +114,7 @@ impl<let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let T: u32, let N_PARTIES: u3
                     sum += self.decryption_shares[h][l].coefficients[j] * coefficients[l][h];
                 }
                 sum.assert_max_bit_size::<128>();
-                residues[l] = reduce_mod::<BIT_Q, BIT_K>(sum, self.configs.qis[l]);
+                residues[l] = reduce_mod_bounded::<BIT_Q, BIT_K>(sum, self.configs.qis[l]);
             }
             let u = garner_reconstruct::<L, BIT_Q, BIT_K>(residues, self.configs.qis);
 
@@ -130,61 +132,11 @@ impl<let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let T: u32, let N_PARTIES: u3
     }
 }
 
-/// Hints below are not trusted. Every consequence is proven by the caller.
-unconstrained fn divide_u128_hint(x: Field, q: Field) -> Field {
-    ((x as u128) / (q as u128)) as Field
-}
-
 /// `Q` exceeds 128 bits on the secure preset, so the rounded decode divides with a bignum.
 unconstrained fn divide_big_hint(x: Field, q: Field) -> Field {
     to_field(
         SecureThreshold8192::from(x).udiv(&SecureThreshold8192::from(q)),
     )
-}
-
-/// `a^(q-2) mod q`, the inverse by Fermat. `q` is prime and below 2^63, so squaring fits u128.
-unconstrained fn inverse_hint(a: Field, q: Field) -> Field {
-    let modulus = q as u128;
-    let mut base = (a as u128) % modulus;
-    let mut exponent = (q as u64) - 2;
-    let mut acc: u128 = 1;
-    for _ in 0..64 {
-        if exponent != 0 {
-            if (exponent & 1) == 1 {
-                acc = (acc * base) % modulus;
-            }
-            base = (base * base) % modulus;
-            exponent = exponent >> 1;
-        }
-    }
-    acc as Field
-}
-
-/// Proves `0 <= v < upper`.
-fn assert_in_range<let BIT: u32>(v: Field, upper: Field) {
-    v.assert_max_bit_size::<BIT>();
-    (upper - 1 - v).assert_max_bit_size::<BIT>();
-}
-
-/// `x mod q`, in `[0, q)`. `x` must fit 128 bits, which the callers assert.
-fn reduce_mod<let BIT_Q: u32, let BIT_K: u32>(x: Field, q: Field) -> Field {
-    // Safety: the quotient bound and the canonical remainder interval fix the division.
-    let k = unsafe { divide_u128_hint(x, q) };
-    k.assert_max_bit_size::<BIT_K>();
-    let remainder = x - q * k;
-    assert_in_range::<BIT_Q>(remainder, q);
-    remainder
-}
-
-/// The inverse of `a` modulo prime `q`, proven by `a * inverse == 1 (mod q)`.
-fn modular_inverse<let BIT_Q: u32, let BIT_K: u32>(a: Field, q: Field) -> Field {
-    // Safety: the range check and the product below pin the inverse; a bad hint cannot satisfy both.
-    let inverse = unsafe { inverse_hint(a, q) };
-    assert_in_range::<BIT_Q>(inverse, q);
-    a.assert_max_bit_size::<128>();
-    let reduced = reduce_mod::<BIT_Q, BIT_K>(a, q);
-    assert(reduce_mod::<BIT_Q, BIT_K>(reduced * inverse, q) == 1, "modular inverse mismatch");
-    inverse
 }
 
 /// Lagrange coefficients at zero for the given party ids, one row per CRT basis.
@@ -224,8 +176,8 @@ fn lagrange_coefficients<let H: u32, let L: u32, let BIT_Q: u32, let BIT_K: u32>
         let negate = (i % 2) == 1;
         for l in 0..L {
             let q = qis[l];
-            let inverse = modular_inverse::<BIT_Q, BIT_K>(denominator, q);
-            let magnitude = reduce_mod::<BIT_Q, BIT_K>(numerator * inverse, q);
+            let inverse = inv_mod_bounded::<BIT_Q, BIT_K>(denominator, q);
+            let magnitude = reduce_mod_bounded::<BIT_Q, BIT_K>(numerator * inverse, q);
             out[l][i] = if negate {
                 if magnitude == 0 {
                     0
@@ -254,11 +206,11 @@ fn garner_reconstruct<let L: u32, let BIT_Q: u32, let BIT_K: u32>(
         // Every value fed to `reduce_mod` must fit 128 bits; this fails loudly if a parameter set
         // ever makes the running product too large, rather than silently mis-reducing.
         u.assert_max_bit_size::<128>();
-        let reduced = reduce_mod::<BIT_Q, BIT_K>(u, qis[l]);
-        let inverse = modular_inverse::<BIT_Q, BIT_K>(modulus, qis[l]);
+        let reduced = reduce_mod_bounded::<BIT_Q, BIT_K>(u, qis[l]);
+        let inverse = inv_mod_bounded::<BIT_Q, BIT_K>(modulus, qis[l]);
         // `residues[l] - reduced` lies in `(-q_l, q_l)`; shift it non-negative before reducing.
         let difference = residues[l] - reduced + qis[l];
-        let step = reduce_mod::<BIT_Q, BIT_K>(difference * inverse, qis[l]);
+        let step = reduce_mod_bounded::<BIT_Q, BIT_K>(difference * inverse, qis[l]);
         u += modulus * step;
         modulus *= qis[l];
     }
