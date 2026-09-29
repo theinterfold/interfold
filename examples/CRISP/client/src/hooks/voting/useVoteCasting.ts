@@ -9,16 +9,8 @@ import { useNavigate } from 'react-router-dom'
 import { useSignTypedData, usePublicClient, useChainId, useWalletClient } from 'wagmi'
 import { zeroHash } from 'viem'
 import type { Address, Hex } from 'viem'
-import {
-  ciphertextCommitment,
-  encodeSolidityProof,
-  finishBallotProof,
-  finishMaskProof,
-  finishSafeBallotProof,
-  ownersCommitment,
-  prepareBallot,
-  withBallotParent,
-} from '@crisp-e3/sdk'
+import { encodeSolidityProof, finishBallotProof, finishMaskProof, prepareBallot } from '@crisp-e3/sdk'
+import { ciphertextCommitment, finishSafeBallotProof, ownersCommitment, withBallotParent } from '@crisp-e3/sdk'
 import type { PreparedBallot, PrepareBallotInputs, SlotOwners } from '@crisp-e3/sdk'
 import { ensureCircuits } from '@/utils/circuits'
 
@@ -43,8 +35,8 @@ const MAX_MASK_DRAWS = 8
 interface PendingAvailabilityJob {
   jobId: string
   isMask: boolean
-  /** Whether the input is the connected account's own vote. A Safe vote is not. */
-  marksOwnVote: boolean
+  /** A Safe vote, which is not the connected account's own vote. */
+  isSafeVote?: boolean
   encodedProof?: string
 }
 
@@ -58,12 +50,10 @@ const readAvailabilityJob = (key: string): PendingAvailabilityJob | undefined =>
     if (!stored) return undefined
     const parsed: unknown = JSON.parse(stored)
     if (typeof parsed !== 'object' || parsed === null || !('jobId' in parsed) || typeof parsed.jobId !== 'string') return undefined
-    const isMask = 'isMask' in parsed && parsed.isMask === true
     return {
       jobId: parsed.jobId,
-      isMask,
-      // Pointers written before this field existed were always the account's own input.
-      marksOwnVote: 'marksOwnVote' in parsed && typeof parsed.marksOwnVote === 'boolean' ? parsed.marksOwnVote : !isMask,
+      isMask: 'isMask' in parsed && parsed.isMask === true,
+      isSafeVote: 'isSafeVote' in parsed && parsed.isSafeVote === true,
       encodedProof: 'encodedProof' in parsed && typeof parsed.encodedProof === 'string' ? parsed.encodedProof : undefined,
     }
   } catch {
@@ -78,7 +68,7 @@ const writeAvailabilityJob = (key: string, job: PendingAvailabilityJob): void =>
     // Large secure ballots can exceed a browser's storage quota. Preserve the small server job
     // pointer when possible, even though a server-database loss would then need operator recovery.
     try {
-      localStorage.setItem(key, JSON.stringify({ jobId: job.jobId, isMask: job.isMask, marksOwnVote: job.marksOwnVote }))
+      localStorage.setItem(key, JSON.stringify({ jobId: job.jobId, isMask: job.isMask, isSafeVote: job.isSafeVote }))
     } catch {
       // The durable server job remains valid. A browser with disabled storage cannot resume it
       // automatically after a reload.
@@ -390,10 +380,8 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
    * round start, and a registry admits voters during the input window, so only the chain knows
    * who is maskable now.
    *
-   * A Safe above the ballot caps has no ballot, so `ballotAuthorization` reverts for it and it
-   * cannot be masked either. Registration is open, so the draw skips such slots rather than fail
-   * the mask: otherwise anyone could register oversized Safes to make random masks fail. Drawing
-   * again keeps the choice uniform over the slots that can be masked.
+   * `ballotAuthorization` reverts for a Safe above the ballot caps, so it cannot be masked. The
+   * random draw skips such slots, so that registered oversized Safes cannot make masks fail.
    */
   const handleMask = useCallback(
     async (target: MaskTarget): Promise<VoteData> => {
@@ -535,7 +523,7 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
       const finishCommitment = async (
         response: BroadcastVoteResponse,
         operationIsMask: boolean,
-        marksOwnVote: boolean,
+        isSafeVote: boolean | undefined,
         afterRestage = false,
       ): Promise<boolean> => {
         if (response.status === 'failed_broadcast') {
@@ -559,7 +547,7 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
           }
           if (decided) {
             if (decided.status === 'failed_broadcast') clearAvailabilityJob(pendingJobKey)
-            return finishCommitment(decided, operationIsMask, marksOwnVote, afterRestage)
+            return finishCommitment(decided, operationIsMask, isSafeVote, afterRestage)
           }
 
           setStepMessage('Your proof is still queued. Come back later and repeat the action to finish it.')
@@ -606,7 +594,7 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
         const url = txHash ? txExplorerUrl(txHash) : undefined
         setTxUrl(url)
 
-        if (marksOwnVote) markVotedInRound(roundState.id)
+        if (!operationIsMask && !isSafeVote) markVotedInRound(roundState.id)
 
         showToast({
           type: 'success',
@@ -634,7 +622,7 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
         )
         if (!restaged) throw new Error('Could not restore the pending data-availability job.')
         if (restaged.status === 'failed_broadcast') clearAvailabilityJob(pendingJobKey)
-        return finishCommitment(restaged, pendingJob.isMask, pendingJob.marksOwnVote, true)
+        return finishCommitment(restaged, pendingJob.isMask, pendingJob.isSafeVote, true)
       }
 
       try {
@@ -660,7 +648,7 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
           } else {
             if (!resumed) throw new Error('Could not read the pending data-availability job.')
             if (resumed.status === 'failed_broadcast') clearAvailabilityJob(pendingJobKey)
-            if (await finishCommitment(resumed, pendingJob.isMask, pendingJob.marksOwnVote)) {
+            if (await finishCommitment(resumed, pendingJob.isMask, pendingJob.isSafeVote)) {
               clearAvailabilityJob(pendingJobKey)
             }
             return
@@ -751,16 +739,16 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
           round_id: roundState.id,
           encoded_proof: encodedProof,
         }
-        const marksOwnVote = !isAMask && !safeBallot
+        const isSafeVote = Boolean(safeBallot)
         const broadcastVoteResponse = await broadcastVote(voteRequest, (jobId) => {
-          writeAvailabilityJob(pendingJobKey, { jobId, isMask: isAMask, marksOwnVote, encodedProof })
+          writeAvailabilityJob(pendingJobKey, { jobId, isMask: isAMask, isSafeVote, encodedProof })
         })
 
         if (!broadcastVoteResponse) {
           throw new Error('Received no response after publishing vote data.')
         }
         if (broadcastVoteResponse.status === 'failed_broadcast') clearAvailabilityJob(pendingJobKey)
-        if (await finishCommitment(broadcastVoteResponse, isAMask, marksOwnVote)) {
+        if (await finishCommitment(broadcastVoteResponse, isAMask, isSafeVote)) {
           clearAvailabilityJob(pendingJobKey)
         }
       } catch (error) {

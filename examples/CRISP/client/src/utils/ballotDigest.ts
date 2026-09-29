@@ -51,9 +51,7 @@ export const getCrispProgramAddress = async (client: PublicClient, interfoldAddr
  *
  * Read from the contract rather than rebuilt here. `CRISPProgram.publishInput` recomputes both
  * values and the circuit proves against them, so a locally built EIP-712 struct that drifted from
- * the contract would produce ballots that every node rejects. For a wallet, `digest` is the
- * `Ballot` typed data that `ballotTypedData` describes. For a Safe slot of an ONCHAIN round, it is
- * the Safe's `SafeMessage` hash, and the owners sign it together.
+ * the contract would produce ballots that every node rejects.
  *
  * @param client The public client.
  * @param crispProgram The CRISP program address.

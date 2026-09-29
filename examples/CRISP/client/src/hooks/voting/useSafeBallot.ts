@@ -27,15 +27,10 @@ type PendingSafeBallot = { prepared: PreparedBallot; request: SafeSignRequest; d
 /**
  * Collect the signatures of several Safe owners for one ballot, then prove and submit it.
  *
- * The order is chosen so that nothing about a Safe vote differs from a mask to the CRISP server:
- *
- * 1. `prepare` encrypts the ballot with no slot head and builds the digest locally. It sends
- *    nothing to the CRISP server and calls nothing on the contract that names the ciphertext.
- * 2. The owners sign in their own wallets, from a link whose request stays in the URL fragment.
- * 3. `submit` hands the signed ballot to `castVoteWithProof`, which makes the same requests, in the
- *    same order, as for a mask, and names the parent only then (`withBallotParent`). However long
- *    the signing took, the server sees a normal input, and a mask that landed meanwhile cannot
- *    leave the vote on a stale parent.
+ * Nothing about a Safe vote differs from a mask to the CRISP server. `prepare` encrypts the ballot
+ * with no slot head and builds the digest locally, so it makes no server request. The owners sign
+ * from a link whose request stays in the URL fragment. `submit` hands the signed ballot to
+ * `castVoteWithProof`, which makes the requests of any input and names the parent only then.
  *
  * @param castVoteWithProof The page's own `useVoteCasting` function, so one step indicator, one
  * busy state and one resume pointer cover every input the page makes.
@@ -93,10 +88,9 @@ export const useSafeBallot = (castVoteWithProof: CastVoteWithProof) => {
         setPending(null)
         setSignatures({})
 
-        const e3Id = BigInt(roundState.id)
         const { crispProgram, paramSet } = await roundConfig()
         await ensureCircuits(paramSet)
-        const votingPower = await getVotingPower(publicClient, crispProgram, e3Id, safe.address)
+        const votingPower = await getVotingPower(publicClient, crispProgram, BigInt(roundState.id), safe.safe)
         if (votingPower === 0n) throw new Error('This Safe has no voting power in this round.')
 
         // No slot head: see `withBallotParent`. The parent is named when the vote is submitted.
@@ -105,21 +99,11 @@ export const useSafeBallot = (castVoteWithProof: CastVoteWithProof) => {
           vote: choice.value === 0 ? [1, 0] : [0, 1],
           publicKey: new Uint8Array(votingRound.pk_bytes),
           votingPower,
-          slotAddress: safe.address,
+          slotAddress: safe.safe,
           isMaskVote: false,
           numOptions: NUM_OPTIONS,
         })
-        const request: SafeSignRequest = {
-          chainId,
-          crispProgram,
-          e3Id: roundState.id,
-          safe: safe.address,
-          ctCommitment: prepared.ctCommitment,
-          owners: safe.owners,
-          keyOwners: safe.keyOwners,
-          threshold: safe.threshold,
-          choice: choice.label,
-        }
+        const request = { ...safe, chainId, crispProgram, e3Id: roundState.id, ctCommitment: prepared.ctCommitment, choice: choice.label }
         setPending({ prepared, request, digest: safeBallotTypedData(request).digest })
       }),
     [run, safe, roundState, votingRound, publicClient, roundConfig, chainId],
@@ -144,16 +128,14 @@ export const useSafeBallot = (castVoteWithProof: CastVoteWithProof) => {
     () =>
       run('signing', async () => {
         if (!pending) throw new Error('Prepare the ballot first.')
-        if (!user) throw new Error('Connect the wallet of one of the owners.')
-        const account = getAddress(user.address)
-        // An owner that is a contract, such as the Safe itself or a nested Safe connected through
-        // WalletConnect, signs in its own app, which publishes the message. That would mark this
-        // input as a vote, so only owners that sign with a key are asked.
-        if (!pending.request.keyOwners.includes(account)) {
+        const account = user && getAddress(user.address)
+        // A contract owner, such as the Safe itself or a nested Safe connected through WalletConnect,
+        // signs in its own app, which publishes the message and so marks this input as a vote.
+        if (!account || !pending.request.keyOwners.includes(account)) {
           throw new Error(
-            pending.request.owners.includes(account)
+            account && pending.request.owners.includes(account)
               ? 'This owner is a contract and cannot sign a ballot. Connect the wallet of an owner that signs with a key.'
-              : 'The connected wallet is not an owner of this Safe.',
+              : 'Connect the wallet of one of the owners.',
           )
         }
 
@@ -180,12 +162,12 @@ export const useSafeBallot = (castVoteWithProof: CastVoteWithProof) => {
     [run, pending, signatures, castVoteWithProof],
   )
 
-  /** Mask the Safe's slot. Owners doing this is what makes their own writes to it ambiguous. */
+  /** Mask the Safe's slot. Owners who do this make their own writes to it ambiguous. */
   const maskSafe = useCallback(
     () =>
       run('masking', async () => {
         if (!safe) throw new Error('Load a Safe first.')
-        await castVoteWithProof(null, true, { slot: safe.address })
+        await castVoteWithProof(null, true, { slot: safe.safe })
       }),
     [run, safe, castVoteWithProof],
   )

@@ -52,7 +52,7 @@ const SafeSign: React.FC = () => {
 
   const { request } = parsed
   const { typedData, digest } = safeBallotTypedData(request)
-  const connected = address ? request.owners.find((o) => o.toLowerCase() === address.toLowerCase()) : undefined
+  const connected = address && request.owners.includes(address) ? address : undefined
   // Only an owner that signs with a key is asked. A contract owner, such as a nested Safe connected
   // through WalletConnect, signs in its own app, which can publish the message.
   const owner = connected && request.keyOwners.includes(connected) ? connected : undefined
