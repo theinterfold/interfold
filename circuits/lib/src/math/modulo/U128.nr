@@ -61,6 +61,16 @@ impl ModU128 {
     ///
     /// # Panics
     /// The circuit will fail if the reduction is incorrect.
+    ///
+    /// # Do not use this on a value a prover controls
+    /// The quotient below is never bounded, and `n == q * quotient + remainder` is a field equation,
+    /// so a prover can pick **any** `remainder` in `[0, m)` and solve for a matching quotient. The
+    /// constraint set accepts `(2, 50)` and `((250 - 51) / 100, 51)` alike for `250 mod 100`, which is
+    /// the same unbounded-quotient shape as IF-012.
+    ///
+    /// It is sound where it is used: the only production caller is `bin/config`, which is `fn main()`
+    /// with no inputs, so every value it reduces is a compile-time `pub global` and there is no
+    /// adversary to choose the second remainder. Use [`reduce_mod_bounded`] for a witness.
     pub fn reduce_mod(self, n: Field) -> Field {
         // Safety: __compute_mod_reduction is safe to call here because we assert the properties of the output
         let (q, r) = unsafe { __compute_mod_reduction(n, self.m) };
@@ -198,6 +208,9 @@ impl ModU128 {
     /// # Panics
     /// The circuit will fail if `val` is not invertible modulo `m` (i.e., if
     /// `gcd(val, m) != 1`). For prime moduli, any non-zero `val` is invertible.
+    /// # Do not use this on a value a prover controls
+    /// The verification routes through [`ModU128::reduce_mod`], whose remainder is not pinned. Use
+    /// [`inv_mod_bounded`] for a witness.
     pub fn inv_mod(self, val: Field) -> Field {
         // Safety: __inv_mod is safe because we verify val * result = 1 (mod m) below
         let result = unsafe { __inv_mod(val, self.m) };
