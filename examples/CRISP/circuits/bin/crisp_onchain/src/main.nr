@@ -44,13 +44,10 @@ use interfold_lib::math::{
 ///
 /// # Who authorises a ballot
 ///
-/// The contract supplies a commitment to the owners of the slot and their threshold, and the
-/// digest that they sign. See `crisp_lib::safe_auth`.
-///   - A wallet slot has one owner, the slot address itself, and a threshold of one. The owner
-///     signs `CRISPProgram.ballotDigest`, as with a single ECDSA check.
-///   - A Safe slot has the owners and threshold that the contract reads from the Safe when the
-///     ballot is published. The owners sign the Safe's `SafeMessage` hash of the ballot digest.
-/// The proof always has `MAX_SAFE_SIGNERS` signature slots, so it does not show how many signed.
+/// The owners of the slot sign the ballot digest (`crisp_lib::safe_auth`), checked against a
+/// commitment to the owners and threshold that the contract supplies. A wallet is its own single
+/// owner. A Safe has the owners and threshold that the contract reads from it at publication. The
+/// proof always has `MAX_SAFE_SIGNERS` signature slots, so it does not show how many signed.
 ///
 /// Mask votes prevent receipt sharing attacks by creating ambiguity: anyone can submit a zero vote
 /// to any slot, creating a different ciphertext that decrypts to the same value. This makes it
@@ -92,8 +89,7 @@ fn main(
     ct0is: [Polynomial<N>; L],
     ct1is: [Polynomial<N>; L],
     k1: Polynomial<N>,
-    // Authorisation Section. The contract commits to `owners` and `threshold`, and supplies the
-    // digest that they sign.
+    // Authorisation Section.
     owners: [Field; MAX_SAFE_OWNERS],
     threshold: u32,
     public_keys_x: [[u8; 32]; MAX_SAFE_SIGNERS],
@@ -139,9 +135,8 @@ fn main(
     // actual votes and to mask votes, and it replaces the tree membership proof of the `crisp`
     // circuit.
     //
-    // The circuit does not read `slot_address`. The contract derives the digest and the owner
-    // commitment from the slot, and those two values bind the signatures to it. The value stays
-    // public so that the proof commits to the slot that it writes to.
+    // `slot_address` is not read here: the digest and the owner commitment bind the signatures to
+    // the slot. It stays public so that the proof names the slot that it writes to.
     let _ = slot_address;
 
     // ============================================================================

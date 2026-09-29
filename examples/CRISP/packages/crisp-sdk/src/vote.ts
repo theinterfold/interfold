@@ -132,9 +132,8 @@ export const generateProof = async (circuitInputs: any, censusMode: CensusVarian
     p1is: circuitInputs.p1is,
     p2is: circuitInputs.p2is,
   })
-  // The two stacks share every input except eligibility and authorisation. A census round proves
-  // a Merkle path and one slot signature. An on-chain round takes the voting power the contract
-  // read, and the signatures of the slot owners against the owner commitment the contract made.
+  // The two stacks differ in eligibility and authorisation: a census round proves a Merkle path and
+  // one slot signature, an on-chain round takes the voting power and the slot owners' signatures.
   const stackInputs =
     censusMode === 'onchain'
       ? {
@@ -314,10 +313,9 @@ export const validateVote = (vote: Vote, balance: bigint): void => {
  * Phase one: encrypt a ballot, before the voter signs anything.
  *
  * A ballot must be encrypted before it can be signed, because the digest binds the ciphertext.
- * Take `ctCommitment` from the result and read `digest` and `ownersCommitment` from
- * `CRISPProgram.ballotAuthorization`. For a wallet, the digest equals `ballotDigest`: have the voter
- * sign it, then call {@link finishBallotProof}. For a Safe, call {@link finishSafeBallotProof}. For a
- * mask, pass both values to {@link finishMaskProof}.
+ * Take `ctCommitment` from the result, read the digest from `CRISPProgram.ballotDigest`, have the
+ * voter sign it, then call {@link finishBallotProof}. For a Safe slot, use
+ * {@link finishSafeBallotProof}.
  *
  * @param inputs - The ballot to encrypt.
  * @returns The prepared ballot.
@@ -341,12 +339,11 @@ const proveBallot = async (prepared: PreparedBallot, circuitInputs: unknown): Pr
 })
 
 /**
- * Phase two: prove a prepared ballot, given the wallet signature over its digest.
+ * Phase two: prove a prepared ballot, given the signature over its digest.
  *
  * Get the digest from `CRISPProgram.ballotDigest(e3Id, slot, prepared.ctCommitment)` and have the
  * voter sign it. Reading it from the contract rather than rebuilding the EIP-712 struct here means
- * there is only one implementation of the domain to keep correct. In an ONCHAIN round this is the
- * one-owner case of {@link finishSafeBallotProof}; for a Safe slot, use that function instead.
+ * there is only one implementation of the domain to keep correct.
  *
  * @param prepared The output of `prepareBallot`.
  * @param digest The ballot digest.
@@ -357,14 +354,11 @@ export const finishBallotProof = async (prepared: PreparedBallot, digest: `0x${s
   proveBallot(prepared, await attachSignatureImpl(prepared, digest, signature))
 
 /**
- * Phase two for a Safe slot of an ONCHAIN round: prove the ballot with the owners' signatures.
+ * Phase two for a Safe slot of an ONCHAIN round: prove the ballot with its owners' signatures.
  *
- * Get `digest` from `CRISPProgram.ballotAuthorization(e3Id, slot, prepared.ctCommitment)`. It is
- * the Safe's EIP-712 `SafeMessage` hash of the ballot digest. Each owner signs the `SafeMessage`
- * typed data in their own wallet, which gives an ECDSA signature over that hash; the Safe's own
- * `isValidSignature` accepts the same signatures. `eth_sign` signatures do not work. Do not collect
- * the signatures through the Safe Transaction Service: it publishes the digest, and anyone who
- * recomputes the digest could then tell this vote from a mask.
+ * `digest` is the Safe `SafeMessage` hash that `CRISPProgram.ballotAuthorization` returns. Each
+ * owner signs that typed data in their own wallet, not through the Safe Transaction Service, which
+ * publishes the message and so marks the input as a vote.
  *
  * @param prepared The output of `prepareBallot`, for an ONCHAIN round.
  * @param digest The `digest` from `CRISPProgram.ballotAuthorization`.
@@ -382,18 +376,14 @@ export const finishSafeBallotProof = async (
 /**
  * Phase two for a mask.
  *
- * A mask carries the same public inputs as a real vote for the slot, because
- * `CRISPProgram.publishInput` computes them for every input regardless of branch. Only the
- * signatures are placeholders, and the circuit does not check them on the mask branch. Passing the
- * real values here is what keeps a mask and a vote indistinguishable in the published inputs.
- *
- * Read both values from `CRISPProgram.ballotAuthorization(e3Id, slot, prepared.ctCommitment)`. The
- * owner commitment is required for a Safe slot of an ONCHAIN round. For any other ONCHAIN slot the
- * SDK derives it from the slot, and a census round has none.
+ * A mask carries the same digest as a real vote, because `CRISPProgram.publishInput` computes it
+ * for every input regardless of branch. Only the signature is a placeholder, and the circuit does
+ * not check it on the mask branch. Passing a real digest here is what keeps a mask and a vote
+ * indistinguishable in the published public inputs.
  *
  * @param prepared The output of `prepareBallot` with `isMaskVote: true`.
  * @param digest The `digest` from `CRISPProgram.ballotAuthorization`.
- * @param ownersCommitment The `ownersCommitment` from `CRISPProgram.ballotAuthorization`.
+ * @param ownersCommitment The `ownersCommitment` from the same call. Required in an ONCHAIN round.
  * @returns The proof.
  */
 export const finishMaskProof = async (

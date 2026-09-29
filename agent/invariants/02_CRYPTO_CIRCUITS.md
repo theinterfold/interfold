@@ -244,23 +244,20 @@ every section.
   and masking all prove `published = addend + ballot`, with the addend selected by the private
   `is_mask_vote` and derived as `keep_previous = is_mask_vote & !is_first_vote`. The circuit returns
   `sum_ct_commitment` on every path, the SDK has one code path, and `CrispSDK.prepareBallot` makes
-  the same server request either way. `withBallotParent` only moves the head request of a vote to
-  just before proving; the inputs it sets equal those a prepare with the head sets. Branching any of
-  these apart — a different published ciphertext, a different commitment for the digest, a different
-  request — makes the three distinguishable on chain, which is what masks exist to prevent. Deriving
-  the selector rather than witnessing it is what stops a voter counting their old ballot twice and a
-  masker erasing a vote. — `flow-trace/04`
+  the same server request either way. Branching any of these apart — a different published
+  ciphertext, a different commitment for the digest, a different request — makes the three
+  distinguishable on chain, which is what masks exist to prevent. Deriving the selector rather than
+  witnessing it is what stops a voter counting their old ballot twice and a masker erasing a vote. —
+  `flow-trace/04`
 - **An ONCHAIN CRISP slot is authorised by its owners inside the proof, against values the contract
-  computes.** `CRISPProgram.ballotAuthorization` gives every slot of a `CensusMode.ONCHAIN` round a
-  digest and an owner commitment, and `crisp_onchain` checks `threshold` owner signatures against
-  them. A wallet is its own single owner and signs `ballotDigest`. A slot is a Safe only when its
-  code hash and its proxy's `masterCopy()` are on the allowlists fixed at deployment. Any contract
-  can answer `getOwners()`, so the owner list is trusted only from an accepted proxy. For a Safe,
-  the contract computes the `SafeMessage` digest and reads `getOwners()` and `getThreshold()` at
-  publication. A prover supplies neither value. Votes and masks for one slot use the same public
-  inputs, and the proof always has `MAX_SAFE_SIGNERS` signature slots. `MAX_SAFE_OWNERS` and
-  `MAX_SAFE_SIGNERS` must match in `CRISPProgram.sol`, `crisp_lib::constants` and the SDK constants.
-  A Safe above either cap reverts for votes and masks alike. — `flow-trace/04`
+  computes.** `CRISPProgram.ballotAuthorization` gives each slot a digest and an owner commitment,
+  and `crisp_onchain` checks `threshold` owner signatures against them; a prover supplies neither. A
+  wallet is its own single owner. A slot is a Safe only when its code hash and `masterCopy()` are on
+  the allowlists fixed at deployment, because any contract can answer `getOwners()`. Votes and masks
+  for one slot have the same public inputs, and every proof has `MAX_SAFE_SIGNERS` signature slots.
+  `withBallotParent` only moves a vote's head request to just before proving; the inputs it sets
+  equal those a prepare with the head sets. `MAX_SAFE_OWNERS` and `MAX_SAFE_SIGNERS` must match in
+  `CRISPProgram.sol`, `crisp_lib::constants` and the SDK. — `flow-trace/04`
 - **CRISP constrains every coefficient of the ballot plaintext, at the real BFV degree.** The
   witness generator reverses the message over the full degree, so the payload starts at
   `D - MAX_MSG_NON_ZERO_COEFFS + (MAX_MSG_NON_ZERO_COEFFS mod num_options)` with the options back to

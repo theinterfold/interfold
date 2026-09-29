@@ -8,15 +8,8 @@ export { setCircuits, getRegisteredCircuits, registeredPreset, requireCircuits, 
 export * from './token'
 export * from './state'
 export * from './api'
-export {
-  MAX_MSG_NON_ZERO_COEFFS,
-  MAX_SAFE_OWNERS,
-  MAX_SAFE_SIGNERS,
-  MAX_VOTE_OPTIONS,
-  MERKLE_TREE_MAX_DEPTH,
-  SIGNATURE_MESSAGE,
-  SIGNATURE_MESSAGE_HASH,
-} from './constants'
+export { MAX_MSG_NON_ZERO_COEFFS, MAX_VOTE_OPTIONS, MERKLE_TREE_MAX_DEPTH, SIGNATURE_MESSAGE, SIGNATURE_MESSAGE_HASH } from './constants'
+export { MAX_SAFE_OWNERS, MAX_SAFE_SIGNERS } from './constants'
 export {
   hashLeaf,
   generateMerkleProof,

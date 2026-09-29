@@ -1820,59 +1820,41 @@ coefficients, and the options appear back to front.
 
 ### Slot owners in ONCHAIN rounds
 
-In a `CensusMode.ONCHAIN` round, the owners of a slot authorise its ballot inside the proof. A
-wallet is its own single owner with a threshold of one. A Safe has no private key, so its own owners
-and threshold authorise it. One circuit, `crisp_onchain`, serves both.
+In a `CensusMode.ONCHAIN` round, the owners of a slot authorise its ballot inside the
+`crisp_onchain` proof. A wallet is its own single owner. A Safe has no private key, so its owners
+and threshold authorise it.
 
 ```
-CRISPProgram._verifyInputProof(e3Id, ..., slotAddress, encryptedVoteCommitment, ...)
+CRISPProgram._verifyInputProof → ballotAuthorization(e3Id, slot, encryptedVoteCommitment)
 │  File: examples/CRISP/packages/crisp-contracts/contracts/CRISPProgram.sol
-├─ _eligibility → voting power from getPastVotes(slot, snapshot), onchainHonkVerifier
-├─ _ballotPublicInputs → ballotAuthorization(e3Id, slot, encryptedVoteCommitment)
-│  ├─ census round: digest = ballotDigest, no owner commitment (9 inputs, crisp circuit)
-│  └─ ONCHAIN round:
-│     ├─ isSafe(slot): slot.codehash in safeProxyCodehashAccepted
-│     │                and safeSingletonAccepted[ISafeProxy(slot).masterCopy()]
-│     ├─ Safe: digest = Safe EIP-712 SafeMessage hash of abi.encode(ballotDigest), Safe
-│     │   domain (chainId, slot); the Safe's own isValidSignature accepts the same signatures.
-│     │   owners = getOwners(), threshold = getThreshold(), read now, not at the snapshot
-│     │   → SafeShapeUnsupported if owners > MAX_SAFE_OWNERS or threshold > MAX_SAFE_SIGNERS
-│     ├─ any other slot (EOA, EIP-7702 account, other contract): digest = ballotDigest,
-│     │   owners = [slot], threshold = 1
-│     └─ ownersCommitment = keccak256(abi.encode(address[MAX_SAFE_OWNERS] padded, threshold))
-└─ ONCHAIN public inputs: [0..7] as before, [8..9] owner-commitment halves,
-   [10] committee public key (11 inputs)
+├─ census round: digest = ballotDigest, 9 public inputs (crisp circuit)
+└─ ONCHAIN round: 11 public inputs, owner-commitment halves at [8..9], committee key at [10]
+   ├─ isSafe(slot): slot.codehash in safeProxyCodehashAccepted and
+   │        safeSingletonAccepted[ISafe(slot).masterCopy()] (both fixed at deployment)
+   │  digest = Safe SafeMessage hash of ballotDigest (domain: chainId, slot)
+   │  owners = getOwners(), threshold = getThreshold(), read at publication
+   │  → SafeShapeUnsupported above MAX_SAFE_OWNERS (10) or MAX_SAFE_SIGNERS (3)
+   ├─ any other slot (EOA, EIP-7702 account, other contract): digest = ballotDigest,
+   │  owners = [slot], threshold = 1
+   └─ ownersCommitment = keccak256(abi.encode(address[MAX_SAFE_OWNERS] padded, threshold))
 ```
 
-`crisp_onchain` (`examples/CRISP/circuits/bin/crisp_onchain/src/main.nr`) checks the owners with
-`crisp_lib::safe_auth::validate_safe_signatures`. That function recomputes the owner commitment from
-private owners and threshold. It then requires `threshold` valid signatures over the public digest,
-each by a committed owner, in strictly ascending signer order. The proof has `MAX_SAFE_SIGNERS`
-signature slots, so it does not show how many signed; inactive slots are ignored but must hold a
-valid public key. `fold_onchain` exposes the two commitment halves after `final_ct_commitment`.
+`crisp_lib::safe_auth::validate_safe_signatures` recomputes the commitment from the private owners
+and threshold, then requires `threshold` valid signatures over the digest by committed owners, in
+strictly ascending signer order. Every proof has `MAX_SAFE_SIGNERS` signature slots. The mask branch
+checks no signature, so a masker needs only the public `ballotAuthorization` values, and a vote and
+a mask for one slot have the same public inputs. SDK: `finishBallotProof` (wallet),
+`finishSafeBallotProof` (Safe) and `finishMaskProof` (any slot, with the owner commitment).
 
-The mask branch checks no signature. A masker needs only the public values from
-`ballotAuthorization`, not the owner list, and a vote and a mask for one slot have the same public
-inputs. The SDK builds these inputs: `finishBallotProof` (wallet), `finishSafeBallotProof` (Safe
-owners) and `finishMaskProof` (any slot, with the owner commitment from `ballotAuthorization`).
+The owners sign the `SafeMessage` typed data in their own wallets, never through the Safe
+Transaction Service: it publishes the digest, which anyone can recompute to tell the vote from a
+mask. A vote replaces its slot, so its ciphertext, commitment and digest do not depend on the head.
+`withBallotParent(prepared, {index, commitment})` names the parent right before proving, with
+`ciphertextCommitment(headBytes)`, so the CRISP server sees the same requests as for a mask, and a
+mask that lands during the signing does not invalidate the signatures.
 
-The owners of a Safe sign the `SafeMessage` typed data in their own wallets and pass the signatures
-to whoever proves. They must not use the Safe Transaction Service: it publishes the digest, anyone
-can recompute that digest from the slot and the commitment, and it would mark the input as a real
-vote.
-
-A vote replaces the slot, so its ciphertext, commitment and digest do not depend on the slot head.
-`withBallotParent(prepared, {index, commitment})` names the parent after preparation, with
-`ciphertextCommitment(headBytes)`, and refuses a mask. A prover that reads the head only right
-before proving therefore makes the same CRISP-server requests, in the same order, as for a mask,
-however long the signing took. A mask that lands during the signing does not invalidate the
-signatures.
-
-Limits: only owner signatures made with a private key work. Contract owners (v = 0), approved hashes
-(v = 1), `eth_sign` signatures and nested Safes cannot be checked in the proof. Merkle-census rounds
-keep the `crisp` circuit, so a Safe in such a census cannot vote.
-
-The owner list and the threshold are public, and the contract reads them at publication. A coercer
-who holds enough owner keys to stop the others from reaching the threshold can therefore block a
-re-vote. A Safe that its owners move above the caps can no longer write to its slot, for votes and
-masks alike.
+Limits: only ECDSA owner signatures work; contract owners (v = 0), approved hashes (v = 1),
+`eth_sign` signatures and nested Safes do not. Merkle-census rounds keep the `crisp` circuit, so a
+Safe in such a census cannot vote. The owners are read at publication, so a coercer who holds enough
+owner keys to stop the threshold can block a re-vote, and a Safe moved above the caps can no longer
+write to its slot, for votes and masks alike.
