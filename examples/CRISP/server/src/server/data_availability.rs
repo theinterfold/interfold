@@ -285,6 +285,10 @@ enum JobKind {
         staged_envelope: Vec<u8>,
         deadline: u64,
         commitment_deadline: u64,
+        /// The voter asked that its own wallet send the commitment. The job then never takes the
+        /// relay path. Records without this field load as `false`.
+        #[serde(default)]
+        send_from_wallet: bool,
     },
     Output {
         e3_id: String,
@@ -303,6 +307,17 @@ impl JobKind {
         match self {
             Self::Input { deadline, .. } | Self::Output { deadline, .. } => *deadline,
         }
+    }
+
+    /// Whether the voter asked that its own wallet send the commitment of this input.
+    fn sends_from_wallet(&self) -> bool {
+        matches!(
+            self,
+            Self::Input {
+                send_from_wallet: true,
+                ..
+            }
+        )
     }
 }
 
@@ -882,10 +897,16 @@ impl AvailabilityService {
     /// admission — would let a cancelled request (the client closes the connection during the
     /// await) release quota for work that stays retrievable and can still spend relay funds.
     /// Admitted work must remain counted until its reservation expires on its own.
+    ///
+    /// `send_from_wallet` records the voter's request that its own wallet send the commitment.
+    /// It is not part of the job identity: a statement that already has a job keeps the choice
+    /// that the job was created with. Only a failed job, which is staged again under the same
+    /// identifier, takes the choice of the new request.
     pub async fn stage_input(
         &self,
         e3_id: &str,
         encoded_envelope: Vec<u8>,
+        send_from_wallet: bool,
         reservation: Option<GlobalReservation<'_>>,
     ) -> anyhow::Result<StagedInput> {
         // The numeric parser accepts leading zeros, so two different strings can name the same E3.
@@ -979,6 +1000,7 @@ impl AvailabilityService {
                 staged_envelope,
                 deadline,
                 commitment_deadline,
+                send_from_wallet,
             },
             state: JobState::Created,
         };
@@ -1671,9 +1693,9 @@ impl AvailabilityService {
                         job.state = self.relay_input_commitment(&job).await?;
                     }
                     JobKind::Input { .. } => {
-                        // The relay is off, the relay key is below its balance floor or its
-                        // balance cannot be read, or a relay limit is reached: the voter's wallet
-                        // sends the commitment.
+                        // The voter asked to send from its own wallet, the relay is off, the
+                        // relay key is below its balance floor or its balance cannot be read, or
+                        // a relay limit is reached: the voter's wallet sends the commitment.
                         job.state = self.wallet_commitment(&job).await?;
                     }
                     JobKind::Output { .. } => {
@@ -1698,9 +1720,11 @@ impl AvailabilityService {
                     }
                     CommitmentStep::Recommit => {
                         // A reorganization removed the relayed transaction. Send it again only
-                        // while the relay may spend. Otherwise the voter's wallet must send it,
-                        // so that turning the relay off stops every relay send.
-                        job.state = if self.relay_may_send().await {
+                        // while the relay may spend and the voter did not ask to send from its
+                        // own wallet. Otherwise the voter's wallet must send it, so that turning
+                        // the relay off stops every relay send.
+                        job.state = if !job.kind.sends_from_wallet() && self.relay_may_send().await
+                        {
                             self.relay_input_commitment(&job).await?
                         } else {
                             self.wallet_commitment(&job).await?
@@ -2065,7 +2089,13 @@ impl AvailabilityService {
     }
 
     /// Decide whether this service relays the commitment of a `Created` input job.
+    ///
+    /// The service never relays a job whose voter asked to send from its own wallet. This check
+    /// comes first, so such a job reads no relay balance and writes no relay record.
     async fn relays(&self, job: &AvailabilityJob) -> anyhow::Result<bool> {
+        if job.kind.sends_from_wallet() {
+            return Ok(false);
+        }
         Ok(self.relay_may_send().await && self.reserve_relay(job)?)
     }
 
@@ -2126,9 +2156,11 @@ impl AvailabilityService {
     /// that the worker retries, and a relayed transaction that a reorganization removes, keep the
     /// place of the job. A send that the relay key cannot pay for is different. That job moves to
     /// the wallet path (`relay_input_commitment`), and its record stays and counts against the
-    /// limits. The decision reads only the slot and the earlier relays, so votes, updates, and
-    /// masks get the same answer. The record is durable before the relay transaction is sent, and
-    /// it holds the commitment cutoff of the round, after which `prune_relay_records` removes it.
+    /// limits. `relays` honors the voter's request to send from its own wallet before it calls
+    /// this function. Apart from that request, the decision reads only the slot and the earlier
+    /// relays, so votes, updates, and masks with the same request get the same answer. The record
+    /// is durable before the relay transaction is sent, and it holds the commitment cutoff of the
+    /// round, after which `prune_relay_records` removes it.
     ///
     /// Turning the relay off (`MAINNET_RELAY=false` on mainnet, or a limit of zero), or a key below
     /// its balance floor, stops every relay send (`relay_may_send`). A job that has no relayed
@@ -3003,6 +3035,7 @@ mod tests {
                 staged_envelope: vec![0x22],
                 deadline: 1_000,
                 commitment_deadline: 900,
+                send_from_wallet: false,
             },
             state: JobState::AwaitingCommitment {
                 ethereum_payload: vec![0x33],
@@ -3014,6 +3047,10 @@ mod tests {
         let state = encoded["state"].as_object_mut().unwrap();
         state.remove("attestation_expires_at");
         state.remove("relayed_transaction_hash");
+        encoded["kind"]
+            .as_object_mut()
+            .unwrap()
+            .remove("send_from_wallet");
 
         let decoded =
             AvailabilityService::decode_job(&serde_json::to_vec(&encoded).unwrap()).unwrap();
@@ -3028,6 +3065,8 @@ mod tests {
         assert_eq!(attestation_expires_at, 0);
         // A record written before the relay became provisional is a wallet-path record.
         assert_eq!(relayed_transaction_hash, None);
+        // A record without the sender choice leaves the relay decision to the service.
+        assert!(!decoded.kind.sends_from_wallet());
     }
 
     #[test]
@@ -3166,6 +3205,7 @@ mod tests {
                 staged_envelope: vec![0x11],
                 deadline: 1_000,
                 commitment_deadline: 900,
+                send_from_wallet: false,
             },
             state: JobState::Created,
         };
@@ -3183,6 +3223,7 @@ mod tests {
                 staged_envelope: vec![0x22],
                 deadline: 1_000,
                 commitment_deadline: 900,
+                send_from_wallet: false,
             },
             state: JobState::Created,
             ..job
@@ -3220,6 +3261,7 @@ mod tests {
                 ),
                 deadline: 1_000,
                 commitment_deadline: 900,
+                send_from_wallet: false,
             },
             state: JobState::Created,
         }
@@ -3351,6 +3393,36 @@ mod tests {
 
         assert!(!service.relays(&job).await.unwrap());
         assert!(service.relayed_inputs.is_empty());
+    }
+
+    /// A voter that asks to send from its own wallet gets the wallet path, also when the relay is
+    /// on and no relay limit is reached. The job uses none of the relay allowance.
+    #[tokio::test]
+    async fn a_voter_that_asks_for_its_wallet_is_not_relayed() {
+        let service = test_service_on(
+            &temporary_db(),
+            1024,
+            RelayPolicy::new(31_337, false, 3, None, None),
+        );
+        let mut job = round_input_job("wallet-choice", "1", Address::repeat_byte(0x77));
+        let set_choice = |job: &mut AvailabilityJob, choice: bool| {
+            let JobKind::Input {
+                send_from_wallet, ..
+            } = &mut job.kind
+            else {
+                unreachable!("round_input_job builds an input job");
+            };
+            *send_from_wallet = choice;
+        };
+
+        set_choice(&mut job, true);
+        assert!(!service.relays(&job).await.unwrap());
+        assert!(service.relayed_inputs.is_empty());
+
+        // The same job without the request is relayed, so the check above is the voter's choice.
+        set_choice(&mut job, false);
+        assert!(service.relays(&job).await.unwrap());
+        assert_eq!(service.relayed_inputs.len(), 1);
     }
 
     /// A mask needs no signature from the slot owner, so an uncommitted job for a slot must not
@@ -4194,6 +4266,7 @@ mod tests {
                 staged_envelope: staged_envelope_for_slot(slot, B256::repeat_byte(0x11), object),
                 deadline: no_deadline(),
                 commitment_deadline: no_deadline(),
+                send_from_wallet: false,
             },
             state: JobState::Created,
         };
@@ -4245,6 +4318,7 @@ mod tests {
                 staged_envelope: staged_envelope_for_slot(slot, B256::repeat_byte(0x11), object),
                 deadline: no_deadline(),
                 commitment_deadline: no_deadline(),
+                send_from_wallet: false,
             },
             state: JobState::Created,
         };

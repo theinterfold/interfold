@@ -369,6 +369,11 @@ funds for `finalizeInput`, and so does a balance that cannot be read. Those jobs
 path. A send that the relay key cannot pay for also moves its job to the wallet path, with the same
 signed payload (`relay_input_commitment`, `is_insufficient_funds`).
 
+A `POST /voting/broadcast` request with `send_from_wallet: true` takes the wallet path (`relays`,
+`JobKind::sends_from_wallet`). The server writes no relay record for it, reads no relay balance, and
+uses no relay allowance. The choice is stored on the job and is not part of the job ID, so a repeat
+of the statement keeps the choice of its existing job.
+
 Every transaction from the server key takes its nonce from one sequence in the process
 (`e3_evm_helpers::nonce::send_with_next_nonce`). This includes `publishInput`, `finalizeInput`,
 `setMerkleRoot`, and the Interfold helper transactions. A send takes the lowest nonce, at or above
