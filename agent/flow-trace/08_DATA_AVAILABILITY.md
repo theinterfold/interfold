@@ -374,6 +374,11 @@ relay for a grace period of five minutes (`RELAY_FUNDING_GRACE_SECONDS`). The gr
 when the commitment cutoff is less than five minutes away, so the wallet path always comes before
 the cutoff, also behind a stuck transaction.
 
+A `POST /voting/broadcast` request with `send_from_wallet: true` takes the wallet path (`relays`,
+`JobKind::sends_from_wallet`). The server writes no relay record for it, reads no relay balance, and
+uses no relay allowance. The choice is stored on the job and is not part of the job ID, so a repeat
+of the statement keeps the choice of its existing job.
+
 Every transaction from the server key takes its nonce from one sequence in the process
 (`e3_evm_helpers::nonce::send_with_next_nonce`). This includes `publishInput`, `finalizeInput`,
 `setMerkleRoot`, and the Interfold helper transactions. A send takes the lowest nonce, at or above

@@ -234,7 +234,12 @@ async fn broadcast_encrypted_vote(
     // client that closes the connection mid-stage cancel this handler and release quota for a
     // job the background worker still holds.
     match availability
-        .stage_input(&e3_key, encoded_proof.to_vec(), Some(reservation))
+        .stage_input(
+            &e3_key,
+            encoded_proof.to_vec(),
+            vote.send_from_wallet,
+            Some(reservation),
+        )
         .await
     {
         Ok(staged) => {
