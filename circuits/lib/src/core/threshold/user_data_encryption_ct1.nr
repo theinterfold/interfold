@@ -8,8 +8,8 @@
 //!
 //! See `UserDataEncryptionCt1` for the circuit contract.
 
-use crate::math::commitments::compute_multiple_polynomial_commitment;
-use crate::math::commitments::compute_single_polynomial_commitment;
+use crate::math::commitments::compute_multiple_polynomial_commitment_checked;
+use crate::math::commitments::compute_single_polynomial_commitment_checked;
 use crate::math::commitments::compute_user_data_encryption_ct1_challenge;
 use crate::math::commitments::DS_CIPHERTEXT;
 use crate::math::commitments::DS_PK_AGGREGATION;
@@ -83,11 +83,20 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
     }
 
     fn generate_commitments(self) -> (Field, Field, Field) {
-        let pk1_commitment =
-            compute_multiple_polynomial_commitment::<N, L, BIT_PK>(self.pk1is, DS_PK_AGGREGATION);
-        let ct1_commitment =
-            compute_multiple_polynomial_commitment::<N, L, BIT_CT>(self.ct1is, DS_CIPHERTEXT);
-        let u_commitment = compute_single_polynomial_commitment::<N, BIT_U>(
+        // None of `pk1is`, `ct1is`, `u` is range-checked here, and all three reach the transcript
+        // only through these commitments, so all three are packed with the digit asserts. `pk1is`
+        // transfers C5's bound, `ct1is` is then forced by the encryption identity once the transcript
+        // binds, and `u` transfers ct0's `u_bound` through the equality the
+        // `user_data_encryption` fold asserts between the two `u` commitments.
+        let pk1_commitment = compute_multiple_polynomial_commitment_checked::<N, L, BIT_PK>(
+            self.pk1is,
+            DS_PK_AGGREGATION,
+        );
+        let ct1_commitment = compute_multiple_polynomial_commitment_checked::<N, L, BIT_CT>(
+            self.ct1is,
+            DS_CIPHERTEXT,
+        );
+        let u_commitment = compute_single_polynomial_commitment_checked::<N, BIT_U>(
             self.u,
             DS_USER_DATA_ENCRYPTION_COMMITMENT,
         );
@@ -150,4 +159,40 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
 
         (pk1_commitment, ct1_commitment, u_commitment)
     }
+}
+
+/// IF-013: before the commitments carried the digit asserts, `u` had a second opening here.
+///
+/// ct0 range-checks `u` to `u_bound` and the `user_data_encryption` fold asserts ct0's and ct1's `u`
+/// commitments are equal, so the intent is that ct1 encrypts under the same randomness. ct1 bounded
+/// `u` nowhere, though, and `pack` lays coefficients into one carrier as base-`radix` digits, so
+/// adding `delta` to slot 0 and `-radix * delta` to slot 1 left the commitment — and so the fold's
+/// equality — untouched. ct1 could use different randomness from ct0 and still satisfy it.
+///
+/// With the checked commitment the shifted `u` no longer fits its digit, so recomputing the
+/// commitments fails and the substitution is unreachable.
+#[test(should_fail)]
+fn second_opening_of_u_is_rejected() {
+    let z = Polynomial::new([0; 8]);
+    let one = Polynomial::new([0, 0, 0, 0, 0, 0, 0, 1]);
+    let mut c: UserDataEncryptionCt1<8, 1, 35, 35, 1, 5, 9, 35> = UserDataEncryptionCt1::new(
+        Configs::new([68719403009], 32, 1, [256], [34359701504]),
+        [one],
+        [one],
+        z,
+        z,
+        [Polynomial::new([0; 15])],
+        [Polynomial::new([0; 7])],
+    );
+    let before = c.generate_commitments();
+    let gamma = c.generate_challenge(before.0, before.1, before.2)[0];
+
+    // Carry `shift` from slot 0 into slot 1: under the unchecked packing the carrier did not move.
+    let shift = 1 / (gamma.pow_32(6) * (gamma - 256));
+    c.u.coefficients[0] += shift;
+    c.u.coefficients[1] -= 256 * shift;
+
+    // Rejected here: slot 1 no longer holds its digit.
+    let after = c.execute();
+    assert(after.2 == before.2);
 }
