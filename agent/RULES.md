@@ -15,7 +15,7 @@ file rather than duplicating its content.
 | `CRATES_ARCHITECTURE.md` | The implemented Rust runtime, persistence, and protocol topology                                             |
 | `flow-trace/00_INDEX.md` | Protocol behavior questions; known bugs & concerns                                                           |
 | `prompts/`               | Canonical bodies for reusable agents/commands — tool wrappers in `.claude/` and `.agents/skills/` point here |
-| `.agents/skills/`        | Portable task skills; load `asd-ste100` before writing or reviewing technical prose                          |
+| `.agents/skills/`        | Portable task skills; load `asd-ste100` before technical prose and `test-audit` before tests                 |
 
 Maintenance rule: these docs are part of the codebase. When a change invalidates a statement in any
 of them (a command, an invariant, a crate's role), update the doc **in the same PR** — surgical
@@ -40,6 +40,8 @@ reverts the file to its base content; anything else needs `[skip-doc-sync]` in a
   `.agents/skills/asd-ste100/SKILL.md`. Apply it to code comments, doc comments, documentation,
   requirements, procedures, help text, error text, release notes, and PR prose. Preserve protected
   code and exact interface literals.
+- Before writing, changing, reviewing, or sweeping tests, load `.agents/skills/test-audit/SKILL.md`.
+  Apply its authoring gate to each new or changed test.
 - Before assuming current behavior is correct, read the open-issues list in
   `invariants/00_INDEX.md`. Then search the "Verified Bugs & Protocol Concerns" table in
   `flow-trace/00_INDEX.md` for the contract, actor, or function you touch. The table is large and

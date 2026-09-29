@@ -12,7 +12,8 @@ Read before starting any task, in this order:
    break; its routing table names the scoped section file(s) to read for the paths you touch
 4. `.agents/skills/asd-ste100/SKILL.md` — before writing or reviewing comments, docs, error text,
    requirements, PR prose, or other natural-language technical content
-5. Area-specific, when relevant:
+5. `.agents/skills/test-audit/SKILL.md` — before writing, changing, reviewing, or sweeping tests
+6. Area-specific, when relevant:
    - Rust work → `agent/ARCHITECTURE.md` (contribution rules) and `agent/CRATES_ARCHITECTURE.md`
      (implemented runtime/topology)
    - Protocol behavior → `agent/flow-trace/00_INDEX.md` (lifecycle traces, known bugs)
@@ -51,7 +52,7 @@ Per-tool adapters (thin wrappers; never put content here):
   `.claude/agents/` (`invariant-reviewer`), `.claude/commands/` (`/invariant-review`,
   `/switch-committee`, `/update-flow-trace`), `.claude/skills/` (`asd-ste100` pointer)
 - Codex: `AGENTS.md`, `.agents/skills/` (`invariant-review`, `switch-committee`,
-  `update-flow-trace`, `asd-ste100`), `.codex/config.toml` (MCP)
+  `update-flow-trace`, `asd-ste100`, `test-audit`), `.codex/config.toml` (MCP)
 - OpenCode: `opencode.json` (permissions, MCP, and the `invariant-reviewer` agent). It loads skills
   from `.agents/skills/` and also from `.claude/skills/`.
 - Others (Cursor, Cline, Windsurf, Copilot): one-line pointers to `AGENTS.md`
