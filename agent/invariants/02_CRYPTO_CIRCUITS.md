@@ -224,6 +224,22 @@ every section.
   are of this kind; C1's `pk0` and C5's `pk0_agg` are not, because no identity inside their circuit
   determines them. Ask "does anything outside this circuit's own identity depend on this value's
   magnitude?" rather than "was it bounded before?". — `flow-trace/04`
+- **A circuit-size change must be measured at every committee size before it is called a win.** Cost
+  splits into a part that scales with the committee (`H*L*N` work, such as per-share commitment
+  openings) and a part that does not (`L*N` work, such as the aggregate's normalisation). A change
+  that trades one for the other therefore has a break-even `H`, and a single measurement cannot show
+  it. `feat/secure-circuit-optimizations` does exactly this in C4: its own benchmark reads -26.8% at
+  `minimum` (H=2) and **+4.6% at `micro`** (H=5), with `small` (H=14) never run. Our committees span
+  H=2 to H=14, so a benchmark at `minimum` alone says little about the size that matters. Fit
+  `A + B*H` across at least two committees and state which half of the change each term is. —
+  `flow-trace/04`
+- **A gate-count sweep leaves compiled artifacts at whatever preset it last built, and that breaks
+  tests that load them.** `scripts/test-circuits.sh` and any ad-hoc `bb gates` loop restore the
+  *source* config through their trap but not `target/` or `dist/circuits`. Anything reading compiled
+  artifacts afterwards — `pnpm rust:test:proofs` in particular — then runs the wrong parameter set and
+  fails with an ABI `LengthMismatch` naming an `L` that does not match the data. That failure is an
+  artifact of the sweep, not of the change under test: rebuild with `pnpm build:circuits` before
+  believing it. — `flow-trace/04`
 - A soundness fix can be blocked by the browser prover, and the ceiling is a cliff rather than a
   slope. CRISP proves ct0 in-browser against a hardcoded `srsSize: 2**21` (2,097,152); the checked pk
   and ciphertext commitments put ct0 at 2,229,363, which stops browser proving rather than slowing it.
