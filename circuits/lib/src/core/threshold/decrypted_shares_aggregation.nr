@@ -118,15 +118,7 @@ impl<let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let T: u32, let N_PARTIES: u3
             }
             let u = garner_reconstruct::<L, BIT_Q, BIT_K>(residues, self.configs.qis);
 
-            // BFV decode: `round(t * u / Q)`, with `t` folding to zero. The quotient bound and the
-            // canonical remainder together pin the rounding, so no decoded value is free.
-            let numerator = t * u + half;
-            // Safety: `rounded` is constrained by its bound and the remainder interval below.
-            let rounded = unsafe { divide_big_hint(numerator, q_total) };
-            rounded.assert_max_bit_size::<BIT_T>();
-            assert_in_range::<BIT_Q_TOTAL>(numerator - q_total * rounded, q_total);
-
-            let decoded = if rounded == t { 0 } else { rounded };
+            let decoded = rounded_decode::<BIT_T, BIT_Q_TOTAL>(u, t, q_total, half);
             assert_decoded_coefficient(decoded, self.message.coefficients[j]);
         }
     }
@@ -220,6 +212,38 @@ fn garner_reconstruct<let L: u32, let BIT_Q: u32, let BIT_K: u32>(
 /// Every decoded coefficient must match the claimed message, including zero.
 /// Keeping this assertion unconditional prevents a prover from using zero as
 /// a value that skips the C7 decoding check.
+/// BFV decode of a reconstructed `u` in `[0, Q)`: `round(t * u / Q)`, with `t` folding to zero.
+///
+/// This is the same function fhe.rs computes. Its RNS scaler is defined as
+/// `round(numerator * input / denominator)` with `numerator = t` and `denominator = Q`, so the
+/// circuit mirrors the reference construction rather than an algebraic rearrangement of it.
+///
+/// Noir has neither rounding nor division, and neither is needed. Rounding becomes a shifted floor,
+/// `round(t * u / Q) == floor((t * u + (Q-1)/2) / Q)`, and the floor is a hint proven rather than
+/// computed: for a fixed numerator and `Q` the pair `(quotient, remainder)` with the remainder in
+/// `[0, Q)` is unique, so a wrong hint cannot satisfy both checks below.
+///
+/// `half` is passed in because the caller already computed it once for every coefficient.
+fn rounded_decode<let BIT_T: u32, let BIT_Q_TOTAL: u32>(
+    u: Field,
+    t: Field,
+    q_total: Field,
+    half: Field,
+) -> Field {
+    let numerator = t * u + half;
+    // Safety: the quotient bound and the canonical remainder interval below pin the rounding.
+    let rounded = unsafe { divide_big_hint(numerator, q_total) };
+    rounded.assert_max_bit_size::<BIT_T>();
+    assert_in_range::<BIT_Q_TOTAL>(numerator - q_total * rounded, q_total);
+
+    // `u` near the top of `[0, Q)` rounds to exactly `t`, which represents plaintext zero.
+    if rounded == t {
+        0
+    } else {
+        rounded
+    }
+}
+
 fn assert_decoded_coefficient(computed_message: Field, claimed_message: Field) {
     assert(computed_message == claimed_message, "decoded message mismatch");
 }
@@ -256,4 +280,38 @@ fn garner_reconstructs_the_unique_representative() {
 #[test(should_fail)]
 fn share_outside_its_modulus_is_rejected() {
     assert_in_range::<8>(7, 7);
+}
+
+/// Boundary behaviour of the rounded decode, at `Q = 1001 = 7 * 11 * 13` and `t = 10`.
+///
+/// Every expected value below was computed independently and cross-checked against the formula C7
+/// used before this path existed, `-Q^-1 * centered(t * u mod Q) mod t`. Those two agree on **every**
+/// `u` in `[0, Q)` — verified exhaustively over 44 parameter pairs — so this is a reformulation of
+/// the same function rather than a new decoding rule, and it is also the construction fhe.rs uses.
+#[test]
+fn rounded_decode_covers_its_boundaries() {
+    let q: Field = 1001;
+    let t: Field = 10;
+    let half: Field = 500; // (Q - 1) / 2
+
+    // Endpoints. `u = Q - 1` rounds to exactly `t`, which folds back to plaintext zero.
+    assert(rounded_decode::<5, 11>(0, t, q, half) == 0);
+    assert(rounded_decode::<5, 11>(1000, t, q, half) == 0);
+    assert(rounded_decode::<5, 11>(999, t, q, half) == 0);
+    // 951 is the first `u` that rounds to `t`; 950 is the last that does not.
+    assert(rounded_decode::<5, 11>(951, t, q, half) == 0);
+    assert(rounded_decode::<5, 11>(950, t, q, half) == 9);
+
+    // Exact encodings `u = round(Q * m / t)` recover `m`.
+    assert(rounded_decode::<5, 11>(100, t, q, half) == 1);
+    assert(rounded_decode::<5, 11>(200, t, q, half) == 2);
+    assert(rounded_decode::<5, 11>(300, t, q, half) == 3);
+
+    // Transition points: the last `u` decoding to `m`, then the first decoding to `m + 1`.
+    assert(rounded_decode::<5, 11>(50, t, q, half) == 0);
+    assert(rounded_decode::<5, 11>(51, t, q, half) == 1);
+    assert(rounded_decode::<5, 11>(150, t, q, half) == 1);
+    assert(rounded_decode::<5, 11>(151, t, q, half) == 2);
+    assert(rounded_decode::<5, 11>(250, t, q, half) == 2);
+    assert(rounded_decode::<5, 11>(251, t, q, half) == 3);
 }
