@@ -230,6 +230,18 @@ pub fn pack<let A: u32, let BIT: u32>(values: [Field; A]) -> [Field] {
 /// # Returns
 /// A vector of field elements squeezed from the sponge, with length determined by
 /// the SQUEEZE operation in the IO pattern.
+/// Proves `0 <= v < upper` using two one-sided bit-size checks.
+///
+/// `assert_max_bit_size` is one-sided: it forces a small **non-negative** field element. So bounding
+/// `v` gives `v >= 0`, and bounding `upper - 1 - v` gives `v <= upper - 1`. The pair composes into a
+/// two-sided interval without a comparison operator.
+///
+/// `BIT` must cover `upper`; the caller supplies it from the generated config.
+pub fn assert_in_range<let BIT: u32>(v: Field, upper: Field) {
+    v.assert_max_bit_size::<BIT>();
+    (upper - 1 - v).assert_max_bit_size::<BIT>();
+}
+
 pub fn compute_safe(domain_separator: [u8; 64], inputs: [Field], io_pattern: [u32; 2]) -> [Field] {
     let mut sponge = SafeSponge::start(io_pattern, domain_separator);
     sponge.absorb(inputs);
