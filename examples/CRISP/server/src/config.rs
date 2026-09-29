@@ -4,6 +4,10 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+use alloy::primitives::{
+    utils::{ParseUnits, Unit},
+    U256,
+};
 use config::{Config as ConfigManager, ConfigError, Environment};
 use dotenvy::dotenv;
 use once_cell::sync::Lazy;
@@ -113,12 +117,16 @@ pub struct Config {
     /// Relay input commitments on Ethereum mainnet. Off by default; other chains always relay.
     #[serde(default)]
     pub mainnet_relay: bool,
-    /// Relayed input commitments per voting slot per round. Zero relays none.
+    /// Relayed input commitments per voting slot per round. Zero turns the relay off.
     #[serde(default = "default_relay_max_inputs_per_slot")]
     pub relay_max_inputs_per_slot: u32,
-    /// Relayed input commitments per round. Absent means no limit.
+    /// Relayed input commitments per round. Absent means no limit; zero turns the relay off.
     #[serde(default)]
     pub relay_max_inputs_per_round: Option<u32>,
+    /// Stop relaying while the server key holds less than this ETH amount, so that the key keeps
+    /// funds for `finalizeInput`. Absent means no floor.
+    #[serde(default)]
+    pub relay_min_balance_eth: Option<String>,
 }
 
 impl Config {
@@ -170,7 +178,27 @@ impl Config {
             config.mainnet_relay,
             config.relay_max_inputs_per_round,
         )?;
+        config.relay_min_balance()?;
         Ok(config)
+    }
+
+    /// The relay balance floor in wei, from `RELAY_MIN_BALANCE_ETH`.
+    pub fn relay_min_balance(&self) -> Result<Option<U256>, ConfigError> {
+        Self::parse_relay_min_balance(self.relay_min_balance_eth.as_deref())
+    }
+
+    /// Parse a non-negative ETH amount into wei. `parse_ether` alone is not enough: it returns the
+    /// absolute value of a negative amount.
+    fn parse_relay_min_balance(value: Option<&str>) -> Result<Option<U256>, ConfigError> {
+        let Some(value) = value else {
+            return Ok(None);
+        };
+        match ParseUnits::parse_units(value.trim(), Unit::ETHER) {
+            Ok(ParseUnits::U256(wei)) => Ok(Some(wei)),
+            _ => Err(ConfigError::Message(format!(
+                "RELAY_MIN_BALANCE_ETH must be a non-negative ETH amount, got '{value}'"
+            ))),
+        }
     }
 
     /// Refuse a mainnet relay that has no round limit.
@@ -307,6 +335,18 @@ mod tests {
         assert!(Config::validate_relay(1, false, None).is_ok());
         // Other chains relay without the flag and can leave the round unlimited.
         assert!(Config::validate_relay(11_155_111, false, None).is_ok());
+    }
+
+    #[test]
+    fn relay_balance_floor_is_a_non_negative_eth_amount() {
+        assert_eq!(Config::parse_relay_min_balance(None).unwrap(), None);
+        assert_eq!(
+            Config::parse_relay_min_balance(Some("0.5")).unwrap(),
+            Some(alloy::primitives::U256::from(500_000_000_000_000_000_u128))
+        );
+        // `parse_ether` alone would read this as a floor of 1 ETH.
+        assert!(Config::parse_relay_min_balance(Some("-1")).is_err());
+        assert!(Config::parse_relay_min_balance(Some("half")).is_err());
     }
 
     #[test]

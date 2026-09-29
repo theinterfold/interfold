@@ -269,10 +269,10 @@ voter. The proof transaction reserves the input's tree index immediately, so mas
 still extend it during the VectorX wait. CRISP refuses the aggregate computation while any input is
 not finalized.
 
-The service accepts only one not-yet-committed input per round and voting slot. It also limits the
-total bytes held by unfinished jobs. These controls bound abandoned signed inputs without deleting
-data that Ethereum already accepted. After Avail and Ethereum accept an object, the service removes
-its staging copy because Avail is then the recovery source.
+Each distinct input gets its own job, so a pending mask cannot block a vote for the same slot. The
+service limits the total bytes held by unfinished jobs, which bounds abandoned signed inputs without
+deleting data that Ethereum already accepted. After Avail and Ethereum accept an object, the service
+removes its staging copy because Avail is then the recovery source.
 
 The aggregate ciphertext follows the Avail and VectorX path after its RISC Zero proof is ready.
 

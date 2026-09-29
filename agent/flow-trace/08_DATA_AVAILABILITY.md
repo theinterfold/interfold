@@ -250,8 +250,8 @@ The status endpoint takes the same per-job ownership as the worker. Both paths l
 for an Ethereum answer, and then save, so a status refresh that started before the worker made
 progress could otherwise write its older copy over that progress and discard saved Avail
 coordinates. A status request that finds the job busy returns the persisted view and writes nothing.
-A `Created` job has nothing on Ethereum to reconcile, so the status endpoint answers it from storage
-without the claim.
+The status endpoint answers a `Created` job from storage without the claim. Only the worker's
+`Created` step reconciles that state with Ethereum, and a client poll must not make it skip the job.
 
 The service does not release an expired promise based on its local clock or an unfinalized chain
 head. It waits for an Ethereum finalized block at or after `expiresAt`, then checks the historical
@@ -357,12 +357,17 @@ rules:
 The server relays the `publishInput` commitment within two limits, `RELAY_MAX_INPUTS_PER_SLOT`
 (default 3) and `RELAY_MAX_INPUTS_PER_ROUND` (default: none). On Ethereum mainnet it relays only
 when `MAINNET_RELAY` is set, and that setting requires a round limit. The relay counts are durable
-(`reserve_relay`).
+(`reserve_relay`), and the worker prunes the records of a round after its commitment cutoff. Turning
+the relay off (the flag, or a limit of zero) also stops jobs chosen for the relay earlier. So does a
+server key balance below `RELAY_MIN_BALANCE_ETH`, which keeps funds for `finalizeInput`.
 
 Past a limit, the server still signs the input and the voter's wallet sends the commitment. A
 refusal would reopen ZEN2-25, because a mask needs no signature from the slot owner. The cost is
 sender privacy: masks can use up the relays of a slot, and the owner's later inputs then show the
 owner's address.
+
+A `Created` job whose commitment is already at the chain head, because a relay step was interrupted
+after its send, moves to `AwaitingCommitment` and waits for finality there. It is not sent again.
 
 ## Remaining trust and operations
 

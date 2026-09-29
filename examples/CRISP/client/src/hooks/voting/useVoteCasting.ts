@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useSignTypedData, usePublicClient, useChainId, useWalletClient } from 'wagmi'
 import type { Address } from 'viem'
@@ -83,18 +83,21 @@ const COMMITMENT_DECISION_WAIT_MS = 600_000
 
 /// Wait until a `pending_commitment` job has a sender: the relay, or this wallet, which must then
 /// send the commitment before its availability promise expires. Returns the first other view,
-/// `null` when the server no longer has the job, or `undefined` when the wait ends.
+/// `null` when the server no longer has the job, or `undefined` when the wait ends or
+/// `isCancelled` returns true.
 const waitForCommitmentDecision = async (
   jobId: string,
   getVoteAvailability: (jobId: string) => Promise<BroadcastVoteResponse | null | undefined>,
+  isCancelled: () => boolean,
 ): Promise<BroadcastVoteResponse | null | undefined> => {
   const deadline = Date.now() + COMMITMENT_DECISION_WAIT_MS
-  for (;;) {
+  while (!isCancelled()) {
     const view = await getVoteAvailability(jobId)
     if (view === null || (view && view.status !== 'pending_commitment')) return view
     if (Date.now() >= deadline) return undefined
     await new Promise((resolve) => setTimeout(resolve, COMMITMENT_DECISION_POLL_MS))
   }
+  return undefined
 }
 
 /// The end of the slot's chain of usable entries, with the tree index the new input will name as
@@ -197,6 +200,16 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
   const [lastActiveStep, setLastActiveStep] = useState<VotingStep | null>(null)
   const [stepMessage, setStepMessage] = useState<string>('')
   const submissionInProgress = useRef(false)
+  // A queued-commitment wait outlives the page that started it. Stop it on unmount, so that an
+  // abandoned wait cannot open a wallet prompt or navigate from another page, and cannot run beside
+  // the wait that a remounted page starts for the same job.
+  const unmounted = useRef(false)
+  useEffect(() => {
+    unmounted.current = false
+    return () => {
+      unmounted.current = true
+    }
+  }, [])
 
   /**
    * Encrypt the ballot, have the voter sign the digest that binds it, then prove it.
@@ -454,7 +467,11 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
         if (response.status === 'pending_commitment') {
           setVotingStep('confirming')
           setStepMessage('Your proof is queued. Waiting for the server to send the commitment or to ask your wallet to send it...')
-          const decided = response.job_id ? await waitForCommitmentDecision(response.job_id, getVoteAvailability) : undefined
+          const decided = response.job_id
+            ? await waitForCommitmentDecision(response.job_id, getVoteAvailability, () => unmounted.current)
+            : undefined
+          // The page closed during the wait. Keep the job pointer so that the next action resumes it.
+          if (unmounted.current) return false
           if (decided === null) {
             // The server lost the job while this page waited. Stage the stored bytes again once;
             // a second loss in the same action is left to the next one.
