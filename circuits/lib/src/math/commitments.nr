@@ -131,6 +131,20 @@ pub fn compute_single_polynomial_commitment<let N: u32, let BIT: u32>(
     compute_commitment(payload, domain_separator)
 }
 
+/// [`compute_single_polynomial_commitment`] with the digit asserts, for a polynomial this circuit
+/// carries no bound for. ct1 commits `u` this way: ct0 range-checks the same `u` to `u_bound` and the
+/// `user_data_encryption` fold asserts the two `u` commitments are equal, so making ct1's packing
+/// injective is what forces its `u` to equal ct0's — the bound transfers instead of being repeated.
+/// Produces the same value as the plain version for any input the plain version could legitimately
+/// have committed.
+pub fn compute_single_polynomial_commitment_checked<let N: u32, let BIT: u32>(
+    polynomial: Polynomial<N>,
+    domain_separator: [u8; 64],
+) -> Field {
+    let payload = single_polynomial_payload_checked::<N, BIT>([].as_vector(), polynomial);
+    compute_commitment(payload, domain_separator)
+}
+
 pub fn compute_multiple_polynomial_commitment<let N: u32, let L: u32, let BIT: u32>(
     polynomials: [Polynomial<N>; L],
     domain_separator: [u8; 64],
