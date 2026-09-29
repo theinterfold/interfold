@@ -176,6 +176,25 @@ every section.
 - Where one side of a CRT equation is already provably small, the other side needs no bound of its
   own: the equality makes it derived. C7 bounds only its quotients, because `u_crt < q_l` comes from
   `reduce_mod` and `u_global` is then forced to equal a small expression. — `flow-trace/04`
+- **The enumeration axis is "every prover-chosen witness that reaches the sponge", not "every
+  commitment opened from elsewhere".** Fiat-Shamir is only sound while `gamma` is independent of the
+  witness, and that holds exactly while the packing carrying the witness into the sponge has one
+  opening. Enumerating the narrower class missed four members: C6's `d` and C3's `ct0is` / `ct1is`
+  reach the transcript through `flatten` directly, and ct0 / ct1 reach it through commitments they
+  *create* rather than open. A witness absorbed by `flatten`, or committed by a circuit that creates
+  the commitment, needs `flatten_checked` / the checked helper unless something else already bounds
+  it — creating a commitment is not a reason to skip the check. — `flow-trace/04`
+- **Injectivity restores Schwartz-Zippel, and Schwartz-Zippel then bounds the value for free.** Once
+  the transcript binds a witness uniquely, the evaluation check forces it to equal the identity's
+  right-hand side *as a polynomial*, and that value is already canonical — so a witness the circuit's
+  own identity determines needs injectivity and never an explicit bound. C6's `d` and C3's ciphertext
+  are of this kind; C1's `pk0` and C5's `pk0_agg` are not, because no identity inside their circuit
+  determines them. Ask "does anything outside this circuit's own identity depend on this value's
+  magnitude?" rather than "was it bounded before?". — `flow-trace/04`
+- A soundness fix can be blocked by the browser prover, and the ceiling is a cliff rather than a
+  slope. CRISP proves ct0 in-browser against a hardcoded `srsSize: 2**21`; ct0 sits at 96.3% of it, so
+  either checked commitment pushes it over and browser proving stops working altogether. Measure ct0
+  against 2,097,152 before adding constraints to it. — `flow-trace/04`
 - The class is "every circuit that opens a commitment it did not create", and it has seven members:
   C2a, C2b, C4, C5 and C6 (three). All open through `pack_checked`. A new commitment opened from
   elsewhere joins that list and needs either the checked helper or its own bound. Naming the class
