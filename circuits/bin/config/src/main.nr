@@ -205,8 +205,9 @@ fn verify_dkg_bounds() {
     // e1_bound = 20
     assert(SHARE_ENCRYPTION_E1_BOUND == 20, "SHARE_ENCRYPTION_E1_BOUND should be 20");
 
-    // msg_bound = t - 1
-    assert(SHARE_ENCRYPTION_MSG_BOUND as u128 == t - 1, "SHARE_ENCRYPTION_MSG_BOUND mismatch");
+    // msg_bound = t. `range_check_standard` takes an exclusive upper bound, so the message range
+    // `[0, t)` needs `t` here; `t - 1` rejected the legitimate coefficient `t - 1`.
+    assert(SHARE_ENCRYPTION_MSG_BOUND as u128 == t, "SHARE_ENCRYPTION_MSG_BOUND mismatch");
 
     // ptxt bounds for r1 calculation
     let ptxt_up_bound: u128 = (t - 1) / 2;

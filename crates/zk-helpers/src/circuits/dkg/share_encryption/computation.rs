@@ -237,8 +237,9 @@ impl Computation for Bounds {
         };
         let e1_bound = cbd_bound; // e1 = e2 in the fhe.rs
 
-        // Message bound: message is in [0, t), so bound is t - 1
-        let msg_bound = t.clone() - BigInt::from(1);
+        // Message bound: the message is in [0, t), and `range_check_standard` takes an **exclusive**
+        // upper bound, so this is `t`. Passing `t - 1` rejected the legitimate coefficient `t - 1`.
+        let msg_bound = t.clone();
 
         let ptxt_up_bound = (t.clone() - BigInt::from(1)) / BigInt::from(2);
         let ptxt_low_bound: BigInt = if (t.clone() % BigInt::from(2)) == BigInt::from(1) {

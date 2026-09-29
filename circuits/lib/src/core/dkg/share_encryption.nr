@@ -406,3 +406,23 @@ fn honest_reduced_identity_holds() {
     );
     let _ = c.execute();
 }
+
+/// The largest legitimate plaintext coefficient, `t - 1`, is accepted.
+///
+/// `range_check_standard` takes an **exclusive** upper bound, but `msg_bound` was generated as
+/// `t - 1`, so the enforced range was `[0, t - 1)` and a share coefficient of `t - 1` was rejected.
+/// A completeness bug, not a soundness one: the DKG message is a Shamir share of the threshold
+/// secret, essentially uniform in `[0, t)`, so it would have surfaced as a rare unexplained proving
+/// failure — about `N / t` per share polynomial — rather than in any test.
+#[test]
+fn largest_plaintext_coefficient_is_accepted() {
+    let t: Field = 5;
+    let msg_bound: Field = t; // exclusive, so `t - 1` is in range
+    Polynomial::new([4, 0, 0, 0]).range_check_standard::<3>(msg_bound);
+}
+
+/// A coefficient at `t` itself is still rejected, so the bound did not merely move outward.
+#[test(should_fail)]
+fn plaintext_coefficient_at_t_is_rejected() {
+    Polynomial::new([5, 0, 0, 0]).range_check_standard::<3>(5);
+}
