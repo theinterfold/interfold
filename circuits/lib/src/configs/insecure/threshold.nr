@@ -1120,7 +1120,7 @@ pub global USER_DATA_ENCRYPTION_E1_BOUND: Field = 20;
 pub global USER_DATA_ENCRYPTION_U_BOUND: Field = 1;
 pub global USER_DATA_ENCRYPTION_K1_LOW_BOUND: Field = 50;
 pub global USER_DATA_ENCRYPTION_K1_UP_BOUND: Field = 49;
-pub global USER_DATA_ENCRYPTION_CT0_R_BOUNDS: [Field; L] = [300, 263];
+pub global USER_DATA_ENCRYPTION_CT0_R_BOUNDS: [Field; L] = [301, 263];
 pub global USER_DATA_ENCRYPTION_CT1_R_BOUNDS: [Field; L] = [256, 256];
 
 /************************************

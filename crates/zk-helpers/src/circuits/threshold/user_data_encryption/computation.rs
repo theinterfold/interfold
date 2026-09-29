@@ -255,10 +255,12 @@ impl Computation for Bounds {
             //
             // ct0 takes the *lifted* `e0_bound`, not its residue at q_i: the reduced identity reads
             // the lifted `e0` directly now that the CRT split and `e0is` are gone.
-            let k1_max = if k1_up_bound > (BigInt::from(-1) * &k1_low_bound) {
+            // Both k1 bounds are stored as positive magnitudes, so take the larger of the two:
+            // for even `t` the low side is the wider one by one.
+            let k1_max = if k1_up_bound > k1_low_bound {
                 k1_up_bound.clone()
             } else {
-                BigInt::from(-1) * &k1_low_bound
+                k1_low_bound.clone()
             };
             let ct0_r_bound: BigInt = (&k1_max * k0qi.abs()
                 + (&n * u_bound + BigInt::from(2)) * &qi_bound

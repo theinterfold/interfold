@@ -24684,7 +24684,7 @@ pub global USER_DATA_ENCRYPTION_E1_BOUND: Field = 20;
 pub global USER_DATA_ENCRYPTION_U_BOUND: Field = 1;
 pub global USER_DATA_ENCRYPTION_K1_LOW_BOUND: Field = 500000;
 pub global USER_DATA_ENCRYPTION_K1_UP_BOUND: Field = 499999;
-pub global USER_DATA_ENCRYPTION_CT0_R_BOUNDS: [Field; L] = [431680, 313440, 377152];
+pub global USER_DATA_ENCRYPTION_CT0_R_BOUNDS: [Field; L] = [431681, 313441, 377153];
 pub global USER_DATA_ENCRYPTION_CT1_R_BOUNDS: [Field; L] = [4096, 4096, 4096];
 
 /************************************
