@@ -8,7 +8,7 @@
 //!
 //! See `UserDataEncryptionCt0` for the circuit contract.
 
-use crate::math::commitments::compute_multiple_polynomial_commitment;
+use crate::math::commitments::compute_multiple_polynomial_commitment_checked;
 use crate::math::commitments::compute_single_polynomial_commitment;
 use crate::math::commitments::compute_user_data_encryption_ct0_challenge;
 use crate::math::commitments::DS_CIPHERTEXT;
@@ -151,10 +151,21 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
     }
 
     fn generate_commitments(self) -> (Field, Field, Field, Field) {
-        let pk0_commitment =
-            compute_multiple_polynomial_commitment::<N, L, BIT_PK>(self.pk0is, DS_PK_AGGREGATION);
-        let ct0_commitment =
-            compute_multiple_polynomial_commitment::<N, L, BIT_CT>(self.ct0is, DS_CIPHERTEXT);
+        // `pk0is` and `ct0is` carry no range bound of their own and reach the transcript only
+        // through these commitments, so both are packed with the digit asserts. `pk0is` needs it to
+        // transfer C5's bound: the on-chain caller substitutes the registry's committee key into the
+        // surfaced pk commitment, and only an injective packing makes that value pin `pk0is`.
+        // `ct0is` needs it so the transcript binds before `gamma` is drawn, which is what lets
+        // Schwartz-Zippel force `ct0is` to the encryption identity. `k1` and `u` are bounded by
+        // `check_range_bounds`, so their plain commitments are already injective.
+        let pk0_commitment = compute_multiple_polynomial_commitment_checked::<N, L, BIT_PK>(
+            self.pk0is,
+            DS_PK_AGGREGATION,
+        );
+        let ct0_commitment = compute_multiple_polynomial_commitment_checked::<N, L, BIT_CT>(
+            self.ct0is,
+            DS_CIPHERTEXT,
+        );
         let k1_commitment = compute_single_polynomial_commitment::<N, BIT_K>(
             self.k1,
             DS_USER_DATA_ENCRYPTION_COMMITMENT,
@@ -230,4 +241,55 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
 
         (pk0_commitment, ct0_commitment, k1_commitment, u_commitment)
     }
+}
+
+/// IF-013: before the commitments carried the digit asserts, `pk0is` had a second opening.
+///
+/// The public key is anchored off-circuit, not in-circuit: the on-chain caller substitutes the
+/// registry's committee key into the pk commitment it verifies against, so nothing here bounds
+/// `pk0is` and the anchor rests entirely on that commitment having one opening. `pack` lays
+/// coefficients into one carrier as base-`radix` digits, so adding `delta` to slot 0 and
+/// `-radix * delta` to slot 1 left the commitment unchanged — a voter could encrypt under a perturbed
+/// key while the chain-supplied commitment still matched.
+///
+/// With the checked commitment the shifted coefficient no longer fits its digit.
+#[test(should_fail)]
+fn second_opening_of_pk0is_is_rejected() {
+    let z = Polynomial::new([0; 8]);
+    let configs: Configs<8, 1> = Configs::new(
+        [68719403009],
+        [1],
+        20,
+        [34359701504],
+        [1],
+        1,
+        [1],
+        [1],
+        [1],
+        1,
+        1,
+    );
+    let mut c: UserDataEncryptionCt0<8, 1, 35, 35, 1, 5, 35, 5, 9, 35, 35> = UserDataEncryptionCt0::new(
+        configs,
+        [z],
+        [z],
+        z,
+        z,
+        [z],
+        [z],
+        z,
+        [Polynomial::new([0; 15])],
+        [Polynomial::new([0; 7])],
+    );
+    let before = c.generate_commitments();
+
+    // Carry 1 from slot 0 into slot 1: both indices share a carrier, so under the unchecked packing
+    // the pk commitment did not move.
+    let radix: Field = 1099511627776;
+    c.pk0is[0].coefficients[0] += 1;
+    c.pk0is[0].coefficients[1] -= radix;
+
+    // Rejected here: slot 1 no longer holds its digit.
+    let after = c.generate_commitments();
+    assert(after.0 == before.0);
 }
