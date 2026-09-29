@@ -192,9 +192,17 @@ every section.
   determines them. Ask "does anything outside this circuit's own identity depend on this value's
   magnitude?" rather than "was it bounded before?". — `flow-trace/04`
 - A soundness fix can be blocked by the browser prover, and the ceiling is a cliff rather than a
-  slope. CRISP proves ct0 in-browser against a hardcoded `srsSize: 2**21`; ct0 sits at 96.3% of it, so
-  either checked commitment pushes it over and browser proving stops working altogether. Measure ct0
-  against 2,097,152 before adding constraints to it. — `flow-trace/04`
+  slope. CRISP proves ct0 in-browser against a hardcoded `srsSize: 2**21` (2,097,152); the checked pk
+  and ciphertext commitments put ct0 at 2,229,363, which stops browser proving rather than slowing it.
+  The soundness fix landed first and the pending arithmetic optimisation restores the margin, but the
+  two must ship together: ct0 has to be re-measured against 2,097,152 before CRISP ships. Measure ct0
+  against that number before adding any constraint to it. — `flow-trace/04`
+- Anchoring a value off-circuit still needs an injective packing in-circuit. The public key is never
+  bounded inside ct0/ct1; `CRISPProgram` substitutes the registry's committee key into the pk
+  commitment it verifies (`noirPublicInputs[8]`), so the whole anchor is "this commitment has one
+  opening". Non-injective packing defeats a chain-supplied value exactly as it defeats an in-circuit
+  bound, and the same holds for the `u`-commitment equality the `user_data_encryption` fold asserts:
+  the check was already there and the packing let a prover past it. — `flow-trace/04`
 - The class is "every circuit that opens a commitment it did not create", and it has seven members:
   C2a, C2b, C4, C5 and C6 (three). All open through `pack_checked`. A new commitment opened from
   elsewhere joins that list and needs either the checked helper or its own bound. Naming the class
