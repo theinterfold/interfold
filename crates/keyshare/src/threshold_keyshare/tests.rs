@@ -137,13 +137,19 @@ async fn peer_keys_that_arrive_before_selection_count_toward_collection() -> Res
 }
 
 #[actix::test]
-async fn a_recorded_key_from_an_expelled_party_does_not_count_at_the_cutoff() -> Result<()> {
+async fn a_recorded_key_from_an_expelled_party_does_not_count_toward_h() -> Result<()> {
     let e3_id = E3id::new("early-expelled-key", 1);
     // With a 30 s window, the encryption-key cutoff (10%) comes 3 s after selection.
     let (actor, repo) = start_actor_before_selection(&e3_id, 30).await?;
 
+    // In production this node's key follows its selection. Here it is recorded first, so selection
+    // queues every key to the new collector before the collector schedules its cutoff. No test step
+    // races the cutoff.
     actor
-        .send(keyshare_event(peer_key(&e3_id, 1), 1, EventSource::Net))
+        .send(keyshare_event(peer_key(&e3_id, 0), 1, EventSource::Local))
+        .await?;
+    actor
+        .send(keyshare_event(peer_key(&e3_id, 1), 2, EventSource::Net))
         .await?;
     let expelled = CommitteeMemberExpelled {
         e3_id: e3_id.clone(),
@@ -153,22 +159,19 @@ async fn a_recorded_key_from_an_expelled_party_does_not_count_at_the_cutoff() ->
         party_id: Some(1),
     };
     actor
-        .send(keyshare_event(expelled, 2, EventSource::Evm))
+        .send(keyshare_event(expelled, 3, EventSource::Evm))
         .await?;
     actor
-        .send(keyshare_event(selection(&e3_id), 3, EventSource::Evm))
-        .await?;
-    wait_for_keyshare_state(&repo, |state| {
-        matches!(state, KeyshareState::CollectingEncryptionKeys(_))
-    })
-    .await?;
-    actor
-        .send(keyshare_event(peer_key(&e3_id, 0), 4, EventSource::Local))
+        .send(keyshare_event(selection(&e3_id), 4, EventSource::Evm))
         .await?;
 
-    // Only this node's key counts, one below H = 2, so the collection fails at the cutoff.
+    // The collector continues with keys 0 and 1 at the cutoff. The keyshare removes party 1's key,
+    // and one key is below H = 2, so the DKG fails instead of generating shares.
     let state = wait_for_keyshare_state(&repo, |state| {
-        !matches!(state, KeyshareState::CollectingEncryptionKeys(_))
+        matches!(
+            state,
+            KeyshareState::Failed { .. } | KeyshareState::GeneratingThresholdShare(_)
+        )
     })
     .await?;
     assert!(
@@ -179,9 +182,328 @@ async fn a_recorded_key_from_an_expelled_party_does_not_count_at_the_cutoff() ->
                 reason: FailureReason::DKGTimeout,
             }
         ),
-        "expected the collection to fail at the cutoff, got {state:?}"
+        "expected the DKG to fail with one usable key, got {state:?}"
     );
     Ok(())
+}
+
+#[actix::test]
+async fn a_live_key_after_the_cutoff_does_not_reach_a_waiting_collector() -> Result<()> {
+    let e3_id = E3id::new("late-live-key", 1);
+    // The 10% cutoff of this 2,000 s window passed 800 s ago.
+    let (mut actor, _, _, _) = build_actor(
+        &e3_id,
+        collecting_encryption_keys_state(&e3_id),
+        1_000,
+        2_000,
+        &[],
+    )
+    .await?;
+    let (parent, _, _, _) = build_actor(
+        &e3_id,
+        collecting_encryption_keys_state(&e3_id),
+        7_200,
+        7_200,
+        &[],
+    )
+    .await?;
+    let parent = parent.start();
+    // A collector whose timer has not fired yet. Its relative timer can fire up to a second after
+    // the absolute cutoff.
+    actor.encryption_key_collector = Some(EncryptionKeyCollector::setup(
+        parent.clone(),
+        3,
+        2,
+        0,
+        e3_id.clone(),
+        Some(std::time::Duration::from_secs(3_600)),
+    ));
+
+    let late = actor
+        .handle_encryption_key_created(TypedEvent::new(peer_key(&e3_id, 1), test_ec(1)), parent);
+
+    let error = late.expect_err("a key after the cutoff must not reach the collector");
+    assert!(
+        error.to_string().contains("cutoff"),
+        "unexpected error: {error}"
+    );
+    Ok(())
+}
+
+#[actix::test]
+async fn a_restart_after_the_key_cutoff_continues_with_h_recorded_keys() -> Result<()> {
+    let e3_id = E3id::new("overdue-keys", 1);
+    // The 10% cutoff of this 2,000 s window passed 800 s ago. The deadline is 1,000 s away.
+    let (mut actor, repo, _, _) = build_actor(
+        &e3_id,
+        collecting_encryption_keys_state(&e3_id),
+        1_000,
+        2_000,
+        &[],
+    )
+    .await?;
+    for party_id in [0, 1] {
+        actor.record_encryption_key(&TypedEvent::new(
+            peer_key(&e3_id, party_id),
+            test_ec(party_id + 1),
+        ))?;
+    }
+    let actor = actor.start();
+    actor
+        .send(keyshare_event(EffectsEnabled::new(), 3, EventSource::Local))
+        .await?;
+
+    // This node's key and one peer key reach H = 2, so the DKG continues without party 2.
+    let state = wait_for_keyshare_state(&repo, |state| {
+        matches!(
+            state,
+            KeyshareState::GeneratingThresholdShare(_) | KeyshareState::Failed { .. }
+        )
+    })
+    .await?;
+    let KeyshareState::GeneratingThresholdShare(data) = state else {
+        panic!("expected the DKG to continue after the overdue cutoff, got {state:?}");
+    };
+    let parties = data
+        .collected_encryption_keys
+        .iter()
+        .map(|key| key.party_id)
+        .collect::<Vec<_>>();
+    assert_eq!(parties, vec![0, 1]);
+    Ok(())
+}
+
+#[actix::test]
+async fn a_restart_after_the_key_cutoff_without_this_nodes_key_fails_the_dkg() -> Result<()> {
+    let e3_id = E3id::new("overdue-without-own-key", 1);
+    let (mut actor, repo, _, _) = build_actor(
+        &e3_id,
+        collecting_encryption_keys_state(&e3_id),
+        1_000,
+        2_000,
+        &[],
+    )
+    .await?;
+    for party_id in [1, 2] {
+        actor.record_encryption_key(&TypedEvent::new(
+            peer_key(&e3_id, party_id),
+            test_ec(party_id),
+        ))?;
+    }
+    let actor = actor.start();
+    actor
+        .send(keyshare_event(EffectsEnabled::new(), 3, EventSource::Local))
+        .await?;
+
+    // Two peer keys reach H = 2, but share generation also needs this node's key.
+    let state = wait_for_keyshare_state(&repo, |state| {
+        matches!(
+            state,
+            KeyshareState::GeneratingThresholdShare(_) | KeyshareState::Failed { .. }
+        )
+    })
+    .await?;
+    assert!(
+        matches!(
+            state,
+            KeyshareState::Failed {
+                failed_at_stage: E3Stage::CommitteeFinalized,
+                reason: FailureReason::DKGTimeout,
+            }
+        ),
+        "expected the overdue cutoff to fail the DKG, got {state:?}"
+    );
+    Ok(())
+}
+
+#[actix::test]
+async fn a_restart_during_key_collection_replays_saved_threshold_shares() -> Result<()> {
+    let e3_id = E3id::new("saved-shares", 1);
+    let (mut actor, _, recovery_repo, _) = build_actor(
+        &e3_id,
+        collecting_encryption_keys_state(&e3_id),
+        7_200,
+        7_200,
+        &[],
+    )
+    .await?;
+    // Parties 1 and 2 sent their shares before this node collected every encryption key.
+    for party_id in [1, 2] {
+        actor.record_threshold_share(&TypedEvent::new(
+            peer_share(&e3_id, party_id),
+            test_ec(party_id),
+        ))?;
+    }
+    let actor = actor.start();
+    actor
+        .send(keyshare_event(EffectsEnabled::new(), 3, EventSource::Local))
+        .await?;
+
+    // The new collector gets both saved shares and records the complete batch.
+    let recovery = wait_for_record(&recovery_repo, |recovery| {
+        recovery.collected_threshold_share_ids.is_some()
+    })
+    .await?;
+    assert_eq!(
+        recovery.collected_threshold_share_ids,
+        Some(BTreeSet::from([1, 2]))
+    );
+    Ok(())
+}
+
+#[actix::test]
+async fn a_rebuilt_share_collector_does_not_wait_for_an_expelled_party() -> Result<()> {
+    let e3_id = E3id::new("expelled-share", 1);
+    // The 75% threshold-share cutoff of this 7,200 s window is 5,400 s away.
+    let (mut actor, _, recovery_repo, _) = build_actor(
+        &e3_id,
+        KeyshareState::GeneratingThresholdShare(GeneratingThresholdShareData {
+            pk_share: None,
+            sk_sss: None,
+            esi_sss: None,
+            e_sm_raw: None,
+            sk_bfv: SensitiveBytes::from_encrypted(&[1]),
+            pk_bfv: ArcBytes::from_bytes(&[2]),
+            collected_encryption_keys: [0, 1, 2]
+                .map(|party_id| peer_key(&e3_id, party_id).key)
+                .to_vec(),
+            ciphernode_selected: Some(CiphernodeSelected {
+                e3_id: e3_id.clone(),
+                party_id: 0,
+                threshold_m: 1,
+                threshold_n: 3,
+                ..Default::default()
+            }),
+            proof_request_data: None,
+        }),
+        7_200,
+        7_200,
+        &[1],
+    )
+    .await?;
+    // Party 1's share was saved before its expulsion.
+    for party_id in [1, 2] {
+        actor.record_threshold_share(&TypedEvent::new(
+            peer_share(&e3_id, party_id),
+            test_ec(party_id),
+        ))?;
+    }
+    let actor = actor.start();
+    actor
+        .send(keyshare_event(EffectsEnabled::new(), 3, EventSource::Local))
+        .await?;
+
+    // The rebuilt collector learns that party 1 is expelled, so party 2's share completes the batch
+    // before the cutoff and party 1's share does not count.
+    let recovery = wait_for_record(&recovery_repo, |recovery| {
+        recovery.collected_threshold_share_ids.is_some()
+    })
+    .await?;
+    assert_eq!(
+        recovery.collected_threshold_share_ids,
+        Some(BTreeSet::from([2]))
+    );
+    Ok(())
+}
+
+#[actix::test]
+async fn an_expulsion_that_leaves_fewer_than_h_keys_fails_the_dkg() -> Result<()> {
+    let e3_id = E3id::new("expelled-after-collection", 1);
+    let (actor, repo, _, history) = build_actor(
+        &e3_id,
+        collecting_encryption_keys_state(&e3_id),
+        7_200,
+        7_200,
+        &[1],
+    )
+    .await?;
+    let actor = actor.start();
+
+    // The collector completed with H = 2 keys before party 1's expulsion reached it.
+    let keys = [0, 1]
+        .map(|party_id| peer_key(&e3_id, party_id).key)
+        .to_vec();
+    actor
+        .send(TypedEvent::new(
+            AllEncryptionKeysCollected { keys },
+            test_ec(1),
+        ))
+        .await?;
+
+    let state = wait_for_keyshare_state(&repo, |state| {
+        matches!(
+            state,
+            KeyshareState::GeneratingThresholdShare(_) | KeyshareState::Failed { .. }
+        )
+    })
+    .await?;
+    assert!(
+        matches!(
+            state,
+            KeyshareState::Failed {
+                failed_at_stage: E3Stage::CommitteeFinalized,
+                reason: FailureReason::DKGTimeout,
+            }
+        ),
+        "expected the DKG to fail with one usable key, got {state:?}"
+    );
+    let failure = next_event(&history).await?;
+    assert!(
+        matches!(
+            failure.get_data(),
+            InterfoldEventData::EncryptionKeyCollectionFailed(data)
+                if data.missing_parties == vec![2]
+        ),
+        "expected party 2 to be reported missing, got {failure:?}"
+    );
+    Ok(())
+}
+
+/// Build a keyshare in `keyshare_state` with insecure BFV parameters, as restart recovery hydrates
+/// it. The DKG deadline is `deadline_in_secs` from now, at the end of a `dkg_window_secs` window.
+/// The caller records inputs, starts the actor and sends `EffectsEnabled`.
+async fn build_actor(
+    e3_id: &E3id,
+    keyshare_state: KeyshareState,
+    deadline_in_secs: u64,
+    dkg_window_secs: u64,
+    expelled_parties: &[u64],
+) -> Result<(
+    ThresholdKeyshare,
+    Repository<ThresholdKeyshareState>,
+    Repository<ThresholdKeyshareRecoveryState>,
+    Addr<HistoryCollector<InterfoldEvent>>,
+)> {
+    let (bus, history) = test_bus();
+    let (mut state, repo) = test_state(e3_id, keyshare_state);
+    state.try_mutate_without_context(|mut state| {
+        state.dkg_deadline_unix_secs =
+            Some(crate::domain::timeout_policy::now_unix_secs().saturating_add(deadline_in_secs));
+        state.dkg_window_secs = Some(dkg_window_secs);
+        state.params = insecure_threshold_params();
+        state.expelled_parties.extend(expelled_parties);
+        Ok(state)
+    })?;
+    let (recovery, recovery_repo) = test_recovery_with_repo();
+    let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bus,
+        cipher: Arc::new(Cipher::from_password("test-password").await?),
+        state,
+        share_enc_preset: BfvPreset::InsecureDkg512,
+        interfold_address: Address::ZERO,
+        signer: alloy::signers::local::PrivateKeySigner::random(),
+        effects_enabled: false,
+        recovery,
+        recovery_payloads: test_recovery_payloads(),
+        dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
+    });
+    Ok((actor, repo, recovery_repo, history))
+}
+
+fn insecure_threshold_params() -> ArcBytes {
+    ArcBytes::from_bytes(&encode_bfv_params(
+        &BfvParamSet::from(BfvPreset::InsecureThreshold512).build_arc(),
+    ))
 }
 
 /// Start a keyshare in `Init` that has not yet read its DKG timing, as before its own selection.
@@ -191,13 +513,10 @@ async fn start_actor_before_selection(
 ) -> Result<(Addr<ThresholdKeyshare>, Repository<ThresholdKeyshareState>)> {
     let (bus, _) = test_bus();
     let (mut state, repo) = test_state(e3_id, KeyshareState::Init);
-    let params = ArcBytes::from_bytes(&encode_bfv_params(
-        &BfvParamSet::from(BfvPreset::InsecureThreshold512).build_arc(),
-    ));
     state.try_mutate_without_context(|mut state| {
         state.dkg_deadline_unix_secs = None;
         state.dkg_window_secs = None;
-        state.params = params;
+        state.params = insecure_threshold_params();
         Ok(state)
     })?;
     let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
@@ -250,15 +569,42 @@ fn peer_key(e3_id: &E3id, party_id: u64) -> EncryptionKeyCreated {
     }
 }
 
+fn peer_share(e3_id: &E3id, party_id: u64) -> ThresholdShareCreated {
+    ThresholdShareCreated {
+        e3_id: e3_id.clone(),
+        share: Arc::new(ThresholdShare {
+            party_id,
+            pk_share: ArcBytes::from_bytes(&[party_id as u8]),
+            sk_sss: Default::default(),
+            esi_sss: Vec::new(),
+        }),
+        target_party_id: 0,
+        external: true,
+        signed_c2a_proof: None,
+        signed_c2b_proof: None,
+        signed_c3a_proofs: Vec::new(),
+        signed_c3b_proofs: Vec::new(),
+    }
+}
+
 async fn wait_for_keyshare_state(
     repo: &Repository<ThresholdKeyshareState>,
     matches_state: impl Fn(&KeyshareState) -> bool,
 ) -> Result<KeyshareState> {
+    Ok(wait_for_record(repo, |state| matches_state(&state.state))
+        .await?
+        .state)
+}
+
+async fn wait_for_record<T>(repo: &Repository<T>, matches_record: impl Fn(&T) -> bool) -> Result<T>
+where
+    T: for<'de> serde::Deserialize<'de> + serde::Serialize,
+{
     actix::clock::timeout(std::time::Duration::from_secs(10), async {
         loop {
-            if let Some(state) = repo.read().await? {
-                if matches_state(&state.state) {
-                    return Ok(state.state);
+            if let Some(record) = repo.read().await? {
+                if matches_record(&record) {
+                    return Ok(record);
                 }
             }
             actix::clock::sleep(std::time::Duration::from_millis(10)).await;
@@ -321,9 +667,19 @@ fn test_state(
 }
 
 fn test_recovery() -> Persistable<ThresholdKeyshareRecoveryState> {
+    test_recovery_with_repo().0
+}
+
+fn test_recovery_with_repo() -> (
+    Persistable<ThresholdKeyshareRecoveryState>,
+    Repository<ThresholdKeyshareRecoveryState>,
+) {
     let store = InMemStore::new(false).start();
     let repo = Repository::<ThresholdKeyshareRecoveryState>::new(DataStore::from_in_mem(&store));
-    repo.send(Some(ThresholdKeyshareRecoveryState::default()))
+    (
+        repo.send(Some(ThresholdKeyshareRecoveryState::default())),
+        repo,
+    )
 }
 
 fn test_recovery_payloads() -> ThresholdKeyshareRecoveryPayloads {
@@ -449,7 +805,11 @@ async fn recovered_encryption_keys_reuse_the_replayed_key_output() -> Result<()>
 
     actor.handle_gen_pk_share_and_sk_sss_response(gen_pk_response(&cipher, &e3_id, 2)?)?;
     actor.handle_all_encryption_keys_collected(TypedEvent::new(
-        AllEncryptionKeysCollected { keys: Vec::new() },
+        AllEncryptionKeysCollected {
+            keys: [0, 1]
+                .map(|party_id| peer_key(&e3_id, party_id).key)
+                .to_vec(),
+        },
         test_ec(1),
     ))?;
 

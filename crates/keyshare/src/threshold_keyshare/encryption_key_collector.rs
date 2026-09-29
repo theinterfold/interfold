@@ -43,6 +43,14 @@ impl From<HashMap<u64, Arc<EncryptionKey>>> for AllEncryptionKeysCollected {
 #[rtype(result = "()")]
 pub struct EncryptionKeyCollectionTimeout;
 
+/// Sent by the parent after it has sent every recorded key to the collector.
+///
+/// A collector that starts after the cutoff has no timer. It applies the cutoff when it receives
+/// this message, so every recorded key counts.
+#[derive(Message, Clone, Debug)]
+#[rtype(result = "()")]
+pub struct EncryptionKeysReplayed;
+
 /// Removes this party from the `todo` set so the DKG can complete with
 /// N-1 keys instead of waiting for a key that will never arrive.
 #[derive(Message, Clone, Debug)]
@@ -57,12 +65,14 @@ pub struct ExpelPartyFromKeyCollection {
 /// Once all keys are collected, it sends `AllEncryptionKeysCollected` to the parent
 /// `ThresholdKeyshare` actor. If collection times out, it sends `EncryptionKeyCollectionFailed`.
 /// If a party is expelled (slashed), it is removed from the expected set so the
-/// collection can complete with N-1 parties.
+/// collection can complete with N-1 parties. A collector that restart recovery creates after the
+/// cutoff applies the cutoff when it receives `EncryptionKeysReplayed`.
 pub struct EncryptionKeyCollector {
     e3_id: E3id,
     parent: Addr<ThresholdKeyshare>,
     collection: EncryptionKeyCollection,
-    timeout: Duration,
+    /// Time until the cutoff, or `None` if the cutoff passed before this collector started.
+    timeout: Option<Duration>,
     minimum_keys: usize,
     own_party_id: PartyId,
     last_ec: Option<EventContext<Sequenced>>,
@@ -76,7 +86,7 @@ impl EncryptionKeyCollector {
         minimum_keys: usize,
         own_party_id: PartyId,
         e3_id: E3id,
-        timeout: Duration,
+        timeout: Option<Duration>,
     ) -> Addr<Self> {
         Self::create(|ctx| {
             ctx.set_mailbox_capacity(MAILBOX_LIMIT);
@@ -109,47 +119,10 @@ impl EncryptionKeyCollector {
             self.parent.do_send(event);
         }
     }
-}
 
-impl Actor for EncryptionKeyCollector {
-    type Context = actix::Context<Self>;
-
-    fn started(&mut self, ctx: &mut Self::Context) {
-        info!(
-            e3_id = %self.e3_id,
-            "EncryptionKeyCollector started, scheduling timeout in {:?}",
-            self.timeout
-        );
-
-        let handle = ctx.notify_later(EncryptionKeyCollectionTimeout, self.timeout);
-        self.timeout_handle = Some(handle);
-    }
-}
-
-impl Handler<TypedEvent<EncryptionKeyCreated>> for EncryptionKeyCollector {
-    type Result = ();
-    fn handle(
-        &mut self,
-        msg: TypedEvent<EncryptionKeyCreated>,
-        ctx: &mut Self::Context,
-    ) -> Self::Result {
-        let (msg, ec) = msg.into_components();
-        info!("EncryptionKeyCollector: EncryptionKeyCreated received");
-        let outcome = self.collection.receive(msg.key);
-        if !matches!(outcome, CollectOutcome::Ignored) {
-            self.last_ec = Some(ec.clone());
-        }
-        self.complete(ctx, ec, outcome);
-    }
-}
-
-impl Handler<EncryptionKeyCollectionTimeout> for EncryptionKeyCollector {
-    type Result = ();
-    fn handle(
-        &mut self,
-        _: EncryptionKeyCollectionTimeout,
-        ctx: &mut Self::Context,
-    ) -> Self::Result {
+    /// Continue with the available keys if they reach H and include this node's key. Otherwise
+    /// report the missing parties.
+    fn apply_cutoff(&mut self, ctx: &mut actix::Context<Self>) {
         if let Some(ec) = self.last_ec.clone() {
             if let Some(keys) = self
                 .collection
@@ -188,6 +161,66 @@ impl Handler<EncryptionKeyCollectionTimeout> for EncryptionKeyCollector {
         });
 
         ctx.stop();
+    }
+}
+
+impl Actor for EncryptionKeyCollector {
+    type Context = actix::Context<Self>;
+
+    fn started(&mut self, ctx: &mut Self::Context) {
+        let Some(timeout) = self.timeout else {
+            info!(
+                e3_id = %self.e3_id,
+                "EncryptionKeyCollector started after the cutoff; it applies the cutoff to the recorded keys"
+            );
+            return;
+        };
+        info!(
+            e3_id = %self.e3_id,
+            "EncryptionKeyCollector started, scheduling timeout in {:?}",
+            timeout
+        );
+
+        let handle = ctx.notify_later(EncryptionKeyCollectionTimeout, timeout);
+        self.timeout_handle = Some(handle);
+    }
+}
+
+impl Handler<TypedEvent<EncryptionKeyCreated>> for EncryptionKeyCollector {
+    type Result = ();
+    fn handle(
+        &mut self,
+        msg: TypedEvent<EncryptionKeyCreated>,
+        ctx: &mut Self::Context,
+    ) -> Self::Result {
+        let (msg, ec) = msg.into_components();
+        info!("EncryptionKeyCollector: EncryptionKeyCreated received");
+        let outcome = self.collection.receive(msg.key);
+        if !matches!(outcome, CollectOutcome::Ignored) {
+            self.last_ec = Some(ec.clone());
+        }
+        self.complete(ctx, ec, outcome);
+    }
+}
+
+impl Handler<EncryptionKeyCollectionTimeout> for EncryptionKeyCollector {
+    type Result = ();
+    fn handle(
+        &mut self,
+        _: EncryptionKeyCollectionTimeout,
+        ctx: &mut Self::Context,
+    ) -> Self::Result {
+        self.apply_cutoff(ctx);
+    }
+}
+
+impl Handler<EncryptionKeysReplayed> for EncryptionKeyCollector {
+    type Result = ();
+    fn handle(&mut self, _: EncryptionKeysReplayed, ctx: &mut Self::Context) -> Self::Result {
+        // A collector with a timer applies the cutoff when the timer fires.
+        if self.timeout.is_none() {
+            self.apply_cutoff(ctx);
+        }
     }
 }
 

@@ -51,7 +51,41 @@ impl ThresholdKeyshare {
         let Some(state) = self.state.get() else {
             bail!("State not found on threshold keyshare. This should not happen.");
         };
+        let timeout = resolve_timeout(
+            DkgTimeoutPhase::EncryptionKeyCollection,
+            state.dkg_deadline_unix_secs,
+            state.dkg_window_secs,
+        )?;
+        self.encryption_key_collector_with_timeout(self_addr, Some(timeout))
+    }
 
+    /// Create or return the encryption-key collector during restart recovery.
+    ///
+    /// Unlike `ensure_encryption_key_collector`, this also creates the collector after the cutoff.
+    /// That collector has no timer: it applies the cutoff when it receives `EncryptionKeysReplayed`
+    /// after the recorded keys. A live key after the cutoff must not reach a collector, so only
+    /// `resume_in_flight_work` calls this.
+    pub(in crate::actors::threshold_keyshare) fn recover_encryption_key_collector(
+        &mut self,
+        self_addr: Addr<Self>,
+    ) -> Result<Addr<EncryptionKeyCollector>> {
+        let state = self.state.try_get()?;
+        let timeout = resolve_encryption_key_timeout(
+            state.dkg_deadline_unix_secs,
+            state.dkg_window_secs,
+            crate::domain::timeout_policy::now_unix_secs(),
+        )?;
+        self.encryption_key_collector_with_timeout(self_addr, timeout)
+    }
+
+    /// Return the existing encryption-key collector, or create one with `timeout` (`None`: the
+    /// cutoff has passed).
+    fn encryption_key_collector_with_timeout(
+        &mut self,
+        self_addr: Addr<Self>,
+        timeout: Option<DerivedTimeout>,
+    ) -> Result<Addr<EncryptionKeyCollector>> {
+        let state = self.state.try_get()?;
         info!(
             "Setting up encryption key collector for addr: {} and {} nodes",
             state.address, state.threshold_n
@@ -60,17 +94,18 @@ impl ThresholdKeyshare {
         let threshold_n = state.threshold_n;
         let minimum_keys = state.committee_h()?;
         let own_party_id = state.party_id;
-        let timeout = resolve_timeout(
-            DkgTimeoutPhase::EncryptionKeyCollection,
-            state.dkg_deadline_unix_secs,
-            state.dkg_window_secs,
-        )?;
-        info!(
-            e3_id = %e3_id,
-            timeout = ?timeout.duration,
-            "{}",
-            timeout.description
-        );
+        match &timeout {
+            Some(timeout) => info!(
+                e3_id = %e3_id,
+                timeout = ?timeout.duration,
+                "{}",
+                timeout.description
+            ),
+            None => info!(
+                e3_id = %e3_id,
+                "Encryption-key collection cutoff has passed"
+            ),
+        }
         let addr = self.encryption_key_collector.get_or_insert_with(|| {
             EncryptionKeyCollector::setup(
                 self_addr,
@@ -78,7 +113,7 @@ impl ThresholdKeyshare {
                 minimum_keys,
                 own_party_id,
                 e3_id,
-                timeout.duration,
+                timeout.map(|timeout| timeout.duration),
             )
         });
         Ok(addr.clone())

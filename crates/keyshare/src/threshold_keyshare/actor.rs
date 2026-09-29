@@ -53,13 +53,15 @@ use crate::actors::decryption_key_shared_collector::{
     DecryptionKeySharedCollector, ExpelPartyFromDecryptionKeySharedCollection,
 };
 use crate::actors::encryption_key_collector::{
-    AllEncryptionKeysCollected, EncryptionKeyCollector, ExpelPartyFromKeyCollection,
+    AllEncryptionKeysCollected, EncryptionKeyCollector, EncryptionKeysReplayed,
+    ExpelPartyFromKeyCollection,
 };
 use crate::actors::threshold_share_collector::{
     ExpelPartyFromShareCollection, ThresholdShareCollector,
 };
 use crate::domain::timeout_policy::{
-    resolve_threshold_share_schedule, resolve_timeout, DkgTimeoutPhase,
+    resolve_encryption_key_timeout, resolve_threshold_share_schedule, resolve_timeout,
+    DerivedTimeout, DkgTimeoutPhase,
 };
 use crate::domain::{
     build_decryption_key_plan, build_shares_generated_plan, dealer_identity, generate_bfv_keypair,

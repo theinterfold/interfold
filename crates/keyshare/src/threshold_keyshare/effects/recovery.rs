@@ -262,36 +262,55 @@ impl ThresholdKeyshare {
         })
     }
 
-    /// Create the encryption-key collector and send it every recorded key.
+    /// Send every recorded key to the encryption-key collector, then `EncryptionKeysReplayed`.
     ///
     /// A peer key that arrives while the keyshare is in `Init` is only recorded. The collector needs
-    /// the frozen DKG timing, which this node reads when it handles its own selection.
+    /// the frozen DKG timing, which this node reads when it handles its own selection. A collector
+    /// that restart recovery creates after the cutoff applies the cutoff when the replay ends.
     ///
-    /// Keys from expelled parties are not sent. Such a key must not count toward H at the cutoff,
-    /// because the parent removes it from the collected keys.
+    /// Keys from expelled parties are sent too. When the collector completes, the keyshare removes
+    /// them and fails the DKG if fewer than H keys remain.
     pub(in crate::actors::threshold_keyshare) fn replay_encryption_keys(
-        &mut self,
-        self_addr: Addr<Self>,
+        &self,
+        collector: &Addr<EncryptionKeyCollector>,
     ) -> Result<()> {
-        let expelled = self.state.try_get()?.expelled_parties;
-        let collector = self.ensure_encryption_key_collector(self_addr)?;
-        for event in self
-            .recovery
-            .try_get()?
-            .encryption_keys
-            .values()
-            .filter(|event| !expelled.contains(&event.key.party_id))
-        {
+        for event in self.recovery.try_get()?.encryption_keys.values() {
             collector.try_send(event.clone())?;
         }
+        collector.try_send(EncryptionKeysReplayed)?;
         Ok(())
     }
 
-    fn replay_threshold_shares(&mut self, self_addr: Addr<Self>) -> Result<()> {
+    fn replay_threshold_shares(
+        &mut self,
+        self_addr: Addr<Self>,
+        ec: &EventContext<Sequenced>,
+    ) -> Result<()> {
         if self.recovery_payloads.shares().is_empty() {
             return Ok(());
         }
+        self.rebuild_threshold_share_collector(self_addr, ec)
+    }
+
+    /// Create the threshold-share collector, send it every expelled party, then every recorded
+    /// share.
+    ///
+    /// A running collector learns each expulsion from `ExpelPartyFromShareCollection`. A new
+    /// collector must learn the earlier ones too. Otherwise it waits until the cutoff for a share
+    /// that will not come, and a recorded share from an expelled party can count toward H - 1.
+    fn rebuild_threshold_share_collector(
+        &mut self,
+        self_addr: Addr<Self>,
+        ec: &EventContext<Sequenced>,
+    ) -> Result<()> {
+        let expelled = self.state.try_get()?.expelled_parties;
         let collector = self.ensure_collector(self_addr)?;
+        for party_id in expelled {
+            collector.try_send(ExpelPartyFromShareCollection {
+                party_id,
+                ec: ec.clone(),
+            })?;
+        }
         for event in self.recovery_payloads.shares().values() {
             collector.try_send(event.clone())?;
         }
@@ -405,7 +424,11 @@ impl ThresholdKeyshare {
                 Ok(())
             }
             KeyshareState::CollectingEncryptionKeys(data) => {
-                self.replay_encryption_keys(self_addr)?;
+                let collector = self.recover_encryption_key_collector(self_addr.clone())?;
+                self.replay_encryption_keys(&collector)?;
+                // Selection creates the threshold-share collector too. A peer can send this node
+                // its share while this node still collects encryption keys.
+                self.rebuild_threshold_share_collector(self_addr, &ec)?;
                 let committee_size = committee_size?;
                 self.bus.publish(
                     EncryptionKeyPending {
@@ -418,7 +441,7 @@ impl ThresholdKeyshare {
                 )
             }
             KeyshareState::GeneratingThresholdShare(data) => {
-                self.replay_threshold_shares(self_addr)?;
+                self.replay_threshold_shares(self_addr, &ec)?;
                 self.resume_generating_threshold_share(data, ec)
             }
             KeyshareState::AggregatingDecryptionKey(_) => {
@@ -438,7 +461,7 @@ impl ThresholdKeyshare {
                     if recovery.collected_threshold_share_ids.is_some() {
                         return self.verify_recorded_threshold_shares(ec);
                     }
-                    return self.replay_threshold_shares(self_addr);
+                    return self.replay_threshold_shares(self_addr, &ec);
                 }
                 if let Some(verification) = recovery.share_verification_complete.clone() {
                     self.handle_share_verification_complete(verification)?;
@@ -451,7 +474,7 @@ impl ThresholdKeyshare {
                 if recovery.collected_threshold_share_ids.is_some() {
                     return self.verify_recorded_threshold_shares(ec);
                 }
-                self.replay_threshold_shares(self_addr)
+                self.replay_threshold_shares(self_addr, &ec)
             }
             KeyshareState::ReadyForDecryption(_) => {
                 // PublicKeyAggregated is a newer durable fact than the retained C2/C3/C4
