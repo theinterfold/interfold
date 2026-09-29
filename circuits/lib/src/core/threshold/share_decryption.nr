@@ -8,7 +8,7 @@ use crate::math::commitments::{
     compute_aggregated_shares_commitment_checked, compute_ciphertext_commitment_checked,
     compute_threshold_decryption_share_commitment, compute_threshold_share_decryption_challenge,
 };
-use crate::math::helpers::flatten;
+use crate::math::helpers::{flatten, flatten_checked};
 use crate::math::polynomial::Polynomial;
 
 /// Parameters for threshold share decryption (C6).
@@ -195,8 +195,12 @@ impl<let N: u32, let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let BIT_CT: u32, 
         inputs = flatten::<_, _, BIT_R1>(inputs, self.r1);
         inputs = flatten::<_, _, BIT_R2>(inputs, self.r2);
 
+        // `d` carries no range bound of its own, so absorb it through the checked packing: the
+        // digit asserts make the transcript injective, which is what lets Schwartz-Zippel pin
+        // `d` to the evaluated identity. `ct0`/`ct1` are bounded by `verify_ct_commitment` and
+        // `r1`/`r2` by `check_range_bounds`, so plain `flatten` is already injective for them.
         // Full `d` fixes the C7 prefix commitment (computed separately as the public output)
-        inputs = flatten::<N, L, BIT_D>(inputs, self.d);
+        inputs = flatten_checked::<N, L, BIT_D>(inputs, self.d);
 
         inputs
     }
@@ -347,4 +351,49 @@ impl<let N: u32, let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let BIT_CT: u32, 
             "Decryption share computation failed",
         );
     }
+}
+
+/// IF-013: before `payload` absorbed `d` through the checked packing, a prover could swap `d`
+/// *after* the challenge was fixed.
+///
+/// `pack` lays `group` coefficients into one field element as base-`radix` digits, so adding `delta`
+/// to one coefficient and `-radix * delta` to the next leaves the carrier unchanged. With `d`
+/// carrying no range bound, both digits stayed satisfiable and `gamma` did not move. The shift below
+/// is solved so `d(gamma)` is preserved too, so the evaluation check also still passed — the circuit
+/// accepted a decryption share the committed `sk` / `e_sm` / `ct` never produced.
+///
+/// `flatten_checked` asserts each digit fits its slot, so the second challenge computation now
+/// fails and the swap is unreachable.
+#[test(should_fail)]
+fn forged_d_with_same_transcript_is_rejected() {
+    let z = Polynomial::new([0; 8]);
+    let anchor = compute_aggregated_shares_commitment_checked::<8, 1, 35>([z]);
+    let ct = compute_ciphertext_commitment_checked::<8, 1, 35>([z], [z]);
+    let mut d = z;
+    d.coefficients[7] = 1;
+    let mut c: ShareDecryption<8, 1, 1, 35, 35, 35, 43, 35, 35, 36> = ShareDecryption::new(
+        Configs::new([68719403009], [1], [1]),
+        anchor,
+        anchor,
+        ct,
+        [z],
+        [z],
+        [z],
+        [z],
+        [Polynomial::new([0; 15])],
+        [Polynomial::new([0; 7])],
+        [d],
+        [Polynomial::new([1])],
+    );
+    let gamma = c.generate_challenge();
+
+    // Carry `shift` from slot 0 into slot 1: the packed carrier, and so `gamma`, is unchanged.
+    let radix: Field = 1099511627776;
+    let shift = -1 / (gamma.pow_32(6) * (gamma - radix));
+    c.d[0].coefficients[0] += shift;
+    c.d[0].coefficients[1] -= radix * shift;
+
+    // Rejected here: the shifted coefficients no longer fit their digit slots.
+    assert(c.generate_challenge() == gamma);
+    let _ = c.execute();
 }
