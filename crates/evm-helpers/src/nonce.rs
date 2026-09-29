@@ -101,6 +101,7 @@ fn next_free_nonce(sent: &mut BTreeMap<u64, Instant>, pending: u64, now: Instant
 mod tests {
     use super::*;
 
+    /// A reservation keeps a nonce that the RPC does not count yet out of the next send.
     #[test]
     fn skips_nonces_that_the_rpc_does_not_count_yet() {
         let now = Instant::now();
@@ -109,6 +110,7 @@ mod tests {
         assert_eq!(next_free_nonce(&mut sent, 5, now), 7);
     }
 
+    /// The pending count of the chain wins when it is ahead, and it clears what it counts.
     #[test]
     fn follows_the_chain_past_nonces_that_it_counts() {
         let now = Instant::now();
@@ -118,6 +120,7 @@ mod tests {
         assert!(sent.is_empty());
     }
 
+    /// The lowest nonce that the chain does not count is used again when its reservation expires.
     #[test]
     fn uses_a_dropped_nonce_again_after_its_reservation_expires() {
         let dropped_at = Instant::now();
@@ -132,6 +135,7 @@ mod tests {
         );
     }
 
+    /// An old reservation above a dropped nonce stays, because its transaction waits in the queue.
     #[test]
     fn keeps_the_nonces_queued_behind_a_dropped_one() {
         let sent_at = Instant::now();

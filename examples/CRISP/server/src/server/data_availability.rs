@@ -52,6 +52,12 @@ const AVAILABLE_INPUT_REFERENCE_SCHEMA_VERSION: u32 = 1;
 // clock that runs ahead of the chain.
 const RELAY_RECORD_RETENTION_SECONDS: u64 = 3_600;
 
+/// How long a relayed job keeps the relay after a node refuses its send for lack of funds while
+/// other transactions of the relay key are pending. Such a refusal normally clears within a few
+/// blocks. A longer one, for example behind a stuck transaction, moves the job to the wallet path.
+/// Clients wait ten minutes for the choice of sender, so the grace period ends inside that wait.
+const RELAY_FUNDING_GRACE_SECONDS: u64 = 300;
+
 /// Bounds the intake ciphertext validations that can run at the same time.
 ///
 /// Process-wide, because the limit protects the processor, and one process can serve more than
@@ -75,11 +81,16 @@ fn reject_input(message: &'static str) -> anyhow::Error {
     anyhow::Error::new(InputRejected(message))
 }
 
-/// The relay key cannot pay for a `publishInput` transaction, and no other transaction of the key
-/// is pending.
+/// A node refused a `publishInput` of the relay because the relay key cannot pay for it.
 #[derive(Debug, thiserror::Error)]
-#[error("the relay key cannot pay for the input commitment: {0}")]
-struct RelayUnfunded(String);
+#[error("the relay key cannot pay for the input commitment: {message}")]
+struct RelayUnfunded {
+    message: String,
+    /// Other transactions of the relay key were pending. A node also refuses a transaction when
+    /// the worst-case costs of all pending transactions of the key exceed its balance, and that
+    /// refusal can clear when they are mined.
+    other_transactions_pending: bool,
+}
 
 fn duration_u64(value: U256, name: &str) -> anyhow::Result<u64> {
     value
@@ -626,6 +637,9 @@ pub struct AvailabilityService {
     relayed_inputs: Tree,
     /// Serializes relay decisions, so concurrent job steps cannot pass one limit together.
     relay_decisions: Arc<StorageMutex<()>>,
+    /// The chain time of the first funds refusal of each relayed job in its grace period
+    /// (`relay_funding_grace_ended`). A restart clears it, which only starts the grace again.
+    relay_funding_refusals: Arc<StorageMutex<HashMap<String, u64>>>,
     relay: RelayPolicy,
     http_rpc_url: String,
     private_key: String,
@@ -691,6 +705,7 @@ impl AvailabilityService {
             job_slots: Arc::new(Semaphore::new(MAX_CONCURRENT_JOB_STEPS)),
             relayed_inputs: db.open_tree("data-availability-relayed-inputs")?,
             relay_decisions: Arc::new(StorageMutex::new(())),
+            relay_funding_refusals: Arc::new(StorageMutex::new(HashMap::new())),
             relay: RelayPolicy::new(
                 config.chain_id,
                 config.mainnet_relay,
@@ -1669,7 +1684,7 @@ impl AvailabilityService {
                         // A receipt is a head observation, not finality. Stay provisional and
                         // let the `AwaitingCommitment` arm promote the job on finalized state,
                         // the same as a wallet-submitted commitment.
-                        job.state = self.relay_input_commitment(&job).await?;
+                        job.state = self.relay_input_commitment(&job, now).await?;
                     }
                     JobKind::Input { .. } => {
                         // The relay is off, the relay key is below its balance floor or its
@@ -1702,7 +1717,7 @@ impl AvailabilityService {
                         // while the relay may spend. Otherwise the voter's wallet must send it,
                         // so that turning the relay off stops every relay send.
                         job.state = if self.relay_may_send().await {
-                            self.relay_input_commitment(&job).await?
+                            self.relay_input_commitment(&job, now).await?
                         } else {
                             self.wallet_commitment(&job).await?
                         };
@@ -2220,15 +2235,27 @@ impl AvailabilityService {
     /// If the relay key cannot pay for the transaction, the job takes the wallet path with the same
     /// signed payload, and the voter's wallet sends the commitment before the cutoff. A retry with
     /// the same key would fail until the cutoff and lose the vote. A refusal while other
-    /// transactions of the key are pending does not count (`submit_input_commitment_payload`).
-    async fn relay_input_commitment(&self, job: &AvailabilityJob) -> anyhow::Result<JobState> {
+    /// transactions of the key are pending can clear when they are mined, so the job keeps the
+    /// relay for a grace period first (`relay_funding_grace_ended`).
+    async fn relay_input_commitment(
+        &self,
+        job: &AvailabilityJob,
+        now: u64,
+    ) -> anyhow::Result<JobState> {
         let (ethereum_payload, attestation_expires_at) = self.commitment_payload(job).await?;
         let relayed_transaction_hash = match self
             .submit_input_commitment_payload(job, ethereum_payload.clone())
             .await
         {
             Ok(receipt) => Some(receipt.transaction_hash.to_string()),
-            Err(error) if error.is::<RelayUnfunded>() => {
+            Err(error) => {
+                let Some(unfunded) = error.downcast_ref::<RelayUnfunded>() else {
+                    return Err(error);
+                };
+                if unfunded.other_transactions_pending && !self.relay_funding_grace_ended(job, now)
+                {
+                    return Err(error);
+                }
                 warn!(
                     job_id = job.id.as_str(),
                     %error,
@@ -2236,8 +2263,11 @@ impl AvailabilityService {
                 );
                 None
             }
-            Err(error) => return Err(error),
         };
+        self.relay_funding_refusals
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(&job.id);
         Ok(JobState::AwaitingCommitment {
             ethereum_payload,
             attestation_expires_at,
@@ -2245,6 +2275,37 @@ impl AvailabilityService {
         })
     }
 
+    /// Whether a relayed job has waited long enough for a funds refusal to clear, while other
+    /// transactions of the relay key are pending.
+    ///
+    /// The first refusal of the job starts its grace period. The period ends after
+    /// `RELAY_FUNDING_GRACE_SECONDS`, and also as soon as the commitment cutoff is closer than
+    /// that, so that the voter's wallet can still send the commitment. A refusal that is older than
+    /// two grace periods belongs to a job that was not processed since then, and it starts again.
+    fn relay_funding_grace_ended(&self, job: &AvailabilityJob, now: u64) -> bool {
+        let JobKind::Input {
+            commitment_deadline,
+            ..
+        } = &job.kind
+        else {
+            return true;
+        };
+        if now.saturating_add(RELAY_FUNDING_GRACE_SECONDS) >= *commitment_deadline {
+            return true;
+        }
+        let mut refusals = self
+            .relay_funding_refusals
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        refusals
+            .retain(|_, started| now.saturating_sub(*started) < 2 * RELAY_FUNDING_GRACE_SECONDS);
+        let started = *refusals.entry(job.id.clone()).or_insert(now);
+        now.saturating_sub(started) >= RELAY_FUNDING_GRACE_SECONDS
+    }
+
+    /// Send `publishInput` for a relayed input after a dry run. A refusal for lack of funds comes
+    /// back as `RelayUnfunded`, which records whether other transactions of the relay key were
+    /// pending.
     async fn submit_input_commitment_payload(
         &self,
         job: &AvailabilityJob,
@@ -2270,11 +2331,11 @@ impl AvailabilityService {
             Ok(receipt) => return Ok(receipt),
             Err(error) => error,
         };
-        // A node also refuses a transaction when the worst-case costs of all pending transactions
-        // of the key exceed its balance. That refusal clears when those transactions are mined, so
-        // the job keeps the relay and tries again on its next pass.
-        if is_insufficient_funds(&error) && !self.relay_key_has_pending_transactions().await? {
-            return Err(anyhow::Error::new(RelayUnfunded(error.to_string())));
+        if is_insufficient_funds(&error) {
+            return Err(anyhow::Error::new(RelayUnfunded {
+                message: error.to_string(),
+                other_transactions_pending: self.relay_key_has_pending_transactions().await?,
+            }));
         }
         Err(anyhow::anyhow!(error.to_string()))
     }
@@ -2782,6 +2843,7 @@ mod tests {
             job_slots: Arc::new(Semaphore::new(1)),
             relayed_inputs: db.open_tree("relayed-inputs").unwrap(),
             relay_decisions: Arc::new(StorageMutex::new(())),
+            relay_funding_refusals: Arc::new(StorageMutex::new(HashMap::new())),
             relay,
             http_rpc_url: String::new(),
             private_key: String::new(),
@@ -3374,11 +3436,11 @@ mod tests {
         assert!(service.relayed_inputs.is_empty());
     }
 
-    /// A node refuses a `publishInput` that the relay key cannot pay for. The job leaves the relay
-    /// only when no other transaction of the key is pending: a refusal while other transactions of
-    /// the key are pending can clear when they are mined.
+    /// A node refuses a `publishInput` that the relay key cannot pay for. The refusal records
+    /// whether other transactions of the key were pending, because only such a refusal can clear
+    /// by itself and keeps the relay for a grace period.
     #[tokio::test]
-    async fn only_a_key_without_pending_transactions_counts_as_unfunded() {
+    async fn a_funds_refusal_records_whether_other_transactions_are_pending() {
         use alloy::providers::ext::AnvilApi;
 
         // This node mines no blocks, so a sent transaction stays pending.
@@ -3399,7 +3461,10 @@ mod tests {
             .submit_input_commitment_payload(&job, vec![1])
             .await
             .unwrap_err();
-        assert!(error.is::<RelayUnfunded>(), "{error:#}");
+        let unfunded = error
+            .downcast_ref::<RelayUnfunded>()
+            .unwrap_or_else(|| panic!("not a funds refusal: {error:#}"));
+        assert!(!unfunded.other_transactions_pending);
 
         // A key that sends one transaction, which stays pending, and then loses its funds.
         let key = anvil.keys()[1].to_bytes();
@@ -3427,14 +3492,26 @@ mod tests {
             .submit_input_commitment_payload(&job, vec![1])
             .await
             .unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .to_lowercase()
-                .contains("insufficient funds"),
-            "{error:#}"
-        );
-        assert!(!error.is::<RelayUnfunded>(), "{error:#}");
+        let unfunded = error
+            .downcast_ref::<RelayUnfunded>()
+            .unwrap_or_else(|| panic!("not a funds refusal: {error:#}"));
+        assert!(unfunded.other_transactions_pending);
+    }
+
+    /// A funds refusal while other transactions of the relay key are pending keeps the relay only
+    /// for a grace period, and the wallet path always comes before the commitment cutoff.
+    #[test]
+    fn a_funds_refusal_keeps_the_relay_only_for_a_grace_period() {
+        let service = test_service(1024);
+        // `input_job` sets a commitment cutoff of 900.
+        let job = round_input_job("refused-relay", "1", Address::repeat_byte(0x77));
+        assert!(!service.relay_funding_grace_ended(&job, 100));
+        assert!(!service.relay_funding_grace_ended(&job, 100 + RELAY_FUNDING_GRACE_SECONDS - 1));
+        assert!(service.relay_funding_grace_ended(&job, 100 + RELAY_FUNDING_GRACE_SECONDS));
+
+        // Close to the cutoff, the first refusal already moves the job to the wallet path.
+        let late = round_input_job("late-refused-relay", "1", Address::repeat_byte(0x78));
+        assert!(service.relay_funding_grace_ended(&late, 900 - RELAY_FUNDING_GRACE_SECONDS));
     }
 
     /// A mask needs no signature from the slot owner, so an uncommitted job for a slot must not

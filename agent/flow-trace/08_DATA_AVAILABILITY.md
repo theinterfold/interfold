@@ -367,9 +367,12 @@ stops every send, including jobs chosen for the relay earlier and relayed transa
 reorganization removed. So does a server key balance below `RELAY_MIN_BALANCE_ETH`, which keeps
 funds for `finalizeInput`, and so does a balance that cannot be read. Those jobs take the wallet
 path. A send that the relay key cannot pay for also moves its job to the wallet path, with the same
-signed payload (`relay_input_commitment`, `is_insufficient_funds`). A refusal while other
-transactions of the key are pending does not count. A node also refuses a send when the worst-case
-costs of the pending transactions exceed the balance, and that refusal clears when they are mined.
+signed payload (`relay_input_commitment`, `is_insufficient_funds`). A node also refuses a send when
+the worst-case costs of the pending transactions of the key exceed its balance, and that refusal
+clears when they are mined. So a refusal while other transactions of the key are pending keeps the
+relay for a grace period of five minutes (`RELAY_FUNDING_GRACE_SECONDS`). The grace period also ends
+when the commitment cutoff is less than five minutes away, so the wallet path always comes before
+the cutoff, also behind a stuck transaction.
 
 Every transaction from the server key takes its nonce from one sequence in the process
 (`e3_evm_helpers::nonce::send_with_next_nonce`). This includes `publishInput`, `finalizeInput`,
