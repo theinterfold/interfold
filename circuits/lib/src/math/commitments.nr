@@ -271,6 +271,21 @@ pub fn compute_threshold_decryption_share_commitment<let K: u32, let L: u32, let
     compute_commitment(payload, DS_THRESHOLD_DECRYPTION_SHARE)
 }
 
+/// [`compute_threshold_decryption_share_commitment`] for a circuit that **opens** this commitment
+/// rather than creating it (C7). C6 creates it and pins each coefficient to a native residue in
+/// \([0, q)\) via `verify_d_native_trunc_binding`, so asserting the digits here makes the opening
+/// unique and forces the opened share to equal the one C6 committed. Produces the same value as the
+/// plain version for any input the plain version could legitimately have committed.
+pub fn compute_threshold_decryption_share_commitment_checked<let K: u32, let L: u32, let NATIVE_BIT_WIDTH: u32>(
+    d_share_limbs: [Polynomial<K>; L],
+) -> Field {
+    let payload = multiple_polynomial_payload_checked::<K, L, NATIVE_BIT_WIDTH>(
+        [].as_vector(),
+        d_share_limbs,
+    );
+    compute_commitment(payload, DS_THRESHOLD_DECRYPTION_SHARE)
+}
+
 /// [`compute_share_computation_e_sm_commitment`] for a circuit that **opens** this commitment rather
 /// than creating it (C2b). C1 creates it and bounds each `e_sm` limb to a centered residue.
 pub fn compute_share_computation_e_sm_commitment_checked<let N: u32, let L: u32, let BIT_E_SM: u32>(
