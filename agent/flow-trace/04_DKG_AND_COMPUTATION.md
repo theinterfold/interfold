@@ -32,27 +32,31 @@ CiphernodeSelected event arrives at ThresholdKeyshare
 │
 ├─ handle_ciphernode_selected():
 │   │
-│   ├─ 1. Generate fresh BFV keypair:
-│   │     (secret_key, public_key) = BFV::keygen(share_encryption_preset)
-│   │     → This is the node's SHARE ENCRYPTION key
-│   │     → Used to encrypt Shamir shares sent to this node
-│   │
-│   ├─ 2. Encrypt BFV secret key at rest:
-│   │     encrypted_sk = Cipher.encrypt(secret_key)
-│   │     → Stored locally, password-protected
-│   │
-│   ├─ 3. State transition: Init → CollectingEncryptionKeys
-│   │
-│   ├─ 4. Publish EncryptionKeyPending {
-│   │     e3_id, party_id, bfv_public_key
-│   │   }
-│   │   → ZK proof actor picks this up
-│   │
-│   ├─ 5. Create child actors:
+│   ├─ 1. Create child actors:
 │   │     ├─ EncryptionKeyCollector (accepts all N keys or at least H at cutoff)
 │   │     └─ ThresholdShareCollector (accepts all N−1 external shares or at least H−1 at cutoff)
 │   │     → These collectors start immediately so early peer keys/shares can
 │   │       be buffered while this node is still finishing earlier DKG phases
+│   │     → A peer key that arrives in `Init` is only recorded.
+│   │       `replay_encryption_keys` creates the EncryptionKeyCollector and sends
+│   │       it every recorded key except those of expelled parties, as restart
+│   │       recovery does
+│   │
+│   ├─ 2. Generate fresh BFV keypair:
+│   │     (secret_key, public_key) = BFV::keygen(share_encryption_preset)
+│   │     → This is the node's SHARE ENCRYPTION key
+│   │     → Used to encrypt Shamir shares sent to this node
+│   │
+│   ├─ 3. Encrypt BFV secret key at rest:
+│   │     encrypted_sk = Cipher.encrypt(secret_key)
+│   │     → Stored locally, password-protected
+│   │
+│   ├─ 4. State transition: Init → CollectingEncryptionKeys
+│   │
+│   ├─ 5. Publish EncryptionKeyPending {
+│   │     e3_id, party_id, bfv_public_key
+│   │   }
+│   │   → ZK proof actor picks this up
 │   │
 │   └─ Collector schedules use the frozen per-E3 window and absolute deadline:
 │         ├─ EncryptionKeyCollector: hard cutoff at 10% of the window
@@ -134,6 +138,11 @@ EncryptionKeyCollector collects verified EncryptionKeyCreated events
 │
 ├─ On each arrival: store the first (party_id → bfv_public_key) message;
 │  replay keeps that same first message if a later duplicate arrives
+│
+├─ A key that arrives while the keyshare is in `Init` is only recorded in the
+│  recovery state: the collector needs the frozen DKG timing that the node reads
+│  at its own selection. `handle_ciphernode_selected` sends every recorded key to
+│  the collector, except keys from expelled parties
 │
 ├─ On TIMEOUT (derived DKG-phase cutoff):
 │   ├─ With at least H keys, including this party's key:

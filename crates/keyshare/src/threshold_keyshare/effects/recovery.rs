@@ -262,6 +262,31 @@ impl ThresholdKeyshare {
         })
     }
 
+    /// Create the encryption-key collector and send it every recorded key.
+    ///
+    /// A peer key that arrives while the keyshare is in `Init` is only recorded. The collector needs
+    /// the frozen DKG timing, which this node reads when it handles its own selection.
+    ///
+    /// Keys from expelled parties are not sent. Such a key must not count toward H at the cutoff,
+    /// because the parent removes it from the collected keys.
+    pub(in crate::actors::threshold_keyshare) fn replay_encryption_keys(
+        &mut self,
+        self_addr: Addr<Self>,
+    ) -> Result<()> {
+        let expelled = self.state.try_get()?.expelled_parties;
+        let collector = self.ensure_encryption_key_collector(self_addr)?;
+        for event in self
+            .recovery
+            .try_get()?
+            .encryption_keys
+            .values()
+            .filter(|event| !expelled.contains(&event.key.party_id))
+        {
+            collector.try_send(event.clone())?;
+        }
+        Ok(())
+    }
+
     fn replay_threshold_shares(&mut self, self_addr: Addr<Self>) -> Result<()> {
         if self.recovery_payloads.shares().is_empty() {
             return Ok(());
@@ -380,10 +405,7 @@ impl ThresholdKeyshare {
                 Ok(())
             }
             KeyshareState::CollectingEncryptionKeys(data) => {
-                let collector = self.ensure_encryption_key_collector(self_addr)?;
-                for event in recovery.encryption_keys.values() {
-                    collector.try_send(event.clone())?;
-                }
+                self.replay_encryption_keys(self_addr)?;
                 let committee_size = committee_size?;
                 self.bus.publish(
                     EncryptionKeyPending {

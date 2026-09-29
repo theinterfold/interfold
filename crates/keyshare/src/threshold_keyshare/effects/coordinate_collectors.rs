@@ -277,6 +277,17 @@ impl ThresholdKeyshare {
             return Ok(());
         }
         self.record_encryption_key(&msg)?;
+        // In `Init`, the collector can be missing: it needs the frozen DKG timing that this node
+        // reads when it handles its own selection. `handle_ciphernode_selected` sends every
+        // recorded key to the collector.
+        if matches!(state.state, KeyshareState::Init) {
+            info!(
+                e3_id = %state.e3_id,
+                sender_party_id = msg.key.party_id,
+                "Recorded EncryptionKeyCreated before this node's selection"
+            );
+            return Ok(());
+        }
         info!("Received EncryptionKeyCreated forwarding to encryption key collector!");
         let collector = self.ensure_encryption_key_collector(self_addr)?;
         collector.do_send(msg);

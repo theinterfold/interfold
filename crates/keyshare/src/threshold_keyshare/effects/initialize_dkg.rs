@@ -47,7 +47,8 @@ impl ThresholdKeyshare {
             return Ok(());
         }
 
-        self.ensure_encryption_key_collector(address.clone())?;
+        // `handle_encryption_key_created` only records a peer key that arrives in `Init`.
+        self.replay_encryption_keys(address.clone())?;
         self.ensure_collector(address.clone())?;
 
         let BfvKeypairMaterial {

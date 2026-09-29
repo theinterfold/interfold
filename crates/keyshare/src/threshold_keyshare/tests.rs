@@ -12,15 +12,15 @@ use anyhow::Result;
 use e3_crypto::Cipher;
 use e3_data::{AutoPersist, DataStore, InMemStore, Persistable, Repository};
 use e3_events::{
-    hlc_factory::HlcFactory, AggregatorChanged, BusHandle, CircuitName, ComputeRequest,
-    ComputeRequestError, ComputeRequestErrorKind, ComputeRequestKind, DecryptionKeyShared,
-    DkgCoordination, DkgCoordinationKind, DkgDealer, E3Stage, E3id, EffectsEnabled, EncryptionKey,
-    EncryptionKeyCreated, Event, EventBus, EventBusConfig, EventSource, FailureReason, GetEvents,
-    HistoryCollector, InterfoldEvent, InterfoldEventData, Proof, ProofPayload, ProofType,
-    Sequencer, SignedProofPayload, StoreEventRequested, StoreEventResponse, TakeEvents,
-    Unsequenced, VerificationKind,
+    hlc_factory::HlcFactory, AggregatorChanged, BusHandle, CircuitName, CommitteeMemberExpelled,
+    ComputeRequest, ComputeRequestError, ComputeRequestErrorKind, ComputeRequestKind,
+    DecryptionKeyShared, DkgCoordination, DkgCoordinationKind, DkgDealer, E3Stage, E3id,
+    EffectsEnabled, EncryptionKey, EncryptionKeyCreated, Event, EventBus, EventBusConfig,
+    EventSource, FailureReason, GetEvents, HistoryCollector, InterfoldEvent, InterfoldEventData,
+    Proof, ProofPayload, ProofType, Sequencer, SignedProofPayload, StoreEventRequested,
+    StoreEventResponse, TakeEvents, Unsequenced, VerificationKind,
 };
-use e3_fhe_params::DEFAULT_BFV_PRESET;
+use e3_fhe_params::{encode_bfv_params, BfvParamSet, BfvPreset, DEFAULT_BFV_PRESET};
 use e3_trbfv::{
     gen_esi_sss::GenEsiSssRequest, TrBFVConfig, TrBFVError, TrBFVFailure, TrBFVRequest,
 };
@@ -93,6 +93,178 @@ async fn late_selection_does_not_fail_the_shared_e3() -> Result<()> {
         "one late node must not fail the shared E3"
     );
     Ok(())
+}
+
+#[actix::test]
+async fn peer_keys_that_arrive_before_selection_count_toward_collection() -> Result<()> {
+    let e3_id = E3id::new("early-keys", 1);
+    let (actor, repo) = start_actor_before_selection(&e3_id, 7_200).await?;
+
+    // Parties 1 and 2 publish their keys before this node, party 0, handles its selection.
+    actor
+        .send(keyshare_event(peer_key(&e3_id, 1), 1, EventSource::Net))
+        .await?;
+    actor
+        .send(keyshare_event(peer_key(&e3_id, 2), 2, EventSource::Net))
+        .await?;
+    actor
+        .send(keyshare_event(selection(&e3_id), 3, EventSource::Evm))
+        .await?;
+    wait_for_keyshare_state(&repo, |state| {
+        matches!(state, KeyshareState::CollectingEncryptionKeys(_))
+    })
+    .await?;
+    actor
+        .send(keyshare_event(peer_key(&e3_id, 0), 4, EventSource::Local))
+        .await?;
+
+    // The collector holds all three keys, so the DKG continues before the 10% cutoff.
+    let KeyshareState::GeneratingThresholdShare(data) = wait_for_keyshare_state(&repo, |state| {
+        matches!(state, KeyshareState::GeneratingThresholdShare(_))
+    })
+    .await?
+    else {
+        unreachable!("the wait returns only a matching state");
+    };
+    let mut parties = data
+        .collected_encryption_keys
+        .iter()
+        .map(|key| key.party_id)
+        .collect::<Vec<_>>();
+    parties.sort_unstable();
+    assert_eq!(parties, vec![0, 1, 2]);
+    Ok(())
+}
+
+#[actix::test]
+async fn a_recorded_key_from_an_expelled_party_does_not_count_at_the_cutoff() -> Result<()> {
+    let e3_id = E3id::new("early-expelled-key", 1);
+    // With a 30 s window, the encryption-key cutoff (10%) comes 3 s after selection.
+    let (actor, repo) = start_actor_before_selection(&e3_id, 30).await?;
+
+    actor
+        .send(keyshare_event(peer_key(&e3_id, 1), 1, EventSource::Net))
+        .await?;
+    let expelled = CommitteeMemberExpelled {
+        e3_id: e3_id.clone(),
+        node: Address::ZERO,
+        reason: [0; 32],
+        active_count_after: 2,
+        party_id: Some(1),
+    };
+    actor
+        .send(keyshare_event(expelled, 2, EventSource::Evm))
+        .await?;
+    actor
+        .send(keyshare_event(selection(&e3_id), 3, EventSource::Evm))
+        .await?;
+    wait_for_keyshare_state(&repo, |state| {
+        matches!(state, KeyshareState::CollectingEncryptionKeys(_))
+    })
+    .await?;
+    actor
+        .send(keyshare_event(peer_key(&e3_id, 0), 4, EventSource::Local))
+        .await?;
+
+    // Only this node's key counts, one below H = 2, so the collection fails at the cutoff.
+    let state = wait_for_keyshare_state(&repo, |state| {
+        !matches!(state, KeyshareState::CollectingEncryptionKeys(_))
+    })
+    .await?;
+    assert!(
+        matches!(
+            state,
+            KeyshareState::Failed {
+                failed_at_stage: E3Stage::CommitteeFinalized,
+                reason: FailureReason::DKGTimeout,
+            }
+        ),
+        "expected the collection to fail at the cutoff, got {state:?}"
+    );
+    Ok(())
+}
+
+/// Start a keyshare in `Init` that has not yet read its DKG timing, as before its own selection.
+async fn start_actor_before_selection(
+    e3_id: &E3id,
+    dkg_window_secs: u64,
+) -> Result<(Addr<ThresholdKeyshare>, Repository<ThresholdKeyshareState>)> {
+    let (bus, _) = test_bus();
+    let (mut state, repo) = test_state(e3_id, KeyshareState::Init);
+    let params = ArcBytes::from_bytes(&encode_bfv_params(
+        &BfvParamSet::from(BfvPreset::InsecureThreshold512).build_arc(),
+    ));
+    state.try_mutate_without_context(|mut state| {
+        state.dkg_deadline_unix_secs = None;
+        state.dkg_window_secs = None;
+        state.params = params;
+        Ok(state)
+    })?;
+    let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bus,
+        cipher: Arc::new(Cipher::from_password("test-password").await?),
+        state,
+        share_enc_preset: BfvPreset::InsecureDkg512,
+        interfold_address: Address::ZERO,
+        signer: alloy::signers::local::PrivateKeySigner::random(),
+        effects_enabled: true,
+        recovery: test_recovery(),
+        recovery_payloads: test_recovery_payloads(),
+        dkg_timing_reader: Arc::new(move |_| {
+            Box::pin(async move {
+                Ok((
+                    crate::domain::timeout_policy::now_unix_secs().saturating_add(dkg_window_secs),
+                    dkg_window_secs,
+                ))
+            })
+        }),
+    })
+    .start();
+    Ok((actor, repo))
+}
+
+fn keyshare_event(
+    data: impl Into<InterfoldEventData>,
+    seq: u64,
+    source: EventSource,
+) -> InterfoldEvent {
+    InterfoldEvent::<Unsequenced>::new_with_timestamp(data.into(), None, seq.into(), None, source)
+        .into_sequenced(seq)
+}
+
+fn selection(e3_id: &E3id) -> CiphernodeSelected {
+    CiphernodeSelected {
+        e3_id: e3_id.clone(),
+        ..CiphernodeSelected::default()
+    }
+}
+
+fn peer_key(e3_id: &E3id, party_id: u64) -> EncryptionKeyCreated {
+    EncryptionKeyCreated {
+        e3_id: e3_id.clone(),
+        key: Arc::new(EncryptionKey::new(
+            party_id,
+            ArcBytes::from_bytes(&[party_id as u8]),
+        )),
+        external: party_id != 0,
+    }
+}
+
+async fn wait_for_keyshare_state(
+    repo: &Repository<ThresholdKeyshareState>,
+    matches_state: impl Fn(&KeyshareState) -> bool,
+) -> Result<KeyshareState> {
+    actix::clock::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            if let Some(state) = repo.read().await? {
+                if matches_state(&state.state) {
+                    return Ok(state.state);
+                }
+            }
+            actix::clock::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await?
 }
 
 #[derive(Default)]
