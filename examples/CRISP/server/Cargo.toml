@@ -83,3 +83,6 @@ anyhow.workspace = true
 # Configuration
 config = "=0.14.0"
 dotenvy = "=0.15.7"
+
+[dev-dependencies]
+alloy = { version = "=1.0.41", features = ["node-bindings"] }

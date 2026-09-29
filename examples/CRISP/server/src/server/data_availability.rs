@@ -75,7 +75,8 @@ fn reject_input(message: &'static str) -> anyhow::Error {
     anyhow::Error::new(InputRejected(message))
 }
 
-/// The relay key cannot pay for a `publishInput` transaction.
+/// The relay key cannot pay for a `publishInput` transaction, and no other transaction of the key
+/// is pending.
 #[derive(Debug, thiserror::Error)]
 #[error("the relay key cannot pay for the input commitment: {0}")]
 struct RelayUnfunded(String);
@@ -2218,7 +2219,8 @@ impl AvailabilityService {
     ///
     /// If the relay key cannot pay for the transaction, the job takes the wallet path with the same
     /// signed payload, and the voter's wallet sends the commitment before the cutoff. A retry with
-    /// the same key would fail until the cutoff and lose the vote.
+    /// the same key would fail until the cutoff and lose the vote. A refusal while other
+    /// transactions of the key are pending does not count (`submit_input_commitment_payload`).
     async fn relay_input_commitment(&self, job: &AvailabilityJob) -> anyhow::Result<JobState> {
         let (ethereum_payload, attestation_expires_at) = self.commitment_payload(job).await?;
         let relayed_transaction_hash = match self
@@ -2264,16 +2266,35 @@ impl AvailabilityService {
             .simulate_publish_input(e3_id, payload.clone())
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        contract
-            .publish_input(e3_id, payload)
-            .await
-            .map_err(|error| {
-                if is_insufficient_funds(&error) {
-                    anyhow::Error::new(RelayUnfunded(error.to_string()))
-                } else {
-                    anyhow::anyhow!(error.to_string())
-                }
-            })
+        let error = match contract.publish_input(e3_id, payload).await {
+            Ok(receipt) => return Ok(receipt),
+            Err(error) => error,
+        };
+        // A node also refuses a transaction when the worst-case costs of all pending transactions
+        // of the key exceed its balance. That refusal clears when those transactions are mined, so
+        // the job keeps the relay and tries again on its next pass.
+        if is_insufficient_funds(&error) && !self.relay_key_has_pending_transactions().await? {
+            return Err(anyhow::Error::new(RelayUnfunded(error.to_string())));
+        }
+        Err(anyhow::anyhow!(error.to_string()))
+    }
+
+    /// Whether the relay key has transactions that the chain has not mined: its pending
+    /// transaction count is higher than its mined one.
+    async fn relay_key_has_pending_transactions(&self) -> anyhow::Result<bool> {
+        let signer: PrivateKeySigner = self
+            .private_key
+            .parse()
+            .map_err(|error| anyhow::anyhow!("invalid relay signer key: {error}"))?;
+        let address = signer.address();
+        tokio::time::timeout(Duration::from_secs(15), async {
+            let provider = ProviderBuilder::new().connect(&self.http_rpc_url).await?;
+            let pending = provider.get_transaction_count(address).pending().await?;
+            let mined = provider.get_transaction_count(address).latest().await?;
+            anyhow::Ok(pending > mined)
+        })
+        .await
+        .map_err(|_| anyhow::anyhow!("timed out while reading the relay key nonces"))?
     }
 
     async fn finalize_input(
@@ -3351,6 +3372,69 @@ mod tests {
 
         assert!(!service.relays(&job).await.unwrap());
         assert!(service.relayed_inputs.is_empty());
+    }
+
+    /// A node refuses a `publishInput` that the relay key cannot pay for. The job leaves the relay
+    /// only when no other transaction of the key is pending: a refusal while other transactions of
+    /// the key are pending can clear when they are mined.
+    #[tokio::test]
+    async fn only_a_key_without_pending_transactions_counts_as_unfunded() {
+        use alloy::providers::ext::AnvilApi;
+
+        // This node mines no blocks, so a sent transaction stays pending.
+        let anvil = alloy::node_bindings::Anvil::new()
+            .arg("--no-mining")
+            .try_spawn()
+            .unwrap();
+        let mut service = test_service(1024);
+        service.http_rpc_url = anvil.endpoint();
+        // A call to an address without code succeeds, so the test needs no deployed contract.
+        service.e3_program_address = Address::repeat_byte(0x42).to_string();
+        let job = round_input_job("unfunded-relay", "1", Address::repeat_byte(0x77));
+
+        // A key that never held funds and has nothing pending.
+        service.private_key =
+            "0x1111111111111111111111111111111111111111111111111111111111111111".to_owned();
+        let error = service
+            .submit_input_commitment_payload(&job, vec![1])
+            .await
+            .unwrap_err();
+        assert!(error.is::<RelayUnfunded>(), "{error:#}");
+
+        // A key that sends one transaction, which stays pending, and then loses its funds.
+        let key = anvil.keys()[1].to_bytes();
+        let signer = PrivateKeySigner::from_slice(&key).unwrap();
+        let address = signer.address();
+        let provider = ProviderBuilder::new()
+            .wallet(signer)
+            .connect(&anvil.endpoint())
+            .await
+            .unwrap();
+        let _pending_transaction = provider
+            .send_transaction(
+                alloy::rpc::types::TransactionRequest::default()
+                    .to(Address::repeat_byte(0x43))
+                    .value(U256::from(1)),
+            )
+            .await
+            .unwrap();
+        provider
+            .anvil_set_balance(address, U256::from(1))
+            .await
+            .unwrap();
+        service.private_key = format!("0x{}", hex::encode(key));
+        let error = service
+            .submit_input_commitment_payload(&job, vec![1])
+            .await
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .to_lowercase()
+                .contains("insufficient funds"),
+            "{error:#}"
+        );
+        assert!(!error.is::<RelayUnfunded>(), "{error:#}");
     }
 
     /// A mask needs no signature from the slot owner, so an uncommitted job for a slot must not

@@ -6,8 +6,11 @@
 
 mod helpers;
 use alloy::consensus::BlockHeader;
+use alloy::primitives::{Address, U256};
 use alloy::providers::ext::AnvilApi;
+use alloy::signers::local::PrivateKeySigner;
 use alloy::{node_bindings::Anvil, providers::ProviderBuilder, sol};
+use e3_evm_helpers::nonce::send_with_next_nonce;
 use e3_evm_helpers::{block_listener::BlockListener, event_listener::EventListener};
 use eyre::Result;
 use helpers::setup_logs_contract;
@@ -23,6 +26,42 @@ sol!(
     EmitLogs,
     "tests/fixtures/emit_logs.json"
 );
+
+/// A send that fails gives its nonce back. Otherwise the next send of the account takes a later
+/// nonce and waits in the queue behind a gap that no transaction fills.
+#[tokio::test]
+async fn a_failed_send_gives_its_nonce_back() -> Result<()> {
+    let anvil = Anvil::new().try_spawn()?;
+    // Not an Anvil development account, so it holds no funds.
+    let signer: PrivateKeySigner =
+        "0x2222222222222222222222222222222222222222222222222222222222222222".parse()?;
+    let from = signer.address();
+    let provider = ProviderBuilder::new()
+        .wallet(signer)
+        .connect(&anvil.endpoint())
+        .await?;
+    // A call to an address without code succeeds, so the test needs no deployed contract.
+    let target = EmitLogs::new(Address::repeat_byte(0x42), &provider);
+
+    assert!(
+        send_with_next_nonce(target.setValue("unfunded".to_string()), from)
+            .await
+            .is_err()
+    );
+    provider
+        .anvil_set_balance(from, U256::from(10).pow(U256::from(18)))
+        .await?;
+    let receipt = tokio::time::timeout(Duration::from_secs(10), async {
+        send_with_next_nonce(target.setValue("funded".to_string()), from)
+            .await?
+            .get_receipt()
+            .await
+            .map_err(eyre::Report::from)
+    })
+    .await??;
+    assert!(receipt.status());
+    Ok(())
+}
 
 #[tokio::test]
 async fn test_event_listener() -> Result<()> {
