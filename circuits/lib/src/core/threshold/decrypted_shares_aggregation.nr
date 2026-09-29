@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::math::commitments::compute_threshold_decryption_share_commitment;
+use crate::math::commitments::compute_threshold_decryption_share_commitment_checked;
 use crate::math::modulo::U64::ModU64;
 use crate::math::polynomial::Polynomial;
 use ::bignum::BigNum;
@@ -83,7 +84,12 @@ impl<let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let T: u32, let BIT_NOISE: u3
     /// Run all checks (no return value; asserts hold or the proof fails).
     pub fn execute(self) {
         for party_idx in 0..(T + 1) {
-            let computed = compute_threshold_decryption_share_commitment::<MAX_MSG_NON_ZERO_COEFFS, L, BIT_D_NATIVE>(
+            // `decryption_shares` carry no bound of their own, so open with the checked packing:
+            // C6 pinned each coefficient to a native residue in [0, q) before committing, and the
+            // digit asserts make this opening unique, which transfers that bound instead of
+            // repeating it. Without them the same commitment opened to a different share vector and
+            // C7 reconstructed a different plaintext.
+            let computed = compute_threshold_decryption_share_commitment_checked::<MAX_MSG_NON_ZERO_COEFFS, L, BIT_D_NATIVE>(
                 self.decryption_shares[party_idx],
             );
             assert(computed == self.expected_d_commitments[party_idx], "d commitment mismatch");
@@ -332,4 +338,36 @@ fn test_decoded_zero_coefficient_must_match() {
 fn test_nonzero_decoded_coefficient_cannot_be_claimed_as_zero() {
     // Regression test for IF-002: the old conditional check skipped this case.
     assert_decoded_coefficient(1, 0);
+}
+
+/// IF-013: before `execute` opened the share commitment through the checked packing, the same
+/// commitment opened to a second share vector and C7 reconstructed a different plaintext.
+///
+/// `honest` and `changed` below pack to the identical carrier: the `2^30` in slot 0 is re-expressed
+/// as `2^70` in slot 1, which is the inter-slot carry the unchecked `pack` cannot see. C6 never
+/// commits such a vector — it pins every coefficient to a native residue in \([0, q)\) — so
+/// asserting the digits here rejects the substitution without constraining anything C6 can produce.
+#[test(should_fail)]
+fn second_opening_of_the_share_commitment_is_rejected() {
+    let honest = [Polynomial::new([1073741824, 0, 0]); 2];
+    let changed = [Polynomial::new([0, 1180591620717411303424, 0]); 2];
+    let zero = [Polynomial::new([0; 3]); 2];
+
+    // The collision is in the packing, so the unchecked commitment still agrees on both vectors.
+    let h = compute_threshold_decryption_share_commitment::<3, 2, 36>(honest);
+    assert(h == compute_threshold_decryption_share_commitment::<3, 2, 36>(changed));
+    let z = compute_threshold_decryption_share_commitment::<3, 2, 36>(zero);
+
+    let c: DecryptedSharesAggregation<3, 2, 1, 65, 36, 36> = DecryptedSharesAggregation::new(
+        Configs::new([68719403009, 68719230977], 100, 57),
+        [h, z],
+        [changed, zero],
+        [1, 2],
+        Polynomial::new([0, 50, 0]),
+        Polynomial::new([0, 2361183241434822606848, 0]),
+        [Polynomial::new([0, 34359775231, 0]), Polynomial::new([0, 34359861247, 0])],
+    );
+
+    // Rejected here: `changed`'s slot-1 coefficient no longer fits its digit.
+    c.execute();
 }
