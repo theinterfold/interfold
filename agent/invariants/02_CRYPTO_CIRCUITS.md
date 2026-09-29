@@ -176,6 +176,31 @@ every section.
 - Where one side of a CRT equation is already provably small, the other side needs no bound of its
   own: the equality makes it derived. C7 bounds only its quotients, because `u_crt < q_l` comes from
   `reduce_mod` and `u_global` is then forced to equal a small expression. — `flow-trace/04`
+- **`ModU128::reduce_mod` does not pin its remainder; use `reduce_mod_bounded` for anything a prover
+  controls.** It asserts `n == q * quotient + remainder` with `remainder < q` but never bounds the
+  quotient, and the equation is over the field — so a prover picks any `remainder` in `[0, q)` and
+  solves for a matching quotient. Verified: the constraint set accepts `(2, 50)` and
+  `((250 - 51) / 100, 51)` alike for `250 mod 100`. Same unbounded-quotient shape as IF-012. It is
+  unreachable today only because its one production caller, `bin/config`, is `fn main()` with no
+  inputs, so every value it reduces is a `pub global`; `Polynomial::eval_mod` has no callers at all.
+  `reduce_mod_bounded` / `inv_mod_bounded` bound the quotient and stand beside it for witness use. If
+  `ModU128` ever gains a caller with a prover-supplied input, that caller must use the bounded pair or
+  the primitive must be fixed — which means threading a bit width through `add`, `sub`, `mul_mod`,
+  `div_mod` and `inv_mod`. — `flow-trace/04`
+- **Division and rounding are verified, never computed.** Noir has neither, and neither is needed:
+  `round(a / b)` is `floor((a + (b-1)/2) / b)`, and a floor is a hint plus two constraints — bound the
+  quotient, and put the remainder in `[0, b)`. That pair is unique for a given numerator and divisor,
+  so a wrong hint cannot satisfy both. Every hint in the reduced circuits follows this shape
+  (`reduce_mod_bounded`, `inv_mod_bounded`, `rounded_decode`), and an `unsafe` hint without both
+  checks is a defect. A quotient bound may be loose — the remainder interval is what pins the result —
+  but it must never be absent. — `flow-trace/04`
+- **Reducing an identity modulo `X^N + 1` removes the cyclotomic quotient, and the bounds that replace
+  it must be real, not injectivity.** `negacyclic_kernel` evaluates `a * u mod X^N + 1` without the
+  product entering the witness, which deletes the quotient witness and its range check. What the
+  reduced form then needs is a genuine bound on every coefficient it reads, because it is checked at
+  one point and the field equality only implies the integer one when nothing can wrap. Those bounds
+  make the plain packing injective as a side effect, which is why the IF-013 digit asserts came back
+  out of ct0/ct1/C3/C7 rather than stacking with them. — `flow-trace/04`
 - **The enumeration axis is "every prover-chosen witness that reaches the sponge", not "every
   commitment opened from elsewhere".** Fiat-Shamir is only sound while `gamma` is independent of the
   witness, and that holds exactly while the packing carrying the witness into the sponge has one
