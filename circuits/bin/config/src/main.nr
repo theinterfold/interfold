@@ -22,10 +22,9 @@ use lib::configs::default::{N_PARTIES, T};
 use lib::configs::secure::dkg::{
     L as DKG_L, L_THRESHOLD, N as DKG_N, PARITY_MATRIX, PLAINTEXT_MODULUS as DKG_PLAINTEXT_MODULUS,
     Q_MOD_T as DKG_Q_MOD_T, Q_MOD_T_CENTERED as DKG_Q_MOD_T_CENTERED, QIS as DKG_QIS, QIS_THRESHOLD,
-    SHARE_ENCRYPTION_E0_BOUND, SHARE_ENCRYPTION_E1_BOUND, SHARE_ENCRYPTION_K0IS,
-    SHARE_ENCRYPTION_MSG_BOUND, SHARE_ENCRYPTION_P1_BOUNDS, SHARE_ENCRYPTION_P2_BOUNDS,
-    SHARE_ENCRYPTION_PK_BOUNDS, SHARE_ENCRYPTION_R1_LOW_BOUNDS, SHARE_ENCRYPTION_R1_UP_BOUNDS,
-    SHARE_ENCRYPTION_R2_BOUNDS, SHARE_ENCRYPTION_U_BOUND,
+    SHARE_ENCRYPTION_CT0_R_BOUNDS, SHARE_ENCRYPTION_CT1_R_BOUNDS, SHARE_ENCRYPTION_E0_BOUND,
+    SHARE_ENCRYPTION_E1_BOUND, SHARE_ENCRYPTION_K0IS, SHARE_ENCRYPTION_MSG_BOUND,
+    SHARE_ENCRYPTION_PK_BOUNDS, SHARE_ENCRYPTION_U_BOUND,
 };
 
 use lib::configs::secure::threshold::{
@@ -226,23 +225,14 @@ fn verify_dkg_bounds() {
             "SHARE_ENCRYPTION_PK_BOUNDS mismatch",
         );
 
-        // r2_bounds[i] = (q_i - 1) / 2
+        // ct1_r_bounds[i] = ((n * u_bound + 2) * qi_bound + e1_bound) / q_i
+        //
+        // `r` is the quotient of the mod-q reduction in `ct = pk * u + e + q * r` (mod X^N + 1).
+        // Folding does not change the bound, so this is the expression the unreduced `p1` used.
+        let expected_ct1_r: u128 = ((n * u_bound + 2) * qi_bound + e1_bound) / qi;
         assert(
-            SHARE_ENCRYPTION_R2_BOUNDS[i] as u128 == qi_bound,
-            "SHARE_ENCRYPTION_R2_BOUNDS mismatch",
-        );
-
-        // p2_bounds[i] = (q_i - 1) / 2
-        assert(
-            SHARE_ENCRYPTION_P2_BOUNDS[i] as u128 == qi_bound,
-            "SHARE_ENCRYPTION_P2_BOUNDS mismatch",
-        );
-
-        // p1_bounds[i] = ((n * u_bound + 2) * qi_bound + e1_bound) / q_i
-        let expected_p1: u128 = ((n * u_bound + 2) * qi_bound + e1_bound) / qi;
-        assert(
-            SHARE_ENCRYPTION_P1_BOUNDS[i] as u128 == expected_p1,
-            "SHARE_ENCRYPTION_P1_BOUNDS mismatch",
+            SHARE_ENCRYPTION_CT1_R_BOUNDS[i] as u128 == expected_ct1_r,
+            "SHARE_ENCRYPTION_CT1_R_BOUNDS mismatch",
         );
 
         // k0is[i] verification: k0i * t = -1 mod q_i
@@ -250,27 +240,21 @@ fn verify_dkg_bounds() {
         let product = m.mul_mod(SHARE_ENCRYPTION_K0IS[i], DKG_PLAINTEXT_MODULUS);
         let neg_one = DKG_QIS[i] - 1;
         assert(product == neg_one, "SHARE_ENCRYPTION_K0IS mismatch");
-
-        // e0_bound mod qi for r1 calculation
+        // ct0_r_bounds[i] = (k1_max * k0i + ((n * u + 2) * qi_bound + e0_i)) / q_i
+        //
+        // Same shape plus the `k0is * k1` term. `k1_max` is the wider of the two plaintext
+        // magnitudes: equal for odd `t`, and one larger on the low side for even `t`.
         let e0_bound_i: u128 = e0_bound % qi;
-
-        // r1_up_bounds[i] = (ptxt_up * k0i + ((n * u + 2) * qi_bound + e0_i)) / q_i
-        let expected_r1_up: u128 =
-            (ptxt_up_bound * k0i + ((n * u_bound + 2) * qi_bound + e0_bound_i)) / qi;
-        assert(
-            SHARE_ENCRYPTION_R1_UP_BOUNDS[i] as u128 == expected_r1_up,
-            "SHARE_ENCRYPTION_R1_UP_BOUNDS mismatch",
-        );
-
-        // r1_low_bounds[i] depends on whether t is even or odd
-        let expected_r1_low: u128 = if t_is_even {
-            ((ptxt_up_bound + 1) * k0i + ((n * u_bound + 2) * qi_bound + e0_bound_i)) / qi
+        let k1_max: u128 = if t_is_even {
+            ptxt_up_bound + 1
         } else {
-            expected_r1_up
+            ptxt_up_bound
         };
+        let expected_ct0_r: u128 =
+            (k1_max * k0i + ((n * u_bound + 2) * qi_bound + e0_bound_i)) / qi;
         assert(
-            SHARE_ENCRYPTION_R1_LOW_BOUNDS[i] as u128 == expected_r1_low,
-            "SHARE_ENCRYPTION_R1_LOW_BOUNDS mismatch",
+            SHARE_ENCRYPTION_CT0_R_BOUNDS[i] as u128 == expected_ct0_r,
+            "SHARE_ENCRYPTION_CT0_R_BOUNDS mismatch",
         );
     }
 }
