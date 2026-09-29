@@ -9,7 +9,7 @@ use crate::math::commitments::{
     compute_share_encryption_commitment_from_message,
 };
 use crate::math::commitments::compute_dkg_pk_commitment;
-use crate::math::helpers::flatten;
+use crate::math::helpers::{flatten, flatten_checked};
 use crate::math::modulo::U64::ModU64;
 use crate::math::polynomial::Polynomial;
 
@@ -236,8 +236,12 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
         // Use pk commitment instead of full pk polynomials
         let mut inputs = [self.expected_pk_commitment].as_vector();
 
-        inputs = flatten::<_, _, BIT_CT>(inputs, self.ct0is);
-        inputs = flatten::<_, _, BIT_CT>(inputs, self.ct1is);
+        // `ct0is` / `ct1is` carry no range bound of their own, so absorb them through the checked
+        // packing: the digit asserts make the transcript injective, which is what lets
+        // Schwartz-Zippel pin them to the evaluated encryption identity. Every other term below is
+        // bounded by `check_range_bounds`, so plain `flatten` is already injective for those.
+        inputs = flatten_checked::<_, _, BIT_CT>(inputs, self.ct0is);
+        inputs = flatten_checked::<_, _, BIT_CT>(inputs, self.ct1is);
 
         inputs = flatten::<_, _, BIT_E0>(inputs, [self.e0]);
         inputs = flatten::<_, _, BIT_E1>(inputs, [self.e1]);
@@ -382,4 +386,63 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
 
         assert(sum.0 == sum.1);
     }
+}
+
+/// IF-013: before `payload` absorbed `ct0is` / `ct1is` through the checked packing, the transcript
+/// did not bind them.
+///
+/// `pack` lays `group` coefficients into one carrier as base-`radix` digits, so adding `delta` to one
+/// coefficient and `-radix * delta` to the next leaves the carrier — and so `gamma` — unchanged.
+/// Neither vector carries a range bound, so both digits stayed satisfiable and a prover could swap
+/// the ciphertext after the challenge was fixed, which is exactly the freedom Schwartz-Zippel
+/// assumes away. `flatten_checked` asserts each digit fits its slot, so the carry is now rejected.
+#[test(should_fail)]
+fn ciphertext_carry_in_the_transcript_is_rejected() {
+    let z = Polynomial::new([0; 8]);
+    let configs: Configs<1> = Configs::new(
+        32,
+        1,
+        [68719403009],
+        [1],
+        [34359701504],
+        20,
+        20,
+        1,
+        [1],
+        [1],
+        [1],
+        [1],
+        [1],
+        20,
+    );
+    let mut c: ShareEncryption<8, 1, 35, 35, 1, 5, 5, 5, 35, 35, 35, 35> = ShareEncryption::new(
+        configs,
+        0,
+        0,
+        [z],
+        [z],
+        [z],
+        [z],
+        z,
+        z,
+        z,
+        z,
+        [Polynomial::new([0; 15])],
+        [Polynomial::new([0; 7])],
+        [Polynomial::new([0; 15])],
+        [Polynomial::new([0; 7])],
+    );
+
+    // In-slot ciphertext: the transcript is computable.
+    let before = c.generate_challenge(z);
+
+    // Carry 1 from slot 0 into slot 1. Both indices sit in the same carrier, so under the unchecked
+    // packing this left the challenge untouched.
+    let radix: Field = 1099511627776;
+    c.ct0is[0].coefficients[0] += 1;
+    c.ct0is[0].coefficients[1] -= radix;
+
+    // Rejected here: slot 1 no longer holds its digit.
+    let after = c.generate_challenge(z);
+    assert(before[0] == after[0]);
 }
