@@ -129,6 +129,14 @@ every section.
 - In the DKG aggregator, C3 key slots and C2 share slots use the selected recipient's full-committee
   `party_id`. C4 expected-commitment slots use the sender's position in the H-row fold. These
   indices differ when the selected H-subset skips a committee member. — `flow-trace/04`
+- **A key the fold exports must be constrained across every slot it stands for, not just the slot it
+  is read from.** `node_fold` reduces each recipient's C3 key to one value by taking limb zero, and
+  `dkg_aggregator` links only that value to the recipient's C0 key. Asserting `pk_a == pk_b` per slot
+  is not enough: a prover puts the real key in limb zero and a different one in a later limb,
+  matching across C3a and C3b, and the exported key stops representing what the other limbs encrypted
+  to. `assert_c3_recipient_keys` now pins every limb to limb zero. A comment asserting an invariant
+  ("same DKG key across all moduli") is not a constraint — this gap was exactly that comment being
+  believed. — `flow-trace/04`
 - A recipient outside the selected H dealers builds C4 from all H encrypted dealer shares. It must
   not replace a selected dealer share with its own plaintext share. A selected recipient uses its
   plaintext share only at its own row. — `flow-trace/04`

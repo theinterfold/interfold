@@ -36,6 +36,9 @@ for committee in minimum micro small; do
       "$BACKUP_DIR/default.nr" > "$ACTIVE_PRESET"
     echo "Testing DKG aggregation for $preset_name/$committee"
     (cd "$REPO_ROOT/circuits/bin/recursive_aggregation/dkg_aggregator" && nargo test)
+    # node_fold's recipient-key constraints are indexed by N_PARTIES and L_THRESHOLD, so they are
+    # only meaningful per preset/committee pair.
+    (cd "$REPO_ROOT/circuits/bin/recursive_aggregation/node_fold" && nargo test)
   done
 done
 

@@ -49,6 +49,37 @@ pub global C3AB_MSG_B_START: u32 = C3AB_PREFIX_LEN + (4 * C3_SLOTS);
 /// Total public parameters + outputs for `node_fold`.
 pub global NODE_FOLD_PUBLIC_LEN: u32 = 11 + N_PARTIES + (2 * (N_PARTIES + H) * L_THRESHOLD);
 
+/// Constrains the C3 recipient keys that the fold later reduces to one key per recipient.
+///
+/// Two things must hold. `pk_a[j*L+l] == pk_b[j*L+l]` keeps the key consistent across both folded C3
+/// chains, and every limb of a recipient's key must equal its **limb-zero** key — because limb zero
+/// is the only one exported below, and `dkg_aggregator` links just that one to the recipient's C0
+/// key.
+///
+/// Without the second check a prover puts the correct key in limb zero and a different key in a
+/// later limb, matching in C3a and C3b so the first check still passes. The exported key would then
+/// not represent what the other limbs encrypted to, and the recursive statement would not establish
+/// that every encrypted limb targets the intended recipient. Both presets have more than one
+/// threshold limb, so neither is exempt.
+///
+/// The node's own slot is excluded for the same reason as the C2-to-C3 binding: it is not
+/// C3-encrypted, and its key is taken from C0 rather than from these slots.
+fn assert_c3_recipient_keys(party_id: Field, c3ab_public: [Field; C3AB_FOLD_PUBLIC_LEN]) {
+    for j in 0..N_PARTIES {
+        for l in 0..L_THRESHOLD {
+            let slot = j * L_THRESHOLD + l;
+            assert(c3ab_public[C3AB_PK_A_START + slot] == c3ab_public[C3AB_PK_B_START + slot]);
+
+            if (party_id != (j as Field)) & (l != 0) {
+                assert(
+                    c3ab_public[C3AB_PK_A_START + slot]
+                        == c3ab_public[C3AB_PK_A_START + j * L_THRESHOLD],
+                );
+            }
+        }
+    }
+}
+
 fn main(
     c0_vk: UltraHonkVerificationKey,
     c0_proof: UltraHonkZKProof,
@@ -93,14 +124,7 @@ fn main(
     assert(c1_public[0] == c2ab_public[C2A_INNER_START]);
     assert(c1_public[2] == c2ab_public[C2B_INNER_START]);
 
-    // Same-party C3a and C3b: pk_a[j*L+l] and pk_b[j*L+l] must match for every (party, modulus)
-    // slot - recipient public key must be consistent across both folded C3 chains.
-    for j in 0..N_PARTIES {
-        for l in 0..L_THRESHOLD {
-            let slot = j * L_THRESHOLD + l;
-            assert(c3ab_public[C3AB_PK_A_START + slot] == c3ab_public[C3AB_PK_B_START + slot]);
-        }
-    }
+    assert_c3_recipient_keys(party_id, c3ab_public);
 
     // C2 to C3: encrypted recipient slots must be bound - msg_a[j*L+l] == c2a_shares[j][l]
     // and msg_b[j*L+l] == c2b_shares[j][l]. The node's own slot is intentionally not
@@ -152,4 +176,61 @@ fn main(
     let esm_agg = c4ab_public[ESM_AGG_INDEX];
 
     (key_hash, c0_pk, c1_pk, c3_pk, c2a, c2b, c4a_exp, c4b_exp, sk_agg, esm_agg)
+}
+
+/// Builds C3 public inputs where every recipient key is limb-consistent, as an honest prover's are.
+#[test]
+fn consistent_c3_recipient_keys_are_accepted() {
+    let mut c3ab: [Field; C3AB_FOLD_PUBLIC_LEN] = [0; C3AB_FOLD_PUBLIC_LEN];
+    for j in 0..N_PARTIES {
+        for l in 0..L_THRESHOLD {
+            let slot = j * L_THRESHOLD + l;
+            // One key per recipient, repeated across that recipient's limbs.
+            c3ab[C3AB_PK_A_START + slot] = (j as Field) + 1000;
+            c3ab[C3AB_PK_B_START + slot] = (j as Field) + 1000;
+        }
+    }
+    assert_c3_recipient_keys(0, c3ab);
+}
+
+/// A different key in a nonzero limb is rejected, even though it matches between C3a and C3b.
+///
+/// This is the substitution the fold previously accepted: limb zero carries the recipient's real
+/// key — the only one exported and linked to their C0 key — while a later limb encrypts to a key of
+/// the prover's choosing. Matching it across C3a and C3b satisfied the one check that existed.
+#[test(should_fail)]
+fn divergent_nonzero_limb_c3_key_is_rejected() {
+    let mut c3ab: [Field; C3AB_FOLD_PUBLIC_LEN] = [0; C3AB_FOLD_PUBLIC_LEN];
+    for j in 0..N_PARTIES {
+        for l in 0..L_THRESHOLD {
+            let slot = j * L_THRESHOLD + l;
+            c3ab[C3AB_PK_A_START + slot] = (j as Field) + 1000;
+            c3ab[C3AB_PK_B_START + slot] = (j as Field) + 1000;
+        }
+    }
+    // Recipient 1, limb 1: swapped in both chains so the C3a/C3b check still passes.
+    let tampered = C3AB_PK_A_START + 1 * L_THRESHOLD + 1;
+    let tampered_b = C3AB_PK_B_START + 1 * L_THRESHOLD + 1;
+    c3ab[tampered] = 999999;
+    c3ab[tampered_b] = 999999;
+
+    assert_c3_recipient_keys(0, c3ab);
+}
+
+/// The node's own slot stays unconstrained, since its key comes from C0 rather than these slots.
+#[test]
+fn self_recipient_limbs_may_differ() {
+    let mut c3ab: [Field; C3AB_FOLD_PUBLIC_LEN] = [0; C3AB_FOLD_PUBLIC_LEN];
+    for j in 0..N_PARTIES {
+        for l in 0..L_THRESHOLD {
+            let slot = j * L_THRESHOLD + l;
+            c3ab[C3AB_PK_A_START + slot] = (j as Field) + 1000;
+            c3ab[C3AB_PK_B_START + slot] = (j as Field) + 1000;
+        }
+    }
+    // Party 2 is the node itself here; its own slots are not C3-encrypted.
+    c3ab[C3AB_PK_A_START + 2 * L_THRESHOLD + 1] = 7;
+    c3ab[C3AB_PK_B_START + 2 * L_THRESHOLD + 1] = 7;
+
+    assert_c3_recipient_keys(2, c3ab);
 }
