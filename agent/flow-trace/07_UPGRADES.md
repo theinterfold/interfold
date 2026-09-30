@@ -89,9 +89,11 @@ The old and new stacks must use separate addresses so clients cannot silently co
 The BFV circuits use `interfold-bfv-v2` with compiled `protocol_version = 5` and
 `node_generation = 2`. The configuration ID binds this circuit version even when BFV parameters stay
 unchanged. The builder generates both precomputed IDs. Runtime readers, the indexer, CRISP intake,
-request tooling, and the SDK use the same IDs and reject v1 requests. Changed witness shapes and
-smudging commitments require a governance cutover, not a mixed rolling release. Rebuild all six
-artifact pairs and replace the immutable BFV verifier wrappers and routers before requests resume.
+request tooling, and the SDK use the same IDs and reject v1 requests. The indexer skips historical
+keys for unsupported configuration IDs without storing them. This lets its catch-up cursor advance
+across drained v1 rounds to recover supported rounds. Changed witness shapes and smudging
+commitments require a governance cutover, not a mixed rolling release. Rebuild all six artifact
+pairs and replace the immutable BFV verifier wrappers and routers before requests resume.
 
 The initial VRF upgrade follows this combined path because it introduces the controller and changes
 both `Interfold` and `BondingRegistry`.
