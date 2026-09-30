@@ -19,12 +19,14 @@
 //!     names, and a trace of the layout: the path, the serde kind, and the enum and variant of each
 //!     value. A swap of two fields changes it, also of two `bool` or unit-enum fields whose sample
 //!     values can be equal. A rename or a newtype wrapper changes it too.
-//!   - The positional digest covers two samples whose values come from positions only: a full
-//!     sample, and a minimal sample with each option `None`, each sequence and map empty where the
-//!     type accepts that, and each `bool` the opposite of the full sample. It changes when the
-//!     encoding changes. It does not change for a rename or a newtype wrapper, because bincode
-//!     writes neither. The minimal sample shows a `skip_serializing_if` that drops a `None`, an
-//!     empty value, or one of the two `bool` values.
+//!   - The positional digest covers four samples whose values come from positions only: a full
+//!     sample, a minimal sample with each option `None` and each sequence and map empty where the
+//!     type accepts that, and a flipped copy of each with every `bool` inverted. It changes when
+//!     the encoding changes. It does not change for a rename or a newtype wrapper, because bincode
+//!     writes neither. Each `bool` takes both values, with the sequences, maps, and options around
+//!     it full and with them empty. So a `skip_serializing_if` that drops a `None`, an empty value,
+//!     or either `bool` value shows in one of the samples, and so does one that depends on a
+//!     `bool` and an empty value together.
 //! - Some byte fields and sequences accept only one length, for example an `Address` (20 bytes) or
 //!   an `EventId` (32). When a deserializer rejects a length, the sample is rebuilt with the next
 //!   candidate length for that path.
@@ -111,9 +113,25 @@ enum Mode {
     Named,
     /// Values from positional paths.
     Positional,
+    /// Values from positional paths, with each `bool` the opposite of the positional sample.
+    Flipped,
     /// Values from positional paths, with each option `None` and each sequence and map empty where
     /// the type accepts that.
     Minimal,
+    /// The minimal sample, with each `bool` the opposite of the positional sample.
+    MinimalFlipped,
+}
+
+impl Mode {
+    /// Options are `None`, and sequences and maps are empty where the type accepts that.
+    fn minimal(self) -> bool {
+        matches!(self, Mode::Minimal | Mode::MinimalFlipped)
+    }
+
+    /// Each `bool` is the opposite of the positional sample.
+    fn flipped(self) -> bool {
+        matches!(self, Mode::Flipped | Mode::MinimalFlipped)
+    }
 }
 
 #[derive(Default)]
@@ -198,11 +216,13 @@ impl<'a> Synth<'a> {
     /// The length for this byte field or sequence, recorded as the retry candidate.
     fn length(&self, candidates: &'static [usize]) -> usize {
         let mut run = self.run.borrow_mut();
-        // A minimal sample tries other lengths first, so it keeps its own accepted lengths.
-        let key = if run.mode == Mode::Minimal {
-            format!("min:{}", self.path)
-        } else {
-            self.path.clone()
+        // Each sample keeps its own accepted lengths, so that a retry in one sample does not change
+        // the lengths of another. The named and the positional sample share theirs.
+        let key = match run.mode {
+            Mode::Named | Mode::Positional => self.path.clone(),
+            Mode::Flipped => format!("flipped:{}", self.path),
+            Mode::Minimal => format!("min:{}", self.path),
+            Mode::MinimalFlipped => format!("min-flipped:{}", self.path),
         };
         let index = *run.lengths.get(&key).unwrap_or(&0);
         run.last_length = Some((key, candidates));
@@ -210,7 +230,7 @@ impl<'a> Synth<'a> {
     }
 
     fn bytes(&self) -> Vec<u8> {
-        let candidates = if self.mode() == Mode::Minimal {
+        let candidates = if self.mode().minimal() {
             MIN_BYTE_LENGTHS
         } else {
             BYTE_LENGTHS
@@ -353,10 +373,10 @@ impl<'de> de::Deserializer<'de> for Synth<'_> {
 
     fn deserialize_bool<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, SynthError> {
         self.trace("bool");
-        // The full and the minimal sample take opposite values, so a `skip_serializing_if` on
-        // either value drops the field from one of them.
+        // The flipped samples take the opposite values, so a `skip_serializing_if` on either value
+        // drops the field from one sample, with full and with empty sequences, maps, and options.
         let value = self.u64() & 1 == 1;
-        visitor.visit_bool(value != (self.mode() == Mode::Minimal))
+        visitor.visit_bool(value != self.mode().flipped())
     }
 
     fn deserialize_i8<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, SynthError> {
@@ -444,7 +464,7 @@ impl<'de> de::Deserializer<'de> for Synth<'_> {
     }
 
     fn deserialize_option<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, SynthError> {
-        if self.deep() || self.mode() == Mode::Minimal {
+        if self.deep() || self.mode().minimal() {
             self.trace("option none");
             return visitor.visit_none();
         }
@@ -478,7 +498,7 @@ impl<'de> de::Deserializer<'de> for Synth<'_> {
     fn deserialize_seq<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, SynthError> {
         let len = if self.deep() {
             0
-        } else if self.mode() == Mode::Minimal {
+        } else if self.mode().minimal() {
             self.length(MIN_SEQ_LENGTHS)
         } else {
             self.length(SEQ_LENGTHS)
@@ -524,7 +544,7 @@ impl<'de> de::Deserializer<'de> for Synth<'_> {
     fn deserialize_map<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, SynthError> {
         let entries = if self.deep() {
             0
-        } else if self.mode() == Mode::Minimal {
+        } else if self.mode().minimal() {
             self.length(MIN_MAP_ENTRIES)
         } else {
             1
@@ -679,15 +699,18 @@ fn row<T: Serialize + DeserializeOwned>(
     let named: T = synthesize(run, root, overrides, Mode::Named);
     let trace = run.borrow().trace.join("\n");
     let named_bytes = encode(&named, root, target);
-    let positional: T = synthesize(run, root, overrides, Mode::Positional);
-    let positional_bytes = encode(&positional, root, target);
-    let minimal: T = synthesize(run, root, overrides, Mode::Minimal);
-    let minimal_bytes = encode(&minimal, root, target);
+    let positional = [
+        Mode::Positional,
+        Mode::Flipped,
+        Mode::Minimal,
+        Mode::MinimalFlipped,
+    ]
+    .map(|mode| encode(&synthesize::<T>(run, root, overrides, mode), root, target));
     format!(
         "{root}\t{target}\t{}\t{}\t{}{}",
         named_bytes.len(),
         digest(&[&named_bytes, trace.as_bytes()]),
-        digest(&[&positional_bytes, &minimal_bytes]),
+        digest(&positional.each_ref().map(Vec::as_slice)),
         extra(&named)
     )
 }
@@ -731,7 +754,7 @@ where
 // ── Fixture comparison ──────────────────────────────────────────────────────────────────────
 
 const HEADER: &str = "# root\tforced variant\tbytes\tsha256 (named sample and layout trace)\t\
-                      sha256 (positional and minimal samples)\textra\n";
+                      sha256 (full and minimal positional samples, as is and flipped)\textra\n";
 
 const GUIDE: &str = "\
 Each difference names its kind:
@@ -790,8 +813,11 @@ fn same_encoding(was: &str, now: &str) -> bool {
 /// Two rows of one root and one enum that encode the same way and have the same extra columns,
 /// for example the event ID.
 fn same_variant_slot(was: &str, now: &str) -> bool {
+    // A serde name can contain `::`, so the enum name ends at the last one.
+    fn enum_name(target: &str) -> &str {
+        target.rsplit_once("::").map_or(target, |(name, _)| name)
+    }
     let (old, new) = (columns(was), columns(now));
-    let enum_name = |target: &str| target.split("::").next().unwrap_or(target).to_string();
     old[0] == new[0]
         && enum_name(old[1]) == enum_name(new[1])
         && same_encoding(was, now)
@@ -907,6 +933,24 @@ mod tests {
         let mut rows = rows::<T>();
         assert_eq!(rows.len(), 1);
         rows.remove(0)
+    }
+
+    /// Whether the lock sees a `skip_serializing_if` that `Skipping` adds to `Plain`: a build
+    /// fails, or a positional digest differs.
+    fn skip_shows<Plain, Skipping>() -> bool
+    where
+        Plain: Serialize + DeserializeOwned,
+        Skipping: Serialize + DeserializeOwned,
+    {
+        let digests = |rows: Vec<String>| {
+            rows.iter()
+                .map(|row| positional(row).to_string())
+                .collect::<Vec<_>>()
+        };
+        match std::panic::catch_unwind(rows::<Skipping>) {
+            Err(_) => true,
+            Ok(skipping) => digests(rows::<Plain>()) != digests(skipping),
+        }
     }
 
     #[derive(Serialize, Deserialize)]
@@ -1044,11 +1088,7 @@ mod tests {
     /// build fails, or its encoding differs.
     #[test]
     fn skipping_none_is_not_the_same_layout() {
-        let plain = only::<Changed>();
-        match std::panic::catch_unwind(only::<ChangedSkipping>) {
-            Err(_) => {}
-            Ok(skipping) => assert_ne!(positional(&plain), positional(&skipping)),
-        }
+        assert!(skip_shows::<Changed, ChangedSkipping>());
     }
 
     #[derive(Serialize, Deserialize)]
@@ -1130,6 +1170,21 @@ mod tests {
         assert!(changes[1].starts_with("new:"), "{changes:?}");
     }
 
+    /// A serde name can contain `::`. Two enums whose names share the part before it are still two
+    /// enums.
+    #[test]
+    fn rows_of_two_enums_with_one_name_prefix_are_not_paired() {
+        let fixture = "root\tscope::First::A\t4\tn1\tp\nroot\tscope::First::B\t4\tn2\tq";
+        let rows = "root\tscope::First::B\t4\tn2\tq\nroot\tscope::Second::A\t4\tn3\tp";
+        let changes = compare(
+            &keyed(fixture.lines(), "fixture"),
+            &keyed(rows.lines(), "rows"),
+        );
+        assert_eq!(changes.len(), 2, "{changes:?}");
+        assert!(changes[0].starts_with("missing:"), "{changes:?}");
+        assert!(changes[1].starts_with("new:"), "{changes:?}");
+    }
+
     fn is_true(value: &bool) -> bool {
         *value
     }
@@ -1154,20 +1209,165 @@ mod tests {
         paused: bool,
     }
 
-    /// The full and the minimal sample give each `bool` both values, so a skip on either value
-    /// shows, whatever value the path gives: the build fails, or the encoding differs.
+    /// The positional and the flipped sample give each `bool` both values, so a skip on either
+    /// value shows, whatever value the path gives.
     #[test]
     fn skipping_either_bool_value_is_not_the_same_layout() {
-        let plain = only::<Flags>();
-        for skipping in [
-            std::panic::catch_unwind(only::<FlagsSkippingTrue>),
-            std::panic::catch_unwind(only::<FlagsSkippingFalse>),
-        ] {
-            match skipping {
-                Err(_) => {}
-                Ok(skipping) => assert_ne!(positional(&plain), positional(&skipping)),
+        assert!(skip_shows::<Flags, FlagsSkippingTrue>());
+        assert!(skip_shows::<Flags, FlagsSkippingFalse>());
+    }
+
+    #[derive(Serialize, Deserialize)]
+    #[serde(rename = "Entry")]
+    struct Entry {
+        present: bool,
+    }
+
+    #[derive(Serialize, Deserialize)]
+    #[serde(rename = "Entry")]
+    struct EntrySkippingTrue {
+        #[serde(skip_serializing_if = "is_true")]
+        present: bool,
+    }
+
+    #[derive(Serialize, Deserialize)]
+    #[serde(rename = "Entry")]
+    struct EntrySkippingFalse {
+        #[serde(skip_serializing_if = "is_false")]
+        present: bool,
+    }
+
+    #[derive(Serialize, Deserialize)]
+    #[serde(rename = "InMap")]
+    struct InMap<E>(BTreeMap<u64, E>);
+
+    #[derive(Serialize, Deserialize)]
+    #[serde(rename = "InSeq")]
+    struct InSeq<E>(Vec<E>);
+
+    #[derive(Serialize, Deserialize)]
+    #[serde(rename = "InOption")]
+    struct InOption<E>(Option<E>);
+
+    /// The minimal sample empties sequences and maps and sets options to `None`. A `bool` inside
+    /// them still takes both values, one in the positional sample and one in the flipped sample.
+    #[test]
+    fn skipping_either_bool_value_inside_a_container_is_not_the_same_layout() {
+        assert!(skip_shows::<InMap<Entry>, InMap<EntrySkippingTrue>>());
+        assert!(skip_shows::<InMap<Entry>, InMap<EntrySkippingFalse>>());
+        assert!(skip_shows::<InSeq<Entry>, InSeq<EntrySkippingTrue>>());
+        assert!(skip_shows::<InSeq<Entry>, InSeq<EntrySkippingFalse>>());
+        assert!(skip_shows::<InOption<Entry>, InOption<EntrySkippingTrue>>());
+        assert!(skip_shows::<InOption<Entry>, InOption<EntrySkippingFalse>>());
+    }
+
+    #[derive(Serialize, Deserialize)]
+    #[serde(rename = "Detail")]
+    struct Detail {
+        flag: bool,
+        items: Vec<u8>,
+    }
+
+    fn off_and_empty(detail: &Detail) -> bool {
+        !detail.flag && detail.items.is_empty()
+    }
+
+    fn on_and_empty(detail: &Detail) -> bool {
+        detail.flag && detail.items.is_empty()
+    }
+
+    #[derive(Serialize, Deserialize)]
+    #[serde(rename = "Root")]
+    struct Root {
+        detail: Detail,
+    }
+
+    #[derive(Serialize, Deserialize)]
+    #[serde(rename = "Root")]
+    struct RootSkippingOffAndEmpty {
+        #[serde(skip_serializing_if = "off_and_empty")]
+        detail: Detail,
+    }
+
+    #[derive(Serialize, Deserialize)]
+    #[serde(rename = "Root")]
+    struct RootSkippingOnAndEmpty {
+        #[serde(skip_serializing_if = "on_and_empty")]
+        detail: Detail,
+    }
+
+    /// A skip can depend on a `bool` and an empty value together. The minimal sample and its
+    /// flipped copy give the `bool` both values next to the empty sequence.
+    #[test]
+    fn skipping_on_a_bool_and_an_empty_value_is_not_the_same_layout() {
+        assert!(skip_shows::<Root, RootSkippingOffAndEmpty>());
+        assert!(skip_shows::<Root, RootSkippingOnAndEmpty>());
+    }
+
+    #[derive(Serialize, Deserialize)]
+    #[serde(rename = "Choice")]
+    enum Choice {
+        First,
+        Second,
+    }
+
+    /// A type that checks its fields: an off `flag` needs items.
+    #[derive(Serialize)]
+    #[serde(rename = "Checked")]
+    struct Checked {
+        flag: bool,
+        choice: Choice,
+        items: Vec<u8>,
+    }
+
+    impl<'de> Deserialize<'de> for Checked {
+        fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            #[derive(Deserialize)]
+            #[serde(rename = "Checked")]
+            struct Fields {
+                flag: bool,
+                choice: Choice,
+                items: Vec<u8>,
             }
+            let Fields {
+                flag,
+                choice,
+                items,
+            } = Fields::deserialize(deserializer)?;
+            if !flag && items.is_empty() {
+                return Err(serde::de::Error::custom("an off flag needs items"));
+            }
+            Ok(Self {
+                flag,
+                choice,
+                items,
+            })
         }
+    }
+
+    fn on_second_and_empty(checked: &Checked) -> bool {
+        checked.flag && matches!(checked.choice, Choice::Second) && checked.items.is_empty()
+    }
+
+    #[derive(Serialize, Deserialize)]
+    #[serde(rename = "CheckedRoot")]
+    struct CheckedRoot {
+        checked: Checked,
+    }
+
+    #[derive(Serialize, Deserialize)]
+    #[serde(rename = "CheckedRoot")]
+    struct CheckedRootSkipping {
+        #[serde(skip_serializing_if = "on_second_and_empty")]
+        checked: Checked,
+    }
+
+    /// One minimal sample of the first row needs an item, because its `flag` is off. A retry there
+    /// must not change the lengths of the other samples: the minimal sample with the `flag` on
+    /// stays empty in the row of the second variant, so the skip shows.
+    #[test]
+    fn a_retry_in_one_sample_keeps_the_lengths_of_the_others() {
+        assert!(skip_shows::<CheckedRoot, CheckedRootSkipping>());
     }
 
     /// A map that must not be empty.
