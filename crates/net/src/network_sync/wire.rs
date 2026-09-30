@@ -344,7 +344,8 @@ mod tests {
         assert!(error.to_string().contains("message kind"));
     }
 
-    /// The sync response is locked in the sync actor tests, beside its type.
+    /// `SyncResponseValue` has no lock here: the node passes it only inside the process, and a peer
+    /// receives the `EventBatch` below.
     #[test]
     fn wire_message_bytes_are_locked() {
         let policy = NetworkPolicy::local_unrestricted();

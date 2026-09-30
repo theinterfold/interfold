@@ -21,6 +21,10 @@
 //! in `e3-net`. `e3-net` also locks sample sync messages and their request-response frames.
 //!
 //! Not covered:
+//! - roots that this test does not list. The list is kept by hand: add each new persisted or wire
+//!   type;
+//! - the store keys under which the repositories write their values. The test binds each accessor to
+//!   its value type and does not call it;
 //! - formats written by hand, such as commit-log framing and event-blob references;
 //! - values stored inside opaque bytes, such as the encrypted `SharedSecret` shares in the keyshare
 //!   snapshot and the fhe.rs keys in `SensitiveBytes`. The lock sees only the byte string.
