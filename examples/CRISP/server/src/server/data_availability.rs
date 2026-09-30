@@ -4027,6 +4027,7 @@ mod tests {
             constructor(bytes32 configId);
             function set(bool isCommitted, bool isPublished, uint256 deadline) external;
             function committed() external view returns (bool);
+            function sends() external view returns (uint256);
         }
     }
 
@@ -4187,6 +4188,66 @@ mod tests {
         assert_ne!(hash, "0xorphaned");
         assert!(*attestation_expires_at > 1);
         assert!(mock.committed().call().await.unwrap());
+    }
+
+    /// A restart between an Ethereum send and the save of its result must not pay for that send
+    /// again. Each case stops the worker at one point, and a restarted service over the same
+    /// database drives the job to the end: it ends in the same state, and Ethereum takes each paid
+    /// transaction once.
+    #[tokio::test]
+    async fn a_restart_around_an_ethereum_send_pays_for_it_once() {
+        let object = b"restarted-ciphertext";
+        let mut job = input_job("restarted-input", Address::repeat_byte(0x77), 0x11, object);
+        let JobKind::Input {
+            commitment_deadline,
+            ..
+        } = &mut job.kind
+        else {
+            unreachable!("input_job builds an input job");
+        };
+        *commitment_deadline = no_deadline();
+        let relayed = JobState::AwaitingCommitment {
+            ethereum_payload: vec![1],
+            attestation_expires_at: u64::MAX,
+            relayed_transaction_hash: Some("0xrelayed".to_owned()),
+        };
+        let finalizing = JobState::Ready {
+            ethereum_payload: object.to_vec(),
+            commitment_transaction_hash: None,
+            publication: None,
+        };
+        // Where the worker stopped, what Ethereum holds, and the paid sends that are still owed.
+        let cases = [
+            ("before the relay send", JobState::Created, false, false, 2),
+            ("after the relay send", JobState::Created, true, false, 1),
+            ("after the relay result was saved", relayed, true, false, 1),
+            ("after the finalization", finalizing, true, true, 0),
+        ];
+        for (point, state, committed, published, owed) in cases {
+            let (service, mock, _anvil) = chain_service(&temporary_db()).await;
+            set_input(&mock, committed, published, u64::MAX).await;
+            store_job_in_state(&service, &job, object, state);
+            let restarted = AvailabilityService {
+                in_progress: Arc::new(StorageMutex::new(HashSet::new())),
+                relay_funding_refusals: Arc::new(StorageMutex::new(HashMap::new())),
+                ..service
+            };
+
+            for _ in 0..6 {
+                restarted.process(&job.id).await;
+            }
+
+            let state = restarted.load_required(&job.id).unwrap().state;
+            assert!(
+                matches!(state, JobState::Submitted { .. }),
+                "{point}: {state:?}"
+            );
+            assert_eq!(
+                mock.sends().call().await.unwrap(),
+                U256::from(owed),
+                "{point}"
+            );
+        }
     }
 
     fn output_job(id: &str, state: JobState, object: &[u8]) -> AvailabilityJob {
