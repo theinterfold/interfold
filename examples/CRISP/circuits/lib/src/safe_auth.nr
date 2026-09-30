@@ -8,35 +8,33 @@
 //! proof, so that the signatures stay private. A wallet is one owner, the slot, with threshold 1.
 //!
 //! The contract supplies two public inputs that the prover cannot change: the digest that the
-//! owners sign, and `keccak256(abi.encode(address[MAX_SAFE_OWNERS] owners, uint256 threshold))` in
-//! two 16-byte halves, with the owners padded with the zero address. Only ECDSA owner signatures
-//! over that digest count. The other Safe signature types (contract signatures, approved hashes,
-//! `eth_sign`) need on-chain state or another digest, so a proof cannot check them.
+//! owners sign, and the Keccak hash of the owners as 20-byte words, padded with the zero address to
+//! `MAX_SAFE_OWNERS`, followed by the threshold as one byte, in two 16-byte halves. Only ECDSA owner
+//! signatures over that digest count. The other Safe signature types (contract signatures, approved
+//! hashes, `eth_sign`) need on-chain state or another digest, so a proof cannot check them.
 
 use crate::ecdsa::{address_to_field, derive_address, digest_from_halves, validate_signature};
 use keccak256::keccak256;
 
-/// Returns true when `abi.encode(owners, threshold)`, one 32-byte big-endian word each, hashes
-/// to the committed value.
+/// Returns true when the owners as 20-byte words, followed by the threshold as one byte, hash to
+/// the committed value. The packing keeps 10 owners within two Keccak blocks.
 fn owners_commitment_matches<let O: u32>(
     owners: [Field; O],
     threshold: u32,
     commitment_hi: Field,
     commitment_lo: Field,
 ) -> bool {
-    let mut bytes = [0 as u8; (O + 1) * 32];
+    let mut bytes = [0 as u8; O * 20 + 1];
     for i in 0..O {
-        let owner: [u8; 32] = owners[i].to_be_bytes();
-        for j in 0..32 {
-            bytes[i * 32 + j] = owner[j];
+        let owner: [u8; 20] = owners[i].to_be_bytes();
+        for j in 0..20 {
+            bytes[i * 20 + j] = owner[j];
         }
     }
-    let threshold_bytes: [u8; 32] = (threshold as Field).to_be_bytes();
-    for j in 0..32 {
-        bytes[O * 32 + j] = threshold_bytes[j];
-    }
+    let threshold_byte: [u8; 1] = (threshold as Field).to_be_bytes();
+    bytes[O * 20] = threshold_byte[0];
 
-    keccak256(bytes, (O + 1) * 32) == digest_from_halves(commitment_hi, commitment_lo)
+    keccak256(bytes, O * 20 + 1) == digest_from_halves(commitment_hi, commitment_lo)
 }
 
 /// Returns true when `threshold` distinct committed owners signed `hashed_message`.
@@ -85,13 +83,15 @@ pub fn validate_safe_signatures<let S: u32, let O: u32>(
 // Tests
 // ================================================================================================
 //
-// The fixtures are real secp256k1 signatures. Three owners, sorted by address:
+// The fixtures are real secp256k1 signatures. Four owners, sorted by address (private keys
+// `keccak256("safe owner i")` for i = 0, 1, 2 and 4):
 //   owner0 0x0dD9130977fBe72e9030dF1cd95Fbef5796AC5C0
 //   owner1 0x1127c766a9808F9E0a15a2A56FcE79f2b5b5e8E9
 //   owner2 0x3CaEf311dE49F3af5A74A7364E79A0350b8E723c
+//   owner3 0x58201050f0dB7832Ef4A1Ab20EF40844a71F2433
 // and one account that is not an owner:
 //   outsider 0x6AB133Ce3481A06313b4e0B1bb810BCD670853a4
-// Each signed DIGEST. The owner commitments pad the three owners to MAX_SAFE_OWNERS with the zero
+// Each signed DIGEST. The owner commitments pad the four owners to MAX_SAFE_OWNERS with the zero
 // address, as `CRISPProgram` does.
 
 use crate::constants::{MAX_SAFE_OWNERS, MAX_SAFE_SIGNERS};
@@ -149,6 +149,21 @@ global OWNER2_SIG: [u8; 64] = [
     144, 178, 207,
 ];
 
+global OWNER3_X: [u8; 32] = [
+    222, 141, 175, 112, 45, 148, 85, 126, 255, 78, 72, 239, 142, 172, 217, 122, 206, 167, 76, 232,
+    35, 219, 115, 96, 68, 222, 28, 6, 46, 237, 18, 149,
+];
+global OWNER3_Y: [u8; 32] = [
+    194, 242, 80, 179, 243, 0, 255, 227, 133, 99, 232, 230, 88, 249, 64, 70, 196, 144, 200, 215, 98,
+    179, 104, 11, 173, 15, 73, 37, 114, 231, 195, 123,
+];
+global OWNER3_SIG: [u8; 64] = [
+    172, 162, 190, 111, 87, 167, 166, 221, 219, 217, 49, 131, 144, 181, 39, 114, 2, 81, 178, 116,
+    249, 53, 234, 16, 238, 68, 56, 186, 101, 106, 143, 119, 8, 45, 145, 71, 208, 230, 75, 60, 102,
+    48, 167, 38, 74, 182, 97, 124, 102, 144, 163, 80, 230, 76, 238, 135, 196, 212, 138, 156, 190,
+    117, 21, 178,
+];
+
 global OUTSIDER_X: [u8; 32] = [
     246, 160, 175, 56, 39, 59, 80, 73, 196, 122, 145, 63, 248, 149, 206, 232, 155, 206, 230, 18, 24,
     239, 200, 108, 28, 175, 66, 216, 147, 81, 119, 179,
@@ -164,23 +179,24 @@ global OUTSIDER_SIG: [u8; 64] = [
     44,
 ];
 
-// keccak256(abi.encode(address[10] owners, uint256 threshold)) for thresholds 0 to 4.
+// The owner commitments of the four owners, padded to MAX_SAFE_OWNERS. COMMIT_Tn has threshold n.
 global COMMIT_T0: (Field, Field) =
-    (0x0890e52b41896fdc3994f44caa55d52b, 0x508bf170137c92b6523add98e451def7);
+    (0x002e33d5e9ce49155f7643ae1dc0f684, 0x36251217885075aaed200c712091c90b);
 global COMMIT_T1: (Field, Field) =
-    (0xdda1458d9ac619539d6bd5ff647acf63, 0xcf75f74538f0bf2b0d7f4a53f6fdcc84);
+    (0x87d622ff3d801a4c69ddc74ac80c8c43, 0x5f4871739508393e63afd2d9d94b4c59);
 global COMMIT_T2: (Field, Field) =
-    (0xba2ec3d58e1012ba18bab78e811f3084, 0x2f2b649bdd251330891a440377df6d44);
-global COMMIT_T3: (Field, Field) =
-    (0xcbdb7d27fdca204230440efe00a571f2, 0x7770aebdc4703119a701f80c82f1a74b);
+    (0x552f5e6eb66ec9d5ffc0053430a9b926, 0x08d164983224ab8464904770a5c2572e);
 global COMMIT_T4: (Field, Field) =
-    (0x4e502c42c707abb8b6d68e969c805abd, 0x05017e4ca87b568655c4fef29eb7793b);
+    (0xb032d5dab83e3ac480633acd9b8b23f0, 0x13536920010c51f3bb388812dd47fd6d);
+global COMMIT_T5: (Field, Field) =
+    (0x63afd2165460c0092ac9e6eb2ed4e45b, 0xa6805a324594cb35d5e29a1ab0cfb4a2);
 
 fn test_owners() -> [Field; MAX_SAFE_OWNERS] {
     let mut owners = [0; MAX_SAFE_OWNERS];
     owners[0] = 0x0dD9130977fBe72e9030dF1cd95Fbef5796AC5C0;
     owners[1] = 0x1127c766a9808F9E0a15a2A56FcE79f2b5b5e8E9;
     owners[2] = 0x3CaEf311dE49F3af5A74A7364E79A0350b8E723c;
+    owners[3] = 0x58201050f0dB7832Ef4A1Ab20EF40844a71F2433;
     owners
 }
 
@@ -202,6 +218,10 @@ fn owner1() -> Slot {
 
 fn owner2() -> Slot {
     Slot { x: OWNER2_X, y: OWNER2_Y, sig: OWNER2_SIG, index: 2 }
+}
+
+fn owner3() -> Slot {
+    Slot { x: OWNER3_X, y: OWNER3_Y, sig: OWNER3_SIG, index: 3 }
 }
 
 fn check(
@@ -234,22 +254,36 @@ fn check(
 }
 
 #[test]
-fn test_one_of_three() {
-    // The two inactive slots repeat the active one. Their content is not checked.
-    assert(check(DIGEST, 1, COMMIT_T1, [owner1(), owner1(), owner1()]));
+fn test_one_of_four() {
+    // The inactive slots repeat the active one. Their content is not checked.
+    assert(
+        check(
+            DIGEST,
+            1,
+            COMMIT_T1,
+            [owner1(), owner1(), owner1(), owner1()],
+        ),
+    );
 }
 
 #[test]
-fn test_two_of_three_ignores_inactive_slot() {
-    // The inactive slot holds a key that is not an owner, a signature that is not by that key, and
+fn test_two_of_four_ignores_inactive_slots() {
+    // An inactive slot holds a key that is not an owner, a signature that is not by that key, and
     // the index of an empty owner position.
-    let junk = Slot { x: OUTSIDER_X, y: OUTSIDER_Y, sig: OWNER0_SIG, index: 9 };
-    assert(check(DIGEST, 2, COMMIT_T2, [owner0(), owner2(), junk]));
+    let junk = Slot { x: OUTSIDER_X, y: OUTSIDER_Y, sig: OWNER0_SIG, index: 6 };
+    assert(check(DIGEST, 2, COMMIT_T2, [owner0(), owner2(), junk, junk]));
 }
 
 #[test]
-fn test_three_of_three() {
-    assert(check(DIGEST, 3, COMMIT_T3, [owner0(), owner1(), owner2()]));
+fn test_four_of_four() {
+    assert(
+        check(
+            DIGEST,
+            4,
+            COMMIT_T4,
+            [owner0(), owner1(), owner2(), owner3()],
+        ),
+    );
 }
 
 // Each negative case below returns false instead of failing a constraint. The circuit asserts the
@@ -258,43 +292,99 @@ fn test_three_of_three() {
 /// The threshold is committed, so a prover cannot claim a smaller one than the Safe has.
 #[test]
 fn test_rejects_threshold_below_committed() {
-    assert(!check(DIGEST, 1, COMMIT_T2, [owner0(), owner0(), owner0()]));
+    assert(
+        !check(
+            DIGEST,
+            1,
+            COMMIT_T2,
+            [owner0(), owner0(), owner0(), owner0()],
+        ),
+    );
 }
 
 #[test]
 fn test_rejects_descending_order() {
-    assert(!check(DIGEST, 2, COMMIT_T2, [owner1(), owner0(), owner0()]));
+    assert(
+        !check(
+            DIGEST,
+            2,
+            COMMIT_T2,
+            [owner1(), owner0(), owner0(), owner0()],
+        ),
+    );
 }
 
 #[test]
 fn test_rejects_same_owner_twice() {
-    assert(!check(DIGEST, 2, COMMIT_T2, [owner1(), owner1(), owner1()]));
+    assert(
+        !check(
+            DIGEST,
+            2,
+            COMMIT_T2,
+            [owner1(), owner1(), owner1(), owner1()],
+        ),
+    );
 }
 
 #[test]
 fn test_rejects_signer_not_an_owner() {
     let outsider = Slot { x: OUTSIDER_X, y: OUTSIDER_Y, sig: OUTSIDER_SIG, index: 2 };
-    assert(!check(DIGEST, 2, COMMIT_T2, [owner0(), outsider, outsider]));
+    assert(
+        !check(
+            DIGEST,
+            2,
+            COMMIT_T2,
+            [owner0(), outsider, outsider, outsider],
+        ),
+    );
 }
 
 #[test]
 fn test_rejects_signature_over_other_digest() {
-    assert(!check(OTHER_DIGEST, 2, COMMIT_T2, [owner0(), owner1(), owner1()]));
+    assert(
+        !check(
+            OTHER_DIGEST,
+            2,
+            COMMIT_T2,
+            [owner0(), owner1(), owner1(), owner1()],
+        ),
+    );
 }
 
 #[test]
 fn test_rejects_wrong_owner_index() {
     let misplaced = Slot { x: OWNER1_X, y: OWNER1_Y, sig: OWNER1_SIG, index: 2 };
-    assert(!check(DIGEST, 2, COMMIT_T2, [owner0(), misplaced, misplaced]));
+    assert(
+        !check(
+            DIGEST,
+            2,
+            COMMIT_T2,
+            [owner0(), misplaced, misplaced, misplaced],
+        ),
+    );
 }
 
 /// Even with a matching commitment and valid slots.
 #[test]
 fn test_rejects_threshold_above_signer_cap() {
-    assert(!check(DIGEST, 4, COMMIT_T4, [owner0(), owner1(), owner2()]));
+    assert(
+        !check(
+            DIGEST,
+            5,
+            COMMIT_T5,
+            [owner0(), owner1(), owner2(), owner3()],
+        ),
+    );
 }
 
 #[test]
 fn test_rejects_zero_threshold() {
-    assert(!check(DIGEST, 0, COMMIT_T0, [owner0(), owner1(), owner2()]));
+    assert(
+        !check(
+            DIGEST,
+            0,
+            COMMIT_T0,
+            [owner0(), owner1(), owner2(), owner3()],
+        ),
+    );
 }

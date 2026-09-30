@@ -161,7 +161,7 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
   /// @notice Largest Safe owner list and threshold that a ballot proof carries. Must match
   /// `circuits/lib/src/constants.nr` and the SDK.
   uint256 constant MAX_SAFE_OWNERS = 10;
-  uint256 constant MAX_SAFE_SIGNERS = 3;
+  uint256 constant MAX_SAFE_SIGNERS = 4;
   /// @notice The EIP-712 types that Safe 1.3.0 and later hash a message with.
   bytes32 private constant SAFE_DOMAIN_SEPARATOR_TYPEHASH = keccak256("EIP712Domain(uint256 chainId,address verifyingContract)");
   bytes32 private constant SAFE_MSG_TYPEHASH = keccak256("SafeMessage(bytes message)");
@@ -380,11 +380,12 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
 
   /// @notice What a ballot for `slot` is proved against: the digest that its owners sign and, in a
   /// `CensusMode.ONCHAIN` round, the commitment to those owners. `publishInput` uses the same values.
-  /// @dev `ownersCommitment` is `keccak256(abi.encode(address[MAX_SAFE_OWNERS] owners, threshold))`,
-  /// padded with the zero address. A Safe has its current owners and threshold, and they sign the
-  /// Safe's `SafeMessage` hash of `ballotDigest`, which the Safe's `isValidSignature` also accepts.
-  /// Any other slot is its own single owner and signs `ballotDigest`. In the other census modes,
-  /// `digest` is `ballotDigest` and `ownersCommitment` is zero.
+  /// @dev `ownersCommitment` is the Keccak hash of the owners as 20-byte words, padded with the zero
+  /// address to `MAX_SAFE_OWNERS`, followed by the threshold as one byte. A Safe has its current
+  /// owners and threshold, and they sign the Safe's `SafeMessage` hash of `ballotDigest`, which the
+  /// Safe's `isValidSignature` also accepts. Any other slot is its own single owner and signs
+  /// `ballotDigest`. In the other census modes, `digest` is `ballotDigest` and `ownersCommitment` is
+  /// zero.
   function ballotAuthorization(
     uint256 e3Id,
     address slot,
@@ -393,7 +394,8 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     digest = ballotDigest(e3Id, slot, ciphertextCommitment);
     if (e3Data[e3Id].censusMode != CensusMode.ONCHAIN) return (false, digest, bytes32(0));
 
-    address[MAX_SAFE_OWNERS] memory owners;
+    address[] memory owners = new address[](1);
+    owners[0] = slot;
     uint256 threshold = 1;
     safe = isSafe(slot);
     if (safe) {
@@ -403,18 +405,17 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
       digest = keccak256(abi.encodePacked(bytes2(0x1901), domain, message));
 
       // Read at publication, so an owner that the Safe removed cannot authorise a new ballot.
-      address[] memory safeOwners = ISafe(slot).getOwners();
+      owners = ISafe(slot).getOwners();
       threshold = ISafe(slot).getThreshold();
-      if (safeOwners.length > MAX_SAFE_OWNERS || threshold > MAX_SAFE_SIGNERS) {
-        revert SafeShapeUnsupported(slot, safeOwners.length, threshold);
+      if (owners.length > MAX_SAFE_OWNERS || threshold > MAX_SAFE_SIGNERS) {
+        revert SafeShapeUnsupported(slot, owners.length, threshold);
       }
-      for (uint256 i = 0; i < safeOwners.length; i++) {
-        owners[i] = safeOwners[i];
-      }
-    } else {
-      owners[0] = slot;
     }
-    ownersCommitment = keccak256(abi.encode(owners, threshold));
+    bytes memory packed;
+    for (uint256 i = 0; i < MAX_SAFE_OWNERS; i++) {
+      packed = abi.encodePacked(packed, i < owners.length ? owners[i] : address(0));
+    }
+    ownersCommitment = keccak256(abi.encodePacked(packed, uint8(threshold)));
   }
 
   /// @notice Sets the Merkle root for an E3 program. Can only be set once.

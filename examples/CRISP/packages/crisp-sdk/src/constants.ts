@@ -51,4 +51,4 @@ export const MASK_SIGNATURE =
 
 /** Largest Safe owner list and threshold that a ballot proof carries. Must match `CRISPProgram.sol`. */
 export const MAX_SAFE_OWNERS = 10
-export const MAX_SAFE_SIGNERS = 3
+export const MAX_SAFE_SIGNERS = 4

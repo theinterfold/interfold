@@ -4,8 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-import { bytesToHex, encodeAbiParameters, getAddress, keccak256, recoverAddress, zeroAddress } from 'viem'
-import type { AbiParameter } from 'viem'
+import { bytesToHex, concat, getAddress, keccak256, numberToHex, recoverAddress, zeroAddress } from 'viem'
 import { getZkInputsGenerator, encodeVote } from './encoding'
 import { extractSignatureComponents, generateMerkleProof, getZeroVote, numberArrayToBigInt64Array } from './utils'
 import { MASK_SIGNATURE, MAX_SAFE_OWNERS, MAX_SAFE_SIGNERS } from './constants'
@@ -191,17 +190,14 @@ export const ciphertextCommitment = (ciphertext: Uint8Array): `0x${string}` =>
   bytesToHex(getZkInputsGenerator().computeCtCommitment(ciphertext))
 
 /**
- * `keccak256(abi.encode(address[MAX_SAFE_OWNERS] owners, uint256 threshold))`, with the owners
- * padded with the zero address: what `CRISPProgram.ballotAuthorization` returns and `crisp_onchain`
- * checks.
+ * The Keccak hash of the owners as 20-byte words, padded with the zero address to
+ * `MAX_SAFE_OWNERS`, followed by the threshold as one byte: what `CRISPProgram.ballotAuthorization`
+ * returns and `crisp_onchain` checks.
  */
 export const ownersCommitment = ({ owners, threshold }: SlotOwners): `0x${string}` => {
   if (owners.length > MAX_SAFE_OWNERS) throw new Error(`A slot can have at most ${MAX_SAFE_OWNERS} owners; got ${owners.length}`)
-  // Plain `AbiParameter`s, because the array length comes from a constant.
-  const params: AbiParameter[] = [{ type: `address[${MAX_SAFE_OWNERS}]` }, { type: 'uint256' }]
-  return keccak256(
-    encodeAbiParameters(params, [[...owners, ...Array(MAX_SAFE_OWNERS - owners.length).fill(zeroAddress)], BigInt(threshold)]),
-  )
+  const padded = [...owners, ...Array(MAX_SAFE_OWNERS - owners.length).fill(zeroAddress)].map((owner) => getAddress(owner))
+  return keccak256(concat([...padded, numberToHex(threshold, { size: 1 })]))
 }
 
 const toByteStrings = (bytes: Uint8Array) => Array.from(bytes, (b) => b.toString())

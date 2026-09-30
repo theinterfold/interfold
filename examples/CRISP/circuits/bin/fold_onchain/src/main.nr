@@ -11,9 +11,9 @@ use interfold_lib::math::commitments::compute_vk_hash;
 /// `examples/CRISP` after changing ct0 / ct1 / user_data_encryption / crisp_onchain (or the lib
 /// preset). Insecure: `lib::configs::default` uses `insecure::*`; secure: uses `secure::*`.
 pub global CRISP_ONCHAIN_FOLD_EXPECTED_KEY_HASH_INSECURE: Field =
-    0x145103da5e2e5e442dc60fe6c41b957cf90b5978dc24a8ceaf5b9c7eaa6b8b00;
+    0x05803dbceece37e46e9a974bff6381702817710c4e8e0823ee26a25c4a1fccbe;
 pub global CRISP_ONCHAIN_FOLD_EXPECTED_KEY_HASH_SECURE: Field =
-    0x044c52411c9a896533b1cc3fa1565a6e36e5cfb30e11fda07492eaba4b272505;
+    0x1bd896c51fd05534101ac2f50b84f77bc2b2b16c3eb04ea92614c1d1b60f832c;
 
 /// The public inputs are `prev_ct_commitment` to `final_ct_commitment`, the two halves of the owner
 /// commitment of the slot, and the committee public key. `CRISPProgram` builds the same list.
