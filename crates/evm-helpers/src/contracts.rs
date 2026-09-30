@@ -28,8 +28,8 @@ use crate::nonce::send_with_next_nonce;
 
 fn crypto_config_id_for_param_set(param_set: u8) -> Result<B256> {
     match param_set {
-        0 => Ok("0x19921c8c12f93c3013be57d0859f4ddcdb4464ac856a0c62be1ad617fbbd2e7d".parse()?),
-        1 => Ok("0x38445056db875658295a1531cc5e81ceb73d4f210e2d969465292204fa547446".parse()?),
+        0 => Ok("0x20d76557cc2aee078754ad9a563d61d0697809da363f1979895ec15f6ea30db9".parse()?),
+        1 => Ok("0x3115e08eb5c87d6d245eda5dff0cf377c42e29b9741f94fc7a83efc3da7da920".parse()?),
         _ => Err(eyre::eyre!("unsupported BFV parameter set: {}", param_set)),
     }
 }

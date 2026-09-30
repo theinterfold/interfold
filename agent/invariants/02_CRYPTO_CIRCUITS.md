@@ -283,6 +283,13 @@ every section.
 
 ### Proof binding / domain separation (audit-fix invariants — do not regress)
 
+- **Recursive trust reaches every descendant VK.** Sequential folds keep their leaf, fold, and
+  genesis hashes constant across predecessor proofs. A consumer binds the declared fold hash to the
+  verified VK. C3ab includes both complete C3 chains, and node-fold includes the child-fold VKs and
+  their nested hashes. The final DKG aggregator requires one node-tree hash across every row. Public
+  input zero commits to the complete nodes or C6 tree. Deployment pins that value from the pair's
+  `.vk_tree_hash`, not from its immediate `.vk_hash`. A prover-supplied hash without this immutable
+  anchor does not establish trust. — `math/recursive_vk.nr`; `flow-trace/04`
 - **PK domain binding (C-08):** `publishCommittee` sets
   `committeeHash = CommitteeHashLib.hash(c.topNodes)`: keccak256 over the ordered raw 20-byte
   addresses, not `abi.encodePacked(address[])`, which pads each address to 32 bytes.

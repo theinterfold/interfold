@@ -242,6 +242,11 @@ anchors, which the on-chain decryption verifier compares.
 Domain-separation labels (`DS_*` in `circuits/lib/src/math/commitments.nr`) keep different kinds of
 commitments apart.
 
+Recursive verification also binds the complete VK tree. Each sequential fold carries fixed leaf,
+fold, and genesis key hashes. The final proof commits to every nested key at public input zero.
+Deployment pins that commitment from the matching artifact pair's `.vk_tree_hash`, so a prover
+cannot substitute another circuit within the proof tree.
+
 ## BFV presets
 
 Two BFV presets exist. Each preset has a threshold parameter set for user data and a DKG parameter
@@ -270,7 +275,7 @@ configuration sets `minCommitteeSize` to 19. With that value, `getE3Quote` rejec
 `Micro` requests on mainnet, so only `Small` can be requested.
 
 Each request must name the expected circuit configuration in `expectedCryptoConfigId`. The ID binds
-the scheme, the parameter hash, and the circuit version (`keccak256("interfold-bfv-v2")`).
+the scheme, the parameter hash, and the circuit version (`keccak256("interfold-bfv-v3")`).
 
 ## Next steps
 

@@ -6,7 +6,7 @@
 
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -201,7 +201,7 @@ test('shared Noir constants change the hash but the active preset does not', () 
   }
 })
 
-test('config generation binds both BFV parameter sets to circuit version v2', () => {
+test('config generation binds both BFV parameter sets to circuit version v3', () => {
   const dir = mkdtempSync(join(tmpdir(), 'interfold-circuit-version-'))
   const utilsPath = join(dir, 'packages/interfold-contracts/scripts/utils.ts')
   const contractPath = join(dir, 'packages/interfold-contracts/contracts/lib/ActiveCryptoConfig.sol')
@@ -213,7 +213,7 @@ test('config generation binds both BFV parameter sets to circuit version v2', ()
     builder.syncProtocolConfig('insecure-512', 'minimum')
     const contract = readFileSync(contractPath, 'utf8')
     const utils = readFileSync(utilsPath, 'utf8')
-    assert.match(contract, /CIRCUIT_VERSION = keccak256\("interfold-bfv-v2"\)/)
+    assert.match(contract, /CIRCUIT_VERSION = keccak256\("interfold-bfv-v3"\)/)
     for (const [prefix, params] of [
       ['INSECURE', BFV_PARAMS.insecure512],
       ['SECURE', BFV_PARAMS.secure8192],
@@ -227,9 +227,10 @@ test('config generation binds both BFV parameter sets to circuit version v2', ()
       )
       const configId = (version: string) =>
         keccak256(coder.encode(['bytes32', 'bytes32', 'bytes32'], [id('fhe.rs:BFV'), paramHash, id(version)]))
-      assert.match(contract, new RegExp(`${prefix}_CONFIG_ID =\\s*${configId('interfold-bfv-v2')}`))
-      assert.match(utils, new RegExp(`${prefix}_CONFIG_ID =\\s*"${configId('interfold-bfv-v2')}"`))
-      assert.notEqual(configId('interfold-bfv-v2'), configId('interfold-bfv-v1'))
+      assert.match(contract, new RegExp(`${prefix}_CONFIG_ID =\\s*${configId('interfold-bfv-v3')}`))
+      assert.match(utils, new RegExp(`${prefix}_CONFIG_ID =\\s*"${configId('interfold-bfv-v3')}"`))
+      assert.notEqual(configId('interfold-bfv-v3'), configId('interfold-bfv-v1'))
+      assert.notEqual(configId('interfold-bfv-v3'), configId('interfold-bfv-v2'))
     }
   } finally {
     rmSync(dir, { recursive: true, force: true })
@@ -256,6 +257,18 @@ test('hydrate replaces stale targets at the paths used by Nargo', () => {
       workspace: false,
       expectedTarget: join(dir, 'circuits', 'bin', 'recursive_aggregation', 'c3_fold', 'target'),
     },
+    {
+      group: 'recursive_aggregation',
+      name: 'nodes_fold',
+      workspace: false,
+      expectedTarget: join(dir, 'circuits', 'bin', 'recursive_aggregation', 'nodes_fold', 'target'),
+    },
+    {
+      group: 'recursive_aggregation',
+      name: 'c6_fold',
+      workspace: false,
+      expectedTarget: join(dir, 'circuits', 'bin', 'recursive_aggregation', 'c6_fold', 'target'),
+    },
   ] as const
 
   try {
@@ -270,6 +283,7 @@ test('hydrate replaces stale targets at the paths used by Nargo', () => {
 
       mkdirSync(fixture.expectedTarget, { recursive: true })
       writeFileSync(join(fixture.expectedTarget, `${fixture.name}.json`), 'stale')
+      writeFileSync(join(fixture.expectedTarget, `${fixture.name}.vk_tree_hash`), 'stale-tree')
 
       const pairRoot = join(outputDir, preset, committee)
       for (const variant of ['default', 'evm', 'recursive']) {
@@ -277,6 +291,7 @@ test('hydrate replaces stale targets at the paths used by Nargo', () => {
         mkdirSync(artifactDir, { recursive: true })
         if (variant === 'default') {
           writeFileSync(join(artifactDir, `${fixture.name}.json`), `${fixture.name}-fresh`)
+          writeFileSync(join(artifactDir, `${fixture.name}.vk_tree_hash`), 'fresh-tree')
         }
         writeFileSync(join(artifactDir, `${fixture.name}.vk`), `${variant}-vk`)
         writeFileSync(join(artifactDir, `${fixture.name}.vk_hash`), `${variant}-hash`)
@@ -294,6 +309,7 @@ test('hydrate replaces stale targets at the paths used by Nargo', () => {
       assert.equal(readFileSync(join(fixture.expectedTarget, `${fixture.name}.vk_recursive`), 'utf8'), 'default-vk')
       assert.equal(readFileSync(join(fixture.expectedTarget, `${fixture.name}.vk`), 'utf8'), 'evm-vk')
       assert.equal(readFileSync(join(fixture.expectedTarget, `${fixture.name}.vk_noir`), 'utf8'), 'recursive-vk')
+      assert.equal(readFileSync(join(fixture.expectedTarget, `${fixture.name}.vk_tree_hash`), 'utf8'), 'fresh-tree')
     }
 
     const stamp = JSON.parse(readFileSync(join(dir, 'circuits', 'bin', '.active-preset.json'), 'utf8'))
@@ -310,6 +326,59 @@ test('accepts the exact supported circuit matrix', () => {
   const dir = makeCompleteMatrix()
   try {
     assert.doesNotThrow(() => validateReleaseArtifacts(dir, sourceHash))
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('cache readiness and checksums include both complete VK-tree anchors', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'interfold-vk-tree-markers-'))
+  const outputDir = join(dir, 'dist', 'circuits')
+  const preset = 'insecure-512'
+  const committee = 'minimum'
+  const source = 'source-hash'
+  try {
+    const builder = new NoirCircuitBuilder(dir, { outputDir, preset, committee }) as unknown as {
+      requiredDistMarkers: (preset: string, committee: string) => string[]
+      requiredBinMarkers: () => string[]
+      isDistPresetUpToDate: (preset: string, committee: string, source: string) => boolean
+      isBinReadyForPreset: (preset: string, committee: string, source: string) => boolean
+      generateChecksumFile: (compiled: never[]) => string
+    }
+    const distMarkers = builder.requiredDistMarkers(preset, committee)
+    const binMarkers = builder.requiredBinMarkers()
+    for (const markers of [distMarkers, binMarkers]) {
+      assert.equal(markers.filter((file) => file.endsWith('.vk_tree_hash')).length, 2)
+      for (const file of markers) {
+        mkdirSync(join(file, '..'), { recursive: true })
+        writeFileSync(file, Buffer.alloc(32, 1))
+      }
+    }
+    const stamp = JSON.stringify({ preset, committee, sourceHash: source })
+    writeFileSync(join(outputDir, preset, committee, '.build-stamp.json'), stamp)
+    writeFileSync(join(dir, 'circuits', 'bin', '.active-preset.json'), stamp)
+    assert.equal(builder.isDistPresetUpToDate(preset, committee, source), true)
+    assert.equal(builder.isBinReadyForPreset(preset, committee, source), true)
+    builder.generateChecksumFile([])
+    const checksums = JSON.parse(readFileSync(join(outputDir, 'checksums.json'), 'utf8')).files as Record<string, string>
+    assert.equal(Object.keys(checksums).filter((file) => file.endsWith('.vk_tree_hash')).length, 2)
+    assert.equal(
+      readFileSync(join(outputDir, 'SHA256SUMS'), 'utf8')
+        .split('\n')
+        .filter((line) => line.endsWith('.vk_tree_hash')).length,
+      2,
+    )
+    for (const file of [...distMarkers, ...binMarkers].filter((file) => file.endsWith('.vk_tree_hash'))) {
+      assert.ok(existsSync(file))
+      unlinkSync(file)
+      assert.equal(
+        file.startsWith(outputDir)
+          ? builder.isDistPresetUpToDate(preset, committee, source)
+          : builder.isBinReadyForPreset(preset, committee, source),
+        false,
+      )
+      writeFileSync(file, Buffer.alloc(32, 1))
+    }
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
@@ -352,7 +421,7 @@ test('rejects a pair whose build stamp has a stale source hash', () => {
 })
 
 test('rejects a stamp-valid pair with a missing verification-key artifact', () => {
-  for (const extension of ['.vk', '.vk_hash']) {
+  for (const extension of ['.vk', '.vk_hash', '.vk_tree_hash']) {
     const dir = makeCompleteMatrix()
     try {
       const marker = requiredArtifactMarkers('secure-8192', 'small').find((artifact) => artifact.endsWith(extension))

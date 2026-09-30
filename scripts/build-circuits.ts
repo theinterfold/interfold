@@ -39,7 +39,7 @@ import {
   type CircuitPreset,
 } from './circuit-constants'
 
-const CIRCUIT_VERSION = 'interfold-bfv-v2'
+const CIRCUIT_VERSION = 'interfold-bfv-v3'
 
 /**
  * Reduce Cargo.lock to the external crate pins that the circuit generators compile against.
@@ -634,6 +634,7 @@ library ActiveCryptoConfig {
       copyPair(join(defaultDir, `${packageName}.json`), join(targetDir, `${packageName}.json`))
       copyPair(join(defaultDir, `${packageName}.vk`), join(targetDir, `${packageName}.vk_recursive`))
       copyPair(join(defaultDir, `${packageName}.vk_hash`), join(targetDir, `${packageName}.vk_recursive_hash`))
+      copyPair(join(defaultDir, `${packageName}.vk_tree_hash`), join(targetDir, `${packageName}.vk_tree_hash`))
 
       const evmDir = join(distRoot, CIRCUIT_VARIANTS.EVM, circuit.group, circuit.name)
       copyPair(join(evmDir, `${packageName}.vk`), join(targetDir, `${packageName}.vk`))
@@ -655,6 +656,8 @@ library ActiveCryptoConfig {
       join(dist, CIRCUIT_VARIANTS.DEFAULT, CIRCUIT_GROUPS.THRESHOLD, 'pk_aggregation', 'pk_aggregation.json'),
       join(dist, CIRCUIT_VARIANTS.DEFAULT, CIRCUIT_GROUPS.AGGREGATION, 'dkg_aggregator', 'dkg_aggregator.json'),
       join(dist, CIRCUIT_VARIANTS.DEFAULT, CIRCUIT_GROUPS.AGGREGATION, 'decryption_aggregator', 'decryption_aggregator.json'),
+      join(dist, CIRCUIT_VARIANTS.DEFAULT, CIRCUIT_GROUPS.AGGREGATION, 'nodes_fold', 'nodes_fold.vk_tree_hash'),
+      join(dist, CIRCUIT_VARIANTS.DEFAULT, CIRCUIT_GROUPS.AGGREGATION, 'c6_fold', 'c6_fold.vk_tree_hash'),
     ]
   }
 
@@ -666,6 +669,8 @@ library ActiveCryptoConfig {
       join(bin, CIRCUIT_GROUPS.AGGREGATION, 'dkg_aggregator', 'target', 'dkg_aggregator.vk_recursive'),
       join(bin, CIRCUIT_GROUPS.AGGREGATION, 'decryption_aggregator', 'target', 'decryption_aggregator.json'),
       join(bin, CIRCUIT_GROUPS.AGGREGATION, 'decryption_aggregator', 'target', 'decryption_aggregator.vk_recursive'),
+      join(bin, CIRCUIT_GROUPS.AGGREGATION, 'nodes_fold', 'target', 'nodes_fold.vk_tree_hash'),
+      join(bin, CIRCUIT_GROUPS.AGGREGATION, 'c6_fold', 'target', 'c6_fold.vk_tree_hash'),
       join(bin, CIRCUIT_GROUPS.DKG, 'target', 'pk.json'),
       join(bin, CIRCUIT_GROUPS.THRESHOLD, 'target', 'pk_aggregation.json'),
     ]
@@ -876,6 +881,9 @@ library ActiveCryptoConfig {
 
       this.copyArtifacts(result.compiled, presetOutputDir, preset)
       if (result.errors.length === 0) {
+        if (!this.options.skipVk && !this.options.circuits && ALL_GROUPS.every((group) => this.options.groups?.includes(group))) {
+          this.writeVkTreeHashes(presetOutputDir)
+        }
         this.writePresetStamp(preset, committee, sourceHash)
         this.writeActiveBinPresetStamp(preset, committee, sourceHash)
       }
@@ -1181,6 +1189,26 @@ library ActiveCryptoConfig {
 
   private checksum(filePath: string): string {
     return createHash('sha256').update(readFileSync(filePath)).digest('hex')
+  }
+
+  /** Generate the two immutable trust anchors from the complete artifact pair. */
+  private writeVkTreeHashes(pairDir: string): void {
+    const hashes = JSON.parse(
+      execFileSync(
+        'cargo',
+        ['run', '--quiet', '--locked', '--release', '-p', 'e3-zk-helpers', '--bin', 'compute-vk-hash', '--', '--bfv-tree', pairDir],
+        { cwd: this.rootDir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] },
+      ),
+    ) as Record<string, string>
+    for (const name of ['nodes_fold', 'c6_fold']) {
+      const hash = hashes[name]
+      if (typeof hash !== 'string' || !/^0x[0-9a-f]{64}$/.test(hash)) {
+        throw new Error(`Invalid recursive VK-tree hash for ${name}`)
+      }
+      const bytes = Buffer.from(hash.slice(2), 'hex')
+      writeFileSync(join(pairDir, CIRCUIT_VARIANTS.DEFAULT, CIRCUIT_GROUPS.AGGREGATION, name, `${name}.vk_tree_hash`), bytes)
+      writeFileSync(join(this.circuitsDir, CIRCUIT_GROUPS.AGGREGATION, name, 'target', `${name}.vk_tree_hash`), bytes)
+    }
   }
 
   private cleanOutputSelection(presets: CircuitPreset[], committees: CircuitCommittee[]): void {

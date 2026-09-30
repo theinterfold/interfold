@@ -541,6 +541,13 @@ async fn setup_test_zk_backend(
                     src_dir.join("vk_hash")
                 };
                 copy_file(vk_hash_src, dst_dir.join(format!("{name}.vk_hash"))).await?;
+                if matches!(name, "nodes_fold" | "c6_fold") {
+                    copy_file(
+                        src_dir.join(format!("{name}.vk_tree_hash")),
+                        dst_dir.join(format!("{name}.vk_tree_hash")),
+                    )
+                    .await?;
+                }
                 Ok(())
             }
 

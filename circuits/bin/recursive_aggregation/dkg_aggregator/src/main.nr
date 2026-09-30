@@ -24,7 +24,7 @@ use lib::math::committee_hash::committee_hash_limbs;
 pub global NODE_FOLD_PUBLIC_LEN: u32 = 11 + N_PARTIES + (2 * (N_PARTIES + H) * L_THRESHOLD);
 
 /// Must match `nodes_fold::NODES_FOLD_PUBLIC_LEN` (pub params + flattened `H` node-fold rows).
-pub global NODES_FOLD_PUBLIC_LEN: u32 = 4 + (H * NODE_FOLD_PUBLIC_LEN);
+pub global NODES_FOLD_PUBLIC_LEN: u32 = 5 + (H * NODE_FOLD_PUBLIC_LEN);
 
 /// Flattened `node_fold` return tuple length (key hash + pks + share grids + agg commits).
 pub global NODE_FOLD_RETURN_PUBLIC_LEN: u32 =
@@ -52,6 +52,7 @@ fn main(
     nodes_fold_vk: UltraHonkVerificationKey,
     nodes_fold_proof: UltraHonkProof,
     nodes_fold_public: [Field; NODES_FOLD_PUBLIC_LEN],
+    nodes_fold_vk_hash: Field,
     c5_vk: UltraHonkVerificationKey,
     c5_proof: UltraHonkProof,
     c5_public: [Field; H + 1],
@@ -72,9 +73,32 @@ fn main(
         nodes_fold_vk,
         nodes_fold_proof,
         nodes_fold_public,
-        nodes_fold_key_hash,
+        nodes_fold_vk_hash,
     );
     verify_honk_proof_non_zk(c5_vk, c5_proof, c5_public, c5_key_hash);
+
+    assert(nodes_fold_public[1] == nodes_fold_vk_hash);
+    let node_tree_hash =
+        nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN + NODE_FOLD_PARAM_PUBLIC_LEN];
+    for i in 0..H {
+        assert(
+            nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN
+                + i * NODE_FOLD_PUBLIC_LEN
+                + NODE_FOLD_PARAM_PUBLIC_LEN]
+                == node_tree_hash,
+        );
+    }
+    // Public input zero anchors every fold, genesis, and nested leaf VK on-chain.
+    assert(
+        nodes_fold_key_hash
+            == compute_vk_hash([
+                nodes_fold_vk_hash,
+                nodes_fold_public[2],
+                nodes_fold_public[0],
+                node_tree_hash,
+            ]
+                .as_vector()),
+    );
 
     // Bind each folded `node_fold` row to the aggregator-supplied honest-set ordering: slot 0 per row
     // is the party id (matches `party_ids[i]`).

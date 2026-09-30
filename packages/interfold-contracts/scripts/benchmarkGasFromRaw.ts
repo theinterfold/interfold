@@ -443,7 +443,7 @@ async function main() {
     dkgPublicInputs[1] !== expectedC5KeyHash
   ) {
     throw new Error(
-      "DKG aggregator proof publicInputs[0..1] do not match nodes_fold / pk_aggregation .vk_recursive_hash artifacts",
+      "DKG aggregator publicInputs[0..1] do not match the nodes VK-tree anchor and C5 VK hash",
     );
   }
   if (
@@ -451,7 +451,7 @@ async function main() {
     decPublicInputs[1] !== expectedC7KeyHash
   ) {
     throw new Error(
-      "Decryption aggregator proof publicInputs[0..1] do not match c6_fold / decrypted_shares_aggregation .vk_recursive_hash artifacts",
+      "Decryption aggregator publicInputs[0..1] do not match the C6 VK-tree anchor and C7 VK hash",
     );
   }
 

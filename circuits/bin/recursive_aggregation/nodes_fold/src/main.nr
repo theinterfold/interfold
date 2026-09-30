@@ -11,6 +11,7 @@
 use bb_proof_verification::{UltraHonkProof, UltraHonkVerificationKey, verify_honk_proof_non_zk};
 use lib::configs::default::dkg::L_THRESHOLD;
 use lib::configs::default::{H, N_PARTIES};
+use lib::math::recursive_vk::predecessor_key_hash;
 
 pub global C2_PUBLIC_LEN: u32 = 1 + (N_PARTIES * L_THRESHOLD);
 pub global C2AB_FOLD_PUBLIC_LEN: u32 = 3 + (2 * C2_PUBLIC_LEN);
@@ -23,8 +24,8 @@ pub global C4AB_FOLD_PUBLIC_LEN: u32 = 3 + (2 * C4_PUBLIC_LEN);
 /// Must match `node_fold::NODE_FOLD_PUBLIC_LEN`.
 pub global NODE_FOLD_PUBLIC_LEN: u32 = 11 + N_PARTIES + (2 * (N_PARTIES + H) * L_THRESHOLD);
 
-/// Same shape as `c6_fold`: 4 pub parameters + `H` full `node_fold` public rows (flattened).
-pub global NODES_FOLD_PUBLIC_LEN: u32 = 4 + (H * NODE_FOLD_PUBLIC_LEN);
+/// Five public parameters and `H` complete `node_fold` public rows.
+pub global NODES_FOLD_PUBLIC_LEN: u32 = 5 + (H * NODE_FOLD_PUBLIC_LEN);
 
 pub global NODES_FOLD_PARAM_PUBLIC_LEN: u32 = NODES_FOLD_PUBLIC_LEN - (H * NODE_FOLD_PUBLIC_LEN);
 
@@ -36,7 +37,8 @@ fn main(
     acc_proof: UltraHonkProof,
     acc_public_inputs: [Field; NODES_FOLD_PUBLIC_LEN],
     inner_key_hash: pub Field,
-    acc_key_hash: pub Field,
+    fold_key_hash: pub Field,
+    kernel_key_hash: pub Field,
     is_first_step: pub bool,
     slot_index: pub u32,
 ) -> pub [[Field; NODE_FOLD_PUBLIC_LEN]; H] {
@@ -49,6 +51,13 @@ fn main(
         inner_key_hash,
     );
 
+    let acc_key_hash = predecessor_key_hash(
+        inner_key_hash,
+        fold_key_hash,
+        kernel_key_hash,
+        is_first_step,
+        [acc_public_inputs[0], acc_public_inputs[1], acc_public_inputs[2]],
+    );
     verify_honk_proof_non_zk(acc_vk, acc_proof, acc_public_inputs, acc_key_hash);
 
     let mut out: [[Field; NODE_FOLD_PUBLIC_LEN]; H] = [[0; NODE_FOLD_PUBLIC_LEN]; H];

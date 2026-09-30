@@ -16,7 +16,7 @@ use lib::configs::default::N_PARTIES;
 
 pub global C3_SLOTS: u32 = N_PARTIES * L_THRESHOLD;
 
-pub global C3_FOLD_PUBLIC_LEN: u32 = 4 + (3 * C3_SLOTS);
+pub global C3_FOLD_PUBLIC_LEN: u32 = 5 + (3 * C3_SLOTS);
 
 fn main(
     inner_vk: UltraHonkVerificationKey,
@@ -26,7 +26,8 @@ fn main(
     acc_proof: UltraHonkProof,
     acc_public_inputs: [Field; C3_FOLD_PUBLIC_LEN],
     inner_key_hash: pub Field,
-    acc_key_hash: pub Field,
+    fold_key_hash: pub Field,
+    kernel_key_hash: pub Field,
     is_first_step: pub bool,
     slot_index: pub u32,
 ) -> pub ([Field; C3_SLOTS], [Field; C3_SLOTS], [Field; C3_SLOTS]) {
@@ -35,7 +36,7 @@ fn main(
     verify_honk_proof(inner_vk, inner_proof, c3_public_inputs, inner_key_hash);
 
     // Signature parity with `c3_fold`: kernel mints the genesis accumulator, so acc_* is unused.
-    let _ = (acc_vk, acc_proof, acc_key_hash, acc_public_inputs);
+    let _ = (acc_vk, acc_proof, fold_key_hash, kernel_key_hash, acc_public_inputs);
 
     assert(is_first_step);
 

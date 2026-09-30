@@ -123,9 +123,12 @@ function stampFiles(dir: string): string[] {
 }
 
 export function requiredArtifactMarkers(preset: string, committee: string): string[] {
-  return REQUIRED_VARIANT_CIRCUITS.flatMap((circuit) =>
-    REQUIRED_ARTIFACT_EXTENSIONS.map((extension) => join(preset, committee, `${circuit}${extension}`)),
-  )
+  return [
+    ...REQUIRED_VARIANT_CIRCUITS.flatMap((circuit) =>
+      REQUIRED_ARTIFACT_EXTENSIONS.map((extension) => join(preset, committee, `${circuit}${extension}`)),
+    ),
+    ...['nodes_fold', 'c6_fold'].map((name) => join(preset, committee, 'default', 'recursive_aggregation', name, `${name}.vk_tree_hash`)),
+  ]
 }
 
 type BuildStamp = {
