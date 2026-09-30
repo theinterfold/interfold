@@ -37,7 +37,7 @@ use lib::configs::secure::threshold::{
     Q_MOD_T_CENTERED as THRESHOLD_Q_MOD_T_CENTERED, Q_INVERSE_MOD_T as THRESHOLD_Q_INVERSE_MOD_T,
     // pk_generation bounds
     PK_GENERATION_EEK_BOUND, PK_GENERATION_SK_BOUND, PK_GENERATION_E_SM_BOUND,
-    PK_GENERATION_R1_BOUNDS, PK_GENERATION_R2_BOUNDS, PK_GENERATION_B_ENC,
+    PK_GENERATION_R_BOUNDS, PK_GENERATION_B_ENC,
     // share_decryption bounds
     THRESHOLD_SHARE_DECRYPTION_R1_BOUNDS, THRESHOLD_SHARE_DECRYPTION_R2_BOUNDS,
     // user_data_encryption bounds
@@ -337,20 +337,19 @@ fn verify_pk_generation_bounds() {
     // eek_bound = 20
     assert(PK_GENERATION_EEK_BOUND == 20, "PK_GENERATION_EEK_BOUND should be 20");
 
-    // r2_bounds and r1_bounds for each modulus
+    // r_bounds for each modulus. The identity is checked reduced modulo X^N + 1, so the
+    // cyclotomic quotient's term is identically zero and there is no r2 bound left to derive.
     for i in 0..THRESHOLD_L {
         let qi: u128 = THRESHOLD_QIS[i] as u128;
         let qi_bound: u128 = (qi - 1) / 2;
 
-        // r2_bounds[i] = (q_i - 1) / 2
-        assert(PK_GENERATION_R2_BOUNDS[i] as u128 == qi_bound, "PK_GENERATION_R2_BOUNDS mismatch");
-
-        // r1_bounds[i] = ((n + 2) * qi_bound + eek_bound) / q_i
-        let expected_r1: u128 = ((n + 2) * qi_bound + eek) / qi;
-        assert(
-            PK_GENERATION_R1_BOUNDS[i] as u128 == expected_r1,
-            "PK_GENERATION_R1_BOUNDS mismatch",
-        );
+        // r_bounds[i] = ((n * sk_bound + 2) * qi_bound + eek_bound) / q_i, from bounding the other
+        // terms of pk0 = -(a * sk mod X^N + 1) + eek + q * r: the negacyclic product of n terms with
+        // |a| <= qi_bound, the centered pk0 itself, and eek. sk_bound is 1 (asserted above), so this
+        // is the same expression the unreduced r1 bound used -- the reduced quotient is no wider.
+        let sk: u128 = PK_GENERATION_SK_BOUND as u128;
+        let expected_r: u128 = ((n * sk + 2) * qi_bound + eek) / qi;
+        assert(PK_GENERATION_R_BOUNDS[i] as u128 == expected_r, "PK_GENERATION_R_BOUNDS mismatch");
     }
 
     verify_e_sm_bound();

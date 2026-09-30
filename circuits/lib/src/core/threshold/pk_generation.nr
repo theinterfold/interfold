@@ -9,7 +9,7 @@ use crate::math::commitments::{
     compute_threshold_pk_challenge, compute_threshold_pk_commitment,
 };
 use crate::math::helpers::flatten;
-use crate::math::polynomial::Polynomial;
+use crate::math::polynomial::{negacyclic_kernel, Polynomial};
 
 /// Parameters for threshold public key generation (C1).
 pub struct Configs<let N: u32, let L: u32> {
@@ -25,10 +25,10 @@ pub struct Configs<let N: u32, let L: u32> {
     pub e_sm_limb_bounds: [Field; L],
     /// Bounds for the CRT quotients of e_sm: (e_sm_bound + (q_i - 1) / 2) / q_i
     pub e_sm_quotient_bounds: [Field; L],
-    /// Bounds for r1 polynomials (modulus switching quotients) for each CRT basis
-    pub r1_bounds: [Field; L],
-    /// Bounds for r2 polynomials (cyclotomic reduction quotients) for each CRT basis
-    pub r2_bounds: [Field; L],
+    /// Bounds for the `r` polynomials: the mod-q quotients of the identity reduced modulo
+    /// `X^N + 1`. Reducing the identity makes the cyclotomic quotient's term identically zero, so
+    /// the separate `r2` bound is gone and this one covers what `r1` and `r2` carried between them.
+    pub r_bounds: [Field; L],
 }
 
 impl<let N: u32, let L: u32> Configs<N, L> {
@@ -39,8 +39,7 @@ impl<let N: u32, let L: u32> Configs<N, L> {
         e_sm_bound: Field,
         e_sm_limb_bounds: [Field; L],
         e_sm_quotient_bounds: [Field; L],
-        r1_bounds: [Field; L],
-        r2_bounds: [Field; L],
+        r_bounds: [Field; L],
     ) -> Self {
         Configs {
             qis,
@@ -49,8 +48,7 @@ impl<let N: u32, let L: u32> Configs<N, L> {
             e_sm_bound,
             e_sm_limb_bounds,
             e_sm_quotient_bounds,
-            r1_bounds,
-            r2_bounds,
+            r_bounds,
         }
     }
 }
@@ -66,7 +64,7 @@ impl<let N: u32, let L: u32> Configs<N, L> {
 /// - `commit(sk)` -> C2a (share computation).
 /// - `commit(pk_trbfv)` -> C5 (pk aggregation).
 /// - `commit(e_sm)` -> C2b (share computation).
-pub struct PkGeneration<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u32, let BIT_E_SM_LIFTED: u32, let BIT_E_SM_QUOTIENT: u32, let BIT_R1: u32, let BIT_R2: u32, let BIT_PK: u32> {
+pub struct PkGeneration<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u32, let BIT_E_SM_LIFTED: u32, let BIT_E_SM_QUOTIENT: u32, let BIT_R: u32, let BIT_PK: u32> {
     /// Cryptographic parameters including bounds, moduli, and constants.
     configs: Configs<N, L>,
 
@@ -94,17 +92,19 @@ pub struct PkGeneration<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u3
     /// CRT quotients that tie `e_sm_lifted` to each residue (secret witnesses)
     e_sm_quotients: [Polynomial<N>; L],
 
-    /// Quotients from polynomial operations (secret witnesses)
-    /// r1[i] are quotients from modulus switching for modulus i (can be negative, degree 2*N-1)
-    r1: [Polynomial<2 * N - 1>; L],
-    /// r2[i] are quotients from cyclotomic reduction for modulus i (typically positive, degree N-1)
-    r2: [Polynomial<N - 1>; L],
+    /// Mod-q quotients of the identity reduced modulo `X^N + 1` (secret witnesses).
+    ///
+    /// The unreduced identity needed two: `r1` of degree `2N-1` for the modulus switch and `r2` of
+    /// degree `N-1` for the cyclotomic reduction. Checking the identity in the reduced ring makes
+    /// the `r2` term identically zero and shortens `r1` to `N` coefficients, so one witness of
+    /// degree `N-1` replaces both. `r[i]` is `r1[i] mod X^N + 1`.
+    r: [Polynomial<N>; L],
 
     /// Threshold public key first component per modulus (committed witness). Second component is a[i].
     pk0: [Polynomial<N>; L],
 }
 
-impl<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u32, let BIT_E_SM_LIFTED: u32, let BIT_E_SM_QUOTIENT: u32, let BIT_R1: u32, let BIT_R2: u32, let BIT_PK: u32> PkGeneration<N, L, BIT_EEK, BIT_SK, BIT_E_SM, BIT_E_SM_LIFTED, BIT_E_SM_QUOTIENT, BIT_R1, BIT_R2, BIT_PK> {
+impl<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u32, let BIT_E_SM_LIFTED: u32, let BIT_E_SM_QUOTIENT: u32, let BIT_R: u32, let BIT_PK: u32> PkGeneration<N, L, BIT_EEK, BIT_SK, BIT_E_SM, BIT_E_SM_LIFTED, BIT_E_SM_QUOTIENT, BIT_R, BIT_PK> {
     pub fn new(
         configs: Configs<N, L>,
         a: [Polynomial<N>; L],
@@ -113,11 +113,10 @@ impl<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u3
         e_sm: [Polynomial<N>; L],
         e_sm_lifted: Polynomial<N>,
         e_sm_quotients: [Polynomial<N>; L],
-        r1: [Polynomial<2 * N - 1>; L],
-        r2: [Polynomial<N - 1>; L],
+        r: [Polynomial<N>; L],
         pk0: [Polynomial<N>; L],
     ) -> Self {
-        PkGeneration { configs, a, eek, sk, e_sm, e_sm_lifted, e_sm_quotients, r1, r2, pk0 }
+        PkGeneration { configs, a, eek, sk, e_sm, e_sm_lifted, e_sm_quotients, r, pk0 }
     }
 
     /// Flattens all witness data into a single array for Fiat-Shamir challenge generation.
@@ -137,9 +136,9 @@ impl<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u3
         inputs = inputs.push_back(sk_commitment);
         inputs = inputs.push_back(pk_commitment);
 
-        // Flatten quotient polynomials (L polynomials each)
-        inputs = flatten::<_, _, BIT_R1>(inputs, self.r1);
-        inputs = flatten::<_, _, BIT_R2>(inputs, self.r2);
+        // Flatten the reduced quotient polynomials (L polynomials of degree N-1). The unreduced
+        // form absorbed `r1` at degree 2N-1 and `r2` on top of it; the reduced one absorbs neither.
+        inputs = flatten::<_, _, BIT_R>(inputs, self.r);
 
         inputs
     }
@@ -217,14 +216,13 @@ impl<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u3
                 self.configs.e_sm_quotient_bounds[i],
             );
 
-            self.r1[i].range_check_2bounds::<BIT_R1>(
-                self.configs.r1_bounds[i],
-                self.configs.r1_bounds[i],
-            );
-
-            self.r2[i].range_check_2bounds::<BIT_R2>(
-                self.configs.r2_bounds[i],
-                self.configs.r2_bounds[i],
+            // The reduced identity is checked at a single point, so every coefficient it reads
+            // needs a real bound for the field equality to imply the integer one. `r` is the only
+            // quotient left to bound; `pk0`, `eek` and `sk` are bounded above, and `a` is the
+            // compile-time CRP.
+            self.r[i].range_check_2bounds::<BIT_R>(
+                self.configs.r_bounds[i],
+                self.configs.r_bounds[i],
             );
         }
     }
@@ -247,26 +245,109 @@ impl<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u3
         }
     }
 
-    /// Verifies BFV key generation equations for all CRT moduli using Schwartz-Zippel.
+    /// Verifies the BFV key generation equation for all CRT moduli using Schwartz-Zippel.
     ///
-    /// For each CRT modulus i, verifies at the challenge point gamma:
-    /// - `pk0[i](gamma) = -a[i](gamma) * sk(gamma) + eek(gamma) + r2[i](gamma) * (gamma^N + 1) + r1[i](gamma) * q_i`
-    /// - `pk1[i](gamma) = a[i](gamma)`
+    /// The identity is checked **reduced modulo `X^N + 1`**:
+    ///   `pk0[i] == -(a[i] * sk mod X^N + 1) + eek + r[i] * q_i`
+    /// where the unreduced form carried an extra `r2[i] * (gamma^N + 1)` term. Reducing makes that
+    /// term identically zero, so the witness and its range check disappear rather than being
+    /// checked; `r1` shortens to `r` at the same time.
     ///
-    /// The Schwartz-Zippel lemma states that if these polynomial equations hold at a
-    /// random point, they hold for all coefficients with overwhelming probability.
+    /// `negacyclic_kernel(sk, gamma)[j]` is `(X^(N-1-j) * sk mod X^N + 1)(gamma)`, so
+    /// `a[i].dot(kernel)` evaluates `a[i] * sk mod X^N + 1` at gamma without the product ever
+    /// entering the witness. One kernel serves every modulus, since `sk` and gamma are shared.
+    ///
+    /// Everything the identity reads is bounded — `pk0`, `eek` and `sk` by `perform_range_checks`,
+    /// `r` likewise, and `a` is the compile-time CRP — so the equality over the field implies the
+    /// equality over the integers, which is what lets a single evaluation point stand in for the
+    /// polynomial identity.
     fn verify_evaluations(self, gamma: Field) {
-        let cyclo_at_gamma = gamma.pow_32(N as Field) + 1;
-        let sk_at_gamma = self.sk.eval(gamma);
-        let eek_at_gamma = self.eek.eval(gamma);
+        let kernel = negacyclic_kernel(self.sk, gamma);
 
         for i in 0..L {
-            let expected_pk0 = -self.a[i].eval(gamma) * sk_at_gamma
-                + eek_at_gamma
-                + self.r2[i].eval(gamma) * cyclo_at_gamma
-                + self.r1[i].eval(gamma) * self.configs.qis[i];
+            // Move every term except the product onto one side, so the product is evaluated once
+            // through the kernel and compared against a plain polynomial evaluation.
+            let mut residual: [Field; N] = [0; N];
+            for j in 0..N {
+                residual[j] = self.pk0[i].coefficients[j]
+                    - self.eek.coefficients[j]
+                    - self.configs.qis[i] * self.r[i].coefficients[j];
+            }
 
-            assert(self.pk0[i].eval(gamma) == expected_pk0, "Public key equation 1 failed");
+            assert(
+                Polynomial::new(residual).eval(gamma) == -self.a[i].dot(kernel),
+                "Public key equation 1 failed",
+            );
         }
     }
+}
+
+/// The reduced identity accepts an honest witness.
+///
+/// Worked at `N = 4`, `L = 1`, `q = 97`, so the negacyclic product is checkable by hand:
+/// `a * sk mod X^4 + 1` is `-50X^3 - 30X^2 - 10X - 50`, and `-(a * sk) + eek` is
+/// `[51, 28, 10, 53]`, which `r = [-1, 0, 0, -1]` brings into the centered window as
+/// `pk0 = [-46, 28, 10, -44]`.
+///
+/// This is the test that pins the coefficient-order convention. `eval` is Horner from index 0, so
+/// `Polynomial::new` takes coefficients **highest degree first**, and `negacyclic_kernel` is built to
+/// match. Reverse either one and the identity silently fails to hold.
+#[test]
+fn honest_reduced_identity_holds() {
+    let a = Polynomial::new([30, 40, -20, 10]);
+    let sk = Polynomial::new([0, 1, 0, -1]);
+    let eek = Polynomial::new([1, -2, 0, 3]);
+    let r = Polynomial::new([-1, 0, 0, -1]);
+    let pk0 = Polynomial::new([-46, 28, 10, -44]);
+
+    // One limb, so the CRT split is trivial: the lifted value equals the residue.
+    let e_sm = Polynomial::new([1, 0, 0, -1]);
+    let e_sm_quotients = Polynomial::new([0, 0, 0, 0]);
+
+    // qis, eek_bound, sk_bound, e_sm_bound, e_sm_limb_bounds, e_sm_quotient_bounds, r_bounds
+    let configs: Configs<4, 1> = Configs::new([97], 20, 1, 100, [48], [1], [1]);
+    let c: PkGeneration<4, 1, 6, 2, 7, 8, 2, 2, 7> = PkGeneration::new(
+        configs,
+        [a],
+        eek,
+        sk,
+        [e_sm],
+        e_sm,
+        [e_sm_quotients],
+        [r],
+        [pk0],
+    );
+    let _ = c.execute();
+}
+
+/// A tampered quotient must break the evaluation check.
+///
+/// `r` is the only witness the reduction left to carry the mod-q slack, so this is what stops a
+/// prover choosing `pk0` freely: shifting one coefficient of `r` moves `pk0` off the identity by a
+/// multiple of `q` and Schwartz-Zippel rejects it.
+#[test(should_fail)]
+fn tampered_quotient_is_rejected() {
+    let a = Polynomial::new([30, 40, -20, 10]);
+    let sk = Polynomial::new([0, 1, 0, -1]);
+    let eek = Polynomial::new([1, -2, 0, 3]);
+    // Honest r is [-1, 0, 0, -1]; flip the last coefficient's sign.
+    let r = Polynomial::new([-1, 0, 0, 1]);
+    let pk0 = Polynomial::new([-46, 28, 10, -44]);
+
+    let e_sm = Polynomial::new([1, 0, 0, -1]);
+    let e_sm_quotients = Polynomial::new([0, 0, 0, 0]);
+
+    let configs: Configs<4, 1> = Configs::new([97], 20, 1, 100, [48], [1], [1]);
+    let c: PkGeneration<4, 1, 6, 2, 7, 8, 2, 2, 7> = PkGeneration::new(
+        configs,
+        [a],
+        eek,
+        sk,
+        [e_sm],
+        e_sm,
+        [e_sm_quotients],
+        [r],
+        [pk0],
+    );
+    let _ = c.execute();
 }
