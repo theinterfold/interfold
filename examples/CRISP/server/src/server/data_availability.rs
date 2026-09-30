@@ -982,7 +982,12 @@ impl AvailabilityService {
                 .await?;
         }
 
-        let (deadline, commitment_deadline) = if matches!(&*self.backend, Backend::Avail { .. }) {
+        // Mock mode stores the real cutoff too: the relay record of the input keeps it for pruning.
+        let commitment_deadline = contract
+            .input_commitment_deadline(e3_id_value)
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        let deadline = if matches!(&*self.backend, Backend::Avail { .. }) {
             let interfold =
                 InterfoldContractFactory::create_read(&self.http_rpc_url, &self.interfold_address)
                     .await
@@ -1002,10 +1007,6 @@ impl AvailabilityService {
                 .computeDeadline
                 .try_into()
                 .map_err(|_| anyhow::anyhow!("compute deadline does not fit in u64"))?;
-            let commitment_deadline = contract
-                .input_commitment_deadline(e3_id_value)
-                .await
-                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
             if !committed && commitment_deadline <= now {
                 return Err(reject_input("The vote commitment deadline has passed"));
             }
@@ -1013,9 +1014,9 @@ impl AvailabilityService {
                 input_deadline.saturating_sub(commitment_deadline) >= self.proof_lead_seconds,
                 "the CRISP finalization tail is shorter than AVAIL_PROOF_LEAD_SECONDS"
             );
-            (deadline, commitment_deadline)
+            deadline
         } else {
-            (no_deadline(), no_deadline())
+            no_deadline()
         };
 
         // The object has its own content-addressed record. Do not duplicate it inside the job or
@@ -4119,6 +4120,29 @@ mod tests {
         // The worker found the finalized commitment, and publishes the input next.
         let job = service.load_required(&staged.view.job_id).unwrap();
         assert!(matches!(job.state, JobState::Committed { .. }), "{job:?}");
+    }
+
+    /// A local round stores its real commitment cutoff, so the worker prunes the relay record of a
+    /// relayed input after that cutoff, as in an Avail round.
+    #[tokio::test]
+    async fn a_local_relay_record_is_pruned_after_the_commitment_cutoff() {
+        let (service, mock, _anvil) = chain_service(&temporary_db()).await;
+        let cutoff = service.chain_timestamp().await.unwrap() + 3_600;
+        set_input(&mock, false, false, cutoff).await;
+        let (object, commitment) = encrypted_ballot(&insecure_test_params(), &[1]);
+        let envelope = staged_envelope_with_object(Address::repeat_byte(0x77), commitment, &object);
+
+        service
+            .stage_input("1", envelope, false, None)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            service
+                .prune_relay_records(cutoff + RELAY_RECORD_RETENTION_SECONDS + 1)
+                .unwrap(),
+            1
+        );
     }
 
     /// A reorganization removes a relayed commitment after its attestation expired, while the
