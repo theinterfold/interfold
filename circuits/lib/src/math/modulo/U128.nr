@@ -261,8 +261,15 @@ pub fn reduce_mod_bounded<let BIT_Q: u32, let BIT_K: u32>(n: Field, q: Field) ->
 /// `q` must be odd, so that `half = (q - 1) / 2` is an integer and the window `[-half, half]` holds
 /// exactly `q` values. Every modulus here is an odd prime.
 ///
-/// The caller must keep `n < 2^BIT_K * q`. If it does not, the honest quotient overflows `BIT_K` and
-/// the circuit is unsatisfiable — a completeness failure, not a soundness one.
+/// The caller must keep `n + half < 2^BIT_K * q`, because the quotient divided out is
+/// `floor((n + half) / q)` and not `floor(n / q)`. The weaker `n < 2^BIT_K * q` is **not** enough:
+/// every `n` in `[2^BIT_K * q - half, 2^BIT_K * q)` satisfies it while the honest quotient is already
+/// `2^BIT_K`. If the bound is missed the honest quotient overflows `BIT_K` and the circuit is
+/// unsatisfiable — a completeness failure, not a soundness one, since the centered window fixes the
+/// result whatever `BIT_K` allows.
+///
+/// For a sum of `H` canonical residues the condition is slack by a wide margin:
+/// `n + half <= (q - 1) * (H + 1/2)`, so the quotient is at most `H`.
 pub fn centered_mod_bounded<let BIT_Q: u32, let BIT_K: u32>(n: Field, q: Field) -> Field {
     let half = (q - 1) / 2;
     // Safety: the quotient bound and the canonical centered interval below fix the division, so a
@@ -703,6 +710,30 @@ fn test_centered_mod_bounded_covers_full_aggregate() {
     assert(centered_mod_bounded::<7, 4>(n, q) == -14);
     // The carry is floor((1400 + 50) / 101) = 14, which needs all four bits.
     assert(centered_mod_bounded::<7, 5>(n, q) == -14);
+}
+
+/// The exact `BIT_K` threshold, which sits `half` below the naive one.
+///
+/// The quotient is `floor((n + half) / q)`, so the largest provable `n` is `2^BIT_K * q - half - 1`,
+/// not `2^BIT_K * q - 1`. With `q = 101`, `half = 50` and `BIT_K = 4` that is 1565: one more and the
+/// honest quotient is 16, which four bits cannot hold. The window between the two -- 1566 to 1615 --
+/// is exactly what a precondition written as `n < 2^BIT_K * q` would wrongly admit.
+#[test]
+fn test_centered_mod_bounded_carry_threshold_accounts_for_half() {
+    let q = 101;
+    // 1565 + 50 = 1615 = 15 * 101 + 100, so the carry is 15 and fits four bits.
+    // 1565 mod 101 is 50, exactly `half`, so the representative stays positive.
+    assert(centered_mod_bounded::<7, 4>(1565, q) == 50);
+    // One more: 1566 + 50 = 1616 = 16 * 101 exactly, so the carry is 16 and needs five bits.
+    // 1566 mod 101 is 51, one past `half`, so the representative flips to 51 - 101.
+    assert(centered_mod_bounded::<7, 5>(1566, q) == -50);
+}
+
+/// The first value the stricter precondition excludes must actually be unprovable.
+#[test(should_fail)]
+fn test_centered_mod_bounded_rejects_carry_just_past_threshold() {
+    // 1566 is below 2^4 * 101 = 1616, yet its carry is 16 -- the case the loose bound would allow.
+    let _ = centered_mod_bounded::<7, 4>(1566, 101);
 }
 
 /// A carry that does not fit `BIT_K` makes the circuit unsatisfiable rather than wrong.
