@@ -155,8 +155,9 @@ jobs:
             # the SDK tests does not run the contract tests.
             crisp_sdk_tests:
               - 'examples/CRISP/packages/crisp-sdk/tests/**'
-              # tests/client-circuits.test.ts imports the client circuit loader.
+              # tests/client-*.test.ts import these client modules.
               - 'examples/CRISP/client/src/utils/circuits.ts'
+              - 'examples/CRISP/client/src/utils/directVote.ts'
               - '!**/*.md'
               - '!**/*.mdx'
             crisp_contracts:

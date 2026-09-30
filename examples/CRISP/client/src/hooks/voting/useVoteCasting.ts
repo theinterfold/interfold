@@ -217,9 +217,10 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
   const [lastActiveStep, setLastActiveStep] = useState<VotingStep | null>(null)
   const [stepMessage, setStepMessage] = useState<string>('')
   const submissionInProgress = useRef(false)
-  // A queued-commitment wait outlives the page that started it. Stop it on unmount, so that an
-  // abandoned wait cannot open a wallet prompt or navigate from another page, and cannot run beside
-  // the wait that a remounted page starts for the same job.
+  // A vote action outlives the page that started it. It checks this flag before each wallet
+  // prompt, before it saves a new ballot, and before it navigates, so that an abandoned action does
+  // none of them from another page, and its queued-commitment wait cannot run beside the wait that
+  // a remounted page starts for the same job.
   const unmounted = useRef(false)
   useEffect(() => {
     unmounted.current = false
@@ -302,6 +303,7 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
           return encodeSolidityProof(await finishMaskProof(prepared, digest))
         }
 
+        if (unmounted.current) throw new Error('The page closed before the signature prompt')
         setVotingStep('signing')
         setLastActiveStep('signing')
         setStepMessage('Please sign the ballot in your wallet...')
@@ -521,18 +523,18 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
           if (!response.encoded_proof) {
             throw new Error('Availability job is missing the input commitment payload')
           }
-          // The page closed while the program address loaded. Keep the ballot so that the next
-          // action resumes it, and open no wallet prompt from a closed page.
-          if (unmounted.current) return
           txHash = await submitInputCommitmentDirectly(
             walletClient,
             publicClient,
             crispProgram,
             e3Id,
             response.encoded_proof as `0x${string}`,
+            () => unmounted.current,
           )
         }
 
+        // A closed page shows no result and does not navigate. The next action reports the job.
+        if (unmounted.current) return
         setVotingStep('complete')
         const finalized = response.status === 'success'
         setStepMessage(
@@ -672,6 +674,7 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
           round_id: roundState.id,
           encoded_proof: encodedProof,
         }
+        if (unmounted.current) return
         // Save the ballot before it leaves this page. After a broadcast without an answer, the next
         // action sends this ballot again instead of a second one.
         const key = `${savedJobPrefix}-${Math.random().toString(36).slice(2)}`
