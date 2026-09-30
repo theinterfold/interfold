@@ -67,7 +67,7 @@ Run from repo root via pnpm scripts — not raw cargo/nargo/hardhat.
 | Test one layer              | `pnpm evm:test` · `pnpm rust:test` · `pnpm sdk:test` · `pnpm noir:test`                                                                            |
 | SDK proof verification      | `pnpm sdk:test:proofs` (prepare circuits, generate one proof, verify bindings and reject tampering)                                                |
 | Prepared SDK proof tests    | `pnpm sdk:test:proofs:prepared` (reuse the current SDK build or prepared circuit set)                                                              |
-| Rust proof integration      | `pnpm rust:test:proofs` (prepared insecure-512/minimum circuits and `bb`)                                                                          |
+| Rust proof integration      | `pnpm rust:test:proofs` (prepared insecure-512/minimum circuits, `nargo`, and `bb`)                                                                |
 | Rust slashing integration   | `pnpm rust:test:slashing` (compiled contract artifacts and `anvil`)                                                                                |
 | Integration tests           | `pnpm test:integration [name]` (`--no-prebuild` to skip binary build)                                                                              |
 | Test runner regressions     | `pnpm test:harnesses`                                                                                                                              |
@@ -89,7 +89,8 @@ bytes.
 
 Before `pnpm rust:test:proofs` or `pnpm test`, run
 `pnpm build:circuits --preset insecure-512 --committee minimum --skip-if-built`. This prepares one
-consistent set of inner and recursive circuits. Before `pnpm rust:test:slashing`, run
+consistent set of inner and recursive circuits. The recursive VK-substitution tests also require
+pinned `nargo` on PATH to compile substitute circuits. Before `pnpm rust:test:slashing`, run
 `pnpm evm:build`. The named Rust integration suites fail if a required tool or artifact is missing.
 Ordinary Rust test runs report these integration tests as ignored. CI explicitly selects them. The
 full test command reuses the prepared circuits for SDK proof verification.
