@@ -18,7 +18,7 @@ use e3_config::{AppConfig, UnscopedAppConfig};
 use e3_data::{DataStore, RepositoriesFactory, SledDb};
 use e3_entrypoint::fence::ProcessFence;
 use e3_entrypoint::helpers::datastore::setup_datastore;
-use e3_entrypoint::nodes::purge::{execute, PurgeTargets};
+use e3_entrypoint::nodes::purge::{execute, PurgeTargets, MARKER_FILE_NAME, MARKER_TEXT};
 use e3_events::{E3Stage, E3id, StoreKeys};
 use e3_keyshare::ThresholdKeyshareRepositoryFactory;
 use e3_request::E3LifecycleRepositoryFactory;
@@ -478,13 +478,14 @@ async fn deletion_order_and_rerun() -> Result<()> {
         message.contains("Part of the state can be gone"),
         "the error must say that part of the state can be gone, got: {message}"
     );
-    let left: Vec<_> = std::fs::read_dir(&node_folder)?
+    let mut left: Vec<_> = std::fs::read_dir(&node_folder)?
         .map(|entry| entry.map(|entry| entry.file_name()))
         .collect::<std::io::Result<_>>()?;
+    left.sort();
     assert_eq!(
         left,
-        ["interfold.lock"],
-        "the node folder must hold only its lock"
+        ["interfold.lock", "purge-in-progress"],
+        "the node folder must hold only its lock and the purge marker"
     );
     assert!(
         nodes[0].key_file().exists(),
@@ -492,6 +493,279 @@ async fn deletion_order_and_rerun() -> Result<()> {
     );
 
     execute(&targets, &nodes, false).await?;
+    assert!(purged(project.path()));
+    Ok(())
+}
+
+/// A per-node volume that is not mounted leaves the node folder empty. The node's store holds a key
+/// share elsewhere, so the empty folder is not the leftover of an earlier purge.
+async fn unmounted_node_volume() -> Result<()> {
+    let project = tempfile::tempdir()?;
+    let volume = tempfile::tempdir()?;
+    let targets = PurgeTargets::in_dir(project.path());
+    let nodes = vec![project_node(project.path(), "unmounted")?];
+    let mounted = node_with(
+        project.path(),
+        volume.path(),
+        &project.path().join(".interfold/config"),
+        "unmounted",
+        "",
+    )?;
+    write_state(&mounted, E3Stage::KeyPublished).await?;
+    std::fs::create_dir_all(project.path().join(".interfold/data/unmounted"))?;
+
+    assert_refused(
+        &targets,
+        &nodes,
+        false,
+        &[
+            "node `unmounted`",
+            "its store is not at",
+            "--allow-active-e3s",
+        ],
+    )
+    .await;
+    assert!(nodes[0].key_file().exists());
+    // The refusal took the node's lock, and that lock file alone does not make a leftover.
+    assert_refused(&targets, &nodes, false, &["its store is not at"]).await;
+    assert!(nodes[0].key_file().exists());
+    assert!(mounted.db_file().exists());
+    Ok(())
+}
+
+/// An operator removes the store that the purge refused because it holds no operator key. The
+/// folder that remains is not the leftover of an earlier purge.
+async fn decoy_store_removed_after_the_refusal() -> Result<()> {
+    let project = tempfile::tempdir()?;
+    let targets = PurgeTargets::in_dir(project.path());
+    let nodes = vec![project_node(project.path(), "decoy")?];
+    write_empty_store(&nodes[0]).await?;
+    write_key_file(&nodes[0])?;
+    assert_refused(&targets, &nodes, false, &["holds no operator key"]).await;
+
+    std::fs::remove_dir_all(nodes[0].db_file())?;
+    assert_refused(
+        &targets,
+        &nodes,
+        false,
+        &["node `decoy`", "its store is not at"],
+    )
+    .await;
+    assert!(nodes[0].key_file().exists());
+    Ok(())
+}
+
+/// An earlier purge marked the node folder and stopped while it emptied the folder. A second run
+/// finishes without an override.
+async fn rerun_after_a_partly_emptied_folder() -> Result<()> {
+    let project = tempfile::tempdir()?;
+    let targets = PurgeTargets::in_dir(project.path());
+    let nodes = vec![project_node(project.path(), "cn1")?];
+    write_key_file(&nodes[0])?;
+    let node_folder = project.path().join(".interfold/data/cn1");
+    std::fs::create_dir_all(&node_folder)?;
+    std::fs::write(node_folder.join(MARKER_FILE_NAME), MARKER_TEXT)?;
+    std::fs::write(node_folder.join("log.0"), b"left over")?;
+
+    execute(&targets, &nodes, false).await?;
+    assert!(purged(project.path()));
+    Ok(())
+}
+
+/// Node `inner` keeps its folder inside the folder of node `outer`. Emptying the outer folder must
+/// keep the inner node's lock, or that node could start during the purge.
+async fn nested_node_folders_keep_their_locks() -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let project = tempfile::tempdir()?;
+    let targets = PurgeTargets::in_dir(project.path());
+    let data = project.path().join(".interfold/data");
+    let config = project.path().join(".interfold/config");
+    let nodes = vec![
+        project_node(project.path(), "outer")?,
+        node_with(project.path(), &data.join("outer"), &config, "inner", "")?,
+    ];
+    write_state(&nodes[0], E3Stage::Complete).await?;
+    write_state(&nodes[1], E3Stage::Complete).await?;
+    let inner_lock = data.join("outer/inner/interfold.lock");
+
+    // A key folder without write permission stops the purge after it empties the node folders.
+    let key_folder = nodes[0].key_file().parent().unwrap().to_path_buf();
+    std::fs::set_permissions(&key_folder, std::fs::Permissions::from_mode(0o555))?;
+    let result = execute(&targets, &nodes, false).await;
+    std::fs::set_permissions(&key_folder, std::fs::Permissions::from_mode(0o755))?;
+    result.expect_err("the purge must stop");
+    assert!(
+        inner_lock.exists(),
+        "emptying the outer folder must keep the inner node's lock"
+    );
+    assert!(!nodes[1].db_file().exists());
+
+    execute(&targets, &nodes, false).await?;
+    assert!(purged(project.path()));
+    Ok(())
+}
+
+/// The node folder in the data folder is a link to a folder elsewhere that holds a purge marker, for
+/// example from a purge of another project. Only a folder in the data folder can be this purge's
+/// leftover.
+async fn linked_node_folder_is_not_a_leftover() -> Result<()> {
+    let project = tempfile::tempdir()?;
+    let elsewhere = tempfile::tempdir()?;
+    let targets = PurgeTargets::in_dir(project.path());
+    let nodes = vec![project_node(project.path(), "linked")?];
+    write_key_file(&nodes[0])?;
+    std::fs::write(elsewhere.path().join(MARKER_FILE_NAME), MARKER_TEXT)?;
+    let data = project.path().join(".interfold/data");
+    std::fs::create_dir_all(&data)?;
+    std::os::unix::fs::symlink(elsewhere.path(), data.join("linked"))?;
+
+    assert_refused(
+        &targets,
+        &nodes,
+        false,
+        &["node `linked`", "its store is not at"],
+    )
+    .await;
+    assert!(nodes[0].key_file().exists());
+    Ok(())
+}
+
+/// A marker that a failed write left empty is not the marker of a purge that passed its checks.
+async fn incomplete_marker_is_not_trusted() -> Result<()> {
+    let project = tempfile::tempdir()?;
+    let targets = PurgeTargets::in_dir(project.path());
+    let nodes = vec![project_node(project.path(), "cut")?];
+    write_key_file(&nodes[0])?;
+    let node_folder = project.path().join(".interfold/data/cut");
+    std::fs::create_dir_all(&node_folder)?;
+    std::fs::write(node_folder.join(MARKER_FILE_NAME), b"")?;
+
+    assert_refused(
+        &targets,
+        &nodes,
+        false,
+        &["node `cut`", "its store is not at"],
+    )
+    .await;
+    assert!(nodes[0].key_file().exists());
+    Ok(())
+}
+
+/// When the purge cannot write a marker, it removes the markers that it wrote and deletes nothing.
+/// Each node in turn refuses the marker, so some run writes both other markers before the failure:
+/// one into a folder without a marker, and one over an incomplete marker, which a purge does not
+/// trust.
+async fn failed_marker_write_leaves_no_marker() -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let names = ["cn1", "cn2", "cn3"];
+    for turn in 0..names.len() {
+        let project = tempfile::tempdir()?;
+        let targets = PurgeTargets::in_dir(project.path());
+        let nodes = names
+            .iter()
+            .map(|name| project_node(project.path(), name))
+            .collect::<Result<Vec<_>>>()?;
+        for node in &nodes {
+            write_state(node, E3Stage::Complete).await?;
+        }
+        let data = project.path().join(".interfold/data");
+        let blocked = data.join(names[turn]);
+        std::fs::write(
+            data.join(names[(turn + 1) % names.len()])
+                .join(MARKER_FILE_NAME),
+            b"",
+        )?;
+        // The lock file exists, so the purge can lock the folder, but it cannot create the marker.
+        std::fs::write(blocked.join("interfold.lock"), b"")?;
+        std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o555))?;
+        let result = execute(&targets, &nodes, false).await;
+        std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o755))?;
+
+        let message = result.expect_err("the purge must stop").to_string();
+        assert!(message.contains("could not write its marker"), "{message}");
+        assert!(message.contains("deleted nothing"), "{message}");
+        for name in names {
+            let marker = data.join(name).join(MARKER_FILE_NAME);
+            assert!(
+                !marker.exists() || std::fs::read(&marker)?.is_empty(),
+                "{} holds a marker after the failure",
+                marker.display()
+            );
+        }
+        assert!(untouched(&nodes.iter().collect::<Vec<_>>()));
+    }
+    Ok(())
+}
+
+/// Node `inner` names its folder inside the folder of node `outer` through a link to the project.
+/// The purge must still see that emptying the outer folder would delete the inner node's lock.
+async fn nested_node_folder_through_a_link_keeps_its_lock() -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let project = tempfile::tempdir()?;
+    let links = tempfile::tempdir()?;
+    let alias = links.path().join("alias");
+    std::os::unix::fs::symlink(project.path(), &alias)?;
+    let targets = PurgeTargets::in_dir(project.path());
+    let config = project.path().join(".interfold/config");
+    let nodes = vec![
+        project_node(project.path(), "outer")?,
+        node_with(
+            project.path(),
+            &alias.join(".interfold/data/outer"),
+            &config,
+            "inner",
+            "",
+        )?,
+    ];
+    write_state(&nodes[0], E3Stage::Complete).await?;
+    write_state(&nodes[1], E3Stage::Complete).await?;
+    let inner_lock = project
+        .path()
+        .join(".interfold/data/outer/inner/interfold.lock");
+
+    let key_folder = nodes[0].key_file().parent().unwrap().to_path_buf();
+    std::fs::set_permissions(&key_folder, std::fs::Permissions::from_mode(0o555))?;
+    let result = execute(&targets, &nodes, false).await;
+    std::fs::set_permissions(&key_folder, std::fs::Permissions::from_mode(0o755))?;
+    result.expect_err("the purge must stop");
+    assert!(
+        inner_lock.exists(),
+        "emptying the outer folder must keep the inner node's lock"
+    );
+
+    execute(&targets, &nodes, false).await?;
+    assert!(purged(project.path()));
+    Ok(())
+}
+
+/// A purge checked a node folder that no profile names, marked it, emptied it, and stopped before
+/// it deleted the key folder. A second run finishes without an override.
+async fn rerun_for_a_folder_without_a_profile() -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let project = tempfile::tempdir()?;
+    let targets = PurgeTargets::in_dir(project.path());
+    let stale = project_node(project.path(), "stale")?;
+    write_state(&stale, E3Stage::Complete).await?;
+    let key_folder = stale.key_file().parent().unwrap().to_path_buf();
+
+    std::fs::set_permissions(&key_folder, std::fs::Permissions::from_mode(0o555))?;
+    let result = execute(&targets, &[], false).await;
+    std::fs::set_permissions(&key_folder, std::fs::Permissions::from_mode(0o755))?;
+    result.expect_err("the purge must stop");
+    assert!(
+        !stale.db_file().exists(),
+        "the first run empties the folder"
+    );
+    assert!(
+        stale.key_file().exists(),
+        "the first run keeps the key file"
+    );
+
+    execute(&targets, &[], false).await?;
     assert!(purged(project.path()));
     Ok(())
 }
@@ -600,6 +874,15 @@ async fn purge_refuses_to_delete_a_running_node_or_an_active_key_share() -> Resu
     refusal_creates_nothing().await?;
     links_in_the_data_folder().await?;
     deletion_order_and_rerun().await?;
+    unmounted_node_volume().await?;
+    decoy_store_removed_after_the_refusal().await?;
+    rerun_after_a_partly_emptied_folder().await?;
+    nested_node_folders_keep_their_locks().await?;
+    linked_node_folder_is_not_a_leftover().await?;
+    incomplete_marker_is_not_trusted().await?;
+    failed_marker_write_leaves_no_marker().await?;
+    nested_node_folder_through_a_link_keeps_its_lock().await?;
+    rerun_for_a_folder_without_a_profile().await?;
     event_log_without_a_store().await?;
     unknown_config_file().await?;
     every_refusal_at_once().await?;

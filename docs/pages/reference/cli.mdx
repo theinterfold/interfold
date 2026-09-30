@@ -347,6 +347,10 @@ The purge reports every refusal at once. `--allow-active-e3s` overrides the last
 refusal together. The purge also refuses when `.interfold`, `.interfold/data`, or
 `.interfold/config` is a symbolic link.
 
+Before the first deletion, the purge writes a `purge-in-progress` file into each node folder that it
+empties. When the purge stops part of the way, run it again. The second run finishes the folders
+that hold this file.
+
 The purge has limits:
 
 - It finds each store with its own configuration and environment. It cannot see a node that runs
