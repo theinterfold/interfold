@@ -165,11 +165,24 @@ impl Cli {
             Err(e) => return Err(e),
         };
 
-        setup_tracing(&config, log_level)?;
+        // The purge commands delete the node folders. They write no log file, password, or wallet
+        // there, because a later purge would treat such files as node state.
+        let purges = matches!(
+            self.command,
+            Commands::PurgeAll { .. }
+                | Commands::Nodes {
+                    command: NodeCommands::Purge { .. }
+                }
+        );
+        if purges {
+            setup_simple_tracing(log_level);
+        } else {
+            setup_tracing(&config, log_level)?;
+        }
         info!("Config loaded from: {:?}", config.config_file());
 
         // Config commands only read configuration, so they do not create a password or a wallet.
-        let creates_secrets = !matches!(self.command, Commands::Config { .. });
+        let creates_secrets = !purges && !matches!(self.command, Commands::Config { .. });
 
         if creates_secrets && config.autopassword() {
             e3_entrypoint::password::set::autopassword(&config).await?;
@@ -193,8 +206,11 @@ impl Cli {
                 print_env::execute(out, &config, &chain, vite).await?
             }
             Commands::Program { command } => program::execute(command, &config).await?,
-            Commands::PurgeAll => {
-                purge_all::execute().await?;
+            Commands::PurgeAll {
+                yes,
+                allow_active_e3s,
+            } => {
+                purge_all::execute(&config, self.config.clone(), yes, allow_active_e3s).await?;
             }
             Commands::Nodes { command } => {
                 nodes::execute(
@@ -311,8 +327,20 @@ pub enum Commands {
         command: ProgramCommands,
     },
 
-    /// Purge both the local program cache and all ciphernode databases
-    PurgeAll,
+    /// Run `nodes purge`, then delete the local program cache. Deletes each node's operator key
+    /// and libp2p key.
+    PurgeAll {
+        /// Confirm the deletion.
+        #[arg(long)]
+        yes: bool,
+
+        /// Override the refusal for an active key share and for a node that the command cannot
+        /// check. The node permanently loses its key share. Check first that each listed E3 is
+        /// complete or failed on chain. The command cannot see a node that runs with another
+        /// E3_DATA_DIR, data_dir, or working directory. Check that no such node runs.
+        #[arg(long)]
+        allow_active_e3s: bool,
+    },
 
     /// Password management commands
     Password {
@@ -539,6 +567,45 @@ mod tests {
             (false, false),
             "config get created the key file or the database"
         );
+        Ok(())
+    }
+
+    /// Without `--yes`, the purge commands refuse before they touch any node state, and they
+    /// create no password or wallet.
+    #[actix::test]
+    async fn purge_without_confirmation_changes_nothing() -> Result<()> {
+        // The purge works on the current directory. It must hold no state, so a regression of the
+        // confirmation cannot delete real state.
+        assert!(!std::path::Path::new(".interfold").exists());
+        let dir = tempfile::tempdir()?;
+        let config_file = dir.path().join("config.yaml");
+        std::fs::write(
+            &config_file,
+            format!(
+                "node:\n  network: local\n  autopassword: true\n  autowallet: true\n  config_dir: {}\n  data_dir: {}\n",
+                dir.path().join("config").display(),
+                dir.path().join("data").display()
+            ),
+        )?;
+        let config_arg = config_file.to_string_lossy().into_owned();
+        for command in [&["nodes", "purge"][..], &["purge-all"][..]] {
+            let args = [&["interfold"][..], command, &["-c", &config_arg][..]].concat();
+            let cli = Cli::parse_from(args);
+            let config = cli.load_config()?;
+            let (key_file, db_file) = (config.key_file(), config.db_file());
+
+            let (out, _rx) = Console::channel();
+            let error = cli
+                .execute(out, Ok(config))
+                .await
+                .expect_err("the purge must require --yes");
+            assert!(error.to_string().contains("--yes"), "{command:?}: {error}");
+            assert_eq!(
+                (key_file.exists(), db_file.exists()),
+                (false, false),
+                "{command:?} created the key file or the database"
+            );
+        }
         Ok(())
     }
 

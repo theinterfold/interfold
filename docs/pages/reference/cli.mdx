@@ -331,14 +331,38 @@ other node in the set, in the form `/ip4/127.0.0.1/udp/<quic_port>/quic-v1`.
 | `nodes stop <ID>`    | `ID`: profile name                                                                                                                | Stops one node of the set.                                                                                                |
 | `nodes status <ID>`  | `ID`: profile name                                                                                                                | Prints the status of one node.                                                                                            |
 | `nodes restart <ID>` | `ID`: profile name                                                                                                                | Stops and starts one node.                                                                                                |
-| `nodes purge`        | None                                                                                                                              | Deletes `.interfold/data` and `.interfold/config` in the current directory.                                               |
+| `nodes purge`        | `--yes`: confirms the deletion. `--allow-active-e3s`: overrides the key-share and cannot-check refusals.                          | Deletes `.interfold/data` and `.interfold/config` in the current directory.                                               |
+
+Before it deletes anything, `nodes purge` checks each node whose store, event log, or key file it
+would delete. It finds these nodes in the configuration, in `.interfold/data`, and in
+`.interfold/config`. It refuses in these cases:
+
+- The node runs. The purge takes the lock that `interfold start` takes, and it opens the node's
+  store. Nothing overrides this refusal.
+- The node holds a key share for an E3 that it has not seen complete.
+- The purge cannot check the node. For example, the store is missing at the configured path, or it
+  holds no operator key.
+
+The purge reports every refusal at once. `--allow-active-e3s` overrides the last two kinds of
+refusal together. The purge also refuses when `.interfold`, `.interfold/data`, or
+`.interfold/config` is a symbolic link.
+
+The purge has limits:
+
+- It finds each store with its own configuration and environment. It cannot see a node that runs
+  with another `E3_DATA_DIR`, `data_dir`, or working directory. Before you use `--allow-active-e3s`,
+  make sure that no node runs with such a setting.
+- It cannot tell whether an operator key is the node's own. A stale copy of a store at the
+  configured path passes the check.
+- It finds stores only directly inside each node folder in `.interfold/data`.
 
 The detached supervisor does not receive the `--otel` flag.
 
 <Callout type='warning'>
   `interfold nodes purge` deletes the key files, the stored wallet keys, and the event history of
   every profile under `.interfold` in the current directory. You cannot undo this action. A deleted
-  wallet key that you have no copy of is lost, together with control of its on-chain position.
+  wallet key that you have no copy of is lost, together with control of its on-chain position. To
+  clear a node's state and keep its identity, use `interfold node reset-data`.
 </Callout>
 
 ### `interfold noir`
@@ -719,12 +743,17 @@ interfold rev [--features]
 ### `interfold purge-all`
 
 Deletes `.interfold/data`, `.interfold/config`, and `.interfold/caches` in the current directory.
-This command is `nodes purge` and `program cache purge` together. It returns an error when
-`.interfold/caches` does not exist.
+This command is `nodes purge` and `program cache purge` together, with the same checks as
+`nodes purge`.
 
 ```bash
-interfold purge-all
+interfold purge-all --yes [--allow-active-e3s]
 ```
+
+| Flag                 | Value | Default | Description                                                                                                                               |
+| -------------------- | ----- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `--yes`              | None  | Off     | Confirms the deletion. Without it, the command prints what it deletes and stops.                                                          |
+| `--allow-active-e3s` | None  | Off     | Overrides the key-share refusal and the refusal for a node that `nodes purge` cannot check. The chain cannot restore a deleted key share. |
 
 <Callout type='warning'>
   `interfold purge-all` deletes the key files, the stored wallet keys, and the event history under
