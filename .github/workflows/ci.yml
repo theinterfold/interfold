@@ -386,11 +386,11 @@ jobs:
         if: matrix.suite == 'doc'
         run: cargo test --doc
 
-      # The reset-data and purge guard tests are their own test targets, and the CLI tests are in
-      # the `interfold` binary, so the library run skips them.
-      - name: Run the reset-data and purge guard tests and the CLI tests
+      # The entrypoint guard and older-schema tests are their own test targets, and the CLI tests are
+      # in the `interfold` binary, so the library run skips them.
+      - name: Run the entrypoint guard and older-schema tests and the CLI tests
         if: matrix.suite == 'doc'
-        run: cargo nextest run -p e3-entrypoint --test reset_data_guard --test purge_guard -p e3-cli --bins
+        run: cargo nextest run -p e3-entrypoint --test reset_data_guard --test purge_guard --test validate_older_schema -p e3-cli --bins
 
       # `parallel` is off by default, so the library tests compile the sequential fallback of
       # `recompute_commitments` and the rayon body of that function ships untested. This step is

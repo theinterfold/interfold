@@ -150,7 +150,12 @@ program because it does not schedule the separate voting start required by that 
 `SCHEMA_VERSION` (`crates/sync/src/sync/schema_version.rs`) is the durable format marker. The
 preflight admits only an exact match and refuses to guess in either direction: older on-disk state
 halts as an upgrade with no migration, newer state halts as a downgrade. A raised schema therefore
-makes every populated data directory unloadable until the operator clears it.
+makes every populated data directory unloadable until the operator clears it. The older-schema halt
+names `interfold node reset-data`. The newer-schema halt names the newer release and the backup
+taken before the upgrade, because the reset guard of an older binary cannot read a newer store
+reliably. When the event logs decode with this binary, `interfold node validate` reports the same
+schema failure and skips the checks that read snapshots (`crates/entrypoint/src/validate.rs`). An
+event log that does not decode shows as unreadable, with no schema line.
 
 The operator key and the libp2p keypair live in the same key/value store as that state, under
 `//eth_private_key` and `//libp2p/keypair`. Deleting the data directory destroys the identity that
