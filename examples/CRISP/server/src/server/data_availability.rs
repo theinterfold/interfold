@@ -1574,7 +1574,17 @@ impl AvailabilityService {
         })
     }
 
+    /// Run one step of a job in its own task. A caller that stops waiting, such as a request whose
+    /// client closed the connection, then cannot cancel a paid step partway through.
     async fn process(&self, id: &str) {
+        let service = self.clone();
+        let id = id.to_owned();
+        if let Err(error) = tokio::spawn(async move { service.process_step(&id).await }).await {
+            warn!(%error, "Data-availability job step panicked; the worker retries the job");
+        }
+    }
+
+    async fn process_step(&self, id: &str) {
         let Ok(_permit) = Arc::clone(&self.job_slots).acquire_owned().await else {
             warn!(job_id = id, "Data-availability worker is shutting down");
             return;

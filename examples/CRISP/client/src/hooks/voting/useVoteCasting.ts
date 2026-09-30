@@ -28,7 +28,7 @@ import { txExplorerUrl } from '@/utils/methods'
 const INTERFOLD_API = import.meta.env.VITE_INTERFOLD_API
 
 interface PendingAvailabilityJob {
-  jobId: string
+  jobId?: string
   isMask: boolean
   encodedProof?: string
 }
@@ -53,12 +53,14 @@ const readAvailabilityJob = (key: string): PendingAvailabilityJob | undefined =>
     const stored = localStorage.getItem(key)
     if (!stored) return undefined
     const parsed: unknown = JSON.parse(stored)
-    if (typeof parsed !== 'object' || parsed === null || !('jobId' in parsed) || typeof parsed.jobId !== 'string') return undefined
-    return {
-      jobId: parsed.jobId,
+    if (typeof parsed !== 'object' || parsed === null) return undefined
+    const job = {
+      jobId: 'jobId' in parsed && typeof parsed.jobId === 'string' ? parsed.jobId : undefined,
       isMask: 'isMask' in parsed && parsed.isMask === true,
       encodedProof: 'encodedProof' in parsed && typeof parsed.encodedProof === 'string' ? parsed.encodedProof : undefined,
     }
+    // A ballot saved before its broadcast answered has no job ID yet.
+    return job.jobId || job.encodedProof ? job : undefined
   } catch {
     return undefined
   }
@@ -71,7 +73,7 @@ const writeAvailabilityJob = (key: string, job: PendingAvailabilityJob): void =>
     // Large secure ballots can exceed a browser's storage quota. Preserve the small server job
     // pointer when possible, even though a server-database loss would then need operator recovery.
     try {
-      localStorage.setItem(key, JSON.stringify({ jobId: job.jobId, isMask: job.isMask }))
+      if (job.jobId) localStorage.setItem(key, JSON.stringify({ jobId: job.jobId, isMask: job.isMask }))
     } catch {
       // The durable server job remains valid. A browser with disabled storage cannot resume it
       // automatically after a reload.
@@ -111,6 +113,9 @@ const waitForCommitmentDecision = async (
   return undefined
 }
 
+/// Bounds the slot-head read, which runs before the proof. A stuck read must not hold the action.
+const SLOT_HEAD_TIMEOUT_MS = 30_000
+
 /// The end of the slot's chain of usable entries, with the tree index the new input will name as
 /// its parent. Not simply the newest entry published: one whose bytes do not reproduce its
 /// commitment is never selected by the Secure Process and is never a valid parent, so the server
@@ -120,6 +125,7 @@ const getSlotHead = async (e3Id: string, address: string): Promise<{ ciphertext:
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ round_id: e3Id, address }),
+    signal: AbortSignal.timeout(SLOT_HEAD_TIMEOUT_MS),
   })
 
   if (response.status === 404) return undefined
@@ -578,12 +584,13 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
         for (const key of savedJobKeys(savedJobPrefix)) {
           const pendingJob = readAvailabilityJob(key)
           if (!pendingJob) continue
-          const saved = await getVoteAvailability(pendingJob.jobId)
+          const saved = pendingJob.jobId ? await getVoteAvailability(pendingJob.jobId) : null
           if (saved === undefined) throw new Error('Could not read the pending data-availability job.')
           const resumed = saved ?? (await restage(key, pendingJob))
           if (resumed.status === 'success') clearAvailabilityJob(key)
-          // A ballot that only waits for its availability does not stop a new action.
-          if (resumed.status === 'success' || resumed.status === 'pending_availability') continue
+          // A ballot that only waits for its availability does not stop a new action. A ballot
+          // without a job ID belongs to an action that never learned its result, so it resumes.
+          if (pendingJob.jobId && (resumed.status === 'success' || resumed.status === 'pending_availability')) continue
           setIsMasking(pendingJob.isMask)
           setIsVoting(!pendingJob.isMask)
           setVotingStep('broadcasting')
@@ -665,14 +672,18 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
           round_id: roundState.id,
           encoded_proof: encodedProof,
         }
-        const broadcastVoteResponse = await broadcastVote(voteRequest, (jobId) => {
-          writeAvailabilityJob(`${savedJobPrefix}-${jobId}`, { jobId, isMask: isAMask, encodedProof })
-        })
+        // Save the ballot before it leaves this page. After a broadcast without an answer, the next
+        // action sends this ballot again instead of a second one.
+        const key = `${savedJobPrefix}-${Math.random().toString(36).slice(2)}`
+        writeAvailabilityJob(key, { isMask: isAMask, encodedProof })
+        const broadcastVoteResponse = await broadcastVote(voteRequest, (jobId) =>
+          writeAvailabilityJob(key, { jobId, isMask: isAMask, encodedProof }),
+        )
 
         if (!broadcastVoteResponse) {
-          throw new Error('Received no response after publishing vote data.')
+          throw new Error('The server did not accept or refuse the ballot. Repeat the action to send it again.')
         }
-        await finishCommitment(broadcastVoteResponse, isAMask, `${savedJobPrefix}-${broadcastVoteResponse.job_id}`)
+        await finishCommitment(broadcastVoteResponse, isAMask, key)
       } catch (error) {
         console.error('Vote processing failed:', error)
         // A page that closed during the action shows no toast on the page that is open now. A kept
