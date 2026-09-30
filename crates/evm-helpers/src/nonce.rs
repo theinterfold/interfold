@@ -11,6 +11,7 @@ use alloy::{
     network::Ethereum,
     primitives::Address,
     providers::{PendingTransactionBuilder, Provider},
+    transports::RpcError,
 };
 use eyre::Result;
 use std::{
@@ -55,17 +56,37 @@ where
 {
     let mut sent = SENT_NONCES.lock().await;
     let send = async {
+        // Fill the transaction before its nonce is reserved, so that the send below only signs
+        // and broadcasts it. A failure before the broadcast sends nothing and reserves nothing.
+        let call = call.from(from);
+        let gas = call.estimate_gas().await?;
+        let fees = call.provider.estimate_eip1559_fees().await?;
+        let chain_id = call.provider.get_chain_id().await?;
         let pending = call.provider.get_transaction_count(from).pending().await?;
         let account = sent.entry(from).or_default();
         let nonce = next_free_nonce(account, pending, Instant::now());
         // Reserve the nonce before the broadcast. If the send stops during the broadcast, the node
         // can hold the transaction, and the reservation keeps later sends off its nonce.
         account.insert(nonce, Instant::now());
-        match call.nonce(nonce).send().await {
+        let call = call
+            .gas(gas)
+            .max_fee_per_gas(fees.max_fee_per_gas)
+            .max_priority_fee_per_gas(fees.max_priority_fee_per_gas)
+            .chain_id(chain_id)
+            .nonce(nonce);
+        match call.send().await {
             Ok(transaction) => Ok(transaction),
             Err(error) => {
-                // The send ended with an error, so no transaction holds the nonce.
-                account.remove(&nonce);
+                // A node that answered with an error refused the transaction, so no transaction
+                // holds the nonce. After any other broadcast error the node can hold the
+                // transaction, so the reservation stays until the chain counts the nonce or the
+                // reservation expires.
+                if matches!(
+                    &error,
+                    alloy::contract::Error::TransportError(RpcError::ErrorResp(_))
+                ) {
+                    account.remove(&nonce);
+                }
                 Err(eyre::Report::new(error))
             }
         }
