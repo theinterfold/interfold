@@ -691,17 +691,20 @@ new_image() {
    docker pull "$CIPHERNODE_IMAGE"
    ```
 
-2. Find out how the old container starts:
+2. Find out how the old container starts, and whether a stop removes it:
 
    ```bash
-   docker inspect -f '{{json .Config.Entrypoint}}' ciphernode
+   docker inspect -f '{{json .Config.Entrypoint}} {{.HostConfig.AutoRemove}}' ciphernode
    ```
 
-   Continue only if the output is `["interfold"]`, or one path that ends with `/interfold`. For all
-   other output, do not stop the container, and contact the protocol team. For example,
-   `["ciphernode-entrypoint.sh"]` is the entrypoint of the earlier image. At each start, it sets the
-   password again, and `interfold password set` refuses a key file that exists. Such a container
-   cannot start again after a stop.
+   Continue only if the output is `["interfold"] false`, or one path that ends with `/interfold`
+   followed by `false`. For all other output, do not stop the container, and contact the protocol
+   team:
+   - `["ciphernode-entrypoint.sh"]` is the entrypoint of the earlier image. At each start, it sets
+     the password again, and `interfold password set` refuses a key file that exists. Such a
+     container cannot start again after a stop.
+   - `true` means that the container started with `--rm`. A stop removes the container and the state
+     inside it.
 
 3. Make sure that no E3 is active on the network. The output must be `0`. Get the Interfold address
    from [Contracts and addresses](/reference/contracts).
@@ -779,6 +782,7 @@ new_image() {
    in the last case. In each other case, start the old container again:
 
    ```bash
+   started=$(date -u +%Y-%m-%dT%H:%M:%SZ)
    docker start ciphernode
    ```
 
@@ -786,8 +790,13 @@ new_image() {
    holds the state that the node uses. If the container does not start, stop and contact the
    protocol team, and keep the copy on the volume.
 
-   When the log shows `Ciphernode release is accepted` or `Acknowledging ciphernode release`, remove
-   the copy from the volume. Then do what the case tells you.
+   The log from before the stop also holds the release lines, so read only the log since the start.
+   When it shows `Ciphernode release is accepted` or `Acknowledging ciphernode release`, remove the
+   copy from the volume. Then do what the case tells you.
+
+   ```bash
+   docker logs --since "$started" ciphernode
+   ```
 
    ```bash
    docker run --rm \
@@ -820,8 +829,10 @@ new_image() {
     docker rename ciphernode ciphernode-old
     ```
 
-    For Docker Compose, make sure that `CIPHERNODE_IMAGE` names the new image, then run
-    `docker compose up -d`. This command replaces the old container.
+    For Docker Compose, make sure that `CIPHERNODE_IMAGE` names the new image. Remove the
+    `entrypoint:` line from the service: step 2 required the old container to start `interfold`
+    directly, but the new image must start through its own entrypoint, which uses the volume. Then
+    run `docker compose up -d`. This command replaces the old container.
 
 13. Make sure that the log shows `Ciphernode release is accepted`, and that this command shows the
     operator address from step 4:

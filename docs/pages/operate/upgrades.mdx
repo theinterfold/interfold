@@ -332,6 +332,12 @@ Stop the process with the tool that supervises it.
 `reset-data` takes the same process lock as `interfold start` and refuses to run while the node
 runs.
 
+A Docker container of an image earlier than v0.19.0 that starts through the image entrypoint cannot
+start again after a stop. That entrypoint sets the password again at each start, and
+`interfold password set` refuses a key file that exists. Check the entrypoint with
+`docker inspect -f '{{json .Config.Entrypoint}}' <container>`. If it is
+`["ciphernode-entrypoint.sh"]`, contact the protocol team before you stop the container.
+
 ### Record the identity
 
 Run `interfold wallet get --name <node>` and `interfold net get-peer-id --name <node>`.
@@ -395,7 +401,8 @@ Use the first case that applies:
 
 To start the node again with the release that it ran before, install that release again. For
 example, run `interfoldup update --version v0.18.0` for a node that ran v0.18.0. For Docker, start
-the stopped container with `docker start <container>`.
+the stopped container with `docker start <container>`. This does not work for a container that
+starts through the entrypoint of an image earlier than v0.19.0, as the "Stop the node" step says.
 
 ### Verify the identity
 
