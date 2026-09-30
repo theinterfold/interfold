@@ -396,6 +396,32 @@ Set `CRISP_E2E_DURATION_SECS` to change the input window of the test (default `3
 `--ui` (`pnpm test:e2e --ui`) to run the Synpress wallet setup without `--headless`. On Linux, the
 script runs Playwright with `xvfb-run`. Run `pnpm report` to open the Playwright report.
 
+## Compact the server database
+
+The CRISP server keeps its database in `database/server` below its working directory. sled keeps old
+copies of changed pages on disk until it cleans its log. To recover that space, copy the database
+while the server is stopped. The copy leaves out the old copies. It can still be up to about three
+times the size of the current data, because sled writes pages again while it builds the copy.
+
+1. Stop the CRISP server.
+2. In the server's working directory, run the `cli` binary of the same build:
+
+   ```bash
+   ../target/debug/cli compact-database database/server database/server-compact
+   ```
+
+3. Move `database/server` to a backup location.
+4. Rename `database/server-compact` to `database/server`.
+5. Start the CRISP server. When the server works correctly, delete the backup.
+
+The command stops without a copy when the target directory exists or when the source directory holds
+no database. It also stops when the server holds the database, or when the copy does not match the
+database.
+
+The server moves ballots out of the round records of an older release when it starts. An older
+release cannot read the moved ballots. Before you upgrade the server, stop it and copy
+`database/server`. To return to an older release, restore that copy.
+
 ## Common setup errors
 
 | Symptom                                                                                                    | Cause                                                                     | Fix                                                                                            |

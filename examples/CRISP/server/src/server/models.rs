@@ -284,6 +284,10 @@ pub struct E3Crisp {
     pub eligible_addresses: Vec<TokenHolder>,
     pub token_address: String,
     pub balance_threshold: String,
+    /// Ciphertexts that an older release kept in this record. Startup moves them to keys of their
+    /// own (`CrispE3Repository::move_inline_ciphertexts`). Only an input indexed before the input
+    /// commitments existed keeps its ciphertext here, and reads refuse its round.
+    #[serde(default)]
     pub ciphertext_inputs: Vec<(Vec<u8>, u64)>,
     /// The commitment the contract stored for each input, keyed by the same on-chain index.
     ///
