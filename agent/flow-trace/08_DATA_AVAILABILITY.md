@@ -119,6 +119,13 @@ The check runs at intake only. The publication worker does not repeat it. An inp
 committed keeps its data and its recovery jobs, because its pending status still needs DA
 finalization even when the Secure Process will exclude it from ballot selection.
 
+Intake skips this check, the proof check, and the commitment cutoff for an input that Ethereum
+already committed (`stage_input`). The committed input ID binds the content hash, so bytes with that
+hash are the committed bytes, and the contract refuses the new-input checks for such an input. A
+server that lost its job database therefore recovers a committed input when a client stages the same
+ballot again, also after the cutoff. The job then fails only at the compute deadline, like any other
+input job.
+
 ## Deadline simulation
 
 The production timeout maxima before a committee key can exist are:

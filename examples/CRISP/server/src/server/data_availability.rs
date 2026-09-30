@@ -941,7 +941,6 @@ impl AvailabilityService {
             }
         }
 
-        // Reject invalid Noir proofs before the service pays an Avail submission fee.
         let contract = CRISPContract::new(
             &self.http_rpc_url,
             &self.private_key,
@@ -949,29 +948,46 @@ impl AvailabilityService {
         )
         .await
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        contract
-            .validate_input_proof(
-                e3_id_to_u256(e3_id).map_err(|_| reject_input("The E3 identifier is invalid"))?,
-                envelope.noirProof.clone(),
-                envelope.slotAddress,
-                envelope.encryptedVoteCommitment,
+        let e3_id_value =
+            e3_id_to_u256(e3_id).map_err(|_| reject_input("The E3 identifier is invalid"))?;
+        // An input that Ethereum already committed needs its publication, for example after this
+        // service lost its database. Its input ID binds the content hash that `input_identity`
+        // checked, so these are the committed bytes. The contract refuses the new-input checks for
+        // a committed input, and `verify` refuses the round until the input is published.
+        let committed = contract
+            .is_input_committed(
+                e3_id_value,
                 envelope.encryptedVoteHash,
+                envelope.encryptedVoteCommitment,
+                envelope.slotAddress,
                 envelope.parentIndexPlusOne.to::<u64>(),
             )
-            .await?;
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        if !committed {
+            // Reject invalid Noir proofs before the service pays an Avail submission fee.
+            contract
+                .validate_input_proof(
+                    e3_id_value,
+                    envelope.noirProof.clone(),
+                    envelope.slotAddress,
+                    envelope.encryptedVoteCommitment,
+                    envelope.encryptedVoteHash,
+                    envelope.parentIndexPlusOne.to::<u64>(),
+                )
+                .await?;
 
-        // The proof binds the commitment, not the bytes. Check the bytes against that commitment
-        // before this service attests to them or spends funds on their publication.
-        self.validate_input_ciphertext(e3_id, &object, envelope.encryptedVoteCommitment)
-            .await?;
+            // The proof binds the commitment, not the bytes. Check the bytes against that
+            // commitment before this service attests to them or spends funds on their publication.
+            self.validate_input_ciphertext(e3_id, &object, envelope.encryptedVoteCommitment)
+                .await?;
+        }
 
         let (deadline, commitment_deadline) = if matches!(&*self.backend, Backend::Avail { .. }) {
             let interfold =
                 InterfoldContractFactory::create_read(&self.http_rpc_url, &self.interfold_address)
                     .await
                     .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-            let e3_id_value =
-                e3_id_to_u256(e3_id).map_err(|_| reject_input("The E3 identifier is invalid"))?;
             let e3 = interfold
                 .get_e3(e3_id_value)
                 .await
@@ -991,7 +1007,7 @@ impl AvailabilityService {
                 .input_commitment_deadline(e3_id_value)
                 .await
                 .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-            if commitment_deadline <= now {
+            if !committed && commitment_deadline <= now {
                 return Err(reject_input("The vote commitment deadline has passed"));
             }
             anyhow::ensure!(
@@ -4001,6 +4017,108 @@ mod tests {
         moved.state = state;
         service.save(&moved).unwrap();
         moved
+    }
+
+    sol! {
+        /// `tests/fixtures/mock_crisp_availability.sol`, built with
+        /// `solc --optimize --bin mock_crisp_availability.sol`.
+        #[sol(rpc, bytecode = "60c0604052336080523480156012575f5ffd5b506040516109e73803806109e7833981016040819052602f916036565b60a052604c565b5f602082840312156045575f5ffd5b5051919050565b60805160a0516109736100745f395f81816101bb015261034301525f61012501526109735ff3fe608060405234801561000f575f5ffd5b506004361061011c575f3560e01c80638fa990e3116100a9578063d016b08d1161006e578063d016b08d1461031f578063d1245f6214610332578063e5d6ab8f14610365578063f02631ae1461037d578063f71113361461039f575f5ffd5b80638fa990e314610285578063923123861461028e5780639b6b9664146102c8578063b604ecfe146102d4578063ca6b137c1461030c575f5ffd5b806356e0932f116100ef57806356e0932f146101fd57806362c6aabf14610229578063795e008b1461024a57806383be451a1461025f5780638d4d2b0c14610274575f5ffd5b8063118b9871146101205780631900f48314610164578063203487ce146101b6578063406ed35c146101dd575b5f5ffd5b6101477f000000000000000000000000000000000000000000000000000000000000000081565b6040516001600160a01b0390911681526020015b60405180910390f35b6101a86101723660046104fc565b6040805167ffffffffffffffff831660208201525f91016040516020818303038152906040528051906020012090509392505050565b60405190815260200161015b565b6101a87f000000000000000000000000000000000000000000000000000000000000000081565b6101f06101eb36600461053e565b6103a8565b60405161015b91906105ab565b61021961020b3660046106ff565b5f5460ff1695945050505050565b604051901515815260200161015b565b6102196102373660046106ff565b50505f54610100900460ff169392505050565b6101a861025836600461053e565b5060015490565b61027261026d366004610790565b6103b5565b005b5f5461021990610100900460ff1681565b6101a860015481565b6102ad61029c36600461053e565b5f67ffffffffffffffff8193909250565b6040805193845260208401929092529082015260600161015b565b5f546102199060ff1681565b6102726102e236600461081b565b5f805461ffff191693151561ff001916939093176101009215159290920291909117909155600155565b61021961031a366004610855565b6103df565b61027261032d3660046108d1565b61043c565b6101a861034036600461053e565b507f000000000000000000000000000000000000000000000000000000000000000090565b6101a86103733660046106ff565b5f95945050505050565b61038661025881565b60405167ffffffffffffffff909116815260200161015b565b6101a860025481565b6103b0610460565b919050565b5f805461ff00191661010017815560028054916103d183610919565b919050555050505050505050565b5f805460ff161561042e5760405162461bcd60e51b8152602060048201526015602482015274125b9c1d5d105b1c9958591e541d589b1a5cda1959605a1b604482015260640160405180910390fd5b506001979650505050505050565b5f805460ff19166001178155600280549161045683610919565b9190505550505050565b604051806101e001604052805f81526020015f60ff1681526020015f81526020016104896104de565b81525f602082018190526040820181905260608083018290526080830181905260a0830182905260c0830182905260e08301829052610100830182905261012083015261014082018190526101609091015290565b60405180604001604052806002906020820280368337509192915050565b5f5f5f6060848603121561050e575f5ffd5b8335925060208401359150604084013567ffffffffffffffff81168114610533575f5ffd5b809150509250925092565b5f6020828403121561054e575f5ffd5b5035919050565b805f5b6002811015610577578151845260209384019390910190600101610558565b50505050565b5f81518084528060208401602086015e5f602082860101526020601f19601f83011685010191505092915050565b60208152815160208201525f60208301516105cb604084018260ff169052565b506040830151606083015260608301516105e86080840182610555565b50608083015160c083015260a08301516001600160a01b03811660e08401525060c083015160ff81166101008401525060e083015161020061012084015261063461022084018261057d565b90506101008401516106526101408501826001600160a01b03169052565b506101208401516001600160a01b038116610160850152506101408401516101808401526101608401516101a0840152610180840151601f19848303016101c085015261069f828261057d565b9150506101a08401516106be6101e08501826001600160a01b03169052565b506101c08401516102008401528091505092915050565b80356001600160a01b03811681146103b0575f5ffd5b803564ffffffffff811681146103b0575f5ffd5b5f5f5f5f5f60a08688031215610713575f5ffd5b853594506020860135935060408601359250610731606087016106d5565b915061073f608087016106eb565b90509295509295909350565b5f5f83601f84011261075b575f5ffd5b50813567ffffffffffffffff811115610772575f5ffd5b602083019150836020828501011115610789575f5ffd5b9250929050565b5f5f5f5f5f5f5f60c0888a0312156107a6575f5ffd5b873596506107b6602089016106d5565b955060408801359450606088013593506107d2608089016106eb565b925060a088013567ffffffffffffffff8111156107ed575f5ffd5b6107f98a828b0161074b565b989b979a50959850939692959293505050565b803580151581146103b0575f5ffd5b5f5f5f6060848603121561082d575f5ffd5b6108368461080c565b92506108446020850161080c565b929592945050506040919091013590565b5f5f5f5f5f5f5f60c0888a03121561086b575f5ffd5b87359650602088013567ffffffffffffffff811115610888575f5ffd5b6108948a828b0161074b565b90975095506108a79050604089016106d5565b935060608801359250608088013591506108c360a089016106eb565b905092959891949750929550565b5f5f5f604084860312156108e3575f5ffd5b83359250602084013567ffffffffffffffff811115610900575f5ffd5b61090c8682870161074b565b9497909650939450505050565b5f6001820161093657634e487b7160e01b5f52601160045260245ffd5b506001019056fea2646970667358221220a9c75b8f68e1d9c35fb14d954d8976a1a1ba9f70ece29dfec738b7baedd687ce64736f6c634300081e0033")]
+        contract MockCrispAvailability {
+            constructor(bytes32 configId);
+            function set(bool isCommitted, bool isPublished, uint256 deadline) external;
+        }
+    }
+
+    /// A node with the `Interfold` and `CRISPProgram` state of one input, and a service over `db`
+    /// that sends from a funded key. Each chain gets a new key: the process keeps one nonce sequence
+    /// for each account.
+    async fn chain_service(
+        db: &Db,
+    ) -> (
+        AvailabilityService,
+        MockCrispAvailability::MockCrispAvailabilityInstance<impl Provider>,
+        alloy::node_bindings::AnvilInstance,
+    ) {
+        use alloy::providers::ext::AnvilApi;
+
+        // One slot for each epoch puts the finalized block two blocks behind the head.
+        let anvil = alloy::node_bindings::Anvil::new()
+            .args(["--slots-in-an-epoch", "1"])
+            .try_spawn()
+            .unwrap();
+        let signer = PrivateKeySigner::random();
+        let provider = ProviderBuilder::new()
+            .wallet(signer.clone())
+            .connect(&anvil.endpoint())
+            .await
+            .unwrap();
+        provider
+            .anvil_set_balance(signer.address(), U256::from(10).pow(U256::from(18)))
+            .await
+            .unwrap();
+        let (_, config_id) = bfv_parameters_for_param_set(0).unwrap();
+        let mock = MockCrispAvailability::deploy(provider, config_id)
+            .await
+            .unwrap();
+        let mut service =
+            test_service_on(db, 1 << 20, RelayPolicy::new(31_337, false, 3, None, None));
+        service.http_rpc_url = anvil.endpoint();
+        service.private_key = format!("0x{}", hex::encode(signer.to_bytes()));
+        service.interfold_address = mock.address().to_string();
+        service.e3_program_address = mock.address().to_string();
+        (service, mock, anvil)
+    }
+
+    /// Set the state of the input and its commitment cutoff, and finalize them.
+    async fn set_input(
+        mock: &MockCrispAvailability::MockCrispAvailabilityInstance<impl Provider>,
+        committed: bool,
+        published: bool,
+        cutoff: u64,
+    ) {
+        use alloy::providers::ext::AnvilApi;
+
+        mock.set(committed, published, U256::from(cutoff))
+            .send()
+            .await
+            .unwrap()
+            .watch()
+            .await
+            .unwrap();
+        mock.provider().anvil_mine(Some(2), None).await.unwrap();
+    }
+
+    /// A browser stages a committed input again after the service lost its database, and after the
+    /// commitment cutoff. The contract refuses the new-input checks for a committed input, so the
+    /// service must recover the input from its chain state. Otherwise `verify` refuses the round
+    /// until the compute deadline.
+    #[tokio::test]
+    async fn a_committed_input_is_recovered_after_the_database_is_lost() {
+        let (mut service, mock, _anvil) = chain_service(&temporary_db()).await;
+        // The test ends before the service calls Avail.
+        service.backend = Arc::new(Backend::Avail {
+            publisher: Arc::new(
+                AvailPublisher::new("http://127.0.0.1:1", 1, "//Alice", "http://127.0.0.1:1", 1)
+                    .unwrap(),
+            ),
+            reader: Arc::new(AvailReader::new("http://127.0.0.1:1").unwrap()),
+        });
+        set_input(&mock, true, false, 0).await;
+        let object = b"committed-ciphertext";
+        let envelope = staged_envelope_with_object(
+            Address::repeat_byte(0x77),
+            B256::repeat_byte(0x11),
+            object,
+        );
+
+        let staged = service
+            .stage_input("1", envelope, false, None)
+            .await
+            .unwrap();
+
+        // The worker found the finalized commitment, and publishes the input next.
+        let job = service.load_required(&staged.view.job_id).unwrap();
+        assert!(matches!(job.state, JobState::Committed { .. }), "{job:?}");
     }
 
     fn output_job(id: &str, state: JobState, object: &[u8]) -> AvailabilityJob {
