@@ -241,8 +241,10 @@ the code does not meet yet.
 - Rust type compatibility is **not** a storage-migration strategy: every durable payload carries an
   explicit schema version; add/remove/reorder of fields requires a compatibility test against
   checked-in fixtures; version mismatch runs a tested migration or fails startup with an actionable
-  error. **Gap:** persisted state is positional bincode, and only a few types have a version field
-  or a layout fixture. Until that changes, increase `SCHEMA_VERSION`
+  error. **Gap:** persisted state is positional bincode, and only a few types have a version field.
+  The layout locks (`crates/layout-lock`, listed in `00_INDEX.md`) fail when an encoded layout
+  changes. A change can still ship with a rewritten fixture. Hand-written formats and values stored
+  inside opaque bytes are not covered. Until that changes, increase `SCHEMA_VERSION`
   (`crates/sync/src/sync/schema_version.rs`) for every incompatible change to a persisted type or
   `InterfoldEventData` variant, including an added field. Startup halts on any mismatch. —
   `ARCHITECTURE.md`; `00_INDEX.md` known open issues

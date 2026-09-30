@@ -223,15 +223,17 @@ fn sha256(bytes: &[u8]) -> [u8; 32] {
     Sha256::digest(bytes).into()
 }
 
+/// Shared by the wire tests here and the sync actor tests.
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use e3_config::NetworkProfile;
-    use e3_events::{E3id, EventConstructorWithTimestamp, EventSource, KeyshareCreated};
+pub(crate) mod fixtures {
+    use e3_events::{
+        E3id, EventConstructorWithTimestamp, EventSource, InterfoldEvent, KeyshareCreated,
+        Unsequenced,
+    };
     use e3_utils::ArcBytes;
 
-    fn forwardable_gossip() -> GossipData {
-        let event = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+    pub(crate) fn unsequenced_event() -> InterfoldEvent<Unsequenced> {
+        InterfoldEvent::<Unsequenced>::new_with_timestamp(
             KeyshareCreated {
                 pubkey: ArcBytes::from_bytes(b"public-key"),
                 e3_id: E3id::new("1", 1),
@@ -244,8 +246,57 @@ mod tests {
             1,
             None,
             EventSource::Local,
+        )
+    }
+
+    /// Asserts the length and SHA-256 digest of one wire message. A peer on another release decodes
+    /// these bytes, so they change only with a gossip or sync wire version change, or a protocol
+    /// version change. Update the expected values in that change. On failure the message prints the
+    /// new bytes.
+    pub(crate) fn assert_locked_bytes(name: &str, bytes: &[u8], len: usize, digest: &str) {
+        assert_eq!(
+            (bytes.len(), hex::encode(super::sha256(bytes)).as_str()),
+            (len, digest),
+            "the {name} wire bytes changed: {}",
+            hex::encode(bytes)
         );
-        event.into_sequenced(1).try_into().unwrap()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fixtures::{assert_locked_bytes, unsequenced_event};
+    use super::*;
+    use crate::domain::net_event_batch::{BatchCursor, EventBatch, FetchEventsSince};
+    use e3_config::NetworkProfile;
+    use e3_events::AggregateId;
+
+    // The locked wire bytes for gossip wire 4 and sync wire 3.
+    const GOSSIP_LEN: usize = 390;
+    const GOSSIP_DIGEST: &str = "42f1309c42285bfa14ff3515f0396295ceb9c5d95847bf9cd55b2fcd59ab79bb";
+    const FETCH_LEN: usize = 82;
+    const FETCH_DIGEST: &str = "c7843e62df85a7e18fb8acca5285635f5b0936cca70709542995b4f7fd8b1496";
+    const BATCH_LEN: usize = 297;
+    const BATCH_DIGEST: &str = "440eaa7cfba38ed9ca359a681fda3710686207c18b4045e354fc5aba145ff046";
+    const REQUEST_FRAME: (usize, &str) = (
+        119,
+        "80d4b2528825a099b2052ec2063a2ede1bebf06956021ec95fcfbc53e8997966",
+    );
+    const OK_FRAME: (usize, &str) = (
+        123,
+        "7c760f45c6c9e30ea8c645bda4beffea990c737ec9341fabd1cf1dcf8e10b19a",
+    );
+    const BAD_REQUEST_FRAME: (usize, &str) = (
+        24,
+        "642a7adb11e0f910ea6f6edbf0c27437872752d524997b6763da9a3f8e295b57",
+    );
+    const ERROR_FRAME: (usize, &str) = (
+        13,
+        "d9d63a05a856c947769f3755271cd8d7c9b6c91f4e249e95578d68b4338b339b",
+    );
+
+    fn forwardable_gossip() -> GossipData {
+        unsequenced_event().into_sequenced(1).try_into().unwrap()
     }
 
     #[test]
@@ -293,12 +344,71 @@ mod tests {
         assert!(error.to_string().contains("message kind"));
     }
 
+    /// The sync response is locked in the sync actor tests, beside its type.
     #[test]
-    fn sync_envelope_v3_fixture_is_stable() {
-        let bytes = encode_sync(SyncMessageKind::FetchEvents, &7u64).unwrap();
-        assert_eq!(
-            hex::encode(bytes),
-            "49465333030000000000aae89fc0f03e2959ae4d701a80cc3915918c950b159f6abb6c92c1433b1a853408000000000000000700000000000000"
+    fn wire_message_bytes_are_locked() {
+        let policy = NetworkPolicy::local_unrestricted();
+        let gossip = encode_gossip(&forwardable_gossip(), &policy, Some([7; 16])).unwrap();
+        assert_locked_bytes("gossip event envelope", &gossip, GOSSIP_LEN, GOSSIP_DIGEST);
+
+        let fetch: Vec<u8> = FetchEventsSince::new(AggregateId::new(3), 5, 7)
+            .try_into()
+            .unwrap();
+        assert_locked_bytes("FetchEvents", &fetch, FETCH_LEN, FETCH_DIGEST);
+
+        let batch: Vec<u8> = EventBatch {
+            events: vec![unsequenced_event()],
+            next: BatchCursor::Next(9),
+            aggregate_id: AggregateId::new(3),
+        }
+        .try_into()
+        .unwrap();
+        assert_locked_bytes("EventBatch", &batch, BATCH_LEN, BATCH_DIGEST);
+    }
+
+    /// Sync envelopes travel in CBOR frames that libp2p's request-response codec writes. CBOR
+    /// writes variant names, so renaming a `ProtocolResponse` variant breaks a peer on another
+    /// release.
+    #[test]
+    fn request_response_frame_bytes_are_locked() {
+        use crate::events::ProtocolResponse;
+        use futures::executor::block_on;
+        use futures::io::Cursor;
+        use libp2p::request_response::{cbor::codec::Codec, Codec as _};
+        use libp2p::StreamProtocol;
+
+        // The codec does not write the protocol name.
+        let protocol = StreamProtocol::new("/unused");
+        let mut codec = Codec::<Vec<u8>, ProtocolResponse>::default();
+        let envelope: Vec<u8> = FetchEventsSince::new(AggregateId::new(3), 5, 7)
+            .try_into()
+            .unwrap();
+
+        let mut frame = Cursor::new(Vec::new());
+        block_on(codec.write_request(&protocol, &mut frame, envelope.clone())).unwrap();
+        assert_locked_bytes(
+            "request frame",
+            frame.get_ref(),
+            REQUEST_FRAME.0,
+            REQUEST_FRAME.1,
         );
+
+        for (name, response, (len, digest)) in [
+            ("Ok frame", ProtocolResponse::Ok(envelope), OK_FRAME),
+            (
+                "BadRequest frame",
+                ProtocolResponse::BadRequest("bad request".to_string()),
+                BAD_REQUEST_FRAME,
+            ),
+            (
+                "Error frame",
+                ProtocolResponse::Error("error".to_string()),
+                ERROR_FRAME,
+            ),
+        ] {
+            let mut frame = Cursor::new(Vec::new());
+            block_on(codec.write_response(&protocol, &mut frame, response)).unwrap();
+            assert_locked_bytes(name, frame.get_ref(), len, digest);
+        }
     }
 }

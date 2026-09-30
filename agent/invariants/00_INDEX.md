@@ -104,10 +104,15 @@ item in code before you rely on it.
 - The event log and snapshots are positional bincode, and gossip carries bincode payloads inside a
   versioned envelope. A per-type schema version exists only on some types, for example
   `BondOwnerState`. The main storage guard is the global `SCHEMA_VERSION` in
-  `crates/sync/src/sync/schema_version.rs`, which a change must increase by hand. Layout fixture
-  tests exist for only a few types, for example `CommitteeFinalized`
-  (`dkg_fold_attestation_context_established.rs`) and `BondOwnerState`. Most `InterfoldEventData`
-  variants have none. `crates/config/protocol-release.toml` is not linked to `SCHEMA_VERSION`.
+  `crates/sync/src/sync/schema_version.rs`, which a change must increase by hand. Layout locks
+  (`crates/layout-lock`) fail when an encoded layout changes. `crates/tests/tests/layout_lock.rs`
+  covers the event log, keyshare payloads, gossip payloads, and public repository values. In-crate
+  locks cover the private roots in `e3-slashing` and `e3-zk-prover` and the DHT document payload in
+  `e3-net`. `crates/net/src/network_sync/wire.rs` covers sample wire messages and their
+  request-response frames. Not covered: hand-written formats, such as commit-log framing, and values
+  stored inside opaque bytes, such as the encrypted `SharedSecret` shares in the keyshare snapshot
+  and the fhe.rs keys in `SensitiveBytes`. A rewritten fixture is not yet tied to a `SCHEMA_VERSION`
+  change. `crates/config/protocol-release.toml` is not linked to `SCHEMA_VERSION`.
   `03_ACTOR_RUNTIME.md` §Schema evolution states the target.
 - `ComputeEffectGate` is in-memory only — no durable external-effect outbox yet.
 - Network: `call_and_await_response` waits on a bounded broadcast receiver, so lag can drop the

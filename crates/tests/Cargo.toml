@@ -54,3 +54,7 @@ zeroize = { workspace = true }
 
 [dev-dependencies]
 e3-events = { workspace = true, features = ["test-helpers"] }
+e3-layout-lock = { workspace = true }
+e3-sync = { workspace = true }
+hex = { workspace = true }
+serde = { workspace = true }

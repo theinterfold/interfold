@@ -714,3 +714,23 @@ async fn required_peer_history_still_holds_startup_when_no_peer_serves_it() {
         "a full node must not continue without the history of its open E3s"
     );
 }
+
+/// The locked `SyncResponse` bytes for sync wire 3. Encoded through the
+/// production conversion. See `crate::domain::wire::fixtures`.
+#[test]
+fn sync_response_bytes_are_locked() {
+    use crate::domain::wire::fixtures::{assert_locked_bytes, unsequenced_event};
+
+    let bytes: Vec<u8> = SyncResponseValue {
+        events: vec![unsequenced_event()],
+        ts: 11,
+    }
+    .try_into()
+    .unwrap();
+    assert_locked_bytes(
+        "SyncResponse",
+        &bytes,
+        285,
+        "be1482a7247ac7888f5bf7bee310a1d96f2be4dbd7350dd59660143bbb6b9bbe",
+    );
+}

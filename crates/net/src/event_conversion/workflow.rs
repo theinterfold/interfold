@@ -263,3 +263,22 @@ mod tests {
         assert!(error.to_string().contains("must not contain party filters"));
     }
 }
+
+#[cfg(test)]
+mod layout_lock {
+    //! Locks the encoded layout of the DHT document payload. The payload has no version envelope,
+    //! and peers on two releases fetch each other's documents. `e3-tests` cannot reach this type.
+
+    use super::ReceivableDocument;
+    use std::path::Path;
+
+    #[test]
+    fn dht_document_layout_matches_the_locked_fixture() {
+        let rows =
+            e3_layout_lock::sample_rows::<ReceivableDocument, _>("dht_document", |_| String::new());
+        e3_layout_lock::assert_fixture(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/layout_lock.txt"),
+            &rows,
+        );
+    }
+}

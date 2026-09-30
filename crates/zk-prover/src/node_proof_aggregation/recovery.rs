@@ -279,3 +279,36 @@ impl NodeProofAggregator {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod layout_lock {
+    //! Locks the encoded layout of the node proof recovery records. `e3-tests` locks the public
+    //! roots (`crates/tests/tests/layout_lock.rs`) but cannot reach these.
+
+    use super::*;
+    use serde::de::DeserializeOwned;
+    use std::path::Path;
+
+    /// Binds `T` to the accessor's value type. The accessor is never called.
+    fn repository<T: Serialize + DeserializeOwned>(
+        root: &str,
+        _accessor: fn(&Repositories) -> Repository<T>,
+    ) -> Vec<String> {
+        e3_layout_lock::sample_rows::<T, _>(root, |_| String::new())
+    }
+
+    #[test]
+    fn persisted_layouts_match_the_locked_fixture() {
+        let mut rows = repository("node_dkg_fold_recovery", index_repository);
+        rows.extend(repository("node_dkg_inner_proof", |r| {
+            proof_repository(r, &E3id::new("1", 1), 0)
+        }));
+        rows.extend(repository("node_dkg_fold_meta", |r| {
+            meta_repository(r, &E3id::new("1", 1))
+        }));
+        e3_layout_lock::assert_fixture(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/layout_lock.txt"),
+            &rows,
+        );
+    }
+}
