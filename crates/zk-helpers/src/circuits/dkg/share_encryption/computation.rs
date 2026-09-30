@@ -586,6 +586,16 @@ mod tests {
 
         assert_eq!(max_pk_bound.clone(), BigUint::from(1125899906777088u128));
         assert_eq!(bits.pk_bit, expected_bits);
+        assert_eq!(
+            bounds.msg_bound,
+            BigUint::from(
+                BfvPreset::InsecureThreshold512
+                    .build_pair()
+                    .unwrap()
+                    .1
+                    .plaintext()
+            )
+        );
     }
 
     #[test]

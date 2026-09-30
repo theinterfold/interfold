@@ -45,11 +45,8 @@ describe('real encryption proof', () => {
       ct0is: circuitInputs.ct0is,
       u: circuitInputs.u,
       e0: circuitInputs.e0,
-      e0is: circuitInputs.e0is,
-      e0_quotients: circuitInputs.e0_quotients,
       k1: circuitInputs.k1,
-      r1is: circuitInputs.r1is,
-      r2is: circuitInputs.r2is,
+      r: circuitInputs.r,
     } as any)
     k1Commitment = BigInt((ct0Outputs as string[])[2])
 

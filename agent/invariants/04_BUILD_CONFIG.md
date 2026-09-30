@@ -25,8 +25,8 @@ every section.
   `SOURCE_HASH` matches the current source tree. A different build at the branch tip must not
   replace it. The release workflow archives the branch tip and fails if the tip's hash differs.
   Release verification still checks the source hash, every required pair, and each pair's build
-  stamp. **Gap:** `SOURCE_HASH` does not cover the shared Noir library (see `02_CRYPTO_CIRCUITS.md`
-  §Noir / Barretenberg compatibility).
+  stamp. `SOURCE_HASH` includes the shared Noir library and its dependency manifest (see
+  `02_CRYPTO_CIRCUITS.md` §Noir / Barretenberg compatibility).
 - **`Elf.sol` is never committed.** `crates/support/methods/build.rs` writes it with a machine-local
   guest ELF path, so it is generated per checkout and `.gitignore`d.
 - **A release publishes a complete provenance manifest** — `pnpm provenance:manifest`. It ties

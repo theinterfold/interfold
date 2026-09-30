@@ -91,9 +91,8 @@ item in code before you rely on it.
   failure settlement
 - Startup does not reconcile persisted request contexts with finalized chain state; concern #48
   remains open. — `03_ACTOR_RUNTIME.md` §Durability, persistence, replay
-- Circuit artifacts: the source hash does not cover the shared Noir library, and a node installs a
-  downloaded archive without `checksums.json`. — `02_CRYPTO_CIRCUITS.md` §Noir / Barretenberg
-  compatibility
+- Circuit artifacts: a node installs a downloaded archive without `checksums.json`. —
+  `02_CRYPTO_CIRCUITS.md` §Noir / Barretenberg compatibility
 - Deployment and CLI: `deployInterfold.ts` sends one setter without waiting for its receipt, and the
   CLI accepts secrets on argv. — `04_BUILD_CONFIG.md`
 - CLI `activate` calls `register` and reverts for registered operators. —

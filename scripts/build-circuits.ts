@@ -39,6 +39,8 @@ import {
   type CircuitPreset,
 } from './circuit-constants'
 
+const CIRCUIT_VERSION = 'interfold-bfv-v2'
+
 /**
  * Reduce Cargo.lock to the external crate pins that the circuit generators compile against.
  *
@@ -316,7 +318,7 @@ class NoirCircuitBuilder {
     )
     const paramSetHash = keccak256(encodedParams)
     const configId = keccak256(
-      AbiCoder.defaultAbiCoder().encode(['bytes32', 'bytes32', 'bytes32'], [id('fhe.rs:BFV'), paramSetHash, id('interfold-bfv-v1')]),
+      AbiCoder.defaultAbiCoder().encode(['bytes32', 'bytes32', 'bytes32'], [id('fhe.rs:BFV'), paramSetHash, id(CIRCUIT_VERSION)]),
     )
     return { h, t, n, paramSet, committeeSize, paramSetHash, configId }
   }
@@ -424,7 +426,7 @@ import { IInterfold } from "../interfaces/IInterfold.sol";
 // support insecure and secure BFV with every committee size.
 library ActiveCryptoConfig {
     bytes32 internal constant ENCRYPTION_SCHEME_ID = keccak256("fhe.rs:BFV");
-    bytes32 internal constant CIRCUIT_VERSION = keccak256("interfold-bfv-v1");
+    bytes32 internal constant CIRCUIT_VERSION = keccak256("${CIRCUIT_VERSION}");
 
     bytes32 internal constant INSECURE_CONFIG_ID =
         ${testnet.configId};
@@ -1298,8 +1300,10 @@ library ActiveCryptoConfig {
     }
     const circuits = this.discoverCircuits().sort((a, b) => `${a.group}/${a.name}`.localeCompare(`${b.group}/${b.name}`))
     for (const c of circuits) this.hashDir(c.path, hash)
-    // These sources generate the ignored bounds and parity matrices.
+    // Hash shared circuit logic and the generators for the ignored bounds and parity matrices.
     for (const sourceDir of [
+      'circuits/lib/src/core',
+      'circuits/lib/src/math',
       'crates/zk-helpers/src',
       'crates/fhe-params/src',
       'crates/fhe/src',
@@ -1311,6 +1315,11 @@ library ActiveCryptoConfig {
       if (existsSync(path)) this.hashDir(path, hash)
     }
     for (const sourceFile of [
+      'circuits/lib/Nargo.toml',
+      'circuits/lib/src/lib.nr',
+      'circuits/lib/src/configs/mod.nr',
+      'circuits/lib/src/configs/committee/mod.nr',
+      'circuits/lib/src/configs/default/mod.nr',
       'scripts/build-circuits.ts',
       'scripts/circuit-constants.ts',
       'packages/interfold-contracts/scripts/protocol/constants.ts',
@@ -1319,7 +1328,16 @@ library ActiveCryptoConfig {
       const path = join(this.rootDir, sourceFile)
       if (existsSync(path)) {
         hash.update(sourceFile)
-        const source = readFileSync(path)
+        let source = readFileSync(path)
+        if (sourceFile === 'circuits/lib/src/configs/default/mod.nr') {
+          // The pair already identifies its preset. Keep shared constants, not the local selection.
+          source = Buffer.from(
+            source
+              .toString()
+              .replace(/preset: (insecure-512|secure-8192)/g, 'preset: <selected>')
+              .replace(/super::(insecure|secure)::/g, 'super::<selected>::'),
+          )
+        }
         hash.update(sourceFile === 'Cargo.lock' ? normalizeCargoLockForCircuitHash(source) : source)
       }
     }

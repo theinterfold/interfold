@@ -24,19 +24,15 @@ export const proveUserDataEncryption = async (circuitInputs: CircuitInputs): Pro
       ct0is: circuitInputs.ct0is,
       u: circuitInputs.u,
       e0: circuitInputs.e0,
-      e0is: circuitInputs.e0is,
-      e0_quotients: circuitInputs.e0_quotients,
       k1: circuitInputs.k1,
-      r1is: circuitInputs.r1is,
-      r2is: circuitInputs.r2is,
+      r: circuitInputs.r,
     })
     const { witness: userDataEncryptionCt1Witness } = await executeCircuit(userDataEncryptionCt1Circuit as CompiledCircuit, {
       pk1is: circuitInputs.pk1is,
       ct1is: circuitInputs.ct1is,
       u: circuitInputs.u,
       e1: circuitInputs.e1,
-      p1is: circuitInputs.p1is,
-      p2is: circuitInputs.p2is,
+      r_ct1: circuitInputs.r_ct1,
     })
 
     const userDataEncryptionCt0Backend = new UltraHonkBackend((userDataEncryptionCt0Circuit as CompiledCircuit).bytecode, api)
