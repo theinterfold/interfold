@@ -161,13 +161,44 @@ async fn folder_state(folder: &Path) -> Result<FolderState> {
     })
 }
 
+/// What is at the purge marker path of a folder.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum Marker {
+    Missing,
+    /// A file that holds a start of the marker text, which a failed write left part of the way.
+    Incomplete,
+    Complete,
+    /// Another file, a folder, or a link. The purge neither trusts it nor replaces it.
+    Other,
+}
+
+/// Reads the marker path of `folder` without following a link there.
+pub(super) async fn marker(folder: &Path) -> Result<Marker> {
+    let path = folder.join(MARKER_FILE_NAME);
+    let metadata = match fs::symlink_metadata(&path).await {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Marker::Missing),
+        Err(error) => return Err(anyhow!("failed to inspect {}: {error}", path.display())),
+    };
+    if !metadata.is_file() {
+        return Ok(Marker::Other);
+    }
+    let content = fs::read(&path)
+        .await
+        .map_err(|error| anyhow!("failed to read {}: {error}", path.display()))?;
+    Ok(if content == MARKER_TEXT.as_bytes() {
+        Marker::Complete
+    } else if MARKER_TEXT.as_bytes().starts_with(&content) {
+        Marker::Incomplete
+    } else {
+        Marker::Other
+    })
+}
+
 /// The folder holds a complete purge marker. A marker that a failed write left part of the way, or
 /// one that cannot be read, does not count.
-pub(super) async fn marked(folder: &Path) -> bool {
-    matches!(
-        fs::read(folder.join(MARKER_FILE_NAME)).await,
-        Ok(content) if content == MARKER_TEXT.as_bytes()
-    )
+async fn marked(folder: &Path) -> bool {
+    matches!(marker(folder).await, Ok(Marker::Complete))
 }
 
 async fn data_entries(data: &Path) -> Result<Vec<DataEntry>> {

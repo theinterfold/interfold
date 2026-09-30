@@ -166,7 +166,8 @@ key-share and cannot-check refusals together. No flag overrides a refusal for a 
 sees running. The commands also delete the identity. Before the first deletion, the purge writes a
 `purge-in-progress` marker into each node folder that it empties. A later purge treats only a folder
 with that marker as its own leftover and finishes the deletion. An empty folder without the marker,
-such as the mount point of a volume that is not mounted, still needs its store.
+such as the mount point of a volume that is not mounted, still needs its store. Another file or a
+link with the marker's name stops the purge before it deletes anything.
 
 The purge has limits. It finds stores with its own configuration and environment, so it cannot see a
 node that runs with another `E3_DATA_DIR`, `data_dir`, or working directory. It cannot tell whether
