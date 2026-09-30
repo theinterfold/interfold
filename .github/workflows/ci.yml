@@ -1473,6 +1473,11 @@ jobs:
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
 
+      - name: Install Nargo
+        uses: noir-lang/noirup@7dbe69ccc78877f0200ffa5a40836c953d2cfd8f # v0.1.4
+        with:
+          toolchain: ${{ env.NOIR_TOOLCHAIN }}
+
       - name: Cache Barretenberg binary
         id: cache-bb
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
