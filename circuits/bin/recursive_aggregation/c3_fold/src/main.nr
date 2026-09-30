@@ -14,12 +14,13 @@ use bb_proof_verification::{
 };
 use lib::configs::default::dkg::L_THRESHOLD;
 use lib::configs::default::N_PARTIES;
+use lib::math::recursive_vk::predecessor_key_hash;
 
 /// Total slots: one per (party, threshold-modulus) pair.
 pub global C3_SLOTS: u32 = N_PARTIES * L_THRESHOLD;
 
-/// Total public fields for a `c3_fold` proof: 4 pub parameters + 3*C3_SLOTS (pk, msg, ct).
-pub global C3_FOLD_PUBLIC_LEN: u32 = 4 + (3 * C3_SLOTS);
+/// Five public parameters and three columns of C3 slots (pk, msg, ct).
+pub global C3_FOLD_PUBLIC_LEN: u32 = 5 + (3 * C3_SLOTS);
 
 pub global C3_FOLD_PREFIX_LEN: u32 = C3_FOLD_PUBLIC_LEN - (3 * C3_SLOTS);
 
@@ -31,7 +32,8 @@ fn main(
     acc_proof: UltraHonkProof,
     acc_public_inputs: [Field; C3_FOLD_PUBLIC_LEN],
     inner_key_hash: pub Field,
-    acc_key_hash: pub Field,
+    fold_key_hash: pub Field,
+    kernel_key_hash: pub Field,
     is_first_step: pub bool,
     slot_index: pub u32,
 ) -> pub ([Field; C3_SLOTS], [Field; C3_SLOTS], [Field; C3_SLOTS]) {
@@ -39,6 +41,13 @@ fn main(
 
     verify_honk_proof(inner_vk, inner_proof, c3_public_inputs, inner_key_hash);
 
+    let acc_key_hash = predecessor_key_hash(
+        inner_key_hash,
+        fold_key_hash,
+        kernel_key_hash,
+        is_first_step,
+        [acc_public_inputs[0], acc_public_inputs[1], acc_public_inputs[2]],
+    );
     verify_honk_proof_non_zk(acc_vk, acc_proof, acc_public_inputs, acc_key_hash);
 
     let pk_new = c3_public_inputs[0];

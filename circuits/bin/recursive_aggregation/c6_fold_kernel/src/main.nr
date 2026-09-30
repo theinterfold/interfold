@@ -18,9 +18,9 @@ use lib::configs::default::T;
 /// `domain_hi`, `domain_lo`, `d_commitment` (see C6 leaf).
 pub global C6_PUBLIC_LEN: u32 = 6;
 
-/// Same shape as `c6_fold`: 4 pub parameters + the common domain limbs +
+/// Same shape as `c6_fold`: five public parameters, the common domain limbs, and
 /// 4 columns of `T + 1` party slots each.
-pub global C6_FOLD_PUBLIC_LEN: u32 = 6 + (4 * (T + 1));
+pub global C6_FOLD_PUBLIC_LEN: u32 = 7 + (4 * (T + 1));
 
 fn main(
     inner_vk: UltraHonkVerificationKey,
@@ -30,7 +30,8 @@ fn main(
     acc_proof: UltraHonkProof,
     acc_public_inputs: [Field; C6_FOLD_PUBLIC_LEN],
     inner_key_hash: pub Field,
-    acc_key_hash: pub Field,
+    fold_key_hash: pub Field,
+    kernel_key_hash: pub Field,
     is_first_step: pub bool,
     slot_index: pub u32,
 ) -> pub (Field, Field, [Field; T + 1], [Field; T + 1], [Field; T + 1], [Field; T + 1]) {
@@ -39,7 +40,7 @@ fn main(
     verify_honk_proof(inner_vk, inner_proof, c6_public_inputs, inner_key_hash);
 
     // Signature parity with `c6_fold`: see `c3_fold_kernel`.
-    let _ = (acc_vk, acc_proof, acc_key_hash, acc_public_inputs);
+    let _ = (acc_vk, acc_proof, fold_key_hash, kernel_key_hash, acc_public_inputs);
 
     assert(is_first_step);
 

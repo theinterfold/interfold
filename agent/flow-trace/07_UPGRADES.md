@@ -86,14 +86,16 @@ On a testnet, a fresh protocol, CRISP, and DAO stack is an acceptable alternativ
 upgrade. It must still pass the same route and verification-key validation before it accepts an E3.
 The old and new stacks must use separate addresses so clients cannot silently combine them.
 
-The BFV circuits use `interfold-bfv-v2` with compiled `protocol_version = 5` and
+The BFV circuits use `interfold-bfv-v3` with compiled `protocol_version = 6` and
 `node_generation = 2`. The configuration ID binds this circuit version even when BFV parameters stay
 unchanged. The builder generates both precomputed IDs. Runtime readers, the indexer, CRISP intake,
-request tooling, and the SDK use the same IDs and reject v1 requests. The indexer skips historical
-keys for unsupported configuration IDs without storing them. This lets its catch-up cursor advance
-across drained v1 rounds to recover supported rounds. Changed witness shapes and smudging
-commitments require a governance cutover, not a mixed rolling release. Rebuild all six artifact
-pairs and replace the immutable BFV verifier wrappers and routers before requests resume.
+request tooling, and the SDK use the same IDs and reject v1 and v2 requests. The indexer skips
+historical keys for unsupported configuration IDs without storing them. This lets its catch-up
+cursor advance across drained unsupported rounds to recover supported rounds. Recursive folds carry
+fixed leaf, fold, and genesis VK hashes. Final aggregator public input zero binds the complete
+recursive VK tree. These proof formats require a governance cutover, not a mixed rolling release.
+Rebuild all six artifact pairs and replace the immutable BFV verifier wrappers and routers before
+requests resume.
 
 The initial VRF upgrade follows this combined path because it introduces the controller and changes
 both `Interfold` and `BondingRegistry`.

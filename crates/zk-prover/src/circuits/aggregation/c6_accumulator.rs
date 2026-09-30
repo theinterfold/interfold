@@ -22,12 +22,12 @@ use serde::Serialize;
 
 /// `total_slots` = `T + 1` (one slot per party index in the C6 leaf layout).
 fn c6_fold_public_input_field_count(total_slots: usize) -> usize {
-    6 + 4 * total_slots
+    7 + 4 * total_slots
 }
 
-/// Public-signal layout of `c6_fold`: four fold parameters, two common domain
-/// limbs, then a four-field-wide per-slot tail.
-const C6_FOLD_PREFIX_LEN: usize = 6;
+/// Public-signal layout of `c6_fold`: five fold parameters, two common domain
+/// limbs, then four columns of slots.
+const C6_FOLD_PREFIX_LEN: usize = 7;
 const C6_FOLD_SLOT_WIDTH: usize = 4;
 
 struct C6FoldVks {
@@ -71,6 +71,10 @@ fn generate_c6_fold_kernel_genesis_proof(
         &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
         CircuitName::C6FoldKernel,
     )?;
+    let fold_vk = vk::load_vk_artifacts(
+        &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
+        CircuitName::C6Fold,
+    )?;
     let c6_public_inputs = threshold_share_decryption_inner_public_inputs(inner)?;
     let expected_acc_pub = c6_fold_public_input_field_count(total_slots);
     let acc_pi = zero_field_hex_strings(expected_acc_pub)?;
@@ -84,7 +88,8 @@ fn generate_c6_fold_kernel_genesis_proof(
         acc_proof: acc_pf,
         acc_public_inputs: acc_pi,
         inner_key_hash: inner_vk.key_hash,
-        acc_key_hash: kernel_vk.key_hash,
+        fold_key_hash: fold_vk.key_hash,
+        kernel_key_hash: kernel_vk.key_hash,
         is_first_step: true,
         slot_index,
     };
@@ -138,7 +143,8 @@ struct C6FoldStepInput {
     acc_proof: Vec<String>,
     acc_public_inputs: Vec<String>,
     inner_key_hash: String,
-    acc_key_hash: String,
+    fold_key_hash: String,
+    kernel_key_hash: String,
     is_first_step: bool,
     slot_index: u32,
 }
@@ -168,7 +174,7 @@ fn generate_c6_fold_step_with_vks(
     let c6_public_inputs = threshold_share_decryption_inner_public_inputs(inner)?;
     let expected_acc_pub = c6_fold_public_input_field_count(total_slots);
 
-    let (acc_vk_fields, acc_vk_hash, acc_proof, acc_public_inputs) = if is_first_step {
+    let (acc_vk_fields, acc_proof, acc_public_inputs) = if is_first_step {
         let kernel_job_id = format!("{e3_id}-c6fold-kernel");
         let kernel_proof = generate_c6_fold_kernel_genesis_proof(
             prover,
@@ -189,7 +195,6 @@ fn generate_c6_fold_step_with_vks(
         }
         (
             vks.kernel_vk.verification_key.clone(),
-            vks.kernel_vk.key_hash.clone(),
             bytes_to_field_strings(&kernel_proof.data)?,
             acc_pi,
         )
@@ -218,7 +223,6 @@ fn generate_c6_fold_step_with_vks(
         }
         (
             vks.fold_vk.verification_key.clone(),
-            vks.fold_vk.key_hash.clone(),
             bytes_to_field_strings(&p.data)?,
             acc_pi,
         )
@@ -232,7 +236,8 @@ fn generate_c6_fold_step_with_vks(
         acc_proof,
         acc_public_inputs,
         inner_key_hash: vks.inner_vk.key_hash.clone(),
-        acc_key_hash: acc_vk_hash,
+        fold_key_hash: vks.fold_vk.key_hash.clone(),
+        kernel_key_hash: vks.kernel_vk.key_hash.clone(),
         is_first_step,
         slot_index,
     };

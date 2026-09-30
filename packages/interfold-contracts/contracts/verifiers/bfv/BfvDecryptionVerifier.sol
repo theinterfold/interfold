@@ -20,7 +20,7 @@ import { CommitteeHashLib } from "../../lib/CommitteeHashLib.sol";
  *      compiled DecryptionAggregator circuit `T` (`lib::configs::default::T`).
  *
  *      Expected `publicInputs` layout for DecryptionAggregator EVM outputs:
- *        [0]                = expectedC6FoldKeyHash  (VK anchor)
+ *        [0]                = expectedC6FoldKeyHash  (complete VK-tree anchor)
  *        [1]                = expectedC7KeyHash      (VK anchor)
  *        [2]                = committee_hash_hi
  *        [3]                = committee_hash_lo
@@ -107,14 +107,13 @@ contract BfvDecryptionVerifier is IDecryptionVerifier {
     ///         `party_ids`/`expected_sk`/`expected_esm` outputs must match.
     ICiphernodeRegistry public immutable ciphernodeRegistry;
 
-    /// @notice keccak256 commitment to the C6-fold recursive VK; expected at
-    ///         `publicInputs[0]`. Provenance: `bb verify_key -b
-    ///         circuits/bin/recursive_aggregation/c6_fold/target/...` -- pinned
-    ///         at deployment time.
+    /// @notice SAFE commitment to the C6 fold, genesis, and leaf VKs.
+    ///         Expected at `publicInputs[0]`. The builder writes
+    ///         `c6_fold.vk_tree_hash` from the complete artifact pair.
     bytes32 public immutable expectedC6FoldKeyHash;
 
-    /// @notice keccak256 commitment to the C7 (decrypted_shares_aggregation)
-    ///         recursive VK; expected at `publicInputs[1]`. Same provenance.
+    /// @notice Barretenberg hash of the C7 non-ZK recursive VK.
+    ///         Expected at `publicInputs[1]` from `decrypted_shares_aggregation.vk_hash`.
     bytes32 public immutable expectedC7KeyHash;
 
     constructor(

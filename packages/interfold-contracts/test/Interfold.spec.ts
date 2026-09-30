@@ -601,35 +601,37 @@ describe("Interfold", function () {
       ).to.be.revertedWithCustomError(interfold, "CryptoConfigChanged");
     });
 
-    it("rejects v1 circuit configurations for both BFV parameter sets", async function () {
-      const { interfold, request } = await loadFixture(setup);
-      await interfold.setParamSet(1, BFV_PARAMS_SECURE);
-      for (const [paramSet, params, currentConfigId] of [
-        [0, BFV_PARAMS_DEFAULT, ACTIVE_CRYPTO_CONFIG_ID],
-        [1, BFV_PARAMS_SECURE, PRODUCTION_CRYPTO_CONFIG_ID],
-      ] as const) {
-        const legacyConfigId = ethers.keccak256(
-          abiCoder.encode(
-            ["bytes32", "bytes32", "bytes32"],
-            [
-              encryptionSchemeId,
-              ethers.keccak256(params),
-              ethers.id("interfold-bfv-v1"),
-            ],
-          ),
-        );
-        await expect(
-          interfold.request({
-            ...request,
-            paramSet,
-            inputWindow: await freshInputWindow(),
-            expectedCryptoConfigId: legacyConfigId,
-          }),
-        )
-          .to.be.revertedWithCustomError(interfold, "CryptoConfigChanged")
-          .withArgs(legacyConfigId, currentConfigId);
-      }
-    });
+    for (const version of ["interfold-bfv-v1", "interfold-bfv-v2"]) {
+      it(`rejects ${version} configurations for both BFV parameter sets`, async function () {
+        const { interfold, request } = await loadFixture(setup);
+        await interfold.setParamSet(1, BFV_PARAMS_SECURE);
+        for (const [paramSet, params, currentConfigId] of [
+          [0, BFV_PARAMS_DEFAULT, ACTIVE_CRYPTO_CONFIG_ID],
+          [1, BFV_PARAMS_SECURE, PRODUCTION_CRYPTO_CONFIG_ID],
+        ] as const) {
+          const legacyConfigId = ethers.keccak256(
+            abiCoder.encode(
+              ["bytes32", "bytes32", "bytes32"],
+              [
+                encryptionSchemeId,
+                ethers.keccak256(params),
+                ethers.id(version),
+              ],
+            ),
+          );
+          await expect(
+            interfold.request({
+              ...request,
+              paramSet,
+              inputWindow: await freshInputWindow(),
+              expectedCryptoConfigId: legacyConfigId,
+            }),
+          )
+            .to.be.revertedWithCustomError(interfold, "CryptoConfigChanged")
+            .withArgs(legacyConfigId, currentConfigId);
+        }
+      });
+    }
 
     it("reverts if USDC allowance is insufficient", async function () {
       const { interfold, request, usdcToken } = await loadFixture(setup);

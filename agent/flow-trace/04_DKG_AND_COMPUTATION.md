@@ -334,6 +334,30 @@ node's own recipient slot is exempt because its exported key comes directly from
 `wrapper/` Noir step was removed; aggregator response structs no longer carry a `wrapped_proof`
 field — the inner recursive proof itself is what flows between stages.
 
+Sequential C3, C6, and nodes folds expose the fixed `(leaf, fold, genesis)` VK hashes before
+`is_first_step` and `slot_index`. `predecessor_key_hash` requires the predecessor to carry the same
+three hashes. The first step verifies the genesis VK. Each continuation verifies the fold VK. The
+final consumer also requires the declared fold hash to match the VK that verified its proof.
+
+`compute_vk_hash` uses the SAFE `DS_VK_HASH` sponge and preserves input order. The DKG trust anchor
+includes every descendant key:
+
+```text
+C2 tree    = hash(C2a, C2b)
+C3 chain   = hash(c3_fold, c3_fold_kernel, C3)
+C3 tree    = hash(C3a chain, C3b chain)
+C4 tree    = hash(C4a, C4b)
+node tree  = hash(C0, C1, c2ab_fold, C2 tree, c3ab_fold, C3 tree, c4ab_fold, C4 tree)
+nodes tree = hash(nodes_fold, nodes_fold_kernel, node_fold, node tree)
+C6 tree    = hash(c6_fold, c6_fold_kernel, C6)
+```
+
+The builder derives `nodes_fold.vk_tree_hash` and `c6_fold.vk_tree_hash` from each complete artifact
+pair. `dkg_aggregator` requires every folded node row to carry the same node-tree hash. Both final
+aggregators expose their complete tree anchor at public input zero. The immutable wrapper pin comes
+from the matching tree-hash file, not the immediate fold VK. Public input one retains the separate
+C5 or C7 non-ZK recursive VK hash. The final EVM public-input layouts do not change.
+
 **Ciphernode / aggregator integration:** `ZkRequest::FoldProofs` was removed. The multithread actor
 implements `ZkRequest::NodeDkgFold` (full per-node pipeline to a `NodeFold` proof),
 `ZkRequest::DkgAggregation` (`NodesFold` + C5 + `DkgAggregator`), and
@@ -804,7 +828,7 @@ phase.
         │  │         pkCommitment, committeeHash, proof          │
         │  │       ), InvalidProof())                            │
         │  │       → BFV: `BfvPkVerifier` (DkgAggregator Honk)  │
-        │  │         • M-34: immutable nodesFold / C5 VK hashes  │
+        │  │         • M-34: immutable nodes tree / C5 VK hashes │
         │  │           checked against publicInputs[0..1]        │
         │  │         • C-08: committee_hash_hi/lo (slots         │
         │  │           [2+H] & [3+H]) vs committeeHash           │
@@ -1281,7 +1305,7 @@ InterfoldSolReader decodes CiphertextOutputPublished event
         │  │         domain already committed by every C6 leaf.  │
          │  │       → IF-003: e3Id resolves stored DKG anchors;  │
          │  │       │  proof party IDs and SK/ESM commitments match.│
-         │  │       → M-34: c6Fold / C7 VK hashes are immutable.  │
+          │  │       → M-34: C6 tree / C7 VK hashes are immutable. │
         │  │       → M-35: revert path only (no `bool false`).   │
         │  │    5. stage = Complete                              │
         │  │    6. _distributeRewards(e3Id)                      │

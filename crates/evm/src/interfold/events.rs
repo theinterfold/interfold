@@ -30,7 +30,7 @@ fn crypto_config_id(params: &[u8]) -> B256 {
         (
             keccak256(b"fhe.rs:BFV"),
             keccak256(params),
-            keccak256(b"interfold-bfv-v2"),
+            keccak256(b"interfold-bfv-v3"),
         )
             .abi_encode(),
     )
@@ -522,11 +522,11 @@ mod tests {
         let expected = [
             (
                 0,
-                "0x19921c8c12f93c3013be57d0859f4ddcdb4464ac856a0c62be1ad617fbbd2e7d",
+                "0x20d76557cc2aee078754ad9a563d61d0697809da363f1979895ec15f6ea30db9",
             ),
             (
                 1,
-                "0x38445056db875658295a1531cc5e81ceb73d4f210e2d969465292204fa547446",
+                "0x3115e08eb5c87d6d245eda5dff0cf377c42e29b9741f94fc7a83efc3da7da920",
             ),
         ];
 
@@ -560,21 +560,23 @@ mod tests {
             assert_eq!(converted.params_preset, preset);
 
             let params = encode_bfv_params(&BfvParamSet::from(preset).build_arc());
-            let mut legacy_event = event;
-            legacy_event.cryptoConfigId = keccak256(
-                (
-                    keccak256(b"fhe.rs:BFV"),
-                    keccak256(&params),
-                    keccak256(b"interfold-bfv-v1"),
-                )
-                    .abi_encode(),
-            );
-            let error = E3RequestedWithChainId(legacy_event, 1)
-                .try_into_e3_requested()
-                .unwrap_err();
-            assert!(error
-                .to_string()
-                .contains("Unsupported crypto configuration"));
+            for version in [b"interfold-bfv-v1", b"interfold-bfv-v2"] {
+                let mut legacy_event = event.clone();
+                legacy_event.cryptoConfigId = keccak256(
+                    (
+                        keccak256(b"fhe.rs:BFV"),
+                        keccak256(&params),
+                        keccak256(version),
+                    )
+                        .abi_encode(),
+                );
+                let error = E3RequestedWithChainId(legacy_event, 1)
+                    .try_into_e3_requested()
+                    .unwrap_err();
+                assert!(error
+                    .to_string()
+                    .contains("Unsupported crypto configuration"));
+            }
         }
     }
 

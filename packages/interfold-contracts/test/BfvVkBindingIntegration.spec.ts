@@ -433,6 +433,60 @@ describe("BfvVkBindingIntegration", function () {
         ),
       ).to.equal(true);
 
+      const immediateNodesHash = readVkRecursiveHash(
+        path.join(
+          repoRoot,
+          "circuits/bin/recursive_aggregation/nodes_fold/target/nodes_fold.vk_recursive_hash",
+        ),
+      );
+      const immediateC6Hash = readVkRecursiveHash(
+        path.join(
+          repoRoot,
+          "circuits/bin/recursive_aggregation/c6_fold/target/c6_fold.vk_recursive_hash",
+        ),
+      );
+      expect(immediateNodesHash).not.to.equal(expectedNodesFoldKeyHash);
+      expect(immediateC6Hash).not.to.equal(expectedC6FoldKeyHash);
+      const immediatePkWrapper = await (
+        await ethers.getContractFactory("BfvPkVerifier")
+      ).deploy(
+        await bfvPk.circuitVerifier(),
+        immediateNodesHash,
+        expectedC5KeyHash,
+        BFV_DKG_H,
+      );
+      await immediatePkWrapper.waitForDeployment();
+      const immediateDecWrapper = await (
+        await ethers.getContractFactory("BfvDecryptionVerifier")
+      ).deploy(
+        await bfvDec.circuitVerifier(),
+        await mockCiphernodeRegistry.getAddress(),
+        immediateC6Hash,
+        expectedC7KeyHash,
+        BFV_THRESHOLD_T,
+      );
+      await immediateDecWrapper.waitForDeployment();
+      await expect(
+        immediatePkWrapper.verify.staticCall(
+          testE3Id,
+          testRoot,
+          [testSigner.address],
+          pkCommitment,
+          dkgCommitteeHash,
+          dkgEncoded,
+        ),
+      ).to.be.revertedWithCustomError(immediatePkWrapper, "VkHashMismatch");
+      await expect(
+        immediateDecWrapper.verify.staticCall(
+          testE3Id,
+          decDomain,
+          plaintextHash,
+          decCommitteeHash,
+          decCiphertextCommitment,
+          decEncoded,
+        ),
+      ).to.be.revertedWithCustomError(immediateDecWrapper, "VkHashMismatch");
+
       await expect(
         bfvDec.verify.staticCall(
           testE3Id,

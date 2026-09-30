@@ -20,10 +20,11 @@ use lib::configs::default::N_PARTIES;
 use lib::configs::default::T;
 use lib::math::commitments::compute_vk_hash;
 use lib::math::committee_hash::committee_hash_limbs;
+use lib::math::recursive_vk::sequential_fold_vk_hash;
 
 /// Must match `c6_fold::C6_FOLD_PUBLIC_LEN`: pub params, common domain limbs,
 /// and flattened `(out_sk, out_esm, out_ct, out_d)`.
-pub global C6_FOLD_PUBLIC_LEN: u32 = 6 + (4 * (T + 1));
+pub global C6_FOLD_PUBLIC_LEN: u32 = 7 + (4 * (T + 1));
 
 pub global C6_FOLD_PREFIX_LEN: u32 = C6_FOLD_PUBLIC_LEN - (4 * (T + 1));
 
@@ -68,6 +69,7 @@ fn main(
     c6_fold_vk: UltraHonkVerificationKey,
     c6_fold_proof: UltraHonkProof,
     c6_fold_public: [Field; C6_FOLD_PUBLIC_LEN],
+    c6_fold_vk_hash: Field,
     c7_vk: UltraHonkVerificationKey,
     c7_proof: UltraHonkProof,
     c7_public: [Field; C7_PUBLIC_LEN],
@@ -84,13 +86,19 @@ fn main(
     assert(expected_hi == committee_hash_hi);
     assert(expected_lo == committee_hash_lo);
 
-    verify_honk_proof_non_zk(c6_fold_vk, c6_fold_proof, c6_fold_public, c6_fold_key_hash);
+    verify_honk_proof_non_zk(c6_fold_vk, c6_fold_proof, c6_fold_public, c6_fold_vk_hash);
     verify_honk_proof_non_zk(c7_vk, c7_proof, c7_public, c7_key_hash);
+
+    assert(c6_fold_public[1] == c6_fold_vk_hash);
+    assert(
+        c6_fold_key_hash
+            == sequential_fold_vk_hash(c6_fold_vk_hash, c6_fold_public[2], c6_fold_public[0]),
+    );
 
     // The C6 fold only accepts secret-bearing leaf proofs carrying one common
     // domain. Expose that domain in the final EVM proof for on-chain checking.
-    assert(c6_fold_public[4] == domain_hi);
-    assert(c6_fold_public[5] == domain_lo);
+    assert(c6_fold_public[5] == domain_hi);
+    assert(c6_fold_public[6] == domain_lo);
 
     // Every C6 leaf commits to the same decoded BFV ciphertext. Expose that
     // canonical commitment as a final public input for the EVM wrapper.
