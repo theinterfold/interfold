@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-set -euo pipefail  # Stricter error handling
+# -E: functions, command substitutions and subshells inherit the ERR trap, so `cleanup` also runs
+# when a command inside a function fails. In a substitution or a subshell, `cleanup` exits only
+# that subshell.
+set -Eeuo pipefail
 
 # Get the script's location
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -253,13 +256,6 @@ interfold_nodes_start() {
 
   $INTERFOLD_BIN nodes start $name -v \
     --config "$SCRIPT_DIR/interfold.config.yaml"
-}
-
-kill_proc() {
-  local name=$1
-  local pid=$(ps aux | grep 'interfold' | grep "\--name $name" | awk '{ print $2 }')
-  echo "Killing $pid"
-  kill $pid
 }
 
 kill_em_all() {
