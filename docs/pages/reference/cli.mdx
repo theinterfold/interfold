@@ -697,7 +697,8 @@ The command first writes an encrypted backup of the wallet key and libp2p key to
 and the event log, writes the identity back, and reads it again to confirm. The command refuses to
 run while the node runs. It also refuses, and deletes nothing, while the node holds a key share for
 an E3 that it has not seen complete, including an E3 that shows `Failed`. See
-[Reset node state](/operate/upgrades#reset-node-state).
+[Reset node state](/operate/upgrades#reset-node-state). The command in v0.18.0 and earlier has no
+such check. Run the reset with the binary of the new release.
 
 <Callout type='warning'>
   Do not delete the data folder by hand. The wallet key and the libp2p key are in the same store as

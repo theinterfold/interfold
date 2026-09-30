@@ -258,16 +258,19 @@ full node keeps waiting for that history. It serves discovery, gossip, DHT docum
 like a full node (`crates/entrypoint/src/start/start.rs`).
 
 After schema admission, `preflight_node_role` stamps `//node_role` on a new data directory, which is
-one whose schema marker this startup wrote. A directory without the role marker that existed before
-this startup belongs to a full node, because releases without the marker ran only full nodes; its
-key/value store can hold chain cursors even when its event log is empty. A node refuses a directory
-of the other role, and `ensure_role_components` rejects a bootstrap builder that also enables
-keyshare, aggregation, registry, or contract-writer components. A bootstrap node advances the
-per-chain block cursor with only the Interfold reader, so a full node started on its directory would
-skip earlier registry events. A bootstrap node started on a full node's directory would restore that
-node's committees. The marker is read with `read_checked`, so a storage error cannot pass as an
-unmarked directory. Releases without the marker share schema version 7 and do not check it
-(`crates/sync/src/sync/preflight.rs`).
+one whose schema marker this startup wrote. A directory that existed before this startup and has no
+role marker counts as a full node's. Releases without the marker ran only full nodes, and their
+directories halt at the schema check before the role check. At schema 8, only a start that stopped
+between the schema stamp and the role stamp leaves such a directory. No reader ran before that stop,
+so the directory holds no chain cursors. A node refuses a directory of the other role, and
+`ensure_role_components` rejects a bootstrap builder that also enables keyshare, aggregation,
+registry, or contract-writer components. A bootstrap node advances the per-chain block cursor with
+only the Interfold reader. A full node started on its directory would therefore skip earlier
+registry events. A bootstrap node started on a full node's directory would restore that node's
+committees. The marker is read with `read_checked`, so a storage error cannot pass as an unmarked
+directory. A release without the marker check uses schema 7 or earlier, so it halts on a schema-8
+directory (`crates/sync/src/sync/preflight.rs`). A schema-7 directory that a development build wrote
+with the marker is the exception: v0.18.0 opens it without the check.
 
 Startup has a configured outer deadline. The EVM and network startup buffers expose readiness
 failures; a bound overflow fails startup instead of silently discarding protocol observations.

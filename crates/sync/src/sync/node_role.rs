@@ -46,9 +46,11 @@ pub enum NodeRoleDecision {
 /// Pure decision: given the stamped role (if any), the requested role, and whether schema admission
 /// created the directory in this startup, decide whether to proceed, stamp the role, or halt.
 ///
-/// A directory that existed before this startup but has no role marker was used by a release
-/// without the marker, and those releases ran only full nodes. Such a directory is a full node's
-/// even if its event log is empty, because its key/value store can still hold chain cursors.
+/// A directory that existed before this startup but has no role marker counts as a full node's.
+/// Releases without the marker ran only full nodes, and their directories halt at the schema check
+/// before this decision. At schema 8, only a start that stopped between the schema stamp and the
+/// role stamp leaves such a directory. No reader ran before that stop, so the directory holds no
+/// chain cursors. A bootstrap node halts on it, and `interfold node reset-data` clears it.
 pub fn decide_node_role(
     persisted: Option<NodeRole>,
     requested: NodeRole,

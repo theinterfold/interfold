@@ -166,7 +166,10 @@ names `interfold node reset-data`. The newer-schema halt names the newer release
 taken before the upgrade, because the reset guard of an older binary cannot read a newer store
 reliably. When the event logs decode with this binary, `interfold node validate` reports the same
 schema failure and skips the checks that read snapshots (`crates/entrypoint/src/validate.rs`). An
-event log that does not decode shows as unreadable, with no schema line.
+event log that does not decode shows as unreadable, with no schema line. Schema 8 changes no layout.
+It raises the version so that each node that upgrades to v0.19.0 clears its state. The node then
+syncs again from the chain history. The reset must use the v0.19.0 binary: `reset-data` in v0.18.0
+and earlier has no key-share check.
 
 The operator key and the libp2p keypair live in the same key/value store as that state, under
 `//eth_private_key` and `//libp2p/keypair`. Deleting the data directory destroys the identity that
@@ -241,10 +244,18 @@ bootstrap node, or the reverse, on the same data directory.
 append-only operational log written by `LogCollector`, never read back, and a reset leaves it in
 place.
 
-A schema raise is an upgrade-window action. `assertUpgradeWindow` already requires paused requests,
-zero active E3s, and zero unreleased committees, so no in-flight round loses state to this. The
+A schema raise needs an upgrade window. When a release also raises a required counter,
+`assertUpgradeWindow` requires paused requests, zero active E3s, and zero unreleased committees. A
+release that raises the schema but no required counter has no such on-chain check. Each operator
+resets a node only when the node serves no active E3. For each E3 that the refusal lists, the
+operator also waits until the block time passes its report deadline,
+`accusationSubmissionDeadline(e3Id)` on the `SlashingManager`. That value is
+`getE3LifecycleDeadline(e3Id)` plus one day. `SlashingEvidenceLib` rejects accusation evidence after
+it, for complete and failed E3s alike, and only a running node submits its slash reports. The
 command is not a general repair tool: a node in a live committee that resets loses its keyshare and
-fails that E3. The stage-map check refuses that case unless the operator overrides it.
+fails that E3. The stage-map check refuses that case unless the operator overrides it. It does not
+read the pending slash intents under `slashing_writer_recovery`, so a reset also deletes the reports
+that the node has not submitted.
 
 ## Failure and rollback
 

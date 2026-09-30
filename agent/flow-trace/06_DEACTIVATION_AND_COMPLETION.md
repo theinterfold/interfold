@@ -373,8 +373,9 @@ CLI then exit with a nonzero status instead of leaving a dead storage actor insi
 process. The EventStore syncs each appended log record before it indexes or broadcasts the event. It
 caches the active segment and index handles. Each append still syncs both files, while the directory
 is synced only for the first append and after segment rollover. The current storage schema marker is
-version 7. Older logs remain decodable, but their eligibility timestamps are not trusted. Operators
-must use the controlled reset and resync procedure outside active E3 work; see `07_UPGRADES.md`.
+version 8. The node can still decode schema-6 logs, but it does not trust their eligibility
+timestamps. An operator resets a node on an earlier schema outside active E3 work. See
+`07_UPGRADES.md`.
 
 For DAppNode installations, package v0.2.3 is the mandatory bridge from the shipped v0.1.8 state. It
 atomically moves the legacy `.enclave` custom-config root to `.interfold`, preserves the encrypted

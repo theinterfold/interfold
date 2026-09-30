@@ -68,8 +68,10 @@ the code does not meet yet.
 - A data directory belongs to one node role. All readers of a chain share one block cursor, so a
   node with fewer readers advances it past events that a node with more readers still needs.
   `preflight_node_role` stamps the role on first boot and refuses a directory of the other role; an
-  unmarked directory that existed before this startup is a full node's. **Gap:** releases before the
-  marker share schema version 7 and do not check it. — `crates/sync/src/sync/node_role.rs`;
+  unmarked directory that existed before this startup is a full node's. Releases before the marker
+  use schema 7 or earlier, so they halt on a schema-8 directory instead of opening it without the
+  role check. **Gap:** v0.18.0 opens a schema-7 directory that a development build wrote with the
+  marker, without the role check. — `crates/sync/src/sync/node_role.rs`;
   `crates/sync/src/sync/preflight.rs`
 - Before startup enables the event bus, its HLC must be greater than the greatest timestamp in all
   durable event logs. A snapshot timestamp alone is not a sufficient clock floor because the log can
