@@ -250,8 +250,8 @@ enum CommitmentStep {
 /// Decides the next step for a job in `AwaitingCommitment` from two Ethereum reads.
 ///
 /// ZEN2-24 follow-up, relay path. A receipt is a head observation, so a relayed commitment is
-/// kept provisional until it is final. Only the relay resubmits an orphaned commitment: a
-/// wallet-submitted one belongs to the voter, and the expiry handler renews its attestation.
+/// kept provisional until it is final. Only the relay resubmits an orphaned commitment, also after
+/// its attestation expired: a wallet-submitted one belongs to the voter.
 fn commitment_step(
     relayed_transaction_hash: Option<&str>,
     is_final: bool,
@@ -347,10 +347,9 @@ enum JobState {
         /// receipt used to move the job straight to `Committed`. A receipt is a head
         /// observation: the transaction can be reorganized out and never re-included, and
         /// `Committed` has no way back, so the input would wait on a finality that never comes.
-        /// Keep the job provisional instead. The finality gate below is the only exit, the
-        /// attestation renews on expiry exactly as a wallet-submitted job's does, and an
-        /// orphaned relay is resubmitted. `None` for a wallet-submitted job and for a record
-        /// written before this field existed.
+        /// Keep the job provisional instead. The finality gate below is the only exit, and an
+        /// orphaned relay is resubmitted with a fresh attestation. `None` for a wallet-submitted
+        /// job and for a record written before this field existed.
         #[serde(default)]
         relayed_transaction_hash: Option<String>,
     },
@@ -1636,8 +1635,11 @@ impl AvailabilityService {
             ..
         } = &job.kind
         {
+            // Only a wallet commitment fails when its attestation expires. The relay sends a lost
+            // commitment again with a fresh attestation until the cutoff (`commitment_step`).
             if let JobState::AwaitingCommitment {
                 attestation_expires_at,
+                relayed_transaction_hash: None,
                 ..
             } = &job.state
             {
@@ -2276,9 +2278,6 @@ impl AvailabilityService {
     }
 
     /// Relay one input commitment and return the provisional state that records it.
-    ///
-    /// The attestation expiry is the one the relayed payload was signed with, so the expiry
-    /// handler renews this job on the same schedule as a wallet-submitted one.
     ///
     /// If the relay key cannot pay for the transaction, the job takes the wallet path with the same
     /// signed payload, and the voter's wallet sends the commitment before the cutoff. A retry with
@@ -2931,8 +2930,8 @@ mod tests {
 
     #[test]
     fn a_wallet_commitment_is_never_resubmitted_by_the_relay() {
-        // The voter's transaction is absent from the head: the voter owns it and the expiry
-        // handler renews the attestation, so the relay does not send one of its own.
+        // The voter's transaction is absent from the head: the voter owns it, so the relay does
+        // not send one of its own.
         assert_eq!(commitment_step(None, false, false), CommitmentStep::Wait);
         assert_eq!(commitment_step(None, false, true), CommitmentStep::Wait);
         assert_eq!(
@@ -4026,6 +4025,7 @@ mod tests {
         contract MockCrispAvailability {
             constructor(bytes32 configId);
             function set(bool isCommitted, bool isPublished, uint256 deadline) external;
+            function committed() external view returns (bool);
         }
     }
 
@@ -4119,6 +4119,50 @@ mod tests {
         // The worker found the finalized commitment, and publishes the input next.
         let job = service.load_required(&staged.view.job_id).unwrap();
         assert!(matches!(job.state, JobState::Committed { .. }), "{job:?}");
+    }
+
+    /// A reorganization removes a relayed commitment after its attestation expired, while the
+    /// commitment window is still open. The relay sends the input again with a fresh attestation,
+    /// so the expired attestation must not fail the job.
+    #[tokio::test]
+    async fn an_orphaned_relayed_commitment_is_sent_again_after_its_attestation_expired() {
+        let (service, mock, _anvil) = chain_service(&temporary_db()).await;
+        set_input(&mock, false, false, u64::MAX).await;
+        let object = b"orphaned-ciphertext";
+        let mut job = input_job("orphaned-relay", Address::repeat_byte(0x77), 0x11, object);
+        let JobKind::Input {
+            commitment_deadline,
+            ..
+        } = &mut job.kind
+        else {
+            unreachable!("input_job builds an input job");
+        };
+        *commitment_deadline = no_deadline();
+        let job = store_job_in_state(
+            &service,
+            &job,
+            object,
+            JobState::AwaitingCommitment {
+                ethereum_payload: vec![1],
+                attestation_expires_at: 1,
+                relayed_transaction_hash: Some("0xorphaned".to_owned()),
+            },
+        );
+
+        service.process(&job.id).await;
+
+        let state = service.load_required(&job.id).unwrap().state;
+        let JobState::AwaitingCommitment {
+            attestation_expires_at,
+            relayed_transaction_hash: Some(hash),
+            ..
+        } = &state
+        else {
+            panic!("the relay did not send the orphaned commitment again: {state:?}");
+        };
+        assert_ne!(hash, "0xorphaned");
+        assert!(*attestation_expires_at > 1);
+        assert!(mock.committed().call().await.unwrap());
     }
 
     fn output_job(id: &str, state: JobState, object: &[u8]) -> AvailabilityJob {

@@ -239,12 +239,12 @@ transaction:
   `Committed` stops attestation renewal and starts the paid Avail publication, so an orphaned
   commitment would strand the input for the rest of its commitment window. This holds on both
   submission paths. Where the service relays the commitment itself, the receipt does not promote the
-  job: the job stays in `AwaitingCommitment` with the relayed transaction hash, the attestation
-  renews on the same schedule as a wallet-submitted one, and a relayed transaction that is absent
-  from finalized state and from the chain head is relayed again while the relay may send, or takes
-  the wallet path when it may not (`commitment_step`, `relay_may_send`). The status endpoint reports
-  a relayed provisional job as `pending_availability`, not `ready_for_commitment`, so a client does
-  not sign a second commitment with its wallet.
+  job: the job stays in `AwaitingCommitment` with the relayed transaction hash, and a relayed
+  transaction that is absent from finalized state and from the chain head is relayed again with a
+  fresh attestation, also after the old one expired, while the relay may send, or takes the wallet
+  path when it may not (`commitment_step`, `relay_may_send`). The status endpoint reports a relayed
+  provisional job as `pending_availability`, not `ready_for_commitment`, so a client does not sign a
+  second commitment with its wallet.
 - A publication transaction moves to `AwaitingFinality`, not directly to success. That state keeps
   the Ethereum payload, the Avail coordinates, the compute proof or staged envelope, and the local
   object. When finalized state contains the publication, the job retires. When the publication is
@@ -261,11 +261,12 @@ coordinates. A status request that finds the job busy returns the persisted view
 The status endpoint answers a `Created` job from storage without the claim. Only the worker's
 `Created` step reconciles that state with Ethereum, and a client poll must not make it skip the job.
 
-The service does not release an expired promise based on its local clock or an unfinalized chain
-head. It waits for an Ethereum finalized block at or after `expiresAt`, then checks the historical
-`isInputCommitted` state at that block. A commitment mined before expiry therefore survives even
-when the service observes it later. If the finalized state contains no commitment, the service
-releases the ciphertext and lets the voter stage the original proof again for a fresh promise.
+The service does not release an expired wallet-submitted promise based on its local clock or an
+unfinalized chain head. It waits for an Ethereum finalized block at or after `expiresAt`, then
+checks the historical `isInputCommitted` state at that block. A commitment mined before expiry
+therefore survives even when the service observes it later. If the finalized state contains no
+commitment, the service releases the ciphertext and lets the voter stage the original proof again
+for a fresh promise.
 
 The old four-hour CRISP duration was unsafe. In the worst case, the input commitment cutoff arrived
 before the committee key existed. With a nonzero Avail window, `CRISPProgram.validate` now rejects a
