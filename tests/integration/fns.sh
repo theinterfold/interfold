@@ -1,4 +1,12 @@
 #!/usr/bin/env bash
+# Bash 3.2, the /bin/bash of macOS, runs the inherited ERR trap inside $(...) even under `if` or
+# `||`, so a check that expects a failure there would run `cleanup`. Bash 4 keeps that context, and
+# persist.sh and upgrade.sh already need bash 4.
+if ((BASH_VERSINFO[0] < 4)); then
+  echo "The integration tests need bash 4 or later. This is bash ${BASH_VERSION}." >&2
+  exit 1
+fi
+
 # -E: functions, command substitutions and subshells inherit the ERR trap, so `cleanup` also runs
 # when a command inside a function fails. In a substitution or a subshell, `cleanup` exits only
 # that subshell.

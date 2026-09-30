@@ -7,7 +7,9 @@
 # candidate must accept the released node's persisted state, and the restart must not lose it.
 #
 # The in-place scenarios need a candidate with the same SCHEMA_VERSION as the released binary.
-# Across a SCHEMA_VERSION raise, only `mixed-dkg`, and `reset` with UPGRADE_RESET=all, apply.
+# Across a SCHEMA_VERSION raise, only `reset` with UPGRADE_RESET=all applies, and `mixed-dkg` when
+# both binaries pin the same circuits version. The nodes share one circuits folder, and v0.17.0
+# pins another version than later releases.
 #
 # Required:
 #   INTERFOLD_BIN_OLD  released binary, for example v0.18.0
@@ -311,12 +313,19 @@ interfold_wallet_set cn5 "$PRIVATE_KEY_CN5"
 NOIR_DIR="$SCRIPT_DIR/.interfold/noir"
 CANDIDATE_NOIR="$SCRIPT_DIR/.interfold/candidate-noir"
 if [[ "$UPGRADE_SCENARIO" == "reset" ]]; then
-  # The released binary's setup replaces the circuits when it pins another circuits version, as
-  # v0.17.0 does. Keep the circuits that prebuild built for the candidate, and restore them before
-  # the candidate starts.
+  # The released binary's setup replaces the circuits and `bb` when it pins another circuits
+  # version, as v0.17.0 does. Keep what prebuild staged for the candidate, and restore it before
+  # the candidate starts. After a failed run, a rerun with --no-prebuild would keep what the
+  # released binary downloaded, so the folder must match the stamp that prebuild wrote.
+  PREBUILD_STAMP="$SCRIPT_DIR/.interfold/prebuild-noir.sha256"
+  if ! STAGED_NOIR=$(noir_digest "$NOIR_DIR") || [[ ! -f "$PREBUILD_STAMP" ]] ||
+    [[ "$STAGED_NOIR" != "$(cat "$PREBUILD_STAMP")" ]]; then
+    echo "$NOIR_DIR does not hold the prebuild output. Run ./test.sh upgrade without --no-prebuild." >&2
+    cleanup 1
+  fi
   rm -rf "$CANDIDATE_NOIR"
   mkdir -p "$CANDIDATE_NOIR"
-  cp -R "$NOIR_DIR/circuits" "$NOIR_DIR/version.json" "$CANDIDATE_NOIR/"
+  cp -R "$NOIR_DIR/circuits" "$NOIR_DIR/bin" "$NOIR_DIR/version.json" "$CANDIDATE_NOIR/"
 fi
 
 heading "Setup ZK prover"
@@ -373,8 +382,8 @@ if [[ "$UPGRADE_SCENARIO" == "reset" ]]; then
     fi
   done
   heading "Restore the candidate circuits"
-  rm -rf "$NOIR_DIR/circuits"
-  cp -R "$CANDIDATE_NOIR/circuits" "$NOIR_DIR/circuits"
+  rm -rf "$NOIR_DIR/circuits" "$NOIR_DIR/bin"
+  cp -R "$CANDIDATE_NOIR/circuits" "$CANDIDATE_NOIR/bin" "$NOIR_DIR/"
   cp "$CANDIDATE_NOIR/version.json" "$NOIR_DIR/version.json"
   # The candidate's setup finds its own circuits version and downloads nothing.
   "$INTERFOLD_BIN_NEW" noir setup
