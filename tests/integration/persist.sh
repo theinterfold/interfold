@@ -80,6 +80,11 @@ E3_ID=$(extract_e3_id "$REQUEST_OUTPUT")
 wait_for_committee_pubkey "$E3_ID" "$SCRIPT_DIR/output/pubkey.bin" "${INTEGRATION_DKG_TIMEOUT:-1300}"
 advance_evm_time_past "$INPUT_WINDOW_START"
 
+heading "Query events via daemon REST API"
+daemon_query_events cn1 "$SCRIPT_DIR/output/events.txt"
+
+check_last_line "$SCRIPT_DIR/output/events.txt" '{"Next":10}'
+
 ACTIVE_AGG_ADDRESS=$(wait_for_active_aggregator_address "$E3_ID")
 if ! ACTIVE_AGG=$(node_name_for_address "$ACTIVE_AGG_ADDRESS"); then
   echo "Failed to resolve active aggregator node name for address: $ACTIVE_AGG_ADDRESS" >&2

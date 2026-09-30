@@ -2415,6 +2415,14 @@ describe("InterfoldToken", function () {
   // ═════════════════════════════════════════════════════════════════════════
 
   describe("BondingRegistry integration", function () {
+    async function deployBondingSystem() {
+      return deployInterfoldSystem({
+        useMockCiphernodeRegistry: true,
+        setupOperators: 0,
+        mintUsdcTo: [],
+      });
+    }
+
     async function impersonateSlashingManager(slashingManager: {
       getAddress(): Promise<string>;
     }) {
@@ -2429,12 +2437,7 @@ describe("InterfoldToken", function () {
       const [, beneficiary, , operator] = signers;
       const beneficiaryAddress = await beneficiary.getAddress();
       const operatorAddress = await operator.getAddress();
-      const sys = await deployInterfoldSystem({
-        useMockCiphernodeRegistry: true,
-        setupOperators: 0,
-        wireSlashingManager: false,
-        mintUsdcTo: [],
-      });
+      const sys = await loadFixture(deployBondingSystem);
       const { bondingRegistry, ciphernodeBondToken } = sys;
       const bondingRegistryAddress = await bondingRegistry.getAddress();
 
@@ -2530,12 +2533,7 @@ describe("InterfoldToken", function () {
       const [, beneficiary, , operator] = signers;
       const beneficiaryAddress = await beneficiary.getAddress();
       const operatorAddress = await operator.getAddress();
-      const sys = await deployInterfoldSystem({
-        useMockCiphernodeRegistry: true,
-        setupOperators: 0,
-        wireSlashingManager: false,
-        mintUsdcTo: [],
-      });
+      const sys = await loadFixture(deployBondingSystem);
       const { bondingRegistry, ciphernodeBondToken } = sys;
       const bondingRegistryAddress = await bondingRegistry.getAddress();
       const totalAmount = ethers.parseEther("1000");
@@ -2605,45 +2603,12 @@ describe("InterfoldToken", function () {
       );
     });
 
-    it("bonding registry transfers are allowed pre-TGE", async function () {
-      const sys = await deployInterfoldSystem({
-        useMockCiphernodeRegistry: true,
-        setupOperators: 0,
-        mintUsdcTo: [],
-      });
-      const { bondingRegistry, ciphernodeBondToken, owner } = sys;
-      const bondingRegistryAddress = await bondingRegistry.getAddress();
-      const bondAmount = ethers.parseEther("100");
-      const [, operator] = await ethers.getSigners();
-
-      await ciphernodeBondToken.mint(
-        await owner.getAddress(),
-        bondAmount,
-        ethers.encodeBytes32String("test"),
-      );
-      await ciphernodeBondToken
-        .connect(owner)
-        .approve(bondingRegistryAddress, bondAmount);
-      // Bonding transfer should succeed.
-      await bondingRegistry
-        .connect(operator)
-        .setBondOwner(await owner.getAddress());
-      await bondingRegistry
-        .connect(owner)
-        .bondCiphernodeFor(await operator.getAddress(), bondAmount);
-    });
-
     it("locked tokens can be bonded (pre-credit visible to token)", async function () {
       const signers = await ethers.getSigners();
       const [, beneficiary, , operator] = signers;
       const beneficiaryAddress = await beneficiary.getAddress();
       const operatorAddress = await operator.getAddress();
-      const sys = await deployInterfoldSystem({
-        useMockCiphernodeRegistry: true,
-        setupOperators: 0,
-        wireSlashingManager: false,
-        mintUsdcTo: [],
-      });
+      const sys = await loadFixture(deployBondingSystem);
       const { bondingRegistry, ciphernodeBondToken } = sys;
       const bondingRegistryAddress = await bondingRegistry.getAddress();
 
@@ -2702,11 +2667,7 @@ describe("InterfoldToken", function () {
       const [, beneficiary, operator] = signers;
       const beneficiaryAddress = await beneficiary.getAddress();
       const operatorAddress = await operator.getAddress();
-      const sys = await deployInterfoldSystem({
-        useMockCiphernodeRegistry: true,
-        setupOperators: 0,
-        mintUsdcTo: [],
-      });
+      const sys = await loadFixture(deployBondingSystem);
       const { bondingRegistry, ciphernodeBondToken } = sys;
       const bondingRegistryAddress = await bondingRegistry.getAddress();
 
@@ -2756,11 +2717,7 @@ describe("InterfoldToken", function () {
       const beneficiaryAddress = await beneficiary.getAddress();
       const newOwnerAddress = await newOwner.getAddress();
       const operatorAddress = await operator.getAddress();
-      const sys = await deployInterfoldSystem({
-        useMockCiphernodeRegistry: true,
-        setupOperators: 0,
-        mintUsdcTo: [],
-      });
+      const sys = await loadFixture(deployBondingSystem);
       const { bondingRegistry, ciphernodeBondToken } = sys;
       const bondingRegistryAddress = await bondingRegistry.getAddress();
 
@@ -2838,12 +2795,7 @@ describe("InterfoldToken", function () {
       const [, beneficiary, , operator] = signers;
       const beneficiaryAddress = await beneficiary.getAddress();
       const operatorAddress = await operator.getAddress();
-      const sys = await deployInterfoldSystem({
-        useMockCiphernodeRegistry: true,
-        setupOperators: 0,
-        wireSlashingManager: false,
-        mintUsdcTo: [],
-      });
+      const sys = await loadFixture(deployBondingSystem);
       const { bondingRegistry, ciphernodeBondToken } = sys;
       const bondingRegistryAddress = await bondingRegistry.getAddress();
 
@@ -2890,12 +2842,7 @@ describe("InterfoldToken", function () {
       const [, beneficiary, , operator] = signers;
       const beneficiaryAddress = await beneficiary.getAddress();
       const operatorAddress = await operator.getAddress();
-      const sys = await deployInterfoldSystem({
-        useMockCiphernodeRegistry: true,
-        setupOperators: 0,
-        wireSlashingManager: false,
-        mintUsdcTo: [],
-      });
+      const sys = await loadFixture(deployBondingSystem);
       const { bondingRegistry, ciphernodeBondToken, slashingManager } = sys;
       const bondingRegistryAddress = await bondingRegistry.getAddress();
 
@@ -2962,12 +2909,7 @@ describe("InterfoldToken", function () {
       const [, beneficiary, , operator] = signers;
       const beneficiaryAddress = await beneficiary.getAddress();
       const operatorAddress = await operator.getAddress();
-      const sys = await deployInterfoldSystem({
-        useMockCiphernodeRegistry: true,
-        setupOperators: 0,
-        wireSlashingManager: false,
-        mintUsdcTo: [],
-      });
+      const sys = await loadFixture(deployBondingSystem);
       const { bondingRegistry, ciphernodeBondToken, owner, slashingManager } =
         sys;
       const bondingRegistryAddress = await bondingRegistry.getAddress();

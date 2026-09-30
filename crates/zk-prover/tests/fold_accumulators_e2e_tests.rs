@@ -5,20 +5,15 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 //! Fold **accumulators** integration tests: sequential [`generate_sequential_c3_fold`] /
-//! [`generate_sequential_c6_fold`] (prove + [`ZkProver::verify_fold_proof`]), ABI/slot inference from
-//! compiled `c3_fold` / `c6_fold` JSON, and artifact staging under [`CircuitVariant::Default`]
+//! [`generate_sequential_c6_fold`] (prove + [`ZkProver::verify_fold_proof`]) with the slot count read
+//! from the compiled `c3_fold` / `c6_fold` ABI and artifacts staged under [`CircuitVariant::Default`]
 //! (`noir-recursive-no-zk` VKs — see `scripts/build-circuits.ts`).
 //!
-//! Loads compiled JSON for the node-fold **pipeline** ([`CircuitName::C2abFold`] … [`CircuitName::NodeFold`])
-//! and stages those artifacts; it does **not** run a full correlated `node_fold` proof — use
-//! `node_fold_correlated_e2e_tests.rs` for that.
+//! The node-fold pipeline ([`CircuitName::C2abFold`] … [`CircuitName::NodeFold`]) is proven in
+//! `node_fold_correlated_e2e_tests.rs`.
 //!
-//! - [`recursive_aggregation_default_artifacts_staged`]: staged `c3_fold` paths (no `bb prove`).
-//! - [`recursive_aggregation_c6_fold_kernel_artifacts_staged`]: staged `c6_fold_kernel` paths.
 //! - [`c3_fold_sequential_proves_and_verifies`]: two inner `ShareEncryption` proofs → [`generate_sequential_c3_fold`].
 //! - [`c6_fold_sequential_proves_and_verifies`]: two inner `ThresholdShareDecryption` proofs → [`generate_sequential_c6_fold`].
-//! - [`node_fold_pipeline_compiled_json_load`] / [`node_fold_pipeline_recursive_aggregation_artifacts_staged`]:
-//!   pipeline circuits load + staged artifacts for C2ab/C3ab/C4ab/NodeFold.
 
 mod common;
 
@@ -36,8 +31,8 @@ use e3_zk_helpers::threshold::share_decryption::{
 };
 use e3_zk_helpers::CiphernodesCommitteeSize;
 use e3_zk_prover::{
-    generate_sequential_c3_fold, generate_sequential_c6_fold, CircuitVariant, CompiledCircuit,
-    Provable, ZkBackend, ZkProver,
+    generate_sequential_c3_fold, generate_sequential_c6_fold, CircuitVariant, Provable, ZkBackend,
+    ZkProver,
 };
 
 fn c3_fold_json_path() -> PathBuf {
@@ -49,22 +44,6 @@ fn c6_fold_json_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../circuits/bin/recursive_aggregation/c6_fold/target/c6_fold.json")
 }
-
-fn recursive_aggregation_compiled_json_path(circuit: CircuitName) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../circuits/bin")
-        .join(circuit.dir_path())
-        .join("target")
-        .join(format!("{}.json", circuit.as_str()))
-}
-
-/// `c2ab_fold` → `c3ab_fold` → `c4ab_fold` → inputs to `node_fold` (see `node_fold/src/main.nr`).
-const NODE_FOLD_PIPELINE: &[CircuitName] = &[
-    CircuitName::C2abFold,
-    CircuitName::C3abFold,
-    CircuitName::C4abFold,
-    CircuitName::NodeFold,
-];
 
 /// Reads `C3_SLOTS` from the compiled `c3_fold` ABI (`acc_public_inputs` length is `4 + 3 * C3_SLOTS`).
 fn c3_fold_total_slots_from_compiled_json() -> usize {
@@ -125,177 +104,6 @@ fn c6_fold_total_slots_from_compiled_json() -> usize {
         len
     );
     (len - 6) / 4
-}
-
-#[test]
-#[ignore = "requires compiled circuits; run pnpm rust:test:proofs"]
-fn c3_fold_compiled_abi_has_consistent_slot_count() {
-    if !c3_fold_json_path().exists() {
-        panic!(
-            "missing required test prerequisite: {} not found (run `pnpm build:circuits --group recursive_aggregation`)",
-            c3_fold_json_path().display()
-        );
-    }
-    let slots = c3_fold_total_slots_from_compiled_json();
-    assert!(slots > 0, "C3_SLOTS inferred from ABI should be positive");
-    let _ =
-        CompiledCircuit::from_file(&c3_fold_json_path()).expect("load compiled c3_fold circuit");
-}
-
-#[test]
-#[ignore = "requires compiled circuits; run pnpm rust:test:proofs"]
-fn c6_fold_compiled_abi_has_consistent_slot_count() {
-    if !c6_fold_json_path().exists() {
-        panic!(
-            "missing required test prerequisite: {} not found (run `pnpm build:circuits --group recursive_aggregation`)",
-            c6_fold_json_path().display()
-        );
-    }
-    let slots = c6_fold_total_slots_from_compiled_json();
-    assert!(slots > 0, "C6 slots inferred from ABI should be positive");
-    let _ =
-        CompiledCircuit::from_file(&c6_fold_json_path()).expect("load compiled c6_fold circuit");
-}
-
-#[test]
-#[ignore = "requires compiled circuits; run pnpm rust:test:proofs"]
-fn node_fold_pipeline_compiled_json_load() {
-    let mut missing = Vec::new();
-    for &c in NODE_FOLD_PIPELINE {
-        let p = recursive_aggregation_compiled_json_path(c);
-        if !p.exists() {
-            missing.push(p);
-        }
-    }
-    if !missing.is_empty() {
-        panic!(
-            "missing required test prerequisite: missing compiled JSON(s) (run `pnpm build:circuits --group recursive_aggregation`): {:?}",
-            missing
-        );
-    }
-    for &c in NODE_FOLD_PIPELINE {
-        let path = recursive_aggregation_compiled_json_path(c);
-        let _ = CompiledCircuit::from_file(&path)
-            .unwrap_or_else(|e| panic!("load compiled {}: {}", c.as_str(), e));
-    }
-}
-
-#[tokio::test]
-#[ignore = "requires prepared integration artifacts; run pnpm rust:test:proofs"]
-async fn recursive_aggregation_default_artifacts_staged() {
-    let Some(bb) = find_bb().await else {
-        panic!("missing required test prerequisite: bb not found");
-    };
-    if !c3_fold_json_path().exists() {
-        panic!(
-            "missing required test prerequisite: {} not found",
-            c3_fold_json_path().display()
-        );
-    }
-
-    let (backend, temp) = setup_test_prover(&bb).await;
-    setup_recursive_aggregation_fold_circuit(&backend, CircuitName::C3Fold).await;
-
-    let base = backend
-        .circuits_dir
-        .join("insecure-512")
-        .join("minimum")
-        .join("default")
-        .join(CircuitName::C3Fold.dir_path());
-    let pkg = CircuitName::C3Fold.as_str();
-    assert!(
-        base.join(format!("{pkg}.json")).exists(),
-        "expected staged {}.json under default/ variant",
-        pkg
-    );
-    assert!(
-        base.join(format!("{pkg}.vk")).exists(),
-        "expected staged {}.vk (noir-recursive-no-zk) under default/ variant",
-        pkg
-    );
-
-    drop(temp);
-}
-
-#[tokio::test]
-#[ignore = "requires prepared integration artifacts; run pnpm rust:test:proofs"]
-async fn recursive_aggregation_c6_fold_kernel_artifacts_staged() {
-    let Some(bb) = find_bb().await else {
-        panic!("missing required test prerequisite: bb not found");
-    };
-    let kernel_json = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../circuits/bin/recursive_aggregation/c6_fold_kernel/target/c6_fold_kernel.json");
-    if !kernel_json.exists() {
-        panic!(
-            "missing required test prerequisite: {} not found",
-            kernel_json.display()
-        );
-    }
-
-    let (backend, temp) = setup_test_prover(&bb).await;
-    setup_recursive_aggregation_fold_circuit(&backend, CircuitName::C6FoldKernel).await;
-
-    let base = backend
-        .circuits_dir
-        .join("insecure-512")
-        .join("minimum")
-        .join("default")
-        .join(CircuitName::C6FoldKernel.dir_path());
-    let pkg = CircuitName::C6FoldKernel.as_str();
-    assert!(
-        base.join(format!("{pkg}.json")).exists(),
-        "expected staged {}.json under default/ variant",
-        pkg
-    );
-    assert!(
-        base.join(format!("{pkg}.vk")).exists(),
-        "expected staged {}.vk (noir-recursive-no-zk) under default/ variant",
-        pkg
-    );
-
-    drop(temp);
-}
-
-#[tokio::test]
-#[ignore = "requires prepared integration artifacts; run pnpm rust:test:proofs"]
-async fn node_fold_pipeline_recursive_aggregation_artifacts_staged() {
-    let Some(bb) = find_bb().await else {
-        panic!("missing required test prerequisite: bb not found");
-    };
-    let gate = recursive_aggregation_compiled_json_path(CircuitName::NodeFold);
-    if !gate.exists() {
-        panic!(
-            "missing required test prerequisite: {} not found (run `pnpm build:circuits --group recursive_aggregation`)",
-            gate.display()
-        );
-    }
-
-    let (backend, temp) = setup_test_prover(&bb).await;
-    for &c in NODE_FOLD_PIPELINE {
-        setup_recursive_aggregation_fold_circuit(&backend, c).await;
-    }
-
-    let preset_base = backend
-        .circuits_dir
-        .join("insecure-512")
-        .join("minimum")
-        .join("default");
-    for &c in NODE_FOLD_PIPELINE {
-        let base = preset_base.join(c.dir_path());
-        let pkg = c.as_str();
-        assert!(
-            base.join(format!("{pkg}.json")).exists(),
-            "expected staged {}.json under default/ variant",
-            pkg
-        );
-        assert!(
-            base.join(format!("{pkg}.vk")).exists(),
-            "expected staged {}.vk (noir-recursive-no-zk) under default/ variant",
-            pkg
-        );
-    }
-
-    drop(temp);
 }
 
 async fn setup_c3_fold_with_inner_share_encryption() -> Option<(

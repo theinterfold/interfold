@@ -76,6 +76,9 @@ describe("Interfold", function () {
     };
   };
 
+  const setupWithoutOperators = async () =>
+    deployInterfoldSystem({ setupOperators: 0 });
+
   const deployUnregisteredE3Program = async () => {
     const e3Program = await ethers.deployContract("MockE3Program");
     await e3Program.waitForDeployment();
@@ -180,18 +183,20 @@ describe("Interfold", function () {
         .withArgs(await ciphernodeRegistryContract.getAddress());
     });
 
-    it("sets ciphernodeRegistry correctly", async function () {
-      const { interfold } = await deployInterfoldSystem({ setupOperators: 0 });
+    it("sets ciphernodeRegistry and emits CiphernodeRegistrySet", async function () {
+      const { interfold } = await loadFixture(setupWithoutOperators);
       const replacement = await ethers.deployContract("MockCiphernodeRegistry");
       const replacementAddress = await replacement.getAddress();
 
       await interfold.setRequestsPaused(true);
-      await interfold.setCiphernodeRegistry(replacementAddress);
+      await expect(interfold.setCiphernodeRegistry(replacementAddress))
+        .to.emit(interfold, "CiphernodeRegistrySet")
+        .withArgs(replacementAddress);
       expect(await interfold.ciphernodeRegistry()).to.equal(replacementAddress);
     });
 
     it("rejects a replacement registry with existing members", async function () {
-      const { interfold } = await deployInterfoldSystem({ setupOperators: 0 });
+      const { interfold } = await loadFixture(setupWithoutOperators);
       const replacement = await ethers.deployContract("MockCiphernodeRegistry");
 
       await replacement.addCiphernode(AddressTwo);
@@ -217,17 +222,6 @@ describe("Interfold", function () {
         interfold,
         "DependencyGenerationNotDrained",
       );
-    });
-
-    it("emits CiphernodeRegistrySet event", async function () {
-      const { interfold } = await deployInterfoldSystem({ setupOperators: 0 });
-      const replacement = await ethers.deployContract("MockCiphernodeRegistry");
-      const replacementAddress = await replacement.getAddress();
-
-      await interfold.setRequestsPaused(true);
-      await expect(interfold.setCiphernodeRegistry(replacementAddress))
-        .to.emit(interfold, "CiphernodeRegistrySet")
-        .withArgs(replacementAddress);
     });
   });
 

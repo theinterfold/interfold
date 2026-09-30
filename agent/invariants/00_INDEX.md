@@ -24,11 +24,13 @@ weaken a requirement to match the code; record the gap instead.
 
 ## How to read this directory
 
-Read this index, then the section files that the rows for your changed paths name. A changed path
-can match more than one row; read every section that the matching rows name. The sections are not
-independent: `02` also governs verifier contracts, the compute provider, and CRISP, and `01` also
-governs Rust sortition and eligibility reads. If a section names a file or symbol that your diff
-changes, read that section too (`rg -l '<file or symbol>' agent/invariants/`).
+Consult this directory for protocol-bearing changes (`agent/RULES.md` §Protocol-bearing changes).
+Read this index: the routing table, the meta-invariants, and the open issues for your area. In each
+section that a matching row names, search for the files, contracts, events, and symbols that your
+diff changes, and read the entries that match. A changed path can match more than one row. The
+sections are not independent: `02` also governs verifier contracts, the compute provider, and CRISP,
+and `01` also governs Rust sortition and eligibility reads. If a section names a file or symbol that
+your diff changes, search that section too (`rg -l '<file or symbol>' agent/invariants/`).
 
 | Changed path                                                                                                                                                                   | Read                                                                                                   |
 | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------ |
@@ -56,8 +58,7 @@ that route elsewhere, so they need the crypto section in addition to their own r
 `crates/evm-helpers/src/contracts.rs`. `scripts/circuit-constants.ts` also holds committee values;
 the gate does not compare it, so review it against `02` by hand.
 
-Read the whole directory only when the change spans layers (contracts ↔ Rust ↔ circuits) or when
-you are asked for a full invariant audit.
+Read whole section files only for a full invariant audit that the user asks for.
 
 ## Review budget
 

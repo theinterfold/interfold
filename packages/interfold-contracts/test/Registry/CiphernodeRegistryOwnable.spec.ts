@@ -6,7 +6,6 @@
 import { expect } from "chai";
 import type { Signer } from "ethers";
 
-import { CiphernodeRegistryOwnable__factory as CiphernodeRegistryFactory } from "../../types";
 import {
   ACTIVE_CRYPTO_CONFIG_ID,
   ADDRESS_ONE as AddressOne,
@@ -77,6 +76,11 @@ describe("CiphernodeRegistryOwnable", function () {
     };
   }
 
+  // `setInterfold` needs a drained operator generation.
+  async function setupWithoutOperators() {
+    return deployInterfoldSystem({ setupOperators: 0 });
+  }
+
   // Helper to make a request through the Interfold contract
   async function makeRequest(
     interfold: any,
@@ -116,62 +120,6 @@ describe("CiphernodeRegistryOwnable", function () {
     if (mineEntropyBlock) await networkHelpers.time.increase(1);
     return tx;
   }
-
-  describe("constructor / initialize()", function () {
-    it("correctly sets `_owner` and `interfold` ", async function () {
-      const poseidonFactory = await ethers.getContractFactory("PoseidonT3");
-      const poseidonDeployment = await poseidonFactory.deploy();
-      await poseidonDeployment.waitForDeployment();
-      const poseidonAddress = await poseidonDeployment.getAddress();
-      const sortitionFactory = await ethers.getContractFactory(
-        "RegistrySortitionLib",
-      );
-      const sortitionDeployment = await sortitionFactory.deploy();
-      await sortitionDeployment.waitForDeployment();
-      const sortitionAddress = await sortitionDeployment.getAddress();
-      const [deployer] = await ethers.getSigners();
-      if (!deployer) throw new Error("Bad getSigners() output");
-
-      const ciphernodeRegistryFactory = await ethers.getContractFactory(
-        "CiphernodeRegistryOwnable",
-        {
-          libraries: {
-            PoseidonT3: poseidonAddress,
-            RegistrySortitionLib: sortitionAddress,
-          },
-        },
-      );
-      const implementation = await ciphernodeRegistryFactory.deploy();
-      await implementation.waitForDeployment();
-      const implementationAddress = await implementation.getAddress();
-
-      const initData = ciphernodeRegistryFactory.interface.encodeFunctionData(
-        "initialize",
-        [deployer.address, SORTITION_SUBMISSION_WINDOW],
-      );
-
-      const proxyFactory = await ethers.getContractFactory(
-        "TransparentUpgradeableProxy",
-      );
-      const proxy = await proxyFactory.deploy(
-        implementationAddress,
-        deployer.address,
-        initData,
-      );
-      await proxy.waitForDeployment();
-      const proxyAddress = await proxy.getAddress();
-
-      const ciphernodeRegistry = CiphernodeRegistryFactory.connect(
-        proxyAddress,
-        deployer,
-      );
-
-      expect(await ciphernodeRegistry.owner()).to.equal(deployer.address);
-      expect(await ciphernodeRegistry.sortitionSubmissionWindow()).to.equal(
-        SORTITION_SUBMISSION_WINDOW,
-      );
-    });
-  });
 
   describe("randomness configuration", function () {
     it("disables mock auto-fulfillment by default", async function () {
@@ -1319,20 +1267,14 @@ describe("CiphernodeRegistryOwnable", function () {
         registry.connect(notTheOwner).setInterfold(AddressTwo),
       ).to.be.revertedWithCustomError(registry, "OwnableUnauthorizedAccount");
     });
-    it("sets the interfold address", async function () {
-      const { ciphernodeRegistry: registry } = await deployInterfoldSystem({
-        setupOperators: 0,
-      });
-      expect(await registry.setInterfold(AddressTwo));
-      expect(await registry.interfold()).to.equal(AddressTwo);
-    });
-    it("emits an InterfoldSet event", async function () {
-      const { ciphernodeRegistry: registry } = await deployInterfoldSystem({
-        setupOperators: 0,
-      });
+    it("sets the interfold address and emits InterfoldSet", async function () {
+      const { ciphernodeRegistry: registry } = await loadFixture(
+        setupWithoutOperators,
+      );
       await expect(await registry.setInterfold(AddressTwo))
         .to.emit(registry, "InterfoldSet")
         .withArgs(AddressTwo);
+      expect(await registry.interfold()).to.equal(AddressTwo);
     });
   });
 

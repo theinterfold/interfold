@@ -7,4 +7,12 @@ pnpm check:committee
 pnpm check:docs
 pnpm check:addresses
 pnpm check:invariants
-pnpm check:verifiers
+
+# check:verifiers deletes the aggregation circuits' nargo target directories and recompiles both
+# aggregator circuits. Run it only when the branch changes an input of the generated verifiers;
+# markdown is never one.
+base="$(git merge-base origin/main HEAD 2>/dev/null || true)"
+if [ -z "$base" ] || git diff --name-only "$base" HEAD | grep -vE '\.mdx?$' |
+  grep -qE '^(circuits/|packages/interfold-contracts/contracts/verifiers/|scripts/(generate-verifiers|build-circuits|circuit-constants)\.ts$|crates/zk-prover/versions\.json$)'; then
+  pnpm check:verifiers
+fi

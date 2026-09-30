@@ -94,6 +94,32 @@ consistent set of inner and recursive circuits. Before `pnpm rust:test:slashing`
 Ordinary Rust test runs report these integration tests as ignored. CI explicitly selects them. The
 full test command reuses the prepared circuits for SDK proof verification.
 
+## Build configuration: preset and committee
+
+Two independent settings select what `pnpm build:circuits` compiles into `circuits/bin/`:
+
+- **Preset** (`--preset insecure-512` [default] | `secure-8192`): the BFV parameter set.
+- **Committee** (`--committee minimum` [default] | `micro` | `small`): `(N, T, H)` for the
+  secret-sharing committee. Mirrors `e3_zk_helpers::CiphernodesCommitteeSize`.
+
+`scripts/build-circuits.ts` writes the selection. Never hand-edit the values that it writes:
+
+| File                                                                | What the build script writes                                          |
+| ------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `circuits/lib/src/configs/committee/active.nr`                      | Committed production committee for the Noir circuits                  |
+| `packages/interfold-contracts/scripts/utils.ts`                     | `BFV_DKG_H`, `BFV_THRESHOLD_T`, and the BFV parameter-hash constants  |
+| `packages/interfold-contracts/contracts/lib/ActiveCryptoConfig.sol` | The whole file                                                        |
+| `circuits/bin/.active-preset.json`                                  | Local cache stamp only. It can name a different pair than `active.nr` |
+
+`scripts/check-committee.sh` (`pnpm check:committee`, pre-push and the Agent Harness CI workflow)
+compares the BFV tuples, committee values, and configuration IDs across TypeScript, Rust, Noir, and
+Solidity. The file list is at the top of the script. It regenerates and compares the parity matrices
+only when `target/release/generate_parity_matrices` is executable and `nargo` is on PATH. A
+different `.active-preset.json` only prints a note. Always switch with
+`pnpm build:circuits --committee <name>`. Supported `(preset, committee)` pairs live in
+`scripts/circuit-constants.ts`. See `scripts/README.md#circuit-builder` and
+`circuits/benchmarks/README.md` for the full recipe.
+
 ## Chain-Specific BFV Config
 
 The protocol release can carry more than one circuit artifact set. Current deployments use this
@@ -111,6 +137,21 @@ scheme mapping and dispatch proofs to the concrete verifier for each generated p
 `circuits/bin/.active-preset.json` only records the local hydrated circuit cache. It can point at a
 different pair than the target chain uses, provided `dist/circuits/` contains every required pair
 for that chain.
+
+## Contract addresses
+
+`packages/interfold-contracts/deployed_contracts.json` records what the deploy scripts put on each
+network. `pnpm gen:manifest` derives `deployments/manifest.json` from it, and that manifest is the
+single source of truth for every published address. It is attached to each release, and
+`interfold config check` fetches it to tell an operator that a redeploy happened.
+
+After a redeploy, update every consumer in the same PR: the operator docs, the dashboard, the
+DAppNode package, and the CRISP example. `pnpm check:addresses` (pre-push) enforces this. It fails
+when a consumer keeps an address that the manifest no longer publishes, and when a new file quotes a
+live address without a classification in `scripts/check-addresses.ts`.
+
+A release must carry the current manifest. A tag cut before a redeploy ships dead addresses to every
+node that fetches the asset, and the node then syncs an address that emits no events.
 
 ## Conventions
 
@@ -136,8 +177,10 @@ for that chain.
   (contract addresses in the docs, dashboard, DAppNode package, and CRISP example must match
   `deployments/manifest.json`), `check:invariants` (`do_send` ratchet with its baseline in
   `scripts/invariant-baselines.env`, skip-proof feature containment, runtime proof-skip guard,
-  Docker workspace coverage, Compose shutdown grace), `check:verifiers`. CI does not run
-  `check:addresses`, `check:pnpm`, or the root `eslint`, so these checks run only in this hook.
+  Docker workspace coverage, Compose shutdown grace), and `check:verifiers` when the branch changes
+  `circuits/`, the verifier contracts, `crates/zk-prover/versions.json`, or the circuit build and
+  verifier generation scripts. CI does not run `check:addresses`, `check:pnpm`, or the root
+  `eslint`, so these checks run only in this hook.
 - **Docs MCP server:** `.mcp.json`, `.codex/config.toml`, and `opencode.json` expose
   `@interfold/mcp` (`interfold-docs`) to their respective agents. The launch configs run the
   TypeScript source through the workspace toolchain; `pnpm mcp:build` builds the publishable

@@ -35,10 +35,10 @@ behavior-preserving source reorganization is suspect, not automatically deletabl
 gate still rejects new ones.
 
 Before judging a candidate, read the complete test and production owner, its entry point, callers,
-callees, sibling implementations, overlapping tests, CI routing, and relevant history. Read
-`AGENTS.md` and the files that it routes to first: `agent/RULES.md`, `agent/ARCHITECTURE.md`
-§Testing Requirements for Rust tests, and the `agent/invariants/` sections for the audited paths.
-When the test claims dependency-backed behavior, inspect the dependency source or types directly.
+callees, sibling implementations, overlapping tests, CI routing, and relevant history. For Rust
+tests, search `agent/ARCHITECTURE.md` §Testing Requirements. Search the routed `agent/invariants/`
+sections for the audited files and symbols. When the test claims dependency-backed behavior, inspect
+the dependency source or types directly.
 
 ## Retention bar
 
@@ -58,5 +58,8 @@ contract. Also keep:
 - a test that `agent/invariants/`, `agent/flow-trace/`, or `agent/ARCHITECTURE.md` cites as
   enforcement. To remove one, update the citation in the same change.
 
-Static or slow is not a deletion reason. A test that resembles implementation may still be the
-independent contract; prove otherwise before removing it.
+Slow alone is not a deletion reason, and a test that resembles implementation may still be the
+independent contract: prove otherwise before removing it. Cost does count against duplication. When
+a slow test (a ZK proof, a key generation, a chain or network run) repeats a contract that a cheaper
+test or a test that already pays that cost guards, remove it or merge its assertions into that test.
+When several tests generate the same proof or fixture, generate it once and share it.

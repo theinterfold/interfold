@@ -21,12 +21,9 @@ describe("NodeReleaseRegistry", function () {
     return deployInterfoldSystem({ setupOperators: 1 });
   }
 
-  it("admits every operator that acknowledges the required release", async function () {
-    const { bondingRegistry } = await deployInterfoldSystem({
-      setupOperators: 3,
-    });
-    expect(await bondingRegistry.numActiveOperators()).to.equal(3);
-  });
+  async function setupWithoutOperators() {
+    return deployInterfoldSystem({ setupOperators: 0 });
+  }
 
   it("excludes a stale node after a mandatory release", async function () {
     const { interfold, bondingRegistry, nodeReleaseRegistry, operator1 } =
@@ -72,7 +69,7 @@ describe("NodeReleaseRegistry", function () {
 
   it("does not invalidate eligibility twice during initial setup", async function () {
     const { interfold, bondingRegistry, ciphernodeRegistry, owner } =
-      await deployInterfoldSystem({ setupOperators: 0 });
+      await loadFixture(setupWithoutOperators);
     const replacement = await ethers.deployContract("NodeReleaseRegistry", [
       await owner.getAddress(),
       await bondingRegistry.getAddress(),
@@ -204,7 +201,7 @@ describe("NodeReleaseRegistry", function () {
 
   it("rejects a dependency replacement that leaves stale release bindings", async function () {
     const { interfold, bondingRegistry, slashingManager, nodeReleaseRegistry } =
-      await deployInterfoldSystem({ setupOperators: 0 });
+      await loadFixture(setupWithoutOperators);
     const replacement = await ethers.deployContract("MockCiphernodeRegistry");
     await replacement.setInterfold(await interfold.getAddress());
     await replacement.setBondingRegistry(await bondingRegistry.getAddress());

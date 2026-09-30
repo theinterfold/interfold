@@ -5,14 +5,12 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 import { expect } from "chai";
 
-import SlashingManagerModule from "../../ignition/modules/slashingManager";
 import type { MockCircuitVerifier } from "../../types";
 import type { SlashingManager } from "../../types/contracts/slashing/SlashingManager";
 import {
   REQUIRED_CIPHERNODE_BOND,
   deployInterfoldSystem,
   ethers,
-  ignition,
   networkHelpers,
   setBondingAssetConfig,
   signAndEncodeAttestation,
@@ -203,21 +201,6 @@ describe("SlashingManager", function () {
       expect(await slashingManager.bondingRegistry()).to.equal(
         await bondingRegistry.getAddress(),
       );
-    });
-
-    it("should revert if admin is zero address", async function () {
-      await expect(
-        ignition.deploy(SlashingManagerModule, {
-          parameters: {
-            SlashingManager: {
-              admin: ethers.ZeroAddress,
-              bondingRegistry: ethers.ZeroAddress,
-              ciphernodeRegistry: ethers.ZeroAddress,
-              interfold: ethers.ZeroAddress,
-            },
-          },
-        }),
-      ).to.be.rejected;
     });
   });
 

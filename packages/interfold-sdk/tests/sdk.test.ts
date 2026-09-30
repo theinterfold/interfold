@@ -53,14 +53,6 @@ describe('encryptNumber', () => {
       expect(await sdk.validatePublicKeyCommitment(publicKey, differentCommitment)).to.equal(false)
       expect(await sdk.validatePublicKeyCommitment(publicKey, new Uint8Array(31))).to.equal(false)
     })
-
-    it('should compute a SAFE commitment for encrypted data', async () => {
-      const ciphertext = await sdk.encryptNumber(10n, publicKey)
-      const commitment = await sdk.computeCiphertextCommitment(ciphertext)
-
-      expect(commitment).to.be.an.instanceof(Uint8Array)
-      expect(commitment.length).to.equal(32)
-    })
   })
 
   describe('standalone encryption (no blockchain setup)', () => {

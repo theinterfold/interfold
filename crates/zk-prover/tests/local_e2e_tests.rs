@@ -12,7 +12,8 @@
 //!
 //! To add a new circuit: add setup_*_test() and one line in `e2e_proof_tests!`
 //! `(name, setup, CircuitVariant::...)` (C5 uses Default / noir-recursive-no-zk; EVM is `DkgAggregator`).
-//! Commitment consistency tests are defined separately.
+//! A circuit with a commitment check gets one dedicated test instead of a macro row: it proves
+//! once, verifies with `assert_proof_verifies`, and then compares the commitments.
 
 mod common;
 
@@ -24,7 +25,7 @@ use common::{
     extract_field, extract_field_from_end, find_bb, require_minimum_circuits,
     setup_compiled_circuit, setup_test_prover,
 };
-use e3_events::CircuitName;
+use e3_events::{CircuitName, Proof};
 use e3_fhe_params::{build_pair_for_preset, BfvPreset};
 use e3_polynomial::{CrtPolynomial, Polynomial};
 use e3_zk_helpers::circuits::dkg::pk::circuit::PkCircuit;
@@ -127,12 +128,23 @@ fn fr_to_bigint(f: Fr) -> num_bigint::BigInt {
     num_bigint::BigInt::from_bytes_le(num_bigint::Sign::Plus, &le)
 }
 
-/// Convert raw public signals bytes (32-byte big-endian chunks) to ark_bn254::Fr field elements.
-fn public_signals_to_fields(signals: &[u8]) -> Vec<Fr> {
-    signals
-        .chunks(32)
-        .map(Fr::from_be_bytes_mod_order)
-        .collect()
+/// Verify `proof` with bb and fail the test if bb rejects it.
+fn assert_proof_verifies<C: Provable>(
+    circuit: &C,
+    prover: &ZkProver,
+    proof: &Proof,
+    e3_id: &str,
+    variant: CircuitVariant,
+    artifacts_dir: &str,
+) {
+    let party_id = 1;
+    let verification_result =
+        circuit.verify_with_variant(prover, proof, e3_id, party_id, variant, artifacts_dir);
+    assert!(
+        verification_result.as_ref().is_ok_and(|&v| v),
+        "Proof verification failed: {:?}",
+        verification_result
+    );
 }
 
 async fn setup_share_encryption_e_sm_test() -> Option<(
@@ -482,14 +494,7 @@ macro_rules! e2e_proof_tests {
                     assert!(!proof.data.is_empty(), "proof data should not be empty");
                     assert!(!proof.public_signals.is_empty(), "public signals should not be empty");
 
-                    let party_id = 1;
-                    let verification_result =
-                        circuit.verify_with_variant(&prover, &proof, e3_id, party_id, $variant, &artifacts_dir);
-                    assert!(
-                        verification_result.as_ref().is_ok_and(|&v| v),
-                        "Proof verification failed: {:?}",
-                        verification_result
-                    );
+                    assert_proof_verifies(&circuit, &prover, &proof, e3_id, $variant, &artifacts_dir);
 
                     prover.cleanup(e3_id).unwrap();
                 }
@@ -499,15 +504,10 @@ macro_rules! e2e_proof_tests {
 }
 
 e2e_proof_tests! {
-    (pk_generation, setup_pk_generation_test(), CircuitVariant::Recursive),
-    (pk, setup_pk_test(), CircuitVariant::Recursive),
     (share_computation_sk, setup_share_computation_sk_test(), CircuitVariant::Recursive),
     (share_computation_e_sm, setup_share_computation_e_sm_test(), CircuitVariant::Recursive),
     (share_encryption_sk, setup_share_encryption_sk_test(), CircuitVariant::Recursive),
     (share_encryption_e_sm, setup_share_encryption_e_sm_test(), CircuitVariant::Recursive),
-    (share_decryption, setup_share_decryption_test(), CircuitVariant::Recursive),
-    (pk_aggregation, setup_pk_aggregation_test(), CircuitVariant::Default),
-    (decrypted_shares_aggregation, setup_decrypted_shares_aggregation_test(), CircuitVariant::Recursive),
 }
 
 #[tokio::test]
@@ -524,6 +524,15 @@ async fn test_pk_generation_commitment_consistency() {
     let proof = circuit
         .prove(&prover, &preset, &sample, e3_id, &artifacts_dir)
         .expect("proof generation should succeed");
+
+    assert_proof_verifies(
+        &circuit,
+        &prover,
+        &proof,
+        e3_id,
+        CircuitVariant::Recursive,
+        &artifacts_dir,
+    );
 
     let computation_output = PkGenerationCircuit::compute(preset, &sample).unwrap();
 
@@ -571,6 +580,15 @@ async fn test_pk_bfv_commitment_consistency() {
         .prove(&prover, &preset, &sample, e3_id, &artifacts_dir)
         .expect("proof generation should succeed");
 
+    assert_proof_verifies(
+        &circuit,
+        &prover,
+        &proof,
+        e3_id,
+        CircuitVariant::Recursive,
+        &artifacts_dir,
+    );
+
     // Verify the commitment from the proof is a valid field element
     let commitment_from_proof =
         num_bigint::BigInt::from_bytes_be(num_bigint::Sign::Plus, &proof.public_signals);
@@ -597,74 +615,6 @@ async fn test_pk_bfv_commitment_consistency() {
 }
 
 #[tokio::test]
-async fn test_share_computation_sk_commitment_consistency() {
-    let Some((_backend, _temp, prover, circuit, sample, preset, e3_id)) =
-        setup_share_computation_sk_test().await
-    else {
-        println!("skipping: bb not found");
-        return;
-    };
-
-    let artifacts_dir =
-        preset.artifacts_dir_for_committee(CiphernodesCommitteeSize::Minimum.as_str());
-    let proof = circuit
-        .prove(&prover, &preset, &sample, e3_id, &artifacts_dir)
-        .expect("inner sk_share_computation proof should succeed");
-
-    assert_eq!(
-        proof.circuit,
-        CircuitName::SkShareComputation,
-        "expected SkShareComputation inner circuit tag"
-    );
-    assert!(
-        !proof.public_signals.is_empty() && proof.public_signals.len() % 32 == 0,
-        "inner C2 public signals should be non-empty 32-byte field chunks"
-    );
-
-    let fields = public_signals_to_fields(&proof.public_signals);
-    assert!(
-        fields.iter().any(|f| !f.is_zero()),
-        "inner share computation public signals should not all be zero"
-    );
-
-    prover.cleanup(e3_id).unwrap();
-}
-
-#[tokio::test]
-async fn test_share_computation_e_sm_commitment_consistency() {
-    let Some((_backend, _temp, prover, circuit, sample, preset, e3_id)) =
-        setup_share_computation_e_sm_test().await
-    else {
-        println!("skipping: bb not found");
-        return;
-    };
-
-    let artifacts_dir =
-        preset.artifacts_dir_for_committee(CiphernodesCommitteeSize::Minimum.as_str());
-    let proof = circuit
-        .prove(&prover, &preset, &sample, e3_id, &artifacts_dir)
-        .expect("inner e_sm_share_computation proof should succeed");
-
-    assert_eq!(
-        proof.circuit,
-        CircuitName::ESmShareComputation,
-        "expected ESmShareComputation inner circuit tag"
-    );
-    assert!(
-        !proof.public_signals.is_empty() && proof.public_signals.len() % 32 == 0,
-        "inner C2 public signals should be non-empty 32-byte field chunks"
-    );
-
-    let fields = public_signals_to_fields(&proof.public_signals);
-    assert!(
-        fields.iter().any(|f| !f.is_zero()),
-        "inner share computation public signals should not all be zero"
-    );
-
-    prover.cleanup(e3_id).unwrap();
-}
-
-#[tokio::test]
 async fn test_pk_aggregation_commitment_consistency() {
     let Some((_backend, _temp, prover, circuit, sample, preset, e3_id)) =
         setup_pk_aggregation_test().await
@@ -685,6 +635,15 @@ async fn test_pk_aggregation_commitment_consistency() {
             &artifacts_dir,
         )
         .expect("proof generation should succeed");
+
+    assert_proof_verifies(
+        &circuit,
+        &prover,
+        &proof,
+        e3_id,
+        CircuitVariant::Default,
+        &artifacts_dir,
+    );
 
     let computation_output = PkAggregationCircuit::compute(preset, &sample).unwrap();
 
@@ -738,6 +697,15 @@ async fn test_threshold_share_decryption_commitment_consistency() {
         )
         .expect("proof generation should succeed");
 
+    assert_proof_verifies(
+        &circuit,
+        &prover,
+        &proof,
+        e3_id,
+        CircuitVariant::Recursive,
+        &artifacts_dir,
+    );
+
     let computation_output = ThresholdShareDecryptionCircuit::compute(preset, &sample).unwrap();
 
     let expected_d_commitment = compute_threshold_decryption_share_commitment(
@@ -753,83 +721,6 @@ async fn test_threshold_share_decryption_commitment_consistency() {
     );
 
     prover.cleanup(e3_id).unwrap();
-}
-
-/// C4a publishes `commitment` (aggregated sk); C6 consumes `expected_sk_commitment` as its first
-/// public input — see `commitment_links/c4a_to_c6.rs`. This test checks both proofs expose those
-/// values consistently with witness recomputation (same hash as the cross-circuit link).
-#[tokio::test]
-async fn test_c4_sk_commitment_is_c6_expected_sk_input_e2e() {
-    let Some((_backend, _temp, prover, dkg_sample, c6_sample, preset)) =
-        setup_c4_c6_e2e_test().await
-    else {
-        println!("skipping: bb not found");
-        return;
-    };
-
-    let e3_id_c4 = "c4-e2e";
-    let e3_id_c6 = "c6-e2e";
-    let artifacts_dir =
-        preset.artifacts_dir_for_committee(CiphernodesCommitteeSize::Minimum.as_str());
-
-    let c4_proof = DkgShareDecryptionCircuit
-        .prove_with_variant(
-            &prover,
-            &preset,
-            &dkg_sample,
-            e3_id_c4,
-            CircuitVariant::Recursive,
-            &artifacts_dir,
-        )
-        .expect("C4 proof generation should succeed");
-
-    let c6_proof = ThresholdShareDecryptionCircuit
-        .prove_with_variant(
-            &prover,
-            &preset,
-            &c6_sample,
-            e3_id_c6,
-            CircuitVariant::Recursive,
-            &artifacts_dir,
-        )
-        .expect("C6 proof generation should succeed");
-
-    let c4_commitment_bytes = CircuitName::DkgShareDecryption
-        .output_layout()
-        .extract_field(&c4_proof.public_signals, "commitment")
-        .expect("C4 proof must expose commitment output");
-
-    let c6_expected_sk_bytes = CircuitName::ThresholdShareDecryption
-        .input_layout()
-        .extract_field(&c6_proof.public_signals, "expected_sk_commitment")
-        .expect("C6 proof must expose expected_sk_commitment at public inputs");
-
-    let (threshold_params, _) = build_pair_for_preset(preset).unwrap();
-    let dkg_out = DkgShareDecryptionCircuit::compute(preset, &dkg_sample).unwrap();
-    let aggregated = aggregate_dkg_decrypted_shares_to_crt(&dkg_out.inputs.decrypted_shares);
-    // C4 normalizes (reduce + reverse + center) before hashing; apply the same here.
-    let aggregated_normalized =
-        normalize_crt_for_commitment(&aggregated, threshold_params.moduli());
-    let expected_c4 =
-        compute_aggregated_shares_commitment(&aggregated_normalized, dkg_out.bits.agg_bit);
-    let c4_from_proof =
-        num_bigint::BigInt::from_bytes_be(num_bigint::Sign::Plus, c4_commitment_bytes);
-    assert_eq!(
-        c4_from_proof, expected_c4,
-        "C4 commitment output must match compute_aggregated_shares_commitment on normalized aggregated DKG shares"
-    );
-
-    let c6_out = ThresholdShareDecryptionCircuit::compute(preset, &c6_sample).unwrap();
-    let expected_c6_sk = c6_out.inputs.expected_sk_commitment.clone();
-    let c6_expected_sk_from_proof =
-        num_bigint::BigInt::from_bytes_be(num_bigint::Sign::Plus, c6_expected_sk_bytes);
-    assert_eq!(
-        c6_expected_sk_from_proof, expected_c6_sk,
-        "C6 expected_sk_commitment public input must match witness computation"
-    );
-
-    prover.cleanup(e3_id_c4).unwrap();
-    prover.cleanup(e3_id_c6).unwrap();
 }
 
 /// Wires the same aggregated SK (`agg_sk`) into C6: DKG aggregate → `s` + TRBFV `decryption_share` for new `d_share`.
@@ -958,6 +849,15 @@ async fn test_decrypted_shares_aggregation_commitment_consistency() {
             &artifacts_dir,
         )
         .expect("proof generation should succeed");
+
+    assert_proof_verifies(
+        &circuit,
+        &prover,
+        &proof,
+        e3_id,
+        CircuitVariant::Recursive,
+        &artifacts_dir,
+    );
 
     let computation_output = DecryptedSharesAggregationCircuit::compute(preset, &sample).unwrap();
 

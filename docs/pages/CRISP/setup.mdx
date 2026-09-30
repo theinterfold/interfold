@@ -371,15 +371,15 @@ These scripts are defined in `examples/CRISP/package.json`.
 
 ## Run the tests
 
-| Command                                                                                                                                                                       | What it tests                                                                                                |
-| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `pnpm test:e2e` (also `pnpm test`)                                                                                                                                            | The full stack in a browser. See [End-to-end test](#end-to-end-test).                                        |
-| `pnpm test:contracts`                                                                                                                                                         | All CRISP contract tests (Hardhat and Mocha)                                                                 |
-| `pnpm test:contracts:unit`                                                                                                                                                    | Census modes, journal, input availability, input leaf, Interfold binding, `SelfRegistry`, and tally decoding |
-| `pnpm test:contracts:input-tree`, `pnpm test:contracts:input-tree:forged-input`, `pnpm test:contracts:input-tree:poisoned-parent`, `pnpm test:contracts:input-tree:canonical` | The end-to-end input tree test, in full or in parts                                                          |
-| `pnpm test:contracts:ballots:program`, `pnpm test:contracts:ballots:census`                                                                                                   | Ballots against `CRISPProgram`, and ballots in an on-chain census round                                      |
-| `pnpm test:circuits`                                                                                                                                                          | `nargo test` in `circuits/lib`                                                                               |
-| `pnpm test:sdk`, `pnpm test:sdk:core-and-ballot-proofs`, `pnpm test:sdk:mask-proofs`                                                                                          | SDK tests with Vitest. Each script first stages the `insecure-512` preset.                                   |
+| Command                                                                                                                        | What it tests                                                                                                |
+| ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
+| `pnpm test:e2e` (also `pnpm test`)                                                                                             | The full stack in a browser. See [End-to-end test](#end-to-end-test).                                        |
+| `pnpm test:contracts`                                                                                                          | All CRISP contract tests (Hardhat and Mocha)                                                                 |
+| `pnpm test:contracts:unit`                                                                                                     | Census modes, journal, input availability, input leaf, Interfold binding, `SelfRegistry`, and tally decoding |
+| `pnpm test:contracts:input-tree`, `pnpm test:contracts:input-tree:poisoned-parent`, `pnpm test:contracts:input-tree:canonical` | The end-to-end input tree test, in full or in parts                                                          |
+| `pnpm test:contracts:ballots:program`, `pnpm test:contracts:ballots:census`                                                    | Ballots against `CRISPProgram`, and ballots in an on-chain census round                                      |
+| `pnpm test:circuits`                                                                                                           | `nargo test` in `circuits/lib`                                                                               |
+| `pnpm test:sdk`                                                                                                                | SDK tests with Vitest. The script first stages the `insecure-512` preset.                                    |
 
 ### End-to-end test
 

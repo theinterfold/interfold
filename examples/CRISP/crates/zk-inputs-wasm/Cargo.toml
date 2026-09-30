@@ -19,7 +19,3 @@ getrandom = { version = "0.3", features = ["wasm_js"] }
 getrandom2 = { package = "getrandom", version = "0.2", features = ["js"] }
 serde_json.workspace = true
 num-bigint = "0.4.6"
-
-[dev-dependencies]
-wasm-bindgen-test = "0.2"
-e3-fhe-params = { workspace = true }

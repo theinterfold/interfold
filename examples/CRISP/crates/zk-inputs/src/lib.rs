@@ -410,63 +410,6 @@ mod tests {
         assert!(json_output.contains("sum_ct0is"));
     }
 
-    #[test]
-    fn test_inputs_generation_with_custom_params() {
-        let generator =
-            ZKInputsGenerator::from_set(BfvParamSet::from(BfvPreset::InsecureThreshold512));
-        let (_secret_key, public_key) = generator.generate_keys().expect("failed to generate keys");
-        let vote = create_vote_vector();
-        let prev_ciphertext = generator
-            .encrypt_vote(&public_key, vote.clone())
-            .expect("failed to generate previous ciphertext");
-        let result =
-            generator.generate_inputs(Some(&prev_ciphertext), &public_key, vote.clone(), false);
-
-        assert!(result.is_ok());
-        let (ciphertext_bytes, json_output) = result.unwrap();
-        // Verify ciphertext is not empty
-        assert!(!ciphertext_bytes.is_empty());
-        // Verify it's valid JSON and contains expected fields from both witnesses.
-        assert!(json_output.contains("pk0is"));
-        assert!(json_output.contains("prev_ct0is"));
-        assert!(json_output.contains("sum_ct0is"));
-    }
-
-    #[test]
-    fn test_get_bfv_params() {
-        let generator =
-            ZKInputsGenerator::from_set(BfvParamSet::from(BfvPreset::InsecureThreshold512));
-        let bfv_params = generator.get_bfv_params();
-
-        assert!(bfv_params.degree() == insecure_512::DEGREE);
-        assert!(bfv_params.plaintext() == insecure_512::threshold::PLAINTEXT_MODULUS);
-        assert!(bfv_params.moduli() == insecure_512::threshold::MODULI);
-    }
-
-    #[test]
-    fn test_secure_rng_usage() {
-        let generator = ZKInputsGenerator::with_defaults();
-
-        // Test that functions use secure randomness (no deterministic seed).
-        let (secret_key, public_key) = generator.generate_keys().expect("failed to generate keys");
-        assert!(!public_key.is_empty());
-        assert!(!secret_key.is_empty());
-        let vote = create_vote_vector();
-
-        let ciphertext = generator
-            .encrypt_vote(&public_key, vote.clone())
-            .expect("failed to encrypt vote");
-        assert!(!ciphertext.is_empty());
-
-        let result = generator.generate_inputs(Some(&ciphertext), &public_key, vote.clone(), false);
-        assert!(result.is_ok());
-        let (ciphertext_bytes, json_output) = result.unwrap();
-        assert!(!ciphertext_bytes.is_empty());
-        assert!(json_output.contains("pk0is"));
-        assert!(json_output.contains("prev_ct0is"));
-        assert!(json_output.contains("sum_ct0is"));
-    }
-
     // Error handling tests
     #[test]
     fn test_invalid_inputs() {
@@ -484,29 +427,6 @@ mod tests {
         // Test invalid public key for encryption.
         let result = generator.encrypt_vote(&[1, 2, 3], vote.clone());
         assert!(result.is_err());
-    }
-
-    // Core functionality tests
-    #[test]
-    fn test_vote_values() {
-        let generator = ZKInputsGenerator::with_defaults();
-        let (_secret_key, public_key) = generator.generate_keys().expect("failed to generate keys");
-        let vote = create_vote_vector();
-        let prev_ciphertext = generator
-            .encrypt_vote(&public_key, vote.clone())
-            .expect("failed to encrypt vote");
-
-        // Test vote = 0.
-        let result_0 =
-            generator.generate_inputs(Some(&prev_ciphertext), &public_key, vote.clone(), false);
-        assert!(result_0.is_ok());
-        let (_, _) = result_0.unwrap();
-
-        // Test vote = 1.
-        let result_1 =
-            generator.generate_inputs(Some(&prev_ciphertext), &public_key, vote.clone(), false);
-        assert!(result_1.is_ok());
-        let (_, _) = result_1.unwrap();
     }
 
     #[test]

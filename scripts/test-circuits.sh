@@ -19,24 +19,26 @@ trap restore_active_config EXIT
 (cd "$REPO_ROOT/circuits/lib" && nargo test)
 (cd "$REPO_ROOT/circuits/bin/recursive_aggregation/decryption_aggregator" && nargo test)
 
-for committee in minimum micro small; do
+# The dkg_aggregator tests read only H, N_PARTIES, and L_THRESHOLD, and the preset changes only
+# L_THRESHOLD (insecure 2, secure 3). These pairs run each committee once and cover both values.
+for pair in minimum:insecure micro:secure small:secure; do
+  committee="${pair%%:*}"
+  preset="${pair##*:}"
   sed -E \
     -e "s/committee: (minimum|micro|small)/committee: $committee/g" \
     -e "s/committee::(minimum|micro|small)/committee::$committee/g" \
     "$BACKUP_DIR/active.nr" > "$ACTIVE_COMMITTEE"
 
-  for preset in insecure secure; do
-    preset_name="${preset}-512"
-    if [[ "$preset" == "secure" ]]; then
-      preset_name="secure-8192"
-    fi
-    sed -E \
-      -e "s/preset: (insecure-512|secure-8192)/preset: $preset_name/g" \
-      -e "s/super::(insecure|secure)::/super::$preset::/g" \
-      "$BACKUP_DIR/default.nr" > "$ACTIVE_PRESET"
-    echo "Testing DKG aggregation for $preset_name/$committee"
-    (cd "$REPO_ROOT/circuits/bin/recursive_aggregation/dkg_aggregator" && nargo test)
-  done
+  preset_name="${preset}-512"
+  if [[ "$preset" == "secure" ]]; then
+    preset_name="secure-8192"
+  fi
+  sed -E \
+    -e "s/preset: (insecure-512|secure-8192)/preset: $preset_name/g" \
+    -e "s/super::(insecure|secure)::/super::$preset::/g" \
+    "$BACKUP_DIR/default.nr" > "$ACTIVE_PRESET"
+  echo "Testing DKG aggregation for $preset_name/$committee"
+  (cd "$REPO_ROOT/circuits/bin/recursive_aggregation/dkg_aggregator" && nargo test)
 done
 
 echo "Noir circuits tested successfully"

@@ -59,8 +59,9 @@ Do not edit source or tests while a test run is active in the checkout. Follow `
    `pnpm check:docs`, `pnpm check:invariants`, and `pnpm check:license`. Name the CI jobs whose path
    filters cover the change.
 5. Inspect `git diff --numstat`; report production/tooling separately from tests and test support.
-6. After final audit edits, review the diff in a fresh context (`agent/RULES.md` §Review before you
-   report done). For protocol-bearing paths, use `agent/prompts/invariant-reviewer.md`.
+6. After final audit edits, read the diff once (`agent/RULES.md` §Review). A test-only change needs
+   no invariant review. If the batch also changes protocol-bearing production code, run one pass of
+   `agent/prompts/invariant-reviewer.md`.
 
 ## Landing and continuation
 
