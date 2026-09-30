@@ -103,11 +103,11 @@ describe('CRISP on-chain census', function () {
     honkVerifier = await deployHonkVerifier()
     onchainHonkVerifier = await deployOnchainHonkVerifier()
 
-    // A 2-of-3 Safe, from real Safe 1.4.1 contracts.
+    // A 4-of-7 Safe, the largest threshold a ballot proof carries, from real Safe 1.4.1 contracts.
     const safeContracts = await deploySafeContracts()
-    safeOwners = [0, 1, 2].map((i) => new ethers.Wallet(ethers.id(`census safe owner ${i}`)))
+    safeOwners = Array.from({ length: 7 }, (_, i) => new ethers.Wallet(ethers.id(`census safe owner ${i}`)))
     const ownerAddresses = safeOwners.map((owner) => owner.address)
-    safe = await createSafe(safeContracts, ownerAddresses, 2)
+    safe = await createSafe(safeContracts, ownerAddresses, 4)
     safeContract = safeContracts.singleton.attach(safe) as Safe
 
     crispProgram = await deployCRISPProgram({
@@ -276,9 +276,9 @@ describe('CRISP on-chain census', function () {
   })
 
   /// How the client collects owner signatures. The vote is encrypted and signed with no slot head,
-  /// so the parent (the mask above) is named only right before proving, from the head bytes. Two of
-  /// the three owners sign the Safe's `SafeMessage` in their own wallets, in any order.
-  it('publishes a 2-of-3 Safe vote signed before the slot head was read', async function () {
+  /// so the parent (the mask above) is named only right before proving, from the head bytes. Four of
+  /// the seven owners sign the Safe's `SafeMessage` in their own wallets, in any order.
+  it('publishes a 4-of-7 Safe vote signed before the slot head was read', async function () {
     const prepared = await prepareBallot({
       censusMode: 'onchain',
       vote,
@@ -299,7 +299,7 @@ describe('CRISP on-chain census', function () {
     }
     expect(ethers.TypedDataEncoder.hash(safeMessage.domain, safeMessage.types, safeMessage.message)).to.equal(digest)
     const signatures = await Promise.all(
-      [safeOwners[2], safeOwners[0]].map(
+      [safeOwners[6], safeOwners[0], safeOwners[3], safeOwners[5]].map(
         async (owner) => (await owner.signTypedData(safeMessage.domain, safeMessage.types, safeMessage.message)) as `0x${string}`,
       ),
     )
@@ -312,7 +312,7 @@ describe('CRISP on-chain census', function () {
     const proof = await finishSafeBallotProof(
       withBallotParent(prepared, { index, commitment }),
       digest as `0x${string}`,
-      { owners: (await safeContract.getOwners()) as `0x${string}`[], threshold: 2 },
+      { owners: (await safeContract.getOwners()) as `0x${string}`[], threshold: 4 },
       signatures,
     )
     await (await mockInterfold.setCommitteePublicKey(proof.publicInputs[10])).wait()

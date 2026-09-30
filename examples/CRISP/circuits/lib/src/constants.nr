@@ -17,4 +17,4 @@ pub global MAX_VOTE_BITS: u32 = 50;
 /// owners to `MAX_SAFE_OWNERS`, and every proof has `MAX_SAFE_SIGNERS` signature slots. Must match
 /// `CRISPProgram.sol` and the SDK.
 pub global MAX_SAFE_OWNERS: u32 = 10;
-pub global MAX_SAFE_SIGNERS: u32 = 3;
+pub global MAX_SAFE_SIGNERS: u32 = 4;

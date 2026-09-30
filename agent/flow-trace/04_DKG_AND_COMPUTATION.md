@@ -1833,10 +1833,10 @@ CRISPProgram._verifyInputProof → ballotAuthorization(e3Id, slot, encryptedVote
    │        safeSingletonAccepted[ISafe(slot).masterCopy()] (both fixed at deployment)
    │  digest = Safe SafeMessage hash of ballotDigest (domain: chainId, slot)
    │  owners = getOwners(), threshold = getThreshold(), read at publication
-   │  → SafeShapeUnsupported above MAX_SAFE_OWNERS (10) or MAX_SAFE_SIGNERS (3)
+   │  → SafeShapeUnsupported above MAX_SAFE_OWNERS (10) or MAX_SAFE_SIGNERS (4)
    ├─ any other slot (EOA, EIP-7702 account, other contract): digest = ballotDigest,
    │  owners = [slot], threshold = 1
-   └─ ownersCommitment = keccak256(abi.encode(address[MAX_SAFE_OWNERS] padded, threshold))
+   └─ ownersCommitment = keccak256(owners as 20-byte words, zero-padded to MAX_SAFE_OWNERS ‖ uint8 threshold)
 ```
 
 `crisp_lib::safe_auth::validate_safe_signatures` recomputes the commitment from the private owners

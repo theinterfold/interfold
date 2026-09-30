@@ -11,17 +11,16 @@ import type { CRISPProgram, MockInterfold, Safe } from '../types'
 
 /// Mirror `MAX_SAFE_OWNERS` and `MAX_SAFE_SIGNERS` in CRISPProgram.sol.
 const MAX_SAFE_OWNERS = 10
-const MAX_SAFE_SIGNERS = 3
+const MAX_SAFE_SIGNERS = 4
 const COMMITMENT = ethers.id('ciphertext commitment')
 const abi = ethers.AbiCoder.defaultAbiCoder()
 
-/// `keccak256(abi.encode(address[MAX_SAFE_OWNERS], uint256))`, the owner commitment `crisp_onchain` checks.
+/// The owner commitment `crisp_onchain` checks: the owners as 20-byte words, zero-padded to
+/// `MAX_SAFE_OWNERS`, then the threshold as one byte.
 const commitmentOf = (owners: string[], threshold: bigint) =>
-  ethers.keccak256(
-    abi.encode(
-      [`address[${MAX_SAFE_OWNERS}]`, 'uint256'],
-      [[...owners, ...Array(MAX_SAFE_OWNERS - owners.length).fill(ethers.ZeroAddress)], threshold],
-    ),
+  ethers.solidityPackedKeccak256(
+    [...Array(MAX_SAFE_OWNERS).fill('address'), 'uint8'],
+    [...owners, ...Array(MAX_SAFE_OWNERS - owners.length).fill(ethers.ZeroAddress), threshold],
   )
 
 /// `ballotAuthorization` against real Safe 1.4.1 contracts. `onchain-census.test.ts` proves and

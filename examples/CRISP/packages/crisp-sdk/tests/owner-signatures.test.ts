@@ -11,14 +11,14 @@ import { attachMaskImpl, attachOwnerSignaturesImpl, ownersCommitment, withBallot
 import type { PreparedBallot } from '../src/types'
 
 // The keys and digest of the `crisp_lib::safe_auth` Noir fixtures, sorted by address.
-const [owner0, owner1, owner2] = [0, 1, 2]
+const [owner0, owner1, owner2, owner3] = [0, 1, 2, 4]
   .map((i) => privateKeyToAccount(keccak256(toHex(`safe owner ${i}`))))
   .sort((a, b) => (BigInt(a.address) < BigInt(b.address) ? -1 : 1))
 const DIGEST = keccak256(toHex('crisp safe_auth test digest'))
-// `COMMIT_T2` in `safe_auth.nr`: the three owners with a threshold of two.
-const COMMIT_T2 = '0xba2ec3d58e1012ba18bab78e811f30842f2b649bdd251330891a440377df6d44'
+// `COMMIT_T2` in `safe_auth.nr`: the four owners with a threshold of two.
+const COMMIT_T2 = '0x552f5e6eb66ec9d5ffc0053430a9b92608d164983224ab8464904770a5c2572e'
 
-const owners = [owner0.address, owner1.address, owner2.address]
+const owners = [owner0.address, owner1.address, owner2.address, owner3.address]
 const prepared = () =>
   ({ circuitInputs: { slot_address: owner0.address.toLowerCase() }, censusMode: 'onchain' }) as unknown as PreparedBallot
 const sign = (account: typeof owner0) => account.sign({ hash: DIGEST })
@@ -31,20 +31,20 @@ describe('owner signatures', () => {
   it('orders the signers by address and points each at its owner', async () => {
     const inputs = await attachOwnerSignaturesImpl(prepared(), DIGEST, { owners, threshold: 2 }, [await sign(owner2), await sign(owner0)])
 
-    expect(inputs.owner_indices).toEqual(['0', '2', '0'])
+    expect(inputs.owner_indices).toEqual(['0', '2', '0', '0'])
     expect(BigInt(inputs.owners_commitment_hi)).toBe(BigInt(COMMIT_T2.slice(0, 34)))
-    // The inactive third slot repeats the first, so it holds a valid public key.
-    expect(inputs.public_keys_x[2]).toEqual(inputs.public_keys_x[0])
+    // The inactive slots repeat the first, so they hold a valid public key.
+    expect(inputs.public_keys_x[3]).toEqual(inputs.public_keys_x[0])
   })
 
   it('refuses a signer that is not an owner, and counts one owner once', async () => {
     const outsider = privateKeyToAccount(keccak256(toHex('outsider')))
-    const twoOfThree = { owners, threshold: 2 }
+    const twoOfFour = { owners, threshold: 2 }
 
-    await expect(attachOwnerSignaturesImpl(prepared(), DIGEST, twoOfThree, [await sign(owner0), await sign(outsider)])).rejects.toThrow(
+    await expect(attachOwnerSignaturesImpl(prepared(), DIGEST, twoOfFour, [await sign(owner0), await sign(outsider)])).rejects.toThrow(
       /not an owner/,
     )
-    await expect(attachOwnerSignaturesImpl(prepared(), DIGEST, twoOfThree, [await sign(owner1), await sign(owner1)])).rejects.toThrow(
+    await expect(attachOwnerSignaturesImpl(prepared(), DIGEST, twoOfFour, [await sign(owner1), await sign(owner1)])).rejects.toThrow(
       /needs 2 owner signatures; got 1/,
     )
   })
