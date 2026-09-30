@@ -102,6 +102,7 @@ pub(super) fn plan(facts: &Facts) -> Plan {
                 lock,
                 stores,
                 links: inner,
+                ..
             } => {
                 planner.add_folder_lock(lock, name);
                 for store in stores {
@@ -137,13 +138,15 @@ impl Planner {
                 self.add_lock(&node.lock, &node.name, true)
             }
             FolderState::Missing => {}
-            FolderState::Empty | FolderState::Holds => self.add_lock(&node.lock, &node.name, false),
+            FolderState::Exists | FolderState::Purging => {
+                self.add_lock(&node.lock, &node.name, false)
+            }
         }
         match &node.store {
             Some(store) => self.add_store(store, &node.name, node.key_file_in_target),
-            // An earlier purge that stopped part of the way left only the lock file. The purge
-            // empties only folders in the data folder.
-            None if node.lock_folder == FolderState::Empty && node.lock_folder_in_data => {}
+            // An earlier purge passed its checks, marked the folder, and stopped part of the way.
+            // This purge finishes the deletion. The purge empties only folders in the data folder.
+            None if node.lock_folder == FolderState::Purging && node.lock_folder_in_data => {}
             None if node.key_file_in_target || node.event_log_in_target => {
                 self.add_unchecked(&node.name, Reason::StoreNotFound(node.db_file.clone()))
             }
@@ -161,9 +164,11 @@ impl Planner {
                 if configured {
                     return;
                 }
-                // A node folder of the same name must hold the store that the key protects.
+                // A node folder of the same name must hold the store that the key protects, or be
+                // the marked leftover of an earlier purge that checked it.
                 match node_folder_store(facts, name) {
                     Some(store) => self.require_identity(&store.resolved),
+                    None if node_folder_marked(facts, name) => {}
                     None => {
                         self.add_unchecked(name, Reason::UnknownKeyFolder(location.path.clone()))
                     }
@@ -253,6 +258,13 @@ impl Planner {
     }
 }
 
+/// The node folder named `name` holds a complete purge marker.
+fn node_folder_marked(facts: &Facts, name: &str) -> bool {
+    facts.data.iter().any(|entry| {
+        matches!(entry, DataEntry::Folder { name: folder, marked: true, .. } if folder == name)
+    })
+}
+
 /// The `db` store in the node folder named `name`, where `start` puts a node's store.
 fn node_folder_store<'a>(facts: &'a Facts, name: &str) -> Option<&'a Location> {
     facts.data.iter().find_map(|entry| match entry {
@@ -290,7 +302,7 @@ mod tests {
             db_file: PathBuf::from(format!("{DATA}/{name}/db")),
             store: Some(at(&format!("{DATA}/{name}/db"))),
             lock: at(&format!("{DATA}/{name}/interfold.lock")),
-            lock_folder: FolderState::Holds,
+            lock_folder: FolderState::Exists,
             lock_folder_in_data: true,
             in_scope: true,
             key_file_in_target: true,
@@ -303,6 +315,7 @@ mod tests {
         DataEntry::Folder {
             name: name.to_string(),
             lock: at(&format!("{DATA}/{name}/interfold.lock")),
+            marked: false,
             stores: stores
                 .iter()
                 .map(|store| at(&format!("{DATA}/{name}/{store}")))
@@ -386,22 +399,38 @@ mod tests {
     }
 
     #[test]
-    fn a_folder_that_an_earlier_purge_emptied_is_not_unchecked() {
+    fn a_folder_that_an_earlier_purge_marked_is_not_unchecked() {
         let mut purged = node("purged");
         purged.store = None;
-        purged.lock_folder = FolderState::Empty;
+        purged.lock_folder = FolderState::Purging;
         let plan = plan(&facts(vec![purged], vec![], vec![]));
         assert!(plan.unchecked.is_empty());
         assert_eq!(plan.locks.len(), 1);
     }
 
-    /// The purge empties only folders in the data folder, so an empty folder elsewhere is not its
+    /// An empty node folder without the marker is not a leftover. It can be the mount point of a
+    /// per-node volume that is not mounted, while the node's store holds a key share elsewhere.
+    #[test]
+    fn an_empty_folder_without_the_marker_is_unchecked() {
+        let mut unmounted = node("unmounted");
+        unmounted.store = None;
+        let plan = plan(&facts(vec![unmounted], vec![], vec![]));
+        assert_eq!(
+            plan.unchecked,
+            vec![unchecked(
+                "unmounted",
+                Reason::StoreNotFound(PathBuf::from(format!("{DATA}/unmounted/db")))
+            )]
+        );
+    }
+
+    /// The purge empties only folders in the data folder, so a marked folder elsewhere is not its
     /// own leftover.
     #[test]
-    fn an_empty_folder_outside_the_data_folder_is_not_a_leftover() {
+    fn a_marked_folder_outside_the_data_folder_is_not_a_leftover() {
         let mut away = node("away");
         away.store = None;
-        away.lock_folder = FolderState::Empty;
+        away.lock_folder = FolderState::Purging;
         away.lock_folder_in_data = false;
         let plan = plan(&facts(vec![away], vec![], vec![]));
         assert_eq!(
@@ -471,6 +500,14 @@ mod tests {
                 Reason::UnknownKeyFolder(PathBuf::from(format!("{CONFIG}/old")))
             )]
         );
+
+        // A node folder that an earlier purge checked and marked does, after its store is gone.
+        let mut marked = node_folder("old", &[]);
+        if let DataEntry::Folder { marked: flag, .. } = &mut marked {
+            *flag = true;
+        }
+        let plan_marked = plan(&facts(vec![], vec![marked], vec![key_folder("old")]));
+        assert!(plan_marked.unchecked.is_empty());
     }
 
     /// A configured key file that is a symbolic link matches by its located path.

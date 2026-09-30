@@ -28,6 +28,11 @@
 //! When the purge cannot check a node, it refuses. It reports every refusal at once, because
 //! `--allow-active-e3s` overrides the key-share refusals and the cannot-check refusals together.
 //!
+//! Before it deletes, the purge writes a marker into each node folder that it empties. A later
+//! purge treats a folder with the marker as the leftover of that purge and finishes the deletion.
+//! An empty folder without the marker is not a leftover: it can be the mount point of a volume
+//! that is not mounted.
+//!
 //! Limits:
 //! - The purge finds a node's store with its own configuration and environment. It cannot see a
 //!   node that runs with another `E3_DATA_DIR`, `data_dir`, or working directory. The operator must
@@ -39,6 +44,15 @@
 mod effects;
 mod facts;
 mod plan;
+
+/// The file that the purge writes into each node folder before it empties the folder.
+pub const MARKER_FILE_NAME: &str = "purge-in-progress";
+
+/// The content of a complete marker. A later purge trusts only a marker with exactly this content,
+/// so a marker that a failed write left part of the way is not a leftover.
+pub const MARKER_TEXT: &str =
+    "An interfold purge checked this node and started to empty this folder. Run the purge again \
+     to finish it.\n";
 
 use anyhow::{anyhow, bail, Result};
 use e3_config::AppConfig;

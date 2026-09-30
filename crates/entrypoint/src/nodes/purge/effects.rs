@@ -11,12 +11,12 @@ use anyhow::{anyhow, bail, Result};
 use e3_ciphernode_builder::get_interfold_bus_handle;
 use e3_data::{RepositoriesFactory, SledDb};
 use e3_events::StoreKeys;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tokio::fs;
 
-use super::facts::entries;
+use super::facts::{entries, marked};
 use super::plan::{Plan, PlannedLock, PlannedStore};
-use super::{resolve, PurgeTargets};
+use super::{locate, resolve, PurgeTargets, MARKER_FILE_NAME, MARKER_TEXT};
 use crate::fence::{FenceHeld, ProcessFence, LOCK_FILE_NAME};
 use crate::helpers::datastore::get_sled_store;
 use crate::nodes::state_guard::{active_e3s_with_key_shares, check_active_e3s, ActiveE3, Deletion};
@@ -32,12 +32,30 @@ pub(super) fn hold_existing(plan: &Plan) -> Result<Vec<ProcessFence>> {
 
 /// Creates the planned node folders that do not exist yet in the data folder, and takes their
 /// locks.
+///
+/// The purge checked no store for these nodes, because they had no folder. A node that started and
+/// stopped while the purge checked the others can have created one since, so each folder must hold
+/// only its lock file now.
 pub(super) fn hold_created(plan: &Plan) -> Result<Vec<ProcessFence>> {
-    plan.locks
-        .iter()
-        .filter(|lock| lock.create)
-        .map(hold)
-        .collect()
+    let mut fences = Vec::new();
+    for lock in plan.locks.iter().filter(|lock| lock.create) {
+        fences.push(hold(lock)?);
+        let folder = lock.path.parent().unwrap_or(Path::new("."));
+        let entries = std::fs::read_dir(folder)
+            .map_err(|error| anyhow!("failed to read {}: {error}", folder.display()))?;
+        for entry in entries {
+            let entry = entry?;
+            if entry.file_name() != LOCK_FILE_NAME {
+                bail!(
+                    "Node `{}` created {} while the purge checked the other nodes. The command \
+                     deleted nothing. Run it again.",
+                    lock.nodes.join("` or `"),
+                    entry.path().display()
+                );
+            }
+        }
+    }
+    Ok(fences)
 }
 
 fn hold(lock: &PlannedLock) -> Result<ProcessFence> {
@@ -210,13 +228,22 @@ fn store_in_use(error: &anyhow::Error) -> bool {
 
 /// Deletes the targets while the purge holds every lock.
 ///
-/// The purge empties each locked node folder in the data folder. It then deletes the configuration
-/// folder with the key files, and last the data folder with the lock files. The locks stay until
-/// the end, so no node starts while the purge deletes. After a failure part of the way, a node can
-/// find its key file without its store. A second run of the purge finishes the deletion.
+/// The purge first writes a marker into each locked node folder in the data folder. A later purge
+/// can then tell a folder that this purge started to empty from an empty folder that no purge
+/// checked. It then empties those folders and keeps their locks and markers. It deletes the
+/// configuration folder with the key files, and last the data folder with the markers and the lock
+/// files. The locks stay until that last step, so no node starts while the purge deletes. After a
+/// failure part of the way, a node can find its key file without its store. A second run of the
+/// purge finishes the deletion.
 pub(super) async fn delete(targets: &PurgeTargets, fences: &[ProcessFence]) -> Result<()> {
+    let folders = node_folders(targets, fences)?;
+    mark(&folders).await?;
+    let locks = fences
+        .iter()
+        .map(|fence| resolve(fence.path()))
+        .collect::<Result<Vec<_>>>()?;
     let mut deleted = false;
-    delete_in_order(targets, fences, &mut deleted)
+    delete_in_order(targets, &folders, &locks, &mut deleted)
         .await
         .map_err(|error| {
             if deleted {
@@ -232,28 +259,87 @@ pub(super) async fn delete(targets: &PurgeTargets, fences: &[ProcessFence]) -> R
         })
 }
 
-async fn delete_in_order(
-    targets: &PurgeTargets,
-    fences: &[ProcessFence],
-    deleted: &mut bool,
-) -> Result<()> {
+/// The locked node folders in the data folder, which the purge empties.
+fn node_folders(targets: &PurgeTargets, fences: &[ProcessFence]) -> Result<Vec<PathBuf>> {
+    let mut folders = Vec::new();
     for fence in fences {
         let Some(folder) = fence.path().parent() else {
             continue;
         };
         if resolve(folder)?.starts_with(&targets.data) {
-            remove_all_but_lock(folder, deleted).await?;
+            folders.push(folder.to_path_buf());
         }
+    }
+    Ok(folders)
+}
+
+/// Writes the purge marker into each folder. After a failure, it removes the markers that it
+/// wrote, so that no folder looks like the leftover of a purge that deleted nothing. That includes
+/// a marker that the failed write left part of the way, and an incomplete marker that it replaced.
+async fn mark(folders: &[PathBuf]) -> Result<()> {
+    let mut created = Vec::new();
+    for folder in folders {
+        let marker = folder.join(MARKER_FILE_NAME);
+        // Record the marker before the write: a write that fails can still create the file. Only
+        // a complete marker that an earlier purge left stays after a failure.
+        if !marked(folder).await {
+            created.push(marker.clone());
+        }
+        if let Err(error) = fs::write(&marker, MARKER_TEXT).await {
+            let mut left = Vec::new();
+            for marker in created {
+                match fs::remove_file(&marker).await {
+                    Ok(()) => {}
+                    Err(remove) if remove.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(_) => left.push(marker.display().to_string()),
+                }
+            }
+            let left = if left.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    " Remove these markers by hand, or a later purge treats their folders as \
+                     its leftovers: {}.",
+                    left.join(", ")
+                )
+            };
+            bail!(
+                "The purge could not write its marker into {}: {error}. The command deleted \
+                 nothing.{left}",
+                folder.display()
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn delete_in_order(
+    targets: &PurgeTargets,
+    folders: &[PathBuf],
+    locks: &[PathBuf],
+    deleted: &mut bool,
+) -> Result<()> {
+    for folder in folders {
+        empty_node_folder(folder, locks, deleted).await?;
     }
     remove_if_present(&targets.config, deleted).await?;
     remove_if_present(&targets.data, deleted).await
 }
 
-/// Removes everything in `folder` except the process lock file.
-async fn remove_all_but_lock(folder: &Path, deleted: &mut bool) -> Result<()> {
+/// Removes everything in `folder` except the lock file, the purge marker, and any entry that holds
+/// another lock of the purge. Those go with the data folder at the end, so that the purge deletes
+/// no lock file that it still needs. `locks` are resolved, and each entry is compared by location,
+/// so a lock that a node names through a link still counts.
+async fn empty_node_folder(folder: &Path, locks: &[PathBuf], deleted: &mut bool) -> Result<()> {
     for entry in entries(folder).await? {
-        if entry.file_name() != LOCK_FILE_NAME {
-            remove_if_present(&entry.path(), deleted).await?;
+        let path = entry.path();
+        let name = entry.file_name();
+        let located = locate(&path)?;
+        let keep = name == LOCK_FILE_NAME
+            || name == MARKER_FILE_NAME
+            || locks.iter().any(|lock| lock.starts_with(&located));
+        if !keep {
+            remove_if_present(&path, deleted).await?;
         }
     }
     Ok(())
@@ -275,4 +361,34 @@ async fn remove_if_present(path: &Path, deleted: &mut bool) -> Result<()> {
         fs::remove_file(path).await
     }
     .map_err(|error| anyhow!("failed to remove {}: {error}", path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::nodes::purge::plan::{Plan, PlannedLock};
+
+    /// A node folder that the purge must create was missing when it gathered the facts. If a node
+    /// created it with state since, the purge refuses instead of deleting unchecked state.
+    #[test]
+    fn a_created_folder_that_gained_state_is_refused() {
+        let dir = tempfile::tempdir().expect("temporary folder");
+        let folder = dir.path().join("late");
+        std::fs::create_dir_all(folder.join("db")).expect("store folder");
+        let plan = Plan {
+            locks: vec![PlannedLock {
+                path: folder.join(LOCK_FILE_NAME),
+                nodes: vec!["late".to_string()],
+                create: true,
+            }],
+            ..Plan::default()
+        };
+        let error = hold_created(&plan).expect_err("the purge must refuse");
+        assert!(
+            error
+                .to_string()
+                .contains("while the purge checked the other nodes"),
+            "{error}"
+        );
+    }
 }

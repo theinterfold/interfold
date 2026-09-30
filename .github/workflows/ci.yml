@@ -313,7 +313,9 @@ jobs:
   rust_unit_tests:
     needs: [detect_changes]
     if: needs.detect_changes.outputs.rust_unit_tests == 'true'
-    timeout-minutes: 20
+    # Without a Rust cache, a leg can need close to 20 minutes before the cache save. The doc leg
+    # also runs the guard tests and the CLI tests.
+    timeout-minutes: 30
     runs-on:
       ${{ github.repository == 'theinterfold/interfold' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' ||
       github.ref == 'refs/heads/dev') && format('runs-on={0}-{1}-{2}-{3}/runner=4cpu-linux-x64/ram=16', github.run_id, github.run_attempt,

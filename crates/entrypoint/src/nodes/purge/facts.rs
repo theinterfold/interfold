@@ -11,7 +11,7 @@ use e3_config::AppConfig;
 use std::path::{Path, PathBuf};
 use tokio::fs::{self, DirEntry};
 
-use super::{locate, resolve, PurgeTargets};
+use super::{locate, resolve, PurgeTargets, MARKER_FILE_NAME, MARKER_TEXT};
 use crate::fence::{lock_path_for, LOCK_FILE_NAME};
 use crate::nodes::reset_data::event_log_paths;
 
@@ -32,7 +32,7 @@ pub(super) struct NodeFacts {
     /// The lock that `start` takes for the store.
     pub(super) lock: Location,
     pub(super) lock_folder: FolderState,
-    /// The lock's folder is in the data folder.
+    /// The lock's folder is in the data folder, with every link resolved.
     pub(super) lock_folder_in_data: bool,
     /// The purge would delete the node's store, event log, or key file.
     pub(super) in_scope: bool,
@@ -67,10 +67,10 @@ impl Location {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum FolderState {
     Missing,
-    /// The folder holds nothing, or only the lock file. An earlier purge that stopped part of the
-    /// way leaves this state.
-    Empty,
-    Holds,
+    Exists,
+    /// The folder holds the purge marker. An earlier purge passed its checks and started to empty
+    /// the folder, then stopped part of the way.
+    Purging,
 }
 
 /// An entry of the data folder.
@@ -79,6 +79,8 @@ pub(super) enum DataEntry {
     Folder {
         name: String,
         lock: Location,
+        /// The folder holds a complete purge marker.
+        marked: bool,
         /// The sled stores directly inside the folder.
         stores: Vec<Location>,
         /// The symbolic links directly inside the folder.
@@ -136,7 +138,7 @@ async fn node_facts_of(targets: &PurgeTargets, node: &AppConfig) -> Result<NodeF
         },
         lock: Location::of(lock)?,
         lock_folder: folder_state(&lock_folder).await?,
-        lock_folder_in_data: locate(&lock_folder)?.starts_with(&targets.data),
+        lock_folder_in_data: resolve(&lock_folder)?.starts_with(&targets.data),
         in_scope,
         key_file_in_target,
         key_file,
@@ -149,15 +151,23 @@ async fn folder_state(folder: &Path) -> Result<FolderState> {
     if !fs::try_exists(folder).await? {
         return Ok(FolderState::Missing);
     }
-    let holds = entries(folder)
-        .await?
-        .iter()
-        .any(|entry| entry.file_name() != LOCK_FILE_NAME);
-    Ok(if holds {
-        FolderState::Holds
+    // Only the marker shows an earlier purge. An empty folder, or one with only a lock file, can be
+    // the mount point of a volume that is not mounted, or the folder of a store that an operator
+    // removed.
+    Ok(if marked(folder).await {
+        FolderState::Purging
     } else {
-        FolderState::Empty
+        FolderState::Exists
     })
+}
+
+/// The folder holds a complete purge marker. A marker that a failed write left part of the way, or
+/// one that cannot be read, does not count.
+pub(super) async fn marked(folder: &Path) -> bool {
+    matches!(
+        fs::read(folder.join(MARKER_FILE_NAME)).await,
+        Ok(content) if content == MARKER_TEXT.as_bytes()
+    )
 }
 
 async fn data_entries(data: &Path) -> Result<Vec<DataEntry>> {
@@ -186,6 +196,7 @@ async fn data_entries(data: &Path) -> Result<Vec<DataEntry>> {
         found.push(DataEntry::Folder {
             name,
             lock: Location::of(path.join(LOCK_FILE_NAME))?,
+            marked: marked(&path).await,
             stores,
             links,
         });
