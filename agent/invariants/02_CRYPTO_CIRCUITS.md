@@ -154,8 +154,9 @@ every section.
   nothing on its own: `q_i` is invertible modulo the proof-system prime, so every limb admits a
   quotient that satisfies it. It binds the witnesses only when the lifted value, the limbs **and**
   the quotients all carry range checks that keep the term sum far below the prime, which is what
-  makes the equation hold over the integers. C1 (`e_sm`) and `user_data_encryption_ct0` (`e0`) both
-  rely on all three bounds; dropping any one makes the check vacuous. — `flow-trace/04`
+  makes the equation hold over the integers. C1's `e_sm` lift relies on all three bounds. ct0 and C3
+  use `e0` directly in reduced encryption identities. Their reduction quotients and all operands
+  carry bounds that prevent field wraparound. — `flow-trace/04`
 - Apply a bound where the quantity it describes actually lives. The smudging bound `e_sm_bound` is
   an integer bound and belongs on C1's lifted `e_sm_lifted` witness; on secure presets it exceeds
   every `q_i`, so checking a CRT residue against it is satisfied for free. Limbs carry the modulus
@@ -178,13 +179,13 @@ every section.
   range check. A value that no upstream commitment bounds still needs its own bound: C1's `pk0`,
   because C1 originates it and the key equation absorbs `+q` against `r1`; and C5's `pk0_agg`,
   because `verify_pk_for_basis` pins it only modulo `q_l`. — `flow-trace/04`
-- The CRT-quotient class has four members: ct0, C3, C1 (`e_sm`) and C7. Any equation of the form
-  `lifted == residue + quotient * q` needs a bounded quotient, and the residue side bounded or
-  derived. Enumerate this class as well as the commitment-opening one: C7 belongs to it and not to
-  the other, and was missed because only the latter had been enumerated. — `flow-trace/04`
-- Where one side of a CRT equation is already provably small, the other side needs no bound of its
-  own: the equality makes it derived. C7 bounds only its quotients, because `u_crt < q_l` comes from
-  `reduce_mod` and `u_global` is then forced to equal a small expression. — `flow-trace/04`
+- Every prover-chosen modular quotient needs a bound. This includes C1's `e_sm` CRT lift and the
+  reduced encryption quotients in ct0, ct1, and C3. Bounds on the other operands must also prevent
+  field wraparound. — `flow-trace/04`
+- C7 derives `u` through bounded interpolation and `garner_reconstruct`; it accepts neither
+  `u_global` nor CRT reconstruction quotients as witnesses. `reduce_mod_bounded` and
+  `inv_mod_bounded` constrain every reduction and inverse hint used by that path. The rounded decode
+  constrains its own quotient and remainder. — `flow-trace/04`
 - **`ModU128::reduce_mod` does not pin its remainder; use `reduce_mod_bounded` for anything a prover
   controls.** It asserts `n == q * quotient + remainder` with `remainder < q` but never bounds the
   quotient, and the equation is over the field — so a prover picks any `remainder` in `[0, q)` and

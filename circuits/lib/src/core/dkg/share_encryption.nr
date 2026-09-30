@@ -316,17 +316,7 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
         compute_share_encryption_challenge::<L>(inputs)
     }
 
-    /// Verifies BFV encryption equations using Schwartz-Zippel with batched modulus verification.
-    ///
-    /// For each CRT modulus l, checks at the primary challenge point gamma:
-    ///   ct0[l](gamma) = pk0[l](gamma)*u(gamma) + e0(gamma) + k1(gamma)*k0[l] + r1[l](gamma)*q_l + r2[l](gamma)*(gamma^N + 1)
-    ///   ct1[l](gamma) = pk1[l](gamma)*u(gamma) + e1(gamma) + p2[l](gamma)*(gamma^N + 1) + p1[l](gamma)*q_l
-    ///
-    /// Rather than asserting each equation independently, both sides are accumulated
-    /// into a weighted batch sum using additional challenge values as weights.
-    /// A deviation in any single equation will cause the accumulated sums to diverge
-    /// with overwhelming probability (Schwartz-Zippel soundness).
-    /// Checks both legs in reduced form, at one challenge point:
+    /// Checks both reduced encryption identities at one transcript-derived challenge point:
     ///
     ///   ct0is = pk0is * u + e0 + k0is * k1 + q_i * ct0_r   (mod X^N + 1)
     ///   ct1is = pk1is * u + e1            + q_i * ct1_r   (mod X^N + 1)

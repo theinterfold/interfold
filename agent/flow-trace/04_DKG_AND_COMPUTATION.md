@@ -363,8 +363,13 @@ stores and what gets ECDSA-signed for gossip (`ProofType::C2aSkShareComputation`
 `circuits/bin/recursive_aggregation/` (e.g. `c2ab_fold`, `c3ab_fold`, `c6_fold`, `node_fold`,
 `nodes_fold`, `dkg_aggregator`, `decryption_aggregator` — `nodes_fold` chains `H` `node_fold` proofs
 for `dkg_aggregator`; `decryption_aggregator` folds C6 via non-ZK `c6_fold` then checks C7 with ZK).
-The per-circuit `wrapper/` Noir step was removed; aggregator response structs no longer carry a
-`wrapped_proof` field — the inner recursive proof itself is what flows between stages.
+
+`node_fold::assert_c3_recipient_keys` pins every non-self recipient limb to that recipient's
+limb-zero key. It also requires C3a and C3b keys to match in every slot. The fold exports limb zero,
+and `dkg_aggregator::assert_selected_c0_c3_links` binds that export to the recipient's C0 key. The
+node's own recipient slot is exempt because its exported key comes directly from C0. The per-circuit
+`wrapper/` Noir step was removed; aggregator response structs no longer carry a `wrapped_proof`
+field — the inner recursive proof itself is what flows between stages.
 
 **Ciphernode / aggregator integration:** `ZkRequest::FoldProofs` was removed. The multithread actor
 implements `ZkRequest::NodeDkgFold` (full per-node pipeline to a `NodeFold` proof),
@@ -1401,8 +1406,8 @@ InterfoldSolReader decodes CiphertextOutputPublished event
 ├──────┼────────────────────────────┼───────────────────┼──────────────────────────────┤
 │ C4a  │ SK Decryption Share (T2)   │ DKG: Key Calc     │ Verifies H decrypted shares  │
 │      │                            │                   │ match C2a commitments; sums  │
-│      │                            │                   │ and normalises (reduce mod   │
-│      │                            │                   │ q, reverse, center) before   │
+│      │                            │                   │ reverses and centre-reduces  │
+│      │                            │                   │ in one bounded division      │
 │      │                            │                   │ hashing; output commitment   │
 │      │                            │                   │ consumed by C6               │
 ├──────┼────────────────────────────┼───────────────────┼──────────────────────────────┤
