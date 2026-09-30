@@ -378,9 +378,11 @@ rules:
 The server relays the `publishInput` commitment within two limits, `RELAY_MAX_INPUTS_PER_SLOT`
 (default 3) and `RELAY_MAX_INPUTS_PER_ROUND` (default: none). On Ethereum mainnet it relays only
 when `MAINNET_RELAY` is set, and that setting requires a round limit and a `RELAY_MIN_BALANCE_ETH`
-above zero. These chain rules read `CHAIN_ID`, so startup stops when `HTTP_RPC_URL` serves a
-different chain (`Config::validate_rpc_chain`). The relay counts are durable (`reserve_relay`), and
-the worker prunes the records of a round after its commitment cutoff.
+above zero. Other chains that are not local also need an explicit `RELAY_MIN_BALANCE_ETH`, where `0`
+relays without a floor (`Config::validate_relay`). These chain rules read `CHAIN_ID`, so startup
+stops when `HTTP_RPC_URL` serves a different chain (`Config::validate_rpc_chain`). The relay counts
+are durable (`reserve_relay`), and the worker prunes the records of a round after its commitment
+cutoff.
 
 Every relay send first checks `relay_may_send`. Turning the relay off (the flag, or a limit of zero)
 stops every send, including jobs chosen for the relay earlier and relayed transactions that a
