@@ -653,9 +653,9 @@ async fn incomplete_marker_is_not_trusted() -> Result<()> {
 }
 
 /// When the purge cannot write a marker, it removes the markers that it wrote and deletes nothing.
-/// Each node in turn refuses the marker, so some run writes both other markers before the failure:
-/// one into a folder without a marker, and one over an incomplete marker, which a purge does not
-/// trust.
+/// Each node in turn holds a read-only, empty marker, like one that a failed write left: the purge
+/// cannot write over it, so it must remove it. The next node holds a writable, empty marker, which
+/// the purge writes over when it comes first, and must then remove too.
 async fn failed_marker_write_leaves_no_marker() -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
 
@@ -670,32 +670,89 @@ async fn failed_marker_write_leaves_no_marker() -> Result<()> {
         for node in &nodes {
             write_state(node, E3Stage::Complete).await?;
         }
-        let data = project.path().join(".interfold/data");
-        let blocked = data.join(names[turn]);
-        std::fs::write(
-            data.join(names[(turn + 1) % names.len()])
-                .join(MARKER_FILE_NAME),
-            b"",
-        )?;
-        // The lock file exists, so the purge can lock the folder, but it cannot create the marker.
-        std::fs::write(blocked.join("interfold.lock"), b"")?;
-        std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o555))?;
-        let result = execute(&targets, &nodes, false).await;
-        std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o755))?;
+        let marker = |offset: usize| {
+            project
+                .path()
+                .join(".interfold/data")
+                .join(names[(turn + offset) % names.len()])
+                .join(MARKER_FILE_NAME)
+        };
+        let (blocked, next, last) = (marker(0), marker(1), marker(2));
+        std::fs::write(&blocked, b"")?;
+        std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o444))?;
+        std::fs::write(&next, b"")?;
 
-        let message = result.expect_err("the purge must stop").to_string();
+        let message = execute(&targets, &nodes, false)
+            .await
+            .expect_err("the purge must stop")
+            .to_string();
         assert!(message.contains("could not write its marker"), "{message}");
         assert!(message.contains("deleted nothing"), "{message}");
-        for name in names {
-            let marker = data.join(name).join(MARKER_FILE_NAME);
-            assert!(
-                !marker.exists() || std::fs::read(&marker)?.is_empty(),
-                "{} holds a marker after the failure",
-                marker.display()
-            );
-        }
+        assert!(!blocked.exists(), "{} is left", blocked.display());
+        // The purge wrote over this marker and removed it, or it never reached the folder.
+        assert!(!next.exists() || std::fs::read(&next)?.is_empty());
+        assert!(!last.exists(), "{} is left", last.display());
         assert!(untouched(&nodes.iter().collect::<Vec<_>>()));
     }
+    Ok(())
+}
+
+/// Node `cn1` keeps its key file at the path of the purge marker. The purge neither writes over
+/// the key file nor removes it, and deletes nothing.
+async fn key_file_at_the_marker_path_is_kept() -> Result<()> {
+    let project = tempfile::tempdir()?;
+    let targets = PurgeTargets::in_dir(project.path());
+    let root = project.path().join(".interfold");
+    let key_file = root.join("data/cn1").join(MARKER_FILE_NAME);
+    let nodes = vec![
+        node_with(
+            project.path(),
+            &root.join("data"),
+            &root.join("config"),
+            "cn1",
+            &format!("    key_file: {}\n", key_file.display()),
+        )?,
+        project_node(project.path(), "cn2")?,
+    ];
+    assert_eq!(nodes[0].key_file(), key_file);
+    write_state(&nodes[0], E3Stage::Complete).await?;
+    write_state(&nodes[1], E3Stage::Complete).await?;
+    let key = std::fs::read(&key_file)?;
+
+    let message = execute(&targets, &nodes, false)
+        .await
+        .expect_err("the purge must stop")
+        .to_string();
+    assert!(message.contains("is not a purge marker"), "{message}");
+    assert!(message.contains("deleted nothing"), "{message}");
+    assert_eq!(std::fs::read(&key_file)?, key);
+    assert!(!root.join("data/cn2").join(MARKER_FILE_NAME).exists());
+    assert!(untouched(&[&nodes[0], &nodes[1]]));
+    Ok(())
+}
+
+/// A link at the path of the purge marker. The purge does not write through the link, even with
+/// the override.
+async fn link_at_the_marker_path_is_not_followed() -> Result<()> {
+    let project = tempfile::tempdir()?;
+    let targets = PurgeTargets::in_dir(project.path());
+    let nodes = vec![project_node(project.path(), "cn1")?];
+    write_state(&nodes[0], E3Stage::Complete).await?;
+    let outside = project.path().join("outside");
+    std::fs::write(&outside, b"")?;
+    let marker = project
+        .path()
+        .join(".interfold/data/cn1")
+        .join(MARKER_FILE_NAME);
+    std::os::unix::fs::symlink(&outside, &marker)?;
+
+    let message = execute(&targets, &nodes, true)
+        .await
+        .expect_err("the purge must stop")
+        .to_string();
+    assert!(message.contains("is not a purge marker"), "{message}");
+    assert!(std::fs::read(&outside)?.is_empty());
+    assert!(untouched(&[&nodes[0]]));
     Ok(())
 }
 
@@ -881,6 +938,8 @@ async fn purge_refuses_to_delete_a_running_node_or_an_active_key_share() -> Resu
     linked_node_folder_is_not_a_leftover().await?;
     incomplete_marker_is_not_trusted().await?;
     failed_marker_write_leaves_no_marker().await?;
+    key_file_at_the_marker_path_is_kept().await?;
+    link_at_the_marker_path_is_not_followed().await?;
     nested_node_folder_through_a_link_keeps_its_lock().await?;
     rerun_for_a_folder_without_a_profile().await?;
     event_log_without_a_store().await?;

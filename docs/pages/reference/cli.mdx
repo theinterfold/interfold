@@ -349,7 +349,7 @@ refusal together. The purge also refuses when `.interfold`, `.interfold/data`, o
 
 Before the first deletion, the purge writes a `purge-in-progress` file into each node folder that it
 empties. When the purge stops part of the way, run it again. The second run finishes the folders
-that hold this file.
+that hold this file. If another file or a link has this name, the purge stops and deletes nothing.
 
 The purge has limits:
 

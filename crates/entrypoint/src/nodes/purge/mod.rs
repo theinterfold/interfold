@@ -31,7 +31,8 @@
 //! Before it deletes, the purge writes a marker into each node folder that it empties. A later
 //! purge treats a folder with the marker as the leftover of that purge and finishes the deletion.
 //! An empty folder without the marker is not a leftover: it can be the mount point of a volume
-//! that is not mounted.
+//! that is not mounted. Another file or a link with the marker's name stops the purge before it
+//! deletes anything.
 //!
 //! Limits:
 //! - The purge finds a node's store with its own configuration and environment. It cannot see a
