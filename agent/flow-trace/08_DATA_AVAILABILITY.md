@@ -286,9 +286,11 @@ run in the request transaction, before the requester pays the fee.
   will not replay.
 - Every staged object and job state is in the server's persistent Sled database before the server
   signs an input. The object has one content-addressed copy; job metadata does not duplicate it.
-- The browser keeps the exact encoded ballot with its durable job pointer. If the server loses its
-  job database, the browser re-stages the same commitment instead of creating a second ciphertext
-  and leaving the first on-chain commitment unresolved.
+- The browser keeps each exact encoded ballot, one record per job, until an action finds its
+  availability final or its job failed. Each action also drops the final ballots of other rounds. If
+  the server loses its job database, the browser re-stages the same ballot instead of creating a
+  second ciphertext and leaving the first on-chain commitment unresolved. A saved ballot that only
+  waits for availability does not stop a new vote or mask.
 - The server checks the one-megabyte object limit before it accepts an input commitment or creates
   an output job. An oversized object cannot reserve a leaf that Avail will always reject.
 - The job worker retries every 30 seconds and runs at most four job steps at once. The outer

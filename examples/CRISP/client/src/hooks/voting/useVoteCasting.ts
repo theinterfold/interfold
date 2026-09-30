@@ -33,8 +33,19 @@ interface PendingAvailabilityJob {
   encodedProof?: string
 }
 
+/// Each ballot of an account in a round has its own record under this prefix. A record stays until
+/// an action finds its availability final or its job failed, because a server that lost its job
+/// database needs the same bytes again. The prefix alone is the single record of an older client.
 const availabilityJobKey = (chainId: number, roundId: string, address: string): string => {
   return `crisp-availability-${chainId}-${roundId}-${address.toLowerCase()}`
+}
+
+const savedJobKeys = (prefix: string): string[] => {
+  try {
+    return Object.keys(localStorage).filter((key) => key.startsWith(prefix))
+  } catch {
+    return []
+  }
 }
 
 const readAvailabilityJob = (key: string): PendingAvailabilityJob | undefined => {
@@ -448,18 +459,20 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
         return
       }
 
-      // One account has one durable resume pointer per round. Do not let concurrent actions
-      // replace that pointer before the first request records its job ID.
+      // Run one action at a time. Each action first settles the ballots that this account saved in
+      // this round.
       if (submissionInProgress.current) return
       submissionInProgress.current = true
 
-      const pendingJobKey = availabilityJobKey(chainId, roundState.id, user.address)
+      const savedJobPrefix = availabilityJobKey(chainId, roundState.id, user.address)
 
       const finishCommitment = async (
         response: BroadcastVoteResponse,
         operationIsMask: boolean,
+        key: string,
         afterRestage = false,
-      ): Promise<boolean> => {
+      ): Promise<void> => {
+        if (response.status === 'success' || response.status === 'failed_broadcast') clearAvailabilityJob(key)
         if (response.status === 'failed_broadcast') {
           throw new Error(extractCleanErrorMessage(response.message ?? undefined))
         }
@@ -470,26 +483,23 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
           const decided = response.job_id
             ? await waitForCommitmentDecision(response.job_id, getVoteAvailability, () => unmounted.current)
             : undefined
-          // The page closed during the wait. Keep the job pointer so that the next action resumes it.
-          if (unmounted.current) return false
+          // The page closed during the wait. Keep the ballot so that the next action resumes it.
+          if (unmounted.current) return
           if (decided === null) {
             // The server lost the job while this page waited. Stage the stored bytes again once;
             // a second loss in the same action is left to the next one.
-            const stored = readAvailabilityJob(pendingJobKey)
-            if (!afterRestage && stored) return restagePendingJob(stored)
+            const stored = readAvailabilityJob(key)
+            if (!afterRestage && stored) return finishCommitment(await restage(key, stored), operationIsMask, key, true)
             throw new Error('The server lost the pending proof. Repeat the action to submit it again.')
           }
-          if (decided) {
-            if (decided.status === 'failed_broadcast') clearAvailabilityJob(pendingJobKey)
-            return finishCommitment(decided, operationIsMask, afterRestage)
-          }
+          if (decided) return finishCommitment(decided, operationIsMask, key, afterRestage)
 
           setStepMessage('Your proof is still queued. Come back later and repeat the action to finish it.')
           showToast({
             type: 'success',
             message: 'Proof queued. Repeat the action later: your wallet may need to send the commitment.',
           })
-          return false
+          return
         }
 
         let txHash: string | undefined = response.tx_hash ?? undefined
@@ -505,9 +515,9 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
           if (!response.encoded_proof) {
             throw new Error('Availability job is missing the input commitment payload')
           }
-          // The page closed while the program address loaded. Keep the job pointer so that the next
+          // The page closed while the program address loaded. Keep the ballot so that the next
           // action resumes it, and open no wallet prompt from a closed page.
-          if (unmounted.current) return false
+          if (unmounted.current) return
           txHash = await submitInputCommitmentDirectly(
             walletClient,
             publicClient,
@@ -542,46 +552,44 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
           linkUrl: url,
         })
         navigate(`/result/${roundState.id}/confirmation`)
-        return true
       }
 
-      // The server lost its job database. Re-stage the same bytes: a fresh ciphertext could leave
-      // an earlier on-chain commitment unresolved and stop the complete round.
-      const restagePendingJob = async (pendingJob: PendingAvailabilityJob): Promise<boolean> => {
+      // The server lost the job of a saved ballot. Stage the same bytes again: a fresh ciphertext
+      // could leave the earlier on-chain commitment unresolved and stop the complete round.
+      const restage = async (key: string, pendingJob: PendingAvailabilityJob): Promise<BroadcastVoteResponse> => {
         if (!pendingJob.encodedProof) {
           throw new Error('The server lost this legacy vote job. An operator must recover it before another vote is submitted.')
         }
         const restaged = await broadcastVote({ round_id: roundState.id, encoded_proof: pendingJob.encodedProof }, (jobId) =>
-          writeAvailabilityJob(pendingJobKey, { ...pendingJob, jobId }),
+          writeAvailabilityJob(key, { ...pendingJob, jobId }),
         )
         if (!restaged) throw new Error('Could not restore the pending data-availability job.')
-        if (restaged.status === 'failed_broadcast') clearAvailabilityJob(pendingJobKey)
-        return finishCommitment(restaged, pendingJob.isMask, true)
+        return restaged
       }
 
       try {
-        const pendingJob = readAvailabilityJob(pendingJobKey)
-        if (pendingJob) {
+        // A final ballot of another round is no longer needed. Drop it here, because only an
+        // action in its own round would find it otherwise.
+        for (const key of savedJobKeys('crisp-availability-')) {
+          const jobId = key.startsWith(savedJobPrefix) ? undefined : readAvailabilityJob(key)?.jobId
+          const status = jobId ? (await getVoteAvailability(jobId))?.status : undefined
+          if (status === 'success' || status === 'failed_broadcast') clearAvailabilityJob(key)
+        }
+        for (const key of savedJobKeys(savedJobPrefix)) {
+          const pendingJob = readAvailabilityJob(key)
+          if (!pendingJob) continue
+          const saved = await getVoteAvailability(pendingJob.jobId)
+          if (saved === undefined) throw new Error('Could not read the pending data-availability job.')
+          const resumed = saved ?? (await restage(key, pendingJob))
+          if (resumed.status === 'success') clearAvailabilityJob(key)
+          // A ballot that only waits for its availability does not stop a new action.
+          if (resumed.status === 'success' || resumed.status === 'pending_availability') continue
           setIsMasking(pendingJob.isMask)
           setIsVoting(!pendingJob.isMask)
           setVotingStep('broadcasting')
           setLastActiveStep('broadcasting')
-          setStepMessage('Checking the durable vote job...')
-
-          const resumed = await getVoteAvailability(pendingJob.jobId)
-          if (resumed === null) {
-            if (await restagePendingJob(pendingJob)) {
-              clearAvailabilityJob(pendingJobKey)
-            }
-            return
-          } else {
-            if (!resumed) throw new Error('Could not read the pending data-availability job.')
-            if (resumed.status === 'failed_broadcast') clearAvailabilityJob(pendingJobKey)
-            if (await finishCommitment(resumed, pendingJob.isMask)) {
-              clearAvailabilityJob(pendingJobKey)
-            }
-            return
-          }
+          await finishCommitment(resumed, pendingJob.isMask, key, saved === null)
+          return
         }
 
         if (!isAMask && !pollSelected) {
@@ -658,20 +666,17 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
           encoded_proof: encodedProof,
         }
         const broadcastVoteResponse = await broadcastVote(voteRequest, (jobId) => {
-          writeAvailabilityJob(pendingJobKey, { jobId, isMask: isAMask, encodedProof })
+          writeAvailabilityJob(`${savedJobPrefix}-${jobId}`, { jobId, isMask: isAMask, encodedProof })
         })
 
         if (!broadcastVoteResponse) {
           throw new Error('Received no response after publishing vote data.')
         }
-        if (broadcastVoteResponse.status === 'failed_broadcast') clearAvailabilityJob(pendingJobKey)
-        if (await finishCommitment(broadcastVoteResponse, isAMask)) {
-          clearAvailabilityJob(pendingJobKey)
-        }
+        await finishCommitment(broadcastVoteResponse, isAMask, `${savedJobPrefix}-${broadcastVoteResponse.job_id}`)
       } catch (error) {
         console.error('Vote processing failed:', error)
         // A page that closed during the action shows no toast on the page that is open now. A kept
-        // job pointer lets the next action resume the job and report its state.
+        // ballot lets the next action resume the job and report its state.
         if (unmounted.current) return
         setVotingStep('error')
         showToast({
