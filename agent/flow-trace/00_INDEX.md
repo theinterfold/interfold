@@ -237,6 +237,7 @@ reformulations rather than weakenings — the soundness arguments are in the com
 | C3      | 3,475,203 | 3,589,892 | **2,744,690** | -21.0%  |
 | C7      | 108,461   | 112,591   | **26,808**    | -75.3%  |
 | C4      | 1,746,030 | 1,954,926 | **1,098,865** | -37.1%  |
+| C1      | 2,223,114 | 2,287,310 | **1,634,682** | -26.5%  |
 
 **The shared mechanism.** `negacyclic_kernel(u, x)[j]` is `(X^(N-1-j) * u mod X^N + 1)(x)`, so
 `a.dot(kernel)` evaluates `a * u mod X^N + 1` without the product entering the witness. Folding the
@@ -296,6 +297,28 @@ secure-8192 but silently loses completeness if a parameter set's moduli straddle
 `ceil(log2(H+1))`, because H comes from the committee config, which is routed separately from the
 preset generator. The branch's hardcoded `4` happens to hold at H=14 and would break silently one
 committee size later.
+
+**C1 keeps IF-005, so only its reduction was ported.** The branch's C1 also deletes `e_sm_lifted`
+and `e_sm_quotients`, replacing them with a per-residue `centered(e_sm[l], q_l)` check and an assert
+that `e_sm_bound` contains that interval. That is IF-005: bounding each residue by `(q_l - 1) / 2`
+does not bound the CRT-reconstructed integer, which can reach `~Q/2` (2^171) against an `e_sm_bound`
+of 2^142 - a factor of 2^30 of extra smudging noise, enough to push decryption past its budget. The
+branch is not reverting the fix; `e_sm_lifted` exists only on `fix/circuit-bound-checks` and the
+branch predates it, so its check was an improvement on the vacuous one it had. Relative to this tree
+it is a regression, so the lifted machinery stays. IF-005 costs only 64,196 net (it also dropped
+`BIT_E_SM` from 143 to the modulus width over `L*N` coefficients, which pays for most of the new
+witnesses), and keeping it leaves us 141,188 above the branch's 1,493,494 while capturing the whole
+reduction win.
+
+**C1's reduction, and why the bound did not move.** `pk0[i] = -(a[i] * sk mod X^N + 1) + eek + r[i] * q_i`.
+The unreduced form carried `r2` at degree `N-1` bounded to `BIT_R2 = 57` and `r1` at degree `2N-1`;
+reducing makes the cyclotomic term identically zero, so `r2` disappears and `r1` collapses to `N`
+coefficients. The transcript absorbs `N` instead of `3N-2`. `a` is the compile-time CRP, so the
+product needs no bound of its own, and bounding the rest gives
+`r_bound = ((N * sk_bound + 2) * qi_bound + eek_bound) / q_i` - at `sk_bound = 1` the *same*
+expression the unreduced `r1` used, so `BIT_R` stays 13 (9 insecure) and the bounds are unchanged.
+Codegen confirms that independently rather than it being asserted. C1 runs once per node, so at
+`small` (H = 14) the 652,628 saved is ~9.1M gates per DKG.
 
 **Not ported.** C3's message-scaling rework (`rounding_carries`, `SECURE_SCALE`, `ALPHA`, `BETA`,
 `DELTA`, `check_near_power::<57, 25>`) is worth a further ~1.01M gates but its constants are derived

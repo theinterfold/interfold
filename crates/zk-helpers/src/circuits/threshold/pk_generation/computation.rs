@@ -12,7 +12,7 @@
 use crate::calculate_bit_width;
 use crate::ciphernodes_committee::CiphernodesCommittee;
 use crate::crt_polynomial_to_toml_json;
-use crate::math::{cyclotomic_polynomial, decompose_residue};
+use crate::math::fold_negacyclic;
 use crate::polynomial_to_toml_json;
 use crate::threshold::pk_generation::circuit::PkGenerationCircuit;
 use crate::threshold::pk_generation::circuit::PkGenerationCircuitData;
@@ -78,8 +78,7 @@ pub struct Bits {
     pub e_sm_bit: u32,
     pub e_sm_lifted_bit: u32,
     pub e_sm_quotient_bit: u32,
-    pub r1_bit: u32,
-    pub r2_bit: u32,
+    pub r_bit: u32,
     pub pk_bit: u32,
 }
 
@@ -90,8 +89,7 @@ pub struct Bounds {
     pub e_sm_bound: BigUint,
     pub e_sm_limb_bounds: Vec<BigUint>,
     pub e_sm_quotient_bounds: Vec<BigUint>,
-    pub r1_bounds: Vec<BigUint>,
-    pub r2_bounds: Vec<BigUint>,
+    pub r_bounds: Vec<BigUint>,
     pub pk_bound: BigUint,
 }
 
@@ -102,8 +100,7 @@ pub struct Inputs {
     pub e_sm: CrtPolynomial,
     pub e_sm_lifted: Polynomial,
     pub e_sm_quotients: CrtPolynomial,
-    pub r1is: CrtPolynomial,
-    pub r2is: CrtPolynomial,
+    pub ris: CrtPolynomial,
     pub pk0is: CrtPolynomial,
 }
 
@@ -159,16 +156,10 @@ impl Computation for Bits {
             build_pair_for_preset(preset).map_err(|e| CircuitsErrors::Other(e.to_string()))?;
         let pk_bit = crate::compute_modulus_bit(&threshold_params);
 
-        // For r1, use the maximum of all low and up bounds
-        let mut r1_bit = 0;
-        for bound in &data.r1_bounds {
-            r1_bit = r1_bit.max(calculate_bit_width(BigInt::from(bound.clone())));
-        }
-
-        // For r2, use the maximum of all bounds
-        let mut r2_bit = 0;
-        for bound in &data.r2_bounds {
-            r2_bit = r2_bit.max(calculate_bit_width(BigInt::from(bound.clone())));
+        // One width covers every limb's `r`, so take the widest bound.
+        let mut r_bit = 0;
+        for bound in &data.r_bounds {
+            r_bit = r_bit.max(calculate_bit_width(BigInt::from(bound.clone())));
         }
 
         Ok(Bits {
@@ -177,8 +168,7 @@ impl Computation for Bits {
             e_sm_bit,
             e_sm_lifted_bit,
             e_sm_quotient_bit,
-            r1_bit,
-            r2_bit,
+            r_bit,
             pk_bit,
         })
     }
@@ -226,8 +216,7 @@ impl Computation for Bounds {
 
         // Calculate bounds for each CRT basis
         let num_moduli = ctx.moduli().len();
-        let mut r2_bounds = vec![BigInt::from(0); num_moduli];
-        let mut r1_bounds = vec![BigInt::from(0); num_moduli];
+        let mut r_bounds = vec![BigInt::from(0); num_moduli];
         let mut e_sm_limb_bounds = vec![BigInt::from(0); num_moduli];
         let mut e_sm_quotient_bounds = vec![BigInt::from(0); num_moduli];
         let mut moduli = Vec::new();
@@ -239,15 +228,24 @@ impl Computation for Bounds {
 
             moduli.push(**qi);
 
-            r2_bounds[i] = qi_bound.clone();
-
             // e_sm[i] is the centered residue of the lifted smudging noise at q_i; the matching
             // CRT quotient is bounded by (e_sm_bound + (q_i - 1) / 2) / q_i.
             e_sm_limb_bounds[i] = qi_bound.clone();
             e_sm_quotient_bounds[i] = (BigInt::from(e_sm_bound.clone()) + &qi_bound) / &qi_bigint;
 
-            // Compute asymmetric range for r1 bounds per modulus
-            r1_bounds[i] = ((&n + 2u32) * &qi_bound + eek_bound) / &qi_bigint;
+            // `r` is the quotient of the mod-q reduction in the identity the circuit checks:
+            //   pk0i = -(a * sk mod X^N + 1) + eek + q * r   (over the integers)
+            // so bounding each other term and dividing by q bounds `r`:
+            //   |a * sk mod X^N + 1| <= n * (q-1)/2 * sk_bound (negacyclic convolution of n terms,
+            //   with |a| <= (q-1)/2 because the CRP is stored centered), |pk0i| <= (q-1)/2 and
+            //   |eek| <= eek_bound. Both sides are symmetric, so one bound covers the two-sided
+            //   range check. The `+ 2` rather than `+ 1` keeps the margin the unreduced `r1` bound
+            //   carried.
+            //
+            // Reducing modulo the cyclotomic removed `r2` entirely, and at sk_bound = 1 this is the
+            // same expression the unreduced `r1` used -- the reduced quotient is no wider.
+            let sk_bound_bigint = BigInt::from(sk_bound as u128);
+            r_bounds[i] = ((&n * &sk_bound_bigint + 2u32) * &qi_bound + eek_bound) / &qi_bigint;
 
             // Track maximum pk bound across all moduli
             // We don't need to store them as we only need the maximum bound to compute the commitment bit width
@@ -268,11 +266,7 @@ impl Computation for Bounds {
                 .iter()
                 .map(|b| b.to_biguint().unwrap())
                 .collect(),
-            r1_bounds: r1_bounds
-                .iter()
-                .map(|b| BigUint::from(b.to_u128().unwrap()))
-                .collect(),
-            r2_bounds: r2_bounds
+            r_bounds: r_bounds
                 .iter()
                 .map(|b| BigUint::from(b.to_u128().unwrap()))
                 .collect(),
@@ -301,7 +295,6 @@ impl Computation for Inputs {
             .map(BigInt::from)
             .collect();
         let n = threshold_params.degree() as u64;
-        let cyclo = cyclotomic_polynomial(n);
 
         // Smudging noise over the integers, in the same reversed+centered layout as the limbs.
         let ctx = threshold_params.context_at_level(0)?;
@@ -311,14 +304,7 @@ impl Computation for Inputs {
         e_sm_lifted.center(&modulus_q);
 
         // Perform the main computation logic
-        let mut results: Vec<(
-            usize,
-            Polynomial,
-            Polynomial,
-            Polynomial,
-            Polynomial,
-            Polynomial,
-        )> = izip!(
+        let mut results: Vec<(usize, Polynomial, Polynomial, Polynomial, Polynomial)> = izip!(
             moduli.clone(),
             data.pk0_share.limbs.clone(),
             a.limbs.clone(),
@@ -353,7 +339,38 @@ impl Computation for Inputs {
 
             assert_eq!((pk0_share_hat.coefficients().len() as u64) - 1, 2 * (n - 1));
 
-            let (r1, r2) = decompose_residue(&pk0_share, &pk0_share_hat, &qi, &cyclo, n);
+            // The circuit checks the identity reduced modulo X^N + 1, so the cyclotomic quotient's
+            // term is identically zero and `r2` is gone. `r` is then pinned by the identity itself:
+            //   pk0i == (-(a * sk) + eek mod X^N + 1) + qi * r
+            // so folding the already-computed `pk0_share_hat` and dividing gives `r` directly.
+            //
+            // Everything here is O(N). Going via `decompose_residue` and then
+            // `reduce_by_cyclotomic` would instead recompute the `a * sk` product and run two
+            // generic long divisions, about 134 million BigInt multiply-subtracts per limb at
+            // N = 8192 -- for a value `fold_negacyclic` reaches in N subtractions. Measured at
+            // secure-8192, that was 5.09s of witness generation against 0.92s.
+            let reduced_hat = fold_negacyclic(&pk0_share_hat, n as usize);
+
+            // Exact division is the identity: `div` rejects any coefficient of
+            // `pk0 - reduced_hat` that is not a multiple of qi, so a successful division is a proof
+            // that an integer `r` closes the reduced equation. A wrong fold shows up here, because
+            // the difference stops being divisible.
+            let (r, remainder) = pk0_share
+                .sub(&reduced_hat)
+                .div(&Polynomial::constant(qi.clone()))
+                .expect("pk0i - (a * sk + eek mod X^N + 1) must be divisible by qi");
+            assert!(
+                remainder.is_zero(),
+                "reduced pk0 identity must divide exactly by qi"
+            );
+
+            // Restate the identity on the derived witness. Cheap at O(N), and independent of `div`.
+            assert!(
+                pk0_share
+                    .sub(&reduced_hat.add(&r.scalar_mul(&qi)))
+                    .is_zero(),
+                "reduced pk0 identity must hold: pk0i == -(a * sk) + eek + qi * r (mod X^N + 1)"
+            );
 
             // e_sm_quotient = (e_sm_lifted - e_sm[i]) / q_i, the witness the circuit uses to tie
             // the committed residue back to the bounded lifted value.
@@ -366,14 +383,13 @@ impl Computation for Inputs {
                 "e_sm_lifted - e_sm[i] must be divisible by q_i (CRT consistency)"
             );
 
-            (i, r2, r1, pk0_share.clone(), e_sm.clone(), e_sm_quotient)
+            (i, r, pk0_share.clone(), e_sm.clone(), e_sm_quotient)
         })
         .collect();
 
         results.sort_by_key(|(i, ..)| *i);
 
-        let mut r2 = CrtPolynomial::new(vec![]);
-        let mut r1 = CrtPolynomial::new(vec![]);
+        let mut r = CrtPolynomial::new(vec![]);
         let mut pk0_share = CrtPolynomial::new(vec![]);
         let mut e_sm = CrtPolynomial::new(vec![]);
         let mut e_sm_quotients = CrtPolynomial::new(vec![]);
@@ -386,9 +402,8 @@ impl Computation for Inputs {
         eek.reverse();
         eek.center(&moduli[0]);
 
-        for (_i, r2i, r1i, pk0_sharei, e_smi, e_sm_quotienti) in results {
-            r2.add_limb(r2i);
-            r1.add_limb(r1i);
+        for (_i, ri, pk0_sharei, e_smi, e_sm_quotienti) in results {
+            r.add_limb(ri);
             pk0_share.add_limb(pk0_sharei);
             e_sm.add_limb(e_smi);
             e_sm_quotients.add_limb(e_sm_quotienti);
@@ -400,8 +415,7 @@ impl Computation for Inputs {
             e_sm,
             e_sm_lifted,
             e_sm_quotients,
-            r1is: r1,
-            r2is: r2,
+            ris: r,
             pk0is: pk0_share,
         })
     }
@@ -413,8 +427,7 @@ impl Computation for Inputs {
         let e_sm = crt_polynomial_to_toml_json(&self.e_sm);
         let e_sm_lifted = polynomial_to_toml_json(&self.e_sm_lifted);
         let e_sm_quotients = crt_polynomial_to_toml_json(&self.e_sm_quotients);
-        let r1is = crt_polynomial_to_toml_json(&self.r1is);
-        let r2is = crt_polynomial_to_toml_json(&self.r2is);
+        let ris = crt_polynomial_to_toml_json(&self.ris);
 
         let json = serde_json::json!({
             "pk0is": pk0is,
@@ -423,8 +436,7 @@ impl Computation for Inputs {
             "e_sm": e_sm,
             "e_sm_lifted": e_sm_lifted,
             "e_sm_quotients": e_sm_quotients,
-            "r1is": r1is,
-            "r2is": r2is,
+            "ris": ris,
         });
 
         Ok(json)
