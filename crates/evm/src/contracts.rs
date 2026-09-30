@@ -257,6 +257,13 @@ sol! {
             uint256 e3Id
         ) external view returns (address[] memory nodes, uint256[] memory scores);
 
+        function isCommitteeMember(uint256 e3Id, address node) external view returns (bool);
+
+        function isCommitteeMemberActive(
+            uint256 e3Id,
+            address node
+        ) external view returns (bool);
+
         function dkgFoldAttestationVerifier() external view returns (address);
 
         function accusationVoteValidity() external view returns (uint256);
@@ -476,6 +483,13 @@ sol! {
         event OperatorActivationChanged(address indexed operator, bool active);
 
         event BondOwnerSet(address indexed operator, address indexed bondOwner);
+
+        event CommitteeObligationUpdated(
+            uint256 indexed e3Id,
+            address indexed registry,
+            address indexed operator,
+            bool active
+        );
 
         struct AdmissionPolicy {
             bool cooldownEnabled;

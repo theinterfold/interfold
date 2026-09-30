@@ -194,6 +194,16 @@ User runs: interfold ciphernode status
 │   ├─ bondingRegistry.ticketPrice → price per ticket
 │   └─ bondingRegistry.requiredCiphernodeBond → required bond
 │
+├─ Lists the committees that hold the collateral:
+│   e3_evm::fetch_operator_committees()  (crates/evm/src/operator_status.rs)
+│   ├─ eth_getLogs BondingRegistry.CommitteeObligationUpdated with topic3 = operator,
+│   │   from bonding_registry.deploy_block to head (adaptive window)
+│   ├─ The last update of each E3 in chain order decides whether its obligation is open
+│   └─ For each open E3:
+│       ├─ registry (from the event).isCommitteeMemberActive / isCommitteeMember
+│       │   → member, expelled, or sortition candidate
+│       └─ interfold.getE3Stage(e3Id)
+│
 └─ OUTPUT:
    Operator Key:     0x1234...
    Bond Owner:       0xabcd...
@@ -204,7 +214,14 @@ User runs: interfold ciphernode status
    Ciphernode Bond:     50000 FOLD
    Pending Exits:    tickets=0, ciphernode bond=0
    Requirements:     minTickets=10, ticketPrice=1000000, ciphernodeBond=50000
+   Committees:       1
+     E3 <e3Id>: member, stage KeyPublished
 ```
+
+The committee list holds the obligations that make `claimExitsFor` revert with
+`OperatorInActiveCommittee`. A committee stays in the list until `releaseCommittee(e3Id)` releases
+it, also after its E3 is complete or failed. If the log scan fails, the command prints
+`Committees: unavailable (<error>)` and keeps the other lines.
 
 ---
 
