@@ -12,7 +12,7 @@
 use crate::calculate_bit_width;
 use crate::ciphernodes_committee::CiphernodesCommittee;
 use crate::crt_polynomial_to_toml_json;
-use crate::math::{cyclotomic_polynomial, decompose_residue};
+use crate::math::fold_negacyclic;
 use crate::polynomial_to_toml_json;
 use crate::threshold::pk_generation::circuit::PkGenerationCircuit;
 use crate::threshold::pk_generation::circuit::PkGenerationCircuitData;
@@ -295,7 +295,6 @@ impl Computation for Inputs {
             .map(BigInt::from)
             .collect();
         let n = threshold_params.degree() as u64;
-        let cyclo = cyclotomic_polynomial(n);
 
         // Smudging noise over the integers, in the same reversed+centered layout as the limbs.
         let ctx = threshold_params.context_at_level(0)?;
@@ -340,26 +339,36 @@ impl Computation for Inputs {
 
             assert_eq!((pk0_share_hat.coefficients().len() as u64) - 1, 2 * (n - 1));
 
-            let (r1, _r2) = decompose_residue(&pk0_share, &pk0_share_hat, &qi, &cyclo, n);
+            // The circuit checks the identity reduced modulo X^N + 1, so the cyclotomic quotient's
+            // term is identically zero and `r2` is gone. `r` is then pinned by the identity itself:
+            //   pk0i == (-(a * sk) + eek mod X^N + 1) + qi * r
+            // so folding the already-computed `pk0_share_hat` and dividing gives `r` directly.
+            //
+            // Everything here is O(N). Going via `decompose_residue` and then
+            // `reduce_by_cyclotomic` would instead recompute the `a * sk` product and run two
+            // generic long divisions, about 134 million BigInt multiply-subtracts per limb at
+            // N = 8192 -- for a value `fold_negacyclic` reaches in N subtractions. Measured at
+            // secure-8192, that was 5.09s of witness generation against 0.92s.
+            let reduced_hat = fold_negacyclic(&pk0_share_hat, n as usize);
 
-            // The circuit checks the identity reduced modulo X^N + 1, which makes the cyclotomic
-            // quotient's term identically zero and so removes `r2`. What is left is `r1` taken
-            // modulo the same cyclotomic, which is also half as long.
-            let r = r1
-                .reduce_by_cyclotomic(&cyclo)
-                .expect("r1 must reduce modulo the cyclotomic");
-
-            // Prove the reduced identity on the real witness rather than trusting the derivation:
-            // a wrong fold or coefficient order fails here instead of inside the circuit.
-            let pk0_reduced = a
-                .neg()
-                .mul(&sk)
-                .reduce_by_cyclotomic(&cyclo)
-                .expect("a * sk must reduce modulo the cyclotomic")
-                .add(&eek)
-                .add(&r.scalar_mul(&qi));
+            // Exact division is the identity: `div` rejects any coefficient of
+            // `pk0 - reduced_hat` that is not a multiple of qi, so a successful division is a proof
+            // that an integer `r` closes the reduced equation. A wrong fold shows up here, because
+            // the difference stops being divisible.
+            let (r, remainder) = pk0_share
+                .sub(&reduced_hat)
+                .div(&Polynomial::constant(qi.clone()))
+                .expect("pk0i - (a * sk + eek mod X^N + 1) must be divisible by qi");
             assert!(
-                pk0_share.sub(&pk0_reduced).is_zero(),
+                remainder.is_zero(),
+                "reduced pk0 identity must divide exactly by qi"
+            );
+
+            // Restate the identity on the derived witness. Cheap at O(N), and independent of `div`.
+            assert!(
+                pk0_share
+                    .sub(&reduced_hat.add(&r.scalar_mul(&qi)))
+                    .is_zero(),
                 "reduced pk0 identity must hold: pk0i == -(a * sk) + eek + qi * r (mod X^N + 1)"
             );
 
