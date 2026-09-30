@@ -116,7 +116,7 @@ async fn restrict_permissions(_path: &Path) -> Result<()> {
 /// The index is not always a trailing suffix: `log_file` is configurable per node
 /// (`AppConfig::log_file`), so `events.log` enumerates to `events.0.log`. The split below mirrors
 /// `enumerate_path` exactly; `matches_enumeration_of` is pinned to it by test.
-async fn event_log_paths(log_file: &Path) -> Result<Vec<PathBuf>> {
+pub(crate) async fn event_log_paths(log_file: &Path) -> Result<Vec<PathBuf>> {
     let mut paths = Vec::new();
     // The un-enumerated path is included for older layouts that wrote to it directly.
     if fs::try_exists(log_file)

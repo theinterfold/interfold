@@ -155,7 +155,20 @@ makes every populated data directory unloadable until the operator clears it.
 The operator key and the libp2p keypair live in the same key/value store as that state, under
 `//eth_private_key` and `//libp2p/keypair`. Deleting the data directory destroys the identity that
 holds the bond, and `nodes purge` additionally removes the configuration directory holding the
-cipher key file. Neither is a safe reset.
+cipher key file. Neither is a safe reset. `nodes purge` and `purge-all` require `--yes`. Before they
+delete anything, they check each node whose store, event log, or key file they would delete
+(`crates/entrypoint/src/nodes/purge/`). They take the same `ProcessFence` as `start`. They open the
+node's store, and sled refuses a store that another process has open. They run the key-share check
+that `reset-data` uses (`crates/entrypoint/src/nodes/state_guard.rs`). They also refuse for a node
+that they cannot check. Its store can be missing at the configured path, or that store can hold no
+operator key. They report every refusal at once, because `--allow-active-e3s` overrides the
+key-share and cannot-check refusals together. No flag overrides a refusal for a node that the purge
+sees running. The commands also delete the identity.
+
+The purge has limits. It finds stores with its own configuration and environment, so it cannot see a
+node that runs with another `E3_DATA_DIR`, `data_dir`, or working directory. It cannot tell whether
+an operator key is the node's own, so a stale copy of a store at the configured path passes. It
+finds stores only directly inside node folders.
 
 `interfold node reset-data` is the supported path. It takes the same `ProcessFence` as `start`, so
 it refuses while a node runs, copies both secrets out as ciphertext without the password, backs them
