@@ -226,6 +226,20 @@ every section.
   ciphertext are of this kind; C1's `pk0` and C5's `pk0_agg` are not, because no identity inside
   their circuit determines them. Ask "does anything outside this circuit's own identity depend on
   this value's magnitude?" rather than "was it bounded before?". — `flow-trace/04`
+- **An optimisation branch that predates a fix will silently undo it; diff against the fix, not the
+  optimisation.** `feat/secure-circuit-optimizations` forked before IF-005, so its C1 replaces
+  `e_sm_lifted` / `e_sm_quotients` with a per-residue `centered()` check. Per-residue bounds do not
+  bound a CRT-reconstructed integer -- each residue under `(q_l - 1) / 2` still permits `~Q/2` --
+  which is IF-005 exactly. It reads as an optimisation because against _its own_ base it was a
+  tightening. Before porting any part of that branch, check whether the code it replaces was
+  introduced by a finding on this branch: `git log -S` on the deleted identifier answers it. Only the
+  negacyclic reduction was taken for C1. — `flow-trace/04`
+- **Renaming a generated config global needs the declaration seeded by hand first.**
+  `build-circuits.ts` splices `pub global NAME: ...;` into `configs/{secure,insecure}/*.nr` **by
+  name** and throws `Missing NAME` if the target does not already declare it; a global the generator
+  stops emitting is left behind rather than removed. So a rename is: edit both config files to
+  declare the new name, drop the old, then run codegen to fill the authoritative value. `sync-config`
+  does not regenerate bounds at all — it only switches the active preset. — `flow-trace/04`
 - **A circuit-size change must be measured at every committee size before it is called a win.** Cost
   splits into a part that scales with the committee (`H*L*N` work, such as per-share commitment
   openings) and a part that does not (`L*N` work, such as the aggregate's normalisation). A change
