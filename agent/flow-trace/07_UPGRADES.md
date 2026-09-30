@@ -29,13 +29,13 @@ Use `pnpm --dir packages/interfold-contracts upgrade:node-release --action prepa
 the release needs no governance transaction. Do not change either compatibility counter in this
 path. A compatible contract-only change also needs no node policy change.
 
-A release that changes the off-chain ticket ranking is compatible on chain but not in a mixed
-fleet. Example: the VRF `CommitteeRequested.seed` byte order
+A release that changes the off-chain ticket ranking is compatible on chain but not in a mixed fleet.
+Example: the VRF `CommitteeRequested.seed` byte order
 (`crates/evm/src/randomness_provider/events.rs`, `Seed::from`). Old and new nodes shortlist
-different submitters, so fewer than N distinct owners can submit and
-`CiphernodeRegistryOwnable` fails the E3 with `InsufficientCommitteeMembers`. The registry scores
-each submitted ticket itself, so no honest node is slashed. Pause new E3 requests for such a rollout
-and resume after the operators have upgraded.
+different submitters, so fewer than N distinct owners can submit and `CiphernodeRegistryOwnable`
+fails the E3 with `InsufficientCommitteeMembers`. The registry scores each submitted ticket itself,
+so no honest node is slashed. Pause new E3 requests for such a rollout and resume after the
+operators have upgraded.
 
 ## Mandatory node-only release
 
@@ -85,6 +85,13 @@ pause new requests and drain every E3 and committee
 On a testnet, a fresh protocol, CRISP, and DAO stack is an acceptable alternative to an in-place
 upgrade. It must still pass the same route and verification-key validation before it accepts an E3.
 The old and new stacks must use separate addresses so clients cannot silently combine them.
+
+The BFV circuits use `interfold-bfv-v2` with compiled `protocol_version = 5` and
+`node_generation = 2`. The configuration ID binds this circuit version even when BFV parameters stay
+unchanged. The builder generates both precomputed IDs. Runtime readers, the indexer, CRISP intake,
+request tooling, and the SDK use the same IDs and reject v1 requests. Changed witness shapes and
+smudging commitments require a governance cutover, not a mixed rolling release. Rebuild all six
+artifact pairs and replace the immutable BFV verifier wrappers and routers before requests resume.
 
 The initial VRF upgrade follows this combined path because it introduces the controller and changes
 both `Interfold` and `BondingRegistry`.

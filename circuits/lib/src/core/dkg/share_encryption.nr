@@ -35,7 +35,7 @@ pub struct Configs<let L: u32> {
     pub ct0_r_bounds: [Field; L],
     /// Bounds on the ct1-leg reduction quotient `ct1_r`, per CRT modulus
     pub ct1_r_bounds: [Field; L],
-    /// Bound for the raw message (share) polynomial coefficients: t - 1
+    /// Exclusive bound for the raw message (share) polynomial coefficients: t
     pub msg_bound: Field,
 }
 
@@ -375,6 +375,10 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
 /// two different left operands.
 #[test]
 fn honest_reduced_identity_holds() {
+    let _ = reduced_identity_fixture().execute();
+}
+
+fn reduced_identity_fixture() -> ShareEncryption<4, 1, 6, 6, 1, 1, 1, 3, 3, 3> {
     let pk0 = Polynomial::new([30, 40, -20, 10]);
     let pk1 = Polynomial::new([10, -20, 30, 40]);
     let u = Polynomial::new([0, 1, 0, -1]);
@@ -387,7 +391,7 @@ fn honest_reduced_identity_holds() {
     let ct1_r = Polynomial::new([0, -1, 0, 0]);
 
     // t, q_mod_t, qis, k0is, pk_bounds, e0_bound, e1_bound, u_bound, ct0_r, ct1_r, msg_bound
-    let configs: Configs<1> = Configs::new(5, 2, [97], [58], [48], 1, 1, 1, [3], [3], 4);
+    let configs: Configs<1> = Configs::new(5, 2, [97], [58], [48], 1, 1, 1, [3], [3], 5);
 
     let c: ShareEncryption<4, 1, 6, 6, 1, 1, 1, 3, 3, 3> = ShareEncryption::new(
         configs,
@@ -404,25 +408,50 @@ fn honest_reduced_identity_holds() {
         [ct0_r],
         [ct1_r],
     );
-    let _ = c.execute();
+    c
 }
 
 /// The largest legitimate plaintext coefficient, `t - 1`, is accepted.
-///
-/// `range_check_standard` takes an **exclusive** upper bound, but `msg_bound` was generated as
-/// `t - 1`, so the enforced range was `[0, t - 1)` and a share coefficient of `t - 1` was rejected.
-/// A completeness bug, not a soundness one: the DKG message is a Shamir share of the threshold
-/// secret, essentially uniform in `[0, t)`, so it would have surfaced as a rare unexplained proving
-/// failure — about `N / t` per share polynomial — rather than in any test.
 #[test]
 fn largest_plaintext_coefficient_is_accepted() {
-    let t: Field = 5;
-    let msg_bound: Field = t; // exclusive, so `t - 1` is in range
-    Polynomial::new([4, 0, 0, 0]).range_check_standard::<3>(msg_bound);
+    let mut c = reduced_identity_fixture();
+    c.message.coefficients[0] = 4;
+    c.check_range_bounds();
 }
 
-/// A coefficient at `t` itself is still rejected, so the bound did not merely move outward.
+/// A plaintext coefficient at `t` is rejected.
 #[test(should_fail)]
 fn plaintext_coefficient_at_t_is_rejected() {
-    Polynomial::new([5, 0, 0, 0]).range_check_standard::<3>(5);
+    let mut c = reduced_identity_fixture();
+    c.message.coefficients[0] = 5;
+    c.check_range_bounds();
+}
+
+/// C3 bounds each ciphertext component before it creates the commitment.
+#[test(should_fail)]
+fn ct0_above_centered_bound_is_rejected() {
+    let mut c = reduced_identity_fixture();
+    c.ct0is[0].coefficients[0] = 49;
+    c.check_range_bounds();
+}
+
+#[test(should_fail)]
+fn ct0_below_centered_bound_is_rejected() {
+    let mut c = reduced_identity_fixture();
+    c.ct0is[0].coefficients[0] = -49;
+    c.check_range_bounds();
+}
+
+#[test(should_fail)]
+fn ct1_above_centered_bound_is_rejected() {
+    let mut c = reduced_identity_fixture();
+    c.ct1is[0].coefficients[0] = 49;
+    c.check_range_bounds();
+}
+
+#[test(should_fail)]
+fn ct1_below_centered_bound_is_rejected() {
+    let mut c = reduced_identity_fixture();
+    c.ct1is[0].coefficients[0] = -49;
+    c.check_range_bounds();
 }

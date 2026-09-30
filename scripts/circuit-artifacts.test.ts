@@ -6,10 +6,12 @@
 
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
+import { AbiCoder, id, keccak256 } from 'ethers'
+import { BFV_PARAMS } from '../packages/interfold-contracts/scripts/protocol/constants'
 import { NoirCircuitBuilder, normalizeCargoLockForCircuitHash, stripRustTestModules } from './build-circuits'
 import {
   findArtifactRevision,
@@ -145,6 +147,90 @@ test('pair source hash ignores generated bounds but tracks other Noir config', (
     const generatorHash = builder.computeSourceHash('insecure-512', 'micro')
     writeFileSync(generatorPath, 'second')
     assert.notEqual(builder.computeSourceHash('insecure-512', 'micro'), generatorHash)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('every pair source hash tracks shared Noir sources and dependency pins', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'interfold-shared-noir-hash-'))
+  const sources = [
+    'circuits/lib/src/core/dkg/share_encryption.nr',
+    'circuits/lib/src/math/commitments.nr',
+    'circuits/lib/src/lib.nr',
+    'circuits/lib/Nargo.toml',
+  ]
+  try {
+    for (const source of sources) {
+      mkdirSync(join(dir, source, '..'), { recursive: true })
+      writeFileSync(join(dir, source), 'original')
+    }
+    const builder = new NoirCircuitBuilder(dir)
+    for (const [preset, committee] of RELEASE_REQUIRED_PAIRS) {
+      const original = builder.computeSourceHash(preset, committee)
+      for (const source of sources) {
+        writeFileSync(join(dir, source), 'changed')
+        assert.notEqual(builder.computeSourceHash(preset, committee), original, `${preset}/${committee}: ${source}`)
+        writeFileSync(join(dir, source), 'original')
+        assert.equal(builder.computeSourceHash(preset, committee), original)
+      }
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('shared Noir constants change the hash but the active preset does not', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'interfold-noir-selection-hash-'))
+  const configPath = join(dir, 'circuits/lib/src/configs/default/mod.nr')
+  const source = '// preset: insecure-512\npub use super::insecure::threshold;\npub global MAX_MSG_NON_ZERO_COEFFS: u32 = 100;\n'
+  try {
+    mkdirSync(join(configPath, '..'), { recursive: true })
+    writeFileSync(configPath, source)
+    const builder = new NoirCircuitBuilder(dir)
+    for (const [preset, committee] of RELEASE_REQUIRED_PAIRS) {
+      writeFileSync(configPath, source)
+      const original = builder.computeSourceHash(preset, committee)
+      writeFileSync(configPath, source.replace('insecure-512', 'secure-8192').replace('super::insecure::', 'super::secure::'))
+      assert.equal(builder.computeSourceHash(preset, committee), original)
+      writeFileSync(configPath, source.replace('= 100;', '= 101;'))
+      assert.notEqual(builder.computeSourceHash(preset, committee), original)
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('config generation binds both BFV parameter sets to circuit version v2', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'interfold-circuit-version-'))
+  const utilsPath = join(dir, 'packages/interfold-contracts/scripts/utils.ts')
+  const contractPath = join(dir, 'packages/interfold-contracts/contracts/lib/ActiveCryptoConfig.sol')
+  try {
+    mkdirSync(join(utilsPath, '..'), { recursive: true })
+    mkdirSync(join(contractPath, '..'), { recursive: true })
+    copyFileSync(join(__dirname, '../packages/interfold-contracts/scripts/utils.ts'), utilsPath)
+    const builder = new NoirCircuitBuilder(dir)
+    builder.syncProtocolConfig('insecure-512', 'minimum')
+    const contract = readFileSync(contractPath, 'utf8')
+    const utils = readFileSync(utilsPath, 'utf8')
+    assert.match(contract, /CIRCUIT_VERSION = keccak256\("interfold-bfv-v2"\)/)
+    for (const [prefix, params] of [
+      ['INSECURE', BFV_PARAMS.insecure512],
+      ['SECURE', BFV_PARAMS.secure8192],
+    ] as const) {
+      const coder = AbiCoder.defaultAbiCoder()
+      const paramHash = keccak256(
+        coder.encode(
+          ['tuple(uint256 degree,uint256 plaintext_modulus,uint256[] moduli,string error1_variance)'],
+          [[params.degree, params.plaintextModulus, [...params.moduli], params.error1Variance]],
+        ),
+      )
+      const configId = (version: string) =>
+        keccak256(coder.encode(['bytes32', 'bytes32', 'bytes32'], [id('fhe.rs:BFV'), paramHash, id(version)]))
+      assert.match(contract, new RegExp(`${prefix}_CONFIG_ID =\\s*${configId('interfold-bfv-v2')}`))
+      assert.match(utils, new RegExp(`${prefix}_CONFIG_ID =\\s*"${configId('interfold-bfv-v2')}"`))
+      assert.notEqual(configId('interfold-bfv-v2'), configId('interfold-bfv-v1'))
+    }
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

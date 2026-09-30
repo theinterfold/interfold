@@ -69,10 +69,11 @@ every section.
   artifact directory from the E3's on-chain parameter set and committee size. **Gap:**
   `download_circuits` passes `require_checksums=false`, so a node installs an archive without
   `checksums.json` after a warning (`crates/zk-prover/src/backend/download.rs`).
-- Artifact identity must cover every source that compiles into an artifact. **Gap:**
-  `computeSourceHash` (`scripts/build-circuits.ts`) does not hash `circuits/lib/src/core/**`,
-  `circuits/lib/src/math/**`, or `circuits/lib/src/lib.nr`, where the IF-001 and IF-002 fixes live.
-  After a change there, rebuild and push every affected pair.
+- Artifact identity must cover every source that compiles into an artifact. `computeSourceHash`
+  (`scripts/build-circuits.ts`) includes shared Noir logic, the library entry point and dependency
+  manifest, and shared configuration constants. It normalizes the active preset selector because
+  each pair already identifies its preset. A library-only change invalidates every affected pair.
+  Rebuild and push those pairs before release.
 - The pair source hash ignores generated C1/C2 bound values and includes the Rust sources that
   generate them, without their `#[cfg(test)]` modules. Switching the active committee or editing a
   test module must not change another pair's source hash.
@@ -131,12 +132,12 @@ every section.
   indices differ when the selected H-subset skips a committee member. — `flow-trace/04`
 - **A key the fold exports must be constrained across every slot it stands for, not just the slot it
   is read from.** `node_fold` reduces each recipient's C3 key to one value by taking limb zero, and
-  `dkg_aggregator` links only that value to the recipient's C0 key. Asserting `pk_a == pk_b` per slot
-  is not enough: a prover puts the real key in limb zero and a different one in a later limb,
-  matching across C3a and C3b, and the exported key stops representing what the other limbs encrypted
-  to. `assert_c3_recipient_keys` now pins every limb to limb zero. A comment asserting an invariant
-  ("same DKG key across all moduli") is not a constraint — this gap was exactly that comment being
-  believed. — `flow-trace/04`
+  `dkg_aggregator` links only that value to the recipient's C0 key. Asserting `pk_a == pk_b` per
+  slot is not enough: a prover puts the real key in limb zero and a different one in a later limb,
+  matching across C3a and C3b, and the exported key stops representing what the other limbs
+  encrypted to. `assert_c3_recipient_keys` now pins every limb to limb zero. A comment asserting an
+  invariant ("same DKG key across all moduli") is not a constraint — this gap was exactly that
+  comment being believed. — `flow-trace/04`
 - A recipient outside the selected H dealers builds C4 from all H encrypted dealer shares. It must
   not replace a selected dealer share with its own plaintext share. A selected recipient uses its
   plaintext share only at its own row. — `flow-trace/04`
@@ -191,39 +192,39 @@ every section.
   `((250 - 51) / 100, 51)` alike for `250 mod 100`. Same unbounded-quotient shape as IF-012. It is
   unreachable today only because its one production caller, `bin/config`, is `fn main()` with no
   inputs, so every value it reduces is a `pub global`; `Polynomial::eval_mod` has no callers at all.
-  `reduce_mod_bounded` / `inv_mod_bounded` bound the quotient and stand beside it for witness use. If
-  `ModU128` ever gains a caller with a prover-supplied input, that caller must use the bounded pair or
-  the primitive must be fixed — which means threading a bit width through `add`, `sub`, `mul_mod`,
-  `div_mod` and `inv_mod`. — `flow-trace/04`
+  `reduce_mod_bounded` / `inv_mod_bounded` bound the quotient and stand beside it for witness use.
+  If `ModU128` ever gains a caller with a prover-supplied input, that caller must use the bounded
+  pair or the primitive must be fixed — which means threading a bit width through `add`, `sub`,
+  `mul_mod`, `div_mod` and `inv_mod`. — `flow-trace/04`
 - **Division and rounding are verified, never computed.** Noir has neither, and neither is needed:
-  `round(a / b)` is `floor((a + (b-1)/2) / b)`, and a floor is a hint plus two constraints — bound the
-  quotient, and put the remainder in `[0, b)`. That pair is unique for a given numerator and divisor,
-  so a wrong hint cannot satisfy both. Every hint in the reduced circuits follows this shape
-  (`reduce_mod_bounded`, `inv_mod_bounded`, `rounded_decode`), and an `unsafe` hint without both
-  checks is a defect. A quotient bound may be loose — the remainder interval is what pins the result —
-  but it must never be absent. — `flow-trace/04`
-- **Reducing an identity modulo `X^N + 1` removes the cyclotomic quotient, and the bounds that replace
-  it must be real, not injectivity.** `negacyclic_kernel` evaluates `a * u mod X^N + 1` without the
-  product entering the witness, which deletes the quotient witness and its range check. What the
-  reduced form then needs is a genuine bound on every coefficient it reads, because it is checked at
-  one point and the field equality only implies the integer one when nothing can wrap. Those bounds
-  make the plain packing injective as a side effect, which is why the IF-013 digit asserts came back
-  out of ct0/ct1/C3/C7 rather than stacking with them. — `flow-trace/04`
+  `round(a / b)` is `floor((a + (b-1)/2) / b)`, and a floor is a hint plus two constraints — bound
+  the quotient, and put the remainder in `[0, b)`. That pair is unique for a given numerator and
+  divisor, so a wrong hint cannot satisfy both. Every hint in the reduced circuits follows this
+  shape (`reduce_mod_bounded`, `inv_mod_bounded`, `rounded_decode`), and an `unsafe` hint without
+  both checks is a defect. A quotient bound may be loose — the remainder interval is what pins the
+  result — but it must never be absent. — `flow-trace/04`
+- **Reducing an identity modulo `X^N + 1` removes the cyclotomic quotient, and the bounds that
+  replace it must be real, not injectivity.** `negacyclic_kernel` evaluates `a * u mod X^N + 1`
+  without the product entering the witness, which deletes the quotient witness and its range check.
+  What the reduced form then needs is a genuine bound on every coefficient it reads, because it is
+  checked at one point and the field equality only implies the integer one when nothing can wrap.
+  Those bounds make the plain packing injective as a side effect, which is why the IF-013 digit
+  asserts came back out of ct0/ct1/C3/C7 rather than stacking with them. — `flow-trace/04`
 - **The enumeration axis is "every prover-chosen witness that reaches the sponge", not "every
   commitment opened from elsewhere".** Fiat-Shamir is only sound while `gamma` is independent of the
   witness, and that holds exactly while the packing carrying the witness into the sponge has one
   opening. Enumerating the narrower class missed four members: C6's `d` and C3's `ct0is` / `ct1is`
   reach the transcript through `flatten` directly, and ct0 / ct1 reach it through commitments they
-  *create* rather than open. A witness absorbed by `flatten`, or committed by a circuit that creates
+  _create_ rather than open. A witness absorbed by `flatten`, or committed by a circuit that creates
   the commitment, needs `flatten_checked` / the checked helper unless something else already bounds
   it — creating a commitment is not a reason to skip the check. — `flow-trace/04`
 - **Injectivity restores Schwartz-Zippel, and Schwartz-Zippel then bounds the value for free.** Once
   the transcript binds a witness uniquely, the evaluation check forces it to equal the identity's
-  right-hand side *as a polynomial*, and that value is already canonical — so a witness the circuit's
-  own identity determines needs injectivity and never an explicit bound. C6's `d` and C3's ciphertext
-  are of this kind; C1's `pk0` and C5's `pk0_agg` are not, because no identity inside their circuit
-  determines them. Ask "does anything outside this circuit's own identity depend on this value's
-  magnitude?" rather than "was it bounded before?". — `flow-trace/04`
+  right-hand side _as a polynomial_, and that value is already canonical — so a witness the
+  circuit's own identity determines needs injectivity and never an explicit bound. C6's `d` and C3's
+  ciphertext are of this kind; C1's `pk0` and C5's `pk0_agg` are not, because no identity inside
+  their circuit determines them. Ask "does anything outside this circuit's own identity depend on
+  this value's magnitude?" rather than "was it bounded before?". — `flow-trace/04`
 - **A circuit-size change must be measured at every committee size before it is called a win.** Cost
   splits into a part that scales with the committee (`H*L*N` work, such as per-share commitment
   openings) and a part that does not (`L*N` work, such as the aggregate's normalisation). A change
@@ -235,23 +236,23 @@ every section.
   `flow-trace/04`
 - **A gate-count sweep leaves compiled artifacts at whatever preset it last built, and that breaks
   tests that load them.** `scripts/test-circuits.sh` and any ad-hoc `bb gates` loop restore the
-  *source* config through their trap but not `target/` or `dist/circuits`. Anything reading compiled
-  artifacts afterwards — `pnpm rust:test:proofs` in particular — then runs the wrong parameter set and
-  fails with an ABI `LengthMismatch` naming an `L` that does not match the data. That failure is an
-  artifact of the sweep, not of the change under test: rebuild with `pnpm build:circuits` before
+  _source_ config through their trap but not `target/` or `dist/circuits`. Anything reading compiled
+  artifacts afterwards — `pnpm rust:test:proofs` in particular — then runs the wrong parameter set
+  and fails with an ABI `LengthMismatch` naming an `L` that does not match the data. That failure is
+  an artifact of the sweep, not of the change under test: rebuild with `pnpm build:circuits` before
   believing it. — `flow-trace/04`
 - A soundness fix can be blocked by the browser prover, and the ceiling is a cliff rather than a
-  slope. CRISP proves ct0 in-browser against a hardcoded `srsSize: 2**21` (2,097,152); the checked pk
-  and ciphertext commitments put ct0 at 2,229,363, which stops browser proving rather than slowing it.
-  The soundness fix landed first and the pending arithmetic optimisation restores the margin, but the
-  two must ship together: ct0 has to be re-measured against 2,097,152 before CRISP ships. Measure ct0
-  against that number before adding any constraint to it. — `flow-trace/04`
-- Anchoring a value off-circuit still needs an injective packing in-circuit. The public key is never
-  bounded inside ct0/ct1; `CRISPProgram` substitutes the registry's committee key into the pk
-  commitment it verifies (`noirPublicInputs[8]`), so the whole anchor is "this commitment has one
-  opening". Non-injective packing defeats a chain-supplied value exactly as it defeats an in-circuit
-  bound, and the same holds for the `u`-commitment equality the `user_data_encryption` fold asserts:
-  the check was already there and the packing let a prover past it. — `flow-trace/04`
+  slope. CRISP proves ct0 in-browser against a hardcoded `srsSize: 2**21` (2,097,152); the checked
+  pk and ciphertext commitments put ct0 at 2,229,363, which stops browser proving rather than
+  slowing it. The soundness fix landed first and the pending arithmetic optimisation restores the
+  margin, but the two must ship together: ct0 has to be re-measured against 2,097,152 before CRISP
+  ships. Measure ct0 against that number before adding any constraint to it. — `flow-trace/04`
+- Anchoring a value off-circuit still needs an injective packing in-circuit. ct0/ct1 bound the
+  public-key components before commitment generation. `CRISPProgram` supplies the registry's
+  C5-proven committee key as `noirPublicInputs[8]`. This binds the ballot to the round's key only
+  because the packing has one opening. Non-injective packing defeats a chain-supplied anchor as it
+  defeats an in-circuit commitment comparison. The same requirement applies to the `u`-commitment
+  equality in the `user_data_encryption` fold. — `flow-trace/04`
 - The class is "every circuit that opens a commitment it did not create", and it has seven members:
   C2a, C2b, C4, C5 and C6 (three). All open through `pack_checked`. A new commitment opened from
   elsewhere joins that list and needs either the checked helper or its own bound. Naming the class

@@ -1763,6 +1763,12 @@ published ciphertext = addend + ballot ciphertext
 ```
 
 The ballot is a fresh BFV encryption of `k1`, covered by the recursive `user_data_encryption` proof.
+The SDK passes the WASM-generated reduction quotients as `r` for ct0 and `r_ct1` for ct1.
+`CRISPProgram._verifyInputProof` supplies `e3.committeePublicKey` as `noirPublicInputs[8]`. This
+anchors the ballot proof's public-key commitment to the C5-proven key for that round. The caller
+cannot supply a replacement key. The ballot circuits bound both public-key components before
+commitment generation, so their packed openings are injective.
+
 The addend is the slot's current head for a mask, and the zero ciphertext for a vote, a re-vote, or
 any input to an empty slot. `is_mask_vote` chooses between them and is **private**, and the selector
 is derived (`keep_previous = is_mask_vote & !is_first_vote`) rather than taken as a witness — so a
