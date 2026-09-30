@@ -212,6 +212,68 @@ async fn test_indexer() -> Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn backfill_skips_legacy_keys_and_recovers_current_rounds() -> Result<()> {
+    let (contract, address, _, _, endpoint, _anvil) = setup_two_contracts().await?;
+    let legacy_id = 9u64;
+    let current_id = 10u64;
+    let legacy_config: B256 =
+        "0x04f3677e73b0f5066d6caf5cbd92e3fb2e38338edaf5cfc971ab28f7b684da78".parse()?;
+    contract
+        .setCryptoConfigId(Uint::from(legacy_id), legacy_config)
+        .send()
+        .await?
+        .watch()
+        .await?;
+    for id in [legacy_id, current_id] {
+        contract
+            .emitCommitteePublished(
+                Uint::from(id),
+                Bytes::from(vec![1, 2, 3]),
+                B256::ZERO,
+                Bytes::default(),
+            )
+            .send()
+            .await?
+            .watch()
+            .await?;
+    }
+
+    let indexer = Arc::new(
+        InterfoldIndexer::<InMemoryStore, ReadOnly>::from_endpoint_address_in_mem(
+            &endpoint,
+            &[&address],
+        )
+        .await?,
+    );
+    indexer.configure_backfill(Some(0), Some(2));
+    let listener = {
+        let indexer = indexer.clone();
+        tokio::spawn(async move { indexer.listen().await })
+    };
+    let recovered = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if let Ok(round) = indexer.get_e3(current_id).await {
+                if indexer
+                    .get_store()
+                    .get::<u64>(e3_indexer::INDEXER_CURSOR_KEY)
+                    .await?
+                    .is_some()
+                {
+                    break Ok::<_, eyre::Report>(round);
+                }
+            }
+            sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    listener.abort();
+    let round = recovered??;
+    assert_eq!(round.committee_public_key, vec![1, 2, 3]);
+    assert!(indexer.get_e3(legacy_id).await.is_err());
+    Ok(())
+}
+
 mod test_memory_leak {
 
     use e3_evm_helpers::{contracts::InterfoldContractFactory, event_listener::EventListener};
