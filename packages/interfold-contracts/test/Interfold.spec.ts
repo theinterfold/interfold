@@ -13,6 +13,7 @@ import {
   PRODUCTION_CRYPTO_CONFIG_ID,
   buildMockAggregationPublishArgs,
   deployInterfoldSystem,
+  deployInterfoldSystemWithoutOperators,
   ENCRYPTION_SCHEME_ID as encryptionSchemeId,
   ethers,
   makeRequest,
@@ -75,9 +76,6 @@ describe("Interfold", function () {
       },
     };
   };
-
-  const setupWithoutOperators = async () =>
-    deployInterfoldSystem({ setupOperators: 0 });
 
   const deployUnregisteredE3Program = async () => {
     const e3Program = await ethers.deployContract("MockE3Program");
@@ -184,7 +182,9 @@ describe("Interfold", function () {
     });
 
     it("sets ciphernodeRegistry and emits CiphernodeRegistrySet", async function () {
-      const { interfold } = await loadFixture(setupWithoutOperators);
+      const { interfold } = await loadFixture(
+        deployInterfoldSystemWithoutOperators,
+      );
       const replacement = await ethers.deployContract("MockCiphernodeRegistry");
       const replacementAddress = await replacement.getAddress();
 
@@ -196,7 +196,9 @@ describe("Interfold", function () {
     });
 
     it("rejects a replacement registry with existing members", async function () {
-      const { interfold } = await loadFixture(setupWithoutOperators);
+      const { interfold } = await loadFixture(
+        deployInterfoldSystemWithoutOperators,
+      );
       const replacement = await ethers.deployContract("MockCiphernodeRegistry");
 
       await replacement.addCiphernode(AddressTwo);

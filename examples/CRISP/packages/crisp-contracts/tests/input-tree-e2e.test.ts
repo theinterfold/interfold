@@ -55,9 +55,8 @@ const REVOTE_FIXTURE = fileURLToPath(new URL('fixtures/input-tree-revote.json', 
 /// reproduces the exact on-chain root.
 describe('CRISPProgram input tree (e2e)', function () {
   // 600s was a per-test budget, not a per-file one, and the tests are unevenly weighted: the
-  // heaviest here generates three ballots where the lightest generates one. A CI runner proves
-  // roughly 4x slower than a dev machine, which put the three-ballot test over the line while
-  // every lighter test stayed comfortably inside it.
+  // poisoned-parent test generates three ballots and the re-vote test generates two. A CI runner
+  // proves roughly 4x slower than a dev machine, which put the three-ballot test over the line.
   //
   // A timeout here is also not contained. `destroyBBApi()` runs in `after()`, so one Barretenberg
   // instance is shared by the whole file, and mocha abandons a timed-out test without stopping the

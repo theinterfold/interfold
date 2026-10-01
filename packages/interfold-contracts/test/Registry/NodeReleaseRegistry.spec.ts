@@ -7,6 +7,7 @@ import { expect } from "chai";
 
 import {
   deployInterfoldSystem,
+  deployInterfoldSystemWithoutOperators,
   ethers,
   makeRequest,
   networkHelpers,
@@ -19,10 +20,6 @@ const { loadFixture, time } = networkHelpers;
 describe("NodeReleaseRegistry", function () {
   async function setup() {
     return deployInterfoldSystem({ setupOperators: 1 });
-  }
-
-  async function setupWithoutOperators() {
-    return deployInterfoldSystem({ setupOperators: 0 });
   }
 
   it("excludes a stale node after a mandatory release", async function () {
@@ -69,7 +66,7 @@ describe("NodeReleaseRegistry", function () {
 
   it("does not invalidate eligibility twice during initial setup", async function () {
     const { interfold, bondingRegistry, ciphernodeRegistry, owner } =
-      await loadFixture(setupWithoutOperators);
+      await loadFixture(deployInterfoldSystemWithoutOperators);
     const replacement = await ethers.deployContract("NodeReleaseRegistry", [
       await owner.getAddress(),
       await bondingRegistry.getAddress(),
@@ -201,7 +198,7 @@ describe("NodeReleaseRegistry", function () {
 
   it("rejects a dependency replacement that leaves stale release bindings", async function () {
     const { interfold, bondingRegistry, slashingManager, nodeReleaseRegistry } =
-      await loadFixture(setupWithoutOperators);
+      await loadFixture(deployInterfoldSystemWithoutOperators);
     const replacement = await ethers.deployContract("MockCiphernodeRegistry");
     await replacement.setInterfold(await interfold.getAddress());
     await replacement.setBondingRegistry(await bondingRegistry.getAddress());

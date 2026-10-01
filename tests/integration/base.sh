@@ -100,6 +100,11 @@ daemon_query_events cn1 "$SCRIPT_DIR/output/events.txt"
 
 check_last_line "$SCRIPT_DIR/output/events.txt" '{"Next":10}'
 
+# persist.sh sets this hook to restart the active aggregator before the round decrypts.
+if [[ -n "${AFTER_KEY_PUBLISHED:-}" ]]; then
+  "$AFTER_KEY_PUBLISHED"
+fi
+
 if [[ "$FULL_PROOF_AGGREGATION" == "true" ]]; then
   heading "Wire MockE3Program → Interfold so publishInput triggers decryption"
   pnpm e3-program:setMockInterfold --network localhost

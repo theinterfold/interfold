@@ -15,11 +15,11 @@ every section.
   `ActiveCryptoConfig.sol`, verifier contracts (`generate-verifiers.ts` output),
   `crates/support/contracts/ImageID.sol`, and the ignored local files `.active-preset.json` and
   `crates/support/tests/Elf.sol`.
-- **Generated verifiers must match the built VKs.** When a branch changes `circuits/`, the verifier
-  contracts, `crates/zk-prover/versions.json`, or the circuit build and verifier generation scripts,
-  pre-push checks `insecure-512` with the committee in the local `.active-preset.json` (default
-  `minimum`). CI hydrates and compares every supported preset and committee pair. A drift means a
-  deployed verifier accepts a different circuit from the tree.
+- **Generated verifiers must match the built VKs.** When a pushed branch changes a path in
+  `.github/filters/circuits.yml`, pre-push checks `insecure-512` with the committee in the local
+  `.active-preset.json` (default `minimum`). CI reads the same file to start `build_circuits`, which
+  hydrates and compares every supported preset and committee pair. A drift means a deployed verifier
+  accepts a different circuit from the tree.
 - `pnpm store:circuits pull` selects the newest first-parent `circuit-artifacts` commit whose
   `SOURCE_HASH` matches the current source tree. A different build at the branch tip must not
   replace it. The release workflow archives the branch tip and fails if the tip's hash differs.

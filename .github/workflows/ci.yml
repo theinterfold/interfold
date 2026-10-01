@@ -101,13 +101,8 @@ jobs:
               - 'deployments/**'
               - '!**/*.md'
               - '!**/*.mdx'
-            circuits:
-              - 'circuits/**'
-              - 'scripts/*-circuits.sh'
-              - 'scripts/generate-verifiers*.ts'
-              - 'scripts/circuit-constants.ts'
-              - '!**/*.md'
-              - '!**/*.mdx'
+            # The `circuits` and `verifiers` filters are in .github/filters/circuits.yml, because
+            # .husky/pre-push reads them too. The next step evaluates that file.
             # What the e2e reads: everything in CRISP except the unit test directories
             # (`test/`, singular, holds the Playwright spec and stays in).
             crisp_e2e:
@@ -178,6 +173,11 @@ jobs:
               - 'crates/wasm/**'
               - '!**/*.md'
               - '!**/*.mdx'
+            # build_sdk builds the React package after the SDK. No other job reads it.
+            react:
+              - 'packages/interfold-react/**'
+              - '!**/*.md'
+              - '!**/*.mdx'
             integration_tests:
               - 'tests/integration/**'
               # Run by hand only; no CI job reads them.
@@ -200,10 +200,12 @@ jobs:
               - 'crates/support/**'
               - '!**/*.md'
               - '!**/*.mdx'
-            # Only the workflow and the local actions that it runs. Other workflows, the PR
-            # template, and `.github/scripts` do not change what these jobs produce.
+            # Only the workflow, its path filters, and the local actions that it runs. Other
+            # workflows, the PR template, and `.github/scripts` do not change what these jobs
+            # produce.
             ci:
               - '.github/workflows/ci.yml'
+              - '.github/filters/**'
               - '.github/actions/**'
             # Root manifests define the workspace and every `pnpm <script>` a job
             # runs. A change here can retarget or remove a test command, so it
@@ -212,12 +214,19 @@ jobs:
               - 'package.json'
               - 'pnpm-lock.yaml'
               - 'pnpm-workspace.yaml'
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        if: ${{ !inputs.release_candidate }}
+        id: circuit_filter
+        with:
+          predicate-quantifier: 'some-with-excludes'
+          filters: .github/filters/circuits.yml
       - name: Compute job filters
         id: jobs
         run: |
           RUST="${{ steps.filter.outputs.rust }}"
           CONTRACTS="${{ steps.filter.outputs.contracts }}"
-          CIRCUITS="${{ steps.filter.outputs.circuits }}"
+          CIRCUITS="${{ steps.circuit_filter.outputs.circuits }}"
+          VERIFIERS="${{ steps.circuit_filter.outputs.verifiers }}"
           CRISP_E2E="${{ steps.filter.outputs.crisp_e2e }}"
           CRISP_RUST="${{ steps.filter.outputs.crisp_rust }}"
           CRISP_CIRCUITS="${{ steps.filter.outputs.crisp_circuits }}"
@@ -226,6 +235,7 @@ jobs:
           CRISP_CONTRACTS="${{ steps.filter.outputs.crisp_contracts }}"
           TEMPLATES="${{ steps.filter.outputs.templates }}"
           SDK="${{ steps.filter.outputs.sdk }}"
+          REACT="${{ steps.filter.outputs.react }}"
           INTEGRATION="${{ steps.filter.outputs.integration_tests }}"
           NET="${{ steps.filter.outputs.net }}"
           DOCKER="${{ steps.filter.outputs.docker }}"
@@ -238,9 +248,10 @@ jobs:
           echo "rust_unit_tests=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $CI $TOOLING)" >> $GITHUB_OUTPUT
           echo "rust_integration_tests=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $CI $TOOLING)" >> $GITHUB_OUTPUT
           echo "ciphernode_e2e=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $INTEGRATION $CI $TOOLING)" >> $GITHUB_OUTPUT
-          echo "build_sdk=$(any $FORCE $RUST $CONTRACTS $SDK $INTEGRATION $CIRCUITS $CI $TEMPLATES $TOOLING)" >> $GITHUB_OUTPUT
-          # build_sdk also runs for integration and template changes because their jobs need its
-          # artifacts. Those changes cannot alter the SDK test results, so the tests skip them.
+          echo "build_sdk=$(any $FORCE $RUST $CONTRACTS $SDK $REACT $INTEGRATION $CIRCUITS $CI $TEMPLATES $TOOLING)" >> $GITHUB_OUTPUT
+          # build_sdk also runs for React, integration, and template changes: it builds React, and
+          # the integration and template jobs need its artifacts. Those changes cannot alter the SDK
+          # test results, so the tests skip them.
           echo "sdk_tests=$(any $FORCE $RUST $CONTRACTS $SDK $CIRCUITS $CI $TOOLING)" >> $GITHUB_OUTPUT
           # CRISP jobs (unit legs and e2e alike) only guard CRISP's own layers.
           # Cross-cutting ciphernode coverage comes from template_integration,
@@ -275,7 +286,8 @@ jobs:
           # Both feed template_integration, so each must cover every path that
           # triggers it — a skipped dependency silently skips the e2e job.
           echo "build_e3_support_dev=$(any $FORCE $TEMPLATES $RUST $CONTRACTS $CIRCUITS $SDK $CI $TOOLING)" >> $GITHUB_OUTPUT
-          echo "build_circuits=$(any $FORCE $RUST $CIRCUITS $CI $TOOLING)" >> $GITHUB_OUTPUT
+          # build_circuits runs check:verifiers, so every input of the generated verifiers runs it.
+          echo "build_circuits=$(any $FORCE $RUST $CIRCUITS $VERIFIERS $CI $TOOLING)" >> $GITHUB_OUTPUT
           # nargo reads only the circuit paths, so Rust and tooling changes skip the Noir checks.
           echo "noir_checks=$(any $FORCE $CIRCUITS $CI)" >> $GITHUB_OUTPUT
           echo "integration_prebuild=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $INTEGRATION $CI $TOOLING)" >> $GITHUB_OUTPUT
@@ -822,7 +834,8 @@ jobs:
       labels: [enclave-ci-runner]
     strategy:
       matrix:
-        # persist runs the whole base scenario and then restarts the active aggregator.
+        # persist runs base.sh and restarts the active aggregator after the committee publishes
+        # its key.
         test-suite: [persist]
       fail-fast: true
     steps:
@@ -1595,23 +1608,12 @@ jobs:
       - name: Build the sdk
         run: pnpm sdk:build
 
-      - name: Install Chrome for WASM browser smoke tests
-        if: needs.detect_changes.outputs.sdk_tests == 'true'
-        uses: browser-actions/setup-chrome@19ae4b339ee18925ab85cf12c1041150ea4a44c8 # v1
+      - name: Build the React package
+        run: pnpm react:build
 
-      # `pnpm sdk:build` already built crates/wasm through its prebuild.
-      - name: WASM browser smoke test (e3-wasm)
+      - name: Test the SDK
         if: needs.detect_changes.outputs.sdk_tests == 'true'
-        run: pnpm -C crates/wasm test:browser
-
-      - name: Run the tests
-        if: needs.detect_changes.outputs.sdk_tests == 'true'
-        run: pnpm sdk:test
-
-      - name: Verify SDK encryption proofs and reject altered bindings
-        if: needs.detect_changes.outputs.sdk_tests == 'true'
-        timeout-minutes: 15
-        run: pnpm sdk:test:proofs:prepared
+        uses: ./.github/actions/sdk-tests
 
       - name: Upload SDK artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

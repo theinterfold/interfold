@@ -82,8 +82,10 @@ For a protocol-bearing change:
 7. Verify each reviewer or review-bot finding against the code before you change anything. If a
    finding is wrong, reply with the evidence and make no change.
 8. Do not merge, mark a PR ready for review, or create a tag unless the user asks.
-9. Do not wait for CI unless the user asks. Report the local checks that you ran, and name the CI
-   jobs whose path filters cover the change. Do not claim that CI passed unless you saw the result.
+9. Do not wait for CI unless the user asks. Report the local checks that you ran and their results
+   for the final HEAD, with its commit SHA. Run the affected checks again after later edits. Name
+   the CI jobs whose path filters cover the change. Do not claim that CI passed unless you saw the
+   result.
 
 ## Verification ladder
 

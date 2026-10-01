@@ -1,0 +1,28 @@
+# Path filters for the circuit jobs, in the dorny/paths-filter format. The `detect_changes` job in
+# `workflows/ci.yml` reads this file. `.husky/pre-push` reads every pattern in it as one list, and
+# runs `check:verifiers` when a pushed branch changes a matching path.
+#
+# Put one single-quoted pattern on each list line, because the hook reads the patterns with sed.
+# Give every filter the same `!` patterns, because the hook applies each one to the whole list.
+
+# The Noir circuits and the scripts that build, lint, and test them.
+circuits:
+  - 'circuits/**'
+  - 'scripts/*-circuits.sh'
+  - 'scripts/build-circuits.ts'
+  - 'scripts/generate-verifiers*.ts'
+  - 'scripts/circuit-constants.ts'
+  - '!**/*.md'
+  - '!**/*.mdx'
+
+# The other inputs of the generated verifier contracts. In CI they start only `build_circuits`,
+# which runs `check:verifiers`.
+verifiers:
+  - 'packages/interfold-contracts/contracts/verifiers/**'
+  - 'crates/zk-prover/versions.json'
+  # generate-verifiers.ts formats the contracts with this prettier config, and with the prettier
+  # and prettier-plugin-solidity versions in the lockfile.
+  - 'packages/interfold-contracts/.prettierrc.yml'
+  - 'pnpm-lock.yaml'
+  - '!**/*.md'
+  - '!**/*.mdx'

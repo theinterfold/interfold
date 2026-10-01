@@ -7,6 +7,7 @@ import { expect } from "chai";
 import type { Signer } from "ethers";
 
 import type {
+  Interfold,
   MockBlacklistUSDC,
   MockFeeOnTransferToken,
   MockUSDC,
@@ -29,7 +30,7 @@ import {
   signAndEncodeAttestation,
 } from "../fixtures";
 
-const { loadFixture, time } = networkHelpers;
+const { time } = networkHelpers;
 
 /**
  * Integration tests for E3 Refund/Timeout Mechanism
@@ -41,6 +42,17 @@ const { loadFixture, time } = networkHelpers;
  */
 describe("E3 Integration - Refund/Timeout Mechanism", function () {
   let firstE3Id: bigint;
+  // Each Interfold deployment numbers its E3s from its own address, and `setup`
+  // and `setupWithOperators` deploy separately. Every load therefore reads the
+  // first E3 ID from the system that it returns.
+  const loadFixture = async <T extends { interfold: Interfold }>(
+    fixture: () => Promise<T>,
+  ): Promise<T> => {
+    const fx = await networkHelpers.loadFixture(fixture);
+    firstE3Id = await fx.interfold.nexte3Id();
+    return fx;
+  };
+
   // Time constants
   const ONE_HOUR = 60 * 60;
   const ONE_DAY = 24 * ONE_HOUR;
@@ -106,7 +118,6 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
     if (!randomnessProvider) throw new Error("randomness provider missing");
 
     const interfoldAddress = await interfold.getAddress();
-    firstE3Id = await interfold.nexte3Id();
     const e3RefundManagerAddress = await e3RefundManager.getAddress();
 
     // Slash policy for Lane A proof routing E2E tests
@@ -312,9 +323,10 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
   // `setup` plus operator1, operator2 and operator3 onboarded in that order.
   // Tests that start with this onboarding load it here, so the onboarding runs
   // once per snapshot. The ready-request helpers skip the onboarding that
-  // already ran.
+  // already ran. It calls `setup` directly: a `loadFixture` inside a fixture can
+  // leave a snapshot that its restore invalidated in the snapshot list.
   const setupWithOperators = async () => {
-    const fx = await loadFixture(setup);
+    const fx = await setup();
     for (const operator of [fx.operator1, fx.operator2, fx.operator3]) {
       await fx.setupOperator(operator);
     }
