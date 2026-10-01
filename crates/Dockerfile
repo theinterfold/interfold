@@ -66,6 +66,7 @@ COPY crates/hamt/Cargo.toml ./hamt/Cargo.toml
 COPY crates/indexer/Cargo.toml ./indexer/Cargo.toml
 COPY crates/init/Cargo.toml ./init/Cargo.toml
 COPY crates/keyshare/Cargo.toml ./keyshare/Cargo.toml
+COPY crates/layout-lock/Cargo.toml ./layout-lock/Cargo.toml
 COPY crates/logger/Cargo.toml ./logger/Cargo.toml
 COPY crates/multithread/Cargo.toml ./multithread/Cargo.toml
 COPY crates/net/Cargo.toml ./net/Cargo.toml

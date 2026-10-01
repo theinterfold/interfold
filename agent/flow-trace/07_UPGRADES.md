@@ -29,13 +29,13 @@ Use `pnpm --dir packages/interfold-contracts upgrade:node-release --action prepa
 the release needs no governance transaction. Do not change either compatibility counter in this
 path. A compatible contract-only change also needs no node policy change.
 
-A release that changes the off-chain ticket ranking is compatible on chain but not in a mixed
-fleet. Example: the VRF `CommitteeRequested.seed` byte order
+A release that changes the off-chain ticket ranking is compatible on chain but not in a mixed fleet.
+Example: the VRF `CommitteeRequested.seed` byte order
 (`crates/evm/src/randomness_provider/events.rs`, `Seed::from`). Old and new nodes shortlist
-different submitters, so fewer than N distinct owners can submit and
-`CiphernodeRegistryOwnable` fails the E3 with `InsufficientCommitteeMembers`. The registry scores
-each submitted ticket itself, so no honest node is slashed. Pause new E3 requests for such a rollout
-and resume after the operators have upgraded.
+different submitters, so fewer than N distinct owners can submit and `CiphernodeRegistryOwnable`
+fails the E3 with `InsufficientCommitteeMembers`. The registry scores each submitted ticket itself,
+so no honest node is slashed. Pause new E3 requests for such a rollout and resume after the
+operators have upgraded.
 
 ## Mandatory node-only release
 
@@ -172,7 +172,7 @@ list, and it lists each such E3 with its stage, because the chain cannot restore
 not decode it, so it also protects a store that an older schema wrote. Both reads fail on a storage
 error, which the ordinary read path reports as an absent record, and a key that does not parse fails
 the check. `--allow-active-e3s` overrides the refusals
-(`crates/entrypoint/src/nodes/reset_data.rs`).
+(`crates/entrypoint/src/nodes/state_guard.rs`).
 
 The event log is not one file. `EventSystem::persisted` passes `config.log_file()` through
 `enumerate_path`, which inserts a per-aggregate index before the extension, so the durable logs are

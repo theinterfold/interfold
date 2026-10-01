@@ -16,6 +16,7 @@ pub mod reset_data;
 pub mod restart;
 pub mod server;
 pub mod start;
+mod state_guard;
 pub mod status;
 pub mod stop;
 pub mod up;

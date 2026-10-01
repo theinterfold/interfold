@@ -51,6 +51,7 @@ walkdir = "2.5"
 
 [dev-dependencies]
 e3-test-helpers = { workspace = true }
+e3-layout-lock = { workspace = true }
 e3-evm = { workspace = true }
 e3-crypto = { workspace = true }
 e3-trbfv = { workspace = true }
