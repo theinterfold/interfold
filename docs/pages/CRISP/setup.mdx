@@ -423,9 +423,12 @@ copy.
 4. Rename `database/server-compact` to `database/server`.
 5. Start the CRISP server. When the server works correctly, delete the backup.
 
-The command stops without a copy when the target directory exists or when the source directory holds
-no database. It also stops when the server holds the database, or when the copy does not match the
-database.
+The command builds the copy in the target path with `.partial` added, for example
+`database/server-compact.partial`. It gives the copy the target name only when the copy is complete
+and matches the database. The command stops without a copy when the target directory or the
+`.partial` directory exists, or when the source directory holds no database. It also stops when the
+server holds the database, when the copy does not match the database, or when the disk is full.
+After a failed command, delete the `.partial` directory before you run the command again.
 
 ### Upgrade from a release that keeps ballots in the round record
 

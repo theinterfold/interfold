@@ -105,22 +105,28 @@ fn sync_to_disk(db: &Db, path: &Path) -> Result<(), DatabaseError> {
 }
 
 /// Copy a stopped server's database into a new directory, without the old page copies that sled
-/// keeps on disk. The copy can still be up to about three times the size of the data.
+/// keeps on disk. The copy can still be up to about three times the size of the data. The copy
+/// gets the name `to` only when it is complete, so a failed run never leaves a partial copy there.
 pub fn compact_database(from: &str, to: &str) -> Result<(), DatabaseError> {
-    // `sled::open` creates a missing database, so check both paths first. sled writes `conf` in
+    let partial = format!("{}.partial", to.trim_end_matches('/'));
+    // `sled::open` creates a missing database, so check the paths first. sled writes `conf` in
     // each database directory.
-    if !Path::new(from).join("conf").is_file() || Path::new(to).exists() {
-        let refusal = format!("{from} must hold a database and {to} must not exist");
+    let taken = |path: &str| Path::new(path).exists();
+    if !Path::new(from).join("conf").is_file() || taken(to) || taken(&partial) {
+        let refusal = format!("{from} must hold a database, and {to} and {partial} must not exist");
         return Err(DatabaseError::Compaction(refusal));
     }
     let database = sled::open(from)?;
-    let copy = sled::open(to)?;
+    let copy = sled::open(&partial)?;
     copy.import(database.export());
-    sync_to_disk(&copy, Path::new(to))?;
+    sync_to_disk(&copy, Path::new(&partial))?;
     if copy.checksum()? != database.checksum()? {
-        let mismatch = format!("the copy in {to} does not match {from}");
+        let mismatch = format!("the copy in {partial} does not match {from}");
         return Err(DatabaseError::Compaction(mismatch));
     }
+    // A closed sled database writes no more files, so the rename moves a complete copy.
+    drop(copy);
+    fs::rename(&partial, to)?;
     Ok(())
 }
 

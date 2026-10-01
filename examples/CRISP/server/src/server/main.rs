@@ -12,6 +12,13 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     match std::env::args().skip(1).collect::<Vec<_>>().as_slice() {
         [] => server::start(),
         [command, from, to] if command == "compact-database" => {
+            // sled panics when the disk is full, and its handles then wait for a write that cannot
+            // finish. Exit at the panic, so that the command stops instead of waiting.
+            let report = std::panic::take_hook();
+            std::panic::set_hook(Box::new(move |panic| {
+                report(panic);
+                std::process::exit(1);
+            }));
             server::compact_database(from, to).map_err(|error| error.to_string())?;
             println!("Compacted {from} into {to}");
             Ok(())
