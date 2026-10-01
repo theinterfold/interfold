@@ -250,8 +250,8 @@ enum CommitmentStep {
 /// Decides the next step for a job in `AwaitingCommitment` from two Ethereum reads.
 ///
 /// ZEN2-24 follow-up, relay path. A receipt is a head observation, so a relayed commitment is
-/// kept provisional until it is final. Only the relay resubmits an orphaned commitment: a
-/// wallet-submitted one belongs to the voter, and the expiry handler renews its attestation.
+/// kept provisional until it is final. Only the relay resubmits an orphaned commitment, also after
+/// its attestation expired: a wallet-submitted one belongs to the voter.
 fn commitment_step(
     relayed_transaction_hash: Option<&str>,
     is_final: bool,
@@ -347,10 +347,9 @@ enum JobState {
         /// receipt used to move the job straight to `Committed`. A receipt is a head
         /// observation: the transaction can be reorganized out and never re-included, and
         /// `Committed` has no way back, so the input would wait on a finality that never comes.
-        /// Keep the job provisional instead. The finality gate below is the only exit, the
-        /// attestation renews on expiry exactly as a wallet-submitted job's does, and an
-        /// orphaned relay is resubmitted. `None` for a wallet-submitted job and for a record
-        /// written before this field existed.
+        /// Keep the job provisional instead. The finality gate below is the only exit, and an
+        /// orphaned relay is resubmitted with a fresh attestation. `None` for a wallet-submitted
+        /// job and for a record written before this field existed.
         #[serde(default)]
         relayed_transaction_hash: Option<String>,
     },
@@ -941,7 +940,6 @@ impl AvailabilityService {
             }
         }
 
-        // Reject invalid Noir proofs before the service pays an Avail submission fee.
         let contract = CRISPContract::new(
             &self.http_rpc_url,
             &self.private_key,
@@ -949,29 +947,51 @@ impl AvailabilityService {
         )
         .await
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        contract
-            .validate_input_proof(
-                e3_id_to_u256(e3_id).map_err(|_| reject_input("The E3 identifier is invalid"))?,
-                envelope.noirProof.clone(),
-                envelope.slotAddress,
-                envelope.encryptedVoteCommitment,
+        let e3_id_value =
+            e3_id_to_u256(e3_id).map_err(|_| reject_input("The E3 identifier is invalid"))?;
+        // An input that Ethereum already committed needs its publication, for example after this
+        // service lost its database. Its input ID binds the content hash that `input_identity`
+        // checked, so these are the committed bytes. The contract refuses the new-input checks for
+        // a committed input, and `verify` refuses the round until the input is published.
+        let committed = contract
+            .is_input_committed(
+                e3_id_value,
                 envelope.encryptedVoteHash,
+                envelope.encryptedVoteCommitment,
+                envelope.slotAddress,
                 envelope.parentIndexPlusOne.to::<u64>(),
             )
-            .await?;
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        if !committed {
+            // Reject invalid Noir proofs before the service pays an Avail submission fee.
+            contract
+                .validate_input_proof(
+                    e3_id_value,
+                    envelope.noirProof.clone(),
+                    envelope.slotAddress,
+                    envelope.encryptedVoteCommitment,
+                    envelope.encryptedVoteHash,
+                    envelope.parentIndexPlusOne.to::<u64>(),
+                )
+                .await?;
 
-        // The proof binds the commitment, not the bytes. Check the bytes against that commitment
-        // before this service attests to them or spends funds on their publication.
-        self.validate_input_ciphertext(e3_id, &object, envelope.encryptedVoteCommitment)
-            .await?;
+            // The proof binds the commitment, not the bytes. Check the bytes against that
+            // commitment before this service attests to them or spends funds on their publication.
+            self.validate_input_ciphertext(e3_id, &object, envelope.encryptedVoteCommitment)
+                .await?;
+        }
 
-        let (deadline, commitment_deadline) = if matches!(&*self.backend, Backend::Avail { .. }) {
+        // Mock mode stores the real cutoff too: the relay record of the input keeps it for pruning.
+        let commitment_deadline = contract
+            .input_commitment_deadline(e3_id_value)
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        let deadline = if matches!(&*self.backend, Backend::Avail { .. }) {
             let interfold =
                 InterfoldContractFactory::create_read(&self.http_rpc_url, &self.interfold_address)
                     .await
                     .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-            let e3_id_value =
-                e3_id_to_u256(e3_id).map_err(|_| reject_input("The E3 identifier is invalid"))?;
             let e3 = interfold
                 .get_e3(e3_id_value)
                 .await
@@ -987,20 +1007,22 @@ impl AvailabilityService {
                 .computeDeadline
                 .try_into()
                 .map_err(|_| anyhow::anyhow!("compute deadline does not fit in u64"))?;
-            let commitment_deadline = contract
-                .input_commitment_deadline(e3_id_value)
-                .await
-                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-            if commitment_deadline <= now {
+            if !committed && commitment_deadline <= now {
                 return Err(reject_input("The vote commitment deadline has passed"));
+            }
+            // `finalizeInput` refuses a receipt after the compute deadline, so a committed input
+            // cannot be recovered after it. Its job could only fail, and a failed job does not
+            // answer a repeat of its statement, so each repeat would hold a funding reservation.
+            if committed && now > deadline {
+                return Err(reject_input("The vote finalization deadline has passed"));
             }
             anyhow::ensure!(
                 input_deadline.saturating_sub(commitment_deadline) >= self.proof_lead_seconds,
                 "the CRISP finalization tail is shorter than AVAIL_PROOF_LEAD_SECONDS"
             );
-            (deadline, commitment_deadline)
+            deadline
         } else {
-            (no_deadline(), no_deadline())
+            no_deadline()
         };
 
         // The object has its own content-addressed record. Do not duplicate it inside the job or
@@ -1620,8 +1642,11 @@ impl AvailabilityService {
             ..
         } = &job.kind
         {
+            // Only a wallet commitment fails when its attestation expires. The relay sends a lost
+            // commitment again with a fresh attestation until the cutoff (`commitment_step`).
             if let JobState::AwaitingCommitment {
                 attestation_expires_at,
+                relayed_transaction_hash: None,
                 ..
             } = &job.state
             {
@@ -1754,6 +1779,12 @@ impl AvailabilityService {
                 if matches!(&job.kind, JobKind::Input { .. })
                     && !self.input_commitment_is_final(&job).await?
                 {
+                    return Ok(());
+                }
+                // Another transaction can have published the input, for example from the job of
+                // a database that this service lost. That publication retires this job when it is
+                // final, so wait while the chain head holds it: the Avail publication is paid.
+                if self.ethereum_publication_exists(&job).await? {
                     return Ok(());
                 }
                 job.state = self
@@ -2260,9 +2291,6 @@ impl AvailabilityService {
     }
 
     /// Relay one input commitment and return the provisional state that records it.
-    ///
-    /// The attestation expiry is the one the relayed payload was signed with, so the expiry
-    /// handler renews this job on the same schedule as a wallet-submitted one.
     ///
     /// If the relay key cannot pay for the transaction, the job takes the wallet path with the same
     /// signed payload, and the voter's wallet sends the commitment before the cutoff. A retry with
@@ -2915,8 +2943,8 @@ mod tests {
 
     #[test]
     fn a_wallet_commitment_is_never_resubmitted_by_the_relay() {
-        // The voter's transaction is absent from the head: the voter owns it and the expiry
-        // handler renews the attestation, so the relay does not send one of its own.
+        // The voter's transaction is absent from the head: the voter owns it, so the relay does
+        // not send one of its own.
         assert_eq!(commitment_step(None, false, false), CommitmentStep::Wait);
         assert_eq!(commitment_step(None, false, true), CommitmentStep::Wait);
         assert_eq!(
@@ -4001,6 +4029,339 @@ mod tests {
         moved.state = state;
         service.save(&moved).unwrap();
         moved
+    }
+
+    sol! {
+        /// `tests/fixtures/mock_crisp_availability.sol`, built with solc 0.8.30 and
+        /// `solc --optimize --bin mock_crisp_availability.sol` in that directory.
+        #[sol(rpc, bytecode = "60c0604052336080526001600160401b03600255348015601d575f5ffd5b50604051610a1d380380610a1d833981016040819052603a916041565b60a0526057565b5f602082840312156050575f5ffd5b5051919050565b60805160a05161099e61007f5f395f81816101d1015261036501525f61013b015261099e5ff3fe608060405234801561000f575f5ffd5b5060043610610132575f3560e01c8063912d7b55116100b4578063d016b08d11610079578063d016b08d14610341578063d1245f6214610354578063e5d6ab8f14610387578063efa4f94d1461039f578063f02631ae146103a8578063f7111336146103ca575f5ffd5b8063912d7b55146102a457806392312386146102b75780639b6b9664146102ea578063b604ecfe146102f6578063ca6b137c1461032e575f5ffd5b806362c6aabf116100fa57806362c6aabf1461023f578063795e008b1461026057806383be451a146102755780638d4d2b0c1461028a5780638fa990e31461029b575f5ffd5b8063118b9871146101365780631900f4831461017a578063203487ce146101cc578063406ed35c146101f357806356e0932f14610213575b5f5ffd5b61015d7f000000000000000000000000000000000000000000000000000000000000000081565b6040516001600160a01b0390911681526020015b60405180910390f35b6101be610188366004610527565b6040805167ffffffffffffffff831660208201525f91016040516020818303038152906040528051906020012090509392505050565b604051908152602001610171565b6101be7f000000000000000000000000000000000000000000000000000000000000000081565b610206610201366004610569565b6103d3565b60405161017191906105d6565b61022f61022136600461072a565b5f5460ff1695945050505050565b6040519015158152602001610171565b61022f61024d36600461072a565b50505f54610100900460ff169392505050565b6101be61026e366004610569565b5060015490565b6102886102833660046107bb565b6103e0565b005b5f5461022f90610100900460ff1681565b6101be60015481565b6102886102b2366004610569565b600255565b6102cf6102c5366004610569565b506002545f918290565b60408051938452602084019290925290820152606001610171565b5f5461022f9060ff1681565b610288610304366004610846565b5f805461ffff191693151561ff001916939093176101009215159290920291909117909155600155565b61022f61033c366004610880565b61040a565b61028861034f3660046108fc565b610467565b6101be610362366004610569565b507f000000000000000000000000000000000000000000000000000000000000000090565b6101be61039536600461072a565b5f95945050505050565b6101be60025481565b6103b161025881565b60405167ffffffffffffffff9091168152602001610171565b6101be60035481565b6103db61048b565b919050565b5f805461ff00191661010017815560038054916103fc83610944565b919050555050505050505050565b5f805460ff16156104595760405162461bcd60e51b8152602060048201526015602482015274125b9c1d5d105b1c9958591e541d589b1a5cda1959605a1b604482015260640160405180910390fd5b506001979650505050505050565b5f805460ff19166001178155600380549161048183610944565b9190505550505050565b604051806101e001604052805f81526020015f60ff1681526020015f81526020016104b4610509565b81525f602082018190526040820181905260608083018290526080830181905260a0830182905260c0830182905260e08301829052610100830182905261012083015261014082018190526101609091015290565b60405180604001604052806002906020820280368337509192915050565b5f5f5f60608486031215610539575f5ffd5b8335925060208401359150604084013567ffffffffffffffff8116811461055e575f5ffd5b809150509250925092565b5f60208284031215610579575f5ffd5b5035919050565b805f5b60028110156105a2578151845260209384019390910190600101610583565b50505050565b5f81518084528060208401602086015e5f602082860101526020601f19601f83011685010191505092915050565b60208152815160208201525f60208301516105f6604084018260ff169052565b506040830151606083015260608301516106136080840182610580565b50608083015160c083015260a08301516001600160a01b03811660e08401525060c083015160ff81166101008401525060e083015161020061012084015261065f6102208401826105a8565b905061010084015161067d6101408501826001600160a01b03169052565b506101208401516001600160a01b038116610160850152506101408401516101808401526101608401516101a0840152610180840151601f19848303016101c08501526106ca82826105a8565b9150506101a08401516106e96101e08501826001600160a01b03169052565b506101c08401516102008401528091505092915050565b80356001600160a01b03811681146103db575f5ffd5b803564ffffffffff811681146103db575f5ffd5b5f5f5f5f5f60a0868803121561073e575f5ffd5b85359450602086013593506040860135925061075c60608701610700565b915061076a60808701610716565b90509295509295909350565b5f5f83601f840112610786575f5ffd5b50813567ffffffffffffffff81111561079d575f5ffd5b6020830191508360208285010111156107b4575f5ffd5b9250929050565b5f5f5f5f5f5f5f60c0888a0312156107d1575f5ffd5b873596506107e160208901610700565b955060408801359450606088013593506107fd60808901610716565b925060a088013567ffffffffffffffff811115610818575f5ffd5b6108248a828b01610776565b989b979a50959850939692959293505050565b803580151581146103db575f5ffd5b5f5f5f60608486031215610858575f5ffd5b61086184610837565b925061086f60208501610837565b929592945050506040919091013590565b5f5f5f5f5f5f5f60c0888a031215610896575f5ffd5b87359650602088013567ffffffffffffffff8111156108b3575f5ffd5b6108bf8a828b01610776565b90975095506108d2905060408901610700565b935060608801359250608088013591506108ee60a08901610716565b905092959891949750929550565b5f5f5f6040848603121561090e575f5ffd5b83359250602084013567ffffffffffffffff81111561092b575f5ffd5b61093786828701610776565b9497909650939450505050565b5f6001820161096157634e487b7160e01b5f52601160045260245ffd5b506001019056fea2646970667358221220464980b5df8b58d9b34237308d1e4526d586d921fcb141ccb40ec7184be9c2da64736f6c634300081e0033")]
+        contract MockCrispAvailability {
+            constructor(bytes32 configId);
+            function set(bool isCommitted, bool isPublished, uint256 deadline) external;
+            function setComputeDeadline(uint256 deadline) external;
+            function committed() external view returns (bool);
+            function sends() external view returns (uint256);
+        }
+    }
+
+    /// A node with the `Interfold` and `CRISPProgram` state of one input, and a service over `db`
+    /// that sends from a funded key. Each chain gets a new key: the process keeps one nonce sequence
+    /// for each account.
+    async fn chain_service(
+        db: &Db,
+    ) -> (
+        AvailabilityService,
+        MockCrispAvailability::MockCrispAvailabilityInstance<impl Provider>,
+        alloy::node_bindings::AnvilInstance,
+    ) {
+        use alloy::providers::ext::AnvilApi;
+
+        // One slot for each epoch puts the finalized block two blocks behind the head.
+        let anvil = alloy::node_bindings::Anvil::new()
+            .args(["--slots-in-an-epoch", "1"])
+            .try_spawn()
+            .unwrap();
+        let signer = PrivateKeySigner::random();
+        let provider = ProviderBuilder::new()
+            .wallet(signer.clone())
+            .connect(&anvil.endpoint())
+            .await
+            .unwrap();
+        provider
+            .anvil_set_balance(signer.address(), U256::from(10).pow(U256::from(18)))
+            .await
+            .unwrap();
+        let (_, config_id) = bfv_parameters_for_param_set(0).unwrap();
+        let mock = MockCrispAvailability::deploy(provider, config_id)
+            .await
+            .unwrap();
+        let mut service =
+            test_service_on(db, 1 << 20, RelayPolicy::new(31_337, false, 3, None, None));
+        service.http_rpc_url = anvil.endpoint();
+        service.private_key = format!("0x{}", hex::encode(signer.to_bytes()));
+        service.interfold_address = mock.address().to_string();
+        service.e3_program_address = mock.address().to_string();
+        (service, mock, anvil)
+    }
+
+    /// Set the state of the input and its commitment cutoff, and finalize them.
+    async fn set_input(
+        mock: &MockCrispAvailability::MockCrispAvailabilityInstance<impl Provider>,
+        committed: bool,
+        published: bool,
+        cutoff: u64,
+    ) {
+        use alloy::providers::ext::AnvilApi;
+
+        mock.set(committed, published, U256::from(cutoff))
+            .send()
+            .await
+            .unwrap()
+            .watch()
+            .await
+            .unwrap();
+        mock.provider().anvil_mine(Some(2), None).await.unwrap();
+    }
+
+    /// An Avail backend that submits to `rpc`. Nothing answers at its bridge and reader endpoints.
+    fn avail_backend(rpc: &str) -> Arc<Backend> {
+        Arc::new(Backend::Avail {
+            publisher: Arc::new(
+                AvailPublisher::new(rpc, 1, "//Alice", "http://127.0.0.1:1", 1).unwrap(),
+            ),
+            reader: Arc::new(AvailReader::new("http://127.0.0.1:1").unwrap()),
+        })
+    }
+
+    /// A browser stages a committed input again after the service lost its database, and after the
+    /// commitment cutoff. The contract refuses the new-input checks for a committed input, so the
+    /// service must recover the input from its chain state. Otherwise `verify` refuses the round
+    /// until the compute deadline.
+    #[tokio::test]
+    async fn a_committed_input_is_recovered_after_the_database_is_lost() {
+        let (mut service, mock, _anvil) = chain_service(&temporary_db()).await;
+        // The test ends before the service calls Avail.
+        service.backend = avail_backend("http://127.0.0.1:1");
+        set_input(&mock, true, false, 0).await;
+        let object = b"committed-ciphertext";
+        let envelope = staged_envelope_with_object(
+            Address::repeat_byte(0x77),
+            B256::repeat_byte(0x11),
+            object,
+        );
+
+        let staged = service
+            .stage_input("1", envelope, false, None)
+            .await
+            .unwrap();
+
+        // The worker found the finalized commitment, and publishes the input next.
+        let job = service.load_required(&staged.view.job_id).unwrap();
+        assert!(matches!(job.state, JobState::Committed { .. }), "{job:?}");
+    }
+
+    /// `finalizeInput` refuses a receipt after the compute deadline, so a committed input cannot be
+    /// recovered after it. Intake refuses such an input and returns the funding reservation: its
+    /// job could only fail, and a failed job does not answer a repeat of its statement.
+    #[tokio::test]
+    async fn a_committed_input_is_refused_after_the_compute_deadline() {
+        let (mut service, mock, _anvil) = chain_service(&temporary_db()).await;
+        service.backend = avail_backend("http://127.0.0.1:1");
+        mock.setComputeDeadline(U256::from(1))
+            .send()
+            .await
+            .unwrap()
+            .watch()
+            .await
+            .unwrap();
+        set_input(&mock, true, false, 0).await;
+        let limiter = crate::server::rate_limit::RateLimiter::with_limits(8, 1);
+        let envelope = staged_envelope_with_object(
+            Address::repeat_byte(0x77),
+            B256::repeat_byte(0x11),
+            b"late-ciphertext",
+        );
+
+        let error = service
+            .stage_input(
+                "1",
+                envelope,
+                false,
+                Some(limiter.try_reserve_global().unwrap()),
+            )
+            .await
+            .err()
+            .expect("intake admitted an input that can no longer be finalized");
+
+        assert!(input_rejection_message(&error).is_some(), "{error:#}");
+        assert!(limiter.try_reserve_global().is_ok());
+    }
+
+    /// Another transaction can publish an input that this service still has to publish, for
+    /// example the job of a database that the service lost. While that publication is at the chain
+    /// head and not final, the worker waits for it and does not pay for a second Avail
+    /// publication.
+    #[tokio::test]
+    async fn a_publication_at_the_chain_head_is_not_paid_for_again() {
+        use alloy::providers::ext::AnvilApi;
+
+        let (mut service, mock, _anvil) = chain_service(&temporary_db()).await;
+        // Takes the connection of an Avail submission and never answers it.
+        let avail = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        avail.set_nonblocking(true).unwrap();
+        service.backend = avail_backend(&format!("http://{}", avail.local_addr().unwrap()));
+        set_input(&mock, true, false, u64::MAX).await;
+        // Finalized state holds the commitment, and only the chain head holds the publication.
+        mock.set(true, true, U256::from(u64::MAX))
+            .send()
+            .await
+            .unwrap()
+            .watch()
+            .await
+            .unwrap();
+        let object = b"published-ciphertext";
+        let mut job = input_job("published-input", Address::repeat_byte(0x77), 0x11, object);
+        let JobKind::Input {
+            deadline,
+            commitment_deadline,
+            ..
+        } = &mut job.kind
+        else {
+            unreachable!("input_job builds an input job");
+        };
+        *deadline = no_deadline();
+        *commitment_deadline = no_deadline();
+        let job = store_job_in_state(
+            &service,
+            &job,
+            object,
+            JobState::Committed {
+                transaction_hash: "already-committed".to_owned(),
+            },
+        );
+
+        service.process(&job.id).await;
+
+        assert_eq!(
+            avail.accept().err().map(|error| error.kind()),
+            Some(std::io::ErrorKind::WouldBlock),
+            "the worker submitted a published input to Avail"
+        );
+        let state = service.load_required(&job.id).unwrap().state;
+        assert!(matches!(state, JobState::Committed { .. }), "{state:?}");
+
+        mock.provider().anvil_mine(Some(2), None).await.unwrap();
+        service.process(&job.id).await;
+
+        let state = service.load_required(&job.id).unwrap().state;
+        assert!(matches!(state, JobState::Submitted { .. }), "{state:?}");
+    }
+
+    /// A local round stores its real commitment cutoff, so the worker prunes the relay record of a
+    /// relayed input after that cutoff, as in an Avail round.
+    #[tokio::test]
+    async fn a_local_relay_record_is_pruned_after_the_commitment_cutoff() {
+        let (service, mock, _anvil) = chain_service(&temporary_db()).await;
+        let cutoff = service.chain_timestamp().await.unwrap() + 3_600;
+        set_input(&mock, false, false, cutoff).await;
+        let (object, commitment) = encrypted_ballot(&insecure_test_params(), &[1]);
+        let envelope = staged_envelope_with_object(Address::repeat_byte(0x77), commitment, &object);
+
+        service
+            .stage_input("1", envelope, false, None)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            service
+                .prune_relay_records(cutoff + RELAY_RECORD_RETENTION_SECONDS + 1)
+                .unwrap(),
+            1
+        );
+    }
+
+    /// A reorganization removes a relayed commitment after its attestation expired, while the
+    /// commitment window is still open. The relay sends the input again with a fresh attestation,
+    /// so the expired attestation must not fail the job.
+    #[tokio::test]
+    async fn an_orphaned_relayed_commitment_is_sent_again_after_its_attestation_expired() {
+        let (service, mock, _anvil) = chain_service(&temporary_db()).await;
+        set_input(&mock, false, false, u64::MAX).await;
+        let object = b"orphaned-ciphertext";
+        let mut job = input_job("orphaned-relay", Address::repeat_byte(0x77), 0x11, object);
+        let JobKind::Input {
+            commitment_deadline,
+            ..
+        } = &mut job.kind
+        else {
+            unreachable!("input_job builds an input job");
+        };
+        *commitment_deadline = no_deadline();
+        let job = store_job_in_state(
+            &service,
+            &job,
+            object,
+            JobState::AwaitingCommitment {
+                ethereum_payload: vec![1],
+                attestation_expires_at: 1,
+                relayed_transaction_hash: Some("0xorphaned".to_owned()),
+            },
+        );
+
+        service.process(&job.id).await;
+
+        let state = service.load_required(&job.id).unwrap().state;
+        let JobState::AwaitingCommitment {
+            attestation_expires_at,
+            relayed_transaction_hash: Some(hash),
+            ..
+        } = &state
+        else {
+            panic!("the relay did not send the orphaned commitment again: {state:?}");
+        };
+        assert_ne!(hash, "0xorphaned");
+        assert!(*attestation_expires_at > 1);
+        assert!(mock.committed().call().await.unwrap());
+    }
+
+    /// A restart between an Ethereum send and the save of its result must not pay for that send
+    /// again. Each case stops the worker at one point, and a restarted service over the same
+    /// database drives the job to the end: it ends in the same state, and Ethereum takes each paid
+    /// transaction once.
+    #[tokio::test]
+    async fn a_restart_around_an_ethereum_send_pays_for_it_once() {
+        let object = b"restarted-ciphertext";
+        let mut job = input_job("restarted-input", Address::repeat_byte(0x77), 0x11, object);
+        let JobKind::Input {
+            commitment_deadline,
+            ..
+        } = &mut job.kind
+        else {
+            unreachable!("input_job builds an input job");
+        };
+        *commitment_deadline = no_deadline();
+        let relayed = JobState::AwaitingCommitment {
+            ethereum_payload: vec![1],
+            attestation_expires_at: u64::MAX,
+            relayed_transaction_hash: Some("0xrelayed".to_owned()),
+        };
+        let finalizing = JobState::Ready {
+            ethereum_payload: object.to_vec(),
+            commitment_transaction_hash: None,
+            publication: None,
+        };
+        // Where the worker stopped, what Ethereum holds, and the paid sends that are still owed.
+        let cases = [
+            ("before the relay send", JobState::Created, false, false, 2),
+            ("after the relay send", JobState::Created, true, false, 1),
+            ("after the relay result was saved", relayed, true, false, 1),
+            ("after the finalization", finalizing, true, true, 0),
+        ];
+        for (point, state, committed, published, owed) in cases {
+            let (service, mock, _anvil) = chain_service(&temporary_db()).await;
+            set_input(&mock, committed, published, u64::MAX).await;
+            store_job_in_state(&service, &job, object, state);
+            let restarted = AvailabilityService {
+                in_progress: Arc::new(StorageMutex::new(HashSet::new())),
+                relay_funding_refusals: Arc::new(StorageMutex::new(HashMap::new())),
+                ..service
+            };
+
+            for _ in 0..6 {
+                restarted.process(&job.id).await;
+            }
+
+            let state = restarted.load_required(&job.id).unwrap().state;
+            assert!(
+                matches!(state, JobState::Submitted { .. }),
+                "{point}: {state:?}"
+            );
+            assert_eq!(
+                mock.sends().call().await.unwrap(),
+                U256::from(owed),
+                "{point}"
+            );
+        }
     }
 
     fn output_job(id: &str, state: JobState, object: &[u8]) -> AvailabilityJob {

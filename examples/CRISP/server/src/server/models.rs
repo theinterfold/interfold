@@ -284,6 +284,10 @@ pub struct E3Crisp {
     pub eligible_addresses: Vec<TokenHolder>,
     pub token_address: String,
     pub balance_threshold: String,
+    /// Ciphertexts that an older release kept in this record. Startup moves them to keys of their
+    /// own (`CrispE3Repository::move_inline_ciphertexts`). Only an input indexed before the input
+    /// commitments existed keeps its ciphertext here, and reads refuse its round.
+    #[serde(default)]
     pub ciphertext_inputs: Vec<(Vec<u8>, u64)>,
     /// The commitment the contract stored for each input, keyed by the same on-chain index.
     ///
@@ -317,6 +321,10 @@ pub struct E3Crisp {
     /// the next honest input names the same parent it did.
     #[serde(default)]
     pub input_parents: Vec<(u64, u64)>,
+    /// The content hash of each input's ciphertext, keyed by the same on-chain index. The bytes are
+    /// stored under it, so a read always pairs an input's fields with that input's bytes.
+    #[serde(default)]
+    pub input_ciphertext_hashes: Vec<(u64, [u8; 32])>,
     pub requester: String,
     pub num_options: String,
     pub credit_mode: CreditMode,

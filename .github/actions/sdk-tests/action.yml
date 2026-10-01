@@ -1,0 +1,22 @@
+name: Test the SDK
+description: Runs the e3-wasm browser smoke test, the SDK tests, and the SDK proof tests after `pnpm sdk:build`
+
+runs:
+  using: composite
+  steps:
+    - name: Install Chrome for WASM browser smoke tests
+      uses: browser-actions/setup-chrome@19ae4b339ee18925ab85cf12c1041150ea4a44c8 # v1
+
+    # `pnpm sdk:build` already built crates/wasm through its prebuild.
+    - name: WASM browser smoke test (e3-wasm)
+      shell: bash
+      run: pnpm -C crates/wasm test:browser
+
+    - name: Run the tests
+      shell: bash
+      run: pnpm sdk:test
+
+    # A composite step has no `timeout-minutes`.
+    - name: Verify SDK encryption proofs and reject altered bindings
+      shell: bash
+      run: timeout 15m pnpm sdk:test:proofs:prepared

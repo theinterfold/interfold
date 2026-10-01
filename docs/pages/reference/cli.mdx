@@ -531,6 +531,18 @@ The output shows these values:
 - The ticket balance and the number of available tickets
 - The FOLD bond and the pending exits
 - The requirements: `minTickets`, `ticketPrice`, and `ciphernodeBond`
+- The committees that hold the collateral of the operator, each with its E3 ID, the membership
+  (`candidate`, `member`, or `expelled`), and the E3 stage
+
+A committee stays in the list until `releaseCommittee(e3Id)` releases it, also after its E3 is
+complete or failed. A `candidate` holds a provisional seat while the sortition of the E3 is open.
+
+The command reads the `CommitteeObligationUpdated` events of `BondingRegistry`, from the
+`deploy_block` of the contract to the latest block. When the configuration has no `deploy_block` for
+`bonding_registry`, the read starts at block 0. It sends one `eth_getLogs` request for each 10,000
+blocks, or for each smaller range that the RPC endpoint accepts. Thus the read can take some
+seconds, and longer on an endpoint with a small range limit. If the read fails, the command shows
+`Committees: unavailable` with the error, and it shows all the other values.
 
 ### `interfold faucet`
 

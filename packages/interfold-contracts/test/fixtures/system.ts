@@ -663,3 +663,13 @@ export async function deployInterfoldSystem(
     request,
   };
 }
+
+/**
+ * {@link deployInterfoldSystem} with no onboarded operators. Setters that need
+ * a drained operator generation, such as `setInterfold` and
+ * `setCiphernodeRegistry`, start from it. `loadFixture` keys its snapshots by
+ * function, so specs load this one function instead of a local copy.
+ */
+export async function deployInterfoldSystemWithoutOperators(): Promise<InterfoldSystem> {
+  return deployInterfoldSystem({ setupOperators: 0 });
+}

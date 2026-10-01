@@ -8,12 +8,13 @@ use std::str::FromStr;
 
 use alloy::{primitives::Address, providers::WalletProvider, sol};
 use anyhow::{Context, Result};
-use e3_config::AppConfig;
+use e3_config::{AppConfig, ContractAddresses};
 use e3_crypto::Cipher;
 use e3_entrypoint::helpers::datastore::get_repositories;
 use e3_evm::{
+    fetch_operator_committees,
     helpers::{load_signer_from_repository, ConcreteWriteProvider, EthProvider, ProviderConfig},
-    EthPrivateKeyRepositoryFactory,
+    EthPrivateKeyRepositoryFactory, OperatorCommittee,
 };
 
 mod bonding_registry_contract {
@@ -62,6 +63,7 @@ use crate::helpers::chain::select_chain;
 pub(crate) struct ChainContext {
     chain_label: String,
     bonding_registry: Address,
+    contracts: ContractAddresses,
     provider: EthProvider<ConcreteWriteProvider>,
     signer_address: Address,
 }
@@ -85,6 +87,7 @@ impl ChainContext {
         Ok(Self {
             chain_label: label,
             bonding_registry,
+            contracts: chain.contracts.clone(),
             provider,
             signer_address,
         })
@@ -141,6 +144,13 @@ impl ChainContext {
         address: Address,
     ) -> IERC20Metadata::IERC20MetadataInstance<ConcreteWriteProvider> {
         IERC20Metadata::new(address, self.provider_client())
+    }
+
+    pub(crate) async fn operator_committees(
+        &self,
+        operator: Address,
+    ) -> Result<Vec<OperatorCommittee>> {
+        fetch_operator_committees(&self.provider_client(), &self.contracts, operator).await
     }
 }
 

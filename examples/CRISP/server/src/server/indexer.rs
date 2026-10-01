@@ -2133,6 +2133,7 @@ mod pending_discovery_tests {
             input_slots: vec![],
             input_usable: vec![],
             input_parents: vec![],
+            input_ciphertext_hashes: vec![],
             requester: "0x0000000000000000000000000000000000000002".to_string(),
             num_options: "2".to_string(),
             credit_mode: CreditMode::Constant,

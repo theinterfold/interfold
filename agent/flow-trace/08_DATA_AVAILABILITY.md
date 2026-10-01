@@ -119,6 +119,17 @@ The check runs at intake only. The publication worker does not repeat it. An inp
 committed keeps its data and its recovery jobs, because its pending status still needs DA
 finalization even when the Secure Process will exclude it from ballot selection.
 
+Intake skips this check, the proof check, and the commitment cutoff for an input that the chain head
+shows as committed (`stage_input`). The committed input ID binds the content hash, so bytes with
+that hash are the committed bytes, and the contract refuses the new-input checks for such an input.
+A server that lost its job database therefore recovers a committed input when a client stages the
+same ballot again, also after the cutoff. In Avail mode, intake refuses a committed input after the
+compute deadline. `finalizeInput` then refuses its receipt, so the job could only fail, and a repeat
+of a statement with a failed job takes a new funding reservation. If the commitment leaves the chain
+before it is final, the job signs a new attestation, and the relay or the voter's wallet sends the
+commitment again before the cutoff (`commitment_step`, `relays`). The first attestation for the
+input followed these checks, so the new attestation covers checked bytes.
+
 ## Deadline simulation
 
 The production timeout maxima before a committee key can exist are:
@@ -232,12 +243,12 @@ transaction:
   `Committed` stops attestation renewal and starts the paid Avail publication, so an orphaned
   commitment would strand the input for the rest of its commitment window. This holds on both
   submission paths. Where the service relays the commitment itself, the receipt does not promote the
-  job: the job stays in `AwaitingCommitment` with the relayed transaction hash, the attestation
-  renews on the same schedule as a wallet-submitted one, and a relayed transaction that is absent
-  from finalized state and from the chain head is relayed again while the relay may send, or takes
-  the wallet path when it may not (`commitment_step`, `relay_may_send`). The status endpoint reports
-  a relayed provisional job as `pending_availability`, not `ready_for_commitment`, so a client does
-  not sign a second commitment with its wallet.
+  job: the job stays in `AwaitingCommitment` with the relayed transaction hash, and a relayed
+  transaction that is absent from finalized state and from the chain head is relayed again with a
+  fresh attestation, also after the old one expired, while the relay may send, or takes the wallet
+  path when it may not (`commitment_step`, `relay_may_send`). The status endpoint reports a relayed
+  provisional job as `pending_availability`, not `ready_for_commitment`, so a client does not sign a
+  second commitment with its wallet.
 - A publication transaction moves to `AwaitingFinality`, not directly to success. That state keeps
   the Ethereum payload, the Avail coordinates, the compute proof or staged envelope, and the local
   object. When finalized state contains the publication, the job retires. When the publication is
@@ -254,11 +265,12 @@ coordinates. A status request that finds the job busy returns the persisted view
 The status endpoint answers a `Created` job from storage without the claim. Only the worker's
 `Created` step reconciles that state with Ethereum, and a client poll must not make it skip the job.
 
-The service does not release an expired promise based on its local clock or an unfinalized chain
-head. It waits for an Ethereum finalized block at or after `expiresAt`, then checks the historical
-`isInputCommitted` state at that block. A commitment mined before expiry therefore survives even
-when the service observes it later. If the finalized state contains no commitment, the service
-releases the ciphertext and lets the voter stage the original proof again for a fresh promise.
+The service does not release an expired wallet-submitted promise based on its local clock or an
+unfinalized chain head. It waits for an Ethereum finalized block at or after `expiresAt`, then
+checks the historical `isInputCommitted` state at that block. A commitment mined before expiry
+therefore survives even when the service observes it later. If the finalized state contains no
+commitment, the service releases the ciphertext and lets the voter stage the original proof again
+for a fresh promise.
 
 The old four-hour CRISP duration was unsafe. In the worst case, the input commitment cutoff arrived
 before the committee key existed. With a nonzero Avail window, `CRISPProgram.validate` now rejects a
@@ -310,6 +322,10 @@ run in the request transaction, before the requester pays the fee.
 - If a timeout interrupts an Avail submission after broadcast but before its receipt is saved, a
   retry can pay for a duplicate publication. The content hash remains the same, so this affects cost
   but not correctness.
+- A `Committed` input job does not start its paid Avail publication while the chain head holds a
+  publication of the input from another transaction, for example from the job of a lost database.
+  That publication retires the job when it is final. If it leaves the chain head first, the job
+  publishes the input itself.
 - A candidate VectorX proof keeps the Avail coordinates that produced it. The bridge answer is
   checked for the expected content hash, not for a valid Merkle path, so a syntactically valid
   answer can carry a proof that Ethereum refuses. When a publication attempt fails, the job returns
@@ -395,16 +411,20 @@ up the relays of a slot with masks. The owner's later inputs then show the owner
 owner must confirm the wallet transaction before the commitment cutoff, on the page or on a later
 visit. Otherwise the input is lost.
 
-A `Created` job whose commitment is already at the chain head, because a relay step was interrupted
-after its send, moves to `AwaitingCommitment` and waits for finality there. It is not sent again.
+A `Created` job whose commitment is already at the chain head moves to `AwaitingCommitment` and
+waits for finality there. A relay step that was interrupted after its send leaves such a job, and so
+does a client that stages a committed input again. The job records the commitment as relayed: it is
+not sent again while the chain head holds it, and it takes the recommit path of a relayed commitment
+(`commitment_step`) if it leaves the chain head.
 
 ## Remaining trust and operations
 
 VectorX provides the final correctness and availability proof. The server signature is an earlier
 liveness promise: it proves that the configured service received and durably stored the exact
-ciphertext before Ethereum reserves the leaf. The service signs only after the bytes reproduce the
-commitment their ballot proof binds, so an honest signer no longer funds publication of a ciphertext
-that the Secure Process must exclude.
+ciphertext before Ethereum reserves the leaf. The service signs the first attestation for an input
+only after the bytes reproduce the commitment their ballot proof binds. A later attestation or
+publication for an input that Ethereum already committed relies on that check (`stage_input`), so an
+honest signer does not fund publication of a ciphertext that the Secure Process must exclude.
 
 If the availability signer is compromised, it can sign a hash without retaining the bytes. The
 resulting pending input can stop the round until the compute timeout. It cannot make Ethereum accept
