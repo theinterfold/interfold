@@ -318,8 +318,9 @@ jobs:
       ${{ github.repository == 'theinterfold/interfold' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' ||
       github.ref == 'refs/heads/dev') && format('runs-on={0}-{1}-{2}-{3}/runner=4cpu-linux-x64/ram=16', github.run_id, github.run_attempt,
       'rust_unit_tests', matrix.suite) || 'ubuntu-latest' }}
-    # Library tests link cfg(test) builds and doc-tests link the plain libraries, so the two share
-    # no compiled crates. Run in one job they cost two sequential workspace builds.
+    # Library tests link cfg(test) builds. Doc-tests and the separate test targets link the plain
+    # libraries, so they run together in the `doc` leg. The legs share no compiled crates, and each
+    # leg builds its kind once.
     strategy:
       matrix:
         suite: [lib, doc]
@@ -369,7 +370,6 @@ jobs:
         run: pnpm evm:build
 
       - name: Install cargo-nextest
-        if: matrix.suite == 'lib'
         uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
         with:
           tool: cargo-nextest
@@ -380,27 +380,27 @@ jobs:
         if: matrix.suite == 'lib'
         run: cargo nextest run --lib
 
-      # The reset-data guard test is its own test target, so the library run above skips it.
-      - name: Run the reset-data guard test
-        if: matrix.suite == 'lib'
-        run: cargo nextest run -p e3-entrypoint --test reset_data_guard
-
       - name: Run doc-tests
         if: matrix.suite == 'doc'
         run: cargo test --doc
 
-      # `parallel` is off by default, so the step above compiles the sequential fallback of
+      # The reset-data guard test is its own test target, so the library run skips it.
+      - name: Run the reset-data guard test
+        if: matrix.suite == 'doc'
+        run: cargo nextest run -p e3-entrypoint --test reset_data_guard
+
+      # `parallel` is off by default, so the library tests compile the sequential fallback of
       # `recompute_commitments` and the rayon body of that function ships untested. This step is
       # what exercises it. Scoped with `-p` rather than `--all-features`: the feature is the one
       # thing this crate needs enabled, and the zkVM guest is unaffected either way because it
       # builds from `crates/support/methods/guest`, which takes this crate by git revision with
       # default features.
       - name: Run compute-provider Unit Tests with parallel batching
-        if: matrix.suite == 'lib'
+        if: matrix.suite == 'doc'
         run: 'cargo test -p e3-compute-provider --features parallel'
 
       - name: Run Rust-to-Solidity slashing assertions
-        if: matrix.suite == 'lib'
+        if: matrix.suite == 'doc'
         run: pnpm rust:test:slashing
 
       - name: Cancel workflow on failure
