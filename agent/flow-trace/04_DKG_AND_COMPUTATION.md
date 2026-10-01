@@ -1855,8 +1855,34 @@ mask that lands during the signing does not invalidate the signatures. For the s
 who holds the owner signatures and the prepared ballot can prove that ballot again over a later head
 until the round ends, also after a re-vote, so both must stay private.
 
+The web client (`client/src/hooks/voting/useSafeBallot.ts`, `utils/safeBallot.ts`,
+`components/SafeBallot/SafeBallotPanel.tsx`, `pages/SafeSign/SafeSign.tsx`) collects the signatures
+without the CRISP server:
+
+```
+Coordinator (any account that runs "Vote as a Safe"; it signs too if it is an owner)
+├─ loadSafe: isSafe, getOwners, getThreshold, getCode(owner) (RPC only); keyOwners = owners with
+│            no code or an EIP-7702 delegation, at least `threshold` of them
+├─ prepare:  votingPowerOf, prepareBallot (no slot head); SafeMessage digest computed locally
+├─ link:     <app>/#/safe-sign/<base64url request>; the co-signer page rebuilds the typed data,
+│            lets only a key owner sign, and makes no request of its own
+└─ submit:   castVoteWithProof(…, safeBallot), the path of any input: previous-ciphertext →
+             votingPowerOf (must match) → withBallotParent(head) → ballotAuthorization (owner
+             commitment must match) → finishSafeBallotProof → broadcast. It refuses while an
+             earlier input of the account is pending, so the signed ballot is kept.
+Mask this Safe: castVoteWithProof with MaskTarget {slot}.
+```
+
+Chain observers and the CRISP server cannot tell a Safe vote from a mask. Whoever holds the link or
+a signature can tell whether that one ballot was cast, but nothing about the other inputs of the
+slot; the owners share the account, so this is by design. The link also carries the choice that the
+coordinator claims, which the co-signer page shows and cannot check against the ciphertext. The RPC
+node of the coordinator sees the Safe's owners being read.
+
 Limits: only ECDSA owner signatures work; contract owners (v = 0), approved hashes (v = 1),
 `eth_sign` signatures and nested Safes do not. Merkle-census rounds keep the `crisp` circuit, so a
 Safe in such a census cannot vote. The owners are read at publication, so a coercer who holds enough
 owner keys to stop the threshold can block a re-vote, and a Safe moved above the caps can no longer
-write to its slot, for votes and masks alike.
+write to its slot, for votes and masks alike. Registration is open, so the random mask of the client
+draws again (up to `MAX_MASK_DRAWS`) when `ballotAuthorization` reverts for the drawn slot, and
+registered oversized Safes cannot make random masks fail.

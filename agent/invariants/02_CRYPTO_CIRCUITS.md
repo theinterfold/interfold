@@ -261,7 +261,9 @@ every section.
   Safe's ballot knows its choice, so a coercer can have the owners vote and then freeze the slot:
   the unmaskable-slot receipt above. A change of owners alone does not freeze it, because the new
   owners can vote again. `withBallotParent` only moves a vote's head request to just before proving;
-  the inputs it sets equal those a prepare with the head sets. `MAX_SAFE_OWNERS` and
+  the inputs it sets equal those a prepare with the head sets. The web client sends a signing
+  request only in the URL fragment, submits a Safe vote with the server requests of a mask, and its
+  random mask draw skips slots for which `ballotAuthorization` reverts. `MAX_SAFE_OWNERS` and
   `MAX_SAFE_SIGNERS` must match in `CRISPProgram.sol`, `crisp_lib::constants` and the SDK. —
   `flow-trace/04`
 - **CRISP constrains every coefficient of the ballot plaintext, at the real BFV degree.** The

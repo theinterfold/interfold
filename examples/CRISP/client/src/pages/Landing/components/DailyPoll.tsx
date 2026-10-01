@@ -17,6 +17,8 @@ import { useRegistration } from '@/hooks/voting/useRegistration'
 import VotingStepIndicator from '@/components/VotingStepIndicator'
 import { usePublicClient } from 'wagmi'
 import { EditorialShell, Cipher } from '@/design/Editorial'
+import SafeBallotPanel from '@/components/SafeBallot/SafeBallotPanel'
+import { CensusMode } from '@/model/vote.model'
 
 type DailyPollSectionProps = {
   loading?: boolean
@@ -300,6 +302,11 @@ const DailyPollSection: React.FC<DailyPollSectionProps> = ({ loading, endTime, t
                     {isMasking ? 'Masking…' : 'Mask my slot'}
                   </button>
                 </div>
+
+                {/* A Safe has a slot of its own in an ONCHAIN round. Its owners sign together. */}
+                {roundState.census_mode === CensusMode.Onchain && user && (
+                  <SafeBallotPanel pollSelected={pollSelected} castVoteWithProof={castVoteWithProof} disabled={Boolean(loading) || busy} />
+                )}
               </div>
             )}
 

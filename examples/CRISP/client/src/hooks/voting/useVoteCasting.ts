@@ -7,9 +7,11 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useSignTypedData, usePublicClient, useChainId, useWalletClient } from 'wagmi'
-import type { Address } from 'viem'
+import { zeroHash } from 'viem'
+import type { Address, Hex } from 'viem'
 import { encodeSolidityProof, finishBallotProof, finishMaskProof, prepareBallot } from '@crisp-e3/sdk'
-import type { PrepareBallotInputs } from '@crisp-e3/sdk'
+import { ciphertextCommitment, finishSafeBallotProof, ownersCommitment, withBallotParent } from '@crisp-e3/sdk'
+import type { PreparedBallot, PrepareBallotInputs, SlotOwners } from '@crisp-e3/sdk'
 import { ensureCircuits } from '@/utils/circuits'
 
 import { useVoteManagementContext } from '@/context/voteManagement'
@@ -20,16 +22,21 @@ import { useInterfoldServer } from '../interfold/useInterfoldServer'
 import { getRandomVoterToMask } from '@/utils/voters'
 import { handleGenericError } from '@/utils/handle-generic-error'
 import { NUM_OPTIONS } from '@/utils/constants'
-import { ballotTypedData, getBallotDigest, getCrispProgramAddress, getCrispRoundConfig } from '@/utils/ballotDigest'
+import { ballotTypedData, getBallotAuthorization, getCrispProgramAddress, getCrispRoundConfig } from '@/utils/ballotDigest'
 import { getRandomRegistrant, getVotingPower, isRegisteredIn } from '@/utils/onchainCensus'
 import { submitInputCommitmentDirectly } from '@/utils/directVote'
 import { txExplorerUrl } from '@/utils/methods'
 
 const INTERFOLD_API = import.meta.env.VITE_INTERFOLD_API
 
+/** How many registrants a random mask draws before it gives up on finding one with a ballot. */
+const MAX_MASK_DRAWS = 8
+
 interface PendingAvailabilityJob {
   jobId: string
   isMask: boolean
+  /** A Safe vote, which is not the connected account's own vote. */
+  isSafeVote?: boolean
   encodedProof?: string
 }
 
@@ -46,6 +53,7 @@ const readAvailabilityJob = (key: string): PendingAvailabilityJob | undefined =>
     return {
       jobId: parsed.jobId,
       isMask: 'isMask' in parsed && parsed.isMask === true,
+      isSafeVote: 'isSafeVote' in parsed && parsed.isSafeVote === true,
       encodedProof: 'encodedProof' in parsed && typeof parsed.encodedProof === 'string' ? parsed.encodedProof : undefined,
     }
   } catch {
@@ -60,7 +68,7 @@ const writeAvailabilityJob = (key: string, job: PendingAvailabilityJob): void =>
     // Large secure ballots can exceed a browser's storage quota. Preserve the small server job
     // pointer when possible, even though a server-database loss would then need operator recovery.
     try {
-      localStorage.setItem(key, JSON.stringify({ jobId: job.jobId, isMask: job.isMask }))
+      localStorage.setItem(key, JSON.stringify({ jobId: job.jobId, isMask: job.isMask, isSafeVote: job.isSafeVote }))
     } catch {
       // The durable server job remains valid. A browser with disabled storage cannot resume it
       // automatically after a reload.
@@ -134,8 +142,24 @@ const getSlotHead = async (e3Id: string, address: string): Promise<{ ciphertext:
 
 export type VotingStep = 'idle' | 'signing' | 'encrypting' | 'generating_proof' | 'broadcasting' | 'confirming' | 'complete' | 'error'
 
-/** Whose slot a mask is written to: a randomly drawn eligible slot, or the caller's own. */
-export type MaskTarget = 'random' | 'self'
+/**
+ * Whose slot a mask is written to: a randomly drawn eligible slot, the caller's own, or a named
+ * slot of an ONCHAIN round, such as a Safe the caller co-owns.
+ */
+export type MaskTarget = 'random' | 'self' | { slot: Address }
+
+/**
+ * A vote for a Safe, encrypted without the slot head and signed by its owners (`useSafeBallot`).
+ * `castVoteWithProof` names the parent and proves it like any other input.
+ */
+export type SafeBallot = { prepared: PreparedBallot; slotOwners: SlotOwners; signatures: Hex[] }
+
+export type CastVoteWithProof = (
+  pollSelected: Poll | null,
+  isAMask?: boolean,
+  maskTarget?: MaskTarget,
+  safeBallot?: SafeBallot,
+) => Promise<void>
 
 const extractCleanErrorMessage = (errorMessage: string | undefined): string => {
   if (!errorMessage) return 'Failed to broadcast the vote. Please try again.'
@@ -234,6 +258,7 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
       balance: bigint,
       isAMask: boolean,
       merkleLeaves: bigint[] | undefined,
+      safeBallot?: SafeBallot,
     ): Promise<string | undefined> => {
       if (!votingRound) throw new Error('No voting round available for proof generation')
       if (!roundState) throw new Error('No round state available for proof generation')
@@ -263,6 +288,9 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
         if (isOnchain) {
           // The exact value `publishInput` will hand the circuit as public input 4.
           const votingPower = await getVotingPower(publicClient, crispProgram, e3Id, slot)
+          if (safeBallot && votingPower.toString() !== safeBallot.prepared.circuitInputs.voting_power) {
+            throw new Error('The Safe’s voting power changed since its owners signed. Prepare the ballot again.')
+          }
           ballot = { ...ballotBase, censusMode: 'onchain', votingPower }
         } else {
           if (!merkleLeaves || merkleLeaves.length === 0) {
@@ -274,15 +302,34 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
         await ensureCircuits(paramSet)
         // The slot head is passed as a pair or not at all. A ciphertext without its index would be
         // proven against one entry and published against another, so the SDK types the two together
-        // and this branches rather than spreading them as separate optional fields.
-        const prepared = await prepareBallot(head ? { ...ballot, previousCiphertext: head.ciphertext, previousIndex: head.index } : ballot)
+        // and this branches rather than spreading them as separate optional fields. A Safe vote was
+        // encrypted before the head was read, so it names the parent now; see `withBallotParent`.
+        const prepared = safeBallot
+          ? withBallotParent(safeBallot.prepared, head && { index: head.index, commitment: ciphertextCommitment(head.ciphertext) })
+          : await prepareBallot(head ? { ...ballot, previousCiphertext: head.ciphertext, previousIndex: head.index } : ballot)
 
-        const digest = await getBallotDigest(publicClient, crispProgram, e3Id, slot, prepared.ctCommitment)
+        const authorization = await getBallotAuthorization(publicClient, crispProgram, e3Id, slot, prepared.ctCommitment)
 
         // A mask is not signed. The circuit skips the signature check on that branch, so the
-        // placeholder the SDK supplies is enough.
+        // placeholder the SDK supplies is enough. The owner commitment keeps a mask on a Safe slot
+        // identical in its public inputs to a vote by the Safe.
         if (isAMask) {
-          return encodeSolidityProof(await finishMaskProof(prepared, digest))
+          return encodeSolidityProof(await finishMaskProof(prepared, authorization.digest, authorization.ownersCommitment))
+        }
+
+        if (safeBallot) {
+          if (authorization.ownersCommitment !== ownersCommitment(safeBallot.slotOwners)) {
+            throw new Error('The Safe’s owners or threshold changed since its owners signed. Load the Safe and prepare again.')
+          }
+          return encodeSolidityProof(
+            await finishSafeBallotProof(prepared, authorization.digest, safeBallot.slotOwners, safeBallot.signatures),
+          )
+        }
+
+        if (authorization.safe) {
+          throw new Error(
+            'This account is a Safe, which cannot sign. Connect the wallet of one of its owners and use “Vote as a Safe” to collect the owner signatures.',
+          )
         }
 
         setVotingStep('signing')
@@ -297,7 +344,7 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
           message: { e3Id, slot, ciphertextCommitment: prepared.ctCommitment },
         })
 
-        return encodeSolidityProof(await finishBallotProof(prepared, digest, signature))
+        return encodeSolidityProof(await finishBallotProof(prepared, authorization.digest, signature))
       } catch (error) {
         // Logged and rethrown, not shown. `castVoteWithProof` already toasts what it catches, and
         // toasting here as well gave a rejected wallet prompt two notifications.
@@ -332,6 +379,9 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
    * registrant list from the round's token instead — the server's list is discovered once at
    * round start, and a registry admits voters during the input window, so only the chain knows
    * who is maskable now.
+   *
+   * `ballotAuthorization` reverts for a Safe above the ballot caps, so it cannot be masked. The
+   * random draw skips such slots, so that registered oversized Safes cannot make masks fail.
    */
   const handleMask = useCallback(
     async (target: MaskTarget): Promise<VoteData> => {
@@ -350,6 +400,10 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
         if (roundState.census_mode === CensusMode.Onchain) {
           if (!publicClient) throw new Error('No RPC client available for masking')
 
+          // A named slot needs nothing but its address: the mask proves against the values
+          // `ballotAuthorization` returns for it, and checks no signature.
+          if (typeof target === 'object') return { ...empty, slotAddress: target.slot }
+
           if (target === 'self') {
             const registered = await isRegisteredIn(publicClient, roundState.token_address as Address, user.address as Address).catch(
               () => null,
@@ -363,11 +417,22 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
             return { ...empty, slotAddress: user.address }
           }
 
-          const randomTarget = await getRandomRegistrant(publicClient, roundState.token_address as Address)
-          if (!randomTarget) throw new Error('Nobody has registered in this round yet, so there is no slot to mask')
-
-          return { ...empty, slotAddress: randomTarget }
+          const e3Id = BigInt(roundState.id)
+          const { crispProgram } = await getCrispRoundConfig(publicClient, roundState.interfold_address as Address, e3Id)
+          for (let draw = 0; draw < MAX_MASK_DRAWS; draw++) {
+            const randomTarget = await getRandomRegistrant(publicClient, roundState.token_address as Address)
+            if (!randomTarget) throw new Error('Nobody has registered in this round yet, so there is no slot to mask')
+            // The ciphertext commitment does not change whether the slot has a ballot.
+            const maskable = await getBallotAuthorization(publicClient, crispProgram, e3Id, randomTarget, zeroHash).then(
+              () => true,
+              () => false,
+            )
+            if (maskable) return { ...empty, slotAddress: randomTarget }
+          }
+          throw new Error('Could not find a slot to mask. Try again.')
         }
+
+        if (typeof target === 'object') throw new Error('A named slot can be masked only in an on-chain round.')
 
         const eligibleVoters = await getEligibleVoters(roundState.id)
 
@@ -436,8 +501,8 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
     [roundState],
   )
 
-  const castVoteWithProof = useCallback(
-    async (pollSelected: Poll | null, isAMask: boolean = false, maskTarget: MaskTarget = 'random') => {
+  const castVoteWithProof: CastVoteWithProof = useCallback(
+    async (pollSelected: Poll | null, isAMask: boolean = false, maskTarget: MaskTarget = 'random', safeBallot?: SafeBallot) => {
       if (!user || !roundState) {
         console.error('Cannot cast vote: Missing user or round state.')
         showToast({
@@ -458,6 +523,7 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
       const finishCommitment = async (
         response: BroadcastVoteResponse,
         operationIsMask: boolean,
+        isSafeVote: boolean | undefined,
         afterRestage = false,
       ): Promise<boolean> => {
         if (response.status === 'failed_broadcast') {
@@ -481,7 +547,7 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
           }
           if (decided) {
             if (decided.status === 'failed_broadcast') clearAvailabilityJob(pendingJobKey)
-            return finishCommitment(decided, operationIsMask, afterRestage)
+            return finishCommitment(decided, operationIsMask, isSafeVote, afterRestage)
           }
 
           setStepMessage('Your proof is still queued. Come back later and repeat the action to finish it.')
@@ -528,7 +594,7 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
         const url = txHash ? txExplorerUrl(txHash) : undefined
         setTxUrl(url)
 
-        if (!operationIsMask) markVotedInRound(roundState.id)
+        if (!operationIsMask && !isSafeVote) markVotedInRound(roundState.id)
 
         showToast({
           type: 'success',
@@ -556,11 +622,16 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
         )
         if (!restaged) throw new Error('Could not restore the pending data-availability job.')
         if (restaged.status === 'failed_broadcast') clearAvailabilityJob(pendingJobKey)
-        return finishCommitment(restaged, pendingJob.isMask, true)
+        return finishCommitment(restaged, pendingJob.isMask, pendingJob.isSafeVote, true)
       }
 
       try {
         const pendingJob = readAvailabilityJob(pendingJobKey)
+        // Following the earlier job can leave the page, and a Safe ballot lives only in the panel,
+        // so refuse rather than lose the owners' signatures.
+        if (pendingJob && safeBallot) {
+          throw new Error('An earlier input from this account is still pending. Follow it with Cast or Mask, then submit the Safe vote.')
+        }
         if (pendingJob) {
           setIsMasking(pendingJob.isMask)
           setIsVoting(!pendingJob.isMask)
@@ -577,14 +648,14 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
           } else {
             if (!resumed) throw new Error('Could not read the pending data-availability job.')
             if (resumed.status === 'failed_broadcast') clearAvailabilityJob(pendingJobKey)
-            if (await finishCommitment(resumed, pendingJob.isMask)) {
+            if (await finishCommitment(resumed, pendingJob.isMask, pendingJob.isSafeVote)) {
               clearAvailabilityJob(pendingJobKey)
             }
             return
           }
         }
 
-        if (!isAMask && !pollSelected) {
+        if (!isAMask && !pollSelected && !safeBallot) {
           console.log('Cannot cast vote: Poll option not selected.')
           showToast({ type: 'danger', message: 'Please select a poll option first.' })
           return
@@ -597,6 +668,16 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
         if (isAMask) {
           setIsMasking(true)
           voteData = await handleMask(maskTarget)
+        } else if (safeBallot) {
+          setIsVoting(true)
+          // The vote is already encrypted and signed; only the slot matters from here.
+          voteData = {
+            vote: [],
+            slotAddress: safeBallot.prepared.circuitInputs.slot_address,
+            balance: 0n,
+            signature: '',
+            messageHash: '0x',
+          }
         } else {
           setIsVoting(true)
 
@@ -635,6 +716,7 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
           voteData.balance,
           isAMask,
           merkleLeaves?.map((s: string) => BigInt(`0x${s}`)),
+          safeBallot,
         )
 
         if (!encodedProof) {
@@ -657,15 +739,16 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
           round_id: roundState.id,
           encoded_proof: encodedProof,
         }
+        const isSafeVote = Boolean(safeBallot)
         const broadcastVoteResponse = await broadcastVote(voteRequest, (jobId) => {
-          writeAvailabilityJob(pendingJobKey, { jobId, isMask: isAMask, encodedProof })
+          writeAvailabilityJob(pendingJobKey, { jobId, isMask: isAMask, isSafeVote, encodedProof })
         })
 
         if (!broadcastVoteResponse) {
           throw new Error('Received no response after publishing vote data.')
         }
         if (broadcastVoteResponse.status === 'failed_broadcast') clearAvailabilityJob(pendingJobKey)
-        if (await finishCommitment(broadcastVoteResponse, isAMask)) {
+        if (await finishCommitment(broadcastVoteResponse, isAMask, isSafeVote)) {
           clearAvailabilityJob(pendingJobKey)
         }
       } catch (error) {

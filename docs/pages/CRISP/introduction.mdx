@@ -124,6 +124,13 @@ the coercer prepared until it changes back. A change of owners does not do this,
 owners can vote again. The owner signatures and the prepared ballot can publish that ballot again
 until the round ends, also after a later vote, so keep them private.
 
+In the web client, any account can coordinate a Safe vote with **Vote as a Safe**. It encrypts the
+ballot and makes a signing link whose request stays in the URL fragment, so no server receives it.
+Each owner signs on the linked page in their own wallet, and the coordinator pastes the signatures
+back, then proves and submits. Whoever has the link or a signature can tell whether that one ballot
+was cast, and the link also shows the choice that the coordinator claims, so send them only through
+a private channel. The RPC node of the coordinator sees that the Safe's owners were read.
+
 ### Two-step inputs
 
 Secure BFV ciphertexts are too large for one Ethereum transaction. For this reason, each input goes
