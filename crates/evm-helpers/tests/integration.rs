@@ -31,8 +31,9 @@ sol!(
     "tests/fixtures/emit_logs.json"
 );
 
-/// A send that the node refuses gives its nonce back. Otherwise the next send of the account takes
-/// a later nonce and waits in the queue behind a gap that no transaction fills.
+/// A send that ends before the node holds its transaction gives its nonce back: the node refused
+/// the transaction, or the local wallet could not sign it. Otherwise the next send of the account
+/// takes a later nonce and waits in the queue behind a gap that no transaction fills.
 #[tokio::test]
 async fn a_refused_send_gives_its_nonce_back() -> Result<()> {
     let anvil = Anvil::new().try_spawn()?;
@@ -55,6 +56,18 @@ async fn a_refused_send_gives_its_nonce_back() -> Result<()> {
     provider
         .anvil_set_balance(from, U256::from(10).pow(U256::from(18)))
         .await?;
+    // This wallet holds another key, so it refuses to sign for `from`, after the nonce reservation
+    // and before the broadcast.
+    let other_wallet = ProviderBuilder::new()
+        .wallet(PrivateKeySigner::random())
+        .connect(&anvil.endpoint())
+        .await?;
+    assert!(send_with_next_nonce(
+        EmitLogs::new(Address::repeat_byte(0x42), &other_wallet).setValue("unsigned".to_string()),
+        from
+    )
+    .await
+    .is_err());
     let receipt = tokio::time::timeout(Duration::from_secs(10), async {
         send_with_next_nonce(target.setValue("funded".to_string()), from)
             .await?

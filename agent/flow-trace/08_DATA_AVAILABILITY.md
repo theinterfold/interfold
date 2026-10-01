@@ -405,10 +405,11 @@ Every transaction from the server key takes its nonce from one sequence in the p
 the pending count of the chain, that no reservation holds, and it reserves that nonce before the
 broadcast. Concurrent sends in the server process therefore take different nonces, also while an RPC
 node lags. A send fills its transaction before it reserves a nonce, so a failure before the
-broadcast reserves nothing. A broadcast that the node refuses gives its nonce back. After any other
-broadcast error the node can hold the transaction, so its reservation stays. The reservation of the
-lowest nonce that the chain does not count expires after two minutes, so a nonce that the network
-dropped is used again. A transaction from another process can still take a used nonce.
+broadcast reserves nothing. A signature that the local wallet refuses, and a broadcast that the node
+refuses, give the nonce back. After any other broadcast error the node can hold the transaction, so
+its reservation stays. The reservation of the lowest nonce that the chain does not count expires
+after two minutes, so a nonce that the network dropped is used again. A transaction from another
+process can still take a used nonce.
 
 Past a limit, the server still signs the input and the voter's wallet sends the commitment. A
 refusal would reopen ZEN2-25, because a mask needs no signature from the slot owner. Anyone can use

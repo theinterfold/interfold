@@ -46,6 +46,9 @@ static SENT_NONCES: Mutex<BTreeMap<Address, BTreeMap<u64, Instant>>> =
 /// The lock covers the nonce choice and the broadcast only. The caller waits for the receipt after
 /// the lock is released, so several transactions of one account can wait for inclusion at the same
 /// time.
+///
+/// It sets the gas limit, the EIP-1559 fees, and the chain ID of `call` from the node before it
+/// reserves the nonce, so values that the caller set on `call` are replaced.
 pub async fn send_with_next_nonce<P, D>(
     call: CallBuilder<P, D>,
     from: Address,
@@ -77,13 +80,16 @@ where
         match call.send().await {
             Ok(transaction) => Ok(transaction),
             Err(error) => {
-                // A node that answered with an error refused the transaction, so no transaction
-                // holds the nonce. After any other broadcast error the node can hold the
-                // transaction, so the reservation stays until the chain counts the nonce or the
+                // A node that answered with an error refused the transaction, and a local error,
+                // such as a wallet that cannot sign, stops the send before the broadcast. Then no
+                // transaction holds the nonce. After any other broadcast error the node can hold
+                // the transaction, so the reservation stays until the chain counts the nonce or the
                 // reservation expires.
                 if matches!(
                     &error,
-                    alloy::contract::Error::TransportError(RpcError::ErrorResp(_))
+                    alloy::contract::Error::TransportError(
+                        RpcError::ErrorResp(_) | RpcError::LocalUsageError(_)
+                    )
                 ) {
                     account.remove(&nonce);
                 }
