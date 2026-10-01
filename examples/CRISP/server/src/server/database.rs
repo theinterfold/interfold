@@ -13,6 +13,7 @@ use serde::{de::DeserializeOwned, Serialize};
 use sled::{Db, Tree};
 use std::{
     fs::{self, File},
+    io::ErrorKind,
     path::{Path, PathBuf},
     str,
 };
@@ -76,9 +77,14 @@ impl SledDB {
         }
     }
 
-    /// Write the database to the disk, with the files of its large values.
+    /// Write the database to the disk, with the files of its large values. `Db::flush` syncs only
+    /// the log. sled never syncs the file of a large value, and recovery skips a log entry whose
+    /// file is missing, so this also syncs every file in `blobs/` and the directory. The sync
+    /// covers the files that exist when it runs. sled can later write a page again into a new file
+    /// that the sync does not cover, as it can for every large value that the server stores.
     pub fn sync_to_disk(&self) -> Result<(), DatabaseError> {
-        sync_to_disk(&self.db, &self.path)
+        self.db.flush()?;
+        sync_directory(&self.path.join("blobs"))
     }
 
     /// The IDs of the stored rounds.
@@ -91,22 +97,30 @@ impl SledDB {
     }
 }
 
-/// Write a database to the disk, with the files of its large values. `Db::flush` syncs only the
-/// log: sled does not sync the file of a large value, and recovery skips a log entry whose file is
-/// missing.
-fn sync_to_disk(db: &Db, path: &Path) -> Result<(), DatabaseError> {
-    db.flush()?;
-    let blobs = path.join("blobs");
-    for entry in fs::read_dir(&blobs)? {
-        File::open(entry?.path())?.sync_all()?;
+/// Sync every regular file in a directory, then the directory itself. sled removes the file of a
+/// large value when a newer file replaces it, so a file that is gone before its sync is skipped.
+fn sync_directory(dir: &Path) -> Result<(), DatabaseError> {
+    for entry in fs::read_dir(dir)? {
+        let synced = entry.and_then(|entry| {
+            if entry.file_type()?.is_file() {
+                File::open(entry.path())?.sync_all()
+            } else {
+                Ok(())
+            }
+        });
+        match synced {
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            synced => synced?,
+        }
     }
-    File::open(&blobs)?.sync_all()?;
+    File::open(dir)?.sync_all()?;
     Ok(())
 }
 
 /// Copy a stopped server's database into a new directory, without the old page copies that sled
 /// keeps on disk. The copy can still be up to about three times the size of the data. The copy
-/// gets the name `to` only when it is complete, so a failed run never leaves a partial copy there.
+/// gets the name `to` only when it is complete and on the disk, so a failed run or a crash never
+/// leaves a partial copy there.
 pub fn compact_database(from: &str, to: &str) -> Result<(), DatabaseError> {
     let partial = format!("{}.partial", to.trim_end_matches('/'));
     // `sled::open` creates a missing database, so check the paths first. sled writes `conf` in
@@ -119,14 +133,25 @@ pub fn compact_database(from: &str, to: &str) -> Result<(), DatabaseError> {
     let database = sled::open(from)?;
     let copy = sled::open(&partial)?;
     copy.import(database.export());
-    sync_to_disk(&copy, Path::new(&partial))?;
     if copy.checksum()? != database.checksum()? {
         let mismatch = format!("the copy in {partial} does not match {from}");
         return Err(DatabaseError::Compaction(mismatch));
     }
-    // A closed sled database writes no more files, so the rename moves a complete copy.
+    // A closed sled database syncs its log and then creates no more files, so the syncs below
+    // cover the complete copy. sled syncs neither the files of large values nor `conf` nor the
+    // directories.
     drop(copy);
-    fs::rename(&partial, to)?;
+    drop(database);
+    let partial_dir = Path::new(&partial);
+    sync_directory(&partial_dir.join("blobs"))?;
+    sync_directory(partial_dir)?;
+    fs::rename(partial_dir, to)?;
+    // The rename is durable only when the directory that holds `to` is synced.
+    let parent = Path::new(to)
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    File::open(parent)?.sync_all()?;
     Ok(())
 }
 

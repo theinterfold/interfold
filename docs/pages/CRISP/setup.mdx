@@ -421,14 +421,20 @@ copy.
 
 3. Move `database/server` to a backup location.
 4. Rename `database/server-compact` to `database/server`.
-5. Start the CRISP server. When the server works correctly, delete the backup.
+5. Start the CRISP server.
+6. When the server works correctly, run `sync` on the host.
+7. Delete the backup.
 
 The command builds the copy in the target path with `.partial` added, for example
-`database/server-compact.partial`. It gives the copy the target name only when the copy is complete
-and matches the database. The command stops without a copy when the target directory or the
-`.partial` directory exists, or when the source directory holds no database. It also stops when the
-server holds the database, when the copy does not match the database, or when the disk is full.
-After a failed command, delete the `.partial` directory before you run the command again.
+`database/server-compact.partial`. It gives the copy the target name only when the copy is complete,
+matches the database, and is on the disk. The command stops without a copy when the target directory
+or the `.partial` directory exists, or when the source directory holds no database. It also stops
+when the server holds the database, when the copy does not match the database, or when the disk is
+full. After a failed command, delete the `.partial` directory before you run the command again.
+
+The operating system can keep the moves of steps 3 and 4 in memory for some time before it writes
+them to the disk. The server reads from that memory, so a working server does not show that the disk
+holds the copy. `sync` makes the operating system write that data to the disk.
 
 ### Upgrade from a release that keeps ballots in the round record
 
@@ -441,8 +447,11 @@ read the moved ballots. Before you upgrade:
 
 To go back to the older release, restore the copy, but only before the new release accepts a ballot.
 The copy does not hold the availability jobs of later ballots, so their inputs would stay committed
-but unpublished. After the new release accepts ballots, fix forward, or go back only when none of
-its availability jobs is pending.
+but unpublished. After the new release accepts ballots, fix forward. In `avail` mode, you can also
+go back when none of the availability jobs of the new release is pending: the older release reads
+the published ballots again from Avail. In `mock` mode, the server can read a ballot only from its
+database. The restored copy does not hold the ballots that the new release accepted, so those
+ballots are lost.
 
 ## Common setup errors
 

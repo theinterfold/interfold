@@ -288,10 +288,12 @@ impl<S: DataStore> CrispE3Repository<S> {
 
     /// Move the ciphertexts that an older release kept inside the round record to their own keys.
     ///
-    /// The inline copies go only after `sync` makes the moved copies durable. sled does not sync
-    /// the file of a large value, so a crash could otherwise lose the only copy of a ballot. An
-    /// entry without a commitment was indexed before the commitments existed. It stays, so that
-    /// reads still refuse the round (`input_records`).
+    /// The inline copies go only after `sync` succeeds. sled does not sync the file of a large
+    /// value, so without the sync a crash could lose the only copy of a ballot. The sync covers the
+    /// log and the files of large values that exist when it runs. sled can later write the page of
+    /// a moved ballot again into a new file that the sync does not cover, as it can for every large
+    /// value that the server stores. An entry without a commitment was indexed before the
+    /// commitments existed. It stays, so that reads still refuse the round (`input_records`).
     pub async fn move_inline_ciphertexts(
         &mut self,
         sync: impl FnOnce() -> Result<()>,
@@ -903,13 +905,55 @@ mod tests {
         CurrentRoundRepository,
     };
     use crate::server::models::{CensusMode, CreditMode, CustomParams, E3Crisp};
+    use async_trait::async_trait;
     use e3_fhe_params::{build_bfv_params_from_set_arc, BfvParamSet, BfvPreset};
-    use e3_sdk::indexer::{InMemoryStore, SharedStore};
-    use std::sync::Arc;
+    use e3_sdk::indexer::{DataStore, InMemoryStore, SharedStore};
+    use serde::{de::DeserializeOwned, Serialize};
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
     use tokio::sync::RwLock;
 
     fn test_store() -> SharedStore<InMemoryStore> {
         SharedStore::new(Arc::new(RwLock::new(InMemoryStore::new())))
+    }
+
+    /// A store whose `modify` fails while `failing` is set, as a failed disk write does.
+    struct FailingModify {
+        store: InMemoryStore,
+        failing: Arc<AtomicBool>,
+    }
+
+    #[async_trait]
+    impl DataStore for FailingModify {
+        type Error = eyre::Error;
+
+        async fn insert<T: Serialize + Send + Sync>(
+            &mut self,
+            key: &str,
+            value: &T,
+        ) -> Result<(), Self::Error> {
+            self.store.insert(key, value).await
+        }
+
+        async fn get<T: DeserializeOwned + Send + Sync>(
+            &self,
+            key: &str,
+        ) -> Result<Option<T>, Self::Error> {
+            self.store.get(key).await
+        }
+
+        async fn modify<T, F>(&mut self, key: &str, f: F) -> Result<Option<T>, Self::Error>
+        where
+            T: Serialize + DeserializeOwned + Send + Sync,
+            F: FnMut(Option<T>) -> Option<T> + Send,
+        {
+            if self.failing.load(Ordering::SeqCst) {
+                return Err(eyre::eyre!("the write failed"));
+            }
+            self.store.modify(key, f).await
+        }
     }
 
     fn crisp_round(requester: &str, status: &str) -> E3Crisp {
@@ -938,6 +982,17 @@ mod tests {
             census_mode: CensusMode::Token,
             discovery_pending: false,
         }
+    }
+
+    /// A round record of an older release, with its ballots inline and input 0 committed.
+    fn inline_round(ciphertext_inputs: Vec<(Vec<u8>, u64)>) -> E3Crisp {
+        let mut record = crisp_round("requester", "Active");
+        record.ciphertext_inputs = ciphertext_inputs;
+        record.input_commitments = vec![(0, [1; 32])];
+        record.input_slots = vec![(0, [7; 20])];
+        record.input_parents = vec![(0, 0)];
+        record.input_usable = vec![(0, true)];
+        record
     }
 
     #[test]
@@ -1053,12 +1108,7 @@ mod tests {
     /// `CRISPProgram` rejects.
     #[tokio::test]
     async fn a_round_with_an_input_indexed_before_commitments_stays_refused() {
-        let mut record = crisp_round("requester", "Active");
-        record.ciphertext_inputs = vec![(vec![1; 3], 0), (vec![2; 3], 1)];
-        record.input_commitments = vec![(0, [1; 32])];
-        record.input_slots = vec![(0, [7; 20])];
-        record.input_parents = vec![(0, 0)];
-        record.input_usable = vec![(0, true)];
+        let record = inline_round(vec![(vec![1; 3], 0), (vec![2; 3], 1)]);
         let mut round = CrispE3Repository::new(test_store(), "12");
         round.set_crisp(record).await.unwrap();
 
@@ -1067,23 +1117,62 @@ mod tests {
         assert!(round.get_input_snapshot().await.is_err());
     }
 
+    /// The inline copy of a ballot stays until the sync of the moved copy succeeds. A crash before
+    /// the sync could otherwise lose the only copy of the ballot.
+    #[tokio::test]
+    async fn a_failed_sync_keeps_the_inline_ballot() {
+        let mut round = CrispE3Repository::new(test_store(), "14");
+        round
+            .set_crisp(inline_round(vec![(vec![1; 3], 0)]))
+            .await
+            .unwrap();
+
+        let failed_sync = || Err(eyre::eyre!("the sync failed"));
+        assert!(round.move_inline_ciphertexts(failed_sync).await.is_err());
+        let inline = round.get_crisp().await.unwrap().ciphertext_inputs;
+        assert_eq!(inline, vec![(vec![1; 3], 0)]);
+
+        round.move_inline_ciphertexts(|| Ok(())).await.unwrap();
+        let snapshot = round.get_input_snapshot().await.unwrap();
+        assert_eq!(snapshot.ciphertexts, vec![(vec![1; 3], 0)]);
+    }
+
     /// A ballot that replaces another at the same index, as after a reorganization, reads with its
-    /// own fields.
+    /// own fields. When the round record keeps the old fields, because its update failed, the old
+    /// ballot reads with them.
     #[tokio::test]
     async fn a_replaced_input_reads_the_new_ballot() {
-        let mut round = CrispE3Repository::new(test_store(), "13");
+        let failing = Arc::new(AtomicBool::new(false));
+        let store = FailingModify {
+            store: InMemoryStore::new(),
+            failing: Arc::clone(&failing),
+        };
+        let store = SharedStore::new(Arc::new(RwLock::new(store)));
+        let mut round = CrispE3Repository::new(store, "13");
         round
             .set_crisp(crisp_round("requester", "Active"))
             .await
             .unwrap();
         let bfv = build_bfv_params_from_set_arc(BfvParamSet::from(BfvPreset::InsecureThreshold512));
-        for ballot in [1, 2] {
-            round
-                .insert_ciphertext_input(vec![ballot; 3], 0, [ballot; 32], [7; 20], 0, &bfv)
-                .await
-                .unwrap();
-        }
+        round
+            .insert_ciphertext_input(vec![1; 3], 0, [1; 32], [7; 20], 0, &bfv)
+            .await
+            .unwrap();
 
+        failing.store(true, Ordering::SeqCst);
+        let replaced = round
+            .insert_ciphertext_input(vec![2; 3], 0, [2; 32], [7; 20], 0, &bfv)
+            .await;
+        assert!(replaced.is_err());
+        let snapshot = round.get_input_snapshot().await.unwrap();
+        assert_eq!(snapshot.ciphertexts, vec![(vec![1; 3], 0)]);
+        assert_eq!(snapshot.commitments, vec![[1; 32]]);
+
+        failing.store(false, Ordering::SeqCst);
+        round
+            .insert_ciphertext_input(vec![2; 3], 0, [2; 32], [7; 20], 0, &bfv)
+            .await
+            .unwrap();
         let snapshot = round.get_input_snapshot().await.unwrap();
         assert_eq!(snapshot.ciphertexts, vec![(vec![2; 3], 0)]);
         assert_eq!(snapshot.commitments, vec![[2; 32]]);
