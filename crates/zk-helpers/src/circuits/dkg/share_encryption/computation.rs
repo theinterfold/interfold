@@ -133,6 +133,10 @@ pub struct Inputs {
     pub ct0_r: CrtPolynomial,
     /// ct1-leg reduction quotient, already reduced modulo `X^N + 1`.
     pub ct1_r: CrtPolynomial,
+    /// Rounding carries with `k1 == q_mod_t * m - t * z`, so the circuit's scaled path never builds
+    /// `k1`. A witness rather than an in-circuit hint, matching every other quotient here. Always
+    /// produced; the direct path ignores it.
+    pub z: CrtPolynomial,
     pub e0: Polynomial,
     pub e1: Polynomial,
     pub u: Polynomial,
@@ -741,6 +745,22 @@ impl Computation for Inputs {
         let ct0_r = CrtPolynomial::new(ct0_r);
         let ct1_r = CrtPolynomial::new(ct1_r);
 
+        // z[j] = round(q_mod_t * m[j] / t), i.e. the carry that puts `q_mod_t * m - t * z` in the
+        // centred window modulo t. The circuit pins it by asserting that window, so an off-by-one
+        // here fails there rather than passing silently.
+        let t_big = BigInt::from(dkg_params.plaintext());
+        let scale_big = BigInt::from(compute_q_mod_t(
+            &compute_q_product(dkg_params.moduli()),
+            dkg_params.plaintext(),
+        ));
+        let half_t = (&t_big - BigInt::from(1)) / BigInt::from(2);
+        let z_coeffs: Vec<BigInt> = message
+            .coefficients()
+            .iter()
+            .map(|m| (&scale_big * m + &half_t) / &t_big)
+            .collect();
+        let z = CrtPolynomial::new(vec![Polynomial::new(z_coeffs)]);
+
         let pk_bit = compute_modulus_bit(&dkg_params);
         let msg_bit = compute_msg_bit(&dkg_params);
         let pk_commitment = compute_dkg_pk_commitment(&pk0is, &pk1is, pk_bit);
@@ -753,6 +773,7 @@ impl Computation for Inputs {
             ct1is,
             ct0_r,
             ct1_r,
+            z,
             e0: e0_mod_q,
             e1,
             u,
@@ -774,6 +795,7 @@ impl Computation for Inputs {
         let message = polynomial_to_toml_json(&self.message);
         let ct0_r = crt_polynomial_to_toml_json(&self.ct0_r);
         let ct1_r = crt_polynomial_to_toml_json(&self.ct1_r);
+        let z = crt_polynomial_to_toml_json(&self.z);
         let pk_commitment = self.pk_commitment.to_string();
         let msg_commitment = self.msg_commitment.to_string();
 
@@ -788,6 +810,7 @@ impl Computation for Inputs {
             "message": message,
             "ct0_r": ct0_r,
             "ct1_r": ct1_r,
+            "z": z,
             "expected_pk_commitment": pk_commitment,
             "expected_message_commitment": msg_commitment,
         });

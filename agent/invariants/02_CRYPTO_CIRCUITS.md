@@ -226,6 +226,20 @@ every section.
   ciphertext are of this kind; C1's `pk0` and C5's `pk0_agg` are not, because no identity inside
   their circuit determines them. Ask "does anything outside this circuit's own identity depend on
   this value's magnitude?" rather than "was it bounded before?". — `flow-trace/04`
+- **Supply a quotient as a witness, not as an in-circuit hint.** Every quotient in these circuits is
+  prover-supplied and pinned by constraints, and C3's rounding carry `z` now follows that: a `BIT_Z`
+  bound plus the `[0, t)` window that exactly one `z` satisfies. Computing it in-circuit through
+  `__compute_mod_reduction` instead drew the "Brillig call isn't properly covered" diagnostic for
+  identical constraints. The witness form is cheaper to reason about, matches the rest of the
+  codebase, and keeps the hint in the generator where the rest of them live. A prover-supplied value
+  needs a `should_fail` test in each direction, since nothing else stops it being wrong. —
+  `flow-trace/04`
+- **A path gated off for one preset is the path CI exercises least, and usually the one that ships.**
+  C3's scaled quotient is generated-false on insecure-512, which is the default preset and the only
+  one `rust:test:proofs` and `local_e2e_tests` run. So the production path gets no end-to-end proof
+  coverage from them: it needs its own `nargo execute` against a real secure-8192 witness, plus a
+  unit test that enters the branch. Before C3 added one, every C3 test exercised the fallback. —
+  `flow-trace/04`
 - **Grep `nargo execute` output for `bug:`, not just for failure.** Noir's "Brillig function call
   isn't properly covered by a manual constraint" diagnostic prints even under
   `--silence-warnings`, and a witness that solves says nothing about it. It is call-site sensitive:

@@ -234,7 +234,7 @@ reformulations rather than weakenings — the soundness arguments are in the com
 | ------- | --------- | --------- | ------------- | ------- |
 | ct0     | 1,688,639 | 2,229,363 | **1,399,227** | -17.1%  |
 | ct1     | 1,398,622 | 1,625,997 | **1,216,948** | -13.0%  |
-| C3      | 3,475,203 | 3,589,892 | **2,744,690** | -21.0%  |
+| C3      | 3,475,203 | 3,589,892 | **2,125,396** | -38.8%  |
 | C7      | 108,461   | 112,591   | **26,808**    | -75.3%  |
 | C4      | 1,746,030 | 1,954,926 | **1,098,865** | -37.1%  |
 | C1      | 2,223,114 | 2,287,310 | **1,634,682** | -26.5%  |
@@ -310,6 +310,36 @@ re-asserting would have added about 786k and turned the win into a loss. `d` nee
 own either: it is determined by the identity, which is the Schwartz-Zippel case the invariants
 already name it as. Its IF-013 digit asserts stay, because injectivity is still what keeps `gamma`
 independent of it.
+
+**C3's message scaling, the largest win on the branch.** `k1` is the message scaled by
+`SCALE = Q mod t` and centred modulo `t`. Writing that reduction as a carry, `k1 = SCALE * m - t * z`,
+makes it affine, so with `k0 * t = BETA * q - 1` and `k0 * SCALE = ALPHA * q - SMALL_D` the whole
+`k0 * k1` term folds into the quotient:
+`ct0 = pk0 * u + e0 - SMALL_D * m + z + q * Q0` with `Q0 = r + ALPHA * m - BETA * z`. Measured
+2,744,690 -> 2,125,396, **-619,294**, and -38.8% against main. C3 runs about 1,512 times per DKG at
+`small` -- one proof per (recipient, modulus) per chain, both chains, every node -- so this is roughly
+-936M gates per DKG, far more than every other circuit on this branch combined.
+
+**Most of it is transcript, not arithmetic.** The direct path pushes all `N` coefficients of `k1` into
+the sponge *unpacked*, one absorption each; the scaled form never builds `k1`. `ct0_r` at 55 bits is
+also replaced by `Q0` at 27. The arithmetic saving -- dropping a modular multiply and a centring
+comparison per coefficient -- is the smaller half.
+
+**Why the quotient is narrow, and why it generalises.** `Q0` is dominated by `SMALL_D * m / q`, and
+`SMALL_D = k * q - floor(prod(q) / t)` is small because every modulus sits just above a power of two:
+`floor(prod(q)/t) / q` is then close to `2^(bits(q) - bits(t))`, so `k` is that power of two. Derived
+widths reproduce what `feat/secure-circuit-optimizations` hardcodes -- 27 / 19 / 14 -- and #1996 comes
+out a bit tighter at 26 / 18 / 13. insecure-512 has one DKG modulus, so `floor(q/t) < q`, no `k` works,
+and `SHARED_QUOTIENT` is generated false; that preset keeps the direct path, which is fine for a
+test-only parameter set. Gating on the generated flag rather than on `N == 8192 && L == 2` means a new
+parameter set is either included or excluded loudly, never handed wrong constants.
+
+**`z` is a witness, not a hint.** Computing the carry in-circuit with `__compute_mod_reduction` made
+`nargo execute` emit `bug: Brillig function call isn't properly covered by a manual constraint`, the
+same diagnostic C6 hit. Supplying `z` as a witness and pinning it with the same two constraints -- a
+`BIT_Z` bound and the `[0, t)` window, which exactly one `z` satisfies -- removes the diagnostic and
+matches how every other quotient here is handled. Two `should_fail` tests cover a deflated and an
+inflated carry, since `z` is now prover-supplied.
 
 **C6 keeps its `d_native_trunc` witness, on purpose.** Deriving the C7-facing native tail from `d`
 instead of witnessing it looked worth taking -- derived beats witnessed -- but `nargo execute` then
