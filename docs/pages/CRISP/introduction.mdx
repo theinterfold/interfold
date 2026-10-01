@@ -117,6 +117,13 @@ the digest to sign and a commitment to the current owners, and the SDK proves th
 `finishSafeBallotProof`. On chain, a Safe ballot and a mask look the same. The owners sign in their
 own wallets, not through the Safe Transaction Service, which publishes the digest.
 
+Whoever prepares a Safe ballot knows its choice. The contract reads the owners and threshold when an
+input is published, so while a Safe has more than 10 owners or a threshold above 4, the contract
+refuses every input for its slot, masks included. A coerced Safe can therefore keep a ballot that
+the coercer prepared until it changes back. A change of owners does not do this, because the new
+owners can vote again. The owner signatures and the prepared ballot can publish that ballot again
+until the round ends, also after a later vote, so keep them private.
+
 ### Two-step inputs
 
 Secure BFV ciphertexts are too large for one Ethereum transaction. For this reason, each input goes

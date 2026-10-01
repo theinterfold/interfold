@@ -255,9 +255,15 @@ every section.
   wallet is its own single owner. A slot is a Safe only when its code hash and `masterCopy()` are on
   the allowlists fixed at deployment, because any contract can answer `getOwners()`. Votes and masks
   for one slot have the same public inputs, and every proof has `MAX_SAFE_SIGNERS` signature slots.
-  `withBallotParent` only moves a vote's head request to just before proving; the inputs it sets
-  equal those a prepare with the head sets. `MAX_SAFE_OWNERS` and `MAX_SAFE_SIGNERS` must match in
-  `CRISPProgram.sol`, `crisp_lib::constants` and the SDK. — `flow-trace/04`
+  A Safe is the only slot that can stop masks. The owners and threshold are read at publication, so
+  while the Safe has more than `MAX_SAFE_OWNERS` owners or a threshold above `MAX_SAFE_SIGNERS`,
+  every input for its slot reverts, until it returns to a supported shape. Whoever prepares the
+  Safe's ballot knows its choice, so a coercer can have the owners vote and then freeze the slot:
+  the unmaskable-slot receipt above. A change of owners alone does not freeze it, because the new
+  owners can vote again. `withBallotParent` only moves a vote's head request to just before proving;
+  the inputs it sets equal those a prepare with the head sets. `MAX_SAFE_OWNERS` and
+  `MAX_SAFE_SIGNERS` must match in `CRISPProgram.sol`, `crisp_lib::constants` and the SDK. —
+  `flow-trace/04`
 - **CRISP constrains every coefficient of the ballot plaintext, at the real BFV degree.** The
   witness generator reverses the message over the full degree, so the payload starts at
   `D - MAX_MSG_NON_ZERO_COEFFS + (MAX_MSG_NON_ZERO_COEFFS mod num_options)` with the options back to

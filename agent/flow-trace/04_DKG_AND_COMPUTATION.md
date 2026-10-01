@@ -1851,7 +1851,9 @@ Transaction Service: it publishes the digest, which anyone can recompute to tell
 mask. A vote replaces its slot, so its ciphertext, commitment and digest do not depend on the head.
 `withBallotParent(prepared, {index, commitment})` names the parent right before proving, with
 `ciphertextCommitment(headBytes)`, so the CRISP server sees the same requests as for a mask, and a
-mask that lands during the signing does not invalidate the signatures.
+mask that lands during the signing does not invalidate the signatures. For the same reason, anyone
+who holds the owner signatures and the prepared ballot can prove that ballot again over a later head
+until the round ends, also after a re-vote, so both must stay private.
 
 Limits: only ECDSA owner signatures work; contract owners (v = 0), approved hashes (v = 1),
 `eth_sign` signatures and nested Safes do not. Merkle-census rounds keep the `crisp` circuit, so a
