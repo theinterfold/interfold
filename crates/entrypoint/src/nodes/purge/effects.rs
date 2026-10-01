@@ -187,9 +187,9 @@ fn refuse_unchecked(node: &str, reason: &str, allow_active_e3s: bool) -> Result<
     bail!(
         "Refusing to purge, because the purge cannot check node `{node}`: {reason}. The command \
          deleted nothing. The purge cannot see a node that runs with another E3_DATA_DIR, \
-         data_dir, or working directory. Make sure that the node is stopped. Make sure that it \
-         holds no key share for an E3 that it has not seen complete. Then run this command again \
-         with --allow-active-e3s."
+         data_dir, or working directory. Make sure that the node is stopped. Make sure that each \
+         E3 that the node served is complete or failed on chain, and that one day has passed \
+         after its lifecycle deadline. Then run this command again with --allow-active-e3s."
     )
 }
 

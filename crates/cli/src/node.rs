@@ -48,7 +48,8 @@ pub enum NodeCommands {
         /// Delete the state even when this node holds key-share state for an
         /// E3 that it has not seen complete. The node permanently loses its
         /// key share for that E3. Check first that each listed E3 is complete
-        /// or failed on chain.
+        /// or failed on chain, and that one day has passed after its lifecycle
+        /// deadline.
         #[arg(long)]
         allow_active_e3s: bool,
     },
