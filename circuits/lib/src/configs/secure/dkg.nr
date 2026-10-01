@@ -85,6 +85,26 @@ pub global SHARE_ENCRYPTION_CT0_R_BOUNDS: [Field; L] = [30011921168555547, 43276
 pub global SHARE_ENCRYPTION_CT1_R_BOUNDS: [Field; L] = [4096, 4096];
 pub global SHARE_ENCRYPTION_MSG_BOUND: Field = 144115188098531329;
 
+// Scaled-quotient form of the `k0 * k1` term. `SCALED_QUOTIENT` is false for parameter sets that
+// cannot use it (notably L = 1, where `DELTA < q`); the circuit then keeps the direct `k1` path and
+// the constants below go unused.
+pub global SHARE_ENCRYPTION_SCALED_QUOTIENT: bool = true;
+pub global SHARE_ENCRYPTION_SCALE_K: Field = 4;
+pub global SHARE_ENCRYPTION_DELTA: Field = 2305843008852066296;
+pub global SHARE_ENCRYPTION_SMALL_D: [Field; L] = [361693196, 362741772];
+pub global SHARE_ENCRYPTION_ALPHA: [Field; L] = [3415324443819497, 492478180464660];
+pub global SHARE_ENCRYPTION_BETA: [Field; L] = [60023842337102902, 8655234120485321];
+pub global SHARE_ENCRYPTION_BIT_Z: u32 = 53;
+pub global SHARE_ENCRYPTION_T_POW_BIT: u32 = 57;
+pub global SHARE_ENCRYPTION_T_GAP: Field = 22675457;
+pub global SHARE_ENCRYPTION_T_GAP_BIT: u32 = 25;
+pub global SHARE_ENCRYPTION_BIT_Q0: u32 = 27;
+pub global SHARE_ENCRYPTION_Q0_OFFSET: Field = 4097;
+pub global SHARE_ENCRYPTION_BIT_Q0_DIFF: u32 = 19;
+pub global SHARE_ENCRYPTION_Q0_DIFF_OFFSET: Field = 8194;
+pub global SHARE_ENCRYPTION_BIT_Q1: u32 = 14;
+pub global SHARE_ENCRYPTION_Q1_OFFSET: Field = 4097;
+
 pub global SHARE_ENCRYPTION_CONFIGS: ShareEncryptionConfigs<L> = ShareEncryptionConfigs::new(
     PLAINTEXT_MODULUS,
     Q_MOD_T,

@@ -22,9 +22,13 @@ use lib::configs::default::{N_PARTIES, T};
 use lib::configs::secure::dkg::{
     L as DKG_L, L_THRESHOLD, N as DKG_N, PARITY_MATRIX, PLAINTEXT_MODULUS as DKG_PLAINTEXT_MODULUS,
     Q_MOD_T as DKG_Q_MOD_T, Q_MOD_T_CENTERED as DKG_Q_MOD_T_CENTERED, QIS as DKG_QIS, QIS_THRESHOLD,
-    SHARE_ENCRYPTION_CT0_R_BOUNDS, SHARE_ENCRYPTION_CT1_R_BOUNDS, SHARE_ENCRYPTION_E0_BOUND,
-    SHARE_ENCRYPTION_E1_BOUND, SHARE_ENCRYPTION_K0IS, SHARE_ENCRYPTION_MSG_BOUND,
-    SHARE_ENCRYPTION_PK_BOUNDS, SHARE_ENCRYPTION_U_BOUND,
+    SHARE_ENCRYPTION_ALPHA, SHARE_ENCRYPTION_BETA, SHARE_ENCRYPTION_BIT_Q0, SHARE_ENCRYPTION_BIT_Q1,
+    SHARE_ENCRYPTION_CT0_R_BOUNDS, SHARE_ENCRYPTION_CT1_R_BOUNDS, SHARE_ENCRYPTION_DELTA,
+    SHARE_ENCRYPTION_E0_BOUND, SHARE_ENCRYPTION_E1_BOUND, SHARE_ENCRYPTION_K0IS,
+    SHARE_ENCRYPTION_MSG_BOUND, SHARE_ENCRYPTION_PK_BOUNDS, SHARE_ENCRYPTION_Q0_OFFSET,
+    SHARE_ENCRYPTION_Q1_OFFSET, SHARE_ENCRYPTION_SCALE_K, SHARE_ENCRYPTION_SCALED_QUOTIENT,
+    SHARE_ENCRYPTION_SMALL_D, SHARE_ENCRYPTION_T_GAP, SHARE_ENCRYPTION_T_GAP_BIT,
+    SHARE_ENCRYPTION_T_POW_BIT, SHARE_ENCRYPTION_U_BOUND,
 };
 
 use lib::configs::secure::threshold::{
@@ -257,6 +261,116 @@ fn verify_dkg_bounds() {
             SHARE_ENCRYPTION_CT0_R_BOUNDS[i] as u128 == expected_ct0_r,
             "SHARE_ENCRYPTION_CT0_R_BOUNDS mismatch",
         );
+    }
+
+    verify_scaled_quotient();
+}
+
+/// `2^BITS` as a `u128`. Noir's shift operator wants both operands the same width, and this file is
+/// `u128` throughout, so a comptime-unrolled product keeps the call sites readable.
+fn pow2_u128<let BITS: u32>() -> u128 {
+    let mut out: u128 = 1;
+    for _ in 0..BITS {
+        out = out * 2;
+    }
+    out
+}
+
+/// Re-derives C3's scaled-quotient constants from the moduli, `t` and `k0is`.
+///
+/// The substitution `k0 * k1 = q * (ALPHA * m - BETA * z) - SMALL_D * m + z` only holds over the
+/// integers if both numerators divide `q` exactly, so these are equalities rather than bounds. A
+/// generator that rounded instead of dividing would be caught here.
+///
+/// `BIT_Q0_DIFF` is deliberately not re-derived: it needs `gap * (msg - 1)` where `gap` is about
+/// 2^79, so the product is ~2^137 and overflows the `u128` arithmetic this file uses. The
+/// honest-witness completeness check covers that width instead.
+fn verify_scaled_quotient() {
+    if SHARE_ENCRYPTION_SCALED_QUOTIENT {
+        let t: u128 = DKG_PLAINTEXT_MODULUS as u128;
+        let scale: u128 = DKG_Q_MOD_T as u128;
+        let delta: u128 = SHARE_ENCRYPTION_DELTA as u128;
+        let k: u128 = SHARE_ENCRYPTION_SCALE_K as u128;
+        let n: u128 = DKG_N as u128;
+        let u_bound: u128 = SHARE_ENCRYPTION_U_BOUND as u128;
+        let msg: u128 = SHARE_ENCRYPTION_MSG_BOUND as u128;
+
+        // k must be a power of two, else SMALL_D is not small across limbs.
+        assert(k != 0, "SHARE_ENCRYPTION_SCALE_K must be non-zero when available");
+        assert((k & (k - 1)) == 0, "SHARE_ENCRYPTION_SCALE_K must be a power of two");
+
+        // DELTA * t + scale == prod(q)
+        let mut product: u128 = 1;
+        for i in 0..DKG_L {
+            product = product * (DKG_QIS[i] as u128);
+        }
+        assert(delta * t + scale == product, "SHARE_ENCRYPTION_DELTA mismatch");
+
+        // T = 2^T_POW_BIT + T_GAP, with the gap inside its own width.
+        let t_pow: u128 = pow2_u128::<SHARE_ENCRYPTION_T_POW_BIT>();
+        assert(t_pow + (SHARE_ENCRYPTION_T_GAP as u128) == t, "SHARE_ENCRYPTION_T_GAP mismatch");
+        assert(
+            (SHARE_ENCRYPTION_T_GAP as u128) < pow2_u128::<SHARE_ENCRYPTION_T_GAP_BIT>(),
+            "SHARE_ENCRYPTION_T_GAP_BIT too narrow",
+        );
+
+        let offset0: u128 = SHARE_ENCRYPTION_Q0_OFFSET as u128;
+        let offset1: u128 = SHARE_ENCRYPTION_Q1_OFFSET as u128;
+        // Both quotients share the negative excursion of the pk * u product.
+        assert(offset0 == n * u_bound / 2 + 1, "SHARE_ENCRYPTION_Q0_OFFSET mismatch");
+        assert(offset1 == n * u_bound / 2 + 1, "SHARE_ENCRYPTION_Q1_OFFSET mismatch");
+
+        for i in 0..DKG_L {
+            let qi: u128 = DKG_QIS[i] as u128;
+            let qi_bound: u128 = (qi - 1) / 2;
+            let k0: u128 = SHARE_ENCRYPTION_K0IS[i] as u128;
+            let sd: u128 = SHARE_ENCRYPTION_SMALL_D[i] as u128;
+
+            // SMALL_D = k * q - DELTA
+            assert(sd == k * qi - delta, "SHARE_ENCRYPTION_SMALL_D mismatch");
+            // k0 * t + 1 == BETA * q
+            assert(
+                k0 * t + 1 == (SHARE_ENCRYPTION_BETA[i] as u128) * qi,
+                "SHARE_ENCRYPTION_BETA mismatch",
+            );
+            // k0 * scale + SMALL_D == ALPHA * q
+            assert(
+                k0 * scale + sd == (SHARE_ENCRYPTION_ALPHA[i] as u128) * qi,
+                "SHARE_ENCRYPTION_ALPHA mismatch",
+            );
+
+            // The widths must bracket their bounds: wide enough to hold them, and not a bit wider.
+            let bound0: u128 = (
+                qi_bound
+                    + n * qi_bound * u_bound
+                    + (SHARE_ENCRYPTION_E0_BOUND as u128) % qi
+                    + sd * (msg - 1)
+                    + scale
+            )
+                / qi;
+            let shifted0: u128 = bound0 + offset0;
+            assert(
+                shifted0 < pow2_u128::<SHARE_ENCRYPTION_BIT_Q0>(),
+                "SHARE_ENCRYPTION_BIT_Q0 too narrow",
+            );
+            assert(
+                // `shifted0 >= 2^(BIT-1)`, written to avoid a `BIT - 1` generic argument.
+                shifted0 * 2 >= pow2_u128::<SHARE_ENCRYPTION_BIT_Q0>(),
+                "SHARE_ENCRYPTION_BIT_Q0 wider than needed",
+            );
+
+            let bound1: u128 =
+                (qi_bound + n * qi_bound * u_bound + (SHARE_ENCRYPTION_E1_BOUND as u128)) / qi;
+            let shifted1: u128 = bound1 + offset1;
+            assert(
+                shifted1 < pow2_u128::<SHARE_ENCRYPTION_BIT_Q1>(),
+                "SHARE_ENCRYPTION_BIT_Q1 too narrow",
+            );
+            assert(
+                shifted1 * 2 >= pow2_u128::<SHARE_ENCRYPTION_BIT_Q1>(),
+                "SHARE_ENCRYPTION_BIT_Q1 wider than needed",
+            );
+        }
     }
 }
 
