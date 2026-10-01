@@ -4233,6 +4233,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "e3-layout-lock"
+version = "0.18.0"
+dependencies = [
+ "bincode",
+ "e3-utils",
+ "hex",
+ "serde",
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "e3-logger"
 version = "0.18.0"
 dependencies = [
@@ -4294,6 +4305,7 @@ dependencies = [
  "e3-crypto",
  "e3-data",
  "e3-events",
+ "e3-layout-lock",
  "e3-utils",
  "futures",
  "hex",
@@ -4403,6 +4415,7 @@ dependencies = [
  "e3-data",
  "e3-events",
  "e3-fhe-params",
+ "e3-layout-lock",
  "e3-request",
  "e3-utils",
  "e3-zk-helpers",
@@ -4524,6 +4537,7 @@ dependencies = [
  "e3-fhe",
  "e3-fhe-params",
  "e3-keyshare",
+ "e3-layout-lock",
  "e3-logger",
  "e3-multithread",
  "e3-net",
@@ -4531,6 +4545,7 @@ dependencies = [
  "e3-request",
  "e3-sdk",
  "e3-sortition",
+ "e3-sync",
  "e3-test-helpers",
  "e3-trbfv",
  "e3-utils",
@@ -4539,9 +4554,11 @@ dependencies = [
  "fhe",
  "fhe-traits",
  "fhe-util",
+ "hex",
  "num-bigint 0.4.6",
  "rand 0.9.2",
  "rand_chacha 0.9.0",
+ "serde",
  "serde_json",
  "serial_test",
  "tempfile",
@@ -4676,6 +4693,7 @@ dependencies = [
  "e3-events",
  "e3-evm",
  "e3-fhe-params",
+ "e3-layout-lock",
  "e3-polynomial",
  "e3-request",
  "e3-slashing",

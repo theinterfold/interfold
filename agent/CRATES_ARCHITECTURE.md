@@ -8,7 +8,7 @@ guide and [`RULES.md`](RULES.md). The actor-by-actor refactor findings are summa
 
 ## Dependency layers
 
-All 45 workspace packages are shown below. Arrows point from a dependent crate to a direct
+All 47 workspace packages are shown below. Arrows point from a dependent crate to a direct
 dependency; the diagram keeps representative production edges rather than reproducing every Cargo
 edge, while the groups record each crate's current primary responsibility. Test-only edges are kept
 in the validation group. Several protocol crates still import concrete infrastructure types; that
@@ -56,6 +56,7 @@ flowchart TD
         Net[e3-net]
         Sync[e3-sync]
         Data[e3-data]
+        DataAvailability[e3-data-availability]
         Logger[e3-logger]
     end
 
@@ -80,6 +81,7 @@ flowchart TD
     subgraph Validation[Workspace validation]
         TestHelpers[e3-test-helpers]
         Tests[e3-tests]
+        LayoutLock[e3-layout-lock]
     end
 
     CLI --> EP
@@ -141,6 +143,7 @@ flowchart TD
 
     Evm --> Config
     Evm --> Data
+    Evm --> DataAvailability
     Evm --> Events
     Net --> Config
     Net --> Data
@@ -166,6 +169,8 @@ flowchart TD
     Utils --> UtilsDerive
 
     Tests --> TestHelpers
+    Tests --> LayoutLock
+    LayoutLock --> Utils
     TestHelpers --> Builder
     TestHelpers --> SDK
 ```

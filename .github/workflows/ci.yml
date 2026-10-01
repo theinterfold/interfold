@@ -465,6 +465,13 @@ jobs:
           mkdir -p dist/circuits/insecure-512
           cp -R .ci-noir/circuits/insecure-512/minimum dist/circuits/insecure-512/
 
+      # A separate test target, so no other step runs it. It fails when a persisted or gossiped
+      # layout differs from its fixture. The in-crate locks run with the library tests. Without
+      # `-p`, cargo resolves features as in the next step, so both steps share one build.
+      - name: Run the persisted layout lock
+        if: matrix.leg == 'integration'
+        run: 'cargo test --test layout_lock'
+
       - name: Run Integration Tests
         if: matrix.leg == 'integration'
         env:
