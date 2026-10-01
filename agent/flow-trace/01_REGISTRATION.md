@@ -197,7 +197,7 @@ User runs: interfold ciphernode status
 ├─ Lists the committees that hold the collateral:
 │   e3_evm::fetch_operator_committees()  (crates/evm/src/operator_status.rs)
 │   ├─ eth_getLogs BondingRegistry.CommitteeObligationUpdated with topic3 = operator,
-│   │   from bonding_registry.deploy_block to head (adaptive window)
+│   │   from bonding_registry.deploy_block (block 0 when unset) to head (adaptive window)
 │   ├─ The last update of each E3 in chain order decides whether its obligation is open
 │   └─ For each open E3:
 │       ├─ registry (from the event).isCommitteeMemberActive / isCommitteeMember
