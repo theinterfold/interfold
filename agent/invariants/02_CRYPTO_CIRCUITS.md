@@ -226,6 +226,21 @@ every section.
   ciphertext are of this kind; C1's `pk0` and C5's `pk0_agg` are not, because no identity inside
   their circuit determines them. Ask "does anything outside this circuit's own identity depend on
   this value's magnitude?" rather than "was it bounded before?". — `flow-trace/04`
+- **Grep `nargo execute` output for `bug:`, not just for failure.** Noir's "Brillig function call
+  isn't properly covered by a manual constraint" diagnostic prints even under
+  `--silence-warnings`, and a witness that solves says nothing about it. It is call-site sensitive:
+  `reduce_mod_bounded` draws it from one C6 context while C7 calls the same helper four times
+  cleanly, and widening the quotient bound made it worse, so the trigger is not understood. Treat it
+  as blocking on a soundness-critical circuit rather than reasoning past it -- C6's `d_native_trunc`
+  derivation was dropped for this, at a measured cost of 1,950 gates. — `flow-trace/04`
+- **A bound already transferred by a checked opening must not be re-asserted when reducing an
+  identity.** Reducing modulo `X^N + 1` means every coefficient the identity reads needs a real
+  bound, but "real" includes one inherited through an injective opening -- it does not have to be
+  checked again locally. C6 reads `ct0`, `ct1`, `sk` and `e_sm`, all opened through checked packing
+  from the ciphertext commitment and C4's aggregates, so they arrive bounded; adding `centered()`
+  calls for them (as `feat/secure-circuit-optimizations` does, because its base predates IF-011)
+  would cost about 786k and make the reduction a net loss. Ask what already bounds a witness before
+  bounding it again. — `flow-trace/04`
 - **An optimisation branch that predates a fix will silently undo it; diff against the fix, not the
   optimisation.** `feat/secure-circuit-optimizations` forked before IF-005, so its C1 replaces
   `e_sm_lifted` / `e_sm_quotients` with a per-residue `centered()` check. Per-residue bounds do not

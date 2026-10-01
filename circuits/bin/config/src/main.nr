@@ -39,7 +39,7 @@ use lib::configs::secure::threshold::{
     PK_GENERATION_EEK_BOUND, PK_GENERATION_SK_BOUND, PK_GENERATION_E_SM_BOUND,
     PK_GENERATION_R_BOUNDS, PK_GENERATION_B_ENC,
     // share_decryption bounds
-    THRESHOLD_SHARE_DECRYPTION_R1_BOUNDS, THRESHOLD_SHARE_DECRYPTION_R2_BOUNDS,
+    THRESHOLD_SHARE_DECRYPTION_R_BOUNDS,
     // user_data_encryption bounds
     USER_DATA_ENCRYPTION_K0IS, USER_DATA_ENCRYPTION_PK_BOUNDS, USER_DATA_ENCRYPTION_E0_BOUND,
     USER_DATA_ENCRYPTION_E1_BOUND, USER_DATA_ENCRYPTION_U_BOUND, USER_DATA_ENCRYPTION_K1_LOW_BOUND,
@@ -395,17 +395,17 @@ fn verify_share_decryption_bounds() {
         let qi: u128 = THRESHOLD_QIS[i] as u128;
         let qi_bound: u128 = (qi - 1) / 2;
 
-        // r2_bounds[i] = (q_i - 1) / 2
+        // The identity is checked reduced modulo X^N + 1, so the cyclotomic quotient's term is
+        // identically zero and there is no r2 bound left to derive.
+        //
+        // r_bounds[i] = (((q_i-1)/2)^2 * n + 4 * (q_i-1)/2) / q_i, from bounding the other terms of
+        // d = ct0 + (ct1 * sk mod X^N + 1) + e_sm + q * r: the negacyclic product of n terms with
+        // both operands centered, plus d, ct0 and e_sm. Same expression the unreduced r1 bound used,
+        // so the reduced quotient is no wider.
+        let expected_r: u128 = (qi_bound * qi_bound * n + 4 * qi_bound) / qi;
         assert(
-            THRESHOLD_SHARE_DECRYPTION_R2_BOUNDS[i] as u128 == qi_bound,
-            "SHARE_DECRYPTION_R2_BOUNDS mismatch",
-        );
-
-        // r1_bounds[i] = (((q_j-1)/2)^2 * n + 4 * (q_j-1)/2) / q_j
-        let expected_r1: u128 = (qi_bound * qi_bound * n + 4 * qi_bound) / qi;
-        assert(
-            THRESHOLD_SHARE_DECRYPTION_R1_BOUNDS[i] as u128 == expected_r1,
-            "SHARE_DECRYPTION_R1_BOUNDS mismatch",
+            THRESHOLD_SHARE_DECRYPTION_R_BOUNDS[i] as u128 == expected_r,
+            "SHARE_DECRYPTION_R_BOUNDS mismatch",
         );
     }
 }
