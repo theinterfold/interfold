@@ -51,6 +51,9 @@ pub fn generate_configs(preset: BfvPreset, configs: &Configs) -> CodegenConfigs 
     let prefix = <ShareEncryptionCircuit as Circuit>::PREFIX;
 
     let qis_str = join_display(&configs.moduli, ", ");
+    let small_d_str = join_display(&configs.scaled_quotient.small_d, ", ");
+    let alpha_str = join_display(&configs.scaled_quotient.alpha, ", ");
+    let beta_str = join_display(&configs.scaled_quotient.beta, ", ");
     let k0is_str = join_display(&configs.k0is, ", ");
     let pk_bounds_str = join_display(&configs.bounds.pk_bounds, ", ");
     let ct0_r_bounds_str = join_display(&configs.bounds.ct0_r_bounds, ", ");
@@ -90,6 +93,26 @@ pub global {}_U_BOUND: Field = {};
 pub global {}_CT0_R_BOUNDS: [Field; L] = [{}];
 pub global {}_CT1_R_BOUNDS: [Field; L] = [{}];
 pub global {}_MSG_BOUND: Field = {};
+
+// Scaled-quotient form of the `k0 * k1` term. `SCALED_QUOTIENT` is false for parameter sets that
+// cannot use it (notably L = 1, where `DELTA < q`); the circuit then keeps the direct `k1` path and
+// the constants below go unused.
+pub global {}_SCALED_QUOTIENT: bool = {};
+pub global {}_SCALE_K: Field = {};
+pub global {}_DELTA: Field = {};
+pub global {}_SMALL_D: [Field; L] = [{}];
+pub global {}_ALPHA: [Field; L] = [{}];
+pub global {}_BETA: [Field; L] = [{}];
+pub global {}_BIT_Z: u32 = {};
+pub global {}_T_POW_BIT: u32 = {};
+pub global {}_T_GAP: Field = {};
+pub global {}_T_GAP_BIT: u32 = {};
+pub global {}_BIT_Q0: u32 = {};
+pub global {}_Q0_OFFSET: Field = {};
+pub global {}_BIT_Q0_DIFF: u32 = {};
+pub global {}_Q0_DIFF_OFFSET: Field = {};
+pub global {}_BIT_Q1: u32 = {};
+pub global {}_Q1_OFFSET: Field = {};
 
 pub global {}_CONFIGS: ShareEncryptionConfigs<L> = ShareEncryptionConfigs::new(
     PLAINTEXT_MODULUS,
@@ -143,6 +166,38 @@ pub global {}_CONFIGS: ShareEncryptionConfigs<L> = ShareEncryptionConfigs::new(
         ct1_r_bounds_str,
         prefix,
         configs.bounds.msg_bound,
+        prefix,
+        configs.scaled_quotient.available,
+        prefix,
+        configs.scaled_quotient.k,
+        prefix,
+        configs.scaled_quotient.delta,
+        prefix,
+        small_d_str,
+        prefix,
+        alpha_str,
+        prefix,
+        beta_str,
+        prefix,
+        configs.scaled_quotient.z_bit,
+        prefix,
+        configs.scaled_quotient.t_pow_bit,
+        prefix,
+        configs.scaled_quotient.t_gap,
+        prefix,
+        configs.scaled_quotient.t_gap_bit,
+        prefix,
+        configs.scaled_quotient.q0_bit,
+        prefix,
+        configs.scaled_quotient.q0_offset,
+        prefix,
+        configs.scaled_quotient.q0_diff_bit,
+        prefix,
+        configs.scaled_quotient.q0_diff_offset,
+        prefix,
+        configs.scaled_quotient.q1_bit,
+        prefix,
+        configs.scaled_quotient.q1_offset,
         prefix,
         prefix,
         prefix,
