@@ -119,19 +119,15 @@ export const generateProof = async (circuitInputs: any, censusMode: CensusVarian
     ct0is: circuitInputs.ct0is,
     u: circuitInputs.u,
     e0: circuitInputs.e0,
-    e0is: circuitInputs.e0is,
-    e0_quotients: circuitInputs.e0_quotients,
     k1: circuitInputs.k1,
-    r1is: circuitInputs.r1is,
-    r2is: circuitInputs.r2is,
+    r: circuitInputs.r,
   })
   const { witness: userDataEncryptionCt1Witness } = await executeCircuit(circuits.userDataEncryptionCt1 as CompiledCircuit, {
     pk1is: circuitInputs.pk1is,
     ct1is: circuitInputs.ct1is,
     u: circuitInputs.u,
     e1: circuitInputs.e1,
-    p1is: circuitInputs.p1is,
-    p2is: circuitInputs.p2is,
+    r_ct1: circuitInputs.r_ct1,
   })
   // The two stacks share every input except how eligibility reaches the circuit: a census round
   // proves a Merkle path, an on-chain round takes the voting power the contract read.
