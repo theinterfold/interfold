@@ -17,9 +17,10 @@ every section.
   `crates/support/tests/Elf.sol`.
 - **Generated verifiers must match the built VKs.** When a pushed branch changes a path in
   `.github/filters/circuits.yml`, pre-push checks `insecure-512` with the committee in the local
-  `.active-preset.json` (default `minimum`). CI reads the same file to start `build_circuits`, which
-  hydrates and compares every supported preset and committee pair. A drift means a deployed verifier
-  accepts a different circuit from the tree.
+  `.active-preset.json` (default `minimum`). The check reads the checked-out tree, so the hook stops
+  the push of a branch that differs from HEAD in a path of that file. CI reads the same file to
+  start `build_circuits`, which hydrates and compares every supported preset and committee pair. A
+  drift means a deployed verifier accepts a different circuit from the tree.
 - `pnpm store:circuits pull` selects the newest first-parent `circuit-artifacts` commit whose
   `SOURCE_HASH` matches the current source tree. A different build at the branch tip must not
   replace it. The release workflow archives the branch tip and fails if the tip's hash differs.
