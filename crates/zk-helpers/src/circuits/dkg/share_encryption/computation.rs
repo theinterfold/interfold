@@ -15,8 +15,8 @@ use crate::circuits::commitments::{
 };
 use crate::dkg::share_encryption::ShareEncryptionCircuit;
 use crate::dkg::share_encryption::ShareEncryptionCircuitData;
+use crate::math::fold_negacyclic;
 use crate::math::{compute_k0is, compute_q_mod_t_centered, plaintext_poly_u64};
-use crate::math::{cyclotomic_polynomial, decompose_residue};
 use crate::polynomial_to_toml_json;
 use crate::utils::{compute_modulus_bit, compute_msg_bit};
 use crate::CircuitsErrors;
@@ -579,7 +579,6 @@ impl Computation for Inputs {
         let q_mod_t = (&modulus_q % t)
             .to_u64()
             .ok_or_else(|| CircuitsErrors::Other("Failed to convert q_mod_t to u64".into()))?;
-        let cyclo = cyclotomic_polynomial(n);
 
         let mut e0_mod_q = Polynomial::from_fhe_polynomial(e0);
         e0_mod_q.reverse();
@@ -667,9 +666,6 @@ impl Computation for Inputs {
 
             assert_eq!((ct0i_hat.coefficients().len() as u64) - 1, 2 * (n - 1));
 
-            // `r2i` / `p2i`, the cyclotomic quotients, are discarded: folding zeroes their terms.
-            let (r1i, _r2i) = decompose_residue(&ct0i, &ct0i_hat, &qi_bigint, &cyclo, n);
-
             let ct1i_hat = {
                 let pk1i_u_times = pk1i.mul(&u);
 
@@ -679,40 +675,51 @@ impl Computation for Inputs {
             };
             assert_eq!((ct1i_hat.coefficients().len() as u64) - 1, 2 * (n - 1));
 
-            let (p1i, _p2i) = decompose_residue(&ct1i, &ct1i_hat, &qi_bigint, &cyclo, n);
+            // Both quotients are pinned by the reduced identities themselves:
+            //   ct0i = (pk0i * u + e0 + k0qi * k1 mod X^N + 1) + qi * ct0_r
+            //   ct1i = (pk1i * u + e1            mod X^N + 1) + qi * ct1_r
+            // so folding the hats computed above and dividing by qi gives them. The hats already
+            // hold the products, so nothing is recomputed and the cyclotomic quotients never exist.
+            //
+            // Everything here is O(N). Going through `decompose_residue` plus
+            // `Polynomial::reduce_by_cyclotomic` instead ran four generic long divisions per limb --
+            // 536,870,904 BigInt multiply-subtracts at N = 8192, L = 2 -- and recomputed both
+            // products for the self-checks. Measured, that was 8.66s of witness generation per C3
+            // proof, and C3 runs about 1,512 times per DKG.
+            let ct0_reduced_hat = fold_negacyclic(&ct0i_hat, n as usize);
+            let ct1_reduced_hat = fold_negacyclic(&ct1i_hat, n as usize);
 
-            // Reduce both quotients modulo X^N + 1 so the circuit checks the reduced identities.
-            // Folding makes the cyclotomic quotients' terms identically zero, so `r2i` / `p2i` are
-            // not needed at all and one degree-N quotient per leg replaces the two per leg.
-            let ct0_r = r1i
-                .reduce_by_cyclotomic(&cyclo)
-                .expect("r1i must reduce modulo the cyclotomic");
-            let ct1_r = p1i
-                .reduce_by_cyclotomic(&cyclo)
-                .expect("p1i must reduce modulo the cyclotomic");
-
-            // Prove the reduced identities on the real witness rather than trusting the derivation:
-            // a wrong fold or coefficient order fails here instead of inside the circuit.
-            let ct0_reduced = pk0i
-                .mul(&u)
-                .reduce_by_cyclotomic(&cyclo)
-                .expect("pk0i * u must reduce modulo the cyclotomic")
-                .add(&e0i)
-                .add(&ki)
-                .add(&ct0_r.scalar_mul(&qi_bigint));
+            // Exact division is the identity: `div` rejects any coefficient that is not a multiple of
+            // qi, so a successful division proves an integer quotient closes the reduced equation and
+            // a wrong fold surfaces as a divisibility failure.
+            let (ct0_r, ct0_remainder) = ct0i
+                .sub(&ct0_reduced_hat)
+                .div(&Polynomial::constant(qi_bigint.clone()))
+                .expect("ct0i - (pk0i * u + e0 + k0qi * k1 mod X^N + 1) must be divisible by qi");
             assert!(
-                ct0i.sub(&ct0_reduced).is_zero(),
-                "reduced C3 ct0 identity must hold: ct0i == pk0i * u + e0 + k0qi * k1 + qi * r (mod X^N + 1)"
+                ct0_remainder.is_zero(),
+                "reduced C3 ct0 identity must divide exactly by qi"
+            );
+            let (ct1_r, ct1_remainder) = ct1i
+                .sub(&ct1_reduced_hat)
+                .div(&Polynomial::constant(qi_bigint.clone()))
+                .expect("ct1i - (pk1i * u + e1 mod X^N + 1) must be divisible by qi");
+            assert!(
+                ct1_remainder.is_zero(),
+                "reduced C3 ct1 identity must divide exactly by qi"
             );
 
-            let ct1_reduced = pk1i
-                .mul(&u)
-                .reduce_by_cyclotomic(&cyclo)
-                .expect("pk1i * u must reduce modulo the cyclotomic")
-                .add(&e1)
-                .add(&ct1_r.scalar_mul(&qi_bigint));
+            // Restate both identities on the derived witnesses. O(N), and independent of `div`.
             assert!(
-                ct1i.sub(&ct1_reduced).is_zero(),
+                ct0i
+                    .sub(&ct0_reduced_hat.add(&ct0_r.scalar_mul(&qi_bigint)))
+                    .is_zero(),
+                "reduced C3 ct0 identity must hold: ct0i == pk0i * u + e0 + k0qi * k1 + qi * r (mod X^N + 1)"
+            );
+            assert!(
+                ct1i
+                    .sub(&ct1_reduced_hat.add(&ct1_r.scalar_mul(&qi_bigint)))
+                    .is_zero(),
                 "reduced C3 ct1 identity must hold: ct1i == pk1i * u + e1 + qi * r (mod X^N + 1)"
             );
 
