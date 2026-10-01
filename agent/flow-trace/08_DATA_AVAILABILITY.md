@@ -119,12 +119,16 @@ The check runs at intake only. The publication worker does not repeat it. An inp
 committed keeps its data and its recovery jobs, because its pending status still needs DA
 finalization even when the Secure Process will exclude it from ballot selection.
 
-Intake skips this check, the proof check, and the commitment cutoff for an input that Ethereum
-already committed (`stage_input`). The committed input ID binds the content hash, so bytes with that
-hash are the committed bytes, and the contract refuses the new-input checks for such an input. A
-server that lost its job database therefore recovers a committed input when a client stages the same
-ballot again, also after the cutoff. The job then fails only at the compute deadline, like any other
-input job.
+Intake skips this check, the proof check, and the commitment cutoff for an input that the chain head
+shows as committed (`stage_input`). The committed input ID binds the content hash, so bytes with
+that hash are the committed bytes, and the contract refuses the new-input checks for such an input.
+A server that lost its job database therefore recovers a committed input when a client stages the
+same ballot again, also after the cutoff. In Avail mode, intake refuses a committed input after the
+compute deadline. `finalizeInput` then refuses its receipt, so the job could only fail, and a repeat
+of a statement with a failed job takes a new funding reservation. If the commitment leaves the chain
+before it is final, the job signs a new attestation, and the relay or the voter's wallet sends the
+commitment again before the cutoff (`commitment_step`, `relays`). The first attestation for the
+input followed these checks, so the new attestation covers checked bytes.
 
 ## Deadline simulation
 
@@ -318,6 +322,10 @@ run in the request transaction, before the requester pays the fee.
 - If a timeout interrupts an Avail submission after broadcast but before its receipt is saved, a
   retry can pay for a duplicate publication. The content hash remains the same, so this affects cost
   but not correctness.
+- A `Committed` input job does not start its paid Avail publication while the chain head holds a
+  publication of the input from another transaction, for example from the job of a lost database.
+  That publication retires the job when it is final. If it leaves the chain head first, the job
+  publishes the input itself.
 - A candidate VectorX proof keeps the Avail coordinates that produced it. The bridge answer is
   checked for the expected content hash, not for a valid Merkle path, so a syntactically valid
   answer can carry a proof that Ethereum refuses. When a publication attempt fails, the job returns
@@ -403,16 +411,20 @@ up the relays of a slot with masks. The owner's later inputs then show the owner
 owner must confirm the wallet transaction before the commitment cutoff, on the page or on a later
 visit. Otherwise the input is lost.
 
-A `Created` job whose commitment is already at the chain head, because a relay step was interrupted
-after its send, moves to `AwaitingCommitment` and waits for finality there. It is not sent again.
+A `Created` job whose commitment is already at the chain head moves to `AwaitingCommitment` and
+waits for finality there. A relay step that was interrupted after its send leaves such a job, and so
+does a client that stages a committed input again. The job records the commitment as relayed: it is
+not sent again while the chain head holds it, and it takes the recommit path of a relayed commitment
+(`commitment_step`) if it leaves the chain head.
 
 ## Remaining trust and operations
 
 VectorX provides the final correctness and availability proof. The server signature is an earlier
 liveness promise: it proves that the configured service received and durably stored the exact
-ciphertext before Ethereum reserves the leaf. The service signs only after the bytes reproduce the
-commitment their ballot proof binds, so an honest signer no longer funds publication of a ciphertext
-that the Secure Process must exclude.
+ciphertext before Ethereum reserves the leaf. The service signs the first attestation for an input
+only after the bytes reproduce the commitment their ballot proof binds. A later attestation or
+publication for an input that Ethereum already committed relies on that check (`stage_input`), so an
+honest signer does not fund publication of a ciphertext that the Secure Process must exclude.
 
 If the availability signer is compromised, it can sign a hash without retaining the bytes. The
 resulting pending input can stop the round until the compute timeout. It cannot make Ethereum accept

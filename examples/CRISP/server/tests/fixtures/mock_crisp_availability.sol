@@ -36,6 +36,8 @@ contract MockCrispAvailability {
   bool public committed;
   bool public published;
   uint256 public commitmentDeadline;
+  /// A test that does not set the compute deadline never reaches it.
+  uint256 public computeDeadline = type(uint64).max;
   /// Every `publishInput` and `finalizeInput` transaction.
   uint256 public sends;
 
@@ -49,12 +51,15 @@ contract MockCrispAvailability {
     commitmentDeadline = deadline;
   }
 
+  function setComputeDeadline(uint256 deadline) external {
+    computeDeadline = deadline;
+  }
+
   /// An insecure-512 round.
   function getE3(uint256) external pure returns (E3 memory e3) {}
 
-  /// A compute deadline that a test never reaches.
-  function getDeadlines(uint256) external pure returns (uint256, uint256, uint256) {
-    return (0, type(uint64).max, 0);
+  function getDeadlines(uint256) external view returns (uint256, uint256, uint256) {
+    return (0, computeDeadline, 0);
   }
 
   function e3CryptoConfigIds(uint256) external view returns (bytes32) {
