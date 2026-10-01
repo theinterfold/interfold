@@ -10,6 +10,7 @@ use super::{
     database::{generate_emoji, CIPHERTEXT_KEY_PREFIX},
     models::{CurrentRound, E3Crisp, E3StateLite, WebResultRequest},
 };
+use alloy::primitives::keccak256;
 use e3_sdk::indexer::{models::E3 as InterfoldE3, DataStore, E3Repository, SharedStore};
 use eyre::Result;
 use fhe::bfv::BfvParameters;
@@ -227,8 +228,11 @@ impl<S: DataStore> CrispE3Repository<S> {
         params: &BfvParameters,
     ) -> Result<()> {
         let key = self.crisp_key();
-        // The bytes first, so an input that the round record lists always has them.
-        self.store_ciphertext(index, &vote).await?;
+        // The bytes first, under their content hash, which the round record names in the same
+        // update as the other fields of the input. A ballot that replaces another at this index
+        // after a reorganization can then never be read with the fields of the other ballot.
+        let hash = keccak256(&vote).0;
+        self.store_ciphertext(index, hash, &vote).await?;
 
         // Decided here, once, rather than on every read. An entry's bytes never change, so neither
         // does the answer. `Err` means the bytes do not deserialize, which is itself unusable.
@@ -243,6 +247,14 @@ impl<S: DataStore> CrispE3Repository<S> {
         self.store
             .modify(&key, |e3_obj: Option<E3Crisp>| {
                 e3_obj.map(|mut e| {
+                    match e
+                        .input_ciphertext_hashes
+                        .iter_mut()
+                        .find(|(i, _)| *i == index)
+                    {
+                        Some(existing) => existing.1 = hash,
+                        None => e.input_ciphertext_hashes.push((index, hash)),
+                    }
                     if let Some(existing) =
                         e.input_commitments.iter_mut().find(|(i, _)| *i == index)
                     {
@@ -276,31 +288,41 @@ impl<S: DataStore> CrispE3Repository<S> {
 
     /// Move the ciphertexts that an older release kept inside the round record to their own keys.
     ///
-    /// An entry without a commitment was indexed before the commitments existed. It stays, so that
+    /// The inline copies go only after `sync` makes the moved copies durable. sled does not sync
+    /// the file of a large value, so a crash could otherwise lose the only copy of a ballot. An
+    /// entry without a commitment was indexed before the commitments existed. It stays, so that
     /// reads still refuse the round (`input_records`).
-    pub async fn move_inline_ciphertexts(&mut self) -> Result<()> {
+    pub async fn move_inline_ciphertexts(
+        &mut self,
+        sync: impl FnOnce() -> Result<()>,
+    ) -> Result<()> {
         let Some(round) = self.try_get_crisp().await? else {
             return Ok(());
         };
-        let committed = |index: u64| round.input_commitments.iter().any(|(i, _)| *i == index);
-        let mut moved = false;
+        let mut moved = Vec::new();
         for (bytes, index) in &round.ciphertext_inputs {
-            if committed(*index) {
-                self.store_ciphertext(*index, bytes).await?;
-                moved = true;
+            if round.input_commitments.iter().any(|(i, _)| i == index) {
+                let hash = keccak256(bytes).0;
+                self.store_ciphertext(*index, hash, bytes).await?;
+                moved.push((*index, hash));
             }
         }
-        if !moved {
+        if moved.is_empty() {
             return Ok(());
         }
+        sync()?;
         let key = self.crisp_key();
+        let is_moved = |index: &u64| moved.iter().any(|(i, _)| i == index);
         self.store
             .modify(&key, |round: Option<E3Crisp>| {
                 round.map(|mut round| {
-                    let commitments = &round.input_commitments;
                     round
                         .ciphertext_inputs
-                        .retain(|(_, index)| !commitments.iter().any(|(i, _)| i == index));
+                        .retain(|(_, index)| !is_moved(index));
+                    round
+                        .input_ciphertext_hashes
+                        .retain(|(index, _)| !is_moved(index));
+                    round.input_ciphertext_hashes.extend(moved.iter().copied());
                     round
                 })
             })
@@ -322,6 +344,7 @@ impl<S: DataStore> CrispE3Repository<S> {
             input_commitments: Vec::new(),
             input_slots: Vec::new(),
             input_parents: Vec::new(),
+            input_ciphertext_hashes: Vec::new(),
             input_usable: Vec::new(),
             start_time: 0u64,
             voting_end_time,
@@ -618,22 +641,23 @@ impl<S: DataStore> CrispE3Repository<S> {
     /// `await`s, and an `InputPublished` event can land between them, so a request assembled from
     /// several reads can pair a ciphertext with another input's commitment or leave the vectors
     /// different lengths. The Secure Process would then derive a root `CRISPProgram` rejects, and
-    /// nothing would say why. The bytes are read afterwards by index: an input's bytes are stored
-    /// before the record lists the input, and they never change.
+    /// nothing would say why. The bytes are read afterwards under the content hash that the record
+    /// names, so they always belong to the fields read with them.
     pub async fn get_input_snapshot(&self) -> Result<InputSnapshot> {
-        let mut snapshot = self.input_records().await?;
-        for (bytes, index) in &mut snapshot.ciphertexts {
-            *bytes = self.get_ciphertext(*index).await?;
+        let (mut snapshot, hashes) = self.input_records().await?;
+        for ((bytes, index), hash) in snapshot.ciphertexts.iter_mut().zip(hashes) {
+            *bytes = self.get_ciphertext(*index, hash).await?;
         }
         Ok(snapshot)
     }
 
-    /// The round's per-input records in on-chain index order, from one read, with empty bytes.
+    /// The round's per-input records in on-chain index order, from one read, with empty bytes, and
+    /// the content hash of each input in the same order.
     ///
     /// Event handlers run concurrently, so arrival order is not chain order, and a leaf's position
     /// in the input tree is its position in these vectors. Sorting here is what keeps the root the
     /// Secure Process derives equal to the one the contract accumulated.
-    async fn input_records(&self) -> Result<InputSnapshot> {
+    async fn input_records(&self) -> Result<(InputSnapshot, Vec<[u8; 32]>)> {
         let e3_crisp = self.get_crisp().await?;
 
         // An input indexed before the event carried these fields keeps its ciphertext in the round
@@ -646,6 +670,8 @@ impl<S: DataStore> CrispE3Repository<S> {
         Self::require_indexed(expected, e3_crisp.input_slots.len(), "slots")?;
         Self::require_indexed(expected, e3_crisp.input_parents.len(), "parents")?;
         Self::require_indexed(expected, e3_crisp.input_usable.len(), "usability flags")?;
+        let hashes = e3_crisp.input_ciphertext_hashes.len();
+        Self::require_indexed(expected, hashes, "ciphertext hashes")?;
 
         let mut commitments = e3_crisp.input_commitments;
         commitments.sort_by_key(|(index, _)| *index);
@@ -655,8 +681,10 @@ impl<S: DataStore> CrispE3Repository<S> {
         parents.sort_by_key(|(index, _)| *index);
         let mut usable = e3_crisp.input_usable;
         usable.sort_by_key(|(index, _)| *index);
+        let mut hashes = e3_crisp.input_ciphertext_hashes;
+        hashes.sort_by_key(|(index, _)| *index);
 
-        Ok(InputSnapshot {
+        let snapshot = InputSnapshot {
             ciphertexts: commitments
                 .iter()
                 .map(|(index, _)| (Vec::new(), *index))
@@ -665,7 +693,8 @@ impl<S: DataStore> CrispE3Repository<S> {
             slots: slots.into_iter().map(|(_, value)| value).collect(),
             parents: parents.into_iter().map(|(_, value)| value).collect(),
             usable: usable.into_iter().map(|(_, value)| value).collect(),
-        })
+        };
+        Ok((snapshot, hashes.into_iter().map(|(_, hash)| hash).collect()))
     }
 
     /// Refuses a round whose per-input records do not line up with its ciphertexts.
@@ -680,16 +709,16 @@ impl<S: DataStore> CrispE3Repository<S> {
     }
 
     /// Store an input's bytes as hex, about half the size of a JSON byte array.
-    async fn store_ciphertext(&mut self, index: u64, bytes: &[u8]) -> Result<()> {
-        let key = self.ciphertext_key(index);
+    async fn store_ciphertext(&mut self, index: u64, hash: [u8; 32], bytes: &[u8]) -> Result<()> {
+        let key = self.ciphertext_key(index, hash);
         self.store
             .insert(&key, &hex::encode(bytes))
             .await
             .map_err(|e| eyre::eyre!("Could not store the ciphertext at '{key}': {e}"))
     }
 
-    async fn get_ciphertext(&self, index: u64) -> Result<Vec<u8>> {
-        let key = self.ciphertext_key(index);
+    async fn get_ciphertext(&self, index: u64, hash: [u8; 32]) -> Result<Vec<u8>> {
+        let key = self.ciphertext_key(index, hash);
         let bytes: String = self
             .store
             .get(&key)
@@ -713,24 +742,24 @@ impl<S: DataStore> CrispE3Repository<S> {
     ///
     /// `None` when the slot holds nothing usable, which is what a first vote sees.
     pub async fn get_slot_head(&self, slot: [u8; 20]) -> Result<Option<(Vec<u8>, u64)>> {
-        let records = self.input_records().await?;
-        let mut head: Option<u64> = None;
+        let (records, hashes) = self.input_records().await?;
+        let mut head: Option<(u64, [u8; 32])> = None;
 
         for (position, (_, index)) in records.ciphertexts.iter().enumerate() {
             if records.slots[position] != slot || !records.usable[position] {
                 continue;
             }
 
-            if records.parents[position].checked_sub(1) != head {
+            if records.parents[position].checked_sub(1) != head.map(|(index, _)| index) {
                 continue;
             }
 
-            head = Some(*index);
+            head = Some((*index, hashes[position]));
         }
 
         // Only the head's bytes: a slot's chain can hold many entries.
         match head {
-            Some(index) => Ok(Some((self.get_ciphertext(index).await?, index))),
+            Some((index, hash)) => Ok(Some((self.get_ciphertext(index, hash).await?, index))),
             None => Ok(None),
         }
     }
@@ -828,8 +857,10 @@ impl<S: DataStore> CrispE3Repository<S> {
 
     /// The index has a fixed width, so a round's ciphertexts sort in index order. sled then adds
     /// each new ballot to the last page and does not write the full pages of earlier ballots again.
-    fn ciphertext_key(&self, index: u64) -> String {
-        format!("{CIPHERTEXT_KEY_PREFIX}{}:{index:020}", self.e3_id)
+    /// The content hash keeps a ballot that replaces another at the same index apart from it.
+    fn ciphertext_key(&self, index: u64, hash: [u8; 32]) -> String {
+        let hash = hex::encode(hash);
+        format!("{CIPHERTEXT_KEY_PREFIX}{}:{index:020}:{hash}", self.e3_id)
     }
 }
 
@@ -872,6 +903,7 @@ mod tests {
         CurrentRoundRepository,
     };
     use crate::server::models::{CensusMode, CreditMode, CustomParams, E3Crisp};
+    use e3_fhe_params::{build_bfv_params_from_set_arc, BfvParamSet, BfvPreset};
     use e3_sdk::indexer::{InMemoryStore, SharedStore};
     use std::sync::Arc;
     use tokio::sync::RwLock;
@@ -897,6 +929,7 @@ mod tests {
             input_slots: vec![],
             input_usable: vec![],
             input_parents: vec![],
+            input_ciphertext_hashes: vec![],
             requester: requester.to_string(),
             num_options: "2".to_string(),
             credit_mode: CreditMode::Constant,
@@ -1029,8 +1062,30 @@ mod tests {
         let mut round = CrispE3Repository::new(test_store(), "12");
         round.set_crisp(record).await.unwrap();
 
-        round.move_inline_ciphertexts().await.unwrap();
+        round.move_inline_ciphertexts(|| Ok(())).await.unwrap();
 
         assert!(round.get_input_snapshot().await.is_err());
+    }
+
+    /// A ballot that replaces another at the same index, as after a reorganization, reads with its
+    /// own fields.
+    #[tokio::test]
+    async fn a_replaced_input_reads_the_new_ballot() {
+        let mut round = CrispE3Repository::new(test_store(), "13");
+        round
+            .set_crisp(crisp_round("requester", "Active"))
+            .await
+            .unwrap();
+        let bfv = build_bfv_params_from_set_arc(BfvParamSet::from(BfvPreset::InsecureThreshold512));
+        for ballot in [1, 2] {
+            round
+                .insert_ciphertext_input(vec![ballot; 3], 0, [ballot; 32], [7; 20], 0, &bfv)
+                .await
+                .unwrap();
+        }
+
+        let snapshot = round.get_input_snapshot().await.unwrap();
+        assert_eq!(snapshot.ciphertexts, vec![(vec![2; 3], 0)]);
+        assert_eq!(snapshot.commitments, vec![[2; 32]]);
     }
 }

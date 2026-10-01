@@ -11,7 +11,11 @@ use log::error;
 use rand::{rng, Rng};
 use serde::{de::DeserializeOwned, Serialize};
 use sled::{Db, Tree};
-use std::str;
+use std::{
+    fs::{self, File},
+    path::{Path, PathBuf},
+    str,
+};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -20,6 +24,10 @@ pub enum DatabaseError {
     SledDB(#[from] sled::Error),
     #[error("Serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("{0}")]
+    Compaction(String),
 }
 
 /// Keys under this prefix hold ballot ciphertexts. A ciphertext is large and never changes.
@@ -36,6 +44,7 @@ pub struct SledDB {
     pub db: Db,
     ciphertexts: Tree,
     cursor: Tree,
+    path: PathBuf,
 }
 
 impl SledDB {
@@ -53,6 +62,7 @@ impl SledDB {
             ciphertexts: db.open_tree("crisp-ciphertexts")?,
             cursor,
             db,
+            path: PathBuf::from(path),
         })
     }
 
@@ -66,6 +76,11 @@ impl SledDB {
         }
     }
 
+    /// Write the database to the disk, with the files of its large values.
+    pub fn sync_to_disk(&self) -> Result<(), DatabaseError> {
+        sync_to_disk(&self.db, &self.path)
+    }
+
     /// The IDs of the stored rounds.
     pub fn round_ids(&self) -> Result<Vec<String>, DatabaseError> {
         self.db
@@ -74,6 +89,39 @@ impl SledDB {
             .map(|key| Ok(String::from_utf8_lossy(&key?[CRISP_KEY_PREFIX.len()..]).into_owned()))
             .collect()
     }
+}
+
+/// Write a database to the disk, with the files of its large values. `Db::flush` syncs only the
+/// log: sled does not sync the file of a large value, and recovery skips a log entry whose file is
+/// missing.
+fn sync_to_disk(db: &Db, path: &Path) -> Result<(), DatabaseError> {
+    db.flush()?;
+    let blobs = path.join("blobs");
+    for entry in fs::read_dir(&blobs)? {
+        File::open(entry?.path())?.sync_all()?;
+    }
+    File::open(&blobs)?.sync_all()?;
+    Ok(())
+}
+
+/// Copy a stopped server's database into a new directory, without the old page copies that sled
+/// keeps on disk. The copy can still be up to about three times the size of the data.
+pub fn compact_database(from: &str, to: &str) -> Result<(), DatabaseError> {
+    // `sled::open` creates a missing database, so check both paths first. sled writes `conf` in
+    // each database directory.
+    if !Path::new(from).join("conf").is_file() || Path::new(to).exists() {
+        let refusal = format!("{from} must hold a database and {to} must not exist");
+        return Err(DatabaseError::Compaction(refusal));
+    }
+    let database = sled::open(from)?;
+    let copy = sled::open(to)?;
+    copy.import(database.export());
+    sync_to_disk(&copy, Path::new(to))?;
+    if copy.checksum()? != database.checksum()? {
+        let mismatch = format!("the copy in {to} does not match {from}");
+        return Err(DatabaseError::Compaction(mismatch));
+    }
+    Ok(())
 }
 
 #[async_trait]
@@ -272,10 +320,12 @@ mod tests {
         // The steps of the server startup.
         let sled_db = SledDB::new(dir.path()).unwrap();
         let round_ids = sled_db.round_ids().unwrap();
+        let disk = sled_db.clone();
         let store = SharedStore::new(Arc::new(RwLock::new(sled_db)));
         for e3_id in round_ids {
             let mut round = CrispE3Repository::new(store.clone(), &e3_id);
-            round.move_inline_ciphertexts().await.unwrap();
+            let sync = || Ok(disk.sync_to_disk()?);
+            round.move_inline_ciphertexts(sync).await.unwrap();
         }
 
         let cursor = store.get::<u64>(INDEXER_CURSOR_KEY).await.unwrap();

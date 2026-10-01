@@ -17,7 +17,7 @@ use log::info;
 use clap::{Parser, Subcommand};
 use once_cell::sync::Lazy;
 use sled::Db;
-use std::{path::Path, sync::Arc};
+use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::commands::check_committee_key_published;
@@ -60,14 +60,6 @@ enum Commands {
         #[arg(short, long)]
         e3id: String,
     },
-    /// Copy a stopped server's database into a new directory, without the old page copies that
-    /// sled keeps on disk. The copy can still be up to about three times the size of the data.
-    CompactDatabase {
-        /// The database directory, for example `database/server`.
-        from: String,
-        /// The directory for the copy. It must not exist.
-        to: String,
-    },
 }
 
 #[tokio::main]
@@ -96,21 +88,6 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         Some(Commands::CheckE3Ready { e3id }) => {
             let is_ready = check_committee_key_published(&e3id).await?;
             println!("{}", is_ready);
-        }
-        Some(Commands::CompactDatabase { from, to }) => {
-            // `sled::open` creates a missing database, so check both paths first. sled writes
-            // `conf` in each database directory.
-            if !Path::new(&from).join("conf").is_file() || Path::new(&to).exists() {
-                return Err(format!("{from} must hold a database and {to} must not exist").into());
-            }
-            let database = sled::open(&from)?;
-            let copy = sled::open(&to)?;
-            copy.import(database.export());
-            copy.flush()?;
-            if copy.checksum()? != database.checksum()? {
-                return Err(format!("the copy in {to} does not match {from}").into());
-            }
-            println!("Compacted {from} into {to}");
         }
         None => {
             // Fall back to interactive mode if no command was specified

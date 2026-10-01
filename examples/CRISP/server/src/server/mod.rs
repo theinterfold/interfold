@@ -23,6 +23,7 @@ use actix_cors::Cors;
 use actix_web::{middleware::Logger, web, App, HttpServer};
 use app_data::AppData;
 use data_availability::AvailabilityService;
+pub use database::compact_database;
 use database::SledDB;
 use e3_sdk::indexer::SharedStore;
 use eyre::OptionExt;
@@ -43,6 +44,7 @@ pub async fn start() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let pathdb = pathdb.to_str().ok_or_eyre("Path could not be determined")?;
     let sled_db = SledDB::new(pathdb)?;
     let round_ids = sled_db.round_ids()?;
+    let disk = sled_db.clone();
     let availability = Arc::new(AvailabilityService::new(&sled_db.db, &CONFIG)?);
     availability.validate_onchain_configuration().await?;
     let availability_worker = Arc::clone(&availability);
@@ -53,14 +55,14 @@ pub async fn start() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     });
     let db = SharedStore::new(Arc::new(RwLock::new(sled_db)));
     // An older release kept every ballot inside its round record. Move them to keys of their own
-    // before the indexer and the routes read the rounds.
+    // before the indexer and the routes read the rounds. A failure stops the start: a round with
+    // ballots left in its record cannot be read.
     for e3_id in round_ids {
         let mut round = CrispE3Repository::new(db.clone(), &e3_id);
-        if let Err(error) = round.move_inline_ciphertexts().await {
-            log::warn!(
-                "[e3_id={e3_id}] Could not move the ballots out of the round record: {error}"
-            );
-        }
+        round
+            .move_inline_ciphertexts(|| Ok(disk.sync_to_disk()?))
+            .await
+            .map_err(|error| eyre::eyre!("[e3_id={e3_id}] Could not move the ballots: {error}"))?;
     }
 
     // New indexer
