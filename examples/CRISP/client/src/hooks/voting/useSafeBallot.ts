@@ -172,6 +172,13 @@ export const useSafeBallot = (castVoteWithProof: CastVoteWithProof) => {
     [run, safe, castVoteWithProof],
   )
 
+  /** Drop the prepared ballot and its signatures, so that the page can make other inputs again. */
+  const discard = useCallback(() => {
+    setPending(null)
+    setSignatures({})
+    setError(null)
+  }, [])
+
   return {
     safe,
     pending,
@@ -185,5 +192,6 @@ export const useSafeBallot = (castVoteWithProof: CastVoteWithProof) => {
     signWithWallet,
     submit,
     maskSafe,
+    discard,
   }
 }

@@ -69,6 +69,9 @@ const DailyPollSection: React.FC<DailyPollSectionProps> = ({ loading, endTime, t
   const [noPollSelected, setNoPollSelected] = useState<boolean>(true)
   const { setOpen } = useModal()
   const { castVoteWithProof, isVoting: isCastingVote, isMasking, votingStep, lastActiveStep, stepMessage } = useVoteCasting()
+  // A prepared Safe ballot exists only in the Safe panel. A completed input leaves this page and
+  // discards it, so Cast and Mask wait until the coordinator submits or discards the ballot.
+  const [safeDraft, setSafeDraft] = useState(false)
 
   // Derived and selection state are round-local. Tracking the round id lets us
   // clear them when the round changes so a new active poll doesn't inherit the
@@ -287,25 +290,33 @@ const DailyPollSection: React.FC<DailyPollSectionProps> = ({ loading, endTime, t
                 <div className='row' style={{ gap: 12, flexWrap: 'wrap' }}>
                   <button
                     className='btn lg'
-                    disabled={noPollSelected || loading || busy || (canRegister && isRegistered === false)}
+                    disabled={noPollSelected || loading || busy || safeDraft || (canRegister && isRegistered === false)}
                     onClick={() => castVote(false)}
                   >
                     {isCastingVote ? 'Processing…' : hasVotedInCurrentRound ? 'Update vote →' : 'Cast →'}
                   </button>
-                  <button className='btn ghost lg' disabled={loading || busy} onClick={() => castVote(true, 'random')}>
+                  <button className='btn ghost lg' disabled={loading || busy || safeDraft} onClick={() => castVote(true, 'random')}>
                     {isMasking ? 'Masking…' : 'Mask a voter'}
                   </button>
                   {/* Self-masks are what make your own later activity ambiguous: an observer
                       seeing your address write to your slot again cannot tell an update from a
                       mask — but only if masking yourself is something voters actually do. */}
-                  <button className='btn ghost lg' disabled={loading || busy} onClick={() => castVote(true, 'self')}>
+                  <button className='btn ghost lg' disabled={loading || busy || safeDraft} onClick={() => castVote(true, 'self')}>
                     {isMasking ? 'Masking…' : 'Mask my slot'}
                   </button>
                 </div>
+                {safeDraft && (
+                  <div className='cap muted'>A Safe ballot waits for its signatures. Submit or discard it before you cast or mask.</div>
+                )}
 
                 {/* A Safe has a slot of its own in an ONCHAIN round. Its owners sign together. */}
                 {roundState.census_mode === CensusMode.Onchain && user && (
-                  <SafeBallotPanel pollSelected={pollSelected} castVoteWithProof={castVoteWithProof} disabled={Boolean(loading) || busy} />
+                  <SafeBallotPanel
+                    pollSelected={pollSelected}
+                    castVoteWithProof={castVoteWithProof}
+                    disabled={Boolean(loading) || busy}
+                    onDraftChange={setSafeDraft}
+                  />
                 )}
               </div>
             )}

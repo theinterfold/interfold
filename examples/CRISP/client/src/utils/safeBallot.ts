@@ -102,6 +102,16 @@ export const safeBallotTypedData = (request: SafeSignRequest) => {
 const EIP7702_DELEGATION_PREFIX = '0xef0100'
 
 /**
+ * Whether an account with this code signs with a private key: it has no code, or only an EIP-7702
+ * delegation. A contract owner signs in its own app, which can publish the message.
+ *
+ * @param code The code of the account, as `getCode` returns it.
+ */
+export const signsWithKey = (code: Hex | null | undefined): boolean => {
+  return !code || code === '0x' || code.toLowerCase().startsWith(EIP7702_DELEGATION_PREFIX)
+}
+
+/**
  * Read a Safe's owners and threshold, after a check that the CRISP program accepts it as a Safe.
  *
  * @throws When the program does not accept the Safe, the Safe is above the ballot caps, or fewer
@@ -123,7 +133,7 @@ export const readSafeSlot = async (client: PublicClient, crispProgram: Address, 
     )
   }
   const codes = await Promise.all(owners.map((owner) => client.getCode({ address: owner })))
-  const keyOwners = owners.filter((_, i) => !codes[i] || codes[i] === '0x' || codes[i].toLowerCase().startsWith(EIP7702_DELEGATION_PREFIX))
+  const keyOwners = owners.filter((_, i) => signsWithKey(codes[i]))
   if (keyOwners.length < threshold) {
     throw new Error(
       `Only ${keyOwners.length} owners of this Safe sign with a private key, and the ballot needs ${threshold}. Owners that are contracts, such as nested Safes, cannot sign a ballot.`,

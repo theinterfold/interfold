@@ -7,7 +7,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useSignTypedData, usePublicClient, useChainId, useWalletClient } from 'wagmi'
-import { zeroHash } from 'viem'
+import { decodeAbiParameters, parseAbiParameters, zeroHash } from 'viem'
 import type { Address, Hex } from 'viem'
 import { encodeSolidityProof, finishBallotProof, finishMaskProof, prepareBallot } from '@crisp-e3/sdk'
 import { ciphertextCommitment, finishSafeBallotProof, ownersCommitment, withBallotParent } from '@crisp-e3/sdk'
@@ -23,14 +23,18 @@ import { getRandomVoterToMask } from '@/utils/voters'
 import { handleGenericError } from '@/utils/handle-generic-error'
 import { NUM_OPTIONS } from '@/utils/constants'
 import { ballotTypedData, getBallotAuthorization, getCrispProgramAddress, getCrispRoundConfig } from '@/utils/ballotDigest'
-import { getRandomRegistrant, getVotingPower, isRegisteredIn } from '@/utils/onchainCensus'
+import { firstInRandomOrder, getRegistrantAt, getRegistrantCount, getVotingPower, isRegisteredIn } from '@/utils/onchainCensus'
 import { submitInputCommitmentDirectly } from '@/utils/directVote'
 import { txExplorerUrl } from '@/utils/methods'
 
 const INTERFOLD_API = import.meta.env.VITE_INTERFOLD_API
 
-/** How many registrants a random mask draws before it gives up on finding one with a ballot. */
-const MAX_MASK_DRAWS = 8
+/**
+ * How long a random mask searches the registrants for a slot that it can mask. Each candidate costs
+ * two sequential RPC reads. The limit keeps a registry with many unmaskable slots from holding the
+ * action open, and it is short beside the mask proof, which takes minutes.
+ */
+const MASK_TARGET_SEARCH_MS = 30_000
 
 interface PendingAvailabilityJob {
   jobId: string
@@ -381,7 +385,9 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
    * who is maskable now.
    *
    * `ballotAuthorization` reverts for a Safe above the ballot caps, so it cannot be masked. The
-   * random draw skips such slots, so that registered oversized Safes cannot make masks fail.
+   * random target is the first maskable registrant in a uniformly random order without repeats, so
+   * it stays uniform over the maskable registrants. Oversized Safes cannot make the search fail
+   * while one registrant is maskable, unless `MASK_TARGET_SEARCH_MS` passes first.
    */
   const handleMask = useCallback(
     async (target: MaskTarget): Promise<VoteData> => {
@@ -418,18 +424,25 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
           }
 
           const e3Id = BigInt(roundState.id)
+          const registry = roundState.token_address as Address
           const { crispProgram } = await getCrispRoundConfig(publicClient, roundState.interfold_address as Address, e3Id)
-          for (let draw = 0; draw < MAX_MASK_DRAWS; draw++) {
-            const randomTarget = await getRandomRegistrant(publicClient, roundState.token_address as Address)
-            if (!randomTarget) throw new Error('Nobody has registered in this round yet, so there is no slot to mask')
-            // The ciphertext commitment does not change whether the slot has a ballot.
-            const maskable = await getBallotAuthorization(publicClient, crispProgram, e3Id, randomTarget, zeroHash).then(
-              () => true,
-              () => false,
-            )
-            if (maskable) return { ...empty, slotAddress: randomTarget }
-          }
-          throw new Error('Could not find a slot to mask. Try again.')
+          const total = await getRegistrantCount(publicClient, registry)
+          if (total === 0n) throw new Error('Nobody has registered in this round yet, so there is no slot to mask')
+          const randomTarget = await firstInRandomOrder(
+            total,
+            async (index) => {
+              const registrant = await getRegistrantAt(publicClient, registry, index)
+              // The ciphertext commitment does not change whether the slot can be masked.
+              const maskable = await getBallotAuthorization(publicClient, crispProgram, e3Id, registrant, zeroHash).then(
+                () => true,
+                () => false,
+              )
+              return maskable ? registrant : undefined
+            },
+            Date.now() + MASK_TARGET_SEARCH_MS,
+          )
+          if (!randomTarget) throw new Error('Could not find a slot to mask. Try again.')
+          return { ...empty, slotAddress: randomTarget }
         }
 
         if (typeof target === 'object') throw new Error('A named slot can be masked only in an on-chain round.')
@@ -525,6 +538,8 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
         operationIsMask: boolean,
         isSafeVote: boolean | undefined,
         afterRestage = false,
+        /** Stay on this page after the input completes, because a Safe ballot waits on it. */
+        stay = false,
       ): Promise<boolean> => {
         if (response.status === 'failed_broadcast') {
           throw new Error(extractCleanErrorMessage(response.message ?? undefined))
@@ -542,12 +557,12 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
             // The server lost the job while this page waited. Stage the stored bytes again once;
             // a second loss in the same action is left to the next one.
             const stored = readAvailabilityJob(pendingJobKey)
-            if (!afterRestage && stored) return restagePendingJob(stored)
+            if (!afterRestage && stored) return restagePendingJob(stored, stay)
             throw new Error('The server lost the pending proof. Repeat the action to submit it again.')
           }
           if (decided) {
             if (decided.status === 'failed_broadcast') clearAvailabilityJob(pendingJobKey)
-            return finishCommitment(decided, operationIsMask, isSafeVote, afterRestage)
+            return finishCommitment(decided, operationIsMask, isSafeVote, afterRestage, stay)
           }
 
           setStepMessage('Your proof is still queued. Come back later and repeat the action to finish it.')
@@ -596,24 +611,24 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
 
         if (!operationIsMask && !isSafeVote) markVotedInRound(roundState.id)
 
+        // A Safe ballot that waits on this page is lost when the page closes.
+        const leave = stay ? '' : ' You can safely leave this page.'
         showToast({
           type: 'success',
           message: finalized
             ? operationIsMask
               ? 'Slot masked successfully'
               : 'Vote finalized successfully!'
-            : operationIsMask
-              ? 'Mask committed. You can safely leave this page.'
-              : 'Vote committed. You can safely leave this page.',
+            : `${operationIsMask ? 'Mask' : 'Vote'} committed.${leave}`,
           linkUrl: url,
         })
-        navigate(`/result/${roundState.id}/confirmation`)
+        if (!stay) navigate(`/result/${roundState.id}/confirmation`)
         return true
       }
 
       // The server lost its job database. Re-stage the same bytes: a fresh ciphertext could leave
       // an earlier on-chain commitment unresolved and stop the complete round.
-      const restagePendingJob = async (pendingJob: PendingAvailabilityJob): Promise<boolean> => {
+      const restagePendingJob = async (pendingJob: PendingAvailabilityJob, stay = false): Promise<boolean> => {
         if (!pendingJob.encodedProof) {
           throw new Error('The server lost this legacy vote job. An operator must recover it before another vote is submitted.')
         }
@@ -622,17 +637,26 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
         )
         if (!restaged) throw new Error('Could not restore the pending data-availability job.')
         if (restaged.status === 'failed_broadcast') clearAvailabilityJob(pendingJobKey)
-        return finishCommitment(restaged, pendingJob.isMask, pendingJob.isSafeVote, true)
+        return finishCommitment(restaged, pendingJob.isMask, pendingJob.isSafeVote, true, stay)
       }
 
       try {
         const pendingJob = readAvailabilityJob(pendingJobKey)
-        // Following the earlier job can leave the page, and a Safe ballot lives only in the panel,
-        // so refuse rather than lose the owners' signatures.
-        if (pendingJob && safeBallot) {
-          throw new Error('An earlier input from this account is still pending. Follow it with Cast or Mask, then submit the Safe vote.')
-        }
         if (pendingJob) {
+          // A Safe ballot exists only in the panel, and a completed input leaves the page. So a Safe
+          // vote completes an earlier input of the account in place, keeps the ballot, and stops.
+          // The next submission reads the slot head after that input and makes the server requests
+          // of any other input. When the earlier input is this ballot, completing it is the whole
+          // action. The stored envelope is the ABI sequence of `encodeSolidityProof`, with the
+          // commitment third; a pointer without it counts as this ballot when it is a Safe vote.
+          const stay =
+            safeBallot !== undefined &&
+            !(pendingJob.encodedProof
+              ? decodeAbiParameters(
+                  parseAbiParameters('bytes, address, bytes32, bytes32, uint40, bytes'),
+                  pendingJob.encodedProof as Hex,
+                )[2] === safeBallot.prepared.ctCommitment.toLowerCase()
+              : pendingJob.isSafeVote)
           setIsMasking(pendingJob.isMask)
           setIsVoting(!pendingJob.isMask)
           setVotingStep('broadcasting')
@@ -640,19 +664,27 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
           setStepMessage('Checking the durable vote job...')
 
           const resumed = await getVoteAvailability(pendingJob.jobId)
+          let completed: boolean
           if (resumed === null) {
-            if (await restagePendingJob(pendingJob)) {
-              clearAvailabilityJob(pendingJobKey)
-            }
-            return
+            completed = await restagePendingJob(pendingJob, stay)
           } else {
             if (!resumed) throw new Error('Could not read the pending data-availability job.')
             if (resumed.status === 'failed_broadcast') clearAvailabilityJob(pendingJobKey)
-            if (await finishCommitment(resumed, pendingJob.isMask, pendingJob.isSafeVote)) {
-              clearAvailabilityJob(pendingJobKey)
-            }
-            return
+            completed = await finishCommitment(resumed, pendingJob.isMask, pendingJob.isSafeVote, false, stay)
           }
+          if (completed) clearAvailabilityJob(pendingJobKey)
+          if (stay && !unmounted.current) {
+            showToast(
+              completed
+                ? { type: 'info', message: 'An earlier input from this account is complete. Submit the Safe vote again.' }
+                : {
+                    type: 'warning',
+                    message: 'An earlier input from this account is still queued. Submit the Safe vote again after it completes.',
+                    persistent: true,
+                  },
+            )
+          }
+          return
         }
 
         if (!isAMask && !pollSelected && !safeBallot) {

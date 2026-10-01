@@ -121,8 +121,17 @@ Whoever prepares a Safe ballot knows its choice. The contract reads the owners a
 input is published, so while a Safe has more than 10 owners or a threshold above 4, the contract
 refuses every input for its slot, masks included. A coerced Safe can therefore keep a ballot that
 the coercer prepared until it changes back. A change of owners does not do this, because the new
-owners can vote again. The owner signatures and the prepared ballot can publish that ballot again
-until the round ends, also after a later vote, so keep them private.
+owners can vote again.
+
+`publishInput` refuses a ciphertext commitment that the slot already used in the round, for every
+input. So a published ballot cannot come back over a later vote. This rule does not cover two cases:
+
+- A Safe ballot that the owners signed but nobody published stays valid until the round ends.
+  Whoever holds the owner signatures and the prepared ballot can publish it one time, also after a
+  later vote, and it then replaces that vote. So keep them private.
+- If a mask lands on the slot while a Safe vote is proved, and both name the same previous input,
+  the vote is not counted. It cannot be proved again over the mask, so the owners must sign a new
+  ballot.
 
 In the web client, any account can coordinate a Safe vote with **Vote as a Safe**. It encrypts the
 ballot and makes a signing link whose request stays in the URL fragment, so no server receives it.

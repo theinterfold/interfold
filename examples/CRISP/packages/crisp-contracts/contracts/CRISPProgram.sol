@@ -104,6 +104,12 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     /// Two genuinely distinct inputs differ in bytes, commitment, slot or parent, so they differ
     /// here; only a byte-identical resubmission collides.
     mapping(uint256 leaf => bool) appendedLeaf;
+    /// @notice The ciphertext commitments that each slot has committed in this round.
+    /// @dev A ballot digest binds the slot and the commitment, not the parent. Without this map,
+    /// whoever holds a signed ballot and its encryption could prove it again over a later head and
+    /// replace a later vote of the slot. Every input is checked, so that votes, updates and masks
+    /// keep identical validation.
+    mapping(address slot => mapping(bytes32 commitment => bool)) slotCommitmentUsed;
     /// @notice Proofs accepted before their ciphertexts receive a verified DA receipt.
     /// @dev The key binds every value needed to reproduce the final input leaf. A receipt can
     /// publish only the exact tuple whose Noir proof was accepted in the first transaction.
@@ -250,6 +256,8 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
   /// @notice Thrown when an input identical to one already published is submitted again.
   error InputAlreadyPublished(uint256 leaf);
   error InputAlreadyCommitted(bytes32 inputId);
+  /// @notice The slot already committed an input with this ciphertext commitment in this round.
+  error SlotCommitmentAlreadyUsed(address slot, bytes32 commitment);
   error InputNotCommitted(bytes32 inputId);
   error InvalidInputAvailabilityAttestation();
   error InputAvailabilityAttestationExpired(uint64 expiresAt);
@@ -872,6 +880,10 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     if (e3Data[e3Id].appendedLeaf[leaf]) revert InputAlreadyPublished(leaf);
     bytes32 id = inputId(e3Id, encryptedVoteHash, encryptedVoteCommitment, slotAddress, parentIndexPlusOne);
     if (e3Data[e3Id].inputStatus[id] != InputStatus.NONE) revert InputAlreadyCommitted(id);
+    // A ballot that this slot already committed cannot return over a later head.
+    if (e3Data[e3Id].slotCommitmentUsed[slotAddress][encryptedVoteCommitment]) {
+      revert SlotCommitmentAlreadyUsed(slotAddress, encryptedVoteCommitment);
+    }
 
     (bytes32 eligibility, IHonkVerifier verifier) = _eligibility(e3Id, slotAddress);
     bytes32 parentCommitment = _parentCommitment(e3Id, slotAddress, parentIndexPlusOne);
@@ -1110,7 +1122,8 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     }
   }
 
-  /// @notice Record one input: append its leaf and remember its commitment for later parents.
+  /// @notice Record one input: append its leaf, remember its commitment for later parents, and
+  /// refuse the commitment for any later input of the slot.
   function _processVote(
     uint256 e3Id,
     address slotAddress,
@@ -1131,6 +1144,7 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     // input deadline.
     if (round.appendedLeaf[leaf]) revert InputAlreadyPublished(leaf);
     round.appendedLeaf[leaf] = true;
+    round.slotCommitmentUsed[slotAddress][encryptedVoteCommitment] = true;
 
     voteIndex = round.votes.numberOfLeaves;
     round.votes._insert(leaf);

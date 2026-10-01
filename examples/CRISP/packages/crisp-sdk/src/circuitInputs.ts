@@ -159,6 +159,9 @@ export const attachSignatureImpl = async (prepared: PreparedBallot, digest: `0x$
  * A vote replaces the slot, so its ciphertext, commitment and digest do not depend on the head. Its
  * owners can sign before the head is read, and the prover names the head right before proving, as
  * for any other input. A mask adds to the head, so it is prepared against the head instead.
+ * `CRISPProgram` accepts a commitment only once per slot and round. So after a vote is published, it
+ * cannot name a later head. A vote that lost its parent to another input needs a new `prepareBallot`
+ * and new signatures.
  *
  * @param prepared A vote from `prepareBallot`.
  * @param parent The head's tree index and its {@link ciphertextCommitment}. Omit it for an empty slot.

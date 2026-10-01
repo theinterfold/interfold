@@ -263,9 +263,20 @@ every section.
   owners can vote again. `withBallotParent` only moves a vote's head request to just before proving;
   the inputs it sets equal those a prepare with the head sets. The web client sends a signing
   request only in the URL fragment, submits a Safe vote with the server requests of a mask, and its
-  random mask draw skips slots for which `ballotAuthorization` reverts. `MAX_SAFE_OWNERS` and
-  `MAX_SAFE_SIGNERS` must match in `CRISPProgram.sol`, `crisp_lib::constants` and the SDK. —
-  `flow-trace/04`
+  random mask visits the registrants in a random order without repeats and skips slots for which
+  `ballotAuthorization` reverts. `MAX_SAFE_OWNERS` and `MAX_SAFE_SIGNERS` must match in
+  `CRISPProgram.sol`, `crisp_lib::constants` and the SDK. — `flow-trace/04`
+- **A slot commits each ciphertext commitment at most once per round.** A ballot digest binds the
+  slot and the commitment, not the parent, so whoever holds a signed ballot and its encryption could
+  prove it again over a later head and replace a later vote. `CRISPProgram._verifyInputProof`
+  refuses a commitment that the slot already committed (`SlotCommitmentAlreadyUsed`), so
+  `validateInputProof` and the server refuse it too, and `_processVote` records it. Every input
+  takes the check, because votes, updates and masks must keep identical validation. The rule does
+  not cover a signed ballot that was never published: it stays usable until the round ends, also
+  after a later vote, which it then replaces. A vote that a sibling orphaned cannot be proved again
+  over the new head; its owners encrypt and sign a new ballot. The availability service attests only
+  bytes that reproduce the commitment, so a third party cannot use up a commitment with unusable
+  bytes. — `flow-trace/04`
 - **CRISP constrains every coefficient of the ballot plaintext, at the real BFV degree.** The
   witness generator reverses the message over the full degree, so the payload starts at
   `D - MAX_MSG_NON_ZERO_COEFFS + (MAX_MSG_NON_ZERO_COEFFS mod num_options)` with the options back to

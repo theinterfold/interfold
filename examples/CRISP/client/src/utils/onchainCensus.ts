@@ -84,31 +84,53 @@ const uniformRandomIndex = (total: bigint): bigint => {
 }
 
 /**
- * A uniformly random registrant of a `SelfRegistry`, as a mask target.
+ * Visit `[0, total)` in a uniformly random order, each index once.
  *
- * Read live from the registry rather than from the server's holder list, which is discovered
- * once at round start — a registry admits voters during the input window, and someone who
- * registered a minute ago deserves mask cover as much as anyone.
- *
- * @param client The public client.
- * @param registry The registry address.
- * @returns A registrant address, or undefined when nobody has registered yet.
+ * A sparse Fisher-Yates shuffle: it records only the entries that a swap moved, so a visit of k
+ * indices costs k draws and O(k) memory, whatever `total` is.
  */
-export const getRandomRegistrant = async (client: PublicClient, registry: Address): Promise<Address | undefined> => {
-  const total = await client.readContract({
-    address: registry,
-    abi: SELF_REGISTRY_ABI,
-    functionName: 'totalRegistrants',
-  })
+function* randomOrder(total: bigint): Generator<bigint> {
+  const moved = new Map<bigint, bigint>()
+  for (let last = total - 1n; last >= 0n; last--) {
+    const pick = uniformRandomIndex(last + 1n)
+    yield moved.get(pick) ?? pick
+    // The entry at `last` takes the place of the one just visited. `last` is never drawn again.
+    moved.set(pick, moved.get(last) ?? last)
+    moved.delete(last)
+  }
+}
 
-  if (total === 0n) return undefined
+/**
+ * The value of the first index, in a uniformly random order of `[0, total)`, that `visit` accepts.
+ *
+ * Each index is visited at most once. So the search fails only when no index is accepted or the
+ * deadline passes, never because a few rejected indices were drawn again and again. The first
+ * accepted index of a uniform order is uniform over the accepted indices.
+ *
+ * @param total The number of indices.
+ * @param visit Returns a value for an accepted index, or undefined for a rejected one.
+ * @param deadline The `Date.now()` time after which no further index is visited.
+ * @returns The value of the first accepted index, or undefined.
+ */
+export const firstInRandomOrder = async <T>(
+  total: bigint,
+  visit: (index: bigint) => Promise<T | undefined>,
+  deadline: number,
+): Promise<T | undefined> => {
+  for (const index of randomOrder(total)) {
+    if (Date.now() > deadline) return undefined
+    const value = await visit(index)
+    if (value !== undefined) return value
+  }
+  return undefined
+}
 
-  const index = uniformRandomIndex(total)
+/** The number of registrants of a `SelfRegistry`. */
+export const getRegistrantCount = async (client: PublicClient, registry: Address): Promise<bigint> => {
+  return client.readContract({ address: registry, abi: SELF_REGISTRY_ABI, functionName: 'totalRegistrants' })
+}
 
-  return client.readContract({
-    address: registry,
-    abi: SELF_REGISTRY_ABI,
-    functionName: 'registrantAt',
-    args: [index],
-  })
+/** The registrant of a `SelfRegistry` at `index`, which must be below the registrant count. */
+export const getRegistrantAt = async (client: PublicClient, registry: Address, index: bigint): Promise<Address> => {
+  return client.readContract({ address: registry, abi: SELF_REGISTRY_ABI, functionName: 'registrantAt', args: [index] })
 }

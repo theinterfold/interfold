@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { Poll } from '@/model/poll.model'
 import { useSafeBallot } from '@/hooks/voting/useSafeBallot'
 import type { CastVoteWithProof } from '@/hooks/voting/useVoteCasting'
@@ -15,6 +15,11 @@ type SafeBallotPanelProps = {
   castVoteWithProof: CastVoteWithProof
   /** True while the page makes any input. */
   disabled: boolean
+  /**
+   * Called with true while a prepared ballot waits for signatures. The ballot exists only in this
+   * panel, so the page must not make another input that leaves it.
+   */
+  onDraftChange: (hasDraft: boolean) => void
 }
 
 /**
@@ -24,13 +29,19 @@ type SafeBallotPanelProps = {
  * Any account can coordinate. The coordinator's wallet signs only when it is one of the owners,
  * and never as the Safe itself: the Safe app publishes the messages it signs.
  */
-const SafeBallotPanel: React.FC<SafeBallotPanelProps> = ({ pollSelected, castVoteWithProof, disabled }) => {
+const SafeBallotPanel: React.FC<SafeBallotPanelProps> = ({ pollSelected, castVoteWithProof, disabled, onDraftChange }) => {
   const safeBallot = useSafeBallot(castVoteWithProof)
   const { safe, pending, link, signers, busy, error } = safeBallot
   const [open, setOpen] = useState(false)
   const [address, setAddress] = useState('')
   const [pasted, setPasted] = useState('')
   const [copied, setCopied] = useState(false)
+
+  const hasDraft = Boolean(pending)
+  useEffect(() => {
+    onDraftChange(hasDraft)
+    return () => onDraftChange(false)
+  }, [hasDraft, onDraftChange])
 
   const locked = disabled || Boolean(busy)
 
@@ -91,7 +102,7 @@ const SafeBallotPanel: React.FC<SafeBallotPanelProps> = ({ pollSelected, castVot
                   : 'Select an option first'}
             </button>
             {/* Owners who mask their own Safe make their direct writes to it ambiguous. */}
-            <button className='btn ghost' disabled={locked} onClick={() => safeBallot.maskSafe()}>
+            <button className='btn ghost' disabled={locked || hasDraft} onClick={() => safeBallot.maskSafe()}>
               {busy === 'masking' ? 'Masking…' : 'Mask this Safe'}
             </button>
           </div>
@@ -103,6 +114,11 @@ const SafeBallotPanel: React.FC<SafeBallotPanelProps> = ({ pollSelected, castVot
           <div className='cap'>
             Send this link to the other owners through a private channel. Each owner opens it, connects their own wallet, and sends back the
             signature. Keep this tab open: the encrypted ballot exists only here.
+          </div>
+          <div className='cap'>
+            The owner signatures authorise this ballot until the round ends. Whoever holds them and the encrypted ballot can submit the
+            ballot one time. If the ballot was not submitted before, it can also be submitted after a later vote of the Safe, and it then
+            replaces that vote.
           </div>
           <div className='cap muted'>
             Do not collect the signatures in the Safe app. It publishes the message, and anyone could then tell this vote from a mask.
@@ -116,6 +132,9 @@ const SafeBallotPanel: React.FC<SafeBallotPanelProps> = ({ pollSelected, castVot
           <div className='row' style={{ gap: 8, flexWrap: 'wrap' }}>
             <button className='btn ghost' disabled={locked} onClick={() => safeBallot.signWithWallet()}>
               {busy === 'signing' ? 'Waiting for the wallet…' : 'Sign with my owner wallet'}
+            </button>
+            <button className='btn ghost' disabled={locked} onClick={() => safeBallot.discard()}>
+              Discard the ballot
             </button>
           </div>
           <div className='row' style={{ gap: 8 }}>

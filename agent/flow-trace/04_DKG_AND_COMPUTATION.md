@@ -1851,9 +1851,19 @@ Transaction Service: it publishes the digest, which anyone can recompute to tell
 mask. A vote replaces its slot, so its ciphertext, commitment and digest do not depend on the head.
 `withBallotParent(prepared, {index, commitment})` names the parent right before proving, with
 `ciphertextCommitment(headBytes)`, so the CRISP server sees the same requests as for a mask, and a
-mask that lands during the signing does not invalidate the signatures. For the same reason, anyone
-who holds the owner signatures and the prepared ballot can prove that ballot again over a later head
-until the round ends, also after a re-vote, so both must stay private.
+mask that lands during the signing does not invalidate the signatures. For the same reason, the
+owner signatures and the prepared ballot authorise that ballot until the round ends, over any head.
+
+`CRISPProgram._verifyInputProof` refuses a commitment that the slot already committed in the round
+(`SlotCommitmentAlreadyUsed`), and `_processVote` records each one. The check runs for every input,
+so votes, updates and masks keep identical validation, and `validateInputProof` lets the server
+refuse a repeat before it attests to the input. So a published ballot cannot return over a later
+head. Two cases stay open:
+
+- a ballot that was signed and never published stays usable until the round ends, also after a later
+  vote, which it then replaces; so the signatures and the prepared ballot must stay private;
+- a vote that a concurrent mask orphaned (both named the same parent, and the mask landed first)
+  cannot be proved again over the new head; its owners sign a new ballot.
 
 The web client (`client/src/hooks/voting/useSafeBallot.ts`, `utils/safeBallot.ts`,
 `components/SafeBallot/SafeBallotPanel.tsx`, `pages/SafeSign/SafeSign.tsx`) collects the signatures
@@ -1865,11 +1875,17 @@ Coordinator (any account that runs "Vote as a Safe"; it signs too if it is an ow
 │            no code or an EIP-7702 delegation, at least `threshold` of them
 ├─ prepare:  votingPowerOf, prepareBallot (no slot head); SafeMessage digest computed locally
 ├─ link:     <app>/#/safe-sign/<base64url request>; the co-signer page rebuilds the typed data,
-│            lets only a key owner sign, and makes no request of its own
+│            shows the Safe, the CRISP program and the chain, and lets an owner sign only when its
+│            own code (getCode of the connected account, the page's only request) is empty or an
+│            EIP-7702 delegation. It remounts for each request and account.
 └─ submit:   castVoteWithProof(…, safeBallot), the path of any input: previous-ciphertext →
              votingPowerOf (must match) → withBallotParent(head) → ballotAuthorization (owner
-             commitment must match) → finishSafeBallotProof → broadcast. It refuses while an
-             earlier input of the account is pending, so the signed ballot is kept.
+             commitment must match) → finishSafeBallotProof → broadcast. If an earlier input of
+             the account is pending, the action completes it without leaving the page and stops;
+             the signed ballot stays, and the next submit reads the head after that input with the
+             requests of any input. If that input is this ballot, completing it ends the vote.
+             While a ballot waits, Cast, Mask and Mask this Safe are disabled: a completed input
+             leaves the page, and the ballot exists only there.
 Mask this Safe: castVoteWithProof with MaskTarget {slot}.
 ```
 
@@ -1884,5 +1900,6 @@ Limits: only ECDSA owner signatures work; contract owners (v = 0), approved hash
 Safe in such a census cannot vote. The owners are read at publication, so a coercer who holds enough
 owner keys to stop the threshold can block a re-vote, and a Safe moved above the caps can no longer
 write to its slot, for votes and masks alike. Registration is open, so the random mask of the client
-draws again (up to `MAX_MASK_DRAWS`) when `ballotAuthorization` reverts for the drawn slot, and
-registered oversized Safes cannot make random masks fail.
+visits the registrants in a uniformly random order without repeats and takes the first for which
+`ballotAuthorization` does not revert. Oversized Safes cannot make it fail while one registrant is
+maskable, unless the search time (`MASK_TARGET_SEARCH_MS`, 30 s) ends first.

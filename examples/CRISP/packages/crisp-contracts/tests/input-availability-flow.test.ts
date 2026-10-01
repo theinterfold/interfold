@@ -117,6 +117,23 @@ describe('CRISP input availability flow', function () {
       .withArgs(2)
   })
 
+  /// A ballot digest binds the slot and the commitment, not the parent. A ballot that the slot
+  /// already committed must not return over a later head and replace the later vote.
+  it('refuses a commitment that the slot already committed, under any parent', async function () {
+    const { program, e3Id } = await openRound()
+    const slot = ethers.Wallet.createRandom().address
+    await (await program.publishInput(e3Id, (await input(program, e3Id, 'ballot', slot)).commitmentPayload)).wait()
+    await (await program.publishInput(e3Id, (await input(program, e3Id, 'later', slot, 1)).commitmentPayload)).wait()
+
+    const replay = await input(program, e3Id, 'ballot', slot, 2)
+    await expect(program.validateInputProof(e3Id, '0x01', slot, replay.encryptedVoteCommitment, replay.encryptedVoteHash, 2))
+      .to.be.revertedWithCustomError(program, 'SlotCommitmentAlreadyUsed')
+      .withArgs(slot, replay.encryptedVoteCommitment)
+    await expect(program.publishInput(e3Id, replay.commitmentPayload))
+      .to.be.revertedWithCustomError(program, 'SlotCommitmentAlreadyUsed')
+      .withArgs(slot, replay.encryptedVoteCommitment)
+  })
+
   it('rejects a proof commitment not attested by the configured availability service', async function () {
     const { program, e3Id } = await openRound()
     const ballot = await input(program, e3Id)
