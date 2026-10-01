@@ -164,7 +164,7 @@ impl From<CiphertextOutputReferenceWithChainId> for InterfoldEventData {
 
 struct E3FailedWithChainId(pub IInterfold::E3Failed, pub u64);
 
-fn convert_u8_to_e3_stage(stage_u8: u8) -> E3Stage {
+pub(crate) fn convert_u8_to_e3_stage(stage_u8: u8) -> E3Stage {
     match stage_u8 {
         0 => E3Stage::None,
         1 => E3Stage::Requested,

@@ -7,6 +7,7 @@
 use alloy::primitives::{Address, U256};
 use anyhow::{bail, Result};
 use e3_console::{log, Console};
+use e3_evm::CommitteeMembership;
 
 use crate::helpers::chain::send_and_confirm;
 
@@ -192,5 +193,29 @@ pub(crate) async fn status(out: Console, ctx: &ChainContext, operator: Address) 
         format_amount(ticket_price, ticket_decimals),
         format_amount(required_ciphernode_bond, ciphernode_bond_decimals)
     );
+    // The committee scan reads the whole obligation history, so it has more ways to fail than the
+    // reads above. A failed command on the daemon returns no output, so a failure here keeps the
+    // lines above.
+    match ctx.operator_committees(operator).await {
+        Ok(committees) if committees.is_empty() => log!(out, "  Committees: none"),
+        Ok(committees) => {
+            log!(out, "  Committees: {}", committees.len());
+            for committee in committees {
+                let membership = match committee.membership {
+                    CommitteeMembership::Candidate => "candidate",
+                    CommitteeMembership::Member => "member",
+                    CommitteeMembership::Expelled => "expelled",
+                };
+                log!(
+                    out,
+                    "    E3 {}: {}, stage {:?}",
+                    committee.e3_id,
+                    membership,
+                    committee.e3_stage
+                );
+            }
+        }
+        Err(error) => log!(out, "  Committees: unavailable ({error:#})"),
+    }
     Ok(())
 }
