@@ -238,6 +238,7 @@ reformulations rather than weakenings — the soundness arguments are in the com
 | C7      | 108,461   | 112,591   | **26,808**    | -75.3%  |
 | C4      | 1,746,030 | 1,954,926 | **1,098,865** | -37.1%  |
 | C1      | 2,223,114 | 2,287,310 | **1,634,682** | -26.5%  |
+| C6      | 2,977,228 | 3,499,468 | **2,601,164** | -12.6%  |
 
 **The shared mechanism.** `negacyclic_kernel(u, x)[j]` is `(X^(N-1-j) * u mod X^N + 1)(x)`, so
 `a.dot(kernel)` evaluates `a * u mod X^N + 1` without the product entering the witness. Folding the
@@ -297,6 +298,30 @@ secure-8192 but silently loses completeness if a parameter set's moduli straddle
 `ceil(log2(H+1))`, because H comes from the committee config, which is routed separately from the
 preset generator. The branch's hardcoded `4` happens to hold at H=14 and would break silently one
 committee size later.
+
+**C6 beats the branch by *not* porting its bound checks.** Same reduction:
+`d = ct0 + (ct1 * sk mod X^N + 1) + e_sm + q * r`, with `r2` deleted and `r1` collapsed from `2N-1`
+to `N`. `sk` is per-limb here, so each limb needs its own kernel -- unlike C1, where one kernel
+served every modulus. Measured 3,499,468 -> 2,601,164, **-898,304**, against the branch's own
+-523,577. The difference is that the branch calls `centered()` on `ct0`, `ct1`, `sk` and `e_sm`: its
+base predates IF-011, so packed openings needed local bounds there. In this tree those witnesses
+arrive bounded by transfer -- `verify_ct_commitment` and the checked C4 aggregate openings -- so
+re-asserting would have added about 786k and turned the win into a loss. `d` needs no bound of its
+own either: it is determined by the identity, which is the Schwartz-Zippel case the invariants
+already name it as. Its IF-013 digit asserts stay, because injectivity is still what keeps `gamma`
+independent of it.
+
+**C6 keeps its `d_native_trunc` witness, on purpose.** Deriving the C7-facing native tail from `d`
+instead of witnessing it looked worth taking -- derived beats witnessed -- but `nargo execute` then
+emitted `bug: Brillig function call isn't properly covered by a manual constraint` against
+`reduce_mod_bounded`'s `unsafe` block, reached through the new derivation. The witness still solved
+and the construction is arguably sound (one-bit quotient, canonical remainder, input window asserted
+first), but C7 calls the same helper four times with no such diagnostic, and changing `BIT_K` from 1
+to 2 made it worse rather than better -- so the trigger is not understood. Measured, the derivation
+was worth **1,950 gates** of the 898,304. Shipping an unexplained `bug:` diagnostic in a
+soundness-critical circuit for 0.2% is not a trade worth making, so the original binding stays. It
+also carries no `unsafe` at all, and quietly does a second job worth keeping: its `[0, q)` bounds on
+the witness force `d`'s first `MAX_MSG_NON_ZERO_COEFFS` coefficients into the centered window.
 
 **C1 keeps IF-005, so only its reduction was ported.** The branch's C1 also deletes `e_sm_lifted`
 and `e_sm_quotients`, replacing them with a per-residue `centered(e_sm[l], q_l)` check and an assert
