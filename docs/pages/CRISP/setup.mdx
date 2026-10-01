@@ -396,6 +396,54 @@ Set `CRISP_E2E_DURATION_SECS` to change the input window of the test (default `3
 `--ui` (`pnpm test:e2e --ui`) to run the Synpress wallet setup without `--headless`. On Linux, the
 script runs Playwright with `xvfb-run`. Run `pnpm report` to open the Playwright report.
 
+## Compact the server database
+
+The CRISP server keeps its database in `database/server` below its working directory. In the
+`crisp-server` image, the working directory is `/`, so the database is `/database/server`. sled
+keeps old copies of changed pages on disk until it cleans its log. To recover that space, copy the
+database while the server is stopped. The copy leaves out the old copies. It can still be up to
+about three times the size of the current data, because sled writes pages again while it builds the
+copy.
+
+1. Stop the CRISP server.
+2. In the server's working directory, run the `server` binary with `compact-database`. A source
+   build puts the binary in `target/release` or `target/debug` below `examples/CRISP`:
+
+   ```bash
+   server compact-database database/server database/server-compact
+   ```
+
+   With the image, give the same arguments to the image and mount the volume that holds `/database`:
+
+   ```bash
+   docker run --rm -v <volume>:/database <crisp-server image> compact-database /database/server /database/server-compact
+   ```
+
+3. Move `database/server` to a backup location.
+4. Rename `database/server-compact` to `database/server`.
+5. Start the CRISP server. When the server works correctly, delete the backup.
+
+The command builds the copy in the target path with `.partial` added, for example
+`database/server-compact.partial`. It gives the copy the target name only when the copy is complete
+and matches the database. The command stops without a copy when the target directory or the
+`.partial` directory exists, or when the source directory holds no database. It also stops when the
+server holds the database, when the copy does not match the database, or when the disk is full.
+After a failed command, delete the `.partial` directory before you run the command again.
+
+### Upgrade from a release that keeps ballots in the round record
+
+At its first start, the server moves the ballots out of the round records. An older release cannot
+read the moved ballots. Before you upgrade:
+
+1. Stop the server and copy `database/server`.
+2. If the disk has little free space, compact the database. The first start writes each moved ballot
+   again before it removes the old copy. The command also works on the database of an older release.
+
+To go back to the older release, restore the copy, but only before the new release accepts a ballot.
+The copy does not hold the availability jobs of later ballots, so their inputs would stay committed
+but unpublished. After the new release accepts ballots, fix forward, or go back only when none of
+its availability jobs is pending.
+
 ## Common setup errors
 
 | Symptom                                                                                                    | Cause                                                                     | Fix                                                                                            |
