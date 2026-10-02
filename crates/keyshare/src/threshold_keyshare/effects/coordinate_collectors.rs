@@ -5,9 +5,12 @@
 use super::*;
 
 impl ThresholdKeyshare {
+    /// Create or return the threshold-share collector. A new collector learns every recorded
+    /// expulsion before any share, so it does not wait for a party that will not send one.
     pub fn ensure_collector(
         &mut self,
         self_addr: Addr<Self>,
+        ec: &EventContext<Sequenced>,
     ) -> Result<Addr<ThresholdShareCollector>> {
         let Some(state) = self.state.get() else {
             bail!("State not found on threshold keyshare. This should not happen.");
@@ -31,22 +34,33 @@ impl ThresholdKeyshare {
             "{}",
             schedule.description
         );
-        let addr = self.decryption_key_collector.get_or_insert_with(|| {
-            ThresholdShareCollector::setup(
-                self_addr,
-                threshold_n,
-                own_party_id,
-                minimum_external,
-                e3_id,
-                schedule,
-            )
-        });
-        Ok(addr.clone())
+        if let Some(addr) = &self.decryption_key_collector {
+            return Ok(addr.clone());
+        }
+        let addr = ThresholdShareCollector::setup(
+            self_addr,
+            threshold_n,
+            own_party_id,
+            minimum_external,
+            e3_id,
+            schedule,
+        );
+        // Keep the collector reachable before seeding it: a failed send must not leave a running
+        // collector with live timers that nothing can address.
+        self.decryption_key_collector = Some(addr.clone());
+        for &party_id in &state.expelled_parties {
+            addr.try_send(ExpelPartyFromShareCollection {
+                party_id,
+                ec: ec.clone(),
+            })?;
+        }
+        Ok(addr)
     }
 
     pub fn ensure_encryption_key_collector(
         &mut self,
         self_addr: Addr<Self>,
+        ec: &EventContext<Sequenced>,
     ) -> Result<Addr<EncryptionKeyCollector>> {
         let Some(state) = self.state.get() else {
             bail!("State not found on threshold keyshare. This should not happen.");
@@ -56,7 +70,7 @@ impl ThresholdKeyshare {
             state.dkg_deadline_unix_secs,
             state.dkg_window_secs,
         )?;
-        self.encryption_key_collector_with_timeout(self_addr, Some(timeout))
+        self.encryption_key_collector_with_timeout(self_addr, Some(timeout), ec)
     }
 
     /// Create or return the encryption-key collector during restart recovery.
@@ -68,6 +82,7 @@ impl ThresholdKeyshare {
     pub(in crate::actors::threshold_keyshare) fn recover_encryption_key_collector(
         &mut self,
         self_addr: Addr<Self>,
+        ec: &EventContext<Sequenced>,
     ) -> Result<Addr<EncryptionKeyCollector>> {
         let state = self.state.try_get()?;
         let timeout = resolve_encryption_key_timeout(
@@ -75,15 +90,17 @@ impl ThresholdKeyshare {
             state.dkg_window_secs,
             crate::domain::timeout_policy::now_unix_secs(),
         )?;
-        self.encryption_key_collector_with_timeout(self_addr, timeout)
+        self.encryption_key_collector_with_timeout(self_addr, timeout, ec)
     }
 
     /// Return the existing encryption-key collector, or create one with `timeout` (`None`: the
-    /// cutoff has passed).
+    /// cutoff has passed). A new collector learns every recorded expulsion before any key, so it
+    /// does not wait for a party that will not send one.
     fn encryption_key_collector_with_timeout(
         &mut self,
         self_addr: Addr<Self>,
         timeout: Option<DerivedTimeout>,
+        ec: &EventContext<Sequenced>,
     ) -> Result<Addr<EncryptionKeyCollector>> {
         let state = self.state.try_get()?;
         info!(
@@ -106,17 +123,27 @@ impl ThresholdKeyshare {
                 "Encryption-key collection cutoff has passed"
             ),
         }
-        let addr = self.encryption_key_collector.get_or_insert_with(|| {
-            EncryptionKeyCollector::setup(
-                self_addr,
-                threshold_n,
-                minimum_keys,
-                own_party_id,
-                e3_id,
-                timeout.map(|timeout| timeout.duration),
-            )
-        });
-        Ok(addr.clone())
+        if let Some(addr) = &self.encryption_key_collector {
+            return Ok(addr.clone());
+        }
+        let addr = EncryptionKeyCollector::setup(
+            self_addr,
+            threshold_n,
+            minimum_keys,
+            own_party_id,
+            e3_id,
+            timeout.map(|timeout| timeout.duration),
+        );
+        // Keep the collector reachable before seeding it: a failed send must not leave a running
+        // collector with live timers that nothing can address.
+        self.encryption_key_collector = Some(addr.clone());
+        for &party_id in &state.expelled_parties {
+            addr.try_send(ExpelPartyFromKeyCollection {
+                party_id,
+                ec: ec.clone(),
+            })?;
+        }
+        Ok(addr)
     }
 
     /// Create or return the DecryptionKeySharedCollector.
@@ -278,7 +305,7 @@ impl ThresholdKeyshare {
             "Received ThresholdShareCreated from party {} for us (party {}), forwarding to collector!",
             msg.share.party_id, my_party_id
         );
-        let collector = self.ensure_collector(self_addr)?;
+        let collector = self.ensure_collector(self_addr, msg.get_ctx())?;
         info!("got collector address!");
         collector.do_send(msg);
         Ok(())
@@ -324,7 +351,7 @@ impl ThresholdKeyshare {
             return Ok(());
         }
         info!("Received EncryptionKeyCreated forwarding to encryption key collector!");
-        let collector = self.ensure_encryption_key_collector(self_addr)?;
+        let collector = self.ensure_encryption_key_collector(self_addr, msg.get_ctx())?;
         collector.do_send(msg);
         Ok(())
     }

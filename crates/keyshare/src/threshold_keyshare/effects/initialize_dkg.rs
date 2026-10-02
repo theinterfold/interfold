@@ -48,9 +48,9 @@ impl ThresholdKeyshare {
         }
 
         // `handle_encryption_key_created` only records a peer key that arrives in `Init`.
-        let collector = self.ensure_encryption_key_collector(address.clone())?;
+        let collector = self.ensure_encryption_key_collector(address.clone(), &ec)?;
         self.replay_encryption_keys(&collector)?;
-        self.ensure_collector(address.clone())?;
+        self.ensure_collector(address.clone(), &ec)?;
 
         let BfvKeypairMaterial {
             sk_bfv: sk_bfv_encrypted,
