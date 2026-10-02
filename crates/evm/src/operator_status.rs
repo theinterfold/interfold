@@ -9,7 +9,6 @@
 use crate::{
     adapters::log_fetcher::fetch_logs_adapting,
     contracts::{IBondingRegistry, ICiphernodeRegistry, IInterfold},
-    domain::interfold_events::convert_u8_to_e3_stage,
     helpers::get_current_timestamp_from_provider,
     ProviderConfig,
 };
@@ -189,7 +188,8 @@ pub async fn fetch_operator_committees<P: Provider + Clone>(
         committees.push(OperatorCommittee {
             e3_id,
             membership,
-            e3_stage: convert_u8_to_e3_stage(stage),
+            e3_stage: E3Stage::try_from(stage)
+                .with_context(|| format!("E3 {e3_id} reports a stage this node does not know"))?,
         });
     }
     Ok(committees)
