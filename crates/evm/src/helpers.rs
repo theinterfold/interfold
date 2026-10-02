@@ -504,6 +504,7 @@ mod tests {
             chain_id: Some(31337),
             ingestion_confirmations: None,
             rpc_poll_interval_ms,
+            rpc_log_range_blocks: None,
             data_availability: None,
         }
     }

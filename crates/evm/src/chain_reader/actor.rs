@@ -8,7 +8,7 @@ use crate::adapters::log_fetcher::{
     backfill_to_head, consume_live_logs, fetch_logs_chunked, LiveStop, TimestampTracker,
 };
 use crate::domain::backoff::Backoff;
-use crate::domain::log_window::LogWindow;
+use crate::domain::log_window::{LogWindow, MAX_LOG_WINDOW};
 use crate::helpers::{EthProvider, ProviderFactory};
 use crate::messages::HistoricalSyncComplete;
 use crate::messages::{EvmEventProcessor, InterfoldEvmEvent};
@@ -48,7 +48,7 @@ const MAX_RETRIES_BEFORE_RECREATE: u32 = 3;
 /// confirmations the poll delivers the logs that the subscription did not announce.
 const CONFIRMED_BACKFILL_INTERVAL_SECS: u64 = 5;
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct Filters {
     historical: Filter,
     current: Filter,
@@ -57,6 +57,8 @@ pub struct Filters {
     /// reads to the chain head exactly as before; a positive value clamps the
     /// historical and backfill heads to make ingestion reorg-safe.
     confirmations: u64,
+    /// Widest `eth_getLogs` block range of one request (`rpc_log_range_blocks`).
+    max_log_window: u64,
 }
 
 impl Filters {
@@ -73,6 +75,7 @@ impl Filters {
             current,
             start_block,
             confirmations: 0,
+            max_log_window: MAX_LOG_WINDOW,
         }
     }
 
@@ -82,9 +85,21 @@ impl Filters {
         self
     }
 
+    /// Builder: start every `eth_getLogs` window at `blocks`, the chain's widest range.
+    pub fn with_max_log_window(mut self, blocks: u64) -> Self {
+        self.max_log_window = blocks;
+        self
+    }
+
     /// The selected confirmation depth (`0` reads the chain head).
     pub fn confirmations(&self) -> u64 {
         self.confirmations
+    }
+
+    /// The window that a reader session starts with: the chain's widest range, narrowed only when
+    /// the provider rejects it.
+    pub(crate) fn log_window(&self) -> LogWindow {
+        LogWindow::with_max(self.max_log_window)
     }
 
     pub fn from_routing_table<T>(table: &HashMap<Address, T>, start_block: u64) -> Self {
@@ -143,5 +158,20 @@ impl<P: Provider + Clone + 'static> EvmReadInterface<P> {
         let addr = reader.start();
         bus.subscribe(EventType::Shutdown, addr.clone().into());
         addr
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_reader_window_starts_at_the_configured_range() {
+        let filters = Filters::new(Vec::new(), 0);
+        assert_eq!(filters.log_window().width(), MAX_LOG_WINDOW);
+        assert_eq!(
+            filters.with_max_log_window(2_000).log_window().width(),
+            2_000
+        );
     }
 }

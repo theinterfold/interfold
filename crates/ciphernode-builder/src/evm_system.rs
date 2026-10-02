@@ -7,6 +7,7 @@
 use actix::Actor;
 use alloy::{primitives::Address, providers::Provider};
 use anyhow::{bail, Result};
+use e3_config::chain_config::DEFAULT_RPC_LOG_RANGE_BLOCKS;
 use e3_events::{run_once, BusHandle, EventSubscriber, EventType, HistoricalEvmSyncStart};
 use e3_evm::{
     EthProvider, EvmChainGateway, EvmChainGatewayHandle, EvmEventProcessor, EvmReadInterface,
@@ -25,6 +26,7 @@ pub struct EvmSystemChainBuilder<P> {
     bus: BusHandle,
     chain_id: u64,
     max_buffered_events: usize,
+    max_log_window: u64,
     route_factories: Vec<(Address, RouteFactory)>,
 }
 
@@ -37,12 +39,19 @@ impl<P: Provider + Clone + 'static> EvmSystemChainBuilder<P> {
             provider_factory: None,
             chain_id,
             max_buffered_events: DEFAULT_MAX_BUFFERED_EVM_EVENTS,
+            max_log_window: DEFAULT_RPC_LOG_RANGE_BLOCKS,
             route_factories: Vec::new(),
         }
     }
 
     pub fn with_buffer_limit(&mut self, max_buffered_events: usize) -> &mut Self {
         self.max_buffered_events = max_buffered_events;
+        self
+    }
+
+    /// The chain's widest `eth_getLogs` block range (`rpc_log_range_blocks`).
+    pub fn with_max_log_window(&mut self, blocks: u64) -> &mut Self {
+        self.max_log_window = blocks;
         self
     }
 
@@ -92,6 +101,7 @@ impl<P: Provider + Clone + 'static> EvmSystemChainBuilder<P> {
             let provider = self.provider.clone();
             let provider_factory = self.provider_factory.clone();
             let chain_id = self.chain_id;
+            let max_log_window = self.max_log_window;
 
             // Only gets consumed once so fine to use replace to clean out route_factories
             let route_factories = std::mem::take(&mut self.route_factories);
@@ -107,7 +117,8 @@ impl<P: Provider + Clone + 'static> EvmSystemChainBuilder<P> {
                 let router = configure_router(next, route_factories);
 
                 // Extract filters from the router
-                let filters = filters_from_router(&router, deploy_block, confirmations);
+                let filters =
+                    filters_from_router(&router, deploy_block, confirmations, max_log_window);
 
                 // Setup and start the read interface and the router
                 EvmReadInterface::setup_with_factory(
@@ -143,7 +154,13 @@ fn configure_router(
     router
 }
 
-fn filters_from_router(router: &EvmRouter, deploy_block: u64, confirmations: u64) -> Filters {
+fn filters_from_router(
+    router: &EvmRouter,
+    deploy_block: u64,
+    confirmations: u64,
+    max_log_window: u64,
+) -> Filters {
     Filters::from_routing_table(router.get_routing_table(), deploy_block)
         .with_confirmations(confirmations)
+        .with_max_log_window(max_log_window)
 }

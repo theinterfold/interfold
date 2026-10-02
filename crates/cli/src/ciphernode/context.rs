@@ -66,6 +66,8 @@ pub(crate) struct ChainContext {
     contracts: ContractAddresses,
     provider: EthProvider<ConcreteWriteProvider>,
     signer_address: Address,
+    /// The chain's widest `eth_getLogs` block range, for the history reads.
+    max_log_window: u64,
 }
 
 impl ChainContext {
@@ -89,6 +91,7 @@ impl ChainContext {
             contracts: chain.contracts.clone(),
             provider,
             signer_address,
+            max_log_window: chain.rpc_log_range_blocks()?,
         })
     }
 
@@ -149,7 +152,13 @@ impl ChainContext {
         &self,
         operator: Address,
     ) -> Result<Vec<OperatorCommittee>> {
-        fetch_operator_committees(&self.provider_client(), &self.contracts, operator).await
+        fetch_operator_committees(
+            &self.provider_client(),
+            &self.contracts,
+            operator,
+            self.max_log_window,
+        )
+        .await
     }
 }
 

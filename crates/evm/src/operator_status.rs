@@ -145,6 +145,7 @@ pub async fn fetch_operator_committees<P: Provider + Clone>(
     provider: &P,
     contracts: &ContractAddresses,
     operator: Address,
+    max_log_window: u64,
 ) -> anyhow::Result<Vec<OperatorCommittee>> {
     let interfold = contracts
         .interfold
@@ -162,7 +163,15 @@ pub async fn fetch_operator_committees<P: Provider + Clone>(
     let from_block = contracts.bonding_registry.deploy_block().unwrap_or(0);
     let chain_id = provider.get_chain_id().await?;
     let head = provider.get_block_number().await?;
-    let logs = fetch_logs_adapting(provider, &filter, from_block, head, chain_id).await?;
+    let logs = fetch_logs_adapting(
+        provider,
+        &filter,
+        from_block,
+        head,
+        chain_id,
+        max_log_window,
+    )
+    .await?;
 
     let mut committees = Vec::new();
     for (e3_id, registry) in open_obligations(logs)? {

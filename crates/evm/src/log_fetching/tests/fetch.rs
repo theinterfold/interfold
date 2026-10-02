@@ -458,7 +458,7 @@ async fn a_capped_provider_does_not_defeat_the_shared_read() {
         .with_log(300)
         .with_log(499);
 
-    let logs = fetch_logs_adapting(&provider, &Filter::new(), 100, 500, 1)
+    let logs = fetch_logs_adapting(&provider, &Filter::new(), 100, 500, 1, MAX_LOG_WINDOW)
         .await
         .expect("a provider that caps the range must not fail the read");
 
@@ -495,6 +495,62 @@ async fn a_capped_provider_does_not_defeat_the_shared_read() {
         assert!(
             width <= 50,
             "served range {from}..={to} is {width} blocks, over the provider's cap"
+        );
+    }
+}
+
+/// A provider whose refusal the node does not recognize cannot narrow the window, so only the
+/// chain's configured range makes it usable.
+#[actix::test]
+async fn a_configured_range_serves_a_provider_with_an_unrecognized_refusal() {
+    tokio::time::pause();
+
+    // The refusal names neither a range nor a known code, so the classifier sends it down the
+    // retry path and the read fails at the default width.
+    let provider = CappedLogProvider::new(5_000, 2_000, "request rejected")
+        .with_log(120)
+        .with_log(3_500);
+
+    fetch_logs_adapting(&provider, &Filter::new(), 100, 5_000, 1, MAX_LOG_WINDOW)
+        .await
+        .expect_err("the default width is over the cap and the refusal is not recognized");
+    assert!(provider.served().is_empty());
+
+    // With the provider's documented cap as the chain's range, every request is within the cap.
+    let logs = fetch_logs_adapting(&provider, &Filter::new(), 100, 5_000, 1, 2_000)
+        .await
+        .expect("the configured range must serve the read");
+
+    let mut blocks: Vec<u64> = logs.iter().filter_map(|log| log.block_number).collect();
+    blocks.sort_unstable();
+    assert_eq!(blocks, vec![120, 3_500]);
+    for (from, to) in provider.served() {
+        assert!(
+            to - from + 1 <= 2_000,
+            "served range {from}..={to} is over the cap"
+        );
+    }
+}
+
+/// A range far above the default must still narrow down to a provider's small cap.
+#[actix::test]
+async fn a_large_configured_range_still_narrows_to_a_small_cap() {
+    // 1,000,000 blocks need 17 halvings to reach 10, more than the default range ever needs.
+    let provider = CappedLogProvider::new(5_000, 10, "query returned more than 10000 results")
+        .with_log(120)
+        .with_log(4_990);
+
+    let logs = fetch_logs_adapting(&provider, &Filter::new(), 100, 5_000, 1, 1_000_000)
+        .await
+        .expect("narrowing must reach the provider's cap from any configured range");
+
+    let mut blocks: Vec<u64> = logs.iter().filter_map(|log| log.block_number).collect();
+    blocks.sort_unstable();
+    assert_eq!(blocks, vec![120, 4_990]);
+    for (from, to) in provider.served() {
+        assert!(
+            to - from + 1 <= 10,
+            "served range {from}..={to} is over the cap"
         );
     }
 }
