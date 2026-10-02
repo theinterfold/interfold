@@ -88,7 +88,6 @@ pub struct Bits {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Configs {
     pub l: usize,
-    pub threshold: usize,
     pub moduli: Vec<u64>,
     pub plaintext_modulus: u64,
     pub q_mod_t: BigUint,
@@ -186,7 +185,6 @@ impl Computation for Configs {
         let bounds = Bounds::compute(preset, &())?;
         let bits = Bits::compute(preset, &bounds)?;
         Ok(Configs {
-            threshold: 0, // Not derived from preset; set by caller if needed.
             l: moduli.len(),
             moduli,
             plaintext_modulus: t,
@@ -195,7 +193,8 @@ impl Computation for Configs {
             q_inverse_mod_t,
             bits,
             bounds,
-            // TODO: make this configurable based on the application (e.g., CRISP = 80).
+            // The circuit's message width. Every application shares it, because the width is
+            // compiled into the circuit.
             max_msg_non_zero_coeffs: MAX_MSG_NON_ZERO_COEFFS,
         })
     }
@@ -236,11 +235,21 @@ impl Computation for Inputs {
 
         let d_share_polys: Vec<Poly<PowerBasis>> = data.d_share_polys.clone();
 
-        if d_share_polys.len() < threshold + 1 {
+        // The circuit takes exactly T+1 shares and T+1 party IDs, and the Lagrange weights pair
+        // them by position. One polynomial more would copy into the witness unpaired and make it
+        // the wrong shape; one party ID more would weight a share that does not exist.
+        if d_share_polys.len() != threshold + 1 {
             return Err(CircuitsErrors::Other(format!(
-                "d_share_polys.len() {} < threshold + 1 ({}); need at least {} polynomials",
+                "d_share_polys.len() {} != threshold + 1 ({}); the circuit takes exactly {} polynomials",
                 d_share_polys.len(),
                 threshold + 1,
+                threshold + 1
+            )));
+        }
+        if data.reconstructing_parties.len() != threshold + 1 {
+            return Err(CircuitsErrors::Other(format!(
+                "reconstructing_parties.len() {} != threshold + 1 ({}); one party ID per polynomial",
+                data.reconstructing_parties.len(),
                 threshold + 1
             )));
         }
@@ -372,6 +381,34 @@ mod tests {
 
         assert_eq!(configs.moduli.len(), configs.l);
         assert!(configs.q_inverse_mod_t > 0);
+    }
+
+    #[test]
+    fn an_extra_polynomial_or_party_id_is_refused() {
+        let preset = BfvPreset::InsecureThreshold512;
+        let committee = CiphernodesCommitteeSize::Small.values();
+        let sample =
+            DecryptedSharesAggregationCircuitData::generate_sample(preset, committee).unwrap();
+
+        // T+2 polynomials with T+1 party IDs: the old check accepted this and copied every
+        // polynomial into the witness.
+        let mut oversized = sample.clone();
+        oversized
+            .d_share_polys
+            .push(oversized.d_share_polys[0].clone());
+        let error = Inputs::compute(preset, &oversized).unwrap_err().to_string();
+        assert!(error.contains("d_share_polys.len()"), "{error}");
+
+        // T+1 polynomials with T+2 party IDs.
+        let mut extra_party = sample.clone();
+        extra_party.reconstructing_parties.push(99);
+        let error = Inputs::compute(preset, &extra_party)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("reconstructing_parties.len()"), "{error}");
+
+        // Exactly T+1 of each still computes.
+        Inputs::compute(preset, &sample).unwrap();
     }
 
     #[test]

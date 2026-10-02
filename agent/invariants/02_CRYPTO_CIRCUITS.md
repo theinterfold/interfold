@@ -125,8 +125,9 @@ every section.
   result authorizes only its exact dispatch batch. Share admission checks the signed sender, E3,
   proof type, raw bytes, and ciphertext position before reserving a party slot. — `flow-trace/04`
 
-- SK splits into N shares; exactly **T+1** shares feed the recursive decryption proof. —
-  `flow-trace/04`
+- SK splits into N shares; exactly **T+1** shares feed the recursive decryption proof. The C7 input
+  computation (`Inputs::compute` in `decrypted_shares_aggregation`) refuses any other count of
+  shares or party IDs, so an oversized witness cannot be built. — `flow-trace/04`
 - Runtime `party_id` derives from the finalized committee normalized by ascending address and is
   zero-indexed. DKG circuit party IDs and fold-attestation slots use the same zero-based index. Only
   decryption uses one-based Shamir coordinates, `party_id + 1`, which must be strictly increasing;
