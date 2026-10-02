@@ -172,15 +172,16 @@ key, so the peer ID follows the wallet.
 
 ### Compute and startup limits
 
-| Key                           | Type    | Default               | Meaning                                                                                                   |
-| ----------------------------- | ------- | --------------------- | --------------------------------------------------------------------------------------------------------- |
-| `multithread_reserve_threads` | Integer | `2`                   | Logical CPUs kept for Actix, libp2p, and RPC work. The compute pool does not use them.                    |
-| `multithread_concurrent_jobs` | Integer | `2`                   | Maximum number of CPU-heavy jobs (ZK proofs and TrBFV) at the same time. The node can use a lower value.  |
-| `startup_timeout_secs`        | Integer | `1800` (30 minutes)   | Deadline for construction and initial sync. A node that misses it exits with an error. Must be above `0`. |
-| `max_buffered_evm_events`     | Integer | `100000`              | Maximum decoded EVM events that the node holds for each chain during initial sync. Must be above `0`.     |
-| `max_buffered_net_events`     | Integer | `1024`                | Maximum network events that the node holds during startup sync. Must be above `0`.                        |
-| `max_buffered_net_bytes`      | Integer | `268435456` (256 MiB) | Maximum estimated bytes in the network startup buffer. Must be above `0`.                                 |
-| `skip_proof_aggregation`      | Boolean | `false`               | Test and CI only. See the note below.                                                                     |
+| Key                           | Type    | Default               | Meaning                                                                                                                                                                                                                               |
+| ----------------------------- | ------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `multithread_reserve_threads` | Integer | `2`                   | Logical CPUs kept for Actix, libp2p, and RPC work. The compute pool does not use them.                                                                                                                                                |
+| `multithread_concurrent_jobs` | Integer | `2`                   | Maximum number of CPU-heavy jobs (ZK proofs and TrBFV) at the same time. The node can use a lower value.                                                                                                                              |
+| `startup_timeout_secs`        | Integer | `1800` (30 minutes)   | Deadline for construction and initial sync. A node that misses it exits with an error. Must be above `0`.                                                                                                                             |
+| `bb_timeout_secs`             | Integer | `43200` (12 hours)    | Wall-clock cap of one `bb` proving or verification run. A run that exceeds it is killed and retried, hung or not, so keep it above the longest proof the host needs; a secure proof can take hours on a slow host. Must be above `0`. |
+| `max_buffered_evm_events`     | Integer | `100000`              | Maximum decoded EVM events that the node holds for each chain during initial sync. Must be above `0`.                                                                                                                                 |
+| `max_buffered_net_events`     | Integer | `1024`                | Maximum network events that the node holds during startup sync. Must be above `0`.                                                                                                                                                    |
+| `max_buffered_net_bytes`      | Integer | `268435456` (256 MiB) | Maximum estimated bytes in the network startup buffer. Must be above `0`.                                                                                                                                                             |
+| `skip_proof_aggregation`      | Boolean | `false`               | Test and CI only. See the note below.                                                                                                                                                                                                 |
 
 The node calculates the number of jobs that it admits. The number is the lowest of these values:
 

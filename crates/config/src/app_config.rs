@@ -72,6 +72,11 @@ pub struct NodeDefinition {
     /// protocol operation before this deadline exits non-zero instead of remaining falsely alive.
     #[serde(default = "default_startup_timeout_secs")]
     pub startup_timeout_secs: u64,
+    /// Wall-clock cap of one `bb` proving or verification run, in seconds. The cap kills any run
+    /// that exceeds it, hung or not, so it must stay above the longest proof the host needs. A
+    /// secure proof can take hours on a slow host.
+    #[serde(default = "default_bb_timeout_secs")]
+    pub bb_timeout_secs: u64,
     /// Maximum decoded EVM events retained per chain while initial sync is ordering historical
     /// and live data. Exceeding the bound fails startup; events are never silently discarded.
     #[serde(default = "default_max_buffered_evm_events")]
@@ -94,6 +99,10 @@ fn default_multithread_reserve_threads() -> usize {
 
 fn default_multithread_concurrent_jobs() -> Option<usize> {
     Some(2)
+}
+
+fn default_bb_timeout_secs() -> u64 {
+    12 * 60 * 60
 }
 
 fn default_startup_timeout_secs() -> u64 {
@@ -134,6 +143,7 @@ impl Default for NodeDefinition {
             multithread_reserve_threads: default_multithread_reserve_threads(),
             multithread_concurrent_jobs: default_multithread_concurrent_jobs(),
             startup_timeout_secs: default_startup_timeout_secs(),
+            bb_timeout_secs: default_bb_timeout_secs(),
             max_buffered_evm_events: default_max_buffered_evm_events(),
             max_buffered_net_events: default_max_buffered_net_events(),
             max_buffered_net_bytes: default_max_buffered_net_bytes(),
@@ -227,6 +237,9 @@ impl AppConfig {
         let mut node = node.clone();
         if node.startup_timeout_secs == 0 {
             bail!("node.startup_timeout_secs must be greater than zero");
+        }
+        if node.bb_timeout_secs == 0 {
+            bail!("node.bb_timeout_secs must be greater than zero");
         }
         if node.max_buffered_evm_events == 0 {
             bail!("node.max_buffered_evm_events must be greater than zero");
@@ -442,6 +455,11 @@ impl AppConfig {
     /// Maximum time allowed for construction and initial synchronization.
     pub fn startup_timeout_secs(&self) -> u64 {
         self.node_def().startup_timeout_secs
+    }
+
+    /// Wall-clock cap of one `bb` run
+    pub fn bb_timeout(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.node_def().bb_timeout_secs)
     }
 
     /// Maximum per-chain decoded-event buffer used before EVM gateways become live.
@@ -980,6 +998,58 @@ node:
         assert_eq!(default.max_buffered_evm_events(), 100_000);
         assert_eq!(default.max_buffered_net_events(), 1_024);
         assert_eq!(default.max_buffered_net_bytes(), 256 * 1024 * 1024);
+        Ok(())
+    }
+
+    #[test]
+    fn test_bb_timeout_config_and_default() -> Result<()> {
+        let configured: UnscopedAppConfig = serde_yaml::from_str(
+            r#"
+node:
+  bb_timeout_secs: 90
+"#,
+        )?;
+        let configured = configured.into_scoped_with_defaults(
+            "_default",
+            &PathBuf::from("/default/data"),
+            &PathBuf::from("/default/config"),
+            &PathBuf::from("/my/cwd"),
+        )?;
+        assert_eq!(configured.bb_timeout(), std::time::Duration::from_secs(90));
+
+        let default = UnscopedAppConfig::default().into_scoped_with_defaults(
+            "_default",
+            &PathBuf::from("/default/data"),
+            &PathBuf::from("/default/config"),
+            &PathBuf::from("/my/cwd"),
+        )?;
+        assert_eq!(
+            default.bb_timeout(),
+            std::time::Duration::from_secs(12 * 60 * 60)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_zero_bb_timeout_is_rejected() -> Result<()> {
+        let unscoped: UnscopedAppConfig = serde_yaml::from_str(
+            r#"
+node:
+  bb_timeout_secs: 0
+"#,
+        )?;
+        let error = unscoped
+            .into_scoped_with_defaults(
+                "_default",
+                &PathBuf::from("/default/data"),
+                &PathBuf::from("/default/config"),
+                &PathBuf::from("/my/cwd"),
+            )
+            .map(|_| ())
+            .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("bb_timeout_secs must be greater than zero"));
         Ok(())
     }
 
