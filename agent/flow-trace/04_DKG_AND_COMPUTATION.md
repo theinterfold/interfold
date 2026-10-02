@@ -1632,20 +1632,26 @@ not gossiped or returned by historical peer sync; only the producing node can cr
 intent.
 
 The document publisher rebuilds its active outbox and received-document set from the durable event
-log before network effects start. Document publication and receipt events use their E3's chain
-aggregate. Recovery scans one event at a time to bound memory. During DKG, the publisher first
-stores each document in its own DHT store, so that a peer whose lookup reaches this node can fetch
-it from here, and then gossips a small notification that names it. A lookup asks the about 20 peers
-closest to the key, so it reliably reaches the publisher only in a network of about that size; other
-peers fetch the document once an upload succeeds. The publisher announces the document again 30
-seconds later, doubling the wait up to 5 minutes; these announcements store the document locally
-again and send only the notification. An announcement waits until the local store holds the
-document. Publications start only at `SyncEnded`, after the chain history, so a restarted node does
-not announce or upload a document of an E3 that closed while it was offline. Separately, the
-publisher uploads the full document to the DHT peers closest to its key, and again every 30 minutes
-until the DKG ends; a failing upload never delays an announcement. It starts one upload at a time,
-and each put has two attempts. A put returns after one peer stores the record, so its uploads to
-other peers can overlap the next upload. The Kademlia library's own hourly replication of stored
+log before network effects start. Its DHT store is in memory, so at `SyncEnded` it also stores
+received documents in that store again, one at a time, and prunes them with the other records of
+their E3. This restore is best effort. Recovery chooses the candidates while it reads the local log:
+at most 512 documents and 128 MiB, the ones received last in event-log order. The chain history then
+drops the documents of E3s that closed while the node was offline, but those documents can already
+have taken the place of an open E3's document, which is then not restored. Expired documents, and
+documents that do not fit in a full store, are skipped. Document publication and receipt events use
+their E3's chain aggregate. Recovery scans one event at a time to bound memory. During DKG, the
+publisher first stores each document in its own DHT store, so that a peer whose lookup reaches this
+node can fetch it from here, and then gossips a small notification that names it. A lookup asks the
+about 20 peers closest to the key, so it reliably reaches the publisher only in a network of about
+that size; other peers fetch the document once an upload succeeds. The publisher announces the
+document again 30 seconds later, doubling the wait up to 5 minutes; these announcements store the
+document locally again and send only the notification. An announcement waits until the local store
+holds the document. Publications start only at `SyncEnded`, after the chain history, so a restarted
+node does not announce or upload a document of an E3 that closed while it was offline. Separately,
+the publisher uploads the full document to the DHT peers closest to its key, and again every 30
+minutes until the DKG ends; a failing upload never delays an announcement. It starts one upload at a
+time, and each put has two attempts. A put returns after one peer stores the record, so its uploads
+to other peers can overlap the next upload. The Kademlia library's own hourly replication of stored
 records is disabled. A failed upload or announcement is retried after 15 seconds, doubling up to 5
 minutes, including when no peer subscribed to the topic at the first attempt. A failed announcement
 does not upload the document again. A receiver holds early notifications until its committee slot is

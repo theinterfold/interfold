@@ -53,28 +53,30 @@ pub(super) async fn announce_stored_document(
     topic: impl Into<String>,
     bus: BusHandle,
 ) -> Result<()> {
-    store_document_locally(tx.clone(), rx.clone(), &event).await?;
+    store_document_locally(tx.clone(), rx.clone(), &event.meta, &event.value).await?;
     announce_document(tx, rx, event, topic, bus).await
 }
 
 /// The DHT key of a document and the time its record expires. An expired document has no
 /// record: it must not be stored or uploaded.
 fn dht_record_of(
-    event: &PublishDocumentRequested,
+    meta: &DocumentMeta,
+    value: &ArcBytes,
 ) -> Result<(ContentHash, Option<std::time::Instant>)> {
-    let expires = datetime_to_instant_from_now(event.meta.expires_at)
+    let expires = datetime_to_instant_from_now(meta.expires_at)
         .context("refusing to store an expired DHT document")?;
-    Ok((ContentHash::from_content(&event.value), Some(expires)))
+    Ok((ContentHash::from_content(value), Some(expires)))
 }
 
 /// Store a document in this node's own DHT store, without uploading it to other peers.
-async fn store_document_locally(
+pub(super) async fn store_document_locally(
     net_cmds: mpsc::Sender<NetCommand>,
     net_events: NetEventSubscriber,
-    event: &PublishDocumentRequested,
+    meta: &DocumentMeta,
+    value: &ArcBytes,
 ) -> Result<()> {
-    let (key, expires) = dht_record_of(event)?;
-    let value = event.value.clone();
+    let (key, expires) = dht_record_of(meta, value)?;
+    let value = value.clone();
     call_and_await_response(
         net_cmds,
         net_events,
@@ -102,7 +104,7 @@ pub(super) async fn replicate_document(
     rx: NetEventSubscriber,
     event: &PublishDocumentRequested,
 ) -> Result<()> {
-    let (key, expires) = dht_record_of(event)?;
+    let (key, expires) = dht_record_of(&event.meta, &event.value)?;
     let value = event.value.clone();
     retry_with_backoff(
         || {

@@ -27,6 +27,7 @@ impl Handler<InterfoldEvent> for DocumentPublisher {
                 for id in self.publications.keys() {
                     self.start_publication(id, ctx);
                 }
+                self.restore_next_received_document(ctx);
             }
             InterfoldEventData::PublishDocumentRequested(data) => {
                 ctx.notify(TypedEvent::new(data, ec))

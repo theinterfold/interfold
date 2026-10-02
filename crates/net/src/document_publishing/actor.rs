@@ -9,6 +9,7 @@ use crate::{
     domain::{
         add_candidate, datetime_to_instant_from_now, notification_is_well_formed, Cleanup,
         CleanupQueue, DocumentPublishingService, FetchQueue, PublicationSchedule,
+        RestorableDocuments,
     },
     events::{
         call_and_await_response, DocumentPublishedNotification, GossipData, NetCommand, NetEvent,
@@ -18,8 +19,8 @@ use crate::{
 use actix::prelude::*;
 use anyhow::{Context, Result};
 use e3_events::{
-    prelude::*, trap, BusHandle, CiphernodeSelected, CorrelationId, DocumentReceived, E3Stage,
-    E3id, EType, EventSource, EventType, InterfoldEvent, InterfoldEventData, PartyId,
+    prelude::*, trap, BusHandle, CiphernodeSelected, CorrelationId, DocumentMeta, DocumentReceived,
+    E3Stage, E3id, EType, EventSource, EventType, InterfoldEvent, InterfoldEventData, PartyId,
     PublishDocumentRequested, TypedEvent,
 };
 use e3_utils::ArcBytes;
@@ -73,6 +74,8 @@ type DocumentId = (E3id, ContentHash);
 pub struct RecoveredDocumentState {
     pub publications: Vec<PublishDocumentRequested>,
     pub received: HashSet<(E3id, ContentHash)>,
+    /// Received documents to store in this node's DHT store again at `SyncEnded`.
+    pub restorable: RestorableDocuments,
     pub closed_e3s: VecDeque<E3id>,
 }
 
@@ -164,6 +167,10 @@ pub struct DocumentPublisher {
     late_notifications: HashMap<DocumentId, Vec<DocumentPublishedNotification>>,
     early_notifications: VecDeque<DocumentPublishedNotification>,
     closed_e3s: VecDeque<E3id>,
+    /// Received documents that wait for `SyncEnded` to be stored in this node's DHT store again.
+    restorable: RestorableDocuments,
+    /// The E3 of the received document being stored again, and whether that E3 closed since.
+    restoring: Option<(E3id, bool)>,
 }
 
 impl DocumentPublisher {
@@ -227,6 +234,8 @@ impl DocumentPublisher {
             late_notifications: HashMap::new(),
             early_notifications: VecDeque::new(),
             closed_e3s: recovered.closed_e3s,
+            restorable: recovered.restorable,
+            restoring: None,
         };
         for event in recovered.publications {
             let id = (
@@ -446,6 +455,32 @@ impl DocumentPublisher {
         }
     }
 
+    /// Store the next restorable received document in this node's DHT store. The documents are
+    /// stored one at a time, and their keys are pruned with the other records of their E3. A
+    /// document that does not fit in a full store is skipped: the restore only makes the node
+    /// serve documents again, and the node does not need it to fetch them.
+    fn restore_next_received_document(&mut self, ctx: &mut actix::Context<Self>) {
+        let Some(DocumentReceived { meta, value }) = self.restorable.pop(chrono::Utc::now()) else {
+            return;
+        };
+        let key = self.service.track_published_key(&meta.e3_id, &value);
+        self.restoring = Some((meta.e3_id.clone(), false));
+        let (tx, rx) = (self.tx.clone(), self.rx.clone());
+        let store = async move { store_document_locally(tx, rx, &meta, &value).await };
+        ctx.spawn(store.into_actor(self).map(move |result, actor, ctx| {
+            if let Err(error) = result {
+                actor.bus.err(EType::IO, error);
+            }
+            // The E3 closed during the store, maybe before the store command was sent and so
+            // before the removal of its records. A failed store can also have stored the record
+            // and lost only its reply.
+            if let Some((_, true)) = actor.restoring.take() {
+                actor.queue_cleanup([Cleanup::RemoveRecord(key)], ctx);
+            }
+            actor.restore_next_received_document(ctx);
+        }));
+    }
+
     fn handle_canonical_dkg_end(
         &mut self,
         e3_id: &E3id,
@@ -476,6 +511,10 @@ impl DocumentPublisher {
         self.fetching.retain(|(id, _), _| id != e3_id);
         self.late_notifications.retain(|(id, _), _| id != e3_id);
         self.fetch_queue.remove_e3(e3_id);
+        self.restorable.remove_e3(e3_id);
+        if let Some((restoring, closed)) = &mut self.restoring {
+            *closed |= restoring == e3_id;
+        }
         self.early_notifications
             .retain(|item| &item.meta.e3_id != e3_id);
         if !keys.is_empty() {
@@ -544,7 +583,8 @@ mod handlers;
 mod recovery;
 
 use effects::{
-    announce_stored_document, bind_to_candidate, replicate_document, DocumentMetadataMismatch,
+    announce_stored_document, bind_to_candidate, replicate_document, store_document_locally,
+    DocumentMetadataMismatch,
 };
 pub use effects::{handle_document_published_notification, handle_publish_document_requested};
 pub use recovery::recover_document_state;

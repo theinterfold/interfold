@@ -6,7 +6,7 @@ use super::{
     ContentHash, RecoveredDocumentState, MAX_BUFFERED_NOTIFICATIONS, MAX_PENDING_PUBLICATIONS,
     MAX_PENDING_PUBLICATION_BYTES, MAX_RECEIVED_DOCUMENTS,
 };
-use crate::domain::EventConversionService;
+use crate::domain::{EventConversionService, RestorableDocuments};
 use actix::Recipient;
 use anyhow::{ensure, Context, Result};
 use e3_events::{
@@ -80,6 +80,8 @@ pub async fn recover_document_state(
 ) -> Result<RecoveredDocumentState> {
     let mut publications = HashMap::new();
     let mut received = HashSet::new();
+    let mut restorable = RestorableDocuments::default();
+    let now = chrono::Utc::now();
     let mut closed = VecDeque::new();
     let mut publication_bytes = 0usize;
 
@@ -138,6 +140,7 @@ pub async fn recover_document_state(
                         received.len() <= MAX_RECEIVED_DOCUMENTS,
                         "received-document cache exceeds recovery limit"
                     );
+                    restorable.push(document.clone(), now);
                 }
                 InterfoldEventData::E3StageChanged(change)
                     if event.source() == EventSource::Evm
@@ -165,6 +168,7 @@ pub async fn recover_document_state(
                         }
                     });
                     received.retain(|(id, _)| id != &change.e3_id);
+                    restorable.remove_e3(&change.e3_id);
                 }
                 _ => {}
             }
@@ -174,6 +178,7 @@ pub async fn recover_document_state(
     Ok(RecoveredDocumentState {
         publications: publications.into_values().collect(),
         received,
+        restorable,
         closed_e3s: closed,
     })
 }
@@ -245,11 +250,18 @@ mod tests {
 
         let reader = system.eventstore_reader()?.seq();
         let interests = HashSet::from([e3_id.clone()]);
-        let recovered = recover_document_state(&reader, &[aggregate], &interests).await?;
+        let mut recovered = recover_document_state(&reader, &[aggregate], &interests).await?;
         assert_eq!(recovered.publications, vec![request.clone()]);
         assert!(recovered
             .received
             .contains(&(e3_id.clone(), ContentHash::from_content(&value))));
+        assert_eq!(
+            recovered.restorable.pop(chrono::Utc::now()),
+            Some(DocumentReceived {
+                meta: request.meta.clone(),
+                value: value.clone(),
+            })
+        );
 
         append(
             &system,
@@ -263,9 +275,10 @@ mod tests {
             EventSource::Evm,
         )
         .await?;
-        let recovered = recover_document_state(&reader, &[aggregate], &interests).await?;
+        let mut recovered = recover_document_state(&reader, &[aggregate], &interests).await?;
         assert!(recovered.publications.is_empty());
         assert!(recovered.received.is_empty());
+        assert_eq!(recovered.restorable.pop(chrono::Utc::now()), None);
         assert!(recovered.closed_e3s.contains(&e3_id));
 
         let proof_type = ProofType::C4aSkShareDecryption;

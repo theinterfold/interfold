@@ -360,6 +360,82 @@ async fn cleanup_waits_for_a_busy_command_queue_in_one_queue() -> Result<()> {
     Ok(())
 }
 
+/// The DHT store is in memory. At `SyncEnded` a restarted node stores the received documents of
+/// open E3s in it again, so that it still serves them, and prunes them when their E3 closes.
+#[actix::test]
+async fn received_documents_are_stored_again_after_the_sync() -> Result<()> {
+    tokio::time::pause();
+    let received = |e3: &str, value: &[u8]| {
+        let request = publish_request(e3, value);
+        DocumentReceived {
+            meta: request.meta,
+            value: request.value,
+        }
+    };
+    let closed = received("closed-in-history", b"closed document");
+    let open = received("open", b"open document");
+    let open_key = ContentHash::from_content(&open.value);
+    let mut recovered = RecoveredDocumentState::default();
+    recovered.restorable.push(closed.clone(), Utc::now());
+    recovered.restorable.push(open.clone(), Utc::now());
+    let (_guard, _bus, _net_cmd_tx, commands, net_events, _, _, _, publisher) =
+        setup_startup_test(recovered)?;
+    let mut commands = Commands::new(commands);
+
+    publisher
+        .send(startup_event(EffectsEnabled::new().into(), 1))
+        .await?;
+    publisher.send(key_published(&closed.meta.e3_id, 2)).await?;
+    assert!(
+        !commands
+            .arrives_within(Duration::from_secs(60), is_store_local)
+            .await,
+        "nothing is stored before the chain history arrives"
+    );
+    publisher
+        .send(startup_event(SyncEnded::new().into(), 3))
+        .await?;
+
+    let NetCommand::DhtStoreLocal {
+        correlation_id,
+        key,
+        value,
+        ..
+    } = commands.take(is_store_local).await?
+    else {
+        bail!("expected a local store");
+    };
+    assert_eq!((&key, &value), (&open_key, &open.value));
+    let is_removal = |command: &NetCommand| matches!(command, NetCommand::DhtRemoveRecords { .. });
+    let removes_open_key = |command: NetCommand| match command {
+        NetCommand::DhtRemoveRecords { keys } => keys == vec![open_key.clone()],
+        _ => false,
+    };
+
+    // The open E3 closes while its document is being stored: the closure removes the record,
+    // and the store's answer removes it once more, in case the store came after the removal.
+    // A failed store can have stored the record too.
+    publisher.send(key_published(&open.meta.e3_id, 4)).await?;
+    assert!(removes_open_key(commands.take(is_removal).await?));
+    // Many more E3s close before the store answers, so the list of closed E3s drops this one.
+    for index in 0..1_024u64 {
+        let e3_id = E3id::new(format!("later-{index}"), 1);
+        publisher.send(key_published(&e3_id, 5 + index)).await?;
+    }
+    net_events.send(NetEvent::DhtStoreLocalError {
+        correlation_id,
+        error: libp2p::kad::store::Error::MaxRecords,
+    })?;
+    assert!(removes_open_key(commands.take(is_removal).await?));
+    assert!(
+        !commands
+            .arrives_within(Duration::from_secs(60), is_store_local)
+            .await,
+        "the document of the closed E3 is not stored"
+    );
+    Ok(())
+}
+
 fn key_published(e3_id: &E3id, seq: u64) -> InterfoldEvent {
     InterfoldEvent::<Unsequenced>::new_with_timestamp(
         E3StageChanged {

@@ -11,7 +11,7 @@ use std::{
 };
 
 use chrono::{DateTime, Utc};
-use e3_events::{E3id, Filter, PartyId};
+use e3_events::{DocumentReceived, E3id, Filter, PartyId};
 use e3_utils::ArcBytes;
 
 use crate::{
@@ -351,6 +351,85 @@ impl CleanupQueue {
         let dropped = self.entries.len();
         self.entries.clear();
         dropped
+    }
+}
+
+/// Most received documents that a restart stores in this node's DHT store again. The store holds
+/// at most 1024 records, and this node's own publications need room too.
+pub const MAX_RESTORED_DOCUMENTS: usize = 512;
+/// Most bytes of received documents that a restart stores in this node's DHT store again.
+pub const MAX_RESTORED_DOCUMENT_BYTES: usize = 128 * 1024 * 1024;
+
+/// Received documents to store in this node's DHT store again after a restart. The DHT store is in
+/// memory, so without them the node stops serving the documents that it received, also to peers
+/// whose dealer is offline.
+///
+/// It keeps the documents received last, in event-log order, within a count and a byte limit, and
+/// drops the documents that expired and the documents of E3s that closed. The limits apply while
+/// recovery reads the log, before the chain history closes the E3s that ended while the node was
+/// offline, so those documents can take the place of older documents of open E3s.
+#[derive(Debug)]
+pub struct RestorableDocuments {
+    max_documents: usize,
+    max_bytes: usize,
+    documents: VecDeque<DocumentReceived>,
+    bytes: usize,
+}
+
+impl Default for RestorableDocuments {
+    fn default() -> Self {
+        Self::with_limits(MAX_RESTORED_DOCUMENTS, MAX_RESTORED_DOCUMENT_BYTES)
+    }
+}
+
+impl RestorableDocuments {
+    pub fn with_limits(max_documents: usize, max_bytes: usize) -> Self {
+        Self {
+            max_documents,
+            max_bytes,
+            documents: VecDeque::new(),
+            bytes: 0,
+        }
+    }
+
+    /// Keep a document received after the ones kept before. The oldest documents make room for
+    /// it. An expired document, or one larger than the byte limit, is not kept.
+    pub fn push(&mut self, document: DocumentReceived, now: DateTime<Utc>) {
+        let size = document.value.size();
+        if document.meta.expires_at <= now || size > self.max_bytes {
+            return;
+        }
+        self.documents.push_back(document);
+        self.bytes += size;
+        while self.documents.len() > self.max_documents || self.bytes > self.max_bytes {
+            self.pop_oldest();
+        }
+    }
+
+    /// Remove and return the oldest document that has not expired at `now`.
+    pub fn pop(&mut self, now: DateTime<Utc>) -> Option<DocumentReceived> {
+        while let Some(document) = self.pop_oldest() {
+            if document.meta.expires_at > now {
+                return Some(document);
+            }
+        }
+        None
+    }
+
+    pub fn remove_e3(&mut self, e3_id: &E3id) {
+        self.documents
+            .retain(|document| &document.meta.e3_id != e3_id);
+        self.bytes = self
+            .documents
+            .iter()
+            .map(|document| document.value.size())
+            .sum();
+    }
+
+    fn pop_oldest(&mut self) -> Option<DocumentReceived> {
+        let document = self.documents.pop_front()?;
+        self.bytes -= document.value.size();
+        Some(document)
     }
 }
 
@@ -853,5 +932,74 @@ mod tests {
             Some(NetCommand::DhtRemoveRecords { keys }) if keys == vec![key(3), key(4)]
         ));
         assert!(queue.next_command().is_none());
+    }
+
+    fn received(e3: &str, bytes: usize) -> DocumentReceived {
+        DocumentReceived {
+            meta: DocumentMeta::new(
+                E3id::new(e3, 1),
+                DocumentKind::TrBFV,
+                vec![],
+                Some(Utc::now() + chrono::Duration::hours(1)),
+            ),
+            value: ArcBytes::from_bytes(&vec![0; bytes]),
+        }
+    }
+
+    fn restore_order(restorable: &mut RestorableDocuments) -> Vec<String> {
+        std::iter::from_fn(|| restorable.pop(Utc::now()))
+            .map(|document| document.meta.e3_id.e3_id().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn restorable_documents_keep_at_most_their_count_limit() {
+        let mut restorable = RestorableDocuments::with_limits(3, 1_000);
+        for e3 in ["a", "b", "c", "d"] {
+            restorable.push(received(e3, 2), Utc::now());
+        }
+        assert_eq!(restore_order(&mut restorable), ["b", "c", "d"]);
+    }
+
+    #[test]
+    fn restorable_documents_keep_at_most_their_byte_limit() {
+        let mut restorable = RestorableDocuments::with_limits(100, 10);
+        for (e3, bytes) in [("a", 4), ("b", 4), ("c", 4), ("d", 6)] {
+            restorable.push(received(e3, bytes), Utc::now());
+        }
+        assert_eq!(restore_order(&mut restorable), ["c", "d"]);
+    }
+
+    #[test]
+    fn restorable_documents_keep_the_newest_open_documents_within_their_limits() {
+        let now = Utc::now();
+        let document = |e3: &str, bytes: usize, expires_in: i64| DocumentReceived {
+            meta: DocumentMeta::new(
+                E3id::new(e3, 1),
+                DocumentKind::TrBFV,
+                vec![],
+                Some(now + chrono::Duration::seconds(expires_in)),
+            ),
+            value: ArcBytes::from_bytes(&vec![e3.as_bytes()[0]; bytes]),
+        };
+        let e3_of = |document: Option<DocumentReceived>| document.map(|d| d.meta.e3_id);
+        let mut restorable = RestorableDocuments::with_limits(3, 10);
+
+        restorable.push(document("expired", 1, -1), now);
+        restorable.push(document("too large", 11, 60), now);
+        for e3 in ["a", "b", "c", "d"] {
+            restorable.push(document(e3, 2, 60), now);
+        }
+        // "a" made room for "d" (count). "b" and "c" make room for "e" (count, then bytes).
+        restorable.push(document("e", 7, 60), now);
+        restorable.push(document("f", 1, 1), now);
+        restorable.remove_e3(&E3id::new("e", 1));
+        restorable.push(document("g", 2, 60), now);
+
+        assert_eq!(e3_of(restorable.pop(now)), Some(E3id::new("d", 1)));
+        // "f" expires before it is restored.
+        let later = now + chrono::Duration::seconds(2);
+        assert_eq!(e3_of(restorable.pop(later)), Some(E3id::new("g", 1)));
+        assert_eq!(e3_of(restorable.pop(later)), None);
     }
 }
