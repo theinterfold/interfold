@@ -407,6 +407,7 @@ mod tests {
             finalization_ms: None,
             chain_id: None,
             ingestion_confirmations: Some(0),
+            rpc_poll_interval_ms: None,
             data_availability: None,
         }
     }
