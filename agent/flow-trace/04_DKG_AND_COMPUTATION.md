@@ -1598,23 +1598,30 @@ intent.
 
 The document publisher rebuilds its active outbox and received-document set from the durable event
 log before network effects start. Document publication and receipt events use their E3's chain
-aggregate. Recovery scans one event at a time to bound memory. During DKG, the publisher stores each
-document on the DHT once and then gossips a small notification that names it. It announces the
-document again 30 seconds later, doubling the wait up to 5 minutes; these announcements send only
-the notification. The publisher stores the full document again only after 30 minutes. It starts one
-document replication at a time, and each put has two attempts. A put returns after one peer stores
-the record, so its uploads to other peers can overlap the next replication. The Kademlia library's
-own hourly replication of stored records is disabled. A failed put or announcement is retried after
-15 seconds, doubling up to 5 minutes, including when no peer subscribed to the topic at the first
-attempt. A failed announcement does not upload the document again. A receiver holds early
-notifications until its committee slot is known, one per document and party filter with the latest
-expiry, and it ignores expired notifications. It fetches documents outside the network ingress loop,
-with at most 8 fetches in flight and at most 512 documents waiting. A failed fetch is retried with
-the same back-off until the document arrives, its E3 closes, or its notifications expire. A fetch
-accepts only the record for the requested key, and the document is accepted under the first waiting
-notification whose metadata matches its payload, so a forged notification cannot displace a correct
-one. It suppresses duplicate documents. A canonical `KeyPublished` stage stops DKG-document
-announcements and prunes local DHT records. C4 `DecryptionKeyShared` is a DKG document; later
+aggregate. Recovery scans one event at a time to bound memory. During DKG, the publisher first
+stores each document in its own DHT store, so that a peer whose lookup reaches this node can fetch
+it from here, and then gossips a small notification that names it. A lookup asks the about 20 peers
+closest to the key, so it reliably reaches the publisher only in a network of about that size; other
+peers fetch the document once an upload succeeds. The publisher announces the document again 30
+seconds later, doubling the wait up to 5 minutes; these announcements store the document locally
+again and send only the notification. An announcement waits until the local store holds the
+document. During startup the network event buffer holds that reply until `SyncEnded`, so the wait is
+as long as a put's, 150 seconds. Separately, the publisher uploads the full document to the DHT
+peers closest to its key, and again every 30 minutes until the DKG ends; a failing upload never
+delays an announcement. It starts one upload at a time, and each put has two attempts. A put returns
+after one peer stores the record, so its uploads to other peers can overlap the next upload. The
+Kademlia library's own hourly replication of stored records is disabled. A failed upload or
+announcement is retried after 15 seconds, doubling up to 5 minutes, including when no peer
+subscribed to the topic at the first attempt. A failed announcement does not upload the document
+again. A receiver holds early notifications until its committee slot is known, one per document and
+party filter with the latest expiry, and it ignores expired notifications. It fetches documents
+outside the network ingress loop, with at most 8 fetches in flight and at most 512 documents
+waiting. A failed fetch is retried with the same back-off until the document arrives, its E3 closes,
+or its notifications expire. A fetch accepts only the record for the requested key, and the document
+is accepted under the first waiting notification whose metadata matches its payload, so a forged
+notification cannot displace a correct one. It suppresses duplicate documents. A canonical
+`KeyPublished` stage stops DKG-document announcements and uploads, with their scheduled retries, and
+prunes the DHT records that this node published. C4 `DecryptionKeyShared` is a DKG document; later
 `DecryptionshareCreated` events use event gossip, not the DHT document path. Recovery retains the
 DKG closure across restart. A local `E3RequestComplete` does not mean that the contract has reached
 a terminal stage.

@@ -137,40 +137,45 @@ When the ticket is already on-chain, the node logs
 
 ```text
 ERROR DHT put record failed: the quorum failed; needed 1 peers
-ERROR Operation failed after 4 attempts: DHT put record failed: PutRecordError(QuorumFailed { key: …, success: [], quorum: 1 })
+ERROR Operation failed after 2 attempts: DHT put record failed: PutRecordError(QuorumFailed { key: …, success: [], quorum: 1 })
 ```
 
-Before the second line, the node also logs `Attempt 1/4 failed, retrying in 1000ms: …` and two more
-attempts at the `WARN` level.
+Before the second line, the node also logs `Attempt 1/2 failed, retrying in 1000ms: …` at the `WARN`
+level.
 
 ### What the error means
 
-During a DKG, the node stores each DKG document that it makes in the Kademlia DHT. The documents are
-its threshold shares, its encryption key, and its decryption key share. The node stores each
-document with `Quorum::One`, so at least one remote peer must acknowledge it. The node gossips a
-notification to the committee only after the store succeeds.
+During a DKG, the node publishes each DKG document that it makes: its threshold shares, its
+encryption key, and its decryption key share. It stores the document in its own DHT store and
+gossips a notification to the committee. Separately, it uploads the document to the Kademlia peers
+closest to the document's key. The upload uses `Quorum::One`, so at least one remote peer must
+acknowledge it. These errors come from the upload; a failing upload does not hold back the
+notification.
 
-- **The retry sequence.** Each publication makes 4 attempts. The node waits 1 s, 2 s, and 4 s
-  between the attempts.
+- **The retry sequence.** Each upload makes 2 attempts, 1 s apart.
 - **`success: []`.** Remote peers receive records with record filtering on
   (`StoreInserts::FilterBoth`). With this setting, a remote peer sends a response even when its
   filter rejects the record. An empty `success` list therefore means that no peer acknowledged the
   request at all.
-- **`QuorumFailed`, not `Timeout`.** The Kademlia query timeout is 30 s. A `QuorumFailed` result
+- **`QuorumFailed`, not `Timeout`.** The Kademlia query timeout is 60 s. A `QuorumFailed` result
   before the timeout means that the query had no reachable peers to send the record to.
 
 The node therefore had no admitted and reachable Kademlia peers at that time.
 
 ### What happens next
 
-The node retries a failed publication 15 s after each failed round of 4 attempts. It continues until
-the document expires or the DKG ends. The DKG ends when the chain reports the E3 stage
-`KeyPublished`, `CiphertextReady`, `Complete`, or `Failed`.
+The node keeps announcing the document from its own store: again 30 s after the first notification,
+then with the wait doubling up to 5 minutes. It retries a failed upload 15 s later, also doubling
+the wait up to 5 minutes, and uploads each document again every 30 minutes. It continues until the
+document expires or the DKG ends. The DKG ends when the chain reports the E3 stage `KeyPublished`,
+`CiphertextReady`, `Complete`, or `Failed`.
 
-- If the connectivity comes back in time, a later round succeeds and the node recovers without
-  action.
-- If the connectivity does not come back in time, the committee does not receive the documents of
-  this node for that E3.
+- While the uploads fail, a peer whose DHT lookup reaches this node fetches the document from it. A
+  lookup asks the about 20 peers closest to the key, so in a larger network some peers can fetch the
+  document only after an upload succeeds.
+- If the connectivity comes back in time, an upload succeeds and the node recovers without action.
+- If the connectivity does not come back in time, the peers that cannot reach this node do not
+  receive its documents for that E3.
 
 ### Causes
 

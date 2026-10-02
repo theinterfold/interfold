@@ -43,6 +43,10 @@ use super::event_converter::EventConverter;
 const KADEMLIA_PUT_TIMEOUT: Duration = Duration::from_secs(150);
 const KADEMLIA_GET_TIMEOUT: Duration = Duration::from_secs(90);
 const KADEMLIA_BROADCAST_TIMEOUT: Duration = Duration::from_secs(30);
+/// The network interface stores a local record without network I/O, but during startup the
+/// network event buffer holds the reply until `SyncEnded`. The wait matches the put's, so a
+/// recovered publication waits for the end of the sync as quietly as its first upload does.
+const DHT_STORE_LOCAL_TIMEOUT: Duration = KADEMLIA_PUT_TIMEOUT;
 const MAX_PENDING_PUBLICATIONS: usize = 256;
 const MAX_PENDING_PUBLICATION_BYTES: usize = 256 * 1024 * 1024;
 const MAX_BUFFERED_NOTIFICATIONS: usize = 1_024;
@@ -70,9 +74,56 @@ pub struct RecoveredDocumentState {
     pub closed_e3s: VecDeque<E3id>,
 }
 
+/// Store a pending publication in this node's DHT store and gossip its notification.
 #[derive(Message)]
 #[rtype(result = "()")]
 struct AnnounceDocument(DocumentId);
+
+/// Upload a pending publication to the DHT peers closest to its key, when an upload is due.
+#[derive(Message)]
+#[rtype(result = "()")]
+struct ReplicateDocument(DocumentId);
+
+/// A document this node publishes: the request, when it is next announced and uploaded, the
+/// announcement and upload in flight, and the next ones while they wait for their delay.
+struct Publication {
+    event: PublishDocumentRequested,
+    schedule: PublicationSchedule,
+    announcing: Option<AbortHandle>,
+    replicating: Option<AbortHandle>,
+    next_announcement: Option<SpawnHandle>,
+    next_replication: Option<SpawnHandle>,
+}
+
+impl Publication {
+    fn new(event: PublishDocumentRequested) -> Self {
+        Self {
+            event,
+            schedule: PublicationSchedule::default(),
+            announcing: None,
+            replicating: None,
+            next_announcement: None,
+            next_replication: None,
+        }
+    }
+
+    fn is_expired(&self) -> bool {
+        self.event.meta.expires_at <= chrono::Utc::now()
+    }
+
+    /// Stop the announcement and the upload in flight, and cancel the scheduled ones.
+    fn stop(&self, ctx: &mut actix::Context<DocumentPublisher>) {
+        for handle in [&self.announcing, &self.replicating].into_iter().flatten() {
+            handle.abort();
+        }
+        for timer in [self.next_announcement, self.next_replication]
+            .into_iter()
+            .flatten()
+        {
+            ctx.cancel_future(timer);
+        }
+    }
+}
 
 /// DocumentPublisher is an actor that monitors events from both the Libp2pNetInterface and the
 /// Interfold EventBus in order to manage document publishing interactions. The decision/state logic
@@ -90,12 +141,8 @@ pub struct DocumentPublisher {
     /// Pure decision/state service.
     service: DocumentPublishingService,
     effects_enabled: bool,
-    publications: HashMap<DocumentId, PublishDocumentRequested>,
+    publications: HashMap<DocumentId, Publication>,
     publication_bytes: usize,
-    schedules: HashMap<DocumentId, PublicationSchedule>,
-    publishing: HashSet<DocumentId>,
-    replicating: HashSet<DocumentId>,
-    publish_aborts: HashMap<DocumentId, AbortHandle>,
     received: HashSet<DocumentId>,
     /// Documents being fetched, with the failed attempts before the current one.
     fetching: HashMap<DocumentId, u32>,
@@ -160,10 +207,6 @@ impl DocumentPublisher {
             effects_enabled,
             publications: HashMap::new(),
             publication_bytes: 0,
-            schedules: HashMap::new(),
-            publishing: HashSet::new(),
-            replicating: HashSet::new(),
-            publish_aborts: HashMap::new(),
             received: recovered.received,
             fetching: HashMap::new(),
             fetch_queue: FetchQueue::new(MAX_WAITING_FETCHES),
@@ -181,7 +224,7 @@ impl DocumentPublisher {
                 .publication_bytes
                 .saturating_add(event.value.size());
             publisher.service.track_published_key(&id.0, &event.value);
-            publisher.publications.insert(id, event);
+            publisher.publications.insert(id, Publication::new(event));
         }
         publisher
     }
@@ -315,19 +358,72 @@ impl DocumentPublisher {
         Ok(())
     }
 
-    fn remove_publication(&mut self, id: &DocumentId) {
-        if let Some(event) = self.publications.remove(id) {
-            self.publication_bytes = self.publication_bytes.saturating_sub(event.value.size());
-        }
-        self.schedules.remove(id);
+    /// Start the announcement and the upload of a publication.
+    fn start_publication(&self, id: &DocumentId, ctx: &mut actix::Context<Self>) {
+        ctx.notify(AnnounceDocument(id.clone()));
+        ctx.notify(ReplicateDocument(id.clone()));
     }
 
-    fn handle_canonical_dkg_end(&mut self, e3_id: &E3id) -> Result<()> {
-        for (id, abort) in &self.publish_aborts {
-            if &id.0 == e3_id {
-                abort.abort();
+    /// Announce a publication again after `delay`. It replaces the announcement scheduled before,
+    /// so that each publication has one announcement loop.
+    fn schedule_announcement(
+        &mut self,
+        id: DocumentId,
+        delay: Duration,
+        ctx: &mut actix::Context<Self>,
+    ) {
+        if let Some(publication) = self.publications.get_mut(&id) {
+            let timer = ctx.notify_later(AnnounceDocument(id), delay);
+            if let Some(previous) = publication.next_announcement.replace(timer) {
+                ctx.cancel_future(previous);
             }
         }
+    }
+
+    /// Check a publication's upload again after `delay`. It replaces the check scheduled before,
+    /// so that each publication has one upload loop.
+    fn schedule_replication(
+        &mut self,
+        id: DocumentId,
+        delay: Duration,
+        ctx: &mut actix::Context<Self>,
+    ) {
+        if let Some(publication) = self.publications.get_mut(&id) {
+            let timer = ctx.notify_later(ReplicateDocument(id), delay);
+            if let Some(previous) = publication.next_replication.replace(timer) {
+                ctx.cancel_future(previous);
+            }
+        }
+    }
+
+    /// The document of a publication that may run effects now. An expired publication is removed.
+    fn ready_publication(
+        &mut self,
+        id: &DocumentId,
+        ctx: &mut actix::Context<Self>,
+    ) -> Option<PublishDocumentRequested> {
+        let publication = self.publications.get(id)?;
+        if publication.is_expired() {
+            self.remove_publication(id, ctx);
+            return None;
+        }
+        self.effects_enabled.then(|| publication.event.clone())
+    }
+
+    fn remove_publication(&mut self, id: &DocumentId, ctx: &mut actix::Context<Self>) {
+        if let Some(publication) = self.publications.remove(id) {
+            publication.stop(ctx);
+            self.publication_bytes = self
+                .publication_bytes
+                .saturating_sub(publication.event.value.size());
+        }
+    }
+
+    fn handle_canonical_dkg_end(
+        &mut self,
+        e3_id: &E3id,
+        ctx: &mut actix::Context<Self>,
+    ) -> Result<()> {
         for (id, abort) in &self.fetch_aborts {
             if &id.0 == e3_id {
                 abort.abort();
@@ -340,17 +436,17 @@ impl DocumentPublisher {
             self.closed_e3s.push_back(e3_id.clone());
         }
         let keys = self.service.complete_e3(e3_id);
-        self.publications.retain(|(id, _), event| {
+        self.publications.retain(|(id, _), publication| {
             if id == e3_id {
-                self.publication_bytes = self.publication_bytes.saturating_sub(event.value.size());
+                publication.stop(ctx);
+                self.publication_bytes = self
+                    .publication_bytes
+                    .saturating_sub(publication.event.value.size());
                 false
             } else {
                 true
             }
         });
-        self.schedules.retain(|(id, _), _| id != e3_id);
-        self.publishing.retain(|(id, _)| id != e3_id);
-        self.replicating.retain(|(id, _)| id != e3_id);
         self.received.retain(|(id, _)| id != e3_id);
         self.fetching.retain(|(id, _), _| id != e3_id);
         self.late_notifications.retain(|(id, _), _| id != e3_id);
@@ -376,7 +472,9 @@ mod handlers;
 #[path = "recovery.rs"]
 mod recovery;
 
-use effects::{announce_document, bind_to_candidate, replicate_document, DocumentMetadataMismatch};
+use effects::{
+    announce_stored_document, bind_to_candidate, replicate_document, DocumentMetadataMismatch,
+};
 pub use effects::{handle_document_published_notification, handle_publish_document_requested};
 pub use recovery::recover_document_state;
 

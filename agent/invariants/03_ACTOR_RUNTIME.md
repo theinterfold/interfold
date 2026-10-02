@@ -214,10 +214,12 @@ the code does not meet yet.
   snapshots admit an E3; peer events can only contribute to an admitted one. —
   `crates/request/src/routing/workflow.rs`
 - A periodic network re-send backs off to a cap, stops when its phase ends, and has a lifetime
-  bound. Re-announcing a DHT document sends only its notification; the full document is stored again
-  only by a bounded refresh (once per 30 minutes, one replication started at a time). Library-driven
-  record replication stays disabled. — INDEX concerns #60, #62, #63;
-  `crates/net/src/document_publishing/workflow.rs`;
+  bound. Re-announcing a DHT document sends only its notification; the full document is uploaded to
+  peers again only by a bounded refresh (once per 30 minutes, one upload started at a time).
+  Removing a publication stops its announcement and upload and cancels their scheduled retries.
+  Library-driven record replication stays disabled. A document is announced only after the
+  publisher's own DHT store holds it, and a failing upload never delays its announcement. — INDEX
+  concerns #60, #62, #63, #74; `crates/net/src/document_publishing/workflow.rs`;
   `crates/net/src/network_sync/effects/rebroadcast.rs`
 - A node does not accept or forward a gossip message ID that it has already handled, including after
   the gossipsub duplicate cache expires. It does not store a peer event again while that event ID is

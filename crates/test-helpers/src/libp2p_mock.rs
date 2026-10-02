@@ -174,6 +174,23 @@ impl Libp2pMock {
                             error!("Libp2pMock: failed to send DhtPutRecordSucceeded: {e}");
                         }
                     }
+                    // One shared store stands in for every node's DHT store, so a document stored
+                    // locally can be fetched at once, as when lookups reach its publisher.
+                    NetCommand::DhtStoreLocal {
+                        correlation_id,
+                        key,
+                        value,
+                        ..
+                    } => {
+                        store.write().await.insert(key.clone(), value);
+
+                        if let Err(e) = src_event_tx.send(NetEvent::DhtStoreLocalSucceeded {
+                            key,
+                            correlation_id,
+                        }) {
+                            error!("Libp2pMock: failed to send DhtStoreLocalSucceeded: {e}");
+                        }
+                    }
                     NetCommand::DhtGetRecord {
                         correlation_id,
                         key,
@@ -297,6 +314,85 @@ mod tests {
         .unwrap();
         assert!(mock.store.read().await.contains_key(&online_key));
         assert!(!mock.store.read().await.contains_key(&offline_key));
+    }
+
+    #[tokio::test]
+    async fn local_store_is_answered_and_fetchable_by_peers() {
+        let mock = Libp2pMock::new();
+        let publisher_id = PeerId::random();
+        let fetcher_id = PeerId::random();
+        let (_, publisher) = create_channel_bridge();
+        let (_, fetcher) = create_channel_bridge();
+        mock.add_node(publisher_id, publisher.clone()).await;
+        mock.add_node(fetcher_id, fetcher.clone()).await;
+
+        let offline_key = ContentHash::from_content(b"offline");
+        mock.disconnect_node(publisher_id).await;
+        let mut dropped = mock.dropped_commands.subscribe();
+        publisher
+            .cmd_tx()
+            .send(NetCommand::DhtStoreLocal {
+                correlation_id: CorrelationId::new(),
+                expires: None,
+                value: ArcBytes::from_bytes(b"offline"),
+                key: offline_key.clone(),
+            })
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(1), dropped.changed())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!mock.store.read().await.contains_key(&offline_key));
+
+        mock.reconnect_node(publisher_id, publisher.clone()).await;
+        let key = ContentHash::from_content(b"document");
+        let stored = CorrelationId::new();
+        let mut publisher_events = publisher.event_rx();
+        publisher
+            .cmd_tx()
+            .send(NetCommand::DhtStoreLocal {
+                correlation_id: stored,
+                expires: None,
+                value: ArcBytes::from_bytes(b"document"),
+                key: key.clone(),
+            })
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if let Ok(NetEvent::DhtStoreLocalSucceeded {
+                    key: answered,
+                    correlation_id,
+                }) = publisher_events.recv().await
+                {
+                    if answered == key && correlation_id == stored {
+                        break;
+                    }
+                }
+            }
+        })
+        .await
+        .unwrap();
+
+        let mut fetcher_events = fetcher.event_rx();
+        fetcher
+            .cmd_tx()
+            .send(NetCommand::DhtGetRecord {
+                correlation_id: CorrelationId::new(),
+                key: key.clone(),
+            })
+            .unwrap();
+        let fetched = tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if let Ok(NetEvent::DhtGetRecordSucceeded { value, .. }) =
+                    fetcher_events.recv().await
+                {
+                    break value;
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(fetched.extract_bytes(), b"document".to_vec());
     }
 
     #[tokio::test]

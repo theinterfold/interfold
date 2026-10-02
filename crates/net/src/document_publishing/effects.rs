@@ -28,7 +28,8 @@ impl std::fmt::Display for DocumentMetadataMismatch {
 
 impl std::error::Error for DocumentMetadataMismatch {}
 
-/// Replicate a document to the DHT, then announce it over gossip.
+/// Publish a document once: store it in this node's own DHT store, announce it over gossip, then
+/// upload it to the DHT.
 pub async fn handle_publish_document_requested(
     tx: mpsc::Sender<NetCommand>,
     rx: NetEventSubscriber,
@@ -36,8 +37,63 @@ pub async fn handle_publish_document_requested(
     topic: impl Into<String>,
     bus: BusHandle,
 ) -> Result<()> {
-    replicate_document(tx.clone(), rx.clone(), &event).await?;
+    announce_stored_document(tx.clone(), rx.clone(), event.clone(), topic, bus).await?;
+    replicate_document(tx, rx, &event).await
+}
+
+/// Make a document fetchable from this node's own DHT store, then gossip its notification.
+///
+/// The notification goes out only after the local store holds the document, so a peer that
+/// fetches on the notification can find it here, even when no upload to other peers has
+/// succeeded.
+pub(super) async fn announce_stored_document(
+    tx: mpsc::Sender<NetCommand>,
+    rx: NetEventSubscriber,
+    event: PublishDocumentRequested,
+    topic: impl Into<String>,
+    bus: BusHandle,
+) -> Result<()> {
+    store_document_locally(tx.clone(), rx.clone(), &event).await?;
     announce_document(tx, rx, event, topic, bus).await
+}
+
+/// The DHT key of a document and the time its record expires. An expired document has no
+/// record: it must not be stored or uploaded.
+fn dht_record_of(
+    event: &PublishDocumentRequested,
+) -> Result<(ContentHash, Option<std::time::Instant>)> {
+    let expires = datetime_to_instant_from_now(event.meta.expires_at)
+        .context("refusing to store an expired DHT document")?;
+    Ok((ContentHash::from_content(&event.value), Some(expires)))
+}
+
+/// Store a document in this node's own DHT store, without uploading it to other peers.
+async fn store_document_locally(
+    net_cmds: mpsc::Sender<NetCommand>,
+    net_events: NetEventSubscriber,
+    event: &PublishDocumentRequested,
+) -> Result<()> {
+    let (key, expires) = dht_record_of(event)?;
+    let value = event.value.clone();
+    call_and_await_response(
+        net_cmds,
+        net_events,
+        NetCommand::DhtStoreLocal {
+            correlation_id: CorrelationId::new(),
+            expires,
+            value,
+            key,
+        },
+        |event| match event {
+            NetEvent::DhtStoreLocalSucceeded { .. } => Some(Ok(())),
+            NetEvent::DhtStoreLocalError { error, .. } => {
+                Some(Err(anyhow::anyhow!("DHT local store failed: {error:?}")))
+            }
+            _ => None,
+        },
+        DHT_STORE_LOCAL_TIMEOUT,
+    )
+    .await
 }
 
 /// Store the full document on the DHT peers closest to its content hash.
@@ -46,13 +102,8 @@ pub(super) async fn replicate_document(
     rx: NetEventSubscriber,
     event: &PublishDocumentRequested,
 ) -> Result<()> {
+    let (key, expires) = dht_record_of(event)?;
     let value = event.value.clone();
-    let key = ContentHash::from_content(&value);
-    let expires = Some(
-        datetime_to_instant_from_now(event.meta.expires_at)
-            .context("refusing to publish an expired DHT document")?,
-    );
-
     retry_with_backoff(
         || {
             put_record(tx.clone(), rx.clone(), expires, value.clone(), key.clone())
@@ -64,7 +115,7 @@ pub(super) async fn replicate_document(
     .await
 }
 
-/// Gossip a small notification that names an already replicated document.
+/// Gossip a small notification that names a document this node already stores.
 pub(super) async fn announce_document(
     tx: mpsc::Sender<NetCommand>,
     rx: NetEventSubscriber,

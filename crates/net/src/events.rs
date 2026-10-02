@@ -220,6 +220,14 @@ pub enum NetCommand {
         address: Multiaddr,
         peer_id: PeerId,
     },
+    /// Store a document in this node's own Kademlia store, without uploading it to other peers.
+    /// Peers that look its key up can then fetch it from this node.
+    DhtStoreLocal {
+        correlation_id: CorrelationId,
+        expires: Option<Instant>,
+        value: ArcBytes,
+        key: ContentHash,
+    },
     /// Command to PublishDocument to Kademlia
     DhtPutRecord {
         correlation_id: CorrelationId,
@@ -284,6 +292,15 @@ impl NetCommand {
                 };
                 format!("GossipPublish {{ topic: {topic}, correlation_id: {correlation_id}, {kind} }}")
             }
+            N::DhtStoreLocal {
+                correlation_id,
+                key,
+                value,
+                ..
+            } => format!(
+                "DhtStoreLocal {{ correlation_id: {correlation_id}, key: {key:?}, value_bytes: {} }}",
+                value.size()
+            ),
             N::DhtPutRecord {
                 correlation_id,
                 key,
@@ -313,6 +330,7 @@ impl NetCommand {
     pub fn correlation_id(&self) -> Option<CorrelationId> {
         use NetCommand as N;
         match self {
+            N::DhtStoreLocal { correlation_id, .. } => Some(*correlation_id),
             N::DhtPutRecord { correlation_id, .. } => Some(*correlation_id),
             N::DhtGetRecord { correlation_id, .. } => Some(*correlation_id),
             N::GossipPublish { correlation_id, .. } => Some(*correlation_id),
@@ -373,6 +391,16 @@ pub enum NetEvent {
         key: ContentHash,
         correlation_id: CorrelationId,
     },
+    /// This node stored a document in its own Kademlia store.
+    DhtStoreLocalSucceeded {
+        key: ContentHash,
+        correlation_id: CorrelationId,
+    },
+    /// This node could not store a document in its own Kademlia store.
+    DhtStoreLocalError {
+        correlation_id: CorrelationId,
+        error: store::Error,
+    },
     /// There was an error receiving the document
     DhtGetRecordError {
         correlation_id: CorrelationId,
@@ -422,7 +450,9 @@ impl NetEvent {
             | Self::DhtGetRecordSucceeded { .. }
             | Self::DhtPutRecordSucceeded { .. }
             | Self::DhtGetRecordError { .. }
-            | Self::DhtPutRecordError { .. } => true,
+            | Self::DhtPutRecordError { .. }
+            | Self::DhtStoreLocalSucceeded { .. }
+            | Self::DhtStoreLocalError { .. } => true,
             Self::DialError { .. }
             | Self::ConnectionEstablished { .. }
             | Self::ConfiguredDialAdmitted { .. }
@@ -477,6 +507,8 @@ impl NetEvent {
             | Self::OutgoingConnectionError { .. }
             | Self::DhtPutRecordSucceeded { .. }
             | Self::DhtPutRecordError { .. }
+            | Self::DhtStoreLocalSucceeded { .. }
+            | Self::DhtStoreLocalError { .. }
             | Self::AllPeersDialed { .. } => 0,
         };
 
@@ -492,6 +524,8 @@ impl NetEvent {
             N::DhtGetRecordSucceeded { correlation_id, .. } => Some(*correlation_id),
             N::DhtPutRecordError { correlation_id, .. } => Some(*correlation_id),
             N::DhtPutRecordSucceeded { correlation_id, .. } => Some(*correlation_id),
+            N::DhtStoreLocalSucceeded { correlation_id, .. } => Some(*correlation_id),
+            N::DhtStoreLocalError { correlation_id, .. } => Some(*correlation_id),
             N::OutgoingRequestSucceeded(msg) => Some(msg.correlation_id),
             N::OutgoingRequestFailed(msg) => Some(msg.correlation_id),
             _ => None,

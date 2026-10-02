@@ -21,8 +21,8 @@ impl Handler<InterfoldEvent> for DocumentPublisher {
         match msg {
             InterfoldEventData::EffectsEnabled(_) => {
                 self.effects_enabled = true;
-                for id in self.publications.keys().cloned() {
-                    ctx.notify(AnnounceDocument(id));
+                for id in self.publications.keys() {
+                    self.start_publication(id, ctx);
                 }
             }
             InterfoldEventData::PublishDocumentRequested(data) => {
@@ -52,7 +52,7 @@ impl Handler<InterfoldEvent> for DocumentPublisher {
                             | E3Stage::Failed
                     ) =>
             {
-                if let Err(error) = self.handle_canonical_dkg_end(&data.e3_id) {
+                if let Err(error) = self.handle_canonical_dkg_end(&data.e3_id, ctx) {
                     self.bus.err(EType::DocumentPublishing, error);
                 }
             }
@@ -87,9 +87,10 @@ impl Handler<TypedEvent<PublishDocumentRequested>> for DocumentPublisher {
         }
         self.service.track_published_key(&id.0, &msg.value);
         self.publication_bytes += size;
-        self.publications.insert(id.clone(), msg.into_inner());
+        self.publications
+            .insert(id.clone(), Publication::new(msg.into_inner()));
         if self.effects_enabled {
-            ctx.notify(AnnounceDocument(id));
+            self.start_publication(&id, ctx);
         }
     }
 }
@@ -112,82 +113,114 @@ impl Handler<AnnounceDocument> for DocumentPublisher {
     type Result = ();
 
     fn handle(&mut self, AnnounceDocument(id): AnnounceDocument, ctx: &mut Self::Context) {
-        let Some(event) = self.publications.get(&id).cloned() else {
+        let Some(event) = self.ready_publication(&id, ctx) else {
             return;
         };
-        if event.meta.expires_at <= chrono::Utc::now() {
-            self.remove_publication(&id);
+        let Some(publication) = self.publications.get_mut(&id) else {
             return;
-        }
-        if !self.effects_enabled || self.publishing.contains(&id) {
+        };
+        if publication.announcing.is_some() {
             return;
-        }
-        let replicate = self
-            .schedules
-            .entry(id.clone())
-            .or_default()
-            .needs_replication(Instant::now());
-        if replicate && self.replicating.len() >= MAX_INFLIGHT_REPLICATIONS {
-            ctx.notify_later(AnnounceDocument(id), REPLICATION_QUEUE_POLL);
-            return;
-        }
-        self.publishing.insert(id.clone());
-        if replicate {
-            self.replicating.insert(id.clone());
         }
         let (abort, registration) = AbortHandle::new_pair();
-        self.publish_aborts.insert(id.clone(), abort);
-        let tx = self.tx.clone();
-        let rx = self.rx.clone();
-        let bus = self.bus.clone();
-        let topic = self.topic.clone();
-        let operation = async move {
-            if replicate {
-                if let Err(error) = replicate_document(tx.clone(), rx.clone(), &event).await {
-                    return (false, Err(error));
-                }
-            }
-            (
-                replicate,
-                announce_document(tx, rx, event, topic, bus).await,
-            )
-        };
+        publication.announcing = Some(abort);
+        let announcement = announce_stored_document(
+            self.tx.clone(),
+            self.rx.clone(),
+            event,
+            self.topic.clone(),
+            self.bus.clone(),
+        );
         ctx.spawn(
-            Abortable::new(operation, registration)
+            Abortable::new(announcement, registration)
                 .into_actor(self)
                 .map(move |result, actor, ctx| {
-                    actor.publishing.remove(&id);
-                    actor.replicating.remove(&id);
-                    actor.publish_aborts.remove(&id);
-                    let Ok((replicated, outcome)) = result else {
+                    // An aborted announcement belongs to a publication that was removed.
+                    let Ok(outcome) = result else {
                         return;
                     };
-                    if actor
-                        .publications
-                        .get(&id)
-                        .is_some_and(|event| event.meta.expires_at <= chrono::Utc::now())
-                    {
-                        actor.remove_publication(&id);
-                        return;
-                    }
-                    let Some(schedule) = actor.schedules.get_mut(&id) else {
+                    let Some(publication) = actor.publications.get_mut(&id) else {
                         return;
                     };
-                    if replicated {
-                        schedule.record_replicated(Instant::now());
+                    publication.announcing = None;
+                    if publication.is_expired() {
+                        actor.remove_publication(&id, ctx);
+                        return;
                     }
                     let delay = match outcome {
-                        Ok(()) => schedule.record_announced(),
+                        Ok(()) => publication.schedule.record_announced(),
                         Err(error) => {
+                            let delay = publication.schedule.record_announcement_failed();
                             actor.bus.err(EType::IO, error);
-                            schedule.record_failed()
+                            delay
                         }
                     };
-                    if actor.publications.contains_key(&id) {
-                        ctx.notify_later(AnnounceDocument(id), delay);
-                    }
+                    actor.schedule_announcement(id, delay, ctx);
                 }),
         );
+    }
+}
+
+impl Handler<ReplicateDocument> for DocumentPublisher {
+    type Result = ();
+
+    fn handle(&mut self, ReplicateDocument(id): ReplicateDocument, ctx: &mut Self::Context) {
+        let Some(event) = self.ready_publication(&id, ctx) else {
+            return;
+        };
+        let uploads_in_flight = self
+            .publications
+            .values()
+            .filter(|publication| publication.replicating.is_some())
+            .count();
+        let Some(publication) = self.publications.get_mut(&id) else {
+            return;
+        };
+        if publication.replicating.is_some() {
+            return;
+        }
+        let now = Instant::now();
+        if !publication.schedule.needs_replication(now) {
+            let due_in = publication.schedule.replication_due_in(now);
+            self.schedule_replication(id, due_in, ctx);
+            return;
+        }
+        if uploads_in_flight >= MAX_INFLIGHT_REPLICATIONS {
+            self.schedule_replication(id, REPLICATION_QUEUE_POLL, ctx);
+            return;
+        }
+        let (abort, registration) = AbortHandle::new_pair();
+        publication.replicating = Some(abort);
+        let (tx, rx) = (self.tx.clone(), self.rx.clone());
+        let upload = async move { replicate_document(tx, rx, &event).await };
+        ctx.spawn(Abortable::new(upload, registration).into_actor(self).map(
+            move |result, actor, ctx| {
+                // An aborted upload belongs to a publication that was removed.
+                let Ok(outcome) = result else {
+                    return;
+                };
+                let Some(publication) = actor.publications.get_mut(&id) else {
+                    return;
+                };
+                publication.replicating = None;
+                if publication.is_expired() {
+                    actor.remove_publication(&id, ctx);
+                    return;
+                }
+                let delay = match outcome {
+                    Ok(()) => {
+                        info!(e3_id = %id.0, key = ?id.1, "Uploaded a document to the DHT");
+                        publication.schedule.record_replicated(Instant::now())
+                    }
+                    Err(error) => {
+                        let delay = publication.schedule.record_replication_failed();
+                        actor.bus.err(EType::IO, error);
+                        delay
+                    }
+                };
+                actor.schedule_replication(id, delay, ctx);
+            },
+        ));
     }
 }
 

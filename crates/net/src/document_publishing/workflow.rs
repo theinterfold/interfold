@@ -16,9 +16,9 @@ use e3_utils::ArcBytes;
 
 use crate::{backoff::backoff_delay, events::DocumentPublishedNotification, ContentHash};
 
-/// First delay before a replicated document is announced again. Later announcements back off.
+/// First delay before a document is announced again. Later announcements back off.
 pub const ANNOUNCE_INTERVAL: Duration = Duration::from_secs(30);
-/// First delay before a failed publication is retried. Later retries back off.
+/// First delay before a failed announcement or replication is retried. Later retries back off.
 pub const RETRY_INTERVAL: Duration = Duration::from_secs(15);
 /// Longest delay between announcements, and between retries.
 pub const MAX_ANNOUNCE_BACKOFF: Duration = Duration::from_secs(5 * 60);
@@ -27,42 +27,70 @@ pub const MAX_ANNOUNCE_BACKOFF: Duration = Duration::from_secs(5 * 60);
 /// peers.
 pub const REPLICATION_REFRESH: Duration = Duration::from_secs(30 * 60);
 
-/// When a pending publication next replicates the full document and when it is announced again.
+/// When a pending publication is next announced and next replicated.
 ///
-/// A replication stores the document on the DHT. An announcement gossips a small notification
-/// that names it. Only the first announcement and a refresh after [`REPLICATION_REFRESH`] upload
-/// the document; other announcements send the notification only.
+/// An announcement stores the document in this node's own DHT store, so that a peer whose lookup
+/// reaches this node can fetch it from here, and then gossips a small notification that names it.
+/// A replication uploads the full document to the DHT peers closest to its key, so that peers can
+/// also fetch it from them, and while this node is away. The two have separate schedules: a
+/// failing replication never delays an announcement. The document is uploaded once, and again
+/// every [`REPLICATION_REFRESH`].
 #[derive(Clone, Debug, Default)]
 pub struct PublicationSchedule {
     replicated_at: Option<Instant>,
+    replication_failures: u32,
     announcements: u32,
-    failures: u32,
+    announcement_failures: u32,
 }
 
 impl PublicationSchedule {
-    /// Whether the next announcement must store the full document first.
+    /// Whether the document must be uploaded now: it never was, or the last upload is older than
+    /// [`REPLICATION_REFRESH`].
     pub fn needs_replication(&self, now: Instant) -> bool {
-        self.replicated_at
-            .is_none_or(|at| now.saturating_duration_since(at) >= REPLICATION_REFRESH)
+        self.replication_due_in(now).is_zero()
     }
 
-    /// Record a completed DHT replication.
-    pub fn record_replicated(&mut self, now: Instant) {
+    /// Time until the next upload is due; zero when it is due now.
+    pub fn replication_due_in(&self, now: Instant) -> Duration {
+        self.replicated_at.map_or(Duration::ZERO, |at| {
+            REPLICATION_REFRESH.saturating_sub(now.saturating_duration_since(at))
+        })
+    }
+
+    /// Record a completed upload and return the delay before the next one. A refresh also
+    /// restarts the announcement backoff.
+    pub fn record_replicated(&mut self, now: Instant) -> Duration {
         self.replicated_at = Some(now);
+        self.replication_failures = 0;
         self.announcements = 0;
+        REPLICATION_REFRESH
+    }
+
+    /// Record a failed upload and return the delay before the next attempt.
+    pub fn record_replication_failed(&mut self) -> Duration {
+        self.replication_failures = self.replication_failures.saturating_add(1);
+        backoff_delay(
+            RETRY_INTERVAL,
+            self.replication_failures,
+            MAX_ANNOUNCE_BACKOFF,
+        )
     }
 
     /// Record a completed announcement and return the delay before the next one.
     pub fn record_announced(&mut self) -> Duration {
-        self.failures = 0;
+        self.announcement_failures = 0;
         self.announcements = self.announcements.saturating_add(1);
         backoff_delay(ANNOUNCE_INTERVAL, self.announcements, MAX_ANNOUNCE_BACKOFF)
     }
 
-    /// Record a failed replication or announcement and return the delay before the retry.
-    pub fn record_failed(&mut self) -> Duration {
-        self.failures = self.failures.saturating_add(1);
-        backoff_delay(RETRY_INTERVAL, self.failures, MAX_ANNOUNCE_BACKOFF)
+    /// Record a failed announcement and return the delay before the retry.
+    pub fn record_announcement_failed(&mut self) -> Duration {
+        self.announcement_failures = self.announcement_failures.saturating_add(1);
+        backoff_delay(
+            RETRY_INTERVAL,
+            self.announcement_failures,
+            MAX_ANNOUNCE_BACKOFF,
+        )
     }
 }
 
@@ -449,15 +477,18 @@ mod tests {
         let start = Instant::now();
         let mut schedule = PublicationSchedule::default();
         assert!(schedule.needs_replication(start));
-        schedule.record_replicated(start);
+        assert_eq!(schedule.record_replicated(start), REPLICATION_REFRESH);
         assert!(!schedule.needs_replication(start + REPLICATION_REFRESH / 2));
+        assert_eq!(
+            schedule.replication_due_in(start + REPLICATION_REFRESH / 2),
+            REPLICATION_REFRESH / 2
+        );
         assert!(schedule.needs_replication(start + REPLICATION_REFRESH));
     }
 
     #[test]
     fn announcements_back_off_and_failures_retry_sooner() {
         let mut schedule = PublicationSchedule::default();
-        schedule.record_replicated(Instant::now());
         assert!(within(schedule.record_announced(), ANNOUNCE_INTERVAL));
         assert!(within(schedule.record_announced(), ANNOUNCE_INTERVAL * 2));
         assert!(within(schedule.record_announced(), ANNOUNCE_INTERVAL * 4));
@@ -466,9 +497,57 @@ mod tests {
         }
         assert!(within(schedule.record_announced(), MAX_ANNOUNCE_BACKOFF));
 
-        assert!(within(schedule.record_failed(), RETRY_INTERVAL));
-        assert!(within(schedule.record_failed(), RETRY_INTERVAL * 2));
+        assert!(within(
+            schedule.record_announcement_failed(),
+            RETRY_INTERVAL
+        ));
+        assert!(within(
+            schedule.record_announcement_failed(),
+            RETRY_INTERVAL * 2
+        ));
         assert!(within(schedule.record_announced(), MAX_ANNOUNCE_BACKOFF));
+    }
+
+    #[test]
+    fn failed_uploads_back_off_without_slowing_announcements() {
+        let start = Instant::now();
+        let mut schedule = PublicationSchedule::default();
+        assert!(within(schedule.record_replication_failed(), RETRY_INTERVAL));
+        assert!(within(
+            schedule.record_replication_failed(),
+            RETRY_INTERVAL * 2
+        ));
+        assert!(schedule.needs_replication(start));
+        assert!(within(schedule.record_announced(), ANNOUNCE_INTERVAL));
+
+        schedule.record_replicated(start);
+        assert!(within(schedule.record_replication_failed(), RETRY_INTERVAL));
+    }
+
+    #[test]
+    fn announcement_outcomes_and_upload_failures_keep_separate_backoffs() {
+        let mut schedule = PublicationSchedule::default();
+        assert!(within(schedule.record_replication_failed(), RETRY_INTERVAL));
+        assert!(within(schedule.record_announced(), ANNOUNCE_INTERVAL));
+        assert!(within(
+            schedule.record_announcement_failed(),
+            RETRY_INTERVAL
+        ));
+        // Neither announcement outcome resets or advances the upload backoff,
+        assert!(within(
+            schedule.record_replication_failed(),
+            RETRY_INTERVAL * 2
+        ));
+        // and upload failures do not advance the announcement backoff.
+        assert!(within(
+            schedule.record_announcement_failed(),
+            RETRY_INTERVAL * 2
+        ));
+        assert!(within(schedule.record_announced(), ANNOUNCE_INTERVAL * 2));
+        assert!(within(
+            schedule.record_replication_failed(),
+            RETRY_INTERVAL * 4
+        ));
     }
 
     #[test]

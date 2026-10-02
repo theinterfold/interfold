@@ -1489,6 +1489,15 @@ async fn process_swarm_command(
             handle_dial(swarm, event_tx, multi)?;
             Ok(())
         }
+        NetCommand::DhtStoreLocal {
+            correlation_id,
+            key,
+            expires,
+            value,
+        } => {
+            handle_store_local(swarm, event_tx, correlation_id, key, expires, value)?;
+            Ok(())
+        }
         NetCommand::DhtPutRecord {
             correlation_id,
             key,
@@ -1647,21 +1656,79 @@ fn handle_remove_records(swarm: &mut Swarm<NodeBehaviour>, keys: Vec<ContentHash
 /// all records, expired or not.  This helper removes stale entries so that
 /// the `max_records` budget reflects only live data.
 ///
-/// It runs every [`DHT_EXPIRY_INTERVAL`] and when a local put hits the record limit. Records of a
-/// completed E3 are also removed by `handle_remove_records`.
+/// It runs every [`DHT_EXPIRY_INTERVAL`]; a write to a full store also prunes
+/// ([`store_local_record`]). Records of a completed E3 are also removed by `handle_remove_records`.
 fn prune_expired_dht_records(swarm: &mut Swarm<NodeBehaviour>) {
-    let now = Instant::now();
     let store = swarm.behaviour_mut().kademlia.store_mut();
-    let before = store.records().count();
-    store.retain(|_, r| r.expires.is_none_or(|e| e > now));
-    let after = store.records().count();
-    if before != after {
+    let pruned = prune_expired_records(store, Instant::now());
+    if pruned > 0 {
         info!(
             "DHT pruned {} expired records ({} remaining)",
-            before - after,
-            after
+            pruned,
+            store.records().count()
         );
     }
+}
+
+/// Remove the records that expired at `now` from a DHT store, and return how many were removed.
+fn prune_expired_records(store: &mut MemoryStore, now: Instant) -> usize {
+    let before = store.records().count();
+    store.retain(|_, record| record.expires.is_none_or(|expires| expires > now));
+    before - store.records().count()
+}
+
+/// Store a record in this node's own DHT store. When the store is full, remove the expired
+/// records and try once more. Local stores and puts both write through here.
+fn store_local_record(
+    store: &mut MemoryStore,
+    record: Record,
+    now: Instant,
+) -> Result<(), kad::store::Error> {
+    match store.put(record.clone()) {
+        Err(kad::store::Error::MaxRecords) => {
+            let pruned = prune_expired_records(store, now);
+            warn!("DHT store full: removed {pruned} expired records, storing once more");
+            store.put(record)
+        }
+        result => result,
+    }
+}
+
+/// Store a document in this node's own DHT store, as the publisher, without uploading it to other
+/// peers. Peers that look its key up can then fetch it from this node, even when no upload has
+/// succeeded yet.
+fn handle_store_local(
+    swarm: &mut Swarm<NodeBehaviour>,
+    event_tx: &NetEventSender,
+    correlation_id: CorrelationId,
+    key: ContentHash,
+    expires: Option<Instant>,
+    value: ArcBytes,
+) -> Result<()> {
+    let record = Record {
+        key: RecordKey::new(&key),
+        value: value.extract_bytes(),
+        publisher: Some(*swarm.local_peer_id()),
+        expires,
+    };
+    let store = swarm.behaviour_mut().kademlia.store_mut();
+    match store_local_record(store, record, Instant::now()) {
+        Ok(()) => {
+            debug!("DHT STORE LOCAL OK cid={}", correlation_id);
+            event_tx.send(NetEvent::DhtStoreLocalSucceeded {
+                key,
+                correlation_id,
+            })?;
+        }
+        Err(error) => {
+            warn!("DHT local store failed: {error:?}");
+            event_tx.send(NetEvent::DhtStoreLocalError {
+                correlation_id,
+                error,
+            })?;
+        }
+    }
+    Ok(())
 }
 
 /// Release per-peer quota entries after the corresponding local record is removed.
@@ -1692,44 +1759,27 @@ fn handle_put_record(
         publisher: None, // Will be set automatically to local peer ID
         expires,
     };
-    match swarm
-        .behaviour_mut()
-        .kademlia
-        // Quorum::Majority calculates quorum from the Kademlia routing table size,
-        // not the actual cluster size. With a routing table of ~21 entries,
-        // it required 11 peers to acknowledge the record, which is impossible
-        // in a 4-node cluster.
-        .put_record(record.clone(), Quorum::One)
-    {
+    // put_record writes this node's store before its query. Writing the record first, through
+    // the helper that makes room in a full store, lets put_record replace it instead of failing
+    // on the record limit.
+    let store = swarm.behaviour_mut().kademlia.store_mut();
+    let result = store_local_record(store, record.clone(), Instant::now()).and_then(|()| {
+        swarm
+            .behaviour_mut()
+            .kademlia
+            // Quorum::Majority calculates quorum from the Kademlia routing table size,
+            // not the actual cluster size. With a routing table of ~21 entries,
+            // it required 11 peers to acknowledge the record, which is impossible
+            // in a 4-node cluster.
+            .put_record(record, Quorum::One)
+    });
+    match result {
         Ok(qid) => {
             correlator.track(qid, correlation_id);
             debug!("PUT RECORD OK qid={:?} cid={}", qid, correlation_id);
         }
-        Err(kad::store::Error::MaxRecords) => {
-            warn!("DHT store full (MaxRecords) — attempting fallback expired-record prune");
-            prune_expired_dht_records(swarm);
-            match swarm
-                .behaviour_mut()
-                .kademlia
-                .put_record(record, Quorum::One)
-            {
-                Ok(qid) => {
-                    correlator.track(qid, correlation_id);
-                    debug!(
-                        "PUT RECORD OK (after prune) qid={:?} cid={}",
-                        qid, correlation_id
-                    );
-                }
-                Err(error) => {
-                    error!("DHT put failed even after pruning expired records: {error:?}");
-                    event_tx.send(NetEvent::DhtPutRecordError {
-                        correlation_id,
-                        error: PutOrStoreError::StoreError(error),
-                    })?;
-                }
-            }
-        }
         Err(error) => {
+            warn!("DHT put failed: {error:?}");
             event_tx.send(NetEvent::DhtPutRecordError {
                 correlation_id,
                 error: PutOrStoreError::StoreError(error),
@@ -2090,8 +2140,7 @@ mod tests {
             "put should fail when store is at max_records"
         );
 
-        let now = Instant::now();
-        store.retain(|_, r| r.expires.is_none_or(|e| e > now));
+        super::prune_expired_records(&mut store, Instant::now());
 
         assert_eq!(
             store.records().count(),
@@ -2143,13 +2192,78 @@ mod tests {
 
         assert_eq!(store.records().count(), 5);
 
-        let now = Instant::now();
-        store.retain(|_, r| r.expires.is_none_or(|e| e > now));
+        super::prune_expired_records(&mut store, Instant::now());
 
         assert_eq!(
             store.records().count(),
             3,
             "only live records should remain"
         );
+    }
+
+    fn small_store(max_records: usize) -> MemoryStore {
+        let config = MemoryStoreConfig {
+            max_records,
+            max_value_bytes: 1024,
+            max_providers_per_key: 1,
+            max_provided_keys: 5,
+        };
+        MemoryStore::with_config(PeerId::random(), config)
+    }
+
+    fn record(key: &str, expires: Instant) -> Record {
+        Record {
+            key: RecordKey::new(&key.as_bytes().to_vec()),
+            value: key.as_bytes().to_vec(),
+            publisher: None,
+            expires: Some(expires),
+        }
+    }
+
+    #[test]
+    fn a_local_record_can_be_read_back_from_the_store() {
+        let mut store = small_store(5);
+        let now = Instant::now();
+        let document = record("document", now + Duration::from_secs(3600));
+
+        super::store_local_record(&mut store, document.clone(), now).unwrap();
+
+        assert_eq!(
+            store.get(&document.key).map(|stored| stored.value.clone()),
+            Some(document.value)
+        );
+    }
+
+    #[test]
+    fn a_full_store_drops_expired_records_to_hold_a_local_record() {
+        let mut store = small_store(2);
+        let now = Instant::now();
+        let past = now.checked_sub(Duration::from_secs(1)).unwrap();
+        store.put(record("expired", past)).unwrap();
+        store
+            .put(record("live", now + Duration::from_secs(3600)))
+            .unwrap();
+        let document = record("document", now + Duration::from_secs(3600));
+
+        super::store_local_record(&mut store, document.clone(), now).unwrap();
+
+        assert!(store.get(&document.key).is_some());
+        assert!(store.get(&RecordKey::new(&b"live".to_vec())).is_some());
+        assert!(store.get(&RecordKey::new(&b"expired".to_vec())).is_none());
+    }
+
+    #[test]
+    fn a_full_store_of_live_records_refuses_a_local_record() {
+        let mut store = small_store(1);
+        let now = Instant::now();
+        store
+            .put(record("live", now + Duration::from_secs(3600)))
+            .unwrap();
+        let document = record("document", now + Duration::from_secs(3600));
+
+        assert!(matches!(
+            super::store_local_record(&mut store, document, now),
+            Err(libp2p::kad::store::Error::MaxRecords)
+        ));
     }
 }
