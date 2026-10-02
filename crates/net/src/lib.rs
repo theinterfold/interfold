@@ -14,6 +14,7 @@ pub mod direct_responder;
 mod domain;
 mod event_subscription;
 pub mod events;
+mod gossip_subscription_health;
 mod keypair;
 mod net_interface;
 mod net_interface_handle;

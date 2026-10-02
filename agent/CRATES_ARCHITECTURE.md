@@ -584,9 +584,18 @@ explicit configuration is pinned and cannot rebind to the identity obtained duri
 discovered address without an explicit identity can adopt the authenticated remote peer ID. An
 admitted QUIC connection is not sufficient evidence that gossip is ready. Network status reports how
 many admitted peers advertise the protocol topic. If a connected peer does not advertise the topic
-within 30 seconds, the node closes all connections to that peer. The configured peer dialer then
-creates a fresh connection and repeats the gossip subscription exchange. This repairs a missed
-subscription exchange after overlapping rolling-restart connections.
+within 30 seconds, the node closes all connections to that peer. After a backoff, the configured
+peer dialer creates a fresh connection and repeats the gossip subscription exchange. This repairs a
+missed subscription exchange after overlapping rolling-restart connections. The backoff starts at 30
+seconds and doubles with each such disconnect in a row, up to 30 minutes plus up to 10% jitter. An
+admitted connection does not reset it; a gossip subscription does, seen as a subscribe event or when
+Identify admits a peer that subscribed first. The node forgets the backoff 30 minutes after it ends.
+During the backoff, `GossipSubscriptionHealth` refuses every outbound dial that names the peer, also
+the dials of a Kademlia query that chose the peer before the disconnect. The node also removes the
+peer from its Kademlia routing table, as it does for a quarantined peer, so it is not an initial
+candidate of new queries; a query can still learn it from another peer, and the backoff then refuses
+the dial. An inbound connection from the peer, and a dial by address without a peer ID, are not held
+back.
 
 `PlaintextAggregated` is excluded from gossip and historical peer sync. It remains a local durable
 publication intent, and canonical chain observations report completion. The request router rejects a

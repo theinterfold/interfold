@@ -17,10 +17,12 @@ use crate::{
     direct_responder::{ChannelType, DirectResponder},
     domain::{
         correlator::Correlator,
+        dht_put_summary::DhtPutSummary,
         peer_failure_tracker::PeerFailureTracker,
         wire::{decode_gossip, encode_gossip, MAX_DHT_DOCUMENT_BYTES, MAX_GOSSIP_BYTES},
     },
     events::{IncomingResponse, OutgoingRequest, ProtocolResponse},
+    gossip_subscription_health::{GossipSubscriptionHealth, GOSSIP_SUBSCRIPTION_GRACE},
     keypair::Libp2pKeypair,
     net_interface_handle::{NetEventSender, NetInterfaceHandle},
     peer_admission::PeerAdmission,
@@ -87,7 +89,8 @@ const GOSSIP_HEALTH_INTERVAL: Duration = Duration::from_secs(5);
 /// How often expired DHT records are removed. Kademlia's own record jobs, which also removed them,
 /// are disabled, and `MemoryStore` counts an expired record against its limits until it is removed.
 const DHT_EXPIRY_INTERVAL: Duration = Duration::from_secs(60);
-const GOSSIP_SUBSCRIPTION_GRACE: Duration = Duration::from_secs(30);
+/// How often the interface reports finished DHT uploads at INFO.
+const DHT_PUT_SUMMARY_INTERVAL: Duration = Duration::from_secs(60);
 pub(crate) const EVENT_CHANNEL_SIZE: usize = 1000;
 const CMD_CHANNEL_SIZE: usize = 1000;
 const LIBP2P_ESTABLISHED_PER_PEER_LIMIT_TEXT: &str = "established connections per peer";
@@ -166,33 +169,6 @@ impl PeerConnectionFailures {
         let now = Instant::now();
         self.quarantined_until.retain(|_, until| *until > now);
         self.quarantined_until.keys().copied().collect()
-    }
-}
-
-#[derive(Default)]
-struct GossipSubscriptionHealth {
-    missing_since: HashMap<libp2p::PeerId, Instant>,
-}
-
-impl GossipSubscriptionHealth {
-    fn stale_peers(
-        &mut self,
-        connected: &HashSet<libp2p::PeerId>,
-        subscribed: &HashSet<libp2p::PeerId>,
-        now: Instant,
-    ) -> Vec<libp2p::PeerId> {
-        self.missing_since
-            .retain(|peer, _| connected.contains(peer) && !subscribed.contains(peer));
-        for peer in connected.difference(subscribed) {
-            self.missing_since.entry(*peer).or_insert(now);
-        }
-        self.missing_since
-            .iter()
-            .filter_map(|(peer, since)| {
-                (now.saturating_duration_since(*since) >= GOSSIP_SUBSCRIPTION_GRACE)
-                    .then_some(*peer)
-            })
-            .collect()
     }
 }
 
@@ -313,6 +289,8 @@ fn is_redundant_peer_connection_denial(error: &ListenError) -> bool {
 
 #[derive(NetworkBehaviour)]
 pub struct NodeBehaviour {
+    /// First, so it holds back a dial before the other behaviours prepare it.
+    gossip_health: GossipSubscriptionHealth,
     gossipsub: GossipBehaviour,
     kademlia: KademliaBehaviour<MemoryStore>,
     connection_limits: connection_limits::Behaviour,
@@ -421,7 +399,10 @@ impl Libp2pNetInterface {
         let mut dht_expiry_tick = tokio::time::interval(DHT_EXPIRY_INTERVAL);
         dht_expiry_tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
         dht_expiry_tick.tick().await;
-        let mut gossip_health = GossipSubscriptionHealth::default();
+        let mut dht_put_summary_tick = tokio::time::interval(DHT_PUT_SUMMARY_INTERVAL);
+        dht_put_summary_tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        dht_put_summary_tick.tick().await;
+        let mut dht_puts = DhtPutSummary::default();
         let mut configured_peers: Vec<_> = self
             .peers
             .iter()
@@ -513,13 +494,22 @@ impl Libp2pNetInterface {
                         &peer_admission,
                     );
                 }
+                _ = dht_put_summary_tick.tick() => {
+                    if let Some((stored, failed)) = dht_puts.take() {
+                        info!(
+                            stored,
+                            failed,
+                            interval_seconds = DHT_PUT_SUMMARY_INTERVAL.as_secs(),
+                            "DHT document uploads finished"
+                        );
+                    }
+                }
                 _ = gossip_health_tick.tick() => {
                     reconcile_gossip_subscriptions(
                         &mut self.swarm,
                         &peer_admission,
                         &self.topic,
                         &self.status,
-                        &mut gossip_health,
                     );
                 }
                 // Process commands
@@ -567,6 +557,7 @@ impl Libp2pNetInterface {
                         &mut configured_peers,
                         &mut dht_records_by_peer,
                         &mut seen_gossip,
+                        &mut dht_puts,
                         &self.network,
                         &self.status,
                         event,
@@ -596,7 +587,6 @@ fn reconcile_gossip_subscriptions(
     admission: &PeerAdmission,
     topic: &gossipsub::IdentTopic,
     status: &NetworkStatus,
-    health: &mut GossipSubscriptionHealth,
 ) {
     let topic_hash = topic.hash();
     let subscribed: HashSet<_> = swarm
@@ -613,15 +603,26 @@ fn reconcile_gossip_subscriptions(
         .filter(|peer| admission.is_admitted(peer))
         .copied()
         .collect();
-    for peer in health.stale_peers(&connected, &subscribed, Instant::now()) {
+    let now = Instant::now();
+    let stale = swarm
+        .behaviour_mut()
+        .gossip_health
+        .stale_peers(&connected, &subscribed, now);
+    for peer in stale {
+        if swarm.disconnect_peer_id(peer).is_err() {
+            continue;
+        }
+        // As for a quarantined peer, so it is not an initial candidate of new DHT queries. A query
+        // can still choose it from another peer's answer; the backoff refuses that dial.
+        let behaviour = swarm.behaviour_mut();
+        behaviour.kademlia.remove_peer(&peer);
+        let redial_delay = behaviour.gossip_health.disconnected_unsubscribed(peer, now);
         warn!(
             %peer,
             grace_seconds = GOSSIP_SUBSCRIPTION_GRACE.as_secs(),
-            "Replacing peer connections that did not establish the gossip subscription"
+            redial_after_seconds = redial_delay.as_secs(),
+            "Disconnected a peer that did not establish the gossip subscription"
         );
-        if swarm.disconnect_peer_id(peer).is_ok() {
-            health.missing_since.remove(&peer);
-        }
     }
 }
 
@@ -631,6 +632,7 @@ fn redial_disconnected_configured_peers(
     failures: &mut PeerConnectionFailures,
     admission: &PeerAdmission,
 ) {
+    let now = Instant::now();
     for configured_peer in configured {
         let Some(peer_id) = configured_peer.peer_id else {
             continue;
@@ -639,6 +641,8 @@ fn redial_disconnected_configured_peers(
             || swarm.is_connected(&peer_id)
             || failures.is_identity_quarantined(&peer_id)
             || admission.is_rejected(&peer_id)
+            // The dial gate refuses a dial during the backoff, so do not try it every tick.
+            || !swarm.behaviour().gossip_health.may_redial(&peer_id, now)
         {
             continue;
         }
@@ -756,6 +760,7 @@ fn create_behaviour(
     kademlia.set_mode(Some(kad::Mode::Server));
 
     Ok(NodeBehaviour {
+        gossip_health: GossipSubscriptionHealth::default(),
         gossipsub,
         kademlia,
         connection_limits,
@@ -775,6 +780,7 @@ async fn process_swarm_event(
     configured_peers: &mut [ConfiguredPeer],
     dht_records_by_peer: &mut HashMap<libp2p::PeerId, HashSet<Vec<u8>>>,
     seen_gossip: &mut SeenIds<gossipsub::MessageId>,
+    dht_puts: &mut DhtPutSummary,
     network: &NetworkPolicy,
     status: &NetworkStatus,
     event: SwarmEvent<NodeBehaviourEvent>,
@@ -1103,6 +1109,7 @@ async fn process_swarm_event(
                 ..
             },
         )) => {
+            dht_puts.record(record.is_ok());
             let correlation_id = correlator.expire(id)?;
             match record {
                 Ok(record) => {
@@ -1193,6 +1200,9 @@ async fn process_swarm_event(
                 return Ok(());
             }
             debug!("Peer {} subscribed to {}", peer_id, topic);
+            if topic == gossipsub::IdentTopic::new(network.protocols().gossip_topic()).hash() {
+                swarm.behaviour_mut().gossip_health.subscribed(&peer_id);
+            }
             let count = swarm
                 .behaviour()
                 .gossipsub
@@ -1393,6 +1403,15 @@ async fn process_swarm_event(
             }
             trace!(observed_address = %info.observed_addr, "Peer reported our observed address");
             let topic = gossipsub::IdentTopic::new(network.protocols().gossip_topic()).hash();
+            // The subscribe event of a peer that subscribed before its admission was ignored.
+            let subscribed_before_admission = swarm
+                .behaviour()
+                .gossipsub
+                .all_peers()
+                .any(|(peer, topics)| *peer == peer_id && topics.contains(&&topic));
+            if subscribed_before_admission {
+                swarm.behaviour_mut().gossip_health.subscribed(&peer_id);
+            }
             let count = swarm
                 .behaviour()
                 .gossipsub
@@ -1915,58 +1934,7 @@ mod tests {
     use libp2p::kad::{Record, RecordKey};
     use libp2p::swarm::{ConnectionDenied, ConnectionId, ListenError, NetworkBehaviour};
     use libp2p::{Multiaddr, PeerId};
-    use std::collections::HashSet;
     use std::time::{Duration, Instant};
-
-    #[test]
-    fn missing_gossip_subscription_becomes_stale_after_grace_period() {
-        let peer = PeerId::random();
-        let connected = HashSet::from([peer]);
-        let subscribed = HashSet::new();
-        let started = Instant::now();
-        let mut health = super::GossipSubscriptionHealth::default();
-
-        assert!(health
-            .stale_peers(&connected, &subscribed, started)
-            .is_empty());
-        assert!(health
-            .stale_peers(
-                &connected,
-                &subscribed,
-                started + super::GOSSIP_SUBSCRIPTION_GRACE - Duration::from_millis(1),
-            )
-            .is_empty());
-        assert_eq!(
-            health.stale_peers(
-                &connected,
-                &subscribed,
-                started + super::GOSSIP_SUBSCRIPTION_GRACE,
-            ),
-            vec![peer]
-        );
-    }
-
-    #[test]
-    fn gossip_subscription_clears_missing_peer_state() {
-        let peer = PeerId::random();
-        let connected = HashSet::from([peer]);
-        let started = Instant::now();
-        let mut health = super::GossipSubscriptionHealth::default();
-
-        assert!(health
-            .stale_peers(&connected, &HashSet::new(), started)
-            .is_empty());
-        assert!(health
-            .stale_peers(&connected, &HashSet::from([peer]), started)
-            .is_empty());
-        assert!(health
-            .stale_peers(
-                &connected,
-                &HashSet::new(),
-                started + super::GOSSIP_SUBSCRIPTION_GRACE,
-            )
-            .is_empty());
-    }
 
     #[test]
     fn quarantined_peer_is_restored_after_a_successful_admission() {
@@ -2345,3 +2313,7 @@ mod tests {
         ));
     }
 }
+
+#[cfg(test)]
+#[path = "net_interface_swarm_tests.rs"]
+mod swarm_tests;

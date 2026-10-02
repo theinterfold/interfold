@@ -11,6 +11,8 @@
 
 #[path = "network_sync/correlator.rs"]
 pub(crate) mod correlator;
+#[path = "dht_put_summary.rs"]
+pub(crate) mod dht_put_summary;
 #[path = "document_publishing/workflow.rs"]
 pub(crate) mod document_publishing;
 #[path = "event_conversion/workflow.rs"]
