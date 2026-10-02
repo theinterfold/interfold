@@ -45,3 +45,4 @@ bincode.workspace = true
 
 [dev-dependencies]
 e3-test-helpers.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
