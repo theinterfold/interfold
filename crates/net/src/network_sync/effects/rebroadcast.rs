@@ -4,28 +4,16 @@
 
 use super::*;
 use crate::backoff::backoff_delay;
-use e3_events::{DecryptionshareCreated, DkgCoordination, E3id};
+use e3_events::E3id;
 
 impl NetSyncManager {
+    /// Keep re-sending this node's latest DKG Ready or Roster message until key publication or the
+    /// end of the E3.
     pub(in crate::actors::net_sync_manager) fn remember_dkg_coordination(
         &mut self,
         event: InterfoldEvent,
-        message: &DkgCoordination,
     ) {
-        if event.source() != EventSource::Local {
-            return;
-        }
-        if let Err(error) = self.network.validate_event(&event) {
-            warn!(%error, "Ignoring a local DKG coordination event for another network");
-            return;
-        }
-        self.schedule_reannouncement(
-            AnnouncementKey::Dkg(message.e3_id.clone(), message.party_id, message.kind),
-            event,
-            DKG_REANNOUNCE_BASE,
-            DKG_REANNOUNCE_CAP,
-            Instant::now(),
-        );
+        self.remember(event, DKG_REANNOUNCE_BASE, DKG_REANNOUNCE_CAP);
     }
 
     /// Keep re-sending this node's decryption share until the E3 ends. The aggregator ignores
@@ -33,22 +21,22 @@ impl NetSyncManager {
     pub(in crate::actors::net_sync_manager) fn remember_decryption_share(
         &mut self,
         event: InterfoldEvent,
-        share: &DecryptionshareCreated,
     ) {
+        self.remember(event, SHARE_REANNOUNCE_BASE, SHARE_REANNOUNCE_CAP);
+    }
+
+    fn remember(&mut self, event: InterfoldEvent, base: Duration, cap: Duration) {
         if event.source() != EventSource::Local {
             return;
         }
         if let Err(error) = self.network.validate_event(&event) {
-            warn!(%error, "Ignoring a local decryption share for another network");
+            warn!(%error, "Ignoring a local message for another network");
             return;
         }
-        self.schedule_reannouncement(
-            AnnouncementKey::DecryptionShare(share.e3_id.clone(), share.party_id),
-            event,
-            SHARE_REANNOUNCE_BASE,
-            SHARE_REANNOUNCE_CAP,
-            Instant::now(),
-        );
+        let Some(key) = AnnouncementKey::for_event(event.get_data()) else {
+            return;
+        };
+        self.schedule_reannouncement(key, event, base, cap, Instant::now());
     }
 
     fn schedule_reannouncement(
@@ -189,9 +177,11 @@ impl NetSyncManager {
                 warn!(%error, "Skipping own artifact that does not match the active network");
                 continue;
             }
-            if let InterfoldEventData::DecryptionshareCreated(share) = event.get_data() {
-                let share = share.clone();
-                self.remember_decryption_share(event.clone(), &share);
+            if matches!(
+                event.get_data(),
+                InterfoldEventData::DecryptionshareCreated(_)
+            ) {
+                self.remember_decryption_share(event.clone());
             }
             let data: GossipData = match event.try_into() {
                 Ok(data) => data,

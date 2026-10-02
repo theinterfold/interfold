@@ -157,6 +157,22 @@ enum AnnouncementKey {
 }
 
 impl AnnouncementKey {
+    /// The key of an event that the node re-sends until its phase ends, or `None` for an event
+    /// that it does not re-send.
+    fn for_event(data: &InterfoldEventData) -> Option<Self> {
+        match data {
+            InterfoldEventData::DkgCoordination(message) => Some(Self::Dkg(
+                message.e3_id.clone(),
+                message.party_id,
+                message.kind,
+            )),
+            InterfoldEventData::DecryptionshareCreated(share) => {
+                Some(Self::DecryptionShare(share.e3_id.clone(), share.party_id))
+            }
+            _ => None,
+        }
+    }
+
     fn e3_id(&self) -> &E3id {
         match self {
             Self::Dkg(e3_id, ..) | Self::DecryptionShare(e3_id, _) => e3_id,

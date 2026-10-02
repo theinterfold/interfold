@@ -291,7 +291,7 @@ async fn periodic_dkg_reannouncement_uses_the_latest_ready_superset() {
             EventSource::Local,
         )
         .into_sequenced(timestamp as u64);
-        manager.remember_dkg_coordination(event, &message);
+        manager.remember_dkg_coordination(event);
     }
 
     let start = Instant::now();
@@ -460,7 +460,7 @@ async fn own_decryption_share_is_resent_with_backoff_until_the_e3_ends() {
     let (mut manager, mut rx) = ready_manager();
     let e3_id = E3id::new("decrypting", 1);
     let (event, share) = local_decryption_share(&e3_id, 4);
-    manager.remember_decryption_share(event, &share);
+    manager.remember_decryption_share(event);
 
     let start = Instant::now();
     manager.reannounce_due(start + SHARE_REANNOUNCE_BASE);
@@ -483,7 +483,7 @@ async fn key_publication_keeps_decryption_shares_and_drops_dkg_messages() {
     let (mut manager, mut rx) = ready_manager();
     let e3_id = E3id::new("mixed", 1);
     let (event, share) = local_decryption_share(&e3_id, 2);
-    manager.remember_decryption_share(event, &share);
+    manager.remember_decryption_share(event);
     let ready = DkgCoordination {
         e3_id: e3_id.clone(),
         interfold_address: Default::default(),
@@ -500,7 +500,7 @@ async fn key_publication_keeps_decryption_shares_and_drops_dkg_messages() {
         EventSource::Local,
     )
     .into_sequenced(4);
-    manager.remember_dkg_coordination(ready_event, &ready);
+    manager.remember_dkg_coordination(ready_event);
 
     manager.forget_dkg_coordination(&e3_id);
     manager.reannounce_due(Instant::now() + SHARE_REANNOUNCE_BASE);
@@ -512,15 +512,15 @@ async fn key_publication_keeps_decryption_shares_and_drops_dkg_messages() {
 async fn remote_decryption_shares_and_expired_messages_are_not_resent() {
     let (mut manager, mut rx) = ready_manager();
     let e3_id = E3id::new("remote", 1);
-    let (event, share) = local_decryption_share(&e3_id, 3);
-    manager.remember_decryption_share(event.clone().with_source(EventSource::Net), &share);
+    let (event, _) = local_decryption_share(&e3_id, 3);
+    manager.remember_decryption_share(event.clone().with_source(EventSource::Net));
     manager.reannounce_due(Instant::now() + SHARE_REANNOUNCE_BASE);
     assert!(
         rx.try_recv().is_err(),
         "a peer's share is not re-sent by this node"
     );
 
-    manager.remember_decryption_share(event, &share);
+    manager.remember_decryption_share(event);
     manager.reannounce_due(Instant::now() + REANNOUNCE_LIFETIME);
     assert!(
         rx.try_recv().is_err(),
