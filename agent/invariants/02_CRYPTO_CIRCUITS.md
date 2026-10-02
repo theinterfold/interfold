@@ -43,6 +43,13 @@ every section.
   diffs them only when `target/release/generate_parity_matrices` and `nargo` exist; the Agent
   Harness CI job skips that step. The CI circuits job catches edits to the committed selection
   through its rebuild diff.
+- The C1 and C2 bound globals (`PK_GENERATION_*`, `SHARE_COMPUTATION_*`) are derived artifacts of
+  the preset and committee. The build regenerates them for the selected pair and replaces each whole
+  declaration, array bounds included. It rejects a declaration with its config file's prefix that
+  the generator does not emit, because the pair source hash ignores those declarations. The C1
+  `e_sm` quotient bounds grow with the committee, so an array kept from another committee makes
+  honest C1 proofs fail. The committed configs hold the `minimum` values. —
+  `scripts/build-circuits.ts` (`committeeBoundUpdates`); `scripts/circuit-artifacts.test.ts`
 
 ### Noir / Barretenberg compatibility
 
@@ -265,10 +272,11 @@ every section.
   negacyclic reduction was taken for C1. — `flow-trace/04`
 - **Renaming a generated config global needs the declaration seeded by hand first.**
   `build-circuits.ts` splices `pub global NAME: ...;` into `configs/{secure,insecure}/*.nr` **by
-  name** and throws `Missing NAME` if the target does not already declare it; a global the generator
-  stops emitting is left behind rather than removed. So a rename is: edit both config files to
-  declare the new name, drop the old, then run codegen to fill the authoritative value. `sync-config`
-  does not regenerate bounds at all — it only switches the active preset. — `flow-trace/04`
+  name**. It throws `Missing NAME` if the target does not already declare a generated global, and it
+  throws `NAME ... is not generated` if the target keeps a prefixed global that the generator no
+  longer emits. So a rename is: edit both config files to declare the new name, drop the old, then
+  run codegen to fill the authoritative value. `sync-config` does not regenerate bounds at all — it
+  only switches the active preset. — `flow-trace/04`
 - **A circuit-size change must be measured at every committee size before it is called a win.** Cost
   splits into a part that scales with the committee (`H*L*N` work, such as per-share commitment
   openings) and a part that does not (`L*N` work, such as the aggregate's normalisation). A change

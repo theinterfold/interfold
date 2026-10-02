@@ -86,6 +86,108 @@ export function stripRustTestModules(source: Buffer): Buffer {
   return Buffer.from(kept.join('\n'))
 }
 
+/**
+ * The C1 and C2 bound globals. Their values depend on the committee, so the build regenerates them
+ * for each pair, and the source hash of a pair ignores them.
+ */
+const COMMITTEE_BOUND_SOURCES = [
+  { circuit: 'pk-generation', file: 'threshold.nr', prefix: 'PK_GENERATION_' },
+  { circuit: 'share-computation', file: 'dkg.nr', prefix: 'SHARE_COMPUTATION_' },
+] as const
+
+/**
+ * Return each `pub global NAME: ...;` declaration of a Noir source, keyed by name.
+ *
+ * A declaration ends at the first `;` outside brackets and parentheses. An array type such as
+ * `[Field; L]` contains a `;` of its own, and `nargo fmt` can wrap a value over several lines.
+ */
+function noirGlobalDeclarations(source: string): Map<string, string> {
+  const declarations = new Map<string, string>()
+  for (const match of source.matchAll(/^pub global ([A-Z0-9_]+):/gm)) {
+    let depth = 0
+    for (let end = match.index + match[0].length; end < source.length; end++) {
+      const char = source[end]
+      if (char === '[' || char === '(') depth++
+      else if (char === ']' || char === ')') depth--
+      else if (char === ';' && depth === 0) {
+        declarations.set(match[1], source.slice(match.index, end + 1))
+        break
+      }
+    }
+  }
+  return declarations
+}
+
+/** One Noir config file, with its C1 or C2 bound globals regenerated for a pair. */
+export interface CommitteeBoundUpdate {
+  path: string
+  generated: string
+  original: string
+  updated: string
+}
+
+/**
+ * Regenerate the C1 and C2 bound globals of one pair and return the new config text. Nothing is
+ * written. Every generated declaration replaces the whole committed declaration, so the array
+ * bounds change with the committee as the scalar bounds do.
+ */
+export function committeeBoundUpdates(rootDir: string, preset: CircuitPreset, committee: CircuitCommittee): CommitteeBoundUpdate[] {
+  const tier = PRESET_NOIR_CONFIG[preset]
+  const temporaryDir = mkdtempSync(join(tmpdir(), 'interfold-noir-config-'))
+  try {
+    return COMMITTEE_BOUND_SOURCES.map((source) => {
+      const outputDir = join(temporaryDir, source.circuit)
+      mkdirSync(outputDir)
+      execFileSync(
+        'cargo',
+        [
+          'run',
+          '--quiet',
+          '-p',
+          'e3-zk-helpers',
+          '--bin',
+          'zk_cli',
+          '--',
+          '--circuit',
+          source.circuit,
+          '--preset',
+          tier,
+          '--committee',
+          committee,
+          '--output',
+          outputDir,
+        ],
+        { cwd: rootDir, stdio: 'pipe' },
+      )
+      const path = join(rootDir, 'circuits', 'lib', 'src', 'configs', tier, source.file)
+      const generated = readFileSync(join(outputDir, 'configs.nr'), 'utf8')
+      const original = readFileSync(path, 'utf8')
+      const committed = noirGlobalDeclarations(original)
+      const fresh = noirGlobalDeclarations(generated)
+      let updated = original
+      let count = 0
+      for (const [name, declaration] of fresh) {
+        if (!name.startsWith(source.prefix)) continue
+        const current = committed.get(name)
+        if (current === undefined) throw new Error(`Missing ${name} in ${path}`)
+        // `nargo fmt` wraps long committed declarations. A layout difference alone is no change.
+        if (current.replace(/\s+/g, '') !== declaration.replace(/\s+/g, '')) updated = updated.replace(current, () => declaration)
+        count++
+      }
+      if (count === 0) throw new Error(`No ${source.prefix} constants generated for ${preset}/${committee}`)
+      // The pair source hash ignores every declaration with this prefix, so each one must be generated.
+      for (const name of committed.keys()) {
+        if (name.startsWith(source.prefix) && !fresh.has(name)) {
+          throw new Error(`${name} in ${path} is not generated for ${preset}/${committee}. Remove it or generate it.`)
+        }
+      }
+      return { path, generated, original, updated }
+    })
+  } finally {
+    rmSync(temporaryDir, { recursive: true, force: true })
+  }
+}
+
 interface CircuitInfo {
   name: string
   group: CircuitGroup
@@ -738,64 +840,11 @@ library ActiveCryptoConfig {
   }
 
   private syncCommitteeBounds(preset: CircuitPreset, committee: CircuitCommittee): void {
-    const tier = PRESET_NOIR_CONFIG[preset]
-    const configDir = join(this.rootDir, 'circuits', 'lib', 'src', 'configs', tier)
-    const temporaryDir = mkdtempSync(join(tmpdir(), 'interfold-noir-config-'))
-    const sources = [
-      { circuit: 'pk-generation', file: 'threshold.nr', prefix: 'PK_GENERATION_' },
-      { circuit: 'share-computation', file: 'dkg.nr', prefix: 'SHARE_COMPUTATION_' },
-    ]
-
-    try {
-      for (const source of sources) {
-        const outputDir = join(temporaryDir, source.circuit)
-        mkdirSync(outputDir)
-        execFileSync(
-          'cargo',
-          [
-            'run',
-            '--quiet',
-            '-p',
-            'e3-zk-helpers',
-            '--bin',
-            'zk_cli',
-            '--',
-            '--circuit',
-            source.circuit,
-            '--preset',
-            tier,
-            '--committee',
-            committee,
-            '--output',
-            outputDir,
-          ],
-          { cwd: this.rootDir, stdio: 'pipe' },
-        )
-      }
-
-      for (const source of sources) {
-        const targetPath = join(configDir, source.file)
-        const generated = readFileSync(join(temporaryDir, source.circuit, 'configs.nr'), 'utf8')
-        const original = readFileSync(targetPath, 'utf8')
-        let updated = original
-        let count = 0
-        for (const match of generated.matchAll(/^pub global ([A-Z0-9_]+):[^;]*;/gm)) {
-          const name = match[1]
-          if (!name.startsWith(source.prefix)) continue
-          const declaration = new RegExp(`^pub global ${name}:[^;]*;`, 'm')
-          if (!declaration.test(updated)) {
-            throw new Error(`Missing ${name} in ${targetPath}`)
-          }
-          updated = updated.replace(declaration, match[0])
-          count++
-        }
-        if (count === 0) throw new Error(`No ${source.prefix} constants generated for ${preset}/${committee}`)
-        if (updated !== original) writeFileSync(targetPath, updated)
-      }
-      console.log(`   📋 Regenerated C1/C2 bounds for ${preset}/${committee}`)
-    } finally {
-      rmSync(temporaryDir, { recursive: true, force: true })
-    }
+    const changed = committeeBoundUpdates(this.rootDir, preset, committee).filter(({ original, updated }) => updated !== original)
+    for (const { path, updated } of changed) writeFileSync(path, updated)
+    // The generator writes each declaration on one line. Keep the committed configs as `nargo fmt` leaves them.
+    if (changed.length > 0) execSync('nargo fmt', { cwd: join(this.rootDir, 'circuits', 'lib'), stdio: ['ignore', 'pipe', 'inherit'] })
+    console.log(`   📋 Regenerated C1/C2 bounds for ${preset}/${committee}`)
   }
 
   private async buildForPreset(preset: CircuitPreset, committee: CircuitCommittee, modNrPath?: string): Promise<BuildResult> {
@@ -880,10 +929,14 @@ library ActiveCryptoConfig {
       }
 
       this.copyArtifacts(result.compiled, presetOutputDir, preset)
+      // Only a complete build with keys holds the whole VK tree.
+      const complete =
+        result.errors.length === 0 &&
+        !this.options.skipVk &&
+        !this.options.circuits &&
+        ALL_GROUPS.every((group) => this.options.groups?.includes(group))
+      this.refreshVkTreeHashes(presetOutputDir, complete)
       if (result.errors.length === 0) {
-        if (!this.options.skipVk && !this.options.circuits && ALL_GROUPS.every((group) => this.options.groups?.includes(group))) {
-          this.writeVkTreeHashes(presetOutputDir)
-        }
         this.writePresetStamp(preset, committee, sourceHash)
         this.writeActiveBinPresetStamp(preset, committee, sourceHash)
       }
@@ -1191,8 +1244,23 @@ library ActiveCryptoConfig {
     return createHash('sha256').update(readFileSync(filePath)).digest('hex')
   }
 
-  /** Generate the two immutable trust anchors from the complete artifact pair. */
-  private writeVkTreeHashes(pairDir: string): void {
+  /**
+   * Make the two immutable trust anchors match the keys of this build. A complete build computes
+   * them from the artifact pair. Any other build replaces some keys and keeps the rest, so it
+   * removes the anchors until the next complete build: an old anchor can hash a key that the pair
+   * no longer holds.
+   */
+  private refreshVkTreeHashes(pairDir: string, complete: boolean): void {
+    const anchors = ['nodes_fold', 'c6_fold'].map((name) => ({
+      name,
+      paths: [
+        join(pairDir, CIRCUIT_VARIANTS.DEFAULT, CIRCUIT_GROUPS.AGGREGATION, name, `${name}.vk_tree_hash`),
+        join(this.circuitsDir, CIRCUIT_GROUPS.AGGREGATION, name, 'target', `${name}.vk_tree_hash`),
+      ],
+    }))
+    for (const { paths } of anchors) for (const path of paths) rmSync(path, { force: true })
+    if (!complete) return
+
     const hashes = JSON.parse(
       execFileSync(
         'cargo',
@@ -1200,14 +1268,13 @@ library ActiveCryptoConfig {
         { cwd: this.rootDir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] },
       ),
     ) as Record<string, string>
-    for (const name of ['nodes_fold', 'c6_fold']) {
+    for (const { name, paths } of anchors) {
       const hash = hashes[name]
       if (typeof hash !== 'string' || !/^0x[0-9a-f]{64}$/.test(hash)) {
         throw new Error(`Invalid recursive VK-tree hash for ${name}`)
       }
       const bytes = Buffer.from(hash.slice(2), 'hex')
-      writeFileSync(join(pairDir, CIRCUIT_VARIANTS.DEFAULT, CIRCUIT_GROUPS.AGGREGATION, name, `${name}.vk_tree_hash`), bytes)
-      writeFileSync(join(this.circuitsDir, CIRCUIT_GROUPS.AGGREGATION, name, 'target', `${name}.vk_tree_hash`), bytes)
+      for (const path of paths) writeFileSync(path, bytes)
     }
   }
 
@@ -1387,12 +1454,13 @@ library ActiveCryptoConfig {
       } else if (stat.isFile()) {
         hash.update(entryRelativePath)
         let source = readFileSync(fullPath)
-        if (normalizeBounds && (entryRelativePath === 'dkg.nr' || entryRelativePath === 'threshold.nr')) {
-          source = Buffer.from(
-            source
-              .toString()
-              .replace(/^pub global ((?:PK_GENERATION|SHARE_COMPUTATION)_[A-Z0-9_]+):[^;]*;/gm, 'pub global $1:<generated>;'),
-          )
+        const bounds = normalizeBounds ? COMMITTEE_BOUND_SOURCES.find(({ file }) => file === entryRelativePath) : undefined
+        if (bounds) {
+          let text = source.toString()
+          for (const [name, declaration] of noirGlobalDeclarations(text)) {
+            if (name.startsWith(bounds.prefix)) text = text.replace(declaration, () => `pub global ${name}:<generated>;`)
+          }
+          source = Buffer.from(text)
         }
         hash.update(entry.endsWith('.rs') ? stripRustTestModules(source) : source)
       }

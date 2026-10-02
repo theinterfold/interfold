@@ -12,7 +12,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { AbiCoder, id, keccak256 } from 'ethers'
 import { BFV_PARAMS } from '../packages/interfold-contracts/scripts/protocol/constants'
-import { NoirCircuitBuilder, normalizeCargoLockForCircuitHash, stripRustTestModules } from './build-circuits'
+import { committeeBoundUpdates, NoirCircuitBuilder, normalizeCargoLockForCircuitHash, stripRustTestModules } from './build-circuits'
 import {
   findArtifactRevision,
   RELEASE_REQUIRED_PAIRS,
@@ -127,17 +127,22 @@ test('pair source hash ignores generated bounds but tracks other Noir config', (
   mkdirSync(configDir, { recursive: true })
   const thresholdPath = join(configDir, 'threshold.nr')
   const dkgPath = join(configDir, 'dkg.nr')
-  writeFileSync(thresholdPath, 'pub global PK_GENERATION_E_SM_BOUND: Field = 10;\npub global L: u32 = 2;\n')
+  // `nargo fmt` wraps a long array bound over two lines, and the array type holds a `;` of its own.
+  const threshold = (bound: number, quotients: string, l: number) =>
+    `pub global PK_GENERATION_E_SM_BOUND: Field = ${bound};\n` +
+    `pub global PK_GENERATION_E_SM_QUOTIENT_BOUNDS: [Field; L] =\n    [${quotients}];\n` +
+    `pub global L: u32 = ${l};\n`
+  writeFileSync(thresholdPath, threshold(10, '1, 2', 2))
   writeFileSync(dkgPath, 'pub global SHARE_COMPUTATION_E_SM_BIT_SECRET: u32 = 28;\n')
 
   try {
     const builder = new NoirCircuitBuilder(dir, { preset: 'insecure-512', committee: 'micro' })
     const originalHash = builder.computeSourceHash('insecure-512', 'micro')
-    writeFileSync(thresholdPath, 'pub global PK_GENERATION_E_SM_BOUND: Field = 20;\npub global L: u32 = 2;\n')
+    writeFileSync(thresholdPath, threshold(20, '3, 4', 2))
     writeFileSync(dkgPath, 'pub global SHARE_COMPUTATION_E_SM_BIT_SECRET: u32 = 30;\n')
     assert.equal(builder.computeSourceHash('insecure-512', 'micro'), originalHash)
 
-    writeFileSync(thresholdPath, 'pub global PK_GENERATION_E_SM_BOUND: Field = 20;\npub global L: u32 = 3;\n')
+    writeFileSync(thresholdPath, threshold(20, '3, 4', 3))
     assert.notEqual(builder.computeSourceHash('insecure-512', 'micro'), originalHash)
 
     const generatorDir = join(dir, 'crates', 'zk-helpers', 'src')
@@ -149,6 +154,18 @@ test('pair source hash ignores generated bounds but tracks other Noir config', (
     assert.notEqual(builder.computeSourceHash('insecure-512', 'micro'), generatorHash)
   } finally {
     rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('every pair regenerates all of its C1/C2 bounds, array bounds included', () => {
+  const root = join(__dirname, '..')
+  for (const [preset, committee] of RELEASE_REQUIRED_PAIRS) {
+    for (const { path, generated, updated } of committeeBoundUpdates(root, preset, committee)) {
+      const config = updated.replace(/\s+/g, '')
+      for (const declaration of generated.match(/^pub global (?:PK_GENERATION|SHARE_COMPUTATION)_[A-Z0-9_]+:.*;$/gm) ?? []) {
+        assert.ok(config.includes(declaration.replace(/\s+/g, '')), `${preset}/${committee} ${path}: ${declaration}`)
+      }
+    }
   }
 })
 

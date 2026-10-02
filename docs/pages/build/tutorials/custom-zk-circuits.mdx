@@ -484,19 +484,15 @@ export async function proveBinaryInput(sdk: InterfoldSDK, value: bigint, publicK
       ct0is: c.ct0is,
       u: c.u,
       e0: c.e0,
-      e0is: c.e0is,
-      e0_quotients: c.e0_quotients,
       k1: c.k1,
-      r1is: c.r1is,
-      r2is: c.r2is,
+      r: c.r,
     })
     const ct1 = await prove(ct1Circuit as CompiledCircuit, {
       pk1is: c.pk1is,
       ct1is: c.ct1is,
       u: c.u,
       e1: c.e1,
-      p1is: c.p1is,
-      p2is: c.p2is,
+      r_ct1: c.r_ct1,
     })
     const ude = await prove(udeCircuit as CompiledCircuit, {
       ct0_verification_key: ct0.artifacts.vkAsFields,

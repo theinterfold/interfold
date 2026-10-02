@@ -254,6 +254,12 @@ the generator would produce.
 - `--dry-run` - Show what would be built
 - `--no-clean` - Don't clean output directory
 
+Only a complete build with verification keys writes the `nodes_fold.vk_tree_hash` and
+`c6_fold.vk_tree_hash` anchors. A build with `--group`, `--circuit`, or `--skip-vk`, or a build with
+a failed circuit, removes both anchors from the pair and from `circuits/bin/`. An old anchor can
+hash a key that no longer matches the compiled circuits. Run a complete build before you deploy the
+BFV verifiers or aggregate proofs.
+
 `sync-config` updates only `scripts/utils.ts` and `ActiveCryptoConfig.sol`. Use it when BFV
 parameter constants change and the prebuilt circuit artifacts already exist. It does not compile
 Noir circuits or regenerate verification keys.
