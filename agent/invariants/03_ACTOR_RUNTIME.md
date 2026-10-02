@@ -80,8 +80,13 @@ the code does not meet yet.
   exceed the page budget so the cursor can still advance. — `CRATES_ARCHITECTURE.md`
 - `E3LifecycleCoordinator` never emits protocol events. It must stay rebuildable from the event log.
   Startup reads its persisted stage map to prune terminal E3 state and to seed writer and compute
-  recovery, so treat its schema and update order as durable. — `crates/request/src/lifecycle/`;
-  `crates/ciphernode-builder/src/recovery.rs`; `flow-trace/06`
+  recovery, so treat its schema and update order as durable. **Gap:** startup also writes a terminal
+  stage that it reads at the finalized block (INDEX concern #48). The event log does not contain
+  that stage, so only the persisted snapshot holds a canonical Failed stage of this kind. A rebuild
+  from the log records that E3 as Complete and loses its failure settlement recovery; an ordinary
+  restart keeps the snapshot. A replayable canonical observation is still required. —
+  `crates/request/src/lifecycle/`; `crates/ciphernode-builder/src/recovery.rs`;
+  `crates/ciphernode-builder/src/finalized_lifecycle.rs`; `flow-trace/06`
 - EventStore duplicate rule: same HLC timestamp + stable event ID + **equal payload** is an
   idempotent duplicate (even across Local/Net transport); different payloads at the same timestamp
   fail closed. — INDEX concern #15
@@ -100,11 +105,21 @@ the code does not meet yet.
   lifecycle state. A complete E3 or a non-slashing failed E3 must not resume local protocol work. A
   failed E3 that requires accusation or slashing work must retain its context. An unavailable or
   unknown canonical result must fail startup. If the E3 exists at chain head but not yet at the
-  finalized block, recovery keeps the context and waits; finality lag is not an unknown E3. **Gap:**
-  not implemented. Startup prunes terminal E3 state from the local event-log projection and the
-  lifecycle map; no code reads a finalized block. The router completes a restored context whose
-  lifecycle stage is Failed at `EffectsEnabled`, because no accusation work resumes for it. Concern
-  #48 remains open. — INDEX concern #48
+  finalized block, recovery keeps the context and waits; finality lag is not an unknown E3. Before
+  the restart backfill, startup reads `getE3Stage` and `getFailureReason` at the finalized block for
+  each request-router checkpoint context whose local lifecycle stage is not terminal, with a 60 s
+  bound per chain. It writes the canonical stage of a finished E3 to the lifecycle store, so every
+  restart decision that reads the lifecycle treats that E3 as terminal. The router does not forward
+  `EffectsEnabled` to a restored context whose lifecycle stage is terminal and publishes
+  `E3RequestComplete` for it; startup pruned its finalized committee, so no accusation work resumes.
+  The data-availability coordinator of each chain drops the restored key assembly and ciphertext
+  retrieval of such an E3 before `EffectsEnabled`, and ignores later facts for it. A context on a
+  chain without an enabled configuration fails startup. **Gap:** a context whose E3 failed on chain
+  with a slashing reason, but not in the local lifecycle, resumes its work at `EffectsEnabled`. A
+  context that the EventStore suffix after the checkpoint admits during replay is not checked. Both
+  are follow-up card 2.3b. Document publication recovery does not read the lifecycle. —
+  `crates/ciphernode-builder/src/finalized_lifecycle.rs`; `crates/evm/src/finalized_lifecycle.rs`;
+  INDEX concern #48
 - EventStore replay preserves durable sequence inside each aggregate. It uses HLC order only to
   choose between the next events of different aggregates. A late event can have an older remote HLC
   and must not move ahead of an earlier local sequence from the same aggregate. — INDEX concern #43

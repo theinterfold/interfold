@@ -178,7 +178,7 @@ pub(crate) fn convert_u8_to_e3_stage(stage_u8: u8) -> E3Stage {
 }
 
 // Helper function to convert u8 to Rust FailureReason
-fn convert_u8_to_failure_reason(reason_u8: u8) -> FailureReason {
+pub(crate) fn convert_u8_to_failure_reason(reason_u8: u8) -> FailureReason {
     match reason_u8 {
         0 => FailureReason::None,
         1 => FailureReason::CommitteeFormationTimeout,
