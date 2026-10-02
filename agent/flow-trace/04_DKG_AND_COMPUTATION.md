@@ -144,7 +144,13 @@ EncryptionKeyCollector collects verified EncryptionKeyCreated events
 ├─ A key that arrives while the keyshare is in `Init` is only recorded in the
 │  recovery state: the collector needs the frozen DKG timing that the node reads
 │  at its own selection. `handle_ciphernode_selected` sends every recorded key to
-│  the collector. A key from an expelled party can count here; Step 4 removes it
+│  the collector
+│
+├─ A new collector (this one or the ThresholdShareCollector) first receives every
+│  expulsion that the keyshare recorded (ExpelPartyFromKeyCollection,
+│  ExpelPartyFromShareCollection), then its inputs. It ignores the input of an
+│  expelled party and does not wait for it. A running collector receives each
+│  later expulsion
 │
 ├─ A live key after the cutoff does not reach the collector, even if the
 │  collector's relative timer has not fired yet
@@ -159,9 +165,8 @@ EncryptionKeyCollector collects verified EncryptionKeyCreated events
 │   │  EffectsEnabled. A key whose proof check had not finished also misses
 │   │  this cutoff
 │   └─ Rebuilds the ThresholdShareCollector, as every recovery state that
-│      replays shares does: it sends every expelled party
-│      (ExpelPartyFromShareCollection), then every recorded share. A peer can
-│      send its share while this node still collects encryption keys
+│      replays shares does, and sends it every recorded share. A peer can send
+│      its share while this node still collects encryption keys
 │
 ├─ On TIMEOUT (derived DKG-phase cutoff):
 │   ├─ With at least H keys, including this party's key:
@@ -187,10 +192,9 @@ EncryptionKeyCollector collects verified EncryptionKeyCreated events
 ```
 ThresholdKeyshare receives AllEncryptionKeysCollected
 │
-├─ Removes keys from expelled parties: replay sends recorded keys from expelled
-│  parties, and an expulsion can reach the keyshare after the collector
-│  completes. With fewer than H keys, or without this node's key, the keyshare
-│  fails as at a cutoff with too few keys (Step 3)
+├─ Removes keys from expelled parties: an expulsion can reach the keyshare after
+│  the collector completes. With fewer than H keys, or without this node's key,
+│  the keyshare fails as at a cutoff with too few keys (Step 3)
 │
 ├─ State: CollectingEncryptionKeys → GeneratingThresholdShare
 ├─ Stores the verified BFV public keys available at the cutoff

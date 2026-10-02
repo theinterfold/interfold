@@ -268,8 +268,9 @@ impl ThresholdKeyshare {
     /// the frozen DKG timing, which this node reads when it handles its own selection. A collector
     /// that restart recovery creates after the cutoff applies the cutoff when the replay ends.
     ///
-    /// Keys from expelled parties are sent too. When the collector completes, the keyshare removes
-    /// them and fails the DKG if fewer than H keys remain.
+    /// Keys from expelled parties are sent too. The collector ignores the key of a party that it
+    /// knows is expelled. After a later expulsion, the keyshare removes that party's key from the
+    /// completed collection and fails the DKG if fewer than H keys remain.
     pub(in crate::actors::threshold_keyshare) fn replay_encryption_keys(
         &self,
         collector: &Addr<EncryptionKeyCollector>,
@@ -292,25 +293,17 @@ impl ThresholdKeyshare {
         self.rebuild_threshold_share_collector(self_addr, ec)
     }
 
-    /// Create the threshold-share collector, send it every expelled party, then every recorded
-    /// share.
+    /// Create the threshold-share collector, then send it every recorded share.
     ///
-    /// A running collector learns each expulsion from `ExpelPartyFromShareCollection`. A new
-    /// collector must learn the earlier ones too. Otherwise it waits until the cutoff for a share
-    /// that will not come, and a recorded share from an expelled party can count toward H - 1.
+    /// `ensure_collector` sends a new collector every recorded expulsion first. Otherwise it waits
+    /// until the cutoff for a share that will not come, and a recorded share from an expelled party
+    /// can count toward H - 1.
     fn rebuild_threshold_share_collector(
         &mut self,
         self_addr: Addr<Self>,
         ec: &EventContext<Sequenced>,
     ) -> Result<()> {
-        let expelled = self.state.try_get()?.expelled_parties;
-        let collector = self.ensure_collector(self_addr)?;
-        for party_id in expelled {
-            collector.try_send(ExpelPartyFromShareCollection {
-                party_id,
-                ec: ec.clone(),
-            })?;
-        }
+        let collector = self.ensure_collector(self_addr, ec)?;
         for event in self.recovery_payloads.shares().values() {
             collector.try_send(event.clone())?;
         }
@@ -424,7 +417,7 @@ impl ThresholdKeyshare {
                 Ok(())
             }
             KeyshareState::CollectingEncryptionKeys(data) => {
-                let collector = self.recover_encryption_key_collector(self_addr.clone())?;
+                let collector = self.recover_encryption_key_collector(self_addr.clone(), &ec)?;
                 self.replay_encryption_keys(&collector)?;
                 // Selection creates the threshold-share collector too. A peer can send this node
                 // its share while this node still collects encryption keys.

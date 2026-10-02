@@ -151,15 +151,8 @@ async fn a_recorded_key_from_an_expelled_party_does_not_count_toward_h() -> Resu
     actor
         .send(keyshare_event(peer_key(&e3_id, 1), 2, EventSource::Net))
         .await?;
-    let expelled = CommitteeMemberExpelled {
-        e3_id: e3_id.clone(),
-        node: Address::ZERO,
-        reason: [0; 32],
-        active_count_after: 2,
-        party_id: Some(1),
-    };
     actor
-        .send(keyshare_event(expelled, 3, EventSource::Evm))
+        .send(keyshare_event(expulsion_of(&e3_id, 1), 3, EventSource::Evm))
         .await?;
     actor
         .send(keyshare_event(selection(&e3_id), 4, EventSource::Evm))
@@ -406,6 +399,173 @@ async fn a_rebuilt_share_collector_does_not_wait_for_an_expelled_party() -> Resu
     Ok(())
 }
 
+/// The expulsion of `party_id` from the chain, with the party ID that sortition adds.
+fn expulsion_of(e3_id: &E3id, party_id: u64) -> CommitteeMemberExpelled {
+    CommitteeMemberExpelled {
+        e3_id: e3_id.clone(),
+        node: Address::ZERO,
+        reason: [0; 32],
+        active_count_after: 2,
+        party_id: Some(party_id),
+    }
+}
+
+#[actix::test]
+async fn a_key_collector_created_after_an_expulsion_does_not_wait_for_that_party() -> Result<()> {
+    let e3_id = E3id::new("expelled-before-key-collector", 1);
+    // The encryption-key cutoff (10% of 7,200 s) is 720 s after selection.
+    let (actor, repo) = start_actor_before_selection(&e3_id, 7_200).await?;
+    actor
+        .send(keyshare_event(peer_key(&e3_id, 0), 1, EventSource::Local))
+        .await?;
+    actor
+        .send(keyshare_event(peer_key(&e3_id, 2), 2, EventSource::Net))
+        .await?;
+    actor
+        .send(keyshare_event(expulsion_of(&e3_id, 1), 3, EventSource::Evm))
+        .await?;
+    actor
+        .send(keyshare_event(selection(&e3_id), 4, EventSource::Evm))
+        .await?;
+
+    // The new collector knows that party 1 is expelled, so keys 0 and 2 complete the collection
+    // long before the cutoff.
+    let KeyshareState::GeneratingThresholdShare(data) = wait_for_keyshare_state(&repo, |state| {
+        matches!(
+            state,
+            KeyshareState::GeneratingThresholdShare(_) | KeyshareState::Failed { .. }
+        )
+    })
+    .await?
+    else {
+        panic!("expected the DKG to continue without party 1");
+    };
+    let mut parties = data
+        .collected_encryption_keys
+        .iter()
+        .map(|key| key.party_id)
+        .collect::<Vec<_>>();
+    parties.sort_unstable();
+    assert_eq!(parties, vec![0, 2]);
+    Ok(())
+}
+
+#[actix::test]
+async fn a_share_collector_created_after_an_expulsion_does_not_wait_for_that_party() -> Result<()> {
+    let e3_id = E3id::new("expelled-before-share-collector", 1);
+    // The threshold-share cutoff (75% of 7,200 s) is 5,400 s after selection.
+    let (actor, repo, recovery_repo) =
+        start_actor_before_selection_with_recovery(&e3_id, 7_200).await?;
+    actor
+        .send(keyshare_event(expulsion_of(&e3_id, 1), 1, EventSource::Evm))
+        .await?;
+    actor
+        .send(keyshare_event(selection(&e3_id), 2, EventSource::Evm))
+        .await?;
+    wait_for_keyshare_state(&repo, |state| {
+        matches!(state, KeyshareState::CollectingEncryptionKeys(_))
+    })
+    .await?;
+    actor
+        .send(keyshare_event(peer_share(&e3_id, 2), 3, EventSource::Net))
+        .await?;
+
+    // Selection created the share collector after party 1's expulsion. Party 2's share is the last
+    // one that the collector waits for.
+    let recovery = wait_for_record(&recovery_repo, |recovery| {
+        recovery.collected_threshold_share_ids.is_some()
+    })
+    .await?;
+    assert_eq!(
+        recovery.collected_threshold_share_ids,
+        Some(BTreeSet::from([2]))
+    );
+    Ok(())
+}
+
+#[actix::test]
+async fn a_restarted_key_collector_does_not_wait_for_an_expelled_party() -> Result<()> {
+    let e3_id = E3id::new("expelled-key-restart", 1);
+    // The encryption-key cutoff (10% of the 7,200 s window) is 720 s away.
+    let (mut actor, repo, _, _) = build_actor(
+        &e3_id,
+        collecting_encryption_keys_state(&e3_id),
+        7_200,
+        7_200,
+        &[1],
+    )
+    .await?;
+    for party_id in [0, 2] {
+        actor.record_encryption_key(&TypedEvent::new(
+            peer_key(&e3_id, party_id),
+            test_ec(party_id + 1),
+        ))?;
+    }
+    let actor = actor.start();
+    actor
+        .send(keyshare_event(EffectsEnabled::new(), 3, EventSource::Local))
+        .await?;
+
+    // The recovered collector knows that party 1 is expelled, so the recorded keys 0 and 2
+    // complete the collection before the cutoff.
+    let KeyshareState::GeneratingThresholdShare(data) = wait_for_keyshare_state(&repo, |state| {
+        matches!(
+            state,
+            KeyshareState::GeneratingThresholdShare(_) | KeyshareState::Failed { .. }
+        )
+    })
+    .await?
+    else {
+        panic!("expected the DKG to continue without party 1");
+    };
+    let parties = data
+        .collected_encryption_keys
+        .iter()
+        .map(|key| key.party_id)
+        .collect::<Vec<_>>();
+    assert_eq!(parties, vec![0, 2]);
+    Ok(())
+}
+
+#[actix::test]
+async fn a_new_collector_stays_reachable_when_its_seeding_fails() -> Result<()> {
+    let e3_id = E3id::new("seed-overflow", 1);
+    // More recorded expulsions than a new collector's mailbox holds, so seeding fails part of the
+    // way through.
+    let expelled: Vec<u64> = (1..=(e3_utils::MAILBOX_LIMIT as u64 + 44)).collect();
+    let (mut actor, _, _, _) = build_actor(
+        &e3_id,
+        collecting_encryption_keys_state(&e3_id),
+        7_200,
+        7_200,
+        &expelled,
+    )
+    .await?;
+    let (parent, _, _, _) = build_actor(
+        &e3_id,
+        collecting_encryption_keys_state(&e3_id),
+        7_200,
+        7_200,
+        &[],
+    )
+    .await?;
+    let parent = parent.start();
+
+    assert!(actor.ensure_collector(parent.clone(), &test_ec(1)).is_err());
+    assert!(
+        actor.decryption_key_collector.is_some(),
+        "the started share collector must stay reachable"
+    );
+    assert!(actor
+        .ensure_encryption_key_collector(parent, &test_ec(2))
+        .is_err());
+    assert!(
+        actor.encryption_key_collector.is_some(),
+        "the started key collector must stay reachable"
+    );
+    Ok(())
+}
+
 #[actix::test]
 async fn an_expulsion_that_leaves_fewer_than_h_keys_fails_the_dkg() -> Result<()> {
     let e3_id = E3id::new("expelled-after-collection", 1);
@@ -511,6 +671,20 @@ async fn start_actor_before_selection(
     e3_id: &E3id,
     dkg_window_secs: u64,
 ) -> Result<(Addr<ThresholdKeyshare>, Repository<ThresholdKeyshareState>)> {
+    let (actor, repo, _) =
+        start_actor_before_selection_with_recovery(e3_id, dkg_window_secs).await?;
+    Ok((actor, repo))
+}
+
+/// `start_actor_before_selection`, which also returns the recovery repository.
+async fn start_actor_before_selection_with_recovery(
+    e3_id: &E3id,
+    dkg_window_secs: u64,
+) -> Result<(
+    Addr<ThresholdKeyshare>,
+    Repository<ThresholdKeyshareState>,
+    Repository<ThresholdKeyshareRecoveryState>,
+)> {
     let (bus, _) = test_bus();
     let (mut state, repo) = test_state(e3_id, KeyshareState::Init);
     state.try_mutate_without_context(|mut state| {
@@ -519,6 +693,7 @@ async fn start_actor_before_selection(
         state.params = insecure_threshold_params();
         Ok(state)
     })?;
+    let (recovery, recovery_repo) = test_recovery_with_repo();
     let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
         bus,
         cipher: Arc::new(Cipher::from_password("test-password").await?),
@@ -527,7 +702,7 @@ async fn start_actor_before_selection(
         interfold_address: Address::ZERO,
         signer: alloy::signers::local::PrivateKeySigner::random(),
         effects_enabled: true,
-        recovery: test_recovery(),
+        recovery,
         recovery_payloads: test_recovery_payloads(),
         dkg_timing_reader: Arc::new(move |_| {
             Box::pin(async move {
@@ -539,7 +714,7 @@ async fn start_actor_before_selection(
         }),
     })
     .start();
-    Ok((actor, repo))
+    Ok((actor, repo, recovery_repo))
 }
 
 fn keyshare_event(
