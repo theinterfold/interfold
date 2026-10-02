@@ -123,11 +123,19 @@ fn sync_directory(dir: &Path) -> Result<(), DatabaseError> {
 /// leaves a partial copy there.
 pub fn compact_database(from: &str, to: &str) -> Result<(), DatabaseError> {
     let partial = format!("{}.partial", to.trim_end_matches('/'));
-    // `sled::open` creates a missing database, so check the paths first. sled writes `conf` in
-    // each database directory.
+    // `sled::open` creates a missing database, with any missing parent directory, so check the
+    // paths first. sled writes `conf` in each database directory. The directory that holds `to`
+    // must exist: a directory that sled creates here is not synced into its own parent.
+    let parent = Path::new(to)
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
     let taken = |path: &str| Path::new(path).exists();
-    if !Path::new(from).join("conf").is_file() || taken(to) || taken(&partial) {
-        let refusal = format!("{from} must hold a database, and {to} and {partial} must not exist");
+    if !Path::new(from).join("conf").is_file() || !parent.is_dir() || taken(to) || taken(&partial) {
+        let refusal = format!(
+            "{from} must hold a database, {} must exist, and {to} and {partial} must not exist",
+            parent.display()
+        );
         return Err(DatabaseError::Compaction(refusal));
     }
     let database = sled::open(from)?;
@@ -137,9 +145,11 @@ pub fn compact_database(from: &str, to: &str) -> Result<(), DatabaseError> {
         let mismatch = format!("the copy in {partial} does not match {from}");
         return Err(DatabaseError::Compaction(mismatch));
     }
-    // A closed sled database syncs its log and then creates no more files, so the syncs below
+    // A drop only logs a failed flush, so flush the copy first: its log is then on the disk, and a
+    // failure stops the command. A closed sled database creates no more files, so the syncs below
     // cover the complete copy. sled syncs neither the files of large values nor `conf` nor the
     // directories.
+    copy.flush()?;
     drop(copy);
     drop(database);
     let partial_dir = Path::new(&partial);
@@ -147,10 +157,6 @@ pub fn compact_database(from: &str, to: &str) -> Result<(), DatabaseError> {
     sync_directory(partial_dir)?;
     fs::rename(partial_dir, to)?;
     // The rename is durable only when the directory that holds `to` is synced.
-    let parent = Path::new(to)
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
     File::open(parent)?.sync_all()?;
     Ok(())
 }
@@ -366,5 +372,23 @@ mod tests {
         assert_eq!(snapshot.ciphertexts, vec![(vec![1; 3], 0), (vec![2; 3], 1)]);
         let head = round.get_slot_head([7; 20]).await.unwrap();
         assert_eq!(head, Some((vec![2; 3], 1)));
+    }
+
+    /// sled creates a missing parent directory of the copy, and nothing syncs that directory into
+    /// its own parent. The command refuses such a target before it creates anything.
+    #[test]
+    fn compaction_refuses_a_target_whose_directory_is_missing() {
+        let source = TempDir::new("compact-source");
+        drop(SledDB::new(source.path()).unwrap());
+        let missing = TempDir::new("compact-missing");
+        let to = format!("{}/copy", missing.path());
+
+        let refused = compact_database(source.path(), &to);
+
+        assert!(
+            matches!(refused, Err(DatabaseError::Compaction(_))),
+            "{refused:?}"
+        );
+        assert!(!Path::new(missing.path()).exists());
     }
 }

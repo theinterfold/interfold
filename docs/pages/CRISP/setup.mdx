@@ -428,9 +428,10 @@ copy.
 The command builds the copy in the target path with `.partial` added, for example
 `database/server-compact.partial`. It gives the copy the target name only when the copy is complete,
 matches the database, and is on the disk. The command stops without a copy when the target directory
-or the `.partial` directory exists, or when the source directory holds no database. It also stops
-when the server holds the database, when the copy does not match the database, or when the disk is
-full. After a failed command, delete the `.partial` directory before you run the command again.
+or the `.partial` directory exists, when the directory that holds the target does not exist, or when
+the source directory holds no database. It also stops when the server holds the database, when the
+copy does not match the database, or when the disk is full. After a failed command, delete the
+`.partial` directory before you run the command again.
 
 The operating system can keep the moves of steps 3 and 4 in memory for some time before it writes
 them to the disk. The server reads from that memory, so a working server does not show that the disk
