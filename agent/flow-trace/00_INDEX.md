@@ -239,6 +239,7 @@ reformulations rather than weakenings — the soundness arguments are in the com
 | C4      | 1,746,030 | 1,954,926 | **1,098,865** | -37.1%  |
 | C1      | 2,223,114 | 2,287,310 | **1,634,682** | -26.5%  |
 | C6      | 2,977,228 | 3,499,468 | **2,601,164** | -12.6%  |
+| C5      | 754,560   | 1,172,357 | **1,123,205** | +48.9%  |
 
 **The shared mechanism.** `negacyclic_kernel(u, x)[j]` is `(X^(N-1-j) * u mod X^N + 1)(x)`, so
 `a.dot(kernel)` evaluates `a * u mod X^N + 1` without the product entering the witness. Folding the
@@ -299,7 +300,15 @@ secure-8192 but silently loses completeness if a parameter set's moduli straddle
 preset generator. The branch's hardcoded `4` happens to hold at H=14 and would break silently one
 committee size later.
 
-**C6 beats the branch by *not* porting its bound checks.** Same reduction:
+**C5 stays above main; its cost is the fix, not the arithmetic.** The middle column for C5 is the
+checked opening of every party key (104,448 per party) plus the two-sided range check on `pk0_agg`
+(208,896), and neither can be reformulated away: no identity inside C5 determines those values. The
+one saving is the sum check's quotient, range-checked to `SUM_BIT_CARRY = 8` bits through
+`ModU64::assert_zero_mod_bounded` instead of cast to `u64`: 2 gates per coefficient, 49,152 in all,
+with `assert(H <= 128)` because the quotient is at most `(3H + 1) / 2`. At the small committee C5 is
+5,063,825 against 3,441,804 on main. Reducing it further means chunking the parties and folding.
+
+**C6 beats the branch by _not_ porting its bound checks.** Same reduction:
 `d = ct0 + (ct1 * sk mod X^N + 1) + e_sm + q * r`, with `r2` deleted and `r1` collapsed from `2N-1`
 to `N`. `sk` is per-limb here, so each limb needs its own kernel -- unlike C1, where one kernel
 served every modulus. Measured 3,499,468 -> 2,601,164, **-898,304**, against the branch's own
@@ -312,27 +321,28 @@ already name it as. Its IF-013 digit asserts stay, because injectivity is still 
 independent of it.
 
 **C3's message scaling, the largest win on the branch.** `k1` is the message scaled by
-`SCALE = Q mod t` and centred modulo `t`. Writing that reduction as a carry, `k1 = SCALE * m - t * z`,
-makes it affine, so with `k0 * t = BETA * q - 1` and `k0 * SCALE = ALPHA * q - SMALL_D` the whole
-`k0 * k1` term folds into the quotient:
+`SCALE = Q mod t` and centred modulo `t`. Writing that reduction as a carry,
+`k1 = SCALE * m - t * z`, makes it affine, so with `k0 * t = BETA * q - 1` and
+`k0 * SCALE = ALPHA * q - SMALL_D` the whole `k0 * k1` term folds into the quotient:
 `ct0 = pk0 * u + e0 - SMALL_D * m + z + q * Q0` with `Q0 = r + ALPHA * m - BETA * z`. Measured
 2,744,690 -> 2,125,396, **-619,294**, and -38.8% against main. C3 runs about 1,512 times per DKG at
-`small` -- one proof per (recipient, modulus) per chain, both chains, every node -- so this is roughly
--936M gates per DKG, far more than every other circuit on this branch combined.
+`small` -- one proof per (recipient, modulus) per chain, both chains, every node -- so this is
+roughly -936M gates per DKG, far more than every other circuit on this branch combined.
 
-**Most of it is transcript, not arithmetic.** The direct path pushes all `N` coefficients of `k1` into
-the sponge *unpacked*, one absorption each; the scaled form never builds `k1`. `ct0_r` at 55 bits is
-also replaced by `Q0` at 27. The arithmetic saving -- dropping a modular multiply and a centring
-comparison per coefficient -- is the smaller half.
+**Most of it is transcript, not arithmetic.** The direct path pushes all `N` coefficients of `k1`
+into the sponge _unpacked_, one absorption each; the scaled form never builds `k1`. `ct0_r` at 55
+bits is also replaced by `Q0` at 27. The arithmetic saving -- dropping a modular multiply and a
+centring comparison per coefficient -- is the smaller half.
 
 **Why the quotient is narrow, and why it generalises.** `Q0` is dominated by `SMALL_D * m / q`, and
-`SMALL_D = k * q - floor(prod(q) / t)` is small because every modulus sits just above a power of two:
-`floor(prod(q)/t) / q` is then close to `2^(bits(q) - bits(t))`, so `k` is that power of two. Derived
-widths reproduce what `feat/secure-circuit-optimizations` hardcodes -- 27 / 19 / 14 -- and #1996 comes
-out a bit tighter at 26 / 18 / 13. insecure-512 has one DKG modulus, so `floor(q/t) < q`, no `k` works,
-and `SHARED_QUOTIENT` is generated false; that preset keeps the direct path, which is fine for a
-test-only parameter set. Gating on the generated flag rather than on `N == 8192 && L == 2` means a new
-parameter set is either included or excluded loudly, never handed wrong constants.
+`SMALL_D = k * q - floor(prod(q) / t)` is small because every modulus sits just above a power of
+two: `floor(prod(q)/t) / q` is then close to `2^(bits(q) - bits(t))`, so `k` is that power of two.
+Derived widths reproduce what `feat/secure-circuit-optimizations` hardcodes -- 27 / 19 / 14 -- and
+#1996 comes out a bit tighter at 26 / 18 / 13. insecure-512 has one DKG modulus, so
+`floor(q/t) < q`, no `k` works, and `SHARED_QUOTIENT` is generated false; that preset keeps the
+direct path, which is fine for a test-only parameter set. Gating on the generated flag rather than
+on `N == 8192 && L == 2` means a new parameter set is either included or excluded loudly, never
+handed wrong constants.
 
 **`z` is a witness, not a hint.** Computing the carry in-circuit with `__compute_mod_reduction` made
 `nargo execute` emit `bug: Brillig function call isn't properly covered by a manual constraint`, the
@@ -365,15 +375,15 @@ it is a regression, so the lifted machinery stays. IF-005 costs only 64,196 net 
 witnesses), and keeping it leaves us 141,188 above the branch's 1,493,494 while capturing the whole
 reduction win.
 
-**C1's reduction, and why the bound did not move.** `pk0[i] = -(a[i] * sk mod X^N + 1) + eek + r[i] * q_i`.
-The unreduced form carried `r2` at degree `N-1` bounded to `BIT_R2 = 57` and `r1` at degree `2N-1`;
-reducing makes the cyclotomic term identically zero, so `r2` disappears and `r1` collapses to `N`
-coefficients. The transcript absorbs `N` instead of `3N-2`. `a` is the compile-time CRP, so the
-product needs no bound of its own, and bounding the rest gives
-`r_bound = ((N * sk_bound + 2) * qi_bound + eek_bound) / q_i` - at `sk_bound = 1` the *same*
-expression the unreduced `r1` used, so `BIT_R` stays 13 (9 insecure) and the bounds are unchanged.
-Codegen confirms that independently rather than it being asserted. C1 runs once per node, so at
-`small` (H = 14) the 652,628 saved is ~9.1M gates per DKG.
+**C1's reduction, and why the bound did not move.**
+`pk0[i] = -(a[i] * sk mod X^N + 1) + eek + r[i] * q_i`. The unreduced form carried `r2` at degree
+`N-1` bounded to `BIT_R2 = 57` and `r1` at degree `2N-1`; reducing makes the cyclotomic term
+identically zero, so `r2` disappears and `r1` collapses to `N` coefficients. The transcript absorbs
+`N` instead of `3N-2`. `a` is the compile-time CRP, so the product needs no bound of its own, and
+bounding the rest gives `r_bound = ((N * sk_bound + 2) * qi_bound + eek_bound) / q_i` - at
+`sk_bound = 1` the _same_ expression the unreduced `r1` used, so `BIT_R` stays 13 (9 insecure) and
+the bounds are unchanged. Codegen confirms that independently rather than it being asserted. C1 runs
+once per node, so at `small` (H = 14) the 652,628 saved is ~9.1M gates per DKG.
 
 **Not ported.** C3's message-scaling rework (`rounding_carries`, `SECURE_SCALE`, `ALPHA`, `BETA`,
 `DELTA`, `check_near_power::<57, 25>`) is worth a further ~1.01M gates but its constants are derived
