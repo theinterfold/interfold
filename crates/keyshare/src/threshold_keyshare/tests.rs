@@ -10,15 +10,17 @@ use actix::{Actor, Addr, Handler};
 use alloy::primitives::Address;
 use anyhow::Result;
 use e3_crypto::Cipher;
-use e3_data::{AutoPersist, DataStore, InMemStore, Persistable, Repository};
+use e3_data::{AutoPersist, DataStore, InMemStore, Persistable, Repository, StoreConnector};
 use e3_events::{
-    hlc_factory::HlcFactory, AggregatorChanged, BusHandle, CircuitName, CommitteeMemberExpelled,
-    ComputeRequest, ComputeRequestError, ComputeRequestErrorKind, ComputeRequestKind,
-    DecryptionKeyShared, DkgCoordination, DkgCoordinationKind, DkgDealer, E3Stage, E3id,
-    EffectsEnabled, EncryptionKey, EncryptionKeyCreated, Event, EventBus, EventBusConfig,
-    EventSource, EventType, FailureReason, GetEvents, HistoryCollector, InterfoldEvent,
-    InterfoldEventData, Proof, ProofPayload, ProofType, Sequencer, SignedProofPayload,
-    StoreEventRequested, StoreEventResponse, TakeEvents, TestEvent, Unsequenced, VerificationKind,
+    hlc_factory::HlcFactory, AggregatorChanged, BusHandle, CircuitName, CommitteeMemberExcluded,
+    CommitteeMemberExpelled, ComputeRequest, ComputeRequestError, ComputeRequestErrorKind,
+    ComputeRequestKind, DecryptionKeyShared, DkgCoordination, DkgCoordinationKind, DkgDealer,
+    DkgProofSigned, E3Stage, E3id, EffectsEnabled, EncryptionKey, EncryptionKeyCreated, Event,
+    EventBus, EventBusConfig, EventSource, EventType, FailureReason, Get, GetEvents,
+    HistoryCollector, Insert, InterfoldEvent, InterfoldEventData, OrderedSet,
+    PkGenerationProofSigned, Proof, ProofPayload, ProofType, PublicKeyAggregated, Remove,
+    Sequencer, SignedProofPayload, StoreEventRequested, StoreEventResponse, TakeEvents, TestEvent,
+    Unsequenced, VerificationKind,
 };
 use e3_fhe_params::{encode_bfv_params, BfvParamSet, BfvPreset, DEFAULT_BFV_PRESET};
 use e3_trbfv::{
@@ -184,7 +186,7 @@ async fn a_recorded_key_from_an_expelled_party_does_not_count_toward_h() -> Resu
 async fn a_live_key_after_the_cutoff_does_not_reach_a_waiting_collector() -> Result<()> {
     let e3_id = E3id::new("late-live-key", 1);
     // The 10% cutoff of this 2,000 s window passed 800 s ago.
-    let (mut actor, _, _, _) = build_actor(
+    let (mut actor, _, recovery_repo, _) = build_actor(
         &e3_id,
         collecting_encryption_keys_state(&e3_id),
         1_000,
@@ -192,7 +194,7 @@ async fn a_live_key_after_the_cutoff_does_not_reach_a_waiting_collector() -> Res
         &[],
     )
     .await?;
-    let (parent, _, _, _) = build_actor(
+    let (parent, parent_repo, _, _) = build_actor(
         &e3_id,
         collecting_encryption_keys_state(&e3_id),
         7_200,
@@ -202,24 +204,163 @@ async fn a_live_key_after_the_cutoff_does_not_reach_a_waiting_collector() -> Res
     .await?;
     let parent = parent.start();
     // A collector whose timer has not fired yet. Its relative timer can fire up to a second after
-    // the absolute cutoff.
-    actor.encryption_key_collector = Some(EncryptionKeyCollector::setup(
+    // the absolute cutoff. It holds keys 0 and 2, so key 1 would complete it.
+    let collector = EncryptionKeyCollector::setup(
         parent.clone(),
         3,
         2,
         0,
         e3_id.clone(),
         Some(std::time::Duration::from_secs(3_600)),
-    ));
-
-    let late = actor
-        .handle_encryption_key_created(TypedEvent::new(peer_key(&e3_id, 1), test_ec(1)), parent);
-
-    let error = late.expect_err("a key after the cutoff must not reach the collector");
-    assert!(
-        error.to_string().contains("cutoff"),
-        "unexpected error: {error}"
     );
+    for party_id in [0, 2] {
+        collector
+            .send(TypedEvent::new(
+                peer_key(&e3_id, party_id),
+                test_ec(party_id + 1),
+            ))
+            .await?;
+    }
+    actor.encryption_key_collector = Some(collector);
+
+    // The late key is an expected input, not an error: it is recorded, but it reaches no
+    // collector.
+    actor
+        .handle_encryption_key_created(TypedEvent::new(peer_key(&e3_id, 1), test_ec(4)), parent)?;
+
+    assert!(recovery_repo
+        .read()
+        .await?
+        .expect("recovery state")
+        .encryption_keys
+        .contains_key(&1));
+    actix::clock::sleep(std::time::Duration::from_millis(200)).await;
+    assert!(
+        matches!(
+            parent_repo.read().await?.expect("keyshare state").state,
+            KeyshareState::CollectingEncryptionKeys(_)
+        ),
+        "the late key must not complete the collection"
+    );
+    Ok(())
+}
+
+#[actix::test]
+async fn a_share_after_the_dkg_deadline_is_recorded_but_reaches_no_collector() -> Result<()> {
+    let e3_id = E3id::new("late-share", 1);
+    let (mut actor, _, recovery_repo, _) = build_actor(
+        &e3_id,
+        collecting_encryption_keys_state(&e3_id),
+        7_200,
+        7_200,
+        &[],
+    )
+    .await?;
+    actor.state.try_mutate_without_context(|mut state| {
+        state.dkg_deadline_unix_secs =
+            Some(crate::domain::timeout_policy::now_unix_secs().saturating_sub(10));
+        Ok(state)
+    })?;
+    let (parent, _, _, _) = build_actor(
+        &e3_id,
+        collecting_encryption_keys_state(&e3_id),
+        7_200,
+        7_200,
+        &[],
+    )
+    .await?;
+
+    actor.handle_threshold_share_created(
+        TypedEvent::new(peer_share(&e3_id, 2), test_ec(2)),
+        parent.start(),
+    )?;
+
+    assert!(recovery_repo
+        .read()
+        .await?
+        .expect("recovery state")
+        .threshold_share_refs
+        .contains_key(&2));
+    assert!(actor.decryption_key_collector.is_none());
+    Ok(())
+}
+
+#[actix::test]
+async fn a_collector_takes_its_timing_from_the_reading_that_admitted_its_input() -> Result<()> {
+    let e3_id = E3id::new("one-clock-reading", 1);
+    let (parent, _, _, _) = build_actor(
+        &e3_id,
+        collecting_encryption_keys_state(&e3_id),
+        7_200,
+        7_200,
+        &[],
+    )
+    .await?;
+    let parent = parent.start();
+    let now = crate::domain::timeout_policy::now_unix_secs();
+
+    // The canonical DKG deadline is reached at `now`. A share admitted one second earlier still
+    // gets a collector.
+    let (mut actor, _, _, _) = build_actor(
+        &e3_id,
+        collecting_encryption_keys_state(&e3_id),
+        7_200,
+        7_200,
+        &[],
+    )
+    .await?;
+    actor.state.try_mutate_without_context(|mut state| {
+        state.dkg_deadline_unix_secs = Some(now);
+        Ok(state)
+    })?;
+    actor.ensure_collector(parent.clone(), &test_ec(1), now - 1)?;
+    assert!(actor.decryption_key_collector.is_some());
+
+    // The encryption-key cutoff, 10% into a 1,000 s window, is reached at `now`. A key admitted
+    // one second earlier still gets a collector.
+    let (mut actor, _, _, _) = build_actor(
+        &e3_id,
+        collecting_encryption_keys_state(&e3_id),
+        7_200,
+        7_200,
+        &[],
+    )
+    .await?;
+    actor.state.try_mutate_without_context(|mut state| {
+        state.dkg_deadline_unix_secs = Some(now + 900);
+        state.dkg_window_secs = Some(1_000);
+        Ok(state)
+    })?;
+    actor.ensure_encryption_key_collector(parent, &test_ec(1), now - 1)?;
+    assert!(actor.encryption_key_collector.is_some());
+    Ok(())
+}
+
+#[actix::test]
+async fn an_own_dkg_proof_after_share_aggregation_is_ignored() -> Result<()> {
+    let e3_id = E3id::new("late-own-proof", 1);
+    let (mut actor, repo, _, _) = build_actor(
+        &e3_id,
+        KeyshareState::ReadyForDecryption(ready_for_c4_test()),
+        7_200,
+        7_200,
+        &[],
+    )
+    .await?;
+
+    actor.handle_share_computation_proof_signed(TypedEvent::new(
+        DkgProofSigned {
+            e3_id: e3_id.clone(),
+            party_id: 0,
+            signed_proof: c2_proof(&e3_id, ProofType::C2aSkShareComputation, 0),
+        },
+        test_ec(1),
+    ))?;
+
+    assert!(matches!(
+        repo.read().await?.expect("keyshare state").state,
+        KeyshareState::ReadyForDecryption(_)
+    ));
     Ok(())
 }
 
@@ -551,13 +692,16 @@ async fn a_new_collector_stays_reachable_when_its_seeding_fails() -> Result<()> 
     .await?;
     let parent = parent.start();
 
-    assert!(actor.ensure_collector(parent.clone(), &test_ec(1)).is_err());
+    let now = crate::domain::timeout_policy::now_unix_secs();
+    assert!(actor
+        .ensure_collector(parent.clone(), &test_ec(1), now)
+        .is_err());
     assert!(
         actor.decryption_key_collector.is_some(),
         "the started share collector must stay reachable"
     );
     assert!(actor
-        .ensure_encryption_key_collector(parent, &test_ec(2))
+        .ensure_encryption_key_collector(parent, &test_ec(2), now)
         .is_err());
     assert!(
         actor.encryption_key_collector.is_some(),
@@ -616,6 +760,180 @@ async fn an_expulsion_that_leaves_fewer_than_h_keys_fails_the_dkg() -> Result<()
         ),
         "expected party 2 to be reported missing, got {failure:?}"
     );
+    Ok(())
+}
+
+/// A store that stops when it starts, so it refuses every snapshot write, as a store whose
+/// mailbox rejects writes does.
+struct StoppedStore;
+
+impl Actor for StoppedStore {
+    type Context = actix::Context<Self>;
+
+    fn started(&mut self, ctx: &mut Self::Context) {
+        ctx.stop();
+    }
+}
+
+impl Handler<Get> for StoppedStore {
+    type Result = Option<Vec<u8>>;
+    fn handle(&mut self, _: Get, _: &mut Self::Context) -> Self::Result {
+        None
+    }
+}
+
+impl Handler<Insert> for StoppedStore {
+    type Result = ();
+    fn handle(&mut self, _: Insert, _: &mut Self::Context) {}
+}
+
+impl Handler<Remove> for StoppedStore {
+    type Result = ();
+    fn handle(&mut self, _: Remove, _: &mut Self::Context) {}
+}
+
+/// Hold `value` in a persistable whose writes all fail.
+async fn unwritable<T>(value: T) -> Persistable<T>
+where
+    T: for<'de> serde::Deserialize<'de> + serde::Serialize + Clone + Send + Sync + 'static,
+{
+    let store = StoppedStore.start();
+    actix::clock::sleep(std::time::Duration::from_millis(10)).await;
+    let connector = StoreConnector::new(
+        b"unwritable",
+        &store.clone().recipient(),
+        &store.clone().recipient(),
+        &store.recipient(),
+    );
+    Persistable::new(Some(value), connector)
+}
+
+/// Start a keyshare in `keyshare_state` whose state and recovery writes all fail, and return the
+/// bus history.
+async fn start_unwritable_actor(
+    e3_id: &E3id,
+    keyshare_state: KeyshareState,
+) -> Result<(
+    Addr<ThresholdKeyshare>,
+    Addr<HistoryCollector<InterfoldEvent>>,
+)> {
+    let (bus, history) = test_bus();
+    let (state, _) = test_state(e3_id, keyshare_state);
+    let state = unwritable(state.try_get()?).await;
+    let recovery = unwritable(ThresholdKeyshareRecoveryState::default()).await;
+    let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bus,
+        cipher: Arc::new(Cipher::from_password("test-password").await?),
+        state,
+        share_enc_preset: BfvPreset::InsecureDkg512,
+        interfold_address: Address::ZERO,
+        signer: alloy::signers::local::PrivateKeySigner::random(),
+        effects_enabled: false,
+        recovery,
+        recovery_payloads: test_recovery_payloads(),
+        dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
+    })
+    .start();
+    Ok((actor, history))
+}
+
+/// Wait for `count` events and return the messages of those that are `InterfoldError`s.
+async fn error_messages(
+    history: &Addr<HistoryCollector<InterfoldEvent>>,
+    count: usize,
+) -> Result<Vec<String>> {
+    Ok(next_events(history, count)
+        .await?
+        .into_iter()
+        .filter_map(|event| match event.into_data() {
+            InterfoldEventData::InterfoldError(error) => Some(error.message),
+            _ => None,
+        })
+        .collect())
+}
+
+#[actix::test]
+async fn the_event_router_reports_failed_state_writes() -> Result<()> {
+    let e3_id = E3id::new("unwritable", 1);
+    let own_proof = c2_proof(&e3_id, ProofType::C2aSkShareComputation, 0);
+    let events: Vec<InterfoldEventData> = vec![
+        PublicKeyAggregated {
+            pubkey: ArcBytes::from_bytes(&[1]),
+            e3_id: e3_id.clone(),
+            nodes: OrderedSet::new(),
+            committee_addresses: Vec::new(),
+            honest_committee_addresses: Vec::new(),
+            pk_commitment: [1; 32],
+            dkg_aggregator_proof: None,
+            dkg_attestation_bundle: None,
+        }
+        .into(),
+        peer_share(&e3_id, 2).into(),
+        PkGenerationProofSigned {
+            e3_id: e3_id.clone(),
+            party_id: 0,
+            signed_proof: own_proof.clone(),
+        }
+        .into(),
+        DkgProofSigned {
+            e3_id: e3_id.clone(),
+            party_id: 0,
+            signed_proof: own_proof,
+        }
+        .into(),
+        expulsion_of(&e3_id, 1).into(),
+        CommitteeMemberExcluded {
+            e3_id: e3_id.clone(),
+            node: Address::ZERO,
+            proof_type: ProofType::C2aSkShareComputation,
+            party_id: Some(2),
+        }
+        .into(),
+    ];
+
+    // One keyshare per event: the bus drops a repeated error with the same payload.
+    for data in events {
+        let (actor, history) = start_unwritable_actor(
+            &e3_id,
+            KeyshareState::AggregatingDecryptionKey(aggregating_decryption_key_for_roster_test()),
+        )
+        .await?;
+        let event_type = data.event_type();
+        actor
+            .send(keyshare_event(data, 1, EventSource::Net))
+            .await?;
+
+        let errors = error_messages(&history, 1).await?;
+        assert_eq!(
+            errors.len(),
+            1,
+            "{event_type}: the failed write is reported"
+        );
+        assert!(
+            errors[0].contains("rejected snapshot write"),
+            "{event_type}: {}",
+            errors[0]
+        );
+    }
+    Ok(())
+}
+
+#[actix::test]
+async fn the_event_router_reports_a_failed_encryption_key_write() -> Result<()> {
+    let e3_id = E3id::new("unwritable-key", 1);
+    let (actor, history) = start_unwritable_actor(&e3_id, KeyshareState::Init).await?;
+
+    actor
+        .send(keyshare_event(peer_key(&e3_id, 1), 1, EventSource::Net))
+        .await?;
+
+    let errors = error_messages(&history, 1).await?;
+    assert_eq!(
+        errors.len(),
+        1,
+        "the failed key write is reported: {errors:?}"
+    );
+    assert!(errors[0].contains("rejected snapshot write"));
     Ok(())
 }
 
@@ -1267,6 +1585,27 @@ fn three_signers() -> [alloy::signers::local::PrivateKeySigner; 3] {
     std::array::from_fn(|_| alloy::signers::local::PrivateKeySigner::random())
 }
 
+/// A C2 proof of `proof_type` by `party_id`. Dealer identity hashes the statement, not the
+/// signature, so the proof is not signed.
+fn c2_proof(e3_id: &E3id, proof_type: ProofType, party_id: u64) -> SignedProofPayload {
+    let circuit = match proof_type {
+        ProofType::C2aSkShareComputation => CircuitName::SkShareComputation,
+        _ => CircuitName::ESmShareComputation,
+    };
+    SignedProofPayload {
+        payload: ProofPayload {
+            e3_id: e3_id.clone(),
+            proof_type,
+            proof: Proof::new(
+                circuit,
+                ArcBytes::from_bytes(&[party_id as u8]),
+                ArcBytes::from_bytes(&[party_id as u8, 1]),
+            ),
+        },
+        signature: ArcBytes::from_bytes(&[]),
+    }
+}
+
 /// A completed C2/C3 verification with no dishonest party.
 fn share_proofs_verified(e3_id: &E3id) -> TypedEvent<ShareVerificationComplete> {
     TypedEvent::new(
@@ -1353,7 +1692,7 @@ async fn batch_with_an_expelled_dealer(e3_id: &E3id, verified: bool) -> Result<C
     .await?;
     committee
         .actor
-        .handle_committee_member_expelled(expulsion_of(e3_id, 1), test_ec(4));
+        .handle_committee_member_expelled(expulsion_of(e3_id, 1), test_ec(4))?;
     Ok(committee)
 }
 
@@ -1576,7 +1915,7 @@ async fn a_kept_verdict_applies_when_restart_sends_its_batch_again() -> Result<(
         recovery_repo,
         ..
     } = after;
-    actor.handle_committee_member_expelled(expulsion_of(&e3_id, 1), test_ec(4));
+    actor.handle_committee_member_expelled(expulsion_of(&e3_id, 1), test_ec(4))?;
     let actor = actor.start();
     bus.subscribe(
         EventType::ShareVerificationComplete,
