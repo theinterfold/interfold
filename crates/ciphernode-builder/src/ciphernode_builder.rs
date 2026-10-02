@@ -1625,10 +1625,12 @@ async fn setup_evm_system(
 
         let provider_factory = ProviderConfig::for_chain(chain)?.into_read_provider_factory();
 
+        let max_log_window = chain.rpc_log_range_blocks()?;
         let mut system = EvmSystemChainBuilder::new(bus, &provider);
         system
             .with_provider_factory(provider_factory.clone())
-            .with_buffer_limit(max_buffered_evm_events);
+            .with_buffer_limit(max_buffered_evm_events)
+            .with_max_log_window(max_log_window);
 
         if contract_components.interfold {
             let write_provider = provider_cache.ensure_write_provider(chain).await?;
@@ -1717,6 +1719,7 @@ async fn setup_evm_system(
                 provider.provider(),
                 contract_address,
                 contract.deploy_block().unwrap_or(0),
+                max_log_window,
             )
             .await?;
             if randomness_addresses.is_empty() {
@@ -1878,6 +1881,7 @@ mod tests {
             chain_id: Some(1),
             ingestion_confirmations: Some(0),
             rpc_poll_interval_ms: Some(250),
+            rpc_log_range_blocks: None,
             data_availability: None,
         }
     }

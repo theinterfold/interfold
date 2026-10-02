@@ -1513,6 +1513,7 @@ async fn test_trbfv_actor() -> Result<()> {
         chain_id: Some(1),
         ingestion_confirmations: Some(0),
         rpc_poll_interval_ms: Some(250),
+        rpc_log_range_blocks: None,
         data_availability: None,
     };
 

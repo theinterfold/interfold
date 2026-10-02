@@ -568,9 +568,10 @@ complete or failed. A `candidate` holds a provisional seat while the sortition o
 The command reads the `CommitteeObligationUpdated` events of `BondingRegistry`, from the
 `deploy_block` of the contract to the latest block. When the configuration has no `deploy_block` for
 `bonding_registry`, the read starts at block 0. It sends one `eth_getLogs` request for each 10,000
-blocks, or for each smaller range that the RPC endpoint accepts. Thus the read can take some
-seconds, and longer on an endpoint with a small range limit. If the read fails, the command shows
-`Committees: unavailable` with the error, and it shows all the other values.
+blocks (or the chain's `rpc_log_range_blocks`), or for each smaller range that the RPC endpoint
+accepts. Thus the read can take some seconds, and longer on an endpoint with a small range limit. If
+the read fails, the command shows `Committees: unavailable` with the error, and it shows all the
+other values.
 
 ### `interfold faucet`
 

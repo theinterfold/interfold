@@ -22,6 +22,10 @@ const PUBLIC_RPC_CONFIRMATIONS: u64 = 1;
 /// endpoint.
 const PUBLIC_RPC_POLL_INTERVAL_MS: u64 = 7_000;
 
+/// Widest `eth_getLogs` block range the node asks for unless the chain sets one. Providers that
+/// permit this range, or more, complete a sync in the fewest calls.
+pub const DEFAULT_RPC_LOG_RANGE_BLOCKS: u64 = 10_000;
+
 #[derive(Debug, Clone, Copy, PartialEq, Hash, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DataAvailabilityMode {
@@ -60,6 +64,14 @@ pub struct ChainConfig {
     /// shorten the interval by itself, because it can be a proxy to a live chain.
     #[serde(default)]
     pub rpc_poll_interval_ms: Option<u64>,
+    /// Widest block range of one `eth_getLogs` request.
+    ///
+    /// The default is 10,000 blocks. The node halves the range when the provider refuses it, but
+    /// it recognizes only known refusal messages. Set the provider's documented cap here when the
+    /// node reports a failed log fetch at the full range, or a larger value when the provider
+    /// permits one.
+    #[serde(default)]
+    pub rpc_log_range_blocks: Option<u64>,
     #[serde(default)]
     pub data_availability: Option<DataAvailabilityConfig>,
 }
@@ -86,6 +98,18 @@ impl ChainConfig {
             ),
             Some(ms) => Ok(Duration::from_millis(ms)),
             None => Ok(Duration::from_millis(PUBLIC_RPC_POLL_INTERVAL_MS)),
+        }
+    }
+
+    /// Return the configured `eth_getLogs` block range or the default.
+    pub fn rpc_log_range_blocks(&self) -> Result<u64> {
+        match self.rpc_log_range_blocks {
+            Some(0) => bail!(
+                "rpc_log_range_blocks for chain {} must be greater than zero",
+                self.name
+            ),
+            Some(blocks) => Ok(blocks),
+            None => Ok(DEFAULT_RPC_LOG_RANGE_BLOCKS),
         }
     }
 }
@@ -155,6 +179,7 @@ mod tests {
             chain_id: Some(1),
             ingestion_confirmations: None,
             rpc_poll_interval_ms: None,
+            rpc_log_range_blocks: None,
             data_availability: None,
         }
     }
@@ -197,5 +222,18 @@ mod tests {
         );
         chain.rpc_poll_interval_ms = Some(0);
         assert!(chain.rpc_poll_interval().is_err());
+    }
+
+    #[test]
+    fn the_log_range_setting_is_explicit_and_nonzero() {
+        let mut chain = chain("http://127.0.0.1:8545");
+        assert_eq!(
+            chain.rpc_log_range_blocks().unwrap(),
+            DEFAULT_RPC_LOG_RANGE_BLOCKS
+        );
+        chain.rpc_log_range_blocks = Some(2_000);
+        assert_eq!(chain.rpc_log_range_blocks().unwrap(), 2_000);
+        chain.rpc_log_range_blocks = Some(0);
+        assert!(chain.rpc_log_range_blocks().is_err());
     }
 }

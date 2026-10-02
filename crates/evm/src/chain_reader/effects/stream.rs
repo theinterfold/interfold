@@ -22,7 +22,7 @@ pub(in crate::actors::evm_read_interface) async fn stream_from_evm<
     // One window for the whole session. The provider's range cap is discovered during the
     // historical sync and then reused by every backfill, so a narrow provider is paid for once
     // rather than on every reconnect.
-    let mut log_window = LogWindow::new();
+    let mut log_window = filters.log_window();
 
     // ── Phase 1: Historical sync (must succeed, fatal on failure) ──
 

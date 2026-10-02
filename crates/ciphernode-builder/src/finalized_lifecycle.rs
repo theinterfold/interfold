@@ -408,6 +408,7 @@ mod tests {
             chain_id: None,
             ingestion_confirmations: Some(0),
             rpc_poll_interval_ms: None,
+            rpc_log_range_blocks: None,
             data_availability: None,
         }
     }
