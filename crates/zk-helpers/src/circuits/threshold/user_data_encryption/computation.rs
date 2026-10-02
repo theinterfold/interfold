@@ -12,7 +12,7 @@
 use crate::calculate_bit_width;
 use crate::get_zkp_modulus;
 use crate::math::compute_k0is;
-use crate::math::{cyclotomic_polynomial, decompose_residue, plaintext_poly_u64};
+use crate::math::{fold_negacyclic, plaintext_poly_u64};
 use crate::threshold::user_data_encryption::circuit::UserDataEncryptionCircuit;
 use crate::threshold::user_data_encryption::circuit::UserDataEncryptionCircuitData;
 use crate::CircuitsErrors;
@@ -320,7 +320,6 @@ impl Computation for Inputs {
         let q_mod_t = (&modulus_q % t)
             .to_u64()
             .ok_or_else(|| CircuitsErrors::Other("Failed to convert q_mod_t to u64".into()))?; // [q]_t
-        let cyclo = cyclotomic_polynomial(n);
 
         // Encrypt using the provided public key to ensure ciphertext matches the key.
         let (ct, u, e0, e1) = data
@@ -426,9 +425,6 @@ impl Computation for Inputs {
 
             assert_eq!((ct0i_hat.coefficients().len() as u64) - 1, 2 * (n - 1));
 
-            // `r2i`, the cyclotomic quotient, is discarded: folding modulo X^N + 1 makes its term zero.
-            let (r1i, _r2i) = decompose_residue(&ct0i, &ct0i_hat, &qi_bigint, &cyclo, n);
-
             // Calculate ct1i_hat = pk1i * ui + e1
             let ct1i_hat = {
                 let pk1i_u_times = pk1i.mul(&u);
@@ -439,46 +435,62 @@ impl Computation for Inputs {
             };
             assert_eq!((ct1i_hat.coefficients().len() as u64) - 1, 2 * (n - 1));
 
-            let (p1i, _p2i) = decompose_residue(&ct1i, &ct1i_hat, &qi_bigint, &cyclo, n);
-
-            // Reduce the mod-q quotients modulo X^N + 1 so the circuit can check one degree-N
-            // identity instead of the unreduced one.
+            // The circuit checks one degree-N identity per leg, reduced modulo X^N + 1:
+            //   ct0i = (pk0i * u mod X^N + 1) + e0 + k0qi * k1 + qi * ct0_r
+            //   ct1i = (pk1i * u mod X^N + 1) + e1            + qi * ct1_r
+            // Each quotient is pinned by its own identity, so folding the hat computed above and
+            // dividing by qi gives it. The hats already hold the products, so nothing is recomputed
+            // and the cyclotomic quotients never exist.
             //
-            // Two witnesses disappear into `r`. Folding makes the cyclotomic quotient's term
-            // identically zero, which removes `r2i` / `p2i`. Substituting the CRT split
-            // `e0 = e0i + e0_quotient * qi` into the ct0 equation removes `e0is`, leaving
-            // `qi * (r1i - e0_quotient)`. So `r` carries what `e0is`, `r1i` and `r2i` carried
-            // between them, and the circuit bounds it in their place.
-            let ct0_r = r1i
-                .reduce_by_cyclotomic(&cyclo)
-                .expect("r1i must reduce modulo the cyclotomic")
-                .sub(&e0_quotient);
-            let ct1_r = p1i
-                .reduce_by_cyclotomic(&cyclo)
-                .expect("p1i must reduce modulo the cyclotomic");
+            // The ct0 hat carries the residue `e0i`, while the identity reads the lifted `e0`.
+            // Substituting the CRT split `e0 = e0i + e0_quotient * qi` moves that difference into
+            // the quotient, so `ct0_r` is the folded quotient minus `e0_quotient`. That is how `r`
+            // comes to carry what `e0is`, `r1i` and `r2i` carried between them.
+            //
+            // Everything here is O(N). Going through `decompose_residue` plus
+            // `Polynomial::reduce_by_cyclotomic` ran four generic long divisions per limb, each
+            // (N-1)(N+1) BigInt multiply-subtracts, and recomputed both products for the
+            // self-checks. This generator runs in the voter's browser, where that was about ten
+            // seconds per ballot at secure-8192.
+            let ct0_reduced_hat = fold_negacyclic(&ct0i_hat, n as usize);
+            let ct1_reduced_hat = fold_negacyclic(&ct1i_hat, n as usize);
 
-            // Prove the reduced identities on the real witness rather than trusting the derivation:
-            // a wrong fold or coefficient order fails here instead of inside the circuit.
-            let ct0_reduced = pk0i
-                .mul(&u)
-                .reduce_by_cyclotomic(&cyclo)
-                .expect("pk0i * u must reduce modulo the cyclotomic")
+            // Exact division is the identity: `div` rejects any coefficient that is not a multiple
+            // of qi, so a successful division proves an integer quotient closes the reduced
+            // equation and a wrong fold surfaces as a divisibility failure.
+            let (ct0_folded_quotient, ct0_remainder) = ct0i
+                .sub(&ct0_reduced_hat)
+                .div(&qi_poly)
+                .expect("ct0i - (pk0i * u + e0i + k0qi * k1 mod X^N + 1) must be divisible by qi");
+            assert!(
+                ct0_remainder.is_zero(),
+                "reduced ct0 identity must divide exactly by qi"
+            );
+            let ct0_r = ct0_folded_quotient.sub(&e0_quotient);
+
+            let (ct1_r, ct1_remainder) = ct1i
+                .sub(&ct1_reduced_hat)
+                .div(&qi_poly)
+                .expect("ct1i - (pk1i * u + e1 mod X^N + 1) must be divisible by qi");
+            assert!(
+                ct1_remainder.is_zero(),
+                "reduced ct1 identity must divide exactly by qi"
+            );
+
+            // Restate both identities on the derived witnesses, with the lifted `e0` the circuit
+            // reads. O(N), and independent of `div`.
+            let ct0_reduced = ct0_reduced_hat
+                .sub(&e0i)
                 .add(&e0_mod_q)
-                .add(&ki)
                 .add(&ct0_r.scalar_mul(&qi_bigint));
             assert!(
                 ct0i.sub(&ct0_reduced).is_zero(),
                 "reduced ct0 identity must hold: ct0i == pk0i * u + e0 + k0qi * k1 + qi * r (mod X^N + 1)"
             );
-
-            let ct1_reduced = pk1i
-                .mul(&u)
-                .reduce_by_cyclotomic(&cyclo)
-                .expect("pk1i * u must reduce modulo the cyclotomic")
-                .add(&e1)
-                .add(&ct1_r.scalar_mul(&qi_bigint));
             assert!(
-                ct1i.sub(&ct1_reduced).is_zero(),
+                ct1i
+                    .sub(&ct1_reduced_hat.add(&ct1_r.scalar_mul(&qi_bigint)))
+                    .is_zero(),
                 "reduced ct1 identity must hold: ct1i == pk1i * u + e1 + qi * r (mod X^N + 1)"
             );
 
