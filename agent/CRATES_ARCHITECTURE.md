@@ -413,32 +413,33 @@ After append, the sequencer sends the durable event to the EventBus. The EventBu
 snapshot buffer to accept the sequence before it applies domain deduplication or sends the event to
 domain subscribers. This boundary also covers startup replay and events received through source or
 forked buses. EventBus deduplication uses a separate delivery identity: EVM occurrences include
-their chain, block, and deterministic log timestamp/index, while local and network facts retain
-their stable event ID. Equal EVM state facts from distinct log occurrences therefore both update
-projections, but a re-delivery of the same occurrence remains idempotent. The snapshot router closes
-every older open sequence when it observes a newer sequence; it does not require an exact
-predecessor. The Sled and in-memory stores atomically reject a contextual batch whose sequence is
-below the persisted aggregate cursor. These boundaries prevent a late batch from replacing newer
-state while leaving a newer cursor in place. Historical peer-sync cursors contain only chain-bound
-aggregates allowed by the active network policy; local aggregate 0 is never requested from peers or
-added to recovery retries. Post-snapshot events are queried per aggregate in pages bounded by 1,024
-events and 256 MiB of decoded data, then written to secure sequence runs. A single valid event can
-exceed the page budget so replay always makes progress; the 512 MiB per-event limit remains the hard
-bound. Runs are compacted with bounded fan-in, preserve durable order inside each aggregate, and use
-persisted HLC timestamps to choose between aggregate heads. Memory and open-file use therefore do
-not scale with the entire backlog. Before fanout, the HLC floor advances to the maximum replay
-timestamp, which covers a snapshot cursor stalled behind newer log records. Replay then waits for
-concurrent acceptance by all current EventBus subscribers. An unavailable subscriber or a subscriber
-blocked beyond the bounded acceptance timeout aborts recovery. An `EventBusBarrier` therefore
-completes only after the last replay fanout has completed. Process-infrastructure events from the
-previous boot are classified separately and are not replayed into newly constructed actors. These
-include shutdown, sync phase, network-readiness, and historical sync control events. The current
-boot publishes fresh phase events after its prerequisites pass. This rule is required even when peer
-history is empty: empty historical-network completions have the same payload-derived event ID on
-every boot. Replaying the old completion would otherwise fill the EventBus dedup entry and drop the
-fresh completion that startup is waiting for. The builder also arms the current `NetReady` listener
-before it starts the network transport, so the immediate no-peer readiness signal cannot pass before
-sync begins to wait.
+their chain, block, and deterministic log timestamp/index, local C2/C3 and C6 verification verdicts
+include the dispatch event that caused them, and other local and network facts retain their stable
+event ID. Equal EVM state facts from distinct log occurrences therefore both update projections,
+equal verdicts for different batches are both delivered, and a re-delivery of the same occurrence
+remains idempotent. The snapshot router closes every older open sequence when it observes a newer
+sequence; it does not require an exact predecessor. The Sled and in-memory stores atomically reject
+a contextual batch whose sequence is below the persisted aggregate cursor. These boundaries prevent
+a late batch from replacing newer state while leaving a newer cursor in place. Historical peer-sync
+cursors contain only chain-bound aggregates allowed by the active network policy; local aggregate 0
+is never requested from peers or added to recovery retries. Post-snapshot events are queried per
+aggregate in pages bounded by 1,024 events and 256 MiB of decoded data, then written to secure
+sequence runs. A single valid event can exceed the page budget so replay always makes progress; the
+512 MiB per-event limit remains the hard bound. Runs are compacted with bounded fan-in, preserve
+durable order inside each aggregate, and use persisted HLC timestamps to choose between aggregate
+heads. Memory and open-file use therefore do not scale with the entire backlog. Before fanout, the
+HLC floor advances to the maximum replay timestamp, which covers a snapshot cursor stalled behind
+newer log records. Replay then waits for concurrent acceptance by all current EventBus subscribers.
+An unavailable subscriber or a subscriber blocked beyond the bounded acceptance timeout aborts
+recovery. An `EventBusBarrier` therefore completes only after the last replay fanout has completed.
+Process-infrastructure events from the previous boot are classified separately and are not replayed
+into newly constructed actors. These include shutdown, sync phase, network-readiness, and historical
+sync control events. The current boot publishes fresh phase events after its prerequisites pass.
+This rule is required even when peer history is empty: empty historical-network completions have the
+same payload-derived event ID on every boot. Replaying the old completion would otherwise fill the
+EventBus dedup entry and drop the fresh completion that startup is waiting for. The builder also
+arms the current `NetReady` listener before it starts the network transport, so the immediate
+no-peer readiness signal cannot pass before sync begins to wait.
 
 The request router stores its active-context index, completed set, and covered per-aggregate cursors
 in one recovery checkpoint at `//router/recovery_checkpoint`. Per-E3 context repositories remain

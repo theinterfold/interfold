@@ -556,6 +556,8 @@ ShareVerificationActor receives ShareVerificationDispatched(kind=ShareProofs)
 │            kind: ShareProofs,
 │            dishonest_parties: {pre_dishonest ∪ ecdsa_fails ∪ consistency_fails ∪ zk_fails}
 │          }
+│          The local result is bound to its dispatch event. Equal verdicts for different
+│          batches, such as a batch and its later growth, have different delivery IDs.
 │
 └─ ThresholdKeyshare receives ShareVerificationComplete:
     ├─ Excludes failed C2/C3 proofs and C3 proofs that target a different

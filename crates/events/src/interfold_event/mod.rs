@@ -581,32 +581,37 @@ mod serialization_tests {
     }
 
     #[test]
-    fn local_c6_results_distinguish_batches_but_deduplicate_retries() {
-        let outcome: InterfoldEventData = ShareVerificationComplete {
-            e3_id: E3id::new("1", 1),
-            kind: VerificationKind::ThresholdDecryptionProofs,
-            dishonest_parties: Default::default(),
+    fn local_batch_verdicts_distinguish_batches_but_deduplicate_retries() {
+        for kind in [
+            VerificationKind::ShareProofs,
+            VerificationKind::ThresholdDecryptionProofs,
+        ] {
+            let outcome: InterfoldEventData = ShareVerificationComplete {
+                e3_id: E3id::new("1", 1),
+                kind: kind.clone(),
+                dishonest_parties: Default::default(),
+            }
+            .into();
+            let make_result = |batch: &str, ts| {
+                let cause = EventContext::<Unsequenced>::from(InterfoldEventData::from(
+                    TestEvent::new(batch, 1),
+                ))
+                .sequence(0);
+                InterfoldEvent::<Unsequenced>::new_with_timestamp(
+                    outcome.clone(),
+                    Some(cause),
+                    ts,
+                    None,
+                    EventSource::Local,
+                )
+            };
+            let first = make_result("first", 1);
+            let replacement = make_result("replacement", 2);
+            let replay = make_result("first", 3);
+            assert_eq!(first.event_id(), replacement.event_id(), "{kind:?}");
+            assert_ne!(first.delivery_id(), replacement.delivery_id(), "{kind:?}");
+            assert_eq!(first.delivery_id(), replay.delivery_id(), "{kind:?}");
         }
-        .into();
-        let make_result = |batch: &str, ts| {
-            let cause = EventContext::<Unsequenced>::from(InterfoldEventData::from(
-                TestEvent::new(batch, 1),
-            ))
-            .sequence(0);
-            InterfoldEvent::<Unsequenced>::new_with_timestamp(
-                outcome.clone(),
-                Some(cause),
-                ts,
-                None,
-                EventSource::Local,
-            )
-        };
-        let first = make_result("first", 1);
-        let replacement = make_result("replacement", 2);
-        let replay = make_result("first", 3);
-        assert_eq!(first.event_id(), replacement.event_id());
-        assert_ne!(first.delivery_id(), replacement.delivery_id());
-        assert_eq!(first.delivery_id(), replay.delivery_id());
     }
 }
 
@@ -663,13 +668,15 @@ impl<S: SeqState> Event for InterfoldEvent<S> {
                 self.ctx.block(),
                 self.ctx.ts(),
             )),
-            // Equal C6 verdicts can belong to different replacement batches. The cause binds
-            // the verdict to its request without changing persisted or network event payloads.
+            // Equal C2/C3 or C6 verdicts can belong to different batches: a share batch grows,
+            // and C6 batches are replaced. The cause binds the verdict to its request without
+            // changing persisted or network event payloads.
             EventSource::Local
                 if matches!(
                     self.payload,
                     InterfoldEventData::ShareVerificationComplete(ShareVerificationComplete {
-                        kind: VerificationKind::ThresholdDecryptionProofs,
+                        kind: VerificationKind::ShareProofs
+                            | VerificationKind::ThresholdDecryptionProofs,
                         ..
                     })
                 ) =>
