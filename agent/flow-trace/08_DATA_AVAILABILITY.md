@@ -388,13 +388,14 @@ Every relay send first checks `relay_may_send`. Turning the relay off (the flag,
 stops every send, including jobs chosen for the relay earlier and relayed transactions that a
 reorganization removed. So does a server key balance below `RELAY_MIN_BALANCE_ETH`, which keeps
 funds for `finalizeInput`, and so does a balance that cannot be read. Those jobs take the wallet
-path. A send that the relay key cannot pay for also moves its job to the wallet path, with the same
-signed payload (`relay_input_commitment`, `is_insufficient_funds`). A node also refuses a send when
-the worst-case costs of the pending transactions of the key exceed its balance, and that refusal
-clears when they are mined. So a refusal while other transactions of the key are pending keeps the
-relay for a grace period of five minutes (`RELAY_FUNDING_GRACE_SECONDS`). The grace period also ends
-when the commitment cutoff is less than five minutes away, so the wallet path always comes before
-the cutoff, also behind a stuck transaction.
+path. A zero floor reads no balance, so it stops no send. A send that the relay key cannot pay for
+also moves its job to the wallet path, with the same signed payload (`relay_input_commitment`,
+`is_insufficient_funds`). A node also refuses a send when the worst-case costs of the pending
+transactions of the key exceed its balance, and that refusal clears when they are mined. So a
+refusal while other transactions of the key are pending keeps the relay for a grace period of five
+minutes (`RELAY_FUNDING_GRACE_SECONDS`). The grace period also ends when the commitment cutoff is
+less than five minutes away, so the wallet path always comes before the cutoff, also behind a stuck
+transaction.
 
 A `POST /voting/broadcast` request with `send_from_wallet: true` takes the wallet path (`relays`,
 `JobKind::sends_from_wallet`). The server writes no relay record for it, reads no relay balance, and
