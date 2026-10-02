@@ -21,7 +21,7 @@ the end, you know whether an endpoint is usable before you start a node with it.
 | ------------------- | ----------------------------------------- | ----------------------------------------------------------------------------------- |
 | Log history         | From the lowest configured `deploy_block` | The first sync reads every contract event from that block.                          |
 | `eth_getLogs` range | 10,000 blocks, or a smaller cap           | The node starts at 10,000 blocks and halves the range when the provider refuses it. |
-| WebSocket           | A `ws://` or `wss://` URL                 | After the sync, live logs arrive through an `eth_subscribe` subscription.           |
+| WebSocket           | A `ws://` or `wss://` URL                 | After the sync, an `eth_subscribe` subscription announces new logs.                 |
 | Rate limits         | Short bursts are acceptable               | The node retries HTTP 429 and 503 responses (see below).                            |
 | Historical state    | Not needed                                | The node replays history from logs. It does not read contract state at old blocks.  |
 
@@ -44,7 +44,11 @@ member of the pool can return that block or its logs.
     },
     { label: 'Fetch logs', icon: 'network', sub: 'eth_getLogs in ranges of 10,000 blocks.' },
     { label: 'Narrow', icon: 'wrench', sub: 'Halve the range when the provider refuses it.' },
-    { label: 'Subscribe', icon: 'flow', sub: 'eth_subscribe delivers the live logs.' },
+    {
+      label: 'Subscribe',
+      icon: 'flow',
+      sub: 'eth_subscribe announces new logs. The node reads them with eth_getLogs.',
+    },
   ]}
 />
 
