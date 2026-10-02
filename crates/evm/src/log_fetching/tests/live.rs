@@ -44,6 +44,7 @@ async fn a_live_log_at_zero_confirmations_delivers_the_blocks_the_stream_skipped
         &mut last_block,
         0,
         &mut window,
+        None,
     )
     .await?;
 
@@ -74,6 +75,7 @@ async fn a_live_log_from_a_block_the_backfill_read_makes_no_request() -> anyhow:
         &mut last_block,
         0,
         &mut window,
+        None,
     )
     .await?;
 
@@ -102,6 +104,7 @@ async fn a_live_log_with_a_positive_depth_waits_for_the_confirmed_backfill() -> 
         &mut last_block,
         12,
         &mut window,
+        None,
     )
     .await?;
     assert_eq!(last_block, 188);
@@ -122,6 +125,7 @@ async fn a_live_log_with_a_positive_depth_waits_for_the_confirmed_backfill() -> 
         &mut last_block,
         12,
         &mut window,
+        None,
     )
     .await?;
     assert_eq!(last_block, 199);
@@ -141,6 +145,7 @@ async fn a_live_log_with_a_positive_depth_waits_for_the_confirmed_backfill() -> 
         &mut last_block,
         12,
         &mut window,
+        None,
     )
     .await?;
     assert_eq!(last_block, 200);
@@ -180,6 +185,7 @@ async fn the_periodic_backfill_delivers_what_the_stream_did_not_announce_at_zero
             &mut window,
             poll_interval,
             &mut shutdown,
+            None,
         ));
 
         tokio::select! {

@@ -306,6 +306,11 @@ impl AppConfig {
         self.paths.log_file()
     }
 
+    /// Get the directory of this node's runtime state files
+    pub fn node_data_dir(&self) -> PathBuf {
+        self.paths.node_data_dir()
+    }
+
     /// Get the bb binary path
     pub fn bb_binary(&self) -> BBPath {
         let bb = self.paths.bb_binary();

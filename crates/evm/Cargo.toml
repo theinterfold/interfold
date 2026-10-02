@@ -47,5 +47,6 @@ e3-events = { workspace = true, features = ["test-helpers"] }
 e3-evm = { workspace = true }
 e3-test-helpers = { workspace = true }
 serde_json = { workspace = true }
+tempfile = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
 tracing-subscriber = { workspace = true }

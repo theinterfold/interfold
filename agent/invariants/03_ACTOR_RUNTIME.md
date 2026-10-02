@@ -227,9 +227,14 @@ the code does not meet yet.
   same chain. It must retain the new provider after a successful reconnect and reject the log if the
   retry still cannot verify the accepted request. — `flow-trace/03`
 - A chain gateway that fails closed after startup must make the node exit unsuccessfully after a
-  durability shutdown. A running node must not report healthy after chain ingestion stops. **Gap:**
-  `dappnode/healthcheck.sh` checks the process, local files, and the QUIC port, not chain ingestion.
-  — `crates/cli/src/start.rs`; `flow-trace/03`; `flow-trace/06`
+  durability shutdown. A running node must not report healthy after chain ingestion stops. The chain
+  reader reports each successful head read to an `IngestionProgressSink`; `interfold start` writes
+  one heartbeat file per chain under `<node data dir>/ingestion/`, and `dappnode/healthcheck.sh`
+  fails when a heartbeat is older than 120 s or neither its head nor its cursor moved for 600 s.
+  **Gap:** a node whose reader never reaches its first read (no heartbeat) still passes the check,
+  and a heartbeat write that fails after the startup probe is only logged. —
+  `crates/evm/src/chain_reader/progress.rs`; `dappnode/healthcheck.sh`; `flow-trace/03`;
+  `flow-trace/06`
 - A network event cannot create a request context for an unknown E3. Only chain events or restored
   snapshots admit an E3; peer events can only contribute to an admitted one. —
   `crates/request/src/routing/workflow.rs`

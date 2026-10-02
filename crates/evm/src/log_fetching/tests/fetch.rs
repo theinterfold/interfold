@@ -14,7 +14,18 @@ async fn test_fetch_logs_empty_range() {
     let mut window = LogWindow::new();
     let filter = Filter::new();
 
-    let result = fetch_logs_chunked(&mock, &filter, 200, 100, 1, &next, &mut ts, &mut window).await;
+    let result = fetch_logs_chunked(
+        &mock,
+        &filter,
+        200,
+        100,
+        1,
+        &next,
+        &mut ts,
+        &mut window,
+        None,
+    )
+    .await;
 
     assert!(result.is_ok());
     assert!(result.unwrap().is_none());
@@ -79,6 +90,7 @@ async fn timestamp_rpc_failure_prevents_log_dispatch() {
         &next,
         &mut tracker,
         &mut window,
+        None,
     )
     .await
     .unwrap_err();
@@ -102,7 +114,18 @@ async fn test_fetch_logs_single_chunk() {
     let mut window = LogWindow::new();
     let filter = Filter::new();
 
-    let result = fetch_logs_chunked(&mock, &filter, 0, 5000, 1, &next, &mut ts, &mut window).await;
+    let result = fetch_logs_chunked(
+        &mock,
+        &filter,
+        0,
+        5000,
+        1,
+        &next,
+        &mut ts,
+        &mut window,
+        None,
+    )
+    .await;
 
     assert!(result.is_ok());
     assert!(result.unwrap().is_some());
@@ -129,7 +152,18 @@ async fn test_fetch_logs_multiple_chunks() {
     let mut window = LogWindow::new();
     let filter = Filter::new();
 
-    let result = fetch_logs_chunked(&mock, &filter, 0, 24999, 1, &next, &mut ts, &mut window).await;
+    let result = fetch_logs_chunked(
+        &mock,
+        &filter,
+        0,
+        24999,
+        1,
+        &next,
+        &mut ts,
+        &mut window,
+        None,
+    )
+    .await;
 
     assert!(result.is_ok());
     assert!(result.unwrap().is_some());
@@ -148,7 +182,18 @@ async fn test_fetch_logs_retry_then_success() {
     let mut window = LogWindow::new();
     let filter = Filter::new();
 
-    let result = fetch_logs_chunked(&mock, &filter, 0, 5000, 1, &next, &mut ts, &mut window).await;
+    let result = fetch_logs_chunked(
+        &mock,
+        &filter,
+        0,
+        5000,
+        1,
+        &next,
+        &mut ts,
+        &mut window,
+        None,
+    )
+    .await;
 
     assert!(result.is_ok());
     assert!(result.unwrap().is_some());
@@ -168,7 +213,18 @@ async fn test_fetch_logs_all_retries_exhausted() {
     let mut window = LogWindow::new();
     let filter = Filter::new();
 
-    let result = fetch_logs_chunked(&mock, &filter, 0, 5000, 1, &next, &mut ts, &mut window).await;
+    let result = fetch_logs_chunked(
+        &mock,
+        &filter,
+        0,
+        5000,
+        1,
+        &next,
+        &mut ts,
+        &mut window,
+        None,
+    )
+    .await;
 
     let err = result.expect_err("expected error after all retries exhausted");
     assert!(
@@ -194,7 +250,18 @@ async fn a_rejected_range_is_retried_narrower_and_covers_every_block() {
     let mut window = LogWindow::new();
     let filter = Filter::new();
 
-    let result = fetch_logs_chunked(&mock, &filter, 0, 9_999, 1, &next, &mut ts, &mut window).await;
+    let result = fetch_logs_chunked(
+        &mock,
+        &filter,
+        0,
+        9_999,
+        1,
+        &next,
+        &mut ts,
+        &mut window,
+        None,
+    )
+    .await;
 
     assert!(result.is_ok(), "adaptive retry should succeed: {result:?}");
     // Two rejections then four accepted chunks.
@@ -232,6 +299,7 @@ async fn a_narrowed_window_is_kept_for_later_chunks() {
         &next,
         &mut ts,
         &mut window,
+        None,
     )
     .await
     .expect("should succeed at the narrowed width");
@@ -265,6 +333,7 @@ async fn a_range_error_does_not_consume_the_retry_budget() {
         &next,
         &mut ts,
         &mut window,
+        None,
     )
     .await;
 
@@ -298,6 +367,7 @@ async fn a_provider_that_rejects_every_range_fails_with_an_actionable_error() {
         &next,
         &mut ts,
         &mut window,
+        None,
     )
     .await
     .expect_err("a provider refusing one block must fail");
@@ -332,6 +402,7 @@ async fn a_rate_limit_error_is_retried_without_narrowing_the_window() {
         &next,
         &mut ts,
         &mut window,
+        None,
     )
     .await;
 
@@ -387,6 +458,7 @@ async fn a_whole_chunk_of_timestamped_logs_sends_no_timestamp_requests() {
         &next,
         &mut ts,
         &mut window,
+        None,
     )
     .await
     .expect("chunk should succeed");
