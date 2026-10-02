@@ -215,6 +215,16 @@ jobs:
               - 'package.json'
               - 'pnpm-lock.yaml'
               - 'pnpm-workspace.yaml'
+            # Inputs of build_circuits that the `circuits` and `verifiers` filters do not list: the
+            # circuit artifact store and its test (`store:circuits`, `test:circuit-tooling`), and
+            # the BFV parameters. build-circuits.ts derives the generated constants in
+            # ActiveCryptoConfig.sol and utils.ts from them, and hashes their file into SOURCE_HASH.
+            # check:verifiers reads none of these files, so they stay out of
+            # .github/filters/circuits.yml, which also starts check:verifiers in pre-push.
+            circuit_build:
+              - 'scripts/circuit-artifacts.ts'
+              - 'scripts/circuit-artifacts.test.ts'
+              - 'packages/interfold-contracts/scripts/protocol/constants.ts'
       - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         if: ${{ !inputs.release_candidate }}
         id: circuit_filter
@@ -228,6 +238,7 @@ jobs:
           CONTRACTS="${{ steps.filter.outputs.contracts }}"
           CIRCUITS="${{ steps.circuit_filter.outputs.circuits }}"
           VERIFIERS="${{ steps.circuit_filter.outputs.verifiers }}"
+          CIRCUIT_BUILD="${{ steps.filter.outputs.circuit_build }}"
           CRISP_E2E="${{ steps.filter.outputs.crisp_e2e }}"
           CRISP_RUST="${{ steps.filter.outputs.crisp_rust }}"
           CRISP_CIRCUITS="${{ steps.filter.outputs.crisp_circuits }}"
@@ -288,7 +299,8 @@ jobs:
           # triggers it — a skipped dependency silently skips the e2e job.
           echo "build_e3_support_dev=$(any $FORCE $TEMPLATES $RUST $CONTRACTS $CIRCUITS $SDK $CI $TOOLING)" >> $GITHUB_OUTPUT
           # build_circuits runs check:verifiers, so every input of the generated verifiers runs it.
-          echo "build_circuits=$(any $FORCE $RUST $CIRCUITS $VERIFIERS $CI $TOOLING)" >> $GITHUB_OUTPUT
+          # CIRCUIT_BUILD adds the other files that the job runs or hashes.
+          echo "build_circuits=$(any $FORCE $RUST $CIRCUITS $VERIFIERS $CIRCUIT_BUILD $CI $TOOLING)" >> $GITHUB_OUTPUT
           # nargo reads only the circuit paths, so Rust and tooling changes skip the Noir checks.
           echo "noir_checks=$(any $FORCE $CIRCUITS $CI)" >> $GITHUB_OUTPUT
           echo "integration_prebuild=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $INTEGRATION $CI $TOOLING)" >> $GITHUB_OUTPUT
