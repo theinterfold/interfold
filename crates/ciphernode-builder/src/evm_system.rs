@@ -6,6 +6,7 @@
 
 use actix::Actor;
 use alloy::{primitives::Address, providers::Provider};
+use anyhow::{bail, Result};
 use e3_events::{run_once, BusHandle, EventSubscriber, EventType, HistoricalEvmSyncStart};
 use e3_evm::{
     EthProvider, EvmChainGateway, EvmChainGatewayHandle, EvmEventProcessor, EvmReadInterface,
@@ -59,11 +60,21 @@ impl<P: Provider + Clone + 'static> EvmSystemChainBuilder<P> {
         self
     }
 
-    pub fn build(&mut self) {
-        drop(self.build_with_readiness());
+    pub fn build(&mut self) -> Result<()> {
+        self.build_with_readiness().map(drop)
     }
 
-    pub(crate) fn build_with_readiness(&mut self) -> EvmChainGatewayHandle {
+    /// Fails for a chain without a contract route. The reader's log filter is built from the
+    /// routes, so without one it has no address and fetches every log on the chain. The router
+    /// drops them all, so the chain would do nothing except load the provider.
+    pub(crate) fn build_with_readiness(&mut self) -> Result<EvmChainGatewayHandle> {
+        if self.route_factories.is_empty() {
+            bail!(
+                "chain {} has no contract reader; a chain reader needs at least one contract route",
+                self.chain_id
+            );
+        }
+
         // Think about the following in reverse order
 
         // Gateway is the final step before connecting to the bus
@@ -114,7 +125,7 @@ impl<P: Provider + Clone + 'static> EvmSystemChainBuilder<P> {
         self.bus
             .subscribe(EventType::HistoricalEvmSyncStart, next.recipient());
 
-        gateway
+        Ok(gateway)
     }
 }
 
