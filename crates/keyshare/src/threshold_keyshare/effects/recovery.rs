@@ -120,6 +120,9 @@ impl ThresholdKeyshare {
             recovery.last_ec = Some(ec.clone());
             Ok(recovery)
         })?;
+        if accepted {
+            self.pending.share_dispatches.clear();
+        }
         Ok(accepted)
     }
 
