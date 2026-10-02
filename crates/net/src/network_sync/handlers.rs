@@ -27,14 +27,15 @@ impl Handler<InterfoldEvent> for NetSyncManager {
                 // Capture the snapshot-cursor map so we can bound the post-restart re-broadcast of
                 // our own forwardable artifacts to the in-flight window (H3/H11).
                 self.rebroadcast_since = Some(data.since.clone().into_iter().collect());
+                self.finish_local_replay();
                 self.maybe_rebroadcast_own_artifacts(ctx);
                 ctx.notify(TypedEvent::new(data, ec));
             }
-            InterfoldEventData::DkgCoordination(data) => {
-                self.remember_dkg_coordination(original, &data);
+            InterfoldEventData::DkgCoordination(_) => {
+                self.remember_dkg_coordination(original);
             }
-            InterfoldEventData::DecryptionshareCreated(data) => {
-                self.remember_decryption_share(original, &data);
+            InterfoldEventData::DecryptionshareCreated(_) => {
+                self.remember_decryption_share(original);
             }
             InterfoldEventData::E3StageChanged(data) => {
                 if matches!(
@@ -47,9 +48,17 @@ impl Handler<InterfoldEvent> for NetSyncManager {
                     self.forget_dkg_coordination(&data.e3_id);
                 }
                 if data.new_stage.is_terminal() {
-                    self.forget_e3_announcements(&data.e3_id);
+                    // Only a stage change from the chain ends an E3 for good, as for documents.
+                    if original.source() == EventSource::Evm {
+                        self.mark_e3_ended(&data.e3_id);
+                    } else {
+                        self.forget_e3_announcements(&data.e3_id);
+                    }
                 }
             }
+            // `E3Failed` and `E3RequestComplete` can come from this node alone while the E3
+            // continues on chain. They stop the current re-sends, but a later message of the E3 is
+            // still re-sent.
             InterfoldEventData::E3Failed(data) => {
                 self.forget_e3_announcements(&data.e3_id);
             }
