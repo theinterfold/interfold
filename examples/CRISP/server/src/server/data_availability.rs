@@ -1574,7 +1574,17 @@ impl AvailabilityService {
         })
     }
 
+    /// Run one step of a job in its own task. A caller that stops waiting, such as a request whose
+    /// client closed the connection, then cannot cancel a paid step partway through.
     async fn process(&self, id: &str) {
+        let service = self.clone();
+        let id = id.to_owned();
+        if let Err(error) = tokio::spawn(async move { service.process_step(&id).await }).await {
+            warn!(%error, "Data-availability job step panicked; the worker retries the job");
+        }
+    }
+
+    async fn process_step(&self, id: &str) {
         let Ok(_permit) = Arc::clone(&self.job_slots).acquire_owned().await else {
             warn!(job_id = id, "Data-availability worker is shutting down");
             return;
@@ -2164,8 +2174,9 @@ impl AvailabilityService {
 
     /// Whether the server key holds at least `RELAY_MIN_BALANCE_ETH`. The same key pays for
     /// `finalizeInput`, so the floor keeps relays from spending the funds that finalization needs.
+    /// Every balance meets a zero floor, so a zero floor reads no balance.
     async fn relay_has_funds(&self) -> anyhow::Result<bool> {
-        let Some(floor) = self.relay.min_balance else {
+        let Some(floor) = self.relay.min_balance.filter(|floor| !floor.is_zero()) else {
             return Ok(true);
         };
         let signer: PrivateKeySigner = self
@@ -3485,25 +3496,32 @@ mod tests {
     }
 
     /// A balance that cannot be read counts as too low. The job takes the wallet path instead of
-    /// stopping, and it uses none of the relay allowance.
+    /// stopping, and it uses none of the relay allowance. A zero floor reads no balance, so the
+    /// same failure does not stop a relay without a floor.
     #[tokio::test]
-    async fn an_unreadable_relay_balance_takes_the_wallet_path() {
+    async fn an_unreadable_relay_balance_takes_the_wallet_path_unless_the_floor_is_zero() {
         // A port with no listener, so the balance read fails at once.
         let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let rpc = format!("http://{}", closed.local_addr().unwrap());
         drop(closed);
-        let mut service = test_service_on(
-            &temporary_db(),
-            1024,
-            RelayPolicy::new(11_155_111, false, 3, None, Some(U256::from(1))),
-        );
-        service.http_rpc_url = rpc;
-        service.private_key =
-            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_owned();
+        let service = |floor: u64| {
+            let mut service = test_service_on(
+                &temporary_db(),
+                1024,
+                RelayPolicy::new(11_155_111, false, 3, None, Some(U256::from(floor))),
+            );
+            service.http_rpc_url = rpc.clone();
+            service.private_key =
+                "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_owned();
+            service
+        };
         let job = round_input_job("unreadable-balance", "1", Address::repeat_byte(0x77));
 
-        assert!(!service.relays(&job).await.unwrap());
-        assert!(service.relayed_inputs.is_empty());
+        let floored = service(1);
+        assert!(!floored.relays(&job).await.unwrap());
+        assert!(floored.relayed_inputs.is_empty());
+
+        assert!(service(0).relays(&job).await.unwrap());
     }
 
     /// A node refuses a `publishInput` that the relay key cannot pay for. The refusal records

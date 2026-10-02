@@ -28,6 +28,11 @@ if (!INTERFOLD_API) handleGenericError('useInterfoldServer', { name: 'INTERFOLD_
 /// hold the caller: the commitment wait polls with it.
 const STATUS_READ_TIMEOUT_MS = 30_000
 
+/// Bounds one ballot broadcast. The server can run a job step, such as a relayed commitment, before
+/// it answers, and that step continues when this request stops waiting. A ballot without an answer
+/// stays saved, and the next action sends it again.
+const BROADCAST_TIMEOUT_MS = 120_000
+
 const InterfoldEndpoints = {
   GetCurrentRound: `${INTERFOLD_API}/rounds/current`,
   GetRoundStateLite: `${INTERFOLD_API}/state/lite`,
@@ -64,10 +69,18 @@ export const useInterfoldServer = () => {
     vote: BroadcastVoteRequest,
     onJobCreated?: (jobId: string) => void,
   ): Promise<BroadcastVoteResponse | undefined> => {
-    const initial = await fetchData<BroadcastVoteResponse, BroadcastVoteRequest>(BroadcastVote, 'post', vote)
-    if (!initial) return undefined
-    if (initial.job_id) onJobCreated?.(initial.job_id)
-    return initial
+    try {
+      const { data } = await axios.post<BroadcastVoteResponse>(BroadcastVote, vote, { timeout: BROADCAST_TIMEOUT_MS })
+      if (data.job_id) onJobCreated?.(data.job_id)
+      return data
+    } catch (error) {
+      // A 400 answer with the failed_broadcast status refuses this ballot, and the same bytes get
+      // the same answer. After any other failure the server can still hold the ballot.
+      const answer = axios.isAxiosError<BroadcastVoteResponse>(error) ? error.response : undefined
+      if (answer?.status === 400 && answer.data?.status === 'failed_broadcast') return answer.data
+      handleGenericError(`API Error - ${BroadcastVote}`, error as Error)
+      return undefined
+    }
   }
   const getWebResult = () =>
     fetchData<PollRequestResult[], { requesters: string[] }>(GetWebAllResult, 'post', { requesters: ROUND_REQUESTERS })

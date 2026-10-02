@@ -9,7 +9,11 @@ use alloy::consensus::BlockHeader;
 use alloy::primitives::{Address, U256};
 use alloy::providers::ext::AnvilApi;
 use alloy::signers::local::PrivateKeySigner;
-use alloy::{node_bindings::Anvil, providers::ProviderBuilder, sol};
+use alloy::{
+    node_bindings::Anvil,
+    providers::{Provider, ProviderBuilder},
+    sol,
+};
 use e3_evm_helpers::nonce::send_with_next_nonce;
 use e3_evm_helpers::{block_listener::BlockListener, event_listener::EventListener};
 use eyre::Result;
@@ -27,10 +31,11 @@ sol!(
     "tests/fixtures/emit_logs.json"
 );
 
-/// A send that fails gives its nonce back. Otherwise the next send of the account takes a later
-/// nonce and waits in the queue behind a gap that no transaction fills.
+/// A send that ends before the node holds its transaction gives its nonce back: the node refused
+/// the transaction, or the local wallet could not sign it. Otherwise the next send of the account
+/// takes a later nonce and waits in the queue behind a gap that no transaction fills.
 #[tokio::test]
-async fn a_failed_send_gives_its_nonce_back() -> Result<()> {
+async fn a_refused_send_gives_its_nonce_back() -> Result<()> {
     let anvil = Anvil::new().try_spawn()?;
     // Not an Anvil development account, so it holds no funds.
     let signer: PrivateKeySigner =
@@ -51,6 +56,18 @@ async fn a_failed_send_gives_its_nonce_back() -> Result<()> {
     provider
         .anvil_set_balance(from, U256::from(10).pow(U256::from(18)))
         .await?;
+    // This wallet holds another key, so it refuses to sign for `from`, after the nonce reservation
+    // and before the broadcast.
+    let other_wallet = ProviderBuilder::new()
+        .wallet(PrivateKeySigner::random())
+        .connect(&anvil.endpoint())
+        .await?;
+    assert!(send_with_next_nonce(
+        EmitLogs::new(Address::repeat_byte(0x42), &other_wallet).setValue("unsigned".to_string()),
+        from
+    )
+    .await
+    .is_err());
     let receipt = tokio::time::timeout(Duration::from_secs(10), async {
         send_with_next_nonce(target.setValue("funded".to_string()), from)
             .await?
@@ -60,6 +77,103 @@ async fn a_failed_send_gives_its_nonce_back() -> Result<()> {
     })
     .await??;
     assert!(receipt.status());
+    Ok(())
+}
+
+/// A JSON-RPC proxy in front of `upstream` that acts as a lagging node behind a load balancer: it
+/// reports the mined transaction count as the pending one, and it loses its first answer to a
+/// `lost` request after `upstream` handled it.
+async fn lossy_proxy(upstream: String, lost: &'static str) -> Result<String> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let url = format!("http://{}", listener.local_addr()?);
+    tokio::spawn(async move {
+        let client = alloy::transports::http::reqwest::Client::new();
+        let mut answer_lost = false;
+        while let Ok((mut socket, _)) = listener.accept().await {
+            let mut request = Vec::new();
+            let mut buffer = [0; 8192];
+            let body = loop {
+                let read = socket.read(&mut buffer).await.unwrap();
+                request.extend_from_slice(&buffer[..read]);
+                let text = String::from_utf8_lossy(&request).into_owned();
+                if let Some((head, body)) = text.split_once("\r\n\r\n") {
+                    let length = head
+                        .lines()
+                        .find_map(|line| {
+                            line.to_lowercase()
+                                .strip_prefix("content-length:")?
+                                .trim()
+                                .parse()
+                                .ok()
+                        })
+                        .unwrap_or(0);
+                    if body.len() >= length {
+                        break body.replace("\"pending\"", "\"latest\"");
+                    }
+                }
+            };
+            let answer = client
+                .post(&upstream)
+                .header("content-type", "application/json")
+                .body(body.clone())
+                .send()
+                .await
+                .unwrap()
+                .text()
+                .await
+                .unwrap();
+            if body.contains(lost) && !answer_lost {
+                answer_lost = true;
+                continue;
+            }
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{answer}",
+                answer.len()
+            );
+            socket.write_all(response.as_bytes()).await.unwrap();
+        }
+    });
+    Ok(url)
+}
+
+/// A send keeps its nonce only while the node can hold its transaction. The answer to a broadcast
+/// that the node took can be lost, and a lagging node then still reports the old pending count, so
+/// the next send must not take the same nonce. A failure before the broadcast sends nothing, and
+/// the next send must take the nonce, or its transaction waits behind a gap.
+#[tokio::test]
+async fn a_send_keeps_its_nonce_only_while_the_node_can_hold_its_transaction() -> Result<()> {
+    // The request whose answer is lost, and the transactions that then wait with their own nonces.
+    for (lost, waiting) in [("eth_sendRawTransaction", 2), ("eth_estimateGas", 1)] {
+        // No mining, so the transactions stay pending and the mined count stays behind.
+        let anvil = Anvil::new().arg("--no-mining").try_spawn()?;
+        let signer = PrivateKeySigner::random();
+        let from = signer.address();
+        let upstream = ProviderBuilder::new().connect(&anvil.endpoint()).await?;
+        upstream
+            .anvil_set_balance(from, U256::from(10).pow(U256::from(18)))
+            .await?;
+        let provider = ProviderBuilder::new()
+            .wallet(signer)
+            .connect(&lossy_proxy(anvil.endpoint(), lost).await?)
+            .await?;
+        // A call to an address without code succeeds, so the test needs no deployed contract.
+        let target = EmitLogs::new(Address::repeat_byte(0x42), &provider);
+
+        assert!(
+            send_with_next_nonce(target.setValue("lost".to_string()), from)
+                .await
+                .is_err()
+        );
+        let _next = send_with_next_nonce(target.setValue("next".to_string()), from).await?;
+
+        assert_eq!(
+            upstream.get_transaction_count(from).pending().await?,
+            waiting,
+            "{lost}"
+        );
+    }
     Ok(())
 }
 

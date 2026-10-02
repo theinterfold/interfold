@@ -127,7 +127,7 @@ pub struct Config {
     #[serde(default)]
     pub relay_max_inputs_per_round: Option<u32>,
     /// Stop relaying while the server key holds less than this ETH amount, so that the key keeps
-    /// funds for `finalizeInput`. Absent means no floor.
+    /// funds for `finalizeInput`. Absent or zero means no floor; `validate_relay` limits both.
     #[serde(default)]
     pub relay_min_balance_eth: Option<String>,
 }
@@ -222,17 +222,24 @@ impl Config {
         }
     }
 
-    /// Refuse a mainnet relay that has no round limit or no balance floor.
+    /// Refuse a relay without an explicit balance floor outside local chains, and a mainnet relay
+    /// that has no round limit or no floor above zero.
     ///
-    /// Mainnet relay spends real funds. The slot limit alone does not bound the spend of one
-    /// round, and the relay key also pays for `finalizeInput`. The operator must choose the round
-    /// limit and the balance floor explicitly.
+    /// The relay key also pays for `finalizeInput`, so the operator chooses its floor; zero relays
+    /// without one. Mainnet relay spends real funds, and the slot limit alone does not bound the
+    /// spend of one round, so it also needs a round limit and a floor above zero.
     fn validate_relay(
         chain_id: u64,
         mainnet_relay: bool,
         max_inputs_per_round: Option<u32>,
         min_balance: Option<U256>,
     ) -> Result<(), ConfigError> {
+        if min_balance.is_none() && !matches!(chain_id, 1 | 1_337 | 31_337) {
+            return Err(ConfigError::Message(
+                "RELAY_MIN_BALANCE_ETH is required outside local chains; set 0 to relay without a floor"
+                    .to_owned(),
+            ));
+        }
         if chain_id != 1 || !mainnet_relay {
             return Ok(());
         }
@@ -359,7 +366,7 @@ mod tests {
     }
 
     #[test]
-    fn mainnet_relay_requires_a_round_limit_and_a_balance_floor() {
+    fn relay_needs_a_round_limit_on_mainnet_and_a_chosen_floor_off_local_chains() {
         let floor = Some(alloy::primitives::U256::from(1));
         assert!(Config::validate_relay(1, true, None, floor).is_err());
         assert!(Config::validate_relay(1, true, Some(500), None).is_err());
@@ -371,8 +378,12 @@ mod tests {
         assert!(Config::validate_relay(1, true, Some(500), floor).is_ok());
         // Without the flag, mainnet does not relay, so it needs no round limit and no floor.
         assert!(Config::validate_relay(1, false, None, None).is_ok());
-        // Other chains relay without the flag and can leave the round and the balance unlimited.
-        assert!(Config::validate_relay(11_155_111, false, None, None).is_ok());
+        // Other chains relay without the flag and can leave the round unlimited, but the operator
+        // must choose the floor: zero relays without one. Local chains need no floor.
+        assert!(Config::validate_relay(11_155_111, false, None, None).is_err());
+        let no_floor = Some(alloy::primitives::U256::ZERO);
+        assert!(Config::validate_relay(11_155_111, false, None, no_floor).is_ok());
+        assert!(Config::validate_relay(31_337, false, None, None).is_ok());
     }
 
     #[test]
