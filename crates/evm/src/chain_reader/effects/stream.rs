@@ -15,7 +15,9 @@ pub(in crate::actors::evm_read_interface) async fn stream_from_evm<
     mut shutdown: oneshot::Receiver<()>,
     bus: &BusHandle,
     filters: Filters,
+    progress: Option<IngestionProgressSink>,
 ) {
+    let progress = progress.as_ref();
     let chain_id = provider.chain_id();
     let mut timestamp_tracker = TimestampTracker::new();
     let mut backoff = Backoff::new(MAX_RECONNECT_DELAY_SECS);
@@ -44,6 +46,7 @@ pub(in crate::actors::evm_read_interface) async fn stream_from_evm<
         &next,
         &mut timestamp_tracker,
         &mut log_window,
+        progress,
     )
     .await
     {
@@ -83,6 +86,7 @@ pub(in crate::actors::evm_read_interface) async fn stream_from_evm<
             &mut last_block,
             filters.confirmations(),
             &mut log_window,
+            progress,
         )
         .await
         {
@@ -143,6 +147,7 @@ pub(in crate::actors::evm_read_interface) async fn stream_from_evm<
                     &mut log_window,
                     Duration::from_secs(CONFIRMED_BACKFILL_INTERVAL_SECS),
                     &mut shutdown,
+                    progress,
                 )
                 .await;
                 match stop {

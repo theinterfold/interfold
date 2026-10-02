@@ -4,6 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+use crate::adapters::ingestion_progress::{IngestionProgress, IngestionProgressSink};
 use crate::domain::log_window::{is_range_limit_error, LogWindow, MIN_LOG_WINDOW};
 use crate::messages::{EvmEventProcessor, EvmLog, InterfoldEvmEvent};
 use alloy::providers::Provider;
@@ -86,6 +87,7 @@ pub(crate) async fn handle_live_log<L: LogProvider>(
     last_block: &mut u64,
     confirmations: u64,
     window: &mut LogWindow,
+    progress: Option<&IngestionProgressSink>,
 ) -> Result<(), anyhow::Error> {
     if confirmations > 0 {
         debug!(
@@ -121,6 +123,7 @@ pub(crate) async fn handle_live_log<L: LogProvider>(
         last_block,
         confirmations,
         window,
+        progress,
     )
     .await
 }
@@ -160,6 +163,7 @@ pub(crate) async fn consume_live_logs<L, S>(
     window: &mut LogWindow,
     poll_interval: Duration,
     shutdown: &mut oneshot::Receiver<()>,
+    progress: Option<&IngestionProgressSink>,
 ) -> LiveStop
 where
     L: LogProvider,
@@ -180,7 +184,7 @@ where
                 };
                 if let Err(error) = handle_live_log(
                     provider, &log, filter, chain_id, next, timestamp_tracker, last_block,
-                    confirmations, window,
+                    confirmations, window, progress,
                 ).await {
                     return LiveStop::LiveLogBackfillFailed(error);
                 }
@@ -188,7 +192,7 @@ where
             _ = confirmation_poll.tick() => {
                 if let Err(error) = backfill_to_head(
                     provider, filter, chain_id, next, timestamp_tracker, last_block,
-                    confirmations, window,
+                    confirmations, window, progress,
                 ).await {
                     return LiveStop::PollBackfillFailed(error);
                 }
@@ -352,6 +356,8 @@ pub(crate) async fn fetch_logs_adapting<L: LogProvider>(
 /// `eth_getLogs` range and do not publish that cap over the wire, so the range is narrowed when a
 /// provider rejects it and the narrowed range is then kept. A caller that made a fresh window for
 /// every call would rediscover the same cap and pay one failed request for each chunk.
+///
+/// `progress` learns the cursor after each chunk, so a health check sees a long first sync move.
 pub(crate) async fn fetch_logs_chunked<L: LogProvider>(
     provider: &L,
     filter: &Filter,
@@ -361,6 +367,7 @@ pub(crate) async fn fetch_logs_chunked<L: LogProvider>(
     next: &EvmEventProcessor,
     timestamp_tracker: &mut TimestampTracker,
     window: &mut LogWindow,
+    progress: Option<&IngestionProgressSink>,
 ) -> Result<Option<CorrelationId>, anyhow::Error> {
     if to_block < from_block {
         return Ok(None);
@@ -402,6 +409,7 @@ pub(crate) async fn fetch_logs_chunked<L: LogProvider>(
             last_id = Some(process_log(provider, log, chain_id, next, timestamp_tracker).await?);
         }
 
+        report_progress(progress, chain_id, to_block, chunk_end);
         cursor = chunk_end + 1;
     }
 
@@ -422,6 +430,10 @@ pub(crate) async fn fetch_logs_chunked<L: LogProvider>(
 /// failure part-way keeps that progress and the next call resumes above it. This holds when a
 /// narrowing splits the range: progress follows the chunks actually served, not a range computed
 /// before the provider rejected it.
+///
+/// `progress` learns the head and the cursor of a backfill that succeeded, with or without new
+/// blocks. A failed backfill reports nothing: a provider that answers `eth_blockNumber` and
+/// refuses `eth_getLogs` must look stalled to a health check.
 pub(crate) async fn backfill_to_head<L: LogProvider>(
     provider: &L,
     filter: &Filter,
@@ -431,6 +443,7 @@ pub(crate) async fn backfill_to_head<L: LogProvider>(
     last_block: &mut u64,
     confirmations: u64,
     window: &mut LogWindow,
+    progress: Option<&IngestionProgressSink>,
 ) -> Result<(), anyhow::Error> {
     let raw_head = provider
         .fetch_block_number()
@@ -442,6 +455,7 @@ pub(crate) async fn backfill_to_head<L: LogProvider>(
 
     let gap_start = *last_block + 1;
     if gap_start > current_head {
+        report_progress(progress, chain_id, raw_head, *last_block);
         return Ok(());
     }
 
@@ -474,7 +488,23 @@ pub(crate) async fn backfill_to_head<L: LogProvider>(
         cursor = chunk_end + 1;
     }
 
+    report_progress(progress, chain_id, raw_head, *last_block);
     Ok(())
+}
+
+fn report_progress(
+    progress: Option<&IngestionProgressSink>,
+    chain_id: u64,
+    head: u64,
+    cursor: u64,
+) {
+    if let Some(sink) = progress {
+        sink(IngestionProgress {
+            chain_id,
+            head,
+            cursor,
+        });
+    }
 }
 
 /// Resolves the block timestamp for a log, and remembers the last block it resolved.

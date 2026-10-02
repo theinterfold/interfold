@@ -11,7 +11,8 @@ use e3_config::chain_config::DEFAULT_RPC_LOG_RANGE_BLOCKS;
 use e3_events::{run_once, BusHandle, EventSubscriber, EventType, HistoricalEvmSyncStart};
 use e3_evm::{
     EthProvider, EvmChainGateway, EvmChainGatewayHandle, EvmEventProcessor, EvmReadInterface,
-    EvmRouter, Filters, FixHistoricalOrder, ProviderFactory, DEFAULT_MAX_BUFFERED_EVM_EVENTS,
+    EvmRouter, Filters, FixHistoricalOrder, IngestionProgressSink, ProviderFactory,
+    DEFAULT_MAX_BUFFERED_EVM_EVENTS,
 };
 
 pub trait RouteFn: FnOnce(EvmEventProcessor) -> EvmEventProcessor + Send {}
@@ -27,6 +28,7 @@ pub struct EvmSystemChainBuilder<P> {
     chain_id: u64,
     max_buffered_events: usize,
     max_log_window: u64,
+    progress: Option<IngestionProgressSink>,
     route_factories: Vec<(Address, RouteFactory)>,
 }
 
@@ -40,6 +42,7 @@ impl<P: Provider + Clone + 'static> EvmSystemChainBuilder<P> {
             chain_id,
             max_buffered_events: DEFAULT_MAX_BUFFERED_EVM_EVENTS,
             max_log_window: DEFAULT_RPC_LOG_RANGE_BLOCKS,
+            progress: None,
             route_factories: Vec::new(),
         }
     }
@@ -52,6 +55,12 @@ impl<P: Provider + Clone + 'static> EvmSystemChainBuilder<P> {
     /// The chain's widest `eth_getLogs` block range (`rpc_log_range_blocks`).
     pub fn with_max_log_window(&mut self, blocks: u64) -> &mut Self {
         self.max_log_window = blocks;
+        self
+    }
+
+    /// Report each successful head read of the chain reader to `sink`.
+    pub fn with_progress_sink(&mut self, sink: IngestionProgressSink) -> &mut Self {
+        self.progress = Some(sink);
         self
     }
 
@@ -102,6 +111,7 @@ impl<P: Provider + Clone + 'static> EvmSystemChainBuilder<P> {
             let provider_factory = self.provider_factory.clone();
             let chain_id = self.chain_id;
             let max_log_window = self.max_log_window;
+            let progress = self.progress.clone();
 
             // Only gets consumed once so fine to use replace to clean out route_factories
             let route_factories = std::mem::take(&mut self.route_factories);
@@ -127,6 +137,7 @@ impl<P: Provider + Clone + 'static> EvmSystemChainBuilder<P> {
                     router.start(),
                     &bus,
                     filters,
+                    progress,
                 );
                 Ok(())
             }

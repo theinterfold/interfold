@@ -13,7 +13,7 @@ use crate::{
 };
 use actix::{Actor, Addr};
 use alloy::primitives::Address;
-use anyhow::{ensure, Result};
+use anyhow::{ensure, Context as _, Result};
 use derivative::Derivative;
 use e3_aggregator::ext::{
     AggregatorRoleExtension, PublicKeyAggregatorExtension, ThresholdPlaintextAggregatorExtension,
@@ -31,11 +31,12 @@ use e3_events::{
 };
 use e3_evm::{
     ensure_node_release, fetch_accusation_vote_validity, fetch_randomness_providers,
-    fetch_slashing_manager, read_canonical_dkg_timing, BondingRegistrySolReader,
-    CiphernodeRegistrySol, CiphernodeRegistrySolReader, DataAvailabilityCoordinator,
-    DataAvailabilityRepositoryFactory, EvmChainGatewayHandle, GatewayFailureReceiver,
-    InterfoldSolReader, InterfoldSolWriter, ProviderConfig, RandomnessProviderSolReader,
-    SlashingManagerSolReader, SlashingManagerSolWriter, SlashingWriterRepositoryFactory,
+    fetch_slashing_manager, ingestion_heartbeat_files, read_canonical_dkg_timing,
+    BondingRegistrySolReader, CiphernodeRegistrySol, CiphernodeRegistrySolReader,
+    DataAvailabilityCoordinator, DataAvailabilityRepositoryFactory, EvmChainGatewayHandle,
+    GatewayFailureReceiver, IngestionProgressSink, InterfoldSolReader, InterfoldSolWriter,
+    ProviderConfig, RandomnessProviderSolReader, SlashingManagerSolReader,
+    SlashingManagerSolWriter, SlashingWriterRepositoryFactory,
 };
 use e3_fhe::ext::FheExtension;
 use e3_keyshare::ext::ThresholdKeyshareExtension;
@@ -106,6 +107,8 @@ pub struct CiphernodeBuilder {
     cipher: Arc<Cipher>,
     contract_components: ContractComponents,
     event_system: EventSystemType,
+    /// Directory of the ingestion heartbeat files, one per chain, for a local health check.
+    ingestion_heartbeat_dir: Option<PathBuf>,
     in_mem_store: Option<Addr<InMemStore>>,
     keyshare: Option<KeyshareKind>,
     logging: bool,
@@ -189,6 +192,7 @@ impl CiphernodeBuilder {
             keyshare: None,
             logging: false,
             max_buffered_evm_events: 100_000,
+            ingestion_heartbeat_dir: None,
             max_buffered_net_bytes: 256 * 1024 * 1024,
             max_buffered_net_events: 1_024,
             name: None,
@@ -513,6 +517,12 @@ impl CiphernodeBuilder {
     /// observations. Exhaustion fails startup instead of silently dropping chain history.
     pub fn with_max_buffered_evm_events(mut self, limit: usize) -> Self {
         self.max_buffered_evm_events = limit;
+        self
+    }
+
+    /// Write an ingestion heartbeat file per chain under `dir`, for a local health check.
+    pub fn with_ingestion_heartbeat(mut self, dir: PathBuf) -> Self {
+        self.ingestion_heartbeat_dir = Some(dir);
         self
     }
 
@@ -1043,6 +1053,11 @@ impl CiphernodeBuilder {
             repositories,
             &self.contract_components,
             self.max_buffered_evm_events,
+            self.ingestion_heartbeat_dir
+                .clone()
+                .map(ingestion_heartbeat_files)
+                .transpose()
+                .context("ingestion heartbeat directory")?,
             recovery,
         )
         .await
@@ -1574,6 +1589,7 @@ async fn setup_evm_system(
     repositories: &e3_data::Repositories,
     contract_components: &ContractComponents,
     max_buffered_evm_events: usize,
+    progress: Option<IngestionProgressSink>,
     recovery: EvmStartupRecovery<'_>,
 ) -> Result<(EvmEventConfig, Vec<EvmChainGatewayHandle>)> {
     let EvmStartupRecovery {
@@ -1620,6 +1636,9 @@ async fn setup_evm_system(
             .with_provider_factory(provider_factory.clone())
             .with_buffer_limit(max_buffered_evm_events)
             .with_max_log_window(max_log_window);
+        if let Some(progress) = &progress {
+            system.with_progress_sink(progress.clone());
+        }
 
         if contract_components.interfold {
             let write_provider = provider_cache.ensure_write_provider(chain).await?;

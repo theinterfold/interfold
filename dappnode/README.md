@@ -30,7 +30,7 @@ dappnode/
 ├── dappnode_package.json # Package metadata (name, version, links, backup, etc.)
 ├── setup-wizard.yml      # DAppNode UI form -> configuration and credential upload
 ├── entrypoint.sh         # Startup script (validates env, renders config, runs interfold)
-├── healthcheck.sh        # Local process, credential, config, and QUIC listener checks
+├── healthcheck.sh        # Local process, credential, config, QUIC listener and ingestion checks
 ├── config.template.yaml  # Interfold config template (filled via envsubst)
 ├── releases.json         # Release metadata used by DAppNode
 └── avatar-default.png    # Icon shown in the DAppNode UI
@@ -257,9 +257,20 @@ database/event-log directories must be initialized, and the configured QUIC UDP 
 bound. This detects the old false-positive case where an unrelated process matched `pgrep`, as well
 as missing credentials, uninitialized persistence, and a dead network listener.
 
-This remains a liveness/startup check, not proof of canonical chain sync, healthy RPC responses,
-honest peers, registration, or safe protocol participation. Operators must inspect logs and on-chain
-status before treating the node as protocol-ready.
+The check also reads the chain-ingestion heartbeat. The node writes one file per chain under
+`/data/.interfold/data/_default/ingestion/` (`chain-<id>.heartbeat`, `key=value` lines) after every
+successful read of the chain head: `head`, `cursor` (the last block whose logs the node applied),
+`polled_at` and `progressed_at` (the last read at which `head` or `cursor` moved) in Unix seconds.
+The check fails when a heartbeat is older than `INGESTION_MAX_AGE_SECS` (120) or neither its head
+nor its cursor moved for `INGESTION_STALL_MAX_SECS` (600), which catches a reader that stopped
+polling, an RPC endpoint that stopped following the chain, and a sync that stopped advancing. A node
+without a heartbeat is still starting: the node removes the files of an earlier run at startup, and
+it refuses to start when it cannot write them. A write that fails later leaves the previous file in
+place, which then goes stale.
+
+This remains a liveness check, not proof of healthy RPC responses, honest peers, registration, or
+safe protocol participation. Operators must inspect logs and on-chain status before treating the
+node as protocol-ready.
 
 ## Data & Ports
 
