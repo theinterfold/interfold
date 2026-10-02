@@ -103,6 +103,7 @@ impl ThresholdKeyshare {
     ) -> Result<bool> {
         let ec = event.get_ctx().clone();
         let ids: BTreeSet<u64> = event.shares.iter().map(|share| share.party_id).collect();
+        let expelled = self.state.try_get()?.expelled_parties;
         let mut accepted = false;
         self.recovery.try_mutate(&ec, |mut recovery| {
             let verification_in_flight = recovery.collected_threshold_share_ids.is_some()
@@ -110,7 +111,7 @@ impl ThresholdKeyshare {
             let extends_previous = recovery
                 .collected_threshold_share_ids
                 .as_ref()
-                .is_none_or(|existing| existing.len() < ids.len() && existing.is_subset(&ids));
+                .is_none_or(|existing| batch_grows(existing, &ids, &expelled));
             if !verification_in_flight && extends_previous {
                 recovery.collected_threshold_share_ids = Some(ids);
                 recovery.share_verification_complete = None;
@@ -119,6 +120,9 @@ impl ThresholdKeyshare {
             recovery.last_ec = Some(ec.clone());
             Ok(recovery)
         })?;
+        if accepted {
+            self.pending.share_dispatches.clear();
+        }
         Ok(accepted)
     }
 
@@ -191,7 +195,7 @@ impl ThresholdKeyshare {
             .filter(|party_id| !state.expelled_parties.contains(*party_id))
             .copied()
             .collect::<BTreeSet<_>>();
-        if available.len() <= current.len() || !current.is_subset(&available) {
+        if !batch_grows(&current, &available, &state.expelled_parties) {
             return Ok(());
         }
 

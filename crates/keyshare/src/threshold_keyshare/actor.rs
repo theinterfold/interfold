@@ -19,7 +19,7 @@ use e3_events::{
     DkgCoordination, DkgCoordinationKind, DkgDealer, DkgProofSigned,
     DkgShareDecryptionProofRequest, E3Failed, E3RequestComplete, E3Stage, E3id, EType,
     EncryptionKey, EncryptionKeyCollectionFailed, EncryptionKeyCreated, EncryptionKeyPending,
-    EventContext, FailureReason, InterfoldEvent, InterfoldEventData, KeyshareCreated,
+    EventContext, EventId, FailureReason, InterfoldEvent, InterfoldEventData, KeyshareCreated,
     PartyProofsToVerify, PartyShareDecryptionProofsToVerify, PkGenerationProofSigned, ProofType,
     Sequenced, ShareDecryptionProofPending, ShareVerificationComplete, ShareVerificationDispatched,
     SignedProofPayload, ThresholdShare, ThresholdShareCollectionFailed, ThresholdShareCreated,
@@ -64,8 +64,8 @@ use crate::domain::timeout_policy::{
     DerivedTimeout, DkgTimeoutPhase,
 };
 use crate::domain::{
-    build_decryption_key_plan, build_shares_generated_plan, dealer_identity, generate_bfv_keypair,
-    select_ready_roster, AggregatingDecryptionKey, BfvKeypairMaterial,
+    batch_grows, build_decryption_key_plan, build_shares_generated_plan, dealer_identity,
+    generate_bfv_keypair, select_ready_roster, AggregatingDecryptionKey, BfvKeypairMaterial,
     CollectingEncryptionKeysData, Decrypting, DecryptionKeyPlan, GeneratingDecryptionProof,
     GeneratingThresholdShareData, KeyshareState, ProofRequestData, ReadyForDecryption,
     ReceivedShareProofs, ThresholdKeyshareState,
@@ -151,6 +151,12 @@ struct PendingKeyshareWork {
     gen_esi_response: Option<TypedEvent<ComputeResponse>>,
     /// Shares awaiting the C2/C3 verification result.
     shares: Vec<Arc<ThresholdShare>>,
+    /// IDs of the C2/C3 verification dispatches that this process sent for the current batch.
+    share_dispatches: HashSet<EventId>,
+    /// C2/C3 results of dispatches that this process has not sent for the current batch, by
+    /// dispatch ID. A result applies when this actor sends a dispatch with its ID. There is at
+    /// most one entry for each distinct dispatch payload of the E3.
+    parked_share_verdicts: HashMap<EventId, TypedEvent<ShareVerificationComplete>>,
     /// C4 requests awaiting the threshold-decryption-key result.
     share_decryption_data: Option<(
         DkgShareDecryptionProofRequest,
