@@ -3,9 +3,10 @@
 //! Rebuild in-flight DHT publication and receive state from the durable event log.
 
 use super::{
-    ContentHash, RecoveredDocumentState, MAX_BUFFERED_NOTIFICATIONS, MAX_PENDING_PUBLICATIONS,
-    MAX_PENDING_PUBLICATION_BYTES, MAX_RECEIVED_DOCUMENTS,
+    ContentHash, RecoveredDocumentState, MAX_PENDING_PUBLICATIONS, MAX_PENDING_PUBLICATION_BYTES,
+    MAX_RECEIVED_DOCUMENTS,
 };
+use crate::domain::closed_e3s::record_closed_e3;
 use crate::domain::{EventConversionService, RestorableDocuments};
 use actix::Recipient;
 use anyhow::{ensure, Context, Result};
@@ -185,12 +186,7 @@ pub async fn recover_document_state(
                                 | E3Stage::Failed
                         ) =>
                 {
-                    if !closed.contains(&change.e3_id) {
-                        if closed.len() == MAX_BUFFERED_NOTIFICATIONS {
-                            closed.pop_front();
-                        }
-                        closed.push_back(change.e3_id.clone());
-                    }
+                    record_closed_e3(&mut closed, &change.e3_id);
                     publications.retain(|(id, _), request| {
                         if id == &change.e3_id {
                             publication_bytes =
