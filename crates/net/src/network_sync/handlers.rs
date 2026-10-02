@@ -30,11 +30,11 @@ impl Handler<InterfoldEvent> for NetSyncManager {
                 self.maybe_rebroadcast_own_artifacts(ctx);
                 ctx.notify(TypedEvent::new(data, ec));
             }
-            InterfoldEventData::DkgCoordination(data) => {
-                self.remember_dkg_coordination(original, &data);
+            InterfoldEventData::DkgCoordination(_) => {
+                self.remember_dkg_coordination(original);
             }
-            InterfoldEventData::DecryptionshareCreated(data) => {
-                self.remember_decryption_share(original, &data);
+            InterfoldEventData::DecryptionshareCreated(_) => {
+                self.remember_decryption_share(original);
             }
             InterfoldEventData::E3StageChanged(data) => {
                 if matches!(
