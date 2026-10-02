@@ -152,8 +152,10 @@ EncryptionKeyCollector collects verified EncryptionKeyCreated events
 │  expelled party and does not wait for it. A running collector receives each
 │  later expulsion
 │
-├─ A live key after the cutoff does not reach the collector, even if the
-│  collector's relative timer has not fired yet
+├─ A live key after the cutoff is recorded but does not reach the collector, even
+│  if the collector's relative timer has not fired yet. A late input is expected,
+│  so the keyshare does not report it as an error; a failed write is reported as
+│  InterfoldError
 │
 ├─ Restart in CollectingEncryptionKeys (`resume_in_flight_work`):
 │   ├─ Sends every recorded key to the collector, then EncryptionKeysReplayed
@@ -402,6 +404,7 @@ ThresholdShareCollector collects this recipient's shares from the other N−1 pa
 ├─ ThresholdKeyshare.handle_threshold_share_created():
 │   ├─ Filters: only process shares where target_party_id == MY party_id
 │   │   → Each published share contains this recipient's encrypted material
+│   ├─ After the canonical DKG deadline: records the share, but does not forward it
 │   └─ Forwards filtered share to ThresholdShareCollector
 │
 ├─ At the 75% soft cutoff:
