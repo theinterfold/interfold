@@ -6,11 +6,7 @@
 
 //! Read the lifecycle of E3s at the finalized block.
 
-use crate::{
-    contracts::IInterfold,
-    domain::interfold_events::{convert_u8_to_e3_stage, convert_u8_to_failure_reason},
-    helpers::EthProvider,
-};
+use crate::{contracts::IInterfold, helpers::EthProvider};
 use alloy::{
     eips::BlockId,
     primitives::{Address, U256},
@@ -53,12 +49,12 @@ pub async fn read_finalized_e3_lifecycles<P: Provider + Clone>(
     for e3_id in e3_ids {
         let id: U256 = e3_id.clone().try_into()?;
         let stage = if deployed_at_finalized {
-            convert_u8_to_e3_stage(contract.getE3Stage(id).block(finalized).call().await?)
+            E3Stage::try_from(contract.getE3Stage(id).block(finalized).call().await?)?
         } else {
             E3Stage::None
         };
         let lifecycle = match stage {
-            E3Stage::None => match convert_u8_to_e3_stage(contract.getE3Stage(id).call().await?) {
+            E3Stage::None => match E3Stage::try_from(contract.getE3Stage(id).call().await?)? {
                 E3Stage::None => FinalizedE3Lifecycle::Unknown,
                 _ => FinalizedE3Lifecycle::AwaitingFinality,
             },
@@ -70,7 +66,7 @@ pub async fn read_finalized_e3_lifecycles<P: Provider + Clone>(
                     .await?;
                 FinalizedE3Lifecycle::Finalized {
                     stage,
-                    failure_reason: Some(convert_u8_to_failure_reason(reason)),
+                    failure_reason: Some(FailureReason::try_from(reason)?),
                 }
             }
             stage => FinalizedE3Lifecycle::Finalized {
