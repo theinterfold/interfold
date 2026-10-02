@@ -19,8 +19,11 @@ impl Handler<InterfoldEvent> for DocumentPublisher {
         let source = msg.source();
         let (msg, ec) = msg.into_components();
         match msg {
-            InterfoldEventData::EffectsEnabled(_) => {
-                self.effects_enabled = true;
+            // Startup publishes chain history between `EffectsEnabled` and `SyncEnded`. A
+            // publication that starts earlier can announce or upload a document of an E3 whose
+            // closing stage is still in that history.
+            InterfoldEventData::SyncEnded(_) if !self.publishing_enabled => {
+                self.publishing_enabled = true;
                 for id in self.publications.keys() {
                     self.start_publication(id, ctx);
                 }
@@ -89,7 +92,7 @@ impl Handler<TypedEvent<PublishDocumentRequested>> for DocumentPublisher {
         self.publication_bytes += size;
         self.publications
             .insert(id.clone(), Publication::new(msg.into_inner()));
-        if self.effects_enabled {
+        if self.publishing_enabled {
             self.start_publication(&id, ctx);
         }
     }

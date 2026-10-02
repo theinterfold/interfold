@@ -1515,6 +1515,10 @@ async fn process_swarm_command(
             )?;
             Ok(())
         }
+        NetCommand::DhtCancelPut { key } => {
+            finish_record_uploads(&mut swarm.behaviour_mut().kademlia, &key);
+            Ok(())
+        }
         NetCommand::DhtGetRecord {
             correlation_id,
             key,
@@ -1787,6 +1791,30 @@ fn handle_put_record(
         }
     }
     Ok(())
+}
+
+/// End the puts of `key` that are in their upload phase, so that their queries stop waiting for
+/// answers and release the record. An ended put still reports its result, which nobody waits for.
+/// This is not a full cancel. Requests that a query already gave to the connection handlers,
+/// queued or in progress, still go out: Kademlia has no call that takes them back.
+///
+/// A put first looks up the peers closest to the key. Ending that lookup makes Kademlia upload the
+/// record to the peers found so far, so a put in its lookup runs on to its normal end and uploads.
+fn finish_record_uploads(kademlia: &mut KademliaBehaviour<MemoryStore>, key: &ContentHash) {
+    let key = RecordKey::new(key);
+    for mut query in kademlia.iter_queries_mut() {
+        let uploading = matches!(
+            query.info(),
+            kad::QueryInfo::PutRecord {
+                record,
+                phase: kad::PutRecordPhase::PutRecord { .. },
+                ..
+            } if record.key == key
+        );
+        if uploading {
+            query.finish();
+        }
+    }
 }
 
 fn handle_get_record(
@@ -2264,6 +2292,56 @@ mod tests {
         assert!(matches!(
             super::store_local_record(&mut store, document, now),
             Err(libp2p::kad::store::Error::MaxRecords)
+        ));
+    }
+
+    /// A cancel ends the upload of its key only. A put that still looks up its closest peers runs
+    /// on: ending that lookup would upload the record to the peers found so far.
+    #[test]
+    fn a_cancel_ends_only_the_uploads_of_its_key() {
+        use libp2p::kad::{self, QueryInfo, Quorum};
+        use std::task::{Context, Poll};
+
+        let local = PeerId::random();
+        let mut kademlia = kad::Behaviour::new(local, MemoryStore::new(local));
+        let peer = PeerId::random();
+        kademlia.add_address(&peer, "/ip4/192.0.2.1/udp/1/quic-v1".parse().unwrap());
+        let document = super::ContentHash::from_content(b"document");
+        let other = super::ContentHash::from_content(b"other document");
+        let record_of = |key: &super::ContentHash| Record::new(RecordKey::new(key), vec![1]);
+
+        let lookup = kademlia
+            .put_record(record_of(&document), Quorum::One)
+            .unwrap();
+        let upload = kademlia.put_record_to(record_of(&document), [peer].into_iter(), Quorum::One);
+        let other_upload =
+            kademlia.put_record_to(record_of(&other), [peer].into_iter(), Quorum::One);
+
+        super::finish_record_uploads(&mut kademlia, &document);
+
+        let mut context = Context::from_waker(futures::task::noop_waker_ref());
+        let mut reported = Vec::new();
+        for _ in 0..100 {
+            match NetworkBehaviour::poll(&mut kademlia, &mut context) {
+                Poll::Ready(libp2p::swarm::ToSwarm::GenerateEvent(
+                    kad::Event::OutboundQueryProgressed {
+                        id,
+                        result: kad::QueryResult::PutRecord(_),
+                        ..
+                    },
+                )) => reported.push(id),
+                Poll::Ready(_) => {}
+                Poll::Pending => break,
+            }
+        }
+        assert_eq!(reported, vec![upload]);
+        assert!(kademlia.query(&other_upload).is_some());
+        assert!(matches!(
+            kademlia.query(&lookup).map(|query| query.info().clone()),
+            Some(QueryInfo::PutRecord {
+                phase: kad::PutRecordPhase::GetClosestPeers,
+                ..
+            })
         ));
     }
 }

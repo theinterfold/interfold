@@ -9,8 +9,8 @@ use crate::domain::event_conversion::ReceivableDocument;
 use crate::events::GossipPublishFailure;
 use crate::net_interface_handle::NetEventSubscriber;
 use e3_events::{
-    DecryptionKeyShared, E3StageChanged, EventConstructorWithTimestamp, EventSource, Proof,
-    ProofPayload, ProofType, SignedProofPayload, Unsequenced,
+    DecryptionKeyShared, E3StageChanged, EffectsEnabled, EventConstructorWithTimestamp,
+    EventSource, Proof, ProofPayload, ProofType, SignedProofPayload, SyncEnded, Unsequenced,
 };
 
 fn decryption_publication(e3_id: E3id) -> Result<PublishDocumentRequested> {
@@ -134,7 +134,7 @@ async fn late_c4_document_is_rejected_after_key_published() -> Result<()> {
 #[actix::test]
 async fn key_publication_stops_the_announcement_and_upload_in_flight() -> Result<()> {
     tokio::time::pause();
-    let (_guard, _bus, _net_cmd_tx, commands, net_events, _, _, _, publisher) = setup_test()?;
+    let (_guard, _bus, net_cmd_tx, commands, net_events, _, _, _, publisher) = setup_test()?;
     let mut commands = Commands::new(commands);
     let e3_id = E3id::new("inflight", 1);
     let publication = InterfoldEvent::<Unsequenced>::new_with_timestamp(
@@ -169,10 +169,17 @@ async fn key_publication_stops_the_announcement_and_upload_in_flight() -> Result
         EventSource::Evm,
     )
     .into_sequenced(2);
+    // A busy command queue delays the cleanup commands but does not drop them.
+    while net_cmd_tx.try_send(NetCommand::Shutdown).is_ok() {}
     publisher.send(stage).await?;
     assert!(matches!(
         commands.take(|command| matches!(command, NetCommand::DhtRemoveRecords { .. })).await?,
         NetCommand::DhtRemoveRecords { keys } if keys.contains(&key)
+    ));
+    // The put in the swarm ends too, not only the future that waits for it.
+    assert!(matches!(
+        commands.take(|command| matches!(command, NetCommand::DhtCancelPut { .. })).await?,
+        NetCommand::DhtCancelPut { key: cancelled } if cancelled == key
     ));
 
     // Late answers reach nothing: the announcement does not gossip after its local store, and
@@ -192,6 +199,129 @@ async fn key_publication_stops_the_announcement_and_upload_in_flight() -> Result
             .await
     );
     Ok(())
+}
+
+/// Startup publishes chain history between `EffectsEnabled` and `SyncEnded`. A recovered
+/// publication waits for `SyncEnded`, so a document of an E3 that closed in that history never
+/// reaches the network.
+#[actix::test]
+async fn recovered_publications_wait_for_the_end_of_the_sync() -> Result<()> {
+    tokio::time::pause();
+    let closed = publish_request("closed-in-history", b"closed document");
+    let open = publish_request("open", b"open document");
+    let open_key = ContentHash::from_content(&open.value);
+    let recovered = RecoveredDocumentState {
+        publications: vec![closed.clone(), open],
+        ..RecoveredDocumentState::default()
+    };
+    let (_guard, _bus, _net_cmd_tx, commands, _net_events, _, _, _, publisher) =
+        setup_startup_test(recovered)?;
+    let mut commands = Commands::new(commands);
+    let is_dht_write = |command: &NetCommand| is_store_local(command) || is_upload(command);
+
+    publisher
+        .send(startup_event(EffectsEnabled::new().into(), 1))
+        .await?;
+    assert!(
+        !commands
+            .arrives_within(Duration::from_secs(60), is_dht_write)
+            .await,
+        "no publication runs before the chain history arrives"
+    );
+
+    publisher.send(key_published(&closed.meta.e3_id, 2)).await?;
+    publisher
+        .send(startup_event(SyncEnded::new().into(), 3))
+        .await?;
+
+    for accept in [is_store_local, is_upload] {
+        let command = commands.take(accept).await?;
+        assert!(matches!(
+            command,
+            NetCommand::DhtStoreLocal { key, .. } | NetCommand::DhtPutRecord { key, .. }
+                if key == open_key
+        ));
+    }
+    assert!(
+        !commands
+            .arrives_within(Duration::from_secs(60), is_dht_write)
+            .await,
+        "the publication of the closed E3 never runs"
+    );
+    Ok(())
+}
+
+/// A busy network command queue holds the publisher's cleanup in one bounded queue with one
+/// waiting send, not in a task per command. The cleanup that waits behind that send goes out
+/// together once the queue has room.
+#[actix::test]
+async fn cleanup_waits_for_a_busy_command_queue_in_one_queue() -> Result<()> {
+    tokio::time::pause();
+    let closing: Vec<_> = ["first", "second", "third"]
+        .into_iter()
+        .map(|e3| publish_request(e3, e3.as_bytes()))
+        .collect();
+    let keys: Vec<_> = closing
+        .iter()
+        .map(|publication| ContentHash::from_content(&publication.value))
+        .collect();
+    let recovered = RecoveredDocumentState {
+        publications: closing.clone(),
+        ..RecoveredDocumentState::default()
+    };
+    let (_guard, _bus, net_cmd_tx, commands, _net_events, _, _, _, publisher) =
+        setup_startup_test(recovered)?;
+    let mut commands = Commands::new(commands);
+
+    while net_cmd_tx.try_send(NetCommand::Shutdown).is_ok() {}
+    for (seq, publication) in (1..).zip(&closing) {
+        publisher
+            .send(key_published(&publication.meta.e3_id, seq))
+            .await?;
+    }
+
+    let is_removal = |command: &NetCommand| matches!(command, NetCommand::DhtRemoveRecords { .. });
+    assert!(matches!(
+        commands.take(is_removal).await?,
+        NetCommand::DhtRemoveRecords { keys: removed } if removed == keys[..1]
+    ));
+    assert!(matches!(
+        commands.take(is_removal).await?,
+        NetCommand::DhtRemoveRecords { keys: removed } if removed == keys[1..]
+    ));
+    assert!(
+        !commands
+            .arrives_within(Duration::from_secs(60), is_removal)
+            .await
+    );
+    Ok(())
+}
+
+fn key_published(e3_id: &E3id, seq: u64) -> InterfoldEvent {
+    InterfoldEvent::<Unsequenced>::new_with_timestamp(
+        E3StageChanged {
+            e3_id: e3_id.clone(),
+            previous_stage: E3Stage::CommitteeFinalized,
+            new_stage: E3Stage::KeyPublished,
+        }
+        .into(),
+        None,
+        u128::from(seq),
+        None,
+        EventSource::Evm,
+    )
+    .into_sequenced(seq)
+}
+
+fn startup_event(data: InterfoldEventData, seq: u64) -> InterfoldEvent {
+    InterfoldEvent::<Unsequenced>::new_with_timestamp(
+        data,
+        None,
+        u128::from(seq),
+        None,
+        EventSource::Local,
+    )
+    .into_sequenced(seq)
 }
 
 #[actix::test]

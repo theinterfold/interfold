@@ -7,8 +7,8 @@
 use crate::net_interface_handle::NetEventSubscriber;
 use crate::{
     domain::{
-        add_candidate, datetime_to_instant_from_now, notification_is_well_formed,
-        DocumentPublishingService, FetchQueue, PublicationSchedule,
+        add_candidate, datetime_to_instant_from_now, notification_is_well_formed, Cleanup,
+        CleanupQueue, DocumentPublishingService, FetchQueue, PublicationSchedule,
     },
     events::{
         call_and_await_response, DocumentPublishedNotification, GossipData, NetCommand, NetEvent,
@@ -34,7 +34,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::sync::mpsc;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use super::event_converter::EventConverter;
 
@@ -43,12 +43,14 @@ use super::event_converter::EventConverter;
 const KADEMLIA_PUT_TIMEOUT: Duration = Duration::from_secs(150);
 const KADEMLIA_GET_TIMEOUT: Duration = Duration::from_secs(90);
 const KADEMLIA_BROADCAST_TIMEOUT: Duration = Duration::from_secs(30);
-/// The network interface stores a local record without network I/O, but during startup the
-/// network event buffer holds the reply until `SyncEnded`. The wait matches the put's, so a
-/// recovered publication waits for the end of the sync as quietly as its first upload does.
+/// The network interface stores a local record without network I/O, so the reply comes at once
+/// unless its command queue is busy. The wait matches the put's.
 const DHT_STORE_LOCAL_TIMEOUT: Duration = KADEMLIA_PUT_TIMEOUT;
 const MAX_PENDING_PUBLICATIONS: usize = 256;
 const MAX_PENDING_PUBLICATION_BYTES: usize = 256 * 1024 * 1024;
+/// DHT keys whose cleanup waits for room in the network command queue. A key is 32 bytes, so the
+/// queue holds well under 1 MiB.
+const MAX_QUEUED_CLEANUPS: usize = 4_096;
 const MAX_BUFFERED_NOTIFICATIONS: usize = 1_024;
 const MAX_RECEIVED_DOCUMENTS: usize = 8_192;
 /// Concurrent document fetches.
@@ -111,8 +113,9 @@ impl Publication {
         self.event.meta.expires_at <= chrono::Utc::now()
     }
 
-    /// Stop the announcement and the upload in flight, and cancel the scheduled ones.
-    fn stop(&self, ctx: &mut actix::Context<DocumentPublisher>) {
+    /// Stop the announcement and the upload in flight, and cancel the scheduled ones. Returns
+    /// whether an upload was in flight: stopping its future does not end its Kademlia query.
+    fn stop(&self, ctx: &mut actix::Context<DocumentPublisher>) -> bool {
         for handle in [&self.announcing, &self.replicating].into_iter().flatten() {
             handle.abort();
         }
@@ -122,6 +125,7 @@ impl Publication {
         {
             ctx.cancel_future(timer);
         }
+        self.replicating.is_some()
     }
 }
 
@@ -140,9 +144,16 @@ pub struct DocumentPublisher {
     topic: String,
     /// Pure decision/state service.
     service: DocumentPublishingService,
-    effects_enabled: bool,
+    /// Whether publications may announce and upload their documents. During startup this turns on
+    /// at `SyncEnded`: by then the node has seen the chain history of every E3, so it does not
+    /// announce or upload a document of an E3 that ended while the node was offline.
+    publishing_enabled: bool,
     publications: HashMap<DocumentId, Publication>,
     publication_bytes: usize,
+    /// Cleanup commands that wait for room in the network command queue.
+    cleanup: CleanupQueue,
+    /// Whether a cleanup command waits for room now. Only one does at a time.
+    sending_cleanup: bool,
     received: HashSet<DocumentId>,
     /// Documents being fetched, with the failed attempts before the current one.
     fetching: HashMap<DocumentId, u32>,
@@ -204,9 +215,11 @@ impl DocumentPublisher {
             rx: rx.clone(),
             topic: topic.into(),
             service,
-            effects_enabled,
+            publishing_enabled: effects_enabled,
             publications: HashMap::new(),
             publication_bytes: 0,
+            cleanup: CleanupQueue::new(MAX_QUEUED_CLEANUPS),
+            sending_cleanup: false,
             received: recovered.received,
             fetching: HashMap::new(),
             fetch_queue: FetchQueue::new(MAX_WAITING_FETCHES),
@@ -407,12 +420,14 @@ impl DocumentPublisher {
             self.remove_publication(id, ctx);
             return None;
         }
-        self.effects_enabled.then(|| publication.event.clone())
+        self.publishing_enabled.then(|| publication.event.clone())
     }
 
     fn remove_publication(&mut self, id: &DocumentId, ctx: &mut actix::Context<Self>) {
         if let Some(publication) = self.publications.remove(id) {
-            publication.stop(ctx);
+            if publication.stop(ctx) {
+                self.queue_cleanup([Cleanup::CancelPut(id.1.clone())], ctx);
+            }
             self.publication_bytes = self
                 .publication_bytes
                 .saturating_sub(publication.event.value.size());
@@ -436,17 +451,15 @@ impl DocumentPublisher {
             self.closed_e3s.push_back(e3_id.clone());
         }
         let keys = self.service.complete_e3(e3_id);
-        self.publications.retain(|(id, _), publication| {
-            if id == e3_id {
-                publication.stop(ctx);
-                self.publication_bytes = self
-                    .publication_bytes
-                    .saturating_sub(publication.event.value.size());
-                false
-            } else {
-                true
-            }
-        });
+        let closed: Vec<DocumentId> = self
+            .publications
+            .keys()
+            .filter(|(id, _)| id == e3_id)
+            .cloned()
+            .collect();
+        for id in &closed {
+            self.remove_publication(id, ctx);
+        }
         self.received.retain(|(id, _)| id != e3_id);
         self.fetching.retain(|(id, _), _| id != e3_id);
         self.late_notifications.retain(|(id, _), _| id != e3_id);
@@ -459,9 +472,55 @@ impl DocumentPublisher {
                 keys.len(),
                 e3_id
             );
-            let _ = self.tx.try_send(NetCommand::DhtRemoveRecords { keys });
+            self.queue_cleanup(keys.into_iter().map(Cleanup::RemoveRecord), ctx);
         }
         Ok(())
+    }
+
+    /// Queue network cleanup and send it in order. One send at a time waits for room in a busy
+    /// command queue, so the wait holds no task per command, and a full cleanup queue drops its
+    /// oldest entries.
+    fn queue_cleanup(
+        &mut self,
+        cleanups: impl IntoIterator<Item = Cleanup>,
+        ctx: &mut actix::Context<Self>,
+    ) {
+        let mut dropped = 0;
+        for cleanup in cleanups {
+            dropped += usize::from(self.cleanup.push(cleanup));
+        }
+        if dropped > 0 {
+            warn!(
+                "The network command queue is busy: dropped the {} oldest DHT cleanups. Their \
+                 records expire and their puts time out on their own.",
+                dropped
+            );
+        }
+        self.send_next_cleanup(ctx);
+    }
+
+    fn send_next_cleanup(&mut self, ctx: &mut actix::Context<Self>) {
+        if self.sending_cleanup {
+            return;
+        }
+        let Some(command) = self.cleanup.next_command() else {
+            return;
+        };
+        self.sending_cleanup = true;
+        let tx = self.tx.clone();
+        let send = async move { tx.send(command).await.is_ok() };
+        ctx.spawn(send.into_actor(self).map(|sent, actor, ctx| {
+            actor.sending_cleanup = false;
+            if sent {
+                actor.send_next_cleanup(ctx);
+            } else {
+                let dropped = actor.cleanup.clear();
+                debug!(
+                    "The network interface stopped: dropped {} more DHT cleanups",
+                    dropped
+                );
+            }
+        }));
     }
 }
 

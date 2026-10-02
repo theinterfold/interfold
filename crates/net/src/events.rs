@@ -235,6 +235,13 @@ pub enum NetCommand {
         value: ArcBytes,
         key: ContentHash,
     },
+    /// End the Kademlia queries of a key's DHT puts that are in their upload phase. It has no
+    /// reply. This is not a full cancel: requests that a query already gave to the connection
+    /// handlers, queued or in progress, still go out, and a put that still looks up its closest
+    /// peers runs on and then uploads the record.
+    DhtCancelPut {
+        key: ContentHash,
+    },
     /// Fetch Document from Kademlia
     DhtGetRecord {
         correlation_id: CorrelationId,
@@ -314,6 +321,7 @@ impl NetCommand {
                 correlation_id,
                 key,
             } => format!("DhtGetRecord {{ correlation_id: {correlation_id}, key: {key:?} }}"),
+            N::DhtCancelPut { key } => format!("DhtCancelPut {{ key: {key:?} }}"),
             N::DhtRemoveRecords { keys } => format!("DhtRemoveRecords {{ keys: {} }}", keys.len()),
             N::OutgoingRequest(OutgoingRequest { correlation_id, .. }) => {
                 format!("OutgoingRequest {{ correlation_id: {correlation_id} }}")

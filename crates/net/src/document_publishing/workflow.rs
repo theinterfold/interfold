@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     fmt,
     time::{Duration, Instant},
 };
@@ -14,7 +14,11 @@ use chrono::{DateTime, Utc};
 use e3_events::{E3id, Filter, PartyId};
 use e3_utils::ArcBytes;
 
-use crate::{backoff::backoff_delay, events::DocumentPublishedNotification, ContentHash};
+use crate::{
+    backoff::backoff_delay,
+    events::{DocumentPublishedNotification, NetCommand},
+    ContentHash,
+};
 
 /// First delay before a document is announced again. Later announcements back off.
 pub const ANNOUNCE_INTERVAL: Duration = Duration::from_secs(30);
@@ -288,6 +292,65 @@ impl FetchQueue {
 
     pub fn remove_e3(&mut self, e3_id: &E3id) {
         self.waiting.retain(|(id, _), _| id != e3_id);
+    }
+}
+
+/// Network cleanup of one DHT key that has no reply.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Cleanup {
+    /// End the Kademlia query of a stopped publication's upload.
+    CancelPut(ContentHash),
+    /// Remove a record from this node's DHT store.
+    RemoveRecord(ContentHash),
+}
+
+/// Cleanup that waits for room in the network command queue, oldest first. It holds at most
+/// `limit` keys, so its bytes are bounded too. A full queue drops its oldest entry: the record
+/// still expires and the query still times out on its own.
+pub struct CleanupQueue {
+    entries: VecDeque<Cleanup>,
+    limit: usize,
+}
+
+impl CleanupQueue {
+    pub fn new(limit: usize) -> Self {
+        Self {
+            entries: VecDeque::new(),
+            limit,
+        }
+    }
+
+    /// Queue `cleanup`. Returns whether the oldest entry was dropped to make room.
+    pub fn push(&mut self, cleanup: Cleanup) -> bool {
+        let full = self.entries.len() >= self.limit;
+        if full {
+            self.entries.pop_front();
+        }
+        self.entries.push_back(cleanup);
+        full
+    }
+
+    /// The next command to send. Removals that follow each other go out as one command.
+    pub fn next_command(&mut self) -> Option<NetCommand> {
+        match self.entries.pop_front()? {
+            Cleanup::CancelPut(key) => Some(NetCommand::DhtCancelPut { key }),
+            Cleanup::RemoveRecord(key) => {
+                let mut keys = vec![key];
+                while let Some(Cleanup::RemoveRecord(_)) = self.entries.front() {
+                    if let Some(Cleanup::RemoveRecord(key)) = self.entries.pop_front() {
+                        keys.push(key);
+                    }
+                }
+                Some(NetCommand::DhtRemoveRecords { keys })
+            }
+        }
+    }
+
+    /// Drop every entry. Returns how many were dropped.
+    pub fn clear(&mut self) -> usize {
+        let dropped = self.entries.len();
+        self.entries.clear();
+        dropped
     }
 }
 
@@ -770,5 +833,25 @@ mod tests {
     #[test]
     fn datetime_helper_accepts_future_expiry() {
         assert!(datetime_to_instant_from_now(Utc::now() + chrono::Duration::days(1)).is_ok());
+    }
+
+    #[test]
+    fn a_full_cleanup_queue_drops_its_oldest_entry() {
+        let key = |n: u8| ContentHash::from_content(&[n]);
+        let mut queue = CleanupQueue::new(3);
+        assert!(!queue.push(Cleanup::RemoveRecord(key(1))));
+        assert!(!queue.push(Cleanup::CancelPut(key(2))));
+        assert!(!queue.push(Cleanup::RemoveRecord(key(3))));
+        assert!(queue.push(Cleanup::RemoveRecord(key(4))));
+
+        assert!(matches!(
+            queue.next_command(),
+            Some(NetCommand::DhtCancelPut { key: cancelled }) if cancelled == key(2)
+        ));
+        assert!(matches!(
+            queue.next_command(),
+            Some(NetCommand::DhtRemoveRecords { keys }) if keys == vec![key(3), key(4)]
+        ));
+        assert!(queue.next_command().is_none());
     }
 }
