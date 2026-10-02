@@ -6,7 +6,7 @@
 
 //! Pure selection of an H-dealer set with complete, matching recipient receipts.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use alloy::primitives::keccak256;
 use alloy::sol_types::SolValue;
@@ -51,6 +51,22 @@ pub(crate) fn dealer_identity(
         party_id,
         contribution_hash,
     })
+}
+
+/// Whether the share batch `candidate` grows the recorded batch `previous`: it holds every dealer
+/// of `previous` that is not expelled, and at least one more dealer. A dealer expelled after
+/// `previous` was recorded therefore does not block a larger batch.
+pub(crate) fn batch_grows(
+    previous: &BTreeSet<u64>,
+    candidate: &BTreeSet<u64>,
+    expelled: &HashSet<u64>,
+) -> bool {
+    let remaining: BTreeSet<u64> = previous
+        .iter()
+        .filter(|party_id| !expelled.contains(party_id))
+        .copied()
+        .collect();
+    remaining.len() < candidate.len() && remaining.is_subset(candidate)
 }
 
 /// Find the first H-party set whose members each hold the same version of
@@ -294,5 +310,28 @@ mod tests {
     fn cannot_select_below_h() {
         let ready = BTreeMap::from([(0, dealers(&[0, 1]))]);
         assert!(select_ready_roster(&ready, 2).is_none());
+    }
+
+    fn ids(ids: &[u64]) -> BTreeSet<u64> {
+        ids.iter().copied().collect()
+    }
+
+    #[test]
+    fn a_batch_grows_past_an_expelled_dealer() {
+        let expelled = HashSet::from([1]);
+        assert!(batch_grows(&ids(&[1, 2]), &ids(&[2, 3]), &expelled));
+        assert!(batch_grows(&ids(&[1]), &ids(&[2]), &expelled));
+        // Without the expulsion, dropping dealer 1 is not growth.
+        assert!(!batch_grows(&ids(&[1, 2]), &ids(&[2, 3]), &HashSet::new()));
+    }
+
+    #[test]
+    fn a_batch_must_still_hold_every_remaining_dealer_and_add_one() {
+        let expelled = HashSet::from([1]);
+        // The remaining dealer 2 is missing.
+        assert!(!batch_grows(&ids(&[1, 2]), &ids(&[3, 4]), &expelled));
+        // Only the expelled dealer left; no dealer was added.
+        assert!(!batch_grows(&ids(&[1, 2]), &ids(&[2]), &expelled));
+        assert!(batch_grows(&ids(&[2]), &ids(&[2, 3]), &HashSet::new()));
     }
 }

@@ -565,7 +565,10 @@ ShareVerificationActor receives ShareVerificationDispatched(kind=ShareProofs)
     ├─ Saves the verified dealer IDs and their exact contribution hashes
     ├─ Publishes a signed DkgCoordination::Ready list when at least H dealers,
     │  including this party, remain
-    ├─ Re-verifies each strict late-share superset and publishes a new signed Ready list
+    ├─ Re-verifies each late-share batch that holds every dealer of the saved batch that
+    │  is not expelled, plus at least one more. It publishes a new signed Ready list only
+    │  when the list keeps every dealer of the earlier one, so a Ready list never drops a
+    │  dealer, even an expelled one
     ├─ If fewer than H pass locally, stays outside C4 without failing the E3
     └─ Waits for one H-dealer roster before Step 7
 
