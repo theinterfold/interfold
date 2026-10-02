@@ -6,6 +6,11 @@
 # binary with the same config and data. The E3 must still produce the correct plaintext, the
 # candidate must accept the released node's persisted state, and the restart must not lose it.
 #
+# The in-place scenarios need a candidate with the same SCHEMA_VERSION as the released binary.
+# Across a SCHEMA_VERSION raise, only `reset` with UPGRADE_RESET=all applies, and `mixed-dkg` when
+# both binaries pin the same circuits version. The nodes share one circuits folder, and v0.17.0
+# pins another version than later releases.
+#
 # Required:
 #   INTERFOLD_BIN_OLD  released binary, for example v0.18.0
 #   INTERFOLD_BIN_NEW  candidate binary
@@ -24,6 +29,13 @@
 #   mixed-dkg cn2 and cn4 run the candidate from the start and the other nodes the released
 #             binary, so DKG and decryption both run across versions, as for an E3 requested during
 #             the rollout. The run fails as inconclusive when the committee is not mixed.
+#   reset     a first E3 completes on the released binary. Its committee members then clear their
+#             state with the candidate's `node reset-data`. The command keeps the operator key and
+#             the libp2p keypair. The other nodes move to the candidate with their state. The reset
+#             nodes must keep their identity. A second E3 must complete on the candidate, with a
+#             reset node in its committee. With UPGRADE_RESET=all, every node resets. Use it when
+#             the candidate raised SCHEMA_VERSION over the released binary, so that it cannot load
+#             the released state, as for v0.17.0.
 #
 # Run from tests/integration:
 #   INTERFOLD_BIN_OLD=... INTERFOLD_BIN_NEW=... UPGRADE_SCENARIO=mixed ./test.sh upgrade
@@ -36,8 +48,13 @@ THIS_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 : "${INTERFOLD_BIN_NEW:?set INTERFOLD_BIN_NEW to the candidate interfold binary}"
 UPGRADE_SCENARIO="${UPGRADE_SCENARIO:-all}"
 case "$UPGRADE_SCENARIO" in
-  all|mixed|late|rollback|mixed-dkg) ;;
-  *) echo "Unknown UPGRADE_SCENARIO: $UPGRADE_SCENARIO (use all, mixed, late, rollback, or mixed-dkg)" >&2; exit 1 ;;
+  all|mixed|late|rollback|mixed-dkg|reset) ;;
+  *) echo "Unknown UPGRADE_SCENARIO: $UPGRADE_SCENARIO (use all, mixed, late, rollback, mixed-dkg, or reset)" >&2; exit 1 ;;
+esac
+UPGRADE_RESET="${UPGRADE_RESET:-committee}"
+case "$UPGRADE_RESET" in
+  committee|all) ;;
+  *) echo "Unknown UPGRADE_RESET: $UPGRADE_RESET (use committee or all)" >&2; exit 1 ;;
 esac
 
 export INTERFOLD_BIN="$INTERFOLD_BIN_OLD"
@@ -100,19 +117,18 @@ node_state_dirs() {
   echo "$SCRIPT_DIR/.interfold/data/$1" "$SCRIPT_DIR/.interfold/config/$1"
 }
 
-# Stop a node and prove that the binary it restarts on accepts its state. The first stop records
-# the inventory that the final check compares against.
-prepare_switch() {
-  local name="$1" bin="$2" label="$3"
-  stop_node "$name"
-  if [[ ! -f "$SCRIPT_DIR/output/$name.before.json" ]]; then
-    # shellcheck disable=SC2046
-    python3 "$INVENTORY" snapshot "$SCRIPT_DIR/output/$name.before.json" $(node_state_dirs "$name")
-    if ! identity_of "$INTERFOLD_BIN_OLD" "$name" > "$SCRIPT_DIR/output/$name.identity.before"; then
-      echo "Could not read the operator address and peer ID of $name before the switch" >&2
-      return 1
-    fi
+# Record the operator address and peer ID that the final check compares against.
+record_identity() {
+  local name="$1"
+  if ! identity_of "$INTERFOLD_BIN_OLD" "$name" > "$SCRIPT_DIR/output/$name.identity.before"; then
+    echo "Could not read the operator address and peer ID of $name before the switch" >&2
+    return 1
   fi
+}
+
+# Prove that the binary a node restarts on accepts its state.
+validate_state() {
+  local name="$1" bin="$2" label="$3"
   heading "Validate $name state with the $label binary"
   "$bin" node validate --name "$name" --config "$CONFIG" \
     | tee "$SCRIPT_DIR/output/$name.$label.validate.txt"
@@ -121,6 +137,55 @@ prepare_switch() {
     echo "The $label binary rejected the state of $name" >&2
     return 1
   fi
+}
+
+# Stop a node and prove that the binary it restarts on accepts its state. The first stop records
+# the inventory and the identity that the final checks compare against.
+prepare_switch() {
+  local name="$1" bin="$2" label="$3"
+  stop_node "$name"
+  if [[ ! -f "$SCRIPT_DIR/output/$name.before.json" ]]; then
+    # shellcheck disable=SC2046
+    python3 "$INVENTORY" snapshot "$SCRIPT_DIR/output/$name.before.json" $(node_state_dirs "$name")
+    record_identity "$name"
+  fi
+  validate_state "$name" "$bin" "$label"
+}
+
+# Stop a node and clear its state with the candidate's `node reset-data`, as an operator does when
+# the candidate cannot load the state. The reset must remove the event log and leave only the
+# identity in the store, and the candidate must accept what remains.
+prepare_reset() {
+  local name="$1"
+  stop_node "$name"
+  record_identity "$name"
+  heading "Reset $name with the candidate binary"
+  "$INTERFOLD_BIN_NEW" node reset-data --yes --name "$name" --config "$CONFIG" 2>&1 \
+    | tee "$SCRIPT_DIR/output/$name.reset.txt"
+  if compgen -G "$SCRIPT_DIR/.interfold/data/$name/log*" >/dev/null; then
+    echo "$name: reset-data left an event log" >&2
+    return 1
+  fi
+  validate_state "$name" "$INTERFOLD_BIN_NEW" new
+  if ! grep -qF "empty store will be initialized" "$SCRIPT_DIR/output/$name.new.validate.txt"; then
+    echo "$name: reset-data left protocol state in the store" >&2
+    return 1
+  fi
+}
+
+# Wait until a node records an E3 as complete. `reset-data` refuses to delete the key share of an
+# E3 that the node has not seen complete.
+wait_for_complete() {
+  local name="$1" label="$2" e3_id="$3" waited=0
+  until grep -qF "E3 lifecycle reached terminal stage e3_id=31337:$e3_id stage=Complete" \
+    "$SCRIPT_DIR/output/$name.$label.log" 2>/dev/null; do
+    if ((waited >= 120)); then
+      echo "$name did not record E3 $e3_id as complete within 120 s" >&2
+      return 1
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
 }
 
 contract_address() {
@@ -165,6 +230,61 @@ committee_node_names() {
   done
 }
 
+# Request an E3 from the minimum committee, wait for its public key in `dir`, and open its input
+# window. The function sets E3_ID.
+request_e3() {
+  local dir="$1" request_output
+  heading "Request Committee"
+  set_integration_input_window
+  request_output=$(pnpm committee:new \
+    --network localhost \
+    --input-window-start "$INPUT_WINDOW_START" \
+    --input-window-end "$INPUT_WINDOW_END" \
+    --e3-params "$ENCODED_PARAMS" \
+    --committee-size 0)
+  printf '%s\n' "$request_output"
+  E3_ID=$(extract_e3_id "$request_output")
+  wait_for_committee_pubkey "$E3_ID" "$dir/pubkey.bin" "${INTEGRATION_DKG_TIMEOUT:-1300}"
+  advance_evm_time_past "$INPUT_WINDOW_START"
+}
+
+# Encrypt the test plaintext to the public key in `dir`, then publish an input and the ciphertext.
+publish_ciphertext() {
+  local e3_id="$1" dir="$2"
+  heading "Mock encrypted plaintext"
+  "$SCRIPT_DIR/lib/fake_encrypt.sh" --input "$dir/pubkey.bin" --output "$dir/output.bin" \
+    --commitment-output "$dir/ciphertext_commitment.bin" --plaintext "$PLAINTEXT" \
+    --params "$ENCODED_PARAMS"
+
+  heading "Mock publish input e3-id"
+  pnpm e3-program:publishInput --network localhost --e3-id "$e3_id" --data 0x12345678
+
+  advance_evm_time_past "$INPUT_WINDOW_END"
+
+  waiton "$dir/output.bin"
+
+  heading "Publish ciphertext to EVM"
+  pnpm e3:publishCiphertext \
+    --e3-id "$e3_id" \
+    --network localhost \
+    --data-file "$dir/output.bin" \
+    --ciphertext-commitment-file "$dir/ciphertext_commitment.bin" \
+    --proof 0x12345678 \
+    --mock-data-availability-directory "$MOCK_DATA_AVAILABILITY_DIRECTORY"
+}
+
+# Wait for the plaintext of an E3 and compare it with the test plaintext.
+check_plaintext() {
+  local e3_id="$1" dir="$2" actual
+  wait_for_plaintext_output "$e3_id" "$dir/plaintext.txt"
+  actual=$(cut -d',' -f1,2 "$dir/plaintext.txt")
+  if [[ "$actual" != "$PLAINTEXT"* ]]; then
+    echo "Invalid plaintext decrypted for E3 $e3_id: actual='$actual' expected='$PLAINTEXT'"
+    echo "Test FAILED"
+    cleanup 1
+  fi
+}
+
 heading "Start the EVM node"
 
 launch_evm
@@ -190,6 +310,24 @@ interfold_wallet_set cn3 "$PRIVATE_KEY_CN3"
 interfold_wallet_set cn4 "$PRIVATE_KEY_CN4"
 interfold_wallet_set cn5 "$PRIVATE_KEY_CN5"
 
+NOIR_DIR="$SCRIPT_DIR/.interfold/noir"
+CANDIDATE_NOIR="$SCRIPT_DIR/.interfold/candidate-noir"
+if [[ "$UPGRADE_SCENARIO" == "reset" ]]; then
+  # The released binary's setup replaces the circuits and `bb` when it pins another circuits
+  # version, as v0.17.0 does. Keep what prebuild staged for the candidate, and restore it before
+  # the candidate starts. After a failed run, a rerun with --no-prebuild would keep what the
+  # released binary downloaded, so the folder must match the stamp that prebuild wrote.
+  PREBUILD_STAMP="$SCRIPT_DIR/.interfold/prebuild-noir.sha256"
+  if ! STAGED_NOIR=$(noir_digest "$NOIR_DIR") || [[ ! -f "$PREBUILD_STAMP" ]] ||
+    [[ "$STAGED_NOIR" != "$(cat "$PREBUILD_STAMP")" ]]; then
+    echo "$NOIR_DIR does not hold the prebuild output. Run ./test.sh upgrade without --no-prebuild." >&2
+    cleanup 1
+  fi
+  rm -rf "$CANDIDATE_NOIR"
+  mkdir -p "$CANDIDATE_NOIR"
+  cp -R "$NOIR_DIR/circuits" "$NOIR_DIR/bin" "$NOIR_DIR/version.json" "$CANDIDATE_NOIR/"
+fi
+
 heading "Setup ZK prover"
 $INTERFOLD_BIN noir setup
 
@@ -209,28 +347,55 @@ pnpm ciphernode:add --ciphernode-address "$CIPHERNODE_ADDRESS_3" --network local
 pnpm ciphernode:add --ciphernode-address "$CIPHERNODE_ADDRESS_4" --network localhost
 pnpm ciphernode:add --ciphernode-address "$CIPHERNODE_ADDRESS_5" --network localhost
 
-heading "Request Committee"
-
 ENCODED_PARAMS=0x$("$SCRIPT_DIR/lib/pack_e3_params.sh" \
   --moduli 0xffffee001 \
   --moduli 0xffffc4001 \
   --degree 512 \
   --plaintext-modulus 100)
 
-set_integration_input_window
+FIRST_E3_ID=""
+RESET_NODES=""
+if [[ "$UPGRADE_SCENARIO" == "reset" ]]; then
+  heading "Complete a first E3 on the released binary"
+  FIRST_E3_DIR="$SCRIPT_DIR/output/first-e3"
+  mkdir -p "$FIRST_E3_DIR"
+  request_e3 "$FIRST_E3_DIR"
+  FIRST_E3_ID="$E3_ID"
+  RESET_NODES=$(committee_node_names "$FIRST_E3_ID" | tr '\n' ' ')
+  if [[ "$UPGRADE_RESET" == "all" ]]; then
+    RESET_NODES="$ALL_NODES"
+  fi
+  publish_ciphertext "$FIRST_E3_ID" "$FIRST_E3_DIR"
+  check_plaintext "$FIRST_E3_ID" "$FIRST_E3_DIR"
+  echo "E3 $FIRST_E3_ID is complete. Nodes to reset: [$RESET_NODES ]"
+  for name in $RESET_NODES; do
+    wait_for_complete "$name" old "$FIRST_E3_ID"
+  done
 
-REQUEST_OUTPUT=$(pnpm committee:new \
-  --network localhost \
-  --input-window-start "$INPUT_WINDOW_START" \
-  --input-window-end "$INPUT_WINDOW_END" \
-  --e3-params "$ENCODED_PARAMS" \
-  --committee-size 0)
-printf '%s\n' "$REQUEST_OUTPUT"
+  # Every node stops before any node starts on the candidate. The nodes share one circuits folder,
+  # and each start installs the circuits that its binary pins.
+  for name in $ALL_NODES; do
+    if [[ " $RESET_NODES " == *" $name "* ]]; then
+      prepare_reset "$name"
+    else
+      prepare_switch "$name" "$INTERFOLD_BIN_NEW" new
+    fi
+  done
+  heading "Restore the candidate circuits"
+  rm -rf "$NOIR_DIR/circuits" "$NOIR_DIR/bin"
+  cp -R "$CANDIDATE_NOIR/circuits" "$CANDIDATE_NOIR/bin" "$NOIR_DIR/"
+  cp "$CANDIDATE_NOIR/version.json" "$NOIR_DIR/version.json"
+  # The candidate's setup finds its own circuits version and downloads nothing.
+  "$INTERFOLD_BIN_NEW" noir setup
+  for name in $ALL_NODES; do
+    start_node "$INTERFOLD_BIN_NEW" "$name" new
+  done
+  for name in $ALL_NODES; do
+    wait_for_effects "$name" new
+  done
+fi
 
-E3_ID=$(extract_e3_id "$REQUEST_OUTPUT")
-
-wait_for_committee_pubkey "$E3_ID" "$SCRIPT_DIR/output/pubkey.bin" "${INTEGRATION_DKG_TIMEOUT:-1300}"
-advance_evm_time_past "$INPUT_WINDOW_START"
+request_e3 "$SCRIPT_DIR/output"
 
 COMMITTEE=$(committee_node_names "$E3_ID" | tr '\n' ' ')
 ACTIVE_AGG=$(node_name_for_address "$(wait_for_active_aggregator_address "$E3_ID")")
@@ -238,7 +403,7 @@ echo "Committee: $COMMITTEE; active aggregator: $ACTIVE_AGG"
 
 UPGRADED=""
 case "$UPGRADE_SCENARIO" in
-  all|late|rollback)
+  all|late|rollback|reset)
     UPGRADED="$ALL_NODES"
     ;;
   mixed)
@@ -259,18 +424,34 @@ case "$UPGRADE_SCENARIO" in
     if ((committee_new == 0 || committee_old == 0)); then
       echo "Inconclusive: committee [$COMMITTEE] does not mix the binaries; run the scenario again" >&2
       echo "Test FAILED"
-      exit 1
+      cleanup 1
     fi
     ;;
 esac
-echo "Scenario $UPGRADE_SCENARIO: move [$UPGRADED ] to the candidate"
 
-for name in $UPGRADED; do
-  prepare_switch "$name" "$INTERFOLD_BIN_NEW" new
-  if [[ "$UPGRADE_SCENARIO" != "late" ]]; then
-    start_node "$INTERFOLD_BIN_NEW" "$name" new
+if [[ "$UPGRADE_SCENARIO" == "reset" ]]; then
+  # Every node already runs the candidate. The run proves the reset path only when a reset node
+  # takes part in this E3.
+  reset_in_committee=0
+  for name in $COMMITTEE; do
+    if [[ " $RESET_NODES " == *" $name "* ]]; then
+      reset_in_committee=$((reset_in_committee + 1))
+    fi
+  done
+  if ((reset_in_committee == 0)); then
+    echo "Inconclusive: committee [$COMMITTEE] has no reset node; run the scenario again" >&2
+    echo "Test FAILED"
+    cleanup 1
   fi
-done
+else
+  echo "Scenario $UPGRADE_SCENARIO: move [$UPGRADED ] to the candidate"
+  for name in $UPGRADED; do
+    prepare_switch "$name" "$INTERFOLD_BIN_NEW" new
+    if [[ "$UPGRADE_SCENARIO" != "late" ]]; then
+      start_node "$INTERFOLD_BIN_NEW" "$name" new
+    fi
+  done
+fi
 
 if [[ "$UPGRADE_SCENARIO" == "rollback" ]]; then
   # Roll back only a candidate that replayed its state, joined the network, and enabled effects.
@@ -283,7 +464,7 @@ if [[ "$UPGRADE_SCENARIO" == "rollback" ]]; then
     if grep -E -n "Halting|panicked at|Failed to deserialize|failed to decode" \
       "$SCRIPT_DIR/output/$name.new.log"; then
       echo "$name: the candidate log shows a load or decode failure before the rollback" >&2
-      exit 1
+      cleanup 1
     fi
   done
   for name in $UPGRADED; do
@@ -302,24 +483,7 @@ if [[ "$UPGRADE_SCENARIO" != "late" ]]; then
   done
 fi
 
-heading "Mock encrypted plaintext"
-"$SCRIPT_DIR/lib/fake_encrypt.sh" --input "$SCRIPT_DIR/output/pubkey.bin" --output "$SCRIPT_DIR/output/output.bin" --commitment-output "$SCRIPT_DIR/output/ciphertext_commitment.bin" --plaintext "$PLAINTEXT" --params "$ENCODED_PARAMS"
-
-heading "Mock publish input e3-id"
-pnpm e3-program:publishInput --network localhost --e3-id "$E3_ID" --data 0x12345678
-
-advance_evm_time_past "$INPUT_WINDOW_END"
-
-waiton "$SCRIPT_DIR/output/output.bin"
-
-heading "Publish ciphertext to EVM"
-pnpm e3:publishCiphertext \
-  --e3-id "$E3_ID" \
-  --network localhost \
-  --data-file "$SCRIPT_DIR/output/output.bin" \
-  --ciphertext-commitment-file "$SCRIPT_DIR/output/ciphertext_commitment.bin" \
-  --proof 0x12345678 \
-  --mock-data-availability-directory "$MOCK_DATA_AVAILABILITY_DIRECTORY"
+publish_ciphertext "$E3_ID" "$SCRIPT_DIR/output"
 
 if [[ "$UPGRADE_SCENARIO" == "late" ]]; then
   for name in $UPGRADED; do
@@ -327,14 +491,7 @@ if [[ "$UPGRADE_SCENARIO" == "late" ]]; then
   done
 fi
 
-wait_for_plaintext_output "$E3_ID" "$SCRIPT_DIR/output/plaintext.txt"
-
-ACTUAL=$(cut -d',' -f1,2 "$SCRIPT_DIR/output/plaintext.txt")
-if [[ "$ACTUAL" != "$PLAINTEXT"* ]]; then
-  echo "Invalid plaintext decrypted: actual='$ACTUAL' expected='$PLAINTEXT'"
-  echo "Test FAILED"
-  exit 1
-fi
+check_plaintext "$E3_ID" "$SCRIPT_DIR/output"
 
 heading "Check candidate-node logs and persisted state"
 FAILED=0
@@ -373,12 +530,14 @@ if ((SHARES_SENT == 0)); then
 fi
 
 heading "Check the chain for failures and slashing"
-E3_STAGE=$(cast call "$(contract_address interfold)" "getE3Stage(uint256)(uint8)" "$E3_ID" \
-  --rpc-url http://localhost:8545)
-if [[ "$E3_STAGE" != "5" ]]; then
-  echo "E3 $E3_ID is at stage $E3_STAGE, not Complete (5)" >&2
-  FAILED=1
-fi
+for e3_id in $FIRST_E3_ID $E3_ID; do
+  E3_STAGE=$(cast call "$(contract_address interfold)" "getE3Stage(uint256)(uint8)" "$e3_id" \
+    --rpc-url http://localhost:8545)
+  if [[ "$E3_STAGE" != "5" ]]; then
+    echo "E3 $e3_id is at stage $E3_STAGE, not Complete (5)" >&2
+    FAILED=1
+  fi
+done
 if ! FAILED_E3S=$(count_logs "$(contract_address interfold)" "E3Failed(uint256,uint8,uint8)") ||
   ! SLASH_PROPOSALS=$(count_logs "$(contract_address slashing_manager)" \
     "SlashProposed(uint256,uint256,address,bytes32,uint256,uint256,uint256,address,uint8)"); then
@@ -404,6 +563,10 @@ for name in $UPGRADED; do
   fi
 done
 for name in $UPGRADED; do
+  # A reset node deleted its state on purpose.
+  if [[ " $RESET_NODES " == *" $name "* ]]; then
+    continue
+  fi
   # shellcheck disable=SC2046
   python3 "$INVENTORY" snapshot "$SCRIPT_DIR/output/$name.after.json" \
     --baseline "$SCRIPT_DIR/output/$name.before.json" $(node_state_dirs "$name")

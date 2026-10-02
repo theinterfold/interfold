@@ -119,7 +119,7 @@ describe("CiphernodeRegistryOwnable", function () {
   }
 
   describe("constructor / initialize()", function () {
-    it("stores the owner and the sortition submission window through a proxy", async function () {
+    it("gives ownership to the given owner after the owner-only setup", async function () {
       const poseidonFactory = await ethers.getContractFactory("PoseidonT3");
       const poseidonDeployment = await poseidonFactory.deploy();
       await poseidonDeployment.waitForDeployment();
@@ -130,8 +130,9 @@ describe("CiphernodeRegistryOwnable", function () {
       const sortitionDeployment = await sortitionFactory.deploy();
       await sortitionDeployment.waitForDeployment();
       const sortitionAddress = await sortitionDeployment.getAddress();
-      const [deployer] = await ethers.getSigners();
-      if (!deployer) throw new Error("Bad getSigners() output");
+      // The default signer deploys the proxy, so `msg.sender` in `initialize` differs from `_owner`.
+      const [deployer, owner] = await ethers.getSigners();
+      if (!deployer || !owner) throw new Error("Bad getSigners() output");
 
       const ciphernodeRegistryFactory = await ethers.getContractFactory(
         "CiphernodeRegistryOwnable",
@@ -148,7 +149,7 @@ describe("CiphernodeRegistryOwnable", function () {
 
       const initData = ciphernodeRegistryFactory.interface.encodeFunctionData(
         "initialize",
-        [deployer.address, SORTITION_SUBMISSION_WINDOW],
+        [owner.address, SORTITION_SUBMISSION_WINDOW],
       );
 
       const proxyFactory = await ethers.getContractFactory(
@@ -167,7 +168,7 @@ describe("CiphernodeRegistryOwnable", function () {
         deployer,
       );
 
-      expect(await ciphernodeRegistry.owner()).to.equal(deployer.address);
+      expect(await ciphernodeRegistry.owner()).to.equal(owner.address);
       expect(await ciphernodeRegistry.sortitionSubmissionWindow()).to.equal(
         SORTITION_SUBMISSION_WINDOW,
       );

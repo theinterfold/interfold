@@ -87,6 +87,54 @@ For a protocol-bearing change:
    the CI jobs whose path filters cover the change. Do not claim that CI passed unless you saw the
    result.
 
+## One owner, no copies
+
+A **scattered domain** is a protocol capability or business rule whose logic already lives in
+several files, whose copies disagree, or whose calculations sit in the wrong layer (handlers, CLI
+formatting, templates, view builders).
+
+These rules apply on top of Change discipline. When they conflict with "change only the requested
+scope", the first change is the consolidate. The feature is a later change.
+
+### Second use of existing logic
+
+Before you add a second use of a formula, threshold, format string, hash, or schema fact:
+
+1. Search the repository for that expression.
+2. List every copy.
+3. If copies disagree, stop and report. Do not add another copy.
+4. If copies agree, move the logic to the owning module. Switch every caller. Keep each caller's
+   exact results, including guards, rounding, and clamps. Tests must stay green.
+5. Add the new use in a later change.
+
+A new helper next to old copies is one more duplicate.
+
+### Where a new rule goes
+
+Put a new rule in the module that owns that domain.
+
+- Rust: the capability directory in `ARCHITECTURE.md` §Canonical Module Structure.
+- Protocol facts: the invariant section and the cited source.
+- Contract formulas: the Solidity library that already owns that calculation.
+
+Do not put a new rule in the first feature that needs it. A function-level import that exists only
+to dodge a cycle means the logic is in the wrong module.
+
+### Refactor, then change
+
+When you work in a scattered domain:
+
+1. Write counts: files that hold the logic, copies of each formula, places the copies disagree.
+2. Make a behavior-preserving consolidate. One PR. Tests green. No new feature in that diff.
+3. Add a check that fails if the copies return, when you can write one (`scripts/check-*.{sh,ts}`).
+4. Repeat the same counts on the result.
+5. Then implement the feature on the owner module.
+
+Do not mix the consolidate and the feature in one unverifiable diff.
+
+A prompted "never" is not a gate. A rule that matters has a CI check, a hook, or the
+invariant-reviewer procedure.
+
 ## Verification ladder
 
 Verify each change at the smallest scope that covers it, and name the command that you ran when you
@@ -124,6 +172,9 @@ Scale the review to the risk. Review the diff (`git diff`), not your memory of t
 
 Handle each finding with Change discipline rule 7. The review does not replace the gates, and the
 gates do not replace the review: most invariants have no mechanical check.
+
+When the change consolidates a scattered domain, report the same counts from the first audit.
+Report files, copies, and disagreements. A clean compile is not enough.
 
 ## Harness docs
 

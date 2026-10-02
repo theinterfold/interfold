@@ -662,8 +662,9 @@ A ready committee must finalize at or before its absolute DKG deadline.
    Ticket, activation, and configuration checkpoints use source seconds and log order from their
    `*At` payloads. The gateway captures these before the local clock merge. Snapshot replay and
    offline repair preserve the same positions; older backfill cannot overwrite newer checkpoints,
-   including within one block. Schema 7 requires a controlled resync of schema-6 histories; old
-   event variants stay decodable but do not supply trusted source timestamps.
+   including within one block. A schema-6 node clears its state with `interfold node reset-data` and
+   resyncs from chain history under schema 7; old event variants stay decodable but do not supply
+   trusted source timestamps.
 
 3. **Runtime committee order**: both the on-chain registry and Rust runtime normalize the finalized
    committee into ascending address order before deriving `party_id`. This keeps party IDs,

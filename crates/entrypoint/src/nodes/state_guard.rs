@@ -154,9 +154,12 @@ pub(crate) fn check_active_e3s(
         // The CLI prints only the top-level message, so the cause goes into the message itself.
         Err(error) => bail!(
             "Refusing to {}, because the command cannot show that no active E3 needs a key share \
-             from {}: {error:#}. The command deleted nothing. To delete the state anyway, add \
-             --allow-active-e3s.",
+             from {}: {error:#}. The command deleted nothing, and it cannot list the E3s of {}. Do \
+             not add --allow-active-e3s: it deletes every key share of {}. Start the node again \
+             with the release that it ran before, and find the cause of the error.",
             deletion.verb,
+            deletion.subject(),
+            deletion.subject(),
             deletion.subject()
         ),
     };
@@ -185,8 +188,10 @@ pub(crate) fn check_active_e3s(
         "Refusing to {}. {} holds key-share state for these E3s, which {} has not seen \
          complete:\n{list}\nThe command deleted nothing. A {} permanently deletes {} key share for \
          each listed E3, and the chain cannot restore it. A `Failed` stage can be a local failure \
-         while the E3 continues on chain. Keep this state until each listed E3 is complete or \
-         failed on chain, then run this command again with --allow-active-e3s.",
+         while the E3 continues on chain. Until one day after its lifecycle deadline \
+         (`getE3LifecycleDeadline`), the node can still submit slash reports for an E3. Keep this \
+         state until each listed E3 is complete or failed on chain, and that day has passed. Then \
+         run this command again with --allow-active-e3s.",
         deletion.verb,
         capitalize(&deletion.subject()),
         deletion.subject(),

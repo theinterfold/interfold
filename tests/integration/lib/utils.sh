@@ -66,3 +66,24 @@ extract_e3_id() {
 
   printf '%s\n' "$e3_id"
 }
+
+# Print the SHA-256 of stdin. Linux has sha256sum; macOS has shasum.
+sha256_of_stdin() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum | cut -d' ' -f1
+  else
+    shasum -a 256 | cut -d' ' -f1
+  fi
+}
+
+# Print one digest of the circuits, the pinned versions, and `bb` in a noir folder.
+# Usage: noir_digest <noir dir>
+noir_digest() {
+  local noir_dir="$1"
+  (
+    cd "$noir_dir" || exit 1
+    find circuits bin version.json -type f | LC_ALL=C sort | while IFS= read -r file; do
+      printf '%s %s\n' "$(sha256_of_stdin <"$file")" "$file"
+    done
+  ) | sha256_of_stdin
+}

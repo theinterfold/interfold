@@ -39,6 +39,10 @@ and the files at HEAD, not from what you remember writing.
    close a **Gap:** note (then the table or note must change), or reintroduce a resolved one?
 8. Check doc sync: if the diff changes documented behavior (signatures, events, formulas, timeouts,
    actor routing, CLI behavior), the same branch must update the corresponding `agent/` doc.
+9. When the diff adds or copies a formula, threshold, hash, or schema fact, search for other copies
+   of that expression. Flag a new copy, a helper that sits beside old copies, or copies that
+   disagree. Flag business logic that landed in handlers, CLI formatting, templates, or view
+   builders. — `agent/RULES.md` §One owner, no copies
 
 ## Review budget
 

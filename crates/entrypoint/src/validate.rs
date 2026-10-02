@@ -33,6 +33,9 @@
 //!    event log already contains a terminal event** for that E3. These are the
 //!    orphaned tickets that a crash mid-E3 can leave behind; they are the
 //!    "loose ends" a restart should clean up.
+//!
+//! Between checks 1 and 2, the schema check compares the stored schema marker with this binary.
+//! When it fails, checks 2 to 4 do not run, because they read snapshots in the stored schema.
 
 use crate::helpers::datastore::get_repositories;
 use anyhow::{bail, Context, Result};
@@ -93,7 +96,6 @@ impl CheckResult {
             detail: detail.into(),
         }
     }
-    #[allow(dead_code)]
     fn warn(name: &str, detail: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -217,10 +219,19 @@ pub async fn validate_node(config: &AppConfig, repair: bool) -> Result<Validatio
     let persisted_schema = repositories.schema_version().read().await?;
     let has_existing_state =
         total_events > 0 || has_schema_governed_kv_state(&repositories).await?;
-    report.push(check_schema_compatibility(
-        persisted_schema,
-        has_existing_state,
-    ));
+    let schema = check_schema_compatibility(persisted_schema, has_existing_state);
+    let schema_supported = schema.severity != Severity::Fail;
+    report.push(schema);
+    if !schema_supported {
+        // The later checks read snapshots, and this binary cannot show that it reads their schema.
+        // `start` halts at the same check.
+        report.push(CheckResult::warn(
+            "skipped",
+            "the snapshot cursor, sortition-projection and open-loop checks did not run, because \
+             they read snapshots in the stored schema",
+        ));
+        return Ok(report);
+    }
     let mut snapshot_cursors = HashMap::new();
     for (agg, events) in &events_by_aggregate {
         let seqs: Vec<u64> = events.iter().map(|e| e.seq()).collect();

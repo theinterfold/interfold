@@ -25,7 +25,8 @@ too large for that.
 
 ## Task loop
 
-1. Change only the requested scope.
+1. Change only the requested scope. If the same rule already lives in several files, consolidate
+   that domain first. — `agent/RULES.md` §One owner, no copies
 2. Verify at the smallest scope that covers the change. — `agent/RULES.md` §Verification ladder
 3. Review the diff. A protocol-bearing diff gets one invariant review pass. — `agent/RULES.md`
    §Review
@@ -41,6 +42,8 @@ too large for that.
   explicit, tested migration.
 - A protocol-bearing change is not correct only because it compiles. Check compatibility, replay,
   persistence, and cross-layer behavior.
+- When a change consolidates a scattered domain, re-run the same counts (files, copies,
+  disagreements). Cite the owner module. — `agent/RULES.md` §One owner, no copies
 - Leave formatting and other mechanical findings to the automated checks. Report only consequential,
   actionable findings.
 

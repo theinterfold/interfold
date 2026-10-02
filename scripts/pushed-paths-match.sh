@@ -12,8 +12,13 @@
 # pattern, and a `!<glob>` pattern excludes paths. The script compares each pushed branch with its
 # merge base with origin/main. Without refs on stdin (a manual run), it compares HEAD.
 #
-# Exit 0 when a pushed branch changes a matching path, and also on any error, so that the caller
-# runs its check. Exit 1 when no pushed branch changes a matching path.
+# check:verifiers reads only the checked-out tree, so it covers a pushed branch only when that branch
+# matches HEAD in the matching paths.
+#
+# Exit 0 when a pushed branch changes a matching path and matches HEAD in those paths, and also on
+# any error, so that the caller runs its check. Exit 1 when no pushed branch changes a matching path.
+# Exit 2 when a pushed branch changes a matching path and differs from HEAD in those paths: the
+# caller must stop the push, because its check cannot read that branch.
 
 set -uo pipefail
 
@@ -30,18 +35,27 @@ while IFS= read -r pattern; do
   esac
 done <<<"$patterns"
 
+head="$(git rev-parse HEAD)" || exit 0
 refs="$(cat)"
-if [[ -z "$refs" ]]; then
-  head="$(git rev-parse HEAD)" || exit 0
-  refs="HEAD $head"
-fi
+[[ -n "$refs" ]] || refs="HEAD $head"
 
-while read -r _local_ref local_oid _rest; do
+match=1
+while read -r local_ref local_oid _rest; do
   # Deleting a branch pushes no commits.
   [[ "$local_oid" =~ [^0] ]] || continue
   base="$(git merge-base origin/main "$local_oid" 2>/dev/null)" || exit 0
   changed="$(git diff --name-only "$base" "$local_oid" -- "${pathspecs[@]}")" || exit 0
-  [[ -z "$changed" ]] || exit 0
+  [[ -n "$changed" ]] || continue
+  git diff --quiet "$head" "$local_oid" -- "${pathspecs[@]}"
+  case $? in
+    0) ;;
+    1)
+      echo "pre-push: $local_ref changes a path in $filter_file, but check:verifiers checks only the checked-out tree. Check out $local_ref, then push again." >&2
+      exit 2
+      ;;
+    *) exit 0 ;;
+  esac
+  match=0
 done <<<"$refs"
 
-exit 1
+exit "$match"

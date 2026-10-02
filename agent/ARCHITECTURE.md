@@ -139,6 +139,10 @@ Business logic lives with its capability. Pure protocol rules and calculations d
 actor invoked them; workflows deterministically turn state plus input into a new state and typed
 intents. Actors apply those decisions and effects execute the resulting I/O.
 
+When a second caller needs existing logic, move that logic to the owning capability first. Switch
+the original caller. Keep results identical. Then add the new caller. A new helper beside old copies
+is another copy. See `RULES.md` §One owner, no copies.
+
 ```text
 <capability>/actor.rs + handlers.rs ──► workflow.rs ──► state.rs / validation.rs
                  │                           │

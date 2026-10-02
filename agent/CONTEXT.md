@@ -179,8 +179,9 @@ node that fetches the asset, and the node then syncs an address that emits no ev
   `scripts/invariant-baselines.env`, skip-proof feature containment, runtime proof-skip guard,
   Docker workspace coverage, Compose shutdown grace), and `check:verifiers` when a pushed branch
   changes a path in `.github/filters/circuits.yml`, the file that CI also reads to start the check.
-  CI does not run `check:addresses`, `check:pnpm`, or the root `eslint`, so these checks run only in
-  this hook.
+  The check reads the checked-out tree, so the hook stops the push of a branch that differs from
+  HEAD in a path of that file. CI does not run `check:addresses`, `check:pnpm`, or the root
+  `eslint`, so these checks run only in this hook.
 - **Docs MCP server:** `.mcp.json`, `.codex/config.toml`, and `opencode.json` expose
   `@interfold/mcp` (`interfold-docs`) to their respective agents. The launch configs run the
   TypeScript source through the workspace toolchain; `pnpm mcp:build` builds the publishable

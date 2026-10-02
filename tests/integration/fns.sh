@@ -1,5 +1,16 @@
 #!/usr/bin/env bash
-set -euo pipefail  # Stricter error handling
+# Bash 3.2, the /bin/bash of macOS, runs the inherited ERR trap inside $(...) even under `if` or
+# `||`, so a check that expects a failure there would run `cleanup`. Bash 4 keeps that context, and
+# persist.sh and upgrade.sh already need bash 4.
+if ((BASH_VERSINFO[0] < 4)); then
+  echo "The integration tests need bash 4 or later. This is bash ${BASH_VERSION}." >&2
+  exit 1
+fi
+
+# -E: functions, command substitutions and subshells inherit the ERR trap, so `cleanup` also runs
+# when a command inside a function fails. In a substitution or a subshell, `cleanup` exits only
+# that subshell.
+set -Eeuo pipefail
 
 # Get the script's location
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -253,13 +264,6 @@ interfold_nodes_start() {
 
   $INTERFOLD_BIN nodes start $name -v \
     --config "$SCRIPT_DIR/interfold.config.yaml"
-}
-
-kill_proc() {
-  local name=$1
-  local pid=$(ps aux | grep 'interfold' | grep "\--name $name" | awk '{ print $2 }')
-  echo "Killing $pid"
-  kill $pid
 }
 
 kill_em_all() {
