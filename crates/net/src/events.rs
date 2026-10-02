@@ -607,11 +607,14 @@ where
         command_summary,
         timeout
     );
-    net_cmds.send(command).await?;
-
-    let event = tokio::time::timeout(timeout, response.recv())
-        .await
-        .map_err(|_| anyhow::anyhow!("Timed out waiting for response from {command_summary}"))??;
+    // One deadline covers the queue admission and the response, so a full command queue cannot
+    // hold the caller past its timeout. An expired send drops the command with it.
+    let event = tokio::time::timeout(timeout, async move {
+        net_cmds.send(command).await?;
+        Ok::<_, anyhow::Error>(response.recv().await?)
+    })
+    .await
+    .map_err(|_| anyhow::anyhow!("Timed out waiting for response from {command_summary}"))??;
     matcher(&event)
         .unwrap_or_else(|| Err(anyhow::anyhow!("Unexpected response to {command_summary}")))
 }
@@ -732,6 +735,42 @@ mod tests {
             .context("the call waited for its timeout")??
             .unwrap_err();
         assert!(format!("{error:#}").contains("closed"));
+        Ok(())
+    }
+
+    /// The deadline includes the wait for room in the command queue. A queue that is full and not
+    /// drained ends the call at its own timeout, drops its command and releases its correlation id.
+    #[tokio::test(start_paused = true)]
+    async fn command_deadline_includes_queue_wait() -> anyhow::Result<()> {
+        let events = NetEventChannel::new(1);
+        let (cmd_tx, mut cmd_rx) = mpsc::channel(1);
+        cmd_tx.send(NetCommand::Shutdown).await?;
+        let correlation_id = CorrelationId::new();
+        let call = call_and_await_response(
+            cmd_tx,
+            NetEventSubscriber::from(&events),
+            NetCommand::DhtGetRecord {
+                correlation_id,
+                key: ContentHash::from_content(b"document".as_ref()),
+            },
+            |event| match event {
+                NetEvent::DhtGetRecordSucceeded { value, .. } => Some(Ok(value.clone())),
+                _ => None,
+            },
+            Duration::from_secs(30),
+        );
+
+        let error = tokio::time::timeout(Duration::from_secs(31), call)
+            .await
+            .context("the call outlived its deadline")?
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("Timed out"));
+        assert!(matches!(cmd_rx.try_recv(), Ok(NetCommand::Shutdown)));
+        assert!(
+            cmd_rx.try_recv().is_err(),
+            "the expired command was not queued"
+        );
+        drop(NetEventSubscriber::from(&events).expect_response(correlation_id)?);
         Ok(())
     }
 
