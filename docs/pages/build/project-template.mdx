@@ -221,6 +221,7 @@ chains:
   - name: 'localhost'
     rpc_url: 'ws://localhost:8545'
     ingestion_confirmations: 0
+    rpc_poll_interval_ms: 250
     data_availability:
       mode: mock_http
       rpc_url: http://127.0.0.1:8080/availability
@@ -252,22 +253,23 @@ nodes:
   # cn3, cn4, and cn5 follow the same pattern (ports 9203 to 9205 and 50503 to 50505).
 ```
 
-| Key                                  | Template value                       | Meaning                                                                                                                                                                |
-| ------------------------------------ | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `chains[].name`                      | `localhost`                          | The chain name. `interfold print-env --chain localhost` and the deploy scripts use this name.                                                                          |
-| `chains[].rpc_url`                   | `ws://localhost:8545`                | The RPC endpoint of the chain.                                                                                                                                         |
-| `chains[].ingestion_confirmations`   | `0`                                  | Confirmations before a node applies EVM logs. The default is 1. Use 0 only for a single-process development chain such as Anvil.                                       |
-| `chains[].data_availability.mode`    | `mock_http`                          | Where nodes fetch the output ciphertext. `mock_http` reads it from a local HTTP service. The other mode is `avail`.                                                    |
-| `chains[].data_availability.rpc_url` | `http://127.0.0.1:8080/availability` | The coordination server. It serves each object at `/availability/objects/<contentHash>`.                                                                               |
-| `chains[].contracts.<name>`          | `address`, `deploy_block`            | The contract address and the block to read events from. `deploy/default.ts` writes these values for the contracts that it deploys.                                     |
-| `program.dev`                        | `true`                               | Dev mode. `interfold program compile` and `interfold program start` build and run the program server natively, without a zkVM proof. The default is `false`.           |
-| `program.risc0`                      | Commented out                        | RISC Zero settings for `dev: false`: `risc0_dev_mode` (default 1) and an optional `boundless` block. `interfold program start` needs this block when `dev` is `false`. |
-| `nodes.<name>.address`               | Anvil accounts 1 to 5                | The Ethereum address of the ciphernode.                                                                                                                                |
-| `nodes.<name>.quic_port`             | 9201 to 9205                         | The QUIC port for peer-to-peer traffic.                                                                                                                                |
-| `nodes.<name>.ctrl_port`             | 50501 to 50505                       | The port of the control socket that the CLI uses to talk to a running node.                                                                                            |
-| `nodes.<name>.autonetkey`            | `true`                               | Generate a network key on start if none is set.                                                                                                                        |
-| `nodes.<name>.autopassword`          | `true`                               | Generate a password on start if none is set.                                                                                                                           |
-| `nodes.<name>.dashboard_port`        | `8004` (`cn1` only)                  | Serves the node dashboard at `http://127.0.0.1:8004`.                                                                                                                  |
+| Key                                  | Template value                       | Meaning                                                                                                                                                                  |
+| ------------------------------------ | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `chains[].name`                      | `localhost`                          | The chain name. `interfold print-env --chain localhost` and the deploy scripts use this name.                                                                            |
+| `chains[].rpc_url`                   | `ws://localhost:8545`                | The RPC endpoint of the chain.                                                                                                                                           |
+| `chains[].ingestion_confirmations`   | `0`                                  | Confirmations before a node applies EVM logs. The default is 1. Use 0 only for a single-process development chain such as Anvil.                                         |
+| `chains[].rpc_poll_interval_ms`      | `250`                                | Milliseconds between the polls of an HTTP provider for a receipt or a new block. The default is 7000. Use 250 only for a single-process development chain such as Anvil. |
+| `chains[].data_availability.mode`    | `mock_http`                          | Where nodes fetch the output ciphertext. `mock_http` reads it from a local HTTP service. The other mode is `avail`.                                                      |
+| `chains[].data_availability.rpc_url` | `http://127.0.0.1:8080/availability` | The coordination server. It serves each object at `/availability/objects/<contentHash>`.                                                                                 |
+| `chains[].contracts.<name>`          | `address`, `deploy_block`            | The contract address and the block to read events from. `deploy/default.ts` writes these values for the contracts that it deploys.                                       |
+| `program.dev`                        | `true`                               | Dev mode. `interfold program compile` and `interfold program start` build and run the program server natively, without a zkVM proof. The default is `false`.             |
+| `program.risc0`                      | Commented out                        | RISC Zero settings for `dev: false`: `risc0_dev_mode` (default 1) and an optional `boundless` block. `interfold program start` needs this block when `dev` is `false`.   |
+| `nodes.<name>.address`               | Anvil accounts 1 to 5                | The Ethereum address of the ciphernode.                                                                                                                                  |
+| `nodes.<name>.quic_port`             | 9201 to 9205                         | The QUIC port for peer-to-peer traffic.                                                                                                                                  |
+| `nodes.<name>.ctrl_port`             | 50501 to 50505                       | The port of the control socket that the CLI uses to talk to a running node.                                                                                              |
+| `nodes.<name>.autonetkey`            | `true`                               | Generate a network key on start if none is set.                                                                                                                          |
+| `nodes.<name>.autopassword`          | `true`                               | Generate a password on start if none is set.                                                                                                                             |
+| `nodes.<name>.dashboard_port`        | `8004` (`cn1` only)                  | Serves the node dashboard at `http://127.0.0.1:8004`.                                                                                                                    |
 
 `interfold program compile` and `interfold program start` also accept `--dev true` or `--dev false`.
 The flag overrides `program.dev` for that one command. `scripts/dev_program.sh` gives no flag, so

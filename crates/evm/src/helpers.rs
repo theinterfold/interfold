@@ -35,7 +35,7 @@ use alloy::{
 };
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose::STANDARD, Engine};
-use e3_config::{RpcAuth, RPC};
+use e3_config::{chain_config::ChainConfig, RpcAuth, RPC};
 use e3_crypto::Cipher;
 use e3_data::Repository;
 use e3_events::Proof;
@@ -46,6 +46,7 @@ use std::{
     future::Future,
     pin::Pin,
     sync::{Arc, Mutex as StdMutex, OnceLock},
+    time::Duration,
 };
 use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
 use tracing::{info, warn};
@@ -167,9 +168,10 @@ const RPC_RATE_LIMIT_MAX_RETRIES: u32 = 8;
 
 /// First wait after a refused request, in milliseconds.
 ///
-/// A provider that sends a `Retry-After` value overrides this: the transport prefers the interval
-/// the provider asked for. Without such a hint the wait is this constant on every attempt, so the
-/// value must be large enough for a refusal to clear on its own.
+/// A provider that sends a backoff hint in the JSON-RPC error body overrides this: the transport
+/// prefers the interval the provider asked for. It does not read an HTTP `Retry-After` header.
+/// Without a hint the wait is this constant on every attempt, so the value must be large enough
+/// for a refusal to clear on its own.
 const RPC_RATE_LIMIT_INITIAL_BACKOFF_MS: u64 = 500;
 
 /// Compute units per second the retry path assumes for pacing.
@@ -192,10 +194,18 @@ fn rate_limit_retry_layer() -> RetryBackoffLayer {
     )
 }
 
+/// Poll interval of a provider built without a chain configuration. Alloy's default for a remote
+/// endpoint.
+const DEFAULT_RPC_POLL_INTERVAL: Duration = Duration::from_secs(7);
+
 #[derive(Clone)]
 pub struct ProviderConfig {
     rpc: RPC,
     auth: RpcAuth,
+    /// Interval between the polls of an HTTP provider for a receipt or a new block. Set
+    /// explicitly on every client: Alloy would otherwise poll a loopback URL every 250 ms, and a
+    /// loopback URL can be a proxy to a live chain.
+    poll_interval: Duration,
 }
 
 pub type ConcreteReadProvider = FillProvider<
@@ -222,7 +232,22 @@ pub type ConcreteWriteProvider = FillProvider<
 
 impl ProviderConfig {
     pub fn new(rpc: RPC, auth: RpcAuth) -> Self {
-        Self { rpc, auth }
+        Self {
+            rpc,
+            auth,
+            poll_interval: DEFAULT_RPC_POLL_INTERVAL,
+        }
+    }
+
+    /// The provider configuration of a configured chain: its URL, credentials and poll interval.
+    pub fn for_chain(chain: &ChainConfig) -> Result<Self> {
+        Ok(Self::new(chain.rpc_url()?, chain.rpc_auth.clone())
+            .with_poll_interval(chain.rpc_poll_interval()?))
+    }
+
+    pub fn with_poll_interval(mut self, poll_interval: Duration) -> Self {
+        self.poll_interval = poll_interval;
+        self
     }
 
     pub async fn create_readonly_provider(&self) -> Result<EthProvider<ConcreteReadProvider>> {
@@ -232,6 +257,7 @@ impl ProviderConfig {
                 .ws(self.create_ws_connect()?)
                 .await
                 .context("Failed to connect to WebSocket RPC. Check if the node is running and URL is correct.")?
+                .with_poll_interval(self.poll_interval)
         } else {
             self.create_http_client()?
         };
@@ -287,9 +313,12 @@ impl ProviderConfig {
 
         let url = self.rpc.as_http_url()?;
         let http = Http::with_client(client, url.parse()?);
+        // The local flag only selects Alloy's default poll interval, and the explicit interval
+        // replaces that default.
         Ok(ClientBuilder::default()
             .layer(rate_limit_retry_layer())
-            .transport(http, self.rpc.is_local()))
+            .transport(http, self.rpc.is_local())
+            .with_poll_interval(self.poll_interval))
     }
 }
 
@@ -446,9 +475,55 @@ where
 mod tests {
     use super::*;
     use alloy_dyn_abi::DynSolType;
+    use e3_config::{chain_config::ChainConfig, Contract, ContractAddresses};
     use e3_events::{CircuitName, Proof};
     use e3_utils::ArcBytes;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn loopback_chain(rpc_poll_interval_ms: Option<u64>) -> ChainConfig {
+        let contract = || Contract::Full {
+            address: "0x0000000000000000000000000000000000000000".to_string(),
+            deploy_block: Some(1),
+        };
+        ChainConfig {
+            enabled: Some(true),
+            name: "test".to_string(),
+            rpc_url: "http://127.0.0.1:8545".to_string(),
+            rpc_auth: RpcAuth::default(),
+            contracts: ContractAddresses {
+                interfold: contract(),
+                ciphernode_registry: contract(),
+                bonding_registry: contract(),
+                e3_program: None,
+                fee_token: None,
+                slashing_manager: None,
+                dkg_fold_attestation_verifier: None,
+                faucet: None,
+            },
+            finalization_ms: None,
+            chain_id: Some(31337),
+            ingestion_confirmations: None,
+            rpc_poll_interval_ms,
+            data_availability: None,
+        }
+    }
+
+    #[test]
+    fn a_loopback_http_client_polls_at_the_public_interval_unless_configured() {
+        // Alloy would poll a loopback transport every 250 ms. A loopback URL can be a proxy to a
+        // live chain, so the interval comes from the chain configuration instead.
+        let client = ProviderConfig::for_chain(&loopback_chain(None))
+            .unwrap()
+            .create_http_client()
+            .unwrap();
+        assert_eq!(client.poll_interval(), Duration::from_secs(7));
+
+        let client = ProviderConfig::for_chain(&loopback_chain(Some(250)))
+            .unwrap()
+            .create_http_client()
+            .unwrap();
+        assert_eq!(client.poll_interval(), Duration::from_millis(250));
+    }
 
     /// Verifies encode_zk_proof produces ABI: abi.decode(proof, (bytes, bytes32[]))
     #[test]

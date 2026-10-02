@@ -770,8 +770,7 @@ impl CiphernodeBuilder {
                 .filter(|chain| chain.enabled.unwrap_or(true))
             {
                 let provider = provider_cache.ensure_read_provider(chain).await?;
-                let factory = ProviderConfig::new(chain.rpc_url()?, chain.rpc_auth.clone())
-                    .into_read_provider_factory();
+                let factory = ProviderConfig::for_chain(chain)?.into_read_provider_factory();
                 finalizer_providers.insert(provider.chain_id(), factory);
             }
             CommitteeFinalizer::attach_with_recovery(
@@ -1613,9 +1612,7 @@ async fn setup_evm_system(
         let ingestion_confirmations = chain.ingestion_confirmations()?;
         evm_config.insert(chain_id, chain.try_into()?);
 
-        let rpc_url = chain.rpc_url()?;
-        let provider_factory =
-            ProviderConfig::new(rpc_url, chain.rpc_auth.clone()).into_read_provider_factory();
+        let provider_factory = ProviderConfig::for_chain(chain)?.into_read_provider_factory();
 
         let mut system = EvmSystemChainBuilder::new(bus, &provider);
         system
@@ -1869,6 +1866,7 @@ mod tests {
             finalization_ms,
             chain_id: Some(1),
             ingestion_confirmations: Some(0),
+            rpc_poll_interval_ms: Some(250),
             data_availability: None,
         }
     }
