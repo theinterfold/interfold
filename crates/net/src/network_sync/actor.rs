@@ -8,8 +8,8 @@ use crate::net_interface_handle::NetEventSubscriber;
 use actix::{Actor, Addr, AsyncContext, Handler, Message, Recipient, ResponseFuture};
 use anyhow::{bail, Context, Result};
 use e3_events::{
-    prelude::*, trap, trap_fut, AggregateId, BusHandle, CorrelationId, DkgCoordinationKind, E3id,
-    EType, EventSource, EventStoreFilter, EventStoreQueryBy, EventStoreQueryResponse, EventType,
+    prelude::*, trap, AggregateId, BusHandle, CorrelationId, DkgCoordinationKind, E3id, EType,
+    EventSource, EventStoreFilter, EventStoreQueryBy, EventStoreQueryResponse, EventType,
     HistoricalNetSyncEventsReceived, HistoricalNetSyncStart, InterfoldEvent, InterfoldEventData,
     NetReady, Sequenced, TsAgg, TypedEvent, Unsequenced,
 };

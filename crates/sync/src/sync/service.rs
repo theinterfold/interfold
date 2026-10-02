@@ -18,17 +18,17 @@ use e3_events::{
     BusHandle, CommitteeMemberExcluded, CommitteeMemberExpelled, CommitteeRequested, CorrelationId,
     E3Requested, E3id, EffectsEnabled, Event, EventContext, EventContextAccessors, EventPublisher,
     EventStoreQueryBy, EventStoreQueryResponse, EventSubscriber, EventType, EvmEventConfig,
-    HistoricalEvmEventsReceived, HistoricalEvmSyncStart, HistoricalNetSyncStart, InterfoldEvent,
-    InterfoldEventData, Seed, SeqAgg, Sequenced, SlashExecuted, StoreKeys, SyncEffect, SyncEnded,
-    TicketGenerated, TypedEvent, Unsequenced,
+    HistoricalEvmEventsReceived, HistoricalEvmSyncStart, HistoricalNetSyncFailed,
+    HistoricalNetSyncStart, InterfoldEvent, InterfoldEventData, Seed, SeqAgg, Sequenced,
+    SlashExecuted, StoreKeys, SyncEffect, SyncEnded, TicketGenerated, TypedEvent, Unsequenced,
 };
 use e3_utils::actix::channel as actix_toolbox;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     future::Future,
     time::Duration,
 };
-use tokio::sync::mpsc::Receiver;
+use tokio::sync::{mpsc::Receiver, oneshot};
 use tracing::info;
 
 /// Advance the request-router checkpoint when it trails aggregate snapshots.
@@ -455,14 +455,7 @@ where
     net_ready.await?;
     info!("NetReady!");
     info!("Loading historical libp2p events...");
-    let events_received = bus.wait_for(EventType::HistoricalNetSyncEventsReceived);
-    bus.publish_without_context(HistoricalNetSyncStart::new(net_config.clone()))?;
-    let InterfoldEventData::HistoricalNetSyncEventsReceived(event) =
-        events_received.await?.into_data()
-    else {
-        bail!("failed to get HistoricalNetSyncEventsReceived");
-    };
-    let historical_net_events = event.events;
+    let historical_net_events = fetch_peer_history(bus, net_config).await?;
     info!(
         "{} historical libp2p events loaded.",
         historical_net_events.len()
@@ -484,6 +477,38 @@ where
     // normal live operations
 
     Ok(())
+}
+
+/// Ask the network for the peer history after `since`, and wait for the history or for the
+/// failure of the fetch.
+async fn fetch_peer_history(
+    bus: &BusHandle,
+    since: BTreeMap<AggregateId, u128>,
+) -> Result<Vec<InterfoldEvent<Unsequenced>>> {
+    let (failure, failed) = actix_toolbox::oneshot::<HistoricalNetSyncFailed>();
+    let events_received = bus.wait_for(EventType::HistoricalNetSyncEventsReceived);
+    bus.publish_without_context(
+        HistoricalNetSyncStart::new(since).with_failure_recipient(failure),
+    )?;
+    await_peer_history(events_received, failed).await
+}
+
+/// The failure channel closes without a message when the fetch succeeds, so only a received
+/// failure ends the wait.
+async fn await_peer_history(
+    events_received: impl Future<Output = Result<InterfoldEvent<Sequenced>>>,
+    failed: oneshot::Receiver<HistoricalNetSyncFailed>,
+) -> Result<Vec<InterfoldEvent<Unsequenced>>> {
+    let received = tokio::select! {
+        received = events_received => received?,
+        Some(failed) = async { failed.await.ok() } => {
+            bail!("startup peer history fetch failed: {}", failed.reason);
+        }
+    };
+    let InterfoldEventData::HistoricalNetSyncEventsReceived(event) = received.into_data() else {
+        bail!("failed to get HistoricalNetSyncEventsReceived");
+    };
+    Ok(event.events)
 }
 
 async fn publish_reconciled_history(

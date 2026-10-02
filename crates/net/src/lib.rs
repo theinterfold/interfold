@@ -132,7 +132,7 @@ pub fn setup_net_with_limits(
 
 /// Set up bounded networking and restore active DHT interests without publishing new protocol
 /// events during process startup. With `peer_history_optional`, startup continues without peer
-/// history when no peer can serve it.
+/// history when no peer can serve it. Without it, startup stops with the fetch error.
 #[allow(clippy::too_many_arguments)]
 pub fn setup_net_with_limits_and_interests(
     network: &NetworkPolicy,

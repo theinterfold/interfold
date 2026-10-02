@@ -254,8 +254,10 @@ needs a wallet key. The builder derives the node address and the HLC node id fro
 `wallet set` derives the libp2p keypair from the same key. It fetches peer history at startup like a
 full node, but `NetSyncManager` continues without that history when no peer serves it
 (`peer_history_optional`), so a seed without a reachable peer still starts while an E3 is open. A
-full node keeps waiting for that history. It serves discovery, gossip, DHT documents, and history
-like a full node (`crates/entrypoint/src/start/start.rs`).
+full node needs that history: `NetSyncManager` returns the fetch failure through the failure
+recipient of `HistoricalNetSyncStart`, and startup stops with that error before its deadline. A
+bootstrap node serves discovery, gossip, DHT documents, and history like a full node
+(`crates/entrypoint/src/start/start.rs`).
 
 After schema admission, `preflight_node_role` stamps `//node_role` on a new data directory, which is
 one whose schema marker this startup wrote. A directory without the role marker that existed before

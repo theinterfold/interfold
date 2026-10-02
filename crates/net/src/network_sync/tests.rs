@@ -15,7 +15,7 @@ use e3_ciphernode_builder::EventSystem;
 use e3_config::NetworkProfile;
 use e3_events::{
     AggregateConfig, DecryptionshareCreated, DkgCoordination, DkgCoordinationKind, DkgDealer, E3id,
-    EventSource, InterfoldEvent, KeyshareCreated, TestEvent, Unsequenced,
+    EventSource, HistoricalNetSyncFailed, InterfoldEvent, KeyshareCreated, TestEvent, Unsequenced,
 };
 use e3_utils::ArcBytes;
 use tokio::sync::{mpsc, mpsc::UnboundedSender};
@@ -661,10 +661,14 @@ async fn timed_out_sync_request_releases_its_in_flight_slot() {
     ));
 }
 
-/// Starts a manager with no peer, then asks it for the history of an open aggregate.
+/// Starts a manager with no peer, then asks it for the history of an open aggregate. Returns the
+/// wait for the history and the receiver of the fetch failure.
 fn start_history_fetch_without_peers(
     peer_history_optional: bool,
-) -> impl std::future::Future<Output = anyhow::Result<InterfoldEvent<Sequenced>>> {
+) -> (
+    impl std::future::Future<Output = anyhow::Result<InterfoldEvent<Sequenced>>>,
+    tokio::sync::oneshot::Receiver<HistoricalNetSyncFailed>,
+) {
     let system = EventSystem::new().with_fresh_bus();
     let bus = system.handle().unwrap().enable("test");
     let (tx, rx) = mpsc::channel::<NetCommand>(100);
@@ -679,29 +683,29 @@ fn start_history_fetch_without_peers(
         NetworkPolicy::local_unrestricted(),
         peer_history_optional,
     );
+    let (failure, failed) = e3_utils::actix::channel::oneshot::<HistoricalNetSyncFailed>();
     let received = bus.wait_for(EventType::HistoricalNetSyncEventsReceived);
-    bus.publish_without_context(HistoricalNetSyncStart::new(BTreeMap::from([(
-        AggregateId::new(1),
-        0,
-    )])))
+    bus.publish_without_context(
+        HistoricalNetSyncStart::new(BTreeMap::from([(AggregateId::new(1), 0)]))
+            .with_failure_recipient(failure),
+    )
     .unwrap();
-    async move {
+    let received = async move {
         // Keep the channels and the system alive until the caller has its answer.
         let _keep = (system, tx, rx, evt_tx);
         received.await
-    }
+    };
+    (received, failed)
 }
 
 #[actix::test]
 async fn optional_peer_history_lets_startup_continue_when_no_peer_serves_it() {
     tokio::time::pause();
-    let received = tokio::time::timeout(
-        Duration::from_secs(10 * 60),
-        start_history_fetch_without_peers(true),
-    )
-    .await
-    .expect("startup must not wait for history that no peer serves")
-    .unwrap();
+    let (received, _failed) = start_history_fetch_without_peers(true);
+    let received = tokio::time::timeout(Duration::from_secs(10 * 60), received)
+        .await
+        .expect("startup must not wait for history that no peer serves")
+        .unwrap();
     let InterfoldEventData::HistoricalNetSyncEventsReceived(history) = received.into_data() else {
         panic!("expected the historical net events");
     };
@@ -709,15 +713,24 @@ async fn optional_peer_history_lets_startup_continue_when_no_peer_serves_it() {
 }
 
 #[actix::test]
-async fn required_peer_history_still_holds_startup_when_no_peer_serves_it() {
+async fn required_peer_history_failure_is_returned_to_startup() {
     tokio::time::pause();
-    let received = tokio::time::timeout(
-        Duration::from_secs(10 * 60),
-        start_history_fetch_without_peers(false),
-    )
-    .await;
+    let (received, failed) = start_history_fetch_without_peers(false);
+    let failed = tokio::time::timeout(Duration::from_secs(10 * 60), failed)
+        .await
+        .expect("startup must learn that no peer served the required history")
+        .expect("the failure must reach startup");
     assert!(
-        received.is_err(),
+        failed
+            .reason
+            .contains("No peer connections established within timeout"),
+        "unexpected failure reason: {}",
+        failed.reason
+    );
+    assert!(
+        tokio::time::timeout(Duration::from_secs(10 * 60), received)
+            .await
+            .is_err(),
         "a full node must not continue without the history of its open E3s"
     );
 }

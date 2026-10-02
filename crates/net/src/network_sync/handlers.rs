@@ -3,7 +3,7 @@
 //! Actix routing for local replay, remote sync requests, and readiness signals.
 
 use super::*;
-use e3_events::E3Stage;
+use e3_events::{E3Stage, HistoricalNetSyncFailed};
 
 impl Actor for NetSyncManager {
     type Context = actix::Context<Self>;
@@ -72,6 +72,7 @@ impl Handler<TypedEvent<HistoricalNetSyncStart>> for NetSyncManager {
         info!("HISTORICAL_NET_SYNC_START");
         let bus = self.bus.with_ec(msg.get_ctx());
         let event_context = msg.get_ctx().clone();
+        let failure = msg.failure.clone();
         let address = ctx.address();
         let fetch = handle_sync_request_event(
             self.tx.clone(),
@@ -82,10 +83,13 @@ impl Handler<TypedEvent<HistoricalNetSyncStart>> for NetSyncManager {
             self.network.clone(),
         );
         if !self.peer_history_optional {
-            return trap_fut(EType::Net, &bus, fetch);
+            return Box::pin(async move {
+                if let Err(error) = fetch.await {
+                    report_required_history_failure(&bus, failure, error);
+                }
+            });
         }
-        // Without history, startup would wait for its deadline. A node that uses no E3 history
-        // continues with none when no peer can serve it.
+        // A node that uses no E3 history continues with none when no peer can serve it.
         Box::pin(async move {
             let Err(error) = fetch.await else {
                 return;
@@ -101,6 +105,25 @@ impl Handler<TypedEvent<HistoricalNetSyncStart>> for NetSyncManager {
                 bus.err(EType::Net, anyhow::anyhow!("{error}"));
             }
         })
+    }
+}
+
+/// Startup cannot continue without the required history, so the failure goes back to the startup
+/// coordinator, which stops at once instead of at its deadline. The bus reports the failure only
+/// when no coordinator receives it.
+fn report_required_history_failure(
+    bus: &BusHandle,
+    failure: Option<Recipient<HistoricalNetSyncFailed>>,
+    error: anyhow::Error,
+) {
+    let reason = format!("{error:#}");
+    let delivered = failure.is_some_and(|recipient| {
+        recipient
+            .try_send(HistoricalNetSyncFailed { reason })
+            .is_ok()
+    });
+    if !delivered {
+        bus.err(EType::Net, error);
     }
 }
 
