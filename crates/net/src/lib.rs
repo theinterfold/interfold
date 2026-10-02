@@ -7,6 +7,7 @@
 mod actors;
 mod backoff;
 mod cid;
+mod command_responses;
 mod dialer;
 pub mod direct_requester;
 pub mod direct_responder;

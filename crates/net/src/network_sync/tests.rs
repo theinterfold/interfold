@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use super::*;
-use crate::net_interface_handle::NetEventSubscriber;
+use crate::net_interface_handle::{NetEventChannel, NetEventSubscriber};
 use crate::{
     direct_responder::ChannelType,
     events::{IncomingRequest, NetCommand},
@@ -18,7 +18,7 @@ use e3_events::{
     EventSource, InterfoldEvent, KeyshareCreated, TestEvent, Unsequenced,
 };
 use e3_utils::ArcBytes;
-use tokio::sync::{broadcast, mpsc, mpsc::UnboundedSender};
+use tokio::sync::{mpsc, mpsc::UnboundedSender};
 
 /// Minimal EventStore stand-in so `NetSyncManager::new` can be constructed in tests; the
 /// re-broadcast unit test drives `handle_rebroadcast_response` directly and never queries it.
@@ -53,7 +53,8 @@ fn manager_with_recording_store(
     let system = EventSystem::new().with_fresh_bus();
     let bus = system.handle().unwrap().enable("test");
     let (tx, rx) = mpsc::channel::<NetCommand>(100);
-    let (evt_tx, _evt_rx) = broadcast::channel::<NetEvent>(100);
+    let evt_tx = NetEventChannel::new(100);
+    let _evt_rx = evt_tx.subscribe();
     let evt_rx = NetEventSubscriber::from(&evt_tx);
     let eventstore = RecordingEventStore { queries: query_tx }
         .start()
@@ -172,7 +173,8 @@ fn historical_sync_cursor_keeps_only_active_network_chains() {
 #[actix::test]
 async fn local_only_cursor_completes_without_a_peer_request() {
     let (net_tx, mut net_rx) = mpsc::channel::<NetCommand>(1);
-    let (event_tx, _event_rx) = broadcast::channel::<NetEvent>(1);
+    let event_tx = NetEventChannel::new(1);
+    let _event_rx = event_tx.subscribe();
     let event_rx = NetEventSubscriber::from(&event_tx);
     let (response_tx, response_rx) =
         e3_utils::actix::channel::oneshot::<TypedEvent<SyncRequestSucceeded>>();
@@ -205,7 +207,8 @@ async fn rebroadcast_only_gossips_forwardable_own_artifacts() {
     let system = EventSystem::new().with_fresh_bus();
     let bus = system.handle().unwrap().enable("test");
     let (tx, mut rx) = mpsc::channel::<NetCommand>(100);
-    let (evt_tx, _evt_rx) = broadcast::channel::<NetEvent>(100);
+    let evt_tx = NetEventChannel::new(100);
+    let _evt_rx = evt_tx.subscribe();
     let evt_rx = NetEventSubscriber::from(&evt_tx);
     let eventstore = NoopEventStore.start().recipient();
 
@@ -250,7 +253,8 @@ async fn periodic_dkg_reannouncement_uses_the_latest_ready_superset() {
     let system = EventSystem::new().with_fresh_bus();
     let bus = system.handle().unwrap().enable("test");
     let (tx, mut rx) = mpsc::channel::<NetCommand>(100);
-    let (evt_tx, _evt_rx) = broadcast::channel::<NetEvent>(100);
+    let evt_tx = NetEventChannel::new(100);
+    let _evt_rx = evt_tx.subscribe();
     let evt_rx = NetEventSubscriber::from(&evt_tx);
     let eventstore = NoopEventStore.start().recipient();
     let mut manager = NetSyncManager::new(
@@ -363,7 +367,8 @@ fn ready_manager() -> (NetSyncManager, mpsc::Receiver<NetCommand>) {
     let system = EventSystem::new().with_fresh_bus();
     let bus = system.handle().unwrap().enable("test");
     let (tx, rx) = mpsc::channel::<NetCommand>(100);
-    let (evt_tx, _evt_rx) = broadcast::channel::<NetEvent>(100);
+    let evt_tx = NetEventChannel::new(100);
+    let _evt_rx = evt_tx.subscribe();
     let evt_rx = NetEventSubscriber::from(&evt_tx);
     let eventstore = NoopEventStore.start().recipient();
     let mut manager = NetSyncManager::new(
@@ -420,7 +425,8 @@ async fn a_published_decryption_share_is_scheduled_for_resending() {
         )])));
     let bus = system.handle().unwrap().enable("test");
     let (tx, _rx) = mpsc::channel::<NetCommand>(100);
-    let (evt_tx, _evt_rx) = broadcast::channel::<NetEvent>(100);
+    let evt_tx = NetEventChannel::new(100);
+    let _evt_rx = evt_tx.subscribe();
     let manager = NetSyncManager::setup(
         &bus,
         &tx,
@@ -662,7 +668,8 @@ fn start_history_fetch_without_peers(
     let system = EventSystem::new().with_fresh_bus();
     let bus = system.handle().unwrap().enable("test");
     let (tx, rx) = mpsc::channel::<NetCommand>(100);
-    let (evt_tx, _evt_rx) = broadcast::channel::<NetEvent>(100);
+    let evt_tx = NetEventChannel::new(100);
+    let _evt_rx = evt_tx.subscribe();
     NetSyncManager::setup(
         &bus,
         &tx,

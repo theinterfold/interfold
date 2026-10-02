@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::net_interface_handle::NetEventSubscriber;
+use crate::net_interface_handle::{NetEventChannel, NetEventSubscriber};
 use std::{collections::HashMap, num::NonZero, sync::Arc, time::Duration};
 
 use super::*;
@@ -23,7 +23,7 @@ use e3_utils::ArcBytes;
 use libp2p::kad::{GetRecordError, PutRecordError, RecordKey};
 use std::time::Instant;
 use tokio::{
-    sync::{broadcast, mpsc},
+    sync::mpsc,
     time::{sleep, timeout},
 };
 use tracing::subscriber::DefaultGuard;
@@ -56,7 +56,7 @@ type TestSetup = (
     BusHandle,
     mpsc::Sender<NetCommand>,
     mpsc::Receiver<NetCommand>,
-    broadcast::Sender<NetEvent>,
+    NetEventChannel,
     NetEventSubscriber,
     Addr<HistoryCollector<InterfoldEvent>>,
     Addr<HistoryCollector<InterfoldEvent>>,
@@ -99,7 +99,7 @@ fn setup_test_with(
         .with_aggregate_config(aggregate_config);
     let bus = system.handle()?.enable("test");
     let (net_cmd_tx, net_cmd_rx) = mpsc::channel(100);
-    let (net_evt_tx, _net_evt_rx) = broadcast::channel(100);
+    let net_evt_tx = NetEventChannel::new(100);
     let net_evt_rx = NetEventSubscriber::from(&net_evt_tx);
     let history = HistoryCollector::<InterfoldEvent>::new().start();
     let error = HistoryCollector::<InterfoldEvent>::new().start();

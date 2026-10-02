@@ -7,7 +7,7 @@
 use super::*;
 use crate::domain::event_conversion::ReceivableDocument;
 use crate::events::GossipPublishFailure;
-use crate::net_interface_handle::NetEventSubscriber;
+use crate::net_interface_handle::{NetEventChannel, NetEventSubscriber};
 use e3_events::{
     DecryptionKeyShared, E3StageChanged, EffectsEnabled, EventConstructorWithTimestamp,
     EventSource, Proof, ProofPayload, ProofType, SignedProofPayload, SyncEnded, Unsequenced,
@@ -731,10 +731,7 @@ fn correlation(command: &NetCommand) -> CorrelationId {
 }
 
 /// Answer the next local store with success.
-async fn store_succeeds(
-    commands: &mut Commands,
-    net_events: &broadcast::Sender<NetEvent>,
-) -> Result<()> {
+async fn store_succeeds(commands: &mut Commands, net_events: &NetEventChannel) -> Result<()> {
     let NetCommand::DhtStoreLocal {
         correlation_id,
         key,
@@ -968,7 +965,8 @@ async fn expired_document_is_rejected_without_a_dht_write() -> Result<()> {
     let system = EventSystem::new().with_fresh_bus();
     let bus = system.handle()?.enable("expired-document");
     let (net_cmd_tx, mut net_cmd_rx) = mpsc::channel(1);
-    let (net_evt_tx, _net_evt_rx) = broadcast::channel(1);
+    let net_evt_tx = NetEventChannel::new(1);
+    let _net_evt_rx = net_evt_tx.subscribe();
     let event = PublishDocumentRequested {
         meta: DocumentMeta::new(
             E3id::new("expired", 1),

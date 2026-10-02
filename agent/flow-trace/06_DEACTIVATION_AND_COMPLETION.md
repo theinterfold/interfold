@@ -344,7 +344,13 @@ buffering window remains a fail-closed readiness error because those skipped eve
 reconciled safely. The network producer sends all events to the raw channel. It sends only gossip
 payloads and publish or DHT results to a separate application channel. `NetEventBuffer` subscribes
 to the application channel. Historical-sync and connection-control bursts remain on the raw channel
-and cannot lag or consume the application startup buffer.
+and cannot lag or consume the application startup buffer. A caller of a network command, such as the
+document publisher or the translator, registers for its result by correlation ID at the producer's
+channel, also when it reads the `NetEventBuffer` output. The producer gives the result to that
+caller before the broadcast, so lag cannot drop it and the buffer does not hold it until
+`SyncEnded`. The document publisher sends no such command before `SyncEnded`. The translator's
+publications do not wait for `SyncEnded`, and a gossip result only decides whether the translator
+publishes the event again.
 
 EventStore replay uses a disk-backed external merge: per-aggregate pages are sorted into secure
 temporary runs, then compacted and merged with bounded file-descriptor fan-in. Replay waits for

@@ -61,7 +61,11 @@ impl NetEventBuffer {
     ) -> (NetEventSubscriber, NetEventBufferHandle) {
         let input_rx = input.subscribe();
         let (output_tx, _) = broadcast::channel(max_events);
-        let output = NetEventSubscriber::from(&output_tx);
+        // Command results do not wait for `SyncEnded`: the callers of the output register at the
+        // input channel. The document publisher sends no command that waits for a result before
+        // `SyncEnded`. The translator's publications do not wait for `SyncEnded`, and a gossip
+        // result only decides whether the translator publishes the event again.
+        let output = input.relayed_by(&output_tx);
         let (readiness_tx, readiness) = oneshot::channel();
 
         let actor = Self {

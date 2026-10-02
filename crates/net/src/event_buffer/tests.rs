@@ -4,21 +4,22 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::net_interface_handle::NetEventSubscriber;
+use crate::net_interface_handle::{NetEventChannel, NetEventSubscriber};
 use std::{sync::Arc, time::Duration};
 
 use super::*;
 use crate::{
     direct_responder::{ChannelType, DirectResponder},
     events::{
-        GossipData, IncomingRequest, NetEvent, OutgoingRequestFailed, OutgoingRequestSucceeded,
-        PeerRejectionKind, ProtocolResponse,
+        call_and_await_response, GossipData, IncomingRequest, NetCommand, NetEvent,
+        OutgoingRequestFailed, OutgoingRequestSucceeded, PeerRejectionKind, ProtocolResponse,
     },
     net_interface::EVENT_CHANNEL_SIZE,
-    NetEventSender,
+    ContentHash, NetEventSender,
 };
 use e3_ciphernode_builder::EventSystem;
 use e3_events::{CorrelationId, EventPublisher, SyncEnded};
+use e3_utils::ArcBytes;
 use libp2p::{
     gossipsub::TopicHash,
     swarm::{ConnectionId, DialError},
@@ -92,12 +93,65 @@ fn sync_and_connection_control_events() -> Vec<NetEvent> {
     ]
 }
 
+/// After `SyncEnded` the buffer reads its input through a bounded broadcast receiver, which a burst
+/// of events can overrun. A caller that reads the buffer output still gets its command result,
+/// because it registers for the result at the input channel.
+#[actix::test]
+async fn command_result_reaches_a_caller_of_the_output_when_the_input_lags() -> Result<()> {
+    let system = EventSystem::new().with_fresh_bus();
+    let bus = system.handle()?.enable("test");
+    let input_tx = NetEventChannel::new(1);
+    let input = NetEventSubscriber::from(&input_tx);
+    let (output, handle) = NetEventBuffer::setup_with_limits(
+        &bus,
+        &input,
+        DEFAULT_MAX_BUFFERED_NET_EVENTS,
+        DEFAULT_MAX_BUFFERED_NET_BYTES,
+    );
+    let _output_rx = output.subscribe();
+    bus.publish_without_context(SyncEnded::new())?;
+    timeout(DELIVERY_TIMEOUT, handle.wait_until_running()).await??;
+
+    let value = ArcBytes::from_bytes(b"document");
+    let key = ContentHash::from_content(&value);
+    let (command_tx, mut commands) = mpsc::channel(1);
+    let call = tokio::spawn(call_and_await_response(
+        command_tx,
+        output,
+        NetCommand::DhtGetRecord {
+            correlation_id: CorrelationId::new(),
+            key: key.clone(),
+        },
+        |event| match event {
+            NetEvent::DhtGetRecordSucceeded { value, .. } => Some(Ok(value.clone())),
+            _ => None,
+        },
+        DELIVERY_TIMEOUT,
+    ));
+    let command = timeout(DELIVERY_TIMEOUT, commands.recv())
+        .await?
+        .context("the call sent no command")?;
+    let correlation_id = command.correlation_id().context("the command has no id")?;
+
+    // The second event replaces the result in the one-slot input before the buffer reads it.
+    input_tx.send(NetEvent::DhtGetRecordSucceeded {
+        key,
+        correlation_id,
+        value: value.clone(),
+    })?;
+    input_tx.send(NetEvent::GossipData(GossipData::GossipBytes(vec![1])))?;
+
+    assert_eq!(timeout(DELIVERY_TIMEOUT * 2, call).await???, value);
+    Ok(())
+}
+
 #[actix::test]
 async fn test_buffers_until_sync_ended() -> Result<()> {
     // Setup
     let system = EventSystem::new().with_fresh_bus();
     let bus = system.handle()?.enable("test");
-    let (input_tx, _input_rx) = broadcast::channel(16);
+    let input_tx = NetEventChannel::new(16);
+    let _input_rx = input_tx.subscribe();
     let input = NetEventSubscriber::from(&input_tx);
     let (output, handle) = NetEventBuffer::setup_with_limits(
         &bus,
@@ -165,7 +219,8 @@ async fn test_buffers_until_sync_ended() -> Result<()> {
 async fn startup_buffer_overflow_fails_readiness_without_dropping_oldest() -> Result<()> {
     let system = EventSystem::new().with_fresh_bus();
     let bus = system.handle()?.enable("test-overflow");
-    let (input_tx, _input_rx) = broadcast::channel(16);
+    let input_tx = NetEventChannel::new(16);
+    let _input_rx = input_tx.subscribe();
     let input = NetEventSubscriber::from(&input_tx);
     let (_output_rx, handle) =
         NetEventBuffer::setup_with_limits(&bus, &input, 1, DEFAULT_MAX_BUFFERED_NET_BYTES);
@@ -190,7 +245,8 @@ async fn startup_buffer_overflow_fails_readiness_without_dropping_oldest() -> Re
 async fn startup_buffer_enforces_estimated_payload_bytes() -> Result<()> {
     let system = EventSystem::new().with_fresh_bus();
     let bus = system.handle()?.enable("test-byte-overflow");
-    let (input_tx, _input_rx) = broadcast::channel(16);
+    let input_tx = NetEventChannel::new(16);
+    let _input_rx = input_tx.subscribe();
     let input = NetEventSubscriber::from(&input_tx);
     let event = NetEvent::GossipData(GossipData::GossipBytes(vec![0; 32]));
     let estimated_bytes = event.buffered_size_bytes();

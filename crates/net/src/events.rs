@@ -33,7 +33,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::sync::{broadcast, mpsc};
-use tracing::{error, trace, warn};
+use tracing::trace;
 
 use libp2p::PeerId;
 
@@ -573,7 +573,12 @@ impl DocumentPublishedNotification {
     }
 }
 
-/// Generic helper for the command-response pattern with correlation IDs
+/// Sends a command and waits for its result event.
+///
+/// The result arrives through a oneshot channel registered for the command's correlation id at the
+/// network interface's event channel, also when `net_events` reads the startup buffer. So neither
+/// broadcast lag nor the buffer can drop it. `matcher` converts the result event; it returns `None`
+/// for an event that is not a result of this command.
 pub async fn call_and_await_response<F, R>(
     net_cmds: mpsc::Sender<NetCommand>,
     net_events: NetEventSubscriber,
@@ -584,10 +589,6 @@ pub async fn call_and_await_response<F, R>(
 where
     F: Fn(&NetEvent) -> Option<Result<R>>,
 {
-    // Subscribe before sending the command so the response cannot be missed
-    let mut rx = net_events.subscribe();
-
-    // Extract correlation_id from command
     let Some(id) = command.correlation_id() else {
         return Err(anyhow::anyhow!(
             "Command must have a correlation_id but this does not: {}",
@@ -595,10 +596,12 @@ where
         ));
     };
 
-    // The command moves into the channel, so keep its description for the timeout error.
+    // The command moves into the channel, so keep its description for the errors below.
     let command_summary = command.summary();
 
-    // Send the command to Libp2pNetInterface
+    // Register before sending the command so the result cannot arrive first.
+    let response = net_events.expect_response(id)?;
+
     trace!(
         "call_and_await_response: sending command {} with timeout {:?}",
         command_summary,
@@ -606,32 +609,11 @@ where
     );
     net_cmds.send(command).await?;
 
-    let result = tokio::time::timeout(timeout, async {
-        loop {
-            match rx.recv().await {
-                Ok(event) => {
-                    // Only process events matching our correlation ID
-                    if event.correlation_id() == Some(id) {
-                        if let Some(result) = matcher(&event) {
-                            return result;
-                        } // None means unexpected event type, keep waiting
-                        trace!("matcher did not match event, skipping...");
-                    }
-                }
-                Err(broadcast::error::RecvError::Lagged(n)) => {
-                    warn!("broadcast receiver lagged by {n} messages");
-                    continue;
-                }
-                Err(e) => {
-                    error!("broadcast channel error: {:?}", e);
-                    return Err(e.into());
-                }
-            }
-        }
-    })
-    .await
-    .map_err(|_| anyhow::anyhow!("Timed out waiting for response from {command_summary}"))?;
-    result
+    let event = tokio::time::timeout(timeout, response.recv())
+        .await
+        .map_err(|_| anyhow::anyhow!("Timed out waiting for response from {command_summary}"))??;
+    matcher(&event)
+        .unwrap_or_else(|| Err(anyhow::anyhow!("Unexpected response to {command_summary}")))
 }
 
 pub async fn await_event<F, R>(
@@ -678,8 +660,80 @@ mod tests {
     };
     use e3_utils::ArcBytes;
 
-    use super::{GossipData, NetCommand, NetEvent, ProtocolResponse};
-    use crate::ContentHash;
+    use std::time::Duration;
+
+    use anyhow::Context;
+    use tokio::sync::mpsc;
+
+    use super::{call_and_await_response, GossipData, NetCommand, NetEvent, ProtocolResponse};
+    use crate::{
+        net_interface_handle::{NetEventChannel, NetEventSubscriber},
+        ContentHash,
+    };
+
+    /// Starts a DHT get for `value` on the given event channel and returns the call and the
+    /// correlation id of its command.
+    async fn start_get(
+        events: &NetEventChannel,
+        value: &ArcBytes,
+        timeout: Duration,
+    ) -> anyhow::Result<(
+        tokio::task::JoinHandle<anyhow::Result<ArcBytes>>,
+        CorrelationId,
+    )> {
+        let (cmd_tx, mut cmd_rx) = mpsc::channel(1);
+        let call = tokio::spawn(call_and_await_response(
+            cmd_tx,
+            NetEventSubscriber::from(events),
+            NetCommand::DhtGetRecord {
+                correlation_id: CorrelationId::new(),
+                key: ContentHash::from_content(value),
+            },
+            |event| match event {
+                NetEvent::DhtGetRecordSucceeded { value, .. } => Some(Ok(value.clone())),
+                _ => None,
+            },
+            timeout,
+        ));
+        let command = cmd_rx.recv().await.context("the call sent no command")?;
+        let id = command.correlation_id().context("the command has no id")?;
+        Ok((call, id))
+    }
+
+    #[tokio::test]
+    async fn command_result_survives_broadcast_lag() -> anyhow::Result<()> {
+        let events = NetEventChannel::new(1);
+        let _observer = events.subscribe();
+        let value = ArcBytes::from_bytes(b"document");
+        let (call, correlation_id) = start_get(&events, &value, Duration::from_secs(2)).await?;
+
+        // The next event replaces the result in the one-slot broadcast before the caller runs.
+        events.send(NetEvent::DhtGetRecordSucceeded {
+            key: ContentHash::from_content(&value),
+            correlation_id,
+            value: value.clone(),
+        })?;
+        events.send(NetEvent::GossipData(GossipData::GossipBytes(vec![1])))?;
+
+        assert_eq!(call.await??, value);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn command_wait_ends_when_the_event_channel_closes() -> anyhow::Result<()> {
+        let events = NetEventChannel::new(1);
+        let value = ArcBytes::from_bytes(b"document");
+        let (call, _) = start_get(&events, &value, Duration::from_secs(60)).await?;
+
+        drop(events);
+
+        let error = tokio::time::timeout(Duration::from_secs(5), call)
+            .await
+            .context("the call waited for its timeout")??
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("closed"));
+        Ok(())
+    }
 
     #[test]
     fn command_summary_reports_sizes_without_payload_bytes() {

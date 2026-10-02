@@ -46,10 +46,7 @@ use std::ffi::OsString;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use std::{fs, path::PathBuf, sync::Arc};
-use tokio::{
-    sync::{broadcast, mpsc},
-    time::sleep,
-};
+use tokio::{sync::mpsc, time::sleep};
 
 #[derive(Debug, Clone, Copy)]
 struct BenchmarkParams {
@@ -2880,11 +2877,11 @@ async fn test_p2p_actor_forwards_events_to_network() -> Result<()> {
     use e3_net::{events::NetEvent, NetEventTranslator};
     use std::sync::Arc;
     use tokio::sync::mpsc;
-    use tokio::sync::{broadcast, Mutex};
+    use tokio::sync::Mutex;
 
     // Setup elements in test
     let (cmd_tx, mut cmd_rx) = mpsc::channel(100); // Transmit byte events to the network
-    let (event_tx, _) = broadcast::channel(100); // Receive byte events from the network
+    let event_tx = e3_net::NetEventChannel::new(100); // Receive byte events from the network
     let aggregate_config =
         AggregateConfig::new(HashMap::from([(AggregateId::new(1), Duration::ZERO)]));
     let system = EventSystem::new()
@@ -2989,7 +2986,8 @@ async fn test_p2p_actor_stores_a_repeated_gossip_event_once() -> Result<()> {
 
     // With delivery dedup off, the bus history shows every stored copy of an event.
     let (cmd_tx, _) = mpsc::channel(100);
-    let (event_tx, _event_rx) = broadcast::channel(100);
+    let event_tx = e3_net::NetEventChannel::new(100);
+    let _event_rx = event_tx.subscribe();
     let aggregate_config =
         AggregateConfig::new(HashMap::from([(AggregateId::new(1), Duration::ZERO)]));
     let system = EventSystem::new()
@@ -3066,7 +3064,8 @@ async fn test_p2p_actor_stores_a_replayed_event_at_most_once_more() -> Result<()
 
     // The default bus: it does not deliver an event ID twice, as after replay.
     let (cmd_tx, _) = mpsc::channel(100);
-    let (event_tx, _event_rx) = broadcast::channel(100);
+    let event_tx = e3_net::NetEventChannel::new(100);
+    let _event_rx = event_tx.subscribe();
     let aggregate_config =
         AggregateConfig::new(HashMap::from([(AggregateId::new(1), Duration::ZERO)]));
     let system = EventSystem::new()
@@ -3138,7 +3137,8 @@ async fn test_p2p_actor_mislabeled_event_does_not_suppress_the_real_one() -> Res
     use e3_events::{EventContext, EventSource, KeyshareCreated, Unsequenced};
 
     let (cmd_tx, _) = mpsc::channel(100);
-    let (event_tx, _event_rx) = broadcast::channel(100);
+    let event_tx = e3_net::NetEventChannel::new(100);
+    let _event_rx = event_tx.subscribe();
     let aggregate_config =
         AggregateConfig::new(HashMap::from([(AggregateId::new(1), Duration::ZERO)]));
     let system = EventSystem::new()
