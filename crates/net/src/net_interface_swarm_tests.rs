@@ -124,6 +124,74 @@ async fn redial_backoff_refuses_outbound_dials_until_a_subscription() -> anyhow:
     Ok(())
 }
 
+/// The health check disconnects an admitted peer that stayed without a gossip subscription for the
+/// grace period, and that disconnect starts the redial backoff: the next dial that names the peer
+/// is refused.
+#[tokio::test]
+async fn health_disconnect_starts_redial_backoff() -> anyhow::Result<()> {
+    let mut node = TestNode::new()?;
+    node.interface
+        .swarm
+        .listen_on("/ip4/127.0.0.1/udp/0/quic-v1".parse()?)?;
+    let address = loop {
+        if let super::SwarmEvent::NewListenAddr { address, .. } = node.next_event().await? {
+            break address;
+        }
+    };
+    // A compatible peer that never subscribes to the topic.
+    let mut remote = super::Libp2pNetInterface::new(
+        super::Libp2pKeypair::generate(),
+        vec![],
+        None,
+        super::NetworkPolicy::local_unrestricted(),
+    )?;
+    let remote_id = *remote.swarm.local_peer_id();
+    remote.swarm.dial(address)?;
+    let remote_task = tokio::spawn(async move {
+        use libp2p::futures::StreamExt;
+        loop {
+            remote.swarm.select_next_some().await;
+        }
+    });
+    while !node.admission.is_admitted(&remote_id) {
+        let event = node.next_event().await?;
+        let _ = node.process(event).await;
+    }
+
+    // The peer has been connected without a subscription for longer than the grace period.
+    let missing_since = Instant::now()
+        .checked_sub(super::GOSSIP_SUBSCRIPTION_GRACE + Duration::from_secs(1))
+        .ok_or_else(|| anyhow::anyhow!("the monotonic clock is younger than the grace period"))?;
+    node.health()
+        .stale_peers(&HashSet::from([remote_id]), &HashSet::new(), missing_since);
+    super::reconcile_gossip_subscriptions(
+        &mut node.interface.swarm,
+        &node.admission,
+        &node.interface.topic,
+        &node.interface.status,
+    );
+    remote_task.abort();
+    loop {
+        let event = node.next_event().await?;
+        let closed = matches!(
+            &event,
+            super::SwarmEvent::ConnectionClosed {
+                peer_id,
+                num_established: 0,
+                ..
+            } if *peer_id == remote_id
+        );
+        let _ = node.process(event).await;
+        if closed {
+            break;
+        }
+    }
+
+    let refused = node.dial(remote_id).expect_err("a dial during the backoff");
+    assert!(is_redial_backoff(&refused), "{refused}");
+    Ok(())
+}
+
 /// A Kademlia query keeps the candidates that it chose before the disconnect, and dials them
 /// with addresses from its routing table or the Identify cache. The backoff holds back these
 /// dials too.
