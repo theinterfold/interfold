@@ -251,6 +251,69 @@ async fn recovered_publications_wait_for_the_end_of_the_sync() -> Result<()> {
     Ok(())
 }
 
+/// Replay brings back publication requests whose documents have expired, and startup holds
+/// publications until `SyncEnded`. Expired requests must not fill the outbox, or a document that
+/// the chain history creates in that window is refused and never published.
+#[actix::test]
+async fn expired_replay_does_not_block_fresh_publication() -> Result<()> {
+    tokio::time::pause();
+    let (_guard, _bus, _net_cmd_tx, commands, _net_events, _, _, _, publisher) =
+        setup_startup_test(RecoveredDocumentState::default())?;
+    let mut commands = Commands::new(commands);
+    let is_dht_write = |command: &NetCommand| is_store_local(command) || is_upload(command);
+
+    let mut seq = 0;
+    for index in 0..MAX_PENDING_PUBLICATIONS {
+        let mut expired =
+            publish_request(&format!("expired-{index}"), index.to_string().as_bytes());
+        expired.meta.expires_at = Utc::now() - chrono::Duration::seconds(1);
+        seq += 1;
+        publisher
+            .send(startup_event(
+                InterfoldEventData::PublishDocumentRequested(expired),
+                seq,
+            ))
+            .await?;
+    }
+    publisher
+        .send(startup_event(EffectsEnabled::new().into(), seq + 1))
+        .await?;
+    let fresh = publish_request("fresh", b"fresh document");
+    let fresh_key = ContentHash::from_content(&fresh.value);
+    publisher
+        .send(startup_event(
+            InterfoldEventData::PublishDocumentRequested(fresh),
+            seq + 2,
+        ))
+        .await?;
+    publisher.send(PublisherBarrier).await?;
+    assert!(
+        !commands
+            .arrives_within(Duration::from_secs(60), is_dht_write)
+            .await,
+        "no publication runs before the chain history arrives"
+    );
+
+    publisher
+        .send(startup_event(SyncEnded::new().into(), seq + 3))
+        .await?;
+    for accept in [is_store_local, is_upload] {
+        let command = commands.take(accept).await?;
+        assert!(matches!(
+            command,
+            NetCommand::DhtStoreLocal { key, .. } | NetCommand::DhtPutRecord { key, .. }
+                if key == fresh_key
+        ));
+    }
+    assert!(
+        !commands
+            .arrives_within(Duration::from_secs(60), is_dht_write)
+            .await,
+        "no expired document is written"
+    );
+    Ok(())
+}
+
 /// A busy network command queue holds the publisher's cleanup in one bounded queue with one
 /// waiting send, not in a task per command. The cleanup that waits behind that send goes out
 /// together once the queue has room.

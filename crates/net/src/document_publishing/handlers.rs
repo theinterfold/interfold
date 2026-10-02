@@ -75,6 +75,9 @@ impl Handler<TypedEvent<PublishDocumentRequested>> for DocumentPublisher {
             msg.meta.e3_id.clone(),
             ContentHash::from_content(&msg.value),
         );
+        // Publications wait for `SyncEnded`, and replay brings back requests that may have
+        // expired, so an expired publication must not take the outbox or this document's place.
+        self.remove_expired_publications(ctx);
         if self.closed_e3s.contains(&msg.meta.e3_id) || self.publications.contains_key(&id) {
             return;
         }

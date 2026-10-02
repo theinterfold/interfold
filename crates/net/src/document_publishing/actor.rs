@@ -423,6 +423,18 @@ impl DocumentPublisher {
         self.publishing_enabled.then(|| publication.event.clone())
     }
 
+    fn remove_expired_publications(&mut self, ctx: &mut actix::Context<Self>) {
+        let expired: Vec<DocumentId> = self
+            .publications
+            .iter()
+            .filter(|(_, publication)| publication.is_expired())
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in &expired {
+            self.remove_publication(id, ctx);
+        }
+    }
+
     fn remove_publication(&mut self, id: &DocumentId, ctx: &mut actix::Context<Self>) {
         if let Some(publication) = self.publications.remove(id) {
             if publication.stop(ctx) {

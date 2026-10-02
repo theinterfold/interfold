@@ -1666,7 +1666,9 @@ busy network command queue delays them. A full cleanup queue drops its oldest en
 warning; their records expire and their puts time out on their own. C4 `DecryptionKeyShared` is a
 DKG document; later `DecryptionshareCreated` events use event gossip, not the DHT document path.
 Recovery retains the DKG closure across restart. A local `E3RequestComplete` does not mean that the
-contract has reached a terminal stage.
+contract has reached a terminal stage. Each new publication request first removes the expired
+publications, so the expired documents that replay brings back cannot fill the outbox while
+publications wait for `SyncEnded`.
 
 The CRISP server writes its request record at `E3Requested` and writes the generic E3 record only
 after the indexer verifies the committee public key against the on-chain commitment. Current-round
