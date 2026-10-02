@@ -11,6 +11,18 @@ use crate::math::modulo::U64::ModU64;
 use crate::math::polynomial::Polynomial;
 
 /// Parameters for threshold public key aggregation (C5).
+/// Bit width of the quotient `verify_pk_for_basis` divides out of each coefficient sum.
+///
+/// The checked value is `sum(pk_i) + H * q - pk_agg`. Every `pk_i` equals the canonical residue C1
+/// committed (the checked opening transfers that bound) and `pk_agg` is range-checked here, so each
+/// lies in `[-(q-1)/2, (q-1)/2]` and the value is at most `H * q + (H + 1) * (q - 1) / 2`. Its
+/// quotient by `q` is therefore at most `(3H + 1) / 2`, which is 192 at `H = 128`. Eight bits cover
+/// every committee up to that size; `verify_pk_for_basis` asserts it.
+///
+/// Only completeness rests on this bound. A prover that opens a non-canonical `pk_i` cannot pass
+/// the commitment check, and a quotient that does not fit makes the circuit unsatisfiable.
+pub global SUM_BIT_CARRY: u32 = 8;
+
 pub struct Configs<let L: u32> {
     /// CRT moduli for each basis: [q_0, q_1, ..., q_{L-1}]
     pub qis: [Field; L],
@@ -117,15 +129,17 @@ impl<let N: u32, let H: u32, let L: u32, let BIT_PK: u32> PkAggregation<N, H, L,
         pk_agg: [Polynomial<N>; L],
         basis_idx: u32,
     ) {
+        // The quotient divided out below is at most (3H + 1) / 2; see SUM_BIT_CARRY.
+        assert(H <= 128, "committee exceeds the sum carry bound");
+
         let q_l = self.configs.qis[basis_idx];
-        // sum_shifted < H*2*q_l; quotient < 2H (small) -- safe for ModU64.
         let mod_q_l = ModU64::new(q_l as u64);
 
         let half_qi: Field = (q_l - 1) / 2;
         let h_half_qi: Field = H as Field * half_qi;
         // Offset keeps (sum_shifted - expected_unred + offset) non-negative in the integer
         // sense (not Field-wrapped). sum_shifted in [0, H*q_l), expected_unred in
-        // [(H-1)*q_l/2, (H+1)*q_l/2) -> delta + H*q_l >= (H-1)*q_l/2 >= 0; max quotient <= H+2.
+        // [(H-1)*q_l/2, (H+1)*q_l/2) -> delta + H*q_l >= (H-1)*q_l/2 >= 0.
         let offset: Field = H as Field * q_l;
 
         for coeff_idx in 0..N {
@@ -134,9 +148,9 @@ impl<let N: u32, let H: u32, let L: u32, let BIT_PK: u32> PkAggregation<N, H, L,
                 sum_shifted =
                     sum_shifted + pk[party_idx][basis_idx].coefficients[coeff_idx] + half_qi;
             }
-            // Single divisibility check replaces two reduce_mod calls + equality assert:
-            // saves ~37 gates per position (~48 gates -> ~12 gates for assert_zero_mod).
-            mod_q_l.assert_zero_mod(
+            // Single divisibility check replaces two reduce_mod calls + equality assert, and the
+            // quotient is range-checked to SUM_BIT_CARRY bits instead of cast to u64.
+            mod_q_l.assert_zero_mod_bounded::<SUM_BIT_CARRY>(
                 sum_shifted + offset - pk_agg[basis_idx].coefficients[coeff_idx] - h_half_qi,
             );
         }
@@ -159,4 +173,57 @@ impl<let N: u32, let H: u32, let L: u32, let BIT_PK: u32> PkAggregation<N, H, L,
         // Step 4: Commit to (pk0_agg, crp). crp is the circuit-constant CRS a used as pk1_agg.
         compute_pk_aggregation_commitment::<N, L, BIT_PK>(self.pk0_agg, self.crp)
     }
+}
+
+/// Three parties, `N = 4`, `L = 2`, `q = [101, 97]`. The first two coefficients sit at the edges
+/// of the centered range so the sums wrap by one modulus in each direction.
+fn fixture() -> PkAggregation<4, 3, 2, 7> {
+    let qis = [101, 97];
+    let pk0 = [
+        [Polynomial::new([50, 0 - 50, 10, 0]), Polynomial::new([48, 0 - 48, 5, 7])],
+        [Polynomial::new([50, 0 - 50, 20, 1]), Polynomial::new([48, 0 - 48, 5, 0 - 7])],
+        [Polynomial::new([50, 0 - 50, 0 - 30, 2]), Polynomial::new([48, 0 - 48, 5, 1])],
+    ];
+    // 150 - 101 = 49, -150 + 101 = -49; 144 - 97 = 47, -144 + 97 = -47.
+    let pk0_agg = [Polynomial::new([49, 0 - 49, 0, 3]), Polynomial::new([47, 0 - 47, 15, 1])];
+    let crp = [Polynomial::new([1, 2, 3, 4]), Polynomial::new([5, 6, 7, 8])];
+
+    let mut commitments = [0; 3];
+    for i in 0..3 {
+        commitments[i] = compute_threshold_pk_commitment_checked::<4, 2, 7>(pk0[i]);
+    }
+
+    PkAggregation::new(Configs::new(qis), crp, commitments, pk0, pk0_agg)
+}
+
+#[test]
+fn honest_aggregation_holds() {
+    let circuit = fixture();
+    let expected = compute_pk_aggregation_commitment::<4, 2, 7>(circuit.pk0_agg, circuit.crp);
+    assert(circuit.execute() == expected);
+}
+
+#[test(should_fail_with = "Divisibility check failed")]
+fn wrong_sum_is_rejected() {
+    let mut circuit = fixture();
+    circuit.pk0_agg[0].coefficients[2] = 1;
+    let _ = circuit.execute();
+}
+
+/// `49 - 101` is the same residue as the honest `49`, so the sum check alone accepts it. The range
+/// check is what pins the aggregate to one representative.
+#[test(should_fail)]
+fn non_canonical_aggregate_is_rejected() {
+    let mut circuit = fixture();
+    circuit.pk0_agg[0].coefficients[0] = 49 - 101;
+    let _ = circuit.execute();
+}
+
+#[test(should_fail_with = "PK commitment mismatch")]
+fn party_key_not_matching_its_commitment_is_rejected() {
+    let mut circuit = fixture();
+    // Keeps the sum intact, so only the commitment check can catch it.
+    circuit.pk0[0][0].coefficients[3] = 1;
+    circuit.pk0[1][0].coefficients[3] = 0;
+    let _ = circuit.execute();
 }

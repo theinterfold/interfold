@@ -59,6 +59,27 @@ impl ModU64 {
         assert((quo_u64 as Field) * (self.m as Field) == n, "Divisibility check failed");
     }
 
+    /// Asserts that n == 0 mod m, with the quotient bounded to `BIT_K` bits.
+    ///
+    /// Same check as [`Self::assert_zero_mod`], for callers that know how small the quotient is.
+    /// The `u64` cast there bounds a quotient that is often a few bits wide; an 8-bit range check
+    /// measures 2 gates cheaper per call (C5 on secure-8192: 49,152 gates over 24,576 calls).
+    ///
+    /// Soundness does not depend on `BIT_K` being tight. `quotient * m < 2^(BIT_K + 62)` is far
+    /// below the field prime, so as long as the caller keeps `|n|` far below it too, the field
+    /// equation implies the integer one and `m` divides `n`. A negative `n` wraps to a value near
+    /// the prime and matches no bounded quotient.
+    ///
+    /// The caller must keep `n < 2^BIT_K * m`. If that is missed the honest quotient overflows
+    /// `BIT_K` and the circuit is unsatisfiable: a completeness failure, not a soundness one.
+    pub fn assert_zero_mod_bounded<let BIT_K: u32>(self, n: Field) {
+        // Safety: __reduce_witness_u64 computes floor(n/m); the range check and the arithmetic
+        // assert below verify it.
+        let quotient = unsafe { __reduce_witness_u64(n, self.m) } as Field;
+        quotient.assert_max_bit_size::<BIT_K>();
+        assert(quotient * (self.m as Field) == n, "Divisibility check failed");
+    }
+
     /// (lhs + rhs) mod m. Inputs must already be reduced (< m).
     pub fn add(self, lhs: Field, rhs: Field) -> Field {
         // lhs + rhs < 2m < 2^63; no Field overflow before reduce_mod.
@@ -345,4 +366,30 @@ fn test_u64_div_mod_rejects_non_invertible_divisor() {
     // regression-tests IF-001: the verification assert must now catch it.
     let m = ModU64::new(100);
     let _ = m.div_mod(7, 10);
+}
+
+#[test]
+fn test_assert_zero_mod_bounded_accepts_multiples() {
+    let m = ModU64::new(101);
+    m.assert_zero_mod_bounded::<8>(0);
+    m.assert_zero_mod_bounded::<8>(101);
+    // Largest quotient that fits 8 bits.
+    m.assert_zero_mod_bounded::<8>(255 * 101);
+}
+
+#[test(should_fail_with = "Divisibility check failed")]
+fn test_assert_zero_mod_bounded_rejects_non_multiple() {
+    ModU64::new(101).assert_zero_mod_bounded::<8>(102);
+}
+
+#[test(should_fail)]
+fn test_assert_zero_mod_bounded_rejects_quotient_over_bound() {
+    // 256 * 101 is a multiple, but its quotient needs 9 bits.
+    ModU64::new(101).assert_zero_mod_bounded::<8>(256 * 101);
+}
+
+#[test(should_fail)]
+fn test_assert_zero_mod_bounded_rejects_negative() {
+    // -101 wraps to a value near the field prime; no 8-bit quotient reaches it.
+    ModU64::new(101).assert_zero_mod_bounded::<8>(0 - 101);
 }
