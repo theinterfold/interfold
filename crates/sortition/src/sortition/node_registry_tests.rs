@@ -399,3 +399,93 @@ fn open_committees_lists_only_unreleased() {
     NodeRegistry::release_committee_jobs(&mut store, &b, "test");
     assert!(NodeRegistry::open_committees(&store).is_empty());
 }
+
+#[test]
+fn an_eligibility_version_update_deactivates_every_operator_until_it_refreshes() {
+    let mut store = HashMap::new();
+    for (chain, operator) in [(1, "0xabc"), (1, "0xdef"), (2, "0xabc")] {
+        NodeRegistry::set_operator_active(
+            &mut store,
+            chain,
+            operator.into(),
+            true,
+            ChainPosition::new(1, 0),
+        );
+    }
+    let event = EligibilityConfigurationVersionUpdatedAt {
+        update: e3_events::EligibilityConfigurationVersionUpdated {
+            version: U256::from(2),
+            chain_id: 1,
+        },
+        position: ChainPosition::new(10, 3),
+    };
+
+    NodeRegistry::update_eligibility_version(&mut store, &event);
+
+    assert!(!store[&1].nodes["0xabc"].active);
+    assert!(!store[&1].nodes["0xdef"].active);
+    assert!(
+        store[&2].nodes["0xabc"].active,
+        "other chains keep their state"
+    );
+    // An activation logged before the update does not undo it; a refresh after it does.
+    NodeRegistry::set_operator_active(
+        &mut store,
+        1,
+        "0xabc".into(),
+        true,
+        ChainPosition::new(10, 2),
+    );
+    assert!(!store[&1].nodes["0xabc"].active);
+    NodeRegistry::set_operator_active(
+        &mut store,
+        1,
+        "0xabc".into(),
+        true,
+        ChainPosition::new(20, 0),
+    );
+    let node = &store[&1].nodes["0xabc"];
+    assert!(node.active);
+    // Request-time views see the operator inactive between the update and its refresh.
+    assert!(node.active_at(5));
+    assert!(!node.active_at(15));
+    assert!(node.active_at(25));
+    assert!(!store[&1].nodes["0xdef"].active_at(25));
+}
+
+#[test]
+fn a_bonding_asset_update_sets_the_ticket_price_in_log_order() {
+    let mut store = HashMap::new();
+    NodeRegistry::set_operator_active(
+        &mut store,
+        1,
+        "0xabc".into(),
+        true,
+        ChainPosition::new(1, 0),
+    );
+    let update = |price: u64, position| BondingAssetConfigUpdatedAt {
+        config: e3_events::BondingAssetConfigUpdated {
+            ticket_token: "0x1".into(),
+            ciphernode_bond_token: "0x2".into(),
+            ticket_price: U256::from(price),
+            required_ciphernode_bond: U256::from(1000),
+            expected_ticket_decimals: 6,
+            expected_ciphernode_bond_decimals: 18,
+            configuration_version: 1,
+            chain_id: 1,
+        },
+        position,
+    };
+
+    NodeRegistry::update_bonding_asset_config(&mut store, &update(25, ChainPosition::new(5, 1)));
+    assert_eq!(store[&1].ticket_price, U256::from(25));
+    // The version update that follows in the same transaction deactivates operators; the asset
+    // update alone does not.
+    assert!(store[&1].nodes["0xabc"].active);
+    NodeRegistry::update_bonding_asset_config(&mut store, &update(30, ChainPosition::new(5, 0)));
+    assert_eq!(
+        store[&1].ticket_price,
+        U256::from(25),
+        "an older update is ignored"
+    );
+}

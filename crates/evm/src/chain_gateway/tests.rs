@@ -55,7 +55,8 @@ async fn eligibility_source_time_survives_delayed_ingestion_and_snapshot_replay(
     use alloy::primitives::{Address, FixedBytes, I256, U256};
     use e3_data::{AutoPersist, DataStore, InMemStore, Persistable, Repository};
     use e3_events::{
-        hlc::HlcTimestamp, ConfigurationUpdated, Event, EventContextAccessors,
+        hlc::HlcTimestamp, BondingAssetConfigUpdated, ConfigurationUpdated,
+        EligibilityConfigurationVersionUpdated, Event, EventContextAccessors,
         OperatorActivationChanged, TicketBalanceUpdated,
     };
     use e3_sortition::{CiphernodeSelector, NodeStateStore, Sortition, SortitionParams};
@@ -120,16 +121,34 @@ async fn eligibility_source_time_survives_delayed_ingestion_and_snapshot_replay(
         active: true,
         chain_id: 1,
     };
+    let version = |value| EligibilityConfigurationVersionUpdated {
+        version: U256::from(value),
+        chain_id: 1,
+    };
+    let asset = |value| BondingAssetConfigUpdated {
+        ticket_token: Address::repeat_byte(2).to_string(),
+        ciphernode_bond_token: Address::repeat_byte(3).to_string(),
+        ticket_price: U256::from(value),
+        required_ciphernode_bond: U256::from(1_000u64),
+        expected_ticket_decimals: 6,
+        expected_ciphernode_bond_decimals: 18,
+        configuration_version: 1,
+        chain_id: 1,
+    };
     let request_time = 1_700_000_010;
     let facts: Vec<(u64, InterfoldEventData)> = vec![
         (request_time - 2, price(10u64).into()),
         (request_time - 2, balance(20u64).into()),
         (request_time - 2, active().into()),
+        // A version update with no refresh until the request block.
+        (request_time - 1, version(2u64).into()),
         (request_time, balance(1_000u64).into()),
         (request_time, balance(1_500u64).into()),
         (request_time, price(25u64).into()),
         (request_time, active().into()),
-        (request_time, price(30u64).into()),
+        // An asset update, then the version update of the same transaction, then a refresh.
+        (request_time, asset(30u64).into()),
+        (request_time, version(3u64).into()),
         (request_time, active().into()),
     ];
     let mut events = Vec::new();
@@ -148,6 +167,10 @@ async fn eligibility_source_time_survives_delayed_ingestion_and_snapshot_replay(
             InterfoldEventData::TicketBalanceUpdatedAt(data) => data.position.timepoint,
             InterfoldEventData::OperatorActivationChangedAt(data) => data.position.timepoint,
             InterfoldEventData::ConfigurationUpdatedAt(data) => data.position.timepoint,
+            InterfoldEventData::EligibilityConfigurationVersionUpdatedAt(data) => {
+                data.position.timepoint
+            }
+            InterfoldEventData::BondingAssetConfigUpdatedAt(data) => data.position.timepoint,
             _ => panic!("eligibility events must retain source block time"),
         };
         assert_eq!(checkpoint_time, seconds);
@@ -163,12 +186,18 @@ async fn eligibility_source_time_survives_delayed_ingestion_and_snapshot_replay(
     let expected = live_repository.read().await?.unwrap();
     let node = &expected[&1].nodes[&address];
     assert_eq!(node.ticket_balance_at(request_time - 1), U256::from(20));
-    assert!(node.active_at(request_time - 1));
+    assert!(node.active_at(request_time - 2));
+    // The version update deactivates the operator until its refresh.
+    assert!(!node.active_at(request_time - 1));
     assert_eq!(node.ticket_balance_at(request_time), U256::from(1_500));
     assert!(node.active_at(request_time));
+    // The last price comes from the asset update.
     assert_eq!(expected[&1].ticket_price, U256::from(30));
-    assert_eq!(node.active_history.len(), 2); // Invalidation and refresh share a block.
-    assert_eq!(node.active_history[1].timepoint, request_time);
+    // Activation, the version update, and the request block, where invalidations and refreshes
+    // share one checkpoint.
+    assert_eq!(node.active_history.len(), 3);
+    assert_eq!(node.active_history[1].timepoint, request_time - 1);
+    assert_eq!(node.active_history[2].timepoint, request_time);
 
     for split in 0..=events.len() {
         let (before, repository) = sortition(&bus, Default::default());

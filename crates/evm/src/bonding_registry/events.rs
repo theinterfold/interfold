@@ -12,7 +12,8 @@ use alloy::{
     sol_types::SolEvent,
 };
 use e3_events::{
-    BondOwnerSet, CiphernodeBondUpdated, CiphernodeDeregistrationRequested, InterfoldEventData,
+    BondOwnerSet, BondingAssetConfigUpdated, CiphernodeBondUpdated,
+    CiphernodeDeregistrationRequested, EligibilityConfigurationVersionUpdated, InterfoldEventData,
 };
 use tracing::{error, trace};
 
@@ -64,6 +65,55 @@ impl From<ConfigurationUpdatedWithChainId> for InterfoldEventData {
     fn from(value: ConfigurationUpdatedWithChainId) -> Self {
         let payload: e3_events::ConfigurationUpdated = value.into();
         Self::from(payload)
+    }
+}
+
+struct EligibilityConfigurationVersionUpdatedWithChainId(
+    pub IBondingRegistry::EligibilityConfigurationVersionUpdated,
+    pub u64,
+);
+
+impl From<EligibilityConfigurationVersionUpdatedWithChainId>
+    for EligibilityConfigurationVersionUpdated
+{
+    fn from(value: EligibilityConfigurationVersionUpdatedWithChainId) -> Self {
+        Self {
+            version: value.0.version,
+            chain_id: value.1,
+        }
+    }
+}
+
+impl From<EligibilityConfigurationVersionUpdatedWithChainId> for InterfoldEventData {
+    fn from(value: EligibilityConfigurationVersionUpdatedWithChainId) -> Self {
+        EligibilityConfigurationVersionUpdated::from(value).into()
+    }
+}
+
+struct BondingAssetConfigUpdatedWithChainId(
+    pub IBondingRegistry::BondingAssetConfigUpdated,
+    pub u64,
+);
+
+impl From<BondingAssetConfigUpdatedWithChainId> for BondingAssetConfigUpdated {
+    fn from(value: BondingAssetConfigUpdatedWithChainId) -> Self {
+        let event = value.0;
+        Self {
+            ticket_token: event.ticketToken.to_string(),
+            ciphernode_bond_token: event.ciphernodeBondToken.to_string(),
+            ticket_price: event.ticketPrice,
+            required_ciphernode_bond: event.requiredCiphernodeBond,
+            expected_ticket_decimals: event.expectedTicketDecimals,
+            expected_ciphernode_bond_decimals: event.expectedCiphernodeBondDecimals,
+            configuration_version: event.configurationVersion,
+            chain_id: value.1,
+        }
+    }
+}
+
+impl From<BondingAssetConfigUpdatedWithChainId> for InterfoldEventData {
+    fn from(value: BondingAssetConfigUpdatedWithChainId) -> Self {
+        BondingAssetConfigUpdated::from(value).into()
     }
 }
 
@@ -230,6 +280,23 @@ pub(crate) fn extractor(
                 event, chain_id,
             )))
         }
+        Some(&IBondingRegistry::EligibilityConfigurationVersionUpdated::SIGNATURE_HASH) => {
+            let Ok(event) =
+                IBondingRegistry::EligibilityConfigurationVersionUpdated::decode_log_data(data)
+            else {
+                error!("Error parsing EligibilityConfigurationVersionUpdated after topic matched!");
+                return None;
+            };
+            Some(EligibilityConfigurationVersionUpdatedWithChainId(event, chain_id).into())
+        }
+        Some(&IBondingRegistry::BondingAssetConfigUpdated::SIGNATURE_HASH) => {
+            let Ok(event) = IBondingRegistry::BondingAssetConfigUpdated::decode_log_data(data)
+            else {
+                error!("Error parsing BondingAssetConfigUpdated after topic matched!");
+                return None;
+            };
+            Some(BondingAssetConfigUpdatedWithChainId(event, chain_id).into())
+        }
         Some(&IBondingRegistry::BondOwnerSet::SIGNATURE_HASH) => {
             let Ok(event) = IBondingRegistry::BondOwnerSet::decode_log_data(data) else {
                 error!("Error parsing event BondOwnerSet after topic matched!");
@@ -330,6 +397,113 @@ mod tests {
         let converted: e3_events::ConfigurationUpdated =
             ConfigurationUpdatedWithChainId(event, 1).into();
         assert_eq!(converted.parameter, "price");
+    }
+
+    #[test]
+    fn test_extractor_decodes_eligibility_configuration_version_updated() {
+        let hash = IBondingRegistry::EligibilityConfigurationVersionUpdated::SIGNATURE_HASH;
+        assert_eq!(
+            crate::domain::evm_event_catalog::find("BondingRegistry", hash).map(|event| event.name),
+            Some("EligibilityConfigurationVersionUpdated"),
+            "the binding matches the contract's event signature"
+        );
+        let event = IBondingRegistry::EligibilityConfigurationVersionUpdated {
+            version: alloy::primitives::U256::from(7u64),
+        };
+        let out = extractor(&event.encode_log_data(), &[hash], 55);
+        assert_eq!(
+            out,
+            Some(InterfoldEventData::EligibilityConfigurationVersionUpdated(
+                EligibilityConfigurationVersionUpdated {
+                    version: alloy::primitives::U256::from(7u64),
+                    chain_id: 55,
+                }
+            ))
+        );
+    }
+
+    #[test]
+    fn test_extractor_decodes_bonding_asset_config_updated() {
+        let hash = IBondingRegistry::BondingAssetConfigUpdated::SIGNATURE_HASH;
+        assert_eq!(
+            crate::domain::evm_event_catalog::find("BondingRegistry", hash).map(|event| event.name),
+            Some("BondingAssetConfigUpdated"),
+            "the binding matches the contract's event signature"
+        );
+        let event = IBondingRegistry::BondingAssetConfigUpdated {
+            ticketToken: Address::repeat_byte(0x11),
+            ciphernodeBondToken: Address::repeat_byte(0x22),
+            ticketPrice: alloy::primitives::U256::from(10u64),
+            requiredCiphernodeBond: alloy::primitives::U256::from(1000u64),
+            expectedTicketDecimals: 6,
+            expectedCiphernodeBondDecimals: 18,
+            configurationVersion: 3,
+        };
+        let out = extractor(&event.encode_log_data(), &[hash], 55);
+        assert_eq!(
+            out,
+            Some(InterfoldEventData::BondingAssetConfigUpdated(
+                BondingAssetConfigUpdated {
+                    ticket_token: Address::repeat_byte(0x11).to_string(),
+                    ciphernode_bond_token: Address::repeat_byte(0x22).to_string(),
+                    ticket_price: alloy::primitives::U256::from(10u64),
+                    required_ciphernode_bond: alloy::primitives::U256::from(1000u64),
+                    expected_ticket_decimals: 6,
+                    expected_ciphernode_bond_decimals: 18,
+                    configuration_version: 3,
+                    chain_id: 55,
+                }
+            ))
+        );
+    }
+
+    /// Logs laid out as `IBondingRegistry.sol` declares the events (indexed fields as topics, the
+    /// rest as ABI words), built without the binding, so a wrong `indexed` in it fails here.
+    #[test]
+    fn logs_in_the_solidity_layout_decode() {
+        use alloy::primitives::{keccak256, U256};
+        let word = |value: u64| U256::from(value).to_be_bytes::<32>();
+
+        let topics = vec![
+            keccak256("EligibilityConfigurationVersionUpdated(uint256)"),
+            B256::from(word(7)),
+        ];
+        let log = LogData::new_unchecked(topics.clone(), Default::default());
+        assert_eq!(
+            extractor(&log, &topics, 55),
+            Some(InterfoldEventData::EligibilityConfigurationVersionUpdated(
+                EligibilityConfigurationVersionUpdated {
+                    version: U256::from(7u64),
+                    chain_id: 55,
+                }
+            ))
+        );
+
+        let topics = vec![
+            keccak256(
+                "BondingAssetConfigUpdated(address,address,uint256,uint256,uint8,uint8,uint64)",
+            ),
+            Address::repeat_byte(0x11).into_word(),
+            Address::repeat_byte(0x22).into_word(),
+            B256::from(word(3)),
+        ];
+        let data = [word(10), word(1000), word(6), word(18)].concat();
+        let log = LogData::new_unchecked(topics.clone(), data.into());
+        assert_eq!(
+            extractor(&log, &topics, 55),
+            Some(InterfoldEventData::BondingAssetConfigUpdated(
+                BondingAssetConfigUpdated {
+                    ticket_token: Address::repeat_byte(0x11).to_string(),
+                    ciphernode_bond_token: Address::repeat_byte(0x22).to_string(),
+                    ticket_price: U256::from(10u64),
+                    required_ciphernode_bond: U256::from(1000u64),
+                    expected_ticket_decimals: 6,
+                    expected_ciphernode_bond_decimals: 18,
+                    configuration_version: 3,
+                    chain_id: 55,
+                }
+            ))
+        );
     }
 
     #[test]

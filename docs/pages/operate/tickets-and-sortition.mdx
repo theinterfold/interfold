@@ -252,19 +252,21 @@ Add `--rpc-url <RPC_URL>` to each `cast` command. The contract addresses are in
 
 ### Events
 
-| Event                             | Contract             | Meaning                                                                          |
-| --------------------------------- | -------------------- | -------------------------------------------------------------------------------- |
-| `TicketBalanceUpdated`            | `BondingRegistry`    | The tFOLD balance changed. `reason` is `DEPOSIT`, `WITHDRAW`, or a slash reason. |
-| `OperatorActivationChanged`       | `BondingRegistry`    | The active status of the operator changed.                                       |
-| `ConfigurationUpdated`            | `BondingRegistry`    | Governance changed a parameter.                                                  |
-| `CommitteeRandomnessRequested`    | `CiphernodeRegistry` | The registry requested the VRF seed for an E3.                                   |
-| `RandomnessFulfilled`             | Randomness provider  | The provider recorded a VRF response.                                            |
-| `RandomnessCircuitBreakerTripped` | `CiphernodeRegistry` | The VRF wait expired without a usable response.                                  |
-| `CommitteeBondOwnerCapEnabled`    | `CiphernodeRegistry` | The E3 gives at most one seat to each snapshot bond owner.                       |
-| `TicketSubmitted`                 | `CiphernodeRegistry` | A ciphernode submitted a ticket.                                                 |
-| `SortitionCommitteeFinalized`     | `CiphernodeRegistry` | The committee is final.                                                          |
-| `CommitteeFormationFailed`        | `CiphernodeRegistry` | Fewer than N bond owners submitted eligible tickets.                             |
-| `CommitteePublished`              | `CiphernodeRegistry` | The committee published the aggregated public key.                               |
+| Event                                    | Contract             | Meaning                                                                                                                        |
+| ---------------------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `TicketBalanceUpdated`                   | `BondingRegistry`    | The tFOLD balance changed. `reason` is `DEPOSIT`, `WITHDRAW`, or a slash reason.                                               |
+| `OperatorActivationChanged`              | `BondingRegistry`    | The active status of the operator changed.                                                                                     |
+| `ConfigurationUpdated`                   | `BondingRegistry`    | Governance changed a parameter.                                                                                                |
+| `EligibilityConfigurationVersionUpdated` | `BondingRegistry`    | The eligibility rules changed. Each operator is inactive until a status refresh under the new rules (`refreshOperatorStatus`). |
+| `BondingAssetConfigUpdated`              | `BondingRegistry`    | Governance changed the ticket or bond token, the ticket price, or the required bond.                                           |
+| `CommitteeRandomnessRequested`           | `CiphernodeRegistry` | The registry requested the VRF seed for an E3.                                                                                 |
+| `RandomnessFulfilled`                    | Randomness provider  | The provider recorded a VRF response.                                                                                          |
+| `RandomnessCircuitBreakerTripped`        | `CiphernodeRegistry` | The VRF wait expired without a usable response.                                                                                |
+| `CommitteeBondOwnerCapEnabled`           | `CiphernodeRegistry` | The E3 gives at most one seat to each snapshot bond owner.                                                                     |
+| `TicketSubmitted`                        | `CiphernodeRegistry` | A ciphernode submitted a ticket.                                                                                               |
+| `SortitionCommitteeFinalized`            | `CiphernodeRegistry` | The committee is final.                                                                                                        |
+| `CommitteeFormationFailed`               | `CiphernodeRegistry` | Fewer than N bond owners submitted eligible tickets.                                                                           |
+| `CommitteePublished`                     | `CiphernodeRegistry` | The committee published the aggregated public key.                                                                             |
 
 ### Log lines
 

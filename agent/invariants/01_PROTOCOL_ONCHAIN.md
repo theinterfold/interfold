@@ -170,13 +170,13 @@ every section.
   statuses in O(1). New committee requests wait for a check of every registration captured at that
   change, including inactive results. Duplicates and later registrations cannot settle another
   member's check. Deregistration settles the departing member. Rust uses source block seconds from
-  `ConfigurationUpdatedAt` and `OperatorActivationChangedAt`, never the merged event clock, and must
-  invalidate its activity view on every version bump. **Gap:** of these parameters only
-  `ciphernodeBondActiveBps` and `minTicketBalance` emit `ConfigurationUpdated`. Asset-configuration
-  and node-release changes bump the version through `BondingAssetConfigUpdated` and
-  `EligibilityConfigurationVersionUpdated`, which Rust does not consume
-  (`crates/evm/src/bonding_registry/events.rs`, `crates/sortition/src/sortition/node_registry.rs`).
-  — `BondingRegistry.sol`; INDEX concern #24
+  the `...At` events (configuration, eligibility version, bonding asset, activation), never the
+  merged event clock, and must invalidate its activity view on every version bump. Every bump emits
+  `EligibilityConfigurationVersionUpdated` (`BondingEligibilityLib.invalidateConfiguration`),
+  including asset-configuration and node-release changes, and Rust invalidates on it.
+  `BondingAssetConfigUpdated` sets the local ticket price. — `BondingRegistry.sol`;
+  `crates/evm/src/bonding_registry/events.rs`; `crates/sortition/src/sortition/node_registry.rs`;
+  INDEX concern #24
 - **Mandatory release policy changes are paused, drained, and monotonic:** governance may raise the
   required protocol version or node generation only while requests are paused, `activeE3Count == 0`,
   and `unreleasedCommitteeCount == 0`. The change invalidates every cached operator status in O(1).

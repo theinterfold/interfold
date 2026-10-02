@@ -351,6 +351,15 @@ impl TelemetryProjection {
                     state.active.remove(&operator);
                 }
             }
+            // A new eligibility version makes every operator inactive until it refreshes; its
+            // activation change then lists it again.
+            InterfoldEventData::EligibilityConfigurationVersionUpdatedAt(event) => {
+                self.chains
+                    .entry(event.update.chain_id)
+                    .or_default()
+                    .active
+                    .clear();
+            }
             InterfoldEventData::TicketBalanceUpdated(event)
             | InterfoldEventData::TicketBalanceUpdatedAt(e3_events::TicketBalanceUpdatedAt {
                 balance: event,
@@ -972,6 +981,41 @@ mod tests {
             projection.overview().chains[0].bond_owner.as_deref(),
             Some(owner.bond_owner.as_str())
         );
+    }
+
+    #[test]
+    fn an_eligibility_version_update_clears_the_active_operators_until_they_refresh() {
+        let operator = "0x0000000000000000000000000000000000000001";
+        let mut projection = TelemetryProjection::new(operator);
+        let activation = |active| e3_events::OperatorActivationChangedAt {
+            activation: e3_events::OperatorActivationChanged {
+                operator: operator.into(),
+                active,
+                chain_id: 1,
+            },
+            position: e3_events::ChainPosition::new(1, 0),
+        };
+        projection.apply(replay_event(activation(true).into(), 1, 10));
+        assert!(projection.overview().chains[0].operator_active);
+
+        projection.apply(replay_event(
+            e3_events::EligibilityConfigurationVersionUpdatedAt {
+                update: e3_events::EligibilityConfigurationVersionUpdated {
+                    version: alloy::primitives::U256::from(2),
+                    chain_id: 1,
+                },
+                position: e3_events::ChainPosition::new(2, 0),
+            }
+            .into(),
+            2,
+            20,
+        ));
+        let chain = &projection.overview().chains[0];
+        assert!(!chain.operator_active);
+        assert_eq!(chain.active_nodes, 0);
+
+        projection.apply(replay_event(activation(true).into(), 3, 30));
+        assert!(projection.overview().chains[0].operator_active);
     }
 
     #[test]

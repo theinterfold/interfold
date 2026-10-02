@@ -12,6 +12,7 @@ mod aggregation_proof_pending;
 mod aggregation_proof_signed;
 mod aggregator_changed;
 mod bond_owner_set;
+mod bonding_asset_config_updated;
 mod ciphernode_added;
 mod ciphernode_bond_updated;
 mod ciphernode_deregistration_requested;
@@ -46,6 +47,7 @@ mod e3_failed;
 mod e3_request_complete;
 mod e3_requested;
 mod e3_stage_changed;
+mod eligibility_configuration_version_updated;
 mod enable_effects;
 mod encryption_key_collection_failed;
 mod encryption_key_created;
@@ -98,6 +100,7 @@ pub use aggregation_proof_pending::*;
 pub use aggregation_proof_signed::*;
 pub use aggregator_changed::*;
 pub use bond_owner_set::*;
+pub use bonding_asset_config_updated::*;
 pub use ciphernode_added::*;
 pub use ciphernode_bond_updated::*;
 pub use ciphernode_deregistration_requested::*;
@@ -133,6 +136,7 @@ pub use e3_request_complete::*;
 pub use e3_requested::*;
 pub use e3_stage_changed::*;
 use e3_utils::{colorize, colorize_event_ids, Color};
+pub use eligibility_configuration_version_updated::*;
 pub use enable_effects::*;
 pub use encryption_key_collection_failed::*;
 pub use encryption_key_created::*;
@@ -374,6 +378,10 @@ pub enum InterfoldEventData {
     OperatorActivationChangedAt(OperatorActivationChangedAt),
     ConfigurationUpdatedAt(ConfigurationUpdatedAt),
     PlaintextVerificationResumed(PlaintextVerificationResumed),
+    EligibilityConfigurationVersionUpdated(EligibilityConfigurationVersionUpdated),
+    EligibilityConfigurationVersionUpdatedAt(EligibilityConfigurationVersionUpdatedAt),
+    BondingAssetConfigUpdated(BondingAssetConfigUpdated),
+    BondingAssetConfigUpdatedAt(BondingAssetConfigUpdatedAt),
 }
 
 impl InterfoldEventData {
@@ -944,7 +952,11 @@ impl_event_types!(
     TicketBalanceUpdatedAt,
     OperatorActivationChangedAt,
     ConfigurationUpdatedAt,
-    PlaintextVerificationResumed
+    PlaintextVerificationResumed,
+    EligibilityConfigurationVersionUpdated,
+    EligibilityConfigurationVersionUpdatedAt,
+    BondingAssetConfigUpdated,
+    BondingAssetConfigUpdatedAt
 );
 
 impl TryFrom<&InterfoldEvent<Sequenced>> for InterfoldError {
