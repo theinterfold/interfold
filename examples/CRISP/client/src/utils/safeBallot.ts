@@ -109,7 +109,7 @@ const EIP7702_DELEGATION_PREFIX = '0xef0100'
  */
 export const readSafeSlot = async (client: PublicClient, crispProgram: Address, safe: Address): Promise<SafeSlot> => {
   if (!(await client.readContract({ address: crispProgram, abi: CRISP_SAFE_ABI, functionName: 'isSafe', args: [safe] }))) {
-    throw new Error('This address is not a Safe that this CRISP deployment accepts (Safe 1.3.0 or 1.4.1).')
+    throw new Error('This address is not a Safe that this CRISP deployment accepts (Safe 1.3.0, 1.4.1 or 1.5.0).')
   }
   const [rawOwners, rawThreshold] = await Promise.all([
     client.readContract({ address: safe, abi: SAFE_ABI, functionName: 'getOwners' }),

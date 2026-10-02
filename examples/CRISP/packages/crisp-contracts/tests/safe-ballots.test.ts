@@ -26,29 +26,35 @@ const commitmentOf = (owners: string[], threshold: bigint) =>
     [...owners, ...Array(MAX_SAFE_OWNERS - owners.length).fill(ethers.ZeroAddress), threshold],
   )
 
-/// Safe 1.3.0 from its published build, which is the bytecode of its canonical deployments.
-async function deploySafe130Contracts(): Promise<SafeDeployment> {
+/// Safe 1.3.0 and 1.5.0 from their published builds, which are the bytecode of their canonical
+/// deployments: the package, the singleton and the proxy factory of each.
+const PUBLISHED_SAFES = [
+  ['@gnosis.pm/safe-contracts', 'GnosisSafe.sol/GnosisSafe', 'proxies/GnosisSafeProxyFactory.sol/GnosisSafeProxyFactory'],
+  ['@safe-global/safe-smart-account', 'Safe.sol/Safe', 'proxies/SafeProxyFactory.sol/SafeProxyFactory'],
+] as const
+
+async function deployPublishedSafe([pkg, singleton, factory]: (typeof PUBLISHED_SAFES)[number]): Promise<SafeDeployment> {
   const [signer] = await ethers.getSigners()
   const deploy = async (name: string) => {
-    const artifact = loadArtifact(`@gnosis.pm/safe-contracts/build/artifacts/contracts/${name}.json`)
+    const artifact = loadArtifact(`${pkg}/build/artifacts/contracts/${name}.json`)
     return (await new ethers.ContractFactory(artifact.abi, artifact.bytecode, signer).deploy()) as unknown
   }
   return {
-    singleton: (await deploy('GnosisSafe.sol/GnosisSafe')) as Safe,
-    factory: (await deploy('proxies/GnosisSafeProxyFactory.sol/GnosisSafeProxyFactory')) as SafeProxyFactory,
+    singleton: (await deploy(singleton)) as Safe,
+    factory: (await deploy(factory)) as SafeProxyFactory,
     handler: (await deploy('handler/CompatibilityFallbackHandler.sol/CompatibilityFallbackHandler')) as CompatibilityFallbackHandler,
   }
 }
 
-/// `ballotAuthorization` against real Safe 1.3.0 and 1.4.1 contracts. `onchain-census.test.ts`
-/// proves and publishes Safe ballots against these values.
+/// `ballotAuthorization` against real Safe 1.3.0, 1.4.1 and 1.5.0 contracts.
+/// `onchain-census.test.ts` proves and publishes Safe ballots against these values.
 describe('CRISP Safe ballots', function () {
   let safeContracts: SafeDeployment
-  let safe130Contracts: SafeDeployment
   let mockInterfold: MockInterfold
   let crispProgram: CRISPProgram
   let safe: string
-  let safe130: string
+  /// The 1.4.1 Safe above, then a Safe of each published build.
+  let safes: { contracts: SafeDeployment; safe: string }[]
   let e3Id: bigint
 
   const address = (label: string) => new ethers.Wallet(ethers.id(label)).address
@@ -61,17 +67,17 @@ describe('CRISP Safe ballots', function () {
 
   before(async function () {
     safeContracts = await deploySafeContracts()
-    safe130Contracts = await deploySafe130Contracts()
     safe = await newSafe(3, 2)
-    safe130 = await createSafe(safe130Contracts, [address('owner 0'), address('owner 1')], 2)
+    safes = [{ contracts: safeContracts, safe }]
+    for (const build of PUBLISHED_SAFES) {
+      const contracts = await deployPublishedSafe(build)
+      safes.push({ contracts, safe: await createSafe(contracts, [address('owner 0'), address('owner 1')], 2) })
+    }
     mockInterfold = await deployMockInterfold()
     crispProgram = await deployCRISPProgram({
       mockInterfold,
-      safeProxyCodehashes: [
-        ethers.keccak256(await ethers.provider.getCode(safe)),
-        ethers.keccak256(await ethers.provider.getCode(safe130)),
-      ],
-      safeSingletons: [await safeContracts.singleton.getAddress(), await safe130Contracts.singleton.getAddress()],
+      safeProxyCodehashes: await Promise.all(safes.map(async (entry) => ethers.keccak256(await ethers.provider.getCode(entry.safe)))),
+      safeSingletons: await Promise.all(safes.map((entry) => entry.contracts.singleton.getAddress())),
     })
     const token = await ethers.deployContract('MockVotesToken')
     const params = abi.encode(
@@ -82,11 +88,8 @@ describe('CRISP Safe ballots', function () {
     await (await mockInterfold.requestWithParams(await crispProgram.getAddress(), 2, params)).wait()
   })
 
-  it('binds a Safe 1.3.0 or 1.4.1 ballot to the Safe message hash and the current owners', async function () {
-    for (const [contracts, slot] of [
-      [safeContracts, safe],
-      [safe130Contracts, safe130],
-    ] as const) {
+  it('binds a Safe 1.3.0, 1.4.1 or 1.5.0 ballot to the Safe message hash and the current owners', async function () {
+    for (const { contracts, safe: slot } of safes) {
       const { safe: isSafe, digest, ownersCommitment } = await crispProgram.ballotAuthorization(e3Id, slot, COMMITMENT)
       const ballotDigest = await crispProgram.ballotDigest(e3Id, slot, COMMITMENT)
       const safeContract = contracts.singleton.attach(slot) as Safe
@@ -123,12 +126,14 @@ describe('CRISP Safe ballots', function () {
   })
 
   /// The deploy script accepts a Safe by the code hash of its proxy. The hashes must be those of
-  /// the published Safe 1.3.0 and 1.4.1 proxies, which the canonical factories deploy on every chain.
-  it('allowlists the proxy code of the published Safe 1.3.0 and 1.4.1 builds', function () {
+  /// the published Safe 1.3.0, 1.4.1 and 1.5.0 proxies, which the canonical factories deploy on
+  /// every chain.
+  it('allowlists the proxy code of the published Safe 1.3.0, 1.4.1 and 1.5.0 builds', function () {
     const runtime = (artifact: string) => ethers.keccak256(loadArtifact(`${artifact}.json`).deployedBytecode)
     expect(SAFE_PROXY_CODEHASHES).to.have.members([
       runtime('@gnosis.pm/safe-contracts/build/artifacts/contracts/proxies/GnosisSafeProxy.sol/GnosisSafeProxy'),
       runtime('@safe-global/safe-contracts/build/artifacts/contracts/proxies/SafeProxy.sol/SafeProxy'),
+      runtime('@safe-global/safe-smart-account/build/artifacts/contracts/proxies/SafeProxy.sol/SafeProxy'),
     ])
   })
 

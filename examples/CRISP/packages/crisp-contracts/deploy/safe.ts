@@ -4,11 +4,12 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-// The canonical Safe 1.3.0 and 1.4.1 proxy code hashes and singletons, the same on every chain (read
+// The canonical Safe 1.3.0, 1.4.1 and 1.5.0 proxy code hashes and singletons, the same on every chain (read
 // from mainnet and Sepolia). `CRISPProgram` treats a slot as a Safe only when both match.
 export const SAFE_PROXY_CODEHASHES = [
   '0xb89c1b3bdf2cf8827818646bce9a8f6e372885f8c55e5c07acbd307cb133b000', // GnosisSafeProxy 1.3.0 (canonical and EIP-155 factories)
   '0xd7d408ebcd99b2b70be43e20253d6d92a8ea8fab29bd3be7f55b10032331fb4c', // SafeProxy 1.4.1
+  '0x4e381985ca68b3e5d27b4425fa581c19cf33146d3f887a3cfca96f55528ea46f', // SafeProxy 1.5.0
 ]
 export const SAFE_SINGLETONS = [
   '0xd9Db270c1B5E3Bd161E8c8503c55cEABeE709552', // GnosisSafe 1.3.0
@@ -17,4 +18,6 @@ export const SAFE_SINGLETONS = [
   '0xfb1bffC9d739B8D520DaF37dF666da4C687191EA', // GnosisSafeL2 1.3.0 (EIP-155)
   '0x41675C099F32341bf84BFc5382aF534df5C7461a', // Safe 1.4.1
   '0x29fcB43b46531BcA003ddC8FCB67FFE91900C762', // SafeL2 1.4.1
+  '0xFf51A5898e281Db6DfC7855790607438dF2ca44b', // Safe 1.5.0
+  '0xEdd160fEBBD92E350D4D398fb636302fccd67C7e', // SafeL2 1.5.0
 ]

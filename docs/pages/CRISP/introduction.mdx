@@ -111,11 +111,11 @@ by default. Any account can call `register()` on it once, and a registered accou
 power of 1.
 
 In an `ONCHAIN` round, the owners of a slot authorise its ballot inside the proof. A wallet is its
-own single owner. A Safe 1.3.0 or 1.4.1 account with at most 10 owners and a threshold of at most 4
-votes with its owners' signatures: `ballotAuthorization(e3Id, slot, ciphertextCommitment)` returns
-the digest to sign and a commitment to the current owners, and the SDK proves the ballot with
-`finishSafeBallotProof`. On chain, a Safe ballot and a mask look the same. The owners sign in their
-own wallets, not through the Safe Transaction Service, which publishes the digest.
+own single owner. A Safe 1.3.0, 1.4.1 or 1.5.0 account with at most 10 owners and a threshold of at
+most 4 votes with its owners' signatures: `ballotAuthorization(e3Id, slot, ciphertextCommitment)`
+returns the digest to sign and a commitment to the current owners, and the SDK proves the ballot
+with `finishSafeBallotProof`. On chain, a Safe ballot and a mask look the same. The owners sign in
+their own wallets, not through the Safe Transaction Service, which publishes the digest.
 
 Whoever prepares a Safe ballot knows its choice. The contract reads the owners and threshold when an
 input is published, so while a Safe has more than 10 owners or a threshold above 4, the contract

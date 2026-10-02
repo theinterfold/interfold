@@ -292,6 +292,9 @@ importers:
       '@safe-global/safe-contracts':
         specifier: 1.4.1
         version: 1.4.1(ethers@6.17.0(bufferutil@4.1.0)(utf-8-validate@5.0.10))
+      '@safe-global/safe-smart-account':
+        specifier: 1.5.0
+        version: 1.5.0
       '@typechain/ethers-v6':
         specifier: ^0.5.0
         version: 0.5.1(ethers@6.17.0(bufferutil@4.1.0)(utf-8-validate@5.0.10))(typechain@8.3.2(typescript@5.8.3))(typescript@5.8.3)
@@ -3612,6 +3615,9 @@ packages:
 
   '@safe-global/safe-modules-deployments@3.0.8':
     resolution: {integrity: sha512-RKct6dNFg4KbbpXchyosHmIygy58wLe+1WIATQ2VILGpcivBDcZdyvSl64BoocXCL2CroCBMJMzy0mW4iwZ0Zg==}
+
+  '@safe-global/safe-smart-account@1.5.0':
+    resolution: {integrity: sha512-VIMWxoeY/kNuZVsQVvAeOFKcQS3eojCXg0ecGnesBSLn5ypYshmBhVEEU5XiurJJGTs/MrcoLTbTxhs9W9GvdQ==}
 
   '@safe-global/types-kit@4.0.1':
     resolution: {integrity: sha512-zmIYyAH9mcBcqHszPgcfNjOJYuPSvWCcc/f8zeznh7N1HSA7jEoFErO06O4QDfwAAS4aEyoyjhPyfHbVYRheZg==}
@@ -14669,6 +14675,8 @@ snapshots:
   '@safe-global/safe-gateway-typescript-sdk@3.23.1': {}
 
   '@safe-global/safe-modules-deployments@3.0.8': {}
+
+  '@safe-global/safe-smart-account@1.5.0': {}
 
   '@safe-global/types-kit@4.0.1(typescript@5.8.3)(zod@3.25.76)':
     dependencies:
