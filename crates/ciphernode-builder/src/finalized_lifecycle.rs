@@ -20,8 +20,12 @@ use std::{
 };
 use tracing::{info, warn};
 
-/// Upper bound for the finalized lifecycle read of one chain at startup.
+/// Upper bound at startup for connecting to one chain, and for each batch of its finalized
+/// lifecycle reads.
 const FINALIZED_LIFECYCLE_READ_TIMEOUT: Duration = Duration::from_secs(60);
+/// Most restored contexts that one finalized lifecycle read checks within one deadline: at most
+/// three RPC calls each.
+const FINALIZED_LIFECYCLE_READ_BATCH: usize = 16;
 
 /// Record in the local lifecycle the E3s of restored request contexts that are finished at the
 /// finalized block of their chain.
@@ -49,32 +53,37 @@ pub(crate) async fn reconcile_finalized_lifecycle<State>(
         if unchecked.is_empty() {
             break;
         }
-        let read = async {
+        let connect = async {
             let provider = provider_cache.ensure_read_provider(chain).await?;
-            let chain_id = provider.chain_id();
-            validate_chain_id(chain, chain_id)?;
-            let Some(e3_ids) = unchecked.remove(&chain_id) else {
-                return Ok(Vec::new());
-            };
-            let contract = chain.contracts.interfold.address()?;
-            let lifecycles = read_finalized_e3_lifecycles(&provider, contract, &e3_ids)
+            validate_chain_id(chain, provider.chain_id())?;
+            Ok(provider)
+        };
+        let provider =
+            within_deadline(&chain.name, FINALIZED_LIFECYCLE_READ_TIMEOUT, connect).await?;
+        let chain_id = provider.chain_id();
+        let Some(e3_ids) = unchecked.remove(&chain_id) else {
+            continue;
+        };
+        let contract = chain.contracts.interfold.address()?;
+        let provider = &provider;
+        let lifecycles = read_in_batches(&chain.name, &e3_ids, |batch| async move {
+            read_finalized_e3_lifecycles(provider, contract, batch)
                 .await
                 .with_context(|| {
                     format!(
                         "could not read the finalized E3 lifecycle on chain {chain_id}; startup cannot confirm whether restored request contexts are finished"
                     )
-                })?;
-            let chain_finished = finished_e3s(chain_id, contract, &lifecycles)?;
-            info!(
-                chain_id,
-                checked = e3_ids.len(),
-                finished = chain_finished.len(),
-                "Checked restored request contexts against the finalized block"
-            );
-            Ok(chain_finished)
-        };
-        finished
-            .extend(within_deadline(&chain.name, FINALIZED_LIFECYCLE_READ_TIMEOUT, read).await?);
+                })
+        })
+        .await?;
+        let chain_finished = finished_e3s(chain_id, contract, &lifecycles)?;
+        info!(
+            chain_id,
+            checked = e3_ids.len(),
+            finished = chain_finished.len(),
+            "Checked restored request contexts against the finalized block"
+        );
+        finished.extend(chain_finished);
     }
     if let Some((chain_id, e3_ids)) = unchecked.into_iter().next() {
         bail!(
@@ -151,6 +160,26 @@ fn finished_e3s(
 }
 
 /// Fail when the read for one chain does not end before the timeout.
+/// Read the finalized lifecycles of `e3_ids` in batches, each within its own deadline, so a slow
+/// but working endpoint finishes any number of restored contexts, and a stuck one still fails
+/// startup after one deadline.
+async fn read_in_batches<'a, Read, Batch>(
+    chain: &str,
+    e3_ids: &'a [E3id],
+    mut read: Read,
+) -> Result<Vec<(E3id, FinalizedE3Lifecycle)>>
+where
+    Read: FnMut(&'a [E3id]) -> Batch,
+    Batch: Future<Output = Result<Vec<(E3id, FinalizedE3Lifecycle)>>>,
+{
+    let mut lifecycles = Vec::with_capacity(e3_ids.len());
+    for batch in e3_ids.chunks(FINALIZED_LIFECYCLE_READ_BATCH) {
+        lifecycles
+            .extend(within_deadline(chain, FINALIZED_LIFECYCLE_READ_TIMEOUT, read(batch)).await?);
+    }
+    Ok(lifecycles)
+}
+
 async fn within_deadline<T>(
     chain: &str,
     timeout: Duration,
@@ -173,6 +202,50 @@ mod tests {
             stage,
             failure_reason,
         }
+    }
+
+    fn restored_ids(count: usize) -> Vec<E3id> {
+        (0..count)
+            .map(|index| E3id::new(index.to_string(), 1))
+            .collect()
+    }
+
+    /// A failed E3 takes two RPC calls. At 250 ms each, 128 restored contexts take 64 s, longer
+    /// than one deadline. Each batch has its own deadline, so a slow but working endpoint still
+    /// finishes.
+    #[tokio::test(start_paused = true)]
+    async fn many_restored_failures_reconcile_with_a_slow_endpoint() -> Result<()> {
+        let e3_ids = restored_ids(128);
+        let lifecycles = read_in_batches("slow", &e3_ids, |batch| async move {
+            tokio::time::sleep(Duration::from_millis(500) * batch.len() as u32).await;
+            Ok(batch
+                .iter()
+                .map(|e3_id| {
+                    let failed = finalized(E3Stage::Failed, Some(FailureReason::NoInputsReceived));
+                    (e3_id.clone(), failed)
+                })
+                .collect())
+        })
+        .await?;
+        assert_eq!(lifecycles.len(), e3_ids.len());
+        Ok(())
+    }
+
+    /// A stuck endpoint still fails startup after one deadline.
+    #[tokio::test(start_paused = true)]
+    async fn a_stuck_endpoint_fails_startup_after_one_deadline() {
+        let e3_ids = restored_ids(128);
+        let started = tokio::time::Instant::now();
+        let error = read_in_batches("stuck", &e3_ids, |_| std::future::pending())
+            .await
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("timed out"), "{error:#}");
+        let waited = started.elapsed();
+        assert!(
+            waited >= FINALIZED_LIFECYCLE_READ_TIMEOUT
+                && waited < FINALIZED_LIFECYCLE_READ_TIMEOUT + Duration::from_secs(1),
+            "{waited:?}"
+        );
     }
 
     #[test]
