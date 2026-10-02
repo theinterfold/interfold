@@ -9,6 +9,7 @@ mod ciphernode_builder;
 mod event_system;
 mod eventbus_factory;
 mod evm_system;
+mod finalized_lifecycle;
 pub mod global_eventstore_cache;
 pub mod global_store_cache;
 mod provider_caches;

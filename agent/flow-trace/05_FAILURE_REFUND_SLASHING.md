@@ -1399,7 +1399,8 @@ When CommitteeMemberExpelled event arrives from EVM:
     │   │   plus the largest accusationVoteValidity plus 5 minutes. The timer is in
     │   │   memory: at EffectsEnabled the router completes every restored context whose
     │   │   lifecycle stage is Failed, because startup pruned its finalized committee and
-    │   │   no accusation work resumes for it.
+    │   │   no accusation work resumes for it. That context does not receive
+    │   │   EffectsEnabled.
     │   └─ E3StageChanged(Failed) and the same non-slashing E3Failed arriving after teardown
     │       are silently ignored (expected on-chain lag)
     │

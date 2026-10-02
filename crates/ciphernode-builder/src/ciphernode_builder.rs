@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::{
+    finalized_lifecycle::reconcile_finalized_lifecycle,
     recovery::{
         backfill_restart_state, reconcile_committee_snapshots, recovered_ciphernode_selections,
     },
@@ -700,6 +701,9 @@ impl CiphernodeBuilder {
             &seq_eventstore,
         )
         .await?;
+        // Reconcile the lifecycle with finalized chain state before any restart decision reads
+        // it, so the work of an E3 that is finished on chain does not resume.
+        reconcile_finalized_lifecycle(&repositories, &self.chains, &mut provider_cache).await?;
         let committee_finalizer_recovery = backfill_restart_state(
             &repositories,
             &seq_eventstore,
@@ -1124,15 +1128,10 @@ impl CiphernodeBuilder {
         let max_vote_validity = accusation_vote_validity_by_chain.values().max().copied();
         let teardown_grace = e3_request::SLASHABLE_FAILURE_GRACE
             .saturating_add(Duration::from_secs(max_vote_validity.unwrap_or_default()));
-        let failed_e3s = lifecycle_stages
-            .iter()
-            .filter(|(_, stage)| **stage == E3Stage::Failed)
-            .map(|(e3_id, _)| e3_id.clone())
-            .collect();
         let mut e3_builder = E3Router::builder(bus, store.clone())
             .with_recovered_selections(recovered_selections)
             .with_teardown_grace(teardown_grace)
-            .with_failed_on_restart(failed_e3s);
+            .with_complete_on_restart(terminal_e3s(lifecycle_stages));
         e3_builder = e3_builder.with(AggregatorRoleExtension::create(
             selector_state.is_aggregator.clone(),
         ));
@@ -1465,8 +1464,18 @@ fn parse_env_u64(name: &str, default_val: u64) -> u64 {
     }
 }
 
+/// The E3s whose local lifecycle stage is terminal at startup. Their restored work does not
+/// resume.
+fn terminal_e3s(lifecycle_stages: &HashMap<E3id, E3Stage>) -> HashSet<E3id> {
+    lifecycle_stages
+        .iter()
+        .filter(|(_, stage)| stage.is_terminal())
+        .map(|(e3_id, _)| e3_id.clone())
+        .collect()
+}
+
 /// Validate chain ID matches expected configuration
-fn validate_chain_id(chain: &ChainConfig, actual_chain_id: u64) -> Result<()> {
+pub(crate) fn validate_chain_id(chain: &ChainConfig, actual_chain_id: u64) -> Result<()> {
     if let Some(expected_chain_id) = chain.chain_id {
         if actual_chain_id != expected_chain_id {
             return Err(anyhow::anyhow!(
@@ -1586,6 +1595,7 @@ async fn setup_evm_system(
     } = recovery;
     let mut evm_config = EvmEventConfig::new();
     let mut gateways = Vec::new();
+    let finished = terminal_e3s(lifecycle_stages);
     for (chain, slashing_manager) in chains
         .iter()
         .zip(slashing_managers.iter().copied())
@@ -1604,6 +1614,7 @@ async fn setup_evm_system(
             chain_id,
             chain.data_availability.as_ref(),
             repositories.data_availability_recovery(chain_id),
+            &finished,
         )
         .await?;
         if contract_components.ciphernode_registry {
