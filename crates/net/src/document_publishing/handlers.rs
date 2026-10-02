@@ -36,9 +36,20 @@ impl Handler<InterfoldEvent> for DocumentPublisher {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
             InterfoldEventData::DocumentReceived(data) => {
-                let id = (data.meta.e3_id, ContentHash::from_content(&data.value));
+                let id = (
+                    data.meta.e3_id.clone(),
+                    ContentHash::from_content(&data.value),
+                );
                 if self.received.len() < MAX_RECEIVED_DOCUMENTS || self.received.contains(&id) {
-                    self.received.insert(id);
+                    // Recovery reads only the receipts of the E3s in the committee snapshot, which
+                    // can predate a selection that replay restores. A receipt that replay delivers
+                    // before `SyncEnded` and that recovery did not read is restored too.
+                    if self.received.insert(id)
+                        && !self.publishing_enabled
+                        && !self.closed_e3s.contains(&data.meta.e3_id)
+                    {
+                        self.restorable.push(data, chrono::Utc::now());
+                    }
                 } else {
                     self.bus.err(
                         EType::DocumentPublishing,

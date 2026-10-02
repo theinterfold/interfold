@@ -1674,7 +1674,9 @@ DKG document; later `DecryptionshareCreated` events use event gossip, not the DH
 Recovery retains the DKG closure across restart. A local `E3RequestComplete` does not mean that the
 contract has reached a terminal stage. Each new publication request first removes the expired
 publications, so the expired documents that replay brings back cannot fill the outbox while
-publications wait for `SyncEnded`.
+publications wait for `SyncEnded`. Recovery reads only the receipts of the E3s in the committee
+snapshot, which can predate a selection in the log, so the receipts that replay delivers before
+`SyncEnded` join the restore queue too.
 
 The CRISP server writes its request record at `E3Requested` and writes the generic E3 record only
 after the indexer verifies the committee public key against the on-chain commitment. Current-round

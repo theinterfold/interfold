@@ -436,6 +436,88 @@ async fn received_documents_are_stored_again_after_the_sync() -> Result<()> {
     Ok(())
 }
 
+/// Recovery reads only the receipts of the E3s in the committee snapshot, which can predate a
+/// selection that replay restores. A receipt that replay delivers before `SyncEnded` is stored
+/// again too, unless its E3 closed; a receipt that recovery already read is stored once.
+#[actix::test]
+async fn receipts_that_replay_delivers_are_stored_again_once() -> Result<()> {
+    tokio::time::pause();
+    let received = |e3: &str, value: &[u8]| {
+        let request = publish_request(e3, value);
+        DocumentReceived {
+            meta: request.meta,
+            value: request.value,
+        }
+    };
+    let recovered_receipt = received("in-snapshot", b"recovered document");
+    let replayed_receipt = received("selected-after-snapshot", b"replayed document");
+    let closed_receipt = received("closed", b"closed document");
+    let mut recovered = RecoveredDocumentState::default();
+    recovered.received.insert((
+        recovered_receipt.meta.e3_id.clone(),
+        ContentHash::from_content(&recovered_receipt.value),
+    ));
+    recovered
+        .restorable
+        .push(recovered_receipt.clone(), Utc::now());
+    recovered
+        .closed_e3s
+        .push_back(closed_receipt.meta.e3_id.clone());
+    let (_guard, _bus, _net_cmd_tx, commands, net_events, _, _, _, publisher) =
+        setup_startup_test(recovered)?;
+    let mut commands = Commands::new(commands);
+
+    for (seq, receipt) in (1..).zip([&recovered_receipt, &replayed_receipt, &closed_receipt]) {
+        publisher
+            .send(startup_event(
+                InterfoldEventData::DocumentReceived(receipt.clone()),
+                seq,
+            ))
+            .await?;
+    }
+    publisher
+        .send(startup_event(EffectsEnabled::new().into(), 4))
+        .await?;
+    assert!(
+        !commands
+            .arrives_within(Duration::from_secs(60), is_store_local)
+            .await,
+        "nothing is stored before the chain history arrives"
+    );
+    publisher
+        .send(startup_event(SyncEnded::new().into(), 5))
+        .await?;
+
+    let mut stored = Vec::new();
+    for _ in 0..2 {
+        let NetCommand::DhtStoreLocal {
+            correlation_id,
+            key,
+            ..
+        } = commands.take(is_store_local).await?
+        else {
+            bail!("expected a local store");
+        };
+        stored.push(key.clone());
+        net_events.send(NetEvent::DhtStoreLocalSucceeded {
+            correlation_id,
+            key,
+        })?;
+    }
+    assert_eq!(
+        stored,
+        [&recovered_receipt, &replayed_receipt]
+            .map(|receipt| ContentHash::from_content(&receipt.value))
+    );
+    assert!(
+        !commands
+            .arrives_within(Duration::from_secs(60), is_store_local)
+            .await,
+        "a receipt that recovery read is stored once, and the closed E3's receipt never"
+    );
+    Ok(())
+}
+
 fn key_published(e3_id: &E3id, seq: u64) -> InterfoldEvent {
     InterfoldEvent::<Unsequenced>::new_with_timestamp(
         E3StageChanged {
