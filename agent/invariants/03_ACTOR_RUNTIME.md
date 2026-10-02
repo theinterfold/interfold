@@ -214,9 +214,12 @@ the code does not meet yet.
   snapshots admit an E3; peer events can only contribute to an admitted one. —
   `crates/request/src/routing/workflow.rs`
 - A periodic network re-send backs off to a cap, stops when its phase ends, and has a lifetime
-  bound. Re-announcing a DHT document sends only its notification; the full document is stored again
-  only by a bounded refresh (once per 30 minutes, one replication started at a time). Library-driven
-  record replication stays disabled. — INDEX concerns #60, #62, #63;
+  bound. It does not start for one of the last 1,024 E3s whose terminal stage came from the chain,
+  also from replayed history. After a restart, local replay schedules the re-sends again in log
+  order and they wait until it finishes; the restart re-broadcast schedules none. Re-announcing a
+  DHT document sends only its notification; the full document is stored again only by a bounded
+  refresh (once per 30 minutes, one replication started at a time). Library-driven record
+  replication stays disabled. — INDEX concerns #60, #62, #63;
   `crates/net/src/document_publishing/workflow.rs`;
   `crates/net/src/network_sync/effects/rebroadcast.rs`
 - A node does not accept or forward a gossip message ID that it has already handled, including after

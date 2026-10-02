@@ -17,7 +17,7 @@ use e3_utils::MAILBOX_LIMIT;
 use libp2p::PeerId;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet, VecDeque},
     convert::TryInto,
     time::{Duration, Instant},
 };
@@ -147,6 +147,12 @@ pub struct NetSyncManager {
     /// Roster messages, and this node's decryption shares. They go directly to libp2p with a new
     /// delivery ID because EventBus stable-ID dedup suppresses identical re-publications.
     announcements: HashMap<AnnouncementKey, Reannouncement>,
+    /// E3s whose terminal stage came from the chain, also in replayed history, newest last. The
+    /// node does not re-send their messages, also when the restart re-broadcast returns them.
+    ended_e3s: VecDeque<E3id>,
+    /// Set when local replay has finished, at `HistoricalNetSyncStart`. Re-sends wait for it, so
+    /// that a replayed message is not sent before the replay reaches the end of its E3.
+    replay_finished: bool,
 }
 
 /// Identifies one message that the node keeps re-sending.
@@ -214,6 +220,8 @@ impl NetSyncManager {
             rebroadcast_started: false,
             peer_history_optional: false,
             announcements: HashMap::new(),
+            ended_e3s: VecDeque::new(),
+            replay_finished: false,
         }
     }
 }

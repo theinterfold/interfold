@@ -558,7 +558,11 @@ then doubles the wait up to 5 minutes, with up to 10 % jitter. A newer message f
 party, and kind replaces the cached one and restarts the schedule. The fresh delivery ID bypasses
 the libp2p duplicate cache. The stable embedded event ID preserves EventBus deduplication, and a
 receiver does not store a copy of an event that it has already stored. Key publication or a terminal
-E3 removes the cached messages. A cached message is also dropped 8 hours after it was cached.
+E3 removes the cached messages. A cached message is also dropped 8 hours after it was cached. The
+node remembers the last 1,024 E3s whose terminal stage came from the chain, also from replayed
+history, and does not cache their messages. After a restart, local replay caches the messages again
+in log order, and nothing is sent again before that replay finishes. The restart re-broadcast then
+sends each recent message once, skips the remembered E3s, and caches nothing.
 
 Dealer identity binds the E3, proof type, circuit, and public signals. It excludes randomized proof
 bytes, so replaying the same valid statement cannot create a second dealer identity. Replacing a
@@ -1164,7 +1168,13 @@ InterfoldSolReader decodes CiphertextOutputPublished event
     │   → Broadcast via P2P to committee members for buffering
     │   → The network actor re-sends the node's own share in a fresh transport envelope
     │     60 seconds later, then doubles the wait up to 10 minutes, until the E3 fails or
-    │     completes (at most 8 hours). Receivers keep the first share from each party.
+    │     completes (at most 8 hours). A local E3Failed stops the current re-sends only; a
+    │     terminal stage from the chain also stops later ones, for the last 1,024 such E3s.
+    │     After a restart, local replay schedules the re-sends again in log order, and
+    │     nothing is re-sent before it finishes. The restart re-broadcast sends the share
+    │     once unless the E3 is one of those remembered as ended. An E3 that ended while
+    │     the node was down can get its share again until that chain history arrives.
+    │     Receivers keep the first share from each party.
     │
     └─ State: Decrypting → Completed
 ```
