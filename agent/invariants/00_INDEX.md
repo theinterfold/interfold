@@ -118,15 +118,13 @@ item in code before you rely on it.
   §Schema evolution states the target.
 - `ComputeEffectGate` is in-memory only — no durable external-effect outbox yet.
 - Network: `call_and_await_response` waits on a bounded broadcast receiver, so lag can drop the
-  response and the call times out. Document-publisher recovery reads the event log one event per
-  query at startup, so startup time grows with the log. libp2p-gossipsub 0.49.4 does not decrement
-  its publish counter when it drops an expired queued publish. The DHT replication factor stays at
-  20, so a refresh still sends a document to up to 20 peers. A put returns after one peer stores the
-  record. An aborted put ends its Kademlia query only in the upload phase, and requests that the
-  query already gave to the connection handlers, queued or in progress, still go out. A put that
-  still looks up its closest peers runs on and then uploads. So uploads can overlap the next
-  replication; a full cancel is follow-up work. — `crates/net/src/events.rs`;
-  `crates/net/src/document_publishing/`
+  response and the call times out. libp2p-gossipsub 0.49.4 does not decrement its publish counter
+  when it drops an expired queued publish. The DHT replication factor stays at 20, so a refresh
+  still sends a document to up to 20 peers. A put returns after one peer stores the record. An
+  aborted put ends its Kademlia query only in the upload phase, and requests that the query already
+  gave to the connection handlers, queued or in progress, still go out. A put that still looks up
+  its closest peers runs on and then uploads. So uploads can overlap the next replication; a full
+  cancel is follow-up work. — `crates/net/src/events.rs`; `crates/net/src/document_publishing/`
 - Residual runtime risks: `e3-evm` serializes nonces in memory; only slash submissions have a
   durable intent record, and other transactions rely on preflight reads. Chain ingestion relies on
   confirmation depth, not reorg rollback. Accusation votes and timers lack durable reconstruction.

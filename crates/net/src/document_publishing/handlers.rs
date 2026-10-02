@@ -24,7 +24,8 @@ impl Handler<InterfoldEvent> for DocumentPublisher {
             // closing stage is still in that history.
             InterfoldEventData::SyncEnded(_) if !self.publishing_enabled => {
                 self.publishing_enabled = true;
-                for id in self.publications.keys() {
+                let ids: Vec<_> = self.publications.keys().cloned().collect();
+                for id in &ids {
                     self.start_publication(id, ctx);
                 }
                 self.restore_next_received_document(ctx);

@@ -380,8 +380,23 @@ impl DocumentPublisher {
         Ok(())
     }
 
-    /// Start the announcement and the upload of a publication.
-    fn start_publication(&self, id: &DocumentId, ctx: &mut actix::Context<Self>) {
+    /// Start the announcement and the upload of a publication. An expired publication is removed
+    /// instead.
+    fn start_publication(&mut self, id: &DocumentId, ctx: &mut actix::Context<Self>) {
+        let Some(publication) = self.publications.get(id) else {
+            return;
+        };
+        if publication.is_expired() {
+            self.remove_publication(id, ctx);
+            return;
+        }
+        info!(
+            e3_id = %id.0,
+            key = ?id.1,
+            filter = ?publication.event.meta.filter,
+            bytes = publication.event.value.size(),
+            "Publishing a document"
+        );
         ctx.notify(AnnounceDocument(id.clone()));
         ctx.notify(ReplicateDocument(id.clone()));
     }

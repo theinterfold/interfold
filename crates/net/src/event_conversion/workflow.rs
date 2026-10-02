@@ -11,7 +11,7 @@ use e3_events::{
 };
 use e3_utils::ArcBytes;
 use serde::{Deserialize, Serialize};
-use tracing::{debug, info};
+use tracing::debug;
 
 use super::wire::{decode, MAX_DHT_DOCUMENT_BYTES};
 
@@ -103,8 +103,10 @@ impl EventConversionService {
             return Ok(None);
         }
         let target_party_id = msg.target_party_id;
-        info!(
-            "Publishing ThresholdShare from party {} for target party {} (E3 {})",
+        // Recovery converts every historical share too, so this is not a publication yet. The
+        // document publisher logs the publications that start.
+        debug!(
+            "Converted ThresholdShare from party {} for target party {} (E3 {})",
             msg.share.party_id, target_party_id, msg.e3_id
         );
         let e3_id = msg.e3_id.clone();
