@@ -1821,7 +1821,7 @@ async fn setup_evm_system(
             }
         }
 
-        gateways.push(system.build_with_readiness());
+        gateways.push(system.build_with_readiness()?);
     }
 
     Ok((evm_config, gateways))
