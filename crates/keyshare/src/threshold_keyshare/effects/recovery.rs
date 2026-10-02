@@ -305,7 +305,11 @@ impl ThresholdKeyshare {
         self_addr: Addr<Self>,
         ec: &EventContext<Sequenced>,
     ) -> Result<()> {
-        let collector = self.ensure_collector(self_addr, ec)?;
+        let collector = self.ensure_collector(
+            self_addr,
+            ec,
+            crate::domain::timeout_policy::now_unix_secs(),
+        )?;
         for event in self.recovery_payloads.shares().values() {
             collector.try_send(event.clone())?;
         }

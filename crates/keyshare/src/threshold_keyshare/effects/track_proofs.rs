@@ -42,6 +42,17 @@ impl ThresholdKeyshare {
         }
 
         let proof_type = msg.signed_proof.payload.proof_type;
+        // Own C2 and C3 proofs belong to share aggregation. One that arrives in another state, for
+        // example during replay after the node moved on, has nothing left to update.
+        if !matches!(state.state, KeyshareState::AggregatingDecryptionKey(_)) {
+            debug!(
+                e3_id = %msg.e3_id,
+                state = state.variant_name(),
+                ?proof_type,
+                "Ignoring DkgProofSigned outside share aggregation"
+            );
+            return Ok(());
+        }
         info!(
             "Received DkgProofSigned ({:?}) for party {} E3 {}",
             proof_type, msg.party_id, msg.e3_id

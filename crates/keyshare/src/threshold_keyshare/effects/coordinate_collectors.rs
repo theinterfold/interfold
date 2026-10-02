@@ -11,6 +11,7 @@ impl ThresholdKeyshare {
         &mut self,
         self_addr: Addr<Self>,
         ec: &EventContext<Sequenced>,
+        now_unix_secs: u64,
     ) -> Result<Addr<ThresholdShareCollector>> {
         let Some(state) = self.state.get() else {
             bail!("State not found on threshold keyshare. This should not happen.");
@@ -24,8 +25,11 @@ impl ThresholdKeyshare {
         let threshold_n = state.threshold_n;
         let own_party_id = state.party_id;
         let minimum_external = state.committee_h()?.saturating_sub(1);
-        let schedule =
-            resolve_threshold_share_schedule(state.dkg_deadline_unix_secs, state.dkg_window_secs)?;
+        let schedule = resolve_threshold_share_schedule(
+            state.dkg_deadline_unix_secs,
+            state.dkg_window_secs,
+            now_unix_secs,
+        )?;
         info!(
             e3_id = %e3_id,
             cutoff_delay = ?schedule.cutoff_delay,
@@ -61,6 +65,7 @@ impl ThresholdKeyshare {
         &mut self,
         self_addr: Addr<Self>,
         ec: &EventContext<Sequenced>,
+        now_unix_secs: u64,
     ) -> Result<Addr<EncryptionKeyCollector>> {
         let Some(state) = self.state.get() else {
             bail!("State not found on threshold keyshare. This should not happen.");
@@ -69,6 +74,7 @@ impl ThresholdKeyshare {
             DkgTimeoutPhase::EncryptionKeyCollection,
             state.dkg_deadline_unix_secs,
             state.dkg_window_secs,
+            now_unix_secs,
         )?;
         self.encryption_key_collector_with_timeout(self_addr, Some(timeout), ec)
     }
@@ -171,6 +177,7 @@ impl ThresholdKeyshare {
             DkgTimeoutPhase::DecryptionKeySharedCollection,
             state.dkg_deadline_unix_secs,
             state.dkg_window_secs,
+            crate::domain::timeout_policy::now_unix_secs(),
         )?;
         info!(
             e3_id = %e3_id,
@@ -188,12 +195,12 @@ impl ThresholdKeyshare {
         &mut self,
         data: CommitteeMemberExpelled,
         ec: EventContext<Sequenced>,
-    ) {
+    ) -> Result<()> {
         // Only process enriched events (party_id resolved by Sortition).
         // Raw events from chain (party_id = None) are ignored here;
         // Sortition will re-publish them with party_id set.
         let Some(party_id) = data.party_id else {
-            return;
+            return Ok(());
         };
 
         let node_addr = data.node.to_string();
@@ -202,16 +209,16 @@ impl ThresholdKeyshare {
             node_addr, party_id, data.e3_id, data.active_count_after
         );
 
-        self.handle_party_excluded(party_id, ec);
+        self.handle_party_excluded(party_id, ec)
     }
 
     pub(in crate::actors::threshold_keyshare) fn handle_committee_member_excluded(
         &mut self,
         data: CommitteeMemberExcluded,
         ec: EventContext<Sequenced>,
-    ) {
+    ) -> Result<()> {
         let Some(party_id) = data.party_id else {
-            return;
+            return Ok(());
         };
 
         info!(
@@ -222,14 +229,17 @@ impl ThresholdKeyshare {
             "Stopping current E3 work with a quorum-confirmed faulty member"
         );
 
-        self.handle_party_excluded(party_id, ec);
+        self.handle_party_excluded(party_id, ec)
     }
 
-    fn handle_party_excluded(&mut self, party_id: u64, ec: EventContext<Sequenced>) {
+    /// Record the expulsion, then remove the party from the transient state and from every
+    /// running collector. A failed write is returned after the collectors are told, so that they
+    /// still stop waiting for the party.
+    fn handle_party_excluded(&mut self, party_id: u64, ec: EventContext<Sequenced>) -> Result<()> {
         // Record permanently so late-arriving data is rejected even if
         // collectors haven't been created or have already completed.
         // Also clean honest_parties set for the expelled party.
-        let _ = self.state.try_mutate(&ec, |mut s| {
+        let recorded = self.state.try_mutate(&ec, |mut s| {
             s.expelled_parties.insert(party_id);
             if let Some(ref mut honest) = s.honest_parties {
                 honest.remove(&party_id);
@@ -261,6 +271,7 @@ impl ThresholdKeyshare {
         if let Some(ref collector) = self.decryption_key_shared_collector {
             collector.do_send(ExpelPartyFromDecryptionKeySharedCollection { party_id, ec });
         }
+        recorded
     }
 
     pub fn handle_threshold_share_created(
@@ -300,12 +311,23 @@ impl ThresholdKeyshare {
             return Ok(());
         }
         self.record_threshold_share(&msg)?;
+        // One clock reading decides both whether the share is late and the collector's timing.
+        let now = crate::domain::timeout_policy::now_unix_secs();
+        // A share after the canonical DKG deadline stays recorded, but it reaches no collector.
+        if past_dkg_deadline(state.dkg_deadline_unix_secs, now)? {
+            debug!(
+                e3_id = %state.e3_id,
+                sender_party_id = msg.share.party_id,
+                "Ignoring ThresholdShareCreated after the canonical DKG deadline"
+            );
+            return Ok(());
+        }
 
         info!(
             "Received ThresholdShareCreated from party {} for us (party {}), forwarding to collector!",
             msg.share.party_id, my_party_id
         );
-        let collector = self.ensure_collector(self_addr, msg.get_ctx())?;
+        let collector = self.ensure_collector(self_addr, msg.get_ctx(), now)?;
         info!("got collector address!");
         collector.do_send(msg);
         Ok(())
@@ -350,8 +372,25 @@ impl ThresholdKeyshare {
             );
             return Ok(());
         }
+        // One clock reading decides both whether the key is late and the collector's timing.
+        let now = crate::domain::timeout_policy::now_unix_secs();
+        // A live key after the cutoff stays recorded, but it reaches no collector, even if the
+        // collector's relative timer has not fired yet.
+        if past_phase_cutoff(
+            DkgTimeoutPhase::EncryptionKeyCollection,
+            state.dkg_deadline_unix_secs,
+            state.dkg_window_secs,
+            now,
+        )? {
+            debug!(
+                e3_id = %state.e3_id,
+                sender_party_id = msg.key.party_id,
+                "Ignoring EncryptionKeyCreated after the encryption-key cutoff"
+            );
+            return Ok(());
+        }
         info!("Received EncryptionKeyCreated forwarding to encryption key collector!");
-        let collector = self.ensure_encryption_key_collector(self_addr, msg.get_ctx())?;
+        let collector = self.ensure_encryption_key_collector(self_addr, msg.get_ctx(), now)?;
         collector.do_send(msg);
         Ok(())
     }

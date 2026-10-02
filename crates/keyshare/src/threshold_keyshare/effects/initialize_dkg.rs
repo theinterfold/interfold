@@ -22,10 +22,9 @@ impl ThresholdKeyshare {
             return Ok(());
         }
 
-        let deadline = state
-            .dkg_deadline_unix_secs
-            .ok_or_else(|| anyhow!("canonical DKG deadline is unavailable"))?;
-        if deadline <= crate::domain::timeout_policy::now_unix_secs() {
+        // One clock reading decides the DKG start and the timing of both collectors.
+        let now = crate::domain::timeout_policy::now_unix_secs();
+        if past_dkg_deadline(state.dkg_deadline_unix_secs, now)? {
             warn!(
                 e3_id = %state.e3_id,
                 "Ignoring late DKG startup after the canonical deadline"
@@ -38,6 +37,7 @@ impl ThresholdKeyshare {
             DkgTimeoutPhase::EncryptionKeyCollection,
             state.dkg_deadline_unix_secs,
             state.dkg_window_secs,
+            now,
         ) {
             warn!(
                 e3_id = %state.e3_id,
@@ -48,9 +48,9 @@ impl ThresholdKeyshare {
         }
 
         // `handle_encryption_key_created` only records a peer key that arrives in `Init`.
-        let collector = self.ensure_encryption_key_collector(address.clone(), &ec)?;
+        let collector = self.ensure_encryption_key_collector(address.clone(), &ec, now)?;
         self.replay_encryption_keys(&collector)?;
-        self.ensure_collector(address.clone(), &ec)?;
+        self.ensure_collector(address.clone(), &ec, now)?;
 
         let BfvKeypairMaterial {
             sk_bfv: sk_bfv_encrypted,
