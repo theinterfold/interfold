@@ -34,6 +34,7 @@ import {
   ACTIVE_BFV_COMMITTEE_SIZE,
   ACTIVE_BFV_PARAM_SET,
   BFV_DKG_H,
+  bfvConfigsForChain,
   isLocalDeploymentChain,
   send,
 } from "./utils";
@@ -531,17 +532,31 @@ export const deployInterfold = async (
 
   // E3RefundManager already has correct interfold from deployment
 
-  console.log("Setting the active committee configuration...");
-  await send(
-    interfold.setCommitteeThresholds(ACTIVE_BFV_COMMITTEE_SIZE, [
+  // The mock verifiers accept proofs for every committee size. The BFV verifiers that ZK
+  // verification deploys below check the active committee's H and T only, so a request for another
+  // size could not publish its key.
+  const committeeThresholds = new Map<number, [number, number]>();
+  if (shouldHaveZKVerification) {
+    committeeThresholds.set(ACTIVE_BFV_COMMITTEE_SIZE, [
       BFV_DKG_H,
       ACTIVE_BFV_COMMITTEE_N,
-    ]),
-    "interfold.setCommitteeThresholds",
-  );
-  console.log(
-    `Active committee configuration set to [${BFV_DKG_H},${ACTIVE_BFV_COMMITTEE_N}]`,
-  );
+    ]);
+  } else {
+    const { chainId } = await ethers.provider.getNetwork();
+    for (const { committeeSize, h, n } of bfvConfigsForChain(Number(chainId))) {
+      committeeThresholds.set(committeeSize, [h, n]);
+    }
+  }
+  console.log("Setting the committee configurations...");
+  for (const [committeeSize, threshold] of committeeThresholds) {
+    await send(
+      interfold.setCommitteeThresholds(committeeSize, threshold),
+      `interfold.setCommitteeThresholds(${committeeSize})`,
+    );
+    console.log(
+      `Committee size ${committeeSize} set to [${threshold.join(",")}]`,
+    );
+  }
 
   // Register BFV param sets
   console.log("Registering BFV param sets...");
