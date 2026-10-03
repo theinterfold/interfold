@@ -11,7 +11,7 @@ pub struct E3RouterBuilder {
     pub recovery_store: Repository<RequestRouterCheckpoint>,
     pub store: Repository<E3RouterSnapshot>,
     pub teardown_grace: Duration,
-    pub failed_on_restart: HashSet<E3id>,
+    pub complete_on_restart: HashSet<E3id>,
 }
 
 impl E3RouterBuilder {
@@ -35,9 +35,9 @@ impl E3RouterBuilder {
         self
     }
 
-    /// Set the E3s whose lifecycle stage is Failed; they are completed at `EffectsEnabled`.
-    pub fn with_failed_on_restart(mut self, failed_on_restart: HashSet<E3id>) -> Self {
-        self.failed_on_restart = failed_on_restart;
+    /// Set the finished E3s whose restored contexts complete at `EffectsEnabled` without resuming.
+    pub fn with_complete_on_restart(mut self, complete_on_restart: HashSet<E3id>) -> Self {
+        self.complete_on_restart = complete_on_restart;
         self
     }
 
@@ -64,7 +64,7 @@ impl E3RouterBuilder {
             recovery_store,
             recovered_selections,
             teardown_grace: self.teardown_grace,
-            failed_on_restart: self.failed_on_restart,
+            complete_on_restart: self.complete_on_restart,
         };
 
         let router = match snapshot {

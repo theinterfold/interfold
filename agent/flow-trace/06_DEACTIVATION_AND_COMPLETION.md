@@ -271,6 +271,14 @@ On restart:
 │   2. Backfill missing versioned recovery records from the EventStore
 │      → Sortition inputs, committee-finalizer inputs/tickets, and slash intents are reconstructed
 │      → Existing versioned records are not replaced
+│      → First, `reconcile_finalized_lifecycle` reads each non-terminal checkpoint context at
+│        the finalized block and writes Complete, or a Failed stage with no slashing work, to
+│        the lifecycle store. Recovery steps that read the lifecycle then treat that E3 as
+│        terminal. The data-availability coordinator drops its restored work for that E3
+│        before EffectsEnabled; document publication recovery does not read the lifecycle.
+│        An E3 absent at chain head, a chain missing from the config, an RPC error after two
+│        retries, or 60 s for one read of 16 contexts fails startup. The contexts of a
+│        disabled chain resume unchecked
 │   3. Reconcile and hydrate persisted per-E3 state
 │      → Extensions must preserve hydrated recipients; replayed committee events
 │        must not replace a restored per-E3 actor with a fresh instance
@@ -309,6 +317,9 @@ On restart:
 │      → ComputeEffectGate has already subscribed and buffers ComputeRequest
 │        effects, deduplicating semantic retries while replay is in progress
 │   8. Enable effects (writers may submit only after this point)
+│      → The router does not forward `EffectsEnabled` to a restored context whose lifecycle
+│        stage is terminal. It publishes `E3RequestComplete` for that context instead, so its
+│        work does not resume
 │      → Gate cancels work for terminal E3s and releases only the newest
 │        pending request for each in-flight semantic compute operation
 │      → Gate mirrors a completed response or error to regenerated correlation IDs

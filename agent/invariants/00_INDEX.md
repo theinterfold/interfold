@@ -89,8 +89,11 @@ item in code before you rely on it.
   §Activation
 - Slashing: a restart resets the fallback submission delay. — `01_PROTOCOL_ONCHAIN.md` §Slashing and
   failure settlement
-- Startup does not reconcile persisted request contexts with finalized chain state; concern #48
-  remains open. — `03_ACTOR_RUNTIME.md` §Durability, persistence, replay
+- Startup reconciles restored request contexts with finalized chain state, but concern #48 stays
+  open for a local Failed stage whose reason needs accusation work (restart completes it), for a
+  slashing failure that is absent from the local records, and for contexts that the replayed
+  EventStore suffix admits (follow-up work). A canonical Failed stage from that read is only in the
+  lifecycle snapshot, not in the event log. — `03_ACTOR_RUNTIME.md` §Durability, persistence, replay
 - Circuit artifacts: a node installs a downloaded archive without `checksums.json`. —
   `02_CRYPTO_CIRCUITS.md` §Noir / Barretenberg compatibility
 - Deployment and CLI: `deployInterfold.ts` sends one setter without waiting for its receipt, and the

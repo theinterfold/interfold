@@ -93,7 +93,7 @@ async fn mid_e3_context_and_completed_set_survive_hydration() -> Result<()> {
         recovery_store,
         recovered_selections: Vec::new(),
         teardown_grace: Duration::ZERO,
-        failed_on_restart: HashSet::new(),
+        complete_on_restart: HashSet::new(),
     };
     let recovered = E3Router::from_snapshot(
         params,
@@ -129,7 +129,7 @@ async fn hydration_fails_when_an_active_context_snapshot_is_missing() -> Result<
         recovery_store,
         recovered_selections: Vec::new(),
         teardown_grace: Duration::ZERO,
-        failed_on_restart: HashSet::new(),
+        complete_on_restart: HashSet::new(),
     };
 
     let error = match E3Router::from_snapshot(
@@ -188,7 +188,7 @@ async fn recovery_is_direct_and_uses_one_checkpoint() -> Result<()> {
         recovery_store: recovery_store.clone(),
         store: repositories.router(),
         teardown_grace: Duration::ZERO,
-        failed_on_restart: HashSet::new(),
+        complete_on_restart: HashSet::new(),
     }
     .build()
     .await?;
@@ -237,7 +237,7 @@ async fn failed_contexts_are_torn_down_after_the_grace() -> Result<()> {
     let bus = test_bus();
     let router = E3Router::builder(&bus, store)
         .with_teardown_grace(Duration::from_millis(300))
-        .with_failed_on_restart(HashSet::from([restored.clone()]))
+        .with_complete_on_restart(HashSet::from([restored.clone()]))
         .build()
         .await?;
     let request = |e3_id: &E3id| E3Requested {
@@ -274,6 +274,90 @@ async fn failed_contexts_are_torn_down_after_the_grace() -> Result<()> {
     let checkpoint = checkpoints.read().await?.expect("checkpoint");
     assert!(checkpoint.contexts.is_empty());
     assert!(checkpoint.completed.contains(&live) && checkpoint.completed.contains(&restored));
+    Ok(())
+}
+
+/// Records which E3 contexts received `EffectsEnabled`.
+struct EffectsProbe {
+    e3_id: E3id,
+    enabled: Arc<std::sync::Mutex<Vec<E3id>>>,
+}
+
+impl Actor for EffectsProbe {
+    type Context = actix::Context<Self>;
+}
+
+impl Handler<InterfoldEvent> for EffectsProbe {
+    type Result = ();
+
+    fn handle(&mut self, msg: InterfoldEvent, _: &mut Self::Context) {
+        if matches!(msg.get_data(), InterfoldEventData::EffectsEnabled(_)) {
+            self.enabled.lock().unwrap().push(self.e3_id.clone());
+        }
+    }
+}
+
+struct EffectsProbeExtension {
+    enabled: Arc<std::sync::Mutex<Vec<E3id>>>,
+}
+
+#[async_trait]
+impl E3Extension for EffectsProbeExtension {
+    fn on_event(&self, ctx: &mut E3Context, event: &InterfoldEvent) {
+        if let InterfoldEventData::E3Requested(data) = event.get_data() {
+            let probe = EffectsProbe {
+                e3_id: data.e3_id.clone(),
+                enabled: self.enabled.clone(),
+            };
+            ctx.set_event_recipient("effects_probe", Some(probe.start().recipient()));
+        }
+    }
+
+    async fn hydrate(&self, _: &mut E3Context, _: &E3ContextSnapshot) -> Result<()> {
+        Ok(())
+    }
+}
+
+#[actix::test]
+async fn finished_contexts_complete_without_resuming_work() -> Result<()> {
+    let (active, finished) = (E3id::new("23", 31337), E3id::new("24", 31337));
+    let enabled = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let store = DataStore::from_in_mem(&InMemStore::new(false).start());
+    let checkpoints = store.repositories().request_router_checkpoint();
+    let bus = test_bus();
+    let router = E3Router::builder(&bus, store)
+        .with(Box::new(EffectsProbeExtension {
+            enabled: enabled.clone(),
+        }))
+        .with_complete_on_restart(HashSet::from([finished.clone()]))
+        .build()
+        .await?;
+    let events: [InterfoldEventData; 3] = [
+        E3Requested {
+            e3_id: active.clone(),
+            ..Default::default()
+        }
+        .into(),
+        E3Requested {
+            e3_id: finished.clone(),
+            ..Default::default()
+        }
+        .into(),
+        EffectsEnabled::new().into(),
+    ];
+    for (seq, data) in (1u64..).zip(events) {
+        let event = InterfoldEvent::<Unsequenced>::test_event("event")
+            .data(data)
+            .seq(seq);
+        router.send(event.build()).await?;
+    }
+    bus.flush_event_pipeline().await?;
+    actix::clock::sleep(Duration::from_millis(100)).await;
+
+    assert_eq!(*enabled.lock().unwrap(), vec![active.clone()]);
+    let checkpoint = checkpoints.read().await?.expect("checkpoint");
+    assert_eq!(checkpoint.contexts, vec![active]);
+    assert!(checkpoint.completed.contains(&finished));
     Ok(())
 }
 
@@ -345,7 +429,7 @@ async fn request_time_attestation_contexts_survive_router_snapshots() -> Result<
             recovery_store,
             recovered_selections: Vec::new(),
             teardown_grace: Duration::ZERO,
-            failed_on_restart: HashSet::new(),
+            complete_on_restart: HashSet::new(),
         },
         E3RouterSnapshot {
             contexts: vec![old_e3.clone()],

@@ -166,7 +166,8 @@ struct RetrieveOutput(E3id);
 /// Converts durable transport facts into the existing in-memory protocol events.
 ///
 /// Historical replay performs no network I/O and emits no derived events. Once
-/// `EffectsEnabled` arrives, complete key assemblies and unresolved DA references resume.
+/// `EffectsEnabled` arrives, complete key assemblies and unresolved DA references resume, except
+/// for the E3s that startup reports as finished.
 pub struct DataAvailabilityCoordinator {
     chain_id: u64,
     bus: BusHandle,
@@ -186,11 +187,16 @@ pub struct DataAvailabilityCoordinator {
 }
 
 impl DataAvailabilityCoordinator {
+    /// Start the coordinator for one chain from its recovery state.
+    ///
+    /// `finished` holds the E3s whose local lifecycle stage is terminal at startup. Their
+    /// restored work is dropped before `EffectsEnabled`, and later facts for them are ignored.
     pub async fn attach(
         bus: &BusHandle,
         chain_id: u64,
         config: Option<&DataAvailabilityConfig>,
         recovery: Repository<DataAvailabilityRecoveryState>,
+        finished: &HashSet<E3id>,
     ) -> anyhow::Result<()> {
         let reader: Option<Arc<dyn DataAvailabilityReader>> = match config {
             Some(config) => Some(match config.mode {
@@ -206,7 +212,7 @@ impl DataAvailabilityCoordinator {
             recovered.schema_version,
             chain_id
         );
-        let addr = Self {
+        let mut coordinator = Self {
             chain_id,
             bus: bus.clone(),
             reader,
@@ -222,8 +228,13 @@ impl DataAvailabilityCoordinator {
             retrieving_outputs: HashSet::new(),
             terminal_e3s: recovered.terminal_e3s,
             recovery,
+        };
+        // The next recovery write stores this, at the latest at `EffectsEnabled`. Until then, the
+        // lifecycle store gives the same set on every start.
+        for e3_id in finished.iter().filter(|e3_id| e3_id.chain_id() == chain_id) {
+            coordinator.complete(e3_id);
         }
-        .start();
+        let addr = coordinator.start();
         bus.subscribe_all(
             &[
                 EventType::E3Requested,
@@ -321,6 +332,12 @@ impl DataAvailabilityCoordinator {
             return;
         }
         ctx.notify(RetrieveOutput(e3_id.clone()));
+    }
+
+    /// Make the E3 terminal and drop its work, so that later facts cannot recreate it.
+    fn complete(&mut self, e3_id: &E3id) {
+        self.terminal_e3s.insert(e3_id.clone());
+        self.cleanup(e3_id);
     }
 
     fn cleanup(&mut self, e3_id: &E3id) {
@@ -441,10 +458,7 @@ impl Handler<InterfoldEvent> for DataAvailabilityCoordinator {
                     self.start_output(&e3_id, ctx);
                 }
             }
-            InterfoldEventData::E3RequestComplete(event) => {
-                self.terminal_e3s.insert(event.e3_id.clone());
-                self.cleanup(&event.e3_id);
-            }
+            InterfoldEventData::E3RequestComplete(event) => self.complete(&event.e3_id),
             // `E3Failed` can be a local failure proposal which the chain has not accepted yet.
             // `E3RequestComplete` is the router's durable teardown fact, so only that event makes
             // this projection terminal and prevents later chain events from recreating state.
@@ -606,6 +620,123 @@ mod tests {
         assert!(recovered.assemblies.contains_key(&key));
         assert!(recovered.assemblies[&key].bytes().is_none());
         assert!(recovered.terminal_e3s.contains(&E3id::new("8", 1)));
+    }
+
+    fn test_bus() -> BusHandle {
+        use e3_data::{InMemEventLog, InMemSequenceIndex};
+        use e3_events::{hlc_factory::HlcFactory, EventBus, EventStore, Sequencer};
+
+        let event_bus = EventBus::<InterfoldEvent>::default().start();
+        let store = EventStore::new(InMemSequenceIndex::new(), InMemEventLog::new())
+            .expect("in-memory EventStore")
+            .start();
+        let sequencer =
+            Sequencer::new_with_flush(&event_bus, store.clone().recipient(), store.recipient())
+                .start();
+        BusHandle::new(event_bus, sequencer, HlcFactory::new()).enable("data-availability-test")
+    }
+
+    /// Store a complete, valid committee key assembly for each E3.
+    fn complete_assemblies(e3_ids: &[&E3id]) -> DataAvailabilityRecoveryState {
+        let preset = BfvPreset::InsecureThreshold512;
+        let params = BfvParamSet::from(preset);
+        let public_key = generate_public_key(
+            params.degree,
+            params.plaintext_modulus,
+            params.moduli.to_vec(),
+        )
+        .expect("generate threshold public key");
+        let pk_commitment = compute_pk_commitment(
+            public_key.clone(),
+            params.degree,
+            params.plaintext_modulus,
+            params.moduli.to_vec(),
+        )
+        .expect("compute C5 commitment");
+        let mut state = DataAvailabilityRecoveryState::default();
+        for e3_id in e3_ids {
+            let chunk_count = public_key.len().div_ceil(PUBLIC_KEY_CHUNK_BYTES) as u16;
+            let mut assembly = None;
+            for chunk_index in 0..chunk_count {
+                let event = CommitteePublicKeyChunkPublished {
+                    e3_id: (*e3_id).clone(),
+                    pk_commitment,
+                    ..chunk_event(&public_key, chunk_index)
+                };
+                let assembly = assembly.get_or_insert_with(|| KeyAssembly::new(&event));
+                assert!(assembly.insert(&event));
+            }
+            let key = (
+                (*e3_id).clone(),
+                "0x0000000000000000000000000000000000000001".to_owned(),
+                keccak256(&public_key).0,
+            );
+            state.presets.insert((*e3_id).clone(), preset);
+            state
+                .selected_candidates
+                .insert((key.0.clone(), key.1.clone()), key.2);
+            state
+                .assemblies
+                .insert(key, assembly.expect("at least one chunk"));
+        }
+        state
+    }
+
+    #[actix::test]
+    async fn finished_e3s_resume_no_work_at_effects_enabled() -> anyhow::Result<()> {
+        use crate::DataAvailabilityRepositoryFactory;
+        use e3_data::{DataStore, InMemStore, RepositoriesFactory};
+        use e3_events::GetEvents;
+
+        let (active, finished, other_chain) =
+            (E3id::new("7", 1), E3id::new("8", 1), E3id::new("8", 2));
+        let recovery = DataStore::from_in_mem(&InMemStore::new(false).start())
+            .repositories()
+            .data_availability_recovery(1);
+        recovery
+            .write_sync(&complete_assemblies(&[&active, &finished]))
+            .await?;
+        let bus = test_bus();
+        let history = bus.history();
+
+        DataAvailabilityCoordinator::attach(
+            &bus,
+            1,
+            None,
+            recovery.clone(),
+            &HashSet::from([finished.clone(), other_chain.clone()]),
+        )
+        .await?;
+        // A fact for the finished E3 that the replay delivers after startup.
+        bus.publish_without_context(CiphertextOutputReferencePublished {
+            e3_id: finished.clone(),
+            content_hash: [1; 32],
+            ciphertext_commitment: [2; 32],
+            availability_block: 3,
+            availability_leaf_index: 4,
+        })?;
+        bus.publish_without_context(e3_events::EffectsEnabled::new())?;
+        bus.flush_event_pipeline().await?;
+        actix::clock::sleep(Duration::from_millis(100)).await;
+
+        let published: Vec<E3id> = history
+            .send(GetEvents::<InterfoldEvent>::new())
+            .await?
+            .into_iter()
+            .filter_map(|event| match event.get_data() {
+                InterfoldEventData::CommitteePublished(event) => Some(event.e3_id.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(published, vec![active.clone()]);
+        let state = recovery.read().await?.expect("recovery state");
+        assert!(state.terminal_e3s.contains(&finished));
+        assert!(!state.terminal_e3s.contains(&active));
+        assert!(!state.terminal_e3s.contains(&other_chain));
+        assert!(state.assemblies.keys().all(|key| key.0 == active));
+        assert!(!state.presets.contains_key(&finished));
+        assert!(state.pending_outputs.is_empty());
+        Ok(())
     }
 
     #[test]
