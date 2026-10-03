@@ -1813,9 +1813,10 @@ fn cancel_record_uploads(
     }
 }
 
-/// Send the result of a put to its caller and count it in the upload summary. A put that this node
-/// cancelled ends with a quorum failure too; it is logged at DEBUG and not counted, because it was
-/// neither stored nor a failed upload.
+/// Send the result of a put to its caller and count it in the upload summary. Every finished put
+/// is counted, also one that the interface cannot match to a command, except a put that this node
+/// cancelled: it ends with a quorum failure too, but it was neither stored nor a failed upload, so
+/// it is only logged at DEBUG.
 fn report_put_record_result(
     event_tx: &NetEventSender,
     correlator: &mut Correlator,
@@ -1823,10 +1824,12 @@ fn report_put_record_result(
     id: kad::QueryId,
     result: kad::PutRecordResult,
 ) -> Result<()> {
-    let (correlation_id, cancelled) = correlator.expire_cancellable(id)?;
+    let expired = correlator.expire_cancellable(id);
+    let cancelled = matches!(expired, Ok((_, true)));
     if !cancelled {
         dht_puts.record(result.is_ok());
     }
+    let (correlation_id, _) = expired?;
     match result {
         Ok(record) => {
             let key = ContentHash(record.key.to_vec());
