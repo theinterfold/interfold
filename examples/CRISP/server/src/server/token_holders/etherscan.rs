@@ -9,6 +9,7 @@ use alloy::eips::BlockNumberOrTag;
 use alloy::primitives::{Address, U256};
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::sol;
+use alloy::sol_types::SolEvent;
 use alloy::transports::RpcError;
 use eyre::{eyre, Context, Result}; // Add this import
 use reqwest;
@@ -30,14 +31,21 @@ sol! {
     }
 
     /// The `BondedVotes` adapter, which sums wallet voting power and bonded collateral.
-    /// @dev A pure view: it emits nothing itself, so candidate discovery has to follow these
-    /// three references to the contracts that do emit.
+    /// @dev Its weight comes from contracts that it only reads, so candidate discovery follows
+    /// these references to the contracts that emit. The adapter itself emits only
+    /// `BondedDelegateChanged`, when an owner moves its bonded weight to a delegate.
     #[sol(rpc)]
     contract BondedVotes {
         function token() external view returns (address);
         function checkpoints() external view returns (address);
         function registry() external view returns (address);
         function escrow() external view returns (address);
+
+        event BondedDelegateChanged(
+            address indexed owner,
+            address indexed fromDelegate,
+            address indexed toDelegate
+        );
     }
 }
 
@@ -707,10 +715,10 @@ impl EtherscanClient {
     /// Fetch the addresses named as `bondOwner` by a `BondingRegistry`, and by the
     /// `BondedCheckpoints` it writes to.
     ///
-    /// Bonded FOLD carries voting power through a `BondedVotes` adapter, which is a pure view:
-    /// it emits nothing. Its power comes from two places the adapter merely reads, so an address
-    /// can hold bonded weight while appearing in no `Transfer` and no `DelegateVotesChanged` log
-    /// at all — scanning only the token would miss every operator.
+    /// Bonded FOLD carries voting power through a `BondedVotes` adapter, which records no bonds
+    /// itself. Its power comes from two places the adapter merely reads, so an address can hold
+    /// bonded weight while appearing in no `Transfer` and no `DelegateVotesChanged` log at all —
+    /// scanning only the token would miss every operator.
     ///
     /// `BondOwnerSet` is the complete source. It is emitted both when an operator first names an
     /// owner and when ownership is transferred (`acceptBondOwner` emits it too), and there is no
@@ -828,6 +836,57 @@ impl EtherscanClient {
         }
 
         holders.into_iter().collect()
+    }
+
+    /// Every address that a `BondedVotes` adapter named as a bonded delegate.
+    ///
+    /// An owner moves its bonded weight to a delegate with `delegateBonded`, and the delegate
+    /// takes it with `acceptBonded`. A Safe that cannot sign a ballot does this to vote through a
+    /// key. That key can hold the weight with no token log, no bond and no escrow position, so no
+    /// other source finds it, and the census would drop the weight. The adapter emits
+    /// `BondedDelegateChanged` for each change. An adapter deployed before bonded delegation emits
+    /// nothing, and this finds nobody.
+    ///
+    /// Over-inclusion is harmless on the same terms as for bond owners: every candidate is
+    /// verified against `getPastVotes` at the round's snapshot.
+    ///
+    /// # Arguments
+    /// * `adapter` - The `BondedVotes` adapter that the round names as its token
+    /// * `from_block` - First block to scan
+    /// * `to_block` - Last block to scan
+    pub async fn get_bonded_delegate_candidates(
+        &self,
+        adapter: &str,
+        from_block: u64,
+        to_block: u64,
+    ) -> Result<Vec<Address>> {
+        let logs = self
+            .get_logs_by_topic(
+                adapter,
+                &format!("{:#x}", BondedVotes::BondedDelegateChanged::SIGNATURE_HASH),
+                from_block,
+                to_block,
+            )
+            .await
+            .with_context(|| format!("Bonded delegation logs for {}", adapter))?;
+
+        Ok(Self::bonded_delegates_from_logs(&logs))
+    }
+
+    /// The distinct, non-zero delegates named by a set of `BondedDelegateChanged` logs.
+    ///
+    /// Split from the fetch so the topic layout can be tested without a network. The delegate is
+    /// `toDelegate`, the third indexed parameter, after the owner and the previous delegate. A
+    /// delegation that ends names the zero address, which never becomes a candidate.
+    fn bonded_delegates_from_logs(logs: &[TopicLog]) -> Vec<Address> {
+        let delegates: HashSet<Address> = logs
+            .iter()
+            .filter_map(|log| log.topics.get(3))
+            .filter_map(|raw| Self::address_from_topic(raw).ok())
+            .filter(|delegate| !delegate.is_zero())
+            .collect();
+
+        delegates.into_iter().collect()
     }
 
     /// Decode an address from a 32-byte indexed log topic (left-padded).
@@ -1255,10 +1314,10 @@ impl EtherscanClient {
         divisor_override: Option<U256>,
         sources: VotingPowerSources,
     ) -> Result<Vec<TokenHolder>> {
-        // The adapter has no logs. Scan its token, registry and escrow for candidates.
+        // The adapter logs only bonded delegation. Scan it, and its token, registry and escrow.
         if sources.registry.is_some() {
             log::info!(
-                "{} is a bonded-votes adapter: scanning token {}, registry {:?} and escrow lock \
+                "{} is a bonded-votes adapter: scanning it, token {}, registry {:?} and escrow lock \
                  NFT {:?}",
                 token_address,
                 sources.token,
@@ -1309,10 +1368,11 @@ impl EtherscanClient {
         let mut potential_voters = self.get_potential_voters(&transfer_logs, &delegation_logs);
 
         // Bond owners hold power through the adapter without necessarily appearing in the token's
-        // own logs, so they are unioned in as candidates. Over-inclusion is harmless: each is
-        // verified against `getPastVotes` below and dropped if it has none.
+        // own logs, and so do the delegates that bond owners gave their bonded weight to. Both are
+        // unioned in as candidates. Over-inclusion is harmless: each is verified against
+        // `getPastVotes` below and dropped if it has none.
         if let Some(registry) = sources.registry {
-            let known: HashSet<Address> = potential_voters.iter().map(|v| v.address).collect();
+            let mut known: HashSet<Address> = potential_voters.iter().map(|v| v.address).collect();
             let bond_owners = self
                 .get_bond_owner_candidates(
                     &registry.to_string(),
@@ -1322,12 +1382,25 @@ impl EtherscanClient {
                 )
                 .await
                 .context("Failed to fetch bond owner candidates")?;
-
             log::info!("Found {} bond-owner candidates", bond_owners.len());
-            for owner in bond_owners {
-                if !known.contains(&owner) {
+
+            let bonded_delegates = self
+                .get_bonded_delegate_candidates(
+                    &token_address.to_string(),
+                    start_block,
+                    snapshot_block,
+                )
+                .await
+                .context("Failed to fetch bonded delegate candidates")?;
+            log::info!(
+                "Found {} bonded-delegate candidates",
+                bonded_delegates.len()
+            );
+
+            for candidate in bond_owners.into_iter().chain(bonded_delegates) {
+                if known.insert(candidate) {
                     potential_voters.push(PotentialVoter {
-                        address: owner,
+                        address: candidate,
                         token_balance: U256::ZERO,
                         has_delegation: false,
                     });
@@ -1393,8 +1466,9 @@ impl EtherscanClient {
     }
 
     /// Get token holders with a constant voting credit.
-    /// A bonded-votes adapter emits no transfer logs. Discover its underlying token and bond
-    /// owners, then check their votes at the snapshot before assigning the constant credit.
+    /// A bonded-votes adapter emits no transfer logs. Discover its underlying token, bond owners
+    /// and bonded delegates, then check their votes at the snapshot before assigning the constant
+    /// credit.
     /// Plain tokens keep the transfer-log census, which also supports tokens without IVotes.
     pub async fn get_token_holders_with_constant_balance(
         &self,
@@ -1643,6 +1717,41 @@ mod tests {
         let logs = vec![one.clone(), one];
 
         assert_eq!(EtherscanClient::escrow_holders_from_logs(&logs).len(), 1);
+    }
+
+    /// The census must find the key that an owner, such as a Safe, gave its bonded weight to. That
+    /// key can have no other log at all. The topics come from the ABI, so a wrong index fails here.
+    #[test]
+    fn bonded_delegation_names_each_delegate_and_never_the_zero_address() {
+        let owner = Address::repeat_byte(0xaa);
+        let first = Address::repeat_byte(0xbb);
+        let second = Address::repeat_byte(0xcc);
+        let log = |from: Address, to: Address| TopicLog {
+            address: "0xadapter".to_string(),
+            topics: BondedVotes::BondedDelegateChanged {
+                owner,
+                fromDelegate: from,
+                toDelegate: to,
+            }
+            .encode_log_data()
+            .topics()
+            .iter()
+            .map(|topic| format!("{topic:#x}"))
+            .collect(),
+        };
+
+        // `first` accepts. The owner then moves on, which ends the delegation before `second`
+        // accepts.
+        let logs = vec![
+            log(Address::ZERO, first),
+            log(first, Address::ZERO),
+            log(Address::ZERO, second),
+        ];
+
+        let delegates: HashSet<Address> = EtherscanClient::bonded_delegates_from_logs(&logs)
+            .into_iter()
+            .collect();
+        assert_eq!(delegates, HashSet::from([first, second]));
     }
 
     /// A transport failure while resolving the escrow must not degrade to "no escrow".
