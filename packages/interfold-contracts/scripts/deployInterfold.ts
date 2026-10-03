@@ -312,6 +312,7 @@ export const deployInterfold = async (
   // self-serve tokens. FOLD is in the Virtual phase here (CCA_START is ~1h
   // out), so we mint unlocked FOLD and whitelist the faucet to bypass the
   // pre-TGE transfer gate. Only on sepolia, and only with mocks present.
+  const faucetWiring: Array<[string, Promise<string>, string]> = [];
   if (networkName === "sepolia" && mockStableToken) {
     // Stock the faucet for this many self-serve claims. Supply is derived from
     // the contract's per-claim amounts so it stays correct if those change.
@@ -325,6 +326,10 @@ export const deployInterfold = async (
     });
     const faucetAddress = await faucet.getAddress();
     console.log("Faucet deployed to:", faucetAddress);
+    faucetWiring.push(
+      ["faucet.fold", faucet.fold(), interfoldTokenAddress],
+      ["faucet.feeToken", faucet.feeToken(), feeTokenAddress],
+    );
 
     const amountFold = await faucet.AMOUNT_FOLD();
     const amountFeeToken = await faucet.AMOUNT_FEE_TOKEN();
@@ -704,6 +709,11 @@ export const deployInterfold = async (
   }
   const verifierEntries = Object.entries(verifierDeployments);
 
+  // The verifiers that the BFV scheme must end with: the BFV wrappers with ZK verification, the
+  // mocks otherwise. The ciphertext verifier is always the mock.
+  let expectedDecryptionVerifier = mockDeployments.decryptionVerifierAddress;
+  let expectedPkVerifier = mockDeployments.pkVerifierAddress;
+
   if (shouldHaveZKVerification) {
     console.log("Deploying BfvDecryptionVerifier and registering for prod...");
     const { bfvDecryptionVerifier } = await deployAndSaveBfvDecryptionVerifier(
@@ -712,6 +722,7 @@ export const deployInterfold = async (
     );
     const bfvDecryptionVerifierAddress =
       await bfvDecryptionVerifier.getAddress();
+    expectedDecryptionVerifier = bfvDecryptionVerifierAddress;
     const deployedDecryptionVerifier =
       await interfold.decryptionVerifiers(encryptionSchemeId);
     if (deployedDecryptionVerifier !== bfvDecryptionVerifierAddress) {
@@ -732,6 +743,7 @@ export const deployInterfold = async (
     console.log("Deploying BfvPkVerifier and registering for prod...");
     const { bfvPkVerifier } = await deployAndSaveBfvPkVerifier(hre);
     const bfvPkVerifierAddress = await bfvPkVerifier.getAddress();
+    expectedPkVerifier = bfvPkVerifierAddress;
     const deployedPkVerifier = await interfold.pkVerifiers(encryptionSchemeId);
     if (deployedPkVerifier !== bfvPkVerifierAddress) {
       await send(
@@ -896,6 +908,27 @@ export const deployInterfold = async (
       interfoldToken.BONDING_REGISTRY(),
       bondingRegistryAddress,
     ],
+    ["interfold.feeToken", interfold.feeToken(), feeTokenAddress],
+    [
+      "ticketToken.underlying",
+      interfoldTicketToken.underlying(),
+      feeTokenAddress,
+    ],
+    [
+      "interfold.decryptionVerifiers(BFV)",
+      interfold.decryptionVerifiers(encryptionSchemeId),
+      expectedDecryptionVerifier,
+    ],
+    [
+      "interfold.pkVerifiers(BFV)",
+      interfold.pkVerifiers(encryptionSchemeId),
+      expectedPkVerifier,
+    ],
+    [
+      "interfold.getCiphertextVerifier(BFV)",
+      interfold.getCiphertextVerifier(encryptionSchemeId),
+      mockDeployments.ciphertextVerifierAddress,
+    ],
     [
       "ticketToken.registry",
       interfoldTicketToken.registry(),
@@ -944,6 +977,8 @@ export const deployInterfold = async (
     ],
     ["e3RefundManager.treasury", e3RefundManager.treasury(), ownerAddress],
   ];
+
+  wiring.push(...faucetWiring);
 
   const wiringErrors: string[] = [];
   for (const [label, actualPromise, expected] of wiring) {

@@ -68,14 +68,16 @@ every section.
   the original error as its `cause`. A bare `await contract.setX(...)` resolves when the transaction
   is dispatched, not when it is mined.
 - **A deployment must end with a verified wiring graph.** After configuration, `deployInterfold.ts`
-  reads back every cross-contract reference (Interfold, CiphernodeRegistry with its DKG
-  fold-attestation verifier, BondingRegistry with its ticket token and slashed-funds treasury,
-  InterfoldTicketToken, SlashingManager, NodeReleaseRegistry, BondedCheckpoints, BondedVotes,
-  E3RefundManager, FOLD as the BondingRegistry ciphernode bond token, and FOLD's
-  `BONDING_REGISTRY`), the `interfold` and `treasury` that `E3RefundManager` receives in its
-  initializer, and the BondingRegistry reward-distributor authorization for Interfold. It throws
-  with the full list of mismatches. Add a read-back for each new cross-contract setter and each
-  initializer reference.
+  reads back every cross-contract reference: the references between Interfold, CiphernodeRegistry,
+  BondingRegistry, InterfoldTicketToken, SlashingManager, NodeReleaseRegistry, BondedCheckpoints,
+  BondedVotes and E3RefundManager; Interfold's fee token and its BFV decryption, public-key and
+  ciphertext verifiers; the CiphernodeRegistry DKG fold-attestation verifier; the BondingRegistry
+  ticket token, ciphernode bond token (FOLD) and slashed-funds treasury; the ticket token's
+  underlying token; FOLD's `BONDING_REGISTRY`; the `interfold` and `treasury` that `E3RefundManager`
+  receives in its initializer; on Sepolia, the faucet's FOLD and fee token; and the BondingRegistry
+  reward-distributor authorization for Interfold. It throws with the full list of mismatches, before
+  it enables requests. Add a read-back for each new cross-contract setter and each initializer
+  reference.
 - **A deployment must also enable bonded voting.** `protocol/deployContracts` deploys
   `BondedCheckpoints` (bound to the BondingRegistry **proxy**, not the implementation) and the
   governance batch calls `setBondedCheckpoints` after `initialize`. `BondedVotes` comes later, from
