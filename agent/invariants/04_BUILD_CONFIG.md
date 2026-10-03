@@ -50,6 +50,11 @@ every section.
 - Upgradeable-contract storage baselines are committed and CI-gated (missing baselines, compiler
   drift, layout incompatibility, bad gap consumption all fail); baseline creation is an explicit
   maintainer command. — INDEX concern #27
+- The contract artifacts that git tracks under `packages/interfold-contracts/artifacts/` are the
+  source of the CLI's `sol!` bindings (`crates/cli/src/ciphernode/context.rs`). CI compares their
+  ABI with a fresh build (`pnpm check:bindings`, after `pnpm evm:build`, in the lib unit-test job):
+  an added, removed or changed function, event or error fails until the regenerated files are
+  committed. — `scripts/check-cli-bindings.ts`
 - Contracts CI requires at least 128 bytes below the EIP-170 limit for `Interfold`,
   `BondingRegistry`, `CiphernodeRegistryOwnable`, and the canonical `insecure-512/minimum`
   aggregator verifiers. Every deployed verifier variant must fit, but CI does not measure the other
