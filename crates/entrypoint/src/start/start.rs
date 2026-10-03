@@ -79,7 +79,8 @@ pub async fn execute(config: &AppConfig, bootstrap: bool) -> Result<CiphernodeHa
         return await_startup(builder.build(), startup_timeout).await;
     }
 
-    let backend = ZkBackend::new(config.bb_binary(), config.circuits_dir(), config.work_dir());
+    let backend = ZkBackend::new(config.bb_binary(), config.circuits_dir(), config.work_dir())
+        .with_bb_timeout(config.bb_timeout());
 
     let reserve = config.multithread_reserve_threads();
     let concurrent_jobs = config.multithread_concurrent_jobs();
