@@ -91,7 +91,6 @@ item in code before you rely on it.
   slashing failure that is absent from the local records, and for contexts that the replayed
   EventStore suffix admits (follow-up work). A canonical Failed stage from that read is only in the
   lifecycle snapshot, not in the event log. — `03_ACTOR_RUNTIME.md` §Durability, persistence, replay
-- CLI: the CLI accepts secrets on argv. — `04_BUILD_CONFIG.md`
 - EventBus fan-out waits for each subscriber to accept the event within a timeout, but a timeout is
   only logged and the event is not retried. 82 `.do_send(` sites remain in total, including the
   `Sequencer` and the E3 router context. — `03_ACTOR_RUNTIME.md` §Ordering, backpressure, effects

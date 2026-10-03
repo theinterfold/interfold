@@ -330,7 +330,8 @@ first sync. The node runs in the foreground until it gets `SIGINT` or `SIGTERM`.
 </Steps>
 
 For scripts, `password set --password-stdin` and `wallet set --private-key-stdin` read one line from
-standard input. Do not put secrets in command arguments.
+standard input. Without these flags, the commands use hidden prompts. They reject secrets in command
+arguments.
 
 <Callout type='info'>
   On Sepolia, `interfold ciphernode setup --network sepolia` does the file, password, and key steps

@@ -7,9 +7,12 @@ initial bond owner. A separate wallet or Safe is recommended, but the operator m
 itself. The configured owner then funds and registers the operator on-chain.
 
 For non-interactive provisioning, `password set`, `wallet set`, and `ciphernode setup` expose
-`--password-stdin` / `--private-key-stdin` alternatives. Container entrypoints use these stdin or
-hidden-prompt paths so encryption passwords and private keys do not appear in process arguments or
-environment metadata.
+`--password-stdin` / `--private-key-stdin` flags. Without the corresponding flag, each command uses
+a hidden prompt. The CLI rejects secret-value options, including short options, before it loads the
+configuration. The error names the stdin flag and the interactive prompt. Repository scripts and
+container entrypoints pass secrets through stdin.
+
+**Files:** `crates/cli/src/{main,password,wallet}.rs`, `crates/cli/src/ciphernode/{mod,setup}.rs`.
 
 ## Identity model: bond owner vs operator key
 

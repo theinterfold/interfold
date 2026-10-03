@@ -202,10 +202,10 @@ waiton-files() {
 interfold_password_set() {
   local name="$1"
   local password="$2"
-  $INTERFOLD_BIN password set \
+  printf '%s\n' "$password" | $INTERFOLD_BIN password set \
     --name $name \
     --config "$SCRIPT_DIR/interfold.config.yaml" \
-    --password "$password"
+    --password-stdin
 }
 
 interfold_start() {
@@ -236,10 +236,10 @@ interfold_wallet_set() {
   local name="$1"
   local private_key="$2"
 
-  $INTERFOLD_BIN wallet set \
+  printf '%s\n' "$private_key" | $INTERFOLD_BIN wallet set \
     --name $name \
     --config "$SCRIPT_DIR/interfold.config.yaml" \
-    --private-key "$private_key"
+    --private-key-stdin
 }
 
 interfold_net_set_key() {

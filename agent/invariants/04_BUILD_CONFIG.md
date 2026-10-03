@@ -78,10 +78,11 @@ every section.
 - BFV circuit-verifier and RISC Zero receipt-verifier constructors require deployed verifier
   contracts. BFV circuit wrappers also require nonzero recursive VK hashes. — INDEX concerns #21,
   Z-15
-- CLI secrets are passed over **stdin only** — never argv or environment; private keys are never
-  stored in plaintext. **Gap:** the CLI still accepts `--password` and `--private-key` on argv
-  (`crates/cli/src/password.rs`, `crates/cli/src/wallet.rs`), and `deploy/local/nodes.sh` uses them.
-  — `flow-trace/00`, `01`
+- CLI secrets enter through **stdin or hidden prompts**, never argv or the environment. Wallet keys
+  are never stored in plaintext. `password set`, `wallet set`, and `ciphernode setup` reject
+  secret-value options and name the stdin or prompt alternative. Repository callers pipe secrets
+  into the CLI. — `crates/cli/src/{main,password,wallet}.rs`, `crates/cli/src/ciphernode/`,
+  `crates/cli/tests/cli_secrets.rs`; `flow-trace/01`
 - **Deployment writes must be mined, not only sent.** Every configuration transaction in
   `scripts/deployInterfold.ts` and `scripts/configureLocalSlashingPolicies.ts` goes through the
   `send()` helper in `scripts/utils.ts`, which awaits the receipt and fails on a missing receipt or

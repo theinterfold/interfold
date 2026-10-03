@@ -255,22 +255,22 @@ Makes a configuration file for one ciphernode and stores its password and wallet
 runs only when the CLI finds no configuration file.
 
 ```bash
-interfold ciphernode setup [--network <sepolia|local>] [-r <RPC_URL>] [-p <PASSWORD> | --password-stdin] [-k <PRIVATE_KEY> | --private-key-stdin]
+interfold ciphernode setup [--network <sepolia|local>] [-r <RPC_URL>] [--password-stdin] [--private-key-stdin]
 ```
 
 | Flag                  | Value              | Default   | Description                                                                                                               |
 | --------------------- | ------------------ | --------- | ------------------------------------------------------------------------------------------------------------------------- |
 | `--network`           | `sepolia`, `local` | `sepolia` | P2P network profile and chain for the file. The value `sepolia` uses chain ID `11155111`. The value `local` uses `31337`. |
 | `-r`, `--rpc-url`     | `<RPC_URL>`        | Prompt    | Ethereum RPC URL. The scheme must be `http`, `https`, `ws`, or `wss`.                                                     |
-| `-p`, `--password`    | `<PASSWORD>`       | Prompt    | Password that encrypts the stored keys. It must not be blank.                                                             |
-| `--password-stdin`    | None               | Off       | Reads the password from the first line of standard input. You cannot use it with `--password`.                            |
-| `-k`, `--private-key` | `<PRIVATE_KEY>`    | Prompt    | Wallet private key. It must start with `0x` and contain only hexadecimal characters.                                      |
-| `--private-key-stdin` | None               | Off       | Reads the private key from the next line of standard input. You cannot use it with `--private-key`.                       |
+| `--password-stdin`    | None               | Off       | Reads the password from the first requested line of standard input.                                                       |
+| `--private-key-stdin` | None               | Off       | Reads the wallet key from the next requested line of standard input.                                                      |
 
-When a value is absent, the command prompts for it. The RPC prompt proposes
-`wss://ethereum-sepolia-rpc.publicnode.com` for `sepolia` and `ws://127.0.0.1:8545` for `local`. The
-last prompt asks for the configuration folder. The default is `interfold` in the operating system
-configuration folder, for example `~/.config/interfold` on Linux.
+Without a stdin flag, the command uses a hidden prompt for that secret. It rejects secret values in
+command arguments. The password must not be blank. The wallet key must contain 32 bytes in
+hexadecimal. The RPC prompt proposes `wss://ethereum-sepolia-rpc.publicnode.com` for `sepolia` and
+`ws://127.0.0.1:8545` for `local`. The last prompt asks for the configuration folder. The default is
+`interfold` in the operating system configuration folder, for example `~/.config/interfold` on
+Linux.
 
 The command writes `interfold.config.yaml` with these values:
 
@@ -286,9 +286,9 @@ not contain a `data_availability` block, and `interfold start` needs one. See
 [data availability](/reference/configuration#data-availability).
 
 <Callout type='info'>
-  A secret in a command-line flag can stay in the shell history and in the process list. The
-  `--password-stdin` and `--private-key-stdin` flags keep secrets out of both. When you use both,
-  put the password on the first line and the private key on the second line.
+  Use a hidden prompt or pipe secrets from a file or secret manager with `--password-stdin` and
+  `--private-key-stdin`. Do not type secret values into shell commands. When you use both flags, put
+  the password on the first line and the wallet key on the second line.
 </Callout>
 
 ### `interfold start`
@@ -618,13 +618,15 @@ Sets the password when no password exists. When the key file already exists, the
 an error. Run `interfold password delete` first.
 
 ```bash
-interfold password set [-p <PASSWORD> | --password-stdin]
+interfold password set [--password-stdin]
 ```
 
-| Flag               | Value        | Default | Description                                                               |
-| ------------------ | ------------ | ------- | ------------------------------------------------------------------------- |
-| `-p`, `--password` | `<PASSWORD>` | Prompt  | The new password. It must not be blank. The prompt asks for it two times. |
-| `--password-stdin` | None         | Off     | Reads the password from one line of standard input.                       |
+| Flag               | Value | Default | Description                                         |
+| ------------------ | ----- | ------- | --------------------------------------------------- |
+| `--password-stdin` | None  | Off     | Reads the password from one line of standard input. |
+
+Without the flag, the hidden prompt asks for the password twice. The password must not be blank. The
+command rejects password values in command arguments.
 
 ### `interfold password delete`
 
@@ -647,13 +649,15 @@ keypair from the same private key and stores it. The wallet key gives the node i
 and its peer ID.
 
 ```bash
-interfold wallet set [--private-key <PRIVATE_KEY> | --private-key-stdin]
+interfold wallet set [--private-key-stdin]
 ```
 
-| Flag                  | Value           | Default | Description                                                  |
-| --------------------- | --------------- | ------- | ------------------------------------------------------------ |
-| `--private-key`       | `<PRIVATE_KEY>` | Prompt  | The private key, `0x` followed by 64 hexadecimal characters. |
-| `--private-key-stdin` | None            | Off     | Reads the private key from one line of standard input.       |
+| Flag                  | Value | Default | Description                                            |
+| --------------------- | ----- | ------- | ------------------------------------------------------ |
+| `--private-key-stdin` | None  | Off     | Reads the private key from one line of standard input. |
+
+Without the flag, the command asks for the wallet key with a hidden prompt. The key must contain 32
+bytes in hexadecimal. The command rejects wallet key values in command arguments.
 
 ### `interfold wallet get`
 
