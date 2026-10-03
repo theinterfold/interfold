@@ -6,7 +6,7 @@ import { deploymentPath, readJson } from "./files";
 import { currentNodeRelease } from "./nodeRelease";
 import { assertVrfSubscription, requireRandomnessConfig } from "./randomness";
 import type { ProtocolDeployment } from "./types";
-import { loadConfig, requireContract } from "./values";
+import { hasBondedDelegation, loadConfig, requireContract } from "./values";
 
 function assertEqual(label: string, actual: unknown, expected: unknown): void {
   if (String(actual).toLowerCase() !== String(expected).toLowerCase()) {
@@ -352,6 +352,13 @@ export async function actionValidate(): Promise<void> {
         deployment.bondingRegistryProxy,
       ],
     );
+    if (await hasBondedDelegation(ethers.provider, deployment.bondedVotes)) {
+      console.log("  ok bondedVotes.bondedDelegation");
+    } else {
+      console.log(
+        "  -- bondedVotes predates bonded delegation (replace it with --action activate-voting)",
+      );
+    }
   } else {
     console.log("  -- bondedVotes not deployed yet (--action activate-voting)");
   }

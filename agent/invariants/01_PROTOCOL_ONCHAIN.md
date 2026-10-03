@@ -43,13 +43,28 @@ every section.
   owner's history by a checkpoint per block. — `BondingRegistry.sol`; `BondedCheckpoints.sol`;
   `flow-trace/02`
 - **The numerator comes from the votes source; the denominator is always the token.**
-  `BondedVotes.getPastVotes` sums whatever `votesSource` attributes to the account and that
-  account's bonded FOLD, while `getPastTotalSupply` passes the **token's** supply through unchanged.
-  `votesSource` is either the token itself (wallet-held FOLD votes, the original behaviour) or an
-  escrow adapter (only locked FOLD votes, so holders must lock to participate while operators keep
-  weight by bonding). Reading the denominator off the escrow instead would omit the bonded half and
-  let participation exceed 100%. Summed voting power must never exceed total supply. —
-  `BondedVotes.sol`; `flow-trace/02`
+  `BondedVotes.getPastVotes` sums whatever `votesSource` attributes to the account and the bonded
+  weight that the account holds or represents, while `getPastTotalSupply` passes the **token's**
+  supply through unchanged. `votesSource` is either the token itself (wallet-held FOLD votes, the
+  original behaviour) or an escrow adapter (only locked FOLD votes, so holders must lock to
+  participate while operators keep weight by bonding). Reading the denominator off the escrow
+  instead would omit the bonded half and let participation exceed 100%. Summed voting power must
+  never exceed total supply. — `BondedVotes.sol`; `flow-trace/02`
+- **Bonded delegation moves weight; it never copies it.** An owner's bonded weight is its bonded
+  FOLD, plus its vesting-locked FOLD under an escrow source. At every timepoint it counts at the
+  owner or at exactly one delegate. `_setBondedDelegate` checkpoints the owner-to-delegate and the
+  delegate-to-owner link in one call, at the token's clock, so the two never disagree. A change
+  never moves weight for a timepoint that has settled, and `getPastVotes` rejects an unsettled
+  timepoint for the same reason. The weight moves only when the delegate calls `acceptBonded` for an
+  owner that asked it with `delegateBonded`. A request alone moves nothing, so nobody can push
+  weight onto an account or take its place. A delegate represents at most one owner: bonded weight
+  is read again from its sources on every call, and each represented owner costs a full read.
+  Escrowed FOLD keeps the escrow's delegation and wallet FOLD the token's; moving either one here
+  too would count it twice. Every change emits `BondedDelegateChanged`, not the IVotes
+  `DelegateChanged`, whose readers expect `delegates()` to agree. The CRISP census finds bonded
+  delegates only through that event: without it, a token-census round silently drops the delegated
+  weight. Delegations live in the adapter, so a replacement adapter starts with none. —
+  `BondedVotes.sol`; `examples/CRISP/server/src/server/token_holders/etherscan.rs`; `flow-trace/02`
 - **Escrowed and bonded FOLD cannot overlap; vesting-locked and bonded do, and must be netted.**
   Escrowing custodies the token in the escrow and bonding custodies it in the registry, so no token
   can be in both. Both were transferred rather than burned, so both are still inside the token's

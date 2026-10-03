@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 import { expect } from "chai";
 
+import type { BondedVotes } from "../../types";
 import {
   SEVEN_DAYS,
   deployInterfoldSystem,
@@ -66,12 +67,12 @@ describe("BondedVotes", function () {
     ]);
     await bondingRegistry.setBondedCheckpoints(await checkpoints.getAddress());
 
-    const bondedVotes = await ethers.deployContract("BondedVotes", [
+    const bondedVotes = (await ethers.deployContract("BondedVotes", [
       await ciphernodeBondToken.getAddress(),
       // Votes source == the token: wallet-held FOLD votes, the original behaviour.
       await ciphernodeBondToken.getAddress(),
       await checkpoints.getAddress(),
-    ]);
+    ])) as unknown as BondedVotes;
 
     const bond = async (amount: bigint) => {
       await ciphernodeBondToken
@@ -421,8 +422,8 @@ describe("BondedVotes", function () {
   });
 
   describe("delegation", function () {
-    /// Wallet FOLD follows the token's delegation. Bonded FOLD cannot be delegated — the registry
-    /// holds it — so it stays with the bond owner regardless.
+    /// Wallet FOLD follows the token's delegation. Bonded FOLD does not: the registry holds it, so
+    /// only {delegateBonded} moves it, and token delegation leaves it with the bond owner.
     it("sends wallet weight to the delegate but keeps bonded weight", async function () {
       const {
         ciphernodeBondToken,
@@ -466,6 +467,109 @@ describe("BondedVotes", function () {
       await expect(
         bondedVotes.delegate(bondOwnerAddress),
       ).to.be.revertedWithCustomError(bondedVotes, "DelegationNotSupported");
+    });
+
+    /// An account that cannot cast a vote, such as a Safe, hands its bonded weight to a key. The
+    /// request alone moves nothing, so nobody can push weight onto an account or take its place.
+    it("moves bonded weight to the delegate once it accepts, and only from then on", async function () {
+      const {
+        bondedVotes,
+        bondOwner,
+        bondOwnerAddress,
+        otherHolder,
+        otherHolderAddress,
+        bond,
+        settledVotes,
+      } = await loadFixture(setup);
+
+      await bond(BOND);
+      await bondedVotes.connect(bondOwner).delegateBonded(otherHolderAddress);
+
+      expect(await settledVotes(bondOwnerAddress)).to.equal(MINTED);
+      expect(await settledVotes(otherHolderAddress)).to.equal(MINTED);
+      const requested = (await time.latest()) - 1;
+
+      // Off-chain discovery, such as the CRISP census, finds delegates from this event.
+      await expect(
+        bondedVotes.connect(otherHolder).acceptBonded(bondOwnerAddress),
+      )
+        .to.emit(bondedVotes, "BondedDelegateChanged")
+        .withArgs(bondOwnerAddress, ethers.ZeroAddress, otherHolderAddress);
+
+      // Moved, not copied: the two accounts still hold 2 * MINTED between them.
+      expect(await settledVotes(bondOwnerAddress)).to.equal(MINTED - BOND);
+      expect(await settledVotes(otherHolderAddress)).to.equal(MINTED + BOND);
+      // A timepoint that settled before the acceptance keeps its answer.
+      expect(
+        await bondedVotes.getPastVotes(bondOwnerAddress, requested),
+      ).to.equal(MINTED);
+      expect(
+        await bondedVotes.getPastVotes(otherHolderAddress, requested),
+      ).to.equal(MINTED);
+    });
+
+    /// The owner can always take its weight back, and the delegate can always give it back.
+    /// Either way it returns at once, and never stays with a delegate the owner has moved away from.
+    it("gives the weight back at once when the owner withdraws or moves on, or the delegate drops it", async function () {
+      const {
+        bondedVotes,
+        bondOwner,
+        bondOwnerAddress,
+        otherHolder,
+        otherHolderAddress,
+        newOwnerAddress,
+        bond,
+        settledVotes,
+      } = await loadFixture(setup);
+
+      await bond(BOND);
+      const delegate = async () => {
+        await bondedVotes.connect(bondOwner).delegateBonded(otherHolderAddress);
+        await bondedVotes.connect(otherHolder).acceptBonded(bondOwnerAddress);
+        expect(await settledVotes(bondOwnerAddress)).to.equal(MINTED - BOND);
+      };
+
+      for (const end of [
+        () => bondedVotes.connect(bondOwner).delegateBonded(ethers.ZeroAddress),
+        // Asking someone else ends the current delegation before the new delegate accepts.
+        () => bondedVotes.connect(bondOwner).delegateBonded(newOwnerAddress),
+        () => bondedVotes.connect(otherHolder).dropBonded(),
+      ]) {
+        await delegate();
+        await end();
+        expect(await settledVotes(bondOwnerAddress)).to.equal(MINTED);
+        expect(await settledVotes(otherHolderAddress)).to.equal(MINTED);
+      }
+    });
+
+    /// Only the delegate that the owner asked can take the weight on, and a delegate represents
+    /// one owner at a time, which keeps the cost of reading its power fixed.
+    it("accepts only the delegate the owner asked, and one owner per delegate", async function () {
+      const {
+        bondedVotes,
+        bondOwner,
+        bondOwnerAddress,
+        otherHolder,
+        otherHolderAddress,
+        newOwner,
+        newOwnerAddress,
+      } = await loadFixture(setup);
+
+      await bondedVotes.connect(bondOwner).delegateBonded(otherHolderAddress);
+      await expect(bondedVotes.connect(newOwner).acceptBonded(bondOwnerAddress))
+        .to.be.revertedWithCustomError(
+          bondedVotes,
+          "BondedDelegationNotRequested",
+        )
+        .withArgs(bondOwnerAddress, newOwnerAddress);
+
+      await bondedVotes.connect(otherHolder).acceptBonded(bondOwnerAddress);
+      await bondedVotes.connect(newOwner).delegateBonded(otherHolderAddress);
+      await expect(
+        bondedVotes.connect(otherHolder).acceptBonded(newOwnerAddress),
+      )
+        .to.be.revertedWithCustomError(bondedVotes, "BondedDelegateOccupied")
+        .withArgs(otherHolderAddress, bondOwnerAddress);
     });
   });
 
@@ -1130,11 +1234,11 @@ describe("BondedVotes", function () {
         await escrow.getAddress(),
       ]);
 
-      const veBondedVotes = await ethers.deployContract("BondedVotes", [
+      const veBondedVotes = (await ethers.deployContract("BondedVotes", [
         foldAddress,
         await adapter.getAddress(),
         await checkpoints.getAddress(),
-      ]);
+      ])) as unknown as BondedVotes;
 
       return { ...base, escrow, adapter, veBondedVotes, foldAddress };
     }
@@ -1635,6 +1739,68 @@ describe("BondedVotes", function () {
           await ciphernodeBondToken.getPastVotes(otherHolderAddress, timepoint),
         );
       });
+
+      /// Bonded delegation carries the vesting-locked FOLD too: the owner cannot escrow it, so it
+      /// has no other way to delegate it. Escrowed FOLD stays with the escrow's own delegation.
+      /// Moving it here as well would count it twice once the escrow delegates it.
+      it("moves vesting weight with bonded weight and leaves escrowed weight to the escrow", async function () {
+        const {
+          veBondedVotes,
+          ciphernodeBondToken,
+          adapter,
+          bond,
+          bondOwner,
+          bondOwnerAddress,
+          otherHolder,
+          otherHolderAddress,
+        } = await loadFixture(veSetup);
+
+        await allocate(ciphernodeBondToken, bondOwnerAddress, ALLOCATION);
+        await adapter.setVotes(bondOwnerAddress, LOCKED);
+        await bond(BOND);
+        await veBondedVotes
+          .connect(bondOwner)
+          .delegateBonded(otherHolderAddress);
+        await veBondedVotes.connect(otherHolder).acceptBonded(bondOwnerAddress);
+
+        await time.increase(1);
+        const timepoint = (await time.latest()) - 1;
+
+        // The bond covers part of the lock, so the bonded weight is the whole allocation.
+        expect(
+          await veBondedVotes.getPastVotes(bondOwnerAddress, timepoint),
+        ).to.equal(LOCKED);
+        expect(
+          await veBondedVotes.getPastVotes(otherHolderAddress, timepoint),
+        ).to.equal(ALLOCATION);
+        expect(await veBondedVotes.getVotes(otherHolderAddress)).to.equal(
+          ALLOCATION,
+        );
+        expect(await veBondedVotes.getVotes(bondOwnerAddress)).to.equal(LOCKED);
+      });
+    });
+
+    /// A delegation can still change in the current block, so no answer for it may be given. The
+    /// escrow answers any timepoint, and an owner that delegated its bonded weight away reads no
+    /// bonded history, so here only the check in `BondedVotes` stops the read.
+    it("rejects a timepoint that has not settled, also when no source does", async function () {
+      const {
+        veBondedVotes,
+        bondOwner,
+        bondOwnerAddress,
+        otherHolder,
+        otherHolderAddress,
+      } = await loadFixture(veSetup);
+
+      await veBondedVotes.connect(bondOwner).delegateBonded(otherHolderAddress);
+      await veBondedVotes.connect(otherHolder).acceptBonded(bondOwnerAddress);
+
+      await expect(
+        veBondedVotes.getPastVotes(
+          bondOwnerAddress,
+          await veBondedVotes.clock(),
+        ),
+      ).to.be.revertedWithCustomError(veBondedVotes, "FutureLookup");
     });
 
     it("records the escrow it resolved, and leaves it zero without one", async function () {

@@ -9,6 +9,7 @@ import {
   BondedVotes,
   BondedVotes__factory as BondedVotesFactory,
 } from "../../types";
+import { hasBondedDelegation } from "../protocol/values";
 import {
   getDeploymentChain,
   readDeploymentArgs,
@@ -54,12 +55,14 @@ export const deployAndSaveBondedVotes = async ({
   const chain = getDeploymentChain(hre);
 
   const preDeployedArgs = readDeploymentArgs("BondedVotes", chain);
-  // All three references are immutable, so a record for a different triple cannot be reused.
+  // All three references are immutable, so a record for a different triple cannot be reused. A
+  // record from before bonded delegation has the same triple, so the code is checked too.
   if (
     preDeployedArgs?.address &&
     preDeployedArgs?.constructorArgs?.token === token &&
     preDeployedArgs?.constructorArgs?.votesSource === resolvedVotesSource &&
-    preDeployedArgs?.constructorArgs?.checkpoints === checkpoints
+    preDeployedArgs?.constructorArgs?.checkpoints === checkpoints &&
+    (await hasBondedDelegation(ethers.provider, preDeployedArgs.address))
   ) {
     return {
       bondedVotes: BondedVotesFactory.connect(preDeployedArgs.address, signer),
