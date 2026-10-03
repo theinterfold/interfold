@@ -221,7 +221,8 @@ pub struct NetChannelBridge {
     cmd_tx: broadcast::Sender<NetCommand>,
     /// A command receiver made with the bridge, for the first `cmd_rx` call. A node can send
     /// commands before the test network attaches it, for example a restarted node that restores
-    /// its DHT records during startup; this receiver keeps them for the network.
+    /// its DHT records during startup; this receiver keeps them for the network, up to the channel
+    /// capacity.
     first_cmd_rx: Arc<Mutex<Option<broadcast::Receiver<NetCommand>>>>,
     tx: mpsc::Sender<NetCommand>,
     event_tx: NetEventSender,
@@ -313,8 +314,8 @@ impl NetInterfaceInverted for NetChannelBridge {
         self.tx.clone()
     }
 
-    /// The first call returns every command since the bridge was made; later calls return the
-    /// commands from then on.
+    /// The first call returns the commands since the bridge was made, up to the channel capacity;
+    /// later calls return the commands from then on.
     fn cmd_rx(&self) -> broadcast::Receiver<NetCommand> {
         self.first_cmd_rx
             .lock()
