@@ -164,72 +164,32 @@ impl From<CiphertextOutputReferenceWithChainId> for InterfoldEventData {
 
 struct E3FailedWithChainId(pub IInterfold::E3Failed, pub u64);
 
-pub(crate) fn convert_u8_to_e3_stage(stage_u8: u8) -> E3Stage {
-    match stage_u8 {
-        0 => E3Stage::None,
-        1 => E3Stage::Requested,
-        2 => E3Stage::CommitteeFinalized,
-        3 => E3Stage::KeyPublished,
-        4 => E3Stage::CiphertextReady,
-        5 => E3Stage::Complete,
-        6 => E3Stage::Failed,
-        _ => E3Stage::None,
-    }
-}
+/// A stage or failure reason that this node does not know rejects the log. Mapping it to a known
+/// variant would change what the node does with the E3, and the value means that the contract is
+/// newer than the node.
+impl TryFrom<E3FailedWithChainId> for E3Failed {
+    type Error = anyhow::Error;
 
-// Helper function to convert u8 to Rust FailureReason
-fn convert_u8_to_failure_reason(reason_u8: u8) -> FailureReason {
-    match reason_u8 {
-        0 => FailureReason::None,
-        1 => FailureReason::CommitteeFormationTimeout,
-        2 => FailureReason::InsufficientCommitteeMembers,
-        3 => FailureReason::DKGTimeout,
-        4 => FailureReason::DKGInvalidShares,
-        5 => FailureReason::NoInputsReceived,
-        6 => FailureReason::ComputeTimeout,
-        7 => FailureReason::ComputeProviderExpired,
-        8 => FailureReason::ComputeProviderFailed,
-        9 => FailureReason::RequesterCancelled,
-        10 => FailureReason::DecryptionTimeout,
-        11 => FailureReason::DecryptionInvalidShares,
-        12 => FailureReason::VerificationFailed,
-        _ => FailureReason::None,
-    }
-}
-
-impl From<E3FailedWithChainId> for E3Failed {
-    fn from(value: E3FailedWithChainId) -> Self {
-        E3Failed {
+    fn try_from(value: E3FailedWithChainId) -> Result<Self> {
+        Ok(E3Failed {
             e3_id: E3id::new(value.0.e3Id.to_string(), value.1),
-            failed_at_stage: convert_u8_to_e3_stage(value.0.failedAtStage),
-            reason: convert_u8_to_failure_reason(value.0.reason),
-        }
-    }
-}
-
-impl From<E3FailedWithChainId> for InterfoldEventData {
-    fn from(value: E3FailedWithChainId) -> Self {
-        let payload: E3Failed = value.into();
-        payload.into()
+            failed_at_stage: E3Stage::try_from(value.0.failedAtStage)?,
+            reason: FailureReason::try_from(value.0.reason)?,
+        })
     }
 }
 
 struct E3StageChangedWithChainId(pub IInterfold::E3StageChanged, pub u64);
 
-impl From<E3StageChangedWithChainId> for E3StageChanged {
-    fn from(value: E3StageChangedWithChainId) -> Self {
-        E3StageChanged {
-            e3_id: E3id::new(value.0.e3Id.to_string(), value.1),
-            previous_stage: convert_u8_to_e3_stage(value.0.previousStage),
-            new_stage: convert_u8_to_e3_stage(value.0.newStage),
-        }
-    }
-}
+impl TryFrom<E3StageChangedWithChainId> for E3StageChanged {
+    type Error = anyhow::Error;
 
-impl From<E3StageChangedWithChainId> for InterfoldEventData {
-    fn from(value: E3StageChangedWithChainId) -> Self {
-        let payload: E3StageChanged = value.into();
-        payload.into()
+    fn try_from(value: E3StageChangedWithChainId) -> Result<Self> {
+        Ok(E3StageChanged {
+            e3_id: E3id::new(value.0.e3Id.to_string(), value.1),
+            previous_stage: E3Stage::try_from(value.0.previousStage)?,
+            new_stage: E3Stage::try_from(value.0.newStage)?,
+        })
     }
 }
 
@@ -412,9 +372,9 @@ pub(crate) fn extractor(
                 "E3Failed event received: e3_id={}, stage={:?}, reason={:?}",
                 event.e3Id, event.failedAtStage, event.reason
             );
-            Ok(Some(InterfoldEventData::from(E3FailedWithChainId(
-                event, chain_id,
-            ))))
+            let payload = E3Failed::try_from(E3FailedWithChainId(event, chain_id))
+                .context("E3Failed carries a value this node does not know")?;
+            Ok(Some(payload.into()))
         }
         Some(&IInterfold::E3StageChanged::SIGNATURE_HASH) => {
             let mut event = IInterfold::E3StageChanged::decode_log_data(data)
@@ -431,9 +391,9 @@ pub(crate) fn extractor(
                 event.previousStage,
                 event.newStage
             );
-            Ok(Some(InterfoldEventData::from(E3StageChangedWithChainId(
-                event, chain_id,
-            ))))
+            let payload = E3StageChanged::try_from(E3StageChangedWithChainId(event, chain_id))
+                .context("E3StageChanged carries a value this node does not know")?;
+            Ok(Some(payload.into()))
         }
         Some(&IInterfold::PlaintextOutputPublished::SIGNATURE_HASH) => {
             let mut event = IInterfold::PlaintextOutputPublished::decode_log_data(data)
@@ -500,21 +460,94 @@ mod tests {
     use alloy::primitives::{Address, Bytes, U256};
 
     #[test]
-    fn test_convert_u8_to_e3_stage_known_and_unknown() {
-        assert_eq!(convert_u8_to_e3_stage(1), E3Stage::Requested);
-        assert_eq!(convert_u8_to_e3_stage(6), E3Stage::Failed);
-        // Out-of-range falls back to None
-        assert_eq!(convert_u8_to_e3_stage(200), E3Stage::None);
+    fn contract_stage_and_reason_values_decode_in_declaration_order() {
+        assert_eq!(E3Stage::try_from(1), Ok(E3Stage::Requested));
+        assert_eq!(E3Stage::try_from(6), Ok(E3Stage::Failed));
+        assert_eq!(FailureReason::try_from(3), Ok(FailureReason::DKGTimeout));
+        assert_eq!(
+            FailureReason::try_from(12),
+            Ok(FailureReason::VerificationFailed)
+        );
     }
 
     #[test]
-    fn test_convert_u8_to_failure_reason_known_and_unknown() {
-        assert_eq!(convert_u8_to_failure_reason(3), FailureReason::DKGTimeout);
-        assert_eq!(
-            convert_u8_to_failure_reason(12),
-            FailureReason::VerificationFailed
+    fn unknown_stage_and_reason_values_are_refused() {
+        // 7 is the first stage the contract does not declare; 13 is the reason bound
+        // `_MAX_FAILURE_REASON`, which the contract never emits.
+        assert!(E3Stage::try_from(7).is_err());
+        assert!(FailureReason::try_from(13).is_err());
+        assert!(E3Stage::try_from(200).is_err());
+    }
+
+    fn e3_failed_log(stage: u8, reason: u8) -> (LogData, [B256; 2]) {
+        let event = IInterfold::E3Failed {
+            e3Id: U256::from(7u64),
+            failedAtStage: stage,
+            reason,
+        };
+        // e3Id is indexed, so the extractor reads it from topics[1].
+        let e3_id_topic = B256::from(U256::from(7u64).to_be_bytes::<32>());
+        (
+            event.encode_log_data(),
+            [IInterfold::E3Failed::SIGNATURE_HASH, e3_id_topic],
+        )
+    }
+
+    #[test]
+    fn an_e3_failed_log_with_a_known_reason_decodes() {
+        let (data, topics) = e3_failed_log(3, 3);
+        match extractor(&data, &topics, 1).unwrap() {
+            Some(InterfoldEventData::E3Failed(payload)) => {
+                assert_eq!(payload.failed_at_stage, E3Stage::KeyPublished);
+                assert_eq!(payload.reason, FailureReason::DKGTimeout);
+            }
+            other => panic!("expected E3Failed, got {other:?}"),
+        }
+    }
+
+    fn e3_stage_changed_log(previous: u8, new: u8) -> (LogData, [B256; 2]) {
+        let event = IInterfold::E3StageChanged {
+            e3Id: U256::from(7u64),
+            previousStage: previous,
+            newStage: new,
+        };
+        let e3_id_topic = B256::from(U256::from(7u64).to_be_bytes::<32>());
+        (
+            event.encode_log_data(),
+            [IInterfold::E3StageChanged::SIGNATURE_HASH, e3_id_topic],
+        )
+    }
+
+    #[test]
+    fn an_e3_stage_changed_log_with_an_unknown_stage_is_rejected() {
+        // Either field can carry the unknown value.
+        for (previous, new) in [(7, 1), (1, 7)] {
+            let (data, topics) = e3_stage_changed_log(previous, new);
+            let error = extractor(&data, &topics, 1).unwrap_err();
+            assert!(
+                format!("{error:#}").contains("unknown E3Stage value 7"),
+                "unexpected error: {error:#}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_e3_failed_log_with_an_unknown_reason_is_rejected() {
+        // The parser turns the error into a rejected log, which stops the chain's ingestion
+        // instead of recording a failure reason the node invented.
+        let (data, topics) = e3_failed_log(3, 13);
+        let error = extractor(&data, &topics, 1).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("unknown FailureReason value 13"),
+            "unexpected error: {error:#}"
         );
-        assert_eq!(convert_u8_to_failure_reason(200), FailureReason::None);
+
+        let (data, topics) = e3_failed_log(7, 3);
+        let error = extractor(&data, &topics, 1).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("unknown E3Stage value 7"),
+            "unexpected error: {error:#}"
+        );
     }
 
     #[test]

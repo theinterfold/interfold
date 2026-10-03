@@ -111,6 +111,13 @@ Specific triggers:
   submitted tickets. SlashingManager also uses it when an expulsion leaves fewer than H active
   members. Reusing the existing supplier-paid reason preserves the persisted enum layout.
 
+Node-side decoding (`crates/evm/src/interfold/events.rs`): `E3Stage` and `FailureReason` are `uint8`
+values in the ABI, and the node converts them with `TryFrom<u8>` in the declaration order of
+`IInterfold.sol`. A value outside the enum means a contract that is newer than the node. The reader
+rejects such an `E3Failed` or `E3StageChanged` log, which stops that chain's ingestion
+(`InterfoldEvmEvent::Rejected`), instead of recording a stage or reason the node invented. The
+contract never emits the `_MAX_FAILURE_REASON` bound, so it has no Rust variant.
+
 ### Requester Cancellation
 
 Only the address that created an E3 can call `cancelE3(e3Id)`. Cancellation is a recovery path for
