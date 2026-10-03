@@ -26,14 +26,17 @@ const FINALIZED_LIFECYCLE_READ_TIMEOUT: Duration = Duration::from_secs(60);
 /// Most restored contexts that one finalized lifecycle read checks within one deadline: at most
 /// three RPC calls each.
 const FINALIZED_LIFECYCLE_READ_BATCH: usize = 16;
+/// Delays in seconds before the retries of one batch read after an RPC error.
+const FINALIZED_LIFECYCLE_READ_RETRY_DELAYS: [u64; 2] = [1, 3];
 
 /// Record in the local lifecycle the E3s of restored request contexts that are finished at the
 /// finalized block of their chain.
 ///
 /// An E3 is finished when it is complete, or failed without accusation or slashing work. Startup
 /// runs this before it reads the lifecycle for its restart decisions, so the router completes
-/// these contexts at `EffectsEnabled` and the other recovery paths treat them as terminal. A
-/// restored context that startup cannot check against its chain fails startup.
+/// these contexts at `EffectsEnabled` and the other recovery paths treat them as terminal. The node
+/// does not read a chain that the configuration disables, so the contexts of that chain resume
+/// without the check. Any other restored context that startup cannot check fails startup.
 pub(crate) async fn reconcile_finalized_lifecycle<State>(
     repositories: &e3_data::Repositories,
     chains: &[ChainConfig],
@@ -85,9 +88,22 @@ pub(crate) async fn reconcile_finalized_lifecycle<State>(
         );
         finished.extend(chain_finished);
     }
+    for chain in chains.iter().filter(|chain| !chain.enabled.unwrap_or(true)) {
+        let Some(e3_ids) = chain
+            .chain_id
+            .and_then(|chain_id| unchecked.remove(&chain_id))
+        else {
+            continue;
+        };
+        warn!(
+            chain = %chain.name,
+            ?e3_ids,
+            "Restored request contexts belong to a disabled chain; they resume without the finalized-block check"
+        );
+    }
     if let Some((chain_id, e3_ids)) = unchecked.into_iter().next() {
         bail!(
-            "restored request contexts for E3s {e3_ids:?} belong to chain {chain_id}, which no enabled chain configuration covers; startup cannot confirm whether they are finished. Enable chain {chain_id} with a working RPC endpoint"
+            "restored request contexts for E3s {e3_ids:?} belong to chain {chain_id}, which the configuration does not have; startup cannot confirm whether they are finished. If this node still serves chain {chain_id}, add it with a working RPC endpoint. If the node moved to another network, keep the old chain entry with `enabled: false` and `chain_id: {chain_id}`, which resumes these contexts without the check, or delete the old state with `interfold node reset-data`"
         );
     }
     if finished.is_empty() {
@@ -152,17 +168,17 @@ fn finished_e3s(
             }
             FinalizedE3Lifecycle::Finalized { .. } | FinalizedE3Lifecycle::AwaitingFinality => {}
             FinalizedE3Lifecycle::Unknown => bail!(
-                "restored E3 {e3_id} does not exist in the Interfold contract {contract} on chain {chain_id}; the node data does not match the configured contract. Check the configured Interfold address, or reset the node data"
+                "restored E3 {e3_id} is not in the Interfold contract {contract} at the latest block of chain {chain_id}; startup cannot confirm whether its context is finished. The RPC endpoint can be behind the chain, or the node data can belong to another deployment. Check that the endpoint is synced and that the configured Interfold address is right. Run `interfold node reset-data` only when the node data belongs to another deployment"
             ),
         }
     }
     Ok(finished)
 }
 
-/// Fail when the read for one chain does not end before the timeout.
 /// Read the finalized lifecycles of `e3_ids` in batches, each within its own deadline, so a slow
 /// but working endpoint finishes any number of restored contexts, and a stuck one still fails
-/// startup after one deadline.
+/// startup after one deadline. A batch that fails is read again after each retry delay, within
+/// the same deadline.
 async fn read_in_batches<'a, Read, Batch>(
     chain: &str,
     e3_ids: &'a [E3id],
@@ -174,12 +190,26 @@ where
 {
     let mut lifecycles = Vec::with_capacity(e3_ids.len());
     for batch in e3_ids.chunks(FINALIZED_LIFECYCLE_READ_BATCH) {
-        lifecycles
-            .extend(within_deadline(chain, FINALIZED_LIFECYCLE_READ_TIMEOUT, read(batch)).await?);
+        let read_with_retries = async {
+            let mut result = read(batch).await;
+            for delay_secs in FINALIZED_LIFECYCLE_READ_RETRY_DELAYS {
+                let Err(error) = &result else {
+                    break;
+                };
+                warn!(chain, error = %error, "Reading the finalized E3 lifecycle failed; retrying");
+                tokio::time::sleep(Duration::from_secs(delay_secs)).await;
+                result = read(batch).await;
+            }
+            result
+        };
+        lifecycles.extend(
+            within_deadline(chain, FINALIZED_LIFECYCLE_READ_TIMEOUT, read_with_retries).await?,
+        );
     }
     Ok(lifecycles)
 }
 
+/// Fail when `read` does not end before the timeout.
 async fn within_deadline<T>(
     chain: &str,
     timeout: Duration,
@@ -248,6 +278,35 @@ mod tests {
         );
     }
 
+    /// An RPC error is read again after each retry delay. The read fails startup only when the
+    /// last retry also fails.
+    #[tokio::test(start_paused = true)]
+    async fn a_failed_batch_read_is_retried() -> Result<()> {
+        let e3_ids = restored_ids(3);
+        let read_failing_first = |failures: usize| {
+            let mut calls = 0;
+            read_in_batches("flaky", &e3_ids, move |batch| {
+                calls += 1;
+                let fail = calls <= failures;
+                async move {
+                    if fail {
+                        bail!("connection reset");
+                    }
+                    Ok(batch
+                        .iter()
+                        .map(|e3_id| (e3_id.clone(), FinalizedE3Lifecycle::AwaitingFinality))
+                        .collect())
+                }
+            })
+        };
+
+        let retries = FINALIZED_LIFECYCLE_READ_RETRY_DELAYS.len();
+        assert_eq!(read_failing_first(retries).await?.len(), e3_ids.len());
+        let error = read_failing_first(retries + 1).await.unwrap_err();
+        assert!(error.to_string().contains("connection reset"), "{error:#}");
+        Ok(())
+    }
+
     #[test]
     fn complete_and_non_slashing_failures_are_finished() -> Result<()> {
         let ids: Vec<E3id> = (1..=6).map(|id| E3id::new(id.to_string(), 1)).collect();
@@ -289,10 +348,11 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(error
-            .to_string()
-            .contains(&format!("restored E3 {e3_id} does not exist")));
-        assert!(error.to_string().contains("on chain 5"));
+        assert!(error.to_string().contains(&format!(
+            "restored E3 {e3_id} is not in the Interfold contract"
+        )));
+        assert!(error.to_string().contains("of chain 5"));
+        assert!(error.to_string().contains("endpoint is synced"));
     }
 
     #[test]
@@ -494,19 +554,59 @@ mod tests {
         Ok(())
     }
 
+    /// A chain entry with `enabled: false`, for example of the network that the node served
+    /// before. Startup does not connect to it.
+    fn disabled_chain(chain_id: u64) -> ChainConfig {
+        ChainConfig {
+            enabled: Some(false),
+            chain_id: Some(chain_id),
+            ..anvil_chain("http://127.0.0.1:1".to_owned(), Address::ZERO)
+        }
+    }
+
     #[actix::test]
-    async fn a_restored_context_without_an_enabled_chain_fails_startup() -> Result<()> {
+    async fn a_restored_context_of_a_disabled_chain_resumes_unchecked() -> Result<()> {
+        let restored = E3id::new("1", 11_155_111);
+        let repositories =
+            restored_store(HashMap::from([(restored.clone(), E3Stage::Requested)])).await?;
+
+        reconcile_finalized_lifecycle(
+            &repositories,
+            &[disabled_chain(11_155_111)],
+            &mut ProviderCache::new(),
+        )
+        .await?;
+
+        let lifecycle = repositories
+            .e3_lifecycle()
+            .read()
+            .await?
+            .unwrap_or_default();
+        assert_eq!(lifecycle.get(&restored), Some(&E3Stage::Requested));
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn a_restored_context_of_a_chain_without_configuration_fails_startup() -> Result<()> {
         let repositories = restored_store(HashMap::from([(
             E3id::new("1", 11_155_111),
             E3Stage::Requested,
         )]))
         .await?;
 
-        let error = reconcile_finalized_lifecycle(&repositories, &[], &mut ProviderCache::new())
-            .await
-            .unwrap_err();
+        let error = reconcile_finalized_lifecycle(
+            &repositories,
+            &[disabled_chain(1)],
+            &mut ProviderCache::new(),
+        )
+        .await
+        .unwrap_err();
 
-        assert!(error.to_string().contains("chain 11155111"));
+        assert!(error.to_string().contains("chain 11155111"), "{error:#}");
+        assert!(
+            error.to_string().contains("interfold node reset-data"),
+            "{error:#}"
+        );
         Ok(())
     }
 

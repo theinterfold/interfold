@@ -276,8 +276,9 @@ On restart:
 │        the lifecycle store. Recovery steps that read the lifecycle then treat that E3 as
 │        terminal. The data-availability coordinator drops its restored work for that E3
 │        before EffectsEnabled; document publication recovery does not read the lifecycle.
-│        An E3 absent at chain head, a chain without config, an RPC error, or 60 s for one
-│        read of 16 contexts fails startup
+│        An E3 absent at chain head, a chain missing from the config, an RPC error after two
+│        retries, or 60 s for one read of 16 contexts fails startup. The contexts of a
+│        disabled chain resume unchecked
 │   3. Reconcile and hydrate persisted per-E3 state
 │      → Extensions must preserve hydrated recipients; replayed committee events
 │        must not replace a restored per-E3 actor with a fresh instance
