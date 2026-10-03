@@ -62,19 +62,18 @@ every section.
   (`crates/cli/src/password.rs`, `crates/cli/src/wallet.rs`), and `deploy/local/nodes.sh` uses them.
   — `flow-trace/00`, `01`
 - **Deployment writes must be mined, not only sent.** Every configuration transaction in
-  `scripts/deployInterfold.ts` goes through the `send()` helper in `scripts/utils.ts`, which awaits
-  the receipt and fails on a missing receipt or a non-success status. `send()` also labels a
-  rejection from the send or the mining stage and keeps the original error as its `cause`. A bare
-  `await contract.setX(...)` resolves when the transaction is dispatched, not when it is mined.
-  **Gap:** `deployInterfold.ts` still sends `interfoldTicketToken.setRegistry(...)` with a bare
-  `await`, and several other writes call `.wait()` directly instead of `send()`.
+  `scripts/deployInterfold.ts` and `scripts/configureLocalSlashingPolicies.ts` goes through the
+  `send()` helper in `scripts/utils.ts`, which awaits the receipt and fails on a missing receipt or
+  a non-success status. `send()` also labels a rejection from the send or the mining stage and keeps
+  the original error as its `cause`. A bare `await contract.setX(...)` resolves when the transaction
+  is dispatched, not when it is mined.
 - **A deployment must end with a verified wiring graph.** After configuration, `deployInterfold.ts`
   reads back every cross-contract reference (Interfold, CiphernodeRegistry, BondingRegistry,
   InterfoldTicketToken, SlashingManager, E3RefundManager, FOLD as the BondingRegistry ciphernode
-  bond token) plus the BondingRegistry reward-distributor authorization for Interfold, and throws
-  with the full list of mismatches. Add a read-back for each new cross-contract setter and each
-  initializer reference. **Gap:** the check does not read back the references that `E3RefundManager`
-  receives in its initializer.
+  bond token), the `interfold` and `treasury` that `E3RefundManager` receives in its initializer,
+  and the BondingRegistry reward-distributor authorization for Interfold. It throws with the full
+  list of mismatches. Add a read-back for each new cross-contract setter and each initializer
+  reference.
 - **A deployment must also enable bonded voting.** `protocol/deployContracts` deploys
   `BondedCheckpoints` (bound to the BondingRegistry **proxy**, not the implementation) and the
   governance batch calls `setBondedCheckpoints` after `initialize`. `BondedVotes` comes later, from

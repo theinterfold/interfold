@@ -229,7 +229,10 @@ export const deployInterfold = async (
   console.log("BondingRegistry deployed to:", bondingRegistryAddress);
 
   console.log("Setting BondingRegistry address in InterfoldTicketToken...");
-  await interfoldTicketToken.setRegistry(bondingRegistryAddress);
+  await send(
+    interfoldTicketToken.setRegistry(bondingRegistryAddress),
+    "interfoldTicketToken.setRegistry",
+  );
 
   // FOLD is deployed with BondingRegistry's real address. Local deployments set
   // the deployer as the one-time claim source placeholder; production sale
@@ -250,16 +253,17 @@ export const deployInterfold = async (
 
   // Fix up BondingRegistry's ciphernode bond token now that FOLD exists.
   console.log("Setting ciphernode bond token in BondingRegistry...");
-  await (
-    await bondingRegistry.setBondingAssetConfig({
+  await send(
+    bondingRegistry.setBondingAssetConfig({
       ticketToken: interfoldTicketTokenAddress,
       ciphernodeBondToken: interfoldTokenAddress,
       ticketPrice: ethers.parseUnits("10", 6),
       requiredCiphernodeBond: ethers.parseEther("100"),
       expectedTicketDecimals: 6,
       expectedCiphernodeBondDecimals: 18,
-    })
-  ).wait();
+    }),
+    "bondingRegistry.setBondingAssetConfig",
+  );
 
   if (interfoldTokenAddress.toLowerCase() === feeTokenAddress.toLowerCase()) {
     throw new Error(
@@ -271,9 +275,10 @@ export const deployInterfold = async (
 
   // Whitelist BondingRegistry so bonded transfers work pre-TGE.
   console.log("Whitelisting BondingRegistry in FOLD...");
-  await (
-    await interfoldToken.setTransferWhitelisted(bondingRegistryAddress, true)
-  ).wait();
+  await send(
+    interfoldToken.setTransferWhitelisted(bondingRegistryAddress, true),
+    "interfoldToken.setTransferWhitelisted(bondingRegistry)",
+  );
 
   // ── Bonded voting ───────────────────────────────────────────────────────
   // Bonded FOLD is transferred to BondingRegistry and never delegated, so without a recorded
@@ -297,9 +302,10 @@ export const deployInterfold = async (
   console.log("BondedVotes deployed to:", bondedVotesAddress);
 
   console.log("Attaching BondedCheckpoints to BondingRegistry...");
-  await (
-    await bondingRegistry.setBondedCheckpoints(bondedCheckpointsAddress)
-  ).wait();
+  await send(
+    bondingRegistry.setBondedCheckpoints(bondedCheckpointsAddress),
+    "bondingRegistry.setBondedCheckpoints",
+  );
 
   // ── Testnet faucet (sepolia only) ───────────────────────────────────────
   // Deploy a public Faucet pre-funded with FOLD + mock USDC so testers can
@@ -328,23 +334,26 @@ export const deployInterfold = async (
     // Whitelist the faucet so faucet -> tester FOLD transfers pass the
     // pre-TGE gate (transferWhitelist[from] short-circuits the restriction).
     console.log("Whitelisting Faucet in FOLD...");
-    await (
-      await interfoldToken.setTransferWhitelisted(faucetAddress, true)
-    ).wait();
+    await send(
+      interfoldToken.setTransferWhitelisted(faucetAddress, true),
+      "interfoldToken.setTransferWhitelisted(faucet)",
+    );
 
     console.log("Minting FOLD to Faucet...");
-    await (
-      await interfoldToken.mint(
+    await send(
+      interfoldToken.mint(
         faucetAddress,
         FAUCET_FOLD_SUPPLY,
         ethers.encodeBytes32String("faucet"),
-      )
-    ).wait();
+      ),
+      "interfoldToken.mint(faucet)",
+    );
 
     console.log("Minting mock USDC to Faucet...");
-    await (
-      await mockStableToken.mint(faucetAddress, FAUCET_USDC_SUPPLY)
-    ).wait();
+    await send(
+      mockStableToken.mint(faucetAddress, FAUCET_USDC_SUPPLY),
+      "mockStableToken.mint(faucet)",
+    );
 
     console.log(
       `Faucet funded with ${ethers.formatEther(FAUCET_FOLD_SUPPLY)} FOLD ` +
@@ -510,8 +519,10 @@ export const deployInterfold = async (
     );
   }
   console.log(`Granting SLASHER_ROLE to ${slasherAddress}...`);
-  const addSlasherTx = await slashingManager.addSlasher(slasherAddress);
-  await addSlasherTx.wait();
+  await send(
+    slashingManager.addSlasher(slasherAddress),
+    "slashingManager.addSlasher",
+  );
   const slasherRole = await slashingManager.SLASHER_ROLE();
   const slasherGranted = await slashingManager.hasRole(
     slasherRole,
@@ -613,11 +624,13 @@ export const deployInterfold = async (
       if (deployedDecryptionVerifier === mockDecryptionVerifierAddress) {
         console.log(`DecryptionVerifier already set in Interfold contract`);
       } else {
-        const tx = await interfold.setDecryptionVerifier(
-          encryptionSchemeId,
-          mockDecryptionVerifierAddress,
+        await send(
+          interfold.setDecryptionVerifier(
+            encryptionSchemeId,
+            mockDecryptionVerifierAddress,
+          ),
+          "interfold.setDecryptionVerifier(mock)",
         );
-        await tx.wait();
         console.log(
           `Successfully set MockDecryptionVerifier in Interfold contract`,
         );
@@ -630,11 +643,10 @@ export const deployInterfold = async (
       if (deployedPkVerifier === mockPkVerifierAddress) {
         console.log(`PkVerifier already set in Interfold contract`);
       } else {
-        const tx = await interfold.setPkVerifier(
-          encryptionSchemeId,
-          mockPkVerifierAddress,
+        await send(
+          interfold.setPkVerifier(encryptionSchemeId, mockPkVerifierAddress),
+          "interfold.setPkVerifier(mock)",
         );
-        await tx.wait();
         console.log(`Successfully set MockPkVerifier in Interfold contract`);
       }
     }
@@ -645,11 +657,13 @@ export const deployInterfold = async (
       if (deployedCiphertextVerifier === mockCiphertextVerifierAddress) {
         console.log("CiphertextVerifier already set in Interfold contract");
       } else {
-        const tx = await interfold.setCiphertextVerifier(
-          encryptionSchemeId,
-          mockCiphertextVerifierAddress,
+        await send(
+          interfold.setCiphertextVerifier(
+            encryptionSchemeId,
+            mockCiphertextVerifierAddress,
+          ),
+          "interfold.setCiphertextVerifier(mock)",
         );
-        await tx.wait();
         console.log(
           "Successfully set MockCiphertextVerifier in Interfold contract",
         );
@@ -659,8 +673,10 @@ export const deployInterfold = async (
     if (await interfold.e3Programs(e3ProgramAddress)) {
       console.log(`E3 Program already enabled in Interfold contract`);
     } else {
-      const tx = await interfold.registerE3Program(e3ProgramAddress);
-      await tx.wait();
+      await send(
+        interfold.registerE3Program(e3ProgramAddress),
+        "interfold.registerE3Program",
+      );
       console.log(`Successfully enabled E3 Program in Interfold contract`);
     }
   }
@@ -699,11 +715,13 @@ export const deployInterfold = async (
     const deployedDecryptionVerifier =
       await interfold.decryptionVerifiers(encryptionSchemeId);
     if (deployedDecryptionVerifier !== bfvDecryptionVerifierAddress) {
-      const tx = await interfold.setDecryptionVerifier(
-        encryptionSchemeId,
-        bfvDecryptionVerifierAddress,
+      await send(
+        interfold.setDecryptionVerifier(
+          encryptionSchemeId,
+          bfvDecryptionVerifierAddress,
+        ),
+        "interfold.setDecryptionVerifier(BfvDecryptionVerifier)",
       );
-      await tx.wait();
       console.log(
         "Successfully set BfvDecryptionVerifier in Interfold contract",
       );
@@ -716,11 +734,10 @@ export const deployInterfold = async (
     const bfvPkVerifierAddress = await bfvPkVerifier.getAddress();
     const deployedPkVerifier = await interfold.pkVerifiers(encryptionSchemeId);
     if (deployedPkVerifier !== bfvPkVerifierAddress) {
-      const tx = await interfold.setPkVerifier(
-        encryptionSchemeId,
-        bfvPkVerifierAddress,
+      await send(
+        interfold.setPkVerifier(encryptionSchemeId, bfvPkVerifierAddress),
+        "interfold.setPkVerifier(BfvPkVerifier)",
       );
-      await tx.wait();
       console.log("Successfully set BfvPkVerifier in Interfold contract");
     }
   }
@@ -735,10 +752,12 @@ export const deployInterfold = async (
     const currentVerifier =
       await ciphernodeRegistry.dkgFoldAttestationVerifier();
     if (currentVerifier !== dkgFoldAttestationVerifierAddress) {
-      const tx = await ciphernodeRegistry.setInitialDkgFoldAttestationVerifier(
-        dkgFoldAttestationVerifierAddress,
+      await send(
+        ciphernodeRegistry.setInitialDkgFoldAttestationVerifier(
+          dkgFoldAttestationVerifierAddress,
+        ),
+        "ciphernodeRegistry.setInitialDkgFoldAttestationVerifier",
       );
-      await tx.wait();
       console.log(
         "Successfully set DkgFoldAttestationVerifier on CiphernodeRegistry",
       );
@@ -751,10 +770,12 @@ export const deployInterfold = async (
     await mockDkgFoldAttestationVerifier.waitForDeployment();
     dkgFoldAttestationVerifierAddress =
       await mockDkgFoldAttestationVerifier.getAddress();
-    const tx = await ciphernodeRegistry.setInitialDkgFoldAttestationVerifier(
-      dkgFoldAttestationVerifierAddress,
+    await send(
+      ciphernodeRegistry.setInitialDkgFoldAttestationVerifier(
+        dkgFoldAttestationVerifierAddress,
+      ),
+      "ciphernodeRegistry.setInitialDkgFoldAttestationVerifier(mock)",
     );
-    await tx.wait();
     console.log(
       "Successfully set MockDkgFoldAttestationVerifier on CiphernodeRegistry",
     );
@@ -896,6 +917,12 @@ export const deployInterfold = async (
       slashingManager.e3RefundManager(),
       e3RefundManagerAddress,
     ],
+    [
+      "e3RefundManager.interfold",
+      e3RefundManager.interfold(),
+      interfoldAddress,
+    ],
+    ["e3RefundManager.treasury", e3RefundManager.treasury(), ownerAddress],
   ];
 
   const wiringErrors: string[] = [];
