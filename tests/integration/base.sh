@@ -31,6 +31,10 @@ fi
 heading "Sync tests/integration/interfold.config.yaml from deployed_contracts.json"
 (cd "$ROOT_DIR/packages/interfold-contracts" && pnpm utils:sync-integration-config)
 
+heading "Check the committee sizes of the deployment"
+check_committee_sizes "$ROOT_DIR/packages/interfold-contracts/deployed_contracts.json" \
+  "$FULL_PROOF_AGGREGATION"
+
 interfold_wallet_set cn1 "$PRIVATE_KEY_CN1"
 interfold_wallet_set cn2 "$PRIVATE_KEY_CN2"
 interfold_wallet_set cn3 "$PRIVATE_KEY_CN3"
