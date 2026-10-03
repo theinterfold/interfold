@@ -581,6 +581,29 @@ mod serialization_tests {
     }
 
     #[test]
+    fn local_errors_distinguish_causes_but_deduplicate_repeats() -> anyhow::Result<()> {
+        let make_error = |cause: &str, ts| {
+            let cause = EventContext::<Unsequenced>::from(InterfoldEventData::from(
+                TestEvent::new(cause, 1),
+            ))
+            .sequence(0);
+            InterfoldEvent::<Unsequenced>::from_error(
+                EType::KeyGeneration,
+                anyhow::anyhow!("persistable store mailbox rejected snapshot write"),
+                ts,
+                Some(cause),
+            )
+        };
+        let first = make_error("event of E3 A", 1)?;
+        let other = make_error("event of E3 B", 2)?;
+        let repeat = make_error("event of E3 A", 3)?;
+        assert_eq!(first.event_id(), other.event_id());
+        assert_ne!(first.delivery_id(), other.delivery_id());
+        assert_eq!(first.delivery_id(), repeat.delivery_id());
+        Ok(())
+    }
+
+    #[test]
     fn local_batch_verdicts_distinguish_batches_but_deduplicate_retries() {
         for kind in [
             VerificationKind::ShareProofs,
@@ -669,8 +692,9 @@ impl<S: SeqState> Event for InterfoldEvent<S> {
                 self.ctx.ts(),
             )),
             // Equal C2/C3 or C6 verdicts can belong to different batches: a share batch grows,
-            // and C6 batches are replaced. The cause binds the verdict to its request without
-            // changing persisted or network event payloads.
+            // and C6 batches are replaced. An error's ID is its payload, so the same failure of two
+            // different events has one ID. The cause tells such occurrences apart without changing
+            // persisted or network event payloads; a repeat of one occurrence stays one delivery.
             EventSource::Local
                 if matches!(
                     self.payload,
@@ -678,7 +702,7 @@ impl<S: SeqState> Event for InterfoldEvent<S> {
                         kind: VerificationKind::ShareProofs
                             | VerificationKind::ThresholdDecryptionProofs,
                         ..
-                    })
+                    }) | InterfoldEventData::InterfoldError(_)
                 ) =>
             {
                 EventId::hash((self.ctx.id(), self.ctx.causation_id()))
