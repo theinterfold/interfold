@@ -1811,16 +1811,42 @@ indistinguishable from a sibling that was simply built a moment earlier: both na
 no longer the head, and only the circuit knows whether an entry _replaces_ the slot or _adds_ to it
 — which is precisely what `is_mask_vote` keeps private. Favour the earlier sibling and a re-vote can
 be delayed; favour the later one and a mask built on a superseded ciphertext can restore it over a
-vote. The first is visible to the voter (the server resolves the chain, so the client can see its
-input was not taken) and is fixed by submitting again. The second is a silent tally corruption that
-nobody can detect or undo. Submitting through the CRISP server's relayer also keeps the transaction
-out of a public mempool, which is where the race would be won.
+vote. The first is visible to the voter and is fixed by submitting again. The second is a silent
+tally corruption that nobody can detect or undo. Submitting through the CRISP server's relayer also
+keeps the transaction out of a public mempool, which is where the race would be won.
+
+**How a voter sees a dropped input.** `POST /voting/selection` takes the input's slot, commitment,
+content hash, and parent, and replays the slot's chain with the Secure Process's own rule: the
+server calls `chain_head_per_slot` from the CRISP program crate for this and for `get_slot_head`
+(`InputSnapshot::selection`). It answers `selected` when the input became the head at its turn,
+which stays true when a later mask or re-vote extends it, so the check follows chain ancestry, not
+head equality. It answers `excluded` with the reason (`earlier_sibling`, `stale_parent`,
+`unusable`), and `selection_pending` while any lower tree index is missing from the server's index,
+because an earlier entry can still take the slot. The SDK combines that answer with the availability
+job (`getSubmissionStage`): a committed ballot is `selection_pending`, then `availability_pending`
+or `counted`, or `excluded`. The CRISP client keeps the input identity in local storage, resumes the
+check after a reload, marks the round as voted only at `counted`, and offers a new proof against the
+current head while the commitment deadline is ahead.
+
+The gap that remains: the voter learns of a drop only while a client checks, and after the
+commitment deadline there is no retry. The answer is only as complete as the server's index: a
+server that lost its database, or one of several instances, can report `not_indexed` or
+`selection_pending` for an input the chain holds. The governance apps do not run this check.
 
 Closing the gap entirely would need the guest to tell a replace from an add, which means publishing
 that distinction — the thing the whole design exists to hide.
 
 Capacity: `TREE_DEPTH = 20` gives 2^20 entries, against a physical ceiling of roughly three writes
 per block at the secure preset — append-only is not capacity-bound.
+
+**Slot limit.** A round writes at most `t - 1` distinct slots, where `t` is the plaintext modulus of
+the round's BFV parameters: 99 slots for insecure-512 and 999,999 for secure-8192.
+`CRISPProgram.validate` decodes `t` from the registered parameter set, and `validateInputProof` and
+`publishInput` refuse an input that would open slot `t` with `SlotLimitReached`. Every ballot
+coefficient is 0 or 1 and the tally adds one ballot per selected slot, so each decrypted coefficient
+is at most the slot count and never wraps modulo `t`. Updates and masks to a written slot stay open
+at the limit. A mask needs no signature, so masks to `t - 1` distinct unwritten census slots stop
+every later first vote in the round: 99 inputs at insecure-512, about a million at secure-8192.
 
 A round where _every_ entry is unusable fails at the output commitment, because the processor's
 empty ciphertext does not deserialize. That is only reachable when no honest input exists, and is
@@ -1852,6 +1878,19 @@ any input to an empty slot. `is_mask_vote` chooses between them and is **private
 is derived (`keep_previous = is_mask_vote & !is_first_vote`) rather than taken as a witness — so a
 voter cannot add their new ballot on top of their old one and count twice, and a masker cannot
 discard the head and erase a vote.
+
+Both ballot circuits prove it through one function,
+`crisp_lib::ciphertext_addition::verify_slot_update`, which asserts
+`published = ballot + addend + q_i * r` at every coefficient of every CRT limb, with `r` in
+`[-1, 1]`. There is no Fiat-Shamir challenge. The three commitments pack coefficients with the
+non-injective `pack`, so a prover can open them to other coefficients, and a check at one point
+derived from the commitments accepted a mask that published its ballot alone: the prover picked a
+second opening of the parent commitment that satisfied the single equation. A per-coefficient linear
+relation, aligned across three ciphertexts that pack with the same `BIT_CT`, proves the same
+statement for the committed coefficients under any opening that keeps the carriers, so the circuit
+needs no `pack_checked` digit asserts. At secure-8192 the `crisp` circuit is 1,844,049 gates and
+`crisp_onchain` 1,824,326, under the `2^21` browser ceiling. With the checked helper on the three
+commitments, the secure `crisp` circuit measured 2,520,034 gates.
 
 The circuit returns `sum_ct_commitment` on every path, so the public inputs, the stored commitment,
 the ballot digest, and the published ciphertext have the same shape whichever operation ran. Telling

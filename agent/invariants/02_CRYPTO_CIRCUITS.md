@@ -309,7 +309,19 @@ every section.
   C2a, C2b, C4, C5 and C6 (three). All open through `pack_checked`. A new commitment opened from
   elsewhere joins that list and needs either the checked helper or its own bound. Naming the class
   matters: the first two instances were found while optimising the circuits that held them, and the
-  other five only by enumerating the pattern. — `flow-trace/04`
+  other five only by enumerating the pattern. CRISP's ballot circuits also open commitments they did
+  not create (the parent's and the ballot's ciphertexts) and keep plain `pack`: `verify_slot_update`
+  checks a relation that is linear and aligned coefficient by coefficient across ciphertexts packed
+  with the same `BIT_CT`, so an opening that keeps the carriers proves the same relation for the
+  committed coefficients. With the checked helper on the three commitments, the secure `crisp`
+  circuit measured 2,520,034 gates, above the browser ceiling. The exemption holds only for that
+  shape of relation, and only while every commitment in it has a bounded opening that something else
+  fixes: the ballot through the centered range checks of `user_data_encryption_ct0/ct1`, and the
+  parent and the published result because `chain_head_per_slot` takes an entry only when its bytes
+  reproduce its commitment and it extends the selected head. A check at one point over those
+  commitments, or a Secure Process that follows a parent by its stored commitment without its bytes,
+  needs injective openings: chained masks could then carry a coefficient past the radix and shift a
+  plaintext coefficient by a carry. — `flow-trace/04`
 - A bound that is not tight enough for the slot is no bound for this purpose. C2b's `as u64` cast
   limited coefficients to `2^64` while the slot was `radix = 2^64` with `base = 2^60`, so a digit
   could still overflow. — `flow-trace/04`
@@ -435,7 +447,15 @@ every section.
   from a sibling built a moment earlier, because only the circuit knows whether an entry replaces
   the slot or adds to it. Preferring the later sibling would let a mask on a superseded ciphertext
   restore it over a vote — a silent tally corruption, against a dropped re-vote the voter can see
-  and retry. — `flow-trace/04`
+  and retry.
+
+  A committed input is not a counted input, and clients must not report it as one. The voter sees a
+  drop through `POST /voting/selection`, which replays the chain with the same rule and answers
+  `selected` by ancestry, so a later mask or re-vote on top of the input does not read as a drop; it
+  answers `selection_pending` while a lower tree index is missing from the server's index. **Gap:**
+  a drop is visible only while a client checks, there is no retry after the commitment deadline, the
+  answer depends on the server holding every indexed input, and the governance apps do not run the
+  check. — `flow-trace/04`
 
 - **CRISP's three ballot operations prove one relation and publish one shape.** Voting, updating,
   and masking all prove `published = addend + ballot`, with the addend selected by the private
@@ -446,6 +466,31 @@ every section.
   distinguishable on chain, which is what masks exist to prevent. Deriving the selector rather than
   witnessing it is what stops a voter counting their old ballot twice and a masker erasing a vote. —
   `flow-trace/04`
+- **CRISP proves the slot update at every coefficient.** The function `verify_slot_update` in
+  `crisp_lib::ciphertext_addition` asserts `published = ballot + addend + q_i * r` for each
+  coefficient, with each `r` in `[-1, 1]`, for both ballot circuits. A check at one Fiat-Shamir
+  point derived from the three commitments is unsound: the point is known before the prover picks
+  the parent opening and the quotients, and a second opening of the parent commitment let a mask
+  publish its ballot alone and drop the slot's vote
+  (`a_second_opening_of_the_parent_cannot_erase_the_slot`). The fold circuits pin the ballot
+  circuits through `CRISP_FOLD_EXPECTED_KEY_HASH_*` and `CRISP_ONCHAIN_FOLD_EXPECTED_KEY_HASH_*`, so
+  a change to either ballot circuit must regenerate those constants (`pnpm compute:vk-hash`, both
+  presets) and the generated verifiers; a deployed `CRISPProgram` keeps the circuit its verifier was
+  built from. — `flow-trace/04`
+- **A CRISP round writes at most `t - 1` distinct slots.** `CRISPProgram.validate` reads the
+  plaintext modulus `t` from the registered BFV parameters, and `validateInputProof` and
+  `publishInput` refuse an input that would open slot `t` (`SlotLimitReached`). Every ballot
+  coefficient is 0 or 1 and the tally adds one ballot per selected slot, so no decrypted coefficient
+  reaches `t`; past that, the committee decrypts the residue and the decoded count is wrong with
+  every proof valid. Updates and masks to written slots stay open. A tally format that is not one
+  bit per coefficient per ballot must replace this bound. **Gap:** a mask needs no signature, so
+  masks to `t - 1` distinct unwritten census slots stop every later first vote in the round. That
+  costs 99 inputs at insecure-512 and about a million at secure-8192. — `flow-trace/04`
+- **The relay caps of the shared relay key are enforced on chain.** `publishInput` counts the inputs
+  that `inputAvailabilitySigner` sends, per slot and per round, and reverts with `RelayLimitReached`
+  past the caps set at deployment (`setRelayLimits` adjusts them) before the proof check. Every
+  server instance signs with that one key, so no local ledger can bound the account. —
+  `flow-trace/08`
 - **CRISP constrains every coefficient of the ballot plaintext, at the real BFV degree.** The
   witness generator reverses the message over the full degree, so the payload starts at
   `D - MAX_MSG_NON_ZERO_COEFFS + (MAX_MSG_NON_ZERO_COEFFS mod num_options)` with the options back to

@@ -19,6 +19,15 @@ export const abiCoder = ethers.AbiCoder.defaultAbiCoder()
 const inputEnvelopeTypes = ['bytes', 'address', 'bytes32', 'bytes32', 'uint40', 'bytes'] as const
 export const inputCommitmentTypes = ['bytes', 'address', 'bytes32', 'bytes32', 'uint40', 'uint64', 'bytes'] as const
 
+/** The insecure-512 BFV parameter set, encoded the way Interfold passes it to `validate`. */
+export const INSECURE_BFV_PARAMS = abiCoder.encode(
+  ['tuple(uint256 degree,uint256 plaintext_modulus,uint256[] moduli,string error1_variance)'],
+  [[512n, 100n, [0xffffee001n, 0xffffc4001n], '3']],
+)
+
+/** The largest uint32, which leaves a relay cap unreachable. */
+export const UNLIMITED_RELAYS = 2 ** 32 - 1
+
 /** Read time from the same in-memory chain used by the exported Hardhat ethers helper. */
 export async function latestTimestamp(): Promise<number> {
   return connection.networkHelpers.time.latest()
@@ -204,6 +213,7 @@ export async function deployCRISPProgram(
     bindInterfold?: boolean
     availabilityFinalizationWindow?: number
     inputAvailabilitySigner?: string
+    relayLimits?: { maxInputsPerSlot: number; maxInputsPerRound: number }
   } = {},
 ) {
   const poseidonT3 = contracts.poseidonT3 || (await deployPoseidonT3())
@@ -232,6 +242,9 @@ export async function deployCRISPProgram(
     contracts.availabilityFinalizationWindow ?? 0,
     contracts.inputAvailabilitySigner ?? (await owner.getAddress()),
     zeroHash,
+    // The test signer is also the availability signer, so every input it sends counts as relayed.
+    // Tests of the relay caps pass their own limits.
+    contracts.relayLimits ?? { maxInputsPerSlot: UNLIMITED_RELAYS, maxInputsPerRound: UNLIMITED_RELAYS },
   )
 
   await program.waitForDeployment()

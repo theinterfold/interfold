@@ -23,6 +23,17 @@ contract MockInterfold {
   uint256 public mockDkgWindow;
   /// @dev Defaults to the value the timing tests relied on before it was settable.
   uint256 public mockComputeWindow = 100;
+  /// @notice The BFV parameter set this mock hands to `validate`, as Interfold hands the one it
+  /// registered. Defaults to insecure-512, whose plaintext modulus is 100.
+  bytes public programParams;
+
+  /// @dev The layout Interfold registers: `encode_bfv_params` and the protocol scripts.
+  struct BfvParameters {
+    uint256 degree;
+    uint256 plaintextModulus;
+    uint256[] moduli;
+    string error1Variance;
+  }
 
   uint256 public nextE3Id;
 
@@ -40,6 +51,18 @@ contract MockInterfold {
   /// one that reads another record, so a binding test would pass either way. Set this to bind one
   /// E3 ID and leave the others reporting the global default.
   mapping(uint256 => IE3Program) public e3ProgramOf;
+
+  constructor() {
+    uint256[] memory moduli = new uint256[](2);
+    moduli[0] = 0xffffee001;
+    moduli[1] = 0xffffc4001;
+    programParams = abi.encode(BfvParameters(512, 100, moduli, "3"));
+  }
+
+  /// @notice Replace the BFV parameter set that later requests hand to `validate`.
+  function setProgramParams(bytes memory params) external {
+    programParams = params;
+  }
 
   function registerE3Program(IE3Program program) external {
     e3Programs[program] = true;
@@ -90,7 +113,7 @@ contract MockInterfold {
       ciphertextCommitment: bytes32(0)
     });
 
-    IE3Program(program).validate(nextE3Id, 0, bytes(""), bytes(""), params);
+    IE3Program(program).validate(nextE3Id, 0, programParams, bytes(""), params);
 
     nextE3Id++;
     numOptions; // silence unused-parameter warning; the count travels inside `params`
@@ -116,7 +139,7 @@ contract MockInterfold {
       ciphertextCommitment: bytes32(0)
     });
 
-    IE3Program(program).validate(nextE3Id, 0, bytes(""), bytes(""), abi.encode(address(0), nextE3Id, numOptions, 0, 0, 0, 0));
+    IE3Program(program).validate(nextE3Id, 0, programParams, bytes(""), abi.encode(address(0), nextE3Id, numOptions, 0, 0, 0, 0));
 
     nextE3Id++;
   }

@@ -4,6 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+mod access_log;
 mod app_data;
 mod data_availability;
 mod database;
@@ -20,7 +21,7 @@ pub mod token_holders;
 use std::sync::Arc;
 
 use actix_cors::Cors;
-use actix_web::{middleware::Logger, web, App, HttpServer};
+use actix_web::{web, App, HttpServer};
 use app_data::AppData;
 use data_availability::AvailabilityService;
 pub use database::compact_database;
@@ -133,7 +134,7 @@ pub async fn start() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
         App::new()
             .wrap(cors)
-            .wrap(Logger::new(r#"%a "%r" %s %b %T"#))
+            .wrap(access_log::access_logger())
             .app_data(web::Data::new(AppData::new(db_clone.clone())))
             .app_data(web::Data::from(availability_clone.clone()))
             .app_data(rate_limiter.clone())

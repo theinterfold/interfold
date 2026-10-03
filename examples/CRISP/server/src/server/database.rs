@@ -50,7 +50,17 @@ pub struct SledDB {
 
 impl SledDB {
     pub fn new(path: &str) -> Result<Self, DatabaseError> {
-        let db = sled::open(path)?;
+        Self::open(sled::open(path)?, PathBuf::from(path))
+    }
+
+    /// The database over a sled handle that the caller opened, such as a temporary one, with the
+    /// trees that `new` opens.
+    #[cfg(test)]
+    pub fn from_db(db: Db) -> Result<Self, DatabaseError> {
+        Self::open(db, PathBuf::new())
+    }
+
+    fn open(db: Db, path: PathBuf) -> Result<Self, DatabaseError> {
         let cursor = db.open_tree("indexer-cursor")?;
         // Copy a cursor from the default tree once. The old key stays: after a rollback, an older
         // release resumes from it instead of from the chain head, where it would skip events.
@@ -63,7 +73,7 @@ impl SledDB {
             ciphertexts: db.open_tree("crisp-ciphertexts")?,
             cursor,
             db,
-            path: PathBuf::from(path),
+            path,
         })
     }
 

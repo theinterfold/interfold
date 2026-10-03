@@ -266,6 +266,12 @@ that hold a binary number, with the most significant coefficient first. Homomorp
 the coefficients of all ballots, so each segment decodes to the total for its option. With 2
 options, each option has 50 coefficients.
 
+The committee decrypts each coefficient modulo the plaintext modulus `t` of the parameter set, so a
+coefficient must stay below `t` for the total to be exact. For this reason, a round accepts inputs
+to at most `t - 1` distinct slots: 99 slots with `insecure-512` and 999,999 slots with
+`secure-8192`. An input that would write to one more slot reverts with `SlotLimitReached`. Updates
+and masks to a slot that already holds an input are still accepted.
+
 Three decoders give the same result (`packages/crisp-contracts/tests/tally.decoding.test.ts`):
 
 | Where    | Function                                                                      | Returns                    |

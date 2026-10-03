@@ -26,19 +26,35 @@ An open ballot shows how each person votes. A briber can then pay for a vote, an
 punish a voter who does not obey. A secret ballot hides the vote. But when a voter can prove the
 vote to a third party, bribery and coercion still work. That proof is called a receipt.
 
-CRISP keeps the ballot secret and removes the receipt:
+CRISP protects the secrecy of each ballot and makes receipts weaker. Each property depends on the
+conditions in [Privacy limits](#privacy-limits):
 
-| Property          | How CRISP provides it                                                                                                                                                                  |
-| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Secret ballot     | The client encrypts each ballot with BFV under the committee public key. Only the encrypted sum is decrypted. Decryption needs T + 1 key shares, so no single ciphernode can decrypt.  |
-| No receipt        | A voter can replace their ballot in the same slot. Anyone can add a mask (an encrypted zero ballot) to any eligible slot. An observer cannot tell a vote, an update, and a mask apart. |
-| Eligibility       | A Noir proof shows that the slot is in the round census, or that the slot has on-chain voting power.                                                                                   |
-| Verifiable result | `CRISPProgram.verify` checks a RISC Zero proof of the sum. The Interfold contract checks the decryption proof when the committee publishes the result.                                 |
-| Sender privacy    | The CRISP server can relay inputs, so the chain shows the relay address instead of the voter address. Relaying is configurable, and it is off on Ethereum mainnet by default.          |
+| Property           | How CRISP provides it                                                                                                                                                                 |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Secret ballot      | The client encrypts each ballot with BFV under the committee public key. Only the encrypted sum is decrypted. Decryption needs T + 1 key shares, so no single ciphernode can decrypt. |
+| Receipt resistance | A voter can replace their ballot in the same slot. Anyone can add a mask (an encrypted zero ballot) to any eligible slot. On-chain, a vote, an update, and a mask look the same.      |
+| Eligibility        | A Noir proof shows that the slot is in the round census, or that the slot has on-chain voting power.                                                                                  |
+| Verifiable result  | `CRISPProgram.verify` checks a RISC Zero proof of the sum. The Interfold contract checks the decryption proof when the committee publishes the result.                                |
+| Sender privacy     | The CRISP server can relay inputs, so the chain shows the relay address instead of the voter address. Relaying is configurable, and it is off on Ethereum mainnet by default.         |
 
 A mask adds an encryption of zero to the ciphertext that is already in a slot. The result is a new
-ciphertext that decrypts to the same value. For this reason, a voter cannot prove which ciphertext
-holds their final vote (`circuits/bin/crisp/src/main.nr`).
+ciphertext that decrypts to the same value. For this reason, the on-chain ciphertexts alone do not
+show which ciphertext holds the final vote of a voter (`circuits/bin/crisp/src/main.nr`). This makes
+a receipt weaker, but only under the conditions that follow.
+
+### Privacy limits
+
+The privacy of a CRISP ballot depends on these conditions:
+
+- **Committee threshold.** Decryption needs T + 1 key shares. If T + 1 or more committee members
+  collude, they can decrypt individual ballots.
+- **Public result.** The committee decrypts only the combined result, and that result is public. In
+  some polls, for example small or one-sided polls, the result can show how individual participants
+  voted.
+- **Sender.** The CRISP server receives every input, because it attests that the input is available,
+  so it sees each request. An input that the voter wallet sends also shows the voter address
+  on-chain. When the CRISP server relays an input, the chain shows the relay address.
+  [Two-step inputs](#two-step-inputs) describes when the voter wallet must send the input.
 
 ## How CRISP maps onto an E3
 

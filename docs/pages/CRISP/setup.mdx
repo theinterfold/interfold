@@ -258,6 +258,17 @@ environment (`server/src/config.rs`).
 | `ETHERSCAN_API_KEY`                                                                                                 | Empty                                                   | Token holder lookup on non-local chains                                                                                                                                          |
 | `INDEX_START_BLOCK`, `INDEX_CHUNK_SIZE`, `INDEX_CONTRACTS`, `INDEX_LOG_CONTRACTS`                                   | Not set                                                 | Indexer backfill and the contracts that the read-only `/chain/*` routes serve. An empty `INDEX_CONTRACTS` denies all `/chain/*` reads.                                           |
 
+The relay limits in the table apply to one server instance, and they are a first filter.
+`CRISPProgram` also enforces relay limits for the server key, and those limits apply to all server
+instances that use the key. The deployment sets the contract limits, and the contract owner can
+change them. When a server limit or a contract limit is reached, the voter's wallet sends the input.
+
+The server records its relays in `database/server` in its working directory, and its limits count
+only these records. The server also records the time when this relay record starts. It writes that
+time when it starts on a database without that time, for example a new database. A round that is
+already open at that time uses the voter's wallet for all of its inputs, because the server cannot
+count the relays that occurred before. Keep this directory when you replace or move the server.
+
 <Callout type='warning'>
   The local `PRIVATE_KEY` is a public Anvil test key. Never use it on a live network. Funds sent to
   its address on a live network can be lost.

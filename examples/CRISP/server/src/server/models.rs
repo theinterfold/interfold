@@ -154,6 +154,58 @@ pub struct PreviousCiphertextResponse {
     pub index: u64,
 }
 
+/// Names one submitted input of a round. The tuple is unique in a round, because the contract
+/// accepts one tree leaf for each tuple.
+#[derive(Debug, Deserialize)]
+pub struct InputSelectionRequest {
+    pub round_id: String,
+    pub slot_address: String,
+    pub encrypted_vote_commitment: String,
+    pub encrypted_vote_hash: String,
+    pub parent_index_plus_one: u64,
+}
+
+/// Where an input stands in the selection of its slot, resolved as the Secure Process resolves
+/// it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InputSelectionStatus {
+    /// This server has indexed no entry for the input.
+    NotIndexed,
+    /// The entry is indexed, but an entry with a lower tree index is not, and that entry can
+    /// still take the slot.
+    SelectionPending,
+    /// The entry became the slot head at its turn. Later entries only extend the chain, so this
+    /// is final.
+    Selected,
+    /// The entry did not become the slot head at its turn, so the tally does not count it.
+    Excluded,
+}
+
+/// Why an entry did not become the slot head at its turn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExclusionReason {
+    /// An earlier entry that named the same parent took the slot.
+    EarlierSibling,
+    /// The parent of the entry was not the slot head at its turn, for another reason.
+    StaleParent,
+    /// The bytes of the entry do not reproduce its commitment.
+    Unusable,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize)]
+pub struct InputSelectionResponse {
+    pub status: InputSelectionStatus,
+    /// The tree index of the entry. `None` when the entry is not indexed.
+    pub index: Option<u64>,
+    /// The tree index of the current slot head, the same entry `state/previous-ciphertext`
+    /// returns. `None` when the slot holds no usable entry.
+    pub head_index: Option<u64>,
+    /// Set only when the status is `Excluded`.
+    pub reason: Option<ExclusionReason>,
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ComputeProviderParams {
     pub name: String,

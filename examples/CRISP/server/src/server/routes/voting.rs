@@ -8,16 +8,17 @@ use crate::server::{
     app_data::AppData,
     data_availability::{input_rejection_message, AvailabilityService},
     models::{
-        canonical_e3_id, e3_id_to_u256, VoteRequest, VoteResponse, VoteResponseStatus,
-        VoteStatusRequest, VoteStatusResponse,
+        canonical_e3_id, e3_id_to_u256, InputSelectionRequest, VoteRequest, VoteResponse,
+        VoteResponseStatus, VoteStatusRequest, VoteStatusResponse,
     },
     rate_limit::RateLimiter,
     repo::parse_slot_address,
     CONFIG,
 };
 use actix_web::{web, HttpRequest, HttpResponse, Responder};
-use alloy::primitives::Bytes;
+use alloy::primitives::{Bytes, B256};
 use log::{error, info, warn};
+use std::str::FromStr;
 
 pub fn setup_routes(config: &mut web::ServiceConfig) {
     config.route(
@@ -31,7 +32,8 @@ pub fn setup_routes(config: &mut web::ServiceConfig) {
                 "/availability/{job_id}",
                 web::get().to(get_availability_status),
             )
-            .route("/status", web::post().to(get_vote_status)),
+            .route("/status", web::post().to(get_vote_status))
+            .route("/selection", web::post().to(get_input_selection)),
     );
 }
 
@@ -77,10 +79,7 @@ async fn get_vote_status(
         Ok(e3_id) => e3_id,
         Err(e) => return HttpResponse::BadRequest().json(e.to_string()),
     };
-    info!(
-        "[e3_id={}] Checking slot activity for address: {}",
-        e3_id, request.address
-    );
+    info!("[e3_id={}] Checking slot activity", e3_id);
 
     // Validated before any storage access: a malformed address is the client's error, not a
     // database failure.
@@ -111,6 +110,53 @@ async fn get_vote_status(
         slot_active,
         round_status,
     })
+}
+
+/// Report where one submitted input stands in the selection of its slot.
+///
+/// The body names the input by round, slot, commitment, content hash, and parent, so no
+/// identifier travels in the URL. The answer is `not_indexed`, `selection_pending`, `selected`,
+/// or `excluded` with a reason, and the tree index of the current slot head. 404 when this
+/// server has no record of the round.
+async fn get_input_selection(
+    data: web::Json<InputSelectionRequest>,
+    store: web::Data<AppData>,
+) -> impl Responder {
+    let request = data.into_inner();
+    let e3_id = match canonical_e3_id(&request.round_id) {
+        Ok(e3_id) => e3_id,
+        Err(e) => return HttpResponse::BadRequest().json(e.to_string()),
+    };
+    let Ok(slot) = parse_slot_address(&request.slot_address) else {
+        return HttpResponse::BadRequest().json("Invalid slot address");
+    };
+    let Ok(commitment) = B256::from_str(&request.encrypted_vote_commitment) else {
+        return HttpResponse::BadRequest().json("Invalid encrypted vote commitment");
+    };
+    let Ok(content_hash) = B256::from_str(&request.encrypted_vote_hash) else {
+        return HttpResponse::BadRequest().json("Invalid encrypted vote hash");
+    };
+
+    match store
+        .e3(&e3_id)
+        .get_input_selection(
+            slot,
+            commitment.0,
+            request.parent_index_plus_one,
+            content_hash.0,
+        )
+        .await
+    {
+        Ok(Some(selection)) => HttpResponse::Ok().json(selection),
+        Ok(None) => HttpResponse::NotFound().json(format!("No record of round {e3_id}")),
+        Err(e) => {
+            error!(
+                "[e3_id={}] Could not resolve an input selection: {}",
+                e3_id, e
+            );
+            HttpResponse::InternalServerError().json("Internal server error")
+        }
+    }
 }
 
 /// Broadcast an encrypted vote to the blockchain
@@ -287,5 +333,79 @@ async fn get_availability_status(
             HttpResponse::ServiceUnavailable()
                 .body("Availability status is temporarily unavailable")
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::server::{
+        app_data::AppData,
+        database::SledDB,
+        models::{CensusMode, CreditMode, CustomParams},
+    };
+    use actix_web::{http::StatusCode, test, web, App};
+    use e3_sdk::indexer::SharedStore;
+    use serde_json::json;
+    use std::sync::Arc;
+    use tokio::sync::RwLock;
+
+    /// The selection route reads the input from the JSON body and answers in the documented
+    /// shape. A round this server has no record of is 404, and a malformed field is 400.
+    #[actix_web::test]
+    async fn the_selection_route_reads_the_input_from_the_body() {
+        let store = SharedStore::new(Arc::new(RwLock::new(
+            SledDB::from_db(sled::Config::new().temporary(true).open().unwrap()).unwrap(),
+        )));
+        let data = AppData::new(store);
+        data.e3("5")
+            .initialize_round(
+                CustomParams {
+                    token_address: "0x0000000000000000000000000000000000000001".to_owned(),
+                    balance_threshold: "1".to_owned(),
+                    num_options: "2".to_owned(),
+                    credit_mode: CreditMode::Constant,
+                    credits: Some("1".to_owned()),
+                    census_mode: CensusMode::Token,
+                    voting_power_divisor: "0".to_owned(),
+                },
+                "requester".to_owned(),
+                100,
+                100,
+                1,
+            )
+            .await
+            .unwrap();
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(data))
+                .configure(super::super::setup_routes),
+        )
+        .await;
+        let request = |round_id: &str, encrypted_vote_hash: &str| {
+            test::TestRequest::post()
+                .uri("/voting/selection")
+                .set_json(json!({
+                    "round_id": round_id,
+                    "slot_address": format!("0x{}", "77".repeat(20)),
+                    "encrypted_vote_commitment": format!("0x{}", "11".repeat(32)),
+                    "encrypted_vote_hash": encrypted_vote_hash,
+                    "parent_index_plus_one": 0,
+                }))
+                .to_request()
+        };
+        let hash = format!("0x{}", "22".repeat(32));
+
+        let response = test::call_service(&app, request("5", &hash)).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value = test::read_body_json(response).await;
+        assert_eq!(
+            body,
+            json!({ "status": "not_indexed", "index": null, "head_index": null, "reason": null })
+        );
+
+        let unknown_round = test::call_service(&app, request("6", &hash)).await;
+        assert_eq!(unknown_round.status(), StatusCode::NOT_FOUND);
+        let malformed_hash = test::call_service(&app, request("5", "0x1234")).await;
+        assert_eq!(malformed_hash.status(), StatusCode::BAD_REQUEST);
     }
 }

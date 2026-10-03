@@ -33,6 +33,36 @@ export interface CRISPDeploymentResult {
   governanceComplete: boolean
 }
 
+const UINT32_MAX = 2 ** 32 - 1
+
+/**
+ * Parse one relay cap. The variables and defaults are the ones the CRISP server reads, so one
+ * configuration sets both the per-instance filter and the account-wide cap on chain.
+ */
+const parseRelayLimit = (name: string, fallback: number): number => {
+  const raw = process.env[name]?.trim()
+  if (!raw) return fallback
+  if (!/^\d+$/.test(raw) || Number(raw) > UINT32_MAX) {
+    throw new Error(`${name} must be an integer from 0 to ${UINT32_MAX}`)
+  }
+  return Number(raw)
+}
+
+/**
+ * The caps that `CRISPProgram` enforces on inputs the availability signer sends. Every server
+ * instance relays from that one key, so only the contract can bound the account as a whole. Zero
+ * stops relaying; voters' wallets still send.
+ */
+const readRelayLimits = (chain: string) => {
+  if (chain === 'mainnet' && !process.env.RELAY_MAX_INPUTS_PER_ROUND?.trim()) {
+    throw new Error('RELAY_MAX_INPUTS_PER_ROUND is required on mainnet')
+  }
+  return {
+    maxInputsPerSlot: parseRelayLimit('RELAY_MAX_INPUTS_PER_SLOT', 3),
+    maxInputsPerRound: parseRelayLimit('RELAY_MAX_INPUTS_PER_ROUND', UINT32_MAX),
+  }
+}
+
 export const deployCRISPContracts = async (): Promise<CRISPDeploymentResult> => {
   const { ethers } = await hre.network.connect()
   const [owner] = await ethers.getSigners()
@@ -72,6 +102,7 @@ export const deployCRISPContracts = async (): Promise<CRISPDeploymentResult> => 
       : (() => {
           throw new Error('INPUT_AVAILABILITY_SIGNER is required for an Avail-backed CRISP deployment')
         })()
+  const relayLimits = readRelayLimits(chain)
 
   const verifier = await deployVerifier(useMocks, ethers)
 
@@ -209,6 +240,7 @@ export const deployCRISPContracts = async (): Promise<CRISPDeploymentResult> => 
     useMockDataAvailability ? 0 : AVAIL_FINALIZATION_WINDOW_SECONDS,
     inputAvailabilitySigner,
     IMAGE_ID,
+    relayLimits,
   )
   await crisp.waitForDeployment()
 
@@ -226,6 +258,7 @@ export const deployCRISPContracts = async (): Promise<CRISPDeploymentResult> => 
         availabilityFinalizationWindow: useMockDataAvailability ? 0 : AVAIL_FINALIZATION_WINDOW_SECONDS,
         inputAvailabilitySigner,
         imageId: IMAGE_ID,
+        relayLimits,
       },
     },
     'CRISPProgram',

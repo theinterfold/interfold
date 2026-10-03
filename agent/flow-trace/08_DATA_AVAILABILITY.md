@@ -384,12 +384,35 @@ stops when `HTTP_RPC_URL` serves a different chain (`Config::validate_rpc_chain`
 are durable (`reserve_relay`), and the worker prunes the records of a round after its commitment
 cutoff.
 
+These limits belong to one server instance. Every instance must sign with the same key, because that
+key is also `inputAvailabilitySigner`, so a local ledger cannot bound the account as a whole.
+`CRISPProgram` does: `publishInput` counts the inputs that `inputAvailabilitySigner` sends, per slot
+and per round, and reverts with `RelayLimitReached` past the caps set at deployment (`RelayLimits`,
+from the same two variables in `deploy/crisp.ts`; mainnet requires the round cap) and adjusted with
+`setRelayLimits`. The check runs before the proof check, so a relay past its cap pays for a cheap
+revert only. A relay dry run that reverts with `RelayLimitReached`
+(`SimulateError::RelayLimitReached`) moves the job to the wallet path at once, with no grace period,
+and a relayed transaction that reverted takes the same path at its next attempt. A dry run that
+reverts with `SlotLimitReached` fails the job with the slot-limit message only when a dry run
+against the finalized block reverts the same way (`relay_signed_commitment`,
+`slot_limit_refuses_at_finalized`). Finalized state then holds the round at its limit without the
+input's slot, and the written slots only grow, so no later block takes the input from the relay or
+from the voter's wallet. A refusal at the head alone retries, because a reorganization can bring
+back a commitment of the input, and that commitment needs the bytes that a failed job gives up.
+
+The local ledger records its start (`RELAY_LEDGER_EPOCH_KEY`) the first time it opens, and keeps
+that marker across restarts and pruning. A round whose input window opened before that start can
+hold relays that the ledger never recorded: from a server version without the ledger, a database
+that was lost, or another instance. `reserve_relay` sends such a round to the wallet path until it
+closes, and does the same when the round's window start is not indexed yet. The start is the
+`input_window[0]` value that the indexer stores for the E3.
+
 Every relay send first checks `relay_may_send`. Turning the relay off (the flag, or a limit of zero)
 stops every send, including jobs chosen for the relay earlier and relayed transactions that a
 reorganization removed. So does a server key balance below `RELAY_MIN_BALANCE_ETH`, which keeps
 funds for `finalizeInput`, and so does a balance that cannot be read. Those jobs take the wallet
 path. A zero floor reads no balance, so it stops no send. A send that the relay key cannot pay for
-also moves its job to the wallet path, with the same signed payload (`relay_input_commitment`,
+also moves its job to the wallet path, with the same signed payload (`relay_signed_commitment`,
 `is_insufficient_funds`). A node also refuses a send when the worst-case costs of the pending
 transactions of the key exceed its balance, and that refusal clears when they are mined. So a
 refusal while other transactions of the key are pending keeps the relay for a grace period of five

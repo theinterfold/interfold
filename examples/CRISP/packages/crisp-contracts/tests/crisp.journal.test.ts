@@ -4,13 +4,13 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-import { deployCRISPProgram, deployHonkVerifier, deployMockInterfold, deployMockRISC0Verifier, ethers } from './utils'
+import { deployCRISPProgram, deployHonkVerifier, deployMockInterfold, deployMockRISC0Verifier, ethers, INSECURE_BFV_PARAMS } from './utils'
 
 describe('CRISP journal', () => {
   it('should match the journal returned by the RISC Zero guest', async () => {
     const ciphertextHash = ethers.hexlify(Uint8Array.from({ length: 32 }, (_, index) => index))
     const ciphertextCommitment = ethers.hexlify(Uint8Array.from({ length: 32 }, (_, index) => index + 32))
-    const paramsHash = ethers.keccak256('0x')
+    const paramsHash = ethers.keccak256(INSECURE_BFV_PARAMS)
     const inputRoot = '0x2098f5fb9e239eab3ceac3f27b81e481dc3124d55ffed523a839ee8446b64864'
     const committeePublicKey = `0x${'33'.repeat(32)}`
     const encryptionSchemeId = ethers.keccak256(ethers.toUtf8Bytes('fhe.rs:BFV'))

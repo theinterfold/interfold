@@ -6,8 +6,8 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { requestNewRound } from '../src/api'
-import type { NewRoundRequest } from '../src/types'
+import { getInputSelection, requestNewRound } from '../src/api'
+import type { InputIdentity, InputSelectionResponse, NewRoundRequest } from '../src/types'
 
 const request: NewRoundRequest = {
   cronApiKey: 'secret',
@@ -84,5 +84,49 @@ describe('requestNewRound', () => {
         census_mode: request.censusMode,
       }),
     })
+  })
+})
+
+describe('getInputSelection', () => {
+  const identity: InputIdentity = {
+    slotAddress: '0x1234567890123456789012345678901234567890',
+    encryptedVoteCommitment: `0x${'11'.repeat(32)}`,
+    encryptedVoteHash: `0x${'22'.repeat(32)}`,
+    parentIndexPlusOne: 4,
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('posts the round and the input identity in the body, not the URL', async () => {
+    const answer: InputSelectionResponse = { status: 'excluded', index: 7, head_index: 5, reason: 'earlier_sibling' }
+    const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => answer,
+    } as Response)
+
+    await expect(getInputSelection('https://crisp.example', 12n, identity)).resolves.toEqual(answer)
+
+    const [url, init] = fetch.mock.calls[0]
+    expect(url).toBe('https://crisp.example/voting/selection')
+    expect(init?.method).toBe('POST')
+    expect(JSON.parse(init?.body as string)).toEqual({
+      round_id: '12',
+      slot_address: identity.slotAddress,
+      encrypted_vote_commitment: identity.encryptedVoteCommitment,
+      encrypted_vote_hash: identity.encryptedVoteHash,
+      parent_index_plus_one: 4,
+    })
+  })
+
+  it('tells a round the server does not know apart from a failed request', async () => {
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce({ ok: false, status: 404, text: async () => 'unknown round' } as Response)
+      .mockResolvedValueOnce({ ok: false, status: 503, text: async () => 'indexer busy' } as Response)
+
+    await expect(getInputSelection('https://crisp.example', 12n, identity)).resolves.toBeUndefined()
+    await expect(getInputSelection('https://crisp.example', 12n, identity)).rejects.toThrow('503')
   })
 })

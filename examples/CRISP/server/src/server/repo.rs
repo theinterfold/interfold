@@ -4,14 +4,18 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::server::models::{CustomParams, TokenHolder};
+use crate::server::models::{
+    CustomParams, ExclusionReason, InputSelectionResponse, InputSelectionStatus, TokenHolder,
+};
 
 use super::{
     database::{generate_emoji, CIPHERTEXT_KEY_PREFIX},
     models::{CurrentRound, E3Crisp, E3StateLite, WebResultRequest},
 };
 use alloy::primitives::keccak256;
+use e3_compute_provider::policy::PublishedInput;
 use e3_sdk::indexer::{models::E3 as InterfoldE3, DataStore, E3Repository, SharedStore};
+use e3_user_program::policy::chain_head_per_slot;
 use eyre::Result;
 use fhe::bfv::BfvParameters;
 use log::info;
@@ -126,6 +130,125 @@ pub struct InputSnapshot {
     pub parents: Vec<u64>,
     /// Whether each input's bytes reproduce its commitment, decided when it was indexed.
     pub usable: Vec<bool>,
+}
+
+impl InputSnapshot {
+    /// The position of each slot's head over the entries before position `end`.
+    ///
+    /// The Secure Process's own rule decides (`chain_head_per_slot`): an entry becomes the head
+    /// only when its published bytes reproduce its commitment and it names the head before it, so
+    /// an entry nobody can open never becomes the head and never blocks the slot. The usability
+    /// decision made at indexing stands in for the commitment check.
+    fn heads_before(&self, end: usize) -> Vec<usize> {
+        let commitment = [0u8; 32];
+        // The layout `CRISPProgram` publishes: the slot, then the parent plus one as a uint40.
+        let metadata: Vec<[u8; 25]> = (0..end)
+            .map(|position| {
+                let mut bytes = [0u8; 25];
+                bytes[..20].copy_from_slice(&self.slots[position]);
+                bytes[20..].copy_from_slice(&self.parents[position].to_be_bytes()[3..]);
+                bytes
+            })
+            .collect();
+        let inputs: Vec<PublishedInput> = (0..end)
+            .map(|position| PublishedInput {
+                index: self.ciphertexts[position].1 as usize,
+                ciphertext: &[],
+                commitment: Some(&commitment),
+                metadata: &metadata[position],
+                recomputed: self.usable[position].then_some(commitment),
+            })
+            .collect();
+        chain_head_per_slot(&inputs)
+            .into_iter()
+            .filter_map(|index| self.position_of(index as u64))
+            .collect()
+    }
+
+    /// The position of the entry with tree index `index`. The entries are sorted by tree index.
+    fn position_of(&self, index: u64) -> Option<usize> {
+        self.ciphertexts
+            .binary_search_by_key(&index, |(_, entry)| *entry)
+            .ok()
+    }
+
+    /// The head of `slot` among `heads`, as `heads_before` returns them.
+    fn head_of(&self, heads: &[usize], slot: [u8; 20]) -> Option<usize> {
+        heads
+            .iter()
+            .copied()
+            .find(|&position| self.slots[position] == slot)
+    }
+
+    /// Where the input `(slot, commitment, parent_index_plus_one)` with bytes of hash
+    /// `content_hash` stands in the selection of its slot. `hashes` holds the content hash of each
+    /// entry, in the order of the snapshot.
+    ///
+    /// The verdict for an entry is final only when every lower tree index is indexed here: tree
+    /// indexes are dense, and a missing entry can still take the slot or be the parent of the entry.
+    fn selection(
+        &self,
+        hashes: &[[u8; 32]],
+        slot: [u8; 20],
+        commitment: [u8; 32],
+        parent_index_plus_one: u64,
+        content_hash: [u8; 32],
+    ) -> InputSelectionResponse {
+        let head = self.head_of(&self.heads_before(self.slots.len()), slot);
+        let head_index = head.map(|position| self.ciphertexts[position].1);
+        let input = (0..self.slots.len()).find(|&position| {
+            self.slots[position] == slot
+                && self.commitments[position] == commitment
+                && self.parents[position] == parent_index_plus_one
+                && hashes[position] == content_hash
+        });
+        let Some(position) = input else {
+            return InputSelectionResponse {
+                status: InputSelectionStatus::NotIndexed,
+                index: None,
+                head_index,
+                reason: None,
+            };
+        };
+        let index = self.ciphertexts[position].1;
+        // A head at its turn stays selected when a later entry extends it.
+        let was_head = |position: usize| {
+            self.head_of(&self.heads_before(position + 1), slot) == Some(position)
+        };
+        let (status, reason) = if position as u64 != index {
+            (InputSelectionStatus::SelectionPending, None)
+        } else if was_head(position) {
+            (InputSelectionStatus::Selected, None)
+        } else if !self.usable[position] {
+            (
+                InputSelectionStatus::Excluded,
+                Some(ExclusionReason::Unusable),
+            )
+        } else {
+            // A usable entry is dropped when the head moved on before its turn. The head moves
+            // only to an entry that names it, so an earlier sibling took the parent exactly when
+            // the parent was the head of this slot: the slot starts with no head, and a parent
+            // in the slot was the head when it became one at its turn.
+            let sibling_took_parent = match parent_index_plus_one.checked_sub(1) {
+                None => true,
+                Some(parent) => self
+                    .position_of(parent)
+                    .is_some_and(|parent| self.slots[parent] == slot && was_head(parent)),
+            };
+            let reason = if sibling_took_parent {
+                ExclusionReason::EarlierSibling
+            } else {
+                ExclusionReason::StaleParent
+            };
+            (InputSelectionStatus::Excluded, Some(reason))
+        };
+        InputSelectionResponse {
+            status,
+            index: Some(index),
+            head_index,
+            reason,
+        }
+    }
 }
 
 pub struct CrispE3Repository<S: DataStore> {
@@ -660,8 +783,11 @@ impl<S: DataStore> CrispE3Repository<S> {
     /// in the input tree is its position in these vectors. Sorting here is what keeps the root the
     /// Secure Process derives equal to the one the contract accumulated.
     async fn input_records(&self) -> Result<(InputSnapshot, Vec<[u8; 32]>)> {
-        let e3_crisp = self.get_crisp().await?;
+        Self::records_of(self.get_crisp().await?)
+    }
 
+    /// `input_records` over a round record that the caller has read.
+    fn records_of(e3_crisp: E3Crisp) -> Result<(InputSnapshot, Vec<[u8; 32]>)> {
         // An input indexed before the event carried these fields keeps its ciphertext in the round
         // record (`move_inline_ciphertexts`). Computing over the round would fall back to the
         // pre-binding leaf layout and derive a root `CRISPProgram` rejects, with nothing to explain
@@ -732,10 +858,8 @@ impl<S: DataStore> CrispE3Repository<S> {
 
     /// The end of a slot's chain of usable entries: the entry a new input must name as its parent.
     ///
-    /// Resolved the same way the Secure Process resolves it, so a client that builds on this answer
-    /// produces an input the tally will take. An entry is only ever the head when its published
-    /// bytes reproduce its commitment and it names the head before it, so an entry nobody can open
-    /// never becomes one and never blocks the slot.
+    /// Resolved by the Secure Process's own rule (`InputSnapshot::heads_before`), so a client that
+    /// builds on this answer produces an input the tally will take.
     ///
     /// Reads the usability decision rather than recomputing it. Recomputing costs a BFV commitment
     /// per candidate — about 5ms each, comparable to deserializing a thousand-input round — and
@@ -745,25 +869,42 @@ impl<S: DataStore> CrispE3Repository<S> {
     /// `None` when the slot holds nothing usable, which is what a first vote sees.
     pub async fn get_slot_head(&self, slot: [u8; 20]) -> Result<Option<(Vec<u8>, u64)>> {
         let (records, hashes) = self.input_records().await?;
-        let mut head: Option<(u64, [u8; 32])> = None;
-
-        for (position, (_, index)) in records.ciphertexts.iter().enumerate() {
-            if records.slots[position] != slot || !records.usable[position] {
-                continue;
-            }
-
-            if records.parents[position].checked_sub(1) != head.map(|(index, _)| index) {
-                continue;
-            }
-
-            head = Some((*index, hashes[position]));
-        }
+        let head = records.head_of(&records.heads_before(records.slots.len()), slot);
 
         // Only the head's bytes: a slot's chain can hold many entries.
         match head {
-            Some((index, hash)) => Ok(Some((self.get_ciphertext(index, hash).await?, index))),
+            Some(position) => {
+                let index = records.ciphertexts[position].1;
+                let bytes = self.get_ciphertext(index, hashes[position]).await?;
+                Ok(Some((bytes, index)))
+            }
             None => Ok(None),
         }
+    }
+
+    /// Where one submitted input stands in the selection of its slot, and the current slot head.
+    ///
+    /// The input is the round entry with this slot, commitment, parent, and content hash, the
+    /// keccak256 of its bytes that the round record names. `None` when this server has no record
+    /// of the round.
+    pub async fn get_input_selection(
+        &self,
+        slot: [u8; 20],
+        commitment: [u8; 32],
+        parent_index_plus_one: u64,
+        content_hash: [u8; 32],
+    ) -> Result<Option<InputSelectionResponse>> {
+        let Some(e3_crisp) = self.try_get_crisp().await? else {
+            return Ok(None);
+        };
+        let (records, hashes) = Self::records_of(e3_crisp)?;
+        Ok(Some(records.selection(
+            &hashes,
+            slot,
+            commitment,
+            parent_index_plus_one,
+            content_hash,
+        )))
     }
 
     #[allow(dead_code)]
@@ -904,7 +1045,11 @@ mod tests {
         count_active_slots, parse_slot_address, snapshot_block, CrispE3Repository,
         CurrentRoundRepository,
     };
-    use crate::server::models::{CensusMode, CreditMode, CustomParams, E3Crisp};
+    use crate::server::models::{
+        CensusMode, CreditMode, CustomParams, E3Crisp, ExclusionReason, InputSelectionResponse,
+        InputSelectionStatus,
+    };
+    use alloy::primitives::keccak256;
     use async_trait::async_trait;
     use e3_fhe_params::{build_bfv_params_from_set_arc, BfvParamSet, BfvPreset};
     use e3_sdk::indexer::{DataStore, InMemoryStore, SharedStore};
@@ -1176,5 +1321,242 @@ mod tests {
         let snapshot = round.get_input_snapshot().await.unwrap();
         assert_eq!(snapshot.ciphertexts, vec![(vec![2; 3], 0)]);
         assert_eq!(snapshot.commitments, vec![[2; 32]]);
+    }
+
+    /// One indexed input of a round, with the fields the indexer stores for it.
+    #[derive(Clone, Copy)]
+    struct Entry {
+        index: u64,
+        slot: [u8; 20],
+        parent_index_plus_one: u64,
+        usable: bool,
+        /// The published bytes, which the round record names by their keccak256. The first byte
+        /// also makes the commitment of the entry.
+        bytes: &'static [u8],
+    }
+
+    impl Entry {
+        fn commitment(&self) -> [u8; 32] {
+            [self.bytes[0]; 32]
+        }
+    }
+
+    const SLOT: [u8; 20] = [0x77; 20];
+
+    /// Store round 3 with `entries` as its indexed inputs.
+    async fn round_with(entries: &[Entry]) -> CrispE3Repository<InMemoryStore> {
+        let mut record = crisp_round("requester", "Active");
+        for entry in entries {
+            record
+                .input_ciphertext_hashes
+                .push((entry.index, keccak256(entry.bytes).0));
+            record
+                .input_commitments
+                .push((entry.index, entry.commitment()));
+            record.input_slots.push((entry.index, entry.slot));
+            record
+                .input_parents
+                .push((entry.index, entry.parent_index_plus_one));
+            record.input_usable.push((entry.index, entry.usable));
+        }
+        let mut round = CrispE3Repository::new(test_store(), "3");
+        round.set_crisp(record).await.unwrap();
+        round
+    }
+
+    /// The selection answer for the input that `entry` describes.
+    async fn selection_of(
+        round: &CrispE3Repository<InMemoryStore>,
+        entry: Entry,
+    ) -> InputSelectionResponse {
+        round
+            .get_input_selection(
+                entry.slot,
+                entry.commitment(),
+                entry.parent_index_plus_one,
+                keccak256(entry.bytes).0,
+            )
+            .await
+            .unwrap()
+            .expect("the round is recorded")
+    }
+
+    fn answer(
+        status: InputSelectionStatus,
+        index: Option<u64>,
+        head_index: Option<u64>,
+        reason: Option<ExclusionReason>,
+    ) -> InputSelectionResponse {
+        InputSelectionResponse {
+            status,
+            index,
+            head_index,
+            reason,
+        }
+    }
+
+    /// A mask and the voter's ballot both name the head. The mask is committed first and takes
+    /// the slot, so the ballot is excluded and the answer names the mask as the head to build on.
+    /// A retry that names the mask is selected. An entry that names the excluded ballot names a
+    /// parent that was never the head.
+    #[tokio::test]
+    async fn a_sibling_after_a_mask_is_excluded_and_its_retry_is_selected() {
+        let head = Entry {
+            index: 0,
+            slot: SLOT,
+            parent_index_plus_one: 0,
+            usable: true,
+            bytes: b"\x01head",
+        };
+        let mask = Entry {
+            index: 1,
+            parent_index_plus_one: 1,
+            bytes: b"\x02mask",
+            ..head
+        };
+        let ballot = Entry {
+            index: 2,
+            parent_index_plus_one: 1,
+            bytes: b"\x03ballot",
+            ..head
+        };
+        let round = round_with(&[head, mask, ballot]).await;
+        assert_eq!(
+            selection_of(&round, ballot).await,
+            answer(
+                InputSelectionStatus::Excluded,
+                Some(2),
+                Some(1),
+                Some(ExclusionReason::EarlierSibling)
+            )
+        );
+
+        let retry = Entry {
+            index: 3,
+            parent_index_plus_one: 2,
+            bytes: b"\x04retry",
+            ..head
+        };
+        let on_the_ballot = Entry {
+            index: 4,
+            parent_index_plus_one: 3,
+            bytes: b"\x05on-ballot",
+            ..head
+        };
+        let round = round_with(&[head, mask, ballot, retry, on_the_ballot]).await;
+        assert_eq!(
+            selection_of(&round, retry).await,
+            answer(InputSelectionStatus::Selected, Some(3), Some(3), None)
+        );
+        assert_eq!(
+            selection_of(&round, on_the_ballot).await,
+            answer(
+                InputSelectionStatus::Excluded,
+                Some(4),
+                Some(3),
+                Some(ExclusionReason::StaleParent)
+            )
+        );
+    }
+
+    /// A later entry that extends a selected ballot, a mask or a re-vote, moves the head but
+    /// does not undo the selection of the ballot.
+    #[tokio::test]
+    async fn a_selected_ballot_stays_selected_after_a_later_entry_extends_it() {
+        let ballot = Entry {
+            index: 0,
+            slot: SLOT,
+            parent_index_plus_one: 0,
+            usable: true,
+            bytes: b"\x01ballot",
+        };
+        let descendant = Entry {
+            index: 1,
+            parent_index_plus_one: 1,
+            bytes: b"\x02descendant",
+            ..ballot
+        };
+        let round = round_with(&[ballot, descendant]).await;
+
+        assert_eq!(
+            selection_of(&round, ballot).await,
+            answer(InputSelectionStatus::Selected, Some(0), Some(1), None)
+        );
+    }
+
+    /// An entry with a lower tree index is not indexed here yet. It can still take the slot or
+    /// be the parent of the ballot, so the verdict waits for it.
+    #[tokio::test]
+    async fn an_entry_after_a_missing_tree_index_is_pending() {
+        let other_slot = Entry {
+            index: 0,
+            slot: [0x88; 20],
+            parent_index_plus_one: 0,
+            usable: true,
+            bytes: b"\x01other",
+        };
+        let ballot = Entry {
+            index: 2,
+            slot: SLOT,
+            bytes: b"\x02ballot",
+            ..other_slot
+        };
+        let round = round_with(&[other_slot, ballot]).await;
+
+        assert_eq!(
+            selection_of(&round, ballot).await,
+            answer(
+                InputSelectionStatus::SelectionPending,
+                Some(2),
+                Some(2),
+                None
+            )
+        );
+    }
+
+    /// An input is matched by its bytes too. The same slot, commitment, and parent with other
+    /// bytes is another input, which this server has not indexed.
+    #[tokio::test]
+    async fn an_input_with_other_bytes_is_not_indexed() {
+        let ballot = Entry {
+            index: 0,
+            slot: SLOT,
+            parent_index_plus_one: 0,
+            usable: true,
+            bytes: b"\x01ballot",
+        };
+        let round = round_with(&[ballot]).await;
+        let other_bytes = Entry {
+            bytes: b"\x01other bytes",
+            ..ballot
+        };
+
+        assert_eq!(
+            selection_of(&round, other_bytes).await,
+            answer(InputSelectionStatus::NotIndexed, None, Some(0), None)
+        );
+    }
+
+    /// An entry whose bytes do not reproduce its commitment never becomes the head.
+    #[tokio::test]
+    async fn an_unusable_entry_is_excluded_as_unusable() {
+        let ballot = Entry {
+            index: 0,
+            slot: SLOT,
+            parent_index_plus_one: 0,
+            usable: false,
+            bytes: b"\x01ballot",
+        };
+        let round = round_with(&[ballot]).await;
+
+        assert_eq!(
+            selection_of(&round, ballot).await,
+            answer(
+                InputSelectionStatus::Excluded,
+                Some(0),
+                None,
+                Some(ExclusionReason::Unusable)
+            )
+        );
     }
 }

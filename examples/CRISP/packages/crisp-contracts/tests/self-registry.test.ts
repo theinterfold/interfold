@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 import { expect } from 'chai'
-import { deployContract, deployCRISPProgram, ethers } from './utils'
+import { deployContract, deployCRISPProgram, ethers, INSECURE_BFV_PARAMS } from './utils'
 import type { CRISPProgram } from '../types'
 
 const CONSTANT = 0
@@ -89,7 +89,7 @@ describe('SelfRegistry', function () {
       [registryAddress, 1n, 2, CONSTANT, 1n, ONCHAIN, 0n],
     )
 
-    await (await crispProgram.validate(1, 0, '0x', '0x', params)).wait()
+    await (await crispProgram.validate(1, 0, INSECURE_BFV_PARAMS, '0x', params)).wait()
 
     expect(await crispProgram.censusModeOf(1)).to.equal(ONCHAIN)
     // No `decimals()` on the registry, so the divisor derives to 1.

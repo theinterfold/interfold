@@ -7,7 +7,11 @@
 import { parseAbi } from 'viem'
 import type { Address, Hex, PublicClient, WalletClient } from 'viem'
 
-const PUBLISH_INPUT_ABI = parseAbi(['function publishInput(uint256 e3Id, bytes data)'])
+// The error lets the simulation name a round that holds its most distinct slots.
+const PUBLISH_INPUT_ABI = parseAbi([
+  'function publishInput(uint256 e3Id, bytes data)',
+  'error SlotLimitReached(uint256 e3Id, uint256 maxSlots)',
+])
 
 /**
  * Commit an encoded input proof straight from the voter's wallet.
