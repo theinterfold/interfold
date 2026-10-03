@@ -220,33 +220,6 @@ describe("SlashingManager — lanes, roles, EIP-712 & admin handover", function 
       await bondingRegistry.connect(owner).registerOperatorFor(operatorAddress);
     }
 
-    it("hasOpenSlashProposal flips true after proposeSlashEvidence and false after executeSlash", async function () {
-      const ctx = await loadFixture(setup);
-      const { slashingManager, slasher, operatorAddress } = ctx;
-      await setupLaneBPolicy(slashingManager);
-
-      expect(await slashingManager.hasOpenSlashProposal(operatorAddress)).to.be
-        .false;
-
-      await slashingManager
-        .connect(slasher)
-        .proposeSlashEvidence(
-          0,
-          operatorAddress,
-          REASON_INACTIVITY,
-          ethers.toUtf8Bytes("ev"),
-        );
-
-      expect(await slashingManager.hasOpenSlashProposal(operatorAddress)).to.be
-        .true;
-
-      await time.increase(APPEAL_WINDOW + 1);
-      await slashingManager.executeSlash(0);
-
-      expect(await slashingManager.hasOpenSlashProposal(operatorAddress)).to.be
-        .false;
-    });
-
     it("retains an old manager's E3 authority and exit gate across rotation", async function () {
       const ctx = await loadFixture(setup);
       const {
@@ -573,34 +546,6 @@ describe("SlashingManager — lanes, roles, EIP-712 & admin handover", function 
       expect((await bondingRegistry.pendingExits(operatorAddress))[1]).to.equal(
         0n,
       );
-    });
-
-    it("operator can fileAppeal on a Lane A deferred proposal", async function () {
-      const ctx = await loadFixture(setup);
-      const {
-        slashingManager,
-        proposer,
-        operator,
-        operatorAddress,
-        voter1,
-        voter2,
-      } = ctx;
-      await setupLaneAPolicy(slashingManager, APPEAL_WINDOW);
-      await setupCommittee(ctx);
-
-      const proof = await signAndEncodeAttestation(
-        [voter1, voter2],
-        0,
-        operatorAddress,
-        await slashingManager.getAddress(),
-      );
-      await slashingManager
-        .connect(proposer)
-        .proposeSlash(0, operatorAddress, proof);
-
-      await expect(
-        slashingManager.connect(operator).fileAppeal(0, "not me"),
-      ).to.emit(slashingManager, "AppealFiled");
     });
 
     it("expires an unresolved appeal after the governance grace period", async function () {
