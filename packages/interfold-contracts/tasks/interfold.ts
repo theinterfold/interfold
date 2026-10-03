@@ -19,7 +19,7 @@ import { task } from "hardhat/config";
 import { ArgumentType } from "hardhat/types/arguments";
 import path from "path";
 
-import { readDeploymentArgs } from "../scripts/utils";
+import { ACTIVE_BFV_PARAM_SET, readDeploymentArgs } from "../scripts/utils";
 import { assertCommitteeOwnerCapacity } from "./committeeCapacity";
 import { assembleUniqueCommitteePublicKey } from "./committeePublicKey";
 import { stageMockDataAvailabilityObject } from "./mockDataAvailability";
@@ -207,6 +207,13 @@ export const requestCommittee = task(
     type: ArgumentType.INT,
   })
   .addOption({
+    name: "paramSet",
+    description:
+      "BFV parameter set (0=insecure-512, 1=secure-8192; default: the set of the active circuit build)",
+    defaultValue: ACTIVE_BFV_PARAM_SET,
+    type: ArgumentType.INT,
+  })
+  .addOption({
     name: "inputWindowStart",
     description: "start of input submission window (default: now + 300)",
     defaultValue: Math.floor(Date.now() / 1000) + 300,
@@ -246,6 +253,7 @@ export const requestCommittee = task(
     default: async (
       {
         committeeSize,
+        paramSet,
         inputWindowStart,
         inputWindowEnd,
         e3Address,
@@ -260,6 +268,8 @@ export const requestCommittee = task(
           "Invalid committee size - expected 0 (Minimum), 1 (Micro), or 2 (Small).",
         );
       }
+      // Throws for an unknown set before the task sends a transaction.
+      const expectedCryptoConfigId = cryptoConfigIdForParamSet(paramSet);
 
       const connection = await hre.network.connect();
       const { ethers } = connection;
@@ -269,6 +279,14 @@ export const requestCommittee = task(
       );
 
       const { interfold } = await getInterfoldConnection(hre);
+
+      // getE3Quote also rejects an unregistered set, but the build strips revert strings, so that
+      // revert carries no reason.
+      if ((await interfold.paramSetRegistry(paramSet)) === "0x") {
+        throw new Error(
+          `BFV parameter set ${paramSet} is not registered on this Interfold deployment. No E3 was requested.`,
+        );
+      }
 
       const { mockStableToken: mockUSDC } = await deployAndSaveMockStableToken({
         hre,
@@ -310,9 +328,6 @@ export const requestCommittee = task(
         hre.globalOptions.network,
       );
 
-      // paramSet: 0 = Insecure512, 1 = Secure8192
-      const paramSet = 0;
-
       let computeProviderParams = computeParams;
       const mockDecryptionVerifierArgs = readDeploymentArgs(
         "MockDecryptionVerifier",
@@ -347,7 +362,7 @@ export const requestCommittee = task(
         computeProviderParams,
         customParams,
         expectedFeeToken: await mockUSDCContract.getAddress(),
-        expectedCryptoConfigId: cryptoConfigIdForParamSet(paramSet),
+        expectedCryptoConfigId,
         maxFee: MaxUint256,
       };
 
