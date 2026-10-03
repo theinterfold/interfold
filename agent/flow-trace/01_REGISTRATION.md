@@ -192,7 +192,9 @@ User runs: interfold ciphernode status
 │   ├─ pendingExits.ticketAmount, pendingExits.ciphernodeBondAmount
 │   ├─ bondingRegistry.minTicketBalance → required minimum
 │   ├─ bondingRegistry.ticketPrice → price per ticket
-│   └─ bondingRegistry.requiredCiphernodeBond → required bond
+│   ├─ bondingRegistry.requiredCiphernodeBond → required bond
+│   └─ bondingRegistry.eligibilityAt(operator, latest block timestamp) → eligible for new
+│       committees (admission cooldown and policy applied; `active` alone does not include them)
 │
 ├─ Lists the committees that hold the collateral:
 │   e3_evm::fetch_operator_committees()  (crates/evm/src/operator_status.rs)
@@ -209,6 +211,7 @@ User runs: interfold ciphernode status
    Bond Owner:       0xabcd...
    Registered:       true
    Active:           true
+   Eligible for new committees: true
    Exit Pending:     false
    Ticket Balance:   100 (available: 95)
    Ciphernode Bond:     50000 FOLD
