@@ -745,6 +745,62 @@ describe("Protocol deployment", function () {
     }
   });
 
+  it("refuses each mock contract in a mainnet deployment before it sends a transaction", async function () {
+    const [operator] = await ethers.getSigners();
+    if (!operator) throw new Error("operator signer missing");
+    const record = JSON.parse(
+      fs.readFileSync(
+        new URL(
+          "../../deploy/protocol/mainnet-protocol.config.json",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+    ) as ProtocolConfigFile;
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "interfold-mainnet-mocks-"),
+    );
+    const configFile = path.join(tempDir, "protocol.json");
+    const cases = [
+      {
+        flag: "deployMockE3Program",
+        overrides: {
+          deployMockE3Program: true,
+          deployMockCiphertextVerifier: false,
+          ciphertextVerifier: "0x0000000000000000000000000000000000000003",
+        },
+      },
+      {
+        flag: "deployMockCiphertextVerifier",
+        overrides: {
+          deployMockE3Program: false,
+          e3Programs: ["0x0000000000000000000000000000000000000002"],
+          deployMockCiphertextVerifier: true,
+        },
+      },
+    ];
+
+    try {
+      for (const { flag, overrides } of cases) {
+        fs.writeFileSync(
+          configFile,
+          JSON.stringify({ ...record, ...overrides }),
+        );
+        // The upgrade scripts load the mainnet record, so loading must accept the flags.
+        const config = loadConfig(configFile);
+        expect(config.chainId).to.equal(1);
+        const nonce = await operator.getNonce();
+
+        await expect(
+          deployProtocolContracts(ethers, operator, config),
+        ).to.be.rejectedWith(`${flag} must be false on chainId 1`);
+        expect(await operator.getNonce()).to.equal(nonce);
+      }
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("uses separate fee and ticket collateral tokens", async function () {
     const [operator, safe, bondingProxyAdmin] = await ethers.getSigners();
     const bondingProxy = await ethers.deployContract("MockBondingRegistry");

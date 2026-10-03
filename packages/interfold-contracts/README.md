@@ -172,6 +172,15 @@ and committee decryption proof. Its deterministic receipt is for tests, not
 production data availability. Keep requests paused until a production program is
 registered and wired. Do not set `bindInitialE3Program` for this option.
 
+`deployMockE3Program` and `deployMockCiphertextVerifier` are for Sepolia and
+local chains only. On every other chain, the `check-config` and `deploy` actions
+stop before they send a transaction when either flag is `true`. On mainnet, set
+`e3Programs[0]` to the deployed application program and set
+`ciphertextVerifier`. Also set `bindInitialE3Program` when the program binds to
+Interfold after deployment, as `CRISPProgram` does.
+`mainnet-protocol.config.json` keeps both flags, because it records the first
+mainnet deployment. The upgrade scripts still load that file.
+
 `Interfold.initialize` registers the selected program before the governance
 transaction executes. Later registrations require an owner transaction.
 
