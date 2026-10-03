@@ -312,7 +312,9 @@ export const deployInterfold = async (
   // self-serve tokens. FOLD is in the Virtual phase here (CCA_START is ~1h
   // out), so we mint unlocked FOLD and whitelist the faucet to bypass the
   // pre-TGE transfer gate. Only on sepolia, and only with mocks present.
-  const faucetWiring: Array<[string, Promise<string>, string]> = [];
+  let deployedFaucet:
+    | Awaited<ReturnType<typeof deployAndSaveFaucet>>["faucet"]
+    | undefined;
   if (networkName === "sepolia" && mockStableToken) {
     // Stock the faucet for this many self-serve claims. Supply is derived from
     // the contract's per-claim amounts so it stays correct if those change.
@@ -324,12 +326,9 @@ export const deployInterfold = async (
       feeToken: feeTokenAddress,
       hre,
     });
+    deployedFaucet = faucet;
     const faucetAddress = await faucet.getAddress();
     console.log("Faucet deployed to:", faucetAddress);
-    faucetWiring.push(
-      ["faucet.fold", faucet.fold(), interfoldTokenAddress],
-      ["faucet.feeToken", faucet.feeToken(), feeTokenAddress],
-    );
 
     const amountFold = await faucet.AMOUNT_FOLD();
     const amountFeeToken = await faucet.AMOUNT_FEE_TOKEN();
@@ -713,6 +712,14 @@ export const deployInterfold = async (
   // mocks otherwise. The ciphertext verifier is always the mock.
   let expectedDecryptionVerifier = mockDeployments.decryptionVerifierAddress;
   let expectedPkVerifier = mockDeployments.pkVerifierAddress;
+  let deployedBfvDecryptionVerifier:
+    | Awaited<
+        ReturnType<typeof deployAndSaveBfvDecryptionVerifier>
+      >["bfvDecryptionVerifier"]
+    | undefined;
+  let deployedBfvPkVerifier:
+    | Awaited<ReturnType<typeof deployAndSaveBfvPkVerifier>>["bfvPkVerifier"]
+    | undefined;
 
   if (shouldHaveZKVerification) {
     console.log("Deploying BfvDecryptionVerifier and registering for prod...");
@@ -723,6 +730,7 @@ export const deployInterfold = async (
     const bfvDecryptionVerifierAddress =
       await bfvDecryptionVerifier.getAddress();
     expectedDecryptionVerifier = bfvDecryptionVerifierAddress;
+    deployedBfvDecryptionVerifier = bfvDecryptionVerifier;
     const deployedDecryptionVerifier =
       await interfold.decryptionVerifiers(encryptionSchemeId);
     if (deployedDecryptionVerifier !== bfvDecryptionVerifierAddress) {
@@ -744,6 +752,7 @@ export const deployInterfold = async (
     const { bfvPkVerifier } = await deployAndSaveBfvPkVerifier(hre);
     const bfvPkVerifierAddress = await bfvPkVerifier.getAddress();
     expectedPkVerifier = bfvPkVerifierAddress;
+    deployedBfvPkVerifier = bfvPkVerifier;
     const deployedPkVerifier = await interfold.pkVerifiers(encryptionSchemeId);
     if (deployedPkVerifier !== bfvPkVerifierAddress) {
       await send(
@@ -910,6 +919,21 @@ export const deployInterfold = async (
     ],
     ["interfold.feeToken", interfold.feeToken(), feeTokenAddress],
     [
+      "interfold.pricing.protocolTreasury",
+      interfold.getPricingConfig().then((pricing) => pricing.protocolTreasury),
+      protocolTreasury,
+    ],
+    [
+      "interfoldToken.CLAIM_SOURCE",
+      interfoldToken.CLAIM_SOURCE(),
+      ownerAddress,
+    ],
+    [
+      "bondedVotes.votesSource",
+      bondedVotes.votesSource(),
+      interfoldTokenAddress,
+    ],
+    [
       "ticketToken.underlying",
       interfoldTicketToken.underlying(),
       feeTokenAddress,
@@ -978,7 +1002,33 @@ export const deployInterfold = async (
     ["e3RefundManager.treasury", e3RefundManager.treasury(), ownerAddress],
   ];
 
-  wiring.push(...faucetWiring);
+  if (deployedFaucet) {
+    wiring.push(
+      ["faucet.fold", deployedFaucet.fold(), interfoldTokenAddress],
+      ["faucet.feeToken", deployedFaucet.feeToken(), feeTokenAddress],
+    );
+  }
+  if (deployedBfvDecryptionVerifier) {
+    wiring.push(
+      [
+        "bfvDecryptionVerifier.circuitVerifier",
+        deployedBfvDecryptionVerifier.circuitVerifier(),
+        verifierDeployments[DECRYPTION_AGGREGATOR_VERIFIER],
+      ],
+      [
+        "bfvDecryptionVerifier.ciphernodeRegistry",
+        deployedBfvDecryptionVerifier.ciphernodeRegistry(),
+        ciphernodeRegistryAddress,
+      ],
+    );
+  }
+  if (deployedBfvPkVerifier) {
+    wiring.push([
+      "bfvPkVerifier.circuitVerifier",
+      deployedBfvPkVerifier.circuitVerifier(),
+      verifierDeployments[DKG_AGGREGATOR_VERIFIER],
+    ]);
+  }
 
   const wiringErrors: string[] = [];
   for (const [label, actualPromise, expected] of wiring) {
@@ -988,12 +1038,31 @@ export const deployInterfold = async (
     }
   }
 
-  // The reward distributor is an authorization flag, not an address slot, so it needs its own
-  // read-back rather than an entry in the address table above.
-  if (!(await bondingRegistry.authorizedDistributors(interfoldAddress))) {
-    wiringErrors.push(
-      `bondingRegistry.authorizedDistributors: ${interfoldAddress} is not authorized`,
-    );
+  // Authorization flags are not address slots, so they get their own read-back.
+  const authorizations: Array<[string, Promise<boolean>]> = [
+    [
+      "bondingRegistry.authorizedDistributors(interfold)",
+      bondingRegistry.authorizedDistributors(interfoldAddress),
+    ],
+    [
+      "interfoldToken.transferWhitelist(bondingRegistry)",
+      interfoldToken.transferWhitelist(bondingRegistryAddress),
+    ],
+    [
+      "interfold.e3Programs(initial program)",
+      interfold.e3Programs(mockDeployments.e3ProgramAddress),
+    ],
+  ];
+  if (deployedFaucet) {
+    authorizations.push([
+      "interfoldToken.transferWhitelist(faucet)",
+      interfoldToken.transferWhitelist(await deployedFaucet.getAddress()),
+    ]);
+  }
+  for (const [label, grantedPromise] of authorizations) {
+    if (!(await grantedPromise)) {
+      wiringErrors.push(`${label}: not granted`);
+    }
   }
   if (wiringErrors.length > 0) {
     throw new Error(

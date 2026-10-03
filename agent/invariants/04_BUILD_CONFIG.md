@@ -68,16 +68,15 @@ every section.
   the original error as its `cause`. A bare `await contract.setX(...)` resolves when the transaction
   is dispatched, not when it is mined.
 - **A deployment must end with a verified wiring graph.** After configuration, `deployInterfold.ts`
-  reads back every cross-contract reference: the references between Interfold, CiphernodeRegistry,
-  BondingRegistry, InterfoldTicketToken, SlashingManager, NodeReleaseRegistry, BondedCheckpoints,
-  BondedVotes and E3RefundManager; Interfold's fee token and its BFV decryption, public-key and
-  ciphertext verifiers; the CiphernodeRegistry DKG fold-attestation verifier; the BondingRegistry
-  ticket token, ciphernode bond token (FOLD) and slashed-funds treasury; the ticket token's
-  underlying token; FOLD's `BONDING_REGISTRY`; the `interfold` and `treasury` that `E3RefundManager`
-  receives in its initializer; on Sepolia, the faucet's FOLD and fee token; and the BondingRegistry
-  reward-distributor authorization for Interfold. It throws with the full list of mismatches, before
-  it enables requests. Add a read-back for each new cross-contract setter and each initializer
-  reference.
+  reads back every reference that it sets to another contract, a token, a treasury, or the FOLD
+  claim source (constructor and initializer arguments and setter values, including the BFV verifier
+  bindings and, with ZK verification, the BFV wrappers' circuit verifiers), and every authorization
+  that it grants (the BondingRegistry reward distributor, the FOLD transfer whitelist, the initial
+  E3 program). It throws with the full list of mismatches before it enables requests. Owners and
+  admins (the deployer) and configuration values (committee thresholds, parameter sets, slash
+  policies, the node release, timing and pricing amounts) are not references; the integration check
+  in `tests/integration/base.sh` covers the committee thresholds. Add a read-back for each new
+  reference or authorization.
 - **A deployment must also enable bonded voting.** `protocol/deployContracts` deploys
   `BondedCheckpoints` (bound to the BondingRegistry **proxy**, not the implementation) and the
   governance batch calls `setBondedCheckpoints` after `initialize`. `BondedVotes` comes later, from
