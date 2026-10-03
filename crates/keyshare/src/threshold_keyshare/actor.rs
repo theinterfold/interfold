@@ -68,7 +68,7 @@ use crate::domain::{
     select_ready_roster, AggregatingDecryptionKey, BfvKeypairMaterial,
     CollectingEncryptionKeysData, Decrypting, DecryptionKeyPlan, GeneratingDecryptionProof,
     GeneratingThresholdShareData, KeyshareState, ProofRequestData, ReadyForDecryption,
-    ReceivedShareProofs, ThresholdKeyshareState,
+    ReadySummaryGate, ReceivedShareProofs, ThresholdKeyshareState,
 };
 
 #[path = "recovery_state.rs"]
@@ -182,6 +182,7 @@ pub struct ThresholdKeyshare {
     effects_enabled: bool,
     roster_inputs_ready: bool,
     roster_proposal_pending: bool,
+    ready_summary: ReadySummaryGate,
     selection_timing_pending: bool,
     pending: PendingKeyshareWork,
 }
@@ -242,6 +243,7 @@ impl ThresholdKeyshare {
             effects_enabled: params.effects_enabled,
             roster_inputs_ready: false,
             roster_proposal_pending: false,
+            ready_summary: ReadySummaryGate::default(),
             selection_timing_pending: false,
             pending: PendingKeyshareWork {
                 shares: pending_shares,

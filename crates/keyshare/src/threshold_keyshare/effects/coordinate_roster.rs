@@ -4,6 +4,7 @@
 
 use super::*;
 use anyhow::ensure;
+use std::{collections::BTreeMap, time::Instant};
 
 impl ThresholdKeyshare {
     pub(in crate::actors::threshold_keyshare) fn maybe_publish_dkg_ready(
@@ -94,6 +95,7 @@ impl ThresholdKeyshare {
             }
         }
 
+        let new_party = !recovery.ready_by_party.contains_key(&state.party_id);
         let ready = DkgCoordination::sign(
             state.e3_id.clone(),
             self.interfold_address,
@@ -110,6 +112,7 @@ impl ThresholdKeyshare {
             recovery.last_ec = Some(ec.clone());
             Ok(recovery)
         })?;
+        self.summarize_ready_set(state.party_id, new_party);
         if self.effects_enabled {
             self.bus.publish(ready, ec.clone())?;
             self.maybe_publish_roster_inputs_ready(ec.clone())?;
@@ -187,17 +190,22 @@ impl ThresholdKeyshare {
                 {
                     return Ok(());
                 }
+                let reporter = message.party_id;
+                let new_party = !recovery.ready_by_party.contains_key(&reporter);
+                let replace = recovery
+                    .ready_by_party
+                    .get(&reporter)
+                    .is_none_or(|existing| dealers_extend(&existing.dealers, &message.dealers));
                 self.recovery.try_mutate(&ec, |mut recovery| {
-                    let replace = recovery
-                        .ready_by_party
-                        .get(&message.party_id)
-                        .is_none_or(|existing| dealers_extend(&existing.dealers, &message.dealers));
                     if replace {
                         recovery.ready_by_party.insert(message.party_id, message);
                     }
                     recovery.last_ec = Some(ec.clone());
                     Ok(recovery)
                 })?;
+                if replace {
+                    self.summarize_ready_set(reporter, new_party);
+                }
                 self.maybe_accept_pending_roster(ec.clone())?;
             }
             DkgCoordinationKind::Roster => {
@@ -268,6 +276,36 @@ impl ThresholdKeyshare {
         Ok(())
     }
 
+    /// Logs the authenticated Ready set after a Ready report changed it, as often as the summary
+    /// gate allows: `new_party` when the report added a Ready party. Only logging depends on it,
+    /// so a missing state skips the line.
+    fn summarize_ready_set(&mut self, reporter: u64, new_party: bool) {
+        let (Ok(state), Ok(recovery)) = (self.state.try_get(), self.recovery.try_get()) else {
+            return;
+        };
+        let Ok(roster_size) = state.committee_h() else {
+            return;
+        };
+        let ready = eligible_ready_dealers(&recovery, &state);
+        let Some(suppressed_updates) = self.ready_summary.admit(Instant::now(), new_party) else {
+            return;
+        };
+        let committee = recovery
+            .ciphernode_selected
+            .as_ref()
+            .map_or(0, |selected| selected.committee.len());
+        info!(
+            e3_id = %state.e3_id,
+            reporter,
+            ready = ready.len(),
+            committee,
+            roster_size,
+            ready_parties = ?ready.keys().collect::<Vec<_>>(),
+            suppressed_updates,
+            "DKG Ready set updated"
+        );
+    }
+
     fn maybe_accept_pending_roster(&mut self, ec: EventContext<Sequenced>) -> Result<bool> {
         let Some(active_party_id) = self.active_aggregator_party_id else {
             return Ok(false);
@@ -315,12 +353,7 @@ impl ThresholdKeyshare {
             return Ok(());
         }
         let committee_h = state.committee_h()?;
-        let ready: std::collections::BTreeMap<u64, Vec<DkgDealer>> = recovery
-            .ready_by_party
-            .iter()
-            .filter(|(party_id, _)| !state.expelled_parties.contains(*party_id))
-            .map(|(&party_id, message)| (party_id, message.dealers.clone()))
-            .collect();
+        let ready = eligible_ready_dealers(&recovery, &state);
         let held_roster_is_usable = recovery.pending_rosters.values().any(|roster| {
             roster_is_supported_by_local_state(&recovery, roster)
                 && roster.dealers.len() == committee_h
@@ -363,12 +396,7 @@ impl ThresholdKeyshare {
             }
             accepted.dealers.clone()
         } else {
-            let ready: std::collections::BTreeMap<u64, Vec<DkgDealer>> = recovery
-                .ready_by_party
-                .iter()
-                .filter(|(party_id, _)| !state.expelled_parties.contains(*party_id))
-                .map(|(&party_id, message)| (party_id, message.dealers.clone()))
-                .collect();
+            let ready = eligible_ready_dealers(&recovery, &state);
             let Some(dealers) = select_ready_roster(&ready, committee_h) else {
                 return Ok(());
             };
@@ -487,6 +515,19 @@ impl ThresholdKeyshare {
         }
         self.proceed_with_decryption_key_calculation(None, ec)
     }
+}
+
+/// Dealer sets of the authenticated Ready reports from parties that are not expelled.
+fn eligible_ready_dealers(
+    recovery: &ThresholdKeyshareRecoveryState,
+    state: &ThresholdKeyshareState,
+) -> BTreeMap<u64, Vec<DkgDealer>> {
+    recovery
+        .ready_by_party
+        .iter()
+        .filter(|(party_id, _)| !state.expelled_parties.contains(*party_id))
+        .map(|(&party_id, message)| (party_id, message.dealers.clone()))
+        .collect()
 }
 
 fn ready_contains_roster(ready: &DkgCoordination, roster: &DkgCoordination) -> bool {
