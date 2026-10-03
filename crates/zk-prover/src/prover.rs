@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::backend::{ZkBackend, DEFAULT_BB_TIMEOUT};
+use crate::backend::ZkBackend;
 use crate::error::ZkError;
 use e3_events::{CircuitName, CircuitVariant, Proof};
 use e3_fhe_params::BfvPreset;
@@ -73,13 +73,13 @@ fn read_process_output_tail(path: &Path) -> io::Result<String> {
 /// `take` bounds the read itself: a descendant of a killed wrapper can still append to the file,
 /// and bytes written after the length was measured must not grow the buffer.
 fn bounded_tail<R: io::Read + io::Seek>(output: &mut R, len: u64) -> io::Result<String> {
-    use std::io::{Read, Seek, SeekFrom};
+    use std::io::{Read, SeekFrom};
 
     let skipped = len.saturating_sub(PROCESS_OUTPUT_LIMIT as u64);
     output.seek(SeekFrom::Start(skipped))?;
     let mut tail = Vec::with_capacity(PROCESS_OUTPUT_LIMIT);
     output
-        .take(PROCESS_OUTPUT_LIMIT as u64)
+        .take(len.saturating_sub(skipped).min(PROCESS_OUTPUT_LIMIT as u64))
         .read_to_end(&mut tail)?;
 
     let value = String::from_utf8_lossy(&tail);
@@ -108,12 +108,11 @@ fn run_bb(bb: &Path, args: &[&str], job_dir: &Path, timeout: Duration) -> io::Re
         .stderr(fs::File::create(&stderr_path)?)
         .spawn()?;
     let started = Instant::now();
-    let deadline = started + timeout;
     let status = loop {
         if let Some(status) = child.try_wait()? {
             break status;
         }
-        if Instant::now() >= deadline {
+        if started.elapsed() >= timeout {
             let _ = child.kill();
             child.wait()?;
             let stderr = read_process_output_tail(&stderr_path).unwrap_or_default();
@@ -522,6 +521,7 @@ impl ZkProver {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backend::DEFAULT_BB_TIMEOUT;
     use crate::test_utils::get_tempdir;
     use e3_config::BBPath;
 
@@ -695,6 +695,16 @@ mod tests {
     }
 
     #[test]
+    fn a_short_output_tail_stops_at_the_measured_length() {
+        let temp = get_tempdir().unwrap();
+        let path = temp.path().join("bb.stderr");
+        fs::write(&path, "shortAPPENDED").unwrap();
+        let mut output = fs::File::open(&path).unwrap();
+
+        assert_eq!(bounded_tail(&mut output, 5).unwrap(), "short");
+    }
+
+    #[test]
     fn a_configured_cap_stops_a_hung_proof() {
         // The cap must reach bb through the prover's own prove path, not only through run_bb.
         let temp = get_tempdir().unwrap();
@@ -758,6 +768,22 @@ mod tests {
             &["proof-ok"],
             temp.path(),
             DEFAULT_BB_TIMEOUT,
+        )
+        .unwrap();
+
+        assert!(output.status.success());
+        assert_eq!(output.stdout, b"proof-ok\n");
+    }
+
+    #[test]
+    fn an_enormous_cap_allows_bb_to_finish() {
+        let temp = get_tempdir().unwrap();
+
+        let output = run_bb(
+            Path::new("/bin/sh"),
+            &["-c", "sleep 0.1; echo proof-ok"],
+            temp.path(),
+            Duration::from_secs(u64::MAX),
         )
         .unwrap();
 
