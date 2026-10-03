@@ -160,6 +160,11 @@ impl CappedLogProvider {
     fn refused(&self) -> u32 {
         self.inner.lock().unwrap().refused
     }
+
+    /// Mine up to `head`: later ranges can cover the logs placed there.
+    fn set_head(&self, head: u64) {
+        self.inner.lock().unwrap().head = head;
+    }
 }
 
 #[async_trait]
@@ -239,3 +244,4 @@ fn setup_collector() -> (
 
 mod backfill;
 mod fetch;
+mod live;

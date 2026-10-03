@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::adapters::log_fetcher::{
-    backfill_to_head, fetch_logs_chunked, process_live_log, TimestampTracker,
+    backfill_to_head, consume_live_logs, fetch_logs_chunked, LiveStop, TimestampTracker,
 };
 use crate::domain::backoff::Backoff;
 use crate::domain::log_window::LogWindow;
@@ -22,7 +22,6 @@ use anyhow::anyhow;
 use e3_events::{BusHandle, EType, ErrorDispatcher, Event, InterfoldEvent, InterfoldEventData};
 use e3_events::{EventSubscriber, EventType};
 use e3_utils::{retry_with_backoff, RetryError, MAILBOX_LIMIT};
-use futures_util::stream::StreamExt;
 use std::collections::HashMap;
 use std::time::Duration;
 use tokio::select;
@@ -45,7 +44,8 @@ const PROVIDER_RECREATE_INITIAL_DELAY_MS: u64 = 2000;
 /// Consecutive failures before we assume the provider is dead and recreate it.
 const MAX_RETRIES_BEFORE_RECREATE: u32 = 3;
 /// Polling is required even while the subscription is quiet: a log becomes confirmed because later
-/// blocks arrive, and those blocks need not contain any matching contract event.
+/// blocks arrive, and those blocks need not contain any matching contract event. At zero
+/// confirmations the poll delivers the logs that the subscription did not announce.
 const CONFIRMED_BACKFILL_INTERVAL_SECS: u64 = 5;
 
 #[derive(Clone, Default)]

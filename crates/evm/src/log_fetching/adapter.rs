@@ -13,7 +13,10 @@ use alloy::rpc::types::{Filter, Log};
 use anyhow::{anyhow, Context as _};
 use async_trait::async_trait;
 use e3_events::CorrelationId;
+use futures_util::stream::{Stream, StreamExt};
 use std::time::Duration;
+use tokio::select;
+use tokio::sync::oneshot;
 use tracing::{debug, info, warn};
 
 const GET_LOGS_MAX_RETRIES: u32 = 3;
@@ -63,21 +66,29 @@ pub(crate) async fn process_log<L: LogProvider>(
     Ok(id)
 }
 
-/// Handle a log delivered by the subscription stream.
+/// Handle a log that the subscription stream announced.
 ///
-/// With a positive confirmation depth the subscription is only a wake-up signal. Publishing the
-/// raw notification here would make the historical confirmation gate ineffective, so the periodic
-/// canonical backfill owns delivery instead. With zero confirmations this preserves the existing
-/// low-latency behavior.
-pub(crate) async fn process_live_log<L: LogProvider>(
+/// At every confirmation depth the subscription is a wake-up signal, and the canonical backfill
+/// owns delivery and the watermark. A subscription starts after the backfill that precedes it, so
+/// a log mined between the two never reaches the stream, and a provider can also drop a
+/// notification. A notification that advanced the watermark by itself moved it past such a log,
+/// and no later backfill read that block again.
+///
+/// With zero confirmations the backfill runs at once, so delivery keeps its low latency. With a
+/// positive depth the announced block is not confirmed yet, and the periodic backfill delivers it
+/// when it is. A notification for a block at or below the watermark needs no request, because the
+/// backfill read that block in full.
+pub(crate) async fn handle_live_log<L: LogProvider>(
     provider: &L,
-    log: Log,
+    log: &Log,
+    filter: &Filter,
     chain_id: u64,
     next: &EvmEventProcessor,
     timestamp_tracker: &mut TimestampTracker,
     last_block: &mut u64,
     confirmations: u64,
-) -> Result<Option<CorrelationId>, anyhow::Error> {
+    window: &mut LogWindow,
+) -> Result<(), anyhow::Error> {
     if confirmations > 0 {
         debug!(
             chain_id,
@@ -85,15 +96,108 @@ pub(crate) async fn process_live_log<L: LogProvider>(
             confirmations,
             "Deferring live log to confirmed canonical backfill"
         );
-        return Ok(None);
+        return Ok(());
     }
 
-    let block_number = log.block_number;
-    let id = process_log(provider, log, chain_id, next, timestamp_tracker).await?;
-    if let Some(block_number) = block_number {
-        *last_block = (*last_block).max(block_number);
+    if log.block_number.is_some_and(|block| block <= *last_block) {
+        debug!(
+            chain_id,
+            block_number = log.block_number,
+            last_block,
+            "Live log is in a block that the backfill already read"
+        );
+        return Ok(());
     }
-    Ok(Some(id))
+
+    debug!(
+        chain_id,
+        block_number = log.block_number,
+        "Backfilling to the head for a live log"
+    );
+    backfill_to_head(
+        provider,
+        filter,
+        chain_id,
+        next,
+        timestamp_tracker,
+        last_block,
+        confirmations,
+        window,
+    )
+    .await
+}
+
+/// The reason that [`consume_live_logs`] returned.
+pub(crate) enum LiveStop {
+    /// The shutdown signal arrived.
+    Shutdown,
+    /// The provider closed the subscription stream.
+    StreamEnded,
+    /// The backfill that a live log started failed.
+    LiveLogBackfillFailed(anyhow::Error),
+    /// The periodic backfill to the confirmed head failed.
+    PollBackfillFailed(anyhow::Error),
+}
+
+/// Consume one live subscription until the shutdown signal, or until the reader must reconnect.
+///
+/// The caller owns the provider lifecycle: it subscribes, passes the stream here, and reconnects
+/// for the returned reason. This function owns only the work of an active subscription, so it runs
+/// against any [`LogProvider`] and any stream of logs.
+///
+/// The backfill also runs every `poll_interval` while the stream is quiet, at every confirmation
+/// depth. With a positive depth a log becomes confirmed because later blocks arrive, and those
+/// blocks need not contain a matching event. With zero confirmations the poll delivers a log that
+/// the stream never announced, and a log whose announcement arrived before the provider's head
+/// reached its block.
+pub(crate) async fn consume_live_logs<L, S>(
+    provider: &L,
+    stream: &mut S,
+    filter: &Filter,
+    chain_id: u64,
+    next: &EvmEventProcessor,
+    timestamp_tracker: &mut TimestampTracker,
+    last_block: &mut u64,
+    confirmations: u64,
+    window: &mut LogWindow,
+    poll_interval: Duration,
+    shutdown: &mut oneshot::Receiver<()>,
+) -> LiveStop
+where
+    L: LogProvider,
+    S: Stream<Item = Log> + Unpin,
+{
+    let mut confirmation_poll = tokio::time::interval(poll_interval);
+    confirmation_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    // Tokio intervals tick immediately once. The caller already backfilled, so consume that tick
+    // and wait for the configured period before querying again.
+    confirmation_poll.tick().await;
+
+    loop {
+        select! {
+            maybe_log = stream.next() => {
+                let Some(log) = maybe_log else {
+                    // Stream ended (server-side close, idle timeout, etc.)
+                    return LiveStop::StreamEnded;
+                };
+                if let Err(error) = handle_live_log(
+                    provider, &log, filter, chain_id, next, timestamp_tracker, last_block,
+                    confirmations, window,
+                ).await {
+                    return LiveStop::LiveLogBackfillFailed(error);
+                }
+            }
+            _ = confirmation_poll.tick() => {
+                if let Err(error) = backfill_to_head(
+                    provider, filter, chain_id, next, timestamp_tracker, last_block,
+                    confirmations, window,
+                ).await {
+                    return LiveStop::PollBackfillFailed(error);
+                }
+            }
+            _ = &mut *shutdown => return LiveStop::Shutdown,
+        }
+    }
 }
 
 /// Fetch one chunk, narrowing `window` and retrying until the provider serves it.
