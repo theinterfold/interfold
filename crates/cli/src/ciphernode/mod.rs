@@ -136,7 +136,7 @@ pub enum CiphernodeCommands {
         #[command(flatten)]
         chain: ChainArgs,
     },
-    /// Register an operator and recompute its activation state
+    /// Recompute the activation state of a registered operator
     Activate {
         /// Target operator; defaults to the configured signer for self-owned positions
         #[arg(long = "operator", value_name = "ADDRESS")]
