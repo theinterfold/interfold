@@ -435,6 +435,97 @@ mod tests {
         }
     }
 
+    /// Forwards event-store queries and drops the event at sequence `skip` from every page of
+    /// more than one event, as a corrupted log read would.
+    struct GapReader {
+        inner: Recipient<EventStoreQueryBy<SeqAgg>>,
+        skip: u64,
+    }
+
+    impl actix::Actor for GapReader {
+        type Context = actix::Context<Self>;
+    }
+
+    impl actix::Handler<EventStoreQueryBy<SeqAgg>> for GapReader {
+        type Result = actix::ResponseFuture<()>;
+
+        fn handle(
+            &mut self,
+            query: EventStoreQueryBy<SeqAgg>,
+            _: &mut Self::Context,
+        ) -> Self::Result {
+            let (inner, skip) = (self.inner.clone(), self.skip);
+            Box::pin(async move {
+                let page = query.limit() != Some(1);
+                let (recipient, response) = channel::oneshot::<EventStoreQueryResponse>();
+                let mut forwarded =
+                    EventStoreQueryBy::<SeqAgg>::new(query.id(), query.query().clone(), recipient);
+                if let Some(limit) = query.limit() {
+                    forwarded = forwarded.with_limit(limit);
+                }
+                if let Some(max_bytes) = query.max_bytes() {
+                    forwarded = forwarded.with_max_bytes(max_bytes);
+                }
+                let sender = query.sender();
+                inner
+                    .send(forwarded)
+                    .await
+                    .expect("the event store accepts the query");
+                let response = response.await.expect("the event store answers");
+                let id = response.id();
+                let mut events = response
+                    .into_events()
+                    .expect("the event store reads the log");
+                if page {
+                    events.retain(|event| event.seq() != skip);
+                }
+                sender
+                    .try_send(EventStoreQueryResponse::new(id, events))
+                    .expect("recovery waits for the answer");
+            })
+        }
+    }
+
+    /// A page that skips an event that a one-event read still returns is a gap in the log, not a
+    /// quarantined legacy event, so recovery fails instead of stopping there.
+    #[actix::test]
+    async fn recovery_fails_on_a_gap_that_a_one_event_read_fills() -> Result<()> {
+        let aggregate = AggregateId::new(1);
+        let system =
+            EventSystem::new()
+                .with_fresh_bus()
+                .with_aggregate_config(AggregateConfig::new(HashMap::from([(
+                    aggregate,
+                    Duration::ZERO,
+                )])));
+        for ts in 1..=3u128 {
+            let request = PublishDocumentRequested {
+                meta: DocumentMeta::new(
+                    E3id::new("9", 1),
+                    DocumentKind::TrBFV,
+                    vec![],
+                    Some(chrono::Utc::now() + chrono::Duration::hours(1)),
+                ),
+                value: ArcBytes::from_bytes(&ts.to_le_bytes()),
+            };
+            append(&system, request.into(), ts, EventSource::Local).await?;
+        }
+        let reader = GapReader {
+            inner: system.eventstore_reader()?.seq(),
+            skip: 2,
+        }
+        .start()
+        .recipient();
+
+        let Err(error) = recover_document_state(&reader, &[aggregate], &HashSet::new()).await
+        else {
+            panic!("recovery passed a gap in the event log");
+        };
+
+        assert!(format!("{error:#}").contains("sequence gap"), "{error:#}");
+        Ok(())
+    }
+
     #[actix::test]
     async fn recovery_reads_the_event_log_in_pages() -> Result<()> {
         let aggregate = AggregateId::new(1);
