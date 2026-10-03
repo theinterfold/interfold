@@ -540,10 +540,10 @@ quorum denominator while being unable to help meet it.
 
 Two contracts restore that weight:
 
-| Contract                     | Role                                                                                 |
-| ---------------------------- | ------------------------------------------------------------------------------------ |
-| `registry/BondedCheckpoints` | Records `totalBonded(owner)` over time. Only `BondingRegistry` may write.            |
-| `registry/BondedVotes`       | `IERC5805` view summing a primary vote source and bonded FOLD at the same timepoint. |
+| Contract                     | Role                                                                                                                                           |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `registry/BondedCheckpoints` | Records `totalBonded(owner)` over time. Only `BondingRegistry` may write.                                                                      |
+| `registry/BondedVotes`       | `IERC5805` that sums a primary vote source and bonded FOLD at the same timepoint, and moves an owner's bonded weight to one accepted delegate. |
 
 ```text
 BondedVotes.getPastVotes(account, t)              ← the NUMERATOR
@@ -551,8 +551,12 @@ BondedVotes.getPastVotes(account, t)              ← the NUMERATOR
 ├─ votesSource.getPastVotes(account, t)           ← either the token or an escrow adapter
 │    ├─ votesSource == token   → wallet-held FOLD (needs delegation)
 │    └─ votesSource == escrow  → only escrowed FOLD; idle wallet FOLD carries no weight
-├─ BondedCheckpoints.getPastBonded(account, t)    ← FOLD bonded as an operator
-└─ InterfoldToken.lockedBalanceAt(account, t)     ← vesting-locked FOLD, escrow source ONLY
+├─ bonded weight of account, unless a delegate represents it at t
+└─ bonded weight of the owner that account represents at t, if any
+
+bonded weight(owner, t)
+├─ BondedCheckpoints.getPastBonded(owner, t)      ← FOLD bonded as an operator
+└─ InterfoldToken.lockedBalanceAt(owner, t)       ← vesting-locked FOLD, escrow source ONLY
      minus the bonded total (saturating), because a bond satisfies a lock
 
 BondedVotes.getPastTotalSupply(t)                 ← the DENOMINATOR
@@ -687,10 +691,37 @@ total at the current timepoint, and cannot rewrite any past entry — so a third
 owner's history. Either call it for every existing owner after configuring, or configure the
 checkpoint contract in the same transaction that upgrades the registry, before any bonding.
 
-Bonded weight is **not delegatable** — the registry owns the position — so it always sits with the
-bond owner, including for an owner that never self-delegated. Wallet-held FOLD keeps its normal
-delegation through the token. `BondedVotes.delegate`/`delegateBySig` revert rather than silently
-doing nothing.
+Bonded weight moves only through `BondedVotes` itself. The registry owns the position, so token
+delegation leaves it with the bond owner, also for an owner that never self-delegated. An owner asks
+with `delegateBonded(delegatee)`, and the weight moves when the delegate calls
+`acceptBonded(owner)`. A request alone moves nothing, so nobody can push weight onto a delegate or
+take its place. A delegate represents one owner at a time, because bonded weight is read again from
+its sources on every call and each represented owner costs a full read. The owner ends the
+delegation with `delegateBonded` (zero, itself, or another delegate) and the delegate with
+`dropBonded()`, both at once. Both directions are checkpointed on the token's clock in the same
+call, so at every timepoint an owner's bonded weight counts at the owner or at exactly one delegate.
+Wallet-held FOLD keeps its delegation through the token and escrowed FOLD through the escrow.
+`BondedVotes.delegate` and `delegateBySig` still revert rather than silently doing nothing.
+`pendingBondedDelegate(owner)`, `bondedDelegate(owner)` and `bondedOwner(delegatee)` show the
+current state, and `BondedDelegationRequested` records each request. `getPastVotes` itself rejects
+an unsettled timepoint with `FutureLookup`, because an owner that delegated its weight away reads no
+bonded history that would reject it.
+
+Each change emits `BondedDelegateChanged(owner, fromDelegate, toDelegate)` on `BondedVotes`, not the
+IVotes `DelegateChanged`: `delegates()` names the votes source's delegate, and an indexer that reads
+`DelegateChanged` would record a different one. A delegate can hold bonded weight with no token log,
+no bond and no escrow position, so the CRISP census reads this event to find it.
+`EtherscanClient::get_bonded_delegate_candidates` adds every non-zero `toDelegate` to the
+candidates, and `getPastVotes` at the snapshot then keeps or drops each one. File:
+`examples/CRISP/server/src/server/token_holders/etherscan.rs`.
+
+Delegations live in the adapter. A replacement `BondedVotes`, for a new era or for an adapter from
+before bonded delegation, starts with none, so owners must delegate again. An adapter from before
+bonded delegation has the same constructor arguments as a current one, so `--action activate-voting`
+refuses a recorded one rather than reporting it as deployed, `--action validate` prints a `--` line
+for it, and `deployAndSaveBondedVotes` deploys a replacement. All three use `hasBondedDelegation`.
+Files: `scripts/protocol/activateVoting.ts`, `scripts/protocol/validate.ts`,
+`scripts/deployAndSave/bondedVotes.ts`, `scripts/protocol/values.ts`.
 
 ## Activation Thresholds Summary
 

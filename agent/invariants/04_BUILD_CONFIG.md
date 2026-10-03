@@ -81,8 +81,12 @@ every section.
   `--action activate-voting`: its constructor asks the registry which token it bonds, so it cannot
   be built until that batch has executed. `protocol/validate` reads back
   `bonding.bondedCheckpoints()` and `bondedCheckpoints.registry()`, and adds `bondedVotes.token()`,
-  `bondedVotes.checkpoints()` and `bondedVotes.registry()` once the adapter exists. Upgrading an
-  existing deployment through `upgrade/safeProxyUpgrade` deploys and attaches the pair when none is
-  attached yet, and appends a `resyncBondedCheckpoint` call for each `bondedResyncOwners` entry —
-  attaching does not backfill, so owners that bonded earlier read as zero until then. Without the
-  attachment the upgrade silently ships a disabled feature: the sync is a no-op while unconfigured.
+  `bondedVotes.checkpoints()` and `bondedVotes.registry()` once the adapter exists. Those read-backs
+  cannot tell an adapter from before bonded delegation from a current one, because both take the
+  same constructor arguments. `hasBondedDelegation` probes the code instead: `activate-voting`
+  refuses such a recorded adapter, `validate` prints a `--` line for it, and
+  `deployAndSaveBondedVotes` deploys a replacement. Upgrading an existing deployment through
+  `upgrade/safeProxyUpgrade` deploys and attaches the pair when none is attached yet, and appends a
+  `resyncBondedCheckpoint` call for each `bondedResyncOwners` entry — attaching does not backfill,
+  so owners that bonded earlier read as zero until then. Without the attachment the upgrade silently
+  ships a disabled feature: the sync is a no-op while unconfigured.

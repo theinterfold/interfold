@@ -33,6 +33,61 @@ export async function requireContract(
   if (code === "0x") throw new Error(`${label} has no code: ${target}`);
 }
 
+/**
+ * True when a call failed because the target has no such function. A contract without the
+ * selector and without a fallback reverts with no data, and decoding the empty answer of an account
+ * without code fails the same way. A transport error or a revert with a reason is not this, and a
+ * caller must not read it as a missing function.
+ */
+export function isMissingFunctionError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const rpcError = error as {
+    code?: string | number;
+    data?: unknown;
+    value?: unknown;
+  };
+  if (
+    rpcError.code === 3 &&
+    (rpcError.data === undefined || rpcError.data === "0x")
+  ) {
+    return true;
+  }
+  return (
+    (rpcError.data === "0x" &&
+      (rpcError.code === undefined ||
+        rpcError.code === "CALL_EXCEPTION" ||
+        rpcError.code === 3)) ||
+    (rpcError.code === "BAD_DATA" && rpcError.value === "0x")
+  );
+}
+
+const bondedDelegateCall = new ethersLib.Interface([
+  "function bondedDelegate(address owner) view returns (address)",
+]).encodeFunctionData("bondedDelegate", [ZERO]);
+
+/**
+ * Whether the `BondedVotes` at `target` has bonded delegation.
+ *
+ * An adapter from before bonded delegation takes the same constructor arguments, so a deployment
+ * record cannot tell the two apart. That adapter has no `bondedDelegate` function. Any failure
+ * other than a missing function says nothing about the adapter, and is thrown.
+ */
+export async function hasBondedDelegation(
+  provider: ethersLib.Provider,
+  target: string,
+): Promise<boolean> {
+  try {
+    const result = await provider.call({
+      to: target,
+      data: bondedDelegateCall,
+    });
+    return result !== "0x";
+  } catch (error) {
+    if (isMissingFunctionError(error)) return false;
+    throw error;
+  }
+}
+
 export async function deployedAddress(contract: {
   target?: unknown;
   getAddress?: () => Promise<string>;
