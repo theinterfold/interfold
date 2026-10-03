@@ -847,6 +847,11 @@ export const deployInterfold = async (
       randomnessProviderAddress,
     ],
     [
+      "ciphernodeRegistry.dkgFoldAttestationVerifier",
+      ciphernodeRegistry.dkgFoldAttestationVerifier(),
+      dkgFoldAttestationVerifierAddress ?? ethers.ZeroAddress,
+    ],
+    [
       "randomnessProvider.requester",
       randomnessProvider.requester(),
       ciphernodeRegistryAddress,
@@ -875,6 +880,21 @@ export const deployInterfold = async (
       "bondingRegistry.ciphernodeBondToken",
       bondingRegistry.ciphernodeBondToken(),
       interfoldTokenAddress,
+    ],
+    [
+      "bondingRegistry.ticketToken",
+      bondingRegistry.ticketToken(),
+      interfoldTicketTokenAddress,
+    ],
+    [
+      "bondingRegistry.slashedFundsTreasury",
+      bondingRegistry.slashedFundsTreasury(),
+      ownerAddress,
+    ],
+    [
+      "interfoldToken.BONDING_REGISTRY",
+      interfoldToken.BONDING_REGISTRY(),
+      bondingRegistryAddress,
     ],
     [
       "ticketToken.registry",
