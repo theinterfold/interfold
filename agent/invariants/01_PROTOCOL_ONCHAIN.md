@@ -309,10 +309,13 @@ every section.
   its own rounds after the requester paid. `MockE3Program` is the stateless bootstrap option. It has
   no administrative controls and applies no application rules. Its deterministic test receipt is not
   production data availability, so keep requests paused until a production program is registered and
-  wired; no contract enforces this. The request-time BFV ciphertext verifier and decryption verifier
+  wired; no contract enforces this. The protocol deploy scripts create `MockE3Program` and
+  `DeployableMockCiphertextVerifier` only on Sepolia and local chains
+  (`assertMockDeploymentAllowed`). The request-time BFV ciphertext verifier and decryption verifier
   remain mandatory. Its mutable failure controls live only in `MockE3ProgramHarness`. A protocol
   upgrade that makes the program interface incompatible must retire every incompatible bootstrap
-  program before requests resume. — `Interfold.sol`; `MockE3Program.sol`; `flow-trace/03`
+  program before requests resume. — `Interfold.sol`; `MockE3Program.sol`;
+  `scripts/protocol/values.ts`; `flow-trace/03`
 - **Data availability binds per program and per round:** Interfold holds no protocol-level
   data-availability verifier; it delegates to `IE3ProgramDataAvailability(e3Program)`. A production
   program must freeze each round's data-availability binding; CRISP holds its verifier as an

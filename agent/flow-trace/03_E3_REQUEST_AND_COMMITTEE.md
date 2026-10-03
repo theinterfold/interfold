@@ -710,13 +710,14 @@ A ready committee must finalize at or before its absolute DKG deadline.
     `Interfold.initialize` registers it before it transfers ownership to `protocolOwner`. For
     DAO-owned deployments, `protocolOwner` is the DAO, not a Safe. Every registration rejects an
     address without runtime code. After initialization, only the owner can register or retire a
-    program. Retirement closes new request admission without changing existing E3 records. The
-    deployment can create `MockE3Program` as the initial program. This stateless program accepts the
-    active BFV scheme and applies no application rules. It has no owner, controller, or mutable
-    configuration. The request-time ciphertext verifier and decryption verifier still verify the
-    protocol proofs. Its deterministic data-availability receipt is only for tests. Requests remain
-    paused until a production E3 program is registered and wired, and an interface-incompatible
-    bootstrap mock is retired.
+    program. Retirement closes new request admission without changing existing E3 records. On
+    Sepolia and local chains, the deployment can create `MockE3Program` as the initial program; the
+    `check-config` and `deploy` actions refuse it, and `DeployableMockCiphertextVerifier`, on every
+    other chain. This stateless program accepts the active BFV scheme and applies no application
+    rules. It has no owner, controller, or mutable configuration. The request-time ciphertext
+    verifier and decryption verifier still verify the protocol proofs. Its deterministic
+    data-availability receipt is only for tests. Requests remain paused until a production E3
+    program is registered and wired, and an interface-incompatible bootstrap mock is retired.
 
 ---
 
