@@ -49,7 +49,7 @@ pub async fn fetch_operator_status(
     chain: &ChainConfig,
     operator: Address,
 ) -> anyhow::Result<OperatorChainStatus> {
-    let provider = ProviderConfig::new(chain.rpc_url()?, chain.rpc_auth.clone())
+    let provider = ProviderConfig::for_chain(chain)?
         .create_readonly_provider()
         .await?;
     let client = provider.provider().clone();

@@ -69,11 +69,10 @@ pub async fn execute(out: Console, config: &AppConfig, selection: Option<&str>) 
     let faucet_address =
         Address::from_str(faucet_contract.address_str()).context("Invalid faucet address")?;
 
-    let rpc = chain.rpc_url()?;
     let cipher = Cipher::from_file(config.key_file()).await?;
     let repositories = get_repositories(config)?;
     let signer = load_signer_from_repository(repositories.eth_private_key(), &cipher).await?;
-    let provider = ProviderConfig::new(rpc, chain.rpc_auth.clone())
+    let provider = ProviderConfig::for_chain(chain)?
         .create_signer_provider(&signer)
         .await?;
     let recipient = provider.provider().default_signer_address();

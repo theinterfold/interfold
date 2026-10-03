@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use std::hash::Hash;
+use std::time::Duration;
 
 use crate::{
     contract::ContractAddresses,
@@ -16,6 +17,10 @@ use serde::{Deserialize, Serialize};
 use tracing::error;
 
 const PUBLIC_RPC_CONFIRMATIONS: u64 = 1;
+
+/// Interval between the polls of an HTTP provider, in milliseconds. Alloy's default for a remote
+/// endpoint.
+const PUBLIC_RPC_POLL_INTERVAL_MS: u64 = 7_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Hash, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -48,6 +53,13 @@ pub struct ChainConfig {
     /// Set this to zero only for a single-process development chain such as Anvil.
     #[serde(default)]
     pub ingestion_confirmations: Option<u64>,
+    /// Milliseconds between the polls of an HTTP provider for a receipt or a new block.
+    ///
+    /// The default is 7 seconds, which suits a public chain. A single-process development chain
+    /// such as Anvil mines on demand, so the local templates set `250`. A loopback URL does not
+    /// shorten the interval by itself, because it can be a proxy to a live chain.
+    #[serde(default)]
+    pub rpc_poll_interval_ms: Option<u64>,
     #[serde(default)]
     pub data_availability: Option<DataAvailabilityConfig>,
 }
@@ -63,6 +75,18 @@ impl ChainConfig {
         Ok(self
             .ingestion_confirmations
             .unwrap_or(PUBLIC_RPC_CONFIRMATIONS))
+    }
+
+    /// Return the configured HTTP poll interval or the public-chain default.
+    pub fn rpc_poll_interval(&self) -> Result<Duration> {
+        match self.rpc_poll_interval_ms {
+            Some(0) => bail!(
+                "rpc_poll_interval_ms for chain {} must be greater than zero",
+                self.name
+            ),
+            Some(ms) => Ok(Duration::from_millis(ms)),
+            None => Ok(Duration::from_millis(PUBLIC_RPC_POLL_INTERVAL_MS)),
+        }
     }
 }
 
@@ -130,6 +154,7 @@ mod tests {
             finalization_ms: None,
             chain_id: Some(1),
             ingestion_confirmations: None,
+            rpc_poll_interval_ms: None,
             data_availability: None,
         }
     }
@@ -152,5 +177,25 @@ mod tests {
         chain.ingestion_confirmations = Some(0);
         let config = EvmEventConfigChain::try_from(&chain).unwrap();
         assert_eq!(config.confirmations(), 0);
+    }
+
+    #[test]
+    fn a_loopback_url_keeps_the_public_poll_interval() {
+        // A loopback URL can be a proxy to a live chain, so only the setting shortens the
+        // interval.
+        let chain = chain("http://127.0.0.1:8545");
+        assert_eq!(chain.rpc_poll_interval().unwrap(), Duration::from_secs(7));
+    }
+
+    #[test]
+    fn the_poll_interval_setting_is_explicit_and_nonzero() {
+        let mut chain = chain("http://127.0.0.1:8545");
+        chain.rpc_poll_interval_ms = Some(250);
+        assert_eq!(
+            chain.rpc_poll_interval().unwrap(),
+            Duration::from_millis(250)
+        );
+        chain.rpc_poll_interval_ms = Some(0);
+        assert!(chain.rpc_poll_interval().is_err());
     }
 }

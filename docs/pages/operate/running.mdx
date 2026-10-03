@@ -175,11 +175,13 @@ The keys below matter most on an operator node. The
 | `rpc_auth`                       | No auth  | `Basic` or `Bearer` credentials. See [RPC authentication](/reference/configuration#rpc-authentication).   |
 | `data_availability`              | Required | `mode: avail` and an HTTP `rpc_url`. See [Data availability](/reference/configuration#data-availability). |
 | `ingestion_confirmations`        | `1`      | Confirmations before the node applies a log.                                                              |
+| `rpc_poll_interval_ms`           | `7000`   | Milliseconds between the polls of an HTTP provider for a receipt or a new block.                          |
 | `enabled`                        | `true`   | `false` makes the node ignore the entry.                                                                  |
 
-The default of one confirmation also applies when `rpc_url` uses `localhost` or `127.0.0.1`, because
-that URL can be a proxy to a live chain. Set `ingestion_confirmations: 0` only on a single-process
-development chain such as Anvil. Do not set it to zero on mainnet or Sepolia.
+The defaults of one confirmation and a 7-second poll interval also apply when `rpc_url` uses
+`localhost` or `127.0.0.1`, because that URL can be a proxy to a live chain. Set
+`ingestion_confirmations: 0` and `rpc_poll_interval_ms: 250` only on a single-process development
+chain such as Anvil. Do not set them on mainnet or Sepolia.
 
 The `autonetkey` key has no effect in this release. The node derives its libp2p key from the wallet
 key.

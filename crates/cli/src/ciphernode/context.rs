@@ -73,11 +73,10 @@ impl ChainContext {
         let chain = select_chain(config, selection)?;
         let bonding_registry = parse_address(chain.contracts.bonding_registry.address_str())?;
 
-        let rpc = chain.rpc_url()?;
         let cipher = Cipher::from_file(config.key_file()).await?;
         let repositories = get_repositories(config)?;
         let signer = load_signer_from_repository(repositories.eth_private_key(), &cipher).await?;
-        let provider = ProviderConfig::new(rpc, chain.rpc_auth.clone())
+        let provider = ProviderConfig::for_chain(chain)?
             .create_signer_provider(&signer)
             .await?;
         let signer_address = provider.provider().default_signer_address();
