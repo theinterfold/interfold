@@ -529,7 +529,8 @@ fn started_manager() -> (Addr<NetSyncManager>, EventSystem) {
         )])));
     let bus = system.handle().unwrap().enable("test");
     let (tx, _rx) = mpsc::channel::<NetCommand>(100);
-    let (evt_tx, _evt_rx) = broadcast::channel::<NetEvent>(100);
+    let evt_tx = NetEventChannel::new(100);
+    let _evt_rx = evt_tx.subscribe();
     let manager = NetSyncManager::setup(
         &bus,
         &tx,
@@ -714,7 +715,8 @@ async fn the_restart_rebroadcast_leaves_resends_to_replay() {
     let system = EventSystem::new().with_fresh_bus();
     let bus = system.handle().unwrap().enable("test");
     let (tx, mut rx) = mpsc::channel::<NetCommand>(100);
-    let (evt_tx, _evt_rx) = broadcast::channel::<NetEvent>(100);
+    let evt_tx = NetEventChannel::new(100);
+    let _evt_rx = evt_tx.subscribe();
     // The restart query returns all three shares.
     let eventstore = ReplyingEventStore(vec![
         early_share.clone(),
