@@ -557,7 +557,9 @@ interfold ciphernode status [--operator <ADDRESS>] [--chain <CHAIN>]
 The output shows these values:
 
 - The operator key, the bond owner, and a pending bond owner
-- The `Registered`, `Active`, and `Exit pending` flags
+- The `Registered`, `Active`, and `Exit pending` flags, and `Eligible for new committees`:
+  `eligibilityAt` at the latest block time, which also applies the admission cooldown and the
+  admission policy. An operator in the cooldown is `Active` but not yet eligible.
 - The ticket balance and the number of available tickets
 - The FOLD bond and the pending exits
 - The requirements: `minTickets`, `ticketPrice`, and `ciphernodeBond`

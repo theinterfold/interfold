@@ -109,6 +109,10 @@ impl ChainContext {
         self.signer_address
     }
 
+    pub(crate) fn provider(&self) -> &EthProvider<ConcreteWriteProvider> {
+        &self.provider
+    }
+
     pub(crate) fn resolve_operator(&self, operator: Option<&str>) -> Result<Address> {
         operator
             .map(parse_address)

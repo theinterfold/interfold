@@ -273,9 +273,10 @@ after an owner change or a governance policy change. New requests use the new ru
 `requestBlock - 1`. If governance changes policy at the request timestamp, the capacity check fails
 closed until a later timestamp and a status refresh.
 
-The node dashboard (`fetch_operator_status`) and the public operator guide show `isActive` as
-"Active". They show `eligibilityAt(operator, latest block timestamp)` separately as "Eligible for
-new committees", which is unknown when that read fails. An operator in the admission cooldown is
+The node dashboard (`fetch_operator_status`), `interfold ciphernode status` (`lifecycle.rs`) and the
+public operator guide show `isActive` as "Active". They show
+`eligibilityAt(operator, latest block timestamp)` separately as "Eligible for new committees", which
+the dashboard reports as unknown when that read fails. An operator in the admission cooldown is
 therefore active but not eligible.
 
 Pausing freezes the eligible pool at the timestamp before the pause. Waiting positions cannot enter
