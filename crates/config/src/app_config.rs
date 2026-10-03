@@ -59,6 +59,10 @@ pub struct NodeDefinition {
     pub autowallet: bool,
     /// Optional dashboard port. When set, serves a monitoring web UI on this port.
     pub dashboard_port: Option<u16>,
+    /// Run this profile as a bootstrap peer: networking and chain reads only, as
+    /// `interfold start --bootstrap`. `interfold nodes up` reads it for each profile it starts.
+    #[serde(default)]
+    pub bootstrap: bool,
     /// Logical CPUs reserved for Actix, libp2p, and RPC (not used by the Rayon compute pool).
     #[serde(default = "default_multithread_reserve_threads")]
     pub multithread_reserve_threads: usize,
@@ -131,6 +135,7 @@ impl Default for NodeDefinition {
             autopassword: false,
             autowallet: false,
             dashboard_port: None,
+            bootstrap: false,
             multithread_reserve_threads: default_multithread_reserve_threads(),
             multithread_concurrent_jobs: default_multithread_concurrent_jobs(),
             startup_timeout_secs: default_startup_timeout_secs(),
