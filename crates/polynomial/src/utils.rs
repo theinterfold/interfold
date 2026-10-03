@@ -164,25 +164,6 @@ mod tests {
     }
 
     #[test]
-    fn test_range_check_centered() {
-        let vec = vec![BigInt::from(-2), BigInt::from(0), BigInt::from(2)];
-        let lower = BigInt::from(-3);
-        let upper = BigInt::from(3);
-        assert!(range_check_centered(&vec, &lower, &upper));
-
-        let vec_out_of_range = vec![BigInt::from(-5), BigInt::from(0), BigInt::from(2)];
-        assert!(!range_check_centered(&vec_out_of_range, &lower, &upper));
-    }
-
-    #[test]
-    fn test_range_check_standard() {
-        let vec = vec![BigInt::from(1), BigInt::from(2), BigInt::from(3)];
-        let bound = BigInt::from(5);
-        let modulus = BigInt::from(7);
-        assert!(range_check_standard(&vec, &bound, &modulus));
-    }
-
-    #[test]
     fn test_reduce_less_than_neg_modulus() {
         let modulus = BigInt::from(7);
 

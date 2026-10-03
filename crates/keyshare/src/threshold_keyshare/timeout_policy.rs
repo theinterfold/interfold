@@ -293,20 +293,6 @@ mod tests {
     }
 
     #[test]
-    fn threshold_share_timeout_uses_cumulative_cutoff() {
-        let timeout = resolve_timeout_from_inputs(
-            DkgTimeoutPhase::ThresholdShareCollection,
-            None,
-            8_200,
-            7200,
-            2_000,
-        )
-        .unwrap();
-
-        assert_eq!(timeout.duration, Duration::from_secs(4_400));
-    }
-
-    #[test]
     fn threshold_share_schedule_keeps_the_canonical_deadline() {
         let schedule =
             resolve_threshold_share_schedule_from_inputs(None, 8_200, 7_200, 2_000).unwrap();

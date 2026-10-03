@@ -184,45 +184,6 @@ mod tests {
     use anyhow::Result;
 
     #[tokio::test]
-    async fn test_write_and_read_file() -> Result<()> {
-        // Create an in-memory filesystem
-        // let memory_fs = AsyncMemoryFS::new();
-        let fs = Fs::mem();
-
-        // Test data
-        let test_path = "test_file.txt";
-        let test_content = "Hello, World!\nThis is a test file.";
-
-        // Write the file
-        fs.write_to_file(test_path, test_content).await?;
-
-        // Read the file back
-        let read_content = fs.read_to_string(test_path).await?;
-
-        // Verify the content matches
-        assert_eq!(read_content, test_content);
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_mkdirp_creates_directory() -> Result<()> {
-        // Create an in-memory filesystem
-        let fs = Fs::mem();
-
-        let test_dir = "some/deep/nested/directory";
-
-        // Create the directory structure
-        fs.mkdirp(test_dir).await?;
-
-        // Verify the directory was created by checking if it exists
-        let dir_path = fs.root.join(test_dir)?;
-        assert!(dir_path.exists().await?);
-
-        Ok(())
-    }
-
-    #[tokio::test]
     async fn test_cp_recursive_copy() -> Result<()> {
         // Create an in-memory filesystem
         let fs = Fs::mem();

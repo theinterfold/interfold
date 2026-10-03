@@ -7,8 +7,6 @@
 pub mod application;
 pub mod ciphernode_system;
 pub mod libp2p_mock;
-mod plaintext_writer;
-mod public_key_writer;
 pub mod usecase_helpers;
 mod utils;
 use actix::prelude::*;
@@ -27,8 +25,6 @@ use fhe::bfv::BfvParameters;
 use fhe::mbfv::CommonRandomPoly;
 use fhe_traits::Serialize;
 use libp2p_mock::Libp2pMock;
-pub use plaintext_writer::*;
-pub use public_key_writer::*;
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 use std::{collections::HashMap, sync::Arc, time::Duration};

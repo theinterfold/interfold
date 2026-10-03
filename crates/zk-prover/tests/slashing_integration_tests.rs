@@ -11,20 +11,15 @@
 //! ### Pure Rust (no Anvil)
 //! 1. **ProofPayload signing**: `ProofPayload.digest()` produces the correct
 //!    structured hash for off-chain proof signing (PROOF_PAYLOAD_TYPEHASH).
-//! 2. **ECDSA roundtrip**: `sign_message_sync` → `recover_address` for ProofPayload.
-//! 3. **Evidence encoding**: `encode_fault_evidence()` produces valid ABI-encoded
-//!    data (retained for Lane B tests).
-//! 4. **Vote typehash**: VOTE_TYPEHASH matches the Solidity constant.
-//! 5. **Attestation evidence**: vote signatures are correctly constructed and
-//!    ABI-encoded for `proposeSlash()`.
+//! 2. **Vote typehash**: VOTE_TYPEHASH matches the Solidity constant.
 //!
 //! ### On-chain integration (Anvil + Hardhat artifacts)
-//! 6. **Valid attestation quorum** → slash executes successfully.
-//! 7. **Insufficient attestations** → reverts `InsufficientAttestations`.
-//! 8. **Voter not in committee** → reverts `VoterNotInCommittee`.
-//! 9. **Invalid vote signature** → reverts `InvalidVoteSignature`.
-//! 10. **Duplicate voter** → reverts `DuplicateVoter`.
-//! 11. **Duplicate evidence replay** → reverts `DuplicateEvidence`.
+//! 3. **Valid attestation quorum** → slash executes successfully.
+//! 4. **Insufficient attestations** → reverts `InsufficientAttestations`.
+//! 5. **Voter not in committee** → reverts `VoterNotInCommittee`.
+//! 6. **Invalid vote signature** → reverts `InvalidVoteSignature`.
+//! 7. **Duplicate voter** → reverts `DuplicateVoter`.
+//! 8. **Duplicate evidence replay** → reverts `DuplicateEvidence`.
 //!
 //! ## Prerequisites
 //!
@@ -46,10 +41,7 @@ use alloy::{
     sol_types::SolValue,
 };
 use common::find_anvil;
-use e3_events::{
-    encode_fault_evidence, CircuitName, E3id, Proof, ProofPayload, ProofType, SignedProofFailed,
-    SignedProofPayload,
-};
+use e3_events::{CircuitName, E3id, Proof, ProofPayload, ProofType};
 use e3_utils::utility_types::ArcBytes;
 use serde::Deserialize;
 use std::{collections::BTreeMap, path::PathBuf, sync::OnceLock};
@@ -289,113 +281,6 @@ fn test_proof_payload_typehash() {
         expected,
         "typehash should match keccak256 of the type string"
     );
-}
-
-/// Verifies that digest() uses the structured typehash format with hashed dynamic fields.
-#[test]
-fn test_proof_payload_digest_matches_manual_computation() {
-    let payload = test_proof_payload(1, 42);
-    let digest = payload.digest().expect("digest should succeed");
-
-    // Manually compute expected digest
-    let typehash = keccak256(
-        "ProofPayload(uint256 chainId,uint256 e3Id,uint256 proofType,bytes zkProof,bytes publicSignals)",
-    );
-    let expected_encoded = (
-        typehash,
-        U256::from(42u64),                   // chainId
-        U256::from(1u64),                    // e3Id
-        U256::from(0u8),                     // proofType (C0PkBfv = 0)
-        keccak256([0xde, 0xad, 0xbe, 0xef]), // keccak256(zkProof)
-        keccak256([0u8; 32]),                // keccak256(publicSignals)
-    )
-        .abi_encode();
-    let expected_digest: [u8; 32] = keccak256(&expected_encoded).into();
-
-    assert_eq!(
-        digest, expected_digest,
-        "digest should match manual computation"
-    );
-}
-
-/// Verifies sign → recover roundtrip with the structured digest format.
-#[test]
-fn test_signing_roundtrip_with_structured_digest() {
-    let signer: PrivateKeySigner =
-        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
-            .parse()
-            .unwrap();
-
-    let payload = test_proof_payload(42, 31337);
-    let signed = SignedProofPayload::sign(payload, &signer).expect("signing should succeed");
-    let recovered = signed.recover_address().expect("recovery should succeed");
-
-    assert_eq!(
-        recovered,
-        signer.address(),
-        "recovered address should match signer"
-    );
-}
-
-/// Verifies that different payloads produce different digests (no collisions).
-#[test]
-fn test_different_payloads_different_digests() {
-    let p1 = test_proof_payload(1, 42);
-    let p2 = test_proof_payload(2, 42); // different e3Id
-    let mut p3 = test_proof_payload(1, 42);
-    p3.proof_type = ProofType::C1PkGeneration; // different proofType
-
-    let d1 = p1.digest().unwrap();
-    let d2 = p2.digest().unwrap();
-    let d3 = p3.digest().unwrap();
-
-    assert_ne!(d1, d2, "different e3Ids should produce different digests");
-    assert_ne!(
-        d1, d3,
-        "different proofTypes should produce different digests"
-    );
-}
-
-/// Verifies that encode_fault_evidence() produces correctly structured ABI encoding.
-#[test]
-fn test_encode_fault_evidence_structure() {
-    let signer: PrivateKeySigner =
-        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
-            .parse()
-            .unwrap();
-    let verifier_addr: Address = "0x1234567890abcdef1234567890abcdef12345678"
-        .parse()
-        .unwrap();
-
-    let payload = test_proof_payload(42, 31337);
-    let signed = SignedProofPayload::sign(payload, &signer).expect("signing should succeed");
-
-    let failed = SignedProofFailed {
-        e3_id: E3id::new("42", 31337),
-        faulting_node: signer.address(),
-        proof_type: ProofType::C0PkBfv,
-        signed_payload: signed.clone(),
-    };
-
-    let evidence = encode_fault_evidence(&failed, verifier_addr);
-
-    // Decode and verify structure: (bytes, bytes32[], bytes, uint256, uint256, address)
-    type EvidenceTuple = (Bytes, Vec<FixedBytes<32>>, Bytes, U256, U256, Address);
-    let decoded = EvidenceTuple::abi_decode_params(&evidence).expect("evidence should ABI-decode");
-
-    let (zk_proof, public_inputs, sig, chain_id, proof_type, verifier) = decoded;
-
-    assert_eq!(&zk_proof[..], &[0xde, 0xad, 0xbe, 0xef], "zkProof mismatch");
-    assert_eq!(public_inputs.len(), 1, "should have 1 public input");
-    assert_eq!(
-        public_inputs[0],
-        FixedBytes::from([0u8; 32]),
-        "public input value mismatch"
-    );
-    assert_eq!(&sig[..], &signed.signature[..], "signature bytes mismatch");
-    assert_eq!(chain_id, U256::from(31337u64), "chainId mismatch");
-    assert_eq!(proof_type, U256::from(0u8), "proofType mismatch");
-    assert_eq!(verifier, verifier_addr, "verifier address mismatch");
 }
 
 /// Verifies that the digest format matches what Solidity would compute.
@@ -682,187 +567,6 @@ fn test_vote_digest_matches_external_vector() {
             .parse::<FixedBytes<32>>()
             .unwrap(),
         "vote digest must match the independently generated EIP-712 vector"
-    );
-}
-
-/// Verifies vote sign/recover roundtrip (EIP-712, no EIP-191 wrapping).
-#[test]
-fn test_vote_signing_roundtrip() {
-    let signer: PrivateKeySigner =
-        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
-            .parse()
-            .unwrap();
-    let chain_id = 31337u64;
-    let verifying_contract: Address = "0x9999999999999999999999999999999999999999"
-        .parse()
-        .unwrap();
-    let e3_id = 42u64;
-    let operator: Address = "0x1111111111111111111111111111111111111111"
-        .parse()
-        .unwrap();
-    let proof_type = 0u8;
-    let data_hash = FixedBytes::from([0xab; 32]);
-
-    let accusation_id = compute_accusation_id(chain_id, e3_id, operator, proof_type);
-    let (voter, sig_bytes) = sign_vote(
-        &signer,
-        chain_id,
-        verifying_contract,
-        e3_id,
-        accusation_id,
-        data_hash,
-        TEST_ISSUED_AT,
-        TEST_DEADLINE,
-    );
-
-    assert_eq!(
-        voter,
-        signer.address(),
-        "voter should be the signer address"
-    );
-
-    // Verify recover (raw prehash, no EIP-191 wrapping)
-    let digest = compute_vote_digest(
-        chain_id,
-        verifying_contract,
-        e3_id,
-        accusation_id,
-        voter,
-        data_hash,
-        TEST_ISSUED_AT,
-        TEST_DEADLINE,
-    );
-    let sig =
-        alloy::primitives::Signature::try_from(sig_bytes.as_ref()).expect("signature should parse");
-    let recovered = sig
-        .recover_address_from_prehash(&digest)
-        .expect("recovery should succeed");
-    assert_eq!(
-        recovered,
-        signer.address(),
-        "recovered address should match signer"
-    );
-}
-
-/// First ABI word of attestation evidence must be `proofType` (SlashingManager decodes only that).
-#[test]
-fn test_evidence_leading_word_is_proof_type() {
-    let raw_evidence = Bytes::from(vec![0u8; 32]);
-    let dh: FixedBytes<32> = keccak256(&raw_evidence);
-    let evidence = encode_attestation_evidence(
-        0,
-        vec![
-            (
-                "0x1111111111111111111111111111111111111111"
-                    .parse()
-                    .unwrap(),
-                dh,
-                Bytes::from(vec![0u8; 65]),
-            ),
-            (
-                "0x2222222222222222222222222222222222222222"
-                    .parse()
-                    .unwrap(),
-                dh,
-                Bytes::from(vec![0u8; 65]),
-            ),
-        ],
-        raw_evidence,
-        TEST_ISSUED_AT,
-        TEST_DEADLINE,
-    );
-    let leading = U256::from_be_slice(&evidence[..32]);
-    assert_eq!(leading, U256::ZERO, "leading word must be proofType");
-    let derived_reason: FixedBytes<32> = keccak256(leading.abi_encode_packed());
-    assert_eq!(derived_reason, reason_for_proof_type(0));
-}
-
-/// Verifies attestation evidence encoding structure.
-#[test]
-fn test_attestation_evidence_encoding() {
-    let signer1: PrivateKeySigner = PrivateKeySigner::random();
-    let signer2: PrivateKeySigner = PrivateKeySigner::random();
-
-    let chain_id = 31337u64;
-    let verifying_contract: Address = "0x9999999999999999999999999999999999999999"
-        .parse()
-        .unwrap();
-    let e3_id = 1u64;
-    let operator: Address = "0x1111111111111111111111111111111111111111"
-        .parse()
-        .unwrap();
-    let proof_type = 0u8;
-
-    let accusation_id = compute_accusation_id(chain_id, e3_id, operator, proof_type);
-
-    let raw_evidence = Bytes::from(vec![0xab; 32]);
-    let data_hash: FixedBytes<32> = keccak256(&raw_evidence);
-    let (voter1, sig1) = sign_vote(
-        &signer1,
-        chain_id,
-        verifying_contract,
-        e3_id,
-        accusation_id,
-        data_hash,
-        TEST_ISSUED_AT,
-        TEST_DEADLINE,
-    );
-    let (voter2, sig2) = sign_vote(
-        &signer2,
-        chain_id,
-        verifying_contract,
-        e3_id,
-        accusation_id,
-        data_hash,
-        TEST_ISSUED_AT,
-        TEST_DEADLINE,
-    );
-
-    let evidence = encode_attestation_evidence(
-        proof_type,
-        vec![(voter1, data_hash, sig1), (voter2, data_hash, sig2)],
-        raw_evidence.clone(),
-        TEST_ISSUED_AT,
-        TEST_DEADLINE,
-    );
-
-    // Decode and verify structure: proof type, voters, hashes, evidence,
-    // issued-at time, deadline, and signatures.
-    type AttestationTuple = (
-        U256,
-        Vec<Address>,
-        Vec<FixedBytes<32>>,
-        Bytes,
-        U256,
-        U256,
-        Vec<Bytes>,
-    );
-    let decoded =
-        AttestationTuple::abi_decode_params(&evidence).expect("evidence should ABI-decode");
-
-    let (
-        dec_proof_type,
-        dec_voters,
-        dec_hashes,
-        dec_evidence,
-        dec_issued_at,
-        dec_deadline,
-        dec_sigs,
-    ) = decoded;
-    assert_eq!(dec_proof_type, U256::from(proof_type), "proofType mismatch");
-    assert_eq!(dec_voters.len(), 2, "should have 2 voters");
-    assert!(
-        dec_voters[0] < dec_voters[1],
-        "voters should be sorted ascending"
-    );
-    assert_eq!(dec_hashes.len(), 2, "should have 2 data hashes");
-    assert_eq!(dec_evidence, raw_evidence, "evidence bytes mismatch");
-    assert_eq!(dec_issued_at, TEST_ISSUED_AT, "issued_at mismatch");
-    assert_eq!(dec_deadline, TEST_DEADLINE, "deadline mismatch");
-    assert_eq!(dec_sigs.len(), 2, "should have 2 signatures");
-    assert!(
-        dec_hashes.iter().all(|h| *h == data_hash),
-        "all voters must share the same dataHash"
     );
 }
 

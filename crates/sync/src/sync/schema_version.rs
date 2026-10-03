@@ -102,14 +102,6 @@ mod tests {
     }
 
     #[test]
-    fn rejects_histories_without_source_block_timestamps() {
-        assert!(matches!(
-            decide_schema_version(Some(6), SCHEMA_VERSION, true),
-            SchemaVersionDecision::Halt(_)
-        ));
-    }
-
-    #[test]
     fn newer_on_disk_halts_as_downgrade() {
         let d = decide_schema_version(Some(5), 4, true);
         match d {

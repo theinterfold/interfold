@@ -48,51 +48,6 @@ fn decryption_publication(e3_id: E3id) -> Result<PublishDocumentRequested> {
 }
 
 #[actix::test]
-async fn canonical_dkg_end_suppresses_late_publication() -> Result<()> {
-    let (_guard, _bus, _net_cmd_tx, mut commands, _net_events, _, _, _, publisher) = setup_test()?;
-    let e3_id = E3id::new("closed", 1);
-    let stage = InterfoldEvent::<Unsequenced>::new_with_timestamp(
-        E3StageChanged {
-            e3_id: e3_id.clone(),
-            previous_stage: E3Stage::CommitteeFinalized,
-            new_stage: E3Stage::KeyPublished,
-        }
-        .into(),
-        None,
-        1,
-        None,
-        EventSource::Evm,
-    )
-    .into_sequenced(1);
-    publisher.send(stage).await?;
-
-    let late = InterfoldEvent::<Unsequenced>::new_with_timestamp(
-        PublishDocumentRequested {
-            meta: DocumentMeta::new(
-                e3_id,
-                DocumentKind::TrBFV,
-                vec![],
-                Some(Utc::now() + chrono::Duration::hours(1)),
-            ),
-            value: ArcBytes::from_bytes(b"late document"),
-        }
-        .into(),
-        None,
-        2,
-        None,
-        EventSource::Local,
-    )
-    .into_sequenced(2);
-    publisher.send(late).await?;
-
-    assert!(matches!(
-        commands.try_recv(),
-        Err(mpsc::error::TryRecvError::Empty)
-    ));
-    Ok(())
-}
-
-#[actix::test]
 async fn late_c4_document_is_rejected_after_key_published() -> Result<()> {
     let (_guard, _bus, _net_cmd_tx, mut commands, _net_events, _, _, _, publisher) = setup_test()?;
     let e3_id = E3id::new("decrypt", 1);

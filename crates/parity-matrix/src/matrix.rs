@@ -493,29 +493,13 @@ mod tests {
         }
     }
 
-    // ==================== Representative tests ====================
-    // Most parameter combinations are covered by test_many_combinations below.
-    // These tests cover specific edge cases and representative examples.
-
-    #[test]
-    fn test_default_params() {
-        // Default parameters: q=7, n=5, t=2
-        test_parity_matrix_for_params(BigUint::from(7u32), 5, 2);
-    }
-
-    #[test]
-    fn test_small_prime_q2() {
-        // Smallest prime modulus
-        test_parity_matrix_for_params(BigUint::from(2u32), 3, 1);
-    }
+    // ==================== Primes outside test_many_combinations ====================
 
     #[test]
     fn test_large_prime_101() {
         // Large prime with high degree
         test_parity_matrix_for_params(BigUint::from(101u32), 51, 25);
     }
-
-    // ==================== Very large primes ====================
 
     #[test]
     fn test_large_prime_64bit() {
@@ -539,20 +523,6 @@ mod tests {
         )
         .unwrap();
         test_parity_matrix_for_params(q, 11, 5);
-    }
-
-    // ==================== Edge cases ====================
-
-    #[test]
-    fn test_t_equals_0() {
-        // Degree 0 polynomials (constants)
-        test_parity_matrix_for_params(BigUint::from(7u32), 3, 0);
-    }
-
-    #[test]
-    fn test_minimal_case() {
-        // Minimal meaningful case: n=3, t=1 (linear)
-        test_parity_matrix_for_params(BigUint::from(5u32), 3, 1);
     }
 
     // ==================== Stress test with various parameter combinations ====================

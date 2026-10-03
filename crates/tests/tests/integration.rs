@@ -336,32 +336,6 @@ impl Drop for EnvTimeoutVarsGuard {
     }
 }
 
-/// RAII guard that restores a single env var on scope exit.
-#[allow(dead_code)]
-struct ScopedEnvVar {
-    name: &'static str,
-    original: Option<OsString>,
-}
-
-impl ScopedEnvVar {
-    #[allow(dead_code)]
-    fn set(name: &'static str, value: &str) -> Self {
-        let original = std::env::var_os(name);
-        std::env::set_var(name, value);
-        Self { name, original }
-    }
-}
-
-impl Drop for ScopedEnvVar {
-    fn drop(&mut self) {
-        if let Some(v) = &self.original {
-            std::env::set_var(self.name, v);
-        } else {
-            std::env::remove_var(self.name);
-        }
-    }
-}
-
 async fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Result<()> {
     tokio::fs::create_dir_all(dst).await?;
     let mut entries = tokio::fs::read_dir(src).await?;
@@ -936,28 +910,6 @@ fn find_node_index_by_address(nodes: &CiphernodeSystem, address: &str) -> Result
     }
 
     bail!("Could not find node index for address {address}");
-}
-
-#[allow(dead_code)]
-async fn expect_node_events_with_timeouts(
-    nodes: &CiphernodeSystem,
-    index: usize,
-    expected: &[&str],
-    total_to: Duration,
-    per_evt_to: Duration,
-) -> Result<CiphernodeHistory> {
-    let h = nodes
-        .take_history_with_timeouts(index, expected.len(), Some(total_to), Some(per_evt_to))
-        .await
-        .map_err(|e| anyhow::anyhow!("FAILURE on node {index}: {expected:?} : {e}"))?;
-
-    println!(
-        "node {index} >> {:?} == {:?}",
-        h.event_types(),
-        expected.to_vec()
-    );
-    h.expect(expected.to_vec());
-    Ok(h)
 }
 
 fn project_history<F>(history: &[InterfoldEvent], mut projector: F) -> Vec<&'static str>

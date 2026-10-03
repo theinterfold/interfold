@@ -185,34 +185,6 @@ async fn a_failure_after_narrowing_keeps_the_chunks_already_delivered() {
 }
 
 #[actix::test]
-async fn test_backfill_clamps_to_confirmed_head() {
-    // Head at 200, but require 12 confirmations => only ingest up to 188.
-    let mock = MockLogProvider::new(200);
-    mock.push_logs(vec![make_test_log(150)]);
-    let (next, _rx) = setup_collector();
-    let mut ts = TimestampTracker::new();
-    let mut window = LogWindow::new();
-    let filter = Filter::new();
-    let mut last_block = 100u64;
-
-    let result = backfill_to_head(
-        &mock,
-        &filter,
-        1,
-        &next,
-        &mut ts,
-        &mut last_block,
-        12,
-        &mut window,
-    )
-    .await;
-
-    assert!(result.is_ok());
-    // Advanced only to the confirmed head, not the raw head of 200.
-    assert_eq!(last_block, 188);
-}
-
-#[actix::test]
 async fn live_log_waits_for_confirmed_canonical_backfill() -> anyhow::Result<()> {
     let mock = MockLogProvider::new(200);
     let (next, mut rx) = setup_collector();

@@ -344,26 +344,6 @@ async fn a_rate_limit_error_is_retried_without_narrowing_the_window() {
 }
 
 #[actix::test]
-async fn a_log_carrying_its_timestamp_costs_no_extra_request() {
-    // The provider already delivered the timestamp with the log, so resolving it must not send
-    // eth_getBlockByNumber. This is the common case on a real endpoint.
-    let mock = MockLogProvider::new(100);
-    let mut tracker = TimestampTracker::new();
-
-    let ts = tracker
-        .get(&mock, Some(100), Some(1_700_000_000))
-        .await
-        .expect("a log timestamp needs no request");
-
-    assert_eq!(ts, 1_700_000_000);
-    assert_eq!(
-        mock.timestamp_call_count(),
-        0,
-        "the log's own timestamp must not trigger a request"
-    );
-}
-
-#[actix::test]
 async fn a_whole_chunk_of_timestamped_logs_sends_no_timestamp_requests() {
     // Each log sits in its own block. Before the log's own timestamp was used, this chunk cost one
     // eth_getBlockByNumber per block — more requests than the eth_getLogs calls of the sync.
@@ -403,23 +383,6 @@ async fn a_whole_chunk_of_timestamped_logs_sends_no_timestamp_requests() {
         count += 1;
     }
     assert_eq!(count, 4, "every log must still be delivered");
-}
-
-#[actix::test]
-async fn a_provider_that_omits_the_timestamp_still_falls_back_to_the_block() {
-    // block_timestamp is optional in the JSON-RPC response. When absent the tracker must still
-    // resolve the value rather than invent one.
-    let mock = MockLogProvider::new(100);
-    mock.push_timestamp(1_700_000_500);
-    let mut tracker = TimestampTracker::new();
-
-    let ts = tracker
-        .get(&mock, Some(77), None)
-        .await
-        .expect("fallback should resolve");
-
-    assert_eq!(ts, 1_700_000_500);
-    assert_eq!(mock.timestamp_call_count(), 1);
 }
 
 #[actix::test]

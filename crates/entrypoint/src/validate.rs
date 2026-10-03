@@ -53,7 +53,7 @@ use e3_sync::{
     SyncRepositoryFactory, SCHEMA_VERSION,
 };
 use e3_utils::enumerate_path;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 /// Outcome severity for a single validation check.
@@ -992,10 +992,6 @@ fn read_event_log(
 
     Ok(events)
 }
-
-/// A non-empty `BTreeMap` alias kept for readability in tests.
-#[allow(dead_code)]
-type SeqMap = BTreeMap<AggregateId, u64>;
 
 #[cfg(test)]
 mod tests {

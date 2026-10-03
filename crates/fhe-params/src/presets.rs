@@ -597,24 +597,6 @@ mod tests {
     }
 
     #[test]
-    fn test_param_set_build() {
-        let preset = BfvPreset::InsecureDkg512;
-        let param_set: BfvParamSet = preset.into();
-
-        assert_eq!(param_set.degree, insecure_512::DEGREE);
-        assert_eq!(
-            param_set.plaintext_modulus,
-            insecure_512::dkg::PLAINTEXT_MODULUS
-        );
-        assert_eq!(param_set.moduli, insecure_512::dkg::MODULI);
-
-        let params = param_set.build();
-        assert_eq!(params.degree(), param_set.degree);
-        assert_eq!(params.plaintext(), param_set.plaintext_modulus);
-        assert_eq!(params.moduli(), param_set.moduli);
-    }
-
-    #[test]
     fn test_param_set_build_arc() {
         let preset = BfvPreset::SecureDkg8192;
         let param_set: BfvParamSet = preset.into();

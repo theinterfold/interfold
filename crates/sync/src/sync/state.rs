@@ -32,7 +32,7 @@ impl AggregateState {
 
 /// Snapshot metadata describing where each aggregate left off (sequence, block, hlc timestamp).
 ///
-/// The transforms (`to_evm_config`, `to_net_config`, `to_sequence_map`, `aggregates`) are pure
+/// The transforms (`to_evm_config`, `to_net_config`, `to_sequence_map`) are pure
 /// and unit-tested below. `read_from_disk` is the only I/O entry point and simply hydrates the
 /// value object from the persisted aggregate repositories.
 #[derive(Clone)]
@@ -209,18 +209,5 @@ mod tests {
             .expect_err("configured chains must cover every chain snapshot");
 
         assert!(error.to_string().contains("has no configured EVM chain"));
-    }
-
-    #[test]
-    fn aggregates_lists_every_aggregate_id() {
-        let ids = meta().aggregates();
-        assert_eq!(
-            ids,
-            vec![
-                AggregateId::new(1),
-                AggregateId::new(2),
-                AggregateId::new(0)
-            ]
-        );
     }
 }

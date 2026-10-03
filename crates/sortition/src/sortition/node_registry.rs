@@ -135,39 +135,6 @@ pub struct NodeStateStore {
 }
 
 impl NodeStateStore {
-    /// Get the tickets this node chooses to use after local load balancing.
-    ///
-    /// The available ticket count is `floor(balance / price) - active_jobs`,
-    /// saturating at zero. Inactive nodes and a zero ticket price both yield `0`.
-    ///
-    /// The contract validates the full ticket range from the snapshotted balance.
-    /// Other nodes can ignore this local participation policy.
-    pub fn available_tickets(&self, address: &str) -> u64 {
-        if self.ticket_price.is_zero() {
-            warn!("Ticket price is zero, returning 0 tickets, Please make sure this is the correct behavior");
-            return 0;
-        }
-
-        let Some(node) = self.nodes.get(address) else {
-            return 0;
-        };
-
-        let total_tickets = (node.ticket_balance / self.ticket_price)
-            .try_into()
-            .unwrap_or(0u64);
-        total_tickets.saturating_sub(node.active_jobs)
-    }
-
-    /// Get all active nodes that currently have at least one available ticket.
-    pub fn get_nodes_with_tickets(&self) -> Vec<(String, u64)> {
-        self.nodes
-            .iter()
-            .filter(|(_, node_state)| node_state.active)
-            .map(|(addr, _)| (addr.clone(), self.available_tickets(addr)))
-            .filter(|(_, tickets)| *tickets > 0)
-            .collect()
-    }
-
     pub fn sortition_snapshot(&self, e3_id: &E3id) -> Option<SortitionSnapshot> {
         self.sortition_snapshots.get(&committee_key(e3_id)).copied()
     }
