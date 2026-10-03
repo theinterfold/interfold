@@ -237,6 +237,52 @@ impl ThresholdKeyshare {
         Ok(false)
     }
 
+    /// Save the ID of a logged C2/C3 dispatch that verifies the current batch, at the dispatch's
+    /// own position in the log. The actor records a dispatch ID when it sends the dispatch, but
+    /// that write can be lost: a batch that `EffectsEnabled` sends again has no logged cause that
+    /// replay would run again, and its write uses the last saved context, which the store can
+    /// refuse as stale. So the ID is saved here again, also when the actor already holds it:
+    /// a later snapshot cut then keeps it, and replay from an earlier cut delivers the dispatch
+    /// before its result, so the result applies where it applied before the restart. Only the ID
+    /// is saved: nothing is published and no roster is accepted.
+    pub(in crate::actors::threshold_keyshare) fn record_logged_share_dispatch(
+        &mut self,
+        dispatch: &ShareVerificationDispatched,
+        ec: &EventContext<Sequenced>,
+    ) -> Result<()> {
+        let state = self.state.try_get()?;
+        if dispatch.kind != VerificationKind::ShareProofs || dispatch.e3_id != state.e3_id {
+            return Ok(());
+        }
+        let recovery = self.recovery.try_get()?;
+        let dispatch_id = ec.id();
+        let Some(batch) = recovery.collected_threshold_share_ids.as_ref() else {
+            return Ok(());
+        };
+        let recorded = recovery.share_dispatch_ids.contains(&dispatch_id);
+        let verified: BTreeSet<u64> = dispatch
+            .share_proofs
+            .iter()
+            .map(|proofs| proofs.sender_party_id)
+            .chain(dispatch.pre_dishonest.iter().copied())
+            .collect();
+        let batch: BTreeSet<u64> = batch
+            .iter()
+            .copied()
+            .filter(|party_id| *party_id != state.party_id)
+            .collect();
+        if !recorded && !dispatch_verifies_batch(&verified, &batch, &state.expelled_parties) {
+            return Ok(());
+        }
+        self.recovery.try_mutate(ec, |mut recovery| {
+            if !recovery.share_dispatch_ids.contains(&dispatch_id) {
+                recovery.share_dispatch_ids.push(dispatch_id);
+            }
+            recovery.last_ec = Some(ec.clone());
+            Ok(recovery)
+        })
+    }
+
     /// Record a verification result, act on it, and grow the C2/C3 batch when possible.
     pub(in crate::actors::threshold_keyshare) fn apply_share_verification(
         &mut self,

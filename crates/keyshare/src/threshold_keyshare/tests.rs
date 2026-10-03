@@ -1362,6 +1362,17 @@ async fn share_dispatch_of(
     history: &Addr<HistoryCollector<InterfoldEvent>>,
     dealers: &[u64],
 ) -> Result<EventContext<Sequenced>> {
+    Ok(share_dispatch_event_of(history, dealers)
+        .await?
+        .get_ctx()
+        .clone())
+}
+
+/// The C2/C3 dispatch that the actor sent for `dealers`, as the event log holds it.
+async fn share_dispatch_event_of(
+    history: &Addr<HistoryCollector<InterfoldEvent>>,
+    dealers: &[u64],
+) -> Result<InterfoldEvent> {
     actix::clock::timeout(std::time::Duration::from_secs(10), async {
         loop {
             let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
@@ -1378,7 +1389,7 @@ async fn share_dispatch_of(
                 )
             });
             if let Some(dispatch) = dispatch {
-                return Ok(dispatch.get_ctx().clone());
+                return Ok(dispatch.clone());
             }
             actix::clock::sleep(std::time::Duration::from_millis(10)).await;
         }
@@ -1652,6 +1663,160 @@ async fn a_restart_applies_the_result_of_a_dispatch_sent_before_it() -> Result<(
     .await?;
     assert_eq!(recovery.verified_dealer_ids, Some(BTreeSet::from([2])));
     assert_eq!(actor.send(KeptShareVerdicts).await?, 0);
+    Ok(())
+}
+
+/// A dispatch ID can be missing from the saved state: `EffectsEnabled` sends a recorded batch
+/// again without a logged cause, and the node can stop before that write is saved. Replay delivers
+/// the logged dispatch before its result, so the actor records the ID again, and the result applies
+/// where it applied before the restart instead of waiting for the next `EffectsEnabled`.
+#[actix::test]
+async fn replay_records_a_logged_dispatch_that_the_saved_state_lacks() -> Result<()> {
+    let e3_id = E3id::new("logged-share-dispatch", 1);
+    // The batch grew past expelled dealer 1 to `{2}`, and `{2}` has no result yet.
+    let saved_batch = |recovery: &mut ThresholdKeyshareRecoveryState| {
+        recovery.collected_threshold_share_ids = Some(BTreeSet::from([2]));
+        recovery.verified_dealer_ids = Some(BTreeSet::new());
+    };
+    let CommitteeActor {
+        mut actor, history, ..
+    } = committee_with_two_shares(&e3_id, saved_batch).await?;
+    actor.handle_committee_member_expelled(expulsion_of(&e3_id, 1), test_ec(4));
+    let actor = actor.start();
+    actor
+        .send(keyshare_event(EffectsEnabled::new(), 5, EventSource::Local))
+        .await?;
+    let (dispatch, dispatch_ec) = share_dispatch_event_of(&history, &[2])
+        .await?
+        .into_components();
+
+    // After the restart, the saved state has the batch but not the ID of that dispatch.
+    let CommitteeActor {
+        mut actor,
+        bus,
+        recovery_repo,
+        ..
+    } = committee_with_two_shares(&e3_id, saved_batch).await?;
+    actor.handle_committee_member_expelled(expulsion_of(&e3_id, 1), test_ec(4));
+    let actor = actor.start();
+    bus.subscribe(
+        EventType::ShareVerificationComplete,
+        actor.clone().recipient(),
+    );
+    actor
+        .send(keyshare_event(dispatch, 6, EventSource::Local))
+        .await?;
+    bus.publish(
+        ShareVerificationComplete {
+            e3_id: e3_id.clone(),
+            kind: VerificationKind::ShareProofs,
+            dishonest_parties: BTreeSet::new(),
+        },
+        dispatch_ec.clone(),
+    )?;
+
+    let recovery = wait_for_record(&recovery_repo, |recovery| {
+        recovery.share_verification_complete.is_some()
+    })
+    .await?;
+    assert_eq!(recovery.verified_dealer_ids, Some(BTreeSet::from([2])));
+    assert!(recovery.share_dispatch_ids.contains(&dispatch_ec.id()));
+    assert_eq!(actor.send(KeptShareVerdicts).await?, 0);
+    Ok(())
+}
+
+/// A batch that `EffectsEnabled` sends again is saved with the last saved context, which the store
+/// can refuse as stale. When the logged dispatch reaches the actor, the actor saves its recovery
+/// state again at the dispatch's own position, also though it already holds the ID, so a later
+/// snapshot cut keeps the ID.
+#[actix::test]
+async fn a_logged_dispatch_is_saved_at_its_own_position() -> Result<()> {
+    let e3_id = E3id::new("dispatch-position", 1);
+    let CommitteeActor {
+        mut actor,
+        history,
+        recovery_repo,
+        ..
+    } = committee_with_two_shares(&e3_id, |recovery| {
+        recovery.collected_threshold_share_ids = Some(BTreeSet::from([2]));
+        recovery.verified_dealer_ids = Some(BTreeSet::new());
+    })
+    .await?;
+    actor.handle_committee_member_expelled(expulsion_of(&e3_id, 1), test_ec(4));
+    let actor = actor.start();
+    actor
+        .send(keyshare_event(EffectsEnabled::new(), 5, EventSource::Local))
+        .await?;
+    let (dispatch, dispatch_ec) = share_dispatch_event_of(&history, &[2])
+        .await?
+        .into_components();
+    let resent = wait_for_record(&recovery_repo, |recovery| {
+        recovery.share_dispatch_ids.contains(&dispatch_ec.id())
+    })
+    .await?;
+    assert_ne!(resent.last_ec.map(|ec| ec.id()), Some(dispatch_ec.id()));
+
+    actor
+        .send(keyshare_event(dispatch, 6, EventSource::Local))
+        .await?;
+
+    wait_for_record(&recovery_repo, |recovery| {
+        recovery
+            .last_ec
+            .as_ref()
+            .is_some_and(|ec| ec.id() == dispatch_ec.id())
+            && recovery.share_dispatch_ids.contains(&dispatch_ec.id())
+    })
+    .await?;
+    Ok(())
+}
+
+/// A logged dispatch of an earlier batch does not verify a grown batch, so the actor does not
+/// record its ID, and another result of it is kept instead of completing the grown batch.
+#[actix::test]
+async fn a_logged_dispatch_of_an_earlier_batch_is_not_recorded_for_a_grown_batch() -> Result<()> {
+    let e3_id = E3id::new("earlier-logged-dispatch", 1);
+    let CommitteeActor {
+        mut actor,
+        bus,
+        history,
+        recovery_repo,
+    } = committee_with_two_shares(&e3_id, |recovery| {
+        recovery.collected_threshold_share_ids = Some(BTreeSet::from([2]));
+    })
+    .await?;
+    actor.verify_recorded_threshold_shares(test_ec(4))?;
+    let (first_dispatch, first_ec) = share_dispatch_event_of(&history, &[2])
+        .await?
+        .into_components();
+    let actor = actor.start();
+    bus.subscribe(
+        EventType::ShareVerificationComplete,
+        actor.clone().recipient(),
+    );
+    let verdict = |dishonest_parties: BTreeSet<u64>| ShareVerificationComplete {
+        e3_id: e3_id.clone(),
+        kind: VerificationKind::ShareProofs,
+        dishonest_parties,
+    };
+
+    // `{2}` is verified, and the batch grows to `{1, 2}`.
+    bus.publish(verdict(BTreeSet::new()), first_ec.clone())?;
+    wait_for_record(&recovery_repo, |recovery| {
+        recovery.collected_threshold_share_ids == Some(BTreeSet::from([1, 2]))
+            && recovery.share_verification_complete.is_none()
+    })
+    .await?;
+
+    // The first dispatch arrives again, then another result of it.
+    actor
+        .send(keyshare_event(first_dispatch, 6, EventSource::Local))
+        .await?;
+    bus.publish(verdict(BTreeSet::from([2])), first_ec.clone())?;
+    wait_for_kept_share_verdicts(&actor, 1).await?;
+    let recovery = recovery_repo.read().await?.expect("saved recovery state");
+    assert!(!recovery.share_dispatch_ids.contains(&first_ec.id()));
+    assert!(recovery.share_verification_complete.is_none());
     Ok(())
 }
 

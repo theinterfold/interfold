@@ -73,6 +73,22 @@ pub(crate) fn batch_grows(
     previous.len() < candidate.len() && previous.is_subset(&candidate)
 }
 
+/// Whether a C2/C3 dispatch verified the share batch `batch` of this node, without this node's own
+/// party: `verified`, its senders and pre-dishonest parties, holds every dealer of `batch` that is
+/// not expelled, and no dealer outside `batch`. A dispatch leaves out the dealers expelled when it
+/// was sent, so a later expulsion does not change the answer, and a dispatch of an earlier batch
+/// does not verify a grown one.
+pub(crate) fn dispatch_verifies_batch(
+    verified: &BTreeSet<u64>,
+    batch: &BTreeSet<u64>,
+    expelled: &HashSet<u64>,
+) -> bool {
+    verified.is_subset(batch)
+        && batch
+            .iter()
+            .all(|party_id| expelled.contains(party_id) || verified.contains(party_id))
+}
+
 /// Find the first H-party set whose members each hold the same version of
 /// every selected dealer contribution. Party IDs and dealer versions are
 /// checked before this function receives the readiness map.
@@ -327,6 +343,32 @@ mod tests {
         assert!(batch_grows(&ids(&[1]), &ids(&[2]), &expelled));
         // Without the expulsion, dropping dealer 1 is not growth.
         assert!(!batch_grows(&ids(&[1, 2]), &ids(&[2, 3]), &HashSet::new()));
+    }
+
+    #[test]
+    fn a_dispatch_verifies_the_batch_whose_live_dealers_it_holds() {
+        let batch = ids(&[1, 2, 3]);
+        assert!(dispatch_verifies_batch(
+            &ids(&[1, 2, 3]),
+            &batch,
+            &HashSet::new()
+        ));
+        // Dealer 3 was expelled before the dispatch, or after it.
+        let expelled = HashSet::from([3]);
+        assert!(dispatch_verifies_batch(&ids(&[1, 2]), &batch, &expelled));
+        assert!(dispatch_verifies_batch(&ids(&[1, 2, 3]), &batch, &expelled));
+        // A dispatch of the earlier batch `{1, 2}` does not verify the grown batch.
+        assert!(!dispatch_verifies_batch(
+            &ids(&[1, 2]),
+            &batch,
+            &HashSet::new()
+        ));
+        // A dealer outside the batch.
+        assert!(!dispatch_verifies_batch(
+            &ids(&[1, 2, 3, 4]),
+            &batch,
+            &HashSet::new()
+        ));
     }
 
     #[test]

@@ -65,10 +65,10 @@ use crate::domain::timeout_policy::{
 };
 use crate::domain::{
     batch_grows, build_decryption_key_plan, build_shares_generated_plan, dealer_identity,
-    generate_bfv_keypair, select_ready_roster, AggregatingDecryptionKey, BfvKeypairMaterial,
-    CollectingEncryptionKeysData, Decrypting, DecryptionKeyPlan, GeneratingDecryptionProof,
-    GeneratingThresholdShareData, KeyshareState, ProofRequestData, ReadyForDecryption,
-    ReadySummaryGate, ReceivedShareProofs, ThresholdKeyshareState,
+    dispatch_verifies_batch, generate_bfv_keypair, select_ready_roster, AggregatingDecryptionKey,
+    BfvKeypairMaterial, CollectingEncryptionKeysData, Decrypting, DecryptionKeyPlan,
+    GeneratingDecryptionProof, GeneratingThresholdShareData, KeyshareState, ProofRequestData,
+    ReadyForDecryption, ReadySummaryGate, ReceivedShareProofs, ThresholdKeyshareState,
 };
 
 #[path = "recovery_state.rs"]

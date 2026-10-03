@@ -45,6 +45,11 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
                     }
                 }
             }
+            InterfoldEventData::ShareVerificationDispatched(data) => {
+                trap(EType::KeyGeneration, &self.bus.with_ec(&ec), || {
+                    self.record_logged_share_dispatch(&data, &ec)
+                });
+            }
             InterfoldEventData::DkgCoordination(data) => {
                 let is_ready = matches!(data.kind, DkgCoordinationKind::Ready);
                 let result = self

@@ -563,10 +563,15 @@ ShareVerificationActor receives ShareVerificationDispatched(kind=ShareProofs)
     ├─ Until a C2/C3 result is recorded, applies each one to the first batch. After that,
     │  it applies a result only if its dispatch is one that this node sent for the current
     │  batch. The recovery state keeps those dispatch IDs, so replay applies such a result
-    │  where it applied before a restart. It keeps any other result and applies it when it
-    │  sends a dispatch with that ID, as when a restart sends the saved batch again. A
-    │  result of an earlier batch therefore cannot count a dealer that only a grown batch
-    │  holds as verified
+    │  where it applied before a restart. When the logged dispatch reaches the node and
+    │  holds every live dealer of the current batch and no other, the node saves the ID
+    │  again at the dispatch's own position, also when it already holds it. A batch that
+    │  EffectsEnabled sends again has no logged cause, and its first save uses the last
+    │  saved context, which the store can refuse as stale: a later snapshot cut then keeps
+    │  the ID, and replay from an earlier cut restores it from the log. It keeps any other
+    │  result and applies it when it sends a dispatch with that ID, as when a restart
+    │  sends the saved batch again. A result of an earlier batch therefore cannot count a
+    │  dealer that only a grown batch holds as verified
     ├─ Excludes failed C2/C3 proofs and C3 proofs that target a different
     │  recipient key
     ├─ Saves the verified dealer IDs and their exact contribution hashes
