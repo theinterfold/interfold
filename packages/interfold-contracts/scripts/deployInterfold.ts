@@ -1052,6 +1052,10 @@ export const deployInterfold = async (
       "interfold.e3Programs(initial program)",
       interfold.e3Programs(mockDeployments.e3ProgramAddress),
     ],
+    [
+      "interfold.isFeeTokenAllowed(feeToken)",
+      interfold.isFeeTokenAllowed(feeTokenAddress),
+    ],
   ];
   if (deployedFaucet) {
     authorizations.push([

@@ -72,13 +72,14 @@ every section.
   claim source (constructor and initializer arguments and setter values, including the BFV verifier
   bindings and, with ZK verification, the BFV wrappers' circuit verifiers), and every authorization
   that it grants (the BondingRegistry reward distributor, the FOLD transfer whitelist, the initial
-  E3 program). It throws with the full list of mismatches before it enables requests. Owners and
-  admins (the deployer) and configuration values (committee thresholds, parameter sets, slash
-  policies, the node release, timing and pricing amounts) are not references; the integration check
-  in `tests/integration/base.sh` covers the committee thresholds. Add a read-back for each new
-  reference or authorization. **Gap:** the check does not read the ERC-1967 implementation and admin
-  slots of the proxies; each `deployAndSave` helper passes the implementation that it has just
-  deployed to the proxy constructor, so only a helper bug can make them disagree.
+  E3 program, the fee-token admission). It throws with the full list of mismatches before it enables
+  requests. Owners and admins (the deployer) and configuration values (committee thresholds,
+  parameter sets, slash policies, the node release, timing and pricing amounts) are not references;
+  the integration check in `tests/integration/base.sh` covers the committee thresholds. Add a
+  read-back for each new reference or authorization. **Gap:** the check does not read the ERC-1967
+  implementation and admin slots of the proxies. A fresh deployment passes each new implementation
+  to the proxy constructor in the same `deployAndSave` helper, but a proxy that a helper reuses from
+  the deployment record, or that its admin upgraded later, is not checked.
 - **A deployment must also enable bonded voting.** `protocol/deployContracts` deploys
   `BondedCheckpoints` (bound to the BondingRegistry **proxy**, not the implementation) and the
   governance batch calls `setBondedCheckpoints` after `initialize`. `BondedVotes` comes later, from
