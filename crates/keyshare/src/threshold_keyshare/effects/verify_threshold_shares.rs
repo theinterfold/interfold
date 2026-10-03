@@ -186,8 +186,14 @@ impl ThresholdKeyshare {
             committee_size,
         });
         let dispatch_id = EventId::hash(&dispatch);
-        self.bus.publish(dispatch, ec)?;
-        self.pending.share_dispatches.insert(dispatch_id);
+        self.bus.publish(dispatch, ec.clone())?;
+        self.recovery.try_mutate(&ec, |mut recovery| {
+            if !recovery.share_dispatch_ids.contains(&dispatch_id) {
+                recovery.share_dispatch_ids.push(dispatch_id);
+            }
+            recovery.last_ec = Some(ec.clone());
+            Ok(recovery)
+        })?;
         match self.pending.parked_share_verdicts.remove(&dispatch_id) {
             Some(verdict) => self.apply_share_verification(verdict),
             None => Ok(()),
@@ -196,11 +202,12 @@ impl ThresholdKeyshare {
 
     /// Whether a delivered verification result belongs to the current batch. Until a C2/C3
     /// result is recorded, only the first batch exists, so its results apply. After that, a C2/C3
-    /// result applies only if this process sent its dispatch for the current batch. After a
-    /// restart, a batch can be sent again with another payload when an expulsion came between, so
-    /// a result of the earlier batch can arrive after the batch grew. It would count the dealers
-    /// that only the grown batch holds as verified. Such a result is kept, and it applies if this
-    /// actor later sends a dispatch with its ID.
+    /// result applies only if its dispatch is one that this node sent for the current batch. The
+    /// recovery state keeps those dispatch IDs, so after a restart replay applies such a result
+    /// where it applied before. After a restart, a batch can be sent again with another payload
+    /// when an expulsion came between, so a result of the earlier batch can arrive after the batch
+    /// grew. It would count the dealers that only the grown batch holds as verified. Such a result
+    /// is kept, and it applies if this actor later sends a dispatch with its ID.
     pub(in crate::actors::threshold_keyshare) fn share_verification_applies(
         &mut self,
         msg: &TypedEvent<ShareVerificationComplete>,
@@ -211,7 +218,12 @@ impl ThresholdKeyshare {
             return Ok(true);
         }
         let dispatch_id = msg.get_ctx().causation_id();
-        if self.pending.share_dispatches.contains(&dispatch_id) {
+        if self
+            .recovery
+            .try_get()?
+            .share_dispatch_ids
+            .contains(&dispatch_id)
+        {
             return Ok(true);
         }
         info!(

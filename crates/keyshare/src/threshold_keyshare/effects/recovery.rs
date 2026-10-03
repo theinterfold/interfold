@@ -115,14 +115,12 @@ impl ThresholdKeyshare {
             if !verification_in_flight && extends_previous {
                 recovery.collected_threshold_share_ids = Some(ids);
                 recovery.share_verification_complete = None;
+                recovery.share_dispatch_ids.clear();
                 accepted = true;
             }
             recovery.last_ec = Some(ec.clone());
             Ok(recovery)
         })?;
-        if accepted {
-            self.pending.share_dispatches.clear();
-        }
         Ok(accepted)
     }
 

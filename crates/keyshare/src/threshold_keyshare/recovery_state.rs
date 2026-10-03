@@ -6,11 +6,11 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use e3_events::{
     CiphernodeSelected, DecryptionKeyShared, DecryptionShareProofsPending, DkgCoordination,
-    EncryptionKeyCreated, EventContext, Sequenced, ShareDecryptionProofPending,
+    EncryptionKeyCreated, EventContext, EventId, Sequenced, ShareDecryptionProofPending,
     ShareVerificationComplete, TypedEvent,
 };
 
-pub const THRESHOLD_KEYSHARE_RECOVERY_SCHEMA_VERSION: u32 = 6;
+pub const THRESHOLD_KEYSHARE_RECOVERY_SCHEMA_VERSION: u32 = 7;
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RecoveryPayloadRef {
@@ -31,6 +31,9 @@ pub struct ThresholdKeyshareRecoveryState {
     pub share_decryption_proof_pending: Option<TypedEvent<ShareDecryptionProofPending>>,
     pub share_verification_complete: Option<TypedEvent<ShareVerificationComplete>>,
     pub verified_dealer_ids: Option<BTreeSet<u64>>,
+    /// IDs of the C2/C3 verification dispatches sent for the current share batch. A restart keeps
+    /// them, so replay applies a result of such a dispatch where it applied before the restart.
+    pub share_dispatch_ids: Vec<EventId>,
     pub decryption_verification_complete: Option<TypedEvent<ShareVerificationComplete>>,
     pub dkg_ready: Option<DkgCoordination>,
     pub ready_by_party: BTreeMap<u64, DkgCoordination>,
@@ -56,6 +59,7 @@ impl Default for ThresholdKeyshareRecoveryState {
             share_decryption_proof_pending: None,
             share_verification_complete: None,
             verified_dealer_ids: None,
+            share_dispatch_ids: Vec::new(),
             decryption_verification_complete: None,
             dkg_ready: None,
             ready_by_party: BTreeMap::new(),

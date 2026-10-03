@@ -561,17 +561,20 @@ ShareVerificationActor receives ShareVerificationDispatched(kind=ShareProofs)
 │
 └─ ThresholdKeyshare receives ShareVerificationComplete:
     ├─ Until a C2/C3 result is recorded, applies each one to the first batch. After that,
-    │  it applies a result only if this process sent its dispatch for the current batch.
-    │  It keeps any other result and applies it when it sends a dispatch with that ID, as
-    │  when a restart sends the saved batch again. A result of an earlier batch therefore
-    │  cannot count a dealer that only a grown batch holds as verified
+    │  it applies a result only if its dispatch is one that this node sent for the current
+    │  batch. The recovery state keeps those dispatch IDs, so replay applies such a result
+    │  where it applied before a restart. It keeps any other result and applies it when it
+    │  sends a dispatch with that ID, as when a restart sends the saved batch again. A
+    │  result of an earlier batch therefore cannot count a dealer that only a grown batch
+    │  holds as verified
     ├─ Excludes failed C2/C3 proofs and C3 proofs that target a different
     │  recipient key
     ├─ Saves the verified dealer IDs and their exact contribution hashes
     ├─ Publishes a signed DkgCoordination::Ready list when at least H dealers,
     │  including this party, remain
-    ├─ Re-verifies each late-share batch that holds every dealer of the saved batch that
-    │  is not expelled, plus at least one more. It publishes a new signed Ready list only
+    ├─ Re-verifies each late-share batch that, without its expelled dealers, holds every
+    │  dealer of the saved batch that is not expelled, plus at least one more. An expelled
+    │  dealer in the new batch is not growth. It publishes a new signed Ready list only
     │  when the list keeps every dealer of the earlier one, so a Ready list never drops a
     │  dealer, even an expelled one
     ├─ If fewer than H pass locally, stays outside C4 without failing the E3

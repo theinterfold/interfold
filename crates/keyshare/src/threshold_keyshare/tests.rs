@@ -1597,6 +1597,103 @@ async fn a_kept_verdict_applies_when_restart_sends_its_batch_again() -> Result<(
     Ok(())
 }
 
+/// The recovery state keeps the C2/C3 dispatch IDs of the current batch. After a restart, replay
+/// therefore applies the result of a dispatch sent before the restart where it applied before,
+/// without waiting for `EffectsEnabled` to send the batch again.
+#[actix::test]
+async fn a_restart_applies_the_result_of_a_dispatch_sent_before_it() -> Result<()> {
+    let e3_id = E3id::new("persisted-share-dispatch", 1);
+    let verdict = ShareVerificationComplete {
+        e3_id: e3_id.clone(),
+        kind: VerificationKind::ShareProofs,
+        dishonest_parties: BTreeSet::new(),
+    };
+    // Before the restart, the batch grew past expelled dealer 1 to `{2}` and was sent.
+    let before = batch_with_an_expelled_dealer(&e3_id, false).await?;
+    let first_actor = before.actor.start();
+    before.bus.subscribe(
+        EventType::ShareVerificationComplete,
+        first_actor.recipient(),
+    );
+    let first_dispatch = keyshare_event(TestEvent::new("first batch", 1), 10, EventSource::Local)
+        .get_ctx()
+        .clone();
+    before.bus.publish(verdict.clone(), first_dispatch)?;
+    let grown_dispatch = share_dispatch_of(&before.history, &[2]).await?;
+    let persisted = wait_for_record(&before.recovery_repo, |recovery| {
+        recovery.share_dispatch_ids.contains(&grown_dispatch.id())
+    })
+    .await?;
+
+    // After the restart, replay delivers the grown batch's verdict before the batch is sent again.
+    let after = committee_with_two_shares(&e3_id, |recovery| {
+        recovery.collected_threshold_share_ids = Some(BTreeSet::from([2]));
+        recovery.verified_dealer_ids = Some(BTreeSet::new());
+        recovery.share_dispatch_ids = persisted.share_dispatch_ids.clone();
+    })
+    .await?;
+    let CommitteeActor {
+        mut actor,
+        bus,
+        recovery_repo,
+        ..
+    } = after;
+    actor.handle_committee_member_expelled(expulsion_of(&e3_id, 1), test_ec(4));
+    let actor = actor.start();
+    bus.subscribe(
+        EventType::ShareVerificationComplete,
+        actor.clone().recipient(),
+    );
+    bus.publish(verdict, grown_dispatch)?;
+
+    let recovery = wait_for_record(&recovery_repo, |recovery| {
+        recovery.share_verification_complete.is_some()
+    })
+    .await?;
+    assert_eq!(recovery.verified_dealer_ids, Some(BTreeSet::from([2])));
+    assert_eq!(actor.send(KeptShareVerdicts).await?, 0);
+    Ok(())
+}
+
+/// A verified batch stays verified when the collector reports its live dealers again together
+/// with an expelled dealer: an expelled dealer is not growth, so the result is not cleared and the
+/// same batch is not sent for verification again.
+#[actix::test]
+async fn an_expelled_dealer_does_not_restart_a_verified_batch() -> Result<()> {
+    let e3_id = E3id::new("expelled-is-not-growth", 1);
+    let CommitteeActor { mut actor, .. } = committee_with_two_shares(&e3_id, |recovery| {
+        recovery.collected_threshold_share_ids = Some(BTreeSet::from([2]));
+        recovery.verified_dealer_ids = Some(BTreeSet::from([2]));
+        recovery.share_verification_complete = Some(share_proofs_verified(&e3_id));
+    })
+    .await?;
+    actor.handle_committee_member_expelled(expulsion_of(&e3_id, 1), test_ec(4));
+    let shares = [1u64, 2].map(|party_id| {
+        (
+            party_id,
+            Arc::new(ThresholdShare {
+                party_id,
+                pk_share: ArcBytes::from_bytes(&[party_id as u8]),
+                sk_sss: Default::default(),
+                esi_sss: vec![Default::default()],
+            }),
+        )
+    });
+    let replacement = AllThresholdSharesCollected::new(
+        std::collections::HashMap::from(shares),
+        Default::default(),
+    );
+
+    assert!(!actor.record_collected_threshold_shares(&TypedEvent::new(replacement, test_ec(5)))?);
+    let recovery = actor.recovery.try_get()?;
+    assert_eq!(
+        recovery.collected_threshold_share_ids,
+        Some(BTreeSet::from([2]))
+    );
+    assert!(recovery.share_verification_complete.is_some());
+    Ok(())
+}
+
 #[actix::test]
 async fn only_the_active_aggregator_proposes_a_ready_roster() -> Result<()> {
     let (bus, history) = test_bus();

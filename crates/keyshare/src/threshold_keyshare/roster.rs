@@ -53,20 +53,24 @@ pub(crate) fn dealer_identity(
     })
 }
 
-/// Whether the share batch `candidate` grows the recorded batch `previous`: it holds every dealer
-/// of `previous` that is not expelled, and at least one more dealer. A dealer expelled after
-/// `previous` was recorded therefore does not block a larger batch.
+/// Whether the share batch `candidate` grows the recorded batch `previous`: without their expelled
+/// dealers, `candidate` holds every dealer of `previous` and at least one more. A dealer expelled
+/// after `previous` was recorded therefore does not block a larger batch, and an expelled dealer in
+/// `candidate` does not count as growth.
 pub(crate) fn batch_grows(
     previous: &BTreeSet<u64>,
     candidate: &BTreeSet<u64>,
     expelled: &HashSet<u64>,
 ) -> bool {
-    let remaining: BTreeSet<u64> = previous
-        .iter()
-        .filter(|party_id| !expelled.contains(party_id))
-        .copied()
-        .collect();
-    remaining.len() < candidate.len() && remaining.is_subset(candidate)
+    let live = |batch: &BTreeSet<u64>| -> BTreeSet<u64> {
+        batch
+            .iter()
+            .filter(|party_id| !expelled.contains(party_id))
+            .copied()
+            .collect()
+    };
+    let (previous, candidate) = (live(previous), live(candidate));
+    previous.len() < candidate.len() && previous.is_subset(&candidate)
 }
 
 /// Find the first H-party set whose members each hold the same version of
@@ -333,5 +337,17 @@ mod tests {
         // Only the expelled dealer left; no dealer was added.
         assert!(!batch_grows(&ids(&[1, 2]), &ids(&[2]), &expelled));
         assert!(batch_grows(&ids(&[2]), &ids(&[2, 3]), &HashSet::new()));
+        // An expelled dealer in the candidate is not growth.
+        let expelled = HashSet::from([1, 3]);
+        assert!(!batch_grows(
+            &ids(&[1, 2, 4, 5]),
+            &ids(&[2, 3, 4, 5]),
+            &expelled
+        ));
+        assert!(batch_grows(
+            &ids(&[1, 2, 4, 5]),
+            &ids(&[2, 3, 4, 5, 6]),
+            &expelled
+        ));
     }
 }
