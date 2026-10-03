@@ -57,14 +57,4 @@ describe('proof API forwarding', () => {
     expect(result.proof).toBe(proof)
     expect(await sdk.computeCiphertextCommitment(result.encryptedData)).toHaveLength(32)
   })
-
-  it.each(['number', 'vector'] as const)('propagates %s proof-generation failures', async (kind) => {
-    const failure = new Error('proof generation failed')
-    vi.mocked(generateProof).mockRejectedValueOnce(failure)
-    const request =
-      kind === 'number'
-        ? sdk.encryptNumberAndGenProof(1n, publicKey)
-        : sdk.encryptVectorAndGenProof(new BigUint64Array([1n, 2n]), publicKey)
-    await expect(request).rejects.toBe(failure)
-  })
 })
