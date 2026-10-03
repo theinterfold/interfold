@@ -4,6 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tokio::{
@@ -146,6 +147,10 @@ pub trait NetInterface: Sized {
 /// simulate libp2p without running libp2p.
 pub struct NetChannelBridge {
     cmd_tx: broadcast::Sender<NetCommand>,
+    /// A command receiver made with the bridge, for the first `cmd_rx` call. A node can send
+    /// commands before the test network attaches it, for example a restarted node that restores
+    /// its DHT records during startup; this receiver keeps them for the network.
+    first_cmd_rx: Arc<Mutex<Option<broadcast::Receiver<NetCommand>>>>,
     tx: mpsc::Sender<NetCommand>,
     event_tx: NetEventSender,
 }
@@ -206,6 +211,7 @@ pub fn create_channel_bridge_with_application_event_capacity(
 
     let inverted = NetChannelBridge {
         tx: m_cmd_tx,
+        first_cmd_rx: Arc::new(Mutex::new(Some(b_cmd_tx.subscribe()))),
         cmd_tx: b_cmd_tx,
         event_tx,
     };
@@ -224,6 +230,7 @@ pub trait NetInterfaceInverted: Sized {
         NetChannelBridge {
             tx: self.tx(),
             event_tx: self.event_tx(),
+            first_cmd_rx: Arc::new(Mutex::new(None)),
             cmd_tx: self.cmd_tx(),
         }
     }
@@ -234,8 +241,14 @@ impl NetInterfaceInverted for NetChannelBridge {
         self.tx.clone()
     }
 
+    /// The first call returns every command since the bridge was made; later calls return the
+    /// commands from then on.
     fn cmd_rx(&self) -> broadcast::Receiver<NetCommand> {
-        self.cmd_tx.subscribe()
+        self.first_cmd_rx
+            .lock()
+            .expect("the command receiver lock is not poisoned")
+            .take()
+            .unwrap_or_else(|| self.cmd_tx.subscribe())
     }
     fn event_tx(&self) -> NetEventSender {
         self.event_tx.clone()
@@ -253,6 +266,26 @@ mod tests {
     use crate::events::GossipData;
 
     use super::*;
+
+    /// A restarted node can send commands during startup, before the test network attaches it.
+    /// The first command receiver still gets them; a later receiver gets only later commands.
+    #[tokio::test(start_paused = true)]
+    async fn commands_sent_before_the_network_attaches_reach_it() {
+        let (handle, bridge) = create_channel_bridge();
+        let command = || NetCommand::DhtRemoveRecords { keys: Vec::new() };
+        handle.tx().send(command()).await.unwrap();
+        // Let the bridge forward the command before anything receives commands.
+        sleep(Duration::from_secs(1)).await;
+
+        let mut first = bridge.cmd_rx();
+        let mut later = bridge.cmd_rx();
+
+        assert!(matches!(
+            first.try_recv(),
+            Ok(NetCommand::DhtRemoveRecords { .. })
+        ));
+        assert!(later.try_recv().is_err());
+    }
 
     #[test]
     fn subscriber_closes_when_the_producer_drops() {
