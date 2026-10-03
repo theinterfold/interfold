@@ -91,16 +91,19 @@ impl HistoricalNetSyncStart {
 
 // The failure recipient is local to this process and is not stored, so the event ID and payload
 // equality depend only on `since`. A stored copy then equals its redelivered original, which the
-// EventStore duplicate rule requires.
+// EventStore duplicate rule requires. Both impls name every field, so a new field does not compile
+// until it is placed in or out of the identity here.
 impl Hash for HistoricalNetSyncStart {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.since.hash(state);
+        let Self { since, failure: _ } = self;
+        since.hash(state);
     }
 }
 
 impl PartialEq for HistoricalNetSyncStart {
     fn eq(&self, other: &Self) -> bool {
-        self.since == other.since
+        let Self { since, failure: _ } = self;
+        *since == other.since
     }
 }
 

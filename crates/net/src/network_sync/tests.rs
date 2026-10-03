@@ -701,7 +701,7 @@ fn start_history_fetch_without_peers(
 #[actix::test]
 async fn optional_peer_history_lets_startup_continue_when_no_peer_serves_it() {
     tokio::time::pause();
-    let (received, _failed) = start_history_fetch_without_peers(true);
+    let (received, mut failed) = start_history_fetch_without_peers(true);
     let received = tokio::time::timeout(Duration::from_secs(10 * 60), received)
         .await
         .expect("startup must not wait for history that no peer serves")
@@ -710,6 +710,10 @@ async fn optional_peer_history_lets_startup_continue_when_no_peer_serves_it() {
         panic!("expected the historical net events");
     };
     assert!(history.events.is_empty());
+    assert!(
+        failed.try_recv().is_err(),
+        "an optional history fetch must not report a failure to startup"
+    );
 }
 
 #[actix::test]
