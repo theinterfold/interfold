@@ -168,7 +168,9 @@ The node keeps announcing the document from its own store: again 30 s after the 
 then with the wait doubling up to 5 minutes. It retries a failed upload 15 s later, also doubling
 the wait up to 5 minutes, and uploads each document again every 30 minutes. It continues until the
 document expires or the DKG ends. The DKG ends when the chain reports the E3 stage `KeyPublished`,
-`CiphertextReady`, `Complete`, or `Failed`.
+`CiphertextReady`, `Complete`, or `Failed`. The node then stops an upload that is still running.
+Kademlia reports that stop as a quorum failure, and the node logs it at the `DEBUG` level as
+`DHT put record cancelled`, not as this error.
 
 - While the uploads fail, a peer whose DHT lookup reaches this node fetches the document from it. A
   lookup asks the about 20 peers closest to the key, so in a larger network some peers can fetch the

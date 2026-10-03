@@ -1103,7 +1103,7 @@ async fn process_swarm_event(
                 ..
             },
         )) => {
-            let correlation_id = correlator.expire(id)?;
+            let (correlation_id, cancelled) = correlator.expire_cancellable(id)?;
             match record {
                 Ok(record) => {
                     let key = ContentHash(record.key.to_vec());
@@ -1114,7 +1114,12 @@ async fn process_swarm_event(
                     })?;
                 }
                 Err(error) => {
-                    error!("DHT put record failed: {}", error);
+                    // A put that this node cancelled ends with a quorum failure too.
+                    if cancelled {
+                        debug!("DHT put record cancelled: {}", error);
+                    } else {
+                        error!("DHT put record failed: {}", error);
+                    }
                     event_tx.send(NetEvent::DhtPutRecordError {
                         correlation_id,
                         error: PutOrStoreError::PutRecordError(error),
@@ -1516,7 +1521,9 @@ async fn process_swarm_command(
             Ok(())
         }
         NetCommand::DhtCancelPut { key } => {
-            finish_record_uploads(&mut swarm.behaviour_mut().kademlia, &key);
+            for query_id in finish_record_uploads(&mut swarm.behaviour_mut().kademlia, &key) {
+                correlator.mark_cancelled(query_id);
+            }
             Ok(())
         }
         NetCommand::DhtGetRecord {
@@ -1800,8 +1807,13 @@ fn handle_put_record(
 ///
 /// A put first looks up the peers closest to the key. Ending that lookup makes Kademlia upload the
 /// record to the peers found so far, so a put in its lookup runs on to its normal end and uploads.
-fn finish_record_uploads(kademlia: &mut KademliaBehaviour<MemoryStore>, key: &ContentHash) {
+/// End the puts of `key` that upload their record, and return their query IDs.
+fn finish_record_uploads(
+    kademlia: &mut KademliaBehaviour<MemoryStore>,
+    key: &ContentHash,
+) -> Vec<kad::QueryId> {
     let key = RecordKey::new(key);
+    let mut finished = Vec::new();
     for mut query in kademlia.iter_queries_mut() {
         let uploading = matches!(
             query.info(),
@@ -1813,8 +1825,10 @@ fn finish_record_uploads(kademlia: &mut KademliaBehaviour<MemoryStore>, key: &Co
         );
         if uploading {
             query.finish();
+            finished.push(query.id());
         }
     }
+    finished
 }
 
 fn handle_get_record(
@@ -2317,7 +2331,10 @@ mod tests {
         let other_upload =
             kademlia.put_record_to(record_of(&other), [peer].into_iter(), Quorum::One);
 
-        super::finish_record_uploads(&mut kademlia, &document);
+        assert_eq!(
+            super::finish_record_uploads(&mut kademlia, &document),
+            vec![upload]
+        );
 
         let mut context = Context::from_waker(futures::task::noop_waker_ref());
         let mut reported = Vec::new();
