@@ -114,3 +114,54 @@ async fn reset_keeps_key_shares_that_active_e3s_need() -> Result<()> {
     assert_eq!(read_state(&config, &e3_id).await?, (None, None));
     Ok(())
 }
+
+#[actix::test]
+async fn reset_keeps_slash_reports_that_the_node_has_not_submitted() -> Result<()> {
+    use e3_evm::{SlashingWriterRecoveryState, SlashingWriterRepositoryFactory};
+    let e3_id = E3id::new("42", 1);
+    // The E3 is complete, so its key share does not block the reset, but its slash report does.
+    let node = tempfile::tempdir()?;
+    let config = node_config(node.path())?;
+    write_state(&config, &e3_id, E3Stage::Complete).await?;
+    let repositories = open(&config)?;
+    let mut pending = SlashingWriterRecoveryState::default();
+    pending.record(e3_events::AccusationQuorumReached {
+        e3_id: e3_id.clone(),
+        accuser: alloy::primitives::Address::repeat_byte(1),
+        accused: alloy::primitives::Address::repeat_byte(2),
+        proof_type: e3_events::ProofType::C1PkGeneration,
+        votes_for: Vec::new(),
+        outcome: e3_events::AccusationOutcome::AccusedFaulted,
+        evidence: alloy::primitives::Bytes::new(),
+    })?;
+    repositories
+        .slashing_writer_recovery(1)
+        .write_sync(&pending)
+        .await?;
+    close(repositories).await?;
+
+    let error = execute(&config, false)
+        .await
+        .expect_err("an unsubmitted slash report must block the reset");
+    let message = error.to_string();
+    assert!(
+        message.contains("chain 1: 1 report(s)"),
+        "the refusal must name the chain and the count, got: {message}"
+    );
+    let repositories = open(&config)?;
+    let kept = repositories.slashing_writer_recovery(1).read().await?;
+    close(repositories).await?;
+    assert_eq!(
+        kept.map(|state| state.pending_count()),
+        Some(1),
+        "the refusal must not delete the slash report"
+    );
+
+    // The override deletes it.
+    execute(&config, true).await?;
+    let repositories = open(&config)?;
+    let deleted = repositories.slashing_writer_recovery(1).read().await?;
+    close(repositories).await?;
+    assert!(deleted.is_none());
+    Ok(())
+}

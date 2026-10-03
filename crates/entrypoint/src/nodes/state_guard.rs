@@ -6,14 +6,16 @@
 
 //! The check that each command that deletes node state runs (`node reset-data`, `nodes purge`).
 //!
-//! The chain cannot restore a key share, so these commands refuse to delete key-share state for
-//! an E3 that the node has not seen complete.
+//! The chain cannot restore a key share or the evidence of a slash report, so these commands
+//! refuse to delete key-share state for an E3 that the node has not seen complete, and slash
+//! reports that the node has not submitted.
 
 use anyhow::{bail, Context, Result};
 use e3_data::{DataStore, Repositories};
 use e3_events::{E3Stage, E3id, StoreKeys};
+use e3_evm::{SlashingWriterRecoveryState, SlashingWriterRepositoryFactory};
 use e3_request::E3LifecycleRepositoryFactory;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 /// The command and the node that a refusal names.
 pub(crate) struct Deletion<'a> {
@@ -133,6 +135,58 @@ fn e3_id_after_prefix(key: &[u8], prefix: &str) -> Result<E3id> {
     Ok(E3id::new(id, chain_id))
 }
 
+/// Slash reports on one chain that this node has not submitted or seen settled.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PendingSlashReports {
+    pub(crate) chain_id: u64,
+    pub(crate) count: usize,
+}
+
+/// Find each chain on which this node holds slash reports that it has not submitted or seen
+/// settled. The completion of an E3 does not settle its slash reports, so a complete E3 can still
+/// have one. A record that does not decode fails the check, as a failed read does.
+pub(crate) async fn pending_slash_reports(
+    repositories: &Repositories,
+) -> Result<Vec<PendingSlashReports>> {
+    let keys = repositories
+        .store
+        .keys_with_prefix(StoreKeys::SLASHING_WRITER_PREFIX)
+        .await
+        .context("failed to list the slash writer records")?;
+    let chain_ids = keys
+        .iter()
+        .map(|key| chain_after_slashing_prefix(key))
+        .collect::<Result<BTreeSet<u64>>>()?;
+    let mut pending = Vec::new();
+    for chain_id in chain_ids {
+        let state: Option<SlashingWriterRecoveryState> =
+            DataStore::from(repositories.slashing_writer_recovery(chain_id))
+                .read_checked()
+                .await
+                .with_context(|| format!("failed to read the slash reports of chain {chain_id}"))?;
+        let count = state.map_or(0, |state| state.pending_count());
+        if count > 0 {
+            pending.push(PendingSlashReports { chain_id, count });
+        }
+    }
+    Ok(pending)
+}
+
+/// The chain ID in a slash writer record key: the first path segment after the prefix.
+fn chain_after_slashing_prefix(key: &[u8]) -> Result<u64> {
+    std::str::from_utf8(key)
+        .ok()
+        .and_then(|key| key.strip_prefix(StoreKeys::SLASHING_WRITER_PREFIX))
+        .and_then(|rest| rest.split('/').next())
+        .and_then(|chain_id| chain_id.parse().ok())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "found a slash writer record whose chain this binary cannot read: {}",
+                String::from_utf8_lossy(key)
+            )
+        })
+}
+
 /// Refuse the deletion when it would delete a key share that an active E3 needs.
 ///
 /// `allow_active_e3s` overrides the refusal, and also a failed check, so that an operator can
@@ -200,16 +254,115 @@ pub(crate) fn check_active_e3s(
     )
 }
 
+/// Refuse the deletion when it would delete slash reports that this node has not submitted.
+///
+/// `allow_active_e3s` overrides the refusal, and also a failed check, as for active E3s. An
+/// override returns the warning to print.
+pub(crate) fn check_pending_slash_reports(
+    pending: Result<Vec<PendingSlashReports>>,
+    allow_active_e3s: bool,
+    deletion: &Deletion,
+) -> Result<Option<String>> {
+    let pending = match pending {
+        Ok(pending) => pending,
+        Err(error) if allow_active_e3s => {
+            return Ok(Some(format!(
+                "Could not check for unsubmitted slash reports{}. Continuing because \
+                 --allow-active-e3s is set: {error:#}",
+                deletion.on_node()
+            )));
+        }
+        Err(error) => bail!(
+            "Refusing to {}, because the command cannot show that {} holds no unsubmitted slash \
+             report: {error:#}. The command deleted nothing. Start the node again with the \
+             release that it ran before, and find the cause of the error.",
+            deletion.verb,
+            deletion.subject()
+        ),
+    };
+    if pending.is_empty() {
+        return Ok(None);
+    }
+    let list = pending
+        .iter()
+        .map(|chain| format!("  - chain {}: {} report(s)", chain.chain_id, chain.count))
+        .collect::<Vec<_>>()
+        .join("\n");
+    if allow_active_e3s {
+        return Ok(Some(format!(
+            "--allow-active-e3s is set. The {} deletes {} unsubmitted slash reports:\n{list}",
+            deletion.verb,
+            deletion.possessive()
+        )));
+    }
+    bail!(
+        "Refusing to {}. {} holds slash reports that it has not submitted:\n{list}\nThe command \
+         deleted nothing. A {} deletes them, also for an E3 that is complete, and the chain cannot \
+         restore their evidence. Start the node again with the release that it ran before, so \
+         that it submits them, and run this command again when it holds none. To delete them \
+         anyway, run this command again with --allow-active-e3s.",
+        deletion.verb,
+        capitalize(&deletion.subject()),
+        deletion.verb
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        active_e3s_with_key_shares, check_active_e3s, e3_id_after_prefix, ActiveE3, Deletion,
+        active_e3s_with_key_shares, check_active_e3s, e3_id_after_prefix, pending_slash_reports,
+        ActiveE3, Deletion, PendingSlashReports,
     };
     use e3_data::{DataStore, Repositories};
     use e3_events::{E3Stage, E3id, StoreKeys};
     use e3_keyshare::ThresholdKeyshareRepositoryFactory;
     use e3_request::E3LifecycleRepositoryFactory;
     use std::collections::HashMap;
+
+    /// A slash report for `e3_id` that the slash writer has recorded and not yet submitted.
+    pub(crate) fn unsubmitted_slash_report(e3_id: &E3id) -> e3_events::AccusationQuorumReached {
+        e3_events::AccusationQuorumReached {
+            e3_id: e3_id.clone(),
+            accuser: alloy::primitives::Address::repeat_byte(1),
+            accused: alloy::primitives::Address::repeat_byte(2),
+            proof_type: e3_events::ProofType::C1PkGeneration,
+            votes_for: Vec::new(),
+            outcome: e3_events::AccusationOutcome::AccusedFaulted,
+            evidence: alloy::primitives::Bytes::new(),
+        }
+    }
+
+    /// A slash report that the node has not submitted counts on its chain, also for an E3 that is
+    /// complete. A chain whose slash writer holds no report does not count.
+    #[actix::test]
+    async fn finds_unsubmitted_slash_reports() -> anyhow::Result<()> {
+        use e3_evm::{SlashingWriterRecoveryState, SlashingWriterRepositoryFactory};
+        let repositories = Repositories::in_mem();
+        let complete = E3id::new("4", 1);
+        repositories
+            .e3_lifecycle()
+            .write_sync(&HashMap::from([(complete.clone(), E3Stage::Complete)]))
+            .await?;
+        let mut pending = SlashingWriterRecoveryState::default();
+        pending.record(unsubmitted_slash_report(&complete))?;
+        repositories
+            .slashing_writer_recovery(1)
+            .write_sync(&pending)
+            .await?;
+        repositories
+            .slashing_writer_recovery(2)
+            .write_sync(&SlashingWriterRecoveryState::default())
+            .await?;
+
+        assert_eq!(
+            pending_slash_reports(&repositories).await?,
+            vec![PendingSlashReports {
+                chain_id: 1,
+                count: 1
+            }]
+        );
+        Ok(())
+    }
 
     /// Every E3 that is not `Complete` and has a key-share record blocks the reset, including a
     /// `Failed` one, because the node also records its own local failures as `Failed`. The

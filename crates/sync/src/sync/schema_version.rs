@@ -16,7 +16,9 @@
 // clears its state with `interfold node reset-data`, and the resync from chain history rebuilds
 // those checkpoints from source timestamps.
 // Schema 7 also adds durable decryption backup shares and batch-bound C6 results.
-pub const SCHEMA_VERSION: u32 = 7;
+// Schema 8 changes no layout. An operator who upgrades a node to it clears the node's state with
+// `interfold node reset-data`, and the node syncs again from the chain history.
+pub const SCHEMA_VERSION: u32 = 8;
 
 /// The action a node should take after reading the persisted schema version.
 #[derive(Debug, Clone, PartialEq, Eq)]

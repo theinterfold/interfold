@@ -660,25 +660,68 @@ The key/value store holds the key shares of the node, and the chain cannot resto
 
 <Callout type='warning'>
   Do not remove or recreate the old container before you copy its state. `docker rm`, `docker
-  compose down`, and `docker compose up` with a new image all remove the old container. Never do
-  this migration with `interfold node reset-data` or `interfold nodes purge`. These commands delete
-  the state that you must keep.
+  compose down`, and `docker compose up` with a new image all remove the old container. The copy
+  puts the key file and the stored keys on the volume. Run `interfold node reset-data` only after
+  the copy, and only with the new image. Never use `interfold nodes purge` for this migration.
 </Callout>
 
-Do this procedure one time for each node. Do it only when the new image accepts the stored schema. A
-node that serves an active E3 on v0.17.0 must stay on v0.17.0. See
-[Upgrade a node that serves an active E3](/operate/upgrades#upgrade-a-node-that-serves-an-active-e3).
+Do this procedure one time for each node, when the node serves no active E3. An earlier image uses
+storage schema 7 or earlier, and v0.19.0 uses schema 8. The procedure therefore resets the state
+after the copy. The reset keeps the operator key and the libp2p keypair. See
+[Reset node state](/operate/upgrades#reset-node-state).
 
 The commands use the container name `ciphernode` and the volume name `ciphernode-data`. For Docker
-Compose, use the names that `docker ps -a` and `docker volume ls` show.
+Compose, use the names that `docker ps -a` and `docker volume ls` show. Each one-off container runs
+the new image through its entrypoint, with the same volume and configuration file:
 
-1. Stop the old container. Do not remove it.
+```bash
+new_image() {
+  docker run --rm \
+    -v ciphernode-data:/home/ciphernode/.local/share/interfold \
+    -v "$PWD/config.yaml":/home/ciphernode/.config/interfold/config.yaml:ro \
+    "$CIPHERNODE_IMAGE" \
+    "$@" --config /home/ciphernode/.config/interfold/config.yaml
+}
+```
+
+1. Set the image of the new release, and pull it. The helper and the later steps use this variable.
 
    ```bash
-   docker stop --time 65 ciphernode
+   export CIPHERNODE_IMAGE='ghcr.io/theinterfold/ciphernode:0.19.0'
+   docker pull "$CIPHERNODE_IMAGE"
    ```
 
-2. Make sure that the volume has no `data` or `config` directory. If the output shows either name,
+2. Find out how the old container starts, and whether a stop removes it:
+
+   ```bash
+   docker inspect -f '{{json .Config.Entrypoint}} {{.HostConfig.AutoRemove}}' ciphernode
+   ```
+
+   Continue only if the output is `["interfold"] false`, or one path that ends with `/interfold`
+   followed by `false`. For all other output, do not stop the container, and contact the protocol
+   team:
+   - `["ciphernode-entrypoint.sh"]` is the entrypoint of the earlier image. At each start, it sets
+     the password again, and `interfold password set` refuses a key file that exists. Such a
+     container cannot start again after a stop.
+   - `true` means that the container started with `--rm`. A stop removes the container and the state
+     inside it.
+
+3. Make sure that no E3 is active on the network. The output must be `0`. Get the Interfold address
+   from [Contracts and addresses](/reference/contracts).
+
+   ```bash
+   cast call <Interfold> "activeE3Count()(uint256)" --rpc-url <RPC_URL>
+   ```
+
+4. Record the operator address and the peer ID from the old container, while it runs. If a command
+   fails or prints no value, stop and contact the protocol team.
+
+   ```bash
+   docker exec ciphernode interfold wallet get --config /home/ciphernode/.config/interfold/config.yaml
+   docker exec ciphernode interfold net get-peer-id --config /home/ciphernode/.config/interfold/config.yaml
+   ```
+
+5. Make sure that the volume has no `data` or `config` directory. If the output shows either name,
    stop and contact the protocol team.
 
    ```bash
@@ -689,7 +732,13 @@ Compose, use the names that `docker ps -a` and `docker volume ls` show.
      -A /home/ciphernode/.local/share/interfold
    ```
 
-3. Copy the `data` and `config` directories from the old container to the volume. `docker cp` sends
+6. Stop the old container. Do not remove it.
+
+   ```bash
+   docker stop --time 65 ciphernode
+   ```
+
+7. Copy the `data` and `config` directories from the old container to the volume. `docker cp` sends
    each directory as a tar stream, so the key file does not go to the host disk.
 
    ```bash
@@ -703,7 +752,7 @@ Compose, use the names that `docker ps -a` and `docker volume ls` show.
    done
    ```
 
-4. Make sure that the copy is complete. The output must show `key`, `db`, and `log.0`. If a name is
+8. Make sure that the copy is complete. The output must show `key`, `db`, and `log.0`. If a name is
    missing, stop and contact the protocol team.
 
    ```bash
@@ -715,30 +764,84 @@ Compose, use the names that `docker ps -a` and `docker volume ls` show.
      /home/ciphernode/.local/share/interfold/data/_default
    ```
 
-5. Run the command in [Validate the state](#validate-the-state) with the new image. Continue only if
-   the report shows `on-disk schema version 7 matches this binary` and ends with
-   `VALIDATION PASSED — state is intact and consistent.` If validation fails, or if it shows
-   `empty store will be initialized`, do not start the new image. Keep the old container and the
-   volume, and contact the protocol team.
-
-6. Start the new image. For `docker run`, rename the old container first, then use the command in
-   [Start the container](#start-the-container):
+9. Reset the state:
 
    ```bash
-   docker rename ciphernode ciphernode-old
+   new_image node reset-data --yes
    ```
 
-   For Docker Compose, set the new image and run `docker compose up -d`. This command replaces the
-   old container.
+   The output must end with this line. If it says `No identity was present`, stop and contact the
+   protocol team.
 
-7. Make sure that the log shows `Ciphernode release is accepted`, and that this command shows the
-   operator address:
+   ```text
+   The operator key and libp2p identity were preserved. Verify with: interfold wallet get --name _default
+   ```
+
+   If the command refuses, use the cases in
+   [If the command refuses](/operate/upgrades#if-the-command-refuses). Add `--allow-active-e3s` only
+   in the last case. In each other case, start the old container again:
 
    ```bash
-   docker exec ciphernode ciphernode-entrypoint.sh wallet get --config /home/ciphernode/.config/interfold/config.yaml
+   started=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+   docker start ciphernode
    ```
 
-8. For `docker run`, remove the old container only after step 7 succeeds.
+   Use `docker start` also for Docker Compose. `docker compose up` removes the old container, which
+   holds the state that the node uses. If the container does not start, stop and contact the
+   protocol team, and keep the copy on the volume.
+
+   The log from before the stop also holds the release lines, so read only the log since the start.
+   When it shows `Ciphernode release is accepted` or `Acknowledging ciphernode release`, remove the
+   copy from the volume. Then do what the case tells you.
+
+   ```bash
+   docker logs --since "$started" ciphernode
+   ```
+
+   ```bash
+   docker run --rm \
+     -v ciphernode-data:/home/ciphernode/.local/share/interfold \
+     --entrypoint rm \
+     "$CIPHERNODE_IMAGE" \
+     -rf /home/ciphernode/.local/share/interfold/data /home/ciphernode/.local/share/interfold/config
+   ```
+
+10. Run these commands. The address and the peer ID must be equal to the values from step 4. If they
+    differ, or a command fails, stop and contact the protocol team.
+
+    ```bash
+    new_image wallet get
+    new_image net get-peer-id
+    ```
+
+11. Validate the state. Continue only if the report shows `empty store will be initialized` and ends
+    with `VALIDATION PASSED — state is intact and consistent.` Otherwise, do not start the new
+    image. Keep the old container and the volume, and contact the protocol team.
+
+    ```bash
+    new_image node validate
+    ```
+
+12. Start the new image. For `docker run`, rename the old container first, then use the command in
+    [Start the container](#start-the-container):
+
+    ```bash
+    docker rename ciphernode ciphernode-old
+    ```
+
+    For Docker Compose, make sure that `CIPHERNODE_IMAGE` names the new image. Remove the
+    `entrypoint:` line from the service: step 2 required the old container to start `interfold`
+    directly, but the new image must start through its own entrypoint, which uses the volume. Then
+    run `docker compose up -d`. This command replaces the old container.
+
+13. Make sure that the log shows `Ciphernode release is accepted`, and that this command shows the
+    operator address from step 4:
+
+    ```bash
+    docker exec ciphernode ciphernode-entrypoint.sh wallet get --config /home/ciphernode/.config/interfold/config.yaml
+    ```
+
+14. For `docker run`, remove the old container only after step 13 succeeds.
 
 ## Networking
 
