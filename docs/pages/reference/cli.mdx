@@ -522,9 +522,11 @@ interfold ciphernode deregister [--operator <ADDRESS>] [--chain <CHAIN>]
 
 ### `interfold ciphernode activate`
 
-Sends the same `registerOperatorFor` transaction as `register`. After the registration, the contract
-calculates the activation state. For an operator that is already registered, the transaction reverts
-with `AlreadyRegistered`.
+Sends `refreshOperatorStatus` for a registered operator, so that the contract recomputes its
+activation state from its registration, release acknowledgement, bans, bond and tickets against the
+current requirements. The command prints the `Active` flag after the transaction. The admission
+cooldown is not part of `Active`; it affects eligibility, which `status` shows separately. For an
+operator that is not registered, the command stops and points to `register`.
 
 ```bash
 interfold ciphernode activate [--operator <ADDRESS>] [--chain <CHAIN>]

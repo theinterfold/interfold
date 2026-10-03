@@ -106,8 +106,37 @@ pub(crate) async fn deregister(out: Console, ctx: &ChainContext, operator: Addre
     Ok(())
 }
 
+/// Recompute the activation state of a registered operator from its registration, release
+/// acknowledgement, bans, collateral and tickets. The contract recomputes it on its own when a
+/// bond or ticket balance changes; this call covers the other inputs, such as a changed requirement
+/// or a release acknowledged elsewhere. The admission cooldown is not an input: it affects
+/// eligibility, which `status` shows separately.
 pub(crate) async fn activate(out: Console, ctx: &ChainContext, operator: Address) -> Result<()> {
-    register(out, ctx, operator).await
+    let contract = ctx.bonding();
+    if !contract.isRegistered(operator).call().await? {
+        bail!(
+            "Operator {:#x} is not registered on {}. Run `interfold ciphernode register` first.",
+            operator,
+            ctx.chain_label()
+        );
+    }
+
+    let tx = send_and_confirm(
+        "refresh operator status",
+        contract.refreshOperatorStatus(operator),
+    )
+    .await?;
+    let is_active: bool = contract.isActive(operator).call().await?;
+
+    log!(
+        out,
+        "Refreshed operator {:#x} on {} (tx: {:#x}); active: {}",
+        operator,
+        ctx.chain_label(),
+        tx,
+        is_active
+    );
+    Ok(())
 }
 
 pub(crate) async fn deactivate(
