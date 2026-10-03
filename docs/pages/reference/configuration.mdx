@@ -130,14 +130,15 @@ The `node` key and each entry under `nodes` accept the same keys. Every key is o
 
 ### Network settings
 
-| Key              | Type                      | Default                     | Meaning                                                                                                                      |
-| ---------------- | ------------------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `network`        | String                    | Inferred from the chains    | P2P network profile. The built-in profiles are `mainnet`, `sepolia`, and `local`. See [network profiles](#network-profiles). |
-| `network_id`     | 64 hexadecimal characters | The fixed ID of the profile | 32-byte network identity. A custom network name requires it.                                                                 |
-| `peers`          | List of multiaddrs        | Empty                       | Peers to dial at start. When the list is empty, the node uses the bootstrap peers of the profile.                            |
-| `quic_port`      | Integer (UDP port)        | `9091`                      | Port of the libp2p QUIC listener. The node listens on all interfaces.                                                        |
-| `ctrl_port`      | Integer (TCP port)        | `50505`                     | Control port on `127.0.0.1`. The CLI sends read-only commands to a running node through it.                                  |
-| `dashboard_port` | Integer (TCP port)        | None                        | When set, the node serves a monitoring dashboard at `http://127.0.0.1:<port>`. See [Dashboard](/operate/dashboard).          |
+| Key              | Type                      | Default                     | Meaning                                                                                                                        |
+| ---------------- | ------------------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `network`        | String                    | Inferred from the chains    | P2P network profile. The built-in profiles are `mainnet`, `sepolia`, and `local`. See [network profiles](#network-profiles).   |
+| `network_id`     | 64 hexadecimal characters | The fixed ID of the profile | 32-byte network identity. A custom network name requires it.                                                                   |
+| `peers`          | List of multiaddrs        | Empty                       | Peers to dial at start. When the list is empty, the node uses the bootstrap peers of the profile.                              |
+| `quic_port`      | Integer (UDP port)        | `9091`                      | Port of the libp2p QUIC listener. The node listens on all interfaces.                                                          |
+| `ctrl_port`      | Integer (TCP port)        | `50505`                     | Control port on `127.0.0.1`. The CLI sends read-only commands to a running node through it.                                    |
+| `dashboard_port` | Integer (TCP port)        | None                        | When set, the node serves a monitoring dashboard at `http://127.0.0.1:<port>`. See [Dashboard](/operate/dashboard).            |
+| `bootstrap`      | Boolean                   | `false`                     | `interfold nodes up` starts this profile as a bootstrap peer (`interfold start --bootstrap`): networking and chain reads only. |
 
 Each profile on one host needs its own `quic_port` and `ctrl_port`.
 
