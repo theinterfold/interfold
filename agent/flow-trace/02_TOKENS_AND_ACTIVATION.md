@@ -227,9 +227,10 @@ the current version count as active, so committee requests cannot rely on status
 older policy. Every version bump emits `EligibilityConfigurationVersionUpdated`, including
 asset-configuration changes and the node-release cutover. The Rust sortition state consumes it (and
 the older `ConfigurationUpdated`) and marks its chain-local operators inactive at the bump's chain
-position until matching `OperatorActivationChanged` refresh events arrive. The local dashboard
-clears its active set the same way. `BondingAssetConfigUpdated` sets the local ticket price;
-committee selection uses the request-time price from the committee request instead.
+position until matching `OperatorActivationChanged` refresh events arrive. The local dashboard does
+not apply the bump: it shows the last activation change of each operator.
+`BondingAssetConfigUpdated` sets the local ticket price; committee selection uses the request-time
+price from the committee request instead.
 
 Each base eligibility change also captures the number of registered operators. New committee
 requests remain blocked until every member of that set is checked or deregisters. A check counts

@@ -31,8 +31,9 @@ use std::collections::{HashMap, HashSet};
 use tracing::{info, instrument, warn};
 
 /// Events that build sortition state. The actor subscribes to them when it attaches, so that
-/// EventStore replay reaches it before effects start. Every event that `NodeRegistry` or the
-/// envelope reads belongs here.
+/// EventStore replay reaches it before effects start. Every event that `NodeRegistry` reads
+/// belongs here. `E3Requested` does not: the actor subscribes to it only at `EffectsEnabled`, so
+/// that replayed requests do not generate tickets.
 pub(crate) const STATE_EVENTS: &[EventType] = &[
     EventType::CiphernodeAdded,
     EventType::CiphernodeRemoved,
