@@ -93,8 +93,7 @@ item in code before you rely on it.
   remains open. — `03_ACTOR_RUNTIME.md` §Durability, persistence, replay
 - Circuit artifacts: a node installs a downloaded archive without `checksums.json`. —
   `02_CRYPTO_CIRCUITS.md` §Noir / Barretenberg compatibility
-- Deployment and CLI: `deployInterfold.ts` sends one setter without waiting for its receipt, and the
-  CLI accepts secrets on argv. — `04_BUILD_CONFIG.md`
+- CLI: the CLI accepts secrets on argv. — `04_BUILD_CONFIG.md`
 - CLI `activate` calls `register` and reverts for registered operators. —
   `crates/cli/src/ciphernode/lifecycle.rs`
 - EventBus fan-out waits for each subscriber to accept the event within a timeout, but a timeout is
