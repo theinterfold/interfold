@@ -181,6 +181,42 @@ impl Handler<TypedEvent<ConfigurationUpdatedAt>> for Sortition {
     }
 }
 
+impl Handler<TypedEvent<EligibilityConfigurationVersionUpdatedAt>> for Sortition {
+    type Result = ();
+
+    fn handle(
+        &mut self,
+        msg: TypedEvent<EligibilityConfigurationVersionUpdatedAt>,
+        _: &mut Self::Context,
+    ) -> Self::Result {
+        let (event, ec) = msg.into_components();
+        trap(EType::Sortition, &self.bus.with_ec(&ec), || {
+            self.node_state.try_mutate(&ec, |mut state_map| {
+                NodeRegistry::update_eligibility_version(&mut state_map, &event);
+                Ok(state_map)
+            })
+        })
+    }
+}
+
+impl Handler<TypedEvent<BondingAssetConfigUpdatedAt>> for Sortition {
+    type Result = ();
+
+    fn handle(
+        &mut self,
+        msg: TypedEvent<BondingAssetConfigUpdatedAt>,
+        _: &mut Self::Context,
+    ) -> Self::Result {
+        let (event, ec) = msg.into_components();
+        trap(EType::Sortition, &self.bus.with_ec(&ec), || {
+            self.node_state.try_mutate(&ec, |mut state_map| {
+                NodeRegistry::update_bonding_asset_config(&mut state_map, &event);
+                Ok(state_map)
+            })
+        })
+    }
+}
+
 impl Handler<TypedEvent<CommitteeRequested>> for Sortition {
     type Result = ();
 

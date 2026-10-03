@@ -84,9 +84,6 @@ The "Verified Bugs & Protocol Concerns" table in `flow-trace/00_INDEX.md` record
 wrong. This list and the **Gap:** notes in the section files are the open-issue list. Verify each
 item in code before you rely on it.
 
-- Eligibility: asset-configuration and node-release changes bump the eligibility version, but Rust
-  does not consume those events and keeps a stale activity view. — `01_PROTOCOL_ONCHAIN.md`
-  §Activation
 - Slashing: a restart resets the fallback submission delay. — `01_PROTOCOL_ONCHAIN.md` §Slashing and
   failure settlement
 - Startup does not reconcile persisted request contexts with finalized chain state; concern #48

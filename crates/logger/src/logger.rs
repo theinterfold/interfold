@@ -117,7 +117,9 @@ fn severity(data: &InterfoldEventData) -> Severity {
         | E::TicketBalanceUpdated(_)
         | E::OperatorActivationChanged(_)
         | E::TicketBalanceUpdatedAt(_)
-        | E::OperatorActivationChangedAt(_) => Severity::Info,
+        | E::OperatorActivationChangedAt(_)
+        | E::EligibilityConfigurationVersionUpdatedAt(_)
+        | E::BondingAssetConfigUpdatedAt(_) => Severity::Info,
 
         _ => Severity::Debug,
     }

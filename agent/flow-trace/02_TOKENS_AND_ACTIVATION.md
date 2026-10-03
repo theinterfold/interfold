@@ -224,8 +224,13 @@ Governance may update `ticketPrice`, `requiredCiphernodeBond`, `ciphernodeBondAc
 operator statuses fail closed. Operators or governance then call `refreshOperatorStatus` (or its
 batch form) to re-evaluate registered operators under the new policy. Only operators refreshed into
 the current version count as active, so committee requests cannot rely on status cached under an
-older policy. The Rust sortition state consumes the same `ConfigurationUpdated` event and marks its
-chain-local operators inactive until matching `OperatorActivationChanged` refresh events arrive.
+older policy. Every version bump emits `EligibilityConfigurationVersionUpdated`, including
+asset-configuration changes and the node-release cutover. The Rust sortition state consumes it (and
+the older `ConfigurationUpdated`) and marks its chain-local operators inactive at the bump's chain
+position until matching `OperatorActivationChanged` refresh events arrive. The local dashboard does
+not apply the bump: it shows the last activation change of each operator.
+`BondingAssetConfigUpdated` sets the local ticket price; committee selection uses the request-time
+price from the committee request instead.
 
 Each base eligibility change also captures the number of registered operators. New committee
 requests remain blocked until every member of that set is checked or deregisters. A check counts
@@ -832,4 +837,8 @@ the event bus merges its clock. Sortition and offline projection repair use thos
 not receipt time. Each ticket, activation, and price projection retains its latest source position
 so overlapping restart backfill cannot replace newer state or append an older checkpoint. Schema 7
 rejects schema-6 stores because their histories can contain incorrect checkpoint times. Old variants
-remain readable for validation, but cannot build new trusted eligibility history.
+remain readable for validation, but cannot build new trusted eligibility history. A store written
+before the node decoded `EligibilityConfigurationVersionUpdated` and `BondingAssetConfigUpdated`
+holds them only as raw `EvmLogObserved` records, which no projection reads again. Such a store must
+be reset (the v0.19 schema 8 reset) so that the reader resyncs from the deploy block and decodes
+every version bump.
