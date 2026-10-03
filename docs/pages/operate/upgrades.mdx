@@ -305,8 +305,9 @@ manual delete of the data directory therefore also deletes the identity that hol
 `reset-data` refuses when the node holds key-share state for an E3 that it has not seen complete. It
 also refuses for an E3 that shows `Failed`, because the node records its own local failures that way
 while the E3 can continue on chain. The refusal lists each E3 and its stage, and the command deletes
-nothing. `--allow-active-e3s` overrides the refusal. The command does not check for slash reports
-that the node has not submitted yet. A reset deletes them.
+nothing. It also refuses while the node holds slash reports that it has not submitted, also for an
+E3 that is complete, because the chain cannot restore their evidence. That refusal lists each chain
+and the number of its reports. `--allow-active-e3s` overrides both refusals.
 
 A container from an image earlier than v0.19.0 keeps its state inside the container, not on the
 volume. For such a container, follow
@@ -388,15 +389,18 @@ decryption shares.
 
 Use the first case that applies:
 
-1. The refusal says that the command `cannot show` that no active E3 needs a key share. Do not reset
-   the node. Start the node again with the release that it ran before, and contact the protocol
-   team.
-2. A listed E3 has stage `0`, so the chain does not know the E3. Do the same as in case 1.
-3. A listed E3 has stage `1`, `2`, `3`, or `4`, so the E3 is active. Start the node again with the
+1. The refusal says that the command `cannot show` that no active E3 needs a key share, or that the
+   node holds no slash report that it has not submitted. Do not reset the node. Start the node again
+   with the release that it ran before, and contact the protocol team.
+2. The refusal lists slash reports that the node has not submitted. Start the node again with the
+   release that it ran before, so that it submits them. Do this procedure again later. If the same
+   reports stay after the report deadlines of their E3s, contact the protocol team.
+3. A listed E3 has stage `0`, so the chain does not know the E3. Do the same as in case 1.
+4. A listed E3 has stage `1`, `2`, `3`, or `4`, so the E3 is active. Start the node again with the
    release that it ran before. Do this procedure again when the E3 ends.
-4. A listed E3 has stage `5` or `6`, and the block time is not larger than its report deadline. Do
-   the same as in case 3, and try again after the report deadline.
-5. The refusal lists at least one E3, and no case above applies. Run the command again with
+5. A listed E3 has stage `5` or `6`, and the block time is not larger than its report deadline. Do
+   the same as in case 4, and try again after the report deadline.
+6. The refusal lists at least one E3, and no case above applies. Run the command again with
    `--allow-active-e3s`.
 
 To start the node again with the release that it ran before, install that release again. For

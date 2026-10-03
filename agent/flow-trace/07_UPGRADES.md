@@ -207,7 +207,11 @@ list, and it lists each such E3 with its stage, because the chain cannot restore
 `Failed` while the E3 can continue on chain. The check reads only whether a record exists and does
 not decode it, so it also protects a store that an older schema wrote. Both reads fail on a storage
 error, which the ordinary read path reports as an absent record, and a key that does not parse fails
-the check. `--allow-active-e3s` overrides the refusals
+the check. It also reads the slash writer state of each chain (`//evm_writers/slashing/`) and
+refuses while that state holds a slash report that the node has not submitted, also for an E3 that
+is `Complete`: completion does not settle a slash report, and the chain cannot restore its evidence.
+That state is decoded, and a record that does not decode fails the check. `nodes purge` runs the
+same check. `--allow-active-e3s` overrides the refusals
 (`crates/entrypoint/src/nodes/state_guard.rs`).
 
 The event log is not one file. `EventSystem::persisted` passes `config.log_file()` through

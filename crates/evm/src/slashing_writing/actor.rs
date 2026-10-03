@@ -99,6 +99,11 @@ impl SlashingWriterRecoveryState {
     fn pending_events(&self) -> Vec<AccusationQuorumReached> {
         self.pending.values().cloned().collect()
     }
+
+    /// How many slash reports this writer has not yet submitted or seen settled.
+    pub fn pending_count(&self) -> usize {
+        self.pending.len()
+    }
 }
 
 #[derive(Message)]
