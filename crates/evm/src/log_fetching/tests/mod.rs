@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use super::*;
+use crate::adapters::ingestion_progress::IngestionProgress;
 use crate::domain::log_window::MAX_LOG_WINDOW;
 use actix::prelude::*;
 use std::collections::VecDeque;

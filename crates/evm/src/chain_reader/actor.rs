@@ -4,6 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+use crate::adapters::ingestion_progress::IngestionProgressSink;
 use crate::adapters::log_fetcher::{
     backfill_to_head, consume_live_logs, fetch_logs_chunked, LiveStop, TimestampTracker,
 };
@@ -125,6 +126,8 @@ pub struct EvmReadInterface<P> {
     bus: BusHandle,
     /// Filters to configure when to seek from
     filters: Filters,
+    /// Receives each successful head read, for a local health check
+    progress: Option<IngestionProgressSink>,
 }
 
 impl<P: Provider + Clone + 'static> EvmReadInterface<P> {
@@ -134,7 +137,7 @@ impl<P: Provider + Clone + 'static> EvmReadInterface<P> {
         bus: &BusHandle,
         filters: Filters,
     ) -> Addr<Self> {
-        Self::setup_with_factory(provider, None, next, bus, filters)
+        Self::setup_with_factory(provider, None, next, bus, filters, None)
     }
 
     pub fn setup_with_factory(
@@ -143,6 +146,7 @@ impl<P: Provider + Clone + 'static> EvmReadInterface<P> {
         next: impl Into<EvmEventProcessor>,
         bus: &BusHandle,
         filters: Filters,
+        progress: Option<IngestionProgressSink>,
     ) -> Addr<Self> {
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let reader = Self {
@@ -153,6 +157,7 @@ impl<P: Provider + Clone + 'static> EvmReadInterface<P> {
             next: next.into(),
             bus: bus.clone(),
             filters,
+            progress,
         };
 
         let addr = reader.start();

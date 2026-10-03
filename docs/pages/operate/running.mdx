@@ -256,9 +256,11 @@ there, so backups of `/data` must be encrypted and access-controlled.
 After it stores the credentials, the package deletes the uploaded file. A restart uses the stored
 state and does not need a new upload. An upload with a different password stops startup.
 
-The package health check confirms that the process runs, the files exist, and the QUIC listener is
-bound. It does not prove that the node is synced or registered. Read the logs and the
-[on-chain status](/operate/registration) to confirm that.
+The package health check confirms that the process runs, the files exist, the QUIC listener is
+bound, and chain ingestion moves: the node writes a heartbeat file per chain after every successful
+read of the chain head, and the check fails when the heartbeat is older than 120 seconds or neither
+the head nor the cursor moved for 10 minutes. It does not prove that the node is registered. Read
+the logs and the [on-chain status](/operate/registration) to confirm that.
 
   </Tabs.Tab>
   <Tabs.Tab unmount={false}>
