@@ -76,7 +76,9 @@ every section.
   admins (the deployer) and configuration values (committee thresholds, parameter sets, slash
   policies, the node release, timing and pricing amounts) are not references; the integration check
   in `tests/integration/base.sh` covers the committee thresholds. Add a read-back for each new
-  reference or authorization.
+  reference or authorization. **Gap:** the check does not read the ERC-1967 implementation and admin
+  slots of the proxies; each `deployAndSave` helper passes the implementation that it has just
+  deployed to the proxy constructor, so only a helper bug can make them disagree.
 - **A deployment must also enable bonded voting.** `protocol/deployContracts` deploys
   `BondedCheckpoints` (bound to the BondingRegistry **proxy**, not the implementation) and the
   governance batch calls `setBondedCheckpoints` after `initialize`. `BondedVotes` comes later, from
