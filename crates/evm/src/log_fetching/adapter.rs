@@ -4,9 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::domain::log_window::{
-    is_range_limit_error, LogWindow, MAX_WINDOW_SHRINKS, MIN_LOG_WINDOW,
-};
+use crate::domain::log_window::{is_range_limit_error, LogWindow, MIN_LOG_WINDOW};
 use crate::messages::{EvmEventProcessor, EvmLog, InterfoldEvmEvent};
 use alloy::providers::Provider;
 use alloy::rpc::types::{Filter, Log};
@@ -207,10 +205,11 @@ where
 /// the end of the range: a caller that recomputed it from the window afterwards would advance past
 /// blocks that were never fetched.
 ///
-/// Attempts and narrowings are budgeted separately. A narrowing is not a failed request to be
+/// Attempts and narrowings are counted separately. A narrowing is not a failed request to be
 /// backed off; it is a corrected request that must be reissued at once. One shared budget would let
 /// a provider with a tight cap exhaust the attempts before the window reached its limit, and the
-/// sync would fail on a provider it could have used.
+/// sync would fail on a provider it could have used. Narrowing has no budget of its own: the
+/// one-block floor bounds it, whatever range the chain configures.
 pub(crate) async fn fetch_chunk_adapting<L: LogProvider>(
     provider: &L,
     filter: &Filter,
@@ -237,7 +236,7 @@ pub(crate) async fn fetch_chunk_adapting<L: LogProvider>(
                     // `shrink` reports `false` at the floor. A provider that refuses a single
                     // block is not applying a range cap, so the error is reported rather than
                     // answered with a narrower range that cannot exist.
-                    if shrinks >= MAX_WINDOW_SHRINKS || !window.shrink() {
+                    if !window.shrink() {
                         return Err(anyhow!(
                             "Provider rejected the block range for chain {} blocks {}..={} at \
                              the smallest window of {} block(s) after {} narrowing(s): {}",
@@ -313,6 +312,8 @@ pub(crate) async fn fetch_chunk_adapting<L: LogProvider>(
 /// was taught to tolerate, and it fails before the pager is ever reached. That is the shape of the
 /// reported bug: a ciphernode that would not start against an endpoint the sync could have used.
 ///
+/// `max_log_window` is the chain's widest `eth_getLogs` range (`rpc_log_range_blocks`).
+///
 /// Returns the logs in chain order.
 pub(crate) async fn fetch_logs_adapting<L: LogProvider>(
     provider: &L,
@@ -320,12 +321,13 @@ pub(crate) async fn fetch_logs_adapting<L: LogProvider>(
     from_block: u64,
     to_block: u64,
     chain_id: u64,
+    max_log_window: u64,
 ) -> Result<Vec<Log>, anyhow::Error> {
     if to_block < from_block {
         return Ok(Vec::new());
     }
 
-    let mut window = LogWindow::new();
+    let mut window = LogWindow::with_max(max_log_window);
     let mut cursor = from_block;
     let mut logs = Vec::new();
 

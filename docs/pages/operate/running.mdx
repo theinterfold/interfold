@@ -176,6 +176,7 @@ The keys below matter most on an operator node. The
 | `data_availability`              | Required | `mode: avail` and an HTTP `rpc_url`. See [Data availability](/reference/configuration#data-availability). |
 | `ingestion_confirmations`        | `1`      | Confirmations before the node applies a log.                                                              |
 | `rpc_poll_interval_ms`           | `7000`   | Milliseconds between the polls of an HTTP provider for a receipt or a new block.                          |
+| `rpc_log_range_blocks`           | `10000`  | Widest block range of one `eth_getLogs` request. See [RPC endpoints](/operate/rpc-endpoints).             |
 | `enabled`                        | `true`   | `false` makes the node ignore the entry.                                                                  |
 
 The defaults of one confirmation and a 7-second poll interval also apply when `rpc_url` uses
