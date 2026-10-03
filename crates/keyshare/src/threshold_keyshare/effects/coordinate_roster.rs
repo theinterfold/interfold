@@ -95,6 +95,7 @@ impl ThresholdKeyshare {
             }
         }
 
+        let new_party = !recovery.ready_by_party.contains_key(&state.party_id);
         let ready = DkgCoordination::sign(
             state.e3_id.clone(),
             self.interfold_address,
@@ -111,7 +112,7 @@ impl ThresholdKeyshare {
             recovery.last_ec = Some(ec.clone());
             Ok(recovery)
         })?;
-        self.summarize_ready_set(state.party_id);
+        self.summarize_ready_set(state.party_id, new_party);
         if self.effects_enabled {
             self.bus.publish(ready, ec.clone())?;
             self.maybe_publish_roster_inputs_ready(ec.clone())?;
@@ -190,6 +191,7 @@ impl ThresholdKeyshare {
                     return Ok(());
                 }
                 let reporter = message.party_id;
+                let new_party = !recovery.ready_by_party.contains_key(&reporter);
                 let replace = recovery
                     .ready_by_party
                     .get(&reporter)
@@ -202,7 +204,7 @@ impl ThresholdKeyshare {
                     Ok(recovery)
                 })?;
                 if replace {
-                    self.summarize_ready_set(reporter);
+                    self.summarize_ready_set(reporter, new_party);
                 }
                 self.maybe_accept_pending_roster(ec.clone())?;
             }
@@ -275,19 +277,17 @@ impl ThresholdKeyshare {
     }
 
     /// Logs the authenticated Ready set after a Ready report changed it, as often as the summary
-    /// gate allows. Only logging depends on it, so a missing state skips the line.
-    fn summarize_ready_set(&mut self, reporter: u64) {
+    /// gate allows: `new_party` when the report added a Ready party. Only logging depends on it,
+    /// so a missing state skips the line.
+    fn summarize_ready_set(&mut self, reporter: u64, new_party: bool) {
         let (Ok(state), Ok(recovery)) = (self.state.try_get(), self.recovery.try_get()) else {
             return;
         };
-        let Ok(threshold) = state.committee_h() else {
+        let Ok(roster_size) = state.committee_h() else {
             return;
         };
         let ready = eligible_ready_dealers(&recovery, &state);
-        let Some(suppressed_updates) = self
-            .ready_summary
-            .admit(Instant::now(), ready.len() >= threshold)
-        else {
+        let Some(suppressed_updates) = self.ready_summary.admit(Instant::now(), new_party) else {
             return;
         };
         let committee = recovery
@@ -299,7 +299,7 @@ impl ThresholdKeyshare {
             reporter,
             ready = ready.len(),
             committee,
-            threshold,
+            roster_size,
             ready_parties = ?ready.keys().collect::<Vec<_>>(),
             suppressed_updates,
             "DKG Ready set updated"

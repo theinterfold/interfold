@@ -11,26 +11,26 @@ use std::time::{Duration, Instant};
 /// Shortest time between two Ready-set summaries of one E3.
 pub(crate) const READY_SUMMARY_INTERVAL: Duration = Duration::from_secs(30);
 
-/// Decides which changes of the authenticated Ready set get an INFO summary. The first change and
-/// the first change that gives enough Ready parties for a roster always get one. Other changes get
-/// one at most once per `READY_SUMMARY_INTERVAL`, and that summary counts the changes left out.
+/// Decides which changes of the authenticated Ready set get an INFO summary. A change that adds a
+/// Ready party always gets one, so the last summary lists every Ready party and shows when enough
+/// parties are Ready for a roster; that is at most one line per committee member. A change that
+/// only extends the dealer list of a party that is already Ready gets one at most once per
+/// `READY_SUMMARY_INTERVAL`, and the next summary counts the changes left out.
 #[derive(Debug, Default)]
 pub(crate) struct ReadySummaryGate {
     last_summary: Option<Instant>,
-    threshold_reached: bool,
     suppressed: usize,
 }
 
 impl ReadySummaryGate {
-    /// Records one change of the Ready set. Returns the number of earlier changes without a summary
-    /// when this change gets one, and `None` when it does not.
-    pub(crate) fn admit(&mut self, now: Instant, threshold_reached: bool) -> Option<usize> {
-        let first_threshold = threshold_reached && !self.threshold_reached;
-        self.threshold_reached |= threshold_reached;
+    /// Records one change of the Ready set: `new_party` when it adds a Ready party. Returns the
+    /// number of earlier changes without a summary when this change gets one, and `None` when it
+    /// does not.
+    pub(crate) fn admit(&mut self, now: Instant, new_party: bool) -> Option<usize> {
         let interval_passed = self
             .last_summary
             .is_none_or(|last| now.saturating_duration_since(last) >= READY_SUMMARY_INTERVAL);
-        if !first_threshold && !interval_passed {
+        if !new_party && !interval_passed {
             self.suppressed += 1;
             return None;
         }
@@ -44,31 +44,33 @@ mod tests {
     use super::*;
 
     #[test]
-    fn changes_inside_the_interval_are_counted_in_the_next_summary() {
+    fn every_new_ready_party_gets_a_summary() {
         let start = Instant::now();
         let mut gate = ReadySummaryGate::default();
+        let at = |seconds| start + Duration::from_secs(seconds);
 
-        assert_eq!(gate.admit(start, false), Some(0));
-        assert_eq!(gate.admit(start + Duration::from_secs(1), false), None);
-        assert_eq!(gate.admit(start + Duration::from_secs(2), false), None);
-        assert_eq!(gate.admit(start + READY_SUMMARY_INTERVAL, false), Some(2));
+        assert_eq!(gate.admit(start, true), Some(0));
+        assert_eq!(gate.admit(at(1), true), Some(0));
+        assert_eq!(gate.admit(at(2), true), Some(0));
+    }
+
+    #[test]
+    fn dealer_growth_inside_the_interval_is_counted_in_the_next_summary() {
+        let start = Instant::now();
+        let mut gate = ReadySummaryGate::default();
+        let at = |seconds| start + Duration::from_secs(seconds);
+
+        assert_eq!(gate.admit(start, true), Some(0));
+        assert_eq!(gate.admit(at(1), false), None);
+        assert_eq!(gate.admit(at(2), false), None);
+        assert_eq!(gate.admit(at(3), true), Some(2));
         assert_eq!(
             gate.admit(
-                start + READY_SUMMARY_INTERVAL + Duration::from_secs(1),
+                at(3) + READY_SUMMARY_INTERVAL - Duration::from_secs(1),
                 false
             ),
             None
         );
-    }
-
-    #[test]
-    fn reaching_the_threshold_gets_one_summary_inside_the_interval() {
-        let start = Instant::now();
-        let mut gate = ReadySummaryGate::default();
-        gate.admit(start, false);
-        gate.admit(start + Duration::from_secs(1), false);
-
-        assert_eq!(gate.admit(start + Duration::from_secs(2), true), Some(1));
-        assert_eq!(gate.admit(start + Duration::from_secs(3), true), None);
+        assert_eq!(gate.admit(at(3) + READY_SUMMARY_INTERVAL, false), Some(1));
     }
 }
