@@ -117,7 +117,7 @@ the code does not meet yet.
   chain without an enabled configuration fails startup. **Gap:** a context whose E3 failed on chain
   with a slashing reason, but not in the local lifecycle, resumes its work at `EffectsEnabled`. A
   context that the EventStore suffix after the checkpoint admits during replay is not checked. Both
-  are follow-up card 2.3b. Document publication recovery does not read the lifecycle. —
+  are follow-up work. Document publication recovery does not read the lifecycle. —
   `crates/ciphernode-builder/src/finalized_lifecycle.rs`; `crates/evm/src/finalized_lifecycle.rs`;
   INDEX concern #48
 - EventStore replay preserves durable sequence inside each aggregate. It uses HLC order only to
