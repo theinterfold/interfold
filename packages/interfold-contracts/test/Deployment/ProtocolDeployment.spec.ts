@@ -35,7 +35,7 @@ import type {
   ProtocolDeployment,
   VrfSortitionUpgradePlan,
 } from "../../scripts/protocol/types";
-import { loadConfig } from "../../scripts/protocol/values";
+import { hasBondedDelegation, loadConfig } from "../../scripts/protocol/values";
 import { requiredActiveOperatorsForSecureCrisp } from "../../scripts/upgrade/resumeSecureCrisp";
 import { BondingRegistry__factory as BondingRegistryFactory } from "../../types";
 
@@ -510,6 +510,48 @@ describe("Protocol deployment", function () {
       readOptionalPendingRequestCount(provider, ethersLib.ZeroAddress),
     ).to.be.rejected;
     expect(calls).to.equal(2);
+  });
+
+  /// `activate-voting` and the deploy scripts reuse a recorded `BondedVotes` only when this probe
+  /// passes. An adapter from before bonded delegation takes the same constructor arguments, so its
+  /// code is the only thing that tells the two apart.
+  it("tells a BondedVotes with bonded delegation from older code", async function () {
+    const token = await ethers.deployContract("MockVotesToken");
+    const history = await ethers.deployContract("MockBondedCheckpointsStub", [
+      await token.getAddress(),
+    ]);
+    const adapter = await ethers.deployContract("BondedVotes", [
+      await token.getAddress(),
+      await token.getAddress(),
+      await history.getAddress(),
+    ]);
+
+    expect(
+      await hasBondedDelegation(ethers.provider, await adapter.getAddress()),
+    ).to.equal(true);
+    // Like an adapter from before bonded delegation, the stub has no `bondedDelegate` and no
+    // fallback, so the call reverts with no data.
+    expect(
+      await hasBondedDelegation(ethers.provider, await history.getAddress()),
+    ).to.equal(false);
+    expect(
+      await hasBondedDelegation(
+        ethers.provider,
+        ethersLib.Wallet.createRandom().address,
+      ),
+    ).to.equal(false);
+  });
+
+  it("rejects a bonded-delegation probe that the RPC cannot answer", async function () {
+    const provider = {
+      call: async () => {
+        throw new Error("RPC unavailable");
+      },
+    } as unknown as ethersLib.Provider;
+
+    await expect(
+      hasBondedDelegation(provider, ethersLib.ZeroAddress),
+    ).to.be.rejectedWith("RPC unavailable");
   });
 
   it("rejects VRF timing that cannot satisfy protocol reservations", function () {

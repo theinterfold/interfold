@@ -510,6 +510,7 @@ describe("BondedVotes", function () {
 
     /// The owner can always take its weight back, and the delegate can always give it back.
     /// Either way it returns at once, and never stays with a delegate the owner has moved away from.
+    /// A snapshot taken while the delegation was in force keeps its answer, whichever way it ends.
     it("gives the weight back at once when the owner withdraws or moves on, or the delegate drops it", async function () {
       const {
         bondedVotes,
@@ -536,9 +537,16 @@ describe("BondedVotes", function () {
         () => bondedVotes.connect(otherHolder).dropBonded(bondOwnerAddress),
       ]) {
         await delegate();
+        const active = (await time.latest()) - 1;
         await end();
         expect(await settledVotes(bondOwnerAddress)).to.equal(MINTED);
         expect(await settledVotes(otherHolderAddress)).to.equal(MINTED);
+        expect(
+          await bondedVotes.getPastVotes(bondOwnerAddress, active),
+        ).to.equal(MINTED - BOND);
+        expect(
+          await bondedVotes.getPastVotes(otherHolderAddress, active),
+        ).to.equal(MINTED + BOND);
       }
     });
 
