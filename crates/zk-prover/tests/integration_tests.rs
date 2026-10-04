@@ -15,7 +15,10 @@ use common::test_backend;
 use e3_fhe_params::BfvPreset;
 use e3_zk_helpers::circuits::dkg::pk::circuit::{PkCircuit, PkCircuitData};
 use e3_zk_helpers::CiphernodesCommitteeSize;
-use e3_zk_prover::{test_utils::get_tempdir, BbTarget, Provable, SetupStatus, ZkConfig, ZkProver};
+use e3_zk_prover::{
+    test_utils::get_tempdir, BbTarget, Provable, SetupStatus, ZkBackend, ZkConfig, ZkError,
+    ZkProver,
+};
 use sha2::{Digest, Sha256};
 use std::env;
 use std::path::Path;
@@ -34,6 +37,19 @@ fn integration_config() -> ZkConfig {
             .insert(config.required_circuits_version.clone(), checksum);
     }
     config
+}
+
+async fn download_integration_circuits(backend: &ZkBackend) -> Result<(), ZkError> {
+    if env::var("E3_TEST_CIRCUITS_DOWNLOAD_URL").is_ok() {
+        backend
+            .download_circuits_for_configurations(&[
+                ("insecure-512", RELEASE_COMMITTEE.as_str()),
+                ("secure-8192", RELEASE_COMMITTEE.as_str()),
+            ])
+            .await
+    } else {
+        backend.download_circuits().await
+    }
 }
 
 fn preset_committee_dir(circuits_dir: &Path, preset: &BfvPreset) -> std::path::PathBuf {
@@ -98,7 +114,7 @@ async fn test_full_flow_download_circuits_prove_and_verify() {
         .await
         .unwrap();
 
-    let result = backend.download_circuits().await;
+    let result = download_integration_circuits(&backend).await;
     assert!(result.is_ok(), "download_circuits failed: {:?}", result);
 
     let presets = [
@@ -192,7 +208,7 @@ async fn test_download_circuits_verifies_checksums() {
     let temp = get_tempdir().unwrap();
     let backend = test_backend(temp.path(), config);
 
-    let result = backend.download_circuits().await;
+    let result = download_integration_circuits(&backend).await;
     assert!(result.is_ok(), "download_circuits failed: {:?}", result);
 
     let version_info = backend.load_version_info().await;

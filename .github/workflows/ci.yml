@@ -1259,7 +1259,8 @@ jobs:
         working-directory: ./examples/CRISP
         run: |
           tar -C "$GITHUB_WORKSPACE/dist" -czf "$RUNNER_TEMP/circuits-candidate.tar.gz" circuits/
-          interfold noir setup --circuits-archive "$RUNNER_TEMP/circuits-candidate.tar.gz"
+          interfold noir setup --circuits-archive "$RUNNER_TEMP/circuits-candidate.tar.gz" \
+            --circuits-configuration insecure-512/minimum
           interfold noir setup
 
       - name: Run Playwright tests
@@ -1821,7 +1822,8 @@ jobs:
         working-directory: ./templates/default
         run: |
           tar -C "$GITHUB_WORKSPACE/dist" -czf "$RUNNER_TEMP/circuits-candidate.tar.gz" circuits/
-          interfold noir setup --circuits-archive "$RUNNER_TEMP/circuits-candidate.tar.gz"
+          interfold noir setup --circuits-archive "$RUNNER_TEMP/circuits-candidate.tar.gz" \
+            --circuits-configuration insecure-512/minimum
           interfold noir setup
 
       - name: Verify downloaded artifacts

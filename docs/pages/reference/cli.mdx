@@ -375,10 +375,10 @@ Manages the Noir prover tools that the node uses to make zero-knowledge proofs: 
 binary (`bb`) and the compiled circuits. The required versions come from
 `crates/zk-prover/versions.json`. For release 0.18.0, they are `bb` 5.1.0 and circuits 0.18.0.
 
-| Subcommand    | Flags                                                                                                                                                         | Purpose                                                                                                             |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `noir status` | None                                                                                                                                                          | Prints the path, version, and install state of `bb` and the circuits. The last line is `Ready` or the action to do. |
-| `noir setup`  | `-f`, `--force`: installs `bb` and the circuits again. `--circuits-archive <PATH>`: installs the circuits from a local release archive instead of a download. | Installs or updates `bb` and the circuits. When both are current and `--force` is absent, it does nothing.          |
+| Subcommand    | Flags                                                                                                                                                                                                                                                                                   | Purpose                                                                                                             |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `noir status` | None                                                                                                                                                                                                                                                                                    | Prints the path, version, and install state of `bb` and the circuits. The last line is `Ready` or the action to do. |
+| `noir setup`  | `-f`, `--force`: installs `bb` and the circuits again. `--circuits-archive <PATH>`: installs the circuits from a local release archive instead of a download. `--circuits-configuration <PRESET/COMMITTEE>`: selects a required pair from the local archive. Repeat for multiple pairs. | Installs or updates `bb` and the circuits. When both are current and `--force` is absent, it does nothing.          |
 
 With a configuration file, the tools go to `.interfold/noir` next to that file. Without one, they go
 to `~/.interfold/noir`. A custom `bb` from `custom_bb` or `E3_CUSTOM_BB` replaces the downloaded
@@ -387,10 +387,14 @@ one.
 Circuit downloads require an archive SHA-256 compiled in for the required version from
 `crates/zk-prover/versions.json` or the release build input. `noir status` reports the required
 version and this pin. The installer checks this digest before extraction. It then requires a
-nonempty `checksums.json` that covers every artifact file and verifies each entry. Every included
-preset/committee pair must contain the complete inventory used by release validation. If validation
-fails, the installed circuits and version record stay unchanged. `--circuits-archive` trusts the
-operator's local file and applies the same internal manifest checks without a release archive pin.
+nonempty `checksums.json` that covers every artifact file and verifies each entry. The archive must
+contain the full supported preset/committee matrix and the complete artifact inventory used by
+release validation. If validation fails, the installed circuits and version record stay unchanged.
+`--circuits-archive` trusts the operator's local file and applies the same internal manifest checks
+without a release archive pin. To install a subset from a local archive, add
+`--circuits-configuration <PRESET/COMMITTEE>` for each required pair. For example,
+`--circuits-configuration insecure-512/minimum` selects the development configuration. This option
+requires `--circuits-archive` and cannot reduce the network download requirements.
 
 ### `interfold events query`
 

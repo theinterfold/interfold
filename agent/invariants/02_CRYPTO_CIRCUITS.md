@@ -76,13 +76,16 @@ every section.
   parameter set and committee size. `download_circuits` checks the archive SHA-256 against
   `ZkConfig::circuits_checksums[required_circuits_version]` before extraction. Missing pins fail
   closed. Both download and local archive installation require a nonempty SHA-256 `checksums.json`,
-  verify each entry, and reject uncovered artifact files before replacement. Each included
-  preset/committee pair must contain every path in `crates/zk-prover/required-artifacts.json`, with
-  a verified manifest entry. The release tooling's `requiredArtifactMarkers` uses that same
-  inventory. Local and CI archives can contain fewer pairs, but cannot omit required artifacts from
-  a pair. An archive must contain a supported pair. Root manifests, `SOURCE_HASH`, and build stamps
-  are metadata, not required prover artifacts. Validation failure preserves the installed circuits
-  and `version.json`. — `crates/zk-prover/src/backend/download.rs`
+  verify each entry, and reject uncovered artifact files before replacement. Download and local
+  archive installation require every pair in `crates/zk-prover/supported-configurations.json` by
+  default. Release tooling uses the same matrix. A local or CI caller can request a nonempty subset
+  through `download_circuits_for_configurations` or `install_circuits_archive_for_configurations`.
+  The CLI accepts repeated `--circuits-configuration` options only with `--circuits-archive`.
+  Required pairs never depend on archive contents. Each required or included pair must contain every
+  path in `crates/zk-prover/required-artifacts.json`, with a verified manifest entry. The release
+  tooling's `requiredArtifactMarkers` uses that same inventory. Root manifests, `SOURCE_HASH`, and
+  build stamps are metadata, not required prover artifacts. Validation failure preserves the
+  installed circuits and `version.json`. — `crates/zk-prover/src/backend/download.rs`
 - Archive pins ship with the binary; neither the archive nor its download endpoint supplies the
   expected digest at runtime. The 0.18.0 pin comes from the published GitHub asset digest. Local
   archive installation trusts the operator's file and does not require a release pin. Release

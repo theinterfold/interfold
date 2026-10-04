@@ -6,7 +6,6 @@
 
 use crate::config::{verify_checksum, BbTarget, ChecksumManifest, CircuitInfo, VersionInfo};
 use crate::error::ZkError;
-use e3_fhe_params::BfvPreset;
 use flate2::read::GzDecoder;
 use futures_util::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -28,6 +27,11 @@ const CIRCUIT_VARIANT_DIRS: &[&str] = &["default", "evm", "recursive"];
 
 // Release validation and installation use the same per-configuration inventory.
 const REQUIRED_ARTIFACTS: &str = include_str!("../../required-artifacts.json");
+
+fn supported_configurations() -> Vec<(&'static str, &'static str)> {
+    serde_json::from_str(include_str!("../../supported-configurations.json"))
+        .expect("invalid supported circuit configuration inventory")
+}
 
 /// Collect candidate on-disk paths for a manifest entry (legacy flat + per-committee layouts).
 fn circuit_manifest_candidates(circuits_dir: &Path, rel_path: &str) -> Vec<PathBuf> {
@@ -161,6 +165,15 @@ impl ZkBackend {
     }
 
     pub async fn download_circuits(&self) -> Result<(), ZkError> {
+        self.download_circuits_for_configurations(&supported_configurations())
+            .await
+    }
+
+    /// Download circuits for an explicit subset of supported preset/committee pairs.
+    pub async fn download_circuits_for_configurations(
+        &self,
+        configurations: &[(&str, &str)],
+    ) -> Result<(), ZkError> {
         let version = &self.config.required_circuits_version;
         let archive_name = format!("circuits-{version}.tar.gz");
         let expected_checksum = self
@@ -182,7 +195,7 @@ impl ZkBackend {
         match result {
             Ok(bytes) => {
                 verify_checksum(&archive_name, &bytes, Some(expected_checksum))?;
-                self.install_circuits_bytes(&bytes, &mut version_info)
+                self.install_circuits_bytes(&bytes, &mut version_info, configurations)
                     .await?;
                 info!("installed circuits v{}", version);
             }
@@ -199,9 +212,19 @@ impl ZkBackend {
 
     /// Install a circuit release archive from the local filesystem.
     pub async fn install_circuits_archive(&self, path: &Path) -> Result<(), ZkError> {
+        self.install_circuits_archive_for_configurations(path, &supported_configurations())
+            .await
+    }
+
+    /// Install a local archive for an explicit subset of supported preset/committee pairs.
+    pub async fn install_circuits_archive_for_configurations(
+        &self,
+        path: &Path,
+        configurations: &[(&str, &str)],
+    ) -> Result<(), ZkError> {
         let bytes = fs::read(path).await?;
         let mut version_info = self.load_version_info().await;
-        self.install_circuits_bytes(&bytes, &mut version_info)
+        self.install_circuits_bytes(&bytes, &mut version_info, configurations)
             .await?;
         info!(
             "installed circuits v{} from {}",
@@ -215,6 +238,7 @@ impl ZkBackend {
         &self,
         bytes: &[u8],
         version_info: &mut VersionInfo,
+        configurations: &[(&str, &str)],
     ) -> Result<(), ZkError> {
         fs::create_dir_all(&self.base_dir).await?;
 
@@ -246,7 +270,7 @@ impl ZkBackend {
             ));
         }
 
-        let circuit_infos = verify_circuits_dir(&staged_circuits).await?;
+        let circuit_infos = verify_circuits_dir(&staged_circuits, configurations).await?;
 
         let mut installed_version = version_info.clone();
         installed_version.circuits = circuit_infos;
@@ -331,7 +355,20 @@ fn validate_circuit_archive_entry(path: &Path, entry_type: tar::EntryType) -> Re
     Ok(())
 }
 
-async fn verify_circuits_dir(circuits_dir: &Path) -> Result<HashMap<String, CircuitInfo>, ZkError> {
+async fn verify_circuits_dir(
+    circuits_dir: &Path,
+    required_configurations: &[(&str, &str)],
+) -> Result<HashMap<String, CircuitInfo>, ZkError> {
+    let supported = supported_configurations();
+    if required_configurations.is_empty()
+        || required_configurations
+            .iter()
+            .any(|pair| !supported.contains(pair))
+    {
+        return Err(ZkError::InvalidInput(
+            "select at least one supported circuit configuration".into(),
+        ));
+    }
     let manifest_path = circuits_dir.join("checksums.json");
     if !manifest_path.exists() {
         return Err(ZkError::ChecksumMissing("circuits/checksums.json".into()));
@@ -373,30 +410,23 @@ async fn verify_circuits_dir(circuits_dir: &Path) -> Result<HashMap<String, Circ
 
     let required: Vec<&str> = serde_json::from_str(REQUIRED_ARTIFACTS)
         .expect("invalid required circuit artifact inventory");
-    let mut configurations = Vec::new();
-    for preset in [
-        BfvPreset::InsecureThreshold512,
-        BfvPreset::SecureThreshold8192,
-    ] {
-        let preset_dir = circuits_dir.join(preset.artifacts_dir());
-        // Local builds can contain a subset of the release's preset/committee pairs.
-        for committee in COMMITTEE_SUBDIRS {
-            let pair_dir = preset_dir.join(committee);
-            if pair_dir.is_dir() {
-                configurations.push(pair_dir);
-            }
+    let mut configurations: HashSet<PathBuf> = required_configurations
+        .iter()
+        .map(|(preset, committee)| circuits_dir.join(preset).join(committee))
+        .collect();
+    for (preset, committee) in supported {
+        let preset_dir = circuits_dir.join(preset);
+        let pair_dir = preset_dir.join(committee);
+        // Additional configurations in a subset archive must also be complete.
+        if pair_dir.is_dir() {
+            configurations.insert(pair_dir);
         }
         if CIRCUIT_VARIANT_DIRS
             .iter()
             .any(|variant| preset_dir.join(variant).is_dir())
         {
-            configurations.push(preset_dir);
+            configurations.insert(preset_dir);
         }
-    }
-    if configurations.is_empty() {
-        return Err(ZkError::CircuitNotFound(
-            "archive contains no supported circuit configuration".into(),
-        ));
     }
     for configuration in configurations {
         for artifact in &required {
@@ -551,9 +581,13 @@ mod tests {
 
     fn fixture_artifacts() -> Vec<String> {
         let artifacts: Vec<&str> = serde_json::from_str(REQUIRED_ARTIFACTS).unwrap();
-        artifacts
+        supported_configurations()
             .into_iter()
-            .map(|artifact| format!("insecure-512/minimum/{artifact}"))
+            .flat_map(|(preset, committee)| {
+                artifacts
+                    .iter()
+                    .map(move |artifact| format!("{preset}/{committee}/{artifact}"))
+            })
             .collect()
     }
 
@@ -655,11 +689,13 @@ mod tests {
     }
 
     async fn seed_installation(backend: &ZkBackend) -> Vec<u8> {
-        write_file(
-            &backend.circuits_dir,
-            "insecure-512/minimum/default/dkg/pk/pk.json",
-            b"previous-circuit",
-        );
+        for configuration in ["insecure-512/minimum", "secure-8192/small"] {
+            write_file(
+                &backend.circuits_dir,
+                &format!("{configuration}/default/dkg/pk/pk.json"),
+                b"previous-circuit",
+            );
+        }
         write_file(&backend.circuits_dir, "installed.txt", b"installed");
         VersionInfo {
             bb_version: Some("5.1.0".into()),
@@ -675,15 +711,17 @@ mod tests {
 
     fn assert_installation_unchanged(backend: &ZkBackend, version: &[u8]) {
         assert_eq!(fs::read(backend.version_file()).unwrap(), version);
-        assert_eq!(
-            fs::read(
-                backend
-                    .circuits_dir
-                    .join("insecure-512/minimum/default/dkg/pk/pk.json")
-            )
-            .unwrap(),
-            b"previous-circuit"
-        );
+        for configuration in ["insecure-512/minimum", "secure-8192/small"] {
+            assert_eq!(
+                fs::read(
+                    backend
+                        .circuits_dir
+                        .join(format!("{configuration}/default/dkg/pk/pk.json"))
+                )
+                .unwrap(),
+                b"previous-circuit"
+            );
+        }
         assert_eq!(
             fs::read(backend.circuits_dir.join("installed.txt")).unwrap(),
             b"installed"
@@ -777,6 +815,39 @@ mod tests {
             );
             assert_installation_unchanged(&backend, &previous_version);
         }
+    }
+
+    #[tokio::test]
+    async fn download_requires_all_release_configurations() {
+        let temp = TempDir::new().unwrap();
+        let mut backend = test_backend(&temp);
+        let previous_version = seed_installation(&backend).await;
+        let mut manifest = fixture_manifest(b"circuit");
+        let artifacts = fixture_artifacts();
+        let omitted: Vec<&str> = artifacts
+            .iter()
+            .filter(|path| path.starts_with("secure-8192/small/"))
+            .map(String::as_str)
+            .collect();
+        for path in &omitted {
+            manifest.remove(*path);
+        }
+        let archive = circuit_archive_with_manifest(b"circuit", Some(manifest), &[], &omitted);
+        backend
+            .config
+            .circuits_checksums
+            .insert("candidate".into(), sha256_hex(&archive));
+        let (url, server) = serve_archive(archive).await;
+        backend.config.circuits_download_url = url;
+
+        let result = backend.download_circuits().await;
+        server.await.unwrap();
+
+        assert!(
+            matches!(result, Err(ZkError::CircuitNotFound(ref path)) if path.starts_with("secure-8192/small/")),
+            "{result:?}"
+        );
+        assert_installation_unchanged(&backend, &previous_version);
     }
 
     #[tokio::test]
@@ -876,17 +947,43 @@ mod tests {
     async fn local_archive_accepts_pax_metadata_and_records_version() {
         let temp = TempDir::new().unwrap();
         let archive_path = temp.path().join("circuits.tar.gz");
-        fs::write(&archive_path, circuit_archive(b"circuit", true)).unwrap();
+        let mut manifest = fixture_manifest(b"circuit");
+        let artifacts = fixture_artifacts();
+        let omitted: Vec<&str> = artifacts
+            .iter()
+            .filter(|path| !path.starts_with("insecure-512/minimum/"))
+            .map(String::as_str)
+            .collect();
+        for path in &omitted {
+            manifest.remove(*path);
+        }
+        let expected_files = manifest.len();
+        fs::write(
+            &archive_path,
+            circuit_archive_with_manifest(b"circuit", Some(manifest), &[], &omitted),
+        )
+        .unwrap();
         let backend = test_backend(&temp);
+        let previous_version = seed_installation(&backend).await;
+
+        let result = backend.install_circuits_archive(&archive_path).await;
+        assert!(
+            matches!(result, Err(ZkError::CircuitNotFound(_))),
+            "{result:?}"
+        );
+        assert_installation_unchanged(&backend, &previous_version);
 
         backend
-            .install_circuits_archive(&archive_path)
+            .install_circuits_archive_for_configurations(
+                &archive_path,
+                &[("insecure-512", "minimum")],
+            )
             .await
             .unwrap();
 
         let version = backend.load_version_info().await;
         assert_eq!(version.circuits_version.as_deref(), Some("candidate"));
-        assert_eq!(version.circuits.len(), fixture_artifacts().len());
+        assert_eq!(version.circuits.len(), expected_files);
     }
 
     #[tokio::test]

@@ -250,10 +250,15 @@ build input. The installer checks it before extraction, then requires a nonempty
 that covers every artifact file. Root manifests, `SOURCE_HASH`, and build stamps are metadata. Local
 builds and `noir setup --circuits-archive` do not need an archive pin.
 
-Each included preset/committee pair must contain every artifact in
+The installer requires every pair in `crates/zk-prover/supported-configurations.json` by default,
+including for `noir setup --circuits-archive`. The release validator uses the same matrix. For a
+local archive, repeat `--circuits-configuration <PRESET/COMMITTEE>` to select a subset explicitly.
+For example, `--circuits-configuration insecure-512/minimum` selects the development configuration.
+Local and CI callers can request a nonempty subset through `download_circuits_for_configurations` or
+`install_circuits_archive_for_configurations`. The required set never depends on archive contents.
+Each required or included pair must contain every artifact in
 `crates/zk-prover/required-artifacts.json`. The release validator and installer share this
-inventory. Local and CI archives can contain fewer pairs. Each included pair must still be complete
-and covered by the manifest.
+inventory. The manifest must cover each artifact.
 
 The release workflow packages the archive first and passes its SHA-256 as
 `E3_CIRCUITS_ARCHIVE_SHA256` to binary builds and the ciphernode Docker build. The build binds this

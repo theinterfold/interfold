@@ -33,8 +33,13 @@ every section.
   `SOURCE_HASH` matches the current source tree. A different build at the branch tip must not
   replace it. The release workflow archives the branch tip and fails if the tip's hash differs.
   Release verification still checks the source hash, every required pair, and each pair's build
-  stamp. `SOURCE_HASH` includes the shared Noir library and its dependency manifest (see
-  `02_CRYPTO_CIRCUITS.md` §Noir / Barretenberg compatibility).
+  stamp. `crates/zk-prover/supported-configurations.json` owns the release matrix that archive
+  installation and release verification require. Each listed pair must be a build pair in
+  `scripts/circuit-constants.ts`, and a tooling test checks this. The matrix file is not a
+  `SOURCE_HASH` input. CI download fixtures explicitly request the two `minimum` pairs. CI local
+  archive setup selects `insecure-512/minimum` with `--circuits-configuration`. `SOURCE_HASH`
+  includes the shared Noir library and its dependency manifest (see `02_CRYPTO_CIRCUITS.md` §Noir /
+  Barretenberg compatibility).
 - Network circuit installation requires a version-bound archive SHA-256 compiled into the binary.
   `download-circuits` in `.github/workflows/releases.yml` hashes the exact archive that it uploads.
   Binary and ciphernode image builds depend on that job and pass `E3_CIRCUITS_ARCHIVE_SHA256` to

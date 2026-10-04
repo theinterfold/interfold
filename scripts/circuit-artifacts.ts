@@ -9,14 +9,18 @@ import { execFileSync, execSync } from 'child_process'
 import { createHash } from 'crypto'
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'fs'
 import { join, relative, resolve } from 'path'
-import { SUPPORTED_PRESET_COMMITTEE_PAIRS } from './circuit-constants'
+import type { CircuitCommittee, CircuitPreset } from './circuit-constants'
 import requiredArtifacts from '../crates/zk-prover/required-artifacts.json'
+import supportedConfigurations from '../crates/zk-prover/supported-configurations.json'
 
 const BRANCH = 'circuit-artifacts'
 const ROOT = resolve(__dirname, '..')
 const DIST = join(ROOT, 'dist', 'circuits')
 const METADATA_FILES = new Set(['.git', 'SOURCE_HASH', 'SHA256SUMS', 'checksums.json'])
-export const RELEASE_REQUIRED_PAIRS = SUPPORTED_PRESET_COMMITTEE_PAIRS.map(({ preset, committee }) => [preset, committee] as const)
+// The release matrix is the file that the Rust installer requires, so both read the same pairs.
+export const RELEASE_REQUIRED_PAIRS = supportedConfigurations.map(
+  ([preset, committee]) => [preset as CircuitPreset, committee as CircuitCommittee] as const,
+)
 
 const run = (cmd: string, cwd = ROOT) => execSync(cmd, { encoding: 'utf-8', cwd, stdio: 'pipe' }).trim()
 const runV = (cmd: string, cwd = ROOT) => execSync(cmd, { cwd, stdio: 'inherit' })

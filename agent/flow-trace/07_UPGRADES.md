@@ -22,6 +22,11 @@ that pin for its crate version. Binary and image builds compare the pin in `inte
 with the archive digest before publication. See `agent/invariants/04_BUILD_CONFIG.md` for the build
 dependency and Docker argument rules.
 
+Circuit installation checks every pair in `crates/zk-prover/supported-configurations.json` before it
+replaces the installed circuits and version record. Local and CI callers can explicitly request a
+nonempty subset. `noir setup --circuits-archive` accepts repeated `--circuits-configuration` options
+for this purpose. An archive cannot select its own required configuration set.
+
 ```text
 build backward-compatible release
   -> keep protocol_version and node_generation unchanged
