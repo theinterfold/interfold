@@ -69,15 +69,16 @@ impl ZkActorRecovery {
             .cloned()
             .collect();
         self.node_proofs = NodeProofRecovery::load(repositories, &active_e3_ids).await?;
-        self.pending_c0 =
+        self.pending_c0 = Box::pin(
             crate::actors::proof_verification::recovery::recover_pending_verifications(
                 eventstore,
                 aggregates,
                 &active_e3_ids,
                 &self.finalized_committees,
                 &self.e3_metadata,
-            )
-            .await?;
+            ),
+        )
+        .await?;
         Ok(())
     }
 }
