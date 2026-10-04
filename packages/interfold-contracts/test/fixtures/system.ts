@@ -49,7 +49,7 @@ import type { BondingRegistry } from "../../types/contracts/registry/BondingRegi
 import type { CiphernodeRegistryOwnable } from "../../types/contracts/registry/CiphernodeRegistryOwnable";
 import type { NodeReleaseRegistry } from "../../types/contracts/registry/NodeReleaseRegistry";
 import type { SlashingManager } from "../../types/contracts/slashing/SlashingManager";
-import type { MockCiphernodeRegistry } from "../../types/contracts/test/MockCiphernodeRegistry.sol/MockCiphernodeRegistry";
+import type { MockCiphernodeRegistry } from "../../types/contracts/test/MockCiphernodeRegistry";
 import type { MockCiphertextVerifier } from "../../types/contracts/test/MockCiphertextVerifier";
 import type { MockComputeProvider } from "../../types/contracts/test/MockComputeProvider";
 import type { MockDecryptionVerifier } from "../../types/contracts/test/MockDecryptionVerifier";

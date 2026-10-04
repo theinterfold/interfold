@@ -111,6 +111,13 @@ Specific triggers:
   submitted tickets. SlashingManager also uses it when an expulsion leaves fewer than H active
   members. Reusing the existing supplier-paid reason preserves the persisted enum layout.
 
+Node-side decoding (`crates/evm/src/interfold/events.rs`): `E3Stage` and `FailureReason` are `uint8`
+values in the ABI, and the node converts them with `TryFrom<u8>` in the declaration order of
+`IInterfold.sol`. A value outside the enum means a contract that is newer than the node. The reader
+rejects such an `E3Failed` or `E3StageChanged` log, which stops that chain's ingestion
+(`InterfoldEvmEvent::Rejected`), instead of recording a stage or reason the node invented. The
+contract never emits the `_MAX_FAILURE_REASON` bound, so it has no Rust variant.
+
 ### Requester Cancellation
 
 Only the address that created an E3 can call `cancelE3(e3Id)`. Cancellation is a recovery path for
@@ -414,6 +421,7 @@ an off-chain committee quorum protocol.
 LIFECYCLE:
   Created by AccusationManagerExtension on SortitionCommitteeFinalized or context hydration
   → Stores committee list, threshold_m, this node's address + signer
+  → Keeps finalized party IDs fixed when slashing removes active committee members
   → Actor identity and committee inputs recover from durable committee state
   → In-flight accusations, votes, and timers remain process-local
   → Destroyed by E3RequestComplete (Die signal)
@@ -425,13 +433,20 @@ Signed accusation deadlines bound how long that recovery remains useful.
 
 #### Step 1: Local Proof Failure Detection
 
+For C0, only a completed invalid check emits `SignedProofFailed` and `ProofVerificationFailed`. An
+unavailable local verifier, verification key, or local I/O operation leaves verification pending.
+The verifier retries that input without starting an accusation.
+
 ```text
 ProofVerificationFailed OR CommitmentConsistencyViolation event arrives
 │
 ├─ For ProofVerificationFailed:
-│   ├─ 1. Resolve accused address:
-│   │     If accused_address == 0x0:
-│   │       Look up from committee list by party_id
+│   ├─ 1. Authenticate the accused address:
+│   │     Require the exact proof signature to recover to the claimed finalized committee slot
+│   │     Require the signed E3, proof type, and proof hash to match the failure
+│   │     Keep finalized slots fixed when slashing removes a member from the live voting roster
+│   │     Drop an unrecoverable signature; never resolve a zero address through party_id
+│   │     Ignore a failure against this node's address or finalized party ID before caching
 │   │
 │   ├─ 2. Cache verification result:
 │   │     received_data[(accused, proof_type)] = { data_hash, passed: false }
@@ -442,7 +457,7 @@ ProofVerificationFailed OR CommitmentConsistencyViolation event arrives
 │   └─ 4. Delegate to initiate_accusation()
 │
 ├─ For CommitmentConsistencyViolation:
-│   ├─ 1. Cache verification result:
+│   ├─ 1. Ignore a violation against this node's address or finalized party ID; otherwise cache:
 │   │     received_data[(accused, proof_type)] = { data_hash, passed: false }
 │   │
 │   └─ 2. Delegate to initiate_accusation() (no forwarded payload)
@@ -483,6 +498,11 @@ ProofVerificationFailed OR CommitmentConsistencyViolation event arrives
 ```text
 ProofFailureAccusation arrives via P2P from another committee member
 │
+├─ Reject self-accusations: signed accuser and accused addresses are equal
+│   accused_party_id is not in the accusation digest and does not decide this check
+│   Reject a signed_payload for any proof type other than C3a/C3b
+│   Both checks precede cached evidence, pending accusations, and buffered vote replay
+│
 ├─ 1. Verify accuser is a committee member
 │
 ├─ 2. Validate accusation deadline against local policy:
@@ -517,7 +537,7 @@ ProofFailureAccusation arrives via P2P from another committee member
 │         ├─ For C3a/C3b: re-verify using signed_payload from accusation
 │         │   → Dispatch to ZkActor for local re-verification
 │         │   → Vote after re-verification completes
-│         └─ For other proofs: do not vote without local evidence
+│         └─ For other proofs: require local evidence and no forwarded payload
 │
 ├─ 6. Create and SIGN vote:
 │     AccusationVote {
@@ -1374,11 +1394,23 @@ When CommitteeMemberExpelled event arrives from EVM:
 │   │       → May trigger share processing with reduced set
 │   └─ Does NOT hold committee state — fully delegated to Sortition
 │
-├─ PublicKeyAggregator (aggregator, receives raw event):
+├─ PublicKeyAggregator (active or standby, receives raw event):
 │   ├─ Only processes raw events (party_id: None)
 │   ├─ Ignores enriched events (party_id: Some) to avoid double-processing
-│   └─ Reduces threshold_n
-│   └─ May trigger aggregation if enough keyshares collected
+│   ├─ Before canonical key publication:
+│   │   ├─ A selected roster member's removal publishes E3Failed at CommitteeFinalized
+│   │   │   → InsufficientCommitteeMembers: the fixed H-row proof needs every selected member
+│   │   └─ Other removals in Collecting remove buffered keyshares and reduce threshold_n
+│   │       → C1 verification still requires the accepted dealer roster
+│   └─ After canonical key publication:
+│       ├─ Skips DKG failure, threshold changes, and aggregation from this removal
+│       ├─ Applies even to a standby still in VerifyingC1
+│       └─ Hydration restores this boundary from the existing lifecycle projection
+│
+├─ ThresholdPlaintextAggregator (receives enriched event):
+│   └─ Removes the party from decryption collection
+│       ├─ Decryption can continue with T+1 valid roster shares
+│       └─ C6 verification fails if fewer than T+1 roster shares remain possible
 │
 ├─ KeyshareCreatedFilterBuffer (aggregator):
 │   ├─ Only processes raw events (party_id: None)
@@ -1399,7 +1431,8 @@ When CommitteeMemberExpelled event arrives from EVM:
     │   │   plus the largest accusationVoteValidity plus 5 minutes. The timer is in
     │   │   memory: at EffectsEnabled the router completes every restored context whose
     │   │   lifecycle stage is Failed, because startup pruned its finalized committee and
-    │   │   no accusation work resumes for it.
+    │   │   no accusation work resumes for it. That context does not receive
+    │   │   EffectsEnabled.
     │   └─ E3StageChanged(Failed) and the same non-slashing E3Failed arriving after teardown
     │       are silently ignored (expected on-chain lag)
     │
@@ -1426,8 +1459,22 @@ When a proof-fault quorum is reached while its on-chain policy is disabled, the 
 separate `CommitteeMemberExcluded` event. Sortition resolves its stable `party_id` from the same
 immutable `CommitteeFinalized` roster and republishes the enriched event. The keyshare collectors,
 public-key aggregator, plaintext aggregator, and active-aggregator selector then treat that party as
-unavailable for this E3. The final DKG proof still receives all N canonical committee addresses from
-`CommitteeFinalized`; it never derives the proof-bound roster from the reduced keyshare set.
+unavailable for their applicable work in this E3. The public-key aggregator uses the same
+raw-removal handler for expulsion and exclusion. Canonical key publication ends its DKG removal
+handling, even if the local phase is incomplete. `CommitteePublished` or `E3StageChanged` to
+`KeyPublished`, `CiphertextReady`, or `Complete` establishes this boundary for the E3.
+
+The shared handler logs each raw removal for its E3 at INFO with its kind, node, and exclusion proof
+type. The log states when DKG handling is skipped because the key is already published. File:
+crates/aggregator/src/public_key_aggregation/handlers.rs File:
+crates/aggregator/src/public_key_aggregation/effects/mod.rs (handle_member_expelled) File:
+crates/aggregator/src/ext.rs (PublicKeyAggregatorExtension::hydrate)
+
+Canonical chain failures remain authoritative after key publication. Plaintext aggregation also
+fails if fewer than T+1 valid roster shares remain possible. Neither failure path uses the
+public-key aggregator's DKG removal rule. The final DKG proof still receives all N canonical
+committee addresses from `CommitteeFinalized`. It never derives the proof-bound roster from the
+reduced keyshare set.
 
 This fallback is availability-only. The excluded operator remains an active on-chain committee
 member, can remain eligible for future E3s, and can receive any reward that the contracts still

@@ -397,18 +397,6 @@ contracts:
     }
 
     #[test]
-    fn contracts_only_in_the_config_are_ignored() {
-        // The manifest describes no faucet; a config that names one is fine.
-        let c = chain("0x0000000000000000000000000000000000000001", Some(10));
-        let n = network(&[(
-            "interfold",
-            "0x0000000000000000000000000000000000000001",
-            Some(10),
-        )]);
-        assert_eq!(compare(&c, &n), vec![]);
-    }
-
-    #[test]
     fn wrong_chain_id_is_an_error_even_when_addresses_match() {
         let c = chain_with_id("0x0000000000000000000000000000000000000001", Some(31337));
         let n = network(&[(

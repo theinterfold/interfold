@@ -273,53 +273,6 @@ impl Display for SignedProofFailed {
     }
 }
 
-/// Encode a [`SignedProofFailed`] event into the ABI-encoded evidence bytes
-/// expected by `SlashingManager.proposeSlash()` for **Lane B** (evidence-based,
-/// SLASHER_ROLE) slashing.
-///
-/// **Not used in production.** The current production flow uses Lane A
-/// (attestation-based) via `encode_attestation_evidence()` in
-/// `slashing_manager_sol_writer.rs`. This function is retained for Lane B
-/// integration tests and may be activated when Lane B slashing is implemented.
-///
-/// Returns: `abi.encode(bytes zkProof, bytes32[] publicInputs, bytes signature, uint256 chainId, uint256 proofType, address verifier)`
-///
-/// The `verifier` is the current on-chain verifier contract address for this
-/// proof type's slash policy. The `FaultSubmitter` actor must look this up
-/// before calling this function.
-pub fn encode_fault_evidence(failed: &SignedProofFailed, verifier: Address) -> Vec<u8> {
-    use alloy::primitives::Bytes;
-
-    let proof = &failed.signed_payload.payload.proof;
-
-    // Convert raw public_signals bytes → Vec<FixedBytes<32>> (one per 32-byte field)
-    let public_inputs: Vec<FixedBytes<32>> = proof
-        .public_signals
-        .chunks(32)
-        .map(|chunk| {
-            let mut buf = [0u8; 32];
-            buf[..chunk.len()].copy_from_slice(chunk);
-            FixedBytes::from(buf)
-        })
-        .collect();
-
-    // Must match the decode in SlashingManager.proposeSlash():
-    // (bytes zkProof, bytes32[] publicInputs, bytes signature, uint256 chainId, uint256 proofType, address verifier)
-    //
-    // IMPORTANT: Use abi_encode_params() (not abi_encode()) because abi_encode()
-    // wraps dynamic tuples in an outer offset word, but Solidity's abi.decode()
-    // expects flat parameter encoding — the same as abi.encode(a, b, c, ...).
-    (
-        Bytes::copy_from_slice(&proof.data),
-        public_inputs,
-        Bytes::copy_from_slice(&failed.signed_payload.signature),
-        U256::from(failed.e3_id.chain_id()),
-        U256::from(failed.signed_payload.payload.proof_type as u8),
-        verifier,
-    )
-        .abi_encode_params()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

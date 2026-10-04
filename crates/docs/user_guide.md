@@ -50,11 +50,11 @@ It will also setup the nodes key_file in the following path:
 You can now setup your wallet if you have your node configured for writing to the blockchain:
 
 ```
-# Example key DO NOT USE
-$ interfold wallet set --private-key "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+$ interfold wallet set
 ```
 
-_\*NOTE: do not use the above private key as this is obviously public and all funds will be lost_
+Enter the wallet key at the hidden prompt. For scripts, use `--private-key-stdin` to read the key
+from one line of standard input.
 
 ## Configuration
 

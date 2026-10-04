@@ -58,6 +58,11 @@ pub const SLASHABLE_FAILURE_GRACE: Duration = Duration::from_secs(24 * 60 * 60 +
 /// before constructing new extensions.
 #[async_trait]
 pub trait E3Extension: Send + Sync + 'static {
+    /// The recipient that needs deferred events before this extension creates it.
+    fn expected_recipient(&self) -> Option<&'static str> {
+        None
+    }
+
     /// This function is triggered when an InterfoldEvent is sent to the router. Use this to
     /// initialize the receiver using `ctx.set_event_receiver(my_address.into())`. Typically this
     /// means filtering for specific e3_id enabled events that give rise to actors that have to
@@ -103,8 +108,8 @@ pub struct E3Router {
     recovered_selections: Vec<CiphernodeSelected>,
     /// How long a slashably-failed E3 keeps its context for the accusation lifecycle.
     teardown_grace: Duration,
-    /// Restored E3s whose lifecycle stage is Failed; completed at `EffectsEnabled`.
-    failed_on_restart: HashSet<E3id>,
+    /// Finished E3s whose restored contexts complete at `EffectsEnabled` without resuming.
+    complete_on_restart: HashSet<E3id>,
 }
 
 pub struct E3RouterParams {
@@ -115,7 +120,7 @@ pub struct E3RouterParams {
     recovery_store: Repository<RequestRouterCheckpoint>,
     recovered_selections: Vec<CiphernodeSelected>,
     teardown_grace: Duration,
-    failed_on_restart: HashSet<E3id>,
+    complete_on_restart: HashSet<E3id>,
 }
 
 impl E3Router {
@@ -126,7 +131,7 @@ impl E3Router {
             extensions: vec![],
             recovered_selections: vec![],
             teardown_grace: SLASHABLE_FAILURE_GRACE,
-            failed_on_restart: HashSet::new(),
+            complete_on_restart: HashSet::new(),
             recovery_store: repositories.request_router_checkpoint(),
             store: repositories.router(),
         };
@@ -147,7 +152,7 @@ impl E3Router {
             recovery_store: params.recovery_store,
             recovered_selections: params.recovered_selections,
             teardown_grace: params.teardown_grace,
-            failed_on_restart: params.failed_on_restart,
+            complete_on_restart: params.complete_on_restart,
         }
     }
 }

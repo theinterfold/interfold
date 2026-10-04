@@ -85,21 +85,24 @@ impl Handler<InterfoldEvent> for E3Router {
                     .is_some_and(|e3_id| self.contexts.contains_key(&e3_id)),
             ) {
                 RoutingDecision::Broadcast => {
-                    for context in self.contexts.values() {
-                        context.forward_message_now(&msg)
+                    // A restored context of a finished E3 gets no `EffectsEnabled`, so it does not
+                    // resume its work. It completes instead.
+                    let finished = if matches!(msg.get_data(), InterfoldEventData::EffectsEnabled(_))
+                    {
+                        std::mem::take(&mut self.complete_on_restart)
+                    } else {
+                        HashSet::new()
+                    };
+                    for (e3_id, context) in &self.contexts {
+                        if !finished.contains(e3_id) {
+                            context.forward_message_now(&msg)
+                        }
                     }
-                    if matches!(msg.get_data(), InterfoldEventData::EffectsEnabled(_)) {
-                        // Startup pruned the finalized committee of a Failed E3, so no accusation
-                        // work resumes for its restored context.
-                        for e3_id in std::mem::take(&mut self.failed_on_restart) {
-                            if self.contexts.contains_key(&e3_id) {
-                                info!(
-                                    %e3_id,
-                                    "Completing a restored E3 whose lifecycle stage is Failed"
-                                );
-                                self.bus
-                                    .publish(E3RequestComplete { e3_id }, msg.get_ctx().clone())?;
-                            }
+                    for e3_id in finished {
+                        if self.contexts.contains_key(&e3_id) {
+                            info!(%e3_id, "Completing a restored context of a finished E3");
+                            self.bus
+                                .publish(E3RequestComplete { e3_id }, msg.get_ctx().clone())?;
                         }
                     }
                     Ok(())

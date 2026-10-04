@@ -7,10 +7,10 @@
 use super::*;
 use crate::domain::event_conversion::ReceivableDocument;
 use crate::events::GossipPublishFailure;
-use crate::net_interface_handle::NetEventSubscriber;
+use crate::net_interface_handle::{NetEventChannel, NetEventSubscriber};
 use e3_events::{
-    DecryptionKeyShared, E3StageChanged, EventConstructorWithTimestamp, EventSource, Proof,
-    ProofPayload, ProofType, SignedProofPayload, Unsequenced,
+    DecryptionKeyShared, E3StageChanged, EffectsEnabled, EventConstructorWithTimestamp,
+    EventSource, Proof, ProofPayload, ProofType, SignedProofPayload, SyncEnded, Unsequenced,
 };
 
 fn decryption_publication(e3_id: E3id) -> Result<PublishDocumentRequested> {
@@ -28,6 +28,7 @@ fn decryption_publication(e3_id: E3id) -> Result<PublishDocumentRequested> {
         signature: ArcBytes::from_bytes(&[3; 65]),
     };
     let value = ReceivableDocument::DecryptionKeyShared(DecryptionKeyShared {
+        signature: Default::default(),
         e3_id: e3_id.clone(),
         party_id: 0,
         node: "test-node".to_string(),
@@ -45,51 +46,6 @@ fn decryption_publication(e3_id: E3id) -> Result<PublishDocumentRequested> {
         ),
         value: ArcBytes::from_bytes(&value),
     })
-}
-
-#[actix::test]
-async fn canonical_dkg_end_suppresses_late_publication() -> Result<()> {
-    let (_guard, _bus, _net_cmd_tx, mut commands, _net_events, _, _, _, publisher) = setup_test()?;
-    let e3_id = E3id::new("closed", 1);
-    let stage = InterfoldEvent::<Unsequenced>::new_with_timestamp(
-        E3StageChanged {
-            e3_id: e3_id.clone(),
-            previous_stage: E3Stage::CommitteeFinalized,
-            new_stage: E3Stage::KeyPublished,
-        }
-        .into(),
-        None,
-        1,
-        None,
-        EventSource::Evm,
-    )
-    .into_sequenced(1);
-    publisher.send(stage).await?;
-
-    let late = InterfoldEvent::<Unsequenced>::new_with_timestamp(
-        PublishDocumentRequested {
-            meta: DocumentMeta::new(
-                e3_id,
-                DocumentKind::TrBFV,
-                vec![],
-                Some(Utc::now() + chrono::Duration::hours(1)),
-            ),
-            value: ArcBytes::from_bytes(b"late document"),
-        }
-        .into(),
-        None,
-        2,
-        None,
-        EventSource::Local,
-    )
-    .into_sequenced(2);
-    publisher.send(late).await?;
-
-    assert!(matches!(
-        commands.try_recv(),
-        Err(mpsc::error::TryRecvError::Empty)
-    ));
-    Ok(())
 }
 
 #[actix::test]
@@ -134,7 +90,7 @@ async fn late_c4_document_is_rejected_after_key_published() -> Result<()> {
 #[actix::test]
 async fn key_publication_stops_the_announcement_and_upload_in_flight() -> Result<()> {
     tokio::time::pause();
-    let (_guard, _bus, _net_cmd_tx, commands, net_events, _, _, _, publisher) = setup_test()?;
+    let (_guard, _bus, net_cmd_tx, commands, net_events, _, _, _, publisher) = setup_test()?;
     let mut commands = Commands::new(commands);
     let e3_id = E3id::new("inflight", 1);
     let publication = InterfoldEvent::<Unsequenced>::new_with_timestamp(
@@ -169,10 +125,17 @@ async fn key_publication_stops_the_announcement_and_upload_in_flight() -> Result
         EventSource::Evm,
     )
     .into_sequenced(2);
+    // A busy command queue delays the cleanup commands but does not drop them.
+    while net_cmd_tx.try_send(NetCommand::Shutdown).is_ok() {}
     publisher.send(stage).await?;
     assert!(matches!(
         commands.take(|command| matches!(command, NetCommand::DhtRemoveRecords { .. })).await?,
         NetCommand::DhtRemoveRecords { keys } if keys.contains(&key)
+    ));
+    // The put in the swarm ends too, not only the future that waits for it.
+    assert!(matches!(
+        commands.take(|command| matches!(command, NetCommand::DhtCancelPut { .. })).await?,
+        NetCommand::DhtCancelPut { key: cancelled } if cancelled == key
     ));
 
     // Late answers reach nothing: the announcement does not gossip after its local store, and
@@ -192,6 +155,350 @@ async fn key_publication_stops_the_announcement_and_upload_in_flight() -> Result
             .await
     );
     Ok(())
+}
+
+/// Startup publishes chain history between `EffectsEnabled` and `SyncEnded`. A recovered
+/// publication waits for `SyncEnded`, so a document of an E3 that closed in that history never
+/// reaches the network.
+#[actix::test]
+async fn recovered_publications_wait_for_the_end_of_the_sync() -> Result<()> {
+    tokio::time::pause();
+    let closed = publish_request("closed-in-history", b"closed document");
+    let open = publish_request("open", b"open document");
+    let open_key = ContentHash::from_content(&open.value);
+    let recovered = RecoveredDocumentState {
+        publications: vec![closed.clone(), open],
+        ..RecoveredDocumentState::default()
+    };
+    let (_guard, _bus, _net_cmd_tx, commands, _net_events, _, _, _, publisher) =
+        setup_startup_test(recovered)?;
+    let mut commands = Commands::new(commands);
+    let is_dht_write = |command: &NetCommand| is_store_local(command) || is_upload(command);
+
+    publisher
+        .send(startup_event(EffectsEnabled::new().into(), 1))
+        .await?;
+    assert!(
+        !commands
+            .arrives_within(Duration::from_secs(60), is_dht_write)
+            .await,
+        "no publication runs before the chain history arrives"
+    );
+
+    publisher.send(key_published(&closed.meta.e3_id, 2)).await?;
+    publisher
+        .send(startup_event(SyncEnded::new().into(), 3))
+        .await?;
+
+    for accept in [is_store_local, is_upload] {
+        let command = commands.take(accept).await?;
+        assert!(matches!(
+            command,
+            NetCommand::DhtStoreLocal { key, .. } | NetCommand::DhtPutRecord { key, .. }
+                if key == open_key
+        ));
+    }
+    assert!(
+        !commands
+            .arrives_within(Duration::from_secs(60), is_dht_write)
+            .await,
+        "the publication of the closed E3 never runs"
+    );
+    Ok(())
+}
+
+/// Replay brings back publication requests whose documents have expired, and startup holds
+/// publications until `SyncEnded`. Expired requests must not fill the outbox, or a document that
+/// the chain history creates in that window is refused and never published.
+#[actix::test]
+async fn expired_replay_does_not_block_fresh_publication() -> Result<()> {
+    tokio::time::pause();
+    let (_guard, _bus, _net_cmd_tx, commands, _net_events, _, _, _, publisher) =
+        setup_startup_test(RecoveredDocumentState::default())?;
+    let mut commands = Commands::new(commands);
+    let is_dht_write = |command: &NetCommand| is_store_local(command) || is_upload(command);
+
+    let mut seq = 0;
+    for index in 0..MAX_PENDING_PUBLICATIONS {
+        let mut expired =
+            publish_request(&format!("expired-{index}"), index.to_string().as_bytes());
+        expired.meta.expires_at = Utc::now() - chrono::Duration::seconds(1);
+        seq += 1;
+        publisher
+            .send(startup_event(
+                InterfoldEventData::PublishDocumentRequested(expired),
+                seq,
+            ))
+            .await?;
+    }
+    publisher
+        .send(startup_event(EffectsEnabled::new().into(), seq + 1))
+        .await?;
+    let fresh = publish_request("fresh", b"fresh document");
+    let fresh_key = ContentHash::from_content(&fresh.value);
+    publisher
+        .send(startup_event(
+            InterfoldEventData::PublishDocumentRequested(fresh),
+            seq + 2,
+        ))
+        .await?;
+    publisher.send(PublisherBarrier).await?;
+    assert!(
+        !commands
+            .arrives_within(Duration::from_secs(60), is_dht_write)
+            .await,
+        "no publication runs before the chain history arrives"
+    );
+
+    publisher
+        .send(startup_event(SyncEnded::new().into(), seq + 3))
+        .await?;
+    for accept in [is_store_local, is_upload] {
+        let command = commands.take(accept).await?;
+        assert!(matches!(
+            command,
+            NetCommand::DhtStoreLocal { key, .. } | NetCommand::DhtPutRecord { key, .. }
+                if key == fresh_key
+        ));
+    }
+    assert!(
+        !commands
+            .arrives_within(Duration::from_secs(60), is_dht_write)
+            .await,
+        "no expired document is written"
+    );
+    Ok(())
+}
+
+/// A busy network command queue holds the publisher's cleanup in one bounded queue with one
+/// waiting send, not in a task per command. The cleanup that waits behind that send goes out
+/// together once the queue has room.
+#[actix::test]
+async fn cleanup_waits_for_a_busy_command_queue_in_one_queue() -> Result<()> {
+    tokio::time::pause();
+    let closing: Vec<_> = ["first", "second", "third"]
+        .into_iter()
+        .map(|e3| publish_request(e3, e3.as_bytes()))
+        .collect();
+    let keys: Vec<_> = closing
+        .iter()
+        .map(|publication| ContentHash::from_content(&publication.value))
+        .collect();
+    let recovered = RecoveredDocumentState {
+        publications: closing.clone(),
+        ..RecoveredDocumentState::default()
+    };
+    let (_guard, _bus, net_cmd_tx, commands, _net_events, _, _, _, publisher) =
+        setup_startup_test(recovered)?;
+    let mut commands = Commands::new(commands);
+
+    while net_cmd_tx.try_send(NetCommand::Shutdown).is_ok() {}
+    for (seq, publication) in (1..).zip(&closing) {
+        publisher
+            .send(key_published(&publication.meta.e3_id, seq))
+            .await?;
+    }
+
+    let is_removal = |command: &NetCommand| matches!(command, NetCommand::DhtRemoveRecords { .. });
+    assert!(matches!(
+        commands.take(is_removal).await?,
+        NetCommand::DhtRemoveRecords { keys: removed } if removed == keys[..1]
+    ));
+    assert!(matches!(
+        commands.take(is_removal).await?,
+        NetCommand::DhtRemoveRecords { keys: removed } if removed == keys[1..]
+    ));
+    assert!(
+        !commands
+            .arrives_within(Duration::from_secs(60), is_removal)
+            .await
+    );
+    Ok(())
+}
+
+/// The DHT store is in memory. At `SyncEnded` a restarted node stores the received documents of
+/// open E3s in it again, so that it still serves them, and prunes them when their E3 closes.
+#[actix::test]
+async fn received_documents_are_stored_again_after_the_sync() -> Result<()> {
+    tokio::time::pause();
+    let received = |e3: &str, value: &[u8]| {
+        let request = publish_request(e3, value);
+        DocumentReceived {
+            meta: request.meta,
+            value: request.value,
+        }
+    };
+    let closed = received("closed-in-history", b"closed document");
+    let open = received("open", b"open document");
+    let open_key = ContentHash::from_content(&open.value);
+    let mut recovered = RecoveredDocumentState::default();
+    recovered.restorable.push(closed.clone(), Utc::now());
+    recovered.restorable.push(open.clone(), Utc::now());
+    let (_guard, _bus, _net_cmd_tx, commands, net_events, _, _, _, publisher) =
+        setup_startup_test(recovered)?;
+    let mut commands = Commands::new(commands);
+
+    publisher
+        .send(startup_event(EffectsEnabled::new().into(), 1))
+        .await?;
+    publisher.send(key_published(&closed.meta.e3_id, 2)).await?;
+    assert!(
+        !commands
+            .arrives_within(Duration::from_secs(60), is_store_local)
+            .await,
+        "nothing is stored before the chain history arrives"
+    );
+    publisher
+        .send(startup_event(SyncEnded::new().into(), 3))
+        .await?;
+
+    let NetCommand::DhtStoreLocal {
+        correlation_id,
+        key,
+        value,
+        ..
+    } = commands.take(is_store_local).await?
+    else {
+        bail!("expected a local store");
+    };
+    assert_eq!((&key, &value), (&open_key, &open.value));
+    let is_removal = |command: &NetCommand| matches!(command, NetCommand::DhtRemoveRecords { .. });
+    let removes_open_key = |command: NetCommand| match command {
+        NetCommand::DhtRemoveRecords { keys } => keys == vec![open_key.clone()],
+        _ => false,
+    };
+
+    // The open E3 closes while its document is being stored: the closure removes the record,
+    // and the store's answer removes it once more, in case the store came after the removal.
+    // A failed store can have stored the record too.
+    publisher.send(key_published(&open.meta.e3_id, 4)).await?;
+    assert!(removes_open_key(commands.take(is_removal).await?));
+    // Many more E3s close before the store answers, so the list of closed E3s drops this one.
+    for index in 0..1_024u64 {
+        let e3_id = E3id::new(format!("later-{index}"), 1);
+        publisher.send(key_published(&e3_id, 5 + index)).await?;
+    }
+    net_events.send(NetEvent::DhtStoreLocalError {
+        correlation_id,
+        error: libp2p::kad::store::Error::MaxRecords,
+    })?;
+    assert!(removes_open_key(commands.take(is_removal).await?));
+    assert!(
+        !commands
+            .arrives_within(Duration::from_secs(60), is_store_local)
+            .await,
+        "the document of the closed E3 is not stored"
+    );
+    Ok(())
+}
+
+/// Recovery reads only the receipts of the E3s in the committee snapshot, which can predate a
+/// selection that replay restores. A receipt that replay delivers before `SyncEnded` is stored
+/// again too, unless its E3 closed; a receipt that recovery already read is stored once.
+#[actix::test]
+async fn receipts_that_replay_delivers_are_stored_again_once() -> Result<()> {
+    tokio::time::pause();
+    let received = |e3: &str, value: &[u8]| {
+        let request = publish_request(e3, value);
+        DocumentReceived {
+            meta: request.meta,
+            value: request.value,
+        }
+    };
+    let recovered_receipt = received("in-snapshot", b"recovered document");
+    let replayed_receipt = received("selected-after-snapshot", b"replayed document");
+    let closed_receipt = received("closed", b"closed document");
+    let mut recovered = RecoveredDocumentState::default();
+    recovered.received.insert((
+        recovered_receipt.meta.e3_id.clone(),
+        ContentHash::from_content(&recovered_receipt.value),
+    ));
+    recovered
+        .restorable
+        .push(recovered_receipt.clone(), Utc::now());
+    recovered
+        .closed_e3s
+        .push_back(closed_receipt.meta.e3_id.clone());
+    let (_guard, _bus, _net_cmd_tx, commands, net_events, _, _, _, publisher) =
+        setup_startup_test(recovered)?;
+    let mut commands = Commands::new(commands);
+
+    for (seq, receipt) in (1..).zip([&recovered_receipt, &replayed_receipt, &closed_receipt]) {
+        publisher
+            .send(startup_event(
+                InterfoldEventData::DocumentReceived(receipt.clone()),
+                seq,
+            ))
+            .await?;
+    }
+    publisher
+        .send(startup_event(EffectsEnabled::new().into(), 4))
+        .await?;
+    assert!(
+        !commands
+            .arrives_within(Duration::from_secs(60), is_store_local)
+            .await,
+        "nothing is stored before the chain history arrives"
+    );
+    publisher
+        .send(startup_event(SyncEnded::new().into(), 5))
+        .await?;
+
+    let mut stored = Vec::new();
+    for _ in 0..2 {
+        let NetCommand::DhtStoreLocal {
+            correlation_id,
+            key,
+            ..
+        } = commands.take(is_store_local).await?
+        else {
+            bail!("expected a local store");
+        };
+        stored.push(key.clone());
+        net_events.send(NetEvent::DhtStoreLocalSucceeded {
+            correlation_id,
+            key,
+        })?;
+    }
+    assert_eq!(
+        stored,
+        [&recovered_receipt, &replayed_receipt]
+            .map(|receipt| ContentHash::from_content(&receipt.value))
+    );
+    assert!(
+        !commands
+            .arrives_within(Duration::from_secs(60), is_store_local)
+            .await,
+        "a receipt that recovery read is stored once, and the closed E3's receipt never"
+    );
+    Ok(())
+}
+
+fn key_published(e3_id: &E3id, seq: u64) -> InterfoldEvent {
+    InterfoldEvent::<Unsequenced>::new_with_timestamp(
+        E3StageChanged {
+            e3_id: e3_id.clone(),
+            previous_stage: E3Stage::CommitteeFinalized,
+            new_stage: E3Stage::KeyPublished,
+        }
+        .into(),
+        None,
+        u128::from(seq),
+        None,
+        EventSource::Evm,
+    )
+    .into_sequenced(seq)
+}
+
+fn startup_event(data: InterfoldEventData, seq: u64) -> InterfoldEvent {
+    InterfoldEvent::<Unsequenced>::new_with_timestamp(
+        data,
+        None,
+        u128::from(seq),
+        None,
+        EventSource::Local,
+    )
+    .into_sequenced(seq)
 }
 
 #[actix::test]
@@ -380,10 +687,7 @@ fn correlation(command: &NetCommand) -> CorrelationId {
 }
 
 /// Answer the next local store with success.
-async fn store_succeeds(
-    commands: &mut Commands,
-    net_events: &broadcast::Sender<NetEvent>,
-) -> Result<()> {
+async fn store_succeeds(commands: &mut Commands, net_events: &NetEventChannel) -> Result<()> {
     let NetCommand::DhtStoreLocal {
         correlation_id,
         key,
@@ -617,7 +921,8 @@ async fn expired_document_is_rejected_without_a_dht_write() -> Result<()> {
     let system = EventSystem::new().with_fresh_bus();
     let bus = system.handle()?.enable("expired-document");
     let (net_cmd_tx, mut net_cmd_rx) = mpsc::channel(1);
-    let (net_evt_tx, _net_evt_rx) = broadcast::channel(1);
+    let net_evt_tx = NetEventChannel::new(1);
+    let _net_evt_rx = net_evt_tx.subscribe();
     let event = PublishDocumentRequested {
         meta: DocumentMeta::new(
             E3id::new("expired", 1),
@@ -647,8 +952,8 @@ async fn expired_document_is_rejected_without_a_dht_write() -> Result<()> {
 }
 
 #[actix::test]
-async fn test_get_document_fails_with_exponential_backoff() -> Result<()> {
-    let (_guard, bus, _net_cmd_tx, mut net_cmd_rx, net_evt_tx, _net_evt_rx, _, errors, _) =
+async fn a_failed_read_releases_its_slot_before_retry_backoff() -> Result<()> {
+    let (_guard, bus, _net_cmd_tx, mut net_cmd_rx, net_evt_tx, _net_evt_rx, _, errors, publisher) =
         setup_test()?;
 
     let value = b"I am a special document".to_vec();
@@ -672,33 +977,27 @@ async fn test_get_document_fails_with_exponential_backoff() -> Result<()> {
         }),
     ))?;
 
-    for _ in 0..4 {
-        // Expect retry
-        let Some(NetCommand::DhtGetRecord { correlation_id, .. }) =
-            timeout(Duration::from_secs(15), net_cmd_rx.recv())
-                .await
-                .expect("did not receive DhtGetRecord")
-        else {
-            bail!("msg not as expected");
-        };
-
-        // Report failure
-        net_evt_tx.send(NetEvent::DhtGetRecordError {
-            correlation_id,
-            error: GetRecordError::Timeout {
-                key: RecordKey::new(&cid),
-            },
-        })?;
-    }
-
-    // wait for events to settle
-    let errors = errors.send(TakeEvents::new(1)).await?;
+    let Some(NetCommand::DhtGetRecord { correlation_id, .. }) =
+        timeout(Duration::from_secs(2), net_cmd_rx.recv()).await?
+    else {
+        bail!("expected a DHT read");
+    };
+    net_evt_tx.send(NetEvent::DhtGetRecordError {
+        correlation_id,
+        error: GetRecordError::Timeout {
+            key: RecordKey::new(&cid),
+        },
+    })?;
+    let errors = timeout(Duration::from_secs(2), errors.send(TakeEvents::new(1))).await??;
     let error: InterfoldError = errors.events.first().unwrap().try_into()?;
-    assert_eq!(
-            error.message,
-            "Operation failed after 4 attempts. Last error: DHT get record failed: Timeout { key: Key(b\"\\xda-\\xe1\\xc0T\\x11$X\\x05\\xd1\\xd4\\xa6C\\x86\\x96\\xb7e\\xd9j\\x96\\x1bD\\xc8P#\\x0f\\\"\\xea A@b\") }"
-        );
-
+    assert!(error.message.contains("DHT get record failed"));
+    assert_eq!(publisher.send(FetchBacklog).await?, (0, 1));
+    assert!(
+        timeout(Duration::from_millis(100), net_cmd_rx.recv())
+            .await
+            .is_err(),
+        "a failed read waits in the queue during backoff"
+    );
     Ok(())
 }
 

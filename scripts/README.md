@@ -93,12 +93,21 @@ pnpm release:tag X.Y.Z
 The tag workflow then:
 
 - Confirms that the tag belongs to `origin/main`.
-- Requires the binaries and source-matched circuit archive.
+- Packages and hashes the source-matched circuit archive before binary and ciphernode image builds.
+- Passes `E3_CIRCUITS_ARCHIVE_SHA256` to those builds, including through the Docker build argument.
+  The ZK prover binds this pin to the crate version and retains the other `versions.json` pins.
+- Checks each binary's `interfold noir status` report against the archive digest before the
+  release-candidate gate passes. The ciphernode image build performs the same check before upload.
 - Publishes versioned containers and npm packages. Moves the `dev` container aliases, and for a
   stable release also the `latest` aliases.
 - Creates the GitHub release only after every required publication succeeds.
 
 Rust workspace crates are not published because they use unreleased git dependencies.
+
+The support image compiles no CLI or ciphernode. DAppNode copies the checked ciphernode binary.
+Builds without `E3_CIRCUITS_ARCHIVE_SHA256` still work, but an unpinned circuit download fails. Do
+not repack the uploaded circuit archive after compilation: the compiled pin authenticates its exact
+bytes.
 
 The workflow calls the small commands in `release.mjs`. The implementation is split by purpose in
 `scripts/release/`. Run `pnpm test:release` to test tag ancestry, npm retries, assets, and gates.
@@ -306,6 +315,9 @@ not need a circuit rebuild.
 
 - **Push**: Merges local `dist/circuits/` into the `circuit-artifacts` branch, refreshes
   `SHA256SUMS` and `checksums.json`, then pushes to origin
+- **Checksums**: `pnpm store:circuits checksums --dir <path>` writes `SHA256SUMS` and
+  `checksums.json` for exactly the staged directory. CI runs this before packaging the
+  circuit-download fixture
 - **Pull**: Fetches `circuit-artifacts` and selects its newest first-parent commit with a matching
   `SOURCE_HASH`. It extracts that build to `dist/circuits/`. A build for another source tree at the
   branch tip does not replace this match. If no match exists, the command fails before it changes

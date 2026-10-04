@@ -75,6 +75,20 @@ impl RequestRouter {
             return RoutingDecision::Broadcast;
         }
 
+        if let InterfoldEventData::EvmLogObserved(log) = msg.get_data() {
+            if has_context
+                && msg.source() == EventSource::Evm
+                && log.contract == "CiphernodeRegistry"
+                && log.event_name == "CommitteeProofPublished"
+                && !log.e3_id.as_ref().is_some_and(|id| completed.contains(id))
+            {
+                return RoutingDecision::Process {
+                    e3_id: log.e3_id.clone().expect("admitted E3 observation"),
+                    post_forward: PostForward::None,
+                };
+            }
+        }
+
         // Durable observational EVM facts are consumed directly by projections
         // and global observers. They describe an E3, but they do not drive its
         // per-E3 actors. Routing them into a context would create contexts for

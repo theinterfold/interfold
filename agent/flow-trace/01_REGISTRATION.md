@@ -7,9 +7,12 @@ initial bond owner. A separate wallet or Safe is recommended, but the operator m
 itself. The configured owner then funds and registers the operator on-chain.
 
 For non-interactive provisioning, `password set`, `wallet set`, and `ciphernode setup` expose
-`--password-stdin` / `--private-key-stdin` alternatives. Container entrypoints use these stdin or
-hidden-prompt paths so encryption passwords and private keys do not appear in process arguments or
-environment metadata.
+`--password-stdin` / `--private-key-stdin` flags. Without the corresponding flag, each command uses
+a hidden prompt. The CLI rejects secret-value options, including short options, before it loads the
+configuration. The error names the stdin flag and the interactive prompt. Repository scripts and
+container entrypoints pass secrets through stdin.
+
+**Files:** `crates/cli/src/{main,password,wallet}.rs`, `crates/cli/src/ciphernode/{mod,setup}.rs`.
 
 ## Identity model: bond owner vs operator key
 
@@ -192,7 +195,9 @@ User runs: interfold ciphernode status
 │   ├─ pendingExits.ticketAmount, pendingExits.ciphernodeBondAmount
 │   ├─ bondingRegistry.minTicketBalance → required minimum
 │   ├─ bondingRegistry.ticketPrice → price per ticket
-│   └─ bondingRegistry.requiredCiphernodeBond → required bond
+│   ├─ bondingRegistry.requiredCiphernodeBond → required bond
+│   └─ bondingRegistry.eligibilityAt(operator, latest block timestamp) → eligible for new
+│       committees (admission cooldown and policy applied; `active` alone does not include them)
 │
 ├─ Lists the committees that hold the collateral:
 │   e3_evm::fetch_operator_committees()  (crates/evm/src/operator_status.rs)
@@ -209,6 +214,7 @@ User runs: interfold ciphernode status
    Bond Owner:       0xabcd...
    Registered:       true
    Active:           true
+   Eligible for new committees: true
    Exit Pending:     false
    Ticket Balance:   100 (available: 95)
    Ciphernode Bond:     50000 FOLD

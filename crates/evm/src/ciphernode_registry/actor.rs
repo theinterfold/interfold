@@ -203,6 +203,7 @@ fn is_control_plane_event(topic: Option<&B256>) -> bool {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod control_plane_event_tests {
     use super::*;
 

@@ -14,25 +14,55 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
                 ctx.spawn(timing);
             }
             InterfoldEventData::CiphertextOutputPublished(data) => {
+                self.observe_canonical_stage(&data.e3_id, &E3Stage::CiphertextReady);
+                if let Err(error) = self.restore_public_key_context(&ec) {
+                    self.bus.with_ec(&ec).err(EType::KeyGeneration, error);
+                }
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
             InterfoldEventData::PublicKeyAggregated(data) => {
-                let committee_hash =
-                    e3_committee_hash::hash_committee_addresses(&data.committee_addresses);
-                let pk = ArcBytes::from_bytes(&data.pubkey);
-                let _ = self.state.try_mutate(&ec, |mut s| {
-                    s.aggregated_pk = Some(pk);
-                    s.decryption_domain = Some(e3_committee_hash::DecryptionDomainContext {
-                        interfold_address: self.interfold_address,
-                        committee_hash,
-                        committee_public_key: data.pk_commitment.into(),
+                let Some(key) = self.canonical_keys.get(&data.e3_id) else {
+                    return;
+                };
+                if !key.accepts(&data) {
+                    return;
+                }
+                trap(EType::KeyGeneration, &self.bus.with_ec(&ec), || {
+                    self.admit_public_key(data.pubkey, &ec)
+                });
+            }
+            InterfoldEventData::EvmLogObserved(_)
+            | InterfoldEventData::CommitteePublicKeyChunkPublished(_) => {
+                if ec.source() == e3_events::EventSource::Evm {
+                    trap(EType::KeyGeneration, &self.bus.with_ec(&ec), || {
+                        self.restore_public_key_context(&ec)?;
+                        self.resume_decryption_work(ec.clone())
                     });
-                    Ok(s)
+                }
+            }
+            InterfoldEventData::CommitteePublished(data) => {
+                if ec.source() == e3_events::EventSource::Net {
+                    return;
+                }
+                self.observe_canonical_stage(&data.e3_id, &E3Stage::KeyPublished);
+                let Some(key) = self.canonical_keys.get(&data.e3_id) else {
+                    return;
+                };
+                let nodes: Result<Vec<Address>, _> =
+                    data.nodes.iter().map(|node| node.parse()).collect();
+                if nodes.as_ref().ok() != Some(&key.committee)
+                    || key.validate_key(&data.public_key).is_err()
+                {
+                    return;
+                }
+                trap(EType::KeyGeneration, &self.bus.with_ec(&ec), || {
+                    self.admit_public_key(data.public_key, &ec)
                 });
             }
             InterfoldEventData::ThresholdShareCreated(data) => {
-                let _ =
-                    self.handle_threshold_share_created(TypedEvent::new(data, ec), ctx.address());
+                trap(EType::KeyGeneration, &self.bus.with_ec(&ec), || {
+                    self.handle_threshold_share_created(TypedEvent::new(data, ec), ctx.address())
+                });
             }
             InterfoldEventData::DKGRecursiveAggregationComplete(data) => {
                 if self
@@ -44,6 +74,11 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
                         error!(%error, "Could not clear completed DKG proof work");
                     }
                 }
+            }
+            InterfoldEventData::ShareVerificationDispatched(data) => {
+                trap(EType::KeyGeneration, &self.bus.with_ec(&ec), || {
+                    self.record_logged_share_dispatch(&data, &ec)
+                });
             }
             InterfoldEventData::DkgCoordination(data) => {
                 let is_ready = matches!(data.kind, DkgCoordinationKind::Ready);
@@ -68,14 +103,19 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
                 }
             }
             InterfoldEventData::EncryptionKeyCreated(data) => {
-                let _ =
-                    self.handle_encryption_key_created(TypedEvent::new(data, ec), ctx.address());
+                trap(EType::KeyGeneration, &self.bus.with_ec(&ec), || {
+                    self.handle_encryption_key_created(TypedEvent::new(data, ec), ctx.address())
+                });
             }
             InterfoldEventData::PkGenerationProofSigned(data) => {
-                let _ = self.handle_pk_generation_proof_signed(TypedEvent::new(data, ec));
+                trap(EType::KeyGeneration, &self.bus.with_ec(&ec), || {
+                    self.handle_pk_generation_proof_signed(TypedEvent::new(data, ec))
+                });
             }
             InterfoldEventData::DkgProofSigned(data) => {
-                let _ = self.handle_share_computation_proof_signed(TypedEvent::new(data, ec));
+                trap(EType::KeyGeneration, &self.bus.with_ec(&ec), || {
+                    self.handle_share_computation_proof_signed(TypedEvent::new(data, ec))
+                });
             }
             InterfoldEventData::E3RequestComplete(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
@@ -91,7 +131,7 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
                 );
             }
             InterfoldEventData::E3StageChanged(data) => {
-                use e3_events::E3Stage;
+                self.observe_canonical_stage(&data.e3_id, &data.new_stage);
                 match &data.new_stage {
                     E3Stage::Complete | E3Stage::Failed => {
                         info!("E3 reached terminal stage {:?}. Shutting down ThresholdKeyshare for e3_id={}", data.new_stage, data.e3_id);
@@ -111,6 +151,21 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
             }
             InterfoldEventData::DecryptionKeyShared(data) => {
                 if data.external {
+                    let expected = self.dkg_dealer_address(&data.e3_id, data.party_id);
+                    match expected {
+                        Ok(Some(address))
+                            if data.recover_address().ok() == Some(address)
+                                && data.node.parse::<alloy::primitives::Address>().ok()
+                                    == Some(address) => {}
+                        _ => {
+                            warn!(
+                                party_id = data.party_id,
+                                e3_id = %data.e3_id,
+                                "Dropping decryption key share without its dealer's signature"
+                            );
+                            return;
+                        }
+                    }
                     // Route based on current state
                     if let Some(state) = self.state.get() {
                         if state.expelled_parties.contains(&data.party_id) {
@@ -234,10 +289,14 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
             InterfoldEventData::CommitteeMemberExpelled(data) => {
-                self.handle_committee_member_expelled(data, ec);
+                trap(EType::KeyGeneration, &self.bus.with_ec(&ec), || {
+                    self.handle_committee_member_expelled(data, ec)
+                });
             }
             InterfoldEventData::CommitteeMemberExcluded(data) => {
-                self.handle_committee_member_excluded(data, ec);
+                trap(EType::KeyGeneration, &self.bus.with_ec(&ec), || {
+                    self.handle_committee_member_excluded(data, ec)
+                });
             }
             InterfoldEventData::EffectsEnabled(_) => {
                 // Broadcast once at the end of boot sync. Re-drive any of this node's own

@@ -16,7 +16,7 @@ import {
   DKG_PROOF_TYPES,
   slashReasonForProofType,
 } from "./protocol/slashPolicies";
-import { getDeploymentChain, readDeploymentArgs } from "./utils";
+import { getDeploymentChain, readDeploymentArgs, send } from "./utils";
 
 /** `IInterfold.FailureReason.InsufficientCommitteeMembers` */
 const FAILURE_REASON_INSUFFICIENT_COMMITTEE_MEMBERS = 2;
@@ -69,27 +69,31 @@ export async function configureLocalSlashingPolicies(
 
   for (const proofType of DKG_PROOF_TYPES) {
     const reason = slashReasonForProofType(proofType);
-    const tx = await contract.setSlashPolicy(
-      reason,
-      localAttestationSlashPolicy(
-        ethers,
-        FAILURE_REASON_INSUFFICIENT_COMMITTEE_MEMBERS,
+    await send(
+      contract.setSlashPolicy(
+        reason,
+        localAttestationSlashPolicy(
+          ethers,
+          FAILURE_REASON_INSUFFICIENT_COMMITTEE_MEMBERS,
+        ),
       ),
+      `slashingManager.setSlashPolicy(${reason})`,
     );
-    await tx.wait();
     console.log(`  proofType ${proofType} (DKG) -> ${reason}`);
   }
 
   for (const proofType of DECRYPTION_PROOF_TYPES) {
     const reason = slashReasonForProofType(proofType);
-    const tx = await contract.setSlashPolicy(
-      reason,
-      localAttestationSlashPolicy(
-        ethers,
-        FAILURE_REASON_INSUFFICIENT_COMMITTEE_MEMBERS,
+    await send(
+      contract.setSlashPolicy(
+        reason,
+        localAttestationSlashPolicy(
+          ethers,
+          FAILURE_REASON_INSUFFICIENT_COMMITTEE_MEMBERS,
+        ),
       ),
+      `slashingManager.setSlashPolicy(${reason})`,
     );
-    await tx.wait();
     console.log(`  proofType ${proofType} (decryption) -> ${reason}`);
   }
 

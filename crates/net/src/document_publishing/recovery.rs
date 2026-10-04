@@ -3,15 +3,16 @@
 //! Rebuild in-flight DHT publication and receive state from the durable event log.
 
 use super::{
-    ContentHash, RecoveredDocumentState, MAX_BUFFERED_NOTIFICATIONS, MAX_PENDING_PUBLICATIONS,
-    MAX_PENDING_PUBLICATION_BYTES, MAX_RECEIVED_DOCUMENTS,
+    ContentHash, RecoveredDocumentState, MAX_PENDING_PUBLICATIONS, MAX_PENDING_PUBLICATION_BYTES,
+    MAX_RECEIVED_DOCUMENTS,
 };
-use crate::domain::EventConversionService;
+use crate::domain::closed_e3s::record_closed_e3;
+use crate::domain::{EventConversionService, RestorableDocuments};
 use actix::Recipient;
 use anyhow::{ensure, Context, Result};
 use e3_events::{
     AggregateId, CorrelationId, E3Stage, E3id, Event, EventContextAccessors, EventContextSeq,
-    EventSource, EventStoreQueryBy, EventStoreQueryResponse, InterfoldEventData,
+    EventSource, EventStoreQueryBy, EventStoreQueryResponse, InterfoldEvent, InterfoldEventData,
     PublishDocumentRequested, SeqAgg,
 };
 use e3_utils::actix::channel;
@@ -73,6 +74,38 @@ fn track_publication(
     Ok(())
 }
 
+/// Events in one event-store page that recovery reads.
+const RECOVERY_PAGE_EVENTS: u64 = 1_024;
+/// Bytes in one event-store page that recovery reads. A page holds at least one event, also when
+/// that event is larger.
+const RECOVERY_PAGE_BYTES: u64 = 16 * 1024 * 1024;
+
+/// Read up to `limit` events of `aggregate_id` from sequence `cursor` on, in one bounded page.
+async fn read_page(
+    eventstore: &Recipient<EventStoreQueryBy<SeqAgg>>,
+    aggregate_id: AggregateId,
+    cursor: u64,
+    limit: u64,
+) -> Result<Vec<InterfoldEvent>> {
+    let (recipient, response) = channel::oneshot::<EventStoreQueryResponse>();
+    eventstore
+        .send(
+            EventStoreQueryBy::<SeqAgg>::new(
+                CorrelationId::new(),
+                HashMap::from([(aggregate_id, cursor)]),
+                recipient,
+            )
+            .with_limit(limit)
+            .with_max_bytes(RECOVERY_PAGE_BYTES),
+        )
+        .await
+        .context("document recovery event-store router stopped")?;
+    response
+        .await
+        .context("document recovery event-store query had no response")?
+        .into_events()
+}
+
 pub async fn recover_document_state(
     eventstore: &Recipient<EventStoreQueryBy<SeqAgg>>,
     aggregates: &[AggregateId],
@@ -80,31 +113,34 @@ pub async fn recover_document_state(
 ) -> Result<RecoveredDocumentState> {
     let mut publications = HashMap::new();
     let mut received = HashSet::new();
+    let mut restorable = RestorableDocuments::default();
+    let now = chrono::Utc::now();
     let mut closed = VecDeque::new();
     let mut publication_bytes = 0usize;
 
     for aggregate_id in aggregates.iter().copied() {
         let mut cursor = 1u64;
+        let mut page = VecDeque::new();
         loop {
-            let (recipient, response) = channel::oneshot::<EventStoreQueryResponse>();
-            eventstore
-                .send(
-                    EventStoreQueryBy::<SeqAgg>::new(
-                        CorrelationId::new(),
-                        HashMap::from([(aggregate_id, cursor)]),
-                        recipient,
-                    )
-                    .with_limit(1),
-                )
-                .await
-                .context("document recovery event-store router stopped")?;
-            let mut events = response
-                .await
-                .context("document recovery event-store query had no response")?
-                .into_events()?;
-            let Some(event) = events.pop() else {
+            if page.is_empty() {
+                page = read_page(eventstore, aggregate_id, cursor, RECOVERY_PAGE_EVENTS)
+                    .await?
+                    .into();
+            }
+            let Some(event) = page.pop_front() else {
                 break;
             };
+            // The event-store router drops legacy events that were written to the wrong aggregate
+            // store, so a page can skip a sequence number. A one-event read at that number is then
+            // empty: recovery stops there, so that a node with such a legacy store still starts.
+            // A missing event is an error.
+            if event.seq() != cursor
+                && read_page(eventstore, aggregate_id, cursor, 1)
+                    .await?
+                    .is_empty()
+            {
+                break;
+            }
             ensure!(
                 event.aggregate_id() == aggregate_id && event.seq() == cursor,
                 "document recovery event-store sequence gap"
@@ -138,6 +174,7 @@ pub async fn recover_document_state(
                         received.len() <= MAX_RECEIVED_DOCUMENTS,
                         "received-document cache exceeds recovery limit"
                     );
+                    restorable.push(document.clone(), now);
                 }
                 InterfoldEventData::E3StageChanged(change)
                     if event.source() == EventSource::Evm
@@ -149,12 +186,7 @@ pub async fn recover_document_state(
                                 | E3Stage::Failed
                         ) =>
                 {
-                    if !closed.contains(&change.e3_id) {
-                        if closed.len() == MAX_BUFFERED_NOTIFICATIONS {
-                            closed.pop_front();
-                        }
-                        closed.push_back(change.e3_id.clone());
-                    }
+                    record_closed_e3(&mut closed, &change.e3_id);
                     publications.retain(|(id, _), request| {
                         if id == &change.e3_id {
                             publication_bytes =
@@ -165,6 +197,7 @@ pub async fn recover_document_state(
                         }
                     });
                     received.retain(|(id, _)| id != &change.e3_id);
+                    restorable.remove_e3(&change.e3_id);
                 }
                 _ => {}
             }
@@ -174,6 +207,7 @@ pub async fn recover_document_state(
     Ok(RecoveredDocumentState {
         publications: publications.into_values().collect(),
         received,
+        restorable,
         closed_e3s: closed,
     })
 }
@@ -182,7 +216,8 @@ pub async fn recover_document_state(
 mod tests {
     use super::*;
     use crate::domain::event_conversion::ReceivableDocument;
-    use e3_ciphernode_builder::EventSystem;
+    use actix::Actor;
+    use e3_ciphernode_builder::{EventStoreAddrs, EventSystem};
     use e3_events::{
         AggregateConfig, DecryptionKeyShared, DocumentKind, DocumentMeta, DocumentReceived,
         E3StageChanged, EncryptionKey, EncryptionKeyCreated, EventConstructorWithTimestamp,
@@ -190,6 +225,7 @@ mod tests {
         SignedProofPayload, StoreEventRequested, StoreEventResponse, Unsequenced,
     };
     use e3_utils::ArcBytes;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
     use std::time::Duration;
 
@@ -245,11 +281,18 @@ mod tests {
 
         let reader = system.eventstore_reader()?.seq();
         let interests = HashSet::from([e3_id.clone()]);
-        let recovered = recover_document_state(&reader, &[aggregate], &interests).await?;
+        let mut recovered = recover_document_state(&reader, &[aggregate], &interests).await?;
         assert_eq!(recovered.publications, vec![request.clone()]);
         assert!(recovered
             .received
             .contains(&(e3_id.clone(), ContentHash::from_content(&value))));
+        assert_eq!(
+            recovered.restorable.pop(chrono::Utc::now()),
+            Some(DocumentReceived {
+                meta: request.meta.clone(),
+                value: value.clone(),
+            })
+        );
 
         append(
             &system,
@@ -263,9 +306,10 @@ mod tests {
             EventSource::Evm,
         )
         .await?;
-        let recovered = recover_document_state(&reader, &[aggregate], &interests).await?;
+        let mut recovered = recover_document_state(&reader, &[aggregate], &interests).await?;
         assert!(recovered.publications.is_empty());
         assert!(recovered.received.is_empty());
+        assert_eq!(recovered.restorable.pop(chrono::Utc::now()), None);
         assert!(recovered.closed_e3s.contains(&e3_id));
 
         let proof_type = ProofType::C4aSkShareDecryption;
@@ -273,6 +317,7 @@ mod tests {
             meta: request.meta.clone(),
             value: ArcBytes::from_bytes(
                 &ReceivableDocument::DecryptionKeyShared(DecryptionKeyShared {
+                    signature: Default::default(),
                     e3_id: e3_id.clone(),
                     party_id: 0,
                     node: "test-node".to_string(),
@@ -363,6 +408,213 @@ mod tests {
             ReceivableDocument::from_bytes(&publication.value)?,
             ReceivableDocument::EncryptionKeyCreated(recovered) if recovered == artifact
         ));
+        Ok(())
+    }
+
+    /// Forwards event-store queries and counts them.
+    struct CountingReader {
+        inner: Recipient<EventStoreQueryBy<SeqAgg>>,
+        queries: Arc<AtomicUsize>,
+    }
+
+    impl actix::Actor for CountingReader {
+        type Context = actix::Context<Self>;
+    }
+
+    impl actix::Handler<EventStoreQueryBy<SeqAgg>> for CountingReader {
+        type Result = ();
+
+        fn handle(&mut self, query: EventStoreQueryBy<SeqAgg>, _: &mut Self::Context) {
+            self.queries.fetch_add(1, Ordering::SeqCst);
+            self.inner
+                .try_send(query)
+                .expect("the event store accepts the query");
+        }
+    }
+
+    /// Forwards event-store queries and drops the event at sequence `skip` from every page of
+    /// more than one event, as a corrupted log read would.
+    struct GapReader {
+        inner: Recipient<EventStoreQueryBy<SeqAgg>>,
+        skip: u64,
+    }
+
+    impl actix::Actor for GapReader {
+        type Context = actix::Context<Self>;
+    }
+
+    impl actix::Handler<EventStoreQueryBy<SeqAgg>> for GapReader {
+        type Result = actix::ResponseFuture<()>;
+
+        fn handle(
+            &mut self,
+            query: EventStoreQueryBy<SeqAgg>,
+            _: &mut Self::Context,
+        ) -> Self::Result {
+            let (inner, skip) = (self.inner.clone(), self.skip);
+            Box::pin(async move {
+                let page = query.limit() != Some(1);
+                let (recipient, response) = channel::oneshot::<EventStoreQueryResponse>();
+                let mut forwarded =
+                    EventStoreQueryBy::<SeqAgg>::new(query.id(), query.query().clone(), recipient);
+                if let Some(limit) = query.limit() {
+                    forwarded = forwarded.with_limit(limit);
+                }
+                if let Some(max_bytes) = query.max_bytes() {
+                    forwarded = forwarded.with_max_bytes(max_bytes);
+                }
+                let sender = query.sender();
+                inner
+                    .send(forwarded)
+                    .await
+                    .expect("the event store accepts the query");
+                let response = response.await.expect("the event store answers");
+                let id = response.id();
+                let mut events = response
+                    .into_events()
+                    .expect("the event store reads the log");
+                if page {
+                    events.retain(|event| event.seq() != skip);
+                }
+                sender
+                    .try_send(EventStoreQueryResponse::new(id, events))
+                    .expect("recovery waits for the answer");
+            })
+        }
+    }
+
+    /// A page that skips an event that a one-event read still returns is a gap in the log, not a
+    /// quarantined legacy event, so recovery fails instead of stopping there.
+    #[actix::test]
+    async fn recovery_fails_on_a_gap_that_a_one_event_read_fills() -> Result<()> {
+        let aggregate = AggregateId::new(1);
+        let system =
+            EventSystem::new()
+                .with_fresh_bus()
+                .with_aggregate_config(AggregateConfig::new(HashMap::from([(
+                    aggregate,
+                    Duration::ZERO,
+                )])));
+        for ts in 1..=3u128 {
+            let request = PublishDocumentRequested {
+                meta: DocumentMeta::new(
+                    E3id::new("9", 1),
+                    DocumentKind::TrBFV,
+                    vec![],
+                    Some(chrono::Utc::now() + chrono::Duration::hours(1)),
+                ),
+                value: ArcBytes::from_bytes(&ts.to_le_bytes()),
+            };
+            append(&system, request.into(), ts, EventSource::Local).await?;
+        }
+        let reader = GapReader {
+            inner: system.eventstore_reader()?.seq(),
+            skip: 2,
+        }
+        .start()
+        .recipient();
+
+        let Err(error) = recover_document_state(&reader, &[aggregate], &HashSet::new()).await
+        else {
+            panic!("recovery passed a gap in the event log");
+        };
+
+        assert!(format!("{error:#}").contains("sequence gap"), "{error:#}");
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn recovery_reads_the_event_log_in_pages() -> Result<()> {
+        let aggregate = AggregateId::new(1);
+        let system =
+            EventSystem::new()
+                .with_fresh_bus()
+                .with_aggregate_config(AggregateConfig::new(HashMap::from([(
+                    aggregate,
+                    Duration::ZERO,
+                )])));
+        for ts in 1..=50u128 {
+            let request = PublishDocumentRequested {
+                meta: DocumentMeta::new(
+                    E3id::new("9", 1),
+                    DocumentKind::TrBFV,
+                    vec![],
+                    Some(chrono::Utc::now() + chrono::Duration::hours(1)),
+                ),
+                value: ArcBytes::from_bytes(&ts.to_le_bytes()),
+            };
+            append(&system, request.into(), ts, EventSource::Local).await?;
+        }
+        let queries = Arc::new(AtomicUsize::new(0));
+        let reader = CountingReader {
+            inner: system.eventstore_reader()?.seq(),
+            queries: queries.clone(),
+        }
+        .start()
+        .recipient();
+
+        let recovered = recover_document_state(&reader, &[aggregate], &HashSet::new()).await?;
+
+        assert_eq!(recovered.publications.len(), 50);
+        // One page holds every event, and an empty page ends the aggregate.
+        assert_eq!(queries.load(Ordering::SeqCst), 2);
+        Ok(())
+    }
+
+    /// The event-store router drops a legacy event that was written to the wrong aggregate store.
+    /// Recovery stops at that event instead of failing startup on the skipped sequence number.
+    #[actix::test]
+    async fn recovery_stops_at_a_quarantined_legacy_event() -> Result<()> {
+        let aggregate = AggregateId::new(1);
+        let system =
+            EventSystem::new()
+                .with_fresh_bus()
+                .with_aggregate_config(AggregateConfig::new(HashMap::from([(
+                    aggregate,
+                    Duration::ZERO,
+                )])));
+        let request = |e3_id: E3id, value: &[u8]| PublishDocumentRequested {
+            meta: DocumentMeta::new(
+                e3_id,
+                DocumentKind::TrBFV,
+                vec![],
+                Some(chrono::Utc::now() + chrono::Duration::hours(1)),
+            ),
+            value: ArcBytes::from_bytes(value),
+        };
+        let before = request(E3id::new("1", 1), b"before");
+        append(&system, before.clone().into(), 1, EventSource::Local).await?;
+        let EventStoreAddrs::InMem(stores) = system.eventstore_addrs()? else {
+            anyhow::bail!("expected in-memory event stores");
+        };
+        let misrouted = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            request(E3id::new("2", 2), b"misrouted").into(),
+            None,
+            2,
+            None,
+            EventSource::Local,
+        );
+        let (recipient, response) = channel::oneshot::<StoreEventResponse>();
+        stores[&1]
+            .send(StoreEventRequested::new(misrouted, recipient))
+            .await?;
+        response.await?;
+        append(
+            &system,
+            request(E3id::new("3", 1), b"after").into(),
+            3,
+            EventSource::Local,
+        )
+        .await?;
+
+        let recovered = recover_document_state(
+            &system.eventstore_reader()?.seq(),
+            &[aggregate],
+            &HashSet::new(),
+        )
+        .await?;
+
+        assert_eq!(recovered.publications, vec![before]);
         Ok(())
     }
 }

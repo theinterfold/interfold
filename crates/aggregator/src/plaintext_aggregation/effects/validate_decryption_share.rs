@@ -4,7 +4,27 @@ use super::*;
 use e3_events::{CircuitName, ProofType};
 
 impl ThresholdPlaintextAggregator {
-    /// Check the signed sender, share bytes, and ciphertext order before reserving a party slot.
+    pub(super) fn c6_has_canonical_domain(&self, proof: &Proof, ciphertext: &ArcBytes) -> bool {
+        let Ok(e3_id) = self.e3_id.clone().try_into() else {
+            return false;
+        };
+        let domain = e3_committee_hash::decryption_domain_limbs(
+            self.e3_id.chain_id(),
+            e3_id,
+            self.decryption_domain,
+            alloy::primitives::keccak256(&ciphertext[..]),
+        );
+        let layout = CircuitName::ThresholdShareDecryption.input_layout();
+        proof.circuit == CircuitName::ThresholdShareDecryption
+            && [("domain_hi", domain.hi), ("domain_lo", domain.lo)]
+                .into_iter()
+                .all(|(name, limb)| {
+                    let expected = alloy::primitives::U256::from(limb).to_be_bytes::<32>();
+                    layout.extract_field(&proof.public_signals, name) == Some(expected.as_slice())
+                })
+    }
+
+    /// Check the signed sender, shares, ciphertext order, and domain before reserving a party slot.
     /// ZK verification still runs after collection. An unauthenticated bundle cannot exclude a party.
     pub(super) fn share_is_authenticated(
         &mut self,
@@ -33,6 +53,12 @@ impl ThresholdPlaintextAggregator {
                     && proof.verify_address(address).unwrap_or(false)
             });
         if !valid_sender {
+            return Ok(false);
+        }
+
+        if !proofs.iter().zip(ciphertexts).all(|(proof, ciphertext)| {
+            self.c6_has_canonical_domain(&proof.payload.proof, ciphertext)
+        }) {
             return Ok(false);
         }
 

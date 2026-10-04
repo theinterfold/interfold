@@ -131,6 +131,11 @@ $$
 d_i = \mathrm{ct}_0 + \mathrm{ct}_1\,\mathrm{sk}_i + e_{\mathrm{sm},i} \pmod{q}
 $$
 
+Ciphernodes use the committee key and decryption domain from confirmed chain state. Repeated
+matching key publications do not start more share calculations or proof requests. After a restart,
+the node resumes retained work when effects are enabled. Local worker failures retry the same
+request.
+
 The aggregator takes T + 1 shares with party coordinates $x_i$. The coordinates start at 1, and they
 must be unique and in increasing order. The aggregator combines the shares with Lagrange
 coefficients at zero:

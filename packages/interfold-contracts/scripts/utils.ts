@@ -228,6 +228,30 @@ export function bfvParamSetConfigsForChain(chainId: number): ActiveBfvConfig[] {
   return configs;
 }
 
+/**
+ * The `[H, N]` committee thresholds of every committee size that the chain's BFV routes use, in
+ * route order. `Interfold.setCommitteeThresholds` takes one pair per size, so the presets must agree
+ * on each size.
+ */
+export function committeeThresholdsForChain(
+  chainId: number,
+): Pick<ActiveBfvConfig, "committeeSize" | "h" | "n">[] {
+  const thresholds = new Map<
+    number,
+    Pick<ActiveBfvConfig, "committeeSize" | "h" | "n">
+  >();
+  for (const { committeeSize, h, n } of bfvConfigsForChain(chainId)) {
+    const existing = thresholds.get(committeeSize);
+    if (existing && (existing.h !== h || existing.n !== n)) {
+      throw new Error(
+        `BFV presets disagree on committee size ${committeeSize}`,
+      );
+    }
+    thresholds.set(committeeSize, { committeeSize, h, n });
+  }
+  return [...thresholds.values()];
+}
+
 /** `dkg_aggregator` EVM public-input count for honest-set size `h`. */
 export function bfvPkExpectedPublicInputsLen(h: number): number {
   return 3 * h + 6;

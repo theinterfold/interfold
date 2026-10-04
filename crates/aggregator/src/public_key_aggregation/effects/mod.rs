@@ -23,6 +23,9 @@ impl PublicKeyAggregator {
         node: Address,
         ec: &EventContext<Sequenced>,
     ) -> Result<()> {
+        if self.key_published {
+            return Ok(());
+        }
         let selected = self.recovery.try_get()?.selected_roster;
         let selected_member_expelled = self
             .state
@@ -49,8 +52,19 @@ impl PublicKeyAggregator {
             )?;
             return Ok(());
         }
+        let was_collecting = matches!(
+            self.state.get(),
+            Some(PublicKeyAggregatorState::Collecting { .. })
+        );
         self.state.try_mutate(ec, |state| {
             PublicKeyAggregation::handle_member_expelled(state, node)
-        })
+        })?;
+        if was_collecting && self.aggregation_inputs_ready() {
+            self.publish_inputs_ready(ec.clone())?;
+        }
+        if was_collecting && self.can_run_aggregation_effects() {
+            self.continue_c1_verification(ec.clone())?;
+        }
+        Ok(())
     }
 }

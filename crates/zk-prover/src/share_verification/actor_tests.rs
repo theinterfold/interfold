@@ -169,3 +169,178 @@ async fn restored_committee_authorizes_c6_without_replayed_finalization_event() 
     assert_eq!(request.e3_id, e3_id);
     assert_eq!(request.party_proofs.len(), 2);
 }
+
+#[actix::test]
+async fn unauthenticated_share_proofs_do_not_emit_accusations() {
+    for forgery in [
+        "first signature",
+        "later signature",
+        "wrong signer",
+        "wrong E3",
+        "circuit",
+    ] {
+        let bus = test_bus();
+        let history = bus.history();
+        bus.event_bus().send(EventBusBarrier).await.unwrap();
+        let e3_id = E3id::new("92", 1);
+        let dealer = PrivateKeySigner::random();
+        let other = PrivateKeySigner::random();
+        let third = PrivateKeySigner::random();
+        let mut actor = ShareVerificationActor::new(
+            &bus,
+            HashMap::from([(
+                e3_id.clone(),
+                Committee::new(vec![
+                    dealer.address().to_string(),
+                    other.address().to_string(),
+                    third.address().to_string(),
+                ]),
+            )]),
+        );
+        let make = |proof_type| {
+            let mut proof = signed_c6(&dealer, &e3_id, 1).payload;
+            proof.proof_type = proof_type;
+            proof.proof.circuit = e3_events::CircuitName::DkgShareDecryption;
+            SignedProofPayload::sign(proof, &dealer).unwrap()
+        };
+        let good = e3_events::PartyShareDecryptionProofsToVerify {
+            sender_party_id: 0,
+            signed_sk_decryption_proof: make(ProofType::C4aSkShareDecryption),
+            signed_e_sm_decryption_proofs: vec![make(ProofType::C4bESmShareDecryption)],
+        };
+        let mut bad = good.clone();
+        match forgery {
+            "first signature" => {
+                bad.signed_sk_decryption_proof.signature = ArcBytes::from_bytes(&[0; 65])
+            }
+            "later signature" => {
+                bad.signed_e_sm_decryption_proofs[0].signature = ArcBytes::from_bytes(&[0; 65])
+            }
+            "wrong signer" => {
+                bad.signed_sk_decryption_proof =
+                    SignedProofPayload::sign(bad.signed_sk_decryption_proof.payload, &other)
+                        .unwrap()
+            }
+            "wrong E3" => {
+                bad.signed_sk_decryption_proof.payload.e3_id = E3id::new("93", 1);
+                bad.signed_sk_decryption_proof =
+                    SignedProofPayload::sign(bad.signed_sk_decryption_proof.payload, &dealer)
+                        .unwrap();
+            }
+            "circuit" => {
+                bad.signed_sk_decryption_proof.payload.proof.circuit = e3_events::CircuitName::PkBfv
+            }
+            _ => unreachable!(),
+        }
+        let dispatch = |proof| ShareVerificationDispatched {
+            e3_id: e3_id.clone(),
+            kind: VerificationKind::DecryptionProofs,
+            share_proofs: Vec::new(),
+            decryption_proofs: vec![proof],
+            pre_dishonest: BTreeSet::new(),
+            params_preset: BfvPreset::InsecureDkg512,
+            committee_size: CiphernodesCommitteeSize::Minimum,
+        };
+        let ec = EventContext::<Unsequenced>::from(InterfoldEventData::from(dispatch(bad.clone())))
+            .sequence(0);
+        actor.handle_share_verification_dispatched(TypedEvent::new(dispatch(bad), ec.clone()));
+        let events = history
+            .send(e3_events::TakeEvents::<InterfoldEvent>::new(1))
+            .await
+            .unwrap();
+        assert!(!events.timed_out);
+        assert!(
+            matches!(events.events[0].get_data(), InterfoldEventData::ShareVerificationComplete(result)
+            if result.dishonest_parties == BTreeSet::from([0])),
+            "{forgery} emitted fault evidence"
+        );
+        actor.handle_share_verification_dispatched(TypedEvent::new(dispatch(good), ec));
+        assert_eq!(
+            actor.pending_consistency.len(),
+            1,
+            "genuine bundle did not reach verification"
+        );
+    }
+}
+
+#[actix::test]
+async fn failed_worker_payload_cannot_borrow_a_verified_signer() {
+    let bus = test_bus();
+    let history = bus.history();
+    bus.event_bus().send(EventBusBarrier).await.unwrap();
+    let e3_id = E3id::new("94", 1);
+    let dealer = PrivateKeySigner::random();
+    let others = [PrivateKeySigner::random(), PrivateKeySigner::random()];
+    let mut actor = ShareVerificationActor::new(
+        &bus,
+        HashMap::from([(
+            e3_id.clone(),
+            Committee::new(vec![
+                dealer.address().to_string(),
+                others[0].address().to_string(),
+                others[1].address().to_string(),
+            ]),
+        )]),
+    );
+    let good = signed_c6(&dealer, &e3_id, 1);
+    let dispatch = ShareVerificationDispatched {
+        e3_id: e3_id.clone(),
+        kind: VerificationKind::ThresholdDecryptionProofs,
+        share_proofs: vec![e3_events::PartyProofsToVerify {
+            sender_party_id: 0,
+            signed_proofs: vec![good.clone()],
+        }],
+        decryption_proofs: Vec::new(),
+        pre_dishonest: BTreeSet::new(),
+        params_preset: BfvPreset::InsecureDkg512,
+        committee_size: CiphernodesCommitteeSize::Minimum,
+    };
+    let ec =
+        EventContext::<Unsequenced>::from(InterfoldEventData::from(dispatch.clone())).sequence(0);
+    actor.handle_share_verification_dispatched(TypedEvent::new(dispatch, ec.clone()));
+    let consistency_id = *actor.pending_consistency.keys().next().unwrap();
+    actor.handle_consistency_check_complete(TypedEvent::new(
+        CommitmentConsistencyCheckComplete {
+            e3_id: e3_id.clone(),
+            kind: VerificationKind::ThresholdDecryptionProofs,
+            correlation_id: consistency_id,
+            inconsistent_parties: BTreeSet::new(),
+        },
+        ec.clone(),
+    ));
+    let correlation_id = *actor.pending.keys().next().unwrap();
+    let mut bad = good;
+    bad.signature = ArcBytes::from_bytes(&[0; 65]);
+    actor.handle_compute_response(TypedEvent::new(
+        ComputeResponse::zk(
+            ZkResponse::VerifyShareProofs(e3_events::VerifyShareProofsResponse {
+                party_results: vec![PartyVerificationResult {
+                    sender_party_id: 0,
+                    all_verified: false,
+                    failed_signed_payload: Some(bad),
+                    recovered_address: Some(dealer.address()),
+                }],
+            }),
+            correlation_id,
+            e3_id,
+        ),
+        ec,
+    ));
+    let events = history
+        .send(e3_events::TakeEvents::<InterfoldEvent>::new(3))
+        .await
+        .unwrap();
+    assert!(!events.timed_out);
+    assert!(
+        events.events.iter().all(|event| !matches!(
+            event.get_data(),
+            InterfoldEventData::SignedProofFailed(_)
+                | InterfoldEventData::ProofVerificationFailed(_)
+        )),
+        "an unauthenticated worker payload borrowed the cached signer"
+    );
+    assert!(events.events.iter().any(|event| matches!(
+        event.get_data(),
+        InterfoldEventData::ShareVerificationComplete(_)
+    )));
+}

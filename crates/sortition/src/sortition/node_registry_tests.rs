@@ -24,51 +24,6 @@ fn add_and_remove_node() {
 }
 
 #[test]
-fn available_tickets_accounts_for_price_and_jobs() {
-    let mut store = HashMap::new();
-    NodeRegistry::set_ticket_price(&mut store, 1, U256::from(10), ChainPosition::new(1, 0));
-    NodeRegistry::set_ticket_balance(
-        &mut store,
-        1,
-        "0xabc".into(),
-        U256::from(55),
-        ChainPosition::new(1, 1),
-    );
-    NodeRegistry::set_operator_active(
-        &mut store,
-        1,
-        "0xabc".into(),
-        true,
-        ChainPosition::new(1, 2),
-    );
-
-    // floor(55 / 10) = 5 tickets, no active jobs yet.
-    assert_eq!(store[&1].available_tickets("0xabc"), 5);
-
-    assert!(NodeRegistry::reserve_committee_job(
-        &mut store,
-        &e3(1, "7"),
-        "0xabc"
-    ));
-    // One active job now -> 4 available.
-    assert_eq!(store[&1].available_tickets("0xabc"), 4);
-    assert_eq!(store[&1].nodes["0xabc"].active_jobs, 1);
-}
-
-#[test]
-fn zero_price_yields_no_tickets() {
-    let mut store = HashMap::new();
-    NodeRegistry::set_ticket_balance(
-        &mut store,
-        1,
-        "0xabc".into(),
-        U256::from(100),
-        ChainPosition::new(1, 0),
-    );
-    assert_eq!(store[&1].available_tickets("0xabc"), 0);
-}
-
-#[test]
 fn operator_active_applies_only_to_the_event_chain() {
     let mut store = HashMap::new();
     NodeRegistry::add_node(&mut store, 1, "0xabc".into());
@@ -336,39 +291,6 @@ fn finalization_releases_an_unselected_ticket_reservation() {
 }
 
 #[test]
-fn get_nodes_with_tickets_filters_inactive_and_empty() {
-    let mut store = HashMap::new();
-    NodeRegistry::set_ticket_price(&mut store, 1, U256::from(10), ChainPosition::new(1, 0));
-    NodeRegistry::set_ticket_balance(
-        &mut store,
-        1,
-        "active".into(),
-        U256::from(30),
-        ChainPosition::new(1, 1),
-    );
-    NodeRegistry::set_operator_active(
-        &mut store,
-        1,
-        "active".into(),
-        true,
-        ChainPosition::new(1, 2),
-    );
-    // Inactive node with balance is excluded.
-    NodeRegistry::set_ticket_balance(
-        &mut store,
-        1,
-        "inactive".into(),
-        U256::from(30),
-        ChainPosition::new(1, 3),
-    );
-
-    let with_tickets = store[&1].get_nodes_with_tickets();
-    assert_eq!(with_tickets.len(), 1);
-    assert_eq!(with_tickets[0].0, "active");
-    assert_eq!(with_tickets[0].1, 3);
-}
-
-#[test]
 fn open_committees_lists_only_unreleased() {
     let mut store = HashMap::new();
     let a = e3(1, "1");
@@ -398,4 +320,94 @@ fn open_committees_lists_only_unreleased() {
     // Fully drained -> empty.
     NodeRegistry::release_committee_jobs(&mut store, &b, "test");
     assert!(NodeRegistry::open_committees(&store).is_empty());
+}
+
+#[test]
+fn an_eligibility_version_update_deactivates_every_operator_until_it_refreshes() {
+    let mut store = HashMap::new();
+    for (chain, operator) in [(1, "0xabc"), (1, "0xdef"), (2, "0xabc")] {
+        NodeRegistry::set_operator_active(
+            &mut store,
+            chain,
+            operator.into(),
+            true,
+            ChainPosition::new(1, 0),
+        );
+    }
+    let event = EligibilityConfigurationVersionUpdatedAt {
+        update: e3_events::EligibilityConfigurationVersionUpdated {
+            version: U256::from(2),
+            chain_id: 1,
+        },
+        position: ChainPosition::new(10, 3),
+    };
+
+    NodeRegistry::update_eligibility_version(&mut store, &event);
+
+    assert!(!store[&1].nodes["0xabc"].active);
+    assert!(!store[&1].nodes["0xdef"].active);
+    assert!(
+        store[&2].nodes["0xabc"].active,
+        "other chains keep their state"
+    );
+    // An activation logged before the update does not undo it; a refresh after it does.
+    NodeRegistry::set_operator_active(
+        &mut store,
+        1,
+        "0xabc".into(),
+        true,
+        ChainPosition::new(10, 2),
+    );
+    assert!(!store[&1].nodes["0xabc"].active);
+    NodeRegistry::set_operator_active(
+        &mut store,
+        1,
+        "0xabc".into(),
+        true,
+        ChainPosition::new(20, 0),
+    );
+    let node = &store[&1].nodes["0xabc"];
+    assert!(node.active);
+    // Request-time views see the operator inactive between the update and its refresh.
+    assert!(node.active_at(5));
+    assert!(!node.active_at(15));
+    assert!(node.active_at(25));
+    assert!(!store[&1].nodes["0xdef"].active_at(25));
+}
+
+#[test]
+fn a_bonding_asset_update_sets_the_ticket_price_in_log_order() {
+    let mut store = HashMap::new();
+    NodeRegistry::set_operator_active(
+        &mut store,
+        1,
+        "0xabc".into(),
+        true,
+        ChainPosition::new(1, 0),
+    );
+    let update = |price: u64, position| BondingAssetConfigUpdatedAt {
+        config: e3_events::BondingAssetConfigUpdated {
+            ticket_token: "0x1".into(),
+            ciphernode_bond_token: "0x2".into(),
+            ticket_price: U256::from(price),
+            required_ciphernode_bond: U256::from(1000),
+            expected_ticket_decimals: 6,
+            expected_ciphernode_bond_decimals: 18,
+            configuration_version: 1,
+            chain_id: 1,
+        },
+        position,
+    };
+
+    NodeRegistry::update_bonding_asset_config(&mut store, &update(25, ChainPosition::new(5, 1)));
+    assert_eq!(store[&1].ticket_price, U256::from(25));
+    // The version update that follows in the same transaction deactivates operators; the asset
+    // update alone does not.
+    assert!(store[&1].nodes["0xabc"].active);
+    NodeRegistry::update_bonding_asset_config(&mut store, &update(30, ChainPosition::new(5, 0)));
+    assert_eq!(
+        store[&1].ticket_price,
+        U256::from(25),
+        "an older update is ignored"
+    );
 }

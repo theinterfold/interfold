@@ -10,8 +10,6 @@ use std::{fmt, marker::PhantomData, time::Duration};
 use anyhow::{anyhow, Result};
 use e3_events::CorrelationId;
 use e3_utils::{retry_with_backoff, to_retry};
-#[cfg(test)]
-use tokio::sync::broadcast;
 use tokio::sync::mpsc;
 
 use crate::events::{
@@ -249,7 +247,7 @@ struct Expectation {
 #[cfg(test)]
 pub(crate) struct DirectRequesterTester {
     net_cmds_rx: mpsc::Receiver<NetCommand>,
-    net_events_tx: broadcast::Sender<NetEvent>,
+    net_events_tx: crate::net_interface_handle::NetEventChannel,
     respond_with: Option<Vec<u8>>,
     expectations: Vec<Expectation>,
     error_on: Option<String>,
@@ -280,7 +278,7 @@ impl ExpectationBuilder {
 impl DirectRequesterTester {
     pub fn new(
         net_cmds_rx: mpsc::Receiver<NetCommand>,
-        net_events_tx: broadcast::Sender<NetEvent>,
+        net_events_tx: crate::net_interface_handle::NetEventChannel,
     ) -> Self {
         Self {
             net_cmds_rx,
@@ -374,12 +372,13 @@ impl DirectRequesterTester {
 mod tests {
     use super::*;
     use crate::events::PeerTarget;
-    use tokio::sync::broadcast;
+    use crate::net_interface_handle::NetEventChannel;
 
     #[tokio::test]
     async fn test_successful_request() {
         let (net_cmds_tx, net_cmds_rx) = mpsc::channel::<NetCommand>(16);
-        let (net_events_tx, _net_events_rx) = broadcast::channel::<NetEvent>(16);
+        let net_events_tx = NetEventChannel::new(16);
+        let _net_events_rx = net_events_tx.subscribe();
         let net_events = NetEventSubscriber::from(&net_events_tx);
 
         let requester = DirectRequester::builder(net_cmds_tx, net_events).build();
@@ -403,7 +402,8 @@ mod tests {
     #[tokio::test]
     async fn test_peer_requester_reuse_across_requests() {
         let (net_cmds_tx, net_cmds_rx) = mpsc::channel::<NetCommand>(16);
-        let (net_events_tx, _net_events_rx) = broadcast::channel::<NetEvent>(16);
+        let net_events_tx = NetEventChannel::new(16);
+        let _net_events_rx = net_events_tx.subscribe();
         let net_events = NetEventSubscriber::from(&net_events_tx);
 
         let requester = DirectRequester::builder(net_cmds_tx, net_events)
@@ -431,7 +431,8 @@ mod tests {
     #[tokio::test]
     async fn test_expect_request() {
         let (net_cmds_tx, net_cmds_rx) = mpsc::channel::<NetCommand>(16);
-        let (net_events_tx, _net_events_rx) = broadcast::channel::<NetEvent>(16);
+        let net_events_tx = NetEventChannel::new(16);
+        let _net_events_rx = net_events_tx.subscribe();
         let net_events = NetEventSubscriber::from(&net_events_tx);
 
         let requester = DirectRequester::builder(net_cmds_tx, net_events).build();
@@ -457,7 +458,8 @@ mod tests {
     #[tokio::test]
     async fn test_request_failure() {
         let (net_cmds_tx, net_cmds_rx) = mpsc::channel::<NetCommand>(16);
-        let (net_events_tx, _net_events_rx) = broadcast::channel::<NetEvent>(16);
+        let net_events_tx = NetEventChannel::new(16);
+        let _net_events_rx = net_events_tx.subscribe();
         let net_events = NetEventSubscriber::from(&net_events_tx);
 
         let requester = DirectRequester::builder(net_cmds_tx, net_events)

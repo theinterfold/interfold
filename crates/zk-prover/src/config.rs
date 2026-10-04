@@ -75,8 +75,15 @@ pub struct ZkConfig {
 
 impl Default for ZkConfig {
     fn default() -> Self {
-        serde_json::from_str(VERSIONS_JSON)
-            .expect("versions.json is invalid — this is a build-time bug")
+        let mut config: Self = serde_json::from_str(VERSIONS_JSON)
+            .expect("versions.json is invalid — this is a build-time bug");
+        let archive_digest = env!("E3_CIRCUITS_ARCHIVE_SHA256");
+        if !archive_digest.is_empty() {
+            config
+                .circuits_checksums
+                .insert(env!("CARGO_PKG_VERSION").into(), archive_digest.into());
+        }
+        config
     }
 }
 
@@ -160,6 +167,29 @@ pub fn verify_checksum(file: &str, data: &[u8], expected: Option<&str>) -> Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_config_honors_build_time_archive_pin() {
+        let config = ZkConfig::default();
+        let shipped: ZkConfig = serde_json::from_str(VERSIONS_JSON).unwrap();
+        let digest = env!("E3_CIRCUITS_ARCHIVE_SHA256");
+        if digest.is_empty() {
+            assert_eq!(config.circuits_checksums, shipped.circuits_checksums);
+        } else {
+            assert_eq!(
+                config
+                    .circuits_checksums
+                    .get(env!("CARGO_PKG_VERSION"))
+                    .map(String::as_str),
+                Some(digest)
+            );
+            for (version, checksum) in shipped.circuits_checksums {
+                if version != env!("CARGO_PKG_VERSION") {
+                    assert_eq!(config.circuits_checksums.get(&version), Some(&checksum));
+                }
+            }
+        }
+    }
 
     // BbTarget tests
     #[test]

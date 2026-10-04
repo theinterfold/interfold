@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { deployMockBondingRegistryProxy } from "../sale/deployContracts";
-import { bfvConfigsForChain } from "../utils";
+import { committeeThresholdsForChain } from "../utils";
 import { arg, connect } from "./cli";
 import { ZERO } from "./constants";
 import { protocolDir, writeJson } from "./files";
@@ -17,28 +17,13 @@ export async function actionPrepareRehearsal(): Promise<void> {
     );
   }
 
-  const committeeThresholds = new Map<
-    number,
-    { size: string; quorum: string; total: string }
-  >();
-  for (const config of bfvConfigsForChain(chainId)) {
-    const threshold = {
-      size: config.committeeSize.toString(),
-      quorum: config.h.toString(),
-      total: config.n.toString(),
-    };
-    const existing = committeeThresholds.get(config.committeeSize);
-    if (
-      existing &&
-      (existing.quorum !== threshold.quorum ||
-        existing.total !== threshold.total)
-    ) {
-      throw new Error(
-        `BFV presets disagree on committee size ${config.committeeSize}`,
-      );
-    }
-    committeeThresholds.set(config.committeeSize, threshold);
-  }
+  const committeeThresholds = committeeThresholdsForChain(chainId).map(
+    ({ committeeSize, h, n }) => ({
+      size: committeeSize.toString(),
+      quorum: h.toString(),
+      total: n.toString(),
+    }),
+  );
 
   const [operator] = await ethers.getSigners();
   const protocolOwner = address(await operator.getAddress(), "protocolOwner");
@@ -178,7 +163,7 @@ export async function actionPrepareRehearsal(): Promise<void> {
         minCommitteeSize: "3",
         minThreshold: "2",
       },
-      committeeThresholds: [...committeeThresholds.values()],
+      committeeThresholds,
       registerActiveBfvParamSet: true,
       allowFeeToken: true,
     },

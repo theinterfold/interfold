@@ -14,7 +14,33 @@ impl Handler<InterfoldEvent> for ProofRequestActor {
     fn handle(&mut self, msg: InterfoldEvent, ctx: &mut Self::Context) -> Self::Result {
         let (msg, ec) = msg.into_components();
 
+        let finished = match &msg {
+            InterfoldEventData::E3RequestComplete(data) => Some(&data.e3_id),
+            InterfoldEventData::E3Failed(data) => Some(&data.e3_id),
+            InterfoldEventData::E3StageChanged(data) if data.new_stage.is_terminal() => {
+                Some(&data.e3_id)
+            }
+            _ => None,
+        };
+        if let Some(id) = finished {
+            self.held_share_decryption.remove(id);
+            self.pending_share_decryption.remove(id);
+            self.share_decryption_correlation
+                .retain(|_, e3_id| e3_id != id);
+            return;
+        }
+
         match msg {
+            InterfoldEventData::EvmLogObserved(_)
+            | InterfoldEventData::CommitteePublished(_)
+            | InterfoldEventData::CommitteePublicKeyChunkPublished(_)
+            | InterfoldEventData::PublicKeyAggregated(_)
+            | InterfoldEventData::EffectsEnabled(_) => {
+                let pending = std::mem::take(&mut self.held_share_decryption);
+                for (_, request) in pending {
+                    self.handle_share_decryption_proof_pending(request);
+                }
+            }
             InterfoldEventData::EncryptionKeyPending(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }

@@ -32,7 +32,7 @@ pub use e3_slashing::CommitmentConsistencyCheckerExtension;
 pub use node_proof_aggregator::NodeProofAggregator;
 pub use proof_request::ProofRequestActor;
 pub use proof_verification::{
-    ProofVerificationActor, ZkVerificationRequest, ZkVerificationResponse,
+    ProofVerificationActor, ZkVerificationOutcome, ZkVerificationRequest, ZkVerificationResponse,
 };
 pub use share_verification::ShareVerificationActor;
 pub use zk_actor::ZkActor;

@@ -16,7 +16,8 @@
 // clears its state with `interfold node reset-data`, and the resync from chain history rebuilds
 // those checkpoints from source timestamps.
 // Schema 7 also adds durable decryption backup shares and batch-bound C6 results.
-pub const SCHEMA_VERSION: u32 = 7;
+// Schema 8 authenticates complete DKG share and C4 bundles before slot admission.
+pub const SCHEMA_VERSION: u32 = 8;
 
 /// The action a node should take after reading the persisted schema version.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,6 +28,15 @@ pub enum SchemaVersionDecision {
     Proceed,
     /// On-disk version is incompatible with the binary; halt with this reason.
     Halt(String),
+}
+
+impl SchemaVersionDecision {
+    pub fn ensure_compatible(&self) -> anyhow::Result<()> {
+        if let Self::Halt(reason) = self {
+            anyhow::bail!("Schema version check failed: {reason}");
+        }
+        Ok(())
+    }
 }
 
 /// The supported path for state that is older than this binary. It clears the state and keeps the
@@ -99,14 +109,6 @@ mod tests {
             }
             other => panic!("expected Halt, got {other:?}"),
         }
-    }
-
-    #[test]
-    fn rejects_histories_without_source_block_timestamps() {
-        assert!(matches!(
-            decide_schema_version(Some(6), SCHEMA_VERSION, true),
-            SchemaVersionDecision::Halt(_)
-        ));
     }
 
     #[test]

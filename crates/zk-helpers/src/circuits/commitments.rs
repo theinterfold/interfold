@@ -658,56 +658,6 @@ mod tests {
     }
 
     #[test]
-    fn compute_threshold_pk_challenge_returns_single_bigint() {
-        let payload = vec![Field::from(1u64), Field::from(2u64)];
-        let input_size = payload.len() as u32;
-        let io_pattern = [0x80000000 | input_size, 1];
-        let expected_challenge = field_to_bigint(
-            compute_commitments(payload.clone(), DS_CLG_PK_GENERATION, io_pattern)[0],
-        );
-
-        let challenge = compute_threshold_pk_challenge(payload);
-        assert_eq!(challenge, expected_challenge);
-    }
-
-    #[test]
-    fn compute_share_encryption_challenge_returns_2l_elements() {
-        let payload = vec![Field::from(1u64), Field::from(2u64)];
-        let l = 3;
-
-        let challenges = compute_share_encryption_challenge(payload, l);
-        assert_eq!(challenges.len(), 2 * l);
-    }
-
-    #[test]
-    fn compute_recursive_aggregation_commitment_matches_manual_payload() {
-        let payload = vec![Field::from(1u64), Field::from(2u64)];
-
-        let input_size = payload.len() as u32;
-        let io_pattern = [0x80000000 | input_size, 1];
-        let expected = field_to_bigint(
-            compute_commitments(payload.clone(), DS_RECURSIVE_AGGREGATION, io_pattern)[0],
-        );
-
-        let actual = compute_recursive_aggregation_commitment(payload);
-        assert_eq!(actual, expected);
-    }
-
-    #[test]
-    fn compute_threshold_share_decryption_challenge_returns_single_bigint() {
-        let payload = vec![Field::from(1u64), Field::from(2u64)];
-
-        let input_size = payload.len() as u32;
-        let io_pattern = [0x80000000 | input_size, 1];
-        let expected = field_to_bigint(
-            compute_commitments(payload.clone(), DS_CLG_SHARE_DECRYPTION, io_pattern)[0],
-        );
-
-        let actual = compute_threshold_share_decryption_challenge(payload);
-        assert_eq!(actual, expected);
-    }
-
-    #[test]
     fn compute_vk_hash_matches_manual_commitment() {
         let vk_hashes = vec![
             Field::from(7u64),

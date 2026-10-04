@@ -13,6 +13,7 @@ import test from 'node:test'
 import { AbiCoder, id, keccak256 } from 'ethers'
 import { BFV_PARAMS } from '../packages/interfold-contracts/scripts/protocol/constants'
 import { committeeBoundUpdates, NoirCircuitBuilder, normalizeCargoLockForCircuitHash, stripRustTestModules } from './build-circuits'
+import { isPresetCommitteeSupported } from './circuit-constants'
 import {
   findArtifactRevision,
   RELEASE_REQUIRED_PAIRS,
@@ -24,6 +25,13 @@ import {
 function sourceHash(preset: string, committee: string): string {
   return `source:${preset}:${committee}`
 }
+
+test('every release pair is a supported build pair', () => {
+  assert.ok(RELEASE_REQUIRED_PAIRS.length > 0)
+  for (const [preset, committee] of RELEASE_REQUIRED_PAIRS) {
+    assert.ok(isPresetCommitteeSupported(preset, committee), `${preset}/${committee} cannot be built`)
+  }
+})
 
 function makeCompleteMatrix(): string {
   const dir = mkdtempSync(join(tmpdir(), 'interfold-circuit-matrix-'))
@@ -39,6 +47,32 @@ function makeCompleteMatrix(): string {
   }
   return dir
 }
+
+test('checksums command covers exactly the staged circuit configurations', () => {
+  const dir = makeCompleteMatrix()
+  try {
+    for (const preset of ['insecure-512', 'secure-8192']) {
+      for (const committee of ['micro', 'small']) {
+        rmSync(join(dir, preset, committee), { recursive: true })
+      }
+    }
+    execFileSync('pnpm', ['tsx', 'scripts/circuit-artifacts.ts', 'checksums', '--dir', dir])
+    const manifest = JSON.parse(readFileSync(join(dir, 'checksums.json'), 'utf8'))
+    assert.equal(manifest.algorithm, 'sha256')
+    assert.deepEqual(
+      Object.keys(manifest.files).sort(),
+      ['insecure-512', 'secure-8192']
+        .flatMap((preset) => [...requiredArtifactMarkers(preset, 'minimum'), join(preset, 'minimum', '.build-stamp.json')])
+        .sort(),
+    )
+    assert.equal(
+      manifest.files['insecure-512/minimum/default/dkg/pk/pk.vk'],
+      '44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',
+    )
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
 
 test('artifact selection uses the newest matching build, not another source tree at the branch tip', () => {
   const dir = mkdtempSync(join(tmpdir(), 'interfold-circuit-history-'))

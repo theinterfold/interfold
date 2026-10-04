@@ -185,13 +185,13 @@ every section.
   statuses in O(1). New committee requests wait for a check of every registration captured at that
   change, including inactive results. Duplicates and later registrations cannot settle another
   member's check. Deregistration settles the departing member. Rust uses source block seconds from
-  `ConfigurationUpdatedAt` and `OperatorActivationChangedAt`, never the merged event clock, and must
-  invalidate its activity view on every version bump. **Gap:** of these parameters only
-  `ciphernodeBondActiveBps` and `minTicketBalance` emit `ConfigurationUpdated`. Asset-configuration
-  and node-release changes bump the version through `BondingAssetConfigUpdated` and
-  `EligibilityConfigurationVersionUpdated`, which Rust does not consume
-  (`crates/evm/src/bonding_registry/events.rs`, `crates/sortition/src/sortition/node_registry.rs`).
-  — `BondingRegistry.sol`; INDEX concern #24
+  the `...At` events (configuration, eligibility version, bonding asset, activation), never the
+  merged event clock, and must invalidate its activity view on every version bump. Every bump emits
+  `EligibilityConfigurationVersionUpdated` (`BondingEligibilityLib.invalidateConfiguration`),
+  including asset-configuration and node-release changes, and Rust invalidates on it.
+  `BondingAssetConfigUpdated` sets the local ticket price. — `BondingRegistry.sol`;
+  `crates/evm/src/bonding_registry/events.rs`; `crates/sortition/src/sortition/node_registry.rs`;
+  INDEX concern #24
 - **Mandatory release policy changes are paused, drained, and monotonic:** governance may raise the
   required protocol version or node generation only while requests are paused, `activeE3Count == 0`,
   and `unreleasedCommitteeCount == 0`. The change invalidates every cached operator status in O(1).
@@ -324,10 +324,13 @@ every section.
   its own rounds after the requester paid. `MockE3Program` is the stateless bootstrap option. It has
   no administrative controls and applies no application rules. Its deterministic test receipt is not
   production data availability, so keep requests paused until a production program is registered and
-  wired; no contract enforces this. The request-time BFV ciphertext verifier and decryption verifier
+  wired; no contract enforces this. The protocol deploy scripts create `MockE3Program` and
+  `DeployableMockCiphertextVerifier` only on Sepolia and local chains
+  (`assertMockDeploymentAllowed`). The request-time BFV ciphertext verifier and decryption verifier
   remain mandatory. Its mutable failure controls live only in `MockE3ProgramHarness`. A protocol
   upgrade that makes the program interface incompatible must retire every incompatible bootstrap
-  program before requests resume. — `Interfold.sol`; `MockE3Program.sol`; `flow-trace/03`
+  program before requests resume. — `Interfold.sol`; `MockE3Program.sol`;
+  `scripts/protocol/values.ts`; `flow-trace/03`
 - **Data availability binds per program and per round:** Interfold holds no protocol-level
   data-availability verifier; it delegates to `IE3ProgramDataAvailability(e3Program)`. A production
   program must freeze each round's data-availability binding; CRISP holds its verifier as an
@@ -469,7 +472,12 @@ every section.
   `flow-trace/04`, `05`; INDEX concerns Z-32, ZEN2-04, ZEN2-26
 - Accusation quorum: `agree_count >= H`; the implementation derives `H` from the committee enum
   because the legacy E3 field `threshold_m` carries circuit threshold `T`. Voters must be active
-  committee members, and all votes must agree. Lane A is **attestation-based** (ECDSA per voter),
+  committee members, and all votes must agree. Local accusations reject the accuser's own address or
+  finalized party ID. Received accusations reject equal signed accuser and accused addresses.
+  `accused_party_id` is not in the accusation digest and cannot decide received self-accusation
+  admission. Forwarded payloads are admitted only for C3a/C3b; other proof types require local
+  evidence without a forwarded payload. These checks precede evidence caching, vote creation, and
+  pending-window changes in `AccusationVoting`. Lane A is **attestation-based** (ECDSA per voter),
   not on-chain ZK re-verification. Vote digest / EIP-712 type hashes must match the Solidity
   constants exactly (Rust ↔ Solidity). — `flow-trace/05`; `SlashingManager.sol`
 - Staggered slash submission: agreeing voters rank by ascending address. Ranks 0–2 submit, and rank

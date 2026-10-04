@@ -183,7 +183,9 @@ impl TestPeer {
         receive_until_collect(
             &mut self.rx,
             |e| match e {
-                NetEvent::GossipData(data) => is_network_signal(data, marker, id),
+                NetEvent::GossipData(data) | NetEvent::GossipIngress { data, .. } => {
+                    is_network_signal(data, marker, id)
+                }
                 _ => false,
             },
             self.test_timeout.unwrap_or(Duration::from_secs(120)),

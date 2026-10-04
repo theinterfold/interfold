@@ -18,9 +18,6 @@ mod utils;
 use context::ChainContext;
 use e3_console::Console;
 use serde::{Deserialize, Serialize};
-use zeroize::Zeroizing;
-
-use crate::helpers::{ensure_hex_zeroizing, parse_zeroizing};
 
 #[derive(Debug, Args, Clone, Default, Serialize, Deserialize)]
 pub struct ChainArgs {
@@ -47,30 +44,12 @@ pub enum CiphernodeCommands {
         #[arg(long = "rpc-url", short = 'r')]
         rpc_url: Option<String>,
 
-        /// The password
-        #[arg(
-            short = 'p',
-            long,
-            value_parser = parse_zeroizing,
-            conflicts_with = "password_stdin"
-        )]
-        password: Option<Zeroizing<String>>,
-
         /// Read the password from the first requested line on stdin
-        #[arg(long, conflicts_with = "password")]
+        #[arg(long)]
         password_stdin: bool,
 
-        /// Wallet Private Key
-        #[arg(
-            short = 'k',
-            long,
-            value_parser = ensure_hex_zeroizing,
-            conflicts_with = "private_key_stdin"
-        )]
-        private_key: Option<Zeroizing<String>>,
-
         /// Read the private key from the next requested line on stdin
-        #[arg(long, conflicts_with = "private_key")]
+        #[arg(long)]
         private_key_stdin: bool,
     },
     /// Authorize the initial wallet that will own this node's collateral
@@ -136,7 +115,7 @@ pub enum CiphernodeCommands {
         #[command(flatten)]
         chain: ChainArgs,
     },
-    /// Register an operator and recompute its activation state
+    /// Recompute the activation state of a registered operator
     Activate {
         /// Target operator; defaults to the configured signer for self-owned positions
         #[arg(long = "operator", value_name = "ADDRESS")]

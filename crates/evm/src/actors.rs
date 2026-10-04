@@ -11,7 +11,7 @@ mod bonding_registry_sol;
 #[path = "ciphernode_registry/actor.rs"]
 mod ciphernode_registry_sol;
 #[path = "data_availability/actor.rs"]
-mod data_availability;
+pub(crate) mod data_availability;
 #[path = "chain_gateway/actor.rs"]
 mod evm_chain_gateway;
 #[path = "event_decoding/actor.rs"]

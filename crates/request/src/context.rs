@@ -15,20 +15,15 @@ use e3_events::{E3id, InterfoldEvent};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc};
 
-/// Initialize the HashMap with a list of expected Recipients. In order to know whether or not we
-/// should buffer we need to iterate over this list and determine which recipients are missing based
-/// on the recipient value is why we set it here to have keys with empty values.
-///
-/// List only keys that an extension registers. Every event of the E3 is buffered for a key until its
-/// recipient exists, so a key that nothing registers holds all of them until the E3 ends.
-fn init_recipients() -> HashMap<String, Option<Recipient<InterfoldEvent>>> {
-    HashMap::from([
-        ("threshold_keyshare".to_owned(), None),
-        ("plaintext".to_owned(), None),
-        ("publickey".to_owned(), None),
-        ("accusation_manager".to_owned(), None),
-        ("commitment_consistency_checker".to_owned(), None),
-    ])
+/// Only installed recipient extensions need deferred delivery.
+fn init_recipients(
+    extensions: &[Box<dyn E3Extension>],
+) -> HashMap<String, Option<Recipient<InterfoldEvent>>> {
+    extensions
+        .iter()
+        .filter_map(|extension| extension.expected_recipient())
+        .map(|key| (key.to_owned(), None))
+        .collect()
 }
 
 /// Context that is set to each event hook. Hooks can use this context to gather dependencies if
@@ -68,7 +63,7 @@ impl E3Context {
         Self {
             e3_id: params.e3_id,
             repository: params.repository,
-            recipients: init_recipients(),
+            recipients: init_recipients(&params.extensions),
             dependencies: HetrogenousMap::new(),
         }
     }
@@ -173,7 +168,7 @@ impl FromSnapshotWithParams for E3Context {
         let mut ctx = Self {
             e3_id: params.e3_id,
             repository: params.repository,
-            recipients: init_recipients(),
+            recipients: init_recipients(&params.extensions),
             dependencies: HetrogenousMap::new(),
         };
 
@@ -270,24 +265,5 @@ mod tests {
         let snapshot = context.snapshot().unwrap();
 
         assert_eq!(snapshot.recipients, ["threshold_keyshare"]);
-    }
-
-    #[actix::test]
-    async fn events_are_buffered_only_for_recipients_that_extensions_register() {
-        let e3_id = E3id::new("7", 1);
-        let store = DataStore::from_in_mem(&InMemStore::new(false).start());
-        let context = E3Context::from_params(E3ContextParams {
-            repository: store.repositories().context(&e3_id),
-            e3_id: e3_id.clone(),
-            extensions: Arc::new(Vec::new()),
-        });
-        let mut buffer = EventBuffer::default();
-
-        context.forward_message(&event(&e3_id, "early decryption share", 1), &mut buffer);
-
-        // A decryption share can arrive before this node creates its plaintext aggregator.
-        assert_eq!(buffer.take(&e3_id, "plaintext").len(), 1);
-        // No extension registers `keyshare`, so nothing may accumulate for it.
-        assert!(buffer.take(&e3_id, "keyshare").is_empty());
     }
 }

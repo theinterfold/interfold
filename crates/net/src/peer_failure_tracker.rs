@@ -55,15 +55,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn consecutive_failures_increment() {
-        let mut tracker = PeerFailureTracker::new();
-        let peer = PeerId::random();
-        assert_eq!(tracker.record_failure(&peer), 1);
-        assert_eq!(tracker.record_failure(&peer), 2);
-        assert_eq!(tracker.record_failure(&peer), 3);
-    }
-
-    #[test]
     fn reset_clears_count() {
         let mut tracker = PeerFailureTracker::new();
         let peer = PeerId::random();

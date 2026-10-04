@@ -6,7 +6,12 @@
 
 use crate::{E3id, SignedProofPayload};
 use actix::Message;
+use alloy::primitives::{keccak256, Address, Signature, U256};
+use alloy::signers::{local::PrivateKeySigner, SignerSync};
+use alloy::sol_types::SolValue;
+use anyhow::Result;
 use derivative::Derivative;
+use e3_utils::utility_types::ArcBytes;
 use serde::{Deserialize, Serialize};
 use std::fmt::{self, Display};
 
@@ -27,6 +32,40 @@ pub struct DecryptionKeyShared {
     pub signed_e_sm_decryption_proofs: Vec<SignedProofPayload>,
     /// Whether this was received from the network.
     pub external: bool,
+    /// Dealer signature over the E3, sender, node address, and complete C4 bundle.
+    pub signature: ArcBytes,
+}
+
+impl DecryptionKeyShared {
+    pub fn sign(mut self, signer: &PrivateKeySigner) -> Result<Self> {
+        let signature = signer.sign_hash_sync(&self.digest()?.into())?;
+        self.signature = ArcBytes::from_bytes(&signature.as_bytes());
+        Ok(self)
+    }
+
+    pub fn recover_address(&self) -> Result<Address> {
+        let signature = Signature::try_from(&self.signature[..])?;
+        Ok(signature.recover_address_from_prehash(&self.digest()?.into())?)
+    }
+
+    /// Transport origin is excluded because receipt changes `external`.
+    pub fn digest(&self) -> Result<[u8; 32]> {
+        let proofs = bincode::serialize(&(
+            &self.signed_sk_decryption_proof,
+            &self.signed_e_sm_decryption_proofs,
+        ))?;
+        Ok(keccak256(
+            (
+                keccak256("InterfoldDecryptionKeyShare(bytes32 e3IdHash,uint256 dealer,bytes32 nodeHash,bytes32 proofsHash)"),
+                keccak256(bincode::serialize(&self.e3_id)?),
+                U256::from(self.party_id),
+                keccak256(self.node.as_bytes()),
+                keccak256(proofs),
+            )
+                .abi_encode(),
+        )
+        .into())
+    }
 }
 
 impl Display for DecryptionKeyShared {

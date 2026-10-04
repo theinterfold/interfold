@@ -33,7 +33,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::sync::{broadcast, mpsc};
-use tracing::{error, trace, warn};
+use tracing::trace;
 
 use libp2p::PeerId;
 
@@ -235,6 +235,13 @@ pub enum NetCommand {
         value: ArcBytes,
         key: ContentHash,
     },
+    /// End the Kademlia queries of a key's DHT puts that are in their upload phase. It has no
+    /// reply. This is not a full cancel: requests that a query already gave to the connection
+    /// handlers, queued or in progress, still go out, and a put that still looks up its closest
+    /// peers runs on and then uploads the record.
+    DhtCancelPut {
+        key: ContentHash,
+    },
     /// Fetch Document from Kademlia
     DhtGetRecord {
         correlation_id: CorrelationId,
@@ -314,6 +321,7 @@ impl NetCommand {
                 correlation_id,
                 key,
             } => format!("DhtGetRecord {{ correlation_id: {correlation_id}, key: {key:?} }}"),
+            N::DhtCancelPut { key } => format!("DhtCancelPut {{ key: {key:?} }}"),
             N::DhtRemoveRecords { keys } => format!("DhtRemoveRecords {{ keys: {} }}", keys.len()),
             N::OutgoingRequest(OutgoingRequest { correlation_id, .. }) => {
                 format!("OutgoingRequest {{ correlation_id: {correlation_id} }}")
@@ -346,6 +354,13 @@ impl NetCommand {
 pub enum NetEvent {
     /// Bytes have been broadcast over the network
     GossipData(GossipData),
+    /// A protocol event with transient propagation-peer attribution.
+    GossipIngress {
+        propagation_source: PeerId,
+        data: GossipData,
+    },
+    /// A document notification with local transport attribution.
+    DocumentIngress(Box<DocumentIngress>),
     /// There was an Error publishing bytes over the network
     GossipPublishError {
         correlation_id: CorrelationId,
@@ -445,6 +460,8 @@ impl NetEvent {
         // Keep this match exhaustive. Each new event must select one delivery path.
         match self {
             Self::GossipData(_)
+            | Self::GossipIngress { .. }
+            | Self::DocumentIngress(_)
             | Self::GossipPublishError { .. }
             | Self::GossipPublished { .. }
             | Self::DhtGetRecordSucceeded { .. }
@@ -473,7 +490,9 @@ impl NetEvent {
     /// event-count limit.
     pub(crate) fn buffered_size_bytes(&self) -> usize {
         let dynamic = match self {
-            Self::GossipData(data) => serialized_size(data),
+            Self::GossipData(data) | Self::GossipIngress { data, .. } => serialized_size(data),
+            Self::DocumentIngress(ingress) => std::mem::size_of::<DocumentIngress>()
+                .saturating_add(serialized_size(&ingress.notification)),
             Self::GossipPublished { message_id, .. } => message_id.0.len(),
             Self::DhtGetRecordSucceeded { value, .. } => value.len(),
             Self::DhtGetRecordError { error, .. } => match error {
@@ -540,6 +559,14 @@ fn serialized_size(value: &impl Serialize) -> usize {
         .unwrap_or(usize::MAX)
 }
 
+/// Transient ingress metadata. In-process notifications share one unattributed queue.
+#[derive(Message, Clone, Debug)]
+#[rtype(result = "()")]
+pub struct DocumentIngress {
+    pub propagation_source: Option<PeerId>,
+    pub notification: DocumentPublishedNotification,
+}
+
 /// Payload that is dispatched as a net -> net gossip event from Kademlia. This event signals that
 /// a document was published and that this node might be interested in it.
 #[derive(Message, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -565,7 +592,12 @@ impl DocumentPublishedNotification {
     }
 }
 
-/// Generic helper for the command-response pattern with correlation IDs
+/// Sends a command and waits for its result event.
+///
+/// The result arrives through a oneshot channel registered for the command's correlation id at the
+/// network interface's event channel, also when `net_events` reads the startup buffer. So neither
+/// broadcast lag nor the buffer can drop it. `matcher` converts the result event; it returns `None`
+/// for an event that is not a result of this command.
 pub async fn call_and_await_response<F, R>(
     net_cmds: mpsc::Sender<NetCommand>,
     net_events: NetEventSubscriber,
@@ -576,10 +608,6 @@ pub async fn call_and_await_response<F, R>(
 where
     F: Fn(&NetEvent) -> Option<Result<R>>,
 {
-    // Subscribe before sending the command so the response cannot be missed
-    let mut rx = net_events.subscribe();
-
-    // Extract correlation_id from command
     let Some(id) = command.correlation_id() else {
         return Err(anyhow::anyhow!(
             "Command must have a correlation_id but this does not: {}",
@@ -587,43 +615,27 @@ where
         ));
     };
 
-    // The command moves into the channel, so keep its description for the timeout error.
+    // The command moves into the channel, so keep its description for the errors below.
     let command_summary = command.summary();
 
-    // Send the command to Libp2pNetInterface
+    // Register before sending the command so the result cannot arrive first.
+    let response = net_events.expect_response(id)?;
+
     trace!(
         "call_and_await_response: sending command {} with timeout {:?}",
         command_summary,
         timeout
     );
-    net_cmds.send(command).await?;
-
-    let result = tokio::time::timeout(timeout, async {
-        loop {
-            match rx.recv().await {
-                Ok(event) => {
-                    // Only process events matching our correlation ID
-                    if event.correlation_id() == Some(id) {
-                        if let Some(result) = matcher(&event) {
-                            return result;
-                        } // None means unexpected event type, keep waiting
-                        trace!("matcher did not match event, skipping...");
-                    }
-                }
-                Err(broadcast::error::RecvError::Lagged(n)) => {
-                    warn!("broadcast receiver lagged by {n} messages");
-                    continue;
-                }
-                Err(e) => {
-                    error!("broadcast channel error: {:?}", e);
-                    return Err(e.into());
-                }
-            }
-        }
+    // One deadline covers the queue admission and the response, so a full command queue cannot
+    // hold the caller past its timeout. An expired send drops the command with it.
+    let event = tokio::time::timeout(timeout, async move {
+        net_cmds.send(command).await?;
+        response.recv().await
     })
     .await
-    .map_err(|_| anyhow::anyhow!("Timed out waiting for response from {command_summary}"))?;
-    result
+    .map_err(|_| anyhow::anyhow!("Timed out waiting for response from {command_summary}"))??;
+    matcher(&event)
+        .unwrap_or_else(|| Err(anyhow::anyhow!("Unexpected response to {command_summary}")))
 }
 
 pub async fn await_event<F, R>(
@@ -670,8 +682,116 @@ mod tests {
     };
     use e3_utils::ArcBytes;
 
-    use super::{GossipData, NetCommand, NetEvent, ProtocolResponse};
-    use crate::ContentHash;
+    use std::time::Duration;
+
+    use anyhow::Context;
+    use tokio::sync::mpsc;
+
+    use super::{call_and_await_response, GossipData, NetCommand, NetEvent, ProtocolResponse};
+    use crate::{
+        net_interface_handle::{NetEventChannel, NetEventSubscriber},
+        ContentHash,
+    };
+
+    /// Starts a DHT get for `value` on the given event channel and returns the call and the
+    /// correlation id of its command.
+    async fn start_get(
+        events: &NetEventChannel,
+        value: &ArcBytes,
+        timeout: Duration,
+    ) -> anyhow::Result<(
+        tokio::task::JoinHandle<anyhow::Result<ArcBytes>>,
+        CorrelationId,
+    )> {
+        let (cmd_tx, mut cmd_rx) = mpsc::channel(1);
+        let call = tokio::spawn(call_and_await_response(
+            cmd_tx,
+            NetEventSubscriber::from(events),
+            NetCommand::DhtGetRecord {
+                correlation_id: CorrelationId::new(),
+                key: ContentHash::from_content(value),
+            },
+            |event| match event {
+                NetEvent::DhtGetRecordSucceeded { value, .. } => Some(Ok(value.clone())),
+                _ => None,
+            },
+            timeout,
+        ));
+        let command = cmd_rx.recv().await.context("the call sent no command")?;
+        let id = command.correlation_id().context("the command has no id")?;
+        Ok((call, id))
+    }
+
+    #[tokio::test]
+    async fn command_result_survives_broadcast_lag() -> anyhow::Result<()> {
+        let events = NetEventChannel::new(1);
+        let _observer = events.subscribe();
+        let value = ArcBytes::from_bytes(b"document");
+        let (call, correlation_id) = start_get(&events, &value, Duration::from_secs(2)).await?;
+
+        // The next event replaces the result in the one-slot broadcast before the caller runs.
+        events.send(NetEvent::DhtGetRecordSucceeded {
+            key: ContentHash::from_content(&value),
+            correlation_id,
+            value: value.clone(),
+        })?;
+        events.send(NetEvent::GossipData(GossipData::GossipBytes(vec![1])))?;
+
+        assert_eq!(call.await??, value);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn command_wait_ends_when_the_event_channel_closes() -> anyhow::Result<()> {
+        let events = NetEventChannel::new(1);
+        let value = ArcBytes::from_bytes(b"document");
+        let (call, _) = start_get(&events, &value, Duration::from_secs(60)).await?;
+
+        drop(events);
+
+        let error = tokio::time::timeout(Duration::from_secs(5), call)
+            .await
+            .context("the call waited for its timeout")??
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("closed"));
+        Ok(())
+    }
+
+    /// The deadline includes the wait for room in the command queue. A queue that is full and not
+    /// drained ends the call at its own timeout, drops its command and releases its correlation id.
+    #[tokio::test(start_paused = true)]
+    async fn command_deadline_includes_queue_wait() -> anyhow::Result<()> {
+        let events = NetEventChannel::new(1);
+        let (cmd_tx, mut cmd_rx) = mpsc::channel(1);
+        cmd_tx.send(NetCommand::Shutdown).await?;
+        let correlation_id = CorrelationId::new();
+        let call = call_and_await_response(
+            cmd_tx,
+            NetEventSubscriber::from(&events),
+            NetCommand::DhtGetRecord {
+                correlation_id,
+                key: ContentHash::from_content(b"document".as_ref()),
+            },
+            |event| match event {
+                NetEvent::DhtGetRecordSucceeded { value, .. } => Some(Ok(value.clone())),
+                _ => None,
+            },
+            Duration::from_secs(30),
+        );
+
+        let error = tokio::time::timeout(Duration::from_secs(31), call)
+            .await
+            .context("the call outlived its deadline")?
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("Timed out"));
+        assert!(matches!(cmd_rx.try_recv(), Ok(NetCommand::Shutdown)));
+        assert!(
+            cmd_rx.try_recv().is_err(),
+            "the expired command was not queued"
+        );
+        drop(NetEventSubscriber::from(&events).expect_response(correlation_id)?);
+        Ok(())
+    }
 
     #[test]
     fn command_summary_reports_sizes_without_payload_bytes() {

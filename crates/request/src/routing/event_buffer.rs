@@ -5,34 +5,146 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use e3_events::{E3id, InterfoldEvent};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-/// Buffers events for downstream instances to handle out-of-order event delivery.
-/// Events are scoped by protocol request and recipient until the recipient is ready.
+#[path = "event_size.rs"]
+mod event_size;
+pub(crate) use event_size::event_bytes;
+
+// Sized for N=19, H=14 and four concurrent E3s. See the capacity derivation in
+// agent/flow-trace/03_E3_REQUEST_AND_COMMITTEE.md.
+#[derive(Clone, Copy)]
+pub(crate) struct EventBufferLimits {
+    pub per_e3_items: usize,
+    pub per_e3_bytes: usize,
+    pub global_items: usize,
+    pub global_bytes: usize,
+}
+
+impl Default for EventBufferLimits {
+    fn default() -> Self {
+        Self {
+            per_e3_items: 4_096,
+            per_e3_bytes: 1024 * 1024 * 1024,
+            global_items: 16_384,
+            global_bytes: 3 * 1024 * 1024 * 1024,
+        }
+    }
+}
+
 #[derive(Default)]
+struct BufferedEvents {
+    events: Vec<InterfoldEvent>,
+    bytes: usize,
+}
+
+#[derive(Clone, Copy, Default)]
+struct Usage {
+    items: usize,
+    bytes: usize,
+}
+
+impl Usage {
+    fn fits(&self, bytes: usize, max_items: usize, max_bytes: usize) -> bool {
+        self.items < max_items && bytes <= max_bytes.saturating_sub(self.bytes)
+    }
+
+    fn release(&mut self, items: usize, bytes: usize) {
+        self.items -= items;
+        self.bytes -= bytes;
+    }
+}
+
+/// Defers events for missing recipients, within per-E3 and shared memory budgets.
+/// Overflow disables deferral for that recipient until E3 teardown or restart.
 pub struct EventBuffer {
-    buffer: HashMap<(E3id, String), Vec<InterfoldEvent>>,
+    buffer: HashMap<(E3id, String), BufferedEvents>,
+    failed: HashSet<(E3id, String)>,
+    per_e3: HashMap<E3id, Usage>,
+    total: Usage,
+    limits: EventBufferLimits,
+}
+
+impl Default for EventBuffer {
+    fn default() -> Self {
+        Self::with_limits(EventBufferLimits::default())
+    }
 }
 
 impl EventBuffer {
-    pub fn add(&mut self, e3_id: &E3id, recipient: &str, event: InterfoldEvent) {
-        self.buffer
-            .entry((e3_id.clone(), recipient.to_owned()))
-            .or_default()
-            .push(event)
+    pub(crate) fn with_limits(limits: EventBufferLimits) -> Self {
+        Self {
+            buffer: HashMap::new(),
+            failed: HashSet::new(),
+            per_e3: HashMap::new(),
+            total: Usage::default(),
+            limits,
+        }
+    }
+
+    pub fn add(&mut self, e3_id: &E3id, recipient: &str, mut event: InterfoldEvent) {
+        let key = (e3_id.clone(), recipient.to_owned());
+        if self.failed.contains(&key) {
+            return;
+        }
+
+        // Charge shared allocations again for each recipient. No serialized copy is allocated.
+        let bytes = event_bytes(&event);
+        let usage = self.per_e3.get(e3_id).copied().unwrap_or_default();
+        if !bytes.is_some_and(|bytes| {
+            usage.fits(bytes, self.limits.per_e3_items, self.limits.per_e3_bytes)
+                && self
+                    .total
+                    .fits(bytes, self.limits.global_items, self.limits.global_bytes)
+        }) {
+            tracing::error!(
+                %e3_id,
+                recipient,
+                event_bytes = ?bytes,
+                e3_items = usage.items,
+                e3_bytes = usage.bytes,
+                global_items = self.total.items,
+                global_bytes = self.total.bytes,
+                "Deferred delivery failed: request buffer limit exceeded; dropping the recipient backlog"
+            );
+            self.take(e3_id, recipient);
+            self.failed.insert(key);
+            return;
+        }
+
+        let bytes = bytes.expect("buffer admission checked the event size");
+        event.compact_shared_collections();
+        let pending = self.buffer.entry(key).or_default();
+        pending.events.push(event);
+        pending.bytes += bytes;
+        let usage = self.per_e3.entry(e3_id.clone()).or_default();
+        usage.items += 1;
+        usage.bytes += bytes;
+        self.total.items += 1;
+        self.total.bytes += bytes;
     }
 
     pub fn take(&mut self, e3_id: &E3id, recipient: &str) -> Vec<InterfoldEvent> {
-        self.buffer
-            .remove(&(e3_id.clone(), recipient.to_owned()))
-            .unwrap_or_default()
+        let Some(pending) = self.buffer.remove(&(e3_id.clone(), recipient.to_owned())) else {
+            return Vec::new();
+        };
+        self.total.release(pending.events.len(), pending.bytes);
+        if let Some(usage) = self.per_e3.get_mut(e3_id) {
+            usage.release(pending.events.len(), pending.bytes);
+            if usage.items == 0 {
+                self.per_e3.remove(e3_id);
+            }
+        }
+        pending.events
     }
 
-    /// Discard data for a terminal request, including recipients that were never constructed on
-    /// this node role.
+    /// Release the terminal request's reservations and deferred-delivery failure records.
     pub fn remove_e3(&mut self, e3_id: &E3id) {
-        self.buffer
-            .retain(|(buffered_id, _), _| buffered_id != e3_id);
+        self.buffer.retain(|(id, _), _| id != e3_id);
+        self.failed.retain(|(id, _)| id != e3_id);
+        if let Some(usage) = self.per_e3.remove(e3_id) {
+            self.total.release(usage.items, usage.bytes);
+        }
     }
 }
 

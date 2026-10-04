@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use actix::{Actor, ActorContext, Addr, AsyncContext, Handler, Message, SpawnHandle};
 use e3_events::{
-    E3id, EventContext, Sequenced, ThresholdShareCollectionFailed, ThresholdShareCreated,
+    Die, E3id, EventContext, Sequenced, ThresholdShareCollectionFailed, ThresholdShareCreated,
     TypedEvent,
 };
 use e3_trbfv::PartyId;
@@ -148,6 +148,14 @@ impl Actor for ThresholdShareCollector {
         );
         self.deadline_handle =
             Some(ctx.notify_later(ThresholdShareCollectionTimeout, self.deadline_delay));
+    }
+}
+
+impl Handler<Die> for ThresholdShareCollector {
+    type Result = ();
+
+    fn handle(&mut self, _: Die, ctx: &mut Self::Context) {
+        ctx.stop();
     }
 }
 

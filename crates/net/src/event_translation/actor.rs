@@ -4,7 +4,9 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::domain::EventTranslationService;
-use crate::events::{GossipData, GossipPublishFailure, NetCommand, NetEvent};
+use crate::events::{
+    call_and_await_response, GossipData, GossipPublishFailure, NetCommand, NetEvent,
+};
 use crate::net_interface_handle::NetEventSubscriber;
 use crate::NetworkPolicy;
 use actix::prelude::*;
@@ -27,6 +29,8 @@ use tracing::{info, warn};
 pub struct NetEventTranslator {
     bus: BusHandle,
     tx: mpsc::Sender<NetCommand>,
+    /// Registers each publication for its result, so broadcast lag cannot drop the result.
+    events: NetEventSubscriber,
     service: EventTranslationService,
     pending: HashMap<CorrelationId, PendingPublish>,
 }
@@ -53,19 +57,21 @@ impl Actor for NetEventTranslator {
 /// Libp2pEvent is used to send data to the Libp2pNetInterface from the NetEventTranslator
 #[derive(Message, Clone, Debug, PartialEq, Eq)]
 #[rtype(result = "()")]
-struct LibP2pEvent(pub GossipData);
+struct LibP2pEvent(pub GossipData, pub Option<libp2p::PeerId>);
 
 impl NetEventTranslator {
     /// Create a new NetEventTranslator actor
     pub fn new(
         bus: &BusHandle,
         tx: &mpsc::Sender<NetCommand>,
+        events: &NetEventSubscriber,
         topic: &str,
         network: NetworkPolicy,
     ) -> Self {
         Self {
             bus: bus.clone(),
             tx: tx.clone(),
+            events: events.clone(),
             service: EventTranslationService::with_network(topic, network),
             pending: HashMap::new(),
         }
@@ -78,8 +84,8 @@ impl NetEventTranslator {
         topic: &str,
         network: NetworkPolicy,
     ) -> Addr<Self> {
+        let addr = NetEventTranslator::new(bus, tx, rx, topic, network).start();
         let mut rx = rx.subscribe();
-        let addr = NetEventTranslator::new(bus, tx, topic, network).start();
 
         // Listen on all events
         bus.subscribe(EventType::All, addr.clone().recipient());
@@ -90,27 +96,15 @@ impl NetEventTranslator {
                 while let Some(event) =
                     crate::event_subscription::recv_net_event(&mut rx, "NetEventTranslator").await
                 {
-                    let delivery = match event {
-                        NetEvent::GossipData(data @ GossipData::GossipBytes(_)) => {
-                            addr.send(TranslatorMessage::Inbound(data)).await
-                        }
-                        NetEvent::GossipPublished { correlation_id, .. } => {
-                            addr.send(TranslatorMessage::PublishSucceeded(correlation_id))
-                                .await
-                        }
-                        NetEvent::GossipPublishError {
-                            correlation_id,
-                            error,
-                        } => {
-                            addr.send(TranslatorMessage::PublishFailed {
-                                correlation_id,
-                                failure: error.as_ref().clone(),
-                            })
-                            .await
-                        }
+                    let (data, peer) = match event {
+                        NetEvent::GossipIngress {
+                            propagation_source,
+                            data: data @ GossipData::GossipBytes(_),
+                        } => (data, Some(propagation_source)),
+                        NetEvent::GossipData(data @ GossipData::GossipBytes(_)) => (data, None),
                         _ => continue,
                     };
-                    if let Err(error) = delivery {
+                    if let Err(error) = addr.send(LibP2pEvent(data, peer)).await {
                         warn!(%error, "NetEventTranslator stopped; ending gossip ingress");
                         break;
                     }
@@ -169,31 +163,28 @@ impl NetEventTranslator {
                 attempt,
             },
         );
-        ctx.run_later(GOSSIP_PUBLISH_RESULT_TIMEOUT, move |actor, ctx| {
-            if actor.pending.contains_key(&correlation_id) {
-                actor.handle_publish_failed(
-                    correlation_id,
-                    GossipPublishFailure::transient(format!(
-                        "network did not report a gossip publish result within {GOSSIP_PUBLISH_RESULT_TIMEOUT:?}"
-                    )),
-                    ctx,
-                );
-            }
-        });
-        let tx = self.tx.clone();
-        ctx.spawn(async move { tx.send(command).await }.into_actor(self).map(
-            move |result, actor, ctx| {
-                if let Err(error) = result {
-                    actor.handle_publish_failed(
-                        correlation_id,
-                        GossipPublishFailure::permanent(format!(
-                            "network command queue closed: {error}"
-                        )),
-                        ctx,
-                    );
-                }
-            },
-        ));
+        let publish = call_and_await_response(
+            self.tx.clone(),
+            self.events.clone(),
+            command,
+            publish_result,
+            GOSSIP_PUBLISH_RESULT_TIMEOUT,
+        );
+        ctx.spawn(
+            publish
+                .into_actor(self)
+                .map(move |result, actor, ctx| match result {
+                    Ok(Ok(())) => {
+                        if let Some(pending) = actor.pending.remove(&correlation_id) {
+                            actor.service.mark_published(pending.event_id);
+                        }
+                    }
+                    Ok(Err(failure)) => actor.handle_publish_failed(correlation_id, failure, ctx),
+                    Err(error) => {
+                        actor.handle_publish_failed(correlation_id, wait_failure(&error), ctx)
+                    }
+                }),
+        );
     }
 
     fn handle_publish_failed(
@@ -231,46 +222,45 @@ impl NetEventTranslator {
         // The peer supplies the context ID; the event store derives the ID from the payload.
         let id = EventId::hash(&data);
         let now = Instant::now();
-        if self.service.is_stored_remote_event(&id, now) {
+        if !self.service.admit_remote_event(msg.1, &id, now) {
             return Ok(());
         }
-        self.bus
-            .publish_from_remote(data, ec.ts(), None, EventSource::Net)?;
-        self.service.record_remote_event(id, now);
+        if let Err(error) = self
+            .bus
+            .publish_from_remote(data, ec.ts(), None, EventSource::Net)
+        {
+            self.service.reject_remote_event(&id);
+            return Err(error);
+        }
         Ok(())
     }
 }
 
-#[derive(Message)]
-#[rtype(result = "()")]
-enum TranslatorMessage {
-    Inbound(GossipData),
-    PublishSucceeded(CorrelationId),
-    PublishFailed {
-        correlation_id: CorrelationId,
-        failure: GossipPublishFailure,
-    },
+impl Handler<LibP2pEvent> for NetEventTranslator {
+    type Result = ();
+    fn handle(&mut self, msg: LibP2pEvent, _: &mut Self::Context) -> Self::Result {
+        trap(EType::Net, &self.bus.clone(), || {
+            self.handle_remote_event(msg)
+        });
+    }
 }
 
-impl Handler<TranslatorMessage> for NetEventTranslator {
-    type Result = ();
-    fn handle(&mut self, msg: TranslatorMessage, ctx: &mut Self::Context) -> Self::Result {
-        match msg {
-            TranslatorMessage::Inbound(data) => {
-                trap(EType::Net, &self.bus.clone(), || {
-                    self.handle_remote_event(LibP2pEvent(data))
-                });
-            }
-            TranslatorMessage::PublishSucceeded(correlation_id) => {
-                if let Some(pending) = self.pending.remove(&correlation_id) {
-                    self.service.mark_published(pending.event_id);
-                }
-            }
-            TranslatorMessage::PublishFailed {
-                correlation_id,
-                failure,
-            } => self.handle_publish_failed(correlation_id, failure, ctx),
-        }
+/// Reads the network's result of a gossip publication.
+fn publish_result(event: &NetEvent) -> Option<Result<Result<(), GossipPublishFailure>>> {
+    match event {
+        NetEvent::GossipPublished { .. } => Some(Ok(Ok(()))),
+        NetEvent::GossipPublishError { error, .. } => Some(Ok(Err(error.as_ref().clone()))),
+        _ => None,
+    }
+}
+
+/// A closed command queue means that the network interface stopped, so a retry cannot succeed.
+/// Other waits that end without a result, such as a timeout, can succeed on a retry.
+fn wait_failure(error: &anyhow::Error) -> GossipPublishFailure {
+    if error.is::<mpsc::error::SendError<NetCommand>>() {
+        GossipPublishFailure::permanent(format!("network command queue closed: {error}"))
+    } else {
+        GossipPublishFailure::transient(format!("{error:#}"))
     }
 }
 
@@ -298,6 +288,199 @@ impl Handler<InterfoldEvent> for NetEventTranslator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::net_interface_handle::NetEventChannel;
+    use e3_ciphernode_builder::EventSystem;
+    use e3_events::{E3id, EventConstructorWithTimestamp, KeyshareCreated, Unsequenced};
+    use e3_utils::ArcBytes;
+    use libp2p::gossipsub::MessageId;
+
+    fn local_forwardable_event() -> InterfoldEvent {
+        let event: InterfoldEvent<Unsequenced> = InterfoldEvent::new_with_timestamp(
+            KeyshareCreated {
+                pubkey: ArcBytes::from_bytes(&[1, 2, 3]),
+                e3_id: E3id::new("1", 1),
+                node: "node-1".to_string(),
+                party_id: 1,
+                signed_pk_generation_proof: None,
+            }
+            .into(),
+            None,
+            42,
+            None,
+            EventSource::Local,
+        );
+        event.into_sequenced(1)
+    }
+
+    #[actix::test]
+    async fn busy_peers_do_not_discard_other_peers_events() -> Result<()> {
+        use e3_events::{AggregateConfig, AggregateId, EventBus, EventBusConfig, GetEvents};
+        let system = EventSystem::new()
+            .with_event_bus(EventBus::new(EventBusConfig { deduplicate: false }).start())
+            .with_aggregate_config(AggregateConfig::new(HashMap::from([(
+                AggregateId::new(1),
+                Duration::ZERO,
+            )])));
+        let bus = system.handle()?.enable("test");
+        let history = bus.history();
+        let (tx, _commands) = mpsc::channel(8);
+        let events = NetEventChannel::new(2048);
+        let _translator = NetEventTranslator::setup(
+            &bus,
+            &tx,
+            &NetEventSubscriber::from(&events),
+            "topic",
+            NetworkPolicy::local_unrestricted(),
+        );
+        let peers = [
+            libp2p::PeerId::random(),
+            libp2p::PeerId::random(),
+            libp2p::PeerId::random(),
+        ];
+        let mut expected = std::collections::HashSet::new();
+        for round in 0..40 {
+            for (source, count) in [(0, 8), (1, 8), (2, 1)] {
+                for index in 0..count {
+                    let event = bus.event_from(
+                        KeyshareCreated {
+                            e3_id: E3id::new(round.to_string(), 1),
+                            pubkey: ArcBytes::from_bytes(b"key"),
+                            node: format!("node-{source}"),
+                            party_id: index,
+                            signed_pk_generation_proof: None,
+                        },
+                        None,
+                    )?;
+                    expected.insert(event.event_id());
+                    let data = GossipData::GossipBytes(event.to_bytes()?);
+                    for _ in 0..2 {
+                        events.send(NetEvent::GossipIngress {
+                            propagation_source: peers[source],
+                            data: data.clone(),
+                        })?;
+                        tokio::task::yield_now().await;
+                    }
+                }
+            }
+        }
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let stored = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+                let actual: Vec<_> = stored
+                    .iter()
+                    .filter(|event| event.source() == EventSource::Net)
+                    .map(|event| event.event_id())
+                    .collect();
+                if actual.len() >= expected.len() {
+                    assert_eq!(
+                        actual.len(),
+                        expected.len(),
+                        "each logical contribution is stored once"
+                    );
+                    assert_eq!(
+                        actual.into_iter().collect::<std::collections::HashSet<_>>(),
+                        expected
+                    );
+                    return anyhow::Ok(());
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await??;
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn rejected_timestamp_does_not_mark_an_event_as_stored() -> Result<()> {
+        use e3_events::{AggregateConfig, AggregateId, GetEvents};
+        let system =
+            EventSystem::new()
+                .with_fresh_bus()
+                .with_aggregate_config(AggregateConfig::new(HashMap::from([(
+                    AggregateId::new(1),
+                    Duration::ZERO,
+                )])));
+        let bus = system.handle()?.enable("test");
+        let history = bus.history();
+        let (tx, _commands) = mpsc::channel(8);
+        let events = NetEventChannel::new(8);
+        let mut translator = NetEventTranslator::new(
+            &bus,
+            &tx,
+            &NetEventSubscriber::from(&events),
+            "topic",
+            NetworkPolicy::local_unrestricted(),
+        );
+        let data = local_forwardable_event().get_data().clone();
+        let rejected: InterfoldEvent<Unsequenced> = InterfoldEvent::new_with_timestamp(
+            data.clone(),
+            None,
+            u128::MAX,
+            None,
+            EventSource::Net,
+        );
+        assert!(translator
+            .handle_remote_event(LibP2pEvent(
+                GossipData::GossipBytes(rejected.to_bytes()?),
+                None
+            ))
+            .is_err());
+        let accepted = bus.event_from(data.clone(), None)?;
+        translator.handle_remote_event(LibP2pEvent(
+            GossipData::GossipBytes(accepted.to_bytes()?),
+            None,
+        ))?;
+        bus.flush_event_pipeline().await?;
+        let stored = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+        assert_eq!(
+            stored
+                .iter()
+                .filter(|event| event.get_data() == &data)
+                .count(),
+            1,
+            "a rejected timestamp must not suppress a later valid delivery"
+        );
+        Ok(())
+    }
+
+    /// The network reports the result of a publication once, on a bounded broadcast channel. A
+    /// burst of other events can replace it there before the translator reads the channel. The
+    /// translator still gets the result, so it does not time out and publish the event again.
+    #[actix::test]
+    async fn publish_result_survives_a_lagging_event_channel() -> Result<()> {
+        tokio::time::pause();
+        let system = EventSystem::new().with_fresh_bus();
+        let bus = system.handle()?.enable("test");
+        let (command_tx, mut commands) = mpsc::channel(8);
+        let events = NetEventChannel::new(1);
+        let translator = NetEventTranslator::setup(
+            &bus,
+            &command_tx,
+            &NetEventSubscriber::from(&events),
+            "topic",
+            NetworkPolicy::local_unrestricted(),
+        );
+        translator.send(local_forwardable_event()).await?;
+        let Some(NetCommand::GossipPublish { correlation_id, .. }) = commands.recv().await else {
+            anyhow::bail!("the translator did not publish the event");
+        };
+
+        // The second event replaces the result in the one-slot broadcast.
+        let published = |correlation_id| NetEvent::GossipPublished {
+            correlation_id,
+            message_id: MessageId::new(b"message"),
+        };
+        events.send(published(correlation_id))?;
+        events.send(published(CorrelationId::new()))?;
+
+        let republished =
+            tokio::time::timeout(GOSSIP_PUBLISH_RESULT_TIMEOUT * 3, commands.recv()).await;
+        assert!(
+            republished.is_err(),
+            "the translator published a delivered event again: {republished:?}"
+        );
+        Ok(())
+    }
 
     #[test]
     fn no_peer_failures_use_the_long_join_window() {

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { ethers as ethersLib } from "ethers";
 
-import { bfvConfigsForChain } from "../utils";
+import { bfvConfigsForChain, isTestnetOrLocalChainId } from "../utils";
 import { assertSupportedVrfChain, assertVrfRequestTimeout } from "./chains";
 import { arg } from "./cli";
 import { ZERO, abi } from "./constants";
@@ -532,6 +532,27 @@ function validateConfig(config: ProtocolConfigFile): void {
   if (config.deployMockE3Program && config.bindInitialE3Program) {
     throw new Error(
       "bindInitialE3Program must be false when deployMockE3Program is true",
+    );
+  }
+}
+
+/**
+ * Refuse to deploy mock contracts on a chain that is not a testnet or a local chain.
+ * `DeployableMockCiphertextVerifier` accepts every proof, and `MockE3Program` applies no
+ * application rules. The deploy actions call this check, not `loadConfig`: the mainnet
+ * configuration records the first deployment, which used both mocks, and the upgrade scripts
+ * still load it.
+ */
+export function assertMockDeploymentAllowed(config: ProtocolConfigFile): void {
+  if (isTestnetOrLocalChainId(config.chainId)) return;
+  const mocks = [
+    config.deployMockE3Program && "deployMockE3Program",
+    config.deployMockCiphertextVerifier && "deployMockCiphertextVerifier",
+  ].filter(Boolean);
+  if (mocks.length > 0) {
+    throw new Error(
+      `${mocks.join(" and ")} must be false on chainId ${config.chainId}: ` +
+        "mock contracts are for testnets and local chains only",
     );
   }
 }

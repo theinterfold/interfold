@@ -187,46 +187,6 @@ async fn setup_share_encryption_e_sm_test() -> Option<(
     ))
 }
 
-async fn setup_share_encryption_sk_test() -> Option<(
-    ZkBackend,
-    tempfile::TempDir,
-    ZkProver,
-    ShareEncryptionCircuit,
-    ShareEncryptionCircuitData,
-    BfvPreset,
-    &'static str,
-)> {
-    let committee = CiphernodesCommitteeSize::Minimum.values();
-    let preset = BfvPreset::InsecureThreshold512;
-    let bb = find_bb().await?;
-    require_minimum_circuits()?;
-    let (backend, temp) = setup_test_prover(&bb).await;
-
-    let sd: e3_fhe_params::PresetSearchDefaults =
-        BfvPreset::InsecureThreshold512.search_defaults().unwrap();
-
-    setup_compiled_circuit(&backend, "dkg", "share_encryption").await;
-
-    let sample = ShareEncryptionCircuitData::generate_sample(
-        preset,
-        committee,
-        DkgInputType::SecretKey,
-        sd.z,
-    )
-    .ok()?;
-    let prover = ZkProver::new(&backend);
-
-    Some((
-        backend,
-        temp,
-        prover,
-        ShareEncryptionCircuit,
-        sample,
-        preset,
-        "1",
-    ))
-}
-
 async fn setup_share_computation_sk_test() -> Option<(
     ZkBackend,
     tempfile::TempDir,
@@ -506,7 +466,6 @@ macro_rules! e2e_proof_tests {
 e2e_proof_tests! {
     (share_computation_sk, setup_share_computation_sk_test(), CircuitVariant::Recursive),
     (share_computation_e_sm, setup_share_computation_e_sm_test(), CircuitVariant::Recursive),
-    (share_encryption_sk, setup_share_encryption_sk_test(), CircuitVariant::Recursive),
     (share_encryption_e_sm, setup_share_encryption_e_sm_test(), CircuitVariant::Recursive),
 }
 

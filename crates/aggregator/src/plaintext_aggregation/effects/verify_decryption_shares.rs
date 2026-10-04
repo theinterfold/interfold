@@ -40,7 +40,7 @@ impl ThresholdPlaintextAggregator {
         if !self.share_is_authenticated(party_id, &share, &signed_decryption_proofs, ciphertexts)? {
             warn!(
                 party_id,
-                "Ignoring a decryption bundle that does not match its signed party and ciphertext"
+                "Ignoring a decryption bundle that does not match its signed party, ciphertext, or canonical domain"
             );
             return Ok(());
         }

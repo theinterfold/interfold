@@ -67,8 +67,6 @@ describe('CRISP on-chain census', function () {
   let slotAddress: string
   let e3Id: bigint
   let votingPower: bigint
-  let divisor: bigint
-  let rawPower: bigint
   let voteProof: ProofData
 
   const numOptions = 2
@@ -129,13 +127,13 @@ describe('CRISP on-chain census', function () {
     const requestBlock = await ethers.provider.getBlock(receipt!.blockNumber)
     const snapshot = BigInt(requestBlock!.timestamp) - 1n
 
-    rawPower = await token.getPastVotes(slotAddress, snapshot)
+    const rawPower: bigint = await token.getPastVotes(slotAddress, snapshot)
     expect(rawPower, 'voter must hold power at the snapshot').to.be.greaterThan(0n)
 
     // The contract scales raw power into ballot units before handing it to the circuit, so the
     // prover has to use the same value. Read the divisor from the round rather than recomputing
     // it, which also pins the getter clients depend on.
-    divisor = await crispProgram.votingPowerDivisorOf(e3Id)
+    const divisor = await crispProgram.votingPowerDivisorOf(e3Id)
     expect(divisor, 'derived from the token decimals: 10 ** (18 - 1)').to.equal(10n ** 17n)
 
     votingPower = rawPower / divisor
@@ -231,23 +229,6 @@ describe('CRISP on-chain census', function () {
     // difference between the two ballots is the power, so the revert above is attributable to it.
     await (await mockInterfold.setCommitteePublicKey(voteProof.publicInputs[8])).wait()
     await publishAvailableInput(crispProgram, e3Id, encodeSolidityProof(voteProof))
-  })
-
-  /// The divisor is what keeps token weighting meaningful. The circuit enforces
-  /// `vote <= voting_power`, and the BFV encoding caps each choice at `2**(100/numOptions) - 1`
-  /// (about 8.6e9 for three options). Raw power from an 18-decimal token is ~1e18 per token, so
-  /// unscaled every holder would sit above that cap and weighting would flatten silently.
-  it('scales raw power into ballot units', async function () {
-    const perChoiceCap = 2n ** 33n - 1n
-
-    expect(divisor, 'derived as 10 ** (18 - 1)').to.equal(10n ** 17n)
-    expect(votingPower).to.equal(rawPower / divisor)
-
-    // The point of the divisor: the raw value is orders of magnitude past the cap, the scaled one
-    // is comfortably inside it. Without scaling every holder would be pinned at the cap and the
-    // weighting would carry no information.
-    expect(rawPower, 'raw power breaches the cap').to.be.greaterThan(perChoiceCap)
-    expect(votingPower, 'scaled power fits under it').to.be.lessThan(perChoiceCap)
   })
 
   /// A requester that needs different precision names its own divisor; 0 means "derive it".

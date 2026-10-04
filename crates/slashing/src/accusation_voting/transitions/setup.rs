@@ -20,12 +20,19 @@ impl AccusationVoting {
     ) -> Self {
         let my_address = signer.address();
         let committee_n = committee.len();
+        let committee_party_ids = committee
+            .iter()
+            .enumerate()
+            .map(|(party_id, address)| (*address, party_id as u64))
+            .collect();
         Self {
             e3_id,
             my_address,
             signer,
             slashing_manager,
+            finalized_committee: committee.clone(),
             committee,
+            committee_party_ids,
             circuit_threshold_t,
             vote_quorum_h,
             committee_n,

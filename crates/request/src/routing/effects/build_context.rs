@@ -11,10 +11,42 @@ pub struct E3RouterBuilder {
     pub recovery_store: Repository<RequestRouterCheckpoint>,
     pub store: Repository<E3RouterSnapshot>,
     pub teardown_grace: Duration,
-    pub failed_on_restart: HashSet<E3id>,
+    pub complete_on_restart: HashSet<E3id>,
+}
+
+struct RecipientExtension {
+    key: &'static str,
+    inner: Box<dyn E3Extension>,
+}
+
+#[async_trait]
+impl E3Extension for RecipientExtension {
+    fn expected_recipient(&self) -> Option<&'static str> {
+        Some(self.key)
+    }
+
+    fn on_event(&self, context: &mut E3Context, event: &InterfoldEvent) {
+        self.inner.on_event(context, event);
+    }
+
+    async fn hydrate(
+        &self,
+        context: &mut E3Context,
+        snapshot: &crate::E3ContextSnapshot,
+    ) -> Result<()> {
+        self.inner.hydrate(context, snapshot).await
+    }
 }
 
 impl E3RouterBuilder {
+    /// Install an extension and register its recipient for deferred delivery.
+    pub fn with_recipient(self, key: &'static str, extension: Box<dyn E3Extension>) -> Self {
+        self.with(Box::new(RecipientExtension {
+            key,
+            inner: extension,
+        }))
+    }
+
     pub fn with(mut self, listener: Box<dyn E3Extension>) -> Self {
         self.extensions.push(listener);
         self
@@ -35,9 +67,9 @@ impl E3RouterBuilder {
         self
     }
 
-    /// Set the E3s whose lifecycle stage is Failed; they are completed at `EffectsEnabled`.
-    pub fn with_failed_on_restart(mut self, failed_on_restart: HashSet<E3id>) -> Self {
-        self.failed_on_restart = failed_on_restart;
+    /// Set the finished E3s whose restored contexts complete at `EffectsEnabled` without resuming.
+    pub fn with_complete_on_restart(mut self, complete_on_restart: HashSet<E3id>) -> Self {
+        self.complete_on_restart = complete_on_restart;
         self
     }
 
@@ -64,7 +96,7 @@ impl E3RouterBuilder {
             recovery_store,
             recovered_selections,
             teardown_grace: self.teardown_grace,
-            failed_on_restart: self.failed_on_restart,
+            complete_on_restart: self.complete_on_restart,
         };
 
         let router = match snapshot {

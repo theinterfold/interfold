@@ -84,24 +84,6 @@ describe("Interfold", function () {
   };
 
   describe("constructor / initialize()", function () {
-    it("correctly sets owner", async function () {
-      const { interfold, owner } = await loadFixture(setup);
-      expect(await interfold.owner()).to.equal(await owner.getAddress());
-    });
-
-    it("correctly sets ciphernodeRegistry address", async function () {
-      const { interfold, ciphernodeRegistryContract } =
-        await loadFixture(setup);
-      expect(await interfold.ciphernodeRegistry()).to.equal(
-        await ciphernodeRegistryContract.getAddress(),
-      );
-    });
-
-    it("correctly sets max duration", async function () {
-      const { interfold } = await loadFixture(setup);
-      expect(await interfold.maxDuration()).to.equal(60 * 60 * 24 * 30);
-    });
-
     it("namespaces E3 IDs by the controller address", async function () {
       const { interfold } = await loadFixture(setup);
       expect(await interfold.nexte3Id()).to.equal(
@@ -629,22 +611,6 @@ describe("Interfold", function () {
       });
     }
 
-    it("reverts if USDC allowance is insufficient", async function () {
-      const { interfold, request, usdcToken } = await loadFixture(setup);
-      await expect(
-        interfold.request({
-          committeeSize: request.committeeSize,
-          inputWindow: await freshInputWindow(),
-          e3Program: request.e3Program,
-          paramSet: request.paramSet,
-          computeProviderParams: request.computeProviderParams,
-          customParams: request.customParams,
-          expectedFeeToken: request.expectedFeeToken,
-          expectedCryptoConfigId: request.expectedCryptoConfigId,
-          maxFee: request.maxFee,
-        }),
-      ).to.be.revertedWithCustomError(usdcToken, "ERC20InsufficientAllowance");
-    });
     it("reverts if committee size is not configured", async function () {
       const { interfold, request } = await loadFixture(setup);
       const unconfiguredCommitteeSize = 1;

@@ -25,16 +25,7 @@ pub fn require_minimum_circuits() -> Option<()> {
     }
 }
 
-use std::path::PathBuf;
-
 use num_bigint::{BigInt, Sign};
-
-#[allow(dead_code)]
-pub fn fixtures_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("fixtures")
-}
 
 #[allow(dead_code)]
 const FIELD_SIZE: usize = 32;

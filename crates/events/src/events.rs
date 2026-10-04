@@ -42,6 +42,7 @@ impl StoreEventRequested {
 pub struct EventStoreQueryResponse {
     id: CorrelationId,
     result: std::result::Result<Vec<InterfoldEvent<Sequenced>>, String>,
+    log_head: Option<u64>,
 }
 
 impl EventStoreQueryResponse {
@@ -49,6 +50,7 @@ impl EventStoreQueryResponse {
         Self {
             id,
             result: Ok(events),
+            log_head: None,
         }
     }
 
@@ -56,7 +58,18 @@ impl EventStoreQueryResponse {
         Self {
             id,
             result: result.map_err(|error| format!("{error:#}")),
+            log_head: None,
         }
+    }
+
+    pub fn with_log_head(mut self, log_head: Option<u64>) -> Self {
+        self.log_head = log_head;
+        self
+    }
+
+    /// Physical log head for a sequence query that addresses one event store.
+    pub fn log_head(&self) -> Option<u64> {
+        self.log_head
     }
 
     pub fn into_events(self) -> Result<Vec<InterfoldEvent>> {

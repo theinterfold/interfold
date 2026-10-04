@@ -333,11 +333,6 @@ where
         }
     }
 
-    /// Returns true if `key` is present.
-    pub fn contains_key(&self, key: &K) -> bool {
-        self.get(key).is_some()
-    }
-
     /// Collects all key/value pairs into a `Vec`. Iteration order is
     /// unspecified (hash-driven), so callers that need a deterministic order
     /// must sort the result themselves.
@@ -416,14 +411,6 @@ mod tests {
     }
 
     #[test]
-    fn test_remove_absent_key_is_noop() {
-        let map = Hamt::new().insert("a".to_string(), 1);
-        let same = map.remove(&"missing".to_string());
-        assert_eq!(1, same.len());
-        assert_eq!(Some(&1), same.get(&"a".to_string()));
-    }
-
-    #[test]
     fn test_remove_until_empty() {
         let mut map = Hamt::new();
         for i in 0..50 {
@@ -435,17 +422,6 @@ mod tests {
         }
         assert!(map.is_empty());
         assert_eq!(0, map.len());
-    }
-
-    #[test]
-    fn test_contains_key_and_entries() {
-        let map = Hamt::new().insert(1u32, 10).insert(2, 20).insert(3, 30);
-        assert!(map.contains_key(&2));
-        assert!(!map.contains_key(&99));
-
-        let mut entries = map.entries();
-        entries.sort();
-        assert_eq!(vec![(1, 10), (2, 20), (3, 30)], entries);
     }
 
     #[test]

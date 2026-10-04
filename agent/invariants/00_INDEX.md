@@ -84,21 +84,15 @@ The "Verified Bugs & Protocol Concerns" table in `flow-trace/00_INDEX.md` record
 wrong. This list and the **Gap:** notes in the section files are the open-issue list. Verify each
 item in code before you rely on it.
 
-- Eligibility: asset-configuration and node-release changes bump the eligibility version, but Rust
-  does not consume those events and keeps a stale activity view. — `01_PROTOCOL_ONCHAIN.md`
-  §Activation
 - Slashing: a restart resets the fallback submission delay. — `01_PROTOCOL_ONCHAIN.md` §Slashing and
   failure settlement
-- Startup does not reconcile persisted request contexts with finalized chain state; concern #48
-  remains open. — `03_ACTOR_RUNTIME.md` §Durability, persistence, replay
-- Circuit artifacts: a node installs a downloaded archive without `checksums.json`. —
-  `02_CRYPTO_CIRCUITS.md` §Noir / Barretenberg compatibility
-- Deployment and CLI: `deployInterfold.ts` sends one setter without waiting for its receipt, and the
-  CLI accepts secrets on argv. — `04_BUILD_CONFIG.md`
-- CLI `activate` calls `register` and reverts for registered operators. —
-  `crates/cli/src/ciphernode/lifecycle.rs`
+- Startup reconciles restored request contexts with finalized chain state, but concern #48 stays
+  open for a local Failed stage whose reason needs accusation work (restart completes it), for a
+  slashing failure that is absent from the local records, and for contexts that the replayed
+  EventStore suffix admits (follow-up work). A canonical Failed stage from that read is only in the
+  lifecycle snapshot, not in the event log. — `03_ACTOR_RUNTIME.md` §Durability, persistence, replay
 - EventBus fan-out waits for each subscriber to accept the event within a timeout, but a timeout is
-  only logged and the event is not retried. 84 `.do_send(` sites remain in total, including the
+  only logged and the event is not retried. 82 `.do_send(` sites remain in total, including the
   `Sequencer` and the E3 router context. — `03_ACTOR_RUNTIME.md` §Ordering, backpressure, effects
 - The event log and snapshots are positional bincode, and gossip carries bincode payloads inside a
   versioned envelope. A per-type schema version exists only on some types, for example
@@ -117,13 +111,16 @@ item in code before you rely on it.
   `crates/config/protocol-release.toml` is not linked to `SCHEMA_VERSION`. `03_ACTOR_RUNTIME.md`
   §Schema evolution states the target.
 - `ComputeEffectGate` is in-memory only — no durable external-effect outbox yet.
-- Network: `call_and_await_response` waits on a bounded broadcast receiver, so lag can drop the
-  response and the call times out. Document-publisher recovery reads the event log one event per
-  query at startup, so startup time grows with the log. libp2p-gossipsub 0.49.4 does not decrement
-  its publish counter when it drops an expired queued publish. The DHT replication factor stays at
-  20, so a refresh still sends a document to up to 20 peers. A put returns after one peer stores the
-  record, and an aborted put is not cancelled in the swarm, so uploads can overlap the next
-  replication. — `crates/net/src/events.rs`; `crates/net/src/document_publishing/`
+- Network: command results go from the network interface to the registered caller, not through
+  `NetEventBuffer`, so they are not held until `SyncEnded`. The document publisher sends no command
+  that waits for a result before `SyncEnded`, and application events stay buffered. libp2p-gossipsub
+  0.49.4 does not decrement its publish counter when it drops an expired queued publish. The DHT
+  replication factor stays at 20, so a refresh still sends a document to up to 20 peers. A put
+  returns after one peer stores the record. An aborted put ends its Kademlia query only in the
+  upload phase, and requests that the query already gave to the connection handlers, queued or in
+  progress, still go out. A put that still looks up its closest peers runs on and then uploads. So
+  uploads can overlap the next replication; a full cancel is follow-up work. —
+  `crates/net/src/events.rs`; `crates/net/src/document_publishing/`
 - Residual runtime risks: `e3-evm` serializes nonces in memory; only slash submissions have a
   durable intent record, and other transactions rely on preflight reads. Chain ingestion relies on
   confirmation depth, not reorg rollback. Accusation votes and timers lack durable reconstruction.
