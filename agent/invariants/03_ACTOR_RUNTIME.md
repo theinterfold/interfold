@@ -317,9 +317,11 @@ the code does not meet yet.
   document retains up to 128 announcers across queueing, active reads, and retries. At capacity, new
   announcers replace the oldest ones after the first. Any retained announcer can supply its next
   fair slot, charged only to that peer, with one fetch per document. Duplicate announcements do not
-  advance retry deadlines. Document IDs and serialized metadata do not include transport
-  attribution. — `crates/net/src/document_publishing/handlers.rs`;
-  `crates/net/src/document_publishing/workflow.rs`
+  advance retry deadlines. Queue ownership uses the retained announcer with the least queued work,
+  including on retry. Before eviction, shared work moves to a less loaded announcer. A busy peer
+  cannot evict a shared document while another retained announcer has no queued work. Document IDs
+  and serialized metadata do not include transport attribution. —
+  `crates/net/src/document_publishing/handlers.rs`; `crates/net/src/document_publishing/workflow.rs`
 - Log volume must not scale with payload size or redelivery count. Byte payloads format through
   `hexf` (length and edge digits), network commands log `NetCommand::summary`, and the default log
   filter drops libp2p gossipsub warnings. — INDEX concern #65; `crates/utils/src/formatters.rs`;

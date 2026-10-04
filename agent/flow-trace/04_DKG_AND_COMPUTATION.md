@@ -1744,28 +1744,31 @@ attempt, within 90 seconds. Failed fetches return to the fair queue with backoff
 arrives, its E3 closes, or its notifications expire. A document retains up to 128 announcers through
 queueing, active reads, and retries. At that limit, new announcers replace the oldest ones after the
 first. Any retained announcer can supply its next fair slot, charged to that peer, with only one
-fetch per document. Duplicate announcements preserve the retry deadline. Early and fetch queues have
-no hard per-peer cap. At global capacity, a peer below its fair share can reclaim space from the
-largest owner. Otherwise, the fetch queue can replace only that peer's work with more failures.
-Overflow waits for a later announcement. Document deduplication and the serialized notification stay
-unchanged. A fetch accepts only the record for the requested key, and the document is accepted under
-the first waiting notification whose metadata matches its payload, so a forged notification cannot
-displace a correct one. It suppresses duplicate documents. A canonical `KeyPublished` stage stops
-DKG-document announcements and uploads, with their scheduled retries, and prunes the DHT records
-that this node published. The Kademlia query of a put in its upload phase ends too. This is not a
-full cancel: requests that the query already gave to the libp2p connection handlers, queued or in
-progress, still go out, and a put that still looks up its closest peers runs on, because Kademlia
-uploads the record when that lookup ends. A full cancel needs Kademlia support and is follow-up
-work. The publisher sends these cleanup commands, put cancels and record removals, through one queue
-of at most 4,096 keys with one waiting send, so a busy network command queue delays them. A full
-cleanup queue drops its oldest entries with a warning; their records expire and their puts time out
-on their own. C4 `DecryptionKeyShared` is a DKG document; later `DecryptionshareCreated` events use
-event gossip, not the DHT document path. Recovery retains the DKG closure across restart. A local
-`E3RequestComplete` does not mean that the contract has reached a terminal stage. Each new
-publication request first removes the expired publications, so the expired documents that replay
-brings back cannot fill the outbox while publications wait for `SyncEnded`. Recovery reads only the
-receipts of the E3s in the committee snapshot, which can predate a selection in the log, so the
-receipts that replay delivers before `SyncEnded` join the restore queue too.
+fetch per document. Duplicate announcements preserve the retry deadline. Queue ownership uses the
+retained announcer with the least queued work, including on retry. Before eviction, shared work
+moves to a less loaded announcer. Each eviction search moves a document at most once and
+recalculates the donor after each move. Early and fetch queues have no hard per-peer cap. At global
+capacity, a peer below its fair share can reclaim space from the largest owner. Otherwise, the fetch
+queue can replace only that peer's work with more failures. Overflow waits for a later announcement.
+Document deduplication and the serialized notification stay unchanged. A fetch accepts only the
+record for the requested key, and the document is accepted under the first waiting notification
+whose metadata matches its payload, so a forged notification cannot displace a correct one. It
+suppresses duplicate documents. A canonical `KeyPublished` stage stops DKG-document announcements
+and uploads, with their scheduled retries, and prunes the DHT records that this node published. The
+Kademlia query of a put in its upload phase ends too. This is not a full cancel: requests that the
+query already gave to the libp2p connection handlers, queued or in progress, still go out, and a put
+that still looks up its closest peers runs on, because Kademlia uploads the record when that lookup
+ends. A full cancel needs Kademlia support and is follow-up work. The publisher sends these cleanup
+commands, put cancels and record removals, through one queue of at most 4,096 keys with one waiting
+send, so a busy network command queue delays them. A full cleanup queue drops its oldest entries
+with a warning; their records expire and their puts time out on their own. C4 `DecryptionKeyShared`
+is a DKG document; later `DecryptionshareCreated` events use event gossip, not the DHT document
+path. Recovery retains the DKG closure across restart. A local `E3RequestComplete` does not mean
+that the contract has reached a terminal stage. Each new publication request first removes the
+expired publications, so the expired documents that replay brings back cannot fill the outbox while
+publications wait for `SyncEnded`. Recovery reads only the receipts of the E3s in the committee
+snapshot, which can predate a selection in the log, so the receipts that replay delivers before
+`SyncEnded` join the restore queue too.
 
 The CRISP server writes its request record at `E3Requested` and writes the generic E3 record only
 after the indexer verifies the committee public key against the on-chain commitment. Current-round

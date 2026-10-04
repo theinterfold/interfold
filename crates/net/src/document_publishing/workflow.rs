@@ -229,6 +229,14 @@ impl FetchQueue {
     ) -> bool {
         if let Some(waiting) = self.waiting.get_mut(&id) {
             waiting.add(peer, notification);
+            let mut counts = self.peer_counts();
+            let waiting = self.waiting.get_mut(&id).unwrap();
+            *counts.get_mut(&waiting.peer).unwrap() -= 1;
+            waiting.peer = *waiting
+                .announcers
+                .iter()
+                .min_by_key(|peer| counts.get(peer).copied().unwrap_or(0))
+                .unwrap();
             self.add_peer(peer);
             self.prune_peers();
             return true;
@@ -242,8 +250,8 @@ impl FetchQueue {
         true
     }
 
-    /// Queue a failed fetch with all its announcers and candidates. A later announcement can
-    /// restore a document that cannot reclaim space in a full queue.
+    /// Queue a failed fetch under the announcer with the least queued work that can admit it.
+    /// A later announcement can restore a document that cannot reclaim space in a full queue.
     pub fn retry(
         &mut self,
         id: (E3id, ContentHash),
@@ -253,10 +261,11 @@ impl FetchQueue {
         if waiting.notifications.is_empty() {
             return false;
         }
-        let Some(peer) = waiting
-            .announcers
-            .iter()
-            .copied()
+        let counts = self.peer_counts();
+        let mut announcers = waiting.announcers.clone();
+        announcers.sort_by_key(|peer| counts.get(peer).copied().unwrap_or(0));
+        let Some(peer) = announcers
+            .into_iter()
             .find(|peer| self.make_room(*peer, waiting.failures))
         else {
             return false;
@@ -285,27 +294,63 @@ impl FetchQueue {
         self.peers.retain(|peer| peers.contains(peer));
     }
 
+    fn peer_counts(&self) -> HashMap<Option<PeerId>, usize> {
+        let mut counts = HashMap::new();
+        for item in self.waiting.values() {
+            *counts.entry(item.peer).or_insert(0) += 1;
+        }
+        counts
+    }
+
     /// Unused capacity belongs to any peer. At capacity, a new or smaller owner can reclaim
     /// space from the largest owner; otherwise only less promising work of its own makes room.
+    /// Shared work moves to a less loaded announcer before it can be dropped.
     fn make_room(&mut self, peer: Option<PeerId>, failures: u32) -> bool {
         if self.waiting.len() < self.capacity {
             return true;
         }
-        let mut counts = HashMap::new();
-        for item in self.waiting.values() {
-            *counts.entry(item.peer).or_insert(0usize) += 1;
+        let mut counts = self.peer_counts();
+        let mut reassigned = HashSet::new();
+        loop {
+            let owner = crate::ingress_limits::eviction_owner(
+                peer,
+                counts.iter().map(|(peer, count)| (*peer, *count)),
+                self.capacity,
+            );
+            let evicted = self
+                .waiting
+                .iter()
+                .filter(|(id, item)| {
+                    item.peer == owner
+                        && (owner != peer || item.failures > failures)
+                        && !reassigned.contains(*id)
+                })
+                .max_by_key(|(_, item)| (item.failures, std::cmp::Reverse(item.not_before)))
+                .map(|(id, _)| id.clone());
+            let Some(evicted) = evicted else { return false };
+            let item = self.waiting.get_mut(&evicted).unwrap();
+            let alternative = item
+                .announcers
+                .iter()
+                .copied()
+                .min_by_key(|peer| counts.get(peer).copied().unwrap_or(0));
+            if let Some(alternative) = alternative.filter(|alternative| {
+                counts.get(alternative).copied().unwrap_or(0) < counts[&owner]
+            }) {
+                item.peer = alternative;
+                *counts.get_mut(&owner).unwrap() -= 1;
+                if counts[&owner] == 0 {
+                    counts.remove(&owner);
+                }
+                *counts.entry(alternative).or_insert(0) += 1;
+                // Reconsider the donor after each move, without moving the same work back.
+                reassigned.insert(evicted);
+                continue;
+            }
+            self.waiting.remove(&evicted);
+            self.prune_peers();
+            return true;
         }
-        let owner = crate::ingress_limits::eviction_owner(peer, counts.into_iter(), self.capacity);
-        let evicted = self
-            .waiting
-            .iter()
-            .filter(|(_, item)| item.peer == owner && (owner != peer || item.failures > failures))
-            .max_by_key(|(_, item)| (item.failures, std::cmp::Reverse(item.not_before)))
-            .map(|(id, _)| id.clone());
-        let Some(evicted) = evicted else { return false };
-        self.waiting.remove(&evicted);
-        self.prune_peers();
-        true
     }
 
     /// Serve the peer with the fewest active reads, rotating ties. A lone peer can use all slots.

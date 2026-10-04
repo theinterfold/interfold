@@ -861,12 +861,24 @@ async fn duplicate_announcers_join_backoff_retries() -> Result<()> {
     duplicate_announcer_gets_next_slot(DuplicateStage::Backoff).await
 }
 
+#[actix::test]
+async fn duplicate_announcers_survive_queue_fill_after_retry() -> Result<()> {
+    duplicate_announcer_gets_next_slot(DuplicateStage::RetryThenFill).await
+}
+
+#[actix::test]
+async fn duplicate_announcers_survive_queue_growth_after_retry() -> Result<()> {
+    duplicate_announcer_gets_next_slot(DuplicateStage::RetryThenGrowth).await
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum DuplicateStage {
     Early,
     Queued,
     Fetching,
     Backoff,
+    RetryThenFill,
+    RetryThenGrowth,
 }
 
 async fn duplicate_announcer_gets_next_slot(stage: DuplicateStage) -> Result<()> {
@@ -909,7 +921,7 @@ async fn duplicate_announcer_gets_next_slot(stage: DuplicateStage) -> Result<()>
             ts: 100,
         },
     };
-    let retry = matches!(stage, DuplicateStage::Fetching | DuplicateStage::Backoff);
+    let retry = !matches!(stage, DuplicateStage::Early | DuplicateStage::Queued);
     if stage != DuplicateStage::Early {
         publisher.send(selection.clone()).await?;
     } else {
@@ -931,12 +943,12 @@ async fn duplicate_announcer_gets_next_slot(stage: DuplicateStage) -> Result<()>
     if retry {
         publisher.send(ingress(peers[0], key.clone())).await?;
     }
-    let unavailable = MAX_INFLIGHT_TRANSFERS + MAX_WAITING_FETCHES
-        - if stage == DuplicateStage::Backoff {
-            2
-        } else {
-            1
-        };
+    let unavailable = match stage {
+        DuplicateStage::Backoff => MAX_INFLIGHT_TRANSFERS + MAX_WAITING_FETCHES - 2,
+        DuplicateStage::RetryThenFill => MAX_INFLIGHT_TRANSFERS + MAX_WAITING_FETCHES - 3,
+        DuplicateStage::RetryThenGrowth => MAX_INFLIGHT_TRANSFERS - 1,
+        _ => MAX_INFLIGHT_TRANSFERS + MAX_WAITING_FETCHES - 1,
+    };
     for index in 0..unavailable {
         let mut slow = ingress(peers[0], ContentHash::from_content(&index.to_le_bytes()));
         if stage == DuplicateStage::Early {
@@ -966,10 +978,7 @@ async fn duplicate_announcer_gets_next_slot(stage: DuplicateStage) -> Result<()>
     }
     assert_eq!(
         publisher.send(FetchBacklog).await?,
-        (
-            8,
-            MAX_WAITING_FETCHES - usize::from(stage == DuplicateStage::Backoff)
-        )
+        (8, unavailable + 1 - MAX_INFLIGHT_TRANSFERS)
     );
     let fail = |(key, correlation_id): (ContentHash, CorrelationId)| {
         events.send(NetEvent::DhtGetRecordError {
@@ -985,6 +994,23 @@ async fn duplicate_announcer_gets_next_slot(stage: DuplicateStage) -> Result<()>
             .position(|(requested, _)| *requested == key)
             .expect("the shared document starts its first fetch");
         fail(pending.remove(index).unwrap())?;
+        if stage == DuplicateStage::RetryThenGrowth {
+            timeout(Duration::from_secs(2), async {
+                loop {
+                    if publisher.send(FetchBacklog).await? == (7, 1) {
+                        return anyhow::Ok(());
+                    }
+                    sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await??;
+            publisher
+                .send(ingress(
+                    peers[0],
+                    ContentHash::from_content(&unavailable.to_le_bytes()),
+                ))
+                .await?;
+        }
         let Some(NetCommand::DhtGetRecord {
             key: replacement,
             correlation_id,
@@ -994,6 +1020,27 @@ async fn duplicate_announcer_gets_next_slot(stage: DuplicateStage) -> Result<()>
         };
         assert_ne!(replacement, key, "a retry must respect its backoff");
         pending.push_back((replacement, correlation_id));
+        if matches!(
+            stage,
+            DuplicateStage::RetryThenFill | DuplicateStage::RetryThenGrowth
+        ) {
+            let next = unavailable + usize::from(stage == DuplicateStage::RetryThenGrowth);
+            for index in next..MAX_INFLIGHT_TRANSFERS + MAX_WAITING_FETCHES {
+                publisher
+                    .send(ingress(
+                        peers[0],
+                        ContentHash::from_content(&index.to_le_bytes()),
+                    ))
+                    .await?;
+                let (active, queued) = publisher.send(FetchBacklog).await?;
+                assert_eq!(active, MAX_INFLIGHT_TRANSFERS);
+                assert!(queued <= MAX_WAITING_FETCHES);
+            }
+            assert_eq!(
+                publisher.send(FetchBacklog).await?,
+                (MAX_INFLIGHT_TRANSFERS, MAX_WAITING_FETCHES)
+            );
+        }
         if stage == DuplicateStage::Backoff {
             publisher.send(ingress(peers[1], key.clone())).await?;
             fail(pending.pop_front().unwrap())?;

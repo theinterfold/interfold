@@ -739,7 +739,10 @@ largest owner. Notifications repeat to recover queue overflow.
 Each document retains up to 128 announcing peers through queueing and retries, including
 announcements that arrive during a read. A new announcer replaces the oldest one after the first
 when this limit is reached. Any retained announcer can supply its next fair slot. The node still
-fetches each document once at a time, and duplicates do not advance retry deadlines.
+fetches each document once at a time, and duplicates do not advance retry deadlines. The retained
+announcer with the least queued work supplies queue capacity, including for retries. Before
+eviction, shared work moves to a less loaded announcer. Queue growth from one peer cannot discard
+another announcer's only pending document.
 
 Capacity planning uses four concurrent N=19, H=14 E3s and a 2x margin. Each E3 can emit 380 document
 notifications and 173 ordinary publications, including six Ready updates per party. This gives 4,424
