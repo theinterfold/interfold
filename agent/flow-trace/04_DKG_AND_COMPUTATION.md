@@ -120,6 +120,9 @@ ProofRequestActor receives EncryptionKeyPending
      │
      ├─ Resolves canonical party ownership plus BFV preset/committee artifact scope
      │   from startup-recovered verifier context; live lifecycle events refresh both caches
+     ├─ Hydration scans durable events, including the snapshot prefix, for unresolved C0 inputs
+     │   and applies the live signature and commitment checks. Local results and completed E3s
+     │   clear pending inputs. Dispatch waits until EffectsEnabled, also during replay
      ├─ Recovers ECDSA signer address from signed proof
      ├─ Dispatches ZK verification to ZkActor:
      │   ZkActor runs: bb verify -k vk -p proof.data
@@ -134,7 +137,8 @@ ProofRequestActor receives EncryptionKeyPending
      │
      └─ On InfrastructureError (local verifier, verification key, or I/O unavailable):
          ├─ Keeps the authenticated input and event context in the pending map
-         ├─ Retries the same request after 5 seconds, with one timer per pending input
+         ├─ Retries after 5 seconds, doubling the delay to a 60-second cap, with one timer per input
+         ├─ Logs each failed attempt at WARN with its attempt count and next delay
          └─ Publishes no peer-failure evidence; E3RequestComplete cancels pending retries
 ```
 

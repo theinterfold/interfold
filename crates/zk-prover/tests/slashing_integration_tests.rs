@@ -405,6 +405,7 @@ fn compute_vote_domain_separator(chain_id: u64, verifying_contract: Address) -> 
 
 /// Compute the canonical EIP-712 typed-data hash for a vote, matching
 /// `AccusationManager::vote_digest()` and `SlashingManager._verifyVotes`.
+#[allow(clippy::too_many_arguments)]
 fn compute_vote_digest(
     chain_id: u64,
     verifying_contract: Address,
@@ -438,6 +439,7 @@ fn compute_vote_digest(
 }
 
 /// Sign a vote and return `(voter_address, signature_bytes)`. EIP-712 typed-data signature.
+#[allow(clippy::too_many_arguments)]
 fn sign_vote(
     signer: &PrivateKeySigner,
     chain_id: u64,
@@ -664,12 +666,12 @@ async fn test_onchain_valid_attestation_executes_slash() {
         .unwrap();
 
     // Deploy mock registry
-    let mock_registry_addr = deploy_contract(&provider, &mr_bytecode, &[]).await;
+    let mock_registry_addr = deploy_contract(&provider, mr_bytecode, &[]).await;
     let mock_registry = MockCiphernodeRegistry::new(mock_registry_addr, &provider);
 
     // Deploy and configure SlashingManager
     let (sm_addr, _bonding) =
-        deploy_and_configure(&provider, &sm_bytecode, mock_registry_addr).await;
+        deploy_and_configure(&provider, sm_bytecode, mock_registry_addr).await;
     let slashing_mgr = SlashingManager::new(sm_addr, &provider);
 
     let e3_id: u64 = 42;
@@ -888,10 +890,10 @@ async fn test_onchain_insufficient_attestations_reverts() {
         .parse()
         .unwrap();
 
-    let mock_registry_addr = deploy_contract(&provider, &mr_bytecode, &[]).await;
+    let mock_registry_addr = deploy_contract(&provider, mr_bytecode, &[]).await;
     let mock_registry = MockCiphernodeRegistry::new(mock_registry_addr, &provider);
 
-    let (sm_addr, _admin) = deploy_and_configure(&provider, &sm_bytecode, mock_registry_addr).await;
+    let (sm_addr, _admin) = deploy_and_configure(&provider, sm_bytecode, mock_registry_addr).await;
     let slashing_mgr = SlashingManager::new(sm_addr, &provider);
 
     let e3_id: u64 = 42;
@@ -1011,10 +1013,10 @@ async fn test_onchain_voter_not_in_committee_reverts() {
         .parse()
         .unwrap();
 
-    let mock_registry_addr = deploy_contract(&provider, &mr_bytecode, &[]).await;
+    let mock_registry_addr = deploy_contract(&provider, mr_bytecode, &[]).await;
     let mock_registry = MockCiphernodeRegistry::new(mock_registry_addr, &provider);
 
-    let (sm_addr, _admin) = deploy_and_configure(&provider, &sm_bytecode, mock_registry_addr).await;
+    let (sm_addr, _admin) = deploy_and_configure(&provider, sm_bytecode, mock_registry_addr).await;
     let slashing_mgr = SlashingManager::new(sm_addr, &provider);
 
     let e3_id: u64 = 42;
@@ -1129,10 +1131,10 @@ async fn test_onchain_invalid_vote_signature_reverts() {
         .parse()
         .unwrap();
 
-    let mock_registry_addr = deploy_contract(&provider, &mr_bytecode, &[]).await;
+    let mock_registry_addr = deploy_contract(&provider, mr_bytecode, &[]).await;
     let mock_registry = MockCiphernodeRegistry::new(mock_registry_addr, &provider);
 
-    let (sm_addr, _admin) = deploy_and_configure(&provider, &sm_bytecode, mock_registry_addr).await;
+    let (sm_addr, _admin) = deploy_and_configure(&provider, sm_bytecode, mock_registry_addr).await;
     let slashing_mgr = SlashingManager::new(sm_addr, &provider);
 
     let e3_id: u64 = 42;
@@ -1258,10 +1260,10 @@ async fn test_onchain_duplicate_voter_reverts() {
         .parse()
         .unwrap();
 
-    let mock_registry_addr = deploy_contract(&provider, &mr_bytecode, &[]).await;
+    let mock_registry_addr = deploy_contract(&provider, mr_bytecode, &[]).await;
     let mock_registry = MockCiphernodeRegistry::new(mock_registry_addr, &provider);
 
-    let (sm_addr, _admin) = deploy_and_configure(&provider, &sm_bytecode, mock_registry_addr).await;
+    let (sm_addr, _admin) = deploy_and_configure(&provider, sm_bytecode, mock_registry_addr).await;
     let slashing_mgr = SlashingManager::new(sm_addr, &provider);
 
     let e3_id: u64 = 42;
@@ -1381,10 +1383,10 @@ async fn test_onchain_duplicate_evidence_reverts() {
         .parse()
         .unwrap();
 
-    let mock_registry_addr = deploy_contract(&provider, &mr_bytecode, &[]).await;
+    let mock_registry_addr = deploy_contract(&provider, mr_bytecode, &[]).await;
     let mock_registry = MockCiphernodeRegistry::new(mock_registry_addr, &provider);
 
-    let (sm_addr, _admin) = deploy_and_configure(&provider, &sm_bytecode, mock_registry_addr).await;
+    let (sm_addr, _admin) = deploy_and_configure(&provider, sm_bytecode, mock_registry_addr).await;
     let slashing_mgr = SlashingManager::new(sm_addr, &provider);
 
     let e3_id: u64 = 42;
@@ -1539,9 +1541,9 @@ async fn test_onchain_actor_signed_vote_accepted() {
         .parse()
         .unwrap();
 
-    let mock_registry_addr = deploy_contract(&provider, &mr_bytecode, &[]).await;
+    let mock_registry_addr = deploy_contract(&provider, mr_bytecode, &[]).await;
     let mock_registry = MockCiphernodeRegistry::new(mock_registry_addr, &provider);
-    let (sm_addr, _admin) = deploy_and_configure(&provider, &sm_bytecode, mock_registry_addr).await;
+    let (sm_addr, _admin) = deploy_and_configure(&provider, sm_bytecode, mock_registry_addr).await;
     let slashing_mgr = SlashingManager::new(sm_addr, &provider);
 
     let e3_id: u64 = 7;

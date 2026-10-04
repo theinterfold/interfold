@@ -74,7 +74,7 @@ impl Handler<TypedEvent<ZkVerificationRequest>> for ZkActor {
                     }
                 }
                 Err(e) => {
-                    error!("Proof verification error: {}", e);
+                    debug!("Proof verification error: {}", e);
                     ZkVerificationResponse {
                         outcome: ZkVerificationOutcome::InfrastructureError(e.to_string()),
                         e3_id: msg.e3_id,

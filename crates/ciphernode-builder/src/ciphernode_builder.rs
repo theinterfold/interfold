@@ -832,6 +832,7 @@ impl CiphernodeBuilder {
                 &slashing_managers,
                 &selector_state,
                 &lifecycle_stages,
+                &event_system,
             )
             .await?;
 
@@ -1136,6 +1137,7 @@ impl CiphernodeBuilder {
         slashing_managers: &[Option<Address>],
         selector_state: &CiphernodeSelectorState,
         lifecycle_stages: &HashMap<E3id, E3Stage>,
+        event_system: &EventSystem,
     ) -> Result<e3_request::E3RouterBuilder> {
         let recovered_selections = recovered_ciphernode_selections(selector_state, addr)?;
         // A slashably-failed context also outlives the longest accusation vote.
@@ -1167,7 +1169,17 @@ impl CiphernodeBuilder {
             dkg_fold_contexts_by_e3.clone(),
         );
         zk_recovery
-            .hydrate_node_proofs(&repositories, lifecycle_stages)
+            .hydrate(
+                &repositories,
+                lifecycle_stages,
+                &event_system.eventstore_reader()?.seq(),
+                &event_system
+                    .aggregate_config()
+                    .indexed_ids()
+                    .into_iter()
+                    .map(AggregateId::new)
+                    .collect::<Vec<_>>(),
+            )
             .await?;
 
         // ── Threshold keyshare + ZK actors ──
@@ -2186,8 +2198,10 @@ mod tests {
             // The old decoder could persist an empty chain projection. Keep its bytes intact.
             let legacy_store =
                 e3_data::Repository::new(repos.store.scope("//sortition/admission/v1"));
-            let mut legacy = AdmissionState::default();
-            legacy.schema_version = 1;
+            let mut legacy = AdmissionState {
+                schema_version: 1,
+                ..Default::default()
+            };
             legacy.chains.entry(1).or_default();
             legacy_store.write_sync(&legacy).await?;
             let legacy_bytes = bincode::serialize(&legacy)?;

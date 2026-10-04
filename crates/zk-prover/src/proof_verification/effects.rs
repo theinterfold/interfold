@@ -5,6 +5,20 @@
 use super::*;
 
 impl ProofVerificationActor {
+    pub(super) fn clear_e3(&mut self, e3_id: &E3id, ctx: &mut Context<Self>) {
+        self.presets.remove(e3_id);
+        self.committees.remove(e3_id);
+        self.pending.retain(|(pending_e3, _), pending| {
+            if pending_e3 != e3_id {
+                return true;
+            }
+            if let Some(retry) = pending.retry {
+                ctx.cancel_future(retry);
+            }
+            false
+        });
+    }
+
     pub(in crate::actors::proof_verification) fn handle_encryption_key_received(
         &mut self,
         msg: TypedEvent<EncryptionKeyReceived>,
@@ -46,13 +60,7 @@ impl ProofVerificationActor {
             );
             return;
         };
-        let validated = match validate_external_key(
-            &msg.e3_id,
-            &expected_signer,
-            msg.key.party_id,
-            msg.key.proof.as_ref(),
-            msg.key.signed_payload.as_ref(),
-        ) {
+        let validated = match validate_received_key(&msg, &expected_signer, preset) {
             Ok(validated) => validated,
             Err(reason) => {
                 error!("{reason}");
@@ -64,25 +72,6 @@ impl ProofVerificationActor {
             .proof
             .clone()
             .expect("proof present after validation");
-        let key_commitment =
-            match compute_dkg_pk_commitment_from_public_key_bytes(&msg.key.pk_bfv, preset) {
-                Ok(commitment) => commitment,
-                Err(err) => {
-                    error!(
-                        e3_id = %msg.e3_id,
-                        party_id = msg.key.party_id,
-                        "Could not bind C0 proof to advertised BFV key: {err} — rejecting key"
-                    );
-                    return;
-                }
-            };
-        if let Err(reason) =
-            validate_external_key_commitment(msg.key.party_id, &proof, &key_commitment)
-        {
-            error!("{reason}");
-            return;
-        }
-
         let artifacts_dir = preset.artifacts_dir_for_committee(committee_size.as_str());
 
         let request = TypedEvent::new(
@@ -103,29 +92,48 @@ impl ProofVerificationActor {
                 recovered_signer: validated.recovered_signer,
                 request,
                 retry: None,
+                attempts: 0,
+                retry_delay: VERIFICATION_RETRY_DELAY,
             },
         );
         self.dispatch_verification(pending_key, ctx);
     }
 
-    fn dispatch_verification(&mut self, pending_key: (E3id, u64), ctx: &mut Context<Self>) {
-        let Some(pending) = self.pending.get(&pending_key) else {
+    pub(super) fn dispatch_verification(
+        &mut self,
+        pending_key: (E3id, u64),
+        ctx: &mut Context<Self>,
+    ) {
+        if !self.effects_enabled {
+            return;
+        }
+        let Some(pending) = self.pending.get_mut(&pending_key) else {
             return;
         };
+        pending.attempts = pending.attempts.saturating_add(1);
         if let Err(err) = self.verifier.try_send(pending.request.clone()) {
-            error!("Could not dispatch C0 verification: {err}");
-            self.retry_verification(pending_key, ctx);
+            self.retry_verification(pending_key, err.to_string(), ctx);
         }
     }
 
-    pub(super) fn retry_verification(&mut self, pending_key: (E3id, u64), ctx: &mut Context<Self>) {
+    pub(super) fn retry_verification(
+        &mut self,
+        pending_key: (E3id, u64),
+        error: String,
+        ctx: &mut Context<Self>,
+    ) {
         let Some(pending) = self.pending.get_mut(&pending_key) else {
             return;
         };
         if pending.retry.is_some() {
             return;
         }
-        pending.retry = Some(ctx.run_later(VERIFICATION_RETRY_DELAY, move |actor, ctx| {
+        let delay = pending.retry_delay;
+        pending.retry_delay = delay.saturating_mul(2).min(MAX_VERIFICATION_RETRY_DELAY);
+        warn!(e3_id = %pending_key.0, party_id = pending_key.1, attempt = pending.attempts,
+            retry_after_secs = delay.as_secs(), %error,
+            "C0 verification could not complete; retaining the input for retry");
+        pending.retry = Some(ctx.run_later(delay, move |actor, ctx| {
             let Some(pending) = actor.pending.get_mut(&pending_key) else {
                 return;
             };

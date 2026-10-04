@@ -225,9 +225,13 @@ keys arrive. At the C0 cutoff, it continues if it has at least H keys that inclu
 key. With fewer keys, the node records `DKGTimeout` and stops.
 
 A local verifier error leaves C0 verification pending. The receiver retains the authenticated input
-and retries it every five seconds until verification completes or `E3RequestComplete` clears the
-request. A missing verifier binary, missing verification key, or local I/O error produces no
-peer-failure evidence. Only a completed invalid check starts the accusation path.
+and retries after five seconds. Each failed attempt doubles the delay, up to 60 seconds, and logs a
+warning with the attempt count. Verification completion, a canonical stage past DKG, or
+`E3RequestComplete` clears the request. Startup restores unresolved inputs from durable events,
+including inputs before the snapshot cursor, and resumes verification after `EffectsEnabled`. The
+retry delay and attempt count reset on restart. A missing verifier binary, missing verification key,
+or local I/O error produces no peer-failure evidence. Only a completed invalid check starts the
+accusation path.
 
 ### C1: threshold share generation
 

@@ -6,11 +6,14 @@
 
 //! Startup composition for the global ZK actor system.
 
-use actix::{Actor, Addr};
+use actix::{Actor, Addr, Recipient};
 use alloy::signers::local::PrivateKeySigner;
 use anyhow::Result;
 use e3_data::Repositories;
-use e3_events::{BusHandle, Committee, DkgFoldAttestationContext, E3Stage, E3id};
+use e3_events::{
+    AggregateId, BusHandle, Committee, DkgFoldAttestationContext, E3Stage, E3id,
+    EncryptionKeyReceived, EventStoreQueryBy, SeqAgg, TypedEvent,
+};
 use e3_request::E3Meta;
 use std::collections::{HashMap, HashSet};
 
@@ -30,6 +33,7 @@ pub struct ZkActorRecovery {
     e3_metadata: HashMap<E3id, E3Meta>,
     dkg_fold_attestation_contexts: HashMap<E3id, DkgFoldAttestationContext>,
     node_proofs: NodeProofRecovery,
+    pending_c0: Vec<TypedEvent<EncryptionKeyReceived>>,
 }
 
 impl ZkActorRecovery {
@@ -43,31 +47,37 @@ impl ZkActorRecovery {
             e3_metadata,
             dkg_fold_attestation_contexts,
             node_proofs: NodeProofRecovery::default(),
+            pending_c0: Vec::new(),
         }
     }
 
-    pub async fn hydrate_node_proofs(
+    pub async fn hydrate(
         &mut self,
         repositories: &Repositories,
         lifecycle_stages: &HashMap<E3id, E3Stage>,
+        eventstore: &Recipient<EventStoreQueryBy<SeqAgg>>,
+        aggregates: &[AggregateId],
     ) -> Result<()> {
         let active_e3_ids: HashSet<E3id> = self
             .finalized_committees
             .keys()
             .filter(|e3_id| {
-                !matches!(
-                    lifecycle_stages.get(*e3_id),
-                    Some(
-                        E3Stage::KeyPublished
-                            | E3Stage::CiphertextReady
-                            | E3Stage::Complete
-                            | E3Stage::Failed
-                    )
-                )
+                !lifecycle_stages
+                    .get(*e3_id)
+                    .is_some_and(crate::domain::proof_verification::dkg_has_ended)
             })
             .cloned()
             .collect();
         self.node_proofs = NodeProofRecovery::load(repositories, &active_e3_ids).await?;
+        self.pending_c0 =
+            crate::actors::proof_verification::recovery::recover_pending_verifications(
+                eventstore,
+                aggregates,
+                &active_e3_ids,
+                &self.finalized_committees,
+                &self.e3_metadata,
+            )
+            .await?;
         Ok(())
     }
 }
@@ -91,6 +101,7 @@ pub fn setup_zk_actors(
         e3_metadata,
         dkg_fold_attestation_contexts,
         node_proofs,
+        pending_c0,
     } = recovery;
     let zk_actor = ZkActor::new(backend).start();
     let verifier = zk_actor.clone().recipient();
@@ -101,8 +112,13 @@ pub fn setup_zk_actors(
         proof_aggregation_enabled,
         node_proofs.proofs.clone(),
     );
-    let proof_verification =
-        ProofVerificationActor::setup(bus, verifier, finalized_committees.clone(), e3_metadata);
+    let proof_verification = ProofVerificationActor::setup_with_recovery(
+        bus,
+        verifier,
+        finalized_committees.clone(),
+        e3_metadata,
+        pending_c0,
+    );
     let share_verification = ShareVerificationActor::setup(bus, finalized_committees);
     let node_proof_aggregator = NodeProofAggregator::setup(
         bus,

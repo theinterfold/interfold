@@ -496,8 +496,10 @@ mod tests {
 
     fn test_backend(temp: &TempDir) -> ZkBackend {
         let base_dir = temp.path().join("noir");
-        let mut config = ZkConfig::default();
-        config.required_circuits_version = "candidate".into();
+        let config = ZkConfig {
+            required_circuits_version: "candidate".into(),
+            ..Default::default()
+        };
         ZkBackend::with_config(
             BBPath::Default(base_dir.join("bin/bb")),
             base_dir.join("circuits"),

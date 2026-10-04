@@ -10,9 +10,12 @@ use e3_zk_helpers::circuits::dkg::pk::circuit::PkCircuitData;
 use std::fs;
 use std::path::PathBuf;
 
+#[path = "restart_tests.rs"]
+mod restart;
+
 #[derive(Message)]
 #[rtype(result = "()")]
-struct VerificationBarrier;
+pub(super) struct VerificationBarrier;
 
 macro_rules! verification_barrier {
     ($actor:ty) => {
@@ -84,6 +87,9 @@ impl VerificationHarness {
             BfvPreset::InsecureThreshold512,
         );
         bus.event_bus().send(EventBusBarrier).await.unwrap();
+        bus.publish_without_context(EffectsEnabled::new()).unwrap();
+        bus.flush_event_pipeline().await.unwrap();
+        history.send(e3_events::ResetHistory).await.unwrap();
         Self {
             bus,
             verifier,
@@ -201,6 +207,8 @@ async fn c0_local_verifier_failures_retry_without_peer_blame() {
         .prove(&prover, &preset, &sample, "c0-recovery", &artifacts_dir)
         .unwrap();
     let signer = PrivateKeySigner::random();
+
+    restart::check_c0_restart(&backend, &vk, &signer, &pk, &proof).await;
 
     for (index, unavailable) in [&backend.bb_binary, &vk, &backend.work_dir]
         .into_iter()
