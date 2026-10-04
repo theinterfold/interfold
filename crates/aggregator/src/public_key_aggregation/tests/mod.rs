@@ -7,6 +7,7 @@
 use super::*;
 use alloy::primitives::Address;
 use e3_data::{AutoPersist, DataStore, InMemStore, PersistableData, Repository};
+use e3_events::EventConstructorWithTimestamp;
 use e3_events::{
     CircuitName, ComputeRequestErrorKind, EffectsEnabled, GetEvents, HistoryCollector,
     ProofPayload, ProofType, Seed, TakeEvents, Unsequenced, ZkError,
@@ -302,6 +303,110 @@ async fn demoted_aggregator_finishes_the_c1_verification_it_dispatched() -> Resu
         Some(PublicKeyAggregatorState::GeneratingC5Proof { .. })
     ));
     assert!(c5_proof_requested(&history, &e3_id).await?);
+    Ok(())
+}
+
+#[actix::test]
+async fn a_late_c1_failure_after_key_publication_does_not_fail_the_e3() -> Result<()> {
+    let (bus, rng, _seed, params, crp, _errors, history) =
+        get_common_setup(Some(BfvPreset::InsecureThreshold512.into()))?;
+    let e3_id = E3id::new("42", 1);
+    let fhe = Arc::new(Fhe::new(params, crp, rng));
+    let (state, threshold_n, _, _) = verifying_c1_non_square_state(&fhe, &e3_id)?;
+    let (mut aggregator, repository) = micro_aggregator(bus, fhe, &e3_id, true, state);
+    aggregator.continue_c1_verification(test_ctx(EffectsEnabled::new()))?;
+    let aggregator = aggregator.start();
+
+    // A failover demotes this node, and its successor publishes the key.
+    let demotion = AggregatorChanged {
+        e3_id: e3_id.clone(),
+        active_party_id: Some(1),
+        is_aggregator: false,
+    };
+    aggregator
+        .send(TypedEvent::new(demotion.clone(), test_ctx(demotion)))
+        .await?;
+    let published = e3_events::E3StageChanged {
+        e3_id: e3_id.clone(),
+        previous_stage: E3Stage::CommitteeFinalized,
+        new_stage: E3Stage::KeyPublished,
+    };
+    aggregator
+        .send(
+            InterfoldEvent::<Unsequenced>::new_with_timestamp(
+                published.into(),
+                None,
+                1,
+                None,
+                e3_events::EventSource::Evm,
+            )
+            .into_sequenced(1),
+        )
+        .await?;
+    // Its own C1 check then fails every dealer.
+    aggregator
+        .send(c1_verified(&e3_id, (0..threshold_n as u64).collect()))
+        .await?;
+
+    actix::clock::sleep(std::time::Duration::from_millis(50)).await;
+    let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+    assert!(!events
+        .iter()
+        .any(|event| matches!(event.get_data(), InterfoldEventData::E3Failed(_))));
+    assert!(matches!(
+        repository.read().await?,
+        Some(PublicKeyAggregatorState::VerifyingC1 { .. })
+    ));
+    Ok(())
+}
+
+#[actix::test]
+async fn a_c1_failure_after_another_node_published_the_key_does_not_fail_the_e3() -> Result<()> {
+    let (bus, rng, _seed, params, crp, _errors, history) =
+        get_common_setup(Some(BfvPreset::InsecureThreshold512.into()))?;
+    let e3_id = E3id::new("42", 1);
+    let fhe = Arc::new(Fhe::new(params, crp, rng));
+    let (state, threshold_n, _, _) = verifying_c1_non_square_state(&fhe, &e3_id)?;
+    let (mut aggregator, _repository) = micro_aggregator(bus, fhe, &e3_id, true, state);
+    aggregator.continue_c1_verification(test_ctx(EffectsEnabled::new()))?;
+    // A demoted predecessor finished first and published the key.
+    aggregator.observe_stage(&E3Stage::KeyPublished);
+
+    aggregator
+        .handle_c1_verification_complete(c1_verified(&e3_id, (0..threshold_n as u64).collect()))?;
+
+    actix::clock::sleep(std::time::Duration::from_millis(50)).await;
+    let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+    assert!(!events
+        .iter()
+        .any(|event| matches!(event.get_data(), InterfoldEventData::E3Failed(_))));
+    Ok(())
+}
+
+#[actix::test]
+async fn a_demoted_aggregator_stops_its_work_once_a_key_is_published() -> Result<()> {
+    let (bus, rng, _seed, params, crp, _errors, history) =
+        get_common_setup(Some(BfvPreset::InsecureThreshold512.into()))?;
+    let e3_id = E3id::new("42", 1);
+    let fhe = Arc::new(Fhe::new(params, crp, rng));
+    let mut state = generating_c5_state(CorrelationId::new());
+    if let PublicKeyAggregatorState::GeneratingC5Proof {
+        c5_proof_pending, ..
+    } = &mut state
+    {
+        *c5_proof_pending = None;
+    }
+    let (mut aggregator, _repository) = micro_aggregator(bus, fhe, &e3_id, false, state);
+    aggregator.observe_stage(&E3Stage::KeyPublished);
+
+    aggregator.resume_in_flight_work(test_ctx(EffectsEnabled::new()))?;
+
+    actix::clock::sleep(std::time::Duration::from_millis(50)).await;
+    let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+    assert!(!events.iter().any(|event| matches!(
+        event.get_data(),
+        InterfoldEventData::PkAggregationProofPending(_)
+    )));
     Ok(())
 }
 

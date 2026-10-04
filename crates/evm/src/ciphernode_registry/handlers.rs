@@ -202,6 +202,7 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<E3RequestComplete>
             &msg.e3_id,
             publication_pending,
         );
+        self.completed_e3s.insert(msg.e3_id);
     }
 }
 
@@ -477,6 +478,73 @@ mod tests {
         .into_sequenced(seq)
     }
 
+    /// Number of key results that the writer keeps for publication.
+    #[derive(actix::Message)]
+    #[rtype(result = "usize")]
+    struct RetainedPublications;
+
+    impl<P: alloy::providers::Provider + alloy::providers::WalletProvider + Clone + 'static>
+        actix::Handler<RetainedPublications> for CiphernodeRegistrySolWriter<P>
+    {
+        type Result = usize;
+
+        fn handle(&mut self, _: RetainedPublications, _: &mut Self::Context) -> usize {
+            self.publication.pending_keys().len()
+        }
+    }
+
+    async fn mocked_writer(
+        bus: &e3_events::BusHandle,
+        e3_id: &E3id,
+    ) -> anyhow::Result<
+        actix::Addr<
+            CiphernodeRegistrySolWriter<
+                impl alloy::providers::Provider + alloy::providers::WalletProvider + Clone + 'static,
+            >,
+        >,
+    > {
+        let asserter = Asserter::new();
+        asserter.push_success(&"0x1");
+        let provider = EthProvider::new(
+            ProviderBuilder::new()
+                .wallet(EthereumWallet::from(PrivateKeySigner::random()))
+                .connect_mocked_client(asserter),
+        )
+        .await?;
+        Ok(CiphernodeRegistrySolWriter::new_with_recovery(
+            bus,
+            provider,
+            Address::repeat_byte(0x44),
+            HashMap::from([(e3_id.clone(), Address::repeat_byte(0x33))]),
+            HashMap::new(),
+        )?
+        .start())
+    }
+
+    #[actix::test]
+    async fn a_key_result_after_its_request_completed_is_not_kept() -> anyhow::Result<()> {
+        let (bus, _rng, _seed, _params, _crp, _errors, _history) = get_common_setup(None)?;
+        let e3_id = E3id::new("13", 1);
+        let writer = mocked_writer(&bus, &e3_id).await?;
+        writer.send(local_event(EffectsEnabled::new(), 1)).await?;
+
+        // The request completes; a demoted aggregator finishes its key afterwards.
+        writer
+            .send(local_event(
+                e3_events::E3RequestComplete {
+                    e3_id: e3_id.clone(),
+                },
+                2,
+            ))
+            .await?;
+        writer
+            .send(local_event(publication_intent(&e3_id), 3))
+            .await?;
+
+        assert_eq!(writer.send(RetainedPublications).await?, 0);
+        Ok(())
+    }
+
     #[actix::test]
     async fn submits_its_own_key_without_being_the_active_aggregator() -> anyhow::Result<()> {
         let (bus, _rng, _seed, _params, _crp, errors, _history) = get_common_setup(None)?;
@@ -521,6 +589,10 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<PublicKeyAggregated
 
     fn handle(&mut self, msg: PublicKeyAggregated, ctx: &mut Self::Context) -> Self::Result {
         let e3_id = msg.e3_id.clone();
+        if self.completed_e3s.contains(&e3_id) {
+            info!(e3_id = %e3_id, "Ignoring a public-key result for a completed request");
+            return;
+        }
         self.publication.record(e3_id.clone(), msg);
         self.try_start_public_key(&e3_id, ctx);
     }

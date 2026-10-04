@@ -139,9 +139,11 @@ impl PublicKeyAggregator {
     }
 
     /// Whether this node may continue aggregation work that is already in flight. A node that
-    /// started the work as the active aggregator continues it after a failover demotes it.
+    /// started the work as the active aggregator continues it after a failover demotes it, until a
+    /// key is published on chain.
     fn can_continue_aggregation_effects(&self) -> bool {
-        self.effects_enabled && (self.is_aggregator || self.started_as_aggregator)
+        self.effects_enabled
+            && (self.is_aggregator || (self.started_as_aggregator && !self.key_published))
     }
 
     /// Record that this node, as the active aggregator, starts aggregation work.

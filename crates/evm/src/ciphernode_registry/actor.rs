@@ -324,12 +324,43 @@ impl<P: Provider + Clone + 'static> Handler<InterfoldEvmEvent> for CiphernodeReg
     }
 }
 
+/// Bound on remembered completed requests. A late key result follows its completion closely.
+const MAX_COMPLETED_E3S: usize = 1_024;
+
+/// Completed requests, oldest first, at most [`MAX_COMPLETED_E3S`].
+#[derive(Default)]
+pub(crate) struct CompletedE3s {
+    order: std::collections::VecDeque<E3id>,
+    set: HashSet<E3id>,
+}
+
+impl CompletedE3s {
+    pub(crate) fn insert(&mut self, e3_id: E3id) {
+        if !self.set.insert(e3_id.clone()) {
+            return;
+        }
+        self.order.push_back(e3_id);
+        if self.order.len() > MAX_COMPLETED_E3S {
+            if let Some(oldest) = self.order.pop_front() {
+                self.set.remove(&oldest);
+            }
+        }
+    }
+
+    pub(crate) fn contains(&self, e3_id: &E3id) -> bool {
+        self.set.contains(e3_id)
+    }
+}
+
 /// Writer for publishing committees to CiphernodeRegistry.
 pub struct CiphernodeRegistrySolWriter<P> {
     provider: EthProvider<P>,
     contract_address: Address,
     bus: BusHandle,
     effects_enabled: bool,
+    /// Recently completed requests. A key result that arrives after its request completed, such as
+    /// one that a demoted aggregator finishes late, is ignored instead of being kept forever.
+    completed_e3s: CompletedE3s,
     request_registries: HashMap<E3id, Address>,
     publication: ReplaySubmissionGate<E3id, PublicKeyAggregated>,
     ticket_submissions: ReplaySubmissionGate<E3id, TicketGenerated>,
@@ -368,6 +399,7 @@ impl<P: Provider + WalletProvider + Clone + 'static> CiphernodeRegistrySolWriter
             contract_address,
             bus: bus.clone(),
             effects_enabled: false,
+            completed_e3s: CompletedE3s::default(),
             request_registries,
             publication: ReplaySubmissionGate::new(),
             ticket_submissions,

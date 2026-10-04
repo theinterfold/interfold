@@ -909,10 +909,11 @@ Their process-local gates are rebuilt from replay, coalesce by E3, and release w
 `EffectsEnabled`. Neither intent has a role gate: failover demotes an aggregator after a fixed
 budget even while it is still proving, so the node that computed the key or the plaintext submits it
 after a demotion too. A local result exists only when the node started that work as the active
-aggregator. The key writer publishes the committee proof only while the registry has no commitment,
-and the plaintext writer submits only while the E3 is at `CiphertextReady` with no plaintext, so the
-first valid result wins. Contract-state preflights provide cross-restart idempotency. Terminal
-outcomes remove the intent; retryable failures retain it and retry after 30 seconds.
+aggregator. A key result for a request that already completed is ignored. The key writer publishes
+the committee proof only while the registry has no commitment, and the plaintext writer submits only
+while the E3 is at `CiphertextReady` with no plaintext, so the first valid result wins.
+Contract-state preflights provide cross-restart idempotency. Terminal outcomes remove the intent;
+retryable failures retain it and retry after 30 seconds.
 
 Plaintext admission compares the final-proof domain with confirmed key authority and ciphertext
 hashes before the publication gate retains an intent. Missing authority defers admission. A mismatch

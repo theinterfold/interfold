@@ -847,8 +847,9 @@ phase.
 │   ├─ Only the active aggregator starts C1 verification and later proof/compute effects
 │   │   → A promoted standby resumes from its persisted phase; it does not need a RAM buffer
 │   │   → A demoted node that dispatched C1 verification finishes that work and publishes its
-│   │     key; the first valid committee publication on chain wins. A node that did not start
-│   │     the work ignores worker results
+│   │     key; the first valid committee publication on chain wins. Once a key is on chain,
+│   │     the demoted node stops, and any node ignores a late C1 result: it neither fails the
+│   │     E3 nor accuses a dealer. A node that did not start the work ignores worker results
 │   │     File: crates/aggregator/src/public_key_aggregation/actor.rs (started_as_aggregator)
 │   ├─ C1 verification runs over the exact H selected submitters; failures stop DKG
 │   │

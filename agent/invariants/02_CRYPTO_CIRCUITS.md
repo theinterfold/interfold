@@ -132,7 +132,9 @@ every section.
   their local C6 outcomes for failover. Only the active party can launch aggregation effects. Only
   it applies their results, except that an aggregator demoted by failover finishes the work that it
   started (public key: C1 verification onward; plaintext: C6 verification onward) and publishes the
-  result; the first valid result on chain wins. — `flow-trace/04`; INDEX concerns #42, #68
+  result; the first valid result on chain wins. A demoted public-key aggregator stops once a key is
+  on chain, and a C1 result after key publication changes nothing. — `flow-trace/04`; INDEX concerns
+  #42, #68
 - The active aggregator proposes a canonical H-dealer DKG roster only after it derives `H` mutually
   ready dealers from signed Ready reports; a promoted aggregator reuses an already accepted roster.
   A receiver keeps one authenticated roster per proposer. It accepts a roster only from a proposer
