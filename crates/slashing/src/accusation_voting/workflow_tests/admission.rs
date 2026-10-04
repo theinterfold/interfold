@@ -284,7 +284,7 @@ fn received_self_accusations_are_ignored() {
     let other = signer(3);
     let committee = vec![me.address(), accuser.address(), other.address()];
 
-    for (accused, party_id) in [(&accuser, 1), (&accuser, 2), (&other, 1)] {
+    for (accused, party_id) in [(&accuser, 1), (&accuser, 2)] {
         for (cached, forwarded) in [(false, true), (true, false), (true, true)] {
             let mut v = voting_with(&me, committee.clone(), 1, 2);
             let failure = proof_failure(accused, party_id, ProofType::C3bESmShareEncryption);
@@ -315,6 +315,80 @@ fn received_self_accusations_are_ignored() {
             assert!(v.on_vote_received(vote, &ctx()).is_empty());
             assert!(v.on_vote_timeout(id).is_none());
             assert!(v.pending_reverifications.is_empty());
+        }
+    }
+}
+
+#[test]
+fn received_accusations_with_changed_party_ids_reach_quorum() {
+    let me = signer(1);
+    let accuser = signer(2);
+    let accused = signer(3);
+    let committee = vec![me.address(), accuser.address(), accused.address()];
+
+    for proof_type in [
+        ProofType::C3aSkShareEncryption,
+        ProofType::C3bESmShareEncryption,
+    ] {
+        for forwarded in [false, true] {
+            let mut v = voting_with(&me, committee.clone(), 1, 2);
+            let failure = proof_failure(&accused, 2, proof_type);
+            let mut accusation = accusation_from_failure(&accuser, &failure, forwarded, NOW);
+            accusation.accused_party_id = 1;
+            let id = AccusationVoting::accusation_id(&accusation);
+
+            if !forwarded {
+                assert!(!v.on_local_proof_failure(failure.clone(), &ctx()).is_empty());
+                assert_eq!(
+                    v.on_vote_timeout(id).unwrap().0.outcome,
+                    AccusationOutcome::Inconclusive
+                );
+            }
+
+            let vote = signed_vote(
+                &accuser,
+                v.slashing_manager,
+                &v.e3_id,
+                id,
+                failure.data_hash,
+                accusation.deadline,
+            );
+            assert!(v.on_vote_received(vote, &ctx()).is_empty());
+            let mut actions = v.on_accusation_received(accusation, &ctx());
+
+            if forwarded {
+                let request = actions
+                    .iter()
+                    .find_map(|action| match action {
+                        VoteAction::DispatchZk { request, .. } => Some(request),
+                        _ => None,
+                    })
+                    .expect("forwarded C3 must be verified before voting");
+                let response = ComputeResponse::zk(
+                    ZkResponse::VerifyShareProofs(VerifyShareProofsResponse {
+                        party_results: vec![PartyVerificationResult {
+                            sender_party_id: 1,
+                            all_verified: false,
+                            failed_signed_payload: Some(failure.signed_payload),
+                            recovered_address: Some(accused.address()),
+                        }],
+                    }),
+                    request.correlation_id,
+                    v.e3_id.clone(),
+                );
+                actions.extend(v.handle_reverification_response(TypedEvent::new(response, ctx())));
+            }
+
+            assert!(actions.iter().any(|action| matches!(
+                action,
+                VoteAction::PublishVote { vote, .. } if vote.voter == me.address()
+            )));
+            assert_quorum(
+                &actions,
+                accused.address(),
+                &[me.address(), accuser.address()],
+            );
+            assert!(v.on_vote_timeout(id).is_none());
         }
     }
 }

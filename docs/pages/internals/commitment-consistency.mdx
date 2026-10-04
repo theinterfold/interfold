@@ -277,7 +277,8 @@ pub struct CommitmentConsistencyViolation {
 
 A peer that receives the accusation checks the deadline window, the committee membership of the
 accuser and the accused, and the accuser's signature. It rejects an accusation when the accuser and
-accused have the same address or finalized party ID.
+accused have the same signed address. The accusation digest does not include `accused_party_id`, so
+the peer does not use that field to identify a received self-accusation.
 
 The peer votes only after local verification fails. For C3a and C3b, a peer without a local record
 can verify a forwarded signed proof. Accusations for other proof types cannot carry a forwarded

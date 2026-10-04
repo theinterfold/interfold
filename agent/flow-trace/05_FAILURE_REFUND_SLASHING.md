@@ -492,7 +492,8 @@ ProofVerificationFailed OR CommitmentConsistencyViolation event arrives
 ```text
 ProofFailureAccusation arrives via P2P from another committee member
 │
-├─ Reject self-accusations: accuser equals accused address or holds accused_party_id
+├─ Reject self-accusations: signed accuser and accused addresses are equal
+│   accused_party_id is not in the accusation digest and does not decide this check
 │   Reject a signed_payload for any proof type other than C3a/C3b
 │   Both checks precede cached evidence, pending accusations, and buffered vote replay
 │

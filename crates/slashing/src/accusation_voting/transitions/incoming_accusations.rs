@@ -27,11 +27,8 @@ impl AccusationVoting {
             return;
         }
 
-        if self.is_self_accusation(
-            accusation.accuser,
-            accusation.accused,
-            accusation.accused_party_id,
-        ) {
+        // The accusation signature binds addresses, not accused_party_id.
+        if accusation.accuser == accusation.accused {
             return;
         }
 
