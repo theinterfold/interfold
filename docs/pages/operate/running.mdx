@@ -801,7 +801,13 @@ A full node can receive an E3 event before the actor that consumes it starts. Th
 keeps these events in order for recipients declared by the installed extensions. Each E3 has a limit
 of 4,096 deferred entries and 1 GiB of accounted bytes. The router has a shared limit of 16,384
 entries and 3 GiB. Each recipient copy counts toward both limits, including shared payload bytes.
-Each entry is charged its serialized size plus its inline event size.
+
+Each entry reserves its encoded bytes, nested inline storage, and 64 bytes per allocation candidate.
+The reservations cover strings, byte buffers, collections, their elements, and shared payload
+fields. Large contiguous buffers add constant allocation overhead. They have no extra charge per
+payload byte. Shared bytes retain no spare capacity, and deferred copies compact collections inside
+shared keys and threshold shares. Each entry also reserves twice its inline event size for queue
+capacity.
 
 These limits cover four concurrent E3s with the largest supported committee (N=19, H=14) and the
 secure 8192-degree preset. The slashing recipients start at committee finalization. Keyshare and
@@ -812,10 +818,13 @@ The late-recipient allowance is 1,536 records and 640 MiB per E3. It includes th
 the complete request payloads retained by computation failures, C4 inputs, peer shares, and document
 envelopes. Four such histories use 2.5 GiB, leaving 512 MiB of margin below the shared byte limit.
 
-Serialized sizes do not measure exact resident memory. In an 8 GiB memory budget, allow 1.5 GiB
-above the 3 GiB payload ceiling for allocation overhead and an in-flight event. The remaining 3.5
-GiB covers other actors, the process baseline, and the system. These are buffer allowances, not
-total node memory requirements. See [Requirements](/operate/requirements) for node sizing.
+The 3 GiB ceiling includes allocation reservations, but it does not measure exact resident memory.
+In an 8 GiB memory budget, allow another 1.5 GiB for fragmentation, freed storage, and an in-flight
+event. The remaining 3.5 GiB covers other actors, the process baseline, and the system. The router
+memory regression checks this allowance with contiguous and separately allocated small payloads.
+These are buffer allowances, not total node memory requirements or limits on incoming-event
+decoding. Proof workers need a separate allowance. See [Requirements](/operate/requirements) for
+node sizing.
 
 If a limit is exceeded, the router logs `Deferred delivery failed` at ERROR and clears the affected
 recipient's deferred queue. It retains the failure record until E3 teardown or restart and stops

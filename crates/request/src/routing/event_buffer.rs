@@ -7,6 +7,10 @@
 use e3_events::{E3id, InterfoldEvent};
 use std::collections::{HashMap, HashSet};
 
+#[path = "event_size.rs"]
+mod event_size;
+pub(crate) use event_size::event_bytes;
+
 // Sized for N=19, H=14 and four concurrent E3s. See the capacity derivation in
 // agent/flow-trace/03_E3_REQUEST_AND_COMMITTEE.md.
 #[derive(Clone, Copy)]
@@ -78,17 +82,14 @@ impl EventBuffer {
         }
     }
 
-    pub fn add(&mut self, e3_id: &E3id, recipient: &str, event: InterfoldEvent) {
+    pub fn add(&mut self, e3_id: &E3id, recipient: &str, mut event: InterfoldEvent) {
         let key = (e3_id.clone(), recipient.to_owned());
         if self.failed.contains(&key) {
             return;
         }
 
-        // Charge each recipient copy, including shared payloads. No serialized copy is allocated.
-        let bytes = bincode::serialized_size(&event)
-            .ok()
-            .and_then(|bytes| usize::try_from(bytes).ok())
-            .and_then(|bytes| bytes.checked_add(std::mem::size_of::<InterfoldEvent>()));
+        // Charge shared allocations again for each recipient. No serialized copy is allocated.
+        let bytes = event_bytes(&event);
         let usage = self.per_e3.get(e3_id).copied().unwrap_or_default();
         if !bytes.is_some_and(|bytes| {
             usage.fits(bytes, self.limits.per_e3_items, self.limits.per_e3_bytes)
@@ -112,6 +113,7 @@ impl EventBuffer {
         }
 
         let bytes = bytes.expect("buffer admission checked the event size");
+        event.compact_shared_collections();
         let pending = self.buffer.entry(key).or_default();
         pending.events.push(event);
         pending.bytes += bytes;

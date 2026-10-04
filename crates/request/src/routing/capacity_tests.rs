@@ -180,8 +180,7 @@ async fn send_data(
         .data(data)
         .seq(*sequence)
         .build();
-    let size =
-        bincode::serialized_size(&event).unwrap() as usize + std::mem::size_of::<InterfoldEvent>();
+    let size = charged_bytes(&event);
     route(router, event).await;
     size
 }
@@ -408,7 +407,7 @@ fn memory_bytes(field: &str) -> usize {
 }
 
 #[actix::test]
-async fn secure_committee_histories_fit_and_default_bytes_isolate_overflow() -> Result<()> {
+async fn allocated_histories_fit_and_default_bytes_isolate_overflow() -> Result<()> {
     let store = DataStore::from_in_mem(&InMemStore::new(false).start());
     let recorders: Vec<_> = (0..5).map(|_| Recorder::default().start()).collect();
     let router = E3Router::from_params(router_params(&store, &recorders)).start();
@@ -512,6 +511,42 @@ async fn secure_committee_histories_fit_and_default_bytes_isolate_overflow() -> 
             );
         }
     }
+
+    // Small independent allocations must consume the byte budget before the item budget.
+    let store = DataStore::from_in_mem(&InMemStore::new(false).start());
+    let recorder = Recorder::default().start();
+    let router =
+        E3Router::from_params(router_params(&store, std::slice::from_ref(&recorder))).start();
+    let failed = E3id::new("71", 1);
+    let healthy = E3id::new("72", 1);
+    route(&router, admission(&failed)).await;
+    let mut encoded_bytes = 0;
+    for sequence in 2..=65 {
+        let event = InterfoldEvent::<Sequenced>::test_event("capacity")
+            .data(DecryptionshareCreated {
+                e3_id: failed.clone(),
+                party_id: 0,
+                node: "member".into(),
+                decryption_share: (0..131_072).map(|_| ArcBytes::from_bytes(&[])).collect(),
+                signed_decryption_proofs: vec![],
+            })
+            .seq(sequence)
+            .build();
+        encoded_bytes += bincode::serialized_size(&event)?;
+        route(&router, event).await;
+    }
+    assert!(encoded_bytes < 128 * MIB as u64);
+    route(&router, admission(&healthy)).await;
+    route(&router, share(&healthy, 2)).await;
+    route(&router, attach(&healthy, 3)).await;
+    assert_eq!(recorder.send(Recorded(healthy)).await?, [1, 2, 3]);
+    route(&router, attach(&failed, 66)).await;
+    route(&router, share(&failed, 67)).await;
+    assert_eq!(
+        recorder.send(Recorded(failed)).await?,
+        [66, 67],
+        "nested allocations must fail only their deferred queue"
+    );
     #[cfg(target_os = "linux")]
     {
         let peak = memory_bytes("VmHWM:").saturating_sub(baseline);
@@ -521,5 +556,87 @@ async fn secure_committee_histories_fit_and_default_bytes_isolate_overflow() -> 
             "router memory must leave headroom on an 8 GiB node"
         );
     }
+    Ok(())
+}
+
+#[actix::test]
+async fn deferred_share_collections_release_spare_capacity() -> Result<()> {
+    #[derive(Default)]
+    struct CapacityRecorder(Vec<usize>);
+
+    impl Actor for CapacityRecorder {
+        type Context = Context<Self>;
+    }
+
+    impl Handler<InterfoldEvent> for CapacityRecorder {
+        type Result = ();
+
+        fn handle(&mut self, event: InterfoldEvent, _: &mut Self::Context) {
+            let share = match event.get_data() {
+                InterfoldEventData::ThresholdShareCreated(data) => &data.share,
+                InterfoldEventData::ThresholdSharePending(data) => &data.full_share,
+                _ => return,
+            };
+            assert_eq!(share.esi_sss.len(), 1);
+            self.0.push(share.esi_sss.capacity());
+        }
+    }
+
+    #[derive(Message)]
+    #[rtype(result = "Vec<usize>")]
+    struct Capacities;
+
+    impl Handler<Capacities> for CapacityRecorder {
+        type Result = Vec<usize>;
+
+        fn handle(&mut self, _: Capacities, _: &mut Self::Context) -> Self::Result {
+            self.0.clone()
+        }
+    }
+
+    let store = DataStore::from_in_mem(&InMemStore::new(false).start());
+    let recorder = CapacityRecorder::default().start();
+    let router = E3Router::builder(&super::super::test_bus(), store)
+        .with_recipient(
+            "plaintext",
+            Box::new(LateRecipient {
+                key: "plaintext",
+                recipient: recorder.clone().recipient(),
+            }),
+        )
+        .build()
+        .await?;
+    let id = E3id::new("81", 1);
+    route(&router, admission(&id)).await;
+    let mut share = threshold_share(0, &[]);
+    Arc::make_mut(&mut share).esi_sss.reserve(4096);
+    assert!(share.esi_sss.capacity() > 4096);
+    let mut sequence = 1;
+    send_data(
+        &router,
+        &mut sequence,
+        ThresholdShareCreated {
+            share: share.clone(),
+            ..peer_share(&id, 1, false)
+        },
+    )
+    .await;
+    send_data(
+        &router,
+        &mut sequence,
+        ThresholdSharePending {
+            e3_id: id.clone(),
+            full_share: share,
+            proof_request: c1(),
+            sk_share_computation_request: c2(DkgInputType::SecretKey),
+            e_sm_share_computation_request: c2(DkgInputType::SmudgingNoise),
+            sk_share_encryption_requests: vec![],
+            e_sm_share_encryption_requests: vec![],
+            recipient_party_ids: vec![],
+        },
+    )
+    .await;
+    route(&router, attach(&id, 4)).await;
+    assert_eq!(recorder.send(Capacities).await?, [1, 1]);
     Ok(())
 }

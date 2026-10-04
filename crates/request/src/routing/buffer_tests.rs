@@ -168,7 +168,7 @@ impl Handler<ExpectedRecipients> for E3Router {
 }
 
 fn charged_bytes(event: &InterfoldEvent) -> usize {
-    bincode::serialize(event).unwrap().len() + std::mem::size_of::<InterfoldEvent>()
+    crate::event_bytes(event).unwrap()
 }
 
 async fn check_deferred_limit(limit: &str) -> Result<()> {

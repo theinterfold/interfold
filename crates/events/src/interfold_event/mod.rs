@@ -452,6 +452,28 @@ where
     pub fn get_ctx(&self) -> &EventContext<S> {
         &self.ctx
     }
+
+    /// Give deferred copies compact storage for collections inside shared payloads.
+    pub fn compact_shared_collections(&mut self) {
+        match &mut self.payload {
+            InterfoldEventData::EncryptionKeyCreated(data) => {
+                data.key = std::sync::Arc::new(data.key.as_ref().clone());
+            }
+            InterfoldEventData::EncryptionKeyReceived(data) => {
+                data.key = std::sync::Arc::new(data.key.as_ref().clone());
+            }
+            InterfoldEventData::EncryptionKeyPending(data) => {
+                data.key = std::sync::Arc::new(data.key.as_ref().clone());
+            }
+            InterfoldEventData::ThresholdShareCreated(data) => {
+                data.share = std::sync::Arc::new(data.share.as_ref().clone());
+            }
+            InterfoldEventData::ThresholdSharePending(data) => {
+                data.full_share = std::sync::Arc::new(data.full_share.as_ref().clone());
+            }
+            _ => (),
+        }
+    }
 }
 
 impl<S: SeqState> EventContextAccessors for InterfoldEvent<S> {

@@ -360,6 +360,8 @@ InterfoldSolReader decodes IInterfold::E3Requested log
 ### Request-router deferred delivery
 
 **Files:** `crates/request/src/context.rs`, `crates/request/src/routing/event_buffer.rs`,
+`crates/request/src/routing/event_size.rs`, `crates/utils/src/utility_types.rs`,
+`crates/events/src/interfold_event/mod.rs` (`compact_shared_collections`),
 `crates/request/src/routing/effects/build_context.rs`,
 `crates/ciphernode-builder/src/ciphernode_builder.rs` (`setup_extensions`).
 
@@ -370,10 +372,32 @@ even while it routes admitted E3 history. `E3ContextSnapshot` still contains onl
 attached-recipient keys, and dependency keys.
 
 For each missing recipient, `EventBuffer` retains events in arrival order. The recipient receives
-that queue before the event that creates it. Each queued recipient copy consumes one item and its
-bincode size plus the inline `InterfoldEvent` size. Shared payloads count again for each recipient.
-This accounts for payloads, not exact resident memory. Item limits also bound queue entries. These
-limits apply across all missing recipients of an E3:
+that queue before the event that creates it. Each queued recipient copy consumes one item.
+
+`event_bytes` measures fixed-integer bincode size and nested allocation candidates in one serde
+pass. It allocates no encoded copy. Each string, byte buffer, collection, field, and variable
+payload adds a 64-byte reservation. Collection elements and map keys and values also add 64 bytes
+each. Fields, elements, and variable payloads reserve their inline Rust size as well. Fixed tuples
+retain their encoded-byte charge without per-element allocation charges.
+
+The 64-byte reservation covers reference counters, container headers, alignment, and allocator
+metadata on 64-bit nodes. An `Arc<Vec<u8>>` has two reference counters and a 24-byte vector header,
+before its byte storage. Its 40-byte allocation plus typical 16-byte allocator metadata fits this
+reservation. The collection slot is charged separately. Fields and inline byte arrays can receive
+reservations without separate allocations, so the count is conservative. Shared payloads count again
+for each recipient.
+
+Large contiguous buffers add constant overhead, with no charge per payload byte beyond their encoded
+size.
+
+`ArcBytes::try_from_bytes` removes spare byte capacity before it shares storage. The router forwards
+cloned events, whose owned vectors and strings retain only their used capacity. Before deferral,
+`compact_shared_collections` clones each shared key or threshold-share payload. This compacts its
+vectors and strings while its byte payloads remain shared.
+
+Each entry also reserves twice the inline `InterfoldEvent` size for the growing queue's capacity.
+These reservations cover retained storage rather than exact resident memory. Item limits also bound
+queue entries. These limits apply across all missing recipients of an E3:
 
 | Scope  |  Items | Accounted bytes |
 | ------ | -----: | --------------: |
@@ -419,10 +443,10 @@ The late-recipient allowance includes local events and document envelopes:
   MiB for `DecryptionShareProofsPending` and another 32 MiB for its computation failures. Reserve 64
   MiB for keys, TrBFV responses, decryption shares, proof records, and control events.
 
-These allowances total 560 MiB. Round up to 640 MiB for encoding, metadata, and payload variation.
-The allowance includes the separately routed request payloads. Repeated failures or contributions
-can consume the remaining margin and eventually trigger the overflow policy. These are capacity
-allowances, not event validation rules.
+These allowances total 560 MiB. Round up to 640 MiB for encoding, allocation reservations, inline
+storage, and payload variation. The allowance includes the separately routed request payloads.
+Repeated failures or contributions can consume the remaining margin and eventually trigger the
+overflow policy. These are capacity allowances, not event validation rules.
 
 Before local selection, reserve 80 MiB and 256 records for peer contributions and formation. At most
 three recipients still need that history after `CommitteeFinalized`: 240 MiB and 768 entries. Before
@@ -432,23 +456,25 @@ The per-E3 budget leaves 384 MiB (60%) above 640 MiB and 2,560 entries above 1,5
 simultaneous E3s reserve 2.5 GiB and 6,144 entries. The shared byte limit leaves 512 MiB (20%) above
 that allowance.
 
-The shared byte limit is 3 GiB to allow for resident memory that serialized sizes omit. A Linux run
-with a 4 GiB byte limit reached 5.06 GiB of resident growth after the capacity histories drained.
-The allocator retained freed storage while subsequent queues filled. For an 8 GiB memory budget,
-reserve 1.5 GiB above the 3 GiB payload ceiling for collection capacity, allocation headers,
-fragmentation, and an in-flight event. This leaves 3.5 GiB for the process baseline, live actors,
-and the system. This is a buffer budget, not a minimum-memory requirement or a bound on proof-worker
-memory. Serialized sizes do not measure allocator capacity, other queues, or total node RSS.
+The shared limit caps retained reservations at 3 GiB, including nested allocations and queue
+capacity. For an 8 GiB memory budget, reserve another 1.5 GiB for allocator fragmentation, freed
+storage, and an in-flight event. This leaves 3.5 GiB for the process baseline, live actors, and the
+system. The extra reserve is a tested operating allowance, not a bound on total node RSS or
+arbitrary incoming events. The buffer cannot bound storage that another actor or the network decoder
+already holds. Proof workers need their own memory allowance.
 
 `crates/request/src/routing/capacity_tests.rs` routes four independent secure-preset histories. It
 uses real pending-share, share, computation-error, document, and proof-result event types. Opaque
 payloads have secure-preset sizes plus encoding allowances, and each construction allocates and
 fills new storage. The fixture includes all 108 C3 requests and both C4 inputs again through
 computation failures. It delays local selection until peer contributions arrive, then checks ordered
-delivery at each recipient's creation event. Its 1,536-record histories fit below 512 MiB each. The
-Linux check measures resident growth with four histories and near the shared byte ceiling. It
-requires distinct resident storage and at most 4.5 GiB of peak resident growth during saturation,
-including allocator overhead. Overflow assertions exercise the shipped defaults through `E3Router`.
+delivery at each recipient's creation event. Its 1,536-record histories fit below 512 MiB of
+reservations each. The Linux check measures resident growth with four histories and near the shared
+byte ceiling. It requires distinct resident storage and at most 4.5 GiB of peak resident growth
+during saturation, including allocator overhead. It also routes independently allocated empty byte
+buffers and requires their allocation reservations to trigger per-E3 overflow below the encoded-byte
+and item limits. Overflow assertions exercise the shipped defaults through `E3Router`. Separate
+regressions require shared byte storage and deferred shared collections to release spare capacity.
 
 If an addition exceeds either limit, the router discards that E3's queue for the missing recipient.
 It records a deferred-delivery failure, logs at ERROR, and rejects further deferral for that queue.
