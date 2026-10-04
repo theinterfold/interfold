@@ -208,7 +208,22 @@ async fn c0_local_verifier_failures_retry_without_peer_blame() {
         .unwrap();
     let signer = PrivateKeySigner::random();
 
-    restart::check_c0_restart(&backend, &vk, &signer, &pk, &proof).await;
+    let mut failed_restarts = Vec::new();
+    for (case, records, bytes) in [
+        ("record limit", 1_025, 0),
+        ("byte limit", 2, 16 * 1024 * 1024),
+    ] {
+        if restart::check_c0_restart(&backend, &vk, &signer, &pk, &proof, records, bytes)
+            .await
+            .is_err()
+        {
+            failed_restarts.push(case);
+        }
+    }
+    assert!(
+        failed_restarts.is_empty(),
+        "C0 restart failed for {failed_restarts:?}"
+    );
 
     for (index, unavailable) in [&backend.bb_binary, &vk, &backend.work_dir]
         .into_iter()

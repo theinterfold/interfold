@@ -230,9 +230,10 @@ warning with the attempt count. Verification completion, a canonical stage past 
 `E3RequestComplete` clears the request. Startup restores unresolved inputs from durable events,
 including inputs before the snapshot cursor, and resumes verification after `EffectsEnabled`. The
 retry delay and attempt count reset on restart. Recovery continues past legacy records that the
-event-store router quarantines. Other sequence gaps remain startup errors. A missing verifier
-binary, missing verification key, or local I/O error produces no peer-failure evidence. Only a
-completed invalid check starts the accusation path.
+event-store router quarantines, including whole pages limited by record count or bytes. It checks
+the physical log head before it ends the scan. Other sequence gaps remain startup errors. A missing
+verifier binary, missing verification key, or local I/O error produces no peer-failure evidence.
+Only a completed invalid check starts the accusation path.
 
 ### C1: threshold share generation
 

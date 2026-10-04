@@ -460,7 +460,8 @@ impl<I: SequenceIndex, L: EventLog> Handler<EventStoreQueryBy<Seq>> for EventSto
         let response = EventStoreQueryResponse::from_result(
             id,
             self.query_by_seq_with_bounds(query, filter, limit, max_bytes),
-        );
+        )
+        .with_log_head(Some(self.log.head()));
         ctx.wait(
             async move {
                 if let Err(error) = deliver_query_response(sender, response).await {

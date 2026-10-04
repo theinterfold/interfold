@@ -21,7 +21,7 @@ async fn read_page(
     aggregate: AggregateId,
     cursor: u64,
     limit: u64,
-) -> Result<Vec<InterfoldEvent>> {
+) -> Result<(Vec<InterfoldEvent>, u64)> {
     let (recipient, response) = channel::oneshot::<EventStoreQueryResponse>();
     tokio::time::timeout(Duration::from_secs(60), async {
         eventstore
@@ -35,7 +35,13 @@ async fn read_page(
                 .with_max_bytes(16 * 1024 * 1024),
             )
             .await?;
-        response.await?.into_events()
+        let response = response.await?;
+        let head = response.log_head();
+        let events = response.into_events()?;
+        Ok((
+            events,
+            head.context("C0 recovery event-store log head is missing")?,
+        ))
     })
     .await
     .context("C0 recovery event-store query timed out")?
@@ -55,11 +61,25 @@ pub(crate) async fn recover_pending_verifications(
     }
     for aggregate in aggregates.iter().copied() {
         let mut cursor = 1u64;
+        let mut limit = 1_024;
         loop {
-            let events = read_page(eventstore, aggregate, cursor, 1_024).await?;
+            let (events, head) = read_page(eventstore, aggregate, cursor, limit).await?;
             if events.is_empty() {
-                break;
+                if cursor > head {
+                    break;
+                }
+                // Filtering can empty a count- or byte-limited page before the log ends.
+                // Probe one physical record at a time so neither limit can hide a later input.
+                if limit != 1 {
+                    limit = 1;
+                    continue;
+                }
+                cursor = cursor
+                    .checked_add(1)
+                    .context("C0 recovery sequence overflow")?;
+                continue;
             }
+            limit = 1_024;
             for event in events {
                 // A one-event read is empty when the router quarantines that legacy record.
                 // Check each skipped sequence so a later C0 input remains recoverable without
@@ -68,6 +88,7 @@ pub(crate) async fn recover_pending_verifications(
                     ensure!(
                         read_page(eventstore, aggregate, cursor, 1)
                             .await?
+                            .0
                             .is_empty(),
                         "C0 recovery event-store sequence gap"
                     );

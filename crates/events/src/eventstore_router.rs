@@ -24,6 +24,7 @@ struct QueryAggregator {
     sender: Recipient<EventStoreQueryResponse>,
     pending: HashMap<CorrelationId, AggregateId>,
     collected_events: Vec<InterfoldEvent>,
+    query_count: usize,
 }
 
 fn quarantine_misrouted_events(
@@ -46,11 +47,13 @@ impl QueryAggregator {
             sender,
             pending: HashMap::new(),
             collected_events: Vec::new(),
+            query_count: 0,
         }
     }
 
     fn add_pending(&mut self, sub_query_id: CorrelationId, aggregate_id: AggregateId) {
         self.pending.insert(sub_query_id, aggregate_id);
+        self.query_count += 1;
     }
 
     #[allow(dead_code)]
@@ -75,6 +78,7 @@ impl Handler<EventStoreQueryResponse> for QueryAggregator {
                 aggregate_id,
                 self.pending.len()
             );
+            let log_head = (self.query_count == 1).then(|| msg.log_head()).flatten();
             let events = match msg.into_events() {
                 Ok(events) => events,
                 Err(error) => {
@@ -106,7 +110,8 @@ impl Handler<EventStoreQueryResponse> for QueryAggregator {
                 let response = EventStoreQueryResponse::new(
                     self.parent_id,
                     std::mem::take(&mut self.collected_events),
-                );
+                )
+                .with_log_head(log_head);
                 self.sender.do_send(response);
                 ctx.notify(Die)
             }

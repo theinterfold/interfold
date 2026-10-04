@@ -232,8 +232,10 @@ the code does not meet yet.
   `flow-trace/04`
 - C0 recovery scans durable inputs and local outcomes before actor startup, including events before
   the snapshot cursor. It skips legacy records that the EventStore router quarantines, but rejects
-  other sequence gaps. Later C0 inputs remain recoverable. It applies the live admission checks and
-  excludes E3s past DKG. Recovered and replayed C0 inputs dispatch only after `EffectsEnabled`;
+  other sequence gaps. An empty filtered page is not end-of-log until the physical cursor passes the
+  log head. Recovery advances one physical record at a time across empty pages, including pages
+  limited by decoded bytes. Later C0 inputs remain recoverable. It applies the live admission checks
+  and excludes E3s past DKG. Recovered and replayed C0 inputs dispatch only after `EffectsEnabled`;
   document deduplication cannot erase unresolved verification work. Local failures retry with a
   delay that doubles from 5 to 60 seconds. `E3RequestComplete` cancels the retries. —
   `crates/zk-prover/src/proof_verification/recovery.rs`; `flow-trace/06`

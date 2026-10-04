@@ -38,6 +38,7 @@ impl Handler<EventStoreQueryBy<SeqAgg>> for GapReader {
             let page = query.limit() != Some(1);
             inner.send(forwarded).await.unwrap();
             let response = response.await.unwrap();
+            let head = response.log_head();
             let events = response.into_events().map(|mut events| {
                 if page {
                     events.retain(|event| event.seq() != 2);
@@ -47,7 +48,7 @@ impl Handler<EventStoreQueryBy<SeqAgg>> for GapReader {
             let id = query.id();
             query
                 .sender()
-                .try_send(EventStoreQueryResponse::from_result(id, events))
+                .try_send(EventStoreQueryResponse::from_result(id, events).with_log_head(head))
                 .unwrap();
         })
     }

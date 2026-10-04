@@ -28,7 +28,9 @@ pub(super) async fn check_c0_restart(
     signer: &PrivateKeySigner,
     pk: &[u8],
     proof: &Proof,
-) {
+    legacy_records: u64,
+    legacy_bytes: usize,
+) -> std::thread::Result<()> {
     let temp = crate::test_utils::get_tempdir().unwrap();
     let e3_id = E3id::new("8", 31_337);
     let observer = PrivateKeySigner::random();
@@ -145,13 +147,14 @@ pub(super) async fn check_c0_restart(
                 let EventStoreAddrs::Persisted(stores) = system.eventstore_addrs().unwrap() else {
                     panic!("expected persisted event stores");
                 };
-                for (ts, data) in [
-                    (1, InterfoldEventData::from(document.clone())),
-                    (2, TestEvent::new("legacy record", 0).with_e3_id(E3id::new("9", 1)).into()),
-                    (3, TestEvent::new("legacy record", 1).with_e3_id(E3id::new("9", 1)).into()),
-                ] {
+                let padding = "x".repeat(legacy_bytes);
+                let records = std::iter::once(InterfoldEventData::from(document.clone()))
+                    .chain((0..legacy_records).map(|index| {
+                        TestEvent::new(&padding, index).with_e3_id(E3id::new("9", 1)).into()
+                    }));
+                for (index, data) in records.enumerate() {
                     let event = InterfoldEvent::<Unsequenced>::new_with_timestamp(
-                        data, None, ts, None, EventSource::Local);
+                        data, None, index as u128 + 1, None, EventSource::Local);
                     let (recipient, response) = channel::oneshot::<StoreEventResponse>();
                     stores[&31_337].send(StoreEventRequested::new(event, recipient)).await.unwrap();
                     response.await.unwrap();
@@ -201,7 +204,7 @@ pub(super) async fn check_c0_restart(
             let cursor = repositories.aggregate_seq(aggregate).read().await.unwrap().unwrap();
             if boot == 0 {
                 let input = events.iter().find(|event| matches!(event.get_data(), InterfoldEventData::EncryptionKeyReceived(_))).unwrap();
-                assert!(input.seq() > 3, "C0 input must follow the quarantined records");
+                assert!(input.seq() > legacy_records + 1, "C0 input must follow the quarantined records");
                 assert!(input.seq() < cursor, "C0 input must precede the snapshot cursor");
                 // Legacy nodes can have a current checkpoint beyond the quarantined prefix.
                 let checkpoint_store = repositories.request_router_checkpoint();
@@ -213,9 +216,11 @@ pub(super) async fn check_c0_restart(
             store.shutdown().await.unwrap();
         });
         });
-        boot_task.join().unwrap();
+        let result = boot_task.join();
         if boot == 0 {
             fs::rename(&saved_vk, vk).unwrap();
         }
+        result?;
     }
+    Ok(())
 }
