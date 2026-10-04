@@ -447,3 +447,6 @@ async fn request_time_attestation_contexts_survive_router_snapshots() -> Result<
     );
     Ok(())
 }
+
+#[path = "buffer_tests.rs"]
+mod buffer_tests;

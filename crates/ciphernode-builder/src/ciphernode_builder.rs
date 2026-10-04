@@ -1240,14 +1240,17 @@ impl CiphernodeBuilder {
             };
 
             info!("Setting up ThresholdKeyshareExtension");
-            e3_builder = e3_builder.with(ThresholdKeyshareExtension::create(
-                bus,
-                &self.cipher,
-                addr,
-                interfold_addresses,
-                dkg_timing_reader,
-                _signer.clone(),
-            ));
+            e3_builder = e3_builder.with_recipient(
+                "threshold_keyshare",
+                ThresholdKeyshareExtension::create(
+                    bus,
+                    &self.cipher,
+                    addr,
+                    interfold_addresses,
+                    dkg_timing_reader,
+                    _signer.clone(),
+                ),
+            );
 
             info!("Setting up ZK actors");
             setup_zk_actors(
@@ -1268,7 +1271,8 @@ impl CiphernodeBuilder {
 
             info!("Setting up PublicKeyAggregationExtension");
             let _ = self.ensure_multithread(bus, addr, lifecycle_stages);
-            e3_builder = e3_builder.with(PublicKeyAggregatorExtension::create(bus));
+            e3_builder =
+                e3_builder.with_recipient("publickey", PublicKeyAggregatorExtension::create(bus));
 
             if self.keyshare.is_none() {
                 let backend = self
@@ -1293,11 +1297,14 @@ impl CiphernodeBuilder {
         if self.threshold_plaintext_agg {
             info!("Setting up ThresholdPlaintextAggregatorExtension");
             let _ = self.ensure_multithread(bus, addr, lifecycle_stages);
-            e3_builder = e3_builder.with(ThresholdPlaintextAggregatorExtension::create(
-                bus,
-                sortition,
-                self.proof_aggregation_enabled,
-            ));
+            e3_builder = e3_builder.with_recipient(
+                "plaintext",
+                ThresholdPlaintextAggregatorExtension::create(
+                    bus,
+                    sortition,
+                    self.proof_aggregation_enabled,
+                ),
+            );
         }
 
         // A bootstrap node verifies no proofs and must not sign accusation votes, so it gets
@@ -1353,24 +1360,30 @@ impl CiphernodeBuilder {
                 accusation_deadline_skew_secs,
                 "Setting up AccusationManagerExtension"
             );
-            e3_builder = e3_builder.with(AccusationManagerExtension::create(
-                bus,
-                signer,
-                slashing_managers_by_chain,
-                accusation_vote_validity_by_chain.clone(),
-                accusation_deadline_skew_secs,
-                persisted_committees,
-            ));
+            e3_builder = e3_builder.with_recipient(
+                "accusation_manager",
+                AccusationManagerExtension::create(
+                    bus,
+                    signer,
+                    slashing_managers_by_chain,
+                    accusation_vote_validity_by_chain.clone(),
+                    accusation_deadline_skew_secs,
+                    persisted_committees,
+                ),
+            );
         }
 
         // ── Commitment consistency checker ──
         {
             info!("Setting up CommitmentConsistencyCheckerExtension");
-            e3_builder = e3_builder.with(CommitmentConsistencyCheckerExtension::create(
-                bus,
-                &repositories.store,
-                e3_zk_prover::default_links,
-            ));
+            e3_builder = e3_builder.with_recipient(
+                "commitment_consistency_checker",
+                CommitmentConsistencyCheckerExtension::create(
+                    bus,
+                    &repositories.store,
+                    e3_zk_prover::default_links,
+                ),
+            );
         }
 
         Ok(e3_builder)
@@ -2462,6 +2475,106 @@ mod tests {
             .unwrap_err();
 
         assert!(error.to_string().contains("snapshots disagree"));
+    }
+
+    #[actix::test]
+    async fn bootstrap_router_keeps_no_protocol_backlog() -> anyhow::Result<()> {
+        use e3_data::RepositoriesFactory;
+        use e3_events::{
+            E3Requested, EventConstructorWithTimestamp, EventSource, InterfoldEvent, TestEvent,
+            Unsequenced,
+        };
+        use e3_request::{E3Context, E3ContextSnapshot, E3Extension};
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        };
+
+        struct ObserveRecipients(Arc<AtomicUsize>, Arc<AtomicUsize>);
+        #[async_trait::async_trait]
+        impl E3Extension for ObserveRecipients {
+            fn on_event(&self, context: &mut E3Context, _: &InterfoldEvent) {
+                self.0.fetch_max(context.recipients.len(), Ordering::SeqCst);
+                self.1.fetch_add(1, Ordering::SeqCst);
+            }
+            async fn hydrate(
+                &self,
+                _: &mut E3Context,
+                _: &E3ContextSnapshot,
+            ) -> anyhow::Result<()> {
+                Ok(())
+            }
+        }
+        let system = crate::EventSystem::new().with_fresh_bus();
+        let bus = system.handle()?.enable("bootstrap-routing");
+        let store = system.store()?;
+        let cipher =
+            Arc::new(e3_crypto::Cipher::from_password("test-only-bootstrap-router").await?);
+        let mut builder =
+            super::CiphernodeBuilder::new(e3_test_helpers::derive_shared_rng(1, 1), cipher.clone())
+                .with_bootstrap_role();
+        let local = Address::from([0xab; 20]).to_string();
+        let repos = store.repositories();
+        let (sortition, _, selector) = builder.setup_sortition(&bus, &repos, &local).await?;
+        let mut providers = super::ProviderCache::new().with_write_support(cipher, Arc::new(repos));
+        let observed = Arc::new(AtomicUsize::new(0));
+        let routed = Arc::new(AtomicUsize::new(0));
+        let router = builder
+            .setup_extensions(
+                &bus,
+                store,
+                &mut providers,
+                &sortition,
+                &local,
+                &HashMap::new(),
+                &HashMap::new(),
+                &HashMap::new(),
+                &[],
+                &selector,
+                &HashMap::new(),
+                &system,
+            )
+            .await?
+            .with(Box::new(ObserveRecipients(
+                observed.clone(),
+                routed.clone(),
+            )))
+            .build()
+            .await?;
+        let e3_id = E3id::new("701", 1);
+        let admission = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            E3Requested {
+                e3_id: e3_id.clone(),
+                ..Default::default()
+            }
+            .into(),
+            None,
+            1,
+            None,
+            EventSource::Evm,
+        )
+        .into_sequenced(1);
+        router.send(admission).await?;
+        for sequence in 2..2_050 {
+            let event = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+                TestEvent::new("history", sequence)
+                    .with_e3_id(e3_id.clone())
+                    .into(),
+                None,
+                sequence.into(),
+                None,
+                EventSource::Evm,
+            )
+            .into_sequenced(sequence);
+            router.send(event).await?;
+        }
+        assert_eq!(routed.load(Ordering::SeqCst), 2_049);
+        assert_eq!(
+            observed.load(Ordering::SeqCst),
+            0,
+            "a bootstrap context must have no deferred protocol recipients"
+        );
+        Ok(())
     }
 
     #[actix::test]

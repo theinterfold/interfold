@@ -58,6 +58,11 @@ pub const SLASHABLE_FAILURE_GRACE: Duration = Duration::from_secs(24 * 60 * 60 +
 /// before constructing new extensions.
 #[async_trait]
 pub trait E3Extension: Send + Sync + 'static {
+    /// The recipient that needs deferred events before this extension creates it.
+    fn expected_recipient(&self) -> Option<&'static str> {
+        None
+    }
+
     /// This function is triggered when an InterfoldEvent is sent to the router. Use this to
     /// initialize the receiver using `ctx.set_event_receiver(my_address.into())`. Typically this
     /// means filtering for specific e3_id enabled events that give rise to actors that have to

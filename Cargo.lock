@@ -3724,6 +3724,7 @@ dependencies = [
  "actix",
  "alloy",
  "anyhow",
+ "async-trait",
  "bincode",
  "derivative",
  "e3-aggregator",

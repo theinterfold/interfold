@@ -510,8 +510,12 @@ blocking the router while waiting for the store can freeze live gossip and make 
 `CiphertextOutputPublished` arrives before those committee dependencies are ready, the extension
 records the ciphertext in the E3 context and retries plaintext actor creation when
 `PublicKeyAggregated` or `CommitteePublished` supplies the missing facts; the router's existing
-recipient buffer then drains any ciphertext/decryption-share events into the newly-created plaintext
-path.
+recipient buffer then drains retained ciphertext/decryption-share events into the newly-created
+plaintext path, ahead of the triggering event. Deferral has per-E3 and global item and byte limits
+(Part 3, Request-router deferred delivery). Overflow records a delivery failure for that recipient
+and clears its deferred events. Live routing continues. Hydration derives expected recipients from
+the installed extensions, but neither the deferred queue nor its failure record survives restart.
+The existing checkpoint and replay suffix remain unchanged.
 
 `ShareVerificationActor` gates C1/C6 proof verification behind `CommitmentConsistencyCheckRequested`
 / `CommitmentConsistencyCheckComplete`. The per-E3 `CommitmentConsistencyChecker` is therefore

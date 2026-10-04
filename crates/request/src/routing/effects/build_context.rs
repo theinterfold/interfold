@@ -14,7 +14,39 @@ pub struct E3RouterBuilder {
     pub complete_on_restart: HashSet<E3id>,
 }
 
+struct RecipientExtension {
+    key: &'static str,
+    inner: Box<dyn E3Extension>,
+}
+
+#[async_trait]
+impl E3Extension for RecipientExtension {
+    fn expected_recipient(&self) -> Option<&'static str> {
+        Some(self.key)
+    }
+
+    fn on_event(&self, context: &mut E3Context, event: &InterfoldEvent) {
+        self.inner.on_event(context, event);
+    }
+
+    async fn hydrate(
+        &self,
+        context: &mut E3Context,
+        snapshot: &crate::E3ContextSnapshot,
+    ) -> Result<()> {
+        self.inner.hydrate(context, snapshot).await
+    }
+}
+
 impl E3RouterBuilder {
+    /// Install an extension and register its recipient for deferred delivery.
+    pub fn with_recipient(self, key: &'static str, extension: Box<dyn E3Extension>) -> Self {
+        self.with(Box::new(RecipientExtension {
+            key,
+            inner: extension,
+        }))
+    }
+
     pub fn with(mut self, listener: Box<dyn E3Extension>) -> Self {
         self.extensions.push(listener);
         self

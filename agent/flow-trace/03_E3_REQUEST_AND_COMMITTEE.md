@@ -357,6 +357,69 @@ InterfoldSolReader decodes IInterfold::E3Requested log
         → A concurrent request sees the reduced local capacity
 ```
 
+### Request-router deferred delivery
+
+**Files:** `crates/request/src/context.rs`, `crates/request/src/routing/event_buffer.rs`,
+`crates/request/src/routing/effects/build_context.rs`,
+`crates/ciphernode-builder/src/ciphernode_builder.rs` (`setup_extensions`).
+
+`E3RouterBuilder::with_recipient` installs an extension with its expected recipient key. `E3Context`
+derives missing recipients from those extensions, both at creation and hydration. Dependency-only
+extensions declare no recipient. A bootstrap router therefore retains no deferred protocol events,
+even while it routes admitted E3 history. `E3ContextSnapshot` still contains only the E3 ID,
+attached-recipient keys, and dependency keys.
+
+For each missing recipient, `EventBuffer` retains events in arrival order. The recipient receives
+that queue before the event that creates it. Each queued recipient copy consumes one item and its
+bincode size plus the inline `InterfoldEvent` size. Shared payloads count again for each recipient.
+This is conservative payload accounting, not a measurement of allocator overhead. Item limits also
+bound queue entries. These limits apply across all missing recipients of an E3:
+
+| Scope  |  Items | Accounted bytes |
+| ------ | -----: | --------------: |
+| One E3 | 16,384 |           4 GiB |
+| Router | 65,536 |          16 GiB |
+
+The capacity envelope uses the largest supported committee, N=19 and H=14, with the secure
+8192-degree preset. There are three threshold limbs and two DKG limbs
+(`crates/fhe-params/src/constants.rs`). The current `gen_esi_sss` path creates one smudging
+polynomial. The following estimates cover the complete early DKG and decryption history for one
+missing recipient, including local events and document envelopes:
+
+- C3 generates `2 × (N − 1) × 3 = 108` proofs. C0, C1, two C2 proofs, and two C4 proofs bring the
+  base count to 114. Reserve three routed records per proof for results, signing, and aggregation.
+- Reserve another 256 records for fold results, verification, roster coordination, and lifecycle
+  events. Reserve `32 × N = 608` records for keys, shares, document wrappers, and decryption. These
+  allowances total 1,206 records. Round up to 1,536 per recipient.
+- A DKG ciphertext or public key has at most `2 × 2 × 8192 × 8 = 262,144` coefficient bytes. A C3
+  request also has a 64 KiB share row and three 128 KiB randomness/error polynomials. Its
+  coefficient data totals 960 KiB. The 108 requests, full encrypted share, C1 witness, and two C2
+  share matrices fit a 160 MiB allowance for `ThresholdSharePending`.
+- Outbound shares target N−1 parties. Party-filtered ingress supplies at most N−1 peer shares. Allow
+  2 MiB for each of those 36 shares, including its C2/C3 proofs. Count both the typed event and its
+  `PublishDocumentRequested` or `DocumentReceived` envelope: 144 MiB.
+- Two C4 inputs use at most `2 × H × 3` DKG ciphertexts, or 21 MiB of coefficient data. Reserve 32
+  MiB for the input events and their metadata. Reserve 64 MiB for keys, TrBFV responses, decryption
+  shares, small proof records, and remaining control events.
+
+These payload allowances total 400 MiB. Round up to 512 MiB per recipient for serialization,
+metadata, and payload variation. The proof layouts use commitments rather than coefficient arrays as
+public signals (`crates/zk-helpers/src/circuits/output_layout.rs`). The estimates include the local
+witness arrays separately. They are capacity allowances, not new validation rules for events.
+
+Charging this entire envelope to all five installed recipient types requires 7,680 items and 2.5 GiB
+per E3. The limits provide more than twice the item allowance and 60% byte margin. The global limits
+accommodate four such E3s with the same margin. Most recipients start much earlier, and shared byte
+storage reduces actual retained payload memory. The router regression routes four padded envelopes
+concurrently, then checks ordered delivery for all five recipients.
+
+If an addition exceeds either limit, the router discards that E3's queue for the missing recipient.
+It records a deferred-delivery failure, logs at ERROR, and rejects further deferral for that queue.
+It continues live routing, extension hooks, checkpoints, and other E3s. A late recipient still
+receives live events. The affected E3 can fail at its existing deadline. Teardown releases queue
+reservations and failure records. Restart starts with empty queues and failure records. The buffer
+does not read EventStore or recover events before the existing checkpoint.
+
 ### 2b. CiphernodeSelector Processing
 
 ```
