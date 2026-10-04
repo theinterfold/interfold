@@ -182,7 +182,13 @@ impl ThresholdKeyshare {
     ) -> Result<bool> {
         let ec = event.get_ctx().clone();
         let ids: BTreeSet<u64> = event.shares.iter().map(|share| share.party_id).collect();
-        let expelled = self.state.try_get()?.expelled_parties;
+        let state = self.state.try_get()?;
+        // A collector can send its result before it stops; after the decryption-key calculation
+        // retired the batch, that result must not restore it.
+        if !state.state.share_collection_is_open() {
+            return Ok(false);
+        }
+        let expelled = state.expelled_parties;
         let mut accepted = false;
         self.recovery.try_mutate(&ec, |mut recovery| {
             let verification_in_flight = recovery.collected_threshold_share_ids.is_some()

@@ -211,9 +211,11 @@ impl ThresholdKeyshare {
         self.recovery.try_mutate(&ec, |mut recovery| {
             recovery.threshold_share_refs.clear();
             recovery.collected_threshold_share_ids = None;
+            recovery.share_dispatch_ids.clear();
             recovery.last_ec = Some(ec.clone());
             Ok(recovery)
         })?;
+        self.pending.parked_share_verdicts.clear();
         if let Err(error) = self
             .recovery_payloads
             .write_all_share_tombstones(party_count, &ec)

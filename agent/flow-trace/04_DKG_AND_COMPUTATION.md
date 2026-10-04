@@ -605,17 +605,20 @@ ShareVerificationActor receives ShareVerificationDispatched(kind=ShareProofs)
 │          different batches, such as a batch and its later growth, are both delivered.
 │
 └─ ThresholdKeyshare receives ShareVerificationComplete:
-    ├─ Until a C2/C3 result is recorded, applies each one to the first batch. After that,
-    │  it applies a result only if its dispatch is one that this node sent for the current
-    │  batch. The recovery state keeps those dispatch IDs, so replay applies such a result
-    │  where it applied before a restart. When the logged dispatch reaches the node and
-    │  holds every live dealer of the current batch and no other, the node saves the ID
-    │  again at the dispatch's own position, also when it already holds it. A batch that
+    ├─ Drops a C2/C3 result after the C2/C3 phase ended: the decryption-key calculation
+    │  retires the batch and its dispatch IDs, and a failed DKG or a published key also ends
+    │  the phase. A collector result that arrives after that cannot restore the batch.
+    ├─ Otherwise applies a result only while the batch exists and only if its dispatch is
+    │  one that this node sent for that batch; this includes the first result. The recovery
+    │  state keeps those dispatch IDs, so replay applies such a result where it applied
+    │  before a restart. When the logged dispatch reaches the node and holds every live
+    │  dealer of the current batch and no other, the node saves the ID again at the
+    │  dispatch's own position, also when it already holds it. A batch that
     │  EffectsEnabled sends again has no logged cause, and its first save uses the last
     │  saved context, which the store can refuse as stale: a later snapshot cut then keeps
     │  the ID, and replay from an earlier cut restores it from the log. It keeps any other
-    │  result and applies it when it sends a dispatch with that ID, as when a restart
-    │  sends the saved batch again. A result of an earlier batch therefore cannot count a
+    │  result, at most 64, and applies it when it sends a dispatch with that ID, as when a
+    │  restart sends the saved batch again. A result of an earlier batch therefore cannot count a
     │  dealer that only a grown batch holds as verified
     ├─ Excludes failed C2/C3 proofs and C3 proofs that target a different
     │  recipient key

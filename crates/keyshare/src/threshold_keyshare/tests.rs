@@ -1764,6 +1764,17 @@ async fn batch_with_an_expelled_dealer(e3_id: &E3id, verified: bool) -> Result<C
     Ok(committee)
 }
 
+/// Save `dispatch` as a C2/C3 dispatch of the current batch, as the actor does when it sends one.
+fn record_share_dispatch(
+    actor: &mut ThresholdKeyshare,
+    dispatch: &EventContext<Sequenced>,
+) -> Result<()> {
+    actor.recovery.try_mutate_without_context(|mut recovery| {
+        recovery.share_dispatch_ids.push(dispatch.id());
+        Ok(recovery)
+    })
+}
+
 /// The context of the C2/C3 dispatch that the actor sent for `dealers`.
 async fn share_dispatch_of(
     history: &Addr<HistoryCollector<InterfoldEvent>>,
@@ -1826,6 +1837,159 @@ async fn wait_for_kept_share_verdicts(actor: &Addr<ThresholdKeyshare>, count: us
     .await?
 }
 
+/// A keyshare that finished its decryption-key calculation: its C2/C3 batch is retired.
+async fn retired_share_batch(
+    e3_id: &E3id,
+    setup: impl FnOnce(&mut ThresholdKeyshareRecoveryState),
+) -> Result<CommitteeActor> {
+    let (bus, history) = test_bus();
+    let state_store = InMemStore::new(false).start();
+    let (state, state_repo) = test_state_in(
+        &state_store,
+        e3_id,
+        KeyshareState::ReadyForDecryption(ready_for_c4_test()),
+    );
+    let (mut recovery, recovery_repo) = test_recovery_with_repo();
+    recovery.try_mutate_without_context(|mut recovery| {
+        recovery.verified_dealer_ids = Some(BTreeSet::from([1]));
+        setup(&mut recovery);
+        Ok(recovery)
+    })?;
+    let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bus: bus.clone(),
+        cipher: Arc::new(Cipher::from_password("test-password").await?),
+        state,
+        share_enc_preset: BfvPreset::InsecureDkg512,
+        interfold_address: Address::ZERO,
+        signer: alloy::signers::local::PrivateKeySigner::random(),
+        effects_enabled: true,
+        recovery,
+        recovery_payloads: test_recovery_payloads(),
+        dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
+    });
+    Ok(CommitteeActor {
+        actor,
+        bus,
+        history,
+        recovery_repo,
+        state_repo,
+        state_store,
+    })
+}
+
+async fn assert_no_keyshare_error(history: &Addr<HistoryCollector<InterfoldEvent>>) -> Result<()> {
+    actix::clock::sleep(std::time::Duration::from_millis(50)).await;
+    let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event.get_data(), InterfoldEventData::InterfoldError(_))),
+        "unexpected error: {events:?}"
+    );
+    Ok(())
+}
+
+#[actix::test]
+async fn a_c2_c3_result_after_the_batch_retired_changes_nothing() -> Result<()> {
+    let e3_id = E3id::new("retired-share-batch", 1);
+    // The calculation ran from the first verified batch while a grown batch's check still ran.
+    let grown_dispatch = keyshare_event(TestEvent::new("grown batch", 1), 10, EventSource::Local)
+        .get_ctx()
+        .clone();
+    let CommitteeActor {
+        actor,
+        history,
+        recovery_repo,
+        ..
+    } = retired_share_batch(&e3_id, |recovery| {
+        recovery.share_dispatch_ids = vec![grown_dispatch.id()];
+    })
+    .await?;
+    let before = recovery_repo.read().await?.expect("saved recovery state");
+    let actor = actor.start();
+
+    let verdict = ShareVerificationComplete {
+        e3_id,
+        kind: VerificationKind::ShareProofs,
+        dishonest_parties: BTreeSet::new(),
+    };
+    actor.send(TypedEvent::new(verdict, grown_dispatch)).await?;
+
+    assert_no_keyshare_error(&history).await?;
+    let after = recovery_repo.read().await?.expect("saved recovery state");
+    assert_eq!(after.verified_dealer_ids, before.verified_dealer_ids);
+    assert!(after.share_verification_complete.is_none());
+    assert!(after.collected_threshold_share_ids.is_none());
+    assert_eq!(actor.send(KeptShareVerdicts).await?, 0);
+    Ok(())
+}
+
+#[actix::test]
+async fn a_queued_share_collection_cannot_reopen_a_retired_batch() -> Result<()> {
+    let e3_id = E3id::new("queued-share-collection", 1);
+    let CommitteeActor {
+        actor,
+        history,
+        recovery_repo,
+        ..
+    } = retired_share_batch(&e3_id, |_| {}).await?;
+    let actor = actor.start();
+
+    // The collector sent its result before the calculation stopped it.
+    let share = peer_share(&e3_id, 1);
+    let collected = AllThresholdSharesCollected::new(
+        HashMap::from([(1, share.share.clone())]),
+        HashMap::from([(
+            1,
+            ReceivedShareProofs {
+                signed_c2a_proof: None,
+                signed_c2b_proof: None,
+                signed_c3a_proofs: Vec::new(),
+                signed_c3b_proofs: Vec::new(),
+            },
+        )]),
+    );
+    actor.send(TypedEvent::new(collected, test_ec(5))).await?;
+
+    assert_no_keyshare_error(&history).await?;
+    let recovery = recovery_repo.read().await?.expect("saved recovery state");
+    assert!(recovery.collected_threshold_share_ids.is_none());
+    assert!(recovery.share_dispatch_ids.is_empty());
+    Ok(())
+}
+
+#[actix::test]
+async fn a_first_c2_c3_result_applies_only_to_the_batch_of_its_dispatch() -> Result<()> {
+    let e3_id = E3id::new("first-share-verdict", 1);
+    // A restart restored batch `{1}`; this node has not sent its dispatch again yet.
+    let CommitteeActor {
+        actor,
+        recovery_repo,
+        ..
+    } = committee_with_two_shares(&e3_id, |recovery| {
+        recovery.collected_threshold_share_ids = Some(BTreeSet::from([1]));
+    })
+    .await?;
+    let actor = actor.start();
+
+    // The result of a dispatch for another batch, such as one that only the earlier run sent.
+    let other_batch = keyshare_event(TestEvent::new("other batch", 1), 10, EventSource::Local)
+        .get_ctx()
+        .clone();
+    let verdict = ShareVerificationComplete {
+        e3_id,
+        kind: VerificationKind::ShareProofs,
+        dishonest_parties: BTreeSet::new(),
+    };
+    actor.send(TypedEvent::new(verdict, other_batch)).await?;
+
+    assert_eq!(actor.send(KeptShareVerdicts).await?, 1);
+    let recovery = recovery_repo.read().await?.expect("saved recovery state");
+    assert!(recovery.verified_dealer_ids.is_none());
+    assert!(recovery.share_verification_complete.is_none());
+    Ok(())
+}
+
 #[actix::test]
 async fn a_share_batch_grows_past_a_dealer_that_was_expelled() -> Result<()> {
     let e3_id = E3id::new("batch-past-expelled", 1);
@@ -1858,17 +2022,12 @@ async fn a_share_batch_grows_past_a_dealer_that_was_expelled() -> Result<()> {
 async fn a_grown_batch_completes_when_its_verdict_equals_the_first() -> Result<()> {
     let e3_id = E3id::new("grown-batch-verdict", 1);
     let CommitteeActor {
-        actor,
+        mut actor,
         bus,
         history,
         recovery_repo,
         ..
     } = batch_with_an_expelled_dealer(&e3_id, false).await?;
-    let actor = actor.start();
-    bus.subscribe(
-        EventType::ShareVerificationComplete,
-        actor.clone().recipient(),
-    );
     // Each verdict comes from its own dispatch, as in production; the payloads are equal.
     let verdict = ShareVerificationComplete {
         e3_id: e3_id.clone(),
@@ -1880,6 +2039,12 @@ async fn a_grown_batch_completes_when_its_verdict_equals_the_first() -> Result<(
             .get_ctx()
             .clone()
     };
+    record_share_dispatch(&mut actor, &dispatch_before_restart("first batch"))?;
+    let actor = actor.start();
+    bus.subscribe(
+        EventType::ShareVerificationComplete,
+        actor.clone().recipient(),
+    );
 
     // The verdict for `{1}` arrives after dealer 1's expulsion, so the batch grows to `{2}`.
     bus.publish(verdict.clone(), dispatch_before_restart("first batch"))?;
@@ -1972,15 +2137,16 @@ async fn a_kept_verdict_applies_when_restart_sends_its_batch_again() -> Result<(
         dishonest_parties: BTreeSet::new(),
     };
     // Before the restart, the batch grew past expelled dealer 1 to `{2}` and was sent.
-    let before = batch_with_an_expelled_dealer(&e3_id, false).await?;
+    let mut before = batch_with_an_expelled_dealer(&e3_id, false).await?;
+    let first_dispatch = keyshare_event(TestEvent::new("first batch", 1), 10, EventSource::Local)
+        .get_ctx()
+        .clone();
+    record_share_dispatch(&mut before.actor, &first_dispatch)?;
     let first_actor = before.actor.start();
     before.bus.subscribe(
         EventType::ShareVerificationComplete,
         first_actor.recipient(),
     );
-    let first_dispatch = keyshare_event(TestEvent::new("first batch", 1), 10, EventSource::Local)
-        .get_ctx()
-        .clone();
     before.bus.publish(verdict.clone(), first_dispatch)?;
     let grown_dispatch = share_dispatch_of(&before.history, &[2]).await?;
 
@@ -2029,15 +2195,16 @@ async fn a_restart_applies_the_result_of_a_dispatch_sent_before_it() -> Result<(
         dishonest_parties: BTreeSet::new(),
     };
     // Before the restart, the batch grew past expelled dealer 1 to `{2}` and was sent.
-    let before = batch_with_an_expelled_dealer(&e3_id, false).await?;
+    let mut before = batch_with_an_expelled_dealer(&e3_id, false).await?;
+    let first_dispatch = keyshare_event(TestEvent::new("first batch", 1), 10, EventSource::Local)
+        .get_ctx()
+        .clone();
+    record_share_dispatch(&mut before.actor, &first_dispatch)?;
     let first_actor = before.actor.start();
     before.bus.subscribe(
         EventType::ShareVerificationComplete,
         first_actor.recipient(),
     );
-    let first_dispatch = keyshare_event(TestEvent::new("first batch", 1), 10, EventSource::Local)
-        .get_ctx()
-        .clone();
     before.bus.publish(verdict.clone(), first_dispatch)?;
     let grown_dispatch = share_dispatch_of(&before.history, &[2]).await?;
     let persisted = wait_for_record(&before.recovery_repo, |recovery| {

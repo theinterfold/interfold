@@ -135,6 +135,18 @@ pub enum KeyshareState {
 }
 
 impl KeyshareState {
+    /// Whether C2/C3 collection and verification can still change the DKG. The decryption-key
+    /// calculation ends that phase and retires the share batch.
+    pub fn share_collection_is_open(&self) -> bool {
+        matches!(
+            self,
+            KeyshareState::Init
+                | KeyshareState::CollectingEncryptionKeys(_)
+                | KeyshareState::GeneratingThresholdShare(_)
+                | KeyshareState::AggregatingDecryptionKey(_)
+        )
+    }
+
     pub fn next(self: &KeyshareState, new_state: KeyshareState) -> Result<KeyshareState> {
         use KeyshareState as K;
         // The following can be used to check that we are transitioning to a valid state
