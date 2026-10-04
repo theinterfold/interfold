@@ -68,6 +68,8 @@ pub(crate) struct AccusationVoting {
     pub(super) committee: Vec<Address>,
     /// Finalized party IDs stay fixed when slashing removes active members.
     pub(super) committee_party_ids: HashMap<Address, u64>,
+    /// Immutable party slots, also after the live voting roster shrinks.
+    pub(super) finalized_committee: Vec<Address>,
     pub(super) circuit_threshold_t: usize,
     pub(super) vote_quorum_h: usize,
     pub(super) committee_n: usize,

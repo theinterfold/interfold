@@ -433,6 +433,13 @@ NodeFold waits for its request-time attestation context when that context is lat
 failures do not emit `DKGInvalidShares` or `DecryptionInvalidShares`. Cryptographically invalid
 proofs and incomplete proof sets keep their protocol-failure paths.
 
+`ProofRequestActor` signs each recipient's complete `ThresholdShareCreated` before publication. The
+signature digest is a type-separated ABI encoding of the E3 hash, dealer ID, recipient ID, share
+hash, and proof-bundle hash. The hashes use Keccak256 over positional bincode encodings. The
+proof-bundle encoding includes its order, optional fields, proof bytes, signals, and signatures.
+`external` is excluded because network receipt changes it. `DecryptionKeyShared` uses a separate
+type prefix and binds its E3 hash, dealer ID, node-address hash, and ordered C4 bundle hash.
+
 ### Step 6: Collect Threshold Shares (with C2/C3 Verification)
 
 ```
@@ -443,7 +450,11 @@ ThresholdShareCollector collects this recipient's shares from the other N−1 pa
 ├─ ThresholdKeyshare.handle_threshold_share_created():
 │   ├─ Filters: only process shares where target_party_id == MY party_id
 │   │   → Each published share contains this recipient's encrypted material
-│   ├─ After the canonical DKG deadline: records the share, but does not forward it
+│   ├─ Before record_threshold_share or collection: recovers the whole-message signature
+│   │   and requires the finalized committee address for the claimed dealer and this E3
+│   │   → The signature binds E3, dealer, recipient, share bytes, and the complete proof bundle
+│   │   → A rejected message reserves no slot and produces no accusation
+│   ├─ After the canonical DKG deadline: records the authenticated share, but does not forward it
 │   └─ Forwards filtered share to ThresholdShareCollector
 │
 ├─ At the 75% soft cutoff:
@@ -480,7 +491,10 @@ ThresholdShareCollector collects this recipient's shares from the other N−1 pa
              party_proofs: [all C2a, C2b, C3a, C3b proofs per party],
              pre_dishonest: [parties with missing/incomplete proofs]
            }
-           → ShareVerificationActor picks this up
+           → ShareVerificationActor picks this up, including an empty proof list
+           → If all dealers fail local prechecks, it emits the pre_dishonest outcome without ZK work
+           → Keyshare saves that outcome and can dispatch a larger batch when another dealer arrives
+           → A restarted keyshare grows the batch from saved share references too
 ```
 
 ### Step 6a: C2/C3 Share Proof Verification
@@ -504,8 +518,8 @@ ShareVerificationActor receives ShareVerificationDispatched(kind=ShareProofs)
 │   │   ├─ Validate circuit names match expected ProofType::circuit_names()
 │   │   │
 │   │   ├─ If ANY ECDSA check fails:
-│   │   │   └─ Emit SignedProofFailed { accused, proof_type }
-│   │   │      → Triggers accusation pipeline (see Part 5)
+│   │   │   └─ Exclude the bundle from this batch without emitting fault evidence
+│   │   │      → Unauthenticated labels and signatures cannot accuse a claimed party
 │   │   │
 │   │   └─ If ECDSA passes: cache recovered address, proceed
 │   │
@@ -714,12 +728,12 @@ ThresholdKeyshare accepts an H-dealer roster after C2/C3 verification
 │     │  ├─ ZkActor generates all C4 proofs
 │     │  │
 │     │  └─ When is_complete() (all C4a + C4b proofs):
-│     │      ├─ Signs all proofs
+│     │      ├─ Signs all proofs, then signs the complete C4 message
 │     │      └─ Publishes DecryptionKeyShared {
-│     │           e3_id, party_id,
-│     │           sk_poly_sum, es_poly_sum,        // protocol data
+│     │           e3_id, party_id, node,
 │     │           signed_sk_decryption_proof,       // C4a
-│     │           signed_esm_decryption_proofs[]    // C4b per ESI
+│     │           signed_e_sm_decryption_proofs[],  // C4b per ESI
+│     │           signature                       // complete message, excluding transport origin
 │     │         }
 │     │         → Broadcast to all committee nodes via P2P gossip
 │     │         → This is Protocol Exchange #3 (decryption key sharing)
@@ -727,6 +741,9 @@ ThresholdKeyshare accepts an H-dealer roster after C2/C3 verification
 ├─ 5. COLLECT C4 SHARES FROM THE ACCEPTED ROSTER:
 │     Each selected party waits for DecryptionKeyShared from the other H−1
 │     selected parties
+│     Before saving or collecting a C4 message, require its whole-message signature from
+│     the finalized dealer address. It binds the E3, dealer, node address, and ordered proof bundle.
+│     Rejected messages leave the slot free and produce no accusation.
 │     On restart, rebuild the collector from the saved roster and feed it saved
 │     peer shares before new shares arrive. A valid new share also creates the
 │     collector if it is still absent.

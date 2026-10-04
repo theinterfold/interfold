@@ -155,19 +155,25 @@ impl ProofRequestActor {
                     let c3a_proofs = signed_c3a_map.get(&proof_key).cloned().unwrap_or_default();
                     let c3b_proofs = signed_c3b_map.get(&proof_key).cloned().unwrap_or_default();
 
-                    if let Err(err) = self.bus.publish(
-                        ThresholdShareCreated {
-                            e3_id: e3_id.clone(),
-                            share: Arc::new(party_share),
-                            target_party_id: real_party_id,
-                            external: false,
-                            signed_c2a_proof: Some(signed_c2a.clone()),
-                            signed_c2b_proof: Some(signed_c2b.clone()),
-                            signed_c3a_proofs: c3a_proofs,
-                            signed_c3b_proofs: c3b_proofs,
-                        },
-                        ec.clone(),
-                    ) {
+                    let message = ThresholdShareCreated {
+                        signature: ArcBytes::default(),
+                        e3_id: e3_id.clone(),
+                        share: Arc::new(party_share),
+                        target_party_id: real_party_id,
+                        external: false,
+                        signed_c2a_proof: Some(signed_c2a.clone()),
+                        signed_c2b_proof: Some(signed_c2b.clone()),
+                        signed_c3a_proofs: c3a_proofs,
+                        signed_c3b_proofs: c3b_proofs,
+                    };
+                    let message = match message.sign(&self.signer) {
+                        Ok(message) => message,
+                        Err(err) => {
+                            error!("Failed to sign threshold share: {err}");
+                            return false;
+                        }
+                    };
+                    if let Err(err) = self.bus.publish(message, ec.clone()) {
                         error!(
                             "Failed to publish ThresholdShareCreated for party {}: {err}",
                             real_party_id

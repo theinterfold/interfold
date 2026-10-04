@@ -441,9 +441,11 @@ The verifier retries that input without starting an accusation.
 ProofVerificationFailed OR CommitmentConsistencyViolation event arrives
 │
 ├─ For ProofVerificationFailed:
-│   ├─ 1. Resolve accused address:
-│   │     If accused_address == 0x0:
-│   │       Look up from committee list by party_id
+│   ├─ 1. Authenticate the accused address:
+│   │     Require the exact proof signature to recover to the claimed finalized committee slot
+│   │     Require the signed E3, proof type, and proof hash to match the failure
+│   │     Keep finalized slots fixed when slashing removes a member from the live voting roster
+│   │     Drop an unrecoverable signature; never resolve a zero address through party_id
 │   │     Ignore a failure against this node's address or finalized party ID before caching
 │   │
 │   ├─ 2. Cache verification result:

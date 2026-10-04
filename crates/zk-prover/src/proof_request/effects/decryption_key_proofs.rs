@@ -172,17 +172,23 @@ impl ProofRequestActor {
             self.signer.address()
         );
 
-        if let Err(err) = self.bus.publish(
-            DecryptionKeyShared {
-                e3_id: e3_id.clone(),
-                party_id: pending.party_id,
-                node: pending.node,
-                signed_sk_decryption_proof: signed_sk,
-                signed_e_sm_decryption_proofs: signed_esms,
-                external: false,
-            },
-            pending.ec,
-        ) {
+        let message = DecryptionKeyShared {
+            signature: ArcBytes::default(),
+            e3_id: e3_id.clone(),
+            party_id: pending.party_id,
+            node: pending.node,
+            signed_sk_decryption_proof: signed_sk,
+            signed_e_sm_decryption_proofs: signed_esms,
+            external: false,
+        };
+        let message = match message.sign(&self.signer) {
+            Ok(message) => message,
+            Err(err) => {
+                error!("Failed to sign decryption key share: {err}");
+                return false;
+            }
+        };
+        if let Err(err) = self.bus.publish(message, pending.ec) {
             error!("Failed to publish DecryptionKeyShared: {err}");
         }
 

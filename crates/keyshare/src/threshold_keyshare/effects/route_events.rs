@@ -129,6 +129,21 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
             }
             InterfoldEventData::DecryptionKeyShared(data) => {
                 if data.external {
+                    let expected = self.dkg_dealer_address(&data.e3_id, data.party_id);
+                    match expected {
+                        Ok(Some(address))
+                            if data.recover_address().ok() == Some(address)
+                                && data.node.parse::<alloy::primitives::Address>().ok()
+                                    == Some(address) => {}
+                        _ => {
+                            warn!(
+                                party_id = data.party_id,
+                                e3_id = %data.e3_id,
+                                "Dropping decryption key share without its dealer's signature"
+                            );
+                            return;
+                        }
+                    }
                     // Route based on current state
                     if let Some(state) = self.state.get() {
                         if state.expelled_parties.contains(&data.party_id) {

@@ -146,6 +146,13 @@ every section.
 - DKG dealer identity binds the public proof statement, not randomized proof bytes. Replacing a
   same-E3 proof plan must invalidate every prior correlation ID before the replacement can accept
   responses. — `flow-trace/04`
+- A DKG dealer slot accepts only a message authenticated by that finalized committee member.
+  Threshold-share signatures bind the E3 (including chain ID), dealer, recipient, share bytes, and
+  complete C2/C3 bundle. C4 signatures bind the E3, dealer, node address, and complete proof bundle.
+  Individual proof signatures remain the evidence for proof failures. An unrecoverable signature or
+  a mismatched signer cannot name the claimed dealer in an accusation. —
+  `crates/events/src/interfold_event/{threshold_share_created,decryption_key_shared}.rs`;
+  `crates/keyshare/src/threshold_keyshare/effects/coordinate_collectors.rs`; `flow-trace/04`
 - A local C2/C3 result counts only for the share batch that its dispatch carried. A result of an
   earlier batch must not count a dealer that only a later, grown batch holds as verified. —
   `crates/keyshare/src/threshold_keyshare/effects/verify_threshold_shares.rs`; `flow-trace/04`

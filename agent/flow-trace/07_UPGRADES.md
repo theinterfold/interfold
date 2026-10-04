@@ -14,6 +14,12 @@ discover, or synchronize with each other. P2P encoding remains separate. Increas
 `GOSSIP_WIRE_MAJOR` or `SYNC_WIRE_MAJOR` when the corresponding wire format becomes incompatible
 within the same protocol version.
 
+The v0.19 DKG message layout requires storage schema 8, threshold-keyshare recovery schema 8, gossip
+wire major 5, and sync wire major 4. Both `ThresholdShareCreated` and `DecryptionKeyShared` include
+a dealer signature. Their event-log records, recovery inputs, and DHT payloads are incompatible with
+the unsigned layout. Protocol version 6 and node generation 2 remain the release cutover values.
+This change requires drain-and-resync; it has no layout migration.
+
 ## Compatible rolling release
 
 The release workflow packages the circuits before it compiles the binaries and ciphernode image.

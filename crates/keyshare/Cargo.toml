@@ -33,3 +33,6 @@ serde = { workspace = true }
 tracing = { workspace = true }
 ndarray = { workspace = true }
 zeroize = { workspace = true }
+
+[dev-dependencies]
+e3-zk-prover = { workspace = true }

@@ -834,7 +834,11 @@ async fn start_unwritable_actor(
     let (bus, history) = test_bus();
     let (state, _) = test_state(e3_id, keyshare_state);
     let state = unwritable(state.try_get()?).await;
-    let recovery = unwritable(ThresholdKeyshareRecoveryState::default()).await;
+    let recovery = unwritable(ThresholdKeyshareRecoveryState {
+        ciphernode_selected: Some(TypedEvent::new(selection(e3_id), test_ec(0))),
+        ..Default::default()
+    })
+    .await;
     let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
         bus,
         cipher: Arc::new(Cipher::from_password("test-password").await?),
@@ -976,7 +980,11 @@ async fn build_actor(
         state.expelled_parties.extend(expelled_parties);
         Ok(state)
     })?;
-    let (recovery, recovery_repo) = test_recovery_with_repo();
+    let (mut recovery, recovery_repo) = test_recovery_with_repo();
+    recovery.try_mutate_without_context(|mut recovery| {
+        recovery.ciphernode_selected = Some(TypedEvent::new(selection(e3_id), test_ec(0)));
+        Ok(recovery)
+    })?;
     let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
         bus,
         cipher: Arc::new(Cipher::from_password("test-password").await?),
@@ -1025,7 +1033,11 @@ async fn start_actor_before_selection_with_recovery(
         state.params = insecure_threshold_params();
         Ok(state)
     })?;
-    let (recovery, recovery_repo) = test_recovery_with_repo();
+    let (mut recovery, recovery_repo) = test_recovery_with_repo();
+    recovery.try_mutate_without_context(|mut recovery| {
+        recovery.ciphernode_selected = Some(TypedEvent::new(selection(e3_id), test_ec(0)));
+        Ok(recovery)
+    })?;
     let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
         bus,
         cipher: Arc::new(Cipher::from_password("test-password").await?),
@@ -1058,9 +1070,18 @@ fn keyshare_event(
         .into_sequenced(seq)
 }
 
+fn dealer_signer(party_id: u64) -> alloy::signers::local::PrivateKeySigner {
+    let mut bytes = [0u8; 32];
+    bytes[31] = [2, 3, 1][party_id as usize];
+    alloy::signers::local::PrivateKeySigner::from_bytes(&bytes.into()).unwrap()
+}
+
 fn selection(e3_id: &E3id) -> CiphernodeSelected {
     CiphernodeSelected {
         e3_id: e3_id.clone(),
+        committee: (0..3)
+            .map(|party| dealer_signer(party).address().to_string())
+            .collect(),
         ..CiphernodeSelected::default()
     }
 }
@@ -1078,6 +1099,7 @@ fn peer_key(e3_id: &E3id, party_id: u64) -> EncryptionKeyCreated {
 
 fn peer_share(e3_id: &E3id, party_id: u64) -> ThresholdShareCreated {
     ThresholdShareCreated {
+        signature: Default::default(),
         e3_id: e3_id.clone(),
         share: Arc::new(ThresholdShare {
             party_id,
@@ -1092,6 +1114,8 @@ fn peer_share(e3_id: &E3id, party_id: u64) -> ThresholdShareCreated {
         signed_c3a_proofs: Vec::new(),
         signed_c3b_proofs: Vec::new(),
     }
+    .sign(&dealer_signer(party_id))
+    .unwrap()
 }
 
 async fn wait_for_keyshare_state(
@@ -1407,6 +1431,7 @@ async fn early_threshold_share_batch_is_verified_after_own_shares_exist() -> Res
         signed_c3b_proofs: vec![proof; l],
     };
     let peer = ThresholdShareCreated {
+        signature: Default::default(),
         e3_id: e3_id.clone(),
         share: Arc::new(ThresholdShare {
             party_id: 1,
@@ -4103,6 +4128,11 @@ async fn restart_rebuilds_c4_collector_before_peer_share_arrives() -> Result<()>
         state.honest_parties = Some(BTreeSet::from([0, 1]));
         Ok(state)
     })?;
+    let mut recovery = test_recovery();
+    recovery.try_mutate_without_context(|mut recovery| {
+        recovery.ciphernode_selected = Some(TypedEvent::new(selection(&e3_id), test_ec(0)));
+        Ok(recovery)
+    })?;
     let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
         bus,
         cipher: Arc::new(Cipher::from_password("test-password").await?),
@@ -4111,7 +4141,7 @@ async fn restart_rebuilds_c4_collector_before_peer_share_arrives() -> Result<()>
         interfold_address: Address::ZERO,
         signer: alloy::signers::local::PrivateKeySigner::random(),
         effects_enabled: true,
-        recovery: test_recovery(),
+        recovery,
         recovery_payloads: test_recovery_payloads(),
         dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
     })
@@ -4152,6 +4182,7 @@ async fn duplicate_c4_after_collection_does_not_start_another_collector() -> Res
     let duplicate = peer_c4_event(&e3_id, 2);
     let mut recovery = test_recovery();
     recovery.try_mutate_without_context(|mut recovery| {
+        recovery.ciphernode_selected = Some(TypedEvent::new(selection(&e3_id), test_ec(0)));
         recovery.decryption_key_shares.insert(
             1,
             TypedEvent::new(
@@ -4266,13 +4297,21 @@ fn peer_c4_event(e3_id: &E3id, seq: u64) -> InterfoldEvent {
     let mut esm_proof = proof.clone();
     esm_proof.payload.proof_type = ProofType::C4bESmShareDecryption;
     let share = DecryptionKeyShared {
+        signature: Default::default(),
         e3_id: e3_id.clone(),
         party_id: 1,
-        node: Address::ZERO.to_string(),
-        signed_sk_decryption_proof: proof,
-        signed_e_sm_decryption_proofs: vec![esm_proof],
+        node: dealer_signer(1).address().to_string(),
+        signed_sk_decryption_proof: SignedProofPayload::sign(proof.payload, &dealer_signer(1))
+            .unwrap(),
+        signed_e_sm_decryption_proofs: vec![SignedProofPayload::sign(
+            esm_proof.payload,
+            &dealer_signer(1),
+        )
+        .unwrap()],
         external: true,
-    };
+    }
+    .sign(&dealer_signer(1))
+    .unwrap();
     InterfoldEvent::<Unsequenced>::new_with_timestamp(
         share.into(),
         None,
@@ -4282,3 +4321,6 @@ fn peer_c4_event(e3_id: &E3id, seq: u64) -> InterfoldEvent {
     )
     .into_sequenced(seq)
 }
+
+#[path = "tests/admission.rs"]
+mod admission;

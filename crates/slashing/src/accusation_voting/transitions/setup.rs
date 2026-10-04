@@ -30,6 +30,7 @@ impl AccusationVoting {
             my_address,
             signer,
             slashing_manager,
+            finalized_committee: committee.clone(),
             committee,
             committee_party_ids,
             circuit_threshold_t,

@@ -1505,7 +1505,7 @@ async fn test_trbfv_actor() -> Result<()> {
             let paths = restart_root
                 .as_ref()
                 .map(|root| {
-                    let node_dir = root.join(format!("{addr}"));
+                    let node_dir = root.join(&addr);
                     fs::create_dir_all(&node_dir)?;
                     Ok::<_, anyhow::Error>((node_dir.join("log"), node_dir.join("kv")))
                 })
@@ -1560,7 +1560,7 @@ async fn test_trbfv_actor() -> Result<()> {
                 let paths = restart_root
                     .as_ref()
                     .map(|root| {
-                        let node_dir = root.join(format!("{addr}"));
+                        let node_dir = root.join(&addr);
                         fs::create_dir_all(&node_dir)?;
                         Ok::<_, anyhow::Error>((node_dir.join("log"), node_dir.join("kv")))
                     })

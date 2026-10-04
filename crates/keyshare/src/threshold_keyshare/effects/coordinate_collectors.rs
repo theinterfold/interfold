@@ -5,6 +5,24 @@
 use super::*;
 
 impl ThresholdKeyshare {
+    /// Resolve a dealer only from this E3's finalized committee.
+    pub(super) fn dkg_dealer_address(
+        &self,
+        e3_id: &E3id,
+        party_id: u64,
+    ) -> Result<Option<alloy::primitives::Address>> {
+        if *e3_id != self.state.try_get()?.e3_id {
+            return Ok(None);
+        }
+        let recovery = self.recovery.try_get()?;
+        Ok(recovery.ciphernode_selected.as_ref().and_then(|selected| {
+            usize::try_from(party_id)
+                .ok()
+                .and_then(|party| selected.committee.get(party))
+                .and_then(|member| member.parse().ok())
+        }))
+    }
+
     /// Create or return the threshold-share collector. A new collector learns every recorded
     /// expulsion before any share, so it does not wait for a party that will not send one.
     pub fn ensure_collector(
@@ -310,6 +328,15 @@ impl ThresholdKeyshare {
             );
             return Ok(());
         }
+        let expected = self.dkg_dealer_address(&msg.e3_id, msg.share.party_id)?;
+        if expected.is_none() || msg.recover_address().ok() != expected {
+            warn!(
+                party_id = msg.share.party_id,
+                e3_id = %msg.e3_id,
+                "Dropping threshold share without its dealer's signature"
+            );
+            return Ok(());
+        }
         self.record_threshold_share(&msg)?;
         // One clock reading decides both whether the share is late and the collector's timing.
         let now = crate::domain::timeout_policy::now_unix_secs();
@@ -329,8 +356,9 @@ impl ThresholdKeyshare {
         );
         let collector = self.ensure_collector(self_addr, msg.get_ctx(), now)?;
         info!("got collector address!");
+        let ec = msg.get_ctx().clone();
         collector.do_send(msg);
-        Ok(())
+        self.dispatch_expanded_threshold_share_batch(ec)
     }
 
     pub fn handle_encryption_key_created(

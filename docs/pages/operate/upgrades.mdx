@@ -42,6 +42,10 @@ so they can connect to each other. A node on generation 1 can connect, but it ca
 the chain requires generation 2. The storage schema changes at v0.18.0, so a node that ran v0.15.1
 through v0.17.0 must [reset its state](#reset-node-state) before v0.18.0 can start.
 
+The v0.19 DKG message format requires storage schema 8 and gossip/sync wire versions 5 and 4. It
+uses protocol version 6 and node generation 2. Complete active E3 work before the
+[storage reset](#reset-node-state). The signed DKG messages cannot reuse schema 7 state.
+
 ## The on-chain release gate
 
 The Interfold contract points to a node release registry (`INodeReleaseRegistry`). The registry
@@ -250,8 +254,8 @@ image, through the image entrypoint. Mount the same volumes, as in
 
 ### Upgrade a node that serves an active E3
 
-Use this procedure when the new release keeps storage schema 7. The node keeps its state, so it
-keeps its key share for each active E3.
+Use this procedure only when the new release supports the node's current storage schema. It does not
+apply to the schema 7 to 8 upgrade. The node keeps its state and each active E3 key share.
 
 1. Stop the node gracefully, and wait until the process exits. Do not send `SIGKILL`. For Docker,
    run `docker stop --time 65 <container>`.
@@ -261,8 +265,8 @@ keeps its key share for each active E3.
    the complete volume. A container from an image earlier than v0.19.0 keeps its state inside the
    container, not on the volume. For such a container, see
    [Move state from an earlier image](/operate/running#move-state-from-an-earlier-image).
-3. Run `interfold node validate` with the new binary. Continue only if the report shows
-   `on-disk schema version 7 matches this binary` and ends with
+3. Run `interfold node validate` with the new binary. Continue only if the report confirms that the
+   on-disk schema matches this binary and ends with
    `VALIDATION PASSED — state is intact and consistent.` The line `empty store will be initialized`
    means that the command found no state at this location. In that case, do not start the new
    binary.

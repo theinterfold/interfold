@@ -22,7 +22,7 @@ use e3_events::{
     ShareDecryptionProofPending, SignedProofPayload, ThresholdShareCreated, ThresholdSharePending,
     TypedEvent, ZkRequest, ZkResponse,
 };
-use e3_utils::NotifySync;
+use e3_utils::{ArcBytes, NotifySync};
 use tracing::{debug, error, info, trace, warn};
 
 use crate::workflow::proof_request::{

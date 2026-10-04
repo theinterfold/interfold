@@ -160,12 +160,10 @@ impl ThresholdKeyshare {
         }
 
         if party_proofs_to_verify.is_empty() {
-            self.pending.shares.clear();
             warn!(
                 e3_id = %e3_id,
-                "No external DKG share proof passed local prechecks; this node cannot join the C4 roster"
+                "No external DKG share proof passed local prechecks; dispatching the batch outcome"
             );
-            return Ok(());
         }
 
         info!(

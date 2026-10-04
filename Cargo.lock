@@ -4225,6 +4225,7 @@ dependencies = [
  "e3-trbfv",
  "e3-utils",
  "e3-zk-helpers",
+ "e3-zk-prover",
  "fhe",
  "fhe-traits",
  "ndarray",

@@ -31,29 +31,18 @@ impl AccusationVoting {
             return Vec::new();
         }
 
-        let accused_address = if event.accused_address == Address::ZERO {
-            if let Some(&addr) = self.committee.get(event.accused_party_id as usize) {
-                warn!(
-                    "Resolved Address::ZERO for party {} to committee address {}",
-                    event.accused_party_id, addr
-                );
-                addr
-            } else {
-                error!(
-                    "Cannot resolve address for party {} (out of committee bounds) — dropping accusation",
-                    event.accused_party_id
-                );
-                return Vec::new();
-            }
-        } else {
-            event.accused_address
-        };
-
-        if !self.committee.contains(&accused_address) {
-            warn!(
-                "Ignoring proof failure for {} — not on E3 {} committee",
-                accused_address, self.e3_id
-            );
+        let accused_address = event.accused_address;
+        let expected = usize::try_from(event.accused_party_id)
+            .ok()
+            .and_then(|party| self.finalized_committee.get(party));
+        if !self.committee.contains(&accused_address)
+            || expected != Some(&accused_address)
+            || event.signed_payload.payload.e3_id != self.e3_id
+            || event.signed_payload.payload.proof_type != event.proof_type
+            || event.signed_payload.recover_address().ok() != Some(accused_address)
+            || Self::compute_payload_hash(&event.signed_payload) != event.data_hash
+        {
+            warn!("Ignoring proof failure without the claimed committee member's signature");
             return Vec::new();
         }
 

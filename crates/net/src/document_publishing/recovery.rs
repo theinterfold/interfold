@@ -317,6 +317,7 @@ mod tests {
             meta: request.meta.clone(),
             value: ArcBytes::from_bytes(
                 &ReceivableDocument::DecryptionKeyShared(DecryptionKeyShared {
+                    signature: Default::default(),
                     e3_id: e3_id.clone(),
                     party_id: 0,
                     node: "test-node".to_string(),

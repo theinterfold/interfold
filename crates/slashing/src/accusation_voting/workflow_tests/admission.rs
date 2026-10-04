@@ -292,11 +292,16 @@ fn received_self_accusations_are_ignored() {
             let id = AccusationVoting::accusation_id(&accusation);
             if cached {
                 let actions = v.on_local_proof_failure(failure.clone(), &ctx());
-                assert!(!actions.is_empty());
-                assert_eq!(
-                    v.on_vote_timeout(id).unwrap().0.outcome,
-                    AccusationOutcome::Inconclusive
-                );
+                // A local failure accuses only the dealer that holds the claimed finalized slot.
+                if committee[party_id as usize] == accused.address() {
+                    assert!(!actions.is_empty());
+                    assert_eq!(
+                        v.on_vote_timeout(id).unwrap().0.outcome,
+                        AccusationOutcome::Inconclusive
+                    );
+                } else {
+                    assert!(actions.is_empty());
+                }
             }
             let vote = signed_vote(
                 &accuser,

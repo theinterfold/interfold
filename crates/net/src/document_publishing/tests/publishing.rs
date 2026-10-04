@@ -28,6 +28,7 @@ fn decryption_publication(e3_id: E3id) -> Result<PublishDocumentRequested> {
         signature: ArcBytes::from_bytes(&[3; 65]),
     };
     let value = ReceivableDocument::DecryptionKeyShared(DecryptionKeyShared {
+        signature: Default::default(),
         e3_id: e3_id.clone(),
         party_id: 0,
         node: "test-node".to_string(),

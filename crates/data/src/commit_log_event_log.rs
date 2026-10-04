@@ -970,6 +970,7 @@ mod tests {
             (
                 "DecryptionKeyShared",
                 DecryptionKeyShared {
+                    signature: Default::default(),
                     e3_id: e3_id.clone(),
                     party_id: 0,
                     node: node.clone(),

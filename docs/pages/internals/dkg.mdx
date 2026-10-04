@@ -220,9 +220,11 @@ the DKG moduli and outputs `pk_commitment`. C0 does not prove correct key genera
 key so that C3 can prove which key encrypted each share.
 
 The node publishes `EncryptionKeyCreated` with the signed C0 proof. Receivers verify it in
-`ProofVerificationActor` before they store the key. The `EncryptionKeyCollector` finishes when all N
-keys arrive. At the C0 cutoff, it continues if it has at least H keys that include the node's own
-key. With fewer keys, the node records `DKGTimeout` and stops.
+`ProofVerificationActor` before they store the key. Before reserving a verification slot, the
+receiver checks the committee signer, E3, C0 proof type, and commitment to the advertised key. The
+`EncryptionKeyCollector` finishes when all N keys arrive. At the C0 cutoff, it continues if it has
+at least H keys that include the node's own key. With fewer keys, the node records `DKGTimeout` and
+stops.
 
 A local verifier error leaves C0 verification pending. The receiver retains the authenticated input
 and retries after five seconds. Each failed attempt doubles the delay, up to 60 seconds, and logs a
@@ -283,17 +285,23 @@ complete proof plan is ready. It then signs each proof and publishes one recipie
 - The public key share and the recipient's encrypted shares.
 - The signed C2a and C2b proofs.
 - The signed C3a and C3b proofs for that recipient.
+- A dealer signature over the E3, dealer, recipient, share bytes, and complete proof bundle.
 
 The signed C1 proof does not travel in `ThresholdShareCreated`. It travels later in
 `KeyshareCreated`.
 
 ### Share verification
 
-`ThresholdShareCollector` keeps shares addressed to this node. When all $N - 1$ external shares
-arrive, it closes. At the 75% checkpoint, it starts verification if it has at least $H - 1$ external
-shares, and it keeps collecting. Later shares extend the verified dealer set until all $N - 1$
-arrive or the DKG deadline passes. Only the DKG deadline can emit `ThresholdShareCollectionFailed`.
-The parent ignores that failure after it reaches `ReadyForDecryption` or a later phase.
+Before saving or collecting a share, `ThresholdKeyshare` checks its complete message signature
+against the dealer's finalized committee address. A rejected message leaves the dealer's slot
+available for an authenticated share. Signature rejection does not accuse the claimed dealer.
+
+`ThresholdShareCollector` keeps authenticated shares addressed to this node. When all $N - 1$
+external shares arrive, it closes. At the 75% checkpoint, it starts verification if it has at least
+$H - 1$ external shares, and it keeps collecting. Later shares extend the verified dealer set until
+all $N - 1$ arrive or the DKG deadline passes. Only the DKG deadline can emit
+`ThresholdShareCollectionFailed`. The parent ignores that failure after it reaches
+`ReadyForDecryption` or a later phase.
 
 `ShareVerificationActor` verifies each batch in three phases:
 
@@ -305,7 +313,10 @@ The parent ignores that failure after it reaches `ReadyForDecryption` or a later
 3. **ZK verification.** It runs `bb verify` for the remaining parties and publishes
    `ShareVerificationComplete` with the dishonest parties.
 
-The keyshare actor then drops failed dealers and C3 proofs that target a different recipient key. It
+A batch with no proofs that pass local prechecks still produces and saves a verification outcome. A
+later authenticated share can extend the batch, including after a restart.
+
+The keyshare actor drops failed dealers and C3 proofs that target a different recipient key. It
 saves each verified dealer as a `DkgDealer { party_id, contribution_hash }`, where:
 
 $$
@@ -373,6 +384,10 @@ The node publishes `DecryptionKeyShared` with its signed C4 proofs. It collects 
 proofs of the other $H - 1$ roster members. It then publishes `KeyshareCreated` with its public key
 share and its signed C1 proof. A node outside the roster makes C4 only if it holds all H roster
 shares. Its C4 does not add a row to the key.
+
+The C4 message also carries a dealer signature over its E3, party ID, node address, and complete
+ordered proof bundle. The receiver checks this signature before saving the first message or
+forwarding it to the C4 collector. A rejected message leaves that party's slot available.
 
 ## P2: Public key aggregation (C5)
 
