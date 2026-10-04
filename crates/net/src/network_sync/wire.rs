@@ -69,11 +69,25 @@ pub(crate) fn notification_is_valid(
     notification: &DocumentPublishedNotification,
     now: DateTime<Utc>,
 ) -> bool {
+    notification_has_valid_shape(notification) && notification.meta.expires_at > now
+}
+
+fn notification_has_valid_shape(notification: &DocumentPublishedNotification) -> bool {
     notification.key.0.len() == 32
         && matches!(notification.meta.filter.as_slice(), [] | [Filter::Item(_)])
         && notification.meta.e3_id.e3_id().len() <= 78
-        && notification.meta.expires_at > now
 }
+
+#[derive(Debug)]
+pub(crate) struct ExpiredDocumentNotification;
+
+impl std::fmt::Display for ExpiredDocumentNotification {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("expired document notification")
+    }
+}
+
+impl std::error::Error for ExpiredDocumentNotification {}
 
 pub(crate) fn decode<T: DeserializeOwned>(bytes: &[u8], max_bytes: usize) -> Result<T, Error> {
     let max_bytes =
@@ -137,8 +151,8 @@ pub(crate) fn decode_gossip(
     let data = GossipData::from_bytes(&envelope.payload)?;
     if let GossipData::DocumentPublishedNotification(notification) = &data {
         ensure!(
-            notification_is_valid(notification, now),
-            "invalid or expired document notification"
+            notification_has_valid_shape(notification),
+            "invalid document notification"
         );
     }
     let metadata = gossip_metadata(&data, policy)?;
@@ -153,6 +167,12 @@ pub(crate) fn decode_gossip(
             ),
         "gossip envelope metadata does not match its payload"
     );
+    if let GossipData::DocumentPublishedNotification(notification) = &data {
+        ensure!(
+            notification.meta.expires_at > now,
+            ExpiredDocumentNotification
+        );
+    }
     Ok(data)
 }
 

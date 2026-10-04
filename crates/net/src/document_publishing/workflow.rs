@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     fmt,
     time::{Duration, Instant},
 };
@@ -109,11 +109,15 @@ pub fn fetch_retry_delay(failures: u32) -> Duration {
 /// first notification it saw and the newest others, and the fetch accepts the document under the
 /// first one that matches it. A peer cannot replace a correct notification with a wrong one.
 pub const MAX_NOTIFICATION_CANDIDATES: usize = 4;
+/// Keep the first announcer and the most recent others when peer identities churn.
+pub const MAX_FETCH_ANNOUNCERS: usize = 128;
 
 /// A notified document that waits for a fetch slot or for its retry time.
 #[derive(Clone, Debug)]
 pub struct WaitingFetch {
+    /// The peer charged for this queue entry or active read.
     pub peer: Option<PeerId>,
+    announcers: Vec<Option<PeerId>>,
     /// Notifications that name this document, first seen first, distinct by metadata.
     pub notifications: Vec<DocumentPublishedNotification>,
     pub not_before: Instant,
@@ -129,6 +133,7 @@ impl WaitingFetch {
     ) -> Self {
         Self {
             peer,
+            announcers: vec![peer],
             notifications,
             not_before,
             failures,
@@ -137,8 +142,14 @@ impl WaitingFetch {
 
     /// Add a notification. A copy with the same metadata replaces the older copy. When the list is
     /// full, the oldest notification after the first one makes room.
-    fn add(&mut self, notification: DocumentPublishedNotification) {
+    pub fn add(&mut self, peer: Option<PeerId>, notification: DocumentPublishedNotification) {
         add_candidate(&mut self.notifications, notification);
+        if !self.announcers.contains(&peer) {
+            if self.announcers.len() >= MAX_FETCH_ANNOUNCERS {
+                self.announcers.remove(1);
+            }
+            self.announcers.push(peer);
+        }
     }
 }
 
@@ -217,7 +228,9 @@ impl FetchQueue {
         now: Instant,
     ) -> bool {
         if let Some(waiting) = self.waiting.get_mut(&id) {
-            waiting.add(notification);
+            waiting.add(peer, notification);
+            self.add_peer(peer);
+            self.prune_peers();
             return true;
         }
         if !self.make_room(peer, 0) {
@@ -229,32 +242,31 @@ impl FetchQueue {
         true
     }
 
-    /// Queue a document again after its `failures`-th failed fetch. Returns `false` when the
-    /// queue is full of documents that failed more often; a later announcement queues it again.
+    /// Queue a failed fetch with all its announcers and candidates. A later announcement can
+    /// restore a document that cannot reclaim space in a full queue.
     pub fn retry(
         &mut self,
         id: (E3id, ContentHash),
-        peer: Option<PeerId>,
-        notifications: Vec<DocumentPublishedNotification>,
-        failures: u32,
+        mut waiting: WaitingFetch,
         now: Instant,
     ) -> bool {
-        if notifications.is_empty() {
+        if waiting.notifications.is_empty() {
             return false;
         }
-        if !self.make_room(peer, failures) {
+        let Some(peer) = waiting
+            .announcers
+            .iter()
+            .copied()
+            .find(|peer| self.make_room(*peer, waiting.failures))
+        else {
             return false;
+        };
+        waiting.peer = peer;
+        waiting.not_before = now + fetch_retry_delay(waiting.failures);
+        for peer in &waiting.announcers {
+            self.add_peer(*peer);
         }
-        self.add_peer(peer);
-        self.waiting.insert(
-            id,
-            WaitingFetch::new(
-                peer,
-                notifications,
-                now + fetch_retry_delay(failures),
-                failures,
-            ),
-        );
+        self.waiting.insert(id, waiting);
         true
     }
 
@@ -265,8 +277,12 @@ impl FetchQueue {
     }
 
     fn prune_peers(&mut self) {
-        self.peers
-            .retain(|peer| self.waiting.values().any(|item| item.peer == *peer));
+        let peers: HashSet<_> = self
+            .waiting
+            .values()
+            .flat_map(|item| item.announcers.iter().copied())
+            .collect();
+        self.peers.retain(|peer| peers.contains(peer));
     }
 
     /// Unused capacity belongs to any peer. At capacity, a new or smaller owner can reclaim
@@ -298,14 +314,16 @@ impl FetchQueue {
         now: Instant,
         in_flight: &HashMap<Option<PeerId>, usize>,
     ) -> Option<((E3id, ContentHash), WaitingFetch)> {
+        let due: HashSet<_> = self
+            .waiting
+            .values()
+            .filter(|item| item.not_before <= now)
+            .flat_map(|item| item.announcers.iter().copied())
+            .collect();
         let peer = self
             .peers
             .iter()
-            .filter(|peer| {
-                self.waiting
-                    .values()
-                    .any(|item| item.peer == **peer && item.not_before <= now)
-            })
+            .filter(|peer| due.contains(peer))
             .min_by_key(|peer| in_flight.get(peer).copied().unwrap_or(0))
             .copied()?;
         while self.peers.front() != Some(&peer) {
@@ -315,12 +333,13 @@ impl FetchQueue {
         let id = self
             .waiting
             .iter()
-            .filter(|(_, item)| item.peer == peer && item.not_before <= now)
+            .filter(|(_, item)| item.announcers.contains(&peer) && item.not_before <= now)
             .min_by_key(|(_, item)| item.not_before)
             .map(|(id, _)| id.clone())?;
-        let waiting = self.waiting.remove_entry(&id);
+        let (id, mut waiting) = self.waiting.remove_entry(&id)?;
+        waiting.peer = peer;
         self.prune_peers();
-        waiting
+        Some((id, waiting))
     }
 
     pub fn remove_e3(&mut self, e3_id: &E3id) {
@@ -769,8 +788,9 @@ mod tests {
         );
         assert_eq!(queue.len(), 2);
 
-        let (id, waiting) = queue.pop_due(now, &HashMap::new()).unwrap();
-        assert!(queue.retry(id.clone(), None, waiting.notifications, 1, now));
+        let (id, mut waiting) = queue.pop_due(now, &HashMap::new()).unwrap();
+        waiting.failures = 1;
+        assert!(queue.retry(id.clone(), waiting, now));
         assert!(
             queue.push(c.clone(), None, c_note, now),
             "a failed document makes room"
@@ -791,11 +811,41 @@ mod tests {
     }
 
     #[test]
+    fn announcer_churn_is_bounded_and_keeps_recent_peers_eligible() {
+        let now = Instant::now();
+        let mut queue = FetchQueue::new(2);
+        let (id, note) = document("1", b"shared");
+        let mut in_flight = HashMap::new();
+        let mut latest = None;
+        for index in 0..MAX_FETCH_ANNOUNCERS * 2 {
+            let peer = Some(PeerId::random());
+            assert!(queue.push(id.clone(), peer, note.clone(), now));
+            assert!(queue.peers.len() <= MAX_FETCH_ANNOUNCERS);
+            assert!(queue.waiting[&id].announcers.len() <= MAX_FETCH_ANNOUNCERS);
+            assert_eq!(queue.len(), 1);
+            if index < MAX_FETCH_ANNOUNCERS * 2 - 1 {
+                in_flight.insert(peer, 1);
+            }
+            latest = peer;
+        }
+        let (fetched, waiting) = queue.pop_due(now, &in_flight).unwrap();
+        assert_eq!(fetched, id);
+        assert_eq!(waiting.peer, latest);
+        assert_eq!(waiting.notifications, vec![note]);
+        assert!(queue.pop_due(now, &in_flight).is_none());
+        assert!(queue.peers.is_empty());
+    }
+
+    #[test]
     fn a_repeated_notification_keeps_the_retry_time_and_adds_a_candidate() {
         let now = Instant::now();
         let mut queue = FetchQueue::new(4);
         let (a, a_note) = document("1", b"a");
-        assert!(queue.retry(a.clone(), None, vec![a_note.clone()], 2, now));
+        assert!(queue.retry(
+            a.clone(),
+            WaitingFetch::new(None, vec![a_note.clone()], now, 2),
+            now
+        ));
         let newer = with_filter(&a_note, vec![Filter::Item(3)]);
         assert!(queue.push(a.clone(), None, newer.clone(), now));
         assert!(queue.pop_due(now, &HashMap::new()).is_none());
@@ -878,7 +928,11 @@ mod tests {
         let mut queue = FetchQueue::new(4);
         let (a, a_note) = document("1", b"a");
         for failures in 1..40 {
-            assert!(queue.retry(a.clone(), None, vec![a_note.clone()], failures, now));
+            assert!(queue.retry(
+                a.clone(),
+                WaitingFetch::new(None, vec![a_note.clone()], now, failures),
+                now
+            ));
             let (_, waiting) = queue
                 .pop_due(now + MAX_ANNOUNCE_BACKOFF * 2, &HashMap::new())
                 .unwrap();
@@ -896,10 +950,26 @@ mod tests {
         let (a, a_note) = document("1", b"a");
         let (b, b_note) = document("1", b"b");
         let (c, c_note) = document("1", b"c");
-        assert!(queue.retry(a.clone(), None, vec![a_note], 5, now));
-        assert!(queue.retry(b.clone(), None, vec![b_note], 1, now));
-        assert!(!queue.retry(c.clone(), None, vec![c_note.clone()], 7, now));
-        assert!(queue.retry(c.clone(), None, vec![c_note], 2, now));
+        assert!(queue.retry(
+            a.clone(),
+            WaitingFetch::new(None, vec![a_note], now, 5),
+            now
+        ));
+        assert!(queue.retry(
+            b.clone(),
+            WaitingFetch::new(None, vec![b_note], now, 1),
+            now
+        ));
+        assert!(!queue.retry(
+            c.clone(),
+            WaitingFetch::new(None, vec![c_note.clone()], now, 7),
+            now
+        ));
+        assert!(queue.retry(
+            c.clone(),
+            WaitingFetch::new(None, vec![c_note], now, 2),
+            now
+        ));
         assert!(!queue.contains(&a));
         assert!(queue.contains(&b) && queue.contains(&c));
     }

@@ -35,8 +35,8 @@ pub(crate) mod sync_coordinator;
 pub(crate) mod wire;
 
 pub use document_publishing::{
-    add_candidate, datetime_to_instant_from_now, Cleanup, CleanupQueue, DocumentPublishingService,
-    FetchQueue, PublicationSchedule, RestorableDocuments,
+    datetime_to_instant_from_now, Cleanup, CleanupQueue, DocumentPublishingService, FetchQueue,
+    PublicationSchedule, RestorableDocuments, WaitingFetch,
 };
 pub use event_conversion::{EventConversionService, IncomingDocument};
 pub use event_translation::EventTranslationService;

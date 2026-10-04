@@ -11,7 +11,7 @@ use chrono::{DateTime, Utc};
 use libp2p::{gossipsub::MessageId, PeerId};
 
 use crate::{
-    domain::wire::decode_gossip,
+    domain::wire::{decode_gossip, ExpiredDocumentNotification},
     events::GossipData,
     seen_messages::{Admission, SeenIds},
     NetworkPolicy,
@@ -41,7 +41,12 @@ impl GossipIngress {
         if self.seen.contains(id, now) {
             return Ok(None);
         }
-        let data = decode_gossip(bytes, network, wall_time)?;
+        let data = match decode_gossip(bytes, network, wall_time) {
+            Ok(data) => data,
+            // Expiry can pass between hops without any fault by the propagation peer.
+            Err(error) if error.is::<ExpiredDocumentNotification>() => return Ok(None),
+            Err(error) => return Err(error),
+        };
         Ok((self.seen.admit(Some(peer), id, now) == Admission::New).then_some(data))
     }
 }

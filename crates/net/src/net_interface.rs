@@ -1290,7 +1290,7 @@ async fn process_swarm_event(
                                 &peer_id,
                                 gossipsub::MessageAcceptance::Ignore,
                             );
-                        trace!(%peer_id, %id, "Ignored duplicate gossip");
+                        trace!(%peer_id, %id, "Ignored duplicate or expired gossip");
                     }
                     Err(error) => {
                         swarm

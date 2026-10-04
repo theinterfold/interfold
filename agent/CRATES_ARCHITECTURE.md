@@ -563,10 +563,12 @@ A message that arrives before its sender is admitted is not recorded, so a later
 admitted peer is still handled. Gossip envelopes bind the network, Interfold deployment, chain
 aggregate, event ID, schema version, and payload hash. The wire decoder checks notification key
 length, E3 identifier length, party-filter shape, and expiry before gossip accepts or forwards it.
-Valid notifications relay even when they name another party; acceptance does not wait for a DHT
-read. No peer message-count or byte-rate throttle discards valid relayed traffic. The existing
-per-message wire size bounds still apply. `DocumentIngress` and `NetEvent::GossipIngress` carry the
-propagation peer only in local memory, including through startup buffering. Gossipsub and
+Malformed messages get `Reject`. A well-formed notification that has expired gets `Ignore`, so
+expiry between hops does not penalize an honest relay. Envelope and metadata checks precede this
+expiry result. Valid notifications relay even when they name another party; acceptance does not wait
+for a DHT read. No peer message-count or byte-rate throttle discards valid relayed traffic. The
+existing per-message wire size bounds still apply. `DocumentIngress` and `NetEvent::GossipIngress`
+carry the propagation peer only in local memory, including through startup buffering. Gossipsub and
 direct-request/DHT decoding have explicit byte limits. Translation actors accept only the protocol
 event allowlist before publishing remote events, and their broadcast-to-actor ingress loops await
 mailbox acceptance and stop when the destination actor closes. The event translator does not publish
@@ -582,12 +584,16 @@ ingress loop. At most 8 fetches run and 512 documents wait. Four concurrent N=19
 `4 * 3 * 18 = 216` remote documents per node. A 2x margin gives 432, rounded up to 512 queue slots.
 The next due peer with the fewest active reads gets the next slot; ties rotate. A lone peer uses all
 idle slots. A GET releases its slot after one attempt (at most 90 seconds); retries wait in the fair
-queue instead of holding a slot through several attempts. The first notifying peer owns a document
-through retries; later candidates do not change ownership. At capacity, a peer below its fair share
-can replace queued work of the largest owner. Otherwise, only its own work with more failures can
-make room. Overflow can wait for a later announcement. Early buffering holds up to
-`4 * 380 * 2 = 3,040` notifications, with the same borrowing rule and no hard per-peer cap. New
-ingress removes expired entries. In-process notifications without a peer share an unattributed
+queue instead of holding a slot through several attempts. Each document retains up to 128 announcers
+across queueing, active reads, and retries. At that limit, a new announcer replaces the oldest one
+after the first. Any retained announcer can supply the next fair slot, charged only to the selected
+peer. The document still has one queue entry and at most one active read. Duplicate announcements do
+not advance its retry deadline. At capacity, a peer below its fair share can replace queued work of
+the largest owner. Otherwise, only its own work with more failures can make room. Overflow can wait
+for a later announcement. Early buffering holds up to `4 * 380 * 2 = 3,040` notifications, distinct
+by peer, document, and party filter, with the same borrowing rule and no hard per-peer cap. Each
+peer retains its attribution until committee selection drains these entries into the fetch queue.
+New ingress removes expired entries. In-process notifications without a peer share an unattributed
 owner. Failed fetches retry with backoff until delivery, E3 closure, or expiry. A waiting document
 keeps one candidate notification per party filter (`[]` or `[Item(party)]`, the only shapes that any
 release publishes), with the latest expiry, and the fetched document is accepted under the first

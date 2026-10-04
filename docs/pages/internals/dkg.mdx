@@ -725,8 +725,10 @@ C5 and C7 do not travel as separate proofs. They enter the recursive proofs of t
 aggregator.
 
 A node checks each document notification's structure and expiry before gossip forwards it. Valid
-notifications for other parties still relay. Admission does not impose message-count or byte-rate
-throttles on a relay. Each message must still fit the wire size limit.
+notifications for other parties still relay. Malformed messages are rejected. A well-formed
+notification that expires between hops is ignored without a penalty to the relay's score. Admission
+does not impose message-count or byte-rate throttles on a relay. Each message must still fit the
+wire size limit.
 
 Document fetches use up to eight active reads and 512 waiting documents. A peer can use all idle
 capacity. When peers compete, the next due peer with the fewest active reads gets the next slot;
@@ -734,12 +736,18 @@ ties rotate. Each read releases its slot after one attempt, within 90 seconds. F
 to the queue with backoff. At capacity, a peer below its fair share can reclaim space from the
 largest owner. Notifications repeat to recover queue overflow.
 
+Each document retains up to 128 announcing peers through queueing and retries, including
+announcements that arrive during a read. A new announcer replaces the oldest one after the first
+when this limit is reached. Any retained announcer can supply its next fair slot. The node still
+fetches each document once at a time, and duplicates do not advance retry deadlines.
+
 Capacity planning uses four concurrent N=19, H=14 E3s and a 2x margin. Each E3 can emit 380 document
 notifications and 173 ordinary publications, including six Ready updates per party. This gives 4,424
 publications per round with the margin. Each seen-ID cache reserves four rounds for initial traffic
 and early retries, plus 15 IDs/s for six hours: 341,696 entries. A node needs 54 remote documents
 per E3; four E3s with the margin need 432 queue slots, rounded up to 512. Early notifications have
-3,040 slots because the recipient is not yet known.
+3,040 slots because the recipient is not yet known. These entries distinguish the announcing peer,
+document, and party filter, so committee selection preserves each peer's attribution.
 
 Seen-ID caches admit every new ID. Peers borrow idle space; at capacity, a peer at its fair share
 replaces its own oldest ID. A peer below its share reclaims space from the largest owner. Early

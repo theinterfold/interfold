@@ -1090,6 +1090,130 @@ mod notification_ingress {
     }
 
     #[tokio::test]
+    async fn expiry_between_hops_preserves_relay_score_and_valid_delivery() -> Result<()> {
+        let mut path = GossipPath::new(1, 0).await?;
+        let relay: PeerId = path.source.status().snapshot().connected_peers[0]
+            .peer_id
+            .parse()?;
+        let mut receiver = super::TestNode::new()?;
+        let mut delivered = receiver.interface.handle().rx();
+        receiver.interface.swarm.behaviour_mut().connection_limits =
+            libp2p::connection_limits::Behaviour::new(
+                libp2p::connection_limits::ConnectionLimits::default()
+                    .with_max_established(Some(1)),
+            );
+        receiver.interface.swarm.dial(
+            listen_address(&path.handles[0])
+                .await?
+                .parse::<libp2p::Multiaddr>()?,
+        )?;
+        timeout(Duration::from_secs(20), async {
+            while !receiver.admission.is_admitted(&relay)
+                || !receiver
+                    .interface
+                    .swarm
+                    .behaviour()
+                    .gossipsub
+                    .all_peers()
+                    .any(|(peer, topics)| *peer == relay && !topics.is_empty())
+            {
+                let event = receiver.next_event().await?;
+                receiver.process(event).await?;
+            }
+            anyhow::Ok(())
+        })
+        .await??;
+
+        let expiry = Utc::now() + chrono::Duration::seconds(3);
+        let mut expected = HashSet::new();
+        for dealer in 0..8 {
+            let mut note = notification(1, dealer, 7);
+            note.meta.expires_at = expiry;
+            expected.insert(
+                path.publish(GossipData::DocumentPublishedNotification(note))
+                    .await?,
+            );
+        }
+        let mut pending = Vec::new();
+        timeout(Duration::from_secs(2), async {
+            while pending.len() < expected.len() {
+                let event = receiver.next_event().await?;
+                if let super::super::SwarmEvent::Behaviour(
+                    super::super::NodeBehaviourEvent::Gossipsub(
+                        libp2p::gossipsub::Event::Message {
+                            propagation_source,
+                            message_id,
+                            ..
+                        },
+                    ),
+                ) = &event
+                {
+                    assert_eq!(*propagation_source, relay);
+                    assert!(expected.contains(message_id));
+                    assert!(Utc::now() < expiry, "the relay forwarded before expiry");
+                    pending.push(event);
+                } else {
+                    receiver.process(event).await?;
+                }
+            }
+            anyhow::Ok(())
+        })
+        .await??;
+        // Hold application validation across expiry after the relay has forwarded the bytes.
+        sleep((expiry - Utc::now()).to_std()? + Duration::from_millis(10)).await;
+        let score = receiver
+            .interface
+            .swarm
+            .behaviour()
+            .gossipsub
+            .peer_score(&relay)
+            .context("relay score is enabled")?;
+        for event in pending {
+            receiver.process(event).await?;
+        }
+        assert_eq!(
+            receiver
+                .interface
+                .swarm
+                .behaviour()
+                .gossipsub
+                .peer_score(&relay),
+            Some(score),
+            "expiry must not penalize the relay",
+        );
+        while let Ok(event) = delivered.try_recv() {
+            assert!(
+                !matches!(event, NetEvent::DocumentIngress(_)),
+                "expired notification was accepted"
+            );
+        }
+
+        let valid = notification(2, 1, 9);
+        let valid_id = path
+            .publish(GossipData::DocumentPublishedNotification(valid.clone()))
+            .await?;
+        timeout(Duration::from_secs(10), async {
+            loop {
+                let event = receiver.next_event().await?;
+                let is_valid = matches!(&event,
+                    super::super::SwarmEvent::Behaviour(super::super::NodeBehaviourEvent::Gossipsub(
+                        libp2p::gossipsub::Event::Message { propagation_source, message_id, .. }
+                    )) if *propagation_source == relay && *message_id == valid_id);
+                receiver.process(event).await?;
+                if is_valid {
+                    break;
+                }
+            }
+            anyhow::Ok(())
+        })
+        .await??;
+        assert!(std::iter::from_fn(|| delivered.try_recv().ok()).any(|event|
+            matches!(event, NetEvent::DocumentIngress(ingress) if ingress.notification == valid)
+        ), "valid traffic still reaches the document actor");
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn concurrent_committee_bursts_reach_both_receivers_through_relays() -> Result<()> {
         use e3_events::{
             DKGRecursiveAggregationComplete, EventConstructorWithTimestamp, EventSource,

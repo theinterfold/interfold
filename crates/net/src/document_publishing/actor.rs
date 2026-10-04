@@ -8,9 +8,9 @@ use crate::net_interface_handle::NetEventSubscriber;
 use crate::{
     domain::wire::notification_is_valid,
     domain::{
-        add_candidate, closed_e3s::record_closed_e3, datetime_to_instant_from_now, Cleanup,
-        CleanupQueue, DocumentPublishingService, FetchQueue, PublicationSchedule,
-        RestorableDocuments,
+        closed_e3s::record_closed_e3, datetime_to_instant_from_now, Cleanup, CleanupQueue,
+        DocumentPublishingService, FetchQueue, PublicationSchedule, RestorableDocuments,
+        WaitingFetch,
     },
     events::{
         call_and_await_response, DocumentIngress, DocumentPublishedNotification, GossipData,
@@ -161,12 +161,9 @@ pub struct DocumentPublisher {
     sending_cleanup: bool,
     received: HashSet<DocumentId>,
     /// Documents being fetched, with the peer charged for each fetch.
-    fetching: HashMap<DocumentId, Option<libp2p::PeerId>>,
+    fetching: HashMap<DocumentId, WaitingFetch>,
     fetch_queue: FetchQueue,
     fetch_aborts: HashMap<DocumentId, AbortHandle>,
-    /// Notifications that arrived while their document was being fetched. They become candidates
-    /// for the next fetch if the current one does not deliver the document.
-    late_notifications: HashMap<DocumentId, Vec<DocumentPublishedNotification>>,
     early_notifications: VecDeque<DocumentIngress>,
     closed_e3s: VecDeque<E3id>,
     /// Received documents that wait for `SyncEnded` to be stored in this node's DHT store again.
@@ -233,7 +230,6 @@ impl DocumentPublisher {
             fetching: HashMap::new(),
             fetch_queue: FetchQueue::new(MAX_WAITING_FETCHES),
             fetch_aborts: HashMap::new(),
-            late_notifications: HashMap::new(),
             early_notifications: VecDeque::new(),
             closed_e3s: recovered.closed_e3s,
             restorable: recovered.restorable,
@@ -527,7 +523,6 @@ impl DocumentPublisher {
         }
         self.received.retain(|(id, _)| id != e3_id);
         self.fetching.retain(|(id, _), _| id != e3_id);
-        self.late_notifications.retain(|(id, _), _| id != e3_id);
         self.fetch_queue.remove_e3(e3_id);
         self.restorable.remove_e3(e3_id);
         if let Some((restoring, closed)) = &mut self.restoring {
