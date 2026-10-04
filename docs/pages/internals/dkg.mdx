@@ -463,6 +463,11 @@ that a peer failed to publish.
   that stops permanently can fail the E3, even if other committee members stay online.
 </Callout>
 
+Public-key aggregators log raw expulsions and exclusions at INFO. Each record identifies the removal
+kind, node, E3, and, for an exclusion, the proof type. After canonical key publication, the record
+states that DKG handling is skipped because the key is already published. Chain failures and
+decryption failures from insufficient valid roster shares still apply.
+
 ### Restart recovery
 
 A member that restarts recovers its work from the durable event log:

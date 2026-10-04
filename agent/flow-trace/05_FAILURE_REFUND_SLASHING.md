@@ -1388,11 +1388,23 @@ When CommitteeMemberExpelled event arrives from EVM:
 │   │       → May trigger share processing with reduced set
 │   └─ Does NOT hold committee state — fully delegated to Sortition
 │
-├─ PublicKeyAggregator (aggregator, receives raw event):
+├─ PublicKeyAggregator (active or standby, receives raw event):
 │   ├─ Only processes raw events (party_id: None)
 │   ├─ Ignores enriched events (party_id: Some) to avoid double-processing
-│   └─ Reduces threshold_n
-│   └─ May trigger aggregation if enough keyshares collected
+│   ├─ Before canonical key publication:
+│   │   ├─ A selected roster member's removal publishes E3Failed at CommitteeFinalized
+│   │   │   → InsufficientCommitteeMembers: the fixed H-row proof needs every selected member
+│   │   └─ Other removals in Collecting remove buffered keyshares and reduce threshold_n
+│   │       → C1 verification still requires the accepted dealer roster
+│   └─ After canonical key publication:
+│       ├─ Skips DKG failure, threshold changes, and aggregation from this removal
+│       ├─ Applies even to a standby still in VerifyingC1
+│       └─ Hydration restores this boundary from the existing lifecycle projection
+│
+├─ ThresholdPlaintextAggregator (receives enriched event):
+│   └─ Removes the party from decryption collection
+│       ├─ Decryption can continue with T+1 valid roster shares
+│       └─ C6 verification fails if fewer than T+1 roster shares remain possible
 │
 ├─ KeyshareCreatedFilterBuffer (aggregator):
 │   ├─ Only processes raw events (party_id: None)
@@ -1441,8 +1453,22 @@ When a proof-fault quorum is reached while its on-chain policy is disabled, the 
 separate `CommitteeMemberExcluded` event. Sortition resolves its stable `party_id` from the same
 immutable `CommitteeFinalized` roster and republishes the enriched event. The keyshare collectors,
 public-key aggregator, plaintext aggregator, and active-aggregator selector then treat that party as
-unavailable for this E3. The final DKG proof still receives all N canonical committee addresses from
-`CommitteeFinalized`; it never derives the proof-bound roster from the reduced keyshare set.
+unavailable for their applicable work in this E3. The public-key aggregator uses the same
+raw-removal handler for expulsion and exclusion. Canonical key publication ends its DKG removal
+handling, even if the local phase is incomplete. `CommitteePublished` or `E3StageChanged` to
+`KeyPublished`, `CiphertextReady`, or `Complete` establishes this boundary for the E3.
+
+The shared handler logs each raw removal for its E3 at INFO with its kind, node, and exclusion proof
+type. The log states when DKG handling is skipped because the key is already published. File:
+crates/aggregator/src/public_key_aggregation/handlers.rs File:
+crates/aggregator/src/public_key_aggregation/effects/mod.rs (handle_member_expelled) File:
+crates/aggregator/src/ext.rs (PublicKeyAggregatorExtension::hydrate)
+
+Canonical chain failures remain authoritative after key publication. Plaintext aggregation also
+fails if fewer than T+1 valid roster shares remain possible. Neither failure path uses the
+public-key aggregator's DKG removal rule. The final DKG proof still receives all N canonical
+committee addresses from `CommitteeFinalized`. It never derives the proof-bound roster from the
+reduced keyshare set.
 
 This fallback is availability-only. The excluded operator remains an active on-chain committee
 member, can remain eligible for future E3s, and can receive any reward that the contracts still

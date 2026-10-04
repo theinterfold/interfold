@@ -61,14 +61,14 @@ impl Handler<InterfoldEvent> for PublicKeyAggregator {
             InterfoldEventData::E3StageChanged(data) if data.e3_id == self.e3_id => {
                 self.observe_stage(&data.new_stage);
             }
-            InterfoldEventData::CommitteeMemberExpelled(CommitteeMemberExpelled {
-                e3_id,
+            ref removal @ InterfoldEventData::CommitteeMemberExpelled(CommitteeMemberExpelled {
+                ref e3_id,
                 node,
                 party_id,
                 ..
             })
-            | InterfoldEventData::CommitteeMemberExcluded(CommitteeMemberExcluded {
-                e3_id,
+            | ref removal @ InterfoldEventData::CommitteeMemberExcluded(CommitteeMemberExcluded {
+                ref e3_id,
                 node,
                 party_id,
                 ..
@@ -77,10 +77,28 @@ impl Handler<InterfoldEvent> for PublicKeyAggregator {
                 if party_id.is_some() {
                     return;
                 }
-                if e3_id != self.e3_id {
+                if e3_id != &self.e3_id {
                     error!("Wrong e3_id sent to PublicKeyAggregator for member removal.");
                     return;
                 }
+                let (removal_kind, proof_type) = match removal {
+                    InterfoldEventData::CommitteeMemberExcluded(data) => {
+                        ("excluded", Some(tracing::field::display(data.proof_type)))
+                    }
+                    _ => ("expelled", None),
+                };
+                let message = if self.key_published {
+                    "PublicKeyAggregator ignoring DKG member removal because the key is already published"
+                } else {
+                    "PublicKeyAggregator processing DKG member removal"
+                };
+                info!(
+                    removal = %removal_kind,
+                    %node,
+                    %e3_id,
+                    proof_type,
+                    "{message}"
+                );
                 trap(EType::PublickeyAggregation, &self.bus.with_ec(&ec), || {
                     self.handle_member_expelled(node, &ec)
                 });
