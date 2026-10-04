@@ -95,7 +95,7 @@ item in code before you rely on it.
   `02_CRYPTO_CIRCUITS.md` §Noir / Barretenberg compatibility
 - CLI: the CLI accepts secrets on argv. — `04_BUILD_CONFIG.md`
 - EventBus fan-out waits for each subscriber to accept the event within a timeout, but a timeout is
-  only logged and the event is not retried. 84 `.do_send(` sites remain in total, including the
+  only logged and the event is not retried. 82 `.do_send(` sites remain in total, including the
   `Sequencer` and the E3 router context. — `03_ACTOR_RUNTIME.md` §Ordering, backpressure, effects
 - The event log and snapshots are positional bincode, and gossip carries bincode payloads inside a
   versioned envelope. A per-type schema version exists only on some types, for example

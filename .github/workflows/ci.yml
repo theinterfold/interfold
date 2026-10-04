@@ -1547,6 +1547,9 @@ jobs:
       - name: Run ZK prover e2e tests
         run: cargo test -p e3-zk-prover --test local_e2e_tests -- --nocapture --test-threads=1
 
+      - name: Verify C0 recovery after local verifier errors
+        run: cargo test -p e3-zk-prover --lib c0_local_verifier_failures_retry_without_peer_blame -- --nocapture
+
       - name: Verify fold accumulators and the correlated node proof
         timeout-minutes: 30
         run:

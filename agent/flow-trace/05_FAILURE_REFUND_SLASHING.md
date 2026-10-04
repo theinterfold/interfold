@@ -433,6 +433,10 @@ Signed accusation deadlines bound how long that recovery remains useful.
 
 #### Step 1: Local Proof Failure Detection
 
+For C0, only a completed invalid check emits `SignedProofFailed` and `ProofVerificationFailed`. An
+unavailable local verifier, verification key, or local I/O operation leaves verification pending.
+The verifier retries that input without starting an accusation.
+
 ```text
 ProofVerificationFailed OR CommitmentConsistencyViolation event arrives
 │

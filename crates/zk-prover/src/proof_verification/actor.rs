@@ -5,13 +5,14 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 //! Verifies `EncryptionKeyReceived` events: recovers ECDSA address, delegates
-//! ZK proof to `ZkActor`, and on failure emits [`SignedProofFailed`] for
-//! on-chain fault attribution.
+//! ZK proof to `ZkActor`, and emits [`SignedProofFailed`] for a completed invalid check.
+//! Local verifier errors retain the input for retry.
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
-use actix::{Actor, Addr, AsyncContext, Context, Handler, Message, Recipient};
+use actix::{Actor, Addr, AsyncContext, Context, Handler, Message, Recipient, SpawnHandle};
 use alloy::primitives::{keccak256, Address, Bytes};
 use alloy::sol_types::SolValue;
 use e3_events::{
@@ -28,7 +29,9 @@ use tracing::{error, info, warn};
 
 use crate::domain::proof_verification::{validate_external_key, validate_external_key_commitment};
 
-#[derive(Debug, Message)]
+const VERIFICATION_RETRY_DELAY: Duration = Duration::from_secs(5);
+
+#[derive(Debug, Clone, Message)]
 #[rtype(result = "()")]
 pub struct ZkVerificationRequest {
     pub proof: Proof,
@@ -41,16 +44,24 @@ pub struct ZkVerificationRequest {
 #[derive(Debug, Clone, Message)]
 #[rtype(result = "()")]
 pub struct ZkVerificationResponse {
-    pub verified: bool,
-    pub error: Option<String>,
+    pub outcome: ZkVerificationOutcome,
     pub e3_id: E3id,
     pub key: Arc<EncryptionKey>,
+}
+
+#[derive(Debug, Clone)]
+pub enum ZkVerificationOutcome {
+    Valid,
+    Invalid,
+    InfrastructureError(String),
 }
 
 #[derive(Clone, Debug)]
 struct PendingVerification {
     signed_payload: SignedProofPayload,
     recovered_signer: Address,
+    request: TypedEvent<ZkVerificationRequest>,
+    retry: Option<SpawnHandle>,
 }
 
 pub struct ProofVerificationActor {

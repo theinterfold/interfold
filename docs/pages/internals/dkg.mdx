@@ -224,6 +224,11 @@ The node publishes `EncryptionKeyCreated` with the signed C0 proof. Receivers ve
 keys arrive. At the C0 cutoff, it continues if it has at least H keys that include the node's own
 key. With fewer keys, the node records `DKGTimeout` and stops.
 
+A local verifier error leaves C0 verification pending. The receiver retains the authenticated input
+and retries it every five seconds until verification completes or `E3RequestComplete` clears the
+request. A missing verifier binary, missing verification key, or local I/O error produces no
+peer-failure evidence. Only a completed invalid check starts the accusation path.
+
 ### C1: threshold share generation
 
 The node requests `GenPkShareAndSkSss` and then `GenEsiSss` from TrBFV. It gets its secret key

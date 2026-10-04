@@ -128,9 +128,14 @@ ProofRequestActor receives EncryptionKeyPending
      │   ├─ Publishes EncryptionKeyCreated (locally trusted)
      │   └─ Publishes ProofVerificationPassed (cached by AccusationManager)
      │
-     └─ If verification FAILS:
-         └─ Publishes SignedProofFailed { accused, proof_type: C0 }
-            → Triggers accusation pipeline (see Part 5)
+     ├─ If a completed check returns Invalid:
+     │   └─ Publishes SignedProofFailed and ProofVerificationFailed for C0
+     │      → Triggers accusation pipeline (see Part 5)
+     │
+     └─ On InfrastructureError (local verifier, verification key, or I/O unavailable):
+         ├─ Keeps the authenticated input and event context in the pending map
+         ├─ Retries the same request after 5 seconds, with one timer per pending input
+         └─ Publishes no peer-failure evidence; E3RequestComplete cancels pending retries
 ```
 
 ### Step 3: Collect Encryption Keys
@@ -1567,7 +1572,8 @@ finish before the protocol deadline.
 │  ProofVerificationActor (C0 Verification)                          │
 │  ├─ EncryptionKeyReceived → ECDSA recovery + ZK verify            │
 │  ├─ On pass → EncryptionKeyCreated (locally trusted)               │
-│  └─ On fail → SignedProofFailed → AccusationManager                │
+│  ├─ On Invalid → SignedProofFailed + ProofVerificationFailed      │
+│  └─ On InfrastructureError → retain input and retry after 5 s     │
 │                                                                     │
 │  ShareVerificationActor (C2/C3/C4/C6 Verification)                │
 │  ├─ Two-phase: ECDSA inline + ZK dispatched to multithread        │

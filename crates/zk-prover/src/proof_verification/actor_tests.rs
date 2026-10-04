@@ -9,7 +9,8 @@ use actix::{Actor, Context, Handler};
 use alloy::signers::local::PrivateKeySigner;
 use e3_events::{
     hlc_factory::HlcFactory, EventBus, EventBusBarrier, EventBusConfig, EventPublisher,
-    ProofPayload, Seed, Sequencer, StoreEventRequested, StoreEventResponse,
+    FlushEventStores, GetEvents, ProofPayload, Seed, Sequencer, StoreEventRequested,
+    StoreEventResponse, Unsequenced,
 };
 use e3_fhe_params::build_pair_for_preset;
 use e3_utils::utility_types::ArcBytes;
@@ -33,7 +34,17 @@ impl Handler<StoreEventRequested> for TestEventStore {
         let StoreEventRequested { event, sender } = msg;
         let seq = self.next_seq;
         self.next_seq += 1;
-        sender.do_send(StoreEventResponse(event.into_sequenced(seq)));
+        sender
+            .try_send(StoreEventResponse(event.into_sequenced(seq)))
+            .unwrap();
+    }
+}
+
+impl Handler<FlushEventStores> for TestEventStore {
+    type Result = anyhow::Result<()>;
+
+    fn handle(&mut self, _: FlushEventStores, _: &mut Self::Context) -> Self::Result {
+        Ok(())
     }
 }
 
@@ -68,9 +79,13 @@ impl Handler<TypedEvent<ZkVerificationRequest>> for VerificationRecorder {
 fn test_bus() -> BusHandle {
     let event_bus = EventBus::<InterfoldEvent>::new(EventBusConfig { deduplicate: true }).start();
     let store = TestEventStore::default().start();
-    let sequencer = Sequencer::new(&event_bus, store.recipient()).start();
+    let sequencer =
+        Sequencer::new_with_flush(&event_bus, store.clone().recipient(), store.recipient()).start();
     BusHandle::new(event_bus, sequencer, HlcFactory::new()).enable("c0-recovery-test")
 }
+
+#[path = "recovery_tests.rs"]
+mod recovery;
 
 fn signed_c0_key(
     signer: &PrivateKeySigner,

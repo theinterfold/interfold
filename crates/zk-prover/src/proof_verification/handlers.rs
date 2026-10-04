@@ -35,8 +35,15 @@ impl Handler<InterfoldEvent> for ProofVerificationActor {
                 let e3_id = data.e3_id;
                 self.presets.remove(&e3_id);
                 self.committees.remove(&e3_id);
-                self.pending
-                    .retain(|(pending_e3, _), _| pending_e3 != &e3_id);
+                self.pending.retain(|(pending_e3, _), pending| {
+                    if pending_e3 != &e3_id {
+                        return true;
+                    }
+                    if let Some(retry) = pending.retry {
+                        ctx.cancel_future(retry);
+                    }
+                    false
+                });
             }
             _ => (),
         }
@@ -61,25 +68,34 @@ impl Handler<TypedEvent<ZkVerificationResponse>> for ProofVerificationActor {
     fn handle(
         &mut self,
         msg: TypedEvent<ZkVerificationResponse>,
-        _ctx: &mut Self::Context,
+        ctx: &mut Self::Context,
     ) -> Self::Result {
         let (msg, ec) = msg.into_components();
         let pending_key = (msg.e3_id.clone(), msg.key.party_id);
-        let pending = self.pending.remove(&pending_key);
+        if let ZkVerificationOutcome::InfrastructureError(error) = &msg.outcome {
+            error!(
+                e3_id = %msg.e3_id,
+                party_id = msg.key.party_id,
+                %error,
+                "C0 verification could not complete; retaining the input for retry"
+            );
+            self.retry_verification(pending_key, ctx);
+            return;
+        }
+        let Some(PendingVerification {
+            signed_payload,
+            recovered_signer,
+            retry,
+            ..
+        }) = self.pending.remove(&pending_key)
+        else {
+            return;
+        };
+        if let Some(retry) = retry {
+            ctx.cancel_future(retry);
+        }
 
-        if msg.verified {
-            let Some(PendingVerification {
-                signed_payload,
-                recovered_signer,
-            }) = pending
-            else {
-                warn!(
-                    "No pending verification for verified party {} — ignoring duplicate response",
-                    msg.key.party_id
-                );
-                return;
-            };
-
+        if matches!(msg.outcome, ZkVerificationOutcome::Valid) {
             info!(
                 "C0 proof verified for party {} - accepting key",
                 msg.key.party_id
@@ -114,16 +130,11 @@ impl Handler<TypedEvent<ZkVerificationResponse>> for ProofVerificationActor {
                 }
             }
         } else {
-            let error_msg = msg.error.unwrap_or_else(|| "unknown error".to_string());
             error!(
-                "C0 proof verification FAILED for party {} - rejecting key and stopping E3: {}",
-                msg.key.party_id, error_msg
+                "C0 proof verification failed for party {} - rejecting key",
+                msg.key.party_id
             );
 
-            if let Some(PendingVerification {
-                signed_payload,
-                recovered_signer,
-            }) = pending
             {
                 warn!(
                     "Emitting SignedProofFailed for party {} (address: {recovered_signer})",

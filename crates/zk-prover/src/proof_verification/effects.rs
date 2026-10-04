@@ -8,7 +8,7 @@ impl ProofVerificationActor {
     pub(in crate::actors::proof_verification) fn handle_encryption_key_received(
         &mut self,
         msg: TypedEvent<EncryptionKeyReceived>,
-        ctx: &Context<Self>,
+        ctx: &mut Context<Self>,
     ) {
         let (msg, ec) = msg.into_components();
         let pending_key = (msg.e3_id.clone(), msg.key.party_id);
@@ -83,20 +83,11 @@ impl ProofVerificationActor {
             return;
         }
 
-        // Store the signed payload so we can reference it in the verification response
-        self.pending.insert(
-            pending_key,
-            PendingVerification {
-                signed_payload: validated.signed_payload,
-                recovered_signer: validated.recovered_signer,
-            },
-        );
-
         let artifacts_dir = preset.artifacts_dir_for_committee(committee_size.as_str());
 
         let request = TypedEvent::new(
             ZkVerificationRequest {
-                proof: proof.clone(),
+                proof,
                 e3_id: msg.e3_id,
                 key: msg.key,
                 sender: ctx.address().recipient(),
@@ -105,7 +96,42 @@ impl ProofVerificationActor {
             ec,
         );
 
-        self.verifier.do_send(request);
+        self.pending.insert(
+            pending_key.clone(),
+            PendingVerification {
+                signed_payload: validated.signed_payload,
+                recovered_signer: validated.recovered_signer,
+                request,
+                retry: None,
+            },
+        );
+        self.dispatch_verification(pending_key, ctx);
+    }
+
+    fn dispatch_verification(&mut self, pending_key: (E3id, u64), ctx: &mut Context<Self>) {
+        let Some(pending) = self.pending.get(&pending_key) else {
+            return;
+        };
+        if let Err(err) = self.verifier.try_send(pending.request.clone()) {
+            error!("Could not dispatch C0 verification: {err}");
+            self.retry_verification(pending_key, ctx);
+        }
+    }
+
+    pub(super) fn retry_verification(&mut self, pending_key: (E3id, u64), ctx: &mut Context<Self>) {
+        let Some(pending) = self.pending.get_mut(&pending_key) else {
+            return;
+        };
+        if pending.retry.is_some() {
+            return;
+        }
+        pending.retry = Some(ctx.run_later(VERIFICATION_RETRY_DELAY, move |actor, ctx| {
+            let Some(pending) = actor.pending.get_mut(&pending_key) else {
+                return;
+            };
+            pending.retry = None;
+            actor.dispatch_verification(pending_key, ctx);
+        }));
     }
 
     pub(in crate::actors::proof_verification) fn publish_key_created(

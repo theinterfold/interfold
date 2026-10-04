@@ -203,7 +203,7 @@ the code does not meet yet.
   `flow-trace/04`; `flow-trace/06`
 - Correctness-critical sends are acknowledged and timeout-bounded; `do_send` is allowed only for
   best-effort telemetry. Buffers are bounded by both item count and bytes with an explicit overflow
-  policy. **Gap:** 84 `.do_send(` call sites remain (the count covers all sites, not only
+  policy. **Gap:** 82 `.do_send(` call sites remain (the count covers all sites, not only
   correctness paths), including `BusHandle` publication, `Sequencer`, `DataStore::write`, snapshot
   batches, EVM routing, and keyshare collectors. `pnpm check:invariants` blocks growth of the total
   only. The request router's `EventBuffer` has no bound either: it keeps every event of an E3 for
