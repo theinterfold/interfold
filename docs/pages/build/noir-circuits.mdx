@@ -244,6 +244,17 @@ For each pair, the build does these steps (`scripts/build-circuits.ts`):
 
 The build records the active pair in `circuits/bin/.active-preset.json`.
 
+Downloaded release archives must match the SHA-256 for their version in
+`crates/zk-prover/versions.json` (`circuits_checksums`). This pin is compiled into the binary. The
+installer checks it before extraction, then requires a nonempty internal manifest that covers every
+artifact file. Root manifests, `SOURCE_HASH`, and build stamps are metadata. Local builds and
+`noir setup --circuits-archive` do not need an archive pin.
+
+The release workflow creates the archive in parallel with the binary builds. Before a new release
+can support authenticated downloads, prepare the archive, pin its SHA-256, build the binaries, and
+publish those exact archive bytes. Repacking changes the archive digest even if the artifact bytes
+stay the same. `SOURCE_HASH` identifies source inputs and is not an archive digest.
+
 <Callout type="warning">
   The preset and the committee size stay selected after the build, and they change tracked files.
   Always switch them with `pnpm build:circuits --preset <name> --committee <name>`. Do not edit

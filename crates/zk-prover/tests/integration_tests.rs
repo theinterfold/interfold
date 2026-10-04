@@ -27,6 +27,11 @@ fn integration_config() -> ZkConfig {
     let mut config = ZkConfig::default();
     if let Ok(url) = env::var("E3_TEST_CIRCUITS_DOWNLOAD_URL") {
         config.circuits_download_url = url;
+        let checksum = env::var("E3_TEST_CIRCUITS_SHA256")
+            .expect("a test archive URL requires E3_TEST_CIRCUITS_SHA256");
+        config
+            .circuits_checksums
+            .insert(config.required_circuits_version.clone(), checksum);
     }
     config
 }
@@ -192,36 +197,33 @@ async fn test_download_circuits_verifies_checksums() {
 
     let version_info = backend.load_version_info().await;
 
-    // If the archive included a checksums.json, verify_circuits should have
-    // populated version_info.circuits with entries and valid SHA256 hashes.
-    if !version_info.circuits.is_empty() {
-        for (rel_path, circuit_info) in &version_info.circuits {
-            assert_eq!(rel_path, &circuit_info.file);
-            assert!(
-                !circuit_info.checksum.is_empty(),
-                "checksum should not be empty for {}",
-                rel_path
-            );
+    assert!(!version_info.circuits.is_empty());
+    for (rel_path, circuit_info) in &version_info.circuits {
+        assert_eq!(rel_path, &circuit_info.file);
+        assert!(
+            !circuit_info.checksum.is_empty(),
+            "checksum should not be empty for {}",
+            rel_path
+        );
 
-            // Re-read the file from disk and verify the stored checksum matches.
-            let file_path = backend
-                .locate_manifest_artifact(rel_path, &circuit_info.checksum)
-                .await
-                .unwrap_or_else(|e| {
-                    panic!("circuit file should exist on disk for {}: {e:?}", rel_path)
-                });
+        // Re-read the file from disk and verify the stored checksum matches.
+        let file_path = backend
+            .locate_manifest_artifact(rel_path, &circuit_info.checksum)
+            .await
+            .unwrap_or_else(|e| {
+                panic!("circuit file should exist on disk for {}: {e:?}", rel_path)
+            });
 
-            let data = tokio::fs::read(&file_path).await.unwrap();
-            let mut hasher = Sha256::new();
-            hasher.update(&data);
-            let actual_hash = hex::encode(hasher.finalize());
+        let data = tokio::fs::read(&file_path).await.unwrap();
+        let mut hasher = Sha256::new();
+        hasher.update(&data);
+        let actual_hash = hex::encode(hasher.finalize());
 
-            assert_eq!(
-                actual_hash, circuit_info.checksum,
-                "stored checksum for {} doesn't match file on disk",
-                rel_path
-            );
-        }
+        assert_eq!(
+            actual_hash, circuit_info.checksum,
+            "stored checksum for {} doesn't match file on disk",
+            rel_path
+        );
     }
 
     let temp_path = temp.path().to_path_buf();

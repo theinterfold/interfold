@@ -580,6 +580,7 @@ jobs:
         env:
           E3_TEST_CIRCUITS_DOWNLOAD_URL: http://127.0.0.1:8123/circuits-candidate.tar.gz
         run: |
+          export E3_TEST_CIRCUITS_SHA256=$(sha256sum "$RUNNER_TEMP/circuit-release/circuits-candidate.tar.gz" | cut -d ' ' -f1)
           python3 -m http.server 8123 --bind 127.0.0.1 --directory "$RUNNER_TEMP/circuit-release" >"$RUNNER_TEMP/circuit-server.log" 2>&1 &
           SERVER_PID=$!
           trap 'kill "$SERVER_PID"' EXIT

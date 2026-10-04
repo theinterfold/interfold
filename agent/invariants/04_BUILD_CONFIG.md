@@ -35,6 +35,12 @@ every section.
   Release verification still checks the source hash, every required pair, and each pair's build
   stamp. `SOURCE_HASH` includes the shared Noir library and its dependency manifest (see
   `02_CRYPTO_CIRCUITS.md` §Noir / Barretenberg compatibility).
+- Network circuit installation requires a version-bound archive SHA-256 in
+  `crates/zk-prover/versions.json`. Release packaging must supply that pin before binary compilation
+  and publish the exact archive. **Gap:** `.github/workflows/releases.yml` creates the archive in
+  parallel with the binary builds. The source pin and internal checksum manifest do not authenticate
+  archive bytes. CI candidate-download tests compute their expected digest from the locally built
+  archive before serving it. — `02_CRYPTO_CIRCUITS.md` §Noir / Barretenberg compatibility
 - **`Elf.sol` is never committed.** `crates/support/methods/build.rs` writes it with a machine-local
   guest ELF path, so it is generated per checkout and `.gitignore`d.
 - **A release publishes a complete provenance manifest** — `pnpm provenance:manifest`. It ties

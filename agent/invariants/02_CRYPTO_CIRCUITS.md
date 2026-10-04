@@ -72,10 +72,20 @@ every section.
 - A circuit release archive that supports current deployments must include every
   `insecure-512/{minimum,micro,small}` and `secure-8192/{minimum,micro,small}` pair. Each pair has a
   build stamp with the exact preset, committee, and source hash. `checksums.json` and `SHA256SUMS`
-  must cover the archive contents, and a node must reject an archive without them. Nodes select the
-  artifact directory from the E3's on-chain parameter set and committee size. **Gap:**
-  `download_circuits` passes `require_checksums=false`, so a node installs an archive without
-  `checksums.json` after a warning (`crates/zk-prover/src/backend/download.rs`).
+  must cover the archive artifacts. Nodes select the artifact directory from the E3's on-chain
+  parameter set and committee size. `download_circuits` checks the archive SHA-256 against
+  `versions.json`'s `circuits_checksums[required_circuits_version]` before extraction. Missing pins
+  fail closed. Both download and local archive installation require a nonempty SHA-256
+  `checksums.json`, verify each entry, and reject uncovered artifact files before replacement. Root
+  manifests, `SOURCE_HASH`, and build stamps are metadata, not required prover artifacts. Validation
+  failure preserves the installed circuits and `version.json`. —
+  `crates/zk-prover/src/backend/download.rs`
+- Archive pins ship with the binary; neither the archive nor its download endpoint supplies the
+  expected digest at runtime. The 0.18.0 pin comes from the published GitHub asset digest. Local
+  archive installation trusts the operator's file and does not require a release pin. **Gap:**
+  release packaging and binary builds run in parallel. A new release needs its archive digest pinned
+  before binary compilation, with the same archive bytes retained for publication. `SOURCE_HASH`
+  identifies circuit sources, not archive bytes, and cannot replace this check.
 - Artifact identity must cover every source that compiles into an artifact. `computeSourceHash`
   (`scripts/build-circuits.ts`) includes shared Noir logic, the library entry point and dependency
   manifest, and shared configuration constants. It normalizes the active preset selector because

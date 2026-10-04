@@ -9,12 +9,12 @@ use crate::error::ZkError;
 use flate2::read::GzDecoder;
 use futures_util::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 use tar::Archive;
 use tokio::fs;
-use tracing::{info, warn};
+use tracing::info;
 use walkdir::WalkDir;
 
 use super::ZkBackend;
@@ -88,15 +88,6 @@ async fn locate_manifest_artifact(
     Err(ZkError::CircuitNotFound(rel_path.to_string()))
 }
 
-async fn read_manifest_file(
-    circuits_dir: &Path,
-    rel_path: &str,
-    expected_hash: &str,
-) -> Result<Vec<u8>, ZkError> {
-    let path = locate_manifest_artifact(circuits_dir, rel_path, expected_hash).await?;
-    fs::read(&path).await.map_err(ZkError::from)
-}
-
 impl ZkBackend {
     /// Resolve a `checksums.json` entry to an on-disk path (legacy flat or per-committee layout).
     pub async fn locate_manifest_artifact(
@@ -167,6 +158,12 @@ impl ZkBackend {
 
     pub async fn download_circuits(&self) -> Result<(), ZkError> {
         let version = &self.config.required_circuits_version;
+        let archive_name = format!("circuits-{version}.tar.gz");
+        let expected_checksum = self
+            .config
+            .circuits_checksums
+            .get(version)
+            .ok_or_else(|| ZkError::ChecksumMissing(archive_name.clone()))?;
         let url = self
             .config
             .circuits_download_url
@@ -180,7 +177,8 @@ impl ZkBackend {
 
         match result {
             Ok(bytes) => {
-                self.install_circuits_bytes(&bytes, &mut version_info, false)
+                verify_checksum(&archive_name, &bytes, Some(expected_checksum))?;
+                self.install_circuits_bytes(&bytes, &mut version_info)
                     .await?;
                 info!("installed circuits v{}", version);
             }
@@ -199,7 +197,7 @@ impl ZkBackend {
     pub async fn install_circuits_archive(&self, path: &Path) -> Result<(), ZkError> {
         let bytes = fs::read(path).await?;
         let mut version_info = self.load_version_info().await;
-        self.install_circuits_bytes(&bytes, &mut version_info, true)
+        self.install_circuits_bytes(&bytes, &mut version_info)
             .await?;
         info!(
             "installed circuits v{} from {}",
@@ -213,7 +211,6 @@ impl ZkBackend {
         &self,
         bytes: &[u8],
         version_info: &mut VersionInfo,
-        require_checksums: bool,
     ) -> Result<(), ZkError> {
         fs::create_dir_all(&self.base_dir).await?;
 
@@ -246,9 +243,13 @@ impl ZkBackend {
         }
 
         let circuit_infos = verify_circuits_dir(&staged_circuits).await?;
-        if require_checksums && circuit_infos.is_empty() {
-            return Err(ZkError::ChecksumMissing("circuits/checksums.json".into()));
-        }
+
+        let mut installed_version = version_info.clone();
+        installed_version.circuits = circuit_infos;
+        installed_version.circuits_version = Some(self.config.required_circuits_version.clone());
+        installed_version.last_updated = Some(chrono::Utc::now().to_rfc3339());
+        let staged_version = staging_dir.path().join("version.json");
+        installed_version.save(&staged_version).await?;
 
         let backup_circuits = staging_dir.path().join("previous-circuits");
         let had_existing_circuits = self.circuits_dir.exists();
@@ -262,10 +263,14 @@ impl ZkBackend {
             return Err(install_error.into());
         }
 
-        version_info.circuits = circuit_infos;
-        version_info.circuits_version = Some(self.config.required_circuits_version.clone());
-        version_info.last_updated = Some(chrono::Utc::now().to_rfc3339());
-        version_info.save(&self.version_file()).await?;
+        if let Err(install_error) = fs::rename(&staged_version, self.version_file()).await {
+            fs::rename(&self.circuits_dir, &staged_circuits).await?;
+            if had_existing_circuits {
+                fs::rename(&backup_circuits, &self.circuits_dir).await?;
+            }
+            return Err(install_error.into());
+        }
+        *version_info = installed_version;
         Ok(())
     }
 
@@ -325,17 +330,33 @@ fn validate_circuit_archive_entry(path: &Path, entry_type: tar::EntryType) -> Re
 async fn verify_circuits_dir(circuits_dir: &Path) -> Result<HashMap<String, CircuitInfo>, ZkError> {
     let manifest_path = circuits_dir.join("checksums.json");
     if !manifest_path.exists() {
-        warn!("checksums.json not found, skipping circuit verification");
-        return Ok(HashMap::new());
+        return Err(ZkError::ChecksumMissing("circuits/checksums.json".into()));
     }
 
     let manifest_data = fs::read_to_string(&manifest_path).await?;
     let manifest: ChecksumManifest = serde_json::from_str(&manifest_data)?;
+    if manifest.files.is_empty() {
+        return Err(ZkError::ChecksumMissing("circuits/checksums.json".into()));
+    }
+    if manifest.algorithm != "sha256" {
+        return Err(ZkError::InvalidInput(
+            "circuit checksum manifest must use sha256".into(),
+        ));
+    }
 
     let mut circuit_infos = HashMap::new();
+    let mut verified_paths = HashSet::new();
 
     for (rel_path, expected_hash) in &manifest.files {
-        read_manifest_file(circuits_dir, rel_path, expected_hash).await?;
+        if rel_path.is_empty()
+            || Path::new(rel_path)
+                .components()
+                .any(|part| !matches!(part, Component::Normal(_)))
+        {
+            return Err(invalid_circuit_archive_path(Path::new(rel_path)));
+        }
+        let path = locate_manifest_artifact(circuits_dir, rel_path, expected_hash).await?;
+        verified_paths.insert(path);
 
         circuit_infos.insert(
             rel_path.clone(),
@@ -344,6 +365,25 @@ async fn verify_circuits_dir(circuits_dir: &Path) -> Result<HashMap<String, Circ
                 checksum: expected_hash.clone(),
             },
         );
+    }
+
+    for entry in WalkDir::new(circuits_dir) {
+        let entry = entry.map_err(|error| ZkError::IoError(error.into()))?;
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let rel_path = entry.path().strip_prefix(circuits_dir).unwrap();
+        // Build stamps and root manifests are metadata, not prover artifacts.
+        if matches!(
+            rel_path.to_str(),
+            Some("checksums.json" | "SHA256SUMS" | "SOURCE_HASH")
+        ) || entry.file_name() == ".build-stamp.json"
+        {
+            continue;
+        }
+        if !verified_paths.contains(entry.path()) {
+            return Err(ZkError::ChecksumMissing(rel_path.display().to_string()));
+        }
     }
 
     info!(
@@ -429,6 +469,8 @@ mod tests {
     use std::{collections::HashMap, fs, io::Write};
     use tar::{Builder, Header};
     use tempfile::TempDir;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
 
     fn write_file(root: &Path, rel: &str, contents: &[u8]) {
         let path = root.join(rel);
@@ -467,17 +509,34 @@ mod tests {
         include_manifest: bool,
         extra_entries: &[(&str, &[u8])],
     ) -> Vec<u8> {
+        circuit_archive_with_manifest(
+            circuit,
+            include_manifest.then(|| {
+                HashMap::from([(
+                    "insecure-512/minimum/default/dkg/pk/pk.json".into(),
+                    sha256_hex(circuit),
+                )])
+            }),
+            extra_entries,
+        )
+    }
+
+    fn circuit_archive_with_manifest(
+        circuit: &[u8],
+        manifest_files: Option<HashMap<String, String>>,
+        extra_entries: &[(&str, &[u8])],
+    ) -> Vec<u8> {
         let rel_path = "insecure-512/minimum/default/dkg/pk/pk.json";
         let encoder = GzEncoder::new(Vec::new(), Compression::default());
         let mut builder = Builder::new(encoder);
         append_global_pax_header(&mut builder);
         append_archive_file(&mut builder, &format!("circuits/{rel_path}"), circuit);
 
-        if include_manifest {
+        if let Some(files) = manifest_files {
             let manifest = serde_json::to_vec(&ChecksumManifest {
                 algorithm: "sha256".into(),
                 generated: "test".into(),
-                files: HashMap::from([(rel_path.to_string(), sha256_hex(circuit))]),
+                files,
             })
             .unwrap();
             append_archive_file(&mut builder, "circuits/checksums.json", &manifest);
@@ -506,6 +565,229 @@ mod tests {
             base_dir.join("work"),
             config,
         )
+    }
+
+    async fn serve_archive(bytes: Vec<u8>) -> (String, tokio::task::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!(
+            "http://{}/circuits-candidate.tar.gz",
+            listener.local_addr().unwrap()
+        );
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            while !request.ends_with(b"\r\n\r\n") {
+                request.push(stream.read_u8().await.unwrap());
+            }
+            stream
+                .write_all(
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        bytes.len()
+                    )
+                    .as_bytes(),
+                )
+                .await
+                .unwrap();
+            stream.write_all(&bytes).await.unwrap();
+        });
+        (url, server)
+    }
+
+    async fn seed_installation(backend: &ZkBackend) -> Vec<u8> {
+        write_file(
+            &backend.circuits_dir,
+            "insecure-512/minimum/default/dkg/pk/pk.json",
+            b"previous-circuit",
+        );
+        write_file(&backend.circuits_dir, "installed.txt", b"installed");
+        VersionInfo {
+            bb_version: Some("5.1.0".into()),
+            circuits_version: Some("previous".into()),
+            last_updated: Some("previous-installation".into()),
+            ..Default::default()
+        }
+        .save(&backend.version_file())
+        .await
+        .unwrap();
+        fs::read(backend.version_file()).unwrap()
+    }
+
+    fn assert_installation_unchanged(backend: &ZkBackend, version: &[u8]) {
+        assert_eq!(fs::read(backend.version_file()).unwrap(), version);
+        assert_eq!(
+            fs::read(
+                backend
+                    .circuits_dir
+                    .join("insecure-512/minimum/default/dkg/pk/pk.json")
+            )
+            .unwrap(),
+            b"previous-circuit"
+        );
+        assert_eq!(
+            fs::read(backend.circuits_dir.join("installed.txt")).unwrap(),
+            b"installed"
+        );
+    }
+
+    #[tokio::test]
+    async fn download_requires_complete_manifest() {
+        let rel_path = "insecure-512/minimum/default/dkg/pk/pk.json";
+        let valid_manifest = HashMap::from([(rel_path.into(), sha256_hex(b"circuit"))]);
+        let cases = [
+            ("missing", circuit_archive(b"circuit", false)),
+            (
+                "empty",
+                circuit_archive_with_manifest(b"circuit", Some(HashMap::new()), &[]),
+            ),
+            (
+                "uncovered",
+                circuit_archive_with_manifest(
+                    b"circuit",
+                    Some(valid_manifest.clone()),
+                    &[(
+                        "circuits/insecure-512/minimum/default/dkg/pk/pk.vk",
+                        b"verification-key",
+                    )],
+                ),
+            ),
+            (
+                "missing artifact",
+                circuit_archive_with_manifest(
+                    b"circuit",
+                    Some(HashMap::from([
+                        (rel_path.into(), sha256_hex(b"circuit")),
+                        (
+                            "insecure-512/minimum/default/dkg/pk/pk.vk".into(),
+                            sha256_hex(b"verification-key"),
+                        ),
+                    ])),
+                    &[],
+                ),
+            ),
+            (
+                "mismatch",
+                circuit_archive_with_manifest(b"different-circuit", Some(valid_manifest), &[]),
+            ),
+        ];
+        for (case, archive) in cases {
+            let temp = TempDir::new().unwrap();
+            let mut backend = test_backend(&temp);
+            let previous_version = seed_installation(&backend).await;
+            backend
+                .config
+                .circuits_checksums
+                .insert("candidate".into(), sha256_hex(&archive));
+            let (url, server) = serve_archive(archive).await;
+            backend.config.circuits_download_url = url;
+
+            let result = backend.download_circuits().await;
+            server.await.unwrap();
+
+            assert!(
+                matches!(
+                    result,
+                    Err(ZkError::ChecksumMissing(_)
+                        | ZkError::CircuitNotFound(_)
+                        | ZkError::ChecksumMismatch { .. })
+                ),
+                "{case}: {result:?}"
+            );
+            assert_installation_unchanged(&backend, &previous_version);
+        }
+    }
+
+    #[tokio::test]
+    async fn download_authenticates_archive_before_installation() {
+        let temp = TempDir::new().unwrap();
+        let mut backend = test_backend(&temp);
+        let previous_version = seed_installation(&backend).await;
+        let genuine = circuit_archive(b"circuit", true);
+        backend
+            .config
+            .circuits_checksums
+            .insert("candidate".into(), sha256_hex(&genuine));
+
+        for archive in [
+            circuit_archive(b"different-circuit", true),
+            b"not an archive".to_vec(),
+        ] {
+            let (url, server) = serve_archive(archive).await;
+            backend.config.circuits_download_url = url;
+            let result = backend.download_circuits().await;
+            server.await.unwrap();
+            assert!(
+                matches!(result, Err(ZkError::ChecksumMismatch { ref file, .. }) if file == "circuits-candidate.tar.gz"),
+                "{result:?}"
+            );
+            assert_installation_unchanged(&backend, &previous_version);
+        }
+
+        let (url, server) = serve_archive(genuine).await;
+        backend.config.circuits_download_url = url;
+        backend.download_circuits().await.unwrap();
+        server.await.unwrap();
+        assert_eq!(
+            fs::read(
+                backend
+                    .circuits_dir
+                    .join("insecure-512/minimum/default/dkg/pk/pk.json")
+            )
+            .unwrap(),
+            b"circuit"
+        );
+        assert!(!backend.circuits_dir.join("installed.txt").exists());
+        let version = backend.load_version_info().await;
+        assert_eq!(version.circuits_version.as_deref(), Some("candidate"));
+        assert_eq!(version.bb_version.as_deref(), Some("5.1.0"));
+        assert_eq!(version.circuits.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn download_requires_version_bound_digest() {
+        let temp = TempDir::new().unwrap();
+        let mut backend = test_backend(&temp);
+        let previous_version = seed_installation(&backend).await;
+        backend.config.circuits_download_url = "http://127.0.0.1:0/unused".into();
+        let result = backend.download_circuits().await;
+        assert!(
+            matches!(result, Err(ZkError::ChecksumMissing(_))),
+            "{result:?}"
+        );
+        assert_installation_unchanged(&backend, &previous_version);
+    }
+
+    #[tokio::test]
+    async fn download_restores_circuits_if_version_update_fails() {
+        let temp = TempDir::new().unwrap();
+        let mut backend = test_backend(&temp);
+        seed_installation(&backend).await;
+        fs::remove_file(backend.version_file()).unwrap();
+        fs::create_dir(backend.version_file()).unwrap();
+        write_file(&backend.version_file(), "retained", b"version-path");
+        let archive = circuit_archive(b"circuit", true);
+        backend
+            .config
+            .circuits_checksums
+            .insert("candidate".into(), sha256_hex(&archive));
+        let (url, server) = serve_archive(archive).await;
+        backend.config.circuits_download_url = url;
+        let result = backend.download_circuits().await;
+        server.await.unwrap();
+        assert!(matches!(result, Err(ZkError::IoError(_))), "{result:?}");
+        assert_eq!(
+            fs::read(
+                backend
+                    .circuits_dir
+                    .join("insecure-512/minimum/default/dkg/pk/pk.json")
+            )
+            .unwrap(),
+            b"previous-circuit"
+        );
+        assert_eq!(
+            fs::read(backend.version_file().join("retained")).unwrap(),
+            b"version-path"
+        );
     }
 
     #[tokio::test]
@@ -579,7 +861,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn read_manifest_file_prefers_direct_layout() {
+    async fn locate_manifest_artifact_prefers_direct_layout() {
         let temp = TempDir::new().unwrap();
         let circuits_dir = temp.path();
         let contents = b"flat";
@@ -590,15 +872,16 @@ mod tests {
         );
         let hash = sha256_hex(contents);
 
-        let data = read_manifest_file(circuits_dir, "insecure-512/default/dkg/pk/pk.json", &hash)
-            .await
-            .unwrap();
+        let path =
+            locate_manifest_artifact(circuits_dir, "insecure-512/default/dkg/pk/pk.json", &hash)
+                .await
+                .unwrap();
 
-        assert_eq!(data, contents);
+        assert_eq!(fs::read(path).unwrap(), contents);
     }
 
     #[tokio::test]
-    async fn read_manifest_file_picks_committee_matching_checksum() {
+    async fn locate_manifest_artifact_picks_committee_matching_checksum() {
         let temp = TempDir::new().unwrap();
         let circuits_dir = temp.path();
         let minimum = b"minimum";
@@ -615,7 +898,7 @@ mod tests {
         );
         let small_hash = sha256_hex(small);
 
-        let data = read_manifest_file(
+        let path = locate_manifest_artifact(
             circuits_dir,
             "insecure-512/default/dkg/pk/pk.json",
             &small_hash,
@@ -623,11 +906,11 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(data, small);
+        assert_eq!(fs::read(path).unwrap(), small);
     }
 
     #[tokio::test]
-    async fn read_manifest_file_accepts_committee_scoped_manifest_path() {
+    async fn locate_manifest_artifact_accepts_committee_scoped_manifest_path() {
         let temp = TempDir::new().unwrap();
         let circuits_dir = temp.path();
         let contents = b"minimum";
@@ -638,7 +921,7 @@ mod tests {
         );
         let hash = sha256_hex(contents);
 
-        let data = read_manifest_file(
+        let path = locate_manifest_artifact(
             circuits_dir,
             "insecure-512/minimum/default/dkg/pk/pk.json",
             &hash,
@@ -646,6 +929,6 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(data, contents);
+        assert_eq!(fs::read(path).unwrap(), contents);
     }
 }
