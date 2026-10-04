@@ -558,7 +558,7 @@ BondedVotes.getPastVotes(account, t)              ← the NUMERATOR
 │    ├─ votesSource == token   → wallet-held FOLD (needs delegation)
 │    └─ votesSource == escrow  → only escrowed FOLD; idle wallet FOLD carries no weight
 ├─ bonded weight of account, unless a delegate represents it at t
-└─ bonded weight of the owner that account represents at t, if any
+└─ bonded weight of each owner that account represents at t (MAX_BONDED_OWNERS = 3)
 
 bonded weight(owner, t)
 ├─ BondedCheckpoints.getPastBonded(owner, t)      ← FOLD bonded as an operator
@@ -701,17 +701,20 @@ Bonded weight moves only through `BondedVotes` itself. The registry owns the pos
 delegation leaves it with the bond owner, also for an owner that never self-delegated. An owner asks
 with `delegateBonded(delegatee)`, and the weight moves when the delegate calls
 `acceptBonded(owner)`. A request alone moves nothing, so nobody can push weight onto a delegate or
-take its place. A delegate represents one owner at a time, because bonded weight is read again from
-its sources on every call and each represented owner costs a full read. The owner ends the
-delegation with `delegateBonded` (zero, itself, or another delegate) and the delegate with
-`dropBonded()`, both at once. Both directions are checkpointed on the token's clock in the same
-call, so at every timepoint an owner's bonded weight counts at the owner or at exactly one delegate.
-Wallet-held FOLD keeps its delegation through the token and escrowed FOLD through the escrow.
-`BondedVotes.delegate` and `delegateBySig` still revert rather than silently doing nothing.
-`pendingBondedDelegate(owner)`, `bondedDelegate(owner)` and `bondedOwner(delegatee)` show the
-current state, and `BondedDelegationRequested` records each request. `getPastVotes` itself rejects
-an unsettled timepoint with `FutureLookup`, because an owner that delegated its weight away reads no
-bonded history that would reject it.
+take its place. A delegate represents at most three owners at a time (`MAX_BONDED_OWNERS`), one per
+checkpointed slot. Bonded weight is read again from its sources on every call, so each represented
+owner costs a full read: about 29k gas with one vesting lock. The cap keeps the cost of a vote
+bounded. `acceptBonded` takes the first free slot or reverts `BondedDelegateFull`. The owner ends
+the delegation with `delegateBonded` (zero, itself, or another delegate) and the delegate with
+`dropBonded(owner)`, both at once. `dropBonded` reverts `NotBondedDelegate` unless the caller is the
+owner's current delegate, so no third account can end a delegation. Both directions are checkpointed
+on the token's clock in the same call, so at every timepoint an owner's bonded weight counts at the
+owner or at exactly one delegate. Wallet-held FOLD keeps its delegation through the token and
+escrowed FOLD through the escrow. `BondedVotes.delegate` and `delegateBySig` still revert rather
+than silently doing nothing. `pendingBondedDelegate(owner)`, `bondedDelegate(owner)` and
+`bondedOwners(delegatee)` show the current state, and `BondedDelegationRequested` records each
+request. `getPastVotes` itself rejects an unsettled timepoint with `FutureLookup`, because an owner
+that delegated its weight away reads no bonded history that would reject it.
 
 Each change emits `BondedDelegateChanged(owner, fromDelegate, toDelegate)` on `BondedVotes`, not the
 IVotes `DelegateChanged`: `delegates()` names the votes source's delegate, and an indexer that reads

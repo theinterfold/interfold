@@ -121,11 +121,12 @@ account that cannot vote itself, such as a Safe, can give this voting power to o
 1. From the owner account, call `delegateBonded(delegate)` on the `BondedVotes` contract.
 2. From the delegate account, call `acceptBonded(owner)`. The voting power moves at this step.
 
-A delegate can represent one owner at a time. The owner can take the voting power back at any time
-with `delegateBonded` and the zero address. The delegate can give it back with `dropBonded`. If the
-owner asks a different delegate, the current delegation stops immediately, and the voting power
-stays with the owner until the new delegate accepts. A change does not affect a vote that already
-took its snapshot. Locked FOLD keeps its own delegation, which you set in the governance interface.
+A delegate can represent up to three owners at a time. The owner can take the voting power back at
+any time with `delegateBonded` and the zero address. The delegate can give it back with
+`dropBonded(owner)`. Only the current delegate of that owner can call it. If the owner asks a
+different delegate, the current delegation stops immediately, and the voting power stays with the
+owner until the new delegate accepts. A change does not affect a vote that already took its
+snapshot. Locked FOLD keeps its own delegation, which you set in the governance interface.
 
 ### How the contracts add the three sources
 

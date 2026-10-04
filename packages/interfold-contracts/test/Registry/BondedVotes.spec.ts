@@ -533,7 +533,7 @@ describe("BondedVotes", function () {
         () => bondedVotes.connect(bondOwner).delegateBonded(ethers.ZeroAddress),
         // Asking someone else ends the current delegation before the new delegate accepts.
         () => bondedVotes.connect(bondOwner).delegateBonded(newOwnerAddress),
-        () => bondedVotes.connect(otherHolder).dropBonded(),
+        () => bondedVotes.connect(otherHolder).dropBonded(bondOwnerAddress),
       ]) {
         await delegate();
         await end();
@@ -542,9 +542,10 @@ describe("BondedVotes", function () {
       }
     });
 
-    /// Only the delegate that the owner asked can take the weight on, and a delegate represents
-    /// one owner at a time, which keeps the cost of reading its power fixed.
-    it("accepts only the delegate the owner asked, and one owner per delegate", async function () {
+    /// Only the delegate that the owner asked can take the weight on, and only the owner or its
+    /// current delegate can end the delegation. A delegate represents at most three owners, which
+    /// bounds the cost of reading its power.
+    it("accepts only the asked delegate, lets only that delegate drop, and caps it at three owners", async function () {
       const {
         bondedVotes,
         bondOwner,
@@ -554,6 +555,7 @@ describe("BondedVotes", function () {
         newOwner,
         newOwnerAddress,
       } = await loadFixture(setup);
+      const [, , , , , third, fourth] = await ethers.getSigners();
 
       await bondedVotes.connect(bondOwner).delegateBonded(otherHolderAddress);
       await expect(bondedVotes.connect(newOwner).acceptBonded(bondOwnerAddress))
@@ -562,14 +564,26 @@ describe("BondedVotes", function () {
           "BondedDelegationNotRequested",
         )
         .withArgs(bondOwnerAddress, newOwnerAddress);
-
       await bondedVotes.connect(otherHolder).acceptBonded(bondOwnerAddress);
-      await bondedVotes.connect(newOwner).delegateBonded(otherHolderAddress);
+
+      await expect(bondedVotes.connect(newOwner).dropBonded(bondOwnerAddress))
+        .to.be.revertedWithCustomError(bondedVotes, "NotBondedDelegate")
+        .withArgs(bondOwnerAddress, newOwnerAddress);
+
+      for (const owner of [newOwner, third]) {
+        await bondedVotes.connect(owner).delegateBonded(otherHolderAddress);
+        await bondedVotes
+          .connect(otherHolder)
+          .acceptBonded(await owner.getAddress());
+      }
+      await bondedVotes.connect(fourth).delegateBonded(otherHolderAddress);
       await expect(
-        bondedVotes.connect(otherHolder).acceptBonded(newOwnerAddress),
+        bondedVotes
+          .connect(otherHolder)
+          .acceptBonded(await fourth.getAddress()),
       )
-        .to.be.revertedWithCustomError(bondedVotes, "BondedDelegateOccupied")
-        .withArgs(otherHolderAddress, bondOwnerAddress);
+        .to.be.revertedWithCustomError(bondedVotes, "BondedDelegateFull")
+        .withArgs(otherHolderAddress);
     });
   });
 
@@ -1777,6 +1791,62 @@ describe("BondedVotes", function () {
           ALLOCATION,
         );
         expect(await veBondedVotes.getVotes(bondOwnerAddress)).to.equal(LOCKED);
+      });
+
+      /// A delegate holds the weight of every owner that it represents. Releasing one owner gives
+      /// back exactly that owner's weight, and its slot takes a new owner without displacing the
+      /// others.
+      it("sums every owner a delegate represents, and releases only the one it drops", async function () {
+        const {
+          veBondedVotes,
+          ciphernodeBondToken,
+          bondOwner,
+          bondOwnerAddress,
+          otherHolder,
+          otherHolderAddress,
+          newOwner,
+          newOwnerAddress,
+        } = await loadFixture(veSetup);
+        const SECOND = ethers.parseEther("1000");
+
+        await allocate(
+          ciphernodeBondToken,
+          bondOwnerAddress,
+          ALLOCATION,
+          "VE_FIRST",
+        );
+        await allocate(
+          ciphernodeBondToken,
+          newOwnerAddress,
+          SECOND,
+          "VE_SECOND",
+        );
+        const represent = async (
+          owner: typeof bondOwner,
+          ownerAddress: string,
+        ) => {
+          await veBondedVotes.connect(owner).delegateBonded(otherHolderAddress);
+          await veBondedVotes.connect(otherHolder).acceptBonded(ownerAddress);
+        };
+        const settled = async (who: string) => {
+          await time.increase(1);
+          return veBondedVotes.getPastVotes(who, (await time.latest()) - 1);
+        };
+
+        await represent(bondOwner, bondOwnerAddress);
+        await represent(newOwner, newOwnerAddress);
+        expect(await settled(otherHolderAddress)).to.equal(ALLOCATION + SECOND);
+
+        await veBondedVotes.connect(otherHolder).dropBonded(newOwnerAddress);
+        expect(await settled(otherHolderAddress)).to.equal(ALLOCATION);
+        expect(await settled(newOwnerAddress)).to.equal(SECOND);
+
+        await represent(newOwner, newOwnerAddress);
+        expect(await settled(otherHolderAddress)).to.equal(ALLOCATION + SECOND);
+        expect(await settled(bondOwnerAddress)).to.equal(0n);
+        expect([
+          ...(await veBondedVotes.bondedOwners(otherHolderAddress)),
+        ]).to.have.members([bondOwnerAddress, newOwnerAddress]);
       });
     });
 

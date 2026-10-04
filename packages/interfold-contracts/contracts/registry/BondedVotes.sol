@@ -95,10 +95,10 @@ interface IVotingEscrow {
  *   - The owner asks with {delegateBonded}, and the delegate takes the weight on with
  *     {acceptBonded}. A request moves nothing, so nobody can push weight onto a delegate or take
  *     its place.
- *   - A delegate represents ONE owner at a time. Bonded weight is read again from its sources on
- *     every call, not kept as a running total, because bonds, slashes and the lock schedule change
- *     it without telling this contract. Each represented owner therefore costs a full read, and
- *     one owner keeps that cost fixed.
+ *   - A delegate represents at most {MAX_BONDED_OWNERS} owners at a time. Bonded weight is read
+ *     again from its sources on every call, not kept as a running total, because bonds, slashes
+ *     and the lock schedule change it without telling this contract. Each represented owner
+ *     therefore costs a full read, and the cap keeps the cost of a vote bounded.
  *   - The owner ends a delegation with {delegateBonded} and the delegate with {dropBonded}. Both
  *     take effect at once.
  *   - Both directions are checkpointed together on the token's clock. At every timepoint an
@@ -126,6 +126,10 @@ contract BondedVotes is IERC5805 {
     /// @notice The registry that custodies the bonded FOLD and writes the history.
     address public immutable registry;
 
+    /// @notice How many owners one delegate can represent at a time. Each represented owner costs
+    /// a full read of its bonded weight in {getPastVotes}, so the cap bounds the cost of a vote.
+    uint256 public constant MAX_BONDED_OWNERS = 3;
+
     /// @notice The delegate that each owner asked to represent its bonded weight. A request moves
     /// no weight until that delegate calls {acceptBonded}.
     mapping(address owner => address delegatee) public pendingBondedDelegate;
@@ -133,9 +137,10 @@ contract BondedVotes is IERC5805 {
     /// @dev Who represents each owner's bonded weight, over time. Zero while the owner keeps it.
     mapping(address owner => Checkpoints.Trace208) private _bondedDelegates;
 
-    /// @dev Whose bonded weight each delegate represents, over time. Zero while it represents
-    /// nobody. Written with {_bondedDelegates} in the same call, so the two never disagree.
-    mapping(address delegatee => Checkpoints.Trace208) private _bondedOwners;
+    /// @dev Whose bonded weight each delegate represents, over time: one owner per slot, zero for a
+    /// free slot. Written with {_bondedDelegates} in the same call, so the two never disagree.
+    mapping(address delegatee => Checkpoints.Trace208[MAX_BONDED_OWNERS])
+        private _bondedOwners;
 
     /// @notice Thrown when a constructor argument is the zero address.
     error ZeroAddress();
@@ -160,11 +165,12 @@ contract BondedVotes is IERC5805 {
     /// @notice Thrown when a delegate accepts an owner that did not ask it.
     error BondedDelegationNotRequested(address owner, address delegatee);
 
-    /// @notice Thrown when a delegate that already represents an owner accepts another one.
-    error BondedDelegateOccupied(address delegatee, address owner);
+    /// @notice Thrown when a delegate that already represents {MAX_BONDED_OWNERS} owners accepts
+    /// another one.
+    error BondedDelegateFull(address delegatee);
 
-    /// @notice Thrown when a delegate that represents nobody calls {dropBonded}.
-    error NoBondedOwner(address delegatee);
+    /// @notice Thrown when {dropBonded} names an owner that the caller does not represent.
+    error NotBondedDelegate(address owner, address delegatee);
 
     /// @notice `owner` asked `delegatee` to represent its bonded weight, or withdrew its request
     /// when `delegatee` is zero.
@@ -300,7 +306,7 @@ contract BondedVotes is IERC5805 {
 
     /// @inheritdoc IVotes
     /// @dev The numerator: whatever the primary source attributes to the account, plus its own
-    /// bonded weight unless a delegate represents it, plus the bonded weight of the owner that it
+    /// bonded weight unless a delegate represents it, plus the bonded weight of each owner that it
     /// represents. Bonded weight is the bonded FOLD and, under an escrow votes source, the
     /// vesting-locked FOLD that the owner cannot escrow. Everything is FOLD-denominated and read at
     /// the same timepoint.
@@ -314,10 +320,15 @@ contract BondedVotes is IERC5805 {
         if (_bondedDelegates[account].upperLookupRecent(key) == 0) {
             votes += _bondedWeight(account, timepoint);
         }
-        address owner = address(
-            uint160(_bondedOwners[account].upperLookupRecent(key))
-        );
-        if (owner != address(0)) votes += _bondedWeight(owner, timepoint);
+        Checkpoints.Trace208[MAX_BONDED_OWNERS] storage owners = _bondedOwners[
+            account
+        ];
+        for (uint256 slot = 0; slot < MAX_BONDED_OWNERS; ++slot) {
+            address owner = address(
+                uint160(owners[slot].upperLookupRecent(key))
+            );
+            if (owner != address(0)) votes += _bondedWeight(owner, timepoint);
+        }
 
         return votes;
     }
@@ -417,8 +428,13 @@ contract BondedVotes is IERC5805 {
         if (_bondedDelegates[account].latest() == 0) {
             votes += _currentBondedWeight(account);
         }
-        address owner = bondedOwner(account);
-        if (owner != address(0)) votes += _currentBondedWeight(owner);
+        Checkpoints.Trace208[MAX_BONDED_OWNERS] storage owners = _bondedOwners[
+            account
+        ];
+        for (uint256 slot = 0; slot < MAX_BONDED_OWNERS; ++slot) {
+            address owner = address(uint160(owners[slot].latest()));
+            if (owner != address(0)) votes += _currentBondedWeight(owner);
+        }
 
         return votes;
     }
@@ -456,35 +472,45 @@ contract BondedVotes is IERC5805 {
         address current = bondedDelegate(msg.sender);
         if (delegatee != address(0) && delegatee == current) return;
 
-        if (current != address(0)) _setBondedDelegate(msg.sender, address(0));
+        if (current != address(0)) _unlink(msg.sender, current);
         pendingBondedDelegate[msg.sender] = delegatee;
         emit BondedDelegationRequested(msg.sender, delegatee);
     }
 
     /// @notice Represent the bonded weight of `owner`, which asked the caller with
     /// {delegateBonded}.
-    /// @dev A delegate represents one owner at a time. To change owners, it calls {dropBonded}
-    /// first.
+    /// @dev A delegate represents at most {MAX_BONDED_OWNERS} owners at a time. To take on another
+    /// one, it calls {dropBonded} for one of them first. Both directions are written at the same
+    /// timepoint, so the weight is never counted at two places or at none.
     /// @param owner The account whose bonded weight the caller takes on.
     function acceptBonded(address owner) external {
         if (pendingBondedDelegate[owner] != msg.sender) {
             revert BondedDelegationNotRequested(owner, msg.sender);
         }
-        address represented = bondedOwner(msg.sender);
-        if (represented != address(0)) {
-            revert BondedDelegateOccupied(msg.sender, represented);
-        }
 
-        delete pendingBondedDelegate[owner];
-        _setBondedDelegate(owner, msg.sender);
+        Checkpoints.Trace208[MAX_BONDED_OWNERS] storage owners = _bondedOwners[
+            msg.sender
+        ];
+        for (uint256 slot = 0; slot < MAX_BONDED_OWNERS; ++slot) {
+            if (owners[slot].latest() == 0) {
+                delete pendingBondedDelegate[owner];
+                uint48 timepoint = clock();
+                owners[slot].push(timepoint, uint160(owner));
+                _bondedDelegates[owner].push(timepoint, uint160(msg.sender));
+                emit BondedDelegateChanged(owner, address(0), msg.sender);
+                return;
+            }
+        }
+        revert BondedDelegateFull(msg.sender);
     }
 
-    /// @notice Stop representing the owner whose bonded weight the caller holds. The weight goes
-    /// back to that owner at once.
-    function dropBonded() external {
-        address owner = bondedOwner(msg.sender);
-        if (owner == address(0)) revert NoBondedOwner(msg.sender);
-        _setBondedDelegate(owner, address(0));
+    /// @notice Stop representing `owner`. Its bonded weight goes back to it at once.
+    /// @param owner An owner whose bonded weight the caller represents.
+    function dropBonded(address owner) external {
+        if (bondedDelegate(owner) != msg.sender) {
+            revert NotBondedDelegate(owner, msg.sender);
+        }
+        _unlink(owner, msg.sender);
     }
 
     /// @notice The delegate that represents `owner`'s bonded weight now, or zero.
@@ -494,24 +520,46 @@ contract BondedVotes is IERC5805 {
         return address(uint160(_bondedDelegates[owner].latest()));
     }
 
-    /// @notice The owner whose bonded weight `delegatee` represents now, or zero.
-    /// @param delegatee The account whose represented owner to read.
-    /// @return The represented owner, or zero while `delegatee` represents nobody.
-    function bondedOwner(address delegatee) public view returns (address) {
-        return address(uint160(_bondedOwners[delegatee].latest()));
+    /// @notice The owners whose bonded weight `delegatee` represents now.
+    /// @param delegatee The account whose represented owners to read.
+    /// @return represented At most {MAX_BONDED_OWNERS} owners. Empty while `delegatee` represents
+    /// nobody.
+    function bondedOwners(
+        address delegatee
+    ) external view returns (address[] memory represented) {
+        Checkpoints.Trace208[MAX_BONDED_OWNERS] storage owners = _bondedOwners[
+            delegatee
+        ];
+        uint256 count = 0;
+        for (uint256 slot = 0; slot < MAX_BONDED_OWNERS; ++slot) {
+            if (owners[slot].latest() != 0) ++count;
+        }
+
+        represented = new address[](count);
+        uint256 next = 0;
+        for (uint256 slot = 0; slot < MAX_BONDED_OWNERS; ++slot) {
+            uint208 owner = owners[slot].latest();
+            if (owner != 0) represented[next++] = address(uint160(owner));
+        }
     }
 
-    /// @dev Moves `owner`'s bonded weight to `to`, or back to `owner` when `to` is zero. Both
+    /// @dev Gives `owner`'s bonded weight back to it from `delegatee`, its current delegate. Both
     /// directions are written at the same timepoint, so the weight is never counted at two places
     /// or at none. Off-chain discovery, such as the CRISP census, finds delegates from
     /// {BondedDelegateChanged}.
-    function _setBondedDelegate(address owner, address to) private {
+    function _unlink(address owner, address delegatee) private {
         uint48 timepoint = clock();
-        address from = bondedDelegate(owner);
-        if (from != address(0)) _bondedOwners[from].push(timepoint, 0);
-        if (to != address(0)) _bondedOwners[to].push(timepoint, uint160(owner));
-        _bondedDelegates[owner].push(timepoint, uint160(to));
-        emit BondedDelegateChanged(owner, from, to);
+        Checkpoints.Trace208[MAX_BONDED_OWNERS] storage owners = _bondedOwners[
+            delegatee
+        ];
+        for (uint256 slot = 0; slot < MAX_BONDED_OWNERS; ++slot) {
+            if (owners[slot].latest() == uint160(owner)) {
+                owners[slot].push(timepoint, 0);
+                break;
+            }
+        }
+        _bondedDelegates[owner].push(timepoint, 0);
+        emit BondedDelegateChanged(owner, delegatee, address(0));
     }
 
     ////////////////////////////////////////////////////////////
