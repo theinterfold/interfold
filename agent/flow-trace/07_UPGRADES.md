@@ -190,7 +190,9 @@ reliably. `inspect_persisted_schema_version` reads the marker through the raw ke
 `EventSystem` opens logs or timestamp indexes. It checks unmarked log segments for data without
 decoding records. `interfold node validate` uses the same check before it reads or repairs logs
 (`crates/entrypoint/src/validate.rs`). An unsupported schema produces the schema failure even when
-its event bytes cannot decode. Validation skips all event and snapshot checks in that case.
+its event bytes cannot decode. Validation skips all event and snapshot checks in that case. Each
+node that upgrades to v0.19.0 clears its state and syncs again from the chain history. The reset
+must use the v0.19.0 binary: `reset-data` in v0.18.0 and earlier has no key-share check.
 
 The operator key and the libp2p keypair live in the same key/value store as that state, under
 `//eth_private_key` and `//libp2p/keypair`. Deleting the data directory destroys the identity that
@@ -228,7 +230,11 @@ list, and it lists each such E3 with its stage, because the chain cannot restore
 `Failed` while the E3 can continue on chain. The check reads only whether a record exists and does
 not decode it, so it also protects a store that an older schema wrote. Both reads fail on a storage
 error, which the ordinary read path reports as an absent record, and a key that does not parse fails
-the check. `--allow-active-e3s` overrides the refusals
+the check. It also reads the slash writer state of each chain (`//evm_writers/slashing/`) and
+refuses while that state holds a slash report that the node has not submitted, also for an E3 that
+is `Complete`: completion does not settle a slash report, and the chain cannot restore its evidence.
+That state is decoded, and a record that does not decode fails the check. `nodes purge` runs the
+same check. `--allow-active-e3s` overrides the refusals
 (`crates/entrypoint/src/nodes/state_guard.rs`).
 
 The event log is not one file. `EventSystem::persisted` passes `config.log_file()` through
@@ -265,10 +271,17 @@ bootstrap node, or the reverse, on the same data directory.
 append-only operational log written by `LogCollector`, never read back, and a reset leaves it in
 place.
 
-A schema raise is an upgrade-window action. `assertUpgradeWindow` already requires paused requests,
-zero active E3s, and zero unreleased committees, so no in-flight round loses state to this. The
+A schema raise needs an upgrade window. When a release also raises a required counter,
+`assertUpgradeWindow` requires paused requests, zero active E3s, and zero unreleased committees. A
+release that raises the schema but no required counter has no such on-chain check. Each operator
+resets a node only when the node serves no active E3. For each E3 that the refusal lists, the
+operator also waits until the block time passes its report deadline,
+`accusationSubmissionDeadline(e3Id)` on the `SlashingManager`. That value is
+`getE3LifecycleDeadline(e3Id)` plus one day. `SlashingEvidenceLib` rejects accusation evidence after
+it, for complete and failed E3s alike, and only a running node submits its slash reports. The
 command is not a general repair tool: a node in a live committee that resets loses its keyshare and
-fails that E3. The stage-map check refuses that case unless the operator overrides it.
+fails that E3. The stage-map check refuses that case unless the operator overrides it, and the
+slash-writer check refuses while the node holds a slash report that it has not submitted.
 
 ## Failure and rollback
 

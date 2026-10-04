@@ -39,6 +39,9 @@ impl StoreKeys {
     pub const THRESHOLD_KEYSHARE_RECOVERY_PAYLOADS_PREFIX: &'static str =
         "//threshold_keyshare_recovery_payloads/v1/";
 
+    /// Key prefix of the slash writer state of one chain. The chain ID follows it.
+    pub const SLASHING_WRITER_PREFIX: &'static str = "//evm_writers/slashing/";
+
     pub fn plaintext(e3_id: &E3id) -> String {
         format!("//plaintext/{e3_id}")
     }
@@ -125,7 +128,7 @@ impl StoreKeys {
     }
 
     pub fn slashing_writer_recovery(chain_id: u64) -> String {
-        format!("//evm_writers/slashing/{chain_id}/recovery/v1")
+        format!("{}{chain_id}/recovery/v1", Self::SLASHING_WRITER_PREFIX)
     }
 
     pub fn data_availability_recovery(chain_id: u64) -> String {
