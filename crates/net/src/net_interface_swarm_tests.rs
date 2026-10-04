@@ -134,10 +134,12 @@ impl TestNode {
         {
             tokio::select! {
                 event = self.next_event() => {
-                    let event = event?;
+                    let mut event = event?;
                     if let super::SwarmEvent::Behaviour(super::NodeBehaviourEvent::Identify(
                         libp2p::identify::Event::Received { info, .. },
-                    )) = &event {
+                    )) = &mut event {
+                        // Identify sends a hash set. Give the handler a reproducible address order.
+                        info.listen_addrs.sort();
                         identified = Some(info.clone());
                     }
                     self.process(event).await?;
@@ -394,7 +396,29 @@ async fn identify_reconnections_dial_only_filtered_addresses() -> anyhow::Result
         }
     }
 
-    for _ in 0..2 {
+    for reconnect in 0..3 {
+        if reconnect == 1 {
+            for last in 1..=8 {
+                let address: Multiaddr = format!("/ip4/192.0.2.{last}/udp/9/quic-v1").parse()?;
+                remote.interface.swarm.add_external_address(address.clone());
+                advertised.push(address);
+            }
+            remote
+                .interface
+                .swarm
+                .behaviour_mut()
+                .identify
+                .push([node.peer_id()]);
+            let info = node.identify_with(&mut remote).await?;
+            assert_eq!(
+                info.listen_addrs
+                    .iter()
+                    .filter(|address| !super::is_loopback_addr(address))
+                    .position(|address| address == &new_public),
+                Some(8),
+                "the working endpoint must follow eight other eligible addresses"
+            );
+        }
         node.interface
             .swarm
             .disconnect_peer_id(remote.peer_id())
@@ -414,7 +438,7 @@ async fn identify_reconnections_dial_only_filtered_addresses() -> anyhow::Result
             .kademlia
             .kbucket(remote.peer_id())
             .expect("peer bucket");
-        let retained: Vec<_> = bucket
+        let mut retained: Vec<_> = bucket
             .iter()
             .find(|entry| entry.node.key.preimage() == &remote.peer_id())
             .expect("peer remains available for reconnection")
@@ -424,10 +448,16 @@ async fn identify_reconnections_dial_only_filtered_addresses() -> anyhow::Result
             .cloned()
             .map(super::strip_peer_id)
             .collect();
+        assert!(
+            retained.contains(&new_public),
+            "disconnect removed a working endpoint that the peer still advertises"
+        );
+        let mut expected: Vec<_> = advertised.iter().take(8).cloned().collect();
+        retained.sort();
+        expected.sort();
         assert_eq!(
-            retained,
-            vec![new_public.clone()],
-            "retained a superseded address after its connection closed"
+            retained, expected,
+            "retain the advertised endpoint, then fill the remaining slots in advertised order"
         );
         dials.lock().unwrap().clear();
         node.interface.swarm.dial(remote.peer_id())?;
@@ -447,7 +477,9 @@ async fn identify_reconnections_dial_only_filtered_addresses() -> anyhow::Result
         );
         let info = node.identify_with(&mut remote).await?;
         assert!(info.listen_addrs.contains(&new_loopback));
-        assert!(info.listen_addrs.contains(&new_public));
+        assert!(advertised
+            .iter()
+            .all(|address| info.listen_addrs.contains(address)));
         assert!(!info.listen_addrs.contains(&public));
     }
     Ok(())

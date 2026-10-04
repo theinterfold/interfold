@@ -268,9 +268,11 @@ compares the network identity and the supported Kademlia and sync protocols.
 Identify does not cache peer addresses. The node keeps admitted peer addresses in Kademlia and
 filters loopback addresses when it has a listener on a non-loopback interface. Each compatible
 Identify exchange refreshes these addresses, so a connected peer can advertise a new address for
-later reconnection. The node keeps the first unique filtered addresses that fit both limits: 8
-addresses per peer and 2 KiB of encoded addresses, including peer IDs. Each update removes
-superseded Identify addresses. Live connection endpoints remain until they close.
+later reconnection. The node keeps unique filtered addresses within both limits: 8 addresses per
+peer and 2 KiB of encoded addresses, including peer IDs. Advertised live endpoints take slots first.
+The remaining slots fill in advertised order. Each update removes superseded Identify addresses.
+Live connection endpoints remain until they close. A withdrawn endpoint is removed after its last
+connection closes.
 
 | Log line                                                                                      | Cause                                                                        | Action                                                                                                                                                                                                            |
 | --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

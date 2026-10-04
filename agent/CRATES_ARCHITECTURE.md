@@ -581,14 +581,15 @@ Kademlia and does not quarantine the peer it was advertised for. Identify has no
 it cannot supply unfiltered peer addresses to later dials. Each compatible Identify exchange
 refreshes the admitted peer's filtered Kademlia addresses, including updates while connected. Each
 peer retains at most 8 Identify addresses and 2 KiB of encoded multiaddresses, including peer IDs.
-The first unique filtered addresses that fit these limits replace the preceding set. Up to 2 live
-connection endpoints remain until they close, even when absent from Identify. Address tracking
-follows live connections and routing entries. Only newly admitted connections receive admission
-notifications. Kademlia adds new routing-table entries only through the filtered addresses of
-admitted peers, not automatically for every connection. Kademlia still adds a dialed address to an
-existing entry, so the node removes loopback addresses when Kademlia reports a routing update.
-Loopback addresses between nodes on one host are therefore not passed on to remote peers. The
-library's record replication and republication jobs are disabled: each hour the replication job
+Select advertised live endpoints first, then fill the remaining slots with unique filtered addresses
+in advertised order within these limits. Up to 2 live connection endpoints remain until they close,
+even when absent from Identify. A withdrawn endpoint is removed after its last connection closes.
+Address tracking follows live connections and routing entries. Only newly admitted connections
+receive admission notifications. Kademlia adds new routing-table entries only through the filtered
+addresses of admitted peers, not automatically for every connection. Kademlia still adds a dialed
+address to an existing entry, so the node removes loopback addresses when Kademlia reports a routing
+update. Loopback addresses between nodes on one host are therefore not passed on to remote peers.
+The library's record replication and republication jobs are disabled: each hour the replication job
 would put every stored record that no peer put again since its last run to up to 20 peers, which
 after a DKG includes the other peers' DKG documents. Expired records are pruned every minute
 instead. Kademlia queries time out after 60 seconds, and each request stream after 60 seconds. Peer

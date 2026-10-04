@@ -225,13 +225,18 @@ impl PeerAddresses {
         filter_loopback: bool,
         kademlia: &mut KademliaBehaviour<MemoryStore>,
     ) {
+        let mut advertised: Vec<_> = advertised
+            .into_iter()
+            .map(|address| strip_peer_id(address).with(Protocol::P2p(peer)))
+            .collect();
+        // Keep advertised live endpoints first so they remain available after disconnect.
+        advertised.sort_by_key(|address| !self.connections.values().any(|live| live == address));
         let mut next = Vec::new();
         let mut bytes = 0;
         for address in advertised {
             if filter_loopback && is_loopback_addr(&address) {
                 continue;
             }
-            let address = strip_peer_id(address).with(Protocol::P2p(peer));
             if next.contains(&address) || bytes + address.len() > MAX_IDENTIFY_ADDRESS_BYTES {
                 continue;
             }
