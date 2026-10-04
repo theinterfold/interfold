@@ -132,7 +132,7 @@ fn large_net_event(ts: u128, bytes: usize) -> InterfoldEvent {
 fn build_sync_batch_rejects_zero_limit() {
     let fetch = FetchEventsSince::new(AggregateId::new(1), 0, 0);
     assert!(matches!(
-        build_sync_batch(vec![], exhausted(None), &fetch),
+        build_sync_batch(vec![], exhausted(None), None, &fetch),
         SyncBatchOutcome::BadRequest(_)
     ));
 }
@@ -143,6 +143,7 @@ fn build_sync_batch_filters_local_non_forwardable_and_marks_done() {
     let outcome = build_sync_batch(
         vec![net_event(5), net_non_forwardable_event(6), local_event(7)],
         exhausted(Some(7)),
+        None,
         &fetch,
     );
     let SyncBatchOutcome::Batch(batch) = outcome else {
@@ -157,7 +158,12 @@ fn build_sync_batch_filters_local_non_forwardable_and_marks_done() {
 #[test]
 fn build_sync_batch_limit_one_advances_past_inclusive_cursor() {
     let fetch = FetchEventsSince::new(AggregateId::new(1), 0, 1);
-    let outcome = build_sync_batch(vec![net_event(5), net_event(9)], exhausted(Some(9)), &fetch);
+    let outcome = build_sync_batch(
+        vec![net_event(5), net_event(9)],
+        exhausted(Some(9)),
+        None,
+        &fetch,
+    );
     let SyncBatchOutcome::Batch(batch) = outcome else {
         panic!("expected batch");
     };
@@ -174,6 +180,7 @@ fn build_sync_batch_caps_malicious_huge_limit() {
     let SyncBatchOutcome::Batch(batch) = build_sync_batch(
         events,
         exhausted(Some(MAX_SYNC_BATCH_SIZE as u128 + 1)),
+        None,
         &fetch,
     ) else {
         panic!("expected batch");
@@ -194,7 +201,8 @@ fn build_sync_batch_advances_past_full_filtered_scan() {
         .map(|ts| local_event(ts as u128))
         .collect();
     let last = sync_scan_limit(fetch.limit()) as u128;
-    let SyncBatchOutcome::Batch(batch) = build_sync_batch(events, more_after(Some(last)), &fetch)
+    let SyncBatchOutcome::Batch(batch) =
+        build_sync_batch(events, more_after(Some(last)), None, &fetch)
     else {
         panic!("expected batch");
     };
@@ -212,6 +220,7 @@ fn build_sync_batch_stops_at_max_timestamp() {
     let SyncBatchOutcome::Batch(batch) = build_sync_batch(
         vec![net_event(u128::MAX)],
         exhausted(Some(u128::MAX)),
+        None,
         &fetch,
     ) else {
         panic!("expected batch");
@@ -226,7 +235,7 @@ fn build_sync_batch_continues_after_a_storage_page_that_stopped_early() {
     // Storage stopped at its byte budget after one large filtered record; history continues.
     let fetch = FetchEventsSince::new(AggregateId::new(1), 0, 10);
     let SyncBatchOutcome::Batch(batch) =
-        build_sync_batch(vec![local_event(3)], more_after(Some(3)), &fetch)
+        build_sync_batch(vec![local_event(3)], more_after(Some(3)), None, &fetch)
     else {
         panic!("expected batch");
     };
@@ -239,7 +248,8 @@ fn build_sync_batch_continues_after_a_storage_page_that_stopped_early() {
 fn build_sync_batch_continues_after_a_page_without_returned_records() {
     // Every record of the page was quarantined before it reached the reply.
     let fetch = FetchEventsSince::new(AggregateId::new(1), 0, 10);
-    let SyncBatchOutcome::Batch(batch) = build_sync_batch(vec![], more_after(Some(7)), &fetch)
+    let SyncBatchOutcome::Batch(batch) =
+        build_sync_batch(vec![], more_after(Some(7)), None, &fetch)
     else {
         panic!("expected batch");
     };
@@ -259,6 +269,7 @@ fn build_sync_batch_keeps_replies_under_the_message_limit() {
             large_net_event(3, size),
         ],
         exhausted(Some(3)),
+        None,
         &fetch,
     ) else {
         panic!("expected batch");
@@ -307,7 +318,7 @@ async fn an_event_as_large_as_a_reply_allows_is_served_through_the_transport_fra
     };
 
     let SyncBatchOutcome::Batch(batch) =
-        build_sync_batch(vec![keyshare_of_size(budget)], progress, &fetch)
+        build_sync_batch(vec![keyshare_of_size(budget)], progress, None, &fetch)
     else {
         panic!("the largest event that fits a reply is served");
     };
@@ -320,7 +331,7 @@ async fn an_event_as_large_as_a_reply_allows_is_served_through_the_transport_fra
     assert_eq!(batch.events.len(), 1);
 
     assert!(matches!(
-        build_sync_batch(vec![keyshare_of_size(budget + 1)], progress, &fetch),
+        build_sync_batch(vec![keyshare_of_size(budget + 1)], progress, None, &fetch),
         SyncBatchOutcome::Failed(_)
     ));
 }

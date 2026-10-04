@@ -610,6 +610,14 @@ within the 10 MiB response limit less the frame header. Its events can use all o
 except the encoded size of a reply without events; a single event above that budget fails the
 request.
 
+A starting node fetches each aggregate's history from two admitted peers, because one peer can lack
+part of the range after a restart or a reset and still answer `Done`. Each peer starts from the
+requested timestamp, every page of its history goes to that peer, and the node keeps the union, one
+copy per event ID, with the earliest timestamp. A failed peer is replaced by another one. Each reply
+carries `observed_from`: the time when the responder's own startup history fetch ended, so it
+vouches only for later history. While no successful peer vouches for the whole range, the node asks
+up to four peers, and then logs that the history may be incomplete. One connected peer serves alone.
+
 The document publisher fetches documents in spawned tasks, so a slow DHT read does not hold its
 ingress loop. At most 8 fetches run and 512 documents wait. Four concurrent N=19 E3s need
 `4 * 3 * 18 = 216` remote documents per node. A 2x margin gives 432, rounded up to 512 queue slots.

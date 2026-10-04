@@ -154,6 +154,9 @@ impl Handler<TypedEvent<SyncRequestSucceeded>> for NetSyncManager {
     ) -> Self::Result {
         trap(EType::Net, &self.bus.with_ec(msg.get_ctx()), || {
             info!("SYNC REQUEST SUCCEEDED");
+            if self.observed_from.is_none() {
+                self.observed_from = Some(self.bus.ts()?);
+            }
             let (msg, ctx) = msg.into_components();
             let response = msg.response;
             self.bus.publish_from_remote_as_response(
@@ -295,7 +298,7 @@ impl Handler<EventStoreQueryResponse> for NetSyncManager {
                 ))?;
                 bail!("event store answered a historical-sync page without scan progress");
             };
-            match build_sync_batch(events, history, &fetch_request) {
+            match build_sync_batch(events, history, self.observed_from, &fetch_request) {
                 SyncBatchOutcome::BadRequest(reason) => pending.responder.bad_request(reason)?,
                 SyncBatchOutcome::Failed(reason) => {
                     warn!(%reason, "Cannot serve a historical-sync request");

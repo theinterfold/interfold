@@ -120,6 +120,7 @@ pub(crate) fn sync_reply_event_budget() -> usize {
             events: Vec::new(),
             next: BatchCursor::Next(u128::MAX),
             aggregate_id: e3_events::AggregateId::new(0),
+            observed_from: Some(u128::MAX),
         };
         let encoded = crate::domain::wire::encode_sync(
             crate::domain::wire::SyncMessageKind::EventBatch,
@@ -144,6 +145,7 @@ pub(crate) fn sync_reply_event_budget() -> usize {
 pub fn build_sync_batch(
     page: Vec<InterfoldEvent>,
     progress: HistoryProgress,
+    observed_from: Option<u128>,
     fetch: &FetchEventsSince,
 ) -> SyncBatchOutcome {
     if fetch.limit() == 0 {
@@ -226,6 +228,7 @@ pub fn build_sync_batch(
         events,
         next,
         aggregate_id,
+        observed_from,
     })
 }
 

@@ -153,6 +153,9 @@ pub struct NetSyncManager {
     /// Set when local replay has finished, at `HistoricalNetSyncStart`. Re-sends wait for it, so
     /// that a replayed message is not sent before the replay reaches the end of its E3.
     replay_finished: bool,
+    /// Time from which this node has observed the network live: when its own startup history
+    /// fetch ended. History replies carry it, so a requester knows which range a reply vouches for.
+    observed_from: Option<u128>,
 }
 
 /// Identifies one message that the node keeps re-sending.
@@ -222,6 +225,7 @@ impl NetSyncManager {
             announcements: HashMap::new(),
             ended_e3s: VecDeque::new(),
             replay_finished: false,
+            observed_from: None,
         }
     }
 }
@@ -235,7 +239,10 @@ use effects::historical_sync::handle_sync_request_event;
 use handlers::{AllPeersDialed, PeerConnected};
 
 #[cfg(test)]
-use effects::historical_sync::{eligible_sync_cursor, validate_historical_events};
+use effects::historical_sync::{
+    eligible_sync_cursor, fetch_historical_events_for_aggregate, fetch_history_from_peers,
+    validate_historical_events,
+};
 
 #[cfg(test)]
 #[path = "tests.rs"]

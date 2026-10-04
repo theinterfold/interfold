@@ -123,6 +123,10 @@ pub struct EventBatch<E: Debug> {
     pub events: Vec<E>,
     pub next: BatchCursor,
     pub aggregate_id: AggregateId,
+    /// Timestamp from which the responder has observed this network live: the time its own startup
+    /// history fetch ended. `None` while it still starts up. A responder vouches only for history
+    /// at or after this time; earlier records come from its log and from its own peers.
+    pub observed_from: Option<u128>,
 }
 
 impl<E: Debug> TryFrom<Vec<u8>> for EventBatch<E>
@@ -205,6 +209,14 @@ where
     requester.request(request).await
 }
 
+/// The history that one peer served for an aggregate.
+#[derive(Debug)]
+pub(crate) struct PeerHistory<E> {
+    pub events: Vec<E>,
+    /// The responder's `observed_from` on its first page.
+    pub observed_from: Option<u128>,
+}
+
 pub(crate) async fn fetch_all_batched_events_with_budget<E>(
     requester: DirectRequester<WithoutPeer>,
     peer: PeerTarget,
@@ -212,7 +224,7 @@ pub(crate) async fn fetch_all_batched_events_with_budget<E>(
     since: u128,
     batch_size: usize,
     budget: &mut SyncFetchBudget,
-) -> Result<Vec<E>>
+) -> Result<PeerHistory<E>>
 where
     E: Debug + Serialize + TryFrom<Vec<u8>> + Send + Sync + 'static,
     EventBatch<E>: TryFrom<Vec<u8>>,
@@ -222,6 +234,8 @@ where
     let requester = requester.to(peer);
     let mut all_events = Vec::new();
     let mut cursor = since;
+    let mut observed_from = None;
+    let mut first_page = true;
 
     loop {
         let request = FetchEventsSince::new(aggregate_id, cursor, batch_size);
@@ -262,6 +276,10 @@ where
             .try_into()
             .context("historical sync page size does not fit usize")?;
         budget.record_page(batch.events.len(), page_bytes)?;
+        if first_page {
+            observed_from = batch.observed_from;
+            first_page = false;
+        }
         all_events
             .try_reserve(batch.events.len())
             .map_err(|error| {
@@ -286,7 +304,10 @@ where
         all_events.len()
     );
 
-    Ok(all_events)
+    Ok(PeerHistory {
+        events: all_events,
+        observed_from,
+    })
 }
 
 #[cfg(test)]

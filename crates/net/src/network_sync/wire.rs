@@ -320,8 +320,8 @@ mod tests {
     const GOSSIP_DIGEST: &str = "98f658a6f46e26ceeef0858fde1eecf4254f3a047b95f4156f8f7ee12dbe3d1f";
     const FETCH_LEN: usize = 82;
     const FETCH_DIGEST: &str = "bfb226a144e0c1dacd6678ee09cc7e51e2da8ba3f2da8fd4f8e926a473963122";
-    const BATCH_LEN: usize = 297;
-    const BATCH_DIGEST: &str = "bafda5f0479d4b86e8a148aa2fb67e51edd0b8975464dd47979970023c083a97";
+    const BATCH_LEN: usize = 314;
+    const BATCH_DIGEST: &str = "6dfc97c4029940cdccdb2d348c17a8161bd959eb29b3371088c1ff19f5aede7b";
     const REQUEST_FRAME: (usize, &str) = (
         119,
         "f97998b7e97afffc2e11ce5e778227070f0a41044c69be6a093cfd9aadc8789e",
@@ -495,6 +495,7 @@ mod tests {
             events: vec![unsequenced_event()],
             next: BatchCursor::Next(9),
             aggregate_id: AggregateId::new(3),
+            observed_from: Some(5),
         }
         .try_into()
         .unwrap();

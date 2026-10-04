@@ -3,8 +3,26 @@
 //! Bounded historical-event fetching, validation, and recovery retries.
 
 use super::*;
+use crate::events::call_and_await_response;
 use crate::net_interface_handle::NetEventSubscriber;
+use anyhow::ensure;
+use e3_events::EventId;
+use libp2p::PeerId;
+use rand::seq::SliceRandom;
+use std::time::Duration;
 
+/// Peers whose histories a node merges for each aggregate.
+const HISTORY_SOURCES: usize = 2;
+/// Peers a node asks for one aggregate before it accepts history that no peer observed live.
+const MAX_HISTORY_PEERS: usize = 4;
+
+/// Fetch one aggregate's history from several admitted peers and merge it by event ID.
+///
+/// A peer can lack part of the range, for example after a restart or a reset, and still answer
+/// `Done`. So the node asks two peers, each from `since` and with every page pinned to that peer,
+/// and keeps the union. It asks up to four peers while none of the successful ones observed the
+/// whole range live (its `observed_from` is at or before `since`). A peer that fails is replaced by
+/// another one. One connected peer serves alone.
 pub(in crate::actors::net_sync_manager) async fn fetch_historical_events_for_aggregate(
     net_cmds: &mpsc::Sender<NetCommand>,
     net_events: &NetEventSubscriber,
@@ -13,23 +31,132 @@ pub(in crate::actors::net_sync_manager) async fn fetch_historical_events_for_agg
     budget: &mut SyncFetchBudget,
     network: &NetworkPolicy,
 ) -> Result<Vec<InterfoldEvent<Unsequenced>>> {
-    let requester = DirectRequester::builder(net_cmds.clone(), net_events.clone())
-        .max_retries(SYNC_FETCH_MAX_RETRIES)
-        .retry_timeout(SYNC_FETCH_RETRY_TIMEOUT)
-        .build();
-
-    let events = fetch_all_batched_events_with_budget::<InterfoldEvent<Unsequenced>>(
-        requester,
-        PeerTarget::Random,
+    let mut peers = admitted_peers(net_cmds, net_events).await?;
+    ensure!(!peers.is_empty(), "No connected peers available");
+    peers.shuffle(&mut rand::rng());
+    fetch_history_from_peers(
+        net_cmds,
+        net_events,
+        peers,
         aggregate_id,
         since,
-        100,
         budget,
+        network,
     )
-    .await?;
-
-    validate_historical_events(aggregate_id, events, network)
+    .await
 }
+
+/// Fetch one aggregate's history from `peers`, in their order, as
+/// [`fetch_historical_events_for_aggregate`] describes.
+pub(in crate::actors::net_sync_manager) async fn fetch_history_from_peers(
+    net_cmds: &mpsc::Sender<NetCommand>,
+    net_events: &NetEventSubscriber,
+    peers: Vec<PeerId>,
+    aggregate_id: AggregateId,
+    since: u128,
+    budget: &mut SyncFetchBudget,
+    network: &NetworkPolicy,
+) -> Result<Vec<InterfoldEvent<Unsequenced>>> {
+    let mut merged: HashMap<EventId, InterfoldEvent<Unsequenced>> = HashMap::new();
+    let mut sources = 0usize;
+    let mut vouched = false;
+    let mut last_error = None;
+    for peer in peers.into_iter().take(MAX_HISTORY_PEERS) {
+        if sources >= HISTORY_SOURCES && vouched {
+            break;
+        }
+        let requester = DirectRequester::builder(net_cmds.clone(), net_events.clone())
+            .max_retries(SYNC_FETCH_MAX_RETRIES)
+            .retry_timeout(SYNC_FETCH_RETRY_TIMEOUT)
+            .build();
+        let history = match fetch_all_batched_events_with_budget::<InterfoldEvent<Unsequenced>>(
+            requester,
+            PeerTarget::Specific(peer),
+            aggregate_id,
+            since,
+            100,
+            budget,
+        )
+        .await
+        .and_then(|history| {
+            validate_historical_events(aggregate_id, history.events, network)
+                .map(|events| (events, history.observed_from))
+        }) {
+            Ok(history) => history,
+            Err(error) => {
+                if budget.is_exhausted() {
+                    return Err(error);
+                }
+                warn!(%peer, %aggregate_id, "History fetch from a peer failed: {error:#}");
+                last_error = Some(error);
+                continue;
+            }
+        };
+        let (events, observed_from) = history;
+        sources += 1;
+        vouched |= observed_from.is_some_and(|observed| observed <= since);
+        for event in events {
+            merge_by_event_id(&mut merged, event);
+        }
+    }
+    if sources == 0 {
+        return Err(
+            last_error.unwrap_or_else(|| anyhow::anyhow!("No admitted peer served the history"))
+        );
+    }
+    if !vouched {
+        warn!(
+            %aggregate_id,
+            since,
+            sources,
+            "No peer observed the requested history range live; it may be incomplete"
+        );
+    }
+    let mut events: Vec<_> = merged.into_values().collect();
+    events.sort_by_key(|event| event.ts());
+    Ok(events)
+}
+
+/// Keep one copy of each event. Peers stamp the same event with their own reception time, so the
+/// earliest timestamp wins, which makes the choice independent of the order of the peers.
+fn merge_by_event_id(
+    merged: &mut HashMap<EventId, InterfoldEvent<Unsequenced>>,
+    event: InterfoldEvent<Unsequenced>,
+) {
+    match merged.entry(event.id()) {
+        std::collections::hash_map::Entry::Vacant(entry) => {
+            entry.insert(event);
+        }
+        std::collections::hash_map::Entry::Occupied(mut entry) => {
+            if event.ts() < entry.get().ts() {
+                entry.insert(event);
+            }
+        }
+    }
+}
+
+/// The connected peers that passed network admission.
+async fn admitted_peers(
+    net_cmds: &mpsc::Sender<NetCommand>,
+    net_events: &NetEventSubscriber,
+) -> Result<Vec<PeerId>> {
+    call_and_await_response(
+        net_cmds.clone(),
+        net_events.clone(),
+        NetCommand::AdmittedPeers {
+            correlation_id: CorrelationId::new(),
+        },
+        |event| match event {
+            NetEvent::AdmittedPeers { peers, .. } => Some(Ok(peers.clone())),
+            _ => None,
+        },
+        ADMITTED_PEERS_TIMEOUT,
+    )
+    .await
+}
+
+/// Deadline for the swarm to list its admitted peers.
+const ADMITTED_PEERS_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub(in crate::actors::net_sync_manager) fn validate_historical_events(
     aggregate_id: AggregateId,

@@ -213,6 +213,91 @@ async fn served_pages(
     panic!("history did not end");
 }
 
+/// The `observed_from` of one history page that `manager` serves.
+async fn served_observed_from(
+    manager: &Addr<NetSyncManager>,
+    net_tx: &mpsc::Sender<NetCommand>,
+    net_rx: &mut mpsc::Receiver<NetCommand>,
+) -> Option<u128> {
+    let request: Vec<u8> = FetchEventsSince::new(AggregateId::new(1), 0, 1)
+        .try_into()
+        .unwrap();
+    let responder = DirectResponder::new(0, ChannelType::Test("observed".to_string()), net_tx)
+        .with_request(request);
+    manager
+        .send(IncomingRequest {
+            peer: PeerId::random(),
+            responder,
+        })
+        .await
+        .unwrap();
+    let command = tokio::time::timeout(Duration::from_secs(5), net_rx.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    let ProtocolResponse::Ok(bytes) = protocol_response(command) else {
+        panic!("expected a history page");
+    };
+    EventBatch::<InterfoldEvent<Unsequenced>>::try_from(bytes)
+        .unwrap()
+        .observed_from
+}
+
+#[actix::test]
+async fn history_replies_vouch_only_after_the_startup_fetch_ended() {
+    let system = EventSystem::new()
+        .with_fresh_bus()
+        .with_aggregate_config(AggregateConfig::new(HashMap::from([(
+            AggregateId::new(1),
+            Duration::ZERO,
+        )])));
+    let bus = system.handle().unwrap().enable("test");
+    let (net_tx, mut net_rx) = mpsc::channel::<NetCommand>(100);
+    let evt_tx = NetEventChannel::new(100);
+    let _evt_rx = evt_tx.subscribe();
+    let manager = NetSyncManager::new(
+        &bus,
+        &net_tx,
+        &NetEventSubscriber::from(&evt_tx),
+        system.eventstore_reader().unwrap().ts(),
+        "my-topic",
+        NetworkPolicy::local_unrestricted(),
+    )
+    .start();
+
+    assert_eq!(
+        served_observed_from(&manager, &net_tx, &mut net_rx).await,
+        None
+    );
+
+    let ended = SyncRequestSucceeded {
+        response: SyncResponseValue {
+            events: vec![],
+            ts: 0,
+        },
+    };
+    manager
+        .send(TypedEvent::new(
+            ended,
+            InterfoldEvent::<Unsequenced>::new_with_timestamp(
+                TestEvent::new("startup-history", 1).into(),
+                None,
+                1,
+                None,
+                EventSource::Local,
+            )
+            .into_sequenced(1)
+            .get_ctx()
+            .clone(),
+        ))
+        .await
+        .unwrap();
+
+    assert!(served_observed_from(&manager, &net_tx, &mut net_rx)
+        .await
+        .is_some());
+}
+
 #[actix::test]
 async fn history_pages_serve_every_record_when_the_log_holds_older_timestamps_later() {
     let system = EventSystem::new()
@@ -341,6 +426,267 @@ async fn history_pages_continue_past_pages_of_quarantined_records() {
         assert!(*next > cursor, "{pages:?}");
         cursor = *next;
     }
+}
+
+/// One peer of a fake network: the history it serves, the time it observed the network from,
+/// and whether it fails every request.
+#[derive(Clone)]
+struct FakeHistoryPeer {
+    peer: PeerId,
+    events: Vec<InterfoldEvent<Unsequenced>>,
+    observed_from: Option<u128>,
+    fails: bool,
+}
+
+fn keyshare_payload(e3: &str) -> InterfoldEventData {
+    KeyshareCreated {
+        pubkey: ArcBytes::from_bytes(&[1, 2, 3, 4]),
+        e3_id: E3id::new(e3, 1),
+        node: "node-1".to_string(),
+        party_id: 1,
+        signed_pk_generation_proof: None,
+    }
+    .into()
+}
+
+/// A peer's copy of the gossip event `e3`, stamped with the peer's reception time `ts`.
+fn received(e3: &str, ts: u128) -> InterfoldEvent<Unsequenced> {
+    InterfoldEvent::<Unsequenced>::new_with_timestamp(
+        keyshare_payload(e3),
+        None,
+        ts,
+        None,
+        EventSource::Net,
+    )
+}
+
+/// Serve `peers` over a fake transport with two-event pages. Returns the peer of each history
+/// request in order.
+fn spawn_fake_history_network(
+    peers: Vec<FakeHistoryPeer>,
+    mut commands: mpsc::Receiver<NetCommand>,
+    events: NetEventChannel,
+) -> std::sync::Arc<std::sync::Mutex<Vec<PeerId>>> {
+    let requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen = requests.clone();
+    tokio::spawn(async move {
+        while let Some(command) = commands.recv().await {
+            match command {
+                NetCommand::AdmittedPeers { correlation_id } => {
+                    let _ = events.send(NetEvent::AdmittedPeers {
+                        correlation_id,
+                        peers: peers.iter().map(|peer| peer.peer).collect(),
+                    });
+                }
+                NetCommand::OutgoingRequest(request) => {
+                    let PeerTarget::Specific(target) = request.target else {
+                        panic!("history requests must name their peer");
+                    };
+                    seen.lock().unwrap().push(target);
+                    let peer = peers.iter().find(|peer| peer.peer == target).unwrap();
+                    let fetch = FetchEventsSince::try_from(request.payload).unwrap();
+                    let payload = if peer.fails {
+                        ProtocolResponse::Error("unavailable".to_string())
+                    } else {
+                        let mut history: Vec<_> = peer
+                            .events
+                            .iter()
+                            .filter(|event| event.ts() >= fetch.since())
+                            .cloned()
+                            .collect();
+                        history.sort_by_key(|event| event.ts());
+                        let more = history.len() > 2;
+                        history.truncate(2);
+                        let next = match history.last() {
+                            Some(last) if more => BatchCursor::Next(last.ts() + 1),
+                            _ => BatchCursor::Done,
+                        };
+                        let batch = EventBatch {
+                            events: history,
+                            next,
+                            aggregate_id: fetch.aggregate_id(),
+                            observed_from: peer.observed_from,
+                        };
+                        ProtocolResponse::Ok(batch.try_into().unwrap())
+                    };
+                    let _ = events.send(NetEvent::OutgoingRequestSucceeded(
+                        crate::events::OutgoingRequestSucceeded {
+                            payload,
+                            correlation_id: request.correlation_id,
+                        },
+                    ));
+                }
+                _ => {}
+            }
+        }
+    });
+    requests
+}
+
+/// Fetch from a fake network. `order` asks the peers in that order; `None` lets the node list
+/// and shuffle them as in production.
+async fn fetch_from_fake_peers(
+    peers: Vec<FakeHistoryPeer>,
+    since: u128,
+    in_order: bool,
+) -> (Vec<InterfoldEvent<Unsequenced>>, Vec<PeerId>) {
+    let (commands_tx, commands_rx) = mpsc::channel::<NetCommand>(64);
+    let events = NetEventChannel::new(64);
+    let _keep_open = events.subscribe();
+    let order: Vec<PeerId> = peers.iter().map(|peer| peer.peer).collect();
+    let requests = spawn_fake_history_network(peers, commands_rx, events.clone());
+    let subscriber = NetEventSubscriber::from(&events);
+    let mut budget = SyncFetchBudget::production();
+    let policy = NetworkPolicy::local_unrestricted();
+    let fetched = if in_order {
+        fetch_history_from_peers(
+            &commands_tx,
+            &subscriber,
+            order,
+            AggregateId::new(1),
+            since,
+            &mut budget,
+            &policy,
+        )
+        .await
+    } else {
+        fetch_historical_events_for_aggregate(
+            &commands_tx,
+            &subscriber,
+            AggregateId::new(1),
+            since,
+            &mut budget,
+            &policy,
+        )
+        .await
+    }
+    .unwrap();
+    let requests = requests.lock().unwrap().clone();
+    (fetched, requests)
+}
+
+fn fetched_e3s(events: &[InterfoldEvent<Unsequenced>]) -> Vec<(String, u128)> {
+    events
+        .iter()
+        .map(|event| match event.get_data() {
+            InterfoldEventData::KeyshareCreated(data) => {
+                (data.e3_id.e3_id().to_string(), event.ts())
+            }
+            other => panic!("unexpected event {other:?}"),
+        })
+        .collect()
+}
+
+#[actix::test]
+async fn history_from_two_peers_is_merged_and_each_peer_is_paged_alone() {
+    let a = PeerId::random();
+    let b = PeerId::random();
+    // B comes first, received e1 later than A, and holds e2, which A lacks.
+    let peers = vec![
+        FakeHistoryPeer {
+            peer: b,
+            events: vec![received("e1", 11), received("e2", 20), received("e4", 41)],
+            observed_from: Some(0),
+            fails: false,
+        },
+        FakeHistoryPeer {
+            peer: a,
+            events: vec![received("e1", 10), received("e3", 30), received("e4", 40)],
+            observed_from: Some(0),
+            fails: false,
+        },
+    ];
+
+    let (fetched, requests) = fetch_from_fake_peers(peers, 0, true).await;
+
+    assert_eq!(
+        fetched_e3s(&fetched),
+        vec![
+            ("e1".to_string(), 10),
+            ("e2".to_string(), 20),
+            ("e3".to_string(), 30),
+            ("e4".to_string(), 40),
+        ]
+    );
+    // Every page of one peer's history goes to that peer.
+    assert_eq!(requests.len(), 4);
+    assert!(requests[..2].iter().all(|peer| *peer == requests[0]));
+    assert!(requests[2..].iter().all(|peer| *peer == requests[2]));
+    assert_ne!(requests[0], requests[2]);
+}
+
+#[actix::test]
+async fn startup_history_asks_two_admitted_peers() {
+    let peer = |e3: &'static str| FakeHistoryPeer {
+        peer: PeerId::random(),
+        events: vec![received(e3, 10)],
+        observed_from: Some(0),
+        fails: false,
+    };
+
+    let (fetched, requests) = fetch_from_fake_peers(vec![peer("e1"), peer("e2")], 0, false).await;
+
+    assert_eq!(fetched.len(), 2);
+    assert_eq!(requests.len(), 2);
+    assert_ne!(requests[0], requests[1]);
+}
+
+#[actix::test]
+async fn history_is_sought_from_a_peer_that_observed_the_range_live() {
+    let since = 40;
+    let late = |peer| FakeHistoryPeer {
+        peer,
+        events: vec![received("e6", 60)],
+        observed_from: Some(55),
+        fails: false,
+    };
+    let peers = vec![
+        late(PeerId::random()),
+        late(PeerId::random()),
+        FakeHistoryPeer {
+            peer: PeerId::random(),
+            events: vec![received("e5", 45), received("e6", 61)],
+            observed_from: Some(30),
+            fails: false,
+        },
+    ];
+
+    let (fetched, _) = fetch_from_fake_peers(peers, since, true).await;
+
+    assert_eq!(
+        fetched_e3s(&fetched),
+        vec![("e5".to_string(), 45), ("e6".to_string(), 60)]
+    );
+}
+
+#[actix::test]
+async fn a_failing_history_peer_is_replaced() {
+    let failing = PeerId::random();
+    let serving = |peer, e3: &'static str| FakeHistoryPeer {
+        peer,
+        events: vec![received(e3, 10)],
+        observed_from: Some(0),
+        fails: false,
+    };
+    let peers = vec![
+        FakeHistoryPeer {
+            peer: failing,
+            events: vec![],
+            observed_from: Some(0),
+            fails: true,
+        },
+        serving(PeerId::random(), "e1"),
+        serving(PeerId::random(), "e2"),
+    ];
+
+    let (fetched, _) = fetch_from_fake_peers(peers, 0, true).await;
+
+    let mut e3s: Vec<_> = fetched_e3s(&fetched)
+        .into_iter()
+        .map(|(e3, _)| e3)
+        .collect();
+    e3s.sort();
+    assert_eq!(e3s, vec!["e1".to_string(), "e2".to_string()]);
 }
 
 #[test]

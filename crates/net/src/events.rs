@@ -262,6 +262,10 @@ pub enum NetCommand {
     /// Send a request to a peer and await response
     OutgoingRequest(OutgoingRequest),
     IncomingResponse(IncomingResponse),
+    /// List the connected peers that passed network admission (`NetEvent::AdmittedPeers`).
+    AdmittedPeers {
+        correlation_id: CorrelationId,
+    },
 }
 
 impl NetCommand {
@@ -338,6 +342,9 @@ impl NetCommand {
             }
             N::Shutdown => "Shutdown".into(),
             N::IncomingResponse(_) => "IncomingResponse".into(),
+            N::AdmittedPeers { correlation_id } => {
+                format!("AdmittedPeers {{ correlation_id: {correlation_id} }}")
+            }
         }
     }
 
@@ -349,6 +356,7 @@ impl NetCommand {
             N::DhtGetRecord { correlation_id, .. } => Some(*correlation_id),
             N::GossipPublish { correlation_id, .. } => Some(*correlation_id),
             N::OutgoingRequest(OutgoingRequest { correlation_id, .. }) => Some(*correlation_id),
+            N::AdmittedPeers { correlation_id } => Some(*correlation_id),
             _ => None,
         }
     }
@@ -449,6 +457,11 @@ pub enum NetEvent {
         /// Total number of peers that were dialed.
         total: usize,
     },
+    /// Connected peers that passed network admission, in reply to `NetCommand::AdmittedPeers`.
+    AdmittedPeers {
+        correlation_id: CorrelationId,
+        peers: Vec<PeerId>,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -485,7 +498,8 @@ impl NetEvent {
             | Self::IncomingRequest(_)
             | Self::OutgoingRequestSucceeded(_)
             | Self::OutgoingRequestFailed(_)
-            | Self::AllPeersDialed { .. } => false,
+            | Self::AllPeersDialed { .. }
+            | Self::AdmittedPeers { .. } => false,
         }
     }
 
@@ -526,6 +540,9 @@ impl NetEvent {
             Self::OutgoingRequestFailed(response) => response.error.len(),
             Self::GossipPublishError { error, .. } => error.to_string().len(),
             Self::PeerRejected { reason, .. } => reason.len(),
+            Self::AdmittedPeers { peers, .. } => {
+                peers.len().saturating_mul(std::mem::size_of::<PeerId>())
+            }
             Self::DialError { .. }
             | Self::ConnectionEstablished { .. }
             | Self::ConfiguredDialAdmitted { .. }
@@ -553,6 +570,7 @@ impl NetEvent {
             N::DhtStoreLocalError { correlation_id, .. } => Some(*correlation_id),
             N::OutgoingRequestSucceeded(msg) => Some(msg.correlation_id),
             N::OutgoingRequestFailed(msg) => Some(msg.correlation_id),
+            N::AdmittedPeers { correlation_id, .. } => Some(*correlation_id),
             _ => None,
         }
     }

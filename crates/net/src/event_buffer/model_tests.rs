@@ -48,6 +48,7 @@ async fn test_non_advancing_cursor_is_rejected() {
         events: vec![b"event1".to_vec()],
         next: BatchCursor::Next(0),
         aggregate_id: AggregateId::new(1),
+        observed_from: None,
     };
     let handle = DirectRequesterTester::new(net_cmds_rx, net_events_tx)
         .expect_request(FetchEventsSince::new(AggregateId::new(1), 0, 1))
@@ -82,16 +83,19 @@ async fn test_three_batches_with_cursor_continuity() {
         events: vec![b"a".to_vec(), b"b".to_vec()],
         next: BatchCursor::Next(200),
         aggregate_id: AggregateId::new(1),
+        observed_from: None,
     };
     let batch2 = EventBatch {
         events: vec![b"c".to_vec(), b"d".to_vec()],
         next: BatchCursor::Next(400),
         aggregate_id: AggregateId::new(1),
+        observed_from: None,
     };
     let batch3 = EventBatch {
         events: vec![b"e".to_vec()],
         next: BatchCursor::Done,
         aggregate_id: AggregateId::new(1),
+        observed_from: None,
     };
 
     let handle = DirectRequesterTester::new(net_cmds_rx, net_events_tx)
@@ -112,7 +116,8 @@ async fn test_three_batches_with_cursor_continuity() {
         &mut SyncFetchBudget::production(),
     )
     .await
-    .unwrap();
+    .unwrap()
+    .events;
 
     handle.await.unwrap();
 

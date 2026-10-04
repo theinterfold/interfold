@@ -1710,6 +1710,18 @@ async fn process_swarm_command(
             handle_response(swarm, responder)?;
             Ok(())
         }
+        NetCommand::AdmittedPeers { correlation_id } => {
+            let peers = swarm
+                .connected_peers()
+                .filter(|peer| peer_admission.is_admitted(peer))
+                .copied()
+                .collect();
+            event_tx.send(NetEvent::AdmittedPeers {
+                correlation_id,
+                peers,
+            })?;
+            Ok(())
+        }
         NetCommand::Shutdown | NetCommand::ConfiguredPeerAdmitted { .. } => {
             unreachable!("control commands must be handled in Libp2pNetInterface::start")
         }
