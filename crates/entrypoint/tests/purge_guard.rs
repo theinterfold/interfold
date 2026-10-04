@@ -5,8 +5,8 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 //! The purge behind `interfold nodes purge` and `interfold purge-all` must not delete the state or
-//! the key file of a running node. It must not delete a key share that an active E3 needs. When it
-//! cannot check a node, it must refuse.
+//! the key file of a running node. It must not delete a key share that an active E3 needs, or a
+//! slash report that the node has not submitted. When it cannot check a node, it must refuse.
 //!
 //! All scenarios run in one test. `execute` opens stores through the process-wide event bus, and
 //! that bus stops with the actix system that started it. A second test in this binary could stop
@@ -406,6 +406,49 @@ async fn empty_store_at_the_configured_path() -> Result<()> {
         &nodes,
         false,
         &["node `decoy`", "holds no operator key"],
+    )
+    .await;
+    assert!(untouched(&[&nodes[0]]));
+    Ok(())
+}
+
+/// A store without an operator key that still holds a slash report that the node has not
+/// submitted. The refusal for the missing key also lists the report, so that an override of the
+/// refusal cannot delete the report unseen.
+async fn store_without_identity_lists_slash_reports() -> Result<()> {
+    use e3_evm::{SlashingWriterRecoveryState, SlashingWriterRepositoryFactory};
+    let project = tempfile::tempdir()?;
+    let targets = PurgeTargets::in_dir(project.path());
+    let nodes = vec![project_node(project.path(), "reporter")?];
+    let bus = get_interfold_bus_handle()?;
+    let repositories = setup_datastore(&nodes[0], &bus)?.repositories();
+    let mut pending = SlashingWriterRecoveryState::default();
+    pending.record(e3_events::AccusationQuorumReached {
+        e3_id: e3_id(),
+        accuser: alloy::primitives::Address::repeat_byte(1),
+        accused: alloy::primitives::Address::repeat_byte(2),
+        proof_type: e3_events::ProofType::C1PkGeneration,
+        votes_for: Vec::new(),
+        outcome: e3_events::AccusationOutcome::AccusedFaulted,
+        evidence: alloy::primitives::Bytes::new(),
+    })?;
+    repositories
+        .slashing_writer_recovery(1)
+        .write_sync(&pending)
+        .await?;
+    repositories.store.shutdown().await?;
+    SledDb::close_all_connections();
+    write_key_file(&nodes[0])?;
+
+    assert_refused(
+        &targets,
+        &nodes,
+        false,
+        &[
+            "node `reporter`",
+            "holds no operator key",
+            "chain 1: 1 report(s)",
+        ],
     )
     .await;
     assert!(untouched(&[&nodes[0]]));
@@ -928,6 +971,7 @@ async fn purge_refuses_to_delete_a_running_node_or_an_active_key_share() -> Resu
     key_folder_without_a_node().await?;
     store_open_elsewhere().await?;
     empty_store_at_the_configured_path().await?;
+    store_without_identity_lists_slash_reports().await?;
     refusal_creates_nothing().await?;
     links_in_the_data_folder().await?;
     deletion_order_and_rerun().await?;

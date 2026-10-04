@@ -21,8 +21,8 @@ use super::{locate, resolve, PurgeTargets, MARKER_FILE_NAME, MARKER_TEXT};
 use crate::fence::{FenceHeld, ProcessFence, LOCK_FILE_NAME};
 use crate::helpers::datastore::get_sled_store;
 use crate::nodes::state_guard::{
-    active_e3s_with_key_shares, check_active_e3s, check_deletion, pending_slash_reports, ActiveE3,
-    Deletion, PendingSlashReports,
+    active_e3s_with_key_shares, check_active_e3s, check_deletion, merge_checks,
+    pending_slash_reports, ActiveE3, Deletion, PendingSlashReports,
 };
 
 /// Takes the planned locks whose folders exist.
@@ -167,19 +167,26 @@ async fn check_store(store: &PlannedStore, allow_active_e3s: bool) -> Result<Opt
         }
         Err(error) => return check_active_e3s(Err(error), allow_active_e3s, &deletion),
     };
-    if store.needs_identity && !contents.has_identity {
+    // The refusal for a missing operator key also lists the key shares and the slash reports that
+    // the store holds, so an override of it cannot delete them unseen.
+    let identity = if store.needs_identity && !contents.has_identity {
         let reason = format!(
             "the store at {} holds no operator key, so it is not the store that the node's key \
              file protects",
             store.db_file.display()
         );
-        return refuse_unchecked(&store.node, &reason, allow_active_e3s);
-    }
-    check_deletion(
-        contents.active,
-        contents.slash_reports,
-        allow_active_e3s,
-        &deletion,
+        refuse_unchecked(&store.node, &reason, allow_active_e3s)
+    } else {
+        Ok(None)
+    };
+    merge_checks(
+        identity,
+        check_deletion(
+            contents.active,
+            contents.slash_reports,
+            allow_active_e3s,
+            &deletion,
+        ),
     )
 }
 

@@ -256,4 +256,33 @@ mod tests {
         assert!(recovery.pending_events().is_empty());
         Ok(())
     }
+
+    /// After the chain confirms a slash, an equivalent quorum that arrives again is not recorded:
+    /// the durable state keeps no report that the node has already submitted.
+    #[test]
+    fn a_completed_intent_is_not_recorded_again() -> Result<()> {
+        let intent = slash_intent();
+        let mut gate = SlashSubmissionGate::new();
+        gate.enable_effects();
+        let mut recovery = SlashingWriterRecoveryState::default();
+        let (key, decision) =
+            gate.record_and_admit(intent.clone(), |event| recovery.record(event.clone()))?;
+        assert_eq!(decision, SlashSubmissionDecision::Submit);
+        assert_eq!(recovery.pending_count(), 1);
+
+        // The chain confirms the exclusion: the writer acknowledges and completes the intent.
+        recovery.acknowledge_exclusion(&CommitteeMemberExcluded {
+            e3_id: intent.e3_id.clone(),
+            node: intent.accused,
+            proof_type: intent.proof_type,
+            party_id: None,
+        })?;
+        gate.mark_completed(key);
+
+        let (_, decision) =
+            gate.record_and_admit(intent.clone(), |event| recovery.record(event.clone()))?;
+        assert_eq!(decision, SlashSubmissionDecision::IgnoreDuplicate);
+        assert_eq!(recovery.pending_count(), 0);
+        Ok(())
+    }
 }

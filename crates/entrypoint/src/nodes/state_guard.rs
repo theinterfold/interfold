@@ -324,14 +324,23 @@ pub(crate) fn check_deletion(
     allow_active_e3s: bool,
     deletion: &Deletion,
 ) -> Result<Option<String>> {
-    let active = check_active_e3s(active_e3s, allow_active_e3s, deletion);
-    let slash = check_pending_slash_reports(slash_reports, allow_active_e3s, deletion);
-    match (active, slash) {
+    merge_checks(
+        check_active_e3s(active_e3s, allow_active_e3s, deletion),
+        check_pending_slash_reports(slash_reports, allow_active_e3s, deletion),
+    )
+}
+
+/// Combine two check results: one refusal with both reasons, or one warning with both.
+pub(crate) fn merge_checks(
+    first: Result<Option<String>>,
+    second: Result<Option<String>>,
+) -> Result<Option<String>> {
+    match (first, second) {
         // The CLI prints only the top-level message, so both refusals go into one message.
-        (Err(active), Err(slash)) => bail!("{active}\n\n{slash}"),
+        (Err(first), Err(second)) => bail!("{first}\n\n{second}"),
         (Err(refusal), Ok(_)) | (Ok(_), Err(refusal)) => Err(refusal),
-        (Ok(Some(active)), Ok(Some(slash))) => Ok(Some(format!("{active}\n{slash}"))),
-        (Ok(active), Ok(slash)) => Ok(active.or(slash)),
+        (Ok(Some(first)), Ok(Some(second))) => Ok(Some(format!("{first}\n{second}"))),
+        (Ok(first), Ok(second)) => Ok(first.or(second)),
     }
 }
 
