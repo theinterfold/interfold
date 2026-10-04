@@ -906,14 +906,13 @@ covered by snapshot cursors. Recovery keeps effects disabled until `EffectsEnabl
 `InterfoldSolWriter` and `CiphernodeRegistrySolWriter` subscribe before EventStore replay. Locally
 produced `PlaintextAggregated` and `PublicKeyAggregated` events form durable publication intents.
 Their process-local gates are rebuilt from replay, coalesce by E3, and release work only after
-`EffectsEnabled`. For `PublicKeyAggregated`, live admission requires the active aggregator role;
-replay can retain a local intent while the persisted role is restored, but the writer starts a
-submission only while the node is the active aggregator. A `PlaintextAggregated` intent has no role
-gate: failover demotes an aggregator after a fixed budget even while it is still proving, so the
-node that computed the plaintext submits it after a demotion too. It submits only while the E3 is at
-`CiphertextReady` with no plaintext, so the first valid result wins. Contract-state preflights
-provide cross-restart idempotency. Terminal outcomes remove the intent; retryable failures retain it
-and retry after 30 seconds.
+`EffectsEnabled`. Neither intent has a role gate: failover demotes an aggregator after a fixed
+budget even while it is still proving, so the node that computed the key or the plaintext submits it
+after a demotion too. A local result exists only when the node started that work as the active
+aggregator. The key writer publishes the committee proof only while the registry has no commitment,
+and the plaintext writer submits only while the E3 is at `CiphertextReady` with no plaintext, so the
+first valid result wins. Contract-state preflights provide cross-restart idempotency. Terminal
+outcomes remove the intent; retryable failures retain it and retry after 30 seconds.
 
 Plaintext admission compares the final-proof domain with confirmed key authority and ciphertext
 hashes before the publication gate retains an intent. Missing authority defers admission. A mismatch

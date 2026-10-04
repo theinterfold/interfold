@@ -34,10 +34,10 @@ use alloy::{
 };
 use anyhow::{Context as _, Result};
 use e3_events::{
-    prelude::*, AggregatorChanged, BusHandle, CommitteeFinalizeRequested,
-    DkgFoldAttestationContextEstablished, E3RequestComplete, E3id, EType, EffectsEnabled,
-    EventSubscriber, EventType, InterfoldEvent, InterfoldEventData, Proof, PublicKeyAggregated,
-    Shutdown, TicketGenerated, TicketId, DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
+    prelude::*, BusHandle, CommitteeFinalizeRequested, DkgFoldAttestationContextEstablished,
+    E3RequestComplete, E3id, EType, EffectsEnabled, EventSubscriber, EventType, InterfoldEvent,
+    InterfoldEventData, Proof, PublicKeyAggregated, Shutdown, TicketGenerated, TicketId,
+    DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
 };
 use e3_utils::{require_successful_receipt, ArcBytes, NotifySync, MAILBOX_LIMIT};
 use std::collections::{HashMap, HashSet};
@@ -330,8 +330,6 @@ pub struct CiphernodeRegistrySolWriter<P> {
     contract_address: Address,
     bus: BusHandle,
     effects_enabled: bool,
-    active_aggregators: HashMap<E3id, bool>,
-    completed_requests: HashSet<E3id>,
     request_registries: HashMap<E3id, Address>,
     publication: ReplaySubmissionGate<E3id, PublicKeyAggregated>,
     ticket_submissions: ReplaySubmissionGate<E3id, TicketGenerated>,
@@ -351,7 +349,6 @@ impl<P: Provider + WalletProvider + Clone + 'static> CiphernodeRegistrySolWriter
             contract_address,
             request_registries,
             HashMap::new(),
-            HashMap::new(),
         )
     }
 
@@ -360,7 +357,6 @@ impl<P: Provider + WalletProvider + Clone + 'static> CiphernodeRegistrySolWriter
         provider: EthProvider<P>,
         contract_address: Address,
         request_registries: HashMap<E3id, Address>,
-        active_aggregators: HashMap<E3id, bool>,
         recovered_tickets: HashMap<E3id, TicketGenerated>,
     ) -> Result<Self> {
         let mut ticket_submissions = ReplaySubmissionGate::new();
@@ -372,8 +368,6 @@ impl<P: Provider + WalletProvider + Clone + 'static> CiphernodeRegistrySolWriter
             contract_address,
             bus: bus.clone(),
             effects_enabled: false,
-            active_aggregators,
-            completed_requests: HashSet::new(),
             request_registries,
             publication: ReplaySubmissionGate::new(),
             ticket_submissions,
@@ -393,7 +387,6 @@ impl<P: Provider + WalletProvider + Clone + 'static> CiphernodeRegistrySolWriter
             contract_address,
             request_registries,
             HashMap::new(),
-            HashMap::new(),
         );
     }
 
@@ -402,7 +395,6 @@ impl<P: Provider + WalletProvider + Clone + 'static> CiphernodeRegistrySolWriter
         provider: EthProvider<P>,
         contract_address: Address,
         request_registries: HashMap<E3id, Address>,
-        active_aggregators: HashMap<E3id, bool>,
         recovered_tickets: HashMap<E3id, TicketGenerated>,
     ) {
         let addr = CiphernodeRegistrySolWriter::new_with_recovery(
@@ -410,7 +402,6 @@ impl<P: Provider + WalletProvider + Clone + 'static> CiphernodeRegistrySolWriter
             provider,
             contract_address,
             request_registries,
-            active_aggregators,
             recovered_tickets,
         )
         .expect("failed to create CiphernodeRegistrySolWriter")
@@ -419,7 +410,6 @@ impl<P: Provider + WalletProvider + Clone + 'static> CiphernodeRegistrySolWriter
         bus.subscribe_all(
             &[
                 EventType::EffectsEnabled,
-                EventType::AggregatorChanged,
                 EventType::DkgFoldAttestationContextEstablished,
                 EventType::PublicKeyAggregated,
                 EventType::CommitteeFinalizeRequested,
@@ -429,10 +419,6 @@ impl<P: Provider + WalletProvider + Clone + 'static> CiphernodeRegistrySolWriter
             ],
             addr.into(),
         );
-    }
-
-    fn is_active_aggregator_for(&self, e3_id: &E3id) -> bool {
-        self.active_aggregators.get(e3_id).copied().unwrap_or(false)
     }
 }
 
@@ -456,7 +442,6 @@ impl CiphernodeRegistrySol {
         provider: EthProvider<P>,
         contract_address: Address,
         request_registries: HashMap<E3id, Address>,
-        active_aggregators: HashMap<E3id, bool>,
         recovered_tickets: HashMap<E3id, TicketGenerated>,
     ) where
         P: Provider + WalletProvider + Clone + 'static,
@@ -466,7 +451,6 @@ impl CiphernodeRegistrySol {
             provider,
             contract_address,
             request_registries,
-            active_aggregators,
             recovered_tickets,
         );
     }

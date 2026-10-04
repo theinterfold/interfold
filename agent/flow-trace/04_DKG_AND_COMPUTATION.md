@@ -846,7 +846,10 @@ phase.
 │   │
 │   ├─ Only the active aggregator starts C1 verification and later proof/compute effects
 │   │   → A promoted standby resumes from its persisted phase; it does not need a RAM buffer
-│   │   → A demoted node ignores late worker results and cannot publish a stale aggregate
+│   │   → A demoted node that dispatched C1 verification finishes that work and publishes its
+│   │     key; the first valid committee publication on chain wins. A node that did not start
+│   │     the work ignores worker results
+│   │     File: crates/aggregator/src/public_key_aggregation/actor.rs (started_as_aggregator)
 │   ├─ C1 verification runs over the exact H selected submitters; failures stop DKG
 │   │
 │   ├─ Honest-set selection (compile-time H from `committee::active`, may be < N):
@@ -918,9 +921,9 @@ phase.
 └─ CiphernodeRegistrySolWriter receives PublicKeyAggregated:
   ├─ Accepts publication intents only from locally produced events; peer copies only distribute
   │  protocol state
-  ├─ During live operation, requires active_aggregators[e3_id] == true when admitting the intent
-  ├─ During startup replay, can retain one durable local intent while the persisted role is restored
-  ├─ Starts a retained submission only while active_aggregators[e3_id] == true
+  ├─ Has no role gate: a local intent exists only when this node computed the key as the active
+  │  aggregator, and a later failover demotion does not stop its submission
+  ├─ During startup replay, retains one durable local intent
   ├─ Defers and coalesces retained intents until EffectsEnabled
   ├─ Uses the registry from DkgFoldAttestationContextEstablished, including after a rotation
   ├─ Reads chain state to determine whether the proof-backed commitment is unset

@@ -104,6 +104,7 @@ impl PublicKeyAggregator {
         c1_proofs: &[Option<SignedProofPayload>],
         ec: EventContext<Sequenced>,
     ) -> Result<()> {
+        self.mark_started_as_aggregator();
         let C1Dispatch {
             party_proofs,
             no_proof_parties,

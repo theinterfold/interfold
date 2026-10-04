@@ -86,7 +86,6 @@ struct EvmStartupRecovery<'a> {
     terminal_plaintext_e3s: &'a HashSet<E3id>,
     eventstore: &'a actix::Recipient<e3_events::EventStoreQueryBy<e3_events::SeqAgg>>,
     dkg_fold_contexts_by_e3: &'a HashMap<E3id, DkgFoldAttestationContext>,
-    active_aggregators: &'a HashMap<E3id, bool>,
     selected_party_ids: &'a HashMap<E3id, u64>,
     lifecycle_stages: &'a HashMap<E3id, E3Stage>,
     /// Failed E3s that keep their contexts only for accusation or slashing work.
@@ -874,7 +873,6 @@ impl CiphernodeBuilder {
                     terminal_plaintext_e3s: &terminal_plaintext_e3s,
                     eventstore: &seq_eventstore,
                     dkg_fold_contexts_by_e3: &dkg_fold_contexts_by_e3,
-                    active_aggregators: &selector_state.is_aggregator,
                     selected_party_ids: &selected_party_ids,
                     lifecycle_stages: &lifecycle_stages,
                     kept_failures: &kept_failures,
@@ -1775,7 +1773,6 @@ async fn setup_evm_system(
         terminal_plaintext_e3s,
         eventstore,
         dkg_fold_contexts_by_e3,
-        active_aggregators,
         selected_party_ids,
         lifecycle_stages,
         kept_failures,
@@ -1836,11 +1833,6 @@ async fn setup_evm_system(
         if contract_components.interfold {
             let write_provider = provider_cache.ensure_write_provider(chain).await?;
             let contract = &chain.contracts.interfold;
-            let chain_active_aggregators = active_aggregators
-                .iter()
-                .filter(|(e3_id, _)| e3_id.chain_id() == chain_id)
-                .map(|(e3_id, active)| (e3_id.clone(), *active))
-                .collect();
             let chain_party_ids = selected_party_ids
                 .iter()
                 .filter(|(e3_id, _)| e3_id.chain_id() == chain_id)
@@ -1874,7 +1866,6 @@ async fn setup_evm_system(
                 bus,
                 write_provider.clone(),
                 contract.address()?,
-                chain_active_aggregators,
                 chain_party_ids,
                 chain_request_registries,
                 chain_failure_stages,
@@ -1962,11 +1953,6 @@ async fn setup_evm_system(
                             .filter(|(e3_id, _)| e3_id.chain_id() == chain_id)
                             .map(|(e3_id, context)| (e3_id.clone(), context.registry))
                             .collect();
-                        let chain_active_aggregators = active_aggregators
-                            .iter()
-                            .filter(|(e3_id, _)| e3_id.chain_id() == chain_id)
-                            .map(|(e3_id, active)| (e3_id.clone(), *active))
-                            .collect();
                         let chain_recovered_tickets = committee_finalizer
                             .tickets
                             .iter()
@@ -1978,7 +1964,6 @@ async fn setup_evm_system(
                             write_provider.clone(),
                             contract.address()?,
                             request_registries,
-                            chain_active_aggregators,
                             chain_recovered_tickets,
                         );
                         info!("CiphernodeRegistrySolWriter attached for publishing committees");

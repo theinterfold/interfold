@@ -212,6 +212,148 @@ async fn restart_redrives_c1_verification() -> Result<()> {
     Ok(())
 }
 
+fn micro_aggregator(
+    bus: BusHandle,
+    fhe: Arc<Fhe>,
+    e3_id: &E3id,
+    initial_is_aggregator: bool,
+    state: PublicKeyAggregatorState,
+) -> (PublicKeyAggregator, Repository<PublicKeyAggregatorState>) {
+    let repository = Repository::new(DataStore::from_in_mem(&InMemStore::new(false).start()));
+    let aggregator = PublicKeyAggregator::new(
+        PublicKeyAggregatorParams {
+            fhe,
+            bus,
+            e3_id: e3_id.clone(),
+            params_preset: BfvPreset::InsecureThreshold512,
+            committee_size: CiphernodesCommitteeSize::Micro,
+            dkg_fold_attestation_context: None,
+            recovery: test_state(PublicKeyAggregatorRecoveryState::default()),
+            initial_is_aggregator,
+            initial_stage: E3Stage::None,
+            effects_enabled: true,
+        },
+        repository.send(Some(state)),
+    );
+    (aggregator, repository)
+}
+
+fn c1_verified(
+    e3_id: &E3id,
+    dishonest_parties: BTreeSet<u64>,
+) -> TypedEvent<ShareVerificationComplete> {
+    let verified = ShareVerificationComplete {
+        e3_id: e3_id.clone(),
+        kind: VerificationKind::PkGenerationProofs,
+        dishonest_parties,
+    };
+    TypedEvent::new(verified.clone(), test_ctx(verified))
+}
+
+/// Wait until the history holds a C5 proof request for `e3_id`.
+async fn c5_proof_requested(
+    history: &Addr<HistoryCollector<InterfoldEvent>>,
+    e3_id: &E3id,
+) -> Result<bool> {
+    for _ in 0..100 {
+        let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+        if events.iter().any(|event| {
+            matches!(
+                event.get_data(),
+                InterfoldEventData::PkAggregationProofPending(data) if &data.e3_id == e3_id
+            )
+        }) {
+            return Ok(true);
+        }
+        actix::clock::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    Ok(false)
+}
+
+#[actix::test]
+async fn demoted_aggregator_finishes_the_c1_verification_it_dispatched() -> Result<()> {
+    let (bus, rng, _seed, params, crp, _errors, history) =
+        get_common_setup(Some(BfvPreset::InsecureThreshold512.into()))?;
+    let e3_id = E3id::new("42", 1);
+    let fhe = Arc::new(Fhe::new(params, crp, rng));
+    let (state, threshold_n, _, circuit_h) = verifying_c1_non_square_state(&fhe, &e3_id)?;
+    let (mut aggregator, repository) = micro_aggregator(bus, fhe, &e3_id, true, state);
+    aggregator.continue_c1_verification(test_ctx(EffectsEnabled::new()))?;
+
+    // A failover moves aggregation to another party while C1 verification runs.
+    let aggregator = aggregator.start();
+    let demotion = AggregatorChanged {
+        e3_id: e3_id.clone(),
+        active_party_id: Some(1),
+        is_aggregator: false,
+    };
+    aggregator
+        .send(TypedEvent::new(demotion.clone(), test_ctx(demotion)))
+        .await?;
+    aggregator
+        .send(c1_verified(
+            &e3_id,
+            (circuit_h as u64..threshold_n as u64).collect(),
+        ))
+        .await?;
+
+    assert!(matches!(
+        repository.read().await?,
+        Some(PublicKeyAggregatorState::GeneratingC5Proof { .. })
+    ));
+    assert!(c5_proof_requested(&history, &e3_id).await?);
+    Ok(())
+}
+
+#[actix::test]
+async fn standby_ignores_c1_verification_that_it_did_not_dispatch() -> Result<()> {
+    let (bus, rng, _seed, params, crp, _errors, _history) =
+        get_common_setup(Some(BfvPreset::InsecureThreshold512.into()))?;
+    let e3_id = E3id::new("42", 1);
+    let fhe = Arc::new(Fhe::new(params, crp, rng));
+    let (state, threshold_n, _, circuit_h) = verifying_c1_non_square_state(&fhe, &e3_id)?;
+    let (aggregator, repository) = micro_aggregator(bus, fhe, &e3_id, false, state);
+    let aggregator = aggregator.start();
+
+    aggregator
+        .send(c1_verified(
+            &e3_id,
+            (circuit_h as u64..threshold_n as u64).collect(),
+        ))
+        .await?;
+
+    assert!(
+        matches!(
+            repository.read().await?,
+            Some(PublicKeyAggregatorState::VerifyingC1 { .. })
+        ),
+        "a standby applied a C1 verification that it did not dispatch"
+    );
+    Ok(())
+}
+
+#[actix::test]
+async fn demoted_aggregator_resumes_its_key_proof_after_restart() -> Result<()> {
+    let (bus, rng, _seed, params, crp, _errors, history) =
+        get_common_setup(Some(BfvPreset::InsecureThreshold512.into()))?;
+    let e3_id = E3id::new("42", 1);
+    let fhe = Arc::new(Fhe::new(params, crp, rng));
+    let mut state = generating_c5_state(CorrelationId::new());
+    if let PublicKeyAggregatorState::GeneratingC5Proof {
+        c5_proof_pending, ..
+    } = &mut state
+    {
+        *c5_proof_pending = None;
+    }
+    // The persisted state proves that this node computed the key before a failover demoted it.
+    let (mut aggregator, _repository) = micro_aggregator(bus, fhe, &e3_id, false, state);
+
+    aggregator.resume_in_flight_work(test_ctx(EffectsEnabled::new()))?;
+
+    assert!(c5_proof_requested(&history, &e3_id).await?);
+    Ok(())
+}
+
 #[actix::test]
 async fn standby_persists_and_resumes_public_key_work() -> Result<()> {
     let e3_id = E3id::new("42", 1);

@@ -183,7 +183,7 @@ impl Handler<TypedEvent<ShareVerificationComplete>> for PublicKeyAggregator {
         msg: TypedEvent<ShareVerificationComplete>,
         _ctx: &mut Self::Context,
     ) -> Self::Result {
-        if !self.can_run_aggregation_effects() {
+        if !self.can_continue_aggregation_effects() {
             return;
         }
         trap(
@@ -202,7 +202,7 @@ impl Handler<TypedEvent<PkAggregationProofSigned>> for PublicKeyAggregator {
         msg: TypedEvent<PkAggregationProofSigned>,
         _ctx: &mut Self::Context,
     ) -> Self::Result {
-        if !self.can_run_aggregation_effects() {
+        if !self.can_continue_aggregation_effects() {
             return;
         }
         trap(
@@ -240,7 +240,7 @@ impl Handler<TypedEvent<ComputeResponse>> for PublicKeyAggregator {
         msg: TypedEvent<ComputeResponse>,
         _ctx: &mut Self::Context,
     ) -> Self::Result {
-        if !self.can_run_aggregation_effects() {
+        if !self.can_continue_aggregation_effects() {
             return;
         }
         trap(
@@ -259,7 +259,7 @@ impl Handler<TypedEvent<ComputeRequestError>> for PublicKeyAggregator {
         msg: TypedEvent<ComputeRequestError>,
         _ctx: &mut Self::Context,
     ) -> Self::Result {
-        if !self.can_run_aggregation_effects() {
+        if !self.can_continue_aggregation_effects() {
             return;
         }
         trap(
