@@ -82,6 +82,21 @@ async fn execute_status(out: Console, backend: &ZkBackend) -> Result<()> {
 
     log!(out, "Circuits:");
     log!(out, "  Path: {}", backend.circuits_dir.display());
+    log!(
+        out,
+        "  Required version: {}",
+        backend.config.required_circuits_version
+    );
+    log!(
+        out,
+        "  Archive SHA-256: {}",
+        backend
+            .config
+            .circuits_checksums
+            .get(&backend.config.required_circuits_version)
+            .map(String::as_str)
+            .unwrap_or("not pinned")
+    );
     if let Some(ref v) = version_info.circuits_version {
         log!(out, "  Version: {}", v);
     }
@@ -228,4 +243,38 @@ async fn execute_setup(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use e3_config::BBPath;
+    use e3_zk_prover::ZkConfig;
+
+    #[tokio::test]
+    async fn status_reports_required_archive_pin() {
+        let temp = tempfile::tempdir().unwrap();
+        let digest = "a1".repeat(32);
+        let mut config = ZkConfig {
+            required_circuits_version: "candidate".into(),
+            ..Default::default()
+        };
+        config
+            .circuits_checksums
+            .insert("candidate".into(), digest.clone());
+        let backend = ZkBackend::with_config(
+            BBPath::Default(temp.path().join("bb")),
+            temp.path().join("circuits"),
+            temp.path().join("work"),
+            config,
+        );
+        let (out, mut messages) = Console::channel();
+        execute_status(out, &backend).await.unwrap();
+        let mut output = Vec::new();
+        while let Some(message) = messages.recv().await {
+            output.push(message);
+        }
+        assert!(output.contains(&"  Required version: candidate".to_string()));
+        assert!(output.contains(&format!("  Archive SHA-256: {digest}")));
+    }
 }

@@ -74,18 +74,22 @@ every section.
   build stamp with the exact preset, committee, and source hash. `checksums.json` and `SHA256SUMS`
   must cover the archive artifacts. Nodes select the artifact directory from the E3's on-chain
   parameter set and committee size. `download_circuits` checks the archive SHA-256 against
-  `versions.json`'s `circuits_checksums[required_circuits_version]` before extraction. Missing pins
-  fail closed. Both download and local archive installation require a nonempty SHA-256
-  `checksums.json`, verify each entry, and reject uncovered artifact files before replacement. Root
-  manifests, `SOURCE_HASH`, and build stamps are metadata, not required prover artifacts. Validation
-  failure preserves the installed circuits and `version.json`. —
-  `crates/zk-prover/src/backend/download.rs`
+  `ZkConfig::circuits_checksums[required_circuits_version]` before extraction. Missing pins fail
+  closed. Both download and local archive installation require a nonempty SHA-256 `checksums.json`,
+  verify each entry, and reject uncovered artifact files before replacement. Each included
+  preset/committee pair must contain every path in `crates/zk-prover/required-artifacts.json`, with
+  a verified manifest entry. The release tooling's `requiredArtifactMarkers` uses that same
+  inventory. Local and CI archives can contain fewer pairs, but cannot omit required artifacts from
+  a pair. An archive must contain a supported pair. Root manifests, `SOURCE_HASH`, and build stamps
+  are metadata, not required prover artifacts. Validation failure preserves the installed circuits
+  and `version.json`. — `crates/zk-prover/src/backend/download.rs`
 - Archive pins ship with the binary; neither the archive nor its download endpoint supplies the
   expected digest at runtime. The 0.18.0 pin comes from the published GitHub asset digest. Local
-  archive installation trusts the operator's file and does not require a release pin. **Gap:**
-  release packaging and binary builds run in parallel. A new release needs its archive digest pinned
-  before binary compilation, with the same archive bytes retained for publication. `SOURCE_HASH`
-  identifies circuit sources, not archive bytes, and cannot replace this check.
+  archive installation trusts the operator's file and does not require a release pin. Release
+  packaging supplies `E3_CIRCUITS_ARCHIVE_SHA256` before binary and ciphernode image compilation.
+  `build.rs` validates the digest, and `ZkConfig::default` binds it to the crate version. Other pins
+  remain in `versions.json`. The workflow retains the same archive bytes for publication.
+  `SOURCE_HASH` identifies circuit sources, not archive bytes, and cannot replace this check.
 - Artifact identity must cover every source that compiles into an artifact. `computeSourceHash`
   (`scripts/build-circuits.ts`) includes shared Noir logic, the library entry point and dependency
   manifest, and shared configuration constants. It normalizes the active preset selector because

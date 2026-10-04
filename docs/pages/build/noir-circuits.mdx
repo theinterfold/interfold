@@ -244,16 +244,24 @@ For each pair, the build does these steps (`scripts/build-circuits.ts`):
 
 The build records the active pair in `circuits/bin/.active-preset.json`.
 
-Downloaded release archives must match the SHA-256 for their version in
-`crates/zk-prover/versions.json` (`circuits_checksums`). This pin is compiled into the binary. The
-installer checks it before extraction, then requires a nonempty internal manifest that covers every
-artifact file. Root manifests, `SOURCE_HASH`, and build stamps are metadata. Local builds and
-`noir setup --circuits-archive` do not need an archive pin.
+Downloaded release archives must match the SHA-256 compiled into the binary for their version. The
+binary includes pins from `crates/zk-prover/versions.json` (`circuits_checksums`) and the release
+build input. The installer checks it before extraction, then requires a nonempty internal manifest
+that covers every artifact file. Root manifests, `SOURCE_HASH`, and build stamps are metadata. Local
+builds and `noir setup --circuits-archive` do not need an archive pin.
 
-The release workflow creates the archive in parallel with the binary builds. Before a new release
-can support authenticated downloads, prepare the archive, pin its SHA-256, build the binaries, and
-publish those exact archive bytes. Repacking changes the archive digest even if the artifact bytes
-stay the same. `SOURCE_HASH` identifies source inputs and is not an archive digest.
+Each included preset/committee pair must contain every artifact in
+`crates/zk-prover/required-artifacts.json`. The release validator and installer share this
+inventory. Local and CI archives can contain fewer pairs. Each included pair must still be complete
+and covered by the manifest.
+
+The release workflow packages the archive first and passes its SHA-256 as
+`E3_CIRCUITS_ARCHIVE_SHA256` to binary builds and the ciphernode Docker build. The build binds this
+pin to the crate version. Each binary and image build checks the pin reported by
+`interfold noir status` before publication. Builds without this input still work. A download for an
+unpinned version fails with the missing archive name. The workflow publishes the exact archive that
+it hashed. Repacking changes the digest even when artifact bytes stay the same. `SOURCE_HASH`
+identifies source inputs and is not an archive digest.
 
 <Callout type="warning">
   The preset and the committee size stay selected after the build, and they change tracked files.

@@ -566,6 +566,7 @@ jobs:
         run: |
           test -f .ci-noir/circuits/insecure-512/minimum/default/dkg/pk/pk.json
           test -f .ci-noir/circuits/secure-8192/minimum/default/dkg/pk/pk.json
+          pnpm tsx scripts/circuit-artifacts.ts checksums --dir .ci-noir/circuits
           mkdir -p "$RUNNER_TEMP/circuit-release"
           tar -czf "$RUNNER_TEMP/circuit-release/circuits-candidate.tar.gz" \
             -C .ci-noir circuits

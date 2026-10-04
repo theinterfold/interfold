@@ -35,12 +35,17 @@ every section.
   Release verification still checks the source hash, every required pair, and each pair's build
   stamp. `SOURCE_HASH` includes the shared Noir library and its dependency manifest (see
   `02_CRYPTO_CIRCUITS.md` §Noir / Barretenberg compatibility).
-- Network circuit installation requires a version-bound archive SHA-256 in
-  `crates/zk-prover/versions.json`. Release packaging must supply that pin before binary compilation
-  and publish the exact archive. **Gap:** `.github/workflows/releases.yml` creates the archive in
-  parallel with the binary builds. The source pin and internal checksum manifest do not authenticate
-  archive bytes. CI candidate-download tests compute their expected digest from the locally built
-  archive before serving it. — `02_CRYPTO_CIRCUITS.md` §Noir / Barretenberg compatibility
+- Network circuit installation requires a version-bound archive SHA-256 compiled into the binary.
+  `download-circuits` in `.github/workflows/releases.yml` hashes the exact archive that it uploads.
+  Binary and ciphernode image builds depend on that job and pass `E3_CIRCUITS_ARCHIVE_SHA256` to
+  `crates/zk-prover/build.rs`, including through the Docker build argument. `ZkConfig::default`
+  binds this pin to `CARGO_PKG_VERSION` and retains the other pins from `versions.json`. Builds
+  without this input work, but downloads for unpinned versions fail before network access. Each
+  binary build checks the pin reported by `noir status` before the release-candidate gate can pass.
+  The ciphernode Docker build checks the same report. The support image compiles no CLI or
+  ciphernode, and DAppNode copies the checked ciphernode image. CI generates a manifest for exactly
+  the staged fixture before packaging and hashing it. — `02_CRYPTO_CIRCUITS.md` §Noir / Barretenberg
+  compatibility
 - **`Elf.sol` is never committed.** `crates/support/methods/build.rs` writes it with a machine-local
   guest ELF path, so it is generated per checkout and `.gitignore`d.
 - **A release publishes a complete provenance manifest** — `pnpm provenance:manifest`. It ties

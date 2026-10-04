@@ -6,6 +6,7 @@
 
 use crate::config::{verify_checksum, BbTarget, ChecksumManifest, CircuitInfo, VersionInfo};
 use crate::error::ZkError;
+use e3_fhe_params::BfvPreset;
 use flate2::read::GzDecoder;
 use futures_util::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -24,6 +25,9 @@ const COMMITTEE_SUBDIRS: &[&str] = &["minimum", "micro", "small"];
 
 /// Circuit artifact variant directories at `{preset}/{committee?}/{variant}/...`.
 const CIRCUIT_VARIANT_DIRS: &[&str] = &["default", "evm", "recursive"];
+
+// Release validation and installation use the same per-configuration inventory.
+const REQUIRED_ARTIFACTS: &str = include_str!("../../required-artifacts.json");
 
 /// Collect candidate on-disk paths for a manifest entry (legacy flat + per-committee layouts).
 fn circuit_manifest_candidates(circuits_dir: &Path, rel_path: &str) -> Vec<PathBuf> {
@@ -367,6 +371,47 @@ async fn verify_circuits_dir(circuits_dir: &Path) -> Result<HashMap<String, Circ
         );
     }
 
+    let required: Vec<&str> = serde_json::from_str(REQUIRED_ARTIFACTS)
+        .expect("invalid required circuit artifact inventory");
+    let mut configurations = Vec::new();
+    for preset in [
+        BfvPreset::InsecureThreshold512,
+        BfvPreset::SecureThreshold8192,
+    ] {
+        let preset_dir = circuits_dir.join(preset.artifacts_dir());
+        // Local builds can contain a subset of the release's preset/committee pairs.
+        for committee in COMMITTEE_SUBDIRS {
+            let pair_dir = preset_dir.join(committee);
+            if pair_dir.is_dir() {
+                configurations.push(pair_dir);
+            }
+        }
+        if CIRCUIT_VARIANT_DIRS
+            .iter()
+            .any(|variant| preset_dir.join(variant).is_dir())
+        {
+            configurations.push(preset_dir);
+        }
+    }
+    if configurations.is_empty() {
+        return Err(ZkError::CircuitNotFound(
+            "archive contains no supported circuit configuration".into(),
+        ));
+    }
+    for configuration in configurations {
+        for artifact in &required {
+            let path = configuration.join(artifact);
+            if !path.is_file() {
+                return Err(ZkError::CircuitNotFound(
+                    path.strip_prefix(circuits_dir)
+                        .unwrap()
+                        .display()
+                        .to_string(),
+                ));
+            }
+        }
+    }
+
     for entry in WalkDir::new(circuits_dir) {
         let entry = entry.map_err(|error| ZkError::IoError(error.into()))?;
         if !entry.file_type().is_file() {
@@ -504,6 +549,21 @@ mod tests {
             .unwrap();
     }
 
+    fn fixture_artifacts() -> Vec<String> {
+        let artifacts: Vec<&str> = serde_json::from_str(REQUIRED_ARTIFACTS).unwrap();
+        artifacts
+            .into_iter()
+            .map(|artifact| format!("insecure-512/minimum/{artifact}"))
+            .collect()
+    }
+
+    fn fixture_manifest(circuit: &[u8]) -> HashMap<String, String> {
+        fixture_artifacts()
+            .into_iter()
+            .map(|path| (path, sha256_hex(circuit)))
+            .collect()
+    }
+
     fn circuit_archive_with_entries(
         circuit: &[u8],
         include_manifest: bool,
@@ -511,13 +571,9 @@ mod tests {
     ) -> Vec<u8> {
         circuit_archive_with_manifest(
             circuit,
-            include_manifest.then(|| {
-                HashMap::from([(
-                    "insecure-512/minimum/default/dkg/pk/pk.json".into(),
-                    sha256_hex(circuit),
-                )])
-            }),
+            include_manifest.then(|| fixture_manifest(circuit)),
             extra_entries,
+            &[],
         )
     }
 
@@ -525,12 +581,16 @@ mod tests {
         circuit: &[u8],
         manifest_files: Option<HashMap<String, String>>,
         extra_entries: &[(&str, &[u8])],
+        omitted: &[&str],
     ) -> Vec<u8> {
-        let rel_path = "insecure-512/minimum/default/dkg/pk/pk.json";
         let encoder = GzEncoder::new(Vec::new(), Compression::default());
         let mut builder = Builder::new(encoder);
         append_global_pax_header(&mut builder);
-        append_archive_file(&mut builder, &format!("circuits/{rel_path}"), circuit);
+        for path in fixture_artifacts() {
+            if !omitted.contains(&path.as_str()) {
+                append_archive_file(&mut builder, &format!("circuits/{path}"), circuit);
+            }
+        }
 
         if let Some(files) = manifest_files {
             let manifest = serde_json::to_vec(&ChecksumManifest {
@@ -632,42 +692,32 @@ mod tests {
 
     #[tokio::test]
     async fn download_requires_complete_manifest() {
-        let rel_path = "insecure-512/minimum/default/dkg/pk/pk.json";
-        let valid_manifest = HashMap::from([(rel_path.into(), sha256_hex(b"circuit"))]);
+        let rel_path = "insecure-512/minimum/default/dkg/pk/pk.vk";
+        let valid_manifest = fixture_manifest(b"circuit");
+        let mut uncovered = valid_manifest.clone();
+        uncovered.remove(rel_path);
         let cases = [
             ("missing", circuit_archive(b"circuit", false)),
             (
                 "empty",
-                circuit_archive_with_manifest(b"circuit", Some(HashMap::new()), &[]),
+                circuit_archive_with_manifest(b"circuit", Some(HashMap::new()), &[], &[]),
             ),
             (
                 "uncovered",
-                circuit_archive_with_manifest(
-                    b"circuit",
-                    Some(valid_manifest.clone()),
-                    &[(
-                        "circuits/insecure-512/minimum/default/dkg/pk/pk.vk",
-                        b"verification-key",
-                    )],
-                ),
+                circuit_archive_with_manifest(b"circuit", Some(uncovered), &[], &[]),
             ),
             (
                 "missing artifact",
                 circuit_archive_with_manifest(
                     b"circuit",
-                    Some(HashMap::from([
-                        (rel_path.into(), sha256_hex(b"circuit")),
-                        (
-                            "insecure-512/minimum/default/dkg/pk/pk.vk".into(),
-                            sha256_hex(b"verification-key"),
-                        ),
-                    ])),
+                    Some(valid_manifest.clone()),
                     &[],
+                    &[rel_path],
                 ),
             ),
             (
                 "mismatch",
-                circuit_archive_with_manifest(b"different-circuit", Some(valid_manifest), &[]),
+                circuit_archive_with_manifest(b"different-circuit", Some(valid_manifest), &[], &[]),
             ),
         ];
         for (case, archive) in cases {
@@ -692,6 +742,38 @@ mod tests {
                         | ZkError::ChecksumMismatch { .. })
                 ),
                 "{case}: {result:?}"
+            );
+            assert_installation_unchanged(&backend, &previous_version);
+        }
+    }
+
+    #[tokio::test]
+    async fn download_rejects_artifacts_omitted_from_archive_and_manifest() {
+        for omitted in [
+            "insecure-512/minimum/default/dkg/pk/pk.vk",
+            "insecure-512/minimum/recursive/threshold/share_decryption/share_decryption.json",
+            "insecure-512/minimum/evm/recursive_aggregation/dkg_aggregator/dkg_aggregator.vk",
+            "insecure-512/minimum/default/recursive_aggregation/c6_fold/c6_fold.vk_tree_hash",
+        ] {
+            let temp = TempDir::new().unwrap();
+            let mut backend = test_backend(&temp);
+            let previous_version = seed_installation(&backend).await;
+            let mut manifest = fixture_manifest(b"circuit");
+            manifest.remove(omitted);
+            let archive =
+                circuit_archive_with_manifest(b"circuit", Some(manifest), &[], &[omitted]);
+            backend
+                .config
+                .circuits_checksums
+                .insert("candidate".into(), sha256_hex(&archive));
+            let (url, server) = serve_archive(archive).await;
+            backend.config.circuits_download_url = url;
+
+            let result = backend.download_circuits().await;
+            server.await.unwrap();
+            assert!(
+                matches!(result, Err(ZkError::CircuitNotFound(ref path)) if path == omitted),
+                "{omitted}: {result:?}"
             );
             assert_installation_unchanged(&backend, &previous_version);
         }
@@ -740,7 +822,7 @@ mod tests {
         let version = backend.load_version_info().await;
         assert_eq!(version.circuits_version.as_deref(), Some("candidate"));
         assert_eq!(version.bb_version.as_deref(), Some("5.1.0"));
-        assert_eq!(version.circuits.len(), 1);
+        assert_eq!(version.circuits.len(), fixture_artifacts().len());
     }
 
     #[tokio::test]
@@ -804,7 +886,7 @@ mod tests {
 
         let version = backend.load_version_info().await;
         assert_eq!(version.circuits_version.as_deref(), Some("candidate"));
-        assert_eq!(version.circuits.len(), 1);
+        assert_eq!(version.circuits.len(), fixture_artifacts().len());
     }
 
     #[tokio::test]

@@ -384,12 +384,13 @@ With a configuration file, the tools go to `.interfold/noir` next to that file. 
 to `~/.interfold/noir`. A custom `bb` from `custom_bb` or `E3_CUSTOM_BB` replaces the downloaded
 one.
 
-Circuit downloads require an archive SHA-256 pinned for the required version in
-`crates/zk-prover/versions.json`. The installer checks this digest before extraction. It then
-requires a nonempty `checksums.json` that covers every artifact file and verifies each entry. If
-validation fails, the installed circuits and version record stay unchanged. `--circuits-archive`
-trusts the operator's local file and applies the same internal manifest checks without a release
-archive pin.
+Circuit downloads require an archive SHA-256 compiled in for the required version from
+`crates/zk-prover/versions.json` or the release build input. `noir status` reports the required
+version and this pin. The installer checks this digest before extraction. It then requires a
+nonempty `checksums.json` that covers every artifact file and verifies each entry. Every included
+preset/committee pair must contain the complete inventory used by release validation. If validation
+fails, the installed circuits and version record stay unchanged. `--circuits-archive` trusts the
+operator's local file and applies the same internal manifest checks without a release archive pin.
 
 ### `interfold events query`
 

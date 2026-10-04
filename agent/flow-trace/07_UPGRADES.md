@@ -16,6 +16,12 @@ within the same protocol version.
 
 ## Compatible rolling release
 
+The release workflow packages the circuits before it compiles the binaries and ciphernode image.
+`download-circuits` exposes the uploaded archive's SHA-256 as a build input. `e3-zk-prover` embeds
+that pin for its crate version. Binary and image builds compare the pin in `interfold noir status`
+with the archive digest before publication. See `agent/invariants/04_BUILD_CONFIG.md` for the build
+dependency and Docker argument rules.
+
 ```text
 build backward-compatible release
   -> keep protocol_version and node_generation unchanged
