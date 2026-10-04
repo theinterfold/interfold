@@ -2466,6 +2466,134 @@ async fn roster_from_future_aggregator_is_held_until_promotion() -> Result<()> {
 }
 
 #[actix::test]
+async fn own_ready_grows_past_an_expelled_dealer() -> Result<()> {
+    let e3_id = E3id::new("50", 1);
+    let signers = three_signers();
+    let cipher = Arc::new(Cipher::from_password("test-password").await?);
+    let current = AggregatingDecryptionKey {
+        signed_sk_share_computation_proof: Some(c2_proof(
+            &e3_id,
+            ProofType::C2aSkShareComputation,
+            0,
+        )),
+        signed_e_sm_share_computation_proof: Some(c2_proof(
+            &e3_id,
+            ProofType::C2bESmShareComputation,
+            0,
+        )),
+        ..aggregating_decryption_key_for_roster_test()
+    };
+    let CommitteeActor { mut actor, .. } =
+        committee_actor(&e3_id, &signers, current, cipher, |recovery| {
+            recovery.share_verification_complete = Some(share_proofs_verified(&e3_id));
+            recovery.verified_dealer_ids = Some(BTreeSet::from([1]));
+        })
+        .await?;
+    for party_id in [1, 2] {
+        actor.record_threshold_share(&TypedEvent::new(
+            ThresholdShareCreated {
+                signed_c2a_proof: Some(c2_proof(
+                    &e3_id,
+                    ProofType::C2aSkShareComputation,
+                    party_id,
+                )),
+                signed_c2b_proof: Some(c2_proof(
+                    &e3_id,
+                    ProofType::C2bESmShareComputation,
+                    party_id,
+                )),
+                ..peer_share(&e3_id, party_id)
+            },
+            test_ec(party_id + 1),
+        ))?;
+    }
+    let ready_parties = |actor: &ThresholdKeyshare| -> Result<Vec<u64>> {
+        Ok(actor
+            .recovery
+            .try_get()?
+            .dkg_ready
+            .map(|ready| ready.dealers.iter().map(|dealer| dealer.party_id).collect())
+            .unwrap_or_default())
+    };
+    actor.maybe_publish_dkg_ready(test_ec(10))?;
+    assert_eq!(ready_parties(&actor)?, vec![0, 1]);
+
+    // Dealer 1 is expelled, and the grown batch verifies dealer 2.
+    actor.handle_committee_member_expelled(expulsion_of(&e3_id, 1), test_ec(11))?;
+    actor.recovery.try_mutate_without_context(|mut recovery| {
+        recovery.verified_dealer_ids = Some(BTreeSet::from([1, 2]));
+        Ok(recovery)
+    })?;
+    actor.maybe_publish_dkg_ready(test_ec(12))?;
+
+    assert_eq!(ready_parties(&actor)?, vec![0, 2]);
+    Ok(())
+}
+
+#[actix::test]
+async fn ready_update_past_an_expelled_dealer_waits_for_the_expulsion() -> Result<()> {
+    let e3_id = E3id::new("49", 1);
+    let signers = three_signers();
+    let sign = |party_id: u64, kind, dealer_ids: &[u64]| {
+        DkgCoordination::sign(
+            e3_id.clone(),
+            Address::ZERO,
+            party_id,
+            kind,
+            dealers(dealer_ids),
+            &signers[party_id as usize],
+        )
+    };
+    let own_ready = sign(0, DkgCoordinationKind::Ready, &[0, 1])?;
+    // Party 1 reported dealer 2, then saw dealer 2 expelled and verified this party.
+    let stale_ready = sign(1, DkgCoordinationKind::Ready, &[1, 2])?;
+    let ready_update = sign(1, DkgCoordinationKind::Ready, &[0, 1])?;
+    let roster = sign(1, DkgCoordinationKind::Roster, &[0, 1])?;
+    let cipher = Arc::new(Cipher::from_password("test-password").await?);
+    let mut committee = committee_actor(
+        &e3_id,
+        &signers,
+        aggregating_decryption_key_for_roster_test(),
+        cipher,
+        |recovery| {
+            recovery.dkg_ready = Some(own_ready.clone());
+            recovery.ready_by_party.insert(0, own_ready.clone());
+            recovery.ready_by_party.insert(1, stale_ready.clone());
+            recovery.active_aggregator_party_id = Some(1);
+        },
+    )
+    .await?;
+
+    // This node has not seen the expulsion yet: the update lacks dealer 2, and the roster is
+    // contradicted by the held Ready report of its proposer.
+    committee
+        .actor
+        .record_dkg_coordination(ready_update.clone(), test_ec(2))?;
+    committee
+        .actor
+        .record_dkg_coordination(roster.clone(), test_ec(3))?;
+    let recovery = committee.actor.recovery.try_get()?;
+    assert_eq!(recovery.ready_by_party.get(&1), Some(&stale_ready));
+    assert_eq!(recovery.held_ready_updates.get(&1), Some(&ready_update));
+    assert_eq!(recovery.pending_rosters.get(&1), Some(&roster));
+    assert!(recovery.dkg_roster.is_none());
+
+    committee
+        .actor
+        .handle_committee_member_expelled(expulsion_of(&e3_id, 2), test_ec(4))?;
+
+    let recovery = committee.actor.recovery.try_get()?;
+    assert_eq!(recovery.ready_by_party.get(&1), Some(&ready_update));
+    assert!(recovery.held_ready_updates.is_empty());
+    assert_eq!(recovery.dkg_roster, Some(roster));
+    assert_eq!(
+        committee.actor.state.try_get()?.honest_parties,
+        Some(BTreeSet::from([0, 1]))
+    );
+    Ok(())
+}
+
+#[actix::test]
 async fn held_roster_starts_failover_without_every_peer_ready_report() -> Result<()> {
     let (bus, history) = test_bus();
     let e3_id = E3id::new("44", 1);

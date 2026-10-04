@@ -37,6 +37,10 @@ pub struct ThresholdKeyshareRecoveryState {
     pub decryption_verification_complete: Option<TypedEvent<ShareVerificationComplete>>,
     pub dkg_ready: Option<DkgCoordination>,
     pub ready_by_party: BTreeMap<u64, DkgCoordination>,
+    /// Per reporter, the latest refused Ready update that adds a dealer but lacks a dealer of the
+    /// held Ready report. An expulsion that this node has not seen yet can make it valid, and the
+    /// network resends the same event, which EventBus deduplication drops.
+    pub held_ready_updates: BTreeMap<u64, DkgCoordination>,
     pub pending_rosters: BTreeMap<u64, DkgCoordination>,
     pub dkg_roster: Option<DkgCoordination>,
     pub active_aggregator_party_id: Option<u64>,
@@ -63,6 +67,7 @@ impl Default for ThresholdKeyshareRecoveryState {
             decryption_verification_complete: None,
             dkg_ready: None,
             ready_by_party: BTreeMap::new(),
+            held_ready_updates: BTreeMap::new(),
             pending_rosters: BTreeMap::new(),
             dkg_roster: None,
             active_aggregator_party_id: None,

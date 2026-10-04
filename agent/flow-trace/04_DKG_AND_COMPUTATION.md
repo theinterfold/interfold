@@ -625,8 +625,9 @@ ShareVerificationActor receives ShareVerificationDispatched(kind=ShareProofs)
     ├─ Re-verifies each late-share batch that, without its expelled dealers, holds every
     │  dealer of the saved batch that is not expelled, plus at least one more. An expelled
     │  dealer in the new batch is not growth. It publishes a new signed Ready list only
-    │  when the list keeps every dealer of the earlier one, so a Ready list never drops a
-    │  dealer, even an expelled one
+    │  when the list keeps every dealer of the earlier one that is not expelled and adds at
+    │  least one dealer that is not expelled, so a Ready list drops only expelled dealers
+    │  File: crates/keyshare/src/threshold_keyshare/effects/coordinate_roster.rs (ready_update)
     ├─ If fewer than H pass locally, stays outside C4 without failing the E3
     └─ Waits for one H-dealer roster before Step 7
 
@@ -635,7 +636,15 @@ dealer contributions. `AggregatorChanged` carries the active party ID, and thres
 persists that ID. A receiver keeps one authenticated roster per proposer. It can accept a roster
 from the active proposer or an earlier proposer whose failover budget has already elapsed locally.
 The proposer must have published a matching Ready list, the receiver's own Ready list must contain
-the roster, and every Ready list already held for a selected dealer must support it. Before C4
+the roster, and every Ready list already held for a selected dealer must support it.
+
+A receiver applies a peer's Ready update with the same rule. It holds a refused update that adds a
+dealer but lacks a dealer of the held report, one per reporter, in its saved recovery state: the
+reporter can have seen an expulsion that the receiver has not seen yet, and the network resends the
+same event, which EventBus deduplication drops. After each expulsion, the receiver applies every
+held update that the expulsions now explain. A roster that held Ready reports contradict stays held
+in the same way. Acceptance checks the roster's support again, and a later roster from the same
+proposer replaces a held roster that the local Ready state does not support. Before C4
 starts, a roster from a lower party ID replaces a roster from a higher party ID. After C4 starts,
 the roster is fixed. A promoted aggregator re-proposes the accepted dealer list instead of deriving
 a different list from its local delivery order.

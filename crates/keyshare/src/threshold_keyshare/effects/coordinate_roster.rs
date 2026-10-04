@@ -4,7 +4,10 @@
 
 use super::*;
 use anyhow::ensure;
-use std::{collections::BTreeMap, time::Instant};
+use std::{
+    collections::{BTreeMap, HashSet},
+    time::Instant,
+};
 
 impl ThresholdKeyshare {
     pub(in crate::actors::threshold_keyshare) fn maybe_publish_dkg_ready(
@@ -82,16 +85,17 @@ impl ThresholdKeyshare {
         );
 
         if let Some(existing) = recovery.dkg_ready.as_ref() {
-            if existing.dealers == dealers {
-                return self.maybe_start_c4_for_accepted_roster(ec);
-            }
-            if !dealers_extend(&existing.dealers, &dealers) {
-                warn!(
-                    e3_id = %state.e3_id,
-                    party_id = state.party_id,
-                    "Ignoring a non-monotonic DKG Ready update"
-                );
-                return Ok(());
+            match ready_update(&existing.dealers, &dealers, &state.expelled_parties) {
+                ReadyUpdate::Extends => {}
+                ReadyUpdate::Unchanged => return self.maybe_start_c4_for_accepted_roster(ec),
+                ReadyUpdate::DropsLiveDealer { .. } => {
+                    warn!(
+                        e3_id = %state.e3_id,
+                        party_id = state.party_id,
+                        "Ignoring a non-monotonic DKG Ready update"
+                    );
+                    return Ok(());
+                }
             }
         }
 
@@ -192,19 +196,41 @@ impl ThresholdKeyshare {
                 }
                 let reporter = message.party_id;
                 let new_party = !recovery.ready_by_party.contains_key(&reporter);
-                let replace = recovery
-                    .ready_by_party
-                    .get(&reporter)
-                    .is_none_or(|existing| dealers_extend(&existing.dealers, &message.dealers));
+                let update = recovery.ready_by_party.get(&reporter).map(|existing| {
+                    ready_update(&existing.dealers, &message.dealers, &state.expelled_parties)
+                });
+                let replace = update.is_none_or(|update| update == ReadyUpdate::Extends);
+                // A refused update that adds a dealer can become valid once this node sees the
+                // expulsion of the dealer that it lacks.
+                let hold = update
+                    == Some(ReadyUpdate::DropsLiveDealer {
+                        adds_live_dealer: true,
+                    })
+                    && recovery
+                        .held_ready_updates
+                        .get(&reporter)
+                        .is_none_or(|held| {
+                            ready_update(&held.dealers, &message.dealers, &state.expelled_parties)
+                                == ReadyUpdate::Extends
+                        });
                 self.recovery.try_mutate(&ec, |mut recovery| {
                     if replace {
                         recovery.ready_by_party.insert(message.party_id, message);
+                    } else if hold {
+                        recovery.held_ready_updates.insert(reporter, message);
                     }
                     recovery.last_ec = Some(ec.clone());
                     Ok(recovery)
                 })?;
                 if replace {
                     self.summarize_ready_set(reporter, new_party);
+                    self.apply_held_ready_updates(ec.clone())?;
+                } else if hold {
+                    info!(
+                        e3_id = %state.e3_id,
+                        reporter,
+                        "Holding a DKG Ready update that lacks a dealer of the held report until an expulsion explains it"
+                    );
                 }
                 self.maybe_accept_pending_roster(ec.clone())?;
             }
@@ -218,6 +244,8 @@ impl ThresholdKeyshare {
                 {
                     return Ok(());
                 }
+                // A held Ready report can contradict a roster until this node sees the expulsion
+                // that the proposer saw. Keep the roster: acceptance checks the support again.
                 if recovery
                     .ready_by_party
                     .get(&message.party_id)
@@ -232,9 +260,8 @@ impl ThresholdKeyshare {
                     warn!(
                         e3_id = %message.e3_id,
                         proposer = message.party_id,
-                        "Ignoring a DKG roster contradicted by authenticated Ready reports"
+                        "Holding a DKG roster that authenticated Ready reports do not support yet"
                     );
-                    return Ok(());
                 }
                 if recovery.dkg_roster.is_some() {
                     let existing = recovery.dkg_roster.as_ref().expect("checked above");
@@ -255,10 +282,17 @@ impl ThresholdKeyshare {
                     }
                 }
                 self.recovery.try_mutate(&ec, |mut recovery| {
-                    recovery
+                    // Keep the first supported roster of a proposer. A later roster replaces one
+                    // that the local Ready state does not support.
+                    let replace_held = recovery
                         .pending_rosters
-                        .entry(message.party_id)
-                        .or_insert_with(|| message.clone());
+                        .get(&message.party_id)
+                        .is_none_or(|held| !roster_is_supported_by_local_state(&recovery, held));
+                    if replace_held {
+                        recovery
+                            .pending_rosters
+                            .insert(message.party_id, message.clone());
+                    }
                     recovery.last_ec = Some(ec.clone());
                     Ok(recovery)
                 })?;
@@ -335,6 +369,62 @@ impl ThresholdKeyshare {
         };
         self.accept_dkg_roster(roster, ec)?;
         Ok(true)
+    }
+
+    /// Apply each held Ready update that the current expulsions make an extension, and drop each
+    /// one that can no longer become one. Run after an expulsion and after a direct Ready update.
+    pub(in crate::actors::threshold_keyshare) fn apply_held_ready_updates(
+        &mut self,
+        ec: EventContext<Sequenced>,
+    ) -> Result<()> {
+        let state = self.state.try_get()?;
+        let recovery = self.recovery.try_get()?;
+        let mut applied = Vec::new();
+        let mut dropped = Vec::new();
+        for (reporter, held) in &recovery.held_ready_updates {
+            if state.expelled_parties.contains(reporter) {
+                dropped.push(*reporter);
+                continue;
+            }
+            match recovery.ready_by_party.get(reporter).map(|existing| {
+                ready_update(&existing.dealers, &held.dealers, &state.expelled_parties)
+            }) {
+                None | Some(ReadyUpdate::Extends) => applied.push(*reporter),
+                Some(ReadyUpdate::DropsLiveDealer {
+                    adds_live_dealer: true,
+                }) => {}
+                Some(_) => dropped.push(*reporter),
+            }
+        }
+        if applied.is_empty() && dropped.is_empty() {
+            return Ok(());
+        }
+        self.recovery.try_mutate(&ec, |mut recovery| {
+            for reporter in &applied {
+                if let Some(held) = recovery.held_ready_updates.remove(reporter) {
+                    recovery.ready_by_party.insert(*reporter, held);
+                }
+            }
+            for reporter in &dropped {
+                recovery.held_ready_updates.remove(reporter);
+            }
+            recovery.last_ec = Some(ec.clone());
+            Ok(recovery)
+        })?;
+        for reporter in applied {
+            info!(
+                e3_id = %state.e3_id,
+                reporter,
+                "Applied a held DKG Ready update after an expulsion"
+            );
+            self.summarize_ready_set(reporter, false);
+        }
+        self.maybe_accept_pending_roster(ec.clone())?;
+        if self.effects_enabled {
+            self.maybe_publish_roster_inputs_ready(ec.clone())?;
+            self.propose_dkg_roster(ec)?;
+        }
+        Ok(())
     }
 
     pub(in crate::actors::threshold_keyshare) fn maybe_publish_roster_inputs_ready(
@@ -537,8 +627,42 @@ fn ready_contains_roster(ready: &DkgCoordination, roster: &DkgCoordination) -> b
         .all(|dealer| ready.dealers.contains(dealer))
 }
 
-fn dealers_extend(existing: &[DkgDealer], candidate: &[DkgDealer]) -> bool {
-    candidate.len() > existing.len() && existing.iter().all(|dealer| candidate.contains(dealer))
+/// How a new Ready dealer list relates to the one held for the same party.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ReadyUpdate {
+    /// Keeps every dealer of the held list that is not expelled and adds at least one more.
+    Extends,
+    /// Keeps every dealer of the held list that is not expelled and adds none.
+    Unchanged,
+    /// Lacks a dealer of the held list that is not expelled. Only that dealer's later expulsion
+    /// can make the list an extension, and only when it adds a dealer.
+    DropsLiveDealer { adds_live_dealer: bool },
+}
+
+/// Compare Ready dealer lists. An expelled dealer never returns to a roster, so a list may drop it,
+/// and it does not count as growth.
+fn ready_update(
+    existing: &[DkgDealer],
+    candidate: &[DkgDealer],
+    expelled: &HashSet<u64>,
+) -> ReadyUpdate {
+    let live = |dealer: &&DkgDealer| !expelled.contains(&dealer.party_id);
+    let adds_live_dealer = candidate
+        .iter()
+        .filter(live)
+        .any(|dealer| !existing.contains(dealer));
+    if !existing
+        .iter()
+        .filter(live)
+        .all(|dealer| candidate.contains(dealer))
+    {
+        return ReadyUpdate::DropsLiveDealer { adds_live_dealer };
+    }
+    if adds_live_dealer {
+        ReadyUpdate::Extends
+    } else {
+        ReadyUpdate::Unchanged
+    }
 }
 
 fn roster_is_supported_by_local_state(
@@ -565,7 +689,7 @@ fn roster_is_supported_by_local_state(
 
 #[cfg(test)]
 mod coordination_tests {
-    use super::ready_contains_roster;
+    use super::{ready_contains_roster, ready_update, ReadyUpdate};
     use e3_events::{DkgCoordination, DkgCoordinationKind, DkgDealer, E3id};
     use e3_utils::ArcBytes;
 
@@ -591,5 +715,36 @@ mod coordination_tests {
         let roster = message(1, &[1, 2]);
         assert!(ready_contains_roster(&message(0, &[0, 1, 2]), &roster));
         assert!(!ready_contains_roster(&message(0, &[0, 1]), &roster));
+    }
+
+    #[test]
+    fn a_ready_update_drops_only_expelled_dealers() {
+        let d = |ids: &[u64]| message(0, ids).dealers;
+        let none = std::collections::HashSet::new();
+        let expelled = std::collections::HashSet::from([2]);
+        let drops = |adds_live_dealer| ReadyUpdate::DropsLiveDealer { adds_live_dealer };
+
+        assert_eq!(
+            ready_update(&d(&[0, 1]), &d(&[0, 1, 2]), &none),
+            ReadyUpdate::Extends
+        );
+        assert_eq!(
+            ready_update(&d(&[0, 1, 2]), &d(&[0, 1, 3]), &none),
+            drops(true)
+        );
+        assert_eq!(
+            ready_update(&d(&[0, 1, 2]), &d(&[0, 1, 3]), &expelled),
+            ReadyUpdate::Extends
+        );
+        assert_eq!(
+            ready_update(&d(&[0, 1, 2]), &d(&[0, 1]), &expelled),
+            ReadyUpdate::Unchanged
+        );
+        // An expelled dealer is not growth.
+        assert_eq!(
+            ready_update(&d(&[0, 1]), &d(&[0, 1, 2]), &expelled),
+            ReadyUpdate::Unchanged
+        );
+        assert_eq!(ready_update(&d(&[0, 1]), &d(&[0]), &none), drops(false));
     }
 }
