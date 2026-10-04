@@ -592,6 +592,9 @@ interfold node validate --repair
 The repair indexes complete uncommitted frames again, cuts a torn tail, or rebuilds the sortition
 projection from intact events. It never removes an indexed event.
 
+Validation checks the storage schema before it reads or repairs event logs. An unsupported schema
+reports the recovery instruction and skips all event and snapshot checks.
+
 ### Start the node
 
 Start the node only when the validation passes.

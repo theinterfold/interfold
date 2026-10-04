@@ -392,6 +392,10 @@ takes longer than `node.startup_timeout_secs` (default 1800 s).
 provably not committed, and rebuild a stale derived sortition projection. It does not repair a
 corrupt indexed record or an unsupported schema.
 
+Startup and validation check the storage schema before they read or repair event logs. An older
+schema reports the schema mismatch and reset command, even when its event format cannot decode.
+Validation skips the event and snapshot checks for that store, including with `--repair`.
+
 ## Configuration for protocol version 4
 
 Each enabled chain that configures the `interfold` contract needs a `data_availability` block. A

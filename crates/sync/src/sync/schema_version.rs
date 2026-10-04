@@ -30,6 +30,15 @@ pub enum SchemaVersionDecision {
     Halt(String),
 }
 
+impl SchemaVersionDecision {
+    pub fn ensure_compatible(&self) -> anyhow::Result<()> {
+        if let Self::Halt(reason) = self {
+            anyhow::bail!("Schema version check failed: {reason}");
+        }
+        Ok(())
+    }
+}
+
 /// The supported path for state that is older than this binary. It clears the state and keeps the
 /// node identity.
 const RESET_HINT: &str = "Stop the node. Then run `interfold node reset-data --name <node>`, which \

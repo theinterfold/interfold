@@ -250,6 +250,9 @@ interfold start → running node
     └─ Flushes the optional operational JSON log collector
 
 On restart:
+├─ Raw storage schema admission:
+│   → reads the schema marker before opening event logs or timestamp indexes
+│   → rejects incompatible or unmarked state with the supported recovery instruction
 ├─ Event-log open:
 │   → validates physical frames against the commitlog index
 │   → truncates only a CRC/length-invalid suffix after the final indexed record
@@ -377,15 +380,16 @@ durable at each replay step. A page can stop at its byte limit before it reaches
 limit. Replay therefore continues until the EventStore returns an empty page, not until it returns a
 short page.
 
-`interfold node validate` detects a recoverable uncommitted event-log tail without changing it. With
-the node stopped, `interfold node validate --repair` applies the same boundary-checked tail recovery
-as startup and refuses to remove indexed records. The repair also compares both registered-node
-projections with the intact EventStore prefix. It can reconcile derived membership and reconstruct
-missing member ticket and activation history. It does not delete the encrypted identity or matching
-member history. Tail recovery adds missing index entries for complete, CRC-valid records and
-truncates only an incomplete physical suffix. It also removes the exact two-byte, index-free segment
-shape left when a process stops during rollover. Runtime EventStore query failures return to the
-correlated caller. Committed corruption remains a startup or integrity failure.
+`interfold node validate` checks the raw storage schema before it reads or repairs event logs. It
+detects a recoverable uncommitted event-log tail without changing it. With the node stopped,
+`interfold node validate --repair` applies the same boundary-checked tail recovery as startup and
+refuses to remove indexed records. The repair also compares both registered-node projections with
+the intact EventStore prefix. It can reconcile derived membership and reconstruct missing member
+ticket and activation history. It does not delete the encrypted identity or matching member history.
+Tail recovery adds missing index entries for complete, CRC-valid records and truncates only an
+incomplete physical suffix. It also removes the exact two-byte, index-free segment shape left when a
+process stops during rollover. Runtime EventStore query failures return to the correlated caller.
+Committed corruption remains a startup or integrity failure.
 
 Large local events use content-addressed blob files beside the commit log. The log stores a small
 versioned reference only after the blob is synced. Open, replay, and tail recovery verify the blob
@@ -395,7 +399,7 @@ CLI then exit with a nonzero status instead of leaving a dead storage actor insi
 process. The EventStore syncs each appended log record before it indexes or broadcasts the event. It
 caches the active segment and index handles. Each append still syncs both files, while the directory
 is synced only for the first append and after segment rollover. The current storage schema marker is
-version 7. Older logs remain decodable, but their eligibility timestamps are not trusted. Operators
+version 8. Schema-7 DKG events omit bundle signatures and cannot use the current decoder. Operators
 must use the controlled reset and resync procedure outside active E3 work; see `07_UPGRADES.md`.
 
 For DAppNode installations, package v0.2.3 is the mandatory bridge from the shipped v0.1.8 state. It

@@ -34,8 +34,8 @@
 //!    orphaned tickets that a crash mid-E3 can leave behind; they are the
 //!    "loose ends" a restart should clean up.
 //!
-//! Between checks 1 and 2, the schema check compares the stored schema marker with this binary.
-//! When it fails, checks 2 to 4 do not run, because they read snapshots in the stored schema.
+//! Before these checks, the schema check reads the marker through the raw key/value store.
+//! An incompatible schema skips all checks that decode or repair event logs and snapshots.
 
 use crate::helpers::datastore::get_repositories;
 use anyhow::{bail, Context, Result};
@@ -49,8 +49,7 @@ use e3_sortition::{
     SortitionList, SortitionRepositoryFactory,
 };
 use e3_sync::{
-    decide_schema_version, has_schema_governed_kv_state, SchemaVersionDecision,
-    SyncRepositoryFactory, SCHEMA_VERSION,
+    inspect_persisted_schema_version, SchemaVersionDecision, SyncRepositoryFactory, SCHEMA_VERSION,
 };
 use e3_utils::enumerate_path;
 use std::collections::{HashMap, HashSet};
@@ -170,6 +169,23 @@ pub async fn validate_node(config: &AppConfig, repair: bool) -> Result<Validatio
     let aggregate_ids = aggregate_ids(config);
     let mut report = ValidationReport::default();
 
+    let schema = check_schema_compatibility(inspect_persisted_schema_version(
+        &config.db_file(),
+        aggregate_ids
+            .iter()
+            .map(|agg| enumerate_path(&config.log_file(), agg.to_usize())),
+    )?);
+    let schema_supported = schema.severity != Severity::Fail;
+    report.push(schema);
+    if !schema_supported {
+        report.push(CheckResult::warn(
+            "skipped",
+            "the event-log, snapshot cursor, sortition-projection and open-loop checks did not \
+             run, because they read state in the stored schema",
+        ));
+        return Ok(report);
+    }
+
     // 1. Read the commit logs directly before starting any EventStore actor. The
     // checked reader lets the operator receive a structured validation report.
     let mut terminal_keys: HashSet<String> = HashSet::new();
@@ -216,22 +232,6 @@ pub async fn validate_node(config: &AppConfig, repair: bool) -> Result<Validatio
     // 2. Only open the snapshot store after every source-of-truth log passed its
     // framing and decode checks. Cross-check each persisted replay cursor.
     let repositories = get_repositories(config)?;
-    let persisted_schema = repositories.schema_version().read().await?;
-    let has_existing_state =
-        total_events > 0 || has_schema_governed_kv_state(&repositories).await?;
-    let schema = check_schema_compatibility(persisted_schema, has_existing_state);
-    let schema_supported = schema.severity != Severity::Fail;
-    report.push(schema);
-    if !schema_supported {
-        // The later checks read snapshots, and this binary cannot show that it reads their schema.
-        // `start` halts at the same check.
-        report.push(CheckResult::warn(
-            "skipped",
-            "the snapshot cursor, sortition-projection and open-loop checks did not run, because \
-             they read snapshots in the stored schema",
-        ));
-        return Ok(report);
-    }
     let mut snapshot_cursors = HashMap::new();
     for (agg, events) in &events_by_aggregate {
         let seqs: Vec<u64> = events.iter().map(|e| e.seq()).collect();
@@ -709,9 +709,9 @@ fn display_addresses(addresses: &[String]) -> String {
 /// marker is acceptable only for a fresh store (empty or containing the complete bootstrap
 /// identity pair); stamping a version on protocol or unknown bytes would assert compatibility
 /// without evidence.
-fn check_schema_compatibility(persisted: Option<u32>, has_existing_state: bool) -> CheckResult {
+fn check_schema_compatibility(decision: SchemaVersionDecision) -> CheckResult {
     let name = "schema";
-    match decide_schema_version(persisted, SCHEMA_VERSION, has_existing_state) {
+    match decision {
         SchemaVersionDecision::Proceed => CheckResult::pass(
             name,
             format!("on-disk schema version {SCHEMA_VERSION} matches this binary"),
@@ -1097,20 +1097,25 @@ mod tests {
 
     #[test]
     fn schema_check_accepts_exact_version() {
-        let result = check_schema_compatibility(Some(SCHEMA_VERSION), true);
+        let result = check_schema_compatibility(SchemaVersionDecision::Proceed);
         assert_eq!(result.severity, Severity::Pass);
     }
 
     #[test]
     fn schema_check_rejects_missing_marker_on_nonempty_log() {
-        let result = check_schema_compatibility(None, true);
+        let result =
+            check_schema_compatibility(e3_sync::decide_schema_version(None, SCHEMA_VERSION, true));
         assert_eq!(result.severity, Severity::Fail);
         assert!(result.detail.contains("no schema marker"));
     }
 
     #[test]
     fn schema_check_rejects_incompatible_version() {
-        let result = check_schema_compatibility(Some(SCHEMA_VERSION + 1), true);
+        let result = check_schema_compatibility(e3_sync::decide_schema_version(
+            Some(SCHEMA_VERSION + 1),
+            SCHEMA_VERSION,
+            true,
+        ));
         assert_eq!(result.severity, Severity::Fail);
         assert!(result.detail.contains("newer"));
     }

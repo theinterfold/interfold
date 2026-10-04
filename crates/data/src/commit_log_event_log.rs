@@ -67,6 +67,30 @@ pub struct CommitLogEventLog {
 }
 
 impl CommitLogEventLog {
+    /// Check for log data without opening, repairing, or decoding any records.
+    pub fn has_records(path: &Path) -> Result<bool> {
+        let entries = match fs::read_dir(path) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(error.into()),
+        };
+        for entry in entries {
+            let entry = entry?;
+            if entry.path().extension().is_some_and(|ext| ext == "log") {
+                // An empty segment contains only the magic bytes. Anything else needs a schema.
+                if entry.metadata()?.len() != COMMITLOG_SEGMENT_MAGIC.len() as u64 {
+                    return Ok(true);
+                }
+                let mut magic = [0; COMMITLOG_SEGMENT_MAGIC.len()];
+                File::open(entry.path())?.read_exact(&mut magic)?;
+                if magic != COMMITLOG_SEGMENT_MAGIC {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
+    }
+
     pub fn new(path: &Path) -> Result<Self> {
         Self::open(path, EventLogOpenMode::RecoverTail)
     }

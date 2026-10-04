@@ -544,7 +544,10 @@ mod historical;
 mod preflight;
 
 pub use historical::collect_historical_evm_events;
-pub use preflight::{has_schema_governed_kv_state, preflight_node_role, preflight_schema_version};
+pub use preflight::{
+    has_schema_governed_kv_state, inspect_persisted_schema_version, preflight_node_role,
+    preflight_schema_version,
+};
 
 #[derive(Message)]
 #[rtype("()")]

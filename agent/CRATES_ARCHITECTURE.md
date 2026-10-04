@@ -228,8 +228,9 @@ sequenceDiagram
     CLI->>EP: start(config, password)
     EP->>EP: validate configuration and decrypt keys
     EP->>B: configure stores, chains, signer, network, limits
-    B->>ES: create EventBus, Sequencer, EventStore, SnapshotBuffer
-    ES->>ES: rebuild timestamp index in bounded pages
+    B->>ES: initialize persisted event system
+    ES->>SYNC: inspect schema marker through raw key/value store
+    ES->>ES: open logs and rebuild timestamp index in bounded pages
     B->>SYNC: schema preflight before state-writing actors
     B->>EV: create per-chain readers, writers, and gateways
     B->>P: install router, sortition, keyshare, proof, aggregation, slashing extensions
@@ -372,7 +373,8 @@ flowchart TD
     end
 
     subgraph Recovery[Restart and historical reconciliation]
-        Restart[restart] --> Index[reconcile timestamp index in 1024-record pages]
+        Restart[restart] --> RawSchema[check raw schema marker before opening logs or indexes]
+        RawSchema --> Index[reconcile timestamp index in 1024-record pages]
         Index --> ClockFloor[seed HLC from greatest durable event timestamp]
         ClockFloor --> Schema[schema-version preflight before runtime actor writes]
         Schema --> RouterCursor[verify or rebuild the canonical request-router checkpoint]
@@ -398,49 +400,50 @@ flowchart TD
 ```
 
 The append-only event log is the durable source of truth. The timestamp index and snapshots are
-derived state. Before `commitlog` opens, startup validates the active segment's physical frames
-against its index. A CRC/length-invalid suffix after the last indexed record is an uncommitted crash
-tail and is truncated; complete CRC-valid, decodable frames whose index writes were lost are
-re-indexed. Indexed decode/CRC failures and any offset/index mismatch remain fatal. EventStore
-construction then performs a full integrity scan and reconciles missing timestamp-index rows from
-the log in pages bounded by both record count and decoded bytes. Event-log flush synchronizes the
-active segment, index, and directory before dispatch. Large local events use content-addressed blob
-files. Startup verifies every committed reference, then removes only blob files that no committed
-record references. Timestamp admission deduplicates by stable event ID plus payload, so the same
-logical event may return through historical network sync with a different transport source without
-colliding. A different payload at an already-indexed HLC timestamp remains an integrity failure.
-After append, the sequencer sends the durable event to the EventBus. The EventBus waits for the
-snapshot buffer to accept the sequence before it applies domain deduplication or sends the event to
-domain subscribers. This boundary also covers startup replay and events received through source or
-forked buses. EventBus deduplication uses a separate delivery identity: EVM occurrences include
-their chain, block, and deterministic log timestamp/index, local C2/C3 and C6 verification verdicts
-and local errors include the event that caused them, and other local and network facts retain their
-stable event ID. Equal EVM state facts from distinct log occurrences therefore both update
-projections, equal verdicts for different batches and equal errors of different events are all
-delivered, and a re-delivery of the same occurrence remains idempotent. The snapshot router closes
-every older open sequence when it observes a newer sequence; it does not require an exact
-predecessor. The Sled and in-memory stores atomically reject a contextual batch whose sequence is
-below the persisted aggregate cursor. These boundaries prevent a late batch from replacing newer
-state while leaving a newer cursor in place. Historical peer-sync cursors contain only chain-bound
-aggregates allowed by the active network policy; local aggregate 0 is never requested from peers or
-added to recovery retries. Post-snapshot events are queried per aggregate in pages bounded by 1,024
-events and 256 MiB of decoded data, then written to secure sequence runs. A single valid event can
-exceed the page budget so replay always makes progress; the 512 MiB per-event limit remains the hard
-bound. Runs are compacted with bounded fan-in, preserve durable order inside each aggregate, and use
-persisted HLC timestamps to choose between aggregate heads. Memory and open-file use therefore do
-not scale with the entire backlog. Before fanout, the HLC floor advances to the maximum replay
-timestamp, which covers a snapshot cursor stalled behind newer log records. Replay then waits for
-concurrent acceptance by all current EventBus subscribers. An unavailable subscriber or a subscriber
-blocked beyond the bounded acceptance timeout aborts recovery. An `EventBusBarrier` therefore
-completes only after the last replay fanout has completed. Process-infrastructure events from the
-previous boot are classified separately and are not replayed into newly constructed actors. These
-include shutdown, sync phase, network-readiness, and historical sync control events. The current
-boot publishes fresh phase events after its prerequisites pass. This rule is required even when peer
-history is empty: empty historical-network completions have the same payload-derived event ID on
-every boot. Replaying the old completion would otherwise fill the EventBus dedup entry and drop the
-fresh completion that startup is waiting for. The builder also arms the current `NetReady` listener
-before it starts the network transport, so the immediate no-peer readiness signal cannot pass before
-sync begins to wait.
+derived state. `EventSystem` checks the schema through the raw key/value store before opening logs
+or timestamp indexes. Before `commitlog` opens, startup validates the active segment's physical
+frames against its index. A CRC/length-invalid suffix after the last indexed record is an
+uncommitted crash tail and is truncated; complete CRC-valid, decodable frames whose index writes
+were lost are re-indexed. Indexed decode/CRC failures and any offset/index mismatch remain fatal.
+EventStore construction then performs a full integrity scan and reconciles missing timestamp-index
+rows from the log in pages bounded by both record count and decoded bytes. Event-log flush
+synchronizes the active segment, index, and directory before dispatch. Large local events use
+content-addressed blob files. Startup verifies every committed reference, then removes only blob
+files that no committed record references. Timestamp admission deduplicates by stable event ID plus
+payload, so the same logical event may return through historical network sync with a different
+transport source without colliding. A different payload at an already-indexed HLC timestamp remains
+an integrity failure. After append, the sequencer sends the durable event to the EventBus. The
+EventBus waits for the snapshot buffer to accept the sequence before it applies domain deduplication
+or sends the event to domain subscribers. This boundary also covers startup replay and events
+received through source or forked buses. EventBus deduplication uses a separate delivery identity:
+EVM occurrences include their chain, block, and deterministic log timestamp/index, local C2/C3 and
+C6 verification verdicts and local errors include the event that caused them, and other local and
+network facts retain their stable event ID. Equal EVM state facts from distinct log occurrences
+therefore both update projections, equal verdicts for different batches and equal errors of
+different events are all delivered, and a re-delivery of the same occurrence remains idempotent. The
+snapshot router closes every older open sequence when it observes a newer sequence; it does not
+require an exact predecessor. The Sled and in-memory stores atomically reject a contextual batch
+whose sequence is below the persisted aggregate cursor. These boundaries prevent a late batch from
+replacing newer state while leaving a newer cursor in place. Historical peer-sync cursors contain
+only chain-bound aggregates allowed by the active network policy; local aggregate 0 is never
+requested from peers or added to recovery retries. Post-snapshot events are queried per aggregate in
+pages bounded by 1,024 events and 256 MiB of decoded data, then written to secure sequence runs. A
+single valid event can exceed the page budget so replay always makes progress; the 512 MiB per-event
+limit remains the hard bound. Runs are compacted with bounded fan-in, preserve durable order inside
+each aggregate, and use persisted HLC timestamps to choose between aggregate heads. Memory and
+open-file use therefore do not scale with the entire backlog. Before fanout, the HLC floor advances
+to the maximum replay timestamp, which covers a snapshot cursor stalled behind newer log records.
+Replay then waits for concurrent acceptance by all current EventBus subscribers. An unavailable
+subscriber or a subscriber blocked beyond the bounded acceptance timeout aborts recovery. An
+`EventBusBarrier` therefore completes only after the last replay fanout has completed.
+Process-infrastructure events from the previous boot are classified separately and are not replayed
+into newly constructed actors. These include shutdown, sync phase, network-readiness, and historical
+sync control events. The current boot publishes fresh phase events after its prerequisites pass.
+This rule is required even when peer history is empty: empty historical-network completions have the
+same payload-derived event ID on every boot. Replaying the old completion would otherwise fill the
+EventBus dedup entry and drop the fresh completion that startup is waiting for. The builder also
+arms the current `NetReady` listener before it starts the network transport, so the immediate
+no-peer readiness signal cannot pass before sync begins to wait.
 
 The request router stores its active-context index, completed set, and covered per-aggregate cursors
 in one recovery checkpoint at `//router/recovery_checkpoint`. Per-E3 context repositories remain

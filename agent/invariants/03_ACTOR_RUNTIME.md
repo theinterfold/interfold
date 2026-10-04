@@ -344,5 +344,9 @@ the code does not meet yet.
   Roots that no lock lists, store keys, hand-written formats, and values stored inside opaque bytes
   are not covered. Until that changes, increase `SCHEMA_VERSION`
   (`crates/sync/src/sync/schema_version.rs`) for every incompatible change to a persisted type or
-  `InterfoldEventData` variant, including an added field. Startup halts on any mismatch. —
+  `InterfoldEventData` variant, including an added field. Startup and event readers check the marker
+  through the raw key/value store before opening, repairing, or decoding logs and derived state.
+  `node validate` uses the same check before all event and snapshot checks, including with
+  `--repair`. A mismatch names the supported recovery action and leaves log bytes unchanged. —
+  `crates/sync/src/sync/preflight.rs`; `crates/entrypoint/tests/validate_older_schema.rs`;
   `ARCHITECTURE.md`; `00_INDEX.md` known open issues

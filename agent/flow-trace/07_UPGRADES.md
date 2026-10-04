@@ -186,9 +186,11 @@ halts as an upgrade with no migration, newer state halts as a downgrade. A raise
 makes every populated data directory unloadable until the operator clears it. The older-schema halt
 names `interfold node reset-data`. The newer-schema halt names the newer release and the backup
 taken before the upgrade, because the reset guard of an older binary cannot read a newer store
-reliably. When the event logs decode with this binary, `interfold node validate` reports the same
-schema failure and skips the checks that read snapshots (`crates/entrypoint/src/validate.rs`). An
-event log that does not decode shows as unreadable, with no schema line.
+reliably. `inspect_persisted_schema_version` reads the marker through the raw key/value store before
+`EventSystem` opens logs or timestamp indexes. It checks unmarked log segments for data without
+decoding records. `interfold node validate` uses the same check before it reads or repairs logs
+(`crates/entrypoint/src/validate.rs`). An unsupported schema produces the schema failure even when
+its event bytes cannot decode. Validation skips all event and snapshot checks in that case.
 
 The operator key and the libp2p keypair live in the same key/value store as that state, under
 `//eth_private_key` and `//libp2p/keypair`. Deleting the data directory destroys the identity that
