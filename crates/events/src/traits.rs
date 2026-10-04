@@ -178,6 +178,8 @@ pub trait SequenceIndex: Unpin + 'static {
     fn get(&self, key: u128) -> Result<Option<u64>>;
     /// Get the first sequence offset at or after the given timestamp
     fn seek(&self, key: u128) -> Result<Option<u64>>;
+    /// Up to `limit` `(timestamp, sequence)` entries at or after `key`, in timestamp order.
+    fn range_from(&self, key: u128, limit: usize) -> Result<Vec<(u128, u64)>>;
 }
 
 /// Store and retrieve events from a write ahead log
@@ -233,6 +235,15 @@ pub trait EventLog: Unpin + 'static {
     }
     /// The 1-indexed sequence number of the last appended event, or `0` if the log is empty.
     fn head(&self) -> u64;
+    /// Read the event at `seq`, or `None` when the log holds no event there. The default reads
+    /// through the bounded reader; a durable log can read one record without the records after it.
+    fn read_one(&self, seq: u64) -> Result<Option<InterfoldEvent<Unsequenced>>> {
+        Ok(self
+            .read_from_bounded(seq, 1)?
+            .next()
+            .filter(|(read_seq, _)| *read_seq == seq)
+            .map(|(_, event)| event))
+    }
 }
 
 /// EventContext allows consumers to extract infrastructure metadata from event objects

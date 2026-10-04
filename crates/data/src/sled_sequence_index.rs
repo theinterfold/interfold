@@ -53,6 +53,20 @@ impl SequenceIndex for SledSequenceIndex {
             .map(|(_, v)| Ok(u64::from_be_bytes(v.as_ref().try_into()?)))
             .transpose()
     }
+
+    fn range_from(&self, key: u128, limit: usize) -> Result<Vec<(u128, u64)>> {
+        self.db
+            .range(key.to_be_bytes()..)
+            .take(limit)
+            .map(|entry| {
+                let (ts, seq) = entry.context(format!("Failed to scan from timestamp {key}"))?;
+                Ok((
+                    u128::from_be_bytes(ts.as_ref().try_into()?),
+                    u64::from_be_bytes(seq.as_ref().try_into()?),
+                ))
+            })
+            .collect()
+    }
 }
 
 #[cfg(test)]

@@ -27,6 +27,14 @@ struct QueryAggregator {
     query_count: usize,
 }
 
+/// Single-store queries keep the store's scan progress; quarantine does not change it.
+fn single_store_history(
+    query_count: usize,
+    history: Option<crate::HistoryProgress>,
+) -> Option<crate::HistoryProgress> {
+    (query_count == 1).then_some(history).flatten()
+}
+
 fn quarantine_misrouted_events(
     events: Vec<InterfoldEvent>,
     aggregate_id: AggregateId,
@@ -79,6 +87,7 @@ impl Handler<EventStoreQueryResponse> for QueryAggregator {
                 self.pending.len()
             );
             let log_head = (self.query_count == 1).then(|| msg.log_head()).flatten();
+            let history = single_store_history(self.query_count, msg.history());
             let events = match msg.into_events() {
                 Ok(events) => events,
                 Err(error) => {
@@ -111,7 +120,8 @@ impl Handler<EventStoreQueryResponse> for QueryAggregator {
                     self.parent_id,
                     std::mem::take(&mut self.collected_events),
                 )
-                .with_log_head(log_head);
+                .with_log_head(log_head)
+                .with_history(history);
                 self.sender.do_send(response);
                 ctx.notify(Die)
             }
@@ -168,6 +178,7 @@ impl<I: SequenceIndex, L: EventLog> EventStoreRouter<I, L> {
         let limit = msg.limit();
         let max_bytes = msg.max_bytes();
         let filter = msg.filter().cloned();
+        let timestamp_order = msg.timestamp_order();
         let sender = msg.sender();
 
         let missing: Vec<_> = query
@@ -217,9 +228,12 @@ impl<I: SequenceIndex, L: EventLog> EventStoreRouter<I, L> {
         let aggregator_addr = aggregator.start();
 
         for (aggregate_id, ts, sub_query_id, store_addr) in sub_queries {
-            let get_events_msg =
+            let mut get_events_msg =
                 EventStoreQueryBy::<Ts>::new(sub_query_id, ts, aggregator_addr.clone().recipient())
                     .with_options(limit, filter.clone(), max_bytes);
+            if timestamp_order {
+                get_events_msg = get_events_msg.in_timestamp_order();
+            }
             debug!("Sending query for aggregate {:?}", aggregate_id);
             store_addr.do_send(get_events_msg);
         }

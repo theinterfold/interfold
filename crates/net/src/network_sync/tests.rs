@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use super::*;
+use crate::domain::net_event_batch::{BatchCursor, EventBatch};
 use crate::net_interface_handle::{NetEventChannel, NetEventSubscriber};
 use crate::{
     direct_responder::ChannelType,
@@ -34,7 +35,7 @@ impl Handler<EventStoreQueryBy<TsAgg>> for NoopEventStore {
 }
 
 struct RecordingEventStore {
-    queries: UnboundedSender<(Option<u64>, Option<u64>)>,
+    queries: UnboundedSender<(Option<u64>, Option<u64>, bool)>,
 }
 
 impl Actor for RecordingEventStore {
@@ -44,13 +45,15 @@ impl Actor for RecordingEventStore {
 impl Handler<EventStoreQueryBy<TsAgg>> for RecordingEventStore {
     type Result = ();
     fn handle(&mut self, msg: EventStoreQueryBy<TsAgg>, _: &mut Self::Context) {
-        let _ = self.queries.send((msg.limit(), msg.max_bytes()));
+        let _ = self
+            .queries
+            .send((msg.limit(), msg.max_bytes(), msg.timestamp_order()));
         // Intentionally retain no response. Tests exercise the manager's in-flight bounds.
     }
 }
 
 fn manager_with_recording_store(
-    query_tx: UnboundedSender<(Option<u64>, Option<u64>)>,
+    query_tx: UnboundedSender<(Option<u64>, Option<u64>, bool)>,
 ) -> (NetSyncManager, mpsc::Receiver<NetCommand>) {
     let system = EventSystem::new().with_fresh_bus();
     let bus = system.handle().unwrap().enable("test");
@@ -127,6 +130,123 @@ fn local_non_forwardable_event() -> InterfoldEvent {
 
 fn remote_unsequenced(event: InterfoldEvent) -> InterfoldEvent<Unsequenced> {
     event.clone_unsequenced().with_source(EventSource::Net)
+}
+
+struct IgnoreStoreResponses;
+impl Actor for IgnoreStoreResponses {
+    type Context = ActixContext<Self>;
+}
+impl Handler<e3_events::StoreEventResponse> for IgnoreStoreResponses {
+    type Result = ();
+    fn handle(&mut self, _: e3_events::StoreEventResponse, _: &mut Self::Context) {}
+}
+
+fn keyshare_at(ts: u128) -> InterfoldEvent<Unsequenced> {
+    InterfoldEvent::<Unsequenced>::new_with_timestamp(
+        KeyshareCreated {
+            pubkey: ArcBytes::from_bytes(&[1, 2, 3, 4]),
+            e3_id: E3id::new(ts.to_string(), 1),
+            node: "node-1".to_string(),
+            party_id: 1,
+            signed_pk_generation_proof: None,
+        }
+        .into(),
+        None,
+        ts,
+        None,
+        EventSource::Net,
+    )
+}
+
+/// Page through this node's history the way a peer does and return the timestamps it receives.
+async fn served_history(
+    manager: &Addr<NetSyncManager>,
+    net_tx: &mpsc::Sender<NetCommand>,
+    net_rx: &mut mpsc::Receiver<NetCommand>,
+    limit: usize,
+) -> Vec<u128> {
+    let mut since = 0;
+    let mut served = Vec::new();
+    for id in 0..64 {
+        let request: Vec<u8> = FetchEventsSince::new(AggregateId::new(1), since, limit)
+            .try_into()
+            .unwrap();
+        let responder = DirectResponder::new(id, ChannelType::Test(format!("page-{id}")), net_tx)
+            .with_request(request);
+        manager
+            .send(IncomingRequest {
+                peer: PeerId::random(),
+                responder,
+            })
+            .await
+            .unwrap();
+        let command = tokio::time::timeout(Duration::from_secs(5), net_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let ProtocolResponse::Ok(bytes) = protocol_response(command) else {
+            panic!("expected a history page");
+        };
+        let batch = EventBatch::<InterfoldEvent<Unsequenced>>::try_from(bytes).unwrap();
+        served.extend(batch.events.iter().map(|event| event.ts()));
+        match batch.next {
+            BatchCursor::Next(next) => since = next,
+            BatchCursor::Done => return served,
+        }
+    }
+    panic!("history did not end");
+}
+
+#[actix::test]
+async fn history_pages_serve_every_record_when_the_log_holds_older_timestamps_later() {
+    let system = EventSystem::new()
+        .with_fresh_bus()
+        .with_aggregate_config(AggregateConfig::new(HashMap::from([(
+            AggregateId::new(1),
+            Duration::ZERO,
+        )])));
+    let bus = system.handle().unwrap().enable("test");
+    // The log holds timestamp 20 after 30, as when startup appends history, and a record that
+    // the reply filters.
+    let store = system.eventstore_router().unwrap();
+    let responses = IgnoreStoreResponses.start();
+    for event in [
+        keyshare_at(10),
+        keyshare_at(30),
+        InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            TestEvent::new("local-only", 1).into(),
+            None,
+            15,
+            None,
+            EventSource::Local,
+        ),
+        keyshare_at(20),
+    ] {
+        store
+            .send(e3_events::StoreEventRequested::new(
+                event,
+                responses.clone().recipient(),
+            ))
+            .await
+            .unwrap();
+    }
+    let (net_tx, mut net_rx) = mpsc::channel::<NetCommand>(100);
+    let evt_tx = NetEventChannel::new(100);
+    let _evt_rx = evt_tx.subscribe();
+    let manager = NetSyncManager::new(
+        &bus,
+        &net_tx,
+        &NetEventSubscriber::from(&evt_tx),
+        system.eventstore_reader().unwrap().ts(),
+        "my-topic",
+        NetworkPolicy::local_unrestricted(),
+    )
+    .start();
+
+    assert_eq!(
+        served_history(&manager, &net_tx, &mut net_rx, 2).await,
+        vec![10, 20, 30]
+    );
 }
 
 #[test]
@@ -883,6 +1003,7 @@ async fn malicious_huge_limit_is_capped_before_storage_query() {
         (
             Some(sync_scan_limit(usize::MAX) as u64),
             Some(MAX_SYNC_SCAN_BYTES),
+            true,
         )
     );
 }

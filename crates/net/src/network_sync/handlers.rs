@@ -223,7 +223,8 @@ impl Handler<IncomingRequest> for NetSyncManager {
             let storage_query =
                 EventStoreQueryBy::<TsAgg>::new(id, query, ctx.address().recipient())
                     .with_limit(scan_limit as u64)
-                    .with_max_bytes(MAX_SYNC_SCAN_BYTES);
+                    .with_max_bytes(MAX_SYNC_SCAN_BYTES)
+                    .in_timestamp_order();
             if let Err(error) = self.eventstore.try_send(storage_query) {
                 if let Some(pending) = self.requests.remove(&id) {
                     pending.responder.respond(ProtocolResponse::Error(
@@ -247,6 +248,7 @@ impl Handler<EventStoreQueryResponse> for NetSyncManager {
     fn handle(&mut self, msg: EventStoreQueryResponse, _: &mut Self::Context) -> Self::Result {
         let response_id = msg.id();
         let is_rebroadcast = self.rebroadcast_query_ids.remove(&response_id);
+        let history = msg.history();
         trap(EType::Net, &self.bus.clone(), || {
             let events = match msg.into_events() {
                 Ok(events) => events,
@@ -287,8 +289,18 @@ impl Handler<EventStoreQueryResponse> for NetSyncManager {
                     }
                 }
             }
-            match build_sync_batch(events, &fetch_request) {
+            let Some(history) = history else {
+                pending.responder.respond(ProtocolResponse::Error(
+                    "historical sync storage returned no scan progress".to_string(),
+                ))?;
+                bail!("event store answered a historical-sync page without scan progress");
+            };
+            match build_sync_batch(events, history, &fetch_request) {
                 SyncBatchOutcome::BadRequest(reason) => pending.responder.bad_request(reason)?,
+                SyncBatchOutcome::Failed(reason) => {
+                    warn!(%reason, "Cannot serve a historical-sync request");
+                    pending.responder.respond(ProtocolResponse::Error(reason))?
+                }
                 SyncBatchOutcome::Batch(batch) => pending.responder.ok(batch)?,
             }
 

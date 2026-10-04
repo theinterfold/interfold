@@ -43,6 +43,17 @@ pub struct EventStoreQueryResponse {
     id: CorrelationId,
     result: std::result::Result<Vec<InterfoldEvent<Sequenced>>, String>,
     log_head: Option<u64>,
+    history: Option<HistoryProgress>,
+}
+
+/// How far a timestamp-ordered query of one event store scanned.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct HistoryProgress {
+    /// Timestamp of the last record that the scan read, including records that the reply omits.
+    pub last_scanned_ts: Option<u128>,
+    /// The store holds no record after `last_scanned_ts`, or none at or after the query when the
+    /// scan read nothing.
+    pub exhausted: bool,
 }
 
 impl EventStoreQueryResponse {
@@ -51,6 +62,7 @@ impl EventStoreQueryResponse {
             id,
             result: Ok(events),
             log_head: None,
+            history: None,
         }
     }
 
@@ -59,6 +71,7 @@ impl EventStoreQueryResponse {
             id,
             result: result.map_err(|error| format!("{error:#}")),
             log_head: None,
+            history: None,
         }
     }
 
@@ -70,6 +83,16 @@ impl EventStoreQueryResponse {
     /// Physical log head for a sequence query that addresses one event store.
     pub fn log_head(&self) -> Option<u64> {
         self.log_head
+    }
+
+    pub fn with_history(mut self, history: Option<HistoryProgress>) -> Self {
+        self.history = history;
+        self
+    }
+
+    /// Scan progress of a timestamp-ordered query that addresses one event store.
+    pub fn history(&self) -> Option<HistoryProgress> {
+        self.history
     }
 
     pub fn into_events(self) -> Result<Vec<InterfoldEvent>> {
@@ -155,6 +178,7 @@ pub struct EventStoreQueryBy<Q: QueryKind> {
     limit: Option<u64>,
     max_bytes: Option<u64>,
     filter: Option<EventStoreFilter>,
+    timestamp_order: bool,
 }
 
 impl EventStoreQueryBy<SeqAgg> {
@@ -170,6 +194,7 @@ impl EventStoreQueryBy<SeqAgg> {
             limit: None,
             max_bytes: None,
             filter: None,
+            timestamp_order: false,
         }
     }
 
@@ -209,6 +234,7 @@ impl EventStoreQueryBy<TsAgg> {
             limit: None,
             max_bytes: None,
             filter: None,
+            timestamp_order: false,
         }
     }
 
@@ -248,6 +274,7 @@ impl EventStoreQueryBy<Ts> {
             limit: None,
             max_bytes: None,
             filter: None,
+            timestamp_order: false,
         }
     }
 
@@ -287,6 +314,7 @@ impl EventStoreQueryBy<Seq> {
             limit: None,
             max_bytes: None,
             filter: None,
+            timestamp_order: false,
         }
     }
 
@@ -329,6 +357,20 @@ impl<Q: QueryKind> EventStoreQueryBy<Q> {
     pub fn with_max_bytes(mut self, max_bytes: u64) -> Self {
         self.max_bytes = Some(max_bytes);
         self
+    }
+
+    /// Read a timestamp query in timestamp order through the timestamp index, instead of in log
+    /// order from the first matching record. The response reports how far the scan read
+    /// ([`EventStoreQueryResponse::history`]), so a reader can page through every record at or
+    /// after the query even when the log holds older timestamps after newer ones. The query
+    /// takes no filter.
+    pub fn in_timestamp_order(mut self) -> Self {
+        self.timestamp_order = true;
+        self
+    }
+
+    pub fn timestamp_order(&self) -> bool {
+        self.timestamp_order
     }
 
     pub fn with_options(

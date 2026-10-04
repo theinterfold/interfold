@@ -595,6 +595,14 @@ admission throttle during startup draining. A failed append stops the event stor
 recording before the commit cannot hide an event from a running node. After a restart, the first
 copy of an already stored event is stored once more.
 
+A peer's historical-sync request reads this node's history in timestamp order through the timestamp
+index (`EventStore::query_history_page`), at most 400 records and 32 MiB per page. The log can hold
+an older timestamp after a newer one, so a read in log order from the first matching record could
+miss records. Storage reports the last timestamp that it read and whether it holds more. The reply
+moves its cursor one timestamp past the last record that it consumed, returned or filtered, and says
+`Done` only when storage holds nothing more. A reply stays below the 10 MiB direct-message limit; a
+single event above that limit fails the request.
+
 The document publisher fetches documents in spawned tasks, so a slow DHT read does not hold its
 ingress loop. At most 8 fetches run and 512 documents wait. Four concurrent N=19 E3s need
 `4 * 3 * 18 = 216` remote documents per node. A 2x margin gives 432, rounded up to 512 queue slots.

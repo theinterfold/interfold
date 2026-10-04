@@ -24,6 +24,9 @@ const COMMITLOG_HEADER_BYTES: usize = 20;
 const MAX_INLINE_EVENT_BYTES: usize = MAX_MESSAGE_BYTES - COMMITLOG_HEADER_BYTES;
 const COMMITLOG_INDEX_ENTRY_BYTES: usize = 8;
 const COMMITLOG_SEGMENT_MAGIC: [u8; 2] = [0xff, 0xff];
+/// Read window for one record. It holds an ordinary record without reading far past it; a larger
+/// record is read again with the full message window.
+const SINGLE_RECORD_READ_BYTES: usize = 64 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EventLogOpenMode {
@@ -213,7 +216,7 @@ impl CommitLogEventLog {
     /// the same record into mid-log corruption. The [`EventLog`] adapter carries
     /// this error to startup and query callers instead of panicking an actor.
     pub fn read_from_checked(&self, from: u64) -> Result<Vec<(u64, InterfoldEvent<Unsequenced>)>> {
-        self.read_from_checked_with_limits(from, None, None)
+        self.read_from_checked_with_limits(from, None, None, MAX_MESSAGE_BYTES)
     }
 
     fn read_from_checked_with_limits(
@@ -221,6 +224,7 @@ impl CommitLogEventLog {
         from: u64,
         limit: Option<usize>,
         max_bytes: Option<usize>,
+        window: usize,
     ) -> Result<Vec<(u64, InterfoldEvent<Unsequenced>)>> {
         // Convert 1-indexed sequence to 0-indexed offset.
         let mut current_offset = from.saturating_sub(1);
@@ -234,7 +238,7 @@ impl CommitLogEventLog {
         'pages: loop {
             let message_buf = self
                 .log
-                .read(current_offset, ReadLimit::max_bytes(MAX_MESSAGE_BYTES))
+                .read(current_offset, ReadLimit::max_bytes(window))
                 .map_err(|error| {
                     anyhow!(
                         "commit log read failed at sequence {}: {error:?}",
@@ -792,7 +796,7 @@ impl EventLog for CommitLogEventLog {
         limit: usize,
     ) -> Result<Box<dyn Iterator<Item = (u64, InterfoldEvent<Unsequenced>)>>> {
         Ok(Box::new(
-            self.read_from_checked_with_limits(from, Some(limit), None)?
+            self.read_from_checked_with_limits(from, Some(limit), None, MAX_MESSAGE_BYTES)?
                 .into_iter(),
         ))
     }
@@ -804,14 +808,40 @@ impl EventLog for CommitLogEventLog {
         max_bytes: usize,
     ) -> Result<Box<dyn Iterator<Item = (u64, InterfoldEvent<Unsequenced>)>>> {
         Ok(Box::new(
-            self.read_from_checked_with_limits(from, Some(limit), Some(max_bytes))?
-                .into_iter(),
+            self.read_from_checked_with_limits(
+                from,
+                Some(limit),
+                Some(max_bytes),
+                MAX_MESSAGE_BYTES,
+            )?
+            .into_iter(),
         ))
     }
 
     fn head(&self) -> u64 {
         // `last_offset` is 0-indexed; convert to a 1-indexed sequence number.
         self.log.last_offset().map(|o| o + 1).unwrap_or(0)
+    }
+
+    fn read_one(&self, seq: u64) -> Result<Option<InterfoldEvent<Unsequenced>>> {
+        // The commit log rejects a window that the first record does not fit in. Decode and other
+        // errors repeat with the full window and are returned from there.
+        let events = match self.read_from_checked_with_limits(
+            seq,
+            Some(1),
+            None,
+            SINGLE_RECORD_READ_BYTES,
+        ) {
+            Ok(events) => events,
+            Err(_) => self.read_from_checked_with_limits(seq, Some(1), None, MAX_MESSAGE_BYTES)?,
+        };
+        match events.into_iter().next() {
+            Some((read_seq, event)) if read_seq == seq => Ok(Some(event)),
+            Some((read_seq, _)) => {
+                anyhow::bail!("commit log returned sequence {read_seq} for sequence {seq}")
+            }
+            None => Ok(None),
+        }
     }
 }
 
@@ -1199,6 +1229,23 @@ mod tests {
             .collect();
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].1, first);
+    }
+
+    #[test]
+    fn read_one_returns_a_record_larger_than_its_first_window() {
+        let dir = tempdir().unwrap();
+        let mut log = CommitLogEventLog::new(dir.path()).unwrap();
+        let small = event_from(TestEvent::new("small", 1));
+        let large = event_from(TestEvent::new(&"x".repeat(2 * SINGLE_RECORD_READ_BYTES), 2));
+        let after = event_from(TestEvent::new("after", 3));
+        log.append(&small).unwrap();
+        log.append(&large).unwrap();
+        log.append(&after).unwrap();
+
+        assert_eq!(log.read_one(1).unwrap(), Some(small));
+        assert_eq!(log.read_one(2).unwrap(), Some(large));
+        assert_eq!(log.read_one(3).unwrap(), Some(after));
+        assert_eq!(log.read_one(4).unwrap(), None);
     }
 
     #[test]
