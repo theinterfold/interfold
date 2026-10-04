@@ -9,9 +9,10 @@ use alloy::signers::local::PrivateKeySigner;
 use anyhow::Result;
 use e3_crypto::SensitiveBytes;
 use e3_events::{
-    CircuitName, ComputeRequestErrorKind, DkgShareDecryptionProofRequest, E3Failed, E3Stage,
-    EncryptionKey, Event, FailureReason, GetEvents, HistoryCollector, PkGenerationProofRequest,
-    ShareComputationProofRequest, ThresholdShare, ThresholdSharePending, Unsequenced, ZkError,
+    CircuitName, ComputeRequestErrorKind, ComputeRequestKind, DkgShareDecryptionProofRequest,
+    E3Failed, E3Stage, EncryptionKey, Event, FailureReason, GetEvents, HistoryCollector,
+    PkGenerationProofRequest, ShareComputationProofRequest, ThresholdShare, ThresholdSharePending,
+    Unsequenced, ZkError,
 };
 use e3_fhe_params::BfvPreset;
 use e3_test_helpers::get_common_setup;
@@ -384,23 +385,18 @@ async fn c4_dispatch_before_the_seq_layout_is_held_until_threshold_share_pending
     Ok(())
 }
 
-#[actix::test]
-async fn replayed_c6_intent_is_repaired_before_deduplication() -> Result<()> {
+/// Canonical key authority for `id` and a C6 request whose public inputs match it.
+fn c6_fixture(
+    id: &E3id,
+) -> Result<(
+    e3_request::canonical_key::CanonicalPublicKeys,
+    e3_events::ShareDecryptionProofPending,
+)> {
     use alloy::primitives::Address;
     use e3_bfv_client::{client::generate_public_key, compute_pk_commitment};
-    use e3_ciphernode_builder::EventSystem;
-    use e3_data::RepositoriesFactory;
-    use e3_events::{
-        AggregateConfig, AggregateId, EventConstructorWithTimestamp, EvmEventConfig,
-        EvmEventConfigChain, HistoricalEvmEventsReceived, HistoricalNetSyncEventsReceived,
-        NetReady, RequestRouterCheckpoint, ShareDecryptionProofPending,
-        ThresholdShareDecryptionProofRequest,
-    };
+    use e3_events::{ShareDecryptionProofPending, ThresholdShareDecryptionProofRequest};
     use e3_fhe_params::{BfvParamSet, BfvPreset};
     use e3_request::canonical_key::{CanonicalPublicKey, CanonicalPublicKeys};
-    use e3_sync::SyncRepositoryFactory;
-    use std::time::Duration;
-    let id = E3id::new("83", 1);
     let params = BfvParamSet::from(BfvPreset::InsecureThreshold512);
     let pk = generate_public_key(
         params.degree,
@@ -428,7 +424,7 @@ async fn replayed_c6_intent_is_repaired_before_deduplication() -> Result<()> {
     };
     let keys = CanonicalPublicKeys::default();
     keys.insert(id.clone(), key.clone())?;
-    keys.remember_key(&id, ArcBytes::from_bytes(&pk))?;
+    keys.remember_key(id, ArcBytes::from_bytes(&pk))?;
     let pending = ShareDecryptionProofPending {
         e3_id: id.clone(),
         party_id: 0,
@@ -444,7 +440,99 @@ async fn replayed_c6_intent_is_repaired_before_deduplication() -> Result<()> {
             params_preset: key.params_preset,
             committee_size: key.committee_size,
         },
+        redelivery: 0,
     };
+    Ok((keys, pending))
+}
+
+#[actix::test]
+async fn a_redelivered_c6_request_asks_for_the_proof_again() -> Result<()> {
+    let (bus, _rng, _seed, _params, _crp, errors, history) = get_common_setup(None)?;
+    let mut actor = ProofRequestActor::new(&bus, PrivateKeySigner::random(), true);
+    let id = E3id::new("84", 1);
+    let (keys, pending) = c6_fixture(&id)?;
+    actor.canonical_keys = keys;
+    let request = |redelivery| {
+        let pending = e3_events::ShareDecryptionProofPending {
+            redelivery,
+            ..pending.clone()
+        };
+        TypedEvent::new(pending.clone(), test_ctx(pending))
+    };
+    let c6_request_ids = || async {
+        actix::clock::sleep(std::time::Duration::from_millis(20)).await;
+        let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+        anyhow::Ok(
+            events
+                .iter()
+                .filter_map(|event| match event.get_data() {
+                    InterfoldEventData::ComputeRequest(data)
+                        if matches!(
+                            data.request,
+                            ComputeRequestKind::Zk(ZkRequest::ThresholdShareDecryption(_))
+                        ) =>
+                    {
+                        Some(data.correlation_id)
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>(),
+        )
+    };
+
+    actor.handle_share_decryption_proof_pending(request(0));
+    // A copy of the same request is a duplicate.
+    actor.handle_share_decryption_proof_pending(request(0));
+    assert_eq!(c6_request_ids().await?.len(), 1);
+
+    // The keyshare redelivers its request: the proof is requested again under a new ID.
+    actor.handle_share_decryption_proof_pending(request(1));
+    let ids = c6_request_ids().await?;
+    assert_eq!(ids.len(), 2);
+    assert_ne!(ids[0], ids[1]);
+
+    // The answer to the second request completes the proof, and the late answer to the first one
+    // is no orphan.
+    let proof = Proof::new(
+        CircuitName::ThresholdShareDecryption,
+        ArcBytes::from_bytes(&[1]),
+        ArcBytes::from_bytes(&[2]),
+    );
+    actor.handle_share_decryption_proof_response(&ids[1], vec![proof.clone()]);
+    actor.handle_share_decryption_proof_response(&ids[0], vec![proof]);
+    actix::clock::sleep(std::time::Duration::from_millis(20)).await;
+    let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(
+                event.get_data(),
+                InterfoldEventData::DecryptionShareProofSigned(_)
+            ))
+            .count(),
+        1
+    );
+    assert!(actor.share_decryption_correlation.is_empty());
+    assert!(errors
+        .send(GetEvents::<InterfoldEvent>::new())
+        .await?
+        .is_empty());
+    Ok(())
+}
+
+#[actix::test]
+async fn replayed_c6_intent_is_repaired_before_deduplication() -> Result<()> {
+    use e3_ciphernode_builder::EventSystem;
+    use e3_data::RepositoriesFactory;
+    use e3_events::{
+        AggregateConfig, AggregateId, EventConstructorWithTimestamp, EvmEventConfig,
+        EvmEventConfigChain, HistoricalEvmEventsReceived, HistoricalNetSyncEventsReceived,
+        NetReady, RequestRouterCheckpoint,
+    };
+    use e3_sync::SyncRepositoryFactory;
+    use std::time::Duration;
+    let id = E3id::new("83", 1);
+    let (keys, pending) = c6_fixture(&id)?;
     let aggregate = AggregateId::new(1);
     let stored = EventSystem::new()
         .with_fresh_bus()

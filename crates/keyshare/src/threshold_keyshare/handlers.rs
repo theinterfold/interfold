@@ -127,6 +127,16 @@ impl Handler<TypedEvent<ComputeResponse>> for ThresholdKeyshare {
     }
 }
 
+impl Handler<RedeliverDecryptionWork> for ThresholdKeyshare {
+    type Result = ();
+
+    fn handle(&mut self, msg: RedeliverDecryptionWork, _: &mut Self::Context) -> Self::Result {
+        if let Err(error) = self.redeliver_decryption_work(msg.0) {
+            error!(%error, "Could not redeliver decryption work");
+        }
+    }
+}
+
 impl Handler<TypedEvent<ComputeRequestError>> for ThresholdKeyshare {
     type Result = ();
 

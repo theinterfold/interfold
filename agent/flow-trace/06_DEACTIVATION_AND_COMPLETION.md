@@ -560,7 +560,8 @@ witnesses and persists repaired public inputs. It does not need another key publ
 restart. Hydration clears the process-local decryption dispatch markers. `EffectsEnabled` resumes
 each phase once, and late authority or key bytes can start work that still waits for them. Repeated
 matching publications and chain observations do not add compute correlations or repeat C6 proof
-intents. The worker retries local failures with the same request.
+intents. The worker retries local failures with the same request. A phase whose result has not
+arrived for 5 minutes sends its request again, at most 6 times.
 
 Replayed C6 intents pass canonical admission before proof-intent deduplication. Logged C6 compute
 requests also pass admission before dispatch or response reuse. Other E3s continue routing while one

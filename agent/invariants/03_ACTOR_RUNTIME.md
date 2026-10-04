@@ -273,8 +273,9 @@ the code does not meet yet.
 - Keyshare coalesces decryption work per phase in each process. Admission of an already-retained
   canonical key is a no-op. Repeated chain observations and resume signals cannot add share
   correlations or repeat C6 proof intents. Hydration clears the dispatch markers, and the worker
-  retains the same request for local retries. —
-  `crates/keyshare/src/threshold_keyshare/effects/create_decryption_share.rs`; `flow-trace/04`
+  retains the same request for local retries. A phase whose result has not arrived for 5 minutes
+  sends its request again, at most 6 times, because EventBus fan-out can lose a request or a result.
+  — `crates/keyshare/src/threshold_keyshare/effects/create_decryption_share.rs`; `flow-trace/04`
 - A terminal E3 cancels its local node-scoped compute-task group. Work already executing may finish,
   but queued proof jobs from that E3 must not consume task-pool capacity ahead of a later active E3.
   Accusation re-verification runs in its own group: a failure does not cancel it, so a node can

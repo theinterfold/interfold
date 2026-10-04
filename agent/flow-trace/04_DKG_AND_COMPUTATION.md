@@ -1311,6 +1311,14 @@ InterfoldSolReader decodes CiphertextOutputPublished event
       │   → Hydration clears these process-local markers; `EffectsEnabled` resumes retained work.
       │   → A local worker or task-pool failure retries the same request and correlation ID.
       │   → The node does not report a local failure as invalid decryption shares.
+      │   → EventBus fan-out can lose a request or its result. When a phase's result has not
+      │     arrived 5 minutes after its last request, the keyshare sends the request again, at
+      │     most 6 times per phase: a share calculation under a new correlation ID, and a C6
+      │     intent with a raised `redelivery` number. `ComputeEffectGate` runs one compute
+      │     per request payload and answers every correlation ID. `ProofRequestActor` treats a
+      │     C6 intent with a higher `redelivery` for a pending proof as a request to ask for the
+      │     proof again, and ignores other copies.
+      │     File: crates/keyshare/src/threshold_keyshare/effects/create_decryption_share.rs
     │
     ├─ REQUEST C6 PROOF:
     │   Publish ShareDecryptionProofPending {
