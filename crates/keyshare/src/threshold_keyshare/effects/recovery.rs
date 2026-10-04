@@ -541,8 +541,10 @@ mod dealer_snapshot_tests {
 
     #[actix::test]
     async fn a_dealer_snapshot_cannot_replay_without_its_stored_share() {
-        let mut recovery = ThresholdKeyshareRecoveryState::default();
-        recovery.collected_threshold_share_ids = Some(BTreeSet::from([2]));
+        let recovery = ThresholdKeyshareRecoveryState {
+            collected_threshold_share_ids: Some(BTreeSet::from([2])),
+            ..Default::default()
+        };
         let store = InMemStore::new(false).start();
         let payloads = ThresholdKeyshareRecoveryPayloads::new(DataStore::from_in_mem(&store));
         assert!(

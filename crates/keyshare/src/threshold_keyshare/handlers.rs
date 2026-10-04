@@ -5,6 +5,38 @@
 use super::*;
 
 impl ThresholdKeyshare {
+    fn collector_failure_is_current(&self, e3_id: &E3id, phase: DkgTimeoutPhase) -> Result<bool> {
+        let state = self.state.try_get()?;
+        if state.e3_id != *e3_id || Self::public_key_context_is_recovered(&state) {
+            return Ok(false);
+        }
+
+        Ok(match phase {
+            DkgTimeoutPhase::EncryptionKeyCollection => matches!(
+                state.state,
+                KeyshareState::Init | KeyshareState::CollectingEncryptionKeys(_)
+            ),
+            DkgTimeoutPhase::ThresholdShareCollection => matches!(
+                state.state,
+                KeyshareState::Init
+                    | KeyshareState::CollectingEncryptionKeys(_)
+                    | KeyshareState::GeneratingThresholdShare(_)
+                    | KeyshareState::AggregatingDecryptionKey(_)
+            ),
+            DkgTimeoutPhase::DecryptionKeySharedCollection => {
+                // ReadyForDecryption still collects C4 shares until publication is authorized.
+                if !matches!(state.state, KeyshareState::ReadyForDecryption(_))
+                    || state.keyshare_published
+                {
+                    return Ok(false);
+                }
+                let recovery = self.recovery.try_get()?;
+                !recovery.keyshare_publish_authorized
+                    && recovery.decryption_verification_complete.is_none()
+            }
+        })
+    }
+
     fn persist_terminal_failure(
         &mut self,
         failed_at_stage: E3Stage,
@@ -23,6 +55,12 @@ impl ThresholdKeyshare {
         &mut self,
         failure: EncryptionKeyCollectionFailed,
     ) -> Result<()> {
+        if !self.collector_failure_is_current(
+            &failure.e3_id,
+            DkgTimeoutPhase::EncryptionKeyCollection,
+        )? {
+            return Ok(());
+        }
         warn!(
             e3_id = %failure.e3_id,
             missing_parties = ?failure.missing_parties,
@@ -267,6 +305,12 @@ impl Handler<ThresholdShareCollectionFailed> for ThresholdKeyshare {
         _ctx: &mut Self::Context,
     ) -> Self::Result {
         trap(EType::KeyGeneration, &self.bus.clone(), || {
+            if !self.collector_failure_is_current(
+                &msg.e3_id,
+                DkgTimeoutPhase::ThresholdShareCollection,
+            )? {
+                return Ok(());
+            }
             warn!(
                 e3_id = %msg.e3_id,
                 missing_parties = ?msg.missing_parties,
@@ -320,6 +364,12 @@ impl Handler<DecryptionKeySharedCollectionFailed> for ThresholdKeyshare {
         _ctx: &mut Self::Context,
     ) -> Self::Result {
         trap(EType::KeyGeneration, &self.bus.clone(), || {
+            if !self.collector_failure_is_current(
+                &msg.e3_id,
+                DkgTimeoutPhase::DecryptionKeySharedCollection,
+            )? {
+                return Ok(());
+            }
             warn!(
                 e3_id = %msg.e3_id,
                 missing_parties = ?msg.missing_parties,

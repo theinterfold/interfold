@@ -171,6 +171,12 @@ the code does not meet yet.
   supervisor must wait longer than the node deadline before it sends `SIGKILL`. A process that must
   outlive its CLI launcher must use the detached spawn path; dropping an owning child handle stops
   that child. — `flow-trace/06`
+- A threshold-keyshare collector failure must match the E3 and its current collection phase before
+  it clears collector references, writes state, or publishes events. Saved public-key context
+  supersedes all DKG collector failures. Threshold-share failures cannot replace
+  `ReadyForDecryption` or a later phase. C4 failures apply in `ReadyForDecryption` only before C4
+  verification completes or keyshare publication is authorized. —
+  `crates/keyshare/src/threshold_keyshare/handlers.rs`; `flow-trace/04`
 - A fatal threshold-keyshare collector timeout commits `KeyshareState::Failed` before it publishes
   `E3Failed`. The persisted failure stage and reason are immutable. After hydration,
   `EffectsEnabled` redrives the saved failure and does not resume the earlier DKG phase. **Gap:**

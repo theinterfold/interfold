@@ -174,6 +174,7 @@ EncryptionKeyCollector collects verified EncryptionKeyCreated events
 │   ├─ With at least H keys, including this party's key:
 │   │    send AllEncryptionKeysCollected with the available keys
 │   └─ Otherwise send EncryptionKeyCollectionFailed to parent ThresholdKeyshare
+│      ├─ Ignore a different E3 or a failure after encryption-key collection ends
 │      ├─ ThresholdKeyshare persists KeyshareState::Failed {
 │      │    failed_at_stage: CommitteeFinalized,
 │      │    reason: DKGTimeout
@@ -446,6 +447,7 @@ ThresholdShareCollector collects this recipient's shares from the other N−1 pa
 │   ├─ With at least H−1 external shares:
 │   │    send AllThresholdSharesCollected with the available shares
 │   └─ Otherwise send ThresholdShareCollectionFailed to parent ThresholdKeyshare
+│      ├─ Ignore a different E3 or a failure after threshold-share collection ends
 │      ├─ ThresholdKeyshare persists KeyshareState::Failed {
 │      │    failed_at_stage: CommitteeFinalized,
 │      │    reason: DKGTimeout
@@ -678,7 +680,7 @@ ThresholdKeyshare accepts an H-dealer roster after C2/C3 verification
 │     accepted roster can create C4 only when it holds all H selected shares.
 │     Its C4 does not add a dealer row to the C5 key.
 │
-├─ 3. PUBLISH C4 PROOF REQUESTS:
+├─ 3. PERSIST C4 PROOF REQUESTS, ENTER ReadyForDecryption, THEN PUBLISH:
 │     DecryptionShareProofsPending {
 │       sk_request:   DkgShareDecryptionProofRequest (C4a),
 │       esm_requests: Vec<DkgShareDecryptionProofRequest> (C4b, one per ESI),
@@ -725,9 +727,10 @@ ThresholdKeyshare accepts an H-dealer roster after C2/C3 verification
 │     matching the live collector.
 │     │
 │     ├─ On timeout:
+│     │  ├─ Ignore a different E3 or a failure after C4 collection is superseded
 │     │  ├─ Persist KeyshareState::Failed {
 │     │  │    failed_at_stage: CommitteeFinalized,
-│     │  │    reason: DecryptionTimeout
+│     │  │    reason: DKGTimeout
 │     │  │  }
 │     │  ├─ Emit the matching E3Failed event
 │     │  └─ Stop the ThresholdKeyshare actor
@@ -748,7 +751,7 @@ ThresholdKeyshare accepts an H-dealer roster after C2/C3 verification
 │        → On failure: SignedProofFailed → accusation pipeline
 │        → On pass: ProofVerificationPassed (cached)
 │
-├─ 7. State: AggregatingDecryptionKey → ReadyForDecryption
+├─ 7. C4 verification authorizes KeyshareCreated; state remains ReadyForDecryption
 │
 └─ 8. Publish KeyshareCreated {
        e3_id, party_id,
@@ -757,6 +760,15 @@ ThresholdKeyshare accepts an H-dealer roster after C2/C3 verification
      }
     → Broadcast to committee members via P2P
 ```
+
+`crates/keyshare/src/threshold_keyshare/handlers.rs` checks the E3 and collection lifecycle before
+clearing a collector reference or publishing a failure. Encryption-key failures apply in `Init` and
+`CollectingEncryptionKeys`. Threshold-share failures apply from `Init` through
+`AggregatingDecryptionKey`, including while local share generation is unfinished. They cannot
+replace `ReadyForDecryption` or later states. C4 failures apply in `ReadyForDecryption` only before
+C4 verification completes or keyshare publication is authorized. Saved public-key context supersedes
+all three collectors. These checks use the persisted state and recovery record, so they also apply
+after hydration.
 
 Each fatal collector path commits `KeyshareState::Failed` before it publishes `E3Failed`. A later
 transition cannot change the saved stage or reason. If the process stops between these operations,

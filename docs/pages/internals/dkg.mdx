@@ -282,6 +282,7 @@ The signed C1 proof does not travel in `ThresholdShareCreated`. It travels later
 arrive, it closes. At the 75% checkpoint, it starts verification if it has at least $H - 1$ external
 shares, and it keeps collecting. Later shares extend the verified dealer set until all $N - 1$
 arrive or the DKG deadline passes. Only the DKG deadline can emit `ThresholdShareCollectionFailed`.
+The parent ignores that failure after it reaches `ReadyForDecryption` or a later phase.
 
 `ShareVerificationActor` verifies each batch in three phases:
 
@@ -484,8 +485,18 @@ A member that restarts recovers its work from the durable event log:
 - A local prover, verifier, or worker failure retries the same request. It never counts as proof
   that a peer sent invalid data.
 
-When a fatal collector timeout occurs, the node records a local `E3Failed` event. On-chain, the E3
-stays at `CommitteeFinalized` until the DKG deadline. After that, `markE3Failed` records
+The node accepts a collector failure only for the same E3 while that collection remains current:
+
+- Encryption-key failures apply in `Init` and `CollectingEncryptionKeys`.
+- Threshold-share failures apply from `Init` through `AggregatingDecryptionKey`.
+- C4 failures apply in `ReadyForDecryption` until C4 verification completes or keyshare publication
+  is authorized.
+
+Saved public-key context supersedes all three collectors. An ignored failure changes no state and
+publishes no failure event, including after restart.
+
+When a current collector timeout is fatal, the node records a local `E3Failed` event. On-chain, the
+E3 stays at `CommitteeFinalized` until the DKG deadline. After that, `markE3Failed` records
 `DKGTimeout`.
 
 ## Proof aggregation and on-chain anchoring
