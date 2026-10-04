@@ -638,13 +638,16 @@ from the active proposer or an earlier proposer whose failover budget has alread
 The proposer must have published a matching Ready list, the receiver's own Ready list must contain
 the roster, and every Ready list already held for a selected dealer must support it.
 
-A receiver applies a peer's Ready update with the same rule. It holds a refused update that adds a
-dealer but lacks a dealer of the held report, one per reporter, in its saved recovery state: the
-reporter can have seen an expulsion that the receiver has not seen yet, and the network resends the
-same event, which EventBus deduplication drops. After each expulsion, the receiver applies every
-held update that the expulsions now explain. A roster that held Ready reports contradict stays held
-in the same way. Acceptance checks the roster's support again, and a later roster from the same
-proposer replaces a held roster that the local Ready state does not support. Before C4
+A receiver applies a peer's Ready update with the same rule. It holds each refused update that adds
+a dealer but lacks a dealer of the held report, at most one per committee member for each reporter,
+in its saved recovery state: the reporter can have seen expulsions that the receiver has not seen
+yet, and the network resends the same events, which EventBus deduplication drops. After each
+expulsion, and when effects resume after a restart, the receiver applies the held updates that the
+expulsions now explain, one after another, and drops the ones that can no longer apply. A roster
+that held Ready reports contradict stays held in the same way. Acceptance checks the roster's support
+again and that neither its proposer nor a selected dealer is expelled; a held roster with an
+expelled member is dropped. A later roster from the same proposer replaces a held roster that the
+local Ready state does not support. Before C4
 starts, a roster from a lower party ID replaces a roster from a higher party ID. After C4 starts,
 the roster is fixed. A promoted aggregator re-proposes the accepted dealer list instead of deriving
 a different list from its local delivery order.

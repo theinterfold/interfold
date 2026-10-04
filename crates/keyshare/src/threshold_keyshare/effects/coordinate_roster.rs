@@ -205,19 +205,22 @@ impl ThresholdKeyshare {
                 let hold = update
                     == Some(ReadyUpdate::DropsLiveDealer {
                         adds_live_dealer: true,
-                    })
-                    && recovery
-                        .held_ready_updates
-                        .get(&reporter)
-                        .is_none_or(|held| {
-                            ready_update(&held.dealers, &message.dealers, &state.expelled_parties)
-                                == ReadyUpdate::Extends
-                        });
+                    });
+                let held_limit = committee.len();
                 self.recovery.try_mutate(&ec, |mut recovery| {
                     if replace {
                         recovery.ready_by_party.insert(message.party_id, message);
                     } else if hold {
-                        recovery.held_ready_updates.insert(reporter, message);
+                        let held = recovery.held_ready_updates.entry(reporter).or_default();
+                        if !held
+                            .iter()
+                            .any(|candidate| candidate.dealers == message.dealers)
+                        {
+                            held.push(message);
+                            if held.len() > held_limit {
+                                held.remove(0);
+                            }
+                        }
                     }
                     recovery.last_ec = Some(ec.clone());
                     Ok(recovery)
@@ -345,6 +348,7 @@ impl ThresholdKeyshare {
             return Ok(false);
         };
         let recovery = self.recovery.try_get()?;
+        let expelled = self.state.try_get()?.expelled_parties;
         let accepted_proposer = recovery.dkg_roster.as_ref().map(|roster| roster.party_id);
         let c4_started = self.pending.share_decryption_data.is_some()
             || !matches!(
@@ -360,6 +364,7 @@ impl ThresholdKeyshare {
             .filter(|(proposer, roster)| {
                 **proposer <= active_party_id
                     && accepted_proposer.is_none_or(|accepted| **proposer < accepted)
+                    && roster_members_are_live(roster, &expelled)
                     && roster_is_supported_by_local_state(&recovery, roster)
             })
             .min_by_key(|(proposer, _)| **proposer)
@@ -371,47 +376,64 @@ impl ThresholdKeyshare {
         Ok(true)
     }
 
-    /// Apply each held Ready update that the current expulsions make an extension, and drop each
-    /// one that can no longer become one. Run after an expulsion and after a direct Ready update.
+    /// Apply the held Ready updates that the current expulsions make extensions, drop the ones that
+    /// can no longer become one, and drop pending rosters with an expelled member. Run after an
+    /// expulsion, after a direct Ready update, and when effects resume after a restart.
     pub(in crate::actors::threshold_keyshare) fn apply_held_ready_updates(
         &mut self,
         ec: EventContext<Sequenced>,
     ) -> Result<()> {
         let state = self.state.try_get()?;
         let recovery = self.recovery.try_get()?;
+        let expelled = &state.expelled_parties;
         let mut applied = Vec::new();
-        let mut dropped = Vec::new();
+        let mut settled = BTreeMap::new();
         for (reporter, held) in &recovery.held_ready_updates {
-            if state.expelled_parties.contains(reporter) {
-                dropped.push(*reporter);
+            if expelled.contains(reporter) {
+                settled.insert(*reporter, Vec::new());
                 continue;
             }
-            match recovery.ready_by_party.get(reporter).map(|existing| {
-                ready_update(&existing.dealers, &held.dealers, &state.expelled_parties)
-            }) {
-                None | Some(ReadyUpdate::Extends) => applied.push(*reporter),
-                Some(ReadyUpdate::DropsLiveDealer {
-                    adds_live_dealer: true,
-                }) => {}
-                Some(_) => dropped.push(*reporter),
+            let (current, remaining) = settle_held_updates(
+                recovery.ready_by_party.get(reporter).cloned(),
+                held.clone(),
+                expelled,
+            );
+            if let Some(current) = current {
+                applied.push((*reporter, current));
+            }
+            if remaining.len() != held.len() {
+                settled.insert(*reporter, remaining);
             }
         }
-        if applied.is_empty() && dropped.is_empty() {
+        let stale_rosters: Vec<u64> = recovery
+            .pending_rosters
+            .iter()
+            .filter(|(_, roster)| !roster_members_are_live(roster, expelled))
+            .map(|(proposer, _)| *proposer)
+            .collect();
+        if applied.is_empty() && settled.is_empty() && stale_rosters.is_empty() {
             return Ok(());
         }
         self.recovery.try_mutate(&ec, |mut recovery| {
-            for reporter in &applied {
-                if let Some(held) = recovery.held_ready_updates.remove(reporter) {
-                    recovery.ready_by_party.insert(*reporter, held);
+            for (reporter, current) in &applied {
+                recovery.ready_by_party.insert(*reporter, current.clone());
+            }
+            for (reporter, remaining) in &settled {
+                if remaining.is_empty() {
+                    recovery.held_ready_updates.remove(reporter);
+                } else {
+                    recovery
+                        .held_ready_updates
+                        .insert(*reporter, remaining.clone());
                 }
             }
-            for reporter in &dropped {
-                recovery.held_ready_updates.remove(reporter);
+            for proposer in &stale_rosters {
+                recovery.pending_rosters.remove(proposer);
             }
             recovery.last_ec = Some(ec.clone());
             Ok(recovery)
         })?;
-        for reporter in applied {
+        for (reporter, _) in applied {
             info!(
                 e3_id = %state.e3_id,
                 reporter,
@@ -445,7 +467,8 @@ impl ThresholdKeyshare {
         let committee_h = state.committee_h()?;
         let ready = eligible_ready_dealers(&recovery, &state);
         let held_roster_is_usable = recovery.pending_rosters.values().any(|roster| {
-            roster_is_supported_by_local_state(&recovery, roster)
+            roster_members_are_live(roster, &state.expelled_parties)
+                && roster_is_supported_by_local_state(&recovery, roster)
                 && roster.dealers.len() == committee_h
         });
         if select_ready_roster(&ready, committee_h).is_none() && !held_roster_is_usable {
@@ -665,6 +688,60 @@ fn ready_update(
     }
 }
 
+/// Neither the proposer nor a selected dealer of the roster is expelled.
+fn roster_members_are_live(roster: &DkgCoordination, expelled: &HashSet<u64>) -> bool {
+    !expelled.contains(&roster.party_id)
+        && roster
+            .dealers
+            .iter()
+            .all(|dealer| !expelled.contains(&dealer.party_id))
+}
+
+/// Apply held updates to a reporter's Ready report while one of them extends it, the one with the
+/// most dealers that are not expelled first. Returns the new report when it changed, and the held
+/// updates that a later expulsion can still make extensions.
+fn settle_held_updates(
+    mut current: Option<DkgCoordination>,
+    mut held: Vec<DkgCoordination>,
+    expelled: &HashSet<u64>,
+) -> (Option<DkgCoordination>, Vec<DkgCoordination>) {
+    let live_count = |update: &DkgCoordination| {
+        update
+            .dealers
+            .iter()
+            .filter(|dealer| !expelled.contains(&dealer.party_id))
+            .count()
+    };
+    let mut changed = false;
+    loop {
+        let next = held
+            .iter()
+            .enumerate()
+            .filter(|(_, update)| {
+                current.as_ref().is_none_or(|current| {
+                    ready_update(&current.dealers, &update.dealers, expelled)
+                        == ReadyUpdate::Extends
+                })
+            })
+            .max_by_key(|(index, update)| (live_count(update), std::cmp::Reverse(*index)))
+            .map(|(index, _)| index);
+        let Some(index) = next else {
+            break;
+        };
+        current = Some(held.remove(index));
+        changed = true;
+    }
+    held.retain(|update| {
+        current.as_ref().is_some_and(|current| {
+            ready_update(&current.dealers, &update.dealers, expelled)
+                == ReadyUpdate::DropsLiveDealer {
+                    adds_live_dealer: true,
+                }
+        })
+    });
+    (changed.then_some(current).flatten(), held)
+}
+
 fn roster_is_supported_by_local_state(
     recovery: &ThresholdKeyshareRecoveryState,
     roster: &DkgCoordination,
@@ -689,7 +766,7 @@ fn roster_is_supported_by_local_state(
 
 #[cfg(test)]
 mod coordination_tests {
-    use super::{ready_contains_roster, ready_update, ReadyUpdate};
+    use super::{ready_contains_roster, ready_update, settle_held_updates, ReadyUpdate};
     use e3_events::{DkgCoordination, DkgCoordinationKind, DkgDealer, E3id};
     use e3_utils::ArcBytes;
 
@@ -746,5 +823,32 @@ mod coordination_tests {
             ReadyUpdate::Unchanged
         );
         assert_eq!(ready_update(&d(&[0, 1]), &d(&[0]), &none), drops(false));
+    }
+
+    #[test]
+    fn successive_held_updates_settle_on_the_latest_list() {
+        let d = |ids: &[u64]| message(1, ids);
+        let current = d(&[0, 1, 2, 3, 4]);
+        let first = d(&[0, 1, 2, 3, 5]);
+        let second = d(&[0, 1, 2, 3, 6]);
+        let held = vec![first.clone(), second.clone()];
+
+        // Dealer 4 is expelled, then dealer 5.
+        let only_four = std::collections::HashSet::from([4]);
+        let (applied, remaining) =
+            settle_held_updates(Some(current.clone()), held.clone(), &only_four);
+        assert_eq!(applied, Some(first.clone()));
+        assert_eq!(remaining, vec![second.clone()]);
+        let both = std::collections::HashSet::from([4, 5]);
+        let (applied, remaining) = settle_held_updates(applied, remaining, &both);
+        assert_eq!(applied, Some(second.clone()));
+        assert!(remaining.is_empty());
+
+        // Both expulsions arrive before the check, in either order of the held updates.
+        for held in [held.clone(), vec![second.clone(), first.clone()]] {
+            let (applied, remaining) = settle_held_updates(Some(current.clone()), held, &both);
+            assert_eq!(applied, Some(second.clone()));
+            assert!(remaining.is_empty());
+        }
     }
 }

@@ -475,6 +475,10 @@ impl ThresholdKeyshare {
             recovery.schema_version
         );
         let ec = recovery.last_ec.clone().unwrap_or(effects_context);
+        // The saved expulsions can already explain a held Ready update: the write that applies it
+        // is separate from the expulsion's, and a refused write must not strand the update.
+        self.apply_held_ready_updates(ec.clone())?;
+        let recovery = self.recovery.try_get()?;
         self.restore_public_key_context(&ec)?;
         let state = self.state.try_get()?;
         info!(
