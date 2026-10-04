@@ -79,6 +79,8 @@ pub use recovery_state::{
 #[path = "recovery_payloads.rs"]
 mod recovery_payloads;
 pub use recovery_payloads::ThresholdKeyshareRecoveryPayloads;
+#[path = "validation.rs"]
+mod validation;
 
 #[derive(Message, Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[rtype(result = "()")]

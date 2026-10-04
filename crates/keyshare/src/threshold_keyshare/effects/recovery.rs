@@ -64,6 +64,41 @@ impl ThresholdKeyshare {
             && (recovery.keyshare_publish_authorized || state.keyshare_published)
     }
 
+    /// Admit the key of a `PublicKeyAggregated` that matches the canonical key authority.
+    pub(in crate::actors::threshold_keyshare) fn handle_public_key_aggregated(
+        &mut self,
+        data: e3_events::PublicKeyAggregated,
+        ec: &EventContext<Sequenced>,
+    ) -> Result<()> {
+        let Some(key) = self.canonical_keys.get(&data.e3_id) else {
+            return Ok(());
+        };
+        if !key.accepts(&data) {
+            return Ok(());
+        }
+        self.admit_public_key(data.pubkey, ec)
+    }
+
+    /// Record the key publication stage of a chain `CommitteePublished`, and admit its key when it
+    /// matches the canonical key authority. A peer copy establishes nothing.
+    pub(in crate::actors::threshold_keyshare) fn handle_committee_published(
+        &mut self,
+        data: e3_events::CommitteePublished,
+        ec: &EventContext<Sequenced>,
+    ) -> Result<()> {
+        if ec.source() == e3_events::EventSource::Net {
+            return Ok(());
+        }
+        self.observe_canonical_stage(&data.e3_id, &E3Stage::KeyPublished);
+        let Some(key) = self.canonical_keys.get(&data.e3_id) else {
+            return Ok(());
+        };
+        if !validation::committee_publication_matches(&key, &data) {
+            return Ok(());
+        }
+        self.admit_public_key(data.public_key, ec)
+    }
+
     pub(in crate::actors::threshold_keyshare) fn admit_public_key(
         &mut self,
         pk: ArcBytes,

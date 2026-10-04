@@ -1272,7 +1272,8 @@ committee size from this authority. It retains intents while authority is unavai
 it releases compute work or reuses a response.
 
 File: `crates/request/src/canonical_key.rs`, `crates/evm/src/canonical_key.rs`,
-`crates/keyshare/src/threshold_keyshare/effects/route_events.rs`, `crates/aggregator/src/ext.rs`,
+`crates/keyshare/src/threshold_keyshare/effects/recovery.rs` (key admission),
+`crates/keyshare/src/threshold_keyshare/validation.rs`, `crates/aggregator/src/ext.rs`,
 `crates/zk-prover/src/proof_request/effects/decryption_share_proofs.rs`,
 `crates/multithread/src/effect_gate.rs`.
 

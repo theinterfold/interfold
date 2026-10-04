@@ -21,14 +21,8 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
             InterfoldEventData::PublicKeyAggregated(data) => {
-                let Some(key) = self.canonical_keys.get(&data.e3_id) else {
-                    return;
-                };
-                if !key.accepts(&data) {
-                    return;
-                }
                 trap(EType::KeyGeneration, &self.bus.with_ec(&ec), || {
-                    self.admit_public_key(data.pubkey, &ec)
+                    self.handle_public_key_aggregated(data, &ec)
                 });
             }
             InterfoldEventData::EvmLogObserved(_)
@@ -41,22 +35,8 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
                 }
             }
             InterfoldEventData::CommitteePublished(data) => {
-                if ec.source() == e3_events::EventSource::Net {
-                    return;
-                }
-                self.observe_canonical_stage(&data.e3_id, &E3Stage::KeyPublished);
-                let Some(key) = self.canonical_keys.get(&data.e3_id) else {
-                    return;
-                };
-                let nodes: Result<Vec<Address>, _> =
-                    data.nodes.iter().map(|node| node.parse()).collect();
-                if nodes.as_ref().ok() != Some(&key.committee)
-                    || key.validate_key(&data.public_key).is_err()
-                {
-                    return;
-                }
                 trap(EType::KeyGeneration, &self.bus.with_ec(&ec), || {
-                    self.admit_public_key(data.public_key, &ec)
+                    self.handle_committee_published(data, &ec)
                 });
             }
             InterfoldEventData::ThresholdShareCreated(data) => {
@@ -150,131 +130,7 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
                 }
             }
             InterfoldEventData::DecryptionKeyShared(data) => {
-                if data.external {
-                    let expected = self.dkg_dealer_address(&data.e3_id, data.party_id);
-                    match expected {
-                        Ok(Some(address))
-                            if data.recover_address().ok() == Some(address)
-                                && data.node.parse::<alloy::primitives::Address>().ok()
-                                    == Some(address) => {}
-                        _ => {
-                            warn!(
-                                party_id = data.party_id,
-                                e3_id = %data.e3_id,
-                                "Dropping decryption key share without its dealer's signature"
-                            );
-                            return;
-                        }
-                    }
-                    // Route based on current state
-                    if let Some(state) = self.state.get() {
-                        if state.expelled_parties.contains(&data.party_id) {
-                            info!(
-                                "Dropping DecryptionKeyShared from expelled party {}",
-                                data.party_id
-                            );
-                            return;
-                        }
-                        if data.party_id >= state.threshold_n || data.party_id == state.party_id {
-                            warn!(
-                                party_id = data.party_id,
-                                e3_id = %data.e3_id,
-                                "Dropping DecryptionKeyShared with an invalid sender party"
-                            );
-                            return;
-                        }
-                        if state
-                            .honest_parties
-                            .as_ref()
-                            .is_some_and(|parties| !parties.contains(&data.party_id))
-                        {
-                            warn!(
-                                party_id = data.party_id,
-                                e3_id = %data.e3_id,
-                                "Dropping DecryptionKeyShared from outside the honest committee"
-                            );
-                            return;
-                        }
-                        if matches!(state.state, KeyshareState::ReadyForDecryption(_))
-                            && self.decryption_key_shared_collector.is_none()
-                        {
-                            let recovery = match self.recovery.try_get() {
-                                Ok(recovery) => recovery,
-                                Err(err) => {
-                                    error!("Failed to inspect DecryptionKeyShared recovery state: {err}");
-                                    return;
-                                }
-                            };
-                            let collection_complete = state.keyshare_published
-                                || recovery.decryption_verification_complete.is_some()
-                                || state.honest_parties.as_ref().is_some_and(|parties| {
-                                    parties
-                                        .iter()
-                                        .filter(|&&party_id| party_id != state.party_id)
-                                        .all(|party_id| {
-                                            recovery.decryption_key_shares.contains_key(party_id)
-                                        })
-                                });
-                            if collection_complete {
-                                trace!(
-                                    party_id = data.party_id,
-                                    e3_id = %data.e3_id,
-                                    "Ignoring DecryptionKeyShared after C4 collection completed"
-                                );
-                                return;
-                            }
-                        }
-                        let recovered_event = TypedEvent::new(data.clone(), ec.clone());
-                        if let Err(err) = self.record_decryption_key_share(&recovered_event) {
-                            error!("Failed to persist DecryptionKeyShared recovery input: {err}");
-                            return;
-                        }
-                        let result = match &state.state {
-                            KeyshareState::AggregatingDecryptionKey(_) => {
-                                self.handle_early_decryption_key_share(data, ec)
-                            }
-                            KeyshareState::ReadyForDecryption(_) => self
-                                .ensure_decryption_key_shared_collector(ctx.address())
-                                .map(|collector| {
-                                    collector.do_send(TypedEvent::new(data, ec));
-                                }),
-                            other => {
-                                trace!(
-                                    "DecryptionKeyShared from party {} in unexpected state {:?}, ignoring",
-                                    data.party_id,
-                                    other.variant_name()
-                                );
-                                Ok(())
-                            }
-                        };
-                        if let Err(err) = result {
-                            error!("Failed to handle DecryptionKeyShared: {err}");
-                        }
-                    }
-                } else {
-                    // Own DecryptionKeyShared published by ProofRequestActor.
-                    // A3 fast-path: if no other honest parties, publish KeyshareCreated directly.
-                    if let Some(state) = self.state.get() {
-                        if data.party_id == state.party_id {
-                            if let KeyshareState::ReadyForDecryption(_) = state.state {
-                                let others = state
-                                    .honest_parties
-                                    .as_ref()
-                                    .map(|h| h.iter().filter(|&&pid| pid != state.party_id).count())
-                                    .unwrap_or(0);
-                                if others == 0 {
-                                    info!(
-                                        "No other honest parties for E3 {} — publishing KeyshareCreated directly",
-                                        data.e3_id
-                                    );
-                                    if let Err(err) = self.publish_keyshare_created(ec) {
-                                        error!("Failed to publish KeyshareCreated: {err}");
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+                self.handle_decryption_key_shared(data, ec, ctx.address())
             }
             InterfoldEventData::DecryptionShareProofSigned(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
