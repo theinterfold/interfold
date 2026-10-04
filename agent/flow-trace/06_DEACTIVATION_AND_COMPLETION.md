@@ -532,12 +532,15 @@ finalized-committee repository and `CiphernodeSelectorState.e3_cache` before rep
 `CommitteeFinalized` / `CiphernodeSelected` events remain authoritative refreshes, while
 `E3RequestComplete` and canonical stages past DKG remove both caches and cancel pending checks.
 
-`ZkActorRecovery::hydrate` scans each aggregate from its first durable event in bounded pages. It
-retains the first authenticated C0 input per party until a local acceptance, local invalid result,
-or canonical completion clears it. Lifecycle snapshots also exclude E3s past DKG. This restores
-inputs before the snapshot cursor even when document recovery suppresses another fetch. The verifier
-waits for `EffectsEnabled` before dispatch. Local errors retry after 5 seconds, with the delay
-doubling to a 60-second cap. Restart resets the attempt counter and delay.
+`ZkActorRecovery::hydrate` scans each aggregate from its first durable event in bounded pages. If a
+page skips a sequence, recovery reads one record at each skipped sequence. An empty response
+confirms that the EventStore router quarantined that legacy record. The scan continues to later C0
+inputs. Other sequence gaps, wrong aggregates, and out-of-order events fail startup. It retains the
+first authenticated C0 input per party until a local acceptance, local invalid result, or canonical
+completion clears it. Lifecycle snapshots also exclude E3s past DKG. This restores inputs before the
+snapshot cursor even when document recovery suppresses another fetch. The verifier waits for
+`EffectsEnabled` before dispatch. Local errors retry after 5 seconds, with the delay doubling to a
+60-second cap. Restart resets the attempt counter and delay.
 
 Threshold keyshare, public-key aggregation, and plaintext aggregation also store versioned recovery
 records with their protocol snapshots. These records retain collector inputs, pending proof jobs,

@@ -2,12 +2,13 @@
 
 use super::*;
 use crate::{setup_zk_actors, ZkActorRecovery};
-use e3_ciphernode_builder::EventSystem;
+use e3_ciphernode_builder::{EventStoreAddrs, EventSystem};
 use e3_data::RepositoriesFactory;
 use e3_events::{
-    AggregateConfig, AggregateId, DocumentReceived, Event, EventContextSeq, EvmEventConfig,
-    EvmEventConfigChain, FlushPendingSnapshots, HistoricalEvmEventsReceived,
-    HistoricalNetSyncEventsReceived, NetReady, SyncEnded, TestEvent,
+    AggregateConfig, AggregateId, DocumentReceived, Event, EventConstructorWithTimestamp,
+    EventContextSeq, EventSource, EvmEventConfig, EvmEventConfigChain, FlushPendingSnapshots,
+    HistoricalEvmEventsReceived, HistoricalNetSyncEventsReceived, NetReady, StoreEventRequested,
+    StoreEventResponse, SyncEnded, TestEvent,
 };
 use e3_net::{
     create_channel_bridge, events::DocumentPublishedNotification, events::NetCommand,
@@ -18,6 +19,7 @@ use e3_sortition::{
     CiphernodeSelectorFactory, CiphernodeSelectorState, FinalizedCommitteesRepositoryFactory,
 };
 use e3_sync::SyncRepositoryFactory;
+use e3_utils::actix::channel;
 use std::collections::HashSet;
 
 pub(super) async fn check_c0_restart(
@@ -139,6 +141,21 @@ pub(super) async fn check_c0_restart(
             assert!(history.send(GetEvents::new()).await.unwrap().is_empty(), "C0 recovery ran before EffectsEnabled");
 
             if boot == 0 {
+                // Seed a legacy prefix with a durable receipt and records in the wrong store.
+                let EventStoreAddrs::Persisted(stores) = system.eventstore_addrs().unwrap() else {
+                    panic!("expected persisted event stores");
+                };
+                for (ts, data) in [
+                    (1, InterfoldEventData::from(document.clone())),
+                    (2, TestEvent::new("legacy record", 0).with_e3_id(E3id::new("9", 1)).into()),
+                    (3, TestEvent::new("legacy record", 1).with_e3_id(E3id::new("9", 1)).into()),
+                ] {
+                    let event = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+                        data, None, ts, None, EventSource::Local);
+                    let (recipient, response) = channel::oneshot::<StoreEventResponse>();
+                    stores[&31_337].send(StoreEventRequested::new(event, recipient)).await.unwrap();
+                    response.await.unwrap();
+                }
                 bus.publish_without_context(EffectsEnabled::new()).unwrap();
                 bus.publish_without_context(SyncEnded::new()).unwrap();
                 bus.publish_without_context(document.clone()).unwrap();
@@ -184,7 +201,13 @@ pub(super) async fn check_c0_restart(
             let cursor = repositories.aggregate_seq(aggregate).read().await.unwrap().unwrap();
             if boot == 0 {
                 let input = events.iter().find(|event| matches!(event.get_data(), InterfoldEventData::EncryptionKeyReceived(_))).unwrap();
+                assert!(input.seq() > 3, "C0 input must follow the quarantined records");
                 assert!(input.seq() < cursor, "C0 input must precede the snapshot cursor");
+                // Legacy nodes can have a current checkpoint beyond the quarantined prefix.
+                let checkpoint_store = repositories.request_router_checkpoint();
+                let mut checkpoint = checkpoint_store.read().await.unwrap().unwrap();
+                checkpoint.replay_cursors.insert(aggregate, cursor);
+                checkpoint_store.write_sync(&checkpoint).await.unwrap();
             }
             e3_sync::reconcile_request_router_checkpoint(&repositories, aggregates, &reader).await.unwrap();
             store.shutdown().await.unwrap();

@@ -7,14 +7,39 @@ use actix::Recipient;
 use anyhow::{ensure, Context, Result};
 use e3_events::{
     AggregateId, Committee, CorrelationId, E3id, EncryptionKeyReceived, EventContextAccessors,
-    EventContextSeq, EventSource, EventStoreQueryBy, EventStoreQueryResponse, InterfoldEventData,
-    ProofType, SeqAgg, TypedEvent,
+    EventContextSeq, EventSource, EventStoreQueryBy, EventStoreQueryResponse, InterfoldEvent,
+    InterfoldEventData, ProofType, SeqAgg, TypedEvent,
 };
 use e3_request::E3Meta;
 use e3_utils::actix::channel;
 use e3_zk_helpers::CiphernodesCommitteeSize;
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
+
+async fn read_page(
+    eventstore: &Recipient<EventStoreQueryBy<SeqAgg>>,
+    aggregate: AggregateId,
+    cursor: u64,
+    limit: u64,
+) -> Result<Vec<InterfoldEvent>> {
+    let (recipient, response) = channel::oneshot::<EventStoreQueryResponse>();
+    tokio::time::timeout(Duration::from_secs(60), async {
+        eventstore
+            .send(
+                EventStoreQueryBy::<SeqAgg>::new(
+                    CorrelationId::new(),
+                    [(aggregate, cursor)].into(),
+                    recipient,
+                )
+                .with_limit(limit)
+                .with_max_bytes(16 * 1024 * 1024),
+            )
+            .await?;
+        response.await?.into_events()
+    })
+    .await
+    .context("C0 recovery event-store query timed out")?
+}
 
 pub(crate) async fn recover_pending_verifications(
     eventstore: &Recipient<EventStoreQueryBy<SeqAgg>>,
@@ -31,27 +56,25 @@ pub(crate) async fn recover_pending_verifications(
     for aggregate in aggregates.iter().copied() {
         let mut cursor = 1u64;
         loop {
-            let (recipient, response) = channel::oneshot::<EventStoreQueryResponse>();
-            let events = tokio::time::timeout(Duration::from_secs(60), async {
-                eventstore
-                    .send(
-                        EventStoreQueryBy::<SeqAgg>::new(
-                            CorrelationId::new(),
-                            [(aggregate, cursor)].into(),
-                            recipient,
-                        )
-                        .with_limit(1_024)
-                        .with_max_bytes(16 * 1024 * 1024),
-                    )
-                    .await?;
-                response.await?.into_events()
-            })
-            .await
-            .context("C0 recovery event-store query timed out")??;
+            let events = read_page(eventstore, aggregate, cursor, 1_024).await?;
             if events.is_empty() {
                 break;
             }
             for event in events {
+                // A one-event read is empty when the router quarantines that legacy record.
+                // Check each skipped sequence so a later C0 input remains recoverable without
+                // accepting a missing or out-of-order event.
+                while cursor < event.seq() {
+                    ensure!(
+                        read_page(eventstore, aggregate, cursor, 1)
+                            .await?
+                            .is_empty(),
+                        "C0 recovery event-store sequence gap"
+                    );
+                    cursor = cursor
+                        .checked_add(1)
+                        .context("C0 recovery sequence overflow")?;
+                }
                 ensure!(
                     event.aggregate_id() == aggregate && event.seq() == cursor,
                     "C0 recovery event-store sequence gap"
@@ -138,3 +161,7 @@ pub(crate) async fn recover_pending_verifications(
     inputs.sort_by_key(|input| (input.aggregate_id(), input.seq()));
     Ok(inputs)
 }
+
+#[cfg(test)]
+#[path = "recovery_sequence_tests.rs"]
+mod tests;
