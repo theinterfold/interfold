@@ -12,58 +12,77 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// Remembers IDs for `ttl`, keeping at most `capacity` of them (oldest dropped first).
-///
-/// gossipsub forgets a message ID when its duplicate cache expires. A copy that returns later is
-/// then delivered again and, when accepted, forwarded again, which lets old messages circulate.
-/// The node checks gossip message IDs here before it accepts a message, and event IDs before it
-/// stores an event received from gossip.
+/// Supported new IDs per second, with a short burst allowance, for each ingress cache.
+pub(crate) const INGRESS_RATE: u64 = 16;
+pub(crate) const INGRESS_BURST: u64 = 256;
+pub(crate) const SEEN_TTL: Duration = Duration::from_secs(6 * 60 * 60);
+const SEEN_CAPACITY: usize = (INGRESS_RATE * SEEN_TTL.as_secs() + INGRESS_BURST) as usize;
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Admission {
+    New,
+    Duplicate,
+    Throttled,
+}
+
+/// Remembers admitted IDs for the full TTL. Capacity pressure rejects new IDs.
 pub(crate) struct SeenIds<K> {
     ttl: Duration,
     capacity: usize,
     ids: HashSet<K>,
     order: VecDeque<(Instant, K)>,
+    budget: RateBudget,
+    capacity_rejections: u64,
 }
 
 impl<K: Clone + Eq + Hash> SeenIds<K> {
-    pub(crate) fn new(ttl: Duration, capacity: usize) -> Self {
+    pub(crate) fn new() -> Self {
         Self {
-            ttl,
-            capacity,
+            ttl: SEEN_TTL,
+            capacity: SEEN_CAPACITY,
             ids: HashSet::new(),
             order: VecDeque::new(),
+            budget: RateBudget::new(INGRESS_RATE, INGRESS_BURST),
+            capacity_rejections: 0,
         }
     }
 
-    /// Whether `id` was recorded within the time-to-live.
     pub(crate) fn contains(&mut self, id: &K, now: Instant) -> bool {
         self.expire(now);
         self.ids.contains(id)
     }
 
-    /// Records `id`. A repeated ID keeps its first record time.
-    pub(crate) fn record(&mut self, id: K, now: Instant) {
-        self.expire(now);
-        if self.ids.contains(&id) {
-            return;
+    /// Reserve retention before accepting or storing an ID. Copies keep their first record time.
+    pub(crate) fn admit(&mut self, id: &K, now: Instant) -> Admission {
+        if self.contains(id, now) {
+            return Admission::Duplicate;
         }
         if self.order.len() >= self.capacity {
-            if let Some((_, oldest)) = self.order.pop_front() {
-                self.ids.remove(&oldest);
+            self.capacity_rejections = self.capacity_rejections.saturating_add(1);
+            if self.capacity_rejections.is_power_of_two() {
+                tracing::warn!(
+                    capacity = self.capacity,
+                    capacity_rejections = self.capacity_rejections,
+                    early_evictions = 0,
+                    "Seen-ID capacity pressure; new IDs are rejected to preserve retention"
+                );
             }
+            return Admission::Throttled;
+        }
+        if !self.budget.take(1, now) {
+            return Admission::Throttled;
         }
         self.ids.insert(id.clone());
-        self.order.push_back((now, id));
+        self.order.push_back((now, id.clone()));
+        Admission::New
     }
 
-    /// Records `id` and returns `false`, or returns `true` when `id` was already recorded within
-    /// the time-to-live.
-    pub(crate) fn check_and_record(&mut self, id: &K, now: Instant) -> bool {
-        if self.contains(id, now) {
-            return true;
+    /// Undo the most recent admission after a failed handoff, without refunding its rate charge.
+    pub(crate) fn rollback_latest(&mut self, id: &K) {
+        if self.order.back().is_some_and(|(_, latest)| latest == id) {
+            self.order.pop_back();
+            self.ids.remove(id);
         }
-        self.record(id.clone(), now);
-        false
     }
 
     fn expire(&mut self, now: Instant) {
@@ -78,6 +97,47 @@ impl<K: Clone + Eq + Hash> SeenIds<K> {
     }
 }
 
+/// A token budget with fractional refill retained between calls. Callers supply monotonic time.
+pub(crate) struct RateBudget {
+    rate: u64,
+    burst: u64,
+    credit: u128,
+    updated: Option<Instant>,
+}
+
+impl RateBudget {
+    const UNIT: u128 = 1_000_000_000;
+
+    pub(crate) fn new(rate: u64, burst: u64) -> Self {
+        Self {
+            rate,
+            burst,
+            credit: u128::from(burst) * Self::UNIT,
+            updated: None,
+        }
+    }
+
+    pub(crate) fn take(&mut self, amount: u64, now: Instant) -> bool {
+        if let Some(updated) = self.updated {
+            self.credit = self
+                .credit
+                .saturating_add(
+                    now.saturating_duration_since(updated)
+                        .as_nanos()
+                        .saturating_mul(u128::from(self.rate)),
+                )
+                .min(u128::from(self.burst) * Self::UNIT);
+        }
+        self.updated = Some(now);
+        let cost = u128::from(amount) * Self::UNIT;
+        if self.credit < cost {
+            return false;
+        }
+        self.credit -= cost;
+        true
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -85,31 +145,24 @@ mod tests {
     #[test]
     fn repeated_ids_are_reported_until_they_expire() {
         let start = Instant::now();
-        let mut seen = SeenIds::new(Duration::from_secs(60), 10);
-        assert!(!seen.check_and_record(&1u8, start));
-        assert!(seen.check_and_record(&1u8, start + Duration::from_secs(59)));
-        assert!(!seen.check_and_record(&1u8, start + Duration::from_secs(60)));
+        let mut seen = SeenIds::new();
+        assert_eq!(seen.admit(&1u8, start), Admission::New);
+        assert_eq!(
+            seen.admit(&1u8, start + SEEN_TTL - Duration::from_secs(1)),
+            Admission::Duplicate
+        );
+        assert_eq!(seen.admit(&1u8, start + SEEN_TTL), Admission::New);
     }
 
     #[test]
-    fn capacity_drops_the_oldest_id() {
+    fn capacity_preserves_retained_ids() {
         let start = Instant::now();
-        let mut seen = SeenIds::new(Duration::from_secs(3600), 2);
-        assert!(!seen.check_and_record(&1u8, start));
-        assert!(!seen.check_and_record(&2u8, start));
-        assert!(!seen.check_and_record(&3u8, start));
-        assert!(seen.check_and_record(&3u8, start));
-        assert!(seen.check_and_record(&2u8, start));
-        assert!(!seen.check_and_record(&1u8, start));
-    }
-
-    #[test]
-    fn contains_does_not_record() {
-        let start = Instant::now();
-        let mut seen = SeenIds::new(Duration::from_secs(60), 10);
-        assert!(!seen.contains(&7u8, start));
-        assert!(!seen.contains(&7u8, start));
-        seen.record(7u8, start);
-        assert!(seen.contains(&7u8, start));
+        let mut seen = SeenIds::new();
+        seen.capacity = 2;
+        assert_eq!(seen.admit(&1u8, start), Admission::New);
+        assert_eq!(seen.admit(&2u8, start), Admission::New);
+        assert_eq!(seen.admit(&3u8, start), Admission::Throttled);
+        assert_eq!(seen.admit(&1u8, start), Admission::Duplicate);
+        assert_eq!(seen.admit(&3u8, start + SEEN_TTL), Admission::New);
     }
 }

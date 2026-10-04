@@ -6,7 +6,7 @@
 
 use std::{
     collections::{HashSet, VecDeque},
-    time::{Duration, Instant},
+    time::Instant,
 };
 
 use anyhow::{ensure, Result};
@@ -16,15 +16,13 @@ use e3_events::{
 };
 use tracing::{debug, trace};
 
-use crate::{events::GossipData, seen_messages::SeenIds, NetworkPolicy};
+use crate::{
+    events::GossipData,
+    seen_messages::{Admission, SeenIds},
+    NetworkPolicy,
+};
 
 const EVENT_DEDUP_CAPACITY: usize = 10_000;
-/// How long, and for how many IDs, an event from the peer network is not stored again. Peers
-/// re-send DKG coordination and decryption shares in new gossip messages, and every stored copy
-/// adds a record to the event log. The EventBus already stops repeated domain delivery.
-const STORED_REMOTE_TTL: Duration = Duration::from_secs(6 * 60 * 60);
-const STORED_REMOTE_CAPACITY: usize = 20_000;
-
 /// Pure translation/dedup logic backing the `NetEventTranslator` actor.
 ///
 /// Decides which local events should be gossiped to the network (and dedups them so the same
@@ -51,7 +49,7 @@ impl EventTranslationService {
             sent_events: HashSet::with_capacity(EVENT_DEDUP_CAPACITY),
             sent_order: VecDeque::with_capacity(EVENT_DEDUP_CAPACITY),
             pending_events: HashSet::new(),
-            stored_remote: SeenIds::new(STORED_REMOTE_TTL, STORED_REMOTE_CAPACITY),
+            stored_remote: SeenIds::new(),
             topic: topic.to_string(),
             network,
         }
@@ -122,17 +120,16 @@ impl EventTranslationService {
         self.pending_events.remove(&id);
     }
 
-    /// Whether an event with this ID from the peer network was stored locally within the window.
-    pub fn is_stored_remote_event(&mut self, id: &EventId, now: Instant) -> bool {
-        self.stored_remote.contains(id, now)
+    /// Reserve retention before handing a gossip event to the event store. Roll back a rejected
+    /// handoff; a later failed append stops the node. Recording here also covers an event that
+    /// the EventBus knows from replay and does not deliver again.
+    pub fn admit_remote_event(&mut self, id: &EventId, now: Instant) -> bool {
+        self.stored_remote.admit(id, now) == Admission::New
     }
 
-    /// Record a gossip event that was handed to the event store. A failed append stops the event
-    /// store and the node, so recording before the commit cannot hide an event from a running
-    /// node. Recording here, not only on bus delivery, also covers an event that the EventBus
-    /// already knows from replay: the bus does not deliver such an event again.
-    pub fn record_remote_event(&mut self, id: EventId, now: Instant) {
-        self.stored_remote.record(id, now);
+    /// Undo a rejected handoff immediately after admission, before any other cache operation.
+    pub fn reject_remote_event(&mut self, id: &EventId) {
+        self.stored_remote.rollback_latest(id);
     }
 
     /// Record a protocol event from the peer network that the EventBus delivered, for example
@@ -141,7 +138,7 @@ impl EventTranslationService {
     pub fn record_stored_event(&mut self, event: &InterfoldEvent, now: Instant) {
         if event.source() == EventSource::Net && Self::is_forwardable_event(event) {
             self.stored_remote
-                .record(EventId::hash(event.get_data()), now);
+                .admit(&EventId::hash(event.get_data()), now);
         }
     }
 
@@ -223,10 +220,14 @@ mod tests {
         let remote = local_forwardable_event().with_source(EventSource::Net);
         let id = remote.event_id();
         let start = Instant::now();
-        assert!(!svc.is_stored_remote_event(&id, start));
+        assert!(!svc.stored_remote.contains(&id, start));
         svc.record_stored_event(&remote, start);
-        assert!(svc.is_stored_remote_event(&id, start + STORED_REMOTE_TTL / 2));
-        assert!(!svc.is_stored_remote_event(&id, start + STORED_REMOTE_TTL));
+        assert!(svc
+            .stored_remote
+            .contains(&id, start + crate::seen_messages::SEEN_TTL / 2));
+        assert!(!svc
+            .stored_remote
+            .contains(&id, start + crate::seen_messages::SEEN_TTL));
     }
 
     #[test]
@@ -235,10 +236,10 @@ mod tests {
         let start = Instant::now();
         let local = local_forwardable_event();
         svc.record_stored_event(&local, start);
-        assert!(!svc.is_stored_remote_event(&local.event_id(), start));
+        assert!(!svc.stored_remote.contains(&local.event_id(), start));
         let internal = local_test_event().with_source(EventSource::Net);
         svc.record_stored_event(&internal, start);
-        assert!(!svc.is_stored_remote_event(&internal.event_id(), start));
+        assert!(!svc.stored_remote.contains(&internal.event_id(), start));
     }
 
     #[test]
@@ -268,8 +269,10 @@ mod tests {
 
         let now = Instant::now();
         svc.record_stored_event(&forged, now);
-        assert!(!svc.is_stored_remote_event(&genuine.event_id(), now));
-        assert!(svc.is_stored_remote_event(&EventId::hash(forged.get_data()), now));
+        assert!(!svc.stored_remote.contains(&genuine.event_id(), now));
+        assert!(svc
+            .stored_remote
+            .contains(&EventId::hash(forged.get_data()), now));
         Ok(())
     }
 

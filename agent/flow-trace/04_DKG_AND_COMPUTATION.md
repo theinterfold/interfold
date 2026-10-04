@@ -1728,29 +1728,37 @@ announcement. It starts one upload at a time, and each put has two attempts. A p
 peer stores the record, so its uploads to other peers can overlap the next upload. The Kademlia
 library's own hourly replication of stored records is disabled. A failed upload or announcement is
 retried after 15 seconds, doubling up to 5 minutes, including when no peer subscribed to the topic
-at the first attempt. A failed announcement does not upload the document again. A receiver holds
-early notifications until its committee slot is known, one per document and party filter with the
-latest expiry, and it ignores expired notifications. It fetches documents outside the network
-ingress loop, with at most 8 fetches in flight and at most 512 documents waiting. A failed fetch is
-retried with the same back-off until the document arrives, its E3 closes, or its notifications
-expire. A fetch accepts only the record for the requested key, and the document is accepted under
-the first waiting notification whose metadata matches its payload, so a forged notification cannot
-displace a correct one. It suppresses duplicate documents. A canonical `KeyPublished` stage stops
-DKG-document announcements and uploads, with their scheduled retries, and prunes the DHT records
-that this node published. The Kademlia query of a put in its upload phase ends too. This is not a
-full cancel: requests that the query already gave to the libp2p connection handlers, queued or in
-progress, still go out, and a put that still looks up its closest peers runs on, because Kademlia
-uploads the record when that lookup ends. A full cancel needs Kademlia support and is follow-up
-work. The publisher sends these cleanup commands, put cancels and record removals, through one queue
-of at most 4,096 keys with one waiting send, so a busy network command queue delays them. A full
-cleanup queue drops its oldest entries with a warning; their records expire and their puts time out
-on their own. C4 `DecryptionKeyShared` is a DKG document; later `DecryptionshareCreated` events use
-event gossip, not the DHT document path. Recovery retains the DKG closure across restart. A local
-`E3RequestComplete` does not mean that the contract has reached a terminal stage. Each new
-publication request first removes the expired publications, so the expired documents that replay
-brings back cannot fill the outbox while publications wait for `SyncEnded`. Recovery reads only the
-receipts of the E3s in the committee snapshot, which can predate a selection in the log, so the
-receipts that replay delivers before `SyncEnded` join the restore queue too.
+at the first attempt. A failed announcement does not upload the document again. Before gossip
+acceptance, the wire decoder checks the notification's key and E3 identifier lengths, party-filter
+shape, and expiry. Ingress enforces per-propagation-peer message and byte budgets without waiting
+for a DHT fetch. Valid notifications for other parties still relay. A receiver holds early
+notifications until its committee slot is known, one per document and party filter with the latest
+expiry, and it checks expiry again after that wait. Local ingress metadata retains the propagation
+peer. Early buffering admits at most 64 notifications per peer and 1,024 overall, and new ingress
+removes expired entries. It fetches documents outside the network ingress loop, with at most 8
+fetches in flight and at most 512 documents waiting. Each peer has at most 2 active fetches and 64
+waiting documents. The queue rotates among eligible peers and retains the first peer's budget
+ownership across retries. Document deduplication and the serialized notification stay unchanged. A
+failed fetch is retried with the same back-off until the document arrives, its E3 closes, or its
+notifications expire. A fetch accepts only the record for the requested key, and the document is
+accepted under the first waiting notification whose metadata matches its payload, so a forged
+notification cannot displace a correct one. It suppresses duplicate documents. A canonical
+`KeyPublished` stage stops DKG-document announcements and uploads, with their scheduled retries, and
+prunes the DHT records that this node published. The Kademlia query of a put in its upload phase
+ends too. This is not a full cancel: requests that the query already gave to the libp2p connection
+handlers, queued or in progress, still go out, and a put that still looks up its closest peers runs
+on, because Kademlia uploads the record when that lookup ends. A full cancel needs Kademlia support
+and is follow-up work. The publisher sends these cleanup commands, put cancels and record removals,
+through one queue of at most 4,096 keys with one waiting send, so a busy network command queue
+delays them. A full cleanup queue drops its oldest entries with a warning; their records expire and
+their puts time out on their own. C4 `DecryptionKeyShared` is a DKG document; later
+`DecryptionshareCreated` events use event gossip, not the DHT document path. Recovery retains the
+DKG closure across restart. A local `E3RequestComplete` does not mean that the contract has reached
+a terminal stage. Each new publication request first removes the expired publications, so the
+expired documents that replay brings back cannot fill the outbox while publications wait for
+`SyncEnded`. Recovery reads only the receipts of the E3s in the committee snapshot, which can
+predate a selection in the log, so the receipts that replay delivers before `SyncEnded` join the
+restore queue too.
 
 The CRISP server writes its request record at `E3Requested` and writes the generic E3 record only
 after the indexer verifies the committee public key against the on-chain commitment. Current-round

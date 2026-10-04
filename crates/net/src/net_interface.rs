@@ -19,14 +19,14 @@ use crate::{
         correlator::Correlator,
         dht_put_summary::DhtPutSummary,
         peer_failure_tracker::PeerFailureTracker,
-        wire::{decode_gossip, encode_gossip, MAX_DHT_DOCUMENT_BYTES, MAX_GOSSIP_BYTES},
+        wire::{encode_gossip, MAX_DHT_DOCUMENT_BYTES, MAX_GOSSIP_BYTES},
     },
     events::{IncomingResponse, OutgoingRequest, ProtocolResponse},
+    gossip_ingress::GossipIngress,
     gossip_subscription_health::{GossipSubscriptionHealth, GOSSIP_SUBSCRIPTION_GRACE},
     keypair::Libp2pKeypair,
     net_interface_handle::{NetEventSender, NetInterfaceHandle},
     peer_admission::PeerAdmission,
-    seen_messages::SeenIds,
     NetworkPolicy, NetworkStatus,
 };
 use anyhow::{bail, Context, Result};
@@ -74,12 +74,6 @@ const DHT_SUBSTREAM_TIMEOUT: Duration = Duration::from_secs(60);
 /// gossipsub heartbeat. The library's tick-based defaults (message history, gossip windows,
 /// graft timing) assume one second.
 const GOSSIP_HEARTBEAT: Duration = Duration::from_secs(1);
-/// How long, and for how many IDs, the node ignores a gossip message from an admitted peer that it
-/// has already handled. This covers copies that return after the gossipsub duplicate cache (60 s)
-/// has expired. The duplicate cache keeps its default: it also holds messages that arrived before
-/// the sender was admitted, and a longer cache would delay a later copy of such a message.
-const SEEN_GOSSIP_TTL: Duration = Duration::from_secs(6 * 60 * 60);
-const SEEN_GOSSIP_CAPACITY: usize = 100_000;
 const DHT_MAX_RECORDS: usize = 1024;
 const DHT_MAX_RECORDS_PER_PEER: usize = 64;
 const DHT_MAX_TTL: Duration = Duration::from_secs(31 * 24 * 60 * 60);
@@ -485,7 +479,7 @@ impl Libp2pNetInterface {
         let mut peer_admission = PeerAdmission::default();
         let mut peer_addresses = HashMap::<libp2p::PeerId, PeerAddresses>::new();
         let mut dht_records_by_peer: HashMap<libp2p::PeerId, HashSet<Vec<u8>>> = HashMap::new();
-        let mut seen_gossip = SeenIds::new(SEEN_GOSSIP_TTL, SEEN_GOSSIP_CAPACITY);
+        let mut seen_gossip = GossipIngress::new();
         let mut admission_tick = tokio::time::interval(Duration::from_secs(5));
         admission_tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
         let mut configured_peer_tick = tokio::time::interval(CONFIGURED_PEER_REDIAL_INTERVAL);
@@ -884,7 +878,7 @@ async fn process_swarm_event(
     peer_addresses: &mut HashMap<libp2p::PeerId, PeerAddresses>,
     configured_peers: &mut [ConfiguredPeer],
     dht_records_by_peer: &mut HashMap<libp2p::PeerId, HashSet<Vec<u8>>>,
-    seen_gossip: &mut SeenIds<gossipsub::MessageId>,
+    seen_gossip: &mut GossipIngress,
     dht_puts: &mut DhtPutSummary,
     network: &NetworkPolicy,
     status: &NetworkStatus,
@@ -1243,19 +1237,7 @@ async fn process_swarm_event(
             message,
         })) => {
             trace!("Got message with id: {id} from peer: {peer_id}");
-            if peer_admission.is_admitted(&peer_id)
-                && seen_gossip.check_and_record(&id, Instant::now())
-            {
-                swarm
-                    .behaviour_mut()
-                    .gossipsub
-                    .report_message_validation_result(
-                        &id,
-                        &peer_id,
-                        gossipsub::MessageAcceptance::Ignore,
-                    );
-                trace!(%peer_id, %id, "Ignored a gossip message this node already handled");
-            } else if !peer_admission.is_admitted(&peer_id) {
+            if !peer_admission.is_admitted(&peer_id) {
                 swarm
                     .behaviour_mut()
                     .gossipsub
@@ -1266,8 +1248,15 @@ async fn process_swarm_event(
                     );
                 debug!(%peer_id, %id, "Ignored gossip from a peer that has not passed Identify");
             } else {
-                match decode_gossip(&message.data, network) {
-                    Ok(gossip_data) => {
+                match seen_gossip.validate(
+                    peer_id,
+                    &id,
+                    &message.data,
+                    network,
+                    Instant::now(),
+                    chrono::Utc::now(),
+                ) {
+                    Ok(Some(gossip_data)) => {
                         swarm
                             .behaviour_mut()
                             .gossipsub
@@ -1276,7 +1265,29 @@ async fn process_swarm_event(
                                 &peer_id,
                                 gossipsub::MessageAcceptance::Accept,
                             );
-                        event_tx.send(NetEvent::GossipData(gossip_data))?;
+                        let event = match gossip_data {
+                            GossipData::DocumentPublishedNotification(notification) => {
+                                NetEvent::DocumentIngress(Box::new(
+                                    crate::events::DocumentIngress {
+                                        propagation_source: Some(peer_id),
+                                        notification,
+                                    },
+                                ))
+                            }
+                            data => NetEvent::GossipData(data),
+                        };
+                        event_tx.send(event)?;
+                    }
+                    Ok(None) => {
+                        swarm
+                            .behaviour_mut()
+                            .gossipsub
+                            .report_message_validation_result(
+                                &id,
+                                &peer_id,
+                                gossipsub::MessageAcceptance::Ignore,
+                            );
+                        trace!(%peer_id, %id, "Ignored duplicate or throttled gossip");
                     }
                     Err(error) => {
                         swarm

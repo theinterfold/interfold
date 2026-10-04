@@ -6,13 +6,15 @@
 
 use crate::net_interface_handle::NetEventSubscriber;
 use crate::{
+    domain::wire::notification_is_valid,
     domain::{
-        add_candidate, closed_e3s::record_closed_e3, datetime_to_instant_from_now,
-        notification_is_well_formed, Cleanup, CleanupQueue, DocumentPublishingService, FetchQueue,
-        PublicationSchedule, RestorableDocuments,
+        add_candidate, closed_e3s::record_closed_e3, datetime_to_instant_from_now, Cleanup,
+        CleanupQueue, DocumentPublishingService, FetchQueue, PublicationSchedule,
+        RestorableDocuments,
     },
     events::{
-        call_and_await_response, DocumentPublishedNotification, GossipData, NetCommand, NetEvent,
+        call_and_await_response, DocumentIngress, DocumentPublishedNotification, GossipData,
+        NetCommand, NetEvent,
     },
     ContentHash,
 };
@@ -158,14 +160,14 @@ pub struct DocumentPublisher {
     /// Whether a cleanup command waits for room now. Only one does at a time.
     sending_cleanup: bool,
     received: HashSet<DocumentId>,
-    /// Documents being fetched, with the failed attempts before the current one.
-    fetching: HashMap<DocumentId, u32>,
+    /// Documents being fetched, with the peer charged for each fetch.
+    fetching: HashMap<DocumentId, Option<libp2p::PeerId>>,
     fetch_queue: FetchQueue,
     fetch_aborts: HashMap<DocumentId, AbortHandle>,
     /// Notifications that arrived while their document was being fetched. They become candidates
     /// for the next fetch if the current one does not deliver the document.
     late_notifications: HashMap<DocumentId, Vec<DocumentPublishedNotification>>,
-    early_notifications: VecDeque<DocumentPublishedNotification>,
+    early_notifications: VecDeque<DocumentIngress>,
     closed_e3s: VecDeque<E3id>,
     /// Received documents that wait for `SyncEnded` to be stored in this node's DHT store again.
     restorable: RestorableDocuments,
@@ -338,16 +340,22 @@ impl DocumentPublisher {
                         .await
                 {
                     debug!("Received event {:?}", event);
-                    if let NetEvent::GossipData(GossipData::DocumentPublishedNotification(data)) =
-                        event
-                    {
-                        if let Err(error) = addr.send(data).await {
-                            tracing::warn!(
-                                %error,
-                                "DocumentPublisher stopped; ending DHT notification ingress"
-                            );
-                            break;
-                        }
+                    let ingress = match event {
+                        NetEvent::DocumentIngress(ingress) => *ingress,
+                        NetEvent::GossipData(GossipData::DocumentPublishedNotification(
+                            notification,
+                        )) => DocumentIngress {
+                            propagation_source: None,
+                            notification,
+                        },
+                        _ => continue,
+                    };
+                    if let Err(error) = addr.send(ingress).await {
+                        tracing::warn!(
+                            %error,
+                            "DocumentPublisher stopped; ending DHT notification ingress"
+                        );
+                        break;
                     }
                 }
             }
@@ -370,7 +378,7 @@ impl DocumentPublisher {
         self.service.register_interest(e3_id.clone(), party_id);
         let mut retained = VecDeque::new();
         while let Some(notification) = self.early_notifications.pop_front() {
-            if notification.meta.e3_id == e3_id {
+            if notification.notification.meta.e3_id == e3_id {
                 ctx.notify(notification);
             } else {
                 retained.push_back(notification);
@@ -526,7 +534,7 @@ impl DocumentPublisher {
             *closed |= restoring == e3_id;
         }
         self.early_notifications
-            .retain(|item| &item.meta.e3_id != e3_id);
+            .retain(|item| &item.notification.meta.e3_id != e3_id);
         if !keys.is_empty() {
             info!(
                 "Pruning {} DHT records for completed E3 {}",

@@ -290,16 +290,26 @@ the code does not meet yet.
   `crates/net/src/network_sync/effects/rebroadcast.rs`
 - A node does not accept or forward a gossip message ID that it has already handled, including after
   the gossipsub duplicate cache expires. It does not store a peer event again while that event ID is
-  in the translator's stored window. The ID is recorded when the event is handed to the event store,
-  whose failed append stops the node. Waiting document fetches are bounded by count. — INDEX
-  concerns #61, #62; `crates/net/src/net_interface.rs`; `crates/net/src/event_translation/`
+  in the translator's stored window. The ID is recorded when the event is handed to the event store.
+  A rejected handoff releases that ID; a failed append stops the node. Both ingress caches reserve
+  six-hour retention before new gossip acceptance or event storage: 16 new IDs per second, a burst
+  of 256, and capacity for 345,856 IDs each. Capacity pressure rejects new IDs with a log; it never
+  evicts an unexpired ID. Peer message and byte budgets apply before gossip forwarding. Notification
+  shape and expiry checks also precede acceptance, without suppressing valid relays for another
+  party. — INDEX concerns #61, #62; `crates/net/src/gossip_ingress.rs`;
+  `crates/net/src/seen_messages.rs`; `crates/net/src/network_sync/wire.rs`;
+  `crates/net/src/event_translation/`
 - A notification adds a fetch candidate only for its own party filter, and a waiting or
   early-buffered document keeps one notification per filter with the latest expiry, so a forged or
   expired notification cannot displace a correct one. A DHT GET accepts only the record for the
   requested key. — INDEX concern #69; `crates/net/src/document_publishing/workflow.rs`;
   `crates/net/src/document_publishing/effects.rs`
 - Network ingress loops do not wait for long I/O such as a DHT fetch. They hand the work to the
-  actor, which bounds its concurrency. — `crates/net/src/document_publishing/handlers.rs`
+  actor, which bounds its concurrency. A transient wrapper retains the propagation peer across
+  buffering. Document fetches rotate among eligible peers, with at most 2 active and 64 waiting per
+  peer, within the global limits of 8 active and 512 waiting. Document IDs and serialized metadata
+  do not include that transport attribution. — `crates/net/src/document_publishing/handlers.rs`;
+  `crates/net/src/document_publishing/workflow.rs`
 - Log volume must not scale with payload size or redelivery count. Byte payloads format through
   `hexf` (length and edge digits), network commands log `NetCommand::summary`, and the default log
   filter drops libp2p gossipsub warnings. — INDEX concern #65; `crates/utils/src/formatters.rs`;

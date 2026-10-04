@@ -171,7 +171,30 @@ async fn notification_cannot_relabel_payload_for_another_e3() -> Result<()> {
 
 #[actix::test]
 async fn notification_before_selection_is_fetched_once_after_selection() -> Result<()> {
+    use crate::events::DocumentIngress;
     let (_guard, bus, _net_cmd_tx, mut commands, net_events, _, _, _, publisher) = setup_test()?;
+    let peer = libp2p::PeerId::random();
+    let ingress = |notification| DocumentIngress {
+        propagation_source: Some(peer),
+        notification,
+    };
+    let expiry = Utc::now() + chrono::Duration::seconds(2);
+    for index in 0..crate::domain::MAX_WAITING_FETCHES_PER_PEER {
+        publisher
+            .send(ingress(DocumentPublishedNotification {
+                key: ContentHash::from_content(&index.to_be_bytes()),
+                meta: DocumentMeta::new(
+                    E3id::new("unselected", 1),
+                    DocumentKind::TrBFV,
+                    vec![],
+                    Some(expiry),
+                ),
+                ts: 100,
+            }))
+            .await?;
+    }
+    let until_expiry = (expiry - Utc::now()).to_std()?;
+    sleep(until_expiry + Duration::from_millis(1)).await;
     let e3_id = E3id::new("early", 1);
     let value = EventConversionService::encryption_key_to_request(EncryptionKeyCreated {
         e3_id: e3_id.clone(),
@@ -191,7 +214,11 @@ async fn notification_before_selection_is_fetched_once_after_selection() -> Resu
         ),
         ts: 100,
     };
-    timeout(Duration::from_secs(1), publisher.send(notification.clone())).await??;
+    timeout(
+        Duration::from_secs(1),
+        publisher.send(ingress(notification.clone())),
+    )
+    .await??;
     assert!(matches!(
         commands.try_recv(),
         Err(mpsc::error::TryRecvError::Empty)
@@ -216,7 +243,11 @@ async fn notification_before_selection_is_fetched_once_after_selection() -> Resu
     })?;
     timeout(Duration::from_secs(1), received).await??;
 
-    timeout(Duration::from_secs(1), publisher.send(notification)).await??;
+    timeout(
+        Duration::from_secs(1),
+        publisher.send(ingress(notification)),
+    )
+    .await??;
     assert!(matches!(
         commands.try_recv(),
         Err(mpsc::error::TryRecvError::Empty)
@@ -351,6 +382,7 @@ async fn a_notification_flood_keeps_the_fetch_backlog_bounded() -> Result<()> {
     })?;
     publisher.send(PublisherBarrier).await?;
 
+    let peers: Vec<_> = (0..8).map(|_| libp2p::PeerId::random()).collect();
     let notifications = MAX_WAITING_FETCHES * 4;
     for index in 0..notifications {
         let notification = DocumentPublishedNotification {
@@ -363,7 +395,14 @@ async fn a_notification_flood_keeps_the_fetch_backlog_bounded() -> Result<()> {
             ),
             ts: 100,
         };
-        timeout(Duration::from_secs(1), publisher.send(notification)).await??;
+        timeout(
+            Duration::from_secs(1),
+            publisher.send(DocumentIngress {
+                propagation_source: Some(peers[index % peers.len()]),
+                notification,
+            }),
+        )
+        .await??;
     }
 
     // No fetch completes, so only the in-flight limit of reads starts.
@@ -678,5 +717,101 @@ async fn an_early_forged_notification_that_expires_first_does_not_hide_the_corre
     });
     let received = received.expect("the correct notification delivers the document");
     assert!(received.meta.filter.is_empty());
+    Ok(())
+}
+
+#[actix::test]
+async fn another_peer_fetches_while_unavailable_documents_fill_a_peer_budget() -> Result<()> {
+    let (_guard, bus, _tx, mut commands, events, _, history, _, publisher) = setup_test()?;
+    let e3_id = E3id::new("123", 1);
+    publisher
+        .send(
+            bus.event_from(
+                CiphernodeSelected {
+                    e3_id: e3_id.clone(),
+                    threshold_m: 2,
+                    threshold_n: 3,
+                    ..CiphernodeSelected::default()
+                },
+                None,
+            )?
+            .into_sequenced(1),
+        )
+        .await?;
+    let busy = libp2p::PeerId::random();
+    let other = libp2p::PeerId::random();
+    let meta = DocumentMeta::new(
+        e3_id.clone(),
+        DocumentKind::TrBFV,
+        vec![],
+        Some(Utc::now() + chrono::Duration::hours(1)),
+    );
+    for index in 0..MAX_WAITING_FETCHES * 2 {
+        publisher
+            .send(DocumentIngress {
+                propagation_source: Some(busy),
+                notification: DocumentPublishedNotification {
+                    key: ContentHash::from_content(&index.to_le_bytes()),
+                    meta: meta.clone(),
+                    ts: 100,
+                },
+            })
+            .await?;
+    }
+    let (fetching, waiting) = publisher.send(FetchBacklog).await?;
+    for _ in 0..fetching {
+        assert!(matches!(
+            timeout(Duration::from_secs(1), commands.recv()).await?,
+            Some(NetCommand::DhtGetRecord { .. })
+        ));
+    }
+    let value = EventConversionService::encryption_key_to_request(EncryptionKeyCreated {
+        e3_id,
+        key: Arc::new(EncryptionKey::new(
+            1,
+            ArcBytes::from_bytes(b"available key"),
+        )),
+        external: false,
+    })?
+    .expect("local key produces a document")
+    .value;
+    let key = ContentHash::from_content(&value);
+    publisher
+        .send(DocumentIngress {
+            propagation_source: Some(other),
+            notification: DocumentPublishedNotification {
+                key: key.clone(),
+                meta,
+                ts: 101,
+            },
+        })
+        .await?;
+    let Some(NetCommand::DhtGetRecord {
+        key: requested,
+        correlation_id,
+    }) = timeout(Duration::from_secs(1), commands.recv()).await?
+    else {
+        bail!("expected the other peer's fetch");
+    };
+    assert_eq!(requested, key);
+    assert_eq!(
+        (fetching, waiting),
+        (2, 64),
+        "one source must leave room for other peers"
+    );
+    assert_eq!(publisher.send(FetchBacklog).await?, (3, 64));
+    events.send(NetEvent::DhtGetRecordSucceeded {
+        key,
+        correlation_id,
+        value: value.clone(),
+    })?;
+    timeout(Duration::from_secs(2), async {
+        loop {
+            let found = history.send(GetEvents::<InterfoldEvent>::new()).await?.into_iter().any(|event|
+                matches!(event.get_data(), InterfoldEventData::DocumentReceived(document) if document.value == value));
+            if found { return anyhow::Ok(()); }
+            sleep(Duration::from_millis(10)).await;
+        }
+    }).await??;
     Ok(())
 }

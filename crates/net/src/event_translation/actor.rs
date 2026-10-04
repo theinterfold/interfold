@@ -217,12 +217,16 @@ impl NetEventTranslator {
         // The peer supplies the context ID; the event store derives the ID from the payload.
         let id = EventId::hash(&data);
         let now = Instant::now();
-        if self.service.is_stored_remote_event(&id, now) {
+        if !self.service.admit_remote_event(&id, now) {
             return Ok(());
         }
-        self.bus
-            .publish_from_remote(data, ec.ts(), None, EventSource::Net)?;
-        self.service.record_remote_event(id, now);
+        if let Err(error) = self
+            .bus
+            .publish_from_remote(data, ec.ts(), None, EventSource::Net)
+        {
+            self.service.reject_remote_event(&id);
+            return Err(error);
+        }
         Ok(())
     }
 }
@@ -301,6 +305,132 @@ mod tests {
             EventSource::Local,
         );
         event.into_sequenced(1)
+    }
+
+    #[actix::test]
+    async fn churn_is_throttled_before_a_stored_event_can_return() -> Result<()> {
+        use crate::seen_messages::{INGRESS_BURST, INGRESS_RATE};
+        use e3_events::{AggregateConfig, AggregateId, EventBus, EventBusConfig, TakeEvents};
+        let system = EventSystem::new()
+            .with_event_bus(EventBus::new(EventBusConfig { deduplicate: false }).start())
+            .with_aggregate_config(AggregateConfig::new(HashMap::from([(
+                AggregateId::new(1),
+                Duration::ZERO,
+            )])));
+        let bus = system.handle()?.enable("test");
+        let history = bus.history();
+        let (tx, _commands) = mpsc::channel(8);
+        let events = NetEventChannel::new(8);
+        let translator = NetEventTranslator::new(
+            &bus,
+            &tx,
+            &NetEventSubscriber::from(&events),
+            "topic",
+            NetworkPolicy::local_unrestricted(),
+        )
+        .start();
+        let gossip = |party_id| -> Result<GossipData> {
+            Ok(GossipData::GossipBytes(
+                bus.event_from(
+                    KeyshareCreated {
+                        e3_id: E3id::new("1", 1),
+                        pubkey: ArcBytes::from_bytes(b"key"),
+                        node: format!("node-{party_id}"),
+                        party_id,
+                        signed_pk_generation_proof: None,
+                    },
+                    None,
+                )?
+                .to_bytes()?,
+            ))
+        };
+        let original = gossip(0)?;
+        let start = Instant::now();
+        const ANNOUNCEMENTS: u64 = 20_002;
+        for index in 0..ANNOUNCEMENTS {
+            translator.send(LibP2pEvent(gossip(index)?)).await?;
+        }
+        translator.send(LibP2pEvent(original)).await?;
+        let limit =
+            INGRESS_BURST + (start.elapsed().as_secs_f64() * INGRESS_RATE as f64).ceil() as u64;
+        let sentinel = KeyshareCreated {
+            party_id: u64::MAX,
+            e3_id: E3id::new("1", 1),
+            node: "sentinel".into(),
+            pubkey: ArcBytes::from_bytes(b"key"),
+            signed_pk_generation_proof: None,
+        };
+        bus.publish_without_context(sentinel)?;
+        let (stored, originals) = tokio::time::timeout(Duration::from_secs(5), async {
+            let (mut stored, mut originals) = (0, 0);
+            loop {
+                let batch = history.send(TakeEvents::<InterfoldEvent>::new(1)).await?;
+                for event in batch.events {
+                    if let e3_events::InterfoldEventData::KeyshareCreated(key) = event.get_data() {
+                        if key.party_id == u64::MAX {
+                            return anyhow::Ok((stored, originals));
+                        }
+                        stored += 1;
+                        originals += u64::from(key.party_id == 0);
+                    }
+                }
+            }
+        })
+        .await??;
+        assert_eq!(originals, 1, "the first event must be stored only once");
+        assert!(
+            stored <= limit && stored < ANNOUNCEMENTS,
+            "new events must be throttled before storage: {stored} > {limit}"
+        );
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn rejected_timestamp_does_not_mark_an_event_as_stored() -> Result<()> {
+        use e3_events::{AggregateConfig, AggregateId, GetEvents};
+        let system =
+            EventSystem::new()
+                .with_fresh_bus()
+                .with_aggregate_config(AggregateConfig::new(HashMap::from([(
+                    AggregateId::new(1),
+                    Duration::ZERO,
+                )])));
+        let bus = system.handle()?.enable("test");
+        let history = bus.history();
+        let (tx, _commands) = mpsc::channel(8);
+        let events = NetEventChannel::new(8);
+        let mut translator = NetEventTranslator::new(
+            &bus,
+            &tx,
+            &NetEventSubscriber::from(&events),
+            "topic",
+            NetworkPolicy::local_unrestricted(),
+        );
+        let data = local_forwardable_event().get_data().clone();
+        let rejected: InterfoldEvent<Unsequenced> = InterfoldEvent::new_with_timestamp(
+            data.clone(),
+            None,
+            u128::MAX,
+            None,
+            EventSource::Net,
+        );
+        assert!(translator
+            .handle_remote_event(LibP2pEvent(GossipData::GossipBytes(rejected.to_bytes()?)))
+            .is_err());
+        let accepted = bus.event_from(data.clone(), None)?;
+        translator
+            .handle_remote_event(LibP2pEvent(GossipData::GossipBytes(accepted.to_bytes()?)))?;
+        bus.flush_event_pipeline().await?;
+        let stored = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+        assert_eq!(
+            stored
+                .iter()
+                .filter(|event| event.get_data() == &data)
+                .count(),
+            1,
+            "a rejected timestamp must not suppress a later valid delivery"
+        );
+        Ok(())
     }
 
     /// The network reports the result of a publication once, on a bounded broadcast channel. A

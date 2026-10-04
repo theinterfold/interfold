@@ -724,6 +724,18 @@ the prover.
 C5 and C7 do not travel as separate proofs. They enter the recursive proofs of the active
 aggregator.
 
+A node checks each document notification's structure and expiry before gossip forwards it. Valid
+notifications for other parties still relay. Each propagation peer has a budget of 8 messages per
+second with a burst of 32, and 1 MiB per second with a burst of 20 MiB. Document fetches rotate
+among peers, with at most 2 active fetches and 64 waiting documents per peer. The global limits are
+8 active fetches and 512 waiting documents.
+
+Gossip and remote-event storage each support 16 new IDs per second with a burst of 256. Each cache
+retains admitted IDs for six hours during the running process and holds up to 345,856 IDs. Traffic
+above the budget is ignored. A full cache rejects new IDs and logs capacity pressure instead of
+removing unexpired IDs. A restart starts new retention windows. These limits do not change message
+IDs, event IDs, or serialized data.
+
 ### Verification
 
 `ProofVerificationActor` verifies C0. `ShareVerificationActor` verifies the other node proofs with

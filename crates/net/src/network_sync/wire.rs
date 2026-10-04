@@ -6,13 +6,14 @@
 
 use anyhow::{ensure, Context, Result};
 use bincode::Error;
-use e3_events::{Event, EventContextAccessors, InterfoldEvent, Unsequenced};
+use chrono::{DateTime, Utc};
+use e3_events::{Event, EventContextAccessors, Filter, InterfoldEvent, Unsequenced};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::{
     domain::EventTranslationService,
-    events::GossipData,
+    events::{DocumentPublishedNotification, GossipData},
     network::{GOSSIP_WIRE_MAJOR, SYNC_WIRE_MAJOR},
     NetworkPolicy,
 };
@@ -63,6 +64,17 @@ struct SyncWireEnvelope {
     payload: Vec<u8>,
 }
 
+/// Check the notification before forwarding, and again after a wait in the local buffer.
+pub(crate) fn notification_is_valid(
+    notification: &DocumentPublishedNotification,
+    now: DateTime<Utc>,
+) -> bool {
+    notification.key.0.len() == 32
+        && matches!(notification.meta.filter.as_slice(), [] | [Filter::Item(_)])
+        && notification.meta.e3_id.e3_id().len() <= 78
+        && notification.meta.expires_at > now
+}
+
 pub(crate) fn decode<T: DeserializeOwned>(bytes: &[u8], max_bytes: usize) -> Result<T, Error> {
     let max_bytes =
         u64::try_from(max_bytes).map_err(|_| Box::new(bincode::ErrorKind::SizeLimit))?;
@@ -98,7 +110,11 @@ pub(crate) fn encode_gossip(
     Ok(encoded)
 }
 
-pub(crate) fn decode_gossip(bytes: &[u8], policy: &NetworkPolicy) -> Result<GossipData> {
+pub(crate) fn decode_gossip(
+    bytes: &[u8],
+    policy: &NetworkPolicy,
+    now: DateTime<Utc>,
+) -> Result<GossipData> {
     let envelope: GossipWireEnvelope =
         decode(bytes, MAX_GOSSIP_BYTES).context("failed to deserialize gossip envelope")?;
     ensure!(
@@ -119,6 +135,12 @@ pub(crate) fn decode_gossip(bytes: &[u8], policy: &NetworkPolicy) -> Result<Goss
         "gossip payload hash does not match the envelope"
     );
     let data = GossipData::from_bytes(&envelope.payload)?;
+    if let GossipData::DocumentPublishedNotification(notification) = &data {
+        ensure!(
+            notification_is_valid(notification, now),
+            "invalid or expired document notification"
+        );
+    }
     let metadata = gossip_metadata(&data, policy)?;
     ensure!(
         metadata
@@ -178,11 +200,9 @@ pub(crate) fn decode_sync<T: DeserializeOwned>(
         .context("failed to deserialize sync payload")
 }
 
-#[allow(clippy::type_complexity)]
-fn gossip_metadata(
-    data: &GossipData,
-    policy: &NetworkPolicy,
-) -> Result<(GossipMessageKind, u64, [u8; 20], u64, [u8; 32])> {
+type GossipMetadata = (GossipMessageKind, u64, [u8; 20], u64, [u8; 32]);
+
+fn gossip_metadata(data: &GossipData, policy: &NetworkPolicy) -> Result<GossipMetadata> {
     match data {
         GossipData::GossipBytes(bytes) => {
             let event = InterfoldEvent::<Unsequenced>::from_bytes(bytes)
@@ -301,11 +321,95 @@ mod tests {
     }
 
     #[test]
+    fn notification_shapes_are_checked_before_gossip() -> Result<()> {
+        use crate::ContentHash;
+        use e3_events::{DocumentKind, DocumentMeta, E3id};
+        let policy = NetworkPolicy::local_unrestricted();
+        let now = Utc::now();
+        let valid = DocumentPublishedNotification {
+            key: ContentHash::from_content(b"document"),
+            ts: 1,
+            meta: DocumentMeta::new(
+                E3id::new("1", 1),
+                DocumentKind::TrBFV,
+                vec![],
+                Some(now + chrono::Duration::hours(1)),
+            ),
+        };
+        for (key, filter, e3, expiry, accepted) in [
+            (
+                valid.key.clone(),
+                vec![],
+                "1".into(),
+                valid.meta.expires_at,
+                true,
+            ),
+            (
+                valid.key.clone(),
+                vec![Filter::Item(7)],
+                "9".repeat(78),
+                valid.meta.expires_at,
+                true,
+            ),
+            (
+                ContentHash(vec![7; 33]),
+                vec![],
+                "1".into(),
+                valid.meta.expires_at,
+                false,
+            ),
+            (
+                valid.key.clone(),
+                vec![Filter::Item(1), Filter::Item(2)],
+                "1".into(),
+                valid.meta.expires_at,
+                false,
+            ),
+            (
+                valid.key.clone(),
+                vec![Filter::Range(None, None)],
+                "1".into(),
+                valid.meta.expires_at,
+                false,
+            ),
+            (
+                valid.key.clone(),
+                vec![],
+                "9".repeat(79),
+                valid.meta.expires_at,
+                false,
+            ),
+            (valid.key.clone(), vec![], "1".into(), now, false),
+        ] {
+            let data = GossipData::DocumentPublishedNotification(DocumentPublishedNotification {
+                key,
+                meta: DocumentMeta::new(
+                    E3id::new(&e3, 1),
+                    DocumentKind::TrBFV,
+                    filter,
+                    Some(expiry),
+                ),
+                ..valid.clone()
+            });
+            let bytes = encode_gossip(&data, &policy, None)?;
+            assert_eq!(
+                decode_gossip(&bytes, &policy, now).is_ok(),
+                accepted,
+                "{data:?}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn gossip_envelope_round_trips_on_the_same_network() {
         let policy = NetworkPolicy::local_unrestricted();
         let expected = forwardable_gossip();
         let bytes = encode_gossip(&expected, &policy, None).unwrap();
-        assert_eq!(decode_gossip(&bytes, &policy).unwrap(), expected);
+        assert_eq!(
+            decode_gossip(&bytes, &policy, Utc::now()).unwrap(),
+            expected
+        );
     }
 
     #[test]
@@ -316,8 +420,14 @@ mod tests {
         let second = encode_gossip(&expected, &policy, Some([2; 16])).unwrap();
 
         assert_ne!(first, second);
-        assert_eq!(decode_gossip(&first, &policy).unwrap(), expected);
-        assert_eq!(decode_gossip(&second, &policy).unwrap(), expected);
+        assert_eq!(
+            decode_gossip(&first, &policy, Utc::now()).unwrap(),
+            expected
+        );
+        assert_eq!(
+            decode_gossip(&second, &policy, Utc::now()).unwrap(),
+            expected
+        );
     }
 
     #[test]
@@ -325,7 +435,7 @@ mod tests {
         let local = NetworkPolicy::local_unrestricted();
         let mainnet = NetworkPolicy::new(NetworkProfile::mainnet(), [(1, [1; 20])]).unwrap();
         let bytes = encode_gossip(&forwardable_gossip(), &local, None).unwrap();
-        let error = decode_gossip(&bytes, &mainnet).unwrap_err();
+        let error = decode_gossip(&bytes, &mainnet, Utc::now()).unwrap_err();
         assert!(error.to_string().contains("different network"));
     }
 
@@ -334,7 +444,7 @@ mod tests {
         let first = NetworkPolicy::new(NetworkProfile::mainnet(), [(1, [1; 20])]).unwrap();
         let second = NetworkPolicy::new(NetworkProfile::mainnet(), [(1, [2; 20])]).unwrap();
         let bytes = encode_gossip(&forwardable_gossip(), &first, None).unwrap();
-        let error = decode_gossip(&bytes, &second).unwrap_err();
+        let error = decode_gossip(&bytes, &second, Utc::now()).unwrap_err();
         assert!(error.to_string().contains("metadata"));
     }
 
