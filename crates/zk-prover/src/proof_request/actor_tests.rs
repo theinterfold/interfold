@@ -10,9 +10,9 @@ use anyhow::Result;
 use e3_crypto::SensitiveBytes;
 use e3_events::{
     CircuitName, ComputeRequestErrorKind, ComputeRequestKind, DkgShareDecryptionProofRequest,
-    E3Failed, E3Stage, EncryptionKey, Event, FailureReason, GetEvents, HistoryCollector,
-    PkGenerationProofRequest, ShareComputationProofRequest, ThresholdShare, ThresholdSharePending,
-    Unsequenced, ZkError,
+    E3Failed, E3Stage, EncryptionKey, Event, EventConstructorWithTimestamp, FailureReason,
+    GetEvents, HistoryCollector, PkGenerationProofRequest, ShareComputationProofRequest,
+    ThresholdShare, ThresholdSharePending, Unsequenced, ZkError,
 };
 use e3_fhe_params::BfvPreset;
 use e3_test_helpers::get_common_setup;
@@ -480,44 +480,115 @@ async fn a_redelivered_c6_request_asks_for_the_proof_again() -> Result<()> {
         )
     };
 
+    let signed_redeliveries = || async {
+        actix::clock::sleep(std::time::Duration::from_millis(20)).await;
+        let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+        anyhow::Ok(
+            events
+                .iter()
+                .filter_map(|event| match event.get_data() {
+                    InterfoldEventData::DecryptionShareProofSigned(data) => Some(data.redelivery),
+                    _ => None,
+                })
+                .collect::<Vec<_>>(),
+        )
+    };
+
     actor.handle_share_decryption_proof_pending(request(0));
     // A copy of the same request is a duplicate.
     actor.handle_share_decryption_proof_pending(request(0));
     assert_eq!(c6_request_ids().await?.len(), 1);
 
-    // The keyshare redelivers its request: the proof is requested again under a new ID.
-    actor.handle_share_decryption_proof_pending(request(1));
+    // The keyshare redelivers its request with a fresh value, and a value replayed from before a
+    // restart can come first. Each new value requests the proof again under a new ID; a copy of
+    // the latest one is a duplicate.
+    for redelivery in [6, 6, 1] {
+        actor.handle_share_decryption_proof_pending(request(redelivery));
+    }
     let ids = c6_request_ids().await?;
-    assert_eq!(ids.len(), 2);
-    assert_ne!(ids[0], ids[1]);
+    assert_eq!(ids.len(), 3);
+    assert_eq!(
+        ids.iter().collect::<std::collections::HashSet<_>>().len(),
+        3
+    );
 
-    // The answer to the second request completes the proof, and the late answer to the first one
-    // is no orphan.
+    // The answer to the latest request completes the proof, and the late answers to the earlier
+    // ones are no orphans.
     let proof = Proof::new(
         CircuitName::ThresholdShareDecryption,
         ArcBytes::from_bytes(&[1]),
         ArcBytes::from_bytes(&[2]),
     );
-    actor.handle_share_decryption_proof_response(&ids[1], vec![proof.clone()]);
-    actor.handle_share_decryption_proof_response(&ids[0], vec![proof]);
-    actix::clock::sleep(std::time::Duration::from_millis(20)).await;
-    let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
-    assert_eq!(
-        events
-            .iter()
-            .filter(|event| matches!(
-                event.get_data(),
-                InterfoldEventData::DecryptionShareProofSigned(_)
-            ))
-            .count(),
-        1
-    );
+    for id in [ids[2], ids[0], ids[1]] {
+        actor.handle_share_decryption_proof_response(&id, vec![proof.clone()]);
+    }
+    assert_eq!(signed_redeliveries().await?, vec![1]);
     assert!(actor.share_decryption_correlation.is_empty());
+
+    // A redelivery after completion means the keyshare missed the completion. Its answer is a
+    // completion of its own, which EventBus deduplication passes.
+    actor.handle_share_decryption_proof_pending(request(9));
+    let ids = c6_request_ids().await?;
+    assert_eq!(ids.len(), 4);
+    actor.handle_share_decryption_proof_response(&ids[3], vec![proof]);
+    assert_eq!(signed_redeliveries().await?, vec![1, 9]);
     assert!(errors
         .send(GetEvents::<InterfoldEvent>::new())
         .await?
         .is_empty());
     Ok(())
+}
+
+#[actix::test]
+async fn a_c6_request_after_the_e3_ended_is_ignored() -> Result<()> {
+    let (bus, _rng, _seed, _params, _crp, _errors, history) = get_common_setup(None)?;
+    let mut actor = ProofRequestActor::new(&bus, PrivateKeySigner::random(), true);
+    let id = E3id::new("84", 1);
+    let (keys, pending) = c6_fixture(&id)?;
+    actor.canonical_keys = keys;
+    let actor = actor.start();
+    let event = |data: InterfoldEventData, seq: u64| {
+        InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            data,
+            None,
+            seq.into(),
+            None,
+            e3_events::EventSource::Local,
+        )
+        .into_sequenced(seq)
+    };
+
+    actor
+        .send(event(
+            e3_events::E3RequestComplete { e3_id: id.clone() }.into(),
+            1,
+        ))
+        .await?;
+    // A redelivery that the keyshare published before it saw the end arrives late.
+    actor
+        .send(event(
+            e3_events::ShareDecryptionProofPending {
+                redelivery: 7,
+                ..pending
+            }
+            .into(),
+            2,
+        ))
+        .await?;
+
+    assert_no_events(&history).await
+}
+
+#[test]
+fn finished_e3s_forget_the_oldest_beyond_the_bound() {
+    let mut finished = FinishedE3s::default();
+    for index in 0..=MAX_FINISHED_E3S {
+        finished.insert(E3id::new(index.to_string(), 1));
+    }
+    finished.insert(E3id::new("1", 1));
+    assert!(!finished.contains(&E3id::new("0", 1)));
+    assert!(finished.contains(&E3id::new("1", 1)));
+    assert!(finished.contains(&E3id::new(MAX_FINISHED_E3S.to_string(), 1)));
 }
 
 #[actix::test]

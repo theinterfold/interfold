@@ -4804,8 +4804,8 @@ fn share_request_ids(events: &[InterfoldEvent]) -> Vec<CorrelationId> {
         .collect()
 }
 
-/// Redelivery numbers of the C6 proof requests in `events`.
-fn proof_request_redeliveries(events: &[InterfoldEvent]) -> Vec<u32> {
+/// Redelivery values of the C6 proof requests in `events`.
+fn proof_request_redeliveries(events: &[InterfoldEvent]) -> Vec<u64> {
     events
         .iter()
         .filter_map(|event| match event.get_data() {
@@ -4931,24 +4931,115 @@ async fn a_lost_decryption_share_result_is_redelivered() -> Result<()> {
 
 #[actix::test]
 async fn a_lost_c6_proof_result_is_redelivered_a_bounded_number_of_times() -> Result<()> {
-    let keyshare = RedeliveryActor::start().await?;
-    let ids = share_request_ids(&keyshare.events().await?);
-    keyshare.answer_share_request(ids[0]).await?;
+    // A restarted process counts its redeliveries from zero again, and replay can bring back the
+    // values of the process before. Each process stands for one side of a restart.
+    let mut earlier_values = HashSet::new();
+    for _process in 0..2 {
+        let keyshare = RedeliveryActor::start().await?;
+        let ids = share_request_ids(&keyshare.events().await?);
+        keyshare.answer_share_request(ids[0]).await?;
 
-    // The C6 proof result never arrives.
-    let start = std::time::Instant::now();
-    for step in 1..=MAX_DECRYPTION_REDELIVERIES + 2 {
-        keyshare
-            .actor
-            .send(RedeliverDecryptionWork(
-                start + DECRYPTION_REDELIVERY_DELAY * step + std::time::Duration::from_secs(1),
-            ))
-            .await?;
+        // The C6 proof result never arrives.
+        let start = std::time::Instant::now();
+        for step in 1..=MAX_DECRYPTION_REDELIVERIES + 2 {
+            keyshare
+                .actor
+                .send(RedeliverDecryptionWork(
+                    start + DECRYPTION_REDELIVERY_DELAY * step + std::time::Duration::from_secs(1),
+                ))
+                .await?;
+        }
+        // The first request has no redelivery value. Each redelivery has a fresh one, also
+        // across processes.
+        let redeliveries = proof_request_redeliveries(&keyshare.events().await?);
+        assert_eq!(redeliveries.len(), 1 + MAX_DECRYPTION_REDELIVERIES as usize);
+        assert_eq!(redeliveries[0], 0);
+        for value in &redeliveries[1..] {
+            assert!(
+                *value != 0 && earlier_values.insert(*value),
+                "{redeliveries:?}"
+            );
+        }
     }
-    assert_eq!(
-        proof_request_redeliveries(&keyshare.events().await?),
-        (0..=MAX_DECRYPTION_REDELIVERIES).collect::<Vec<_>>()
-    );
+    Ok(())
+}
+
+#[actix::test]
+async fn a_terminal_event_stops_decryption_redelivery_while_its_cleanup_retries() -> Result<()> {
+    let e3_id = E3id::new("79", 1);
+    let (keys, _) = canonical_key_fixture(&e3_id).await?;
+    let canonical = keys.get(&e3_id).unwrap();
+    let (bus, history) = test_bus();
+    let ready = ready_for_c4_test();
+    let generating = GeneratingDecryptionProof {
+        pk_share: ready.pk_share.clone(),
+        decryption_share: vec![ArcBytes::from_bytes(&[4])],
+        signed_pk_generation_proof: None,
+        signed_sk_share_computation_proof: None,
+        signed_e_sm_share_computation_proof: None,
+        signed_sk_share_encryption_proofs: Vec::new(),
+        signed_e_sm_share_encryption_proofs: Vec::new(),
+    };
+    let (state, _) = test_state(&e3_id, KeyshareState::GeneratingDecryptionProof(generating));
+    let pending = ShareDecryptionProofPending {
+        e3_id: e3_id.clone(),
+        party_id: 0,
+        node: Address::repeat_byte(1).to_string(),
+        decryption_share: vec![ArcBytes::from_bytes(&[4])],
+        proof_request: ThresholdShareDecryptionProofRequest {
+            ciphertext_bytes: vec![ArcBytes::from_bytes(&[5])],
+            aggregated_pk_bytes: ArcBytes::from_bytes(&[7]),
+            sk_poly_sum: ready.sk_poly_sum,
+            es_poly_sum: ready.es_poly_sum,
+            d_share_bytes: vec![ArcBytes::from_bytes(&[4])],
+            decryption_domain: canonical.domain(Address::ZERO),
+            params_preset: canonical.params_preset,
+            committee_size: canonical.committee_size,
+        },
+        redelivery: 0,
+    };
+    // Every write fails, so the terminal cleanup retries later.
+    let mut keyshare = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bus,
+        cipher: Arc::new(Cipher::from_password("test-password").await?),
+        state: unwritable(state.try_get()?).await,
+        share_enc_preset: BfvPreset::InsecureDkg512,
+        interfold_address: Address::ZERO,
+        signer: alloy::signers::local::PrivateKeySigner::random(),
+        effects_enabled: true,
+        recovery: unwritable(ThresholdKeyshareRecoveryState {
+            ciphernode_selected: Some(TypedEvent::new(selection(&e3_id), test_ec(0))),
+            share_decryption_proof_pending: Some(TypedEvent::new(pending, test_ec(1))),
+            ..Default::default()
+        })
+        .await,
+        recovery_payloads: test_recovery_payloads(),
+        dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
+    });
+    let issued_at = std::time::Instant::now();
+    keyshare.pending.decryption_proof_request = Some(IssuedDecryptionWork {
+        ec: test_ec(1),
+        last_sent: issued_at,
+        redeliveries: 0,
+    });
+    let actor = keyshare.start();
+
+    actor
+        .send(keyshare_event(
+            E3RequestComplete {
+                e3_id: e3_id.clone(),
+            },
+            2,
+            EventSource::Local,
+        ))
+        .await?;
+    actor
+        .send(RedeliverDecryptionWork(
+            issued_at + DECRYPTION_REDELIVERY_DELAY * 2,
+        ))
+        .await?;
+
+    assert!(proof_request_redeliveries(&history.send(GetEvents::new()).await?).is_empty());
     Ok(())
 }
 

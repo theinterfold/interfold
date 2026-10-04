@@ -186,7 +186,9 @@ impl ThresholdKeyshare {
                     return Ok(());
                 };
                 let mut pending = pending.into_inner();
-                pending.redelivery = work.redeliveries + 1;
+                // A fresh value per redelivery, also after a restart: a counter would repeat the
+                // values of replayed earlier requests.
+                pending.redelivery = rand::random::<u64>().max(1);
                 info!(
                     e3_id = %state.e3_id,
                     redelivery = pending.redelivery,

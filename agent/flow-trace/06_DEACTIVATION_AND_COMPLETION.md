@@ -561,7 +561,8 @@ restart. Hydration clears the process-local decryption dispatch markers. `Effect
 each phase once, and late authority or key bytes can start work that still waits for them. Repeated
 matching publications and chain observations do not add compute correlations or repeat C6 proof
 intents. The worker retries local failures with the same request. A phase whose result has not
-arrived for 5 minutes sends its request again, at most 6 times.
+arrived for 5 minutes sends its request again, at most 6 times. A terminal event stops this at once,
+and `ProofRequestActor` ignores C6 intents for an E3 that has ended.
 
 Replayed C6 intents pass canonical admission before proof-intent deduplication. Logged C6 compute
 requests also pass admission before dispatch or response reuse. Other E3s continue routing while one

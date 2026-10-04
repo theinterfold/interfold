@@ -1314,10 +1314,16 @@ InterfoldSolReader decodes CiphertextOutputPublished event
       │   → EventBus fan-out can lose a request or its result. When a phase's result has not
       │     arrived 5 minutes after its last request, the keyshare sends the request again, at
       │     most 6 times per phase: a share calculation under a new correlation ID, and a C6
-      │     intent with a raised `redelivery` number. `ComputeEffectGate` runs one compute
-      │     per request payload and answers every correlation ID. `ProofRequestActor` treats a
-      │     C6 intent with a higher `redelivery` for a pending proof as a request to ask for the
-      │     proof again, and ignores other copies.
+      │     intent with a fresh random `redelivery` value. Only the first intent has zero, and a
+      │     restart cannot repeat a value that replay brings back. A terminal event stops
+      │     redelivery at once, also while its cleanup retries.
+      │   → `ComputeEffectGate` runs one compute per request payload and answers every
+      │     correlation ID. A request under a new ID whose result has not reached the gate 10
+      │     minutes after it went to the worker goes to the worker again.
+      │   → `ProofRequestActor` asks for the proof again for each new nonzero `redelivery`, also
+      │     after the proof completed, and ignores copies. `DecryptionShareProofSigned` carries
+      │     the `redelivery` it answers, so EventBus deduplication passes a second completion.
+      │     After an E3 ends, its C6 intents are ignored.
       │     File: crates/keyshare/src/threshold_keyshare/effects/create_decryption_share.rs
     │
     ├─ REQUEST C6 PROOF:

@@ -12,6 +12,10 @@ impl ProofRequestActor {
     ) {
         let (mut msg, ec) = msg.into_components();
         let e3_id = msg.e3_id.clone();
+        // Terminal cleanup ran already; a late request must not leave pending work behind.
+        if self.finished_e3s.contains(&e3_id) {
+            return;
+        }
 
         if self
             .canonical_keys
@@ -29,7 +33,7 @@ impl ProofRequestActor {
             // The keyshare redelivers its request when the proof result did not reach it. A lost
             // compute request or response leaves this proof pending, so request it again under a
             // new correlation ID: the compute gate runs it once and answers every ID.
-            if msg.redelivery <= pending.redelivery {
+            if msg.redelivery == 0 || msg.redelivery == pending.redelivery {
                 warn!(
                     "Duplicate ShareDecryptionProofPending for E3 {} — ignoring",
                     e3_id
@@ -145,6 +149,7 @@ impl ProofRequestActor {
                 if let Err(err) = self.bus.publish(
                     DecryptionShareProofSigned {
                         e3_id: e3_id.clone(),
+                        redelivery: pending.redelivery,
                     },
                     ec,
                 ) {
