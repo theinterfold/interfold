@@ -1072,7 +1072,12 @@ fn keyshare_event(
 
 fn dealer_signer(party_id: u64) -> alloy::signers::local::PrivateKeySigner {
     let mut bytes = [0u8; 32];
-    bytes[31] = [2, 3, 1][party_id as usize];
+    bytes[31] = match party_id {
+        0 => 2,
+        1 => 3,
+        2 => 1,
+        _ => u8::try_from(party_id + 1).unwrap(),
+    };
     alloy::signers::local::PrivateKeySigner::from_bytes(&bytes.into()).unwrap()
 }
 
@@ -3065,11 +3070,6 @@ async fn stale_threshold_share_deadline_preserves_decryption(decrypting: bool) -
         ..sk_request.clone()
     };
     actor.pending.share_decryption_data = Some((sk_request, vec![esm_request]));
-    let share = actor
-        .recovery_payloads
-        .share(1)
-        .expect("recorded peer share")
-        .clone();
     let cipher = actor.cipher.clone();
     let signer = actor.signer.clone();
     let mut collector = None;
@@ -3086,13 +3086,8 @@ async fn stale_threshold_share_deadline_preserves_decryption(decrypting: bool) -
         actor
     });
     let collector = collector.expect("share collector");
-    collector.send(share).await?;
-    collector.send(ThresholdShareCollectionCutoff).await?;
-    share_dispatch_of(&history, &[1]).await?;
-    assert!(
-        collector.connected(),
-        "the soft cutoff keeps the deadline active"
-    );
+    // The new collector receives both retained shares, so the collection completes at once.
+    share_dispatch_of(&history, &[1, 2]).await?;
 
     parent
         .send(TypedEvent::new(
@@ -3133,21 +3128,15 @@ async fn stale_threshold_share_deadline_preserves_decryption(decrypting: bool) -
         .threshold_share_refs
         .is_empty());
 
-    collector
-        .send(ExpelPartyFromShareCollection {
-            party_id: 1,
-            ec: test_ec(7),
-        })
-        .await?;
-    collector.send(ThresholdShareCollectionTimeout).await?;
-    // This mailbox barrier follows the collector's failure message to the parent.
-    parent
-        .send(keyshare_event(
-            TestEvent::new("parent barrier", 1),
-            8,
-            EventSource::Local,
-        ))
-        .await?;
+    // The calculated key stops the collector. A failure that it sent before it stopped can
+    // still reach the parent.
+    actix::clock::timeout(std::time::Duration::from_secs(2), async {
+        while collector.connected() {
+            actix::clock::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await?;
+    deliver_collector_failure(&parent, DkgTimeoutPhase::ThresholdShareCollection, &e3_id).await?;
     assert_eq!(
         repo.read().await?.expect("persisted decryption state"),
         expected

@@ -3,8 +3,10 @@
 use super::*;
 use e3_events::{
     CommitmentConsistencyCheckComplete, Committee, Die, EventBusBarrier, PartyVerificationResult,
-    VerifyShareDecryptionProofsResponse, VerifyShareProofsResponse, ZkRequest, ZkResponse,
+    ResetHistory, VerifyShareDecryptionProofsResponse, VerifyShareProofsResponse, ZkRequest,
+    ZkResponse,
 };
+use e3_zk_helpers::CiphernodesCommitteeSize;
 use e3_zk_prover::ShareVerificationActor;
 
 fn signed_proof(e3_id: &E3id, party: u64, proof_type: ProofType) -> SignedProofPayload {
@@ -56,7 +58,23 @@ struct AdmissionHarness {
 
 impl AdmissionHarness {
     async fn new(cutoff_passed: bool) -> Result<(Self, ThresholdKeyshare)> {
+        Self::with_committee(cutoff_passed, CiphernodesCommitteeSize::Minimum).await
+    }
+
+    async fn with_committee(
+        cutoff_passed: bool,
+        committee_size: CiphernodesCommitteeSize,
+    ) -> Result<(Self, ThresholdKeyshare)> {
         let e3_id = E3id::new("91", 1);
+        let committee = committee_size.values();
+        let selected = CiphernodeSelected {
+            committee: (0..committee.n as u64)
+                .map(|party| dealer_signer(party).address().to_string())
+                .collect(),
+            threshold_m: committee.threshold,
+            threshold_n: committee.n,
+            ..selection(&e3_id)
+        };
         let (bus, history) = test_bus();
         let cipher = Arc::new(Cipher::from_password("test-password").await?);
         let rows = vec![vec![1u64]; BfvPreset::InsecureThreshold512.metadata().num_moduli];
@@ -78,6 +96,12 @@ impl AdmissionHarness {
         };
         let (mut state, state_repo) =
             test_state(&e3_id, KeyshareState::AggregatingDecryptionKey(current));
+        state.try_mutate_without_context(|mut state| {
+            state.threshold_m = committee.threshold as u64;
+            state.threshold_n = committee.n as u64;
+            state.params = insecure_threshold_params();
+            Ok(state)
+        })?;
         if cutoff_passed {
             state.try_mutate_without_context(|mut state| {
                 state.dkg_deadline_unix_secs =
@@ -88,7 +112,7 @@ impl AdmissionHarness {
         }
         let (mut recovery, recovery_repo) = test_recovery_with_repo();
         recovery.try_mutate_without_context(|mut recovery| {
-            recovery.ciphernode_selected = Some(TypedEvent::new(selection(&e3_id), test_ec(0)));
+            recovery.ciphernode_selected = Some(TypedEvent::new(selected.clone(), test_ec(0)));
             recovery.encryption_keys.insert(
                 0,
                 TypedEvent::new(
@@ -122,7 +146,7 @@ impl AdmissionHarness {
         );
         ShareVerificationActor::setup(
             &harness.bus,
-            HashMap::from([(e3_id, Committee::new(selection(&harness.e3_id).committee))]),
+            HashMap::from([(e3_id, Committee::new(selected.committee))]),
         );
         Ok((harness, actor))
     }
@@ -469,6 +493,214 @@ async fn empty_precheck_batch_completes_and_accepts_growth_after_restart() -> Re
                 .collected_threshold_share_ids,
             Some(BTreeSet::from([1, 2]))
         );
+        actor.send(Die).await?;
+    }
+    Ok(())
+}
+
+#[actix::test]
+async fn restarted_micro_batch_survives_its_original_deadline() -> Result<()> {
+    use e3_trbfv::{
+        calculate_decryption_key::calculate_decryption_key, shares::BfvEncryptedShares,
+    };
+    use fhe::bfv::PublicKey;
+    use fhe_traits::DeserializeParametrized;
+    use ndarray::Array2;
+    use std::time::Duration;
+
+    // Cover both a node waiting for its roster and one that has finished local DKG.
+    for finish_dkg in [true, false] {
+        let (h, mut actor) =
+            AdmissionHarness::with_committee(true, CiphernodesCommitteeSize::Micro).await?;
+        let params = BfvParamSet::from(BfvPreset::InsecureDkg512).build_arc();
+        let key = generate_bfv_keypair(&BfvPreset::InsecureDkg512, &h.cipher)?;
+        let pk = PublicKey::from_bytes(&key.pk_bfv, &params)?;
+        let num_moduli = BfvPreset::InsecureThreshold512.metadata().num_moduli;
+        let rows = vec![vec![1u64; params.degree()]; num_moduli];
+        let own_rows = SensitiveBytes::new(bincode::serialize(&rows)?, &h.cipher)?;
+        let secret =
+            SharedSecret::new(vec![Array2::from_elem((1, params.degree()), 1); num_moduli]);
+        let (encrypted, _) = BfvEncryptedShares::encrypt_all_extended_for_share_indices(
+            &secret,
+            &[pk],
+            &[0],
+            &params,
+            &mut rand_core::UnwrapErr(rand::rngs::OsRng),
+            None,
+        )?;
+        let share = |party| -> Result<ThresholdShareCreated> {
+            let mut event = authenticated_share(&h.e3_id, party);
+            let payload = Arc::make_mut(&mut event.share);
+            payload.sk_sss = encrypted.clone();
+            payload.esi_sss = vec![encrypted.clone()];
+            event.sign(&dealer_signer(party))
+        };
+        let deadline = crate::domain::timeout_policy::now_unix_secs() + 12;
+        actor.state.try_mutate_without_context(|mut state| {
+            state.dkg_deadline_unix_secs = Some(deadline);
+            state.dkg_window_secs = Some(60);
+            let KeyshareState::AggregatingDecryptionKey(current) = &mut state.state else {
+                unreachable!()
+            };
+            current.sk_bfv = key.sk_bfv;
+            current.own_sk_share_raw = own_rows.clone();
+            current.own_esi_shares_raw = vec![own_rows];
+            current.signed_pk_generation_proof =
+                Some(signed_proof(&h.e3_id, 0, ProofType::C1PkGeneration));
+            Ok(state)
+        })?;
+        let actor = h.start(actor).await?;
+        for party in 1..=3 {
+            h.bus.publish_without_context(share(party)?)?;
+        }
+        h.bus.publish_without_context(peer_share(&h.e3_id, 4))?;
+        h.verify_collected_shares(&[1, 2, 3]).await?;
+        let saved = h.recovery.read().await?.unwrap();
+        assert_eq!(
+            saved.share_verification_complete.unwrap().dishonest_parties,
+            BTreeSet::from([4])
+        );
+        assert!(
+            saved.dkg_ready.is_none(),
+            "three external dealers are below H - 1"
+        );
+
+        let actor = h.restart(actor).await?;
+        assert_eq!(
+            h.state.read().await?.unwrap().dkg_deadline_unix_secs,
+            Some(deadline)
+        );
+        h.history.send(ResetHistory).await?;
+        h.bus.publish_without_context(share(5)?)?;
+        h.verify_collected_shares(&[1, 2, 3, 5]).await?;
+        let ready = wait_for_record(&h.recovery, |recovery| recovery.dkg_ready.is_some())
+            .await?
+            .dkg_ready
+            .unwrap();
+        assert_eq!(
+            ready
+                .dealers
+                .iter()
+                .map(|dealer| dealer.party_id)
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from([0, 1, 2, 3, 5])
+        );
+
+        if finish_dkg {
+            actor
+                .send(keyshare_event(
+                    AggregatorChanged {
+                        e3_id: h.e3_id.clone(),
+                        is_aggregator: false,
+                        active_party_id: Some(1),
+                    },
+                    101,
+                    EventSource::Local,
+                ))
+                .await?;
+            for (seq, kind) in [
+                (102, DkgCoordinationKind::Ready),
+                (103, DkgCoordinationKind::Roster),
+            ] {
+                let message = DkgCoordination::sign(
+                    h.e3_id.clone(),
+                    Address::ZERO,
+                    1,
+                    kind,
+                    ready.dealers.clone(),
+                    &dealer_signer(1),
+                )?;
+                actor
+                    .send(keyshare_event(message, seq, EventSource::Net))
+                    .await?;
+            }
+            let calculation = h.event(|data| matches!(data,
+                InterfoldEventData::ComputeRequest(request)
+                    if matches!(request.request, ComputeRequestKind::TrBFV(TrBFVRequest::CalculateDecryptionKey(_)))
+            )).await?;
+            let InterfoldEventData::ComputeRequest(request) = calculation.into_data() else {
+                unreachable!()
+            };
+            let ComputeRequestKind::TrBFV(TrBFVRequest::CalculateDecryptionKey(input)) =
+                request.request
+            else {
+                unreachable!()
+            };
+            let output = calculate_decryption_key(&h.cipher, input)?;
+            actor
+                .send(keyshare_event(
+                    ComputeResponse::trbfv(
+                        TrBFVResponse::CalculateDecryptionKey(output),
+                        request.correlation_id,
+                        h.e3_id.clone(),
+                    ),
+                    104,
+                    EventSource::Local,
+                ))
+                .await?;
+            wait_for_keyshare_state(&h.state, |state| {
+                matches!(state, KeyshareState::ReadyForDecryption(_))
+            })
+            .await?;
+            h.history.send(ResetHistory).await?;
+            for party in [1, 2, 3, 5] {
+                h.bus.publish_without_context(
+                    DecryptionKeyShared {
+                        signature: Default::default(),
+                        e3_id: h.e3_id.clone(),
+                        party_id: party,
+                        node: dealer_signer(party).address().to_string(),
+                        signed_sk_decryption_proof: signed_proof(
+                            &h.e3_id,
+                            party,
+                            ProofType::C4aSkShareDecryption,
+                        ),
+                        signed_e_sm_decryption_proofs: vec![signed_proof(
+                            &h.e3_id,
+                            party,
+                            ProofType::C4bESmShareDecryption,
+                        )],
+                        external: true,
+                    }
+                    .sign(&dealer_signer(party))?,
+                )?;
+            }
+            h.verify_collected_shares(&[1, 2, 3, 5]).await?;
+            wait_for_record(&h.state, |state| state.keyshare_published).await?;
+            h.event(|data| matches!(data, InterfoldEventData::KeyshareCreated(_)))
+                .await?;
+        }
+
+        actix::clock::sleep(Duration::from_secs(
+            deadline.saturating_sub(crate::domain::timeout_policy::now_unix_secs()) + 2,
+        ))
+        .await;
+        let state = h.state.read().await?.unwrap();
+        assert!(
+            if finish_dkg {
+                matches!(state.state, KeyshareState::ReadyForDecryption(_))
+                    && state.keyshare_published
+            } else {
+                matches!(state.state, KeyshareState::AggregatingDecryptionKey(_))
+            },
+            "the original collection deadline changed the DKG outcome: {:?}",
+            state.state
+        );
+        let recovery = h.recovery.read().await?.unwrap();
+        assert_eq!(
+            recovery.verified_dealer_ids,
+            Some(BTreeSet::from([1, 2, 3, 5]))
+        );
+        assert_eq!(
+            recovery.collected_threshold_share_ids,
+            (!finish_dkg).then(|| BTreeSet::from([1, 2, 3, 4, 5])),
+            "a retired collector must not restore a completed verification batch"
+        );
+        let events = h.history.send(GetEvents::<InterfoldEvent>::new()).await?;
+        assert!(events.iter().all(|event| !matches!(
+            event.get_data(),
+            InterfoldEventData::ThresholdShareCollectionFailed(_) | InterfoldEventData::E3Failed(_)
+        )));
         actor.send(Die).await?;
     }
     Ok(())

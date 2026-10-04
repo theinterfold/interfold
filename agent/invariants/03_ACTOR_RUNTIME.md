@@ -163,8 +163,9 @@ the code does not meet yet.
   absent. After collection is complete, a duplicate C4 share must not start another collector. Saved
   C0 and C4 inputs must keep the first authenticated message from each party, as the live collectors
   do. A C2/C3 batch with no proof that passes local prechecks still dispatches and saves its
-  outcome. A later authenticated share can grow that batch, including after hydration. —
-  `flow-trace/04`
+  outcome. A later authenticated share can grow that batch, including after hydration. Each new
+  threshold-share collector receives saved expulsions, then all retained authenticated shares. Key
+  calculation completion and actor shutdown stop that collector and its timers. — `flow-trace/04`
 - `CommitmentConsistencyChecker` persists its complete verified-proof cache and accepted DKG roster
   in the same snapshot batch as each event that changes them. Hydration restores this state before
   recovered proof work resumes. A restarted checker must not evaluate C2, C3, C4, or aggregate

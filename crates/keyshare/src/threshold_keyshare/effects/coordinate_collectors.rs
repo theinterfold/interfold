@@ -23,8 +23,8 @@ impl ThresholdKeyshare {
         }))
     }
 
-    /// Create or return the threshold-share collector. A new collector learns every recorded
-    /// expulsion before any share, so it does not wait for a party that will not send one.
+    /// Create or return the threshold-share collector. Seed every new collector with recorded
+    /// expulsions, then retained authenticated shares, so its deadline counts the complete set.
     pub fn ensure_collector(
         &mut self,
         self_addr: Addr<Self>,
@@ -76,7 +76,23 @@ impl ThresholdKeyshare {
                 ec: ec.clone(),
             })?;
         }
+        for event in self.recovery_payloads.shares().values() {
+            addr.try_send(event.clone())?;
+        }
         Ok(addr)
+    }
+
+    pub(in crate::actors::threshold_keyshare) fn stop_threshold_share_collector(
+        &mut self,
+    ) -> Result<()> {
+        if let Some(collector) = &self.decryption_key_collector {
+            match collector.try_send(Die) {
+                Ok(()) | Err(SendError::Closed(_)) => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        self.decryption_key_collector = None;
+        Ok(())
     }
 
     pub fn ensure_encryption_key_collector(

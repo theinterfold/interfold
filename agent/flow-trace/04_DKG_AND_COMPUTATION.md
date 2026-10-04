@@ -455,7 +455,12 @@ ThresholdShareCollector collects this recipient's shares from the other N−1 pa
 │   │   → The signature binds E3, dealer, recipient, share bytes, and the complete proof bundle
 │   │   → A rejected message reserves no slot and produces no accusation
 │   ├─ After the canonical DKG deadline: records the authenticated share, but does not forward it
+│   ├─ Seeds every new collector with saved expulsions, then all retained authenticated shares
+│   │   → This also applies when a later share starts collection after restart
 │   └─ Forwards filtered share to ThresholdShareCollector
+│
+├─ When local key calculation completes or the keyshare actor stops:
+│   └─ Stop the threshold-share collector and its cutoff and deadline timers
 │
 ├─ At the 75% soft cutoff:
 │   ├─ With at least H−1 external shares:

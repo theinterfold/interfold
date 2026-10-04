@@ -299,9 +299,10 @@ available for an authenticated share. Signature rejection does not accuse the cl
 `ThresholdShareCollector` keeps authenticated shares addressed to this node. When all $N - 1$
 external shares arrive, it closes. At the 75% checkpoint, it starts verification if it has at least
 $H - 1$ external shares, and it keeps collecting. Later shares extend the verified dealer set until
-all $N - 1$ arrive or the DKG deadline passes. Only the DKG deadline can emit
-`ThresholdShareCollectionFailed`. The parent ignores that failure after it reaches
-`ReadyForDecryption` or a later phase.
+all $N - 1$ arrive, local key calculation completes, or the DKG deadline passes. Local key
+calculation completion stops the collector and its timers. Only the DKG deadline can emit
+`ThresholdShareCollectionFailed` from an active collector. The parent ignores that failure after it
+reaches `ReadyForDecryption` or a later phase.
 
 `ShareVerificationActor` verifies each batch in three phases:
 
@@ -499,7 +500,9 @@ decryption failures from insufficient valid roster shares still apply.
 
 A member that restarts recovers its work from the durable event log:
 
-- It restores collectors with the remaining time to each cutoff.
+- It restores collectors with the remaining time to each cutoff. Every new threshold-share collector
+  receives saved expulsions, then all retained authenticated contributions, including when a later
+  share starts collection after restart.
 - Public-key aggregators restore canonical key publication from the lifecycle projection. This
   prevents a later expulsion or exclusion from failing completed DKG work, including on standby
   nodes.

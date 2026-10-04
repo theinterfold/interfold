@@ -321,6 +321,12 @@ impl Actor for ThresholdKeyshare {
     fn started(&mut self, ctx: &mut Self::Context) {
         ctx.set_mailbox_capacity(MAILBOX_LIMIT);
     }
+
+    fn stopped(&mut self, _: &mut Self::Context) {
+        if let Err(error) = self.stop_threshold_share_collector() {
+            error!(%error, "Could not stop threshold-share collection");
+        }
+    }
 }
 
 #[path = "effects/mod.rs"]

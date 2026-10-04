@@ -416,7 +416,6 @@ impl Handler<TypedEvent<E3RequestComplete>> for ThresholdKeyshare {
             return;
         }
         self.encryption_key_collector = None;
-        self.decryption_key_collector = None;
         self.decryption_key_shared_collector = None;
         self.pending = PendingKeyshareWork::default();
         self.notify_sync(ctx, Die);

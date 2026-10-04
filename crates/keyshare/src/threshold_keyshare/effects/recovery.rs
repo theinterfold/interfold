@@ -295,24 +295,17 @@ impl ThresholdKeyshare {
         self.rebuild_threshold_share_collector(self_addr, ec)
     }
 
-    /// Create the threshold-share collector, then send it every recorded share.
-    ///
-    /// `ensure_collector` sends a new collector every recorded expulsion first. Otherwise it waits
-    /// until the cutoff for a share that will not come, and a recorded share from an expelled party
-    /// can count toward H - 1.
+    /// Restore the collector with its retained shares and the remaining canonical deadline.
     fn rebuild_threshold_share_collector(
         &mut self,
         self_addr: Addr<Self>,
         ec: &EventContext<Sequenced>,
     ) -> Result<()> {
-        let collector = self.ensure_collector(
+        self.ensure_collector(
             self_addr,
             ec,
             crate::domain::timeout_policy::now_unix_secs(),
         )?;
-        for event in self.recovery_payloads.shares().values() {
-            collector.try_send(event.clone())?;
-        }
         Ok(())
     }
 

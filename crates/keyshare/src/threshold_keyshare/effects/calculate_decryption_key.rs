@@ -172,6 +172,7 @@ impl ThresholdKeyshare {
             s.new_state(next)
         })?;
 
+        self.stop_threshold_share_collector()?;
         let party_count = self.state.try_get()?.threshold_n;
         self.recovery.try_mutate(&ec, |mut recovery| {
             recovery.threshold_share_refs.clear();
