@@ -66,6 +66,8 @@ pub(crate) struct AccusationVoting {
     pub(super) signer: PrivateKeySigner,
     pub(super) slashing_manager: Address,
     pub(super) committee: Vec<Address>,
+    /// Finalized party IDs stay fixed when slashing removes active members.
+    pub(super) committee_party_ids: HashMap<Address, u64>,
     pub(super) circuit_threshold_t: usize,
     pub(super) vote_quorum_h: usize,
     pub(super) committee_n: usize,

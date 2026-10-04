@@ -74,6 +74,10 @@ does not verify, it broadcasts an accusation, and the committee votes. When enou
 the voters submit the slash. The voter with the lowest address submits at once. The next two voters
 wait 30 s and 60 s as fallbacks.
 
+Nodes ignore accusations against the accuser's own address or finalized party ID. Only C3a and C3b
+accusations can carry a forwarded proof for verification. Other proof types require local evidence
+and no forwarded payload before the node votes.
+
 For Lane A, the slash reason is `keccak256(abi.encodePacked(uint256(proofType)))`. The proof types
 are the DKG and decryption proofs C0 to C7. If governance disabled the policy for a proof type, the
 nodes exclude the member from that E3 only, and no penalty applies. When the agreeing voters saw

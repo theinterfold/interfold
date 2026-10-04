@@ -27,6 +27,19 @@ impl AccusationVoting {
             return;
         }
 
+        if self.is_self_accusation(
+            accusation.accuser,
+            accusation.accused,
+            accusation.accused_party_id,
+        ) {
+            return;
+        }
+
+        // Only per-recipient C3 proofs can accompany a forwarded accusation.
+        if accusation.signed_payload.is_some() && !Self::can_forward_proof(accusation.proof_type) {
+            return;
+        }
+
         let now = self.clock.unix_now_secs();
         if !Self::is_peer_deadline_acceptable(
             accusation.issued_at,
@@ -299,8 +312,7 @@ impl AccusationVoting {
         let held = &pending.accusation;
         // Only a later start and end from a peer other than the accused moves the window, and
         // each accuser moves it at most once: no one can shorten it or keep resetting the votes.
-        if incoming.accuser == incoming.accused
-            || incoming.issued_at <= held.issued_at
+        if incoming.issued_at <= held.issued_at
             || incoming.deadline <= held.deadline
             || !self.window_movers.insert((accusation_id, incoming.accuser))
         {

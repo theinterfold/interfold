@@ -457,9 +457,13 @@ every section.
   `flow-trace/04`, `05`; INDEX concerns Z-32, ZEN2-04, ZEN2-26
 - Accusation quorum: `agree_count >= H`; the implementation derives `H` from the committee enum
   because the legacy E3 field `threshold_m` carries circuit threshold `T`. Voters must be active
-  committee members, and all votes must agree. Lane A is **attestation-based** (ECDSA per voter),
-  not on-chain ZK re-verification. Vote digest / EIP-712 type hashes must match the Solidity
-  constants exactly (Rust ↔ Solidity). — `flow-trace/05`; `SlashingManager.sol`
+  committee members, and all votes must agree. Local and received accusations must name a different
+  member from the accuser, by both address and finalized party ID. Forwarded payloads are admitted
+  only for C3a/C3b; other proof types require local evidence without a forwarded payload. These
+  checks precede evidence caching, vote creation, and pending-window changes in `AccusationVoting`.
+  Lane A is **attestation-based** (ECDSA per voter), not on-chain ZK re-verification. Vote digest /
+  EIP-712 type hashes must match the Solidity constants exactly (Rust ↔ Solidity). —
+  `flow-trace/05`; `SlashingManager.sol`
 - Staggered slash submission: agreeing voters rank by ascending address. Ranks 0–2 submit, and rank
   N waits N × 30 s. Restarts must not reset the fallback delay. **Gap:** the slashing writer
   persists the intent but not its due time, so a restart waits the full delay again

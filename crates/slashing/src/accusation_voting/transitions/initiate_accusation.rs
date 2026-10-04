@@ -5,6 +5,22 @@
 use super::*;
 
 impl AccusationVoting {
+    pub(super) fn can_forward_proof(proof_type: ProofType) -> bool {
+        matches!(
+            proof_type,
+            ProofType::C3aSkShareEncryption | ProofType::C3bESmShareEncryption
+        )
+    }
+
+    pub(super) fn is_self_accusation(
+        &self,
+        accuser: Address,
+        accused: Address,
+        accused_party_id: u64,
+    ) -> bool {
+        accuser == accused || self.committee_party_ids.get(&accuser) == Some(&accused_party_id)
+    }
+
     /// Called when the local node detects a proof failure.
     pub(crate) fn on_local_proof_failure(
         &mut self,
@@ -41,6 +57,10 @@ impl AccusationVoting {
             return Vec::new();
         }
 
+        if self.is_self_accusation(self.my_address, accused_address, event.accused_party_id) {
+            return Vec::new();
+        }
+
         // Cache the failed verification result.
         let evidence = Bytes::from(
             (
@@ -59,12 +79,8 @@ impl AccusationVoting {
         );
 
         // For C3a/C3b, include the signed payload so other nodes can re-verify
-        let forwarded_payload = match event.proof_type {
-            ProofType::C3aSkShareEncryption | ProofType::C3bESmShareEncryption => {
-                Some(event.signed_payload.clone())
-            }
-            _ => None,
-        };
+        let forwarded_payload =
+            Self::can_forward_proof(event.proof_type).then(|| event.signed_payload.clone());
 
         let mut actions = Vec::new();
         self.initiate_accusation(
@@ -95,6 +111,10 @@ impl AccusationVoting {
                 "Ignoring commitment violation for {} — not on E3 {} committee",
                 data.accused_address, self.e3_id
             );
+            return Vec::new();
+        }
+
+        if self.is_self_accusation(self.my_address, data.accused_address, data.accused_party_id) {
             return Vec::new();
         }
 

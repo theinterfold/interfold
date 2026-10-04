@@ -421,6 +421,7 @@ an off-chain committee quorum protocol.
 LIFECYCLE:
   Created by AccusationManagerExtension on SortitionCommitteeFinalized or context hydration
   → Stores committee list, threshold_m, this node's address + signer
+  → Keeps finalized party IDs fixed when slashing removes active committee members
   → Actor identity and committee inputs recover from durable committee state
   → In-flight accusations, votes, and timers remain process-local
   → Destroyed by E3RequestComplete (Die signal)
@@ -439,6 +440,7 @@ ProofVerificationFailed OR CommitmentConsistencyViolation event arrives
 │   ├─ 1. Resolve accused address:
 │   │     If accused_address == 0x0:
 │   │       Look up from committee list by party_id
+│   │     Ignore a failure against this node's address or finalized party ID before caching
 │   │
 │   ├─ 2. Cache verification result:
 │   │     received_data[(accused, proof_type)] = { data_hash, passed: false }
@@ -449,7 +451,7 @@ ProofVerificationFailed OR CommitmentConsistencyViolation event arrives
 │   └─ 4. Delegate to initiate_accusation()
 │
 ├─ For CommitmentConsistencyViolation:
-│   ├─ 1. Cache verification result:
+│   ├─ 1. Ignore a violation against this node's address or finalized party ID; otherwise cache:
 │   │     received_data[(accused, proof_type)] = { data_hash, passed: false }
 │   │
 │   └─ 2. Delegate to initiate_accusation() (no forwarded payload)
@@ -490,6 +492,10 @@ ProofVerificationFailed OR CommitmentConsistencyViolation event arrives
 ```text
 ProofFailureAccusation arrives via P2P from another committee member
 │
+├─ Reject self-accusations: accuser equals accused address or holds accused_party_id
+│   Reject a signed_payload for any proof type other than C3a/C3b
+│   Both checks precede cached evidence, pending accusations, and buffered vote replay
+│
 ├─ 1. Verify accuser is a committee member
 │
 ├─ 2. Validate accusation deadline against local policy:
@@ -524,7 +530,7 @@ ProofFailureAccusation arrives via P2P from another committee member
 │         ├─ For C3a/C3b: re-verify using signed_payload from accusation
 │         │   → Dispatch to ZkActor for local re-verification
 │         │   → Vote after re-verification completes
-│         └─ For other proofs: do not vote without local evidence
+│         └─ For other proofs: require local evidence and no forwarded payload
 │
 ├─ 6. Create and SIGN vote:
 │     AccusationVote {
