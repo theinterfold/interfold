@@ -266,7 +266,9 @@ The node uses QUIC over UDP. The node admits a peer only after the Identify chec
 compares the network identity and the supported Kademlia and sync protocols.
 
 Identify does not cache peer addresses. The node keeps admitted peer addresses in Kademlia and
-filters loopback addresses when it has a listener on a non-loopback interface.
+filters loopback addresses when it has a listener on a non-loopback interface. Each compatible
+Identify exchange refreshes these addresses, so a connected peer can advertise a new address for
+later reconnection.
 
 | Log line                                                                                      | Cause                                                                        | Action                                                                                                                                                                                                            |
 | --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

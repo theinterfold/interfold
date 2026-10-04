@@ -105,8 +105,9 @@ impl TestNode {
         )
     }
 
-    async fn listen(&mut self) -> anyhow::Result<Multiaddr> {
-        self.interface
+    async fn listen(&mut self) -> anyhow::Result<(ListenerId, Multiaddr)> {
+        let listener = self
+            .interface
             .swarm
             .listen_on("/ip4/127.0.0.1/udp/0/quic-v1".parse()?)?;
         loop {
@@ -117,7 +118,7 @@ impl TestNode {
             };
             self.process(event).await?;
             if let Some(address) = address {
-                return Ok(address);
+                return Ok((listener, address));
             }
         }
     }
@@ -269,15 +270,56 @@ async fn identify_reconnections_dial_only_filtered_addresses() -> anyhow::Result
         .subscribe(&node.interface.topic)?;
     node.listen().await?;
     assert!(super::should_filter_loopback(&node.interface.swarm));
-    let loopback = remote.listen().await?;
+    let (old_listener, loopback) = remote.listen().await?;
     let public = with_ip(loopback.clone(), Ipv4Addr::new(203, 0, 113, 2));
     remote.interface.swarm.add_external_address(public.clone());
     node.interface.swarm.dial(public.clone())?;
+    let info = node.identify_with(&mut remote).await?;
+    assert!(info.listen_addrs.contains(&loopback));
+    assert!(info.listen_addrs.contains(&public));
+
+    let mut events = node.interface.event_tx.subscribe();
+    let (_, new_loopback) = remote.listen().await?;
+    let new_public = with_ip(new_loopback.clone(), Ipv4Addr::new(203, 0, 113, 3));
+    remote.interface.swarm.remove_external_address(&public);
+    remote
+        .interface
+        .swarm
+        .add_external_address(new_public.clone());
+    remote
+        .interface
+        .swarm
+        .behaviour_mut()
+        .identify
+        .push([node.peer_id()]);
+    let info = node.identify_with(&mut remote).await?;
+    assert!(info.listen_addrs.contains(&new_loopback));
+    assert!(info.listen_addrs.contains(&new_public));
+    assert!(!info.listen_addrs.contains(&public));
+    while let Ok(event) = events.try_recv() {
+        assert!(
+            !matches!(
+                event,
+                super::NetEvent::ConnectionEstablished { .. }
+                    | super::NetEvent::ConfiguredDialAdmitted { .. }
+            ),
+            "an address update must not repeat admission notifications"
+        );
+    }
+    assert!(remote.interface.swarm.remove_listener(old_listener));
+    loop {
+        let event = remote.next_event().await?;
+        let closed = matches!(
+            &event,
+            super::SwarmEvent::ListenerClosed { listener_id, .. } if *listener_id == old_listener
+        );
+        remote.process(event).await?;
+        if closed {
+            break;
+        }
+    }
 
     for _ in 0..2 {
-        let info = node.identify_with(&mut remote).await?;
-        assert!(info.listen_addrs.contains(&loopback));
-        assert!(info.listen_addrs.contains(&public));
         node.interface
             .swarm
             .disconnect_peer_id(remote.peer_id())
@@ -300,18 +342,24 @@ async fn identify_reconnections_dial_only_filtered_addresses() -> anyhow::Result
                 .all(|address| !super::is_loopback_addr(address)),
             "dialed an unfiltered address: {attempted:?}"
         );
-        assert!(attempted
-            .iter()
-            .any(|address| super::strip_peer_id(address.clone()) == public));
+        assert!(
+            attempted
+                .iter()
+                .any(|address| super::strip_peer_id(address.clone()) == new_public),
+            "the updated public address was not dialed: {attempted:?}"
+        );
+        let info = node.identify_with(&mut remote).await?;
+        assert!(info.listen_addrs.contains(&new_loopback));
+        assert!(info.listen_addrs.contains(&new_public));
+        assert!(!info.listen_addrs.contains(&public));
     }
-    node.identify_with(&mut remote).await?;
     Ok(())
 }
 
 async fn check_inbound_put_expiry(published_here: bool) -> anyhow::Result<()> {
     let mut node = TestNode::new()?;
     let mut remote = TestNode::new()?;
-    let address = remote.listen().await?;
+    let (_, address) = remote.listen().await?;
     node.interface.swarm.dial(address)?;
     node.identify_with(&mut remote).await?;
     let value = b"document with a retained expiry".to_vec();

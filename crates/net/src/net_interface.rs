@@ -1361,8 +1361,22 @@ async fn process_swarm_event(
                 return Ok(());
             }
 
-            let Some(pending_connections) = peer_admission.admit(peer_id) else {
-                debug!(%peer_id, "Received Identify for an admitted or unstaged peer");
+            let pending_connections = peer_admission.admit(peer_id);
+            if !peer_admission.is_admitted(&peer_id) {
+                debug!(%peer_id, "Received Identify for an unstaged peer");
+                return Ok(());
+            }
+            let filter = should_filter_loopback(swarm);
+            for addr in &info.listen_addrs {
+                if !(filter && is_loopback_addr(addr)) {
+                    swarm
+                        .behaviour_mut()
+                        .kademlia
+                        .add_address(&peer_id, strip_peer_id(addr.clone()));
+                }
+            }
+            trace!(observed_address = %info.observed_addr, "Peer reported our observed address");
+            let Some(pending_connections) = pending_connections else {
                 return Ok(());
             };
             peer_failures.connection_succeeded(&peer_id);
@@ -1382,7 +1396,6 @@ async fn process_swarm_event(
                 status_pending.direction,
                 status_pending.connections,
             );
-            let filter = should_filter_loopback(swarm);
             for pending in &pending_connections {
                 if !(filter && is_loopback_addr(&pending.remote_address)) {
                     swarm
@@ -1391,15 +1404,6 @@ async fn process_swarm_event(
                         .add_address(&peer_id, strip_peer_id(pending.remote_address.clone()));
                 }
             }
-            for addr in &info.listen_addrs {
-                if !(filter && is_loopback_addr(addr)) {
-                    swarm
-                        .behaviour_mut()
-                        .kademlia
-                        .add_address(&peer_id, strip_peer_id(addr.clone()));
-                }
-            }
-            trace!(observed_address = %info.observed_addr, "Peer reported our observed address");
             let topic = gossipsub::IdentTopic::new(network.protocols().gossip_topic()).hash();
             // The subscribe event of a peer that subscribed before its admission was ignored.
             let subscribed_before_admission = swarm

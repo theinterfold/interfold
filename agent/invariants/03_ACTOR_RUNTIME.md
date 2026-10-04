@@ -263,7 +263,9 @@ the code does not meet yet.
 - A network event cannot create a request context for an unknown E3. Only chain events or restored
   snapshots admit an E3; peer events can only contribute to an admitted one. —
   `crates/request/src/routing/workflow.rs`
-- Identify must not cache peer addresses independently of the filtered Kademlia address path. —
+- Identify must not cache peer addresses independently of the filtered Kademlia address path. Each
+  compatible Identify exchange for an admitted peer must refresh that peer's filtered Kademlia
+  addresses. Only newly admitted connections receive admission notifications. —
   `crates/net/src/net_interface.rs`
 - An inbound DHT put must not replace a locally published record or shorten a stored replica's
   expiry. No expiry means an unlimited lifetime. — `crates/net/src/net_interface.rs`

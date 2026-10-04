@@ -578,7 +578,9 @@ and quarantined from discovery-based routing-table reinsertion for up to 30 minu
 connection clears the cooldown early. A peer-ID mismatch quarantines the stale identity immediately.
 A dial that reaches this node's own identity is not a mismatch: the node removes that address from
 Kademlia and does not quarantine the peer it was advertised for. Identify has no address cache, so
-it cannot supply unfiltered peer addresses to later dials. Kademlia adds new routing-table entries
+it cannot supply unfiltered peer addresses to later dials. Each compatible Identify exchange
+refreshes the admitted peer's filtered Kademlia addresses, including updates while connected. Only
+newly admitted connections receive admission notifications. Kademlia adds new routing-table entries
 only through the filtered addresses of admitted peers, not automatically for every connection.
 Kademlia still adds a dialed address to an existing entry, so the node removes loopback addresses
 when Kademlia reports a routing update. Loopback addresses between nodes on one host are therefore
