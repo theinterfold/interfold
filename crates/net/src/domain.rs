@@ -36,7 +36,7 @@ pub(crate) mod wire;
 
 pub use document_publishing::{
     add_candidate, datetime_to_instant_from_now, Cleanup, CleanupQueue, DocumentPublishingService,
-    FetchQueue, PublicationSchedule, RestorableDocuments, MAX_WAITING_FETCHES_PER_PEER,
+    FetchQueue, PublicationSchedule, RestorableDocuments,
 };
 pub use event_conversion::{EventConversionService, IncomingDocument};
 pub use event_translation::EventTranslationService;

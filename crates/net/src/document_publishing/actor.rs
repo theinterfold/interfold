@@ -54,12 +54,12 @@ const MAX_PENDING_PUBLICATION_BYTES: usize = 256 * 1024 * 1024;
 /// DHT keys whose cleanup waits for room in the network command queue. A key is 32 bytes, so the
 /// queue holds well under 1 MiB.
 const MAX_QUEUED_CLEANUPS: usize = 4_096;
-const MAX_BUFFERED_NOTIFICATIONS: usize = 1_024;
+const MAX_BUFFERED_NOTIFICATIONS: usize = crate::ingress_limits::EARLY_NOTIFICATIONS;
 const MAX_RECEIVED_DOCUMENTS: usize = 8_192;
 /// Concurrent document fetches.
 const MAX_INFLIGHT_TRANSFERS: usize = 8;
 /// Notified documents that wait for a fetch slot or for a retry.
-const MAX_WAITING_FETCHES: usize = 512;
+const MAX_WAITING_FETCHES: usize = crate::ingress_limits::WAITING_FETCHES;
 /// Interval at which waiting fetches whose retry time has passed are started.
 const FETCH_QUEUE_POLL: Duration = Duration::from_secs(5);
 /// Concurrent full-document DHT replications. Each one uploads the document to up to 20 peers,

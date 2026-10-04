@@ -288,15 +288,26 @@ impl Handler<DocumentIngress> for DocumentPublisher {
                     item.notification = msg;
                 }
             } else {
-                if self.early_notifications.len() >= MAX_BUFFERED_NOTIFICATIONS
-                    || self
+                if self.early_notifications.len() >= MAX_BUFFERED_NOTIFICATIONS {
+                    let mut counts = HashMap::new();
+                    for item in &self.early_notifications {
+                        *counts.entry(item.propagation_source).or_insert(0usize) += 1;
+                    }
+                    let owner = crate::ingress_limits::eviction_owner(
+                        peer,
+                        counts.into_iter(),
+                        MAX_BUFFERED_NOTIFICATIONS,
+                    );
+                    if owner == peer {
+                        return;
+                    }
+                    if let Some(index) = self
                         .early_notifications
                         .iter()
-                        .filter(|item| item.propagation_source == peer)
-                        .count()
-                        >= crate::domain::MAX_WAITING_FETCHES_PER_PEER
-                {
-                    return;
+                        .position(|item| item.propagation_source == owner)
+                    {
+                        self.early_notifications.remove(index);
+                    }
                 }
                 self.early_notifications.push_back(DocumentIngress {
                     propagation_source: peer,

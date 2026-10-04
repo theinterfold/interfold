@@ -833,8 +833,6 @@ async fn finished_dht_upload_is_counted_for_the_summary() -> anyhow::Result<()> 
 }
 
 mod notification_ingress {
-    use std::time::Duration;
-
     use crate::{
         events::{DocumentPublishedNotification, GossipData, NetCommand, NetEvent},
         ContentHash, Libp2pKeypair, Libp2pNetInterface, NetInterface, NetInterfaceHandle,
@@ -843,7 +841,13 @@ mod notification_ingress {
     use anyhow::{Context, Result};
     use chrono::{Timelike, Utc};
     use e3_events::{CorrelationId, DocumentKind, DocumentMeta, E3id, Filter};
-    use tokio::time::{sleep, timeout};
+    use libp2p::{gossipsub::MessageId, PeerId};
+    use std::collections::HashSet;
+    use std::time::Duration;
+    use tokio::{
+        sync::mpsc,
+        time::{sleep, timeout},
+    };
 
     async fn listen_address(handle: &NetInterfaceHandle) -> Result<String> {
         timeout(Duration::from_secs(10), async {
@@ -864,94 +868,153 @@ mod notification_ingress {
         .context("listener did not start")
     }
 
-    #[tokio::test]
-    async fn invalid_notifications_stop_at_the_relay_but_other_party_documents_pass() -> Result<()>
-    {
-        let policy = NetworkPolicy::local_unrestricted();
-        let relay_key = Libp2pKeypair::generate();
-        let relay_peer = relay_key.peer_id();
-        let mut relay = Libp2pNetInterface::new(relay_key, vec![], None, policy.clone())?;
-        let relay_handle = relay.handle();
-        let relay_task = tokio::spawn(async move { relay.start().await });
-        let address = format!("{}/p2p/{relay_peer}", listen_address(&relay_handle).await?);
-        let mut source = Libp2pNetInterface::new(
-            Libp2pKeypair::generate(),
-            vec![address.clone()],
-            None,
-            policy.clone(),
-        )?;
-        source.swarm.behaviour_mut().connection_limits = libp2p::connection_limits::Behaviour::new(
-            libp2p::connection_limits::ConnectionLimits::default().with_max_established(Some(1)),
-        );
-        let source_handle = source.handle();
-        let mut source_events = source_handle.rx();
-        let source_task = tokio::spawn(async move { source.start().await });
-        let mut receiver = Libp2pNetInterface::new(
-            Libp2pKeypair::generate(),
-            vec![address],
-            None,
-            policy.clone(),
-        )?;
-        receiver.swarm.behaviour_mut().connection_limits =
-            libp2p::connection_limits::Behaviour::new(
-                libp2p::connection_limits::ConnectionLimits::default()
-                    .with_max_established(Some(1)),
-            );
-        let receiver_handle = receiver.handle();
-        let mut received = receiver_handle.rx();
-        let receiver_task = tokio::spawn(async move { receiver.start().await });
-        timeout(Duration::from_secs(20), async {
-            while relay_handle.status().snapshot().gossip_subscribed_peers < 2
-                || source_handle.status().snapshot().gossip_subscribed_peers < 1
-                || receiver_handle.status().snapshot().gossip_subscribed_peers < 1
-            {
-                sleep(Duration::from_millis(50)).await;
-            }
-        })
-        .await
-        .context("three-peer gossip path did not form")?;
-        assert_eq!(source_handle.status().snapshot().connected_peers.len(), 1);
-        assert_eq!(receiver_handle.status().snapshot().connected_peers.len(), 1);
+    struct GossipPath {
+        handles: Vec<NetInterfaceHandle>,
+        tasks: Vec<tokio::task::JoinHandle<()>>,
+        source: NetInterfaceHandle,
+        source_events: tokio::sync::broadcast::Receiver<NetEvent>,
+        receivers: Vec<mpsc::UnboundedReceiver<(PeerId, MessageId, Vec<u8>)>>,
+    }
 
-        let valid = DocumentPublishedNotification {
-            key: ContentHash::from_content(b"another party's document"),
-            ts: 1,
-            meta: DocumentMeta::new(
-                E3id::new("1", 1),
-                DocumentKind::TrBFV,
-                vec![Filter::Item(7)],
-                Some(
-                    (Utc::now() + chrono::Duration::hours(1))
-                        .with_nanosecond(0)
-                        .unwrap(),
-                ),
-            ),
-        };
-        let malformed = DocumentPublishedNotification {
-            key: ContentHash(vec![1; 33]),
-            ..valid.clone()
-        };
-        let mut expired = valid.clone();
-        expired.meta.expires_at = Utc::now() - chrono::Duration::seconds(1);
-        let mut warmup = valid.clone();
-        warmup.key = ContentHash::from_content(b"warmup");
-        for notification in [warmup.clone(), malformed, expired, valid.clone()] {
+    impl Drop for GossipPath {
+        fn drop(&mut self) {
+            for task in &self.tasks {
+                task.abort();
+            }
+        }
+    }
+
+    impl GossipPath {
+        async fn new(relays: usize, receivers: usize) -> Result<Self> {
+            let policy = NetworkPolicy::local_unrestricted();
+            let mut handles = Vec::new();
+            let mut tasks = Vec::new();
+            let mut addresses = Vec::new();
+            for _ in 0..relays {
+                let key = Libp2pKeypair::generate();
+                let peer = key.peer_id();
+                let mut relay = Libp2pNetInterface::new(key, vec![], None, policy.clone())?;
+                let handle = relay.handle();
+                tasks.push(tokio::spawn(async move {
+                    relay.start().await.unwrap();
+                }));
+                addresses.push(format!("{}/p2p/{peer}", listen_address(&handle).await?));
+                handles.push(handle);
+            }
+            let mut source = Libp2pNetInterface::new(
+                Libp2pKeypair::generate(),
+                addresses.clone(),
+                None,
+                policy,
+            )?;
+            source.swarm.behaviour_mut().connection_limits =
+                libp2p::connection_limits::Behaviour::new(
+                    libp2p::connection_limits::ConnectionLimits::default()
+                        .with_max_established(Some(relays as u32)),
+                );
+            let source_handle = source.handle();
+            let source_events = source_handle.rx();
+            handles.push(source.handle());
+            tasks.push(tokio::spawn(async move {
+                source.start().await.unwrap();
+            }));
+            let mut outputs = Vec::new();
+            for _ in 0..receivers {
+                let mut node = super::TestNode::new()?;
+                node.interface.swarm.behaviour_mut().connection_limits =
+                    libp2p::connection_limits::Behaviour::new(
+                        libp2p::connection_limits::ConnectionLimits::default()
+                            .with_max_established(Some(relays as u32)),
+                    );
+                for address in &addresses {
+                    node.interface
+                        .swarm
+                        .dial(address.parse::<libp2p::Multiaddr>()?)?;
+                }
+                handles.push(node.interface.handle());
+                let (raw, output) = mpsc::unbounded_channel();
+                outputs.push(output);
+                tasks.push(tokio::spawn(async move {
+                    loop {
+                        let event = node.next_event().await.unwrap();
+                        if let super::super::SwarmEvent::Behaviour(
+                            super::super::NodeBehaviourEvent::Gossipsub(
+                                libp2p::gossipsub::Event::Message {
+                                    propagation_source,
+                                    message_id,
+                                    message,
+                                },
+                            ),
+                        ) = &event
+                        {
+                            // Observe bytes before the receiving interface can reject them.
+                            raw.send((
+                                *propagation_source,
+                                message_id.clone(),
+                                message.data.clone(),
+                            ))
+                            .unwrap();
+                        }
+                        node.process(event).await.unwrap();
+                        super::super::reconcile_gossip_subscriptions(
+                            &mut node.interface.swarm,
+                            &node.admission,
+                            &node.interface.topic,
+                            &node.interface.status,
+                        );
+                    }
+                }));
+            }
+            let path = Self {
+                handles,
+                tasks,
+                source: source_handle,
+                source_events,
+                receivers: outputs,
+            };
+            timeout(Duration::from_secs(20), async {
+                loop {
+                    if path.handles.iter().enumerate().all(|(index, handle)| {
+                        handle.status().snapshot().gossip_subscribed_peers
+                            >= if index < relays {
+                                receivers + 1
+                            } else {
+                                relays
+                            }
+                    }) {
+                        break;
+                    }
+                    sleep(Duration::from_millis(20)).await;
+                }
+            })
+            .await
+            .context("gossip topology did not form")?;
+            // Let the first heartbeat form the mesh before publishing the workload.
+            sleep(Duration::from_secs(2)).await;
+            Ok(path)
+        }
+
+        async fn publish(&mut self, data: GossipData) -> Result<MessageId> {
             let correlation_id = CorrelationId::new();
-            source_handle
+            self.source
                 .tx()
                 .send(NetCommand::GossipPublish {
-                    topic: policy.protocols().gossip_topic().to_owned(),
-                    data: GossipData::DocumentPublishedNotification(notification),
+                    topic: NetworkPolicy::local_unrestricted()
+                        .protocols()
+                        .gossip_topic()
+                        .to_owned(),
+                    data,
                     correlation_id,
                     delivery_id: None,
                 })
                 .await?;
             timeout(Duration::from_secs(5), async {
                 loop {
-                    match source_events.recv().await? {
+                    match self.source_events.recv().await? {
                         NetEvent::GossipPublished {
-                            correlation_id: id, ..
-                        } if id == correlation_id => return anyhow::Ok(()),
+                            correlation_id: id,
+                            message_id,
+                        } if id == correlation_id => return anyhow::Ok(message_id),
                         NetEvent::GossipPublishError {
                             correlation_id: id,
                             error,
@@ -960,41 +1023,143 @@ mod notification_ingress {
                     }
                 }
             })
-            .await??;
+            .await?
         }
-        let mut delivered = Vec::new();
+    }
+
+    fn notification(e3: u64, dealer: u64, recipient: u64) -> DocumentPublishedNotification {
+        DocumentPublishedNotification {
+            key: ContentHash::from_content(format!("{e3}:{dealer}:{recipient}").as_bytes()),
+            ts: 1,
+            meta: DocumentMeta::new(
+                E3id::new(e3.to_string(), 1),
+                DocumentKind::TrBFV,
+                vec![Filter::Item(recipient)],
+                Some(
+                    (Utc::now() + chrono::Duration::hours(1))
+                        .with_nanosecond(0)
+                        .unwrap(),
+                ),
+            ),
+        }
+    }
+
+    #[tokio::test]
+    async fn invalid_notifications_stop_at_the_relay_but_other_party_documents_pass() -> Result<()>
+    {
+        let mut path = GossipPath::new(1, 1).await?;
+        let valid = notification(1, 1, 7);
+        let malformed = DocumentPublishedNotification {
+            key: ContentHash(vec![1; 33]),
+            ..valid.clone()
+        };
+        let mut expired = valid.clone();
+        expired.meta.expires_at = Utc::now() - chrono::Duration::seconds(1);
+        let warmup = path
+            .publish(GossipData::DocumentPublishedNotification(notification(
+                1, 2, 7,
+            )))
+            .await?;
+        let bad_shape = path
+            .publish(GossipData::DocumentPublishedNotification(malformed))
+            .await?;
+        let bad_expiry = path
+            .publish(GossipData::DocumentPublishedNotification(expired))
+            .await?;
+        let valid_id = path
+            .publish(GossipData::DocumentPublishedNotification(valid))
+            .await?;
+        let expected = HashSet::from([warmup, valid_id]);
+        let mut delivered = HashSet::new();
         timeout(Duration::from_secs(10), async {
-            while delivered.len() < 2 {
-                if let NetEvent::DocumentIngress(ingress) = received.recv().await? {
-                    assert_eq!(ingress.propagation_source, Some(relay_peer));
-                    assert!(
-                        ingress.notification == warmup || ingress.notification == valid,
-                        "invalid notification reached the third peer"
-                    );
-                    delivered.push(ingress.notification);
-                }
+            while delivered.len() < expected.len() {
+                let (_, id, _) = path.receivers[0].recv().await.context("receiver stopped")?;
+                assert!(
+                    expected.contains(&id),
+                    "invalid notification reached the third peer before its validation: {id}"
+                );
+                delivered.insert(id);
             }
             anyhow::Ok(())
         })
         .await??;
-        assert!(delivered.contains(&warmup) && delivered.contains(&valid));
-        let extra = timeout(Duration::from_secs(2), async {
-            loop {
-                if let NetEvent::DocumentIngress(ingress) = received.recv().await? {
-                    return anyhow::Ok(ingress);
+        assert_eq!(delivered, expected);
+        let extra = timeout(Duration::from_secs(2), path.receivers[0].recv()).await;
+        assert!(extra.is_err(), "unexpected raw gossip after the controls: {extra:?}; rejected IDs: {bad_shape}, {bad_expiry}");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn concurrent_committee_bursts_reach_both_receivers_through_relays() -> Result<()> {
+        use e3_events::{
+            DKGRecursiveAggregationComplete, EventConstructorWithTimestamp, EventSource,
+            InterfoldEvent, KeyshareCreated, Unsequenced,
+        };
+        use e3_utils::ArcBytes;
+        // A concentrating relay, then two relay paths in a mesh. Both destinations need the
+        // one-shot inputs used by active and standby aggregators.
+        for relays in [1, 2] {
+            let mut path = GossipPath::new(relays, 2).await?;
+            let mut expected = HashSet::new();
+            for e3 in 1..=2 {
+                for dealer in 0..19 {
+                    for recipient in 0..19 {
+                        if recipient == dealer {
+                            continue;
+                        }
+                        expected.insert(
+                            path.publish(GossipData::DocumentPublishedNotification(notification(
+                                e3, dealer, recipient,
+                            )))
+                            .await?,
+                        );
+                    }
+                    for payload in [
+                        KeyshareCreated {
+                            e3_id: E3id::new(e3.to_string(), 1),
+                            party_id: dealer,
+                            node: "dealer".into(),
+                            pubkey: ArcBytes::from_bytes(b"key"),
+                            signed_pk_generation_proof: None,
+                        }
+                        .into(),
+                        DKGRecursiveAggregationComplete::with_attestation(
+                            E3id::new(e3.to_string(), 1),
+                            dealer,
+                            None,
+                            None,
+                        )
+                        .into(),
+                    ] {
+                        let event = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+                            payload,
+                            None,
+                            1,
+                            None,
+                            EventSource::Local,
+                        );
+                        expected.insert(
+                            path.publish(GossipData::GossipBytes(event.to_bytes()?))
+                                .await?,
+                        );
+                    }
                 }
             }
-        })
-        .await;
-        assert!(
-            extra.is_err(),
-            "invalid notification was relayed after valid traffic"
-        );
-        for handle in [source_handle, relay_handle, receiver_handle] {
-            handle.tx().send(NetCommand::Shutdown).await?;
-        }
-        for task in [source_task, relay_task, receiver_task] {
-            timeout(Duration::from_secs(5), task).await???;
+            assert_eq!(expected.len(), 2 * (342 + 19 + 19));
+            for receiver in &mut path.receivers {
+                let mut received = HashSet::new();
+                timeout(Duration::from_secs(15), async {
+                    while received.len() < expected.len() {
+                        let (_, id, _) = receiver.recv().await.context("receiver stopped")?;
+                        assert!(expected.contains(&id));
+                        received.insert(id);
+                    }
+                    anyhow::Ok(())
+                })
+                .await
+                .context("every committee contribution must reach each receiver")??;
+                assert_eq!(received, expected);
+            }
         }
         Ok(())
     }

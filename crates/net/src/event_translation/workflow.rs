@@ -14,6 +14,7 @@ use e3_events::{
     prelude::*, Event, EventId, EventSource, InterfoldEvent, InterfoldEventData, SeqState,
     Unsequenced,
 };
+use libp2p::PeerId;
 use tracing::{debug, trace};
 
 use crate::{
@@ -49,7 +50,7 @@ impl EventTranslationService {
             sent_events: HashSet::with_capacity(EVENT_DEDUP_CAPACITY),
             sent_order: VecDeque::with_capacity(EVENT_DEDUP_CAPACITY),
             pending_events: HashSet::new(),
-            stored_remote: SeenIds::new(),
+            stored_remote: SeenIds::new("stored_event"),
             topic: topic.to_string(),
             network,
         }
@@ -123,8 +124,8 @@ impl EventTranslationService {
     /// Reserve retention before handing a gossip event to the event store. Roll back a rejected
     /// handoff; a later failed append stops the node. Recording here also covers an event that
     /// the EventBus knows from replay and does not deliver again.
-    pub fn admit_remote_event(&mut self, id: &EventId, now: Instant) -> bool {
-        self.stored_remote.admit(id, now) == Admission::New
+    pub fn admit_remote_event(&mut self, peer: Option<PeerId>, id: &EventId, now: Instant) -> bool {
+        self.stored_remote.admit(peer, id, now) == Admission::New
     }
 
     /// Undo a rejected handoff immediately after admission, before any other cache operation.
@@ -138,7 +139,7 @@ impl EventTranslationService {
     pub fn record_stored_event(&mut self, event: &InterfoldEvent, now: Instant) {
         if event.source() == EventSource::Net && Self::is_forwardable_event(event) {
             self.stored_remote
-                .admit(&EventId::hash(event.get_data()), now);
+                .admit(None, &EventId::hash(event.get_data()), now);
         }
     }
 

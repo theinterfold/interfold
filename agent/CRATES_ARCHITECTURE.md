@@ -543,89 +543,103 @@ require an explicit deployment set; only the local test policy can be unrestrict
 all staged connections for a peer, permanently rejects incompatible peers, and applies a short
 retryable cooldown after an Identify timeout. Gossipsub uses strict signatures and application
 validation before forwarding. The gossipsub duplicate cache keeps its 60-second default. The node
-also ignores, without forwarding, a message ID from an admitted peer that it handled in the last 6
-hours. Gossip and stored-event ingress each admit 16 new IDs per second with a burst of 256. Each
-seen-ID cache holds 345,856 IDs, enough for that rate and burst over 6 hours. A full cache rejects
-new IDs and logs capacity pressure with zero early evictions; it never evicts an unexpired ID. These
-windows are local to the running process. A message that arrives before its sender is admitted is
-not recorded, so a later copy from an admitted peer is still handled. Gossip envelopes bind the
-network, Interfold deployment, chain aggregate, event ID, schema version, and payload hash. Before
-acceptance, `GossipIngress` checks each propagation peer's budgets: 8 messages per second with a
-burst of 32, and 1 MiB per second with a burst of 20 MiB. The budget table holds at most 1,024 peers
-and can remove a peer after 60 idle seconds. Disconnects do not reset budgets. The wire decoder
-checks notification key length, E3 identifier length, party-filter shape, and expiry before gossip
-accepts or forwards the message. Valid notifications relay even when they name another party;
-acceptance does not wait for a DHT read. `DocumentIngress` carries the propagation peer only in
-local memory, including through the startup and early-notification buffers. Gossipsub and
+also ignores, without forwarding, a message ID while it remains in the six-hour seen window. Each
+cache holds 341,696 IDs and admits every new ID. Peers borrow unused space. At capacity, a peer at
+its fair share replaces its own oldest entry; a peer below its share reclaims space from the largest
+owner. Duplicates retain their first timestamp and owner, also when another peer delivers them.
+`seen_ids_early_evictions_total` is a cumulative structured log metric, labeled by cache. WARN logs
+report it at powers of two to bound log volume. These windows are local to the running process.
+
+`ingress_limits.rs` owns the capacity calculation. An N=19, H=14 E3 has 380 document notifications
+and up to 173 ordinary publications, including six Ready updates per party. Four concurrent E3s with
+a 2x margin give 4,424 publications per round. The cache reserves four rounds (17,696 IDs) for the
+initial burst and the retries before the five-minute interval. Its sustained planning rate is
+`ceil(4,424 / 300) = 15` IDs/s. Capacity is `15 * 21,600 + 17,696 = 341,696`. This sizes retention;
+it does not impose an ingress throttle. Above capacity, retention shortens within the peer shares.
+Gossip counts distinct transport delivery IDs, including reannouncements. Storage counts stable
+payload-derived event IDs, so retransmissions do not consume more storage-cache entries.
+
+A message that arrives before its sender is admitted is not recorded, so a later copy from an
+admitted peer is still handled. Gossip envelopes bind the network, Interfold deployment, chain
+aggregate, event ID, schema version, and payload hash. The wire decoder checks notification key
+length, E3 identifier length, party-filter shape, and expiry before gossip accepts or forwards it.
+Valid notifications relay even when they name another party; acceptance does not wait for a DHT
+read. No peer message-count or byte-rate throttle discards valid relayed traffic. The existing
+per-message wire size bounds still apply. `DocumentIngress` and `NetEvent::GossipIngress` carry the
+propagation peer only in local memory, including through startup buffering. Gossipsub and
 direct-request/DHT decoding have explicit byte limits. Translation actors accept only the protocol
 event allowlist before publishing remote events, and their broadcast-to-actor ingress loops await
 mailbox acceptance and stop when the destination actor closes. The event translator does not publish
-a peer event again while that event ID is in its 6-hour stored window. It reserves retention before
-it hands a gossip event to the event store. A rejected handoff releases the ID without refunding its
-ingress budget. Events delivered by the EventBus from other storage paths, such as historical sync,
-can also enter the window within its admission budget. These observations never displace a retained
-ID. A failed append stops the event store and the node, so recording before the commit cannot hide
-an event from a running node. After a restart, the first copy of an already stored event is stored
-once more. The document publisher fetches documents in spawned tasks, so a slow DHT read does not
-hold its ingress loop. At most 8 fetches run and at most 512 notified documents wait. One
-propagation peer can hold at most 2 active fetches and 64 waiting documents. The queue rotates among
-peers with due work and spare active slots. The first notifying peer owns a document's budget
-through its retries; later candidates do not change that owner. A new notification can replace
-failed work, but a peer at its own queue limit can replace only its own failed work. Early
-notifications also have a limit of 64 per peer within the global limit of 1,024; new ingress removes
-expired entries. In-process notifications without a peer share one bounded unattributed budget. A
-failed fetch is retried at the back-off cap until the document arrives, its E3 closes, or its
-notifications expire. A waiting document keeps one candidate notification per party filter (`[]` or
-`[Item(party)]`, the only shapes that any release publishes), with the latest expiry, and the
-fetched document is accepted under the first candidate whose metadata matches its payload. A
-notification that arrives during the fetch is checked against the fetched bytes without another GET,
-and a DHT GET accepts only the record for the requested key. Each publish attempt has a result
-timeout. No-peer failures use a longer retry window than other transient failures. The network
-producer sends all events to the raw channel. It also sends gossip payloads and publish or DHT
-results to a separate application channel. The startup buffer subscribes only to the application
-channel. Historical-sync and connection-control bursts cannot lag the application receiver or
-consume its actor mailbox. The application buffer is bounded by both event count and estimated bytes
-and fails readiness on overflow or broadcast lag; after `SyncEnded`, broadcast lag is warned and
-skipped without stopping the ingress loop. Historical direct sync requires advancing cursors and
-enforces one cumulative page, event, byte, and time budget across all aggregate fetches and recovery
-retries in a startup attempt. Bootstrap dialing makes three bounded startup attempts and then
-retries unavailable peers every 60 seconds in the background. Kademlia peers are evicted after three
-consecutive dial failures and quarantined from discovery-based routing-table reinsertion for up to
-30 minutes. An admitted connection clears the cooldown early. A peer-ID mismatch quarantines the
-stale identity immediately. A dial that reaches this node's own identity is not a mismatch: the node
-removes that address from Kademlia and does not quarantine the peer it was advertised for. Identify
-has no address cache, so it cannot supply unfiltered peer addresses to later dials. Each compatible
-Identify exchange refreshes the admitted peer's filtered Kademlia addresses, including updates while
-connected. Each peer retains at most 8 Identify addresses and 2 KiB of encoded multiaddresses,
-including peer IDs. Select advertised live endpoints first, then fill the remaining slots with
-unique filtered addresses in advertised order within these limits. Up to 2 live connection endpoints
-remain until they close, even when absent from Identify. A withdrawn endpoint is removed after its
-last connection closes. Address tracking follows live connections and routing entries. Only newly
-admitted connections receive admission notifications. Kademlia adds new routing-table entries only
-through the filtered addresses of admitted peers, not automatically for every connection. Kademlia
-still adds a dialed address to an existing entry, so the node removes loopback addresses when
-Kademlia reports a routing update. Loopback addresses between nodes on one host are therefore not
-passed on to remote peers. The library's record replication and republication jobs are disabled:
-each hour the replication job would put every stored record that no peer put again since its last
-run to up to 20 peers, which after a DKG includes the other peers' DKG documents. Expired records
-are pruned every minute instead. Kademlia queries time out after 60 seconds, and each request stream
-after 60 seconds. Peer health and quarantine state are process-local and are rebuilt after restart.
-A peer ID supplied in explicit configuration is pinned and cannot rebind to the identity obtained
-during a failed dial. A discovered address without an explicit identity can adopt the authenticated
-remote peer ID. An admitted QUIC connection is not sufficient evidence that gossip is ready. Network
-status reports how many admitted peers advertise the protocol topic. If a connected peer does not
-advertise the topic within 30 seconds, the node closes all connections to that peer. After a
-backoff, the configured peer dialer creates a fresh connection and repeats the gossip subscription
-exchange. This repairs a missed subscription exchange after overlapping rolling-restart connections.
-The backoff starts at 30 seconds and doubles with each such disconnect in a row, up to 30 minutes
-plus up to 10% jitter. An admitted connection does not reset it; a gossip subscription does, seen as
-a subscribe event or when Identify admits a peer that subscribed first. The node forgets the backoff
-30 minutes after it ends. During the backoff, `GossipSubscriptionHealth` refuses every outbound dial
-that names the peer, also the dials of a Kademlia query that chose the peer before the disconnect.
-The node also removes the peer from its Kademlia routing table, as it does for a quarantined peer,
-so it is not an initial candidate of new queries; a query can still learn it from another peer, and
-the backoff then refuses the dial. An inbound connection from the peer, and a dial by address
-without a peer ID, are not held back.
+a peer event again while that event ID is in its stored window. It records the ID before handing a
+gossip event to the event store. A rejected handoff releases the ID. Historical sync observations
+share an unattributed cache owner and cannot displace peers below their shares. There is no second
+admission throttle during startup draining. A failed append stops the event store and the node, so
+recording before the commit cannot hide an event from a running node. After a restart, the first
+copy of an already stored event is stored once more.
+
+The document publisher fetches documents in spawned tasks, so a slow DHT read does not hold its
+ingress loop. At most 8 fetches run and 512 documents wait. Four concurrent N=19 E3s need
+`4 * 3 * 18 = 216` remote documents per node. A 2x margin gives 432, rounded up to 512 queue slots.
+The next due peer with the fewest active reads gets the next slot; ties rotate. A lone peer uses all
+idle slots. A GET releases its slot after one attempt (at most 90 seconds); retries wait in the fair
+queue instead of holding a slot through several attempts. The first notifying peer owns a document
+through retries; later candidates do not change ownership. At capacity, a peer below its fair share
+can replace queued work of the largest owner. Otherwise, only its own work with more failures can
+make room. Overflow can wait for a later announcement. Early buffering holds up to
+`4 * 380 * 2 = 3,040` notifications, with the same borrowing rule and no hard per-peer cap. New
+ingress removes expired entries. In-process notifications without a peer share an unattributed
+owner. Failed fetches retry with backoff until delivery, E3 closure, or expiry. A waiting document
+keeps one candidate notification per party filter (`[]` or `[Item(party)]`, the only shapes that any
+release publishes), with the latest expiry, and the fetched document is accepted under the first
+candidate whose metadata matches its payload. A notification that arrives during the fetch is
+checked against the fetched bytes without another GET, and a DHT GET accepts only the record for the
+requested key. Each publish attempt has a result timeout. No-peer failures use a longer retry window
+than other transient failures. The network producer sends all events to the raw channel. It also
+sends gossip payloads and publish or DHT results to a separate application channel. The startup
+buffer subscribes only to the application channel. Historical-sync and connection-control bursts
+cannot lag the application receiver or consume its actor mailbox. The application buffer is bounded
+by both event count and estimated bytes and fails readiness on overflow or broadcast lag; after
+`SyncEnded`, broadcast lag is warned and skipped without stopping the ingress loop. Historical
+direct sync requires advancing cursors and enforces one cumulative page, event, byte, and time
+budget across all aggregate fetches and recovery retries in a startup attempt. Bootstrap dialing
+makes three bounded startup attempts and then retries unavailable peers every 60 seconds in the
+background. Kademlia peers are evicted after three consecutive dial failures and quarantined from
+discovery-based routing-table reinsertion for up to 30 minutes. An admitted connection clears the
+cooldown early. A peer-ID mismatch quarantines the stale identity immediately. A dial that reaches
+this node's own identity is not a mismatch: the node removes that address from Kademlia and does not
+quarantine the peer it was advertised for. Identify has no address cache, so it cannot supply
+unfiltered peer addresses to later dials. Each compatible Identify exchange refreshes the admitted
+peer's filtered Kademlia addresses, including updates while connected. Each peer retains at most 8
+Identify addresses and 2 KiB of encoded multiaddresses, including peer IDs. Select advertised live
+endpoints first, then fill the remaining slots with unique filtered addresses in advertised order
+within these limits. Up to 2 live connection endpoints remain until they close, even when absent
+from Identify. A withdrawn endpoint is removed after its last connection closes. Address tracking
+follows live connections and routing entries. Only newly admitted connections receive admission
+notifications. Kademlia adds new routing-table entries only through the filtered addresses of
+admitted peers, not automatically for every connection. Kademlia still adds a dialed address to an
+existing entry, so the node removes loopback addresses when Kademlia reports a routing update.
+Loopback addresses between nodes on one host are therefore not passed on to remote peers. The
+library's record replication and republication jobs are disabled: each hour the replication job
+would put every stored record that no peer put again since its last run to up to 20 peers, which
+after a DKG includes the other peers' DKG documents. Expired records are pruned every minute
+instead. Kademlia queries time out after 60 seconds, and each request stream after 60 seconds. Peer
+health and quarantine state are process-local and are rebuilt after restart. A peer ID supplied in
+explicit configuration is pinned and cannot rebind to the identity obtained during a failed dial. A
+discovered address without an explicit identity can adopt the authenticated remote peer ID. An
+admitted QUIC connection is not sufficient evidence that gossip is ready. Network status reports how
+many admitted peers advertise the protocol topic. If a connected peer does not advertise the topic
+within 30 seconds, the node closes all connections to that peer. After a backoff, the configured
+peer dialer creates a fresh connection and repeats the gossip subscription exchange. This repairs a
+missed subscription exchange after overlapping rolling-restart connections. The backoff starts at 30
+seconds and doubles with each such disconnect in a row, up to 30 minutes plus up to 10% jitter. An
+admitted connection does not reset it; a gossip subscription does, seen as a subscribe event or when
+Identify admits a peer that subscribed first. The node forgets the backoff 30 minutes after it ends.
+During the backoff, `GossipSubscriptionHealth` refuses every outbound dial that names the peer, also
+the dials of a Kademlia query that chose the peer before the disconnect. The node also removes the
+peer from its Kademlia routing table, as it does for a quarantined peer, so it is not an initial
+candidate of new queries; a query can still learn it from another peer, and the backoff then refuses
+the dial. An inbound connection from the peer, and a dial by address without a peer ID, are not held
+back.
 
 `PlaintextAggregated` is excluded from gossip and historical peer sync. It remains a local durable
 publication intent, and canonical chain observations report completion. The request router rejects a

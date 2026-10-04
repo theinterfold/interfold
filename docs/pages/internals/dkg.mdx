@@ -725,16 +725,28 @@ C5 and C7 do not travel as separate proofs. They enter the recursive proofs of t
 aggregator.
 
 A node checks each document notification's structure and expiry before gossip forwards it. Valid
-notifications for other parties still relay. Each propagation peer has a budget of 8 messages per
-second with a burst of 32, and 1 MiB per second with a burst of 20 MiB. Document fetches rotate
-among peers, with at most 2 active fetches and 64 waiting documents per peer. The global limits are
-8 active fetches and 512 waiting documents.
+notifications for other parties still relay. Admission does not impose message-count or byte-rate
+throttles on a relay. Each message must still fit the wire size limit.
 
-Gossip and remote-event storage each support 16 new IDs per second with a burst of 256. Each cache
-retains admitted IDs for six hours during the running process and holds up to 345,856 IDs. Traffic
-above the budget is ignored. A full cache rejects new IDs and logs capacity pressure instead of
-removing unexpired IDs. A restart starts new retention windows. These limits do not change message
-IDs, event IDs, or serialized data.
+Document fetches use up to eight active reads and 512 waiting documents. A peer can use all idle
+capacity. When peers compete, the next due peer with the fewest active reads gets the next slot;
+ties rotate. Each read releases its slot after one attempt, within 90 seconds. Failed reads return
+to the queue with backoff. At capacity, a peer below its fair share can reclaim space from the
+largest owner. Notifications repeat to recover queue overflow.
+
+Capacity planning uses four concurrent N=19, H=14 E3s and a 2x margin. Each E3 can emit 380 document
+notifications and 173 ordinary publications, including six Ready updates per party. This gives 4,424
+publications per round with the margin. Each seen-ID cache reserves four rounds for initial traffic
+and early retries, plus 15 IDs/s for six hours: 341,696 entries. A node needs 54 remote documents
+per E3; four E3s with the margin need 432 queue slots, rounded up to 512. Early notifications have
+3,040 slots because the recipient is not yet known.
+
+Seen-ID caches admit every new ID. Peers borrow idle space; at capacity, a peer at its fair share
+replaces its own oldest ID. A peer below its share reclaims space from the largest owner. Early
+eviction shortens retention and increments the `seen_ids_early_evictions_total` counter in WARN
+logs. Cache pressure never discards accepted startup events. Gossip tracks transport delivery IDs;
+storage tracks stable event IDs, so a retransmission does not add another logical contribution. A
+restart starts new windows. Message IDs, event IDs, and serialized data remain unchanged.
 
 ### Verification
 

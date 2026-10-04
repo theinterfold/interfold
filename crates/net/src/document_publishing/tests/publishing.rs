@@ -951,8 +951,8 @@ async fn expired_document_is_rejected_without_a_dht_write() -> Result<()> {
 }
 
 #[actix::test]
-async fn test_get_document_fails_with_exponential_backoff() -> Result<()> {
-    let (_guard, bus, _net_cmd_tx, mut net_cmd_rx, net_evt_tx, _net_evt_rx, _, errors, _) =
+async fn a_failed_read_releases_its_slot_before_retry_backoff() -> Result<()> {
+    let (_guard, bus, _net_cmd_tx, mut net_cmd_rx, net_evt_tx, _net_evt_rx, _, errors, publisher) =
         setup_test()?;
 
     let value = b"I am a special document".to_vec();
@@ -976,33 +976,27 @@ async fn test_get_document_fails_with_exponential_backoff() -> Result<()> {
         }),
     ))?;
 
-    for _ in 0..4 {
-        // Expect retry
-        let Some(NetCommand::DhtGetRecord { correlation_id, .. }) =
-            timeout(Duration::from_secs(15), net_cmd_rx.recv())
-                .await
-                .expect("did not receive DhtGetRecord")
-        else {
-            bail!("msg not as expected");
-        };
-
-        // Report failure
-        net_evt_tx.send(NetEvent::DhtGetRecordError {
-            correlation_id,
-            error: GetRecordError::Timeout {
-                key: RecordKey::new(&cid),
-            },
-        })?;
-    }
-
-    // wait for events to settle
-    let errors = errors.send(TakeEvents::new(1)).await?;
+    let Some(NetCommand::DhtGetRecord { correlation_id, .. }) =
+        timeout(Duration::from_secs(2), net_cmd_rx.recv()).await?
+    else {
+        bail!("expected a DHT read");
+    };
+    net_evt_tx.send(NetEvent::DhtGetRecordError {
+        correlation_id,
+        error: GetRecordError::Timeout {
+            key: RecordKey::new(&cid),
+        },
+    })?;
+    let errors = timeout(Duration::from_secs(2), errors.send(TakeEvents::new(1))).await??;
     let error: InterfoldError = errors.events.first().unwrap().try_into()?;
-    assert_eq!(
-            error.message,
-            "Operation failed after 4 attempts. Last error: DHT get record failed: Timeout { key: Key(b\"\\xda-\\xe1\\xc0T\\x11$X\\x05\\xd1\\xd4\\xa6C\\x86\\x96\\xb7e\\xd9j\\x96\\x1bD\\xc8P#\\x0f\\\"\\xea A@b\") }"
-        );
-
+    assert!(error.message.contains("DHT get record failed"));
+    assert_eq!(publisher.send(FetchBacklog).await?, (0, 1));
+    assert!(
+        timeout(Duration::from_millis(100), net_cmd_rx.recv())
+            .await
+            .is_err(),
+        "a failed read waits in the queue during backoff"
+    );
     Ok(())
 }
 

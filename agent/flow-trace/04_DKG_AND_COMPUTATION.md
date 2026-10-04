@@ -1730,18 +1730,22 @@ library's own hourly replication of stored records is disabled. A failed upload 
 retried after 15 seconds, doubling up to 5 minutes, including when no peer subscribed to the topic
 at the first attempt. A failed announcement does not upload the document again. Before gossip
 acceptance, the wire decoder checks the notification's key and E3 identifier lengths, party-filter
-shape, and expiry. Ingress enforces per-propagation-peer message and byte budgets without waiting
-for a DHT fetch. Valid notifications for other parties still relay. A receiver holds early
-notifications until its committee slot is known, one per document and party filter with the latest
-expiry, and it checks expiry again after that wait. Local ingress metadata retains the propagation
-peer. Early buffering admits at most 64 notifications per peer and 1,024 overall, and new ingress
-removes expired entries. It fetches documents outside the network ingress loop, with at most 8
-fetches in flight and at most 512 documents waiting. Each peer has at most 2 active fetches and 64
-waiting documents. The queue rotates among eligible peers and retains the first peer's budget
-ownership across retries. Document deduplication and the serialized notification stay unchanged. A
-failed fetch is retried with the same back-off until the document arrives, its E3 closes, or its
-notifications expire. A fetch accepts only the record for the requested key, and the document is
-accepted under the first waiting notification whose metadata matches its payload, so a forged
+shape, and expiry. Valid notifications for other parties still relay. No per-peer message-count or
+byte-rate throttle discards valid relay traffic, and ingress does not wait for a DHT fetch. A
+receiver holds early notifications until its committee slot is known, one per document and party
+filter with the latest expiry, and checks expiry again after that wait. Transient ingress metadata
+retains the propagation peer through buffering. `ingress_limits.rs` sizes early buffering for four
+N=19 E3s with a 2x margin: 3,040 notifications. New ingress removes expired entries. Fetches run
+outside the network ingress loop, with at most 8 active reads and 512 queued documents (above the
+432-document workload floor). A due peer with the fewest active reads gets the next slot; ties
+rotate. A lone peer can use all idle capacity. Each GET releases its slot after one attempt, within
+90 seconds. Failed fetches return to the fair queue with backoff until the document arrives, its E3
+closes, or its notifications expire. The first peer owns the document across retries. Early and
+fetch queues have no hard per-peer cap. At global capacity, a peer below its fair share can reclaim
+space from the largest owner. Otherwise, the fetch queue can replace only that peer's work with more
+failures. Overflow waits for a later announcement. Document deduplication and the serialized
+notification stay unchanged. A fetch accepts only the record for the requested key, and the document
+is accepted under the first waiting notification whose metadata matches its payload, so a forged
 notification cannot displace a correct one. It suppresses duplicate documents. A canonical
 `KeyPublished` stage stops DKG-document announcements and uploads, with their scheduled retries, and
 prunes the DHT records that this node published. The Kademlia query of a put in its upload phase

@@ -288,16 +288,19 @@ the code does not meet yet.
   progress, still go out, and a put that still looks up its closest peers runs on and then uploads.
   — INDEX concerns #60, #62, #63, #74; `crates/net/src/document_publishing/workflow.rs`;
   `crates/net/src/network_sync/effects/rebroadcast.rs`
-- A node does not accept or forward a gossip message ID that it has already handled, including after
-  the gossipsub duplicate cache expires. It does not store a peer event again while that event ID is
-  in the translator's stored window. The ID is recorded when the event is handed to the event store.
-  A rejected handoff releases that ID; a failed append stops the node. Both ingress caches reserve
-  six-hour retention before new gossip acceptance or event storage: 16 new IDs per second, a burst
-  of 256, and capacity for 345,856 IDs each. Capacity pressure rejects new IDs with a log; it never
-  evicts an unexpired ID. Peer message and byte budgets apply before gossip forwarding. Notification
-  shape and expiry checks also precede acceptance, without suppressing valid relays for another
-  party. — INDEX concerns #61, #62; `crates/net/src/gossip_ingress.rs`;
-  `crates/net/src/seen_messages.rs`; `crates/net/src/network_sync/wire.rs`;
+- A node does not accept or forward a gossip message ID while it remains in its seen cache. It does
+  not store a peer event again while its payload-derived ID remains in the stored window. A rejected
+  event-store handoff releases that ID; a failed append stops the node. Both caches admit every new
+  ID without a rate throttle, including during startup draining. Capacity comes from four concurrent
+  N=19, H=14 committees with a 2x margin, retry bursts, and a six-hour TTL. Peers borrow idle
+  capacity. At capacity, a peer at its fair share evicts its own oldest entry; a peer below its
+  share reclaims space from the largest owner. Early eviction increments
+  `seen_ids_early_evictions_total` in structured WARN logs with bounded log frequency. Retention can
+  shorten under pressure; it must not reject required protocol inputs. Notification shape and expiry
+  checks precede acceptance, without suppressing valid relays for another party. No message-count or
+  byte-rate throttle discards valid relay traffic. Per-message wire size limits still apply. — INDEX
+  concerns #61, #62; `crates/net/src/gossip_ingress.rs`; `crates/net/src/seen_messages.rs`;
+  `crates/net/src/ingress_limits.rs`; `crates/net/src/network_sync/wire.rs`;
   `crates/net/src/event_translation/`
 - A notification adds a fetch candidate only for its own party filter, and a waiting or
   early-buffered document keeps one notification per filter with the latest expiry, so a forged or
@@ -306,10 +309,12 @@ the code does not meet yet.
   `crates/net/src/document_publishing/effects.rs`
 - Network ingress loops do not wait for long I/O such as a DHT fetch. They hand the work to the
   actor, which bounds its concurrency. A transient wrapper retains the propagation peer across
-  buffering. Document fetches rotate among eligible peers, with at most 2 active and 64 waiting per
-  peer, within the global limits of 8 active and 512 waiting. Document IDs and serialized metadata
-  do not include that transport attribution. — `crates/net/src/document_publishing/handlers.rs`;
-  `crates/net/src/document_publishing/workflow.rs`
+  buffering. Document fetches serve due peers with the fewest active reads and rotate ties, with at
+  most 8 active reads and 512 queued documents. A lone peer can use all idle slots. Each GET
+  releases its slot after one attempt; retries return to the fair queue. No per-peer cap drops work
+  while global capacity is idle. The queue covers four concurrent N=19 E3s with a 2x margin.
+  Document IDs and serialized metadata do not include transport attribution. —
+  `crates/net/src/document_publishing/handlers.rs`; `crates/net/src/document_publishing/workflow.rs`
 - Log volume must not scale with payload size or redelivery count. Byte payloads format through
   `hexf` (length and edge digits), network commands log `NetCommand::summary`, and the default log
   filter drops libp2p gossipsub warnings. — INDEX concern #65; `crates/utils/src/formatters.rs`;

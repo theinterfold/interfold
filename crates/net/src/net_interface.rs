@@ -1274,7 +1274,10 @@ async fn process_swarm_event(
                                     },
                                 ))
                             }
-                            data => NetEvent::GossipData(data),
+                            data => NetEvent::GossipIngress {
+                                propagation_source: peer_id,
+                                data,
+                            },
                         };
                         event_tx.send(event)?;
                     }
@@ -1287,7 +1290,7 @@ async fn process_swarm_event(
                                 &peer_id,
                                 gossipsub::MessageAcceptance::Ignore,
                             );
-                        trace!(%peer_id, %id, "Ignored duplicate or throttled gossip");
+                        trace!(%peer_id, %id, "Ignored duplicate gossip");
                     }
                     Err(error) => {
                         swarm

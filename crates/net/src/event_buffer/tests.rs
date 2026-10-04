@@ -303,3 +303,96 @@ async fn sync_control_burst_does_not_lag_or_consume_the_application_buffer() -> 
     ));
     Ok(())
 }
+
+#[actix::test]
+async fn startup_drain_stores_every_accepted_protocol_event() -> Result<()> {
+    use crate::{
+        domain::wire::encode_gossip, gossip_ingress::GossipIngress, NetEventTranslator,
+        NetworkPolicy,
+    };
+    use e3_events::{AggregateConfig, AggregateId, EventFactory, GetEvents, KeyshareCreated};
+    use sha2::{Digest, Sha256};
+    let system = EventSystem::new()
+        .with_fresh_bus()
+        .with_aggregate_config(AggregateConfig::new(std::collections::HashMap::from([(
+            AggregateId::new(1),
+            Duration::ZERO,
+        )])));
+    let bus = system.handle()?.enable("test");
+    let history = bus.history();
+    let input_tx = NetEventChannel::new(1024);
+    let input = NetEventSubscriber::from(&input_tx);
+    let (output, handle) = NetEventBuffer::setup_with_limits(
+        &bus,
+        &input,
+        DEFAULT_MAX_BUFFERED_NET_EVENTS,
+        DEFAULT_MAX_BUFFERED_NET_BYTES,
+    );
+    let (commands, _command_rx) = mpsc::channel(8);
+    let policy = NetworkPolicy::local_unrestricted();
+    let _translator = NetEventTranslator::setup(&bus, &commands, &output, "topic", policy.clone());
+    let peer = PeerId::random();
+    let mut ingress = GossipIngress::new();
+    let start = Instant::now();
+    let wall = chrono::Utc::now();
+    let mut expected = std::collections::HashSet::new();
+    for index in 0..400 {
+        let event = bus.event_from(
+            KeyshareCreated {
+                e3_id: e3_events::E3id::new((index / 19).to_string(), 1),
+                party_id: index % 19,
+                node: "dealer".into(),
+                pubkey: ArcBytes::from_bytes(b"key"),
+                signed_pk_generation_proof: None,
+            },
+            None,
+        )?;
+        expected.insert(event.event_id());
+        let bytes = encode_gossip(&GossipData::GossipBytes(event.to_bytes()?), &policy, None)?;
+        let id = libp2p::gossipsub::MessageId::from(Sha256::digest(&bytes).to_vec());
+        let data = ingress
+            .validate(
+                peer,
+                &id,
+                &bytes,
+                &policy,
+                start + Duration::from_millis(index * 200),
+                wall,
+            )?
+            .expect("ingress accepts five events per second");
+        input_tx.send(NetEvent::GossipIngress {
+            propagation_source: peer,
+            data,
+        })?;
+    }
+    timeout(DELIVERY_TIMEOUT, async {
+        while handle.actor.send(BufferedEventCount).await? != expected.len() {
+            tokio::task::yield_now().await;
+        }
+        anyhow::Ok(())
+    })
+    .await??;
+    assert!(history
+        .send(GetEvents::<InterfoldEvent>::new())
+        .await?
+        .is_empty());
+    bus.publish_without_context(SyncEnded::new())?;
+    timeout(DELIVERY_TIMEOUT, handle.wait_until_running()).await??;
+    timeout(DELIVERY_TIMEOUT, async {
+        loop {
+            let stored = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+            let actual: std::collections::HashSet<_> = stored
+                .iter()
+                .filter(|event| matches!(event.get_data(), InterfoldEventData::KeyshareCreated(_)))
+                .map(|event| event.event_id())
+                .collect();
+            if actual.len() == expected.len() {
+                assert_eq!(actual, expected);
+                return anyhow::Ok(());
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await??;
+    Ok(())
+}

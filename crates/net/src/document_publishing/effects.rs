@@ -157,12 +157,8 @@ pub async fn handle_document_published_notification(
         relevant.len()
     );
 
-    let value = retry_with_backoff(
-        || get_record(net_cmds.clone(), net_events.clone(), key.clone()).map_err(to_retry),
-        4,
-        1000,
-    )
-    .await?;
+    // Release the slot after one attempt. The publisher queues retries behind other peers.
+    let value = get_record(net_cmds, net_events, key).await?;
 
     // When no candidate matches, the mismatch is final for these notifications, so the caller does
     // not fetch the document again for them. It checks later notifications against these bytes.

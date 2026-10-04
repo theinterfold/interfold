@@ -104,9 +104,6 @@ pub fn fetch_retry_delay(failures: u32) -> Duration {
     backoff_delay(RETRY_INTERVAL, failures, MAX_ANNOUNCE_BACKOFF)
 }
 
-pub const MAX_WAITING_FETCHES_PER_PEER: usize = 64;
-pub const MAX_INFLIGHT_FETCHES_PER_PEER: usize = 2;
-
 /// Most notifications kept for one waiting document, distinct by metadata. Peers choose the
 /// metadata, and only the fetched payload shows which metadata is right. So the queue keeps the
 /// first notification it saw and the newest others, and the fetch accepts the document under the
@@ -209,9 +206,9 @@ impl FetchQueue {
     }
 
     /// Queue a newly notified document. A document that is already queued keeps its retry time
-    /// and adds the notification to its candidates. When the queue is full, the document with the
-    /// most failed fetches makes room; if no queued document has failed, the new one is dropped
-    /// and `false` is returned.
+    /// and adds the notification to its candidates. When the queue is full, the largest owner
+    /// makes room for a peer below its share. Otherwise, only a document with
+    /// more failed fetches from the same peer makes room.
     pub fn push(
         &mut self,
         id: (E3id, ContentHash),
@@ -272,56 +269,58 @@ impl FetchQueue {
             .retain(|peer| self.waiting.values().any(|item| item.peer == *peer));
     }
 
-    /// A full peer budget can replace only that peer's failed work.
+    /// Unused capacity belongs to any peer. At capacity, a new or smaller owner can reclaim
+    /// space from the largest owner; otherwise only less promising work of its own makes room.
     fn make_room(&mut self, peer: Option<PeerId>, failures: u32) -> bool {
-        let peer_full = self
-            .waiting
-            .values()
-            .filter(|item| item.peer == peer)
-            .count()
-            >= MAX_WAITING_FETCHES_PER_PEER;
-        if self.waiting.len() < self.capacity && !peer_full {
+        if self.waiting.len() < self.capacity {
             return true;
         }
+        let mut counts = HashMap::new();
+        for item in self.waiting.values() {
+            *counts.entry(item.peer).or_insert(0usize) += 1;
+        }
+        let owner = crate::ingress_limits::eviction_owner(peer, counts.into_iter(), self.capacity);
         let evicted = self
             .waiting
             .iter()
-            .filter(|(_, item)| item.failures > failures && (!peer_full || item.peer == peer))
-            .max_by_key(|(_, item)| item.failures)
+            .filter(|(_, item)| item.peer == owner && (owner != peer || item.failures > failures))
+            .max_by_key(|(_, item)| (item.failures, std::cmp::Reverse(item.not_before)))
             .map(|(id, _)| id.clone());
-        let Some(evicted) = evicted else {
-            return false;
-        };
+        let Some(evicted) = evicted else { return false };
         self.waiting.remove(&evicted);
         self.prune_peers();
         true
     }
 
-    /// Rotate among peers with due work and room in their in-flight budget.
+    /// Serve the peer with the fewest active reads, rotating ties. A lone peer can use all slots.
     pub fn pop_due(
         &mut self,
         now: Instant,
         in_flight: &HashMap<Option<PeerId>, usize>,
     ) -> Option<((E3id, ContentHash), WaitingFetch)> {
-        for _ in 0..self.peers.len() {
-            let peer = self.peers.pop_front()?;
-            self.peers.push_back(peer);
-            if in_flight.get(&peer).copied().unwrap_or(0) >= MAX_INFLIGHT_FETCHES_PER_PEER {
-                continue;
-            }
-            let id = self
-                .waiting
-                .iter()
-                .filter(|(_, item)| item.peer == peer && item.not_before <= now)
-                .min_by_key(|(_, item)| item.not_before)
-                .map(|(id, _)| id.clone());
-            if let Some(id) = id {
-                let waiting = self.waiting.remove_entry(&id);
-                self.prune_peers();
-                return waiting;
-            }
+        let peer = self
+            .peers
+            .iter()
+            .filter(|peer| {
+                self.waiting
+                    .values()
+                    .any(|item| item.peer == **peer && item.not_before <= now)
+            })
+            .min_by_key(|peer| in_flight.get(peer).copied().unwrap_or(0))
+            .copied()?;
+        while self.peers.front() != Some(&peer) {
+            self.peers.rotate_left(1);
         }
-        None
+        self.peers.rotate_left(1);
+        let id = self
+            .waiting
+            .iter()
+            .filter(|(_, item)| item.peer == peer && item.not_before <= now)
+            .min_by_key(|(_, item)| item.not_before)
+            .map(|(id, _)| id.clone())?;
+        let waiting = self.waiting.remove_entry(&id);
+        self.prune_peers();
+        waiting
     }
 
     pub fn remove_e3(&mut self, e3_id: &E3id) {
