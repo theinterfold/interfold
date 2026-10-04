@@ -233,9 +233,10 @@ error, which the ordinary read path reports as an absent record, and a key that 
 the check. It also reads the slash writer state of each chain (`//evm_writers/slashing/`) and
 refuses while that state holds a slash report that the node has not submitted, also for an E3 that
 is `Complete`: completion does not settle a slash report, and the chain cannot restore its evidence.
-That state is decoded, and a record that does not decode fails the check. `nodes purge` runs the
-same check. `--allow-active-e3s` overrides the refusals
-(`crates/entrypoint/src/nodes/state_guard.rs`).
+That state is decoded, and a record that does not decode fails the check, as does a record under any
+other key below that prefix. Both checks run before the command refuses, so one refusal lists the
+E3s and the slash reports. `nodes purge` runs the same check. `--allow-active-e3s` overrides the
+refusals (`crates/entrypoint/src/nodes/state_guard.rs`).
 
 The event log is not one file. `EventSystem::persisted` passes `config.log_file()` through
 `enumerate_path`, which inserts a per-aggregate index before the extension, so the durable logs are

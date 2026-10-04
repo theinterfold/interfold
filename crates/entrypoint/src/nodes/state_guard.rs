@@ -153,10 +153,19 @@ pub(crate) async fn pending_slash_reports(
         .keys_with_prefix(StoreKeys::SLASHING_WRITER_PREFIX)
         .await
         .context("failed to list the slash writer records")?;
-    let chain_ids = keys
-        .iter()
-        .map(|key| chain_after_slashing_prefix(key))
-        .collect::<Result<BTreeSet<u64>>>()?;
+    let mut chain_ids = BTreeSet::new();
+    for key in &keys {
+        let chain_id = chain_after_slashing_prefix(key)?;
+        // The slash writer stores one record per chain, at this exact key. A record under any other
+        // key would not be read below, so it fails the check instead of passing it unread.
+        if key.as_slice() != StoreKeys::slashing_writer_recovery(chain_id).as_bytes() {
+            bail!(
+                "found a slash writer record that this binary cannot read: {}",
+                String::from_utf8_lossy(key)
+            );
+        }
+        chain_ids.insert(chain_id);
+    }
     let mut pending = Vec::new();
     for chain_id in chain_ids {
         let state: Option<SlashingWriterRecoveryState> =
@@ -307,11 +316,30 @@ pub(crate) fn check_pending_slash_reports(
     )
 }
 
+/// Run both checks before refusing, so that one refusal lists every reason. An operator who
+/// overrides a refusal for key shares must also see the slash reports that the override deletes.
+pub(crate) fn check_deletion(
+    active_e3s: Result<Vec<ActiveE3>>,
+    slash_reports: Result<Vec<PendingSlashReports>>,
+    allow_active_e3s: bool,
+    deletion: &Deletion,
+) -> Result<Option<String>> {
+    let active = check_active_e3s(active_e3s, allow_active_e3s, deletion);
+    let slash = check_pending_slash_reports(slash_reports, allow_active_e3s, deletion);
+    match (active, slash) {
+        // The CLI prints only the top-level message, so both refusals go into one message.
+        (Err(active), Err(slash)) => bail!("{active}\n\n{slash}"),
+        (Err(refusal), Ok(_)) | (Ok(_), Err(refusal)) => Err(refusal),
+        (Ok(Some(active)), Ok(Some(slash))) => Ok(Some(format!("{active}\n{slash}"))),
+        (Ok(active), Ok(slash)) => Ok(active.or(slash)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        active_e3s_with_key_shares, check_active_e3s, e3_id_after_prefix, pending_slash_reports,
-        ActiveE3, Deletion, PendingSlashReports,
+        active_e3s_with_key_shares, check_active_e3s, check_deletion, e3_id_after_prefix,
+        pending_slash_reports, ActiveE3, Deletion, PendingSlashReports,
     };
     use e3_data::{DataStore, Repositories};
     use e3_events::{E3Stage, E3id, StoreKeys};
@@ -542,6 +570,76 @@ mod tests {
         assert!(
             warning.is_some_and(|warning| warning.contains("--allow-active-e3s is set")),
             "the override must produce a warning"
+        );
+        Ok(())
+    }
+
+    /// The slash writer stores one record per chain at one exact key. A record under any other key
+    /// under its prefix fails the check, also beside an empty record at the exact key, because the
+    /// check would otherwise pass it unread.
+    #[actix::test]
+    async fn slash_records_under_unknown_keys_fail_the_check() -> anyhow::Result<()> {
+        use e3_evm::{SlashingWriterRecoveryState, SlashingWriterRepositoryFactory};
+        for unknown in [
+            "//evm_writers/slashing/1/recovery/v2",
+            "//evm_writers/slashing/01/recovery/v1",
+        ] {
+            let repositories = Repositories::in_mem();
+            repositories
+                .slashing_writer_recovery(1)
+                .write_sync(&SlashingWriterRecoveryState::default())
+                .await?;
+            repositories
+                .store
+                .scope(unknown)
+                .write_sync(vec![1_u8, 2, 3])
+                .await?;
+
+            let error = pending_slash_reports(&repositories)
+                .await
+                .expect_err("an unknown slash writer record must fail the check");
+            assert!(
+                error.to_string().contains("cannot read"),
+                "the error must name the unreadable record {unknown}, got: {error}"
+            );
+        }
+        Ok(())
+    }
+
+    /// One refusal lists the key shares and the slash reports. An operator who overrides a refusal
+    /// for key shares therefore sees the slash reports that the override also deletes.
+    #[test]
+    fn one_refusal_lists_key_shares_and_slash_reports() -> anyhow::Result<()> {
+        let active = || -> anyhow::Result<Vec<ActiveE3>> {
+            Ok(vec![ActiveE3 {
+                e3_id: E3id::new("3", 1),
+                stage: Some(E3Stage::Failed),
+            }])
+        };
+        let reports = || -> anyhow::Result<Vec<PendingSlashReports>> {
+            Ok(vec![PendingSlashReports {
+                chain_id: 1,
+                count: 2,
+            }])
+        };
+
+        let error = check_deletion(active(), reports(), false, &Deletion::RESET)
+            .expect_err("key shares and slash reports must block the deletion");
+        let message = error.to_string();
+        assert!(
+            message.contains("E3 1:3 at stage Failed"),
+            "the refusal must list the E3, got: {message}"
+        );
+        assert!(
+            message.contains("chain 1: 2 report(s)"),
+            "the refusal must list the slash reports, got: {message}"
+        );
+
+        let warning = check_deletion(active(), reports(), true, &Deletion::RESET)?
+            .expect("the override must produce a warning");
+        assert!(
+            warning.contains("E3 1:3 at stage Failed") && warning.contains("chain 1: 2 report(s)"),
+            "the override warning must list both, got: {warning}"
         );
         Ok(())
     }

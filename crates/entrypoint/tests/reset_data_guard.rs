@@ -159,5 +159,26 @@ async fn reset_keeps_state_that_the_chain_cannot_restore() -> Result<()> {
     let deleted = repositories.slashing_writer_recovery(1).read().await?;
     close(repositories).await?;
     assert!(deleted.is_none());
+
+    // A key share and a slash report block the reset together, and one refusal lists both, so an
+    // override for the key share cannot delete a slash report that the operator has not seen.
+    let mixed_node = tempfile::tempdir()?;
+    let config = node_config(mixed_node.path())?;
+    let failed = E3id::new("43", 1);
+    write_state(&config, &failed, E3Stage::Failed).await?;
+    let repositories = open(&config)?;
+    repositories
+        .slashing_writer_recovery(1)
+        .write_sync(&pending)
+        .await?;
+    close(repositories).await?;
+    let error = execute(&config, false)
+        .await
+        .expect_err("a key share and a slash report must block the reset");
+    let message = error.to_string();
+    assert!(
+        message.contains("E3 1:43 at stage Failed") && message.contains("chain 1: 1 report(s)"),
+        "one refusal must list the key share and the slash report, got: {message}"
+    );
     Ok(())
 }

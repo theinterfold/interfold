@@ -21,8 +21,8 @@ use super::{locate, resolve, PurgeTargets, MARKER_FILE_NAME, MARKER_TEXT};
 use crate::fence::{FenceHeld, ProcessFence, LOCK_FILE_NAME};
 use crate::helpers::datastore::get_sled_store;
 use crate::nodes::state_guard::{
-    active_e3s_with_key_shares, check_active_e3s, check_pending_slash_reports,
-    pending_slash_reports, ActiveE3, Deletion, PendingSlashReports,
+    active_e3s_with_key_shares, check_active_e3s, check_deletion, pending_slash_reports, ActiveE3,
+    Deletion, PendingSlashReports,
 };
 
 /// Takes the planned locks whose folders exist.
@@ -175,13 +175,12 @@ async fn check_store(store: &PlannedStore, allow_active_e3s: bool) -> Result<Opt
         );
         return refuse_unchecked(&store.node, &reason, allow_active_e3s);
     }
-    let active = check_active_e3s(contents.active, allow_active_e3s, &deletion)?;
-    let slash_reports =
-        check_pending_slash_reports(contents.slash_reports, allow_active_e3s, &deletion)?;
-    Ok(match (active, slash_reports) {
-        (Some(active), Some(slash_reports)) => Some(format!("{active}\n{slash_reports}")),
-        (active, slash_reports) => active.or(slash_reports),
-    })
+    check_deletion(
+        contents.active,
+        contents.slash_reports,
+        allow_active_e3s,
+        &deletion,
+    )
 }
 
 /// The refusal for a node that the purge cannot check, or the warning when `allow_active_e3s`
