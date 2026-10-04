@@ -22,13 +22,15 @@ use anyhow::{anyhow, ensure, Result};
 use async_trait::async_trait;
 use e3_data::{AutoPersist, Persistable, RepositoriesFactory};
 use e3_events::{
-    prelude::*, CiphernodeSelected, CiphertextOutputPublished, E3id, EventContext, Sequenced,
+    prelude::*, CiphernodeSelected, CiphertextOutputPublished, E3Stage, E3id, EventContext,
+    Sequenced,
 };
 use e3_events::{BusHandle, EType, InterfoldEvent, InterfoldEventData};
 use e3_fhe::ext::FHE_KEY;
 use e3_keyshare::ThresholdKeyshareRepositoryFactory;
 use e3_request::{
-    E3Context, E3ContextSnapshot, E3Extension, TypedKey, DKG_FOLD_ATTESTATION_CONTEXT_KEY, META_KEY,
+    E3Context, E3ContextSnapshot, E3Extension, E3LifecycleRepositoryFactory, TypedKey,
+    DKG_FOLD_ATTESTATION_CONTEXT_KEY, META_KEY,
 };
 use e3_sortition::{FinalizedCommitteesRepositoryFactory, Sortition};
 use e3_zk_helpers::CiphernodesCommitteeSize;
@@ -175,6 +177,7 @@ impl E3Extension for PublicKeyAggregatorExtension {
                 dkg_fold_attestation_context,
                 recovery,
                 initial_is_aggregator: load_is_active_aggregator(ctx),
+                initial_stage: E3Stage::CommitteeFinalized,
                 effects_enabled: true,
             },
             sync_state,
@@ -245,6 +248,17 @@ impl E3Extension for PublicKeyAggregatorExtension {
                     )
                 },
             )?;
+        // The lifecycle projection belongs to the node root, not the per-E3 context scope.
+        let initial_stage = ctx
+            .repositories()
+            .store
+            .base("")
+            .repositories()
+            .e3_lifecycle()
+            .read()
+            .await?
+            .and_then(|stages| stages.get(&ctx.e3_id).cloned())
+            .unwrap_or(E3Stage::None);
         let value = create_publickey_aggregator(
             PublicKeyAggregatorParams {
                 fhe: fhe.clone(),
@@ -257,6 +271,7 @@ impl E3Extension for PublicKeyAggregatorExtension {
                     .copied(),
                 recovery,
                 initial_is_aggregator: load_is_active_aggregator(ctx),
+                initial_stage,
                 effects_enabled: false,
             },
             sync_state,

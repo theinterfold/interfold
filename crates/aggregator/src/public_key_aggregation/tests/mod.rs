@@ -96,6 +96,7 @@ async fn build_public_key_aggregator_with_committee(
             dkg_fold_attestation_context: None,
             recovery: test_state(PublicKeyAggregatorRecoveryState::default()),
             initial_is_aggregator: true,
+            initial_stage: E3Stage::None,
             effects_enabled: true,
         },
         test_state(initial_state),
@@ -313,36 +314,86 @@ async fn collecting_aggregator_accepts_a_roster_replacement_before_c1() -> Resul
 #[actix::test]
 async fn expelling_a_selected_roster_member_fails_the_dkg_immediately() -> Result<()> {
     let selected_node = Address::repeat_byte(0x11);
-    let other_node = Address::repeat_byte(0x22);
-    let state = PublicKeyAggregatorState::init(
-        3,
-        1,
-        Seed([0; 32]),
-        HashMap::from([
-            (0, selected_node.to_string()),
-            (1, other_node.to_string()),
-            (2, Address::repeat_byte(0x33).to_string()),
-        ]),
-    );
-    let (mut aggregator, history, e3_id) = build_public_key_aggregator(state).await?;
-    aggregator
-        .recovery
-        .try_mutate_without_context(|mut recovery| {
-            recovery.selected_roster = Some(BTreeSet::from([0, 1]));
-            Ok(recovery)
-        })?;
+    let e3_id = E3id::new("42", 1);
+    for removal in [
+        InterfoldEventData::from(CommitteeMemberExpelled {
+            e3_id: e3_id.clone(),
+            node: selected_node,
+            reason: [0; 32],
+            active_count_after: 2,
+            party_id: None,
+        }),
+        InterfoldEventData::from(CommitteeMemberExcluded {
+            e3_id: e3_id.clone(),
+            node: selected_node,
+            proof_type: ProofType::C1PkGeneration,
+            party_id: None,
+        }),
+    ] {
+        let committee_addresses = vec![
+            selected_node,
+            Address::repeat_byte(0x22),
+            Address::repeat_byte(0x33),
+        ];
+        let state = PublicKeyAggregatorState::init(
+            3,
+            1,
+            Seed([0; 32]),
+            committee_addresses
+                .iter()
+                .enumerate()
+                .map(|(party_id, node)| (party_id as u64, node.to_string()))
+                .collect(),
+        );
+        let (mut aggregator, history, _) = build_public_key_aggregator(state).await?;
+        aggregator
+            .recovery
+            .try_mutate_without_context(|mut recovery| {
+                recovery.selected_roster = Some(BTreeSet::from([0, 1]));
+                Ok(recovery)
+            })?;
+        let bus = aggregator.bus.clone();
+        let actor = aggregator.start();
+        // A local candidate and another E3's publication do not end this E3's DKG.
+        for event in [
+            InterfoldEventData::from(PublicKeyAggregated {
+                e3_id: e3_id.clone(),
+                pubkey: ArcBytes::from_bytes(&[1]),
+                nodes: OrderedSet::new(),
+                committee_addresses: committee_addresses.clone(),
+                honest_committee_addresses: committee_addresses[..2].to_vec(),
+                pk_commitment: [0; 32],
+                dkg_aggregator_proof: None,
+                dkg_attestation_bundle: None,
+            }),
+            InterfoldEventData::from(e3_events::CommitteePublished {
+                e3_id: E3id::new("43", 1),
+                nodes: Vec::new(),
+                public_key: ArcBytes::from_bytes(&[1]),
+                proof: ArcBytes::from_bytes(&[]),
+            }),
+            InterfoldEventData::from(e3_events::E3StageChanged {
+                e3_id: E3id::new("43", 1),
+                previous_stage: E3Stage::CommitteeFinalized,
+                new_stage: E3Stage::KeyPublished,
+            }),
+            removal,
+        ] {
+            actor
+                .send(bus.event_from(event, None)?.into_sequenced(0))
+                .await?;
+        }
+        let event = next_event(&history).await?;
+        assert!(matches!(
+            event.into_data(),
+            InterfoldEventData::E3Failed(E3Failed {
+                e3_id: failed_e3,
+                failed_at_stage: E3Stage::CommitteeFinalized,
+                reason: FailureReason::InsufficientCommitteeMembers,
+            }) if failed_e3 == e3_id
+        ));
+    }
 
-    aggregator.handle_member_expelled(selected_node, &test_ctx(EffectsEnabled::new()))?;
-
-    let event = next_event(&history).await?;
-    assert!(matches!(
-        event.into_data(),
-        InterfoldEventData::E3Failed(E3Failed {
-            e3_id: failed_e3,
-            failed_at_stage: E3Stage::CommitteeFinalized,
-            reason: FailureReason::InsufficientCommitteeMembers,
-        }) if failed_e3 == e3_id
-    ));
     Ok(())
 }
 
@@ -378,6 +429,7 @@ async fn standby_retains_dkg_fold_for_failover() -> Result<()> {
             dkg_fold_attestation_context: None,
             recovery: test_state(PublicKeyAggregatorRecoveryState::default()),
             initial_is_aggregator: false,
+            initial_stage: E3Stage::None,
             effects_enabled: true,
         },
         state,

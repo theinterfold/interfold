@@ -629,8 +629,13 @@ different rosters from producing two accepted keys, but a malicious active aggre
 withhold progress until failover.
 If a selected party stops permanently after the roster is accepted, this path does not select a
 replacement or rebuild C4. The E3 can fail even when other committee members remain online.
-If a selected party is expelled or excluded, the public-key aggregator fails the DKG immediately;
-the fixed H-row proof cannot remove that party after roster selection.
+Before canonical key publication, a selected party's expulsion or exclusion fails the DKG
+immediately: the fixed H-row proof cannot remove that party after roster selection.
+After `CommitteePublished`, or `E3StageChanged` to `KeyPublished`, `CiphertextReady`, or `Complete`,
+the public-key aggregator ignores raw expulsion and exclusion events for DKG work. This rule also
+applies to a standby that remains in `VerifyingC1`. Chain failures remain authoritative, and
+plaintext aggregation still requires T+1 valid roster shares.
+File: crates/aggregator/src/public_key_aggregation/effects/mod.rs (handle_member_expelled)
 The cutoff omits missing nodes but does not accuse or slash them: a local timeout is not proof
 that a peer failed to publish.
 ```

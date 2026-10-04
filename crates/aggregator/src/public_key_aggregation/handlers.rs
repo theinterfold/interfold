@@ -55,75 +55,34 @@ impl Handler<InterfoldEvent> for PublicKeyAggregator {
                 });
             }
             InterfoldEventData::E3RequestComplete(_) => self.notify_sync(ctx, Die),
-            InterfoldEventData::CommitteeMemberExpelled(data) => {
-                // Only process raw events from chain (party_id not yet resolved).
-                if data.party_id.is_some() {
-                    return;
-                }
-
-                let node_addr = data.node;
-
-                if data.e3_id != self.e3_id {
-                    error!("Wrong e3_id sent to PublicKeyAggregator for expulsion. This should not happen.");
-                    return;
-                }
-
-                info!(
-                    "PublicKeyAggregator: committee member expelled: {} for e3_id={}",
-                    node_addr, data.e3_id
-                );
-                trap(EType::PublickeyAggregation, &self.bus.with_ec(&ec), || {
-                    let was_collecting = matches!(
-                        self.state.get(),
-                        Some(PublicKeyAggregatorState::Collecting { .. })
-                    );
-
-                    self.handle_member_expelled(node_addr, &ec)?;
-
-                    // If we just transitioned to VerifyingC1, dispatch C1 verification
-                    // using the c1_proofs now stored in the VerifyingC1 state (already
-                    // cleaned of the expelled node's entry).
-                    if was_collecting && self.aggregation_inputs_ready() {
-                        self.publish_inputs_ready(ec.clone())?;
-                    }
-                    if was_collecting && self.can_run_aggregation_effects() {
-                        self.continue_c1_verification(ec.clone())?;
-                    }
-                    Ok(())
-                });
+            InterfoldEventData::CommitteePublished(data) if data.e3_id == self.e3_id => {
+                self.observe_stage(&E3Stage::KeyPublished);
             }
-            InterfoldEventData::CommitteeMemberExcluded(data) => {
-                // Sortition republishes this event with a party ID. The public-key collector uses
-                // the raw event because it filters by the node address before that enrichment.
-                if data.party_id.is_some() {
+            InterfoldEventData::E3StageChanged(data) if data.e3_id == self.e3_id => {
+                self.observe_stage(&data.new_stage);
+            }
+            InterfoldEventData::CommitteeMemberExpelled(CommitteeMemberExpelled {
+                e3_id,
+                node,
+                party_id,
+                ..
+            })
+            | InterfoldEventData::CommitteeMemberExcluded(CommitteeMemberExcluded {
+                e3_id,
+                node,
+                party_id,
+                ..
+            }) => {
+                // Sortition enriches these events with a party ID. This collector uses addresses.
+                if party_id.is_some() {
                     return;
                 }
-
-                let node_addr = data.node;
-                if data.e3_id != self.e3_id {
-                    error!("Wrong e3_id sent to PublicKeyAggregator for local exclusion.");
+                if e3_id != self.e3_id {
+                    error!("Wrong e3_id sent to PublicKeyAggregator for member removal.");
                     return;
                 }
-
-                info!(
-                    node = %node_addr,
-                    e3_id = %data.e3_id,
-                    proof_type = %data.proof_type,
-                    "PublicKeyAggregator excluding a quorum-confirmed faulty member"
-                );
                 trap(EType::PublickeyAggregation, &self.bus.with_ec(&ec), || {
-                    let was_collecting = matches!(
-                        self.state.get(),
-                        Some(PublicKeyAggregatorState::Collecting { .. })
-                    );
-                    self.handle_member_expelled(node_addr, &ec)?;
-                    if was_collecting && self.aggregation_inputs_ready() {
-                        self.publish_inputs_ready(ec.clone())?;
-                    }
-                    if was_collecting && self.can_run_aggregation_effects() {
-                        self.continue_c1_verification(ec.clone())?;
-                    }
-                    Ok(())
+                    self.handle_member_expelled(node, &ec)
                 });
             }
             _ => (),

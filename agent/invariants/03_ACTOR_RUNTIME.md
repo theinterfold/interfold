@@ -185,6 +185,12 @@ the code does not meet yet.
   per-E3 actors are keyed by `E3id`, which includes `chain_id`, but durable order is per chain
   aggregate, and EventBus fan-out delivers one event at a time, so a slow subscriber can block
   unrelated E3s. — `ARCHITECTURE.md`; `crates/events/src/e3id.rs`; `crates/events/src/eventbus.rs`
+- Canonical key publication ends DKG-specific expulsion and exclusion handling in every public-key
+  aggregator, including standbys whose local DKG phase is incomplete. Hydration derives publication
+  from the existing lifecycle projection. This does not suppress chain failures or plaintext
+  failures when fewer than T+1 valid roster shares remain. —
+  `crates/aggregator/src/public_key_aggregation/effects/mod.rs`; `crates/aggregator/src/ext.rs`;
+  `flow-trace/04`; `flow-trace/06`
 - Correctness-critical sends are acknowledged and timeout-bounded; `do_send` is allowed only for
   best-effort telemetry. Buffers are bounded by both item count and bytes with an explicit overflow
   policy. **Gap:** 84 `.do_send(` call sites remain (the count covers all sites, not only

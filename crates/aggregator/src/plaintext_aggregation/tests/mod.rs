@@ -443,5 +443,6 @@ async fn decryption_share_after_collection_closed_is_ignored() -> Result<()> {
 
 mod completion;
 mod failures;
+mod publication;
 mod share_admission;
 mod threshold;

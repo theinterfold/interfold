@@ -445,21 +445,22 @@ The DKG is crash tolerant: it can finish when some members are offline. The prot
 members at defined points. It does not accuse or slash them, because a local timeout does not prove
 that a peer failed to publish.
 
-| Member stops                                          | Protocol behavior                                                                                       | Result                                                 |
-| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| Before its C0 key arrives                             | Other members continue at the C0 cutoff with at least H keys. They fill its C3 slots with placeholders. | It cannot be a dealer or a roster member.              |
-| Before its threshold shares arrive                    | Other members start roster work with at least $H - 1$ external shares and accept later shares.          | It is not in the roster.                               |
-| A member has fewer than H verified dealers            | It stays outside C4. It does not fail the E3.                                                           | The E3 continues if a roster forms.                    |
-| Active aggregator, during roster selection            | After 10 minutes, the next eligible party becomes active and uses the saved Ready reports.              | The roster forms if H members are mutually ready.      |
-| A roster member, after roster acceptance              | No replacement exists. The fixed H-row proof needs every roster member.                                 | The E3 fails with `DKGTimeout` after the DKG deadline. |
-| A roster member is expelled after acceptance          | The public key aggregator stops the DKG. On-chain, an expulsion below H fails the E3 at once.           | The E3 fails.                                          |
-| Active aggregator, during C5 or publication           | After 10 minutes, the next eligible party resumes from its persisted phase.                             | Publication continues.                                 |
-| Up to $H - (T + 1)$ roster members, before decryption | The aggregator starts at T + 1 valid roster shares.                                                     | Decryption continues.                                  |
-| Active aggregator, during plaintext aggregation       | After 10 minutes, the next eligible party resumes.                                                      | Decryption continues.                                  |
+| Member stops                                                        | Protocol behavior                                                                                                               | Result                                                                                  |
+| ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| Before its C0 key arrives                                           | Other members continue at the C0 cutoff with at least H keys. They fill its C3 slots with placeholders.                         | It cannot be a dealer or a roster member.                                               |
+| Before its threshold shares arrive                                  | Other members start roster work with at least $H - 1$ external shares and accept later shares.                                  | It is not in the roster.                                                                |
+| A member has fewer than H verified dealers                          | It stays outside C4. It does not fail the E3.                                                                                   | The E3 continues if a roster forms.                                                     |
+| Active aggregator, during roster selection                          | After 10 minutes, the next eligible party becomes active and uses the saved Ready reports.                                      | The roster forms if H members are mutually ready.                                       |
+| A roster member, after roster acceptance and before key publication | No replacement exists. The fixed H-row proof needs every roster member.                                                         | The E3 fails with `DKGTimeout` after the DKG deadline.                                  |
+| A roster member is expelled or excluded before key publication      | The public-key aggregator stops the DKG because the fixed H-row proof needs every selected member.                              | The E3 fails.                                                                           |
+| A roster member is expelled or excluded after key publication       | Public-key aggregators retain canonical publication, including after restart. Decryption still needs T + 1 valid roster shares. | Decryption continues if enough valid shares remain and the chain has not failed the E3. |
+| Active aggregator, during C5 or publication                         | After 10 minutes, the next eligible party resumes from its persisted phase.                                                     | Publication continues.                                                                  |
+| Up to $H - (T + 1)$ roster members, before decryption               | The aggregator starts at T + 1 valid roster shares.                                                                             | Decryption continues.                                                                   |
+| Active aggregator, during plaintext aggregation                     | After 10 minutes, the next eligible party resumes.                                                                              | Decryption continues.                                                                   |
 
 <Callout type='warning'>
-  After the roster is accepted, each of its H members is necessary for the DKG. A roster member that
-  stops permanently can fail the E3, even if other committee members stay online.
+  Before key publication, each of the H selected members is necessary for the DKG. A roster member
+  that stops permanently can fail the E3, even if other committee members stay online.
 </Callout>
 
 ### Restart recovery
@@ -467,6 +468,9 @@ that a peer failed to publish.
 A member that restarts recovers its work from the durable event log:
 
 - It restores collectors with the remaining time to each cutoff.
+- Public-key aggregators restore canonical key publication from the lifecycle projection. This
+  prevents a later expulsion or exclusion from failing completed DKG work, including on standby
+  nodes.
 - It holds replayed `GenPkShareAndSkSss` and `GenEsiSss` responses until their prerequisites return.
   It does not make new random shares that conflict with its published C1 to C3 proofs.
 - `NodeProofAggregator` restores saved inner proofs and fold metadata, then issues the fold again or
