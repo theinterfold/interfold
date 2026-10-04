@@ -87,10 +87,9 @@ item in code before you rely on it.
 - Slashing: a restart resets the fallback submission delay. — `01_PROTOCOL_ONCHAIN.md` §Slashing and
   failure settlement
 - Startup reconciles restored request contexts with finalized chain state, but concern #48 stays
-  open for a local Failed stage whose reason needs accusation work (restart completes it), for a
-  slashing failure that is absent from the local records, and for contexts that the replayed
-  EventStore suffix admits (follow-up work). A canonical Failed stage from that read is only in the
-  lifecycle snapshot, not in the event log. — `03_ACTOR_RUNTIME.md` §Durability, persistence, replay
+  open for a local Failed stage whose reason needs accusation work (restart completes it; follow-up
+  work). A canonical Failed stage from that read is only in the lifecycle snapshot, not in the event
+  log. — `03_ACTOR_RUNTIME.md` §Durability, persistence, replay
 - EventBus fan-out waits for each subscriber to accept the event within a timeout, but a timeout is
   only logged and the event is not retried. 82 `.do_send(` sites remain in total, including the
   `Sequencer` and the E3 router context. — `03_ACTOR_RUNTIME.md` §Ordering, backpressure, effects

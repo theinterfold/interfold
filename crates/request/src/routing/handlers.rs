@@ -6,7 +6,10 @@ use super::effects::advance_request_router_cursor;
 use super::*;
 use actix::AsyncContext;
 use anyhow::Context as _;
-use e3_events::{EventContext, InterfoldEventData, RequestRouterCheckpoint, Sequenced, SyncEffect};
+use e3_events::{
+    E3Stage, E3StageChanged, EventConstructorWithTimestamp, EventContext, EventSource,
+    InterfoldEventData, RequestRouterCheckpoint, Sequenced, SyncEffect, Unsequenced,
+};
 use tracing::info;
 
 impl E3Router {
@@ -87,12 +90,39 @@ impl Handler<InterfoldEvent> for E3Router {
                 RoutingDecision::Broadcast => {
                     // A restored context of a finished E3 gets no `EffectsEnabled`, so it does not
                     // resume its work. It completes instead.
-                    let finished = if matches!(msg.get_data(), InterfoldEventData::EffectsEnabled(_))
-                    {
-                        std::mem::take(&mut self.complete_on_restart)
-                    } else {
-                        HashSet::new()
-                    };
+                    let (finished, failed) =
+                        if matches!(msg.get_data(), InterfoldEventData::EffectsEnabled(_)) {
+                            (
+                                std::mem::take(&mut self.complete_on_restart),
+                                std::mem::take(&mut self.fail_on_restart),
+                            )
+                        } else {
+                            (HashSet::new(), HashMap::new())
+                        };
+                    // A restored context of an E3 that failed on chain with accusation or slashing
+                    // work keeps that work. Its protocol actors learn of the failure before
+                    // `EffectsEnabled`, as from the chain, so their DKG or decryption work does not
+                    // resume.
+                    for (e3_id, previous_stage) in failed {
+                        if let Some(context) = self.contexts.get(&e3_id) {
+                            info!(%e3_id, "Ending the protocol work of a restored context of a failed E3");
+                            let ec = msg.get_ctx();
+                            let failure = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+                                E3StageChanged {
+                                    e3_id,
+                                    previous_stage,
+                                    new_stage: E3Stage::Failed,
+                                }
+                                .into(),
+                                Some(ec.clone()),
+                                ec.ts(),
+                                ec.block(),
+                                EventSource::Local,
+                            )
+                            .into_sequenced(ec.seq());
+                            context.forward_message_now(&failure);
+                        }
+                    }
                     for (e3_id, context) in &self.contexts {
                         if !finished.contains(e3_id) {
                             context.forward_message_now(&msg)

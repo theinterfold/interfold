@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::{
-    finalized_lifecycle::reconcile_finalized_lifecycle,
+    finalized_lifecycle::reconcile_restored_contexts,
     recovery::{
         backfill_restart_state, reconcile_committee_snapshots, recovered_ciphernode_selections,
     },
@@ -89,6 +89,8 @@ struct EvmStartupRecovery<'a> {
     active_aggregators: &'a HashMap<E3id, bool>,
     selected_party_ids: &'a HashMap<E3id, u64>,
     lifecycle_stages: &'a HashMap<E3id, E3Stage>,
+    /// Failed E3s that keep their contexts only for accusation or slashing work.
+    kept_failures: &'a HashSet<E3id>,
     committee_finalizer: &'a CommitteeFinalizerRecoveryState,
 }
 
@@ -721,7 +723,14 @@ impl CiphernodeBuilder {
         .await?;
         // Reconcile the lifecycle with finalized chain state before any restart decision reads
         // it, so the work of an E3 that is finished on chain does not resume.
-        reconcile_finalized_lifecycle(&repositories, &self.chains, &mut provider_cache).await?;
+        let kept_failures = reconcile_restored_contexts(
+            &repositories,
+            aggregate_config.aggregates(),
+            &seq_eventstore,
+            &self.chains,
+            &mut provider_cache,
+        )
+        .await?;
         let committee_finalizer_recovery = backfill_restart_state(
             &repositories,
             &seq_eventstore,
@@ -863,6 +872,7 @@ impl CiphernodeBuilder {
                     active_aggregators: &selector_state.is_aggregator,
                     selected_party_ids: &selected_party_ids,
                     lifecycle_stages: &lifecycle_stages,
+                    kept_failures: &kept_failures,
                     committee_finalizer: &committee_finalizer_recovery,
                 },
             )
@@ -886,6 +896,7 @@ impl CiphernodeBuilder {
             &slashing_managers,
             &selector_state,
             &lifecycle_stages,
+            &kept_failures,
             &event_system,
             &canonical_keys,
             &seq_eventstore,
@@ -1193,6 +1204,7 @@ impl CiphernodeBuilder {
         slashing_managers: &[Option<Address>],
         selector_state: &CiphernodeSelectorState,
         lifecycle_stages: &HashMap<E3id, E3Stage>,
+        kept_failures: &HashSet<E3id>,
         event_system: &EventSystem,
         canonical_keys: &e3_request::canonical_key::CanonicalPublicKeys,
         eventstore: &actix::Recipient<e3_events::EventStoreQueryBy<e3_events::SeqAgg>>,
@@ -1205,7 +1217,9 @@ impl CiphernodeBuilder {
         let mut e3_builder = E3Router::builder(bus, store.clone())
             .with_recovered_selections(recovered_selections)
             .with_teardown_grace(teardown_grace)
-            .with_complete_on_restart(terminal_e3s(lifecycle_stages));
+            .with_complete_on_restart(terminal_e3s(lifecycle_stages))
+            .with_fail_on_restart(fail_on_restart(lifecycle_stages, kept_failures));
+        let effect_stages = compute_gate_stages(lifecycle_stages, kept_failures);
         e3_builder = e3_builder.with(AggregatorRoleExtension::create(
             selector_state.is_aggregator.clone(),
         ));
@@ -1243,7 +1257,7 @@ impl CiphernodeBuilder {
 
         // ── Threshold keyshare + ZK actors ──
         if let Some(KeyshareKind::Threshold) = self.keyshare {
-            let _ = self.ensure_multithread(bus, addr, lifecycle_stages, canonical_keys);
+            let _ = self.ensure_multithread(bus, addr, &effect_stages, canonical_keys);
             let backend = self
                 .zk_backend
                 .as_ref()
@@ -1326,7 +1340,7 @@ impl CiphernodeBuilder {
             e3_builder = e3_builder.with(FheExtension::create(bus, &self.rng));
 
             info!("Setting up PublicKeyAggregationExtension");
-            let _ = self.ensure_multithread(bus, addr, lifecycle_stages, canonical_keys);
+            let _ = self.ensure_multithread(bus, addr, &effect_stages, canonical_keys);
             e3_builder =
                 e3_builder.with_recipient("publickey", PublicKeyAggregatorExtension::create(bus));
 
@@ -1352,7 +1366,7 @@ impl CiphernodeBuilder {
         // ── Threshold plaintext aggregation ──
         if self.threshold_plaintext_agg {
             info!("Setting up ThresholdPlaintextAggregatorExtension");
-            let _ = self.ensure_multithread(bus, addr, lifecycle_stages, canonical_keys);
+            let _ = self.ensure_multithread(bus, addr, &effect_stages, canonical_keys);
             e3_builder = e3_builder.with_recipient(
                 "plaintext",
                 ThresholdPlaintextAggregatorExtension::create(
@@ -1580,6 +1594,47 @@ fn terminal_e3s(lifecycle_stages: &HashMap<E3id, E3Stage>) -> HashSet<E3id> {
         .collect()
 }
 
+/// The failed E3s that keep their contexts only for accusation or slashing work, with their local
+/// lifecycle stage. Their protocol actors learn of the failure at `EffectsEnabled`.
+fn fail_on_restart(
+    lifecycle_stages: &HashMap<E3id, E3Stage>,
+    kept_failures: &HashSet<E3id>,
+) -> HashMap<E3id, E3Stage> {
+    kept_failures
+        .iter()
+        .map(|e3_id| {
+            let stage = lifecycle_stages.get(e3_id).cloned();
+            (e3_id.clone(), stage.unwrap_or(E3Stage::None))
+        })
+        .collect()
+}
+
+/// The stages that the compute gate starts from: a failed E3 that keeps its context only for
+/// accusation or slashing work runs no compute.
+fn compute_gate_stages(
+    lifecycle_stages: &HashMap<E3id, E3Stage>,
+    kept_failures: &HashSet<E3id>,
+) -> HashMap<E3id, E3Stage> {
+    let mut stages = lifecycle_stages.clone();
+    stages.extend(
+        kept_failures
+            .iter()
+            .map(|e3_id| (e3_id.clone(), E3Stage::Failed)),
+    );
+    stages
+}
+
+/// The E3s whose data-availability work ends at startup: finished E3s, and failed E3s that keep
+/// their contexts only for accusation or slashing work.
+fn work_ended_on_restart(
+    lifecycle_stages: &HashMap<E3id, E3Stage>,
+    kept_failures: &HashSet<E3id>,
+) -> HashSet<E3id> {
+    let mut ended = terminal_e3s(lifecycle_stages);
+    ended.extend(kept_failures.iter().cloned());
+    ended
+}
+
 /// Validate chain ID matches expected configuration
 pub(crate) fn validate_chain_id(chain: &ChainConfig, actual_chain_id: u64) -> Result<()> {
     if let Some(expected_chain_id) = chain.chain_id {
@@ -1701,11 +1756,12 @@ async fn setup_evm_system(
         active_aggregators,
         selected_party_ids,
         lifecycle_stages,
+        kept_failures,
         committee_finalizer,
     } = recovery;
     let mut evm_config = EvmEventConfig::new();
     let mut gateways = Vec::new();
-    let finished = terminal_e3s(lifecycle_stages);
+    let finished = work_ended_on_restart(lifecycle_stages, kept_failures);
     for (chain, slashing_manager) in chains
         .iter()
         .zip(slashing_managers.iter().copied())
@@ -1961,9 +2017,9 @@ async fn wait_for_evm_gateways(gateways: Vec<EvmChainGatewayHandle>) -> Result<(
 #[cfg(test)]
 mod tests {
     use super::{
-        choose_slashing_manager, create_aggregate_delay, event_clock,
-        reconcile_committee_snapshots, recovered_ciphernode_selections, validate_vrf_chain_id,
-        SlashingManagerChoice,
+        choose_slashing_manager, compute_gate_stages, create_aggregate_delay, event_clock,
+        fail_on_restart, reconcile_committee_snapshots, recovered_ciphernode_selections,
+        validate_vrf_chain_id, work_ended_on_restart, SlashingManagerChoice,
     };
     use e3_config::{
         chain_config::ChainConfig,
@@ -1980,6 +2036,32 @@ mod tests {
     use e3_utils::ArcBytes;
     use std::collections::HashMap;
     use std::time::Duration;
+
+    /// A failed E3 that keeps its context only for accusation or slashing work learns of the
+    /// failure at `EffectsEnabled`, runs no compute, and ends its data-availability work. Other
+    /// E3s keep their decisions.
+    #[test]
+    fn a_kept_failure_ends_its_work_on_restart() {
+        let (kept, active, complete) = (E3id::new("1", 1), E3id::new("2", 1), E3id::new("3", 1));
+        let lifecycle = HashMap::from([
+            (kept.clone(), E3Stage::CommitteeFinalized),
+            (active.clone(), E3Stage::KeyPublished),
+            (complete.clone(), E3Stage::Complete),
+        ]);
+        let kept_failures = std::collections::HashSet::from([kept.clone()]);
+
+        assert_eq!(
+            fail_on_restart(&lifecycle, &kept_failures),
+            HashMap::from([(kept.clone(), E3Stage::CommitteeFinalized)])
+        );
+        let gate = compute_gate_stages(&lifecycle, &kept_failures);
+        assert_eq!(gate.get(&kept), Some(&E3Stage::Failed));
+        assert_eq!(gate.get(&active), Some(&E3Stage::KeyPublished));
+        assert_eq!(
+            work_ended_on_restart(&lifecycle, &kept_failures),
+            std::collections::HashSet::from([kept, complete])
+        );
+    }
 
     fn chain_with_finalization_ms(finalization_ms: Option<u64>) -> ChainConfig {
         let contract = || Contract::AddressOnly(Address::ZERO.to_string());
@@ -2603,6 +2685,7 @@ mod tests {
                 &[],
                 &selector,
                 &HashMap::new(),
+                &std::collections::HashSet::new(),
                 &system,
                 &e3_request::canonical_key::CanonicalPublicKeys::default(),
                 &system.eventstore_reader()?.seq(),

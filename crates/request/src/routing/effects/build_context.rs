@@ -12,6 +12,7 @@ pub struct E3RouterBuilder {
     pub store: Repository<E3RouterSnapshot>,
     pub teardown_grace: Duration,
     pub complete_on_restart: HashSet<E3id>,
+    pub fail_on_restart: HashMap<E3id, E3Stage>,
 }
 
 struct RecipientExtension {
@@ -73,6 +74,14 @@ impl E3RouterBuilder {
         self
     }
 
+    /// Set the E3s that failed on chain with accusation or slashing work, with their local
+    /// lifecycle stage. Their restored contexts keep that work, but their protocol actors learn of
+    /// the failure at `EffectsEnabled` before effects resume.
+    pub fn with_fail_on_restart(mut self, fail_on_restart: HashMap<E3id, E3Stage>) -> Self {
+        self.fail_on_restart = fail_on_restart;
+        self
+    }
+
     pub async fn build(self) -> Result<Addr<E3Router>> {
         let recovered_selections = self.recovered_selections;
         let legacy_snapshot: Option<E3RouterSnapshot> = self.store.read().await?;
@@ -97,6 +106,7 @@ impl E3RouterBuilder {
             recovered_selections,
             teardown_grace: self.teardown_grace,
             complete_on_restart: self.complete_on_restart,
+            fail_on_restart: self.fail_on_restart,
         };
 
         let router = match snapshot {

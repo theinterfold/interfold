@@ -274,11 +274,16 @@ On restart:
 │   2. Backfill missing versioned recovery records from the EventStore
 │      → Sortition inputs, committee-finalizer inputs/tickets, and slash intents are reconstructed
 │      → Existing versioned records are not replaced
-│      → First, `reconcile_finalized_lifecycle` reads each non-terminal checkpoint context at
-│        the finalized block and writes Complete, or a Failed stage with no slashing work, to
-│        the lifecycle store. Recovery steps that read the lifecycle then treat that E3 as
-│        terminal. The data-availability coordinator drops its restored work for that E3
-│        before EffectsEnabled; document publication recovery does not read the lifecycle.
+│      → First, `reconcile_restored_contexts` projects the logged events after the router
+│        checkpoint onto a copy of it, so it has every context that replay restores. It reads
+│        each non-terminal restored context at the finalized block and writes Complete, or a
+│        Failed stage with no slashing work, to the lifecycle store. Recovery steps that read
+│        the lifecycle then treat that E3 as terminal. The data-availability coordinator drops
+│        its restored work for that E3 before EffectsEnabled; document publication recovery
+│        does not read the lifecycle. Any other failed E3 keeps its context for accusation or
+│        slashing work: the router forwards a Failed `E3StageChanged` to the context before
+│        EffectsEnabled, the compute gate starts with the Failed stage for it, and the
+│        data-availability coordinator drops its restored work
 │        An E3 absent at chain head, a chain missing from the config, an RPC error after two
 │        retries, or 60 s for one read of 16 contexts fails startup. The contexts of a
 │        disabled chain resume unchecked

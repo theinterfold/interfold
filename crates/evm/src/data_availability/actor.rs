@@ -218,8 +218,10 @@ pub struct DataAvailabilityCoordinator {
 impl DataAvailabilityCoordinator {
     /// Start the coordinator for one chain from its recovery state.
     ///
-    /// `finished` holds the E3s whose local lifecycle stage is terminal at startup. Their
-    /// restored work is dropped before `EffectsEnabled`, and later facts for them are ignored.
+    /// `finished` holds the E3s whose work ends at startup: those whose local lifecycle stage is
+    /// terminal, and failed E3s that keep their contexts only for accusation or slashing work.
+    /// Their restored work is dropped before `EffectsEnabled`, and later facts for them are
+    /// ignored.
     pub async fn attach(
         bus: &BusHandle,
         chain_id: u64,

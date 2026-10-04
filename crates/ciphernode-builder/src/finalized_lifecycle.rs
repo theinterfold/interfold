@@ -10,11 +10,11 @@ use crate::{ciphernode_builder::validate_chain_id, ProviderCache};
 use alloy::primitives::Address;
 use anyhow::{anyhow, bail, Context, Result};
 use e3_config::chain_config::ChainConfig;
-use e3_events::{E3Stage, E3id, FailureReason};
+use e3_events::{AggregateId, E3Stage, E3id, EventStoreQueryBy, FailureReason, SeqAgg};
 use e3_evm::{read_finalized_e3_lifecycles, FinalizedE3Lifecycle};
-use e3_request::{E3LifecycleRepositoryFactory, RouterRepositoryFactory};
+use e3_request::E3LifecycleRepositoryFactory;
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     future::Future,
     time::Duration,
 };
@@ -29,29 +29,45 @@ const FINALIZED_LIFECYCLE_READ_BATCH: usize = 16;
 /// Delays in seconds before the retries of one batch read after an RPC error.
 const FINALIZED_LIFECYCLE_READ_RETRY_DELAYS: [u64; 2] = [1, 3];
 
-/// Record in the local lifecycle the E3s of restored request contexts that are finished at the
-/// finalized block of their chain.
-///
-/// An E3 is finished when it is complete, or failed without accusation or slashing work. Startup
-/// runs this before it reads the lifecycle for its restart decisions, so the router completes
-/// these contexts at `EffectsEnabled` and the other recovery paths treat them as terminal. The node
-/// does not read a chain that the configuration disables, so the contexts of that chain resume
-/// without the check. Any other restored context that startup cannot check fails startup.
-pub(crate) async fn reconcile_finalized_lifecycle<State>(
+/// Check every request context that startup restores against the finalized chain lifecycle: the
+/// contexts of the router checkpoint, and those that logged events after it admit, which startup
+/// replays before effects resume. Return the failed E3s that keep their contexts only for
+/// accusation or slashing work; see [`reconcile_finalized_lifecycle`].
+pub(crate) async fn reconcile_restored_contexts<State>(
     repositories: &e3_data::Repositories,
+    aggregate_ids: impl IntoIterator<Item = AggregateId>,
+    eventstore: &actix::Recipient<EventStoreQueryBy<SeqAgg>>,
     chains: &[ChainConfig],
     provider_cache: &mut ProviderCache<State>,
-) -> Result<()> {
+) -> Result<HashSet<E3id>> {
+    let contexts =
+        e3_sync::project_restored_request_contexts(repositories, aggregate_ids, eventstore).await?;
+    reconcile_finalized_lifecycle(repositories, &contexts, chains, provider_cache).await
+}
+
+/// Record in the local lifecycle the E3s of restored request contexts that are finished at the
+/// finalized block of their chain, and return the E3s that failed there and keep their contexts
+/// for accusation or slashing work.
+///
+/// `contexts` holds every context that the router holds when startup replay ends, including those
+/// that logged events after its checkpoint admit. An E3 is finished when it is complete, or failed
+/// without accusation or slashing work. Startup runs this before it reads the lifecycle for its
+/// restart decisions, so the router completes these contexts at `EffectsEnabled` and the other
+/// recovery paths treat them as terminal. Any other failed E3 keeps its context for accusation or
+/// slashing work, and startup ends its DKG and decryption work. The node does not read a chain that the
+/// configuration disables, so the contexts of that chain resume without the check. Any other
+/// restored context that startup cannot check fails startup.
+pub(crate) async fn reconcile_finalized_lifecycle<State>(
+    repositories: &e3_data::Repositories,
+    contexts: &[E3id],
+    chains: &[ChainConfig],
+    provider_cache: &mut ProviderCache<State>,
+) -> Result<HashSet<E3id>> {
     let lifecycle_store = repositories.e3_lifecycle();
     let mut lifecycle = lifecycle_store.read().await?.unwrap_or_default();
-    let contexts = repositories
-        .request_router_checkpoint()
-        .read()
-        .await?
-        .map(|checkpoint| checkpoint.contexts)
-        .unwrap_or_default();
-    let mut unchecked = active_contexts_by_chain(&contexts, &lifecycle);
+    let mut unchecked = active_contexts_by_chain(contexts, &lifecycle);
     let mut finished = Vec::new();
+    let mut kept_failures = HashSet::new();
     for chain in chains.iter().filter(|chain| chain.enabled.unwrap_or(true)) {
         if unchecked.is_empty() {
             break;
@@ -79,14 +95,16 @@ pub(crate) async fn reconcile_finalized_lifecycle<State>(
                 })
         })
         .await?;
-        let chain_finished = finished_e3s(chain_id, contract, &lifecycles)?;
+        let (chain_finished, chain_kept_failures) = finished_e3s(chain_id, contract, &lifecycles)?;
         info!(
             chain_id,
             checked = e3_ids.len(),
             finished = chain_finished.len(),
+            kept_failures = chain_kept_failures.len(),
             "Checked restored request contexts against the finalized block"
         );
         finished.extend(chain_finished);
+        kept_failures.extend(chain_kept_failures);
     }
     for chain in chains.iter().filter(|chain| !chain.enabled.unwrap_or(true)) {
         let Some(e3_ids) = chain
@@ -107,11 +125,12 @@ pub(crate) async fn reconcile_finalized_lifecycle<State>(
         );
     }
     if finished.is_empty() {
-        return Ok(());
+        return Ok(kept_failures);
     }
     // Only non-terminal local stages were checked, so this cannot replace a terminal stage.
     lifecycle.extend(finished);
-    lifecycle_store.write_sync(&lifecycle).await
+    lifecycle_store.write_sync(&lifecycle).await?;
+    Ok(kept_failures)
 }
 
 /// Group the restored contexts whose local lifecycle stage is not terminal by chain.
@@ -131,18 +150,23 @@ fn active_contexts_by_chain(
     by_chain
 }
 
-/// Select the E3s that are finished at the finalized block, with their canonical stage.
+/// E3s that are finished at the finalized block, with their canonical stage.
+type FinishedE3s = Vec<(E3id, E3Stage)>;
+
+/// Select the E3s that are finished at the finalized block, with their canonical stage, and the
+/// failed E3s that keep their contexts.
 ///
-/// A complete E3 and an E3 that failed without accusation or slashing work are finished. A failed
-/// E3 that needs accusation or slashing work keeps its context. An E3 that is not yet at the
-/// finalized block keeps its context and waits for finality. An E3 that chain head does not have
-/// is an error.
+/// A complete E3 and an E3 that failed without accusation or slashing work are finished. Any other
+/// failed E3 keeps its context for accusation or slashing work. An E3 that is not
+/// yet at the finalized block keeps its context and waits for finality. An E3 that chain head does
+/// not have is an error.
 fn finished_e3s(
     chain_id: u64,
     contract: Address,
     lifecycles: &[(E3id, FinalizedE3Lifecycle)],
-) -> Result<Vec<(E3id, E3Stage)>> {
+) -> Result<(FinishedE3s, Vec<E3id>)> {
     let mut finished = Vec::new();
+    let mut kept_failures = Vec::new();
     for (e3_id, lifecycle) in lifecycles {
         match lifecycle {
             FinalizedE3Lifecycle::Finalized {
@@ -162,8 +186,9 @@ fn finished_e3s(
                     warn!(
                         %e3_id,
                         ?failure_reason,
-                        "Keeping the restored context of a failed E3 for its accusation and slashing work"
+                        "Keeping the restored context of a failed E3 for its accusation and slashing work only"
                     );
+                    kept_failures.push(e3_id.clone());
                 }
             }
             FinalizedE3Lifecycle::Finalized { .. } | FinalizedE3Lifecycle::AwaitingFinality => {}
@@ -172,7 +197,7 @@ fn finished_e3s(
             ),
         }
     }
-    Ok(finished)
+    Ok((finished, kept_failures))
 }
 
 /// Read the finalized lifecycles of `e3_ids` in batches, each within its own deadline, so a slow
@@ -226,6 +251,7 @@ async fn within_deadline<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use e3_request::RouterRepositoryFactory;
 
     fn finalized(stage: E3Stage, failure_reason: Option<FailureReason>) -> FinalizedE3Lifecycle {
         FinalizedE3Lifecycle::Finalized {
@@ -325,7 +351,7 @@ mod tests {
             (ids[5].clone(), FinalizedE3Lifecycle::AwaitingFinality),
         ];
 
-        let finished = finished_e3s(1, Address::ZERO, &lifecycles)?;
+        let (finished, kept_failures) = finished_e3s(1, Address::ZERO, &lifecycles)?;
 
         assert_eq!(
             finished,
@@ -334,6 +360,8 @@ mod tests {
                 (ids[1].clone(), E3Stage::Failed),
             ]
         );
+        // A failure with accusation or slashing work, or with an unknown reason, keeps its context.
+        assert_eq!(kept_failures, vec![ids[2].clone(), ids[3].clone()]);
         Ok(())
     }
 
@@ -413,10 +441,11 @@ mod tests {
         }
     }
 
-    /// Store restored request contexts and their local lifecycle stages.
+    /// Store restored request contexts and their local lifecycle stages. Return the repositories
+    /// and the contexts.
     async fn restored_store(
         lifecycle: HashMap<E3id, E3Stage>,
-    ) -> Result<std::sync::Arc<e3_data::Repositories>> {
+    ) -> Result<(std::sync::Arc<e3_data::Repositories>, Vec<E3id>)> {
         use actix::Actor;
         use e3_data::{DataStore, InMemStore, RepositoriesFactory};
         use e3_events::RequestRouterCheckpoint;
@@ -433,7 +462,7 @@ mod tests {
             })
             .await?;
         repositories.e3_lifecycle().write_sync(&lifecycle).await?;
-        Ok(repositories)
+        Ok((repositories, lifecycle.into_keys().collect()))
     }
 
     /// Reconcile two restored contexts against a local chain whose Interfold contract answers
@@ -461,7 +490,7 @@ mod tests {
         chain_head.anvil_mine(Some(3), None).await?;
         chain_head.anvil_set_code(interfold, code).await?;
         chain_head.anvil_mine(Some(1), None).await?;
-        let repositories = restored_store(HashMap::from([
+        let (repositories, contexts) = restored_store(HashMap::from([
             (restored.clone(), E3Stage::KeyPublished),
             (terminal_locally.0.clone(), terminal_locally.1),
         ]))
@@ -479,10 +508,12 @@ mod tests {
         };
 
         // The finalized block trails chain head by 64 blocks on anvil.
-        reconcile_finalized_lifecycle(&repositories, &chains, &mut provider_cache).await?;
+        reconcile_finalized_lifecycle(&repositories, &contexts, &chains, &mut provider_cache)
+            .await?;
         let before_finality = persisted().await?;
         chain_head.anvil_mine(Some(64), None).await?;
-        reconcile_finalized_lifecycle(&repositories, &chains, &mut provider_cache).await?;
+        reconcile_finalized_lifecycle(&repositories, &contexts, &chains, &mut provider_cache)
+            .await?;
         Ok((before_finality, persisted().await?))
     }
 
@@ -537,11 +568,12 @@ mod tests {
             .await?;
         chain_head.anvil_mine(Some(1), None).await?;
         let restored = E3id::new("1", anvil.chain_id());
-        let repositories =
+        let (repositories, contexts) =
             restored_store(HashMap::from([(restored.clone(), E3Stage::KeyPublished)])).await?;
 
         reconcile_finalized_lifecycle(
             &repositories,
+            &contexts,
             &[anvil_chain(anvil.endpoint(), interfold)],
             &mut ProviderCache::new(),
         )
@@ -553,6 +585,88 @@ mod tests {
             .await?
             .unwrap_or_default();
         assert_eq!(lifecycle.get(&restored), Some(&E3Stage::KeyPublished));
+        Ok(())
+    }
+
+    /// A context that a logged event after the router checkpoint admits is checked too: startup
+    /// replays that event before effects resume.
+    #[actix::test]
+    async fn a_context_admitted_after_the_router_checkpoint_is_checked() -> Result<()> {
+        use alloy::{
+            node_bindings::Anvil,
+            primitives::Bytes,
+            providers::{ext::AnvilApi, ProviderBuilder},
+        };
+        use e3_data::RepositoriesFactory;
+        use e3_events::{
+            E3Requested, EventConstructorWithTimestamp, EventSource, InterfoldEvent,
+            RequestRouterCheckpoint, Unsequenced,
+        };
+
+        let anvil = Anvil::new().try_spawn()?;
+        let chain_head = ProviderBuilder::new().connect_http(anvil.endpoint_url());
+        let interfold = Address::repeat_byte(0x42);
+        // The contract answers 5, the Complete stage, to every call.
+        let code = Bytes::from(vec![
+            0x60, 5, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xf3,
+        ]);
+        chain_head.anvil_mine(Some(3), None).await?;
+        chain_head.anvil_set_code(interfold, code).await?;
+        // The finalized block trails chain head by 64 blocks on anvil.
+        chain_head.anvil_mine(Some(65), None).await?;
+
+        // Events of an E3 belong to the aggregate of its chain.
+        let aggregate_id = AggregateId::from_chain_id(Some(anvil.chain_id()));
+        let system = crate::EventSystem::new()
+            .with_fresh_bus()
+            .with_aggregate_config(e3_events::AggregateConfig::new(HashMap::from([(
+                aggregate_id,
+                Duration::ZERO,
+            )])));
+        let bus = system.handle()?.enable("finalized-suffix");
+        let admitted = E3id::new("1", anvil.chain_id());
+        bus.naked_dispatch_async(InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            E3Requested {
+                e3_id: admitted.clone(),
+                ..Default::default()
+            }
+            .into(),
+            None,
+            1,
+            None,
+            EventSource::Evm,
+        ))
+        .await?;
+        bus.flush_event_pipeline().await?;
+        let repositories = system.store()?.repositories();
+        repositories
+            .request_router_checkpoint()
+            .write_sync(&RequestRouterCheckpoint::default())
+            .await?;
+
+        reconcile_restored_contexts(
+            &repositories,
+            [aggregate_id],
+            &system.eventstore_reader()?.seq(),
+            &[anvil_chain(anvil.endpoint(), interfold)],
+            &mut ProviderCache::new(),
+        )
+        .await?;
+
+        let lifecycle = repositories
+            .e3_lifecycle()
+            .read()
+            .await?
+            .unwrap_or_default();
+        assert_eq!(lifecycle.get(&admitted), Some(&E3Stage::Complete));
+        // The check reads the logged events; the saved checkpoint stays as it was.
+        assert!(repositories
+            .request_router_checkpoint()
+            .read()
+            .await?
+            .expect("checkpoint")
+            .contexts
+            .is_empty());
         Ok(())
     }
 
@@ -569,11 +683,12 @@ mod tests {
     #[actix::test]
     async fn a_restored_context_of_a_disabled_chain_resumes_unchecked() -> Result<()> {
         let restored = E3id::new("1", 11_155_111);
-        let repositories =
+        let (repositories, contexts) =
             restored_store(HashMap::from([(restored.clone(), E3Stage::Requested)])).await?;
 
         reconcile_finalized_lifecycle(
             &repositories,
+            &contexts,
             &[disabled_chain(11_155_111)],
             &mut ProviderCache::new(),
         )
@@ -590,7 +705,7 @@ mod tests {
 
     #[actix::test]
     async fn a_restored_context_of_a_chain_without_configuration_fails_startup() -> Result<()> {
-        let repositories = restored_store(HashMap::from([(
+        let (repositories, contexts) = restored_store(HashMap::from([(
             E3id::new("1", 11_155_111),
             E3Stage::Requested,
         )]))
@@ -598,6 +713,7 @@ mod tests {
 
         let error = reconcile_finalized_lifecycle(
             &repositories,
+            &contexts,
             &[disabled_chain(1)],
             &mut ProviderCache::new(),
         )

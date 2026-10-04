@@ -100,6 +100,78 @@ async fn router_checkpoint_advances_without_losing_state() -> anyhow::Result<()>
     Ok(())
 }
 
+/// Startup replays the logged events after the router checkpoint before effects resume, so the
+/// restored contexts include those that these events admit, without those that they complete.
+#[actix::test]
+async fn restored_contexts_include_admissions_after_the_checkpoint() -> anyhow::Result<()> {
+    let aggregate_id = AggregateId::new(1);
+    let system =
+        EventSystem::new()
+            .with_fresh_bus()
+            .with_aggregate_config(e3_events::AggregateConfig::new(HashMap::from([(
+                aggregate_id,
+                Duration::ZERO,
+            )])));
+    let bus = system.handle()?.enable("test-restored-contexts");
+    let (checkpointed, admitted, finished) =
+        (E3id::new("7", 1), E3id::new("8", 1), E3id::new("9", 1));
+    let request = |e3_id: &E3id| -> InterfoldEventData {
+        E3Requested {
+            e3_id: e3_id.clone(),
+            ..Default::default()
+        }
+        .into()
+    };
+    let events = [
+        request(&checkpointed),
+        request(&admitted),
+        request(&finished),
+        e3_events::E3RequestComplete {
+            e3_id: finished.clone(),
+        }
+        .into(),
+    ];
+    for (index, data) in (1u64..).zip(events) {
+        bus.naked_dispatch_async(
+            InterfoldEvent::<Unsequenced>::test_event("event")
+                .data(data)
+                .id(index)
+                .aggregate_id(1)
+                .ts(index.into())
+                .build(),
+        )
+        .await?;
+    }
+    bus.flush_event_pipeline().await?;
+    let repositories = Repositories::from(&system.store()?);
+    // The checkpoint covers the first event only.
+    repositories
+        .request_router_checkpoint()
+        .write_sync(&RequestRouterCheckpoint {
+            contexts: vec![checkpointed.clone()],
+            replay_cursors: HashMap::from([(aggregate_id, 1)]),
+            ..Default::default()
+        })
+        .await?;
+
+    let contexts = project_restored_request_contexts(
+        &repositories,
+        [aggregate_id],
+        &system.eventstore_reader()?.seq(),
+    )
+    .await?;
+
+    assert_eq!(contexts, vec![checkpointed.clone(), admitted]);
+    // The saved checkpoint stays as it was.
+    let saved = repositories
+        .request_router_checkpoint()
+        .read()
+        .await?
+        .expect("checkpoint");
+    assert_eq!(saved.contexts, vec![checkpointed]);
+    Ok(())
+}
+
 #[actix::test]
 async fn infrastructure_events_are_filtered_during_replay() -> anyhow::Result<()> {
     let system = EventSystem::new().with_fresh_bus();

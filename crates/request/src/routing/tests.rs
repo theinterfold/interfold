@@ -94,6 +94,7 @@ async fn mid_e3_context_and_completed_set_survive_hydration() -> Result<()> {
         recovered_selections: Vec::new(),
         teardown_grace: Duration::ZERO,
         complete_on_restart: HashSet::new(),
+        fail_on_restart: HashMap::new(),
     };
     let recovered = E3Router::from_snapshot(
         params,
@@ -130,6 +131,7 @@ async fn hydration_fails_when_an_active_context_snapshot_is_missing() -> Result<
         recovered_selections: Vec::new(),
         teardown_grace: Duration::ZERO,
         complete_on_restart: HashSet::new(),
+        fail_on_restart: HashMap::new(),
     };
 
     let error = match E3Router::from_snapshot(
@@ -189,6 +191,7 @@ async fn recovery_is_direct_and_uses_one_checkpoint() -> Result<()> {
         store: repositories.router(),
         teardown_grace: Duration::ZERO,
         complete_on_restart: HashSet::new(),
+        fail_on_restart: HashMap::new(),
     }
     .build()
     .await?;
@@ -361,6 +364,106 @@ async fn finished_contexts_complete_without_resuming_work() -> Result<()> {
     Ok(())
 }
 
+/// Records, per E3 context, a failed stage and `EffectsEnabled` in the order they arrive.
+struct RestartProbe {
+    e3_id: E3id,
+    seen: Arc<std::sync::Mutex<Vec<(E3id, &'static str)>>>,
+}
+
+impl Actor for RestartProbe {
+    type Context = actix::Context<Self>;
+}
+
+impl Handler<InterfoldEvent> for RestartProbe {
+    type Result = ();
+
+    fn handle(&mut self, msg: InterfoldEvent, _: &mut Self::Context) {
+        let label = match msg.get_data() {
+            InterfoldEventData::E3StageChanged(data) if data.new_stage == E3Stage::Failed => {
+                "failed"
+            }
+            InterfoldEventData::EffectsEnabled(_) => "effects",
+            _ => return,
+        };
+        self.seen.lock().unwrap().push((self.e3_id.clone(), label));
+    }
+}
+
+struct RestartProbeExtension {
+    seen: Arc<std::sync::Mutex<Vec<(E3id, &'static str)>>>,
+}
+
+#[async_trait]
+impl E3Extension for RestartProbeExtension {
+    fn on_event(&self, ctx: &mut E3Context, event: &InterfoldEvent) {
+        if let InterfoldEventData::E3Requested(data) = event.get_data() {
+            let probe = RestartProbe {
+                e3_id: data.e3_id.clone(),
+                seen: self.seen.clone(),
+            };
+            ctx.set_event_recipient("restart_probe", Some(probe.start().recipient()));
+        }
+    }
+
+    async fn hydrate(&self, _: &mut E3Context, _: &E3ContextSnapshot) -> Result<()> {
+        Ok(())
+    }
+}
+
+#[actix::test]
+async fn failed_contexts_end_their_work_before_effects_resume() -> Result<()> {
+    let (active, failed) = (E3id::new("25", 31337), E3id::new("26", 31337));
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let store = DataStore::from_in_mem(&InMemStore::new(false).start());
+    let checkpoints = store.repositories().request_router_checkpoint();
+    let bus = test_bus();
+    let router = E3Router::builder(&bus, store)
+        .with(Box::new(RestartProbeExtension { seen: seen.clone() }))
+        .with_fail_on_restart(HashMap::from([(
+            failed.clone(),
+            E3Stage::CommitteeFinalized,
+        )]))
+        .build()
+        .await?;
+    let events: [InterfoldEventData; 3] = [
+        E3Requested {
+            e3_id: active.clone(),
+            ..Default::default()
+        }
+        .into(),
+        E3Requested {
+            e3_id: failed.clone(),
+            ..Default::default()
+        }
+        .into(),
+        EffectsEnabled::new().into(),
+    ];
+    for (seq, data) in (1u64..).zip(events) {
+        let event = InterfoldEvent::<Unsequenced>::test_event("event")
+            .data(data)
+            .seq(seq);
+        router.send(event.build()).await?;
+    }
+    bus.flush_event_pipeline().await?;
+    actix::clock::sleep(Duration::from_millis(100)).await;
+
+    // The failed context learns of the failure first, and keeps its context for accusation or
+    // slashing work, so it also gets `EffectsEnabled`.
+    let seen = seen.lock().unwrap().clone();
+    let of = |e3_id: &E3id| {
+        seen.iter()
+            .filter(|(id, _)| id == e3_id)
+            .map(|(_, label)| *label)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(of(&failed), vec!["failed", "effects"]);
+    assert_eq!(of(&active), vec!["effects"]);
+    let checkpoint = checkpoints.read().await?.expect("checkpoint");
+    assert!(checkpoint.contexts.contains(&failed));
+    assert!(!checkpoint.completed.contains(&failed));
+    Ok(())
+}
+
 #[actix::test]
 async fn request_time_attestation_contexts_survive_router_snapshots() -> Result<()> {
     let old_e3 = E3id::new("41", 1);
@@ -430,6 +533,7 @@ async fn request_time_attestation_contexts_survive_router_snapshots() -> Result<
             recovered_selections: Vec::new(),
             teardown_grace: Duration::ZERO,
             complete_on_restart: HashSet::new(),
+            fail_on_restart: HashMap::new(),
         },
         E3RouterSnapshot {
             contexts: vec![old_e3.clone()],

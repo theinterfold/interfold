@@ -105,6 +105,39 @@ pub async fn reconcile_request_router_checkpoint(
     Ok(())
 }
 
+/// The request contexts that the router holds when startup replay ends: those of its checkpoint,
+/// with the admissions and completions of the logged events after the checkpoint applied. Startup
+/// replays those events before effects resume, so a context that they admit resumes like one in
+/// the checkpoint, and startup checks both.
+pub async fn project_restored_request_contexts(
+    repositories: &Repositories,
+    aggregate_ids: impl IntoIterator<Item = AggregateId>,
+    eventstore: &Recipient<EventStoreQueryBy<SeqAgg>>,
+) -> Result<Vec<E3id>> {
+    let mut checkpoint = repositories
+        .request_router_checkpoint()
+        .read()
+        .await?
+        .context("request-router checkpoint is missing after storage preflight")?;
+    let cursors = aggregate_ids
+        .into_iter()
+        .map(|aggregate_id| {
+            let cursor = checkpoint
+                .replay_cursors
+                .get(&aggregate_id)
+                .copied()
+                .unwrap_or(0);
+            (aggregate_id, cursor)
+        })
+        .collect();
+    let spool = ReplaySpool::load_after(eventstore, cursors).await?;
+    spool.project(|event| {
+        e3_request::project_request_router_event(&mut checkpoint, event);
+        Ok(())
+    })?;
+    Ok(checkpoint.contexts)
+}
+
 #[derive(Clone, Debug)]
 pub struct RecoveredCommitteeRequest {
     pub request: CommitteeRequested,

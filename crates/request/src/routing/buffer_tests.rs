@@ -111,6 +111,7 @@ fn router_params(store: &DataStore, recorders: &[Addr<Recorder>]) -> E3RouterPar
         recovered_selections: Vec::new(),
         teardown_grace: Duration::ZERO,
         complete_on_restart: HashSet::new(),
+        fail_on_restart: HashMap::new(),
     }
 }
 

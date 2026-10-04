@@ -134,23 +134,25 @@ the code does not meet yet.
   node does not read that chain, so its contexts resume unchecked. If the E3 exists at chain head
   but not yet at the finalized block, recovery keeps the context and waits; finality lag is not an
   unknown E3. Before the restart backfill, startup reads `getE3Stage` and `getFailureReason` at the
-  finalized block for each request-router checkpoint context whose local lifecycle stage is not
-  terminal. It reads 16 contexts per batch. The connection to the chain and each batch have a 60 s
-  bound, and a batch is read again twice after an RPC error. It writes the canonical stage of a
-  finished E3 to the lifecycle store, so every restart decision that reads the lifecycle treats that
-  E3 as terminal. The router does not forward `EffectsEnabled` to a restored context whose lifecycle
-  stage is terminal and publishes `E3RequestComplete` for it; startup pruned its finalized
-  committee. The data-availability coordinator of each chain drops the restored key assembly and
-  ciphertext retrieval of such an E3 before `EffectsEnabled`, and ignores later facts for it. A
-  disabled chain covers the contexts of its configured `chain_id`; a context of a chain that the
-  configuration does not have fails startup. **Gap:** a context whose local lifecycle stage is
+  finalized block for each context that the router holds when startup replay ends, whose local
+  lifecycle stage is not terminal: the checkpoint's contexts, with the admissions and completions of
+  the logged events after the checkpoint applied. It reads 16 contexts per batch. The connection to
+  the chain and each batch have a 60 s bound, and a batch is read again twice after an RPC error. It
+  writes the canonical stage of a finished E3 to the lifecycle store, so every restart decision that
+  reads the lifecycle treats that E3 as terminal. The router does not forward `EffectsEnabled` to a
+  restored context whose lifecycle stage is terminal and publishes `E3RequestComplete` for it;
+  startup pruned its finalized committee. The data-availability coordinator of each chain drops the
+  restored key assembly and ciphertext retrieval of such an E3 before `EffectsEnabled`, and ignores
+  later facts for it. Any other E3 that failed at the finalized block keeps its context for
+  accusation or slashing work, but its other work ends: the router forwards a Failed
+  `E3StageChanged` to the context before `EffectsEnabled`, so its keyshare stops; the compute gate
+  starts with the Failed stage for it; and the data-availability coordinator drops its restored
+  work. A disabled chain covers the contexts of its configured `chain_id`; a context of a chain that
+  the configuration does not have fails startup. **Gap:** a context whose local lifecycle stage is
   Failed completes at `EffectsEnabled` even when its failure reason needs accusation work, because
-  the lifecycle does not keep the reason. A context whose E3 failed on chain with a slashing reason,
-  but not in the local lifecycle, resumes its work at `EffectsEnabled`. A context that the
-  EventStore suffix after the checkpoint admits during replay is not checked. All three are
-  follow-up work. Document publication recovery does not read the lifecycle. —
-  `crates/ciphernode-builder/src/finalized_lifecycle.rs`; `crates/evm/src/finalized_lifecycle.rs`;
-  INDEX concern #48
+  the lifecycle does not keep the reason. This is follow-up work. Document publication recovery does
+  not read the lifecycle. — `crates/ciphernode-builder/src/finalized_lifecycle.rs`;
+  `crates/evm/src/finalized_lifecycle.rs`; INDEX concern #48
 - EventStore replay preserves durable sequence inside each aggregate. It uses HLC order only to
   choose between the next events of different aggregates. A late event can have an older remote HLC
   and must not move ahead of an earlier local sequence from the same aggregate. — INDEX concern #43
