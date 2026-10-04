@@ -265,8 +265,10 @@ the code does not meet yet.
   `crates/request/src/routing/workflow.rs`
 - Identify must not cache peer addresses independently of the filtered Kademlia address path. Each
   compatible Identify exchange for an admitted peer must refresh that peer's filtered Kademlia
-  addresses. Only newly admitted connections receive admission notifications. —
-  `crates/net/src/net_interface.rs`
+  addresses. Keep the first unique filtered addresses that fit both limits: 8 addresses and 2 KiB of
+  encoded multiaddresses, including peer IDs. Remove superseded Identify addresses, but retain up to
+  2 live connection endpoints until they close. Only newly admitted connections receive admission
+  notifications. — `crates/net/src/net_interface.rs`
 - An inbound DHT put must not replace a locally published record or shorten a stored replica's
   expiry. No expiry means an unlimited lifetime. — `crates/net/src/net_interface.rs`
 - A periodic network re-send backs off to a cap, stops when its phase ends, and has a lifetime

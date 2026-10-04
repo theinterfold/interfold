@@ -26,6 +26,7 @@ struct TestNode {
     correlator: super::Correlator,
     peer_failures: super::PeerConnectionFailures,
     admission: super::PeerAdmission,
+    peer_addresses: HashMap<PeerId, super::PeerAddresses>,
     dht_records: HashMap<PeerId, HashSet<Vec<u8>>>,
     seen_gossip: super::SeenIds<libp2p::gossipsub::MessageId>,
     dht_puts: super::DhtPutSummary,
@@ -50,6 +51,7 @@ impl TestNode {
             correlator: super::Correlator::new(),
             peer_failures: super::PeerConnectionFailures::new(),
             admission: super::PeerAdmission::default(),
+            peer_addresses: HashMap::new(),
             dht_records: Default::default(),
             seen_gossip: super::SeenIds::new(super::SEEN_GOSSIP_TTL, 16),
             dht_puts: super::DhtPutSummary::default(),
@@ -85,6 +87,7 @@ impl TestNode {
             &mut self.correlator,
             &mut self.peer_failures,
             &mut self.admission,
+            &mut self.peer_addresses,
             &mut [],
             &mut self.dht_records,
             &mut self.seen_gossip,
@@ -280,22 +283,94 @@ async fn identify_reconnections_dial_only_filtered_addresses() -> anyhow::Result
 
     let mut events = node.interface.event_tx.subscribe();
     let (_, new_loopback) = remote.listen().await?;
-    let new_public = with_ip(new_loopback.clone(), Ipv4Addr::new(203, 0, 113, 3));
-    remote.interface.swarm.remove_external_address(&public);
-    remote
-        .interface
-        .swarm
-        .add_external_address(new_public.clone());
-    remote
-        .interface
-        .swarm
-        .behaviour_mut()
-        .identify
-        .push([node.peer_id()]);
-    let info = node.identify_with(&mut remote).await?;
-    assert!(info.listen_addrs.contains(&new_loopback));
-    assert!(info.listen_addrs.contains(&new_public));
-    assert!(!info.listen_addrs.contains(&public));
+    let mut advertised = vec![public.clone()];
+    let mut new_public = public.clone();
+    for update in 0..35 {
+        for address in advertised.drain(..) {
+            remote.interface.swarm.remove_external_address(&address);
+        }
+        new_public = with_ip(new_loopback.clone(), Ipv4Addr::new(203, 0, 113, update + 3));
+        advertised.push(new_public.clone());
+        if update == 32 {
+            // More short addresses than the count limit, below the byte limit.
+            for last in 1..=12 {
+                advertised.push(with_ip(
+                    new_loopback.clone(),
+                    Ipv4Addr::new(192, 0, 2, last),
+                ));
+            }
+        } else if update == 33 {
+            // Fewer addresses than the count limit, above the byte limit. The complete
+            // Identify message still fits libp2p's message limit.
+            for suffix in 0..4 {
+                advertised.push(
+                    format!(
+                        "/dns4/{}-{suffix}.example/udp/1234/quic-v1",
+                        "a".repeat(650)
+                    )
+                    .parse()?,
+                );
+            }
+        }
+        for address in &advertised {
+            remote.interface.swarm.add_external_address(address.clone());
+        }
+        remote
+            .interface
+            .swarm
+            .behaviour_mut()
+            .identify
+            .push([node.peer_id()]);
+        let info = node.identify_with(&mut remote).await?;
+        assert!(info.listen_addrs.contains(&new_loopback));
+        assert!(advertised
+            .iter()
+            .all(|address| info.listen_addrs.contains(address)));
+        assert!(!info.listen_addrs.contains(&public));
+        let bucket = node
+            .interface
+            .swarm
+            .behaviour_mut()
+            .kademlia
+            .kbucket(remote.peer_id())
+            .expect("peer bucket");
+        let retained = bucket
+            .iter()
+            .find(|entry| entry.node.key.preimage() == &remote.peer_id())
+            .expect("admitted peer in the routing table")
+            .node
+            .value;
+        assert!(
+            retained
+                .iter()
+                .any(|address| super::strip_peer_id(address.clone()) == public),
+            "an Identify update removed the live connection address"
+        );
+        let identified: Vec<_> = retained
+            .iter()
+            .filter(|address| super::strip_peer_id((*address).clone()) != public)
+            .collect();
+        assert!(
+            identified.len() <= 8,
+            "retained too many Identify addresses: {}",
+            identified.len()
+        );
+        assert!(
+            identified
+                .iter()
+                .map(|address| address.len())
+                .sum::<usize>()
+                <= 2048,
+            "retained Identify addresses exceed the byte limit"
+        );
+        assert!(
+            identified.iter().all(|address| {
+                let address = super::strip_peer_id((*address).clone());
+                !super::is_loopback_addr(&address) && advertised.contains(&address)
+            }),
+            "retained a superseded or unfiltered Identify address"
+        );
+    }
     while let Ok(event) = events.try_recv() {
         assert!(
             !matches!(
@@ -332,6 +407,28 @@ async fn identify_reconnections_dial_only_filtered_addresses() -> anyhow::Result
                 event = remote.next_event() => remote.process(event?).await?,
             }
         }
+        let bucket = node
+            .interface
+            .swarm
+            .behaviour_mut()
+            .kademlia
+            .kbucket(remote.peer_id())
+            .expect("peer bucket");
+        let retained: Vec<_> = bucket
+            .iter()
+            .find(|entry| entry.node.key.preimage() == &remote.peer_id())
+            .expect("peer remains available for reconnection")
+            .node
+            .value
+            .iter()
+            .cloned()
+            .map(super::strip_peer_id)
+            .collect();
+        assert_eq!(
+            retained,
+            vec![new_public.clone()],
+            "retained a superseded address after its connection closed"
+        );
         dials.lock().unwrap().clear();
         node.interface.swarm.dial(remote.peer_id())?;
         let attempted = dials.lock().unwrap().clone();
