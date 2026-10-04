@@ -4,11 +4,12 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+use crate::adapters::ingestion_progress::IngestionProgressSink;
 use crate::adapters::log_fetcher::{
-    backfill_to_head, fetch_logs_chunked, process_live_log, TimestampTracker,
+    backfill_to_head, consume_live_logs, fetch_logs_chunked, LiveStop, TimestampTracker,
 };
 use crate::domain::backoff::Backoff;
-use crate::domain::log_window::LogWindow;
+use crate::domain::log_window::{LogWindow, MAX_LOG_WINDOW};
 use crate::helpers::{EthProvider, ProviderFactory};
 use crate::messages::HistoricalSyncComplete;
 use crate::messages::{EvmEventProcessor, InterfoldEvmEvent};
@@ -22,7 +23,6 @@ use anyhow::anyhow;
 use e3_events::{BusHandle, EType, ErrorDispatcher, Event, InterfoldEvent, InterfoldEventData};
 use e3_events::{EventSubscriber, EventType};
 use e3_utils::{retry_with_backoff, RetryError, MAILBOX_LIMIT};
-use futures_util::stream::StreamExt;
 use std::collections::HashMap;
 use std::time::Duration;
 use tokio::select;
@@ -45,10 +45,11 @@ const PROVIDER_RECREATE_INITIAL_DELAY_MS: u64 = 2000;
 /// Consecutive failures before we assume the provider is dead and recreate it.
 const MAX_RETRIES_BEFORE_RECREATE: u32 = 3;
 /// Polling is required even while the subscription is quiet: a log becomes confirmed because later
-/// blocks arrive, and those blocks need not contain any matching contract event.
+/// blocks arrive, and those blocks need not contain any matching contract event. At zero
+/// confirmations the poll delivers the logs that the subscription did not announce.
 const CONFIRMED_BACKFILL_INTERVAL_SECS: u64 = 5;
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct Filters {
     historical: Filter,
     current: Filter,
@@ -57,6 +58,8 @@ pub struct Filters {
     /// reads to the chain head exactly as before; a positive value clamps the
     /// historical and backfill heads to make ingestion reorg-safe.
     confirmations: u64,
+    /// Widest `eth_getLogs` block range of one request (`rpc_log_range_blocks`).
+    max_log_window: u64,
 }
 
 impl Filters {
@@ -73,6 +76,7 @@ impl Filters {
             current,
             start_block,
             confirmations: 0,
+            max_log_window: MAX_LOG_WINDOW,
         }
     }
 
@@ -82,9 +86,21 @@ impl Filters {
         self
     }
 
+    /// Builder: start every `eth_getLogs` window at `blocks`, the chain's widest range.
+    pub fn with_max_log_window(mut self, blocks: u64) -> Self {
+        self.max_log_window = blocks;
+        self
+    }
+
     /// The selected confirmation depth (`0` reads the chain head).
     pub fn confirmations(&self) -> u64 {
         self.confirmations
+    }
+
+    /// The window that a reader session starts with: the chain's widest range, narrowed only when
+    /// the provider rejects it.
+    pub(crate) fn log_window(&self) -> LogWindow {
+        LogWindow::with_max(self.max_log_window)
     }
 
     pub fn from_routing_table<T>(table: &HashMap<Address, T>, start_block: u64) -> Self {
@@ -110,6 +126,8 @@ pub struct EvmReadInterface<P> {
     bus: BusHandle,
     /// Filters to configure when to seek from
     filters: Filters,
+    /// Receives each successful head read, for a local health check
+    progress: Option<IngestionProgressSink>,
 }
 
 impl<P: Provider + Clone + 'static> EvmReadInterface<P> {
@@ -119,7 +137,7 @@ impl<P: Provider + Clone + 'static> EvmReadInterface<P> {
         bus: &BusHandle,
         filters: Filters,
     ) -> Addr<Self> {
-        Self::setup_with_factory(provider, None, next, bus, filters)
+        Self::setup_with_factory(provider, None, next, bus, filters, None)
     }
 
     pub fn setup_with_factory(
@@ -128,6 +146,7 @@ impl<P: Provider + Clone + 'static> EvmReadInterface<P> {
         next: impl Into<EvmEventProcessor>,
         bus: &BusHandle,
         filters: Filters,
+        progress: Option<IngestionProgressSink>,
     ) -> Addr<Self> {
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let reader = Self {
@@ -138,10 +157,26 @@ impl<P: Provider + Clone + 'static> EvmReadInterface<P> {
             next: next.into(),
             bus: bus.clone(),
             filters,
+            progress,
         };
 
         let addr = reader.start();
         bus.subscribe(EventType::Shutdown, addr.clone().into());
         addr
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_reader_window_starts_at_the_configured_range() {
+        let filters = Filters::new(Vec::new(), 0);
+        assert_eq!(filters.log_window().width(), MAX_LOG_WINDOW);
+        assert_eq!(
+            filters.with_max_log_window(2_000).log_window().width(),
+            2_000
+        );
     }
 }

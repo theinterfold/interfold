@@ -317,8 +317,10 @@ Each network accepts different pairs:
 | Sepolia, local chains (31337 and 1337) | 0 and 1        | All three sizes, when the deployment configures their thresholds. |
 
 A parameter set must also be registered on the chain. `paramSetRegistry(paramSet)` returns empty
-bytes for an unregistered set. The local deploy script registers set 0 and configures thresholds
-only for `Minimum`.
+bytes for an unregistered set. The local deploy script registers the set of the active circuit build
+(set 0 in the checked-in configuration). With mock verifiers, it configures thresholds for all three
+sizes. With `ENABLE_ZK_VERIFICATION=true`, it configures thresholds only for the committee of the
+active circuit build, because its verifiers check only that committee.
 
 Use these rules to choose:
 

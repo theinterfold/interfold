@@ -29,6 +29,9 @@ pub mod helpers;
 pub use domain::error_decoder;
 
 pub use actors::*;
+pub use adapters::ingestion_progress::{
+    heartbeat_file_name, ingestion_heartbeat_files, IngestionProgress, IngestionProgressSink,
+};
 pub use dkg_timing::{read_canonical_dkg_timing, CanonicalDkgTiming};
 pub use domain::encode_attestation_evidence;
 pub use finalized_lifecycle::{read_finalized_e3_lifecycles, FinalizedE3Lifecycle};

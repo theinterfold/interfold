@@ -10,15 +10,17 @@ use actix::{Actor, Addr, Handler};
 use alloy::primitives::Address;
 use anyhow::Result;
 use e3_crypto::Cipher;
-use e3_data::{AutoPersist, DataStore, InMemStore, Persistable, Repository};
+use e3_data::{AutoPersist, DataStore, InMemStore, Persistable, Repository, StoreConnector};
 use e3_events::{
-    hlc_factory::HlcFactory, AggregatorChanged, BusHandle, CircuitName, CommitteeMemberExpelled,
-    ComputeRequest, ComputeRequestError, ComputeRequestErrorKind, ComputeRequestKind,
-    DecryptionKeyShared, DkgCoordination, DkgCoordinationKind, DkgDealer, E3Stage, E3id,
-    EffectsEnabled, EncryptionKey, EncryptionKeyCreated, Event, EventBus, EventBusConfig,
-    EventSource, FailureReason, GetEvents, HistoryCollector, InterfoldEvent, InterfoldEventData,
-    Proof, ProofPayload, ProofType, Sequencer, SignedProofPayload, StoreEventRequested,
-    StoreEventResponse, TakeEvents, Unsequenced, VerificationKind,
+    hlc_factory::HlcFactory, AggregatorChanged, BusHandle, CircuitName, CommitteeMemberExcluded,
+    CommitteeMemberExpelled, ComputeRequest, ComputeRequestError, ComputeRequestErrorKind,
+    ComputeRequestKind, DecryptionKeyShared, DkgCoordination, DkgCoordinationKind, DkgDealer,
+    DkgProofSigned, E3Stage, E3id, EffectsEnabled, EncryptionKey, EncryptionKeyCreated, Event,
+    EventBus, EventBusConfig, EventSource, EventType, FailureReason, Get, GetEvents,
+    HistoryCollector, Insert, InterfoldEvent, InterfoldEventData, OrderedSet,
+    PkGenerationProofSigned, Proof, ProofPayload, ProofType, PublicKeyAggregated, Remove,
+    Sequencer, SignedProofPayload, StoreEventRequested, StoreEventResponse, TakeEvents, TestEvent,
+    Unsequenced, VerificationKind,
 };
 use e3_fhe_params::{encode_bfv_params, BfvParamSet, BfvPreset, DEFAULT_BFV_PRESET};
 use e3_trbfv::{
@@ -151,15 +153,8 @@ async fn a_recorded_key_from_an_expelled_party_does_not_count_toward_h() -> Resu
     actor
         .send(keyshare_event(peer_key(&e3_id, 1), 2, EventSource::Net))
         .await?;
-    let expelled = CommitteeMemberExpelled {
-        e3_id: e3_id.clone(),
-        node: Address::ZERO,
-        reason: [0; 32],
-        active_count_after: 2,
-        party_id: Some(1),
-    };
     actor
-        .send(keyshare_event(expelled, 3, EventSource::Evm))
+        .send(keyshare_event(expulsion_of(&e3_id, 1), 3, EventSource::Evm))
         .await?;
     actor
         .send(keyshare_event(selection(&e3_id), 4, EventSource::Evm))
@@ -191,7 +186,7 @@ async fn a_recorded_key_from_an_expelled_party_does_not_count_toward_h() -> Resu
 async fn a_live_key_after_the_cutoff_does_not_reach_a_waiting_collector() -> Result<()> {
     let e3_id = E3id::new("late-live-key", 1);
     // The 10% cutoff of this 2,000 s window passed 800 s ago.
-    let (mut actor, _, _, _) = build_actor(
+    let (mut actor, _, recovery_repo, _) = build_actor(
         &e3_id,
         collecting_encryption_keys_state(&e3_id),
         1_000,
@@ -199,7 +194,7 @@ async fn a_live_key_after_the_cutoff_does_not_reach_a_waiting_collector() -> Res
         &[],
     )
     .await?;
-    let (parent, _, _, _) = build_actor(
+    let (parent, parent_repo, _, _) = build_actor(
         &e3_id,
         collecting_encryption_keys_state(&e3_id),
         7_200,
@@ -209,24 +204,163 @@ async fn a_live_key_after_the_cutoff_does_not_reach_a_waiting_collector() -> Res
     .await?;
     let parent = parent.start();
     // A collector whose timer has not fired yet. Its relative timer can fire up to a second after
-    // the absolute cutoff.
-    actor.encryption_key_collector = Some(EncryptionKeyCollector::setup(
+    // the absolute cutoff. It holds keys 0 and 2, so key 1 would complete it.
+    let collector = EncryptionKeyCollector::setup(
         parent.clone(),
         3,
         2,
         0,
         e3_id.clone(),
         Some(std::time::Duration::from_secs(3_600)),
-    ));
-
-    let late = actor
-        .handle_encryption_key_created(TypedEvent::new(peer_key(&e3_id, 1), test_ec(1)), parent);
-
-    let error = late.expect_err("a key after the cutoff must not reach the collector");
-    assert!(
-        error.to_string().contains("cutoff"),
-        "unexpected error: {error}"
     );
+    for party_id in [0, 2] {
+        collector
+            .send(TypedEvent::new(
+                peer_key(&e3_id, party_id),
+                test_ec(party_id + 1),
+            ))
+            .await?;
+    }
+    actor.encryption_key_collector = Some(collector);
+
+    // The late key is an expected input, not an error: it is recorded, but it reaches no
+    // collector.
+    actor
+        .handle_encryption_key_created(TypedEvent::new(peer_key(&e3_id, 1), test_ec(4)), parent)?;
+
+    assert!(recovery_repo
+        .read()
+        .await?
+        .expect("recovery state")
+        .encryption_keys
+        .contains_key(&1));
+    actix::clock::sleep(std::time::Duration::from_millis(200)).await;
+    assert!(
+        matches!(
+            parent_repo.read().await?.expect("keyshare state").state,
+            KeyshareState::CollectingEncryptionKeys(_)
+        ),
+        "the late key must not complete the collection"
+    );
+    Ok(())
+}
+
+#[actix::test]
+async fn a_share_after_the_dkg_deadline_is_recorded_but_reaches_no_collector() -> Result<()> {
+    let e3_id = E3id::new("late-share", 1);
+    let (mut actor, _, recovery_repo, _) = build_actor(
+        &e3_id,
+        collecting_encryption_keys_state(&e3_id),
+        7_200,
+        7_200,
+        &[],
+    )
+    .await?;
+    actor.state.try_mutate_without_context(|mut state| {
+        state.dkg_deadline_unix_secs =
+            Some(crate::domain::timeout_policy::now_unix_secs().saturating_sub(10));
+        Ok(state)
+    })?;
+    let (parent, _, _, _) = build_actor(
+        &e3_id,
+        collecting_encryption_keys_state(&e3_id),
+        7_200,
+        7_200,
+        &[],
+    )
+    .await?;
+
+    actor.handle_threshold_share_created(
+        TypedEvent::new(peer_share(&e3_id, 2), test_ec(2)),
+        parent.start(),
+    )?;
+
+    assert!(recovery_repo
+        .read()
+        .await?
+        .expect("recovery state")
+        .threshold_share_refs
+        .contains_key(&2));
+    assert!(actor.decryption_key_collector.is_none());
+    Ok(())
+}
+
+#[actix::test]
+async fn a_collector_takes_its_timing_from_the_reading_that_admitted_its_input() -> Result<()> {
+    let e3_id = E3id::new("one-clock-reading", 1);
+    let (parent, _, _, _) = build_actor(
+        &e3_id,
+        collecting_encryption_keys_state(&e3_id),
+        7_200,
+        7_200,
+        &[],
+    )
+    .await?;
+    let parent = parent.start();
+    let now = crate::domain::timeout_policy::now_unix_secs();
+
+    // The canonical DKG deadline is reached at `now`. A share admitted one second earlier still
+    // gets a collector.
+    let (mut actor, _, _, _) = build_actor(
+        &e3_id,
+        collecting_encryption_keys_state(&e3_id),
+        7_200,
+        7_200,
+        &[],
+    )
+    .await?;
+    actor.state.try_mutate_without_context(|mut state| {
+        state.dkg_deadline_unix_secs = Some(now);
+        Ok(state)
+    })?;
+    actor.ensure_collector(parent.clone(), &test_ec(1), now - 1)?;
+    assert!(actor.decryption_key_collector.is_some());
+
+    // The encryption-key cutoff, 10% into a 1,000 s window, is reached at `now`. A key admitted
+    // one second earlier still gets a collector.
+    let (mut actor, _, _, _) = build_actor(
+        &e3_id,
+        collecting_encryption_keys_state(&e3_id),
+        7_200,
+        7_200,
+        &[],
+    )
+    .await?;
+    actor.state.try_mutate_without_context(|mut state| {
+        state.dkg_deadline_unix_secs = Some(now + 900);
+        state.dkg_window_secs = Some(1_000);
+        Ok(state)
+    })?;
+    actor.ensure_encryption_key_collector(parent, &test_ec(1), now - 1)?;
+    assert!(actor.encryption_key_collector.is_some());
+    Ok(())
+}
+
+#[actix::test]
+async fn an_own_dkg_proof_after_share_aggregation_is_ignored() -> Result<()> {
+    let e3_id = E3id::new("late-own-proof", 1);
+    let (mut actor, repo, _, _) = build_actor(
+        &e3_id,
+        KeyshareState::ReadyForDecryption(ready_for_c4_test()),
+        7_200,
+        7_200,
+        &[],
+    )
+    .await?;
+
+    actor.handle_share_computation_proof_signed(TypedEvent::new(
+        DkgProofSigned {
+            e3_id: e3_id.clone(),
+            party_id: 0,
+            signed_proof: c2_proof(&e3_id, ProofType::C2aSkShareComputation, 0),
+        },
+        test_ec(1),
+    ))?;
+
+    assert!(matches!(
+        repo.read().await?.expect("keyshare state").state,
+        KeyshareState::ReadyForDecryption(_)
+    ));
     Ok(())
 }
 
@@ -406,6 +540,176 @@ async fn a_rebuilt_share_collector_does_not_wait_for_an_expelled_party() -> Resu
     Ok(())
 }
 
+/// The expulsion of `party_id` from the chain, with the party ID that sortition adds.
+fn expulsion_of(e3_id: &E3id, party_id: u64) -> CommitteeMemberExpelled {
+    CommitteeMemberExpelled {
+        e3_id: e3_id.clone(),
+        node: Address::ZERO,
+        reason: [0; 32],
+        active_count_after: 2,
+        party_id: Some(party_id),
+    }
+}
+
+#[actix::test]
+async fn a_key_collector_created_after_an_expulsion_does_not_wait_for_that_party() -> Result<()> {
+    let e3_id = E3id::new("expelled-before-key-collector", 1);
+    // The encryption-key cutoff (10% of 7,200 s) is 720 s after selection.
+    let (actor, repo) = start_actor_before_selection(&e3_id, 7_200).await?;
+    actor
+        .send(keyshare_event(peer_key(&e3_id, 0), 1, EventSource::Local))
+        .await?;
+    actor
+        .send(keyshare_event(peer_key(&e3_id, 2), 2, EventSource::Net))
+        .await?;
+    actor
+        .send(keyshare_event(expulsion_of(&e3_id, 1), 3, EventSource::Evm))
+        .await?;
+    actor
+        .send(keyshare_event(selection(&e3_id), 4, EventSource::Evm))
+        .await?;
+
+    // The new collector knows that party 1 is expelled, so keys 0 and 2 complete the collection
+    // long before the cutoff.
+    let KeyshareState::GeneratingThresholdShare(data) = wait_for_keyshare_state(&repo, |state| {
+        matches!(
+            state,
+            KeyshareState::GeneratingThresholdShare(_) | KeyshareState::Failed { .. }
+        )
+    })
+    .await?
+    else {
+        panic!("expected the DKG to continue without party 1");
+    };
+    let mut parties = data
+        .collected_encryption_keys
+        .iter()
+        .map(|key| key.party_id)
+        .collect::<Vec<_>>();
+    parties.sort_unstable();
+    assert_eq!(parties, vec![0, 2]);
+    Ok(())
+}
+
+#[actix::test]
+async fn a_share_collector_created_after_an_expulsion_does_not_wait_for_that_party() -> Result<()> {
+    let e3_id = E3id::new("expelled-before-share-collector", 1);
+    // The threshold-share cutoff (75% of 7,200 s) is 5,400 s after selection.
+    let (actor, repo, recovery_repo) =
+        start_actor_before_selection_with_recovery(&e3_id, 7_200).await?;
+    actor
+        .send(keyshare_event(expulsion_of(&e3_id, 1), 1, EventSource::Evm))
+        .await?;
+    actor
+        .send(keyshare_event(selection(&e3_id), 2, EventSource::Evm))
+        .await?;
+    wait_for_keyshare_state(&repo, |state| {
+        matches!(state, KeyshareState::CollectingEncryptionKeys(_))
+    })
+    .await?;
+    actor
+        .send(keyshare_event(peer_share(&e3_id, 2), 3, EventSource::Net))
+        .await?;
+
+    // Selection created the share collector after party 1's expulsion. Party 2's share is the last
+    // one that the collector waits for.
+    let recovery = wait_for_record(&recovery_repo, |recovery| {
+        recovery.collected_threshold_share_ids.is_some()
+    })
+    .await?;
+    assert_eq!(
+        recovery.collected_threshold_share_ids,
+        Some(BTreeSet::from([2]))
+    );
+    Ok(())
+}
+
+#[actix::test]
+async fn a_restarted_key_collector_does_not_wait_for_an_expelled_party() -> Result<()> {
+    let e3_id = E3id::new("expelled-key-restart", 1);
+    // The encryption-key cutoff (10% of the 7,200 s window) is 720 s away.
+    let (mut actor, repo, _, _) = build_actor(
+        &e3_id,
+        collecting_encryption_keys_state(&e3_id),
+        7_200,
+        7_200,
+        &[1],
+    )
+    .await?;
+    for party_id in [0, 2] {
+        actor.record_encryption_key(&TypedEvent::new(
+            peer_key(&e3_id, party_id),
+            test_ec(party_id + 1),
+        ))?;
+    }
+    let actor = actor.start();
+    actor
+        .send(keyshare_event(EffectsEnabled::new(), 3, EventSource::Local))
+        .await?;
+
+    // The recovered collector knows that party 1 is expelled, so the recorded keys 0 and 2
+    // complete the collection before the cutoff.
+    let KeyshareState::GeneratingThresholdShare(data) = wait_for_keyshare_state(&repo, |state| {
+        matches!(
+            state,
+            KeyshareState::GeneratingThresholdShare(_) | KeyshareState::Failed { .. }
+        )
+    })
+    .await?
+    else {
+        panic!("expected the DKG to continue without party 1");
+    };
+    let parties = data
+        .collected_encryption_keys
+        .iter()
+        .map(|key| key.party_id)
+        .collect::<Vec<_>>();
+    assert_eq!(parties, vec![0, 2]);
+    Ok(())
+}
+
+#[actix::test]
+async fn a_new_collector_stays_reachable_when_its_seeding_fails() -> Result<()> {
+    let e3_id = E3id::new("seed-overflow", 1);
+    // More recorded expulsions than a new collector's mailbox holds, so seeding fails part of the
+    // way through.
+    let expelled: Vec<u64> = (1..=(e3_utils::MAILBOX_LIMIT as u64 + 44)).collect();
+    let (mut actor, _, _, _) = build_actor(
+        &e3_id,
+        collecting_encryption_keys_state(&e3_id),
+        7_200,
+        7_200,
+        &expelled,
+    )
+    .await?;
+    let (parent, _, _, _) = build_actor(
+        &e3_id,
+        collecting_encryption_keys_state(&e3_id),
+        7_200,
+        7_200,
+        &[],
+    )
+    .await?;
+    let parent = parent.start();
+
+    let now = crate::domain::timeout_policy::now_unix_secs();
+    assert!(actor
+        .ensure_collector(parent.clone(), &test_ec(1), now)
+        .is_err());
+    assert!(
+        actor.decryption_key_collector.is_some(),
+        "the started share collector must stay reachable"
+    );
+    assert!(actor
+        .ensure_encryption_key_collector(parent, &test_ec(2), now)
+        .is_err());
+    assert!(
+        actor.encryption_key_collector.is_some(),
+        "the started key collector must stay reachable"
+    );
+    Ok(())
+}
+
 #[actix::test]
 async fn an_expulsion_that_leaves_fewer_than_h_keys_fails_the_dkg() -> Result<()> {
     let e3_id = E3id::new("expelled-after-collection", 1);
@@ -456,6 +760,180 @@ async fn an_expulsion_that_leaves_fewer_than_h_keys_fails_the_dkg() -> Result<()
         ),
         "expected party 2 to be reported missing, got {failure:?}"
     );
+    Ok(())
+}
+
+/// A store that stops when it starts, so it refuses every snapshot write, as a store whose
+/// mailbox rejects writes does.
+struct StoppedStore;
+
+impl Actor for StoppedStore {
+    type Context = actix::Context<Self>;
+
+    fn started(&mut self, ctx: &mut Self::Context) {
+        ctx.stop();
+    }
+}
+
+impl Handler<Get> for StoppedStore {
+    type Result = Option<Vec<u8>>;
+    fn handle(&mut self, _: Get, _: &mut Self::Context) -> Self::Result {
+        None
+    }
+}
+
+impl Handler<Insert> for StoppedStore {
+    type Result = ();
+    fn handle(&mut self, _: Insert, _: &mut Self::Context) {}
+}
+
+impl Handler<Remove> for StoppedStore {
+    type Result = ();
+    fn handle(&mut self, _: Remove, _: &mut Self::Context) {}
+}
+
+/// Hold `value` in a persistable whose writes all fail.
+async fn unwritable<T>(value: T) -> Persistable<T>
+where
+    T: for<'de> serde::Deserialize<'de> + serde::Serialize + Clone + Send + Sync + 'static,
+{
+    let store = StoppedStore.start();
+    actix::clock::sleep(std::time::Duration::from_millis(10)).await;
+    let connector = StoreConnector::new(
+        b"unwritable",
+        &store.clone().recipient(),
+        &store.clone().recipient(),
+        &store.recipient(),
+    );
+    Persistable::new(Some(value), connector)
+}
+
+/// Start a keyshare in `keyshare_state` whose state and recovery writes all fail, and return the
+/// bus history.
+async fn start_unwritable_actor(
+    e3_id: &E3id,
+    keyshare_state: KeyshareState,
+) -> Result<(
+    Addr<ThresholdKeyshare>,
+    Addr<HistoryCollector<InterfoldEvent>>,
+)> {
+    let (bus, history) = test_bus();
+    let (state, _) = test_state(e3_id, keyshare_state);
+    let state = unwritable(state.try_get()?).await;
+    let recovery = unwritable(ThresholdKeyshareRecoveryState::default()).await;
+    let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bus,
+        cipher: Arc::new(Cipher::from_password("test-password").await?),
+        state,
+        share_enc_preset: BfvPreset::InsecureDkg512,
+        interfold_address: Address::ZERO,
+        signer: alloy::signers::local::PrivateKeySigner::random(),
+        effects_enabled: false,
+        recovery,
+        recovery_payloads: test_recovery_payloads(),
+        dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
+    })
+    .start();
+    Ok((actor, history))
+}
+
+/// Wait for `count` events and return the messages of those that are `InterfoldError`s.
+async fn error_messages(
+    history: &Addr<HistoryCollector<InterfoldEvent>>,
+    count: usize,
+) -> Result<Vec<String>> {
+    Ok(next_events(history, count)
+        .await?
+        .into_iter()
+        .filter_map(|event| match event.into_data() {
+            InterfoldEventData::InterfoldError(error) => Some(error.message),
+            _ => None,
+        })
+        .collect())
+}
+
+#[actix::test]
+async fn the_event_router_reports_failed_state_writes() -> Result<()> {
+    let e3_id = E3id::new("unwritable", 1);
+    let own_proof = c2_proof(&e3_id, ProofType::C2aSkShareComputation, 0);
+    let events: Vec<InterfoldEventData> = vec![
+        PublicKeyAggregated {
+            pubkey: ArcBytes::from_bytes(&[1]),
+            e3_id: e3_id.clone(),
+            nodes: OrderedSet::new(),
+            committee_addresses: Vec::new(),
+            honest_committee_addresses: Vec::new(),
+            pk_commitment: [1; 32],
+            dkg_aggregator_proof: None,
+            dkg_attestation_bundle: None,
+        }
+        .into(),
+        peer_share(&e3_id, 2).into(),
+        PkGenerationProofSigned {
+            e3_id: e3_id.clone(),
+            party_id: 0,
+            signed_proof: own_proof.clone(),
+        }
+        .into(),
+        DkgProofSigned {
+            e3_id: e3_id.clone(),
+            party_id: 0,
+            signed_proof: own_proof,
+        }
+        .into(),
+        expulsion_of(&e3_id, 1).into(),
+        CommitteeMemberExcluded {
+            e3_id: e3_id.clone(),
+            node: Address::ZERO,
+            proof_type: ProofType::C2aSkShareComputation,
+            party_id: Some(2),
+        }
+        .into(),
+    ];
+
+    // One keyshare per event: the bus drops a repeated error with the same payload.
+    for data in events {
+        let (actor, history) = start_unwritable_actor(
+            &e3_id,
+            KeyshareState::AggregatingDecryptionKey(aggregating_decryption_key_for_roster_test()),
+        )
+        .await?;
+        let event_type = data.event_type();
+        actor
+            .send(keyshare_event(data, 1, EventSource::Net))
+            .await?;
+
+        let errors = error_messages(&history, 1).await?;
+        assert_eq!(
+            errors.len(),
+            1,
+            "{event_type}: the failed write is reported"
+        );
+        assert!(
+            errors[0].contains("rejected snapshot write"),
+            "{event_type}: {}",
+            errors[0]
+        );
+    }
+    Ok(())
+}
+
+#[actix::test]
+async fn the_event_router_reports_a_failed_encryption_key_write() -> Result<()> {
+    let e3_id = E3id::new("unwritable-key", 1);
+    let (actor, history) = start_unwritable_actor(&e3_id, KeyshareState::Init).await?;
+
+    actor
+        .send(keyshare_event(peer_key(&e3_id, 1), 1, EventSource::Net))
+        .await?;
+
+    let errors = error_messages(&history, 1).await?;
+    assert_eq!(
+        errors.len(),
+        1,
+        "the failed key write is reported: {errors:?}"
+    );
+    assert!(errors[0].contains("rejected snapshot write"));
     Ok(())
 }
 
@@ -511,6 +989,20 @@ async fn start_actor_before_selection(
     e3_id: &E3id,
     dkg_window_secs: u64,
 ) -> Result<(Addr<ThresholdKeyshare>, Repository<ThresholdKeyshareState>)> {
+    let (actor, repo, _) =
+        start_actor_before_selection_with_recovery(e3_id, dkg_window_secs).await?;
+    Ok((actor, repo))
+}
+
+/// `start_actor_before_selection`, which also returns the recovery repository.
+async fn start_actor_before_selection_with_recovery(
+    e3_id: &E3id,
+    dkg_window_secs: u64,
+) -> Result<(
+    Addr<ThresholdKeyshare>,
+    Repository<ThresholdKeyshareState>,
+    Repository<ThresholdKeyshareRecoveryState>,
+)> {
     let (bus, _) = test_bus();
     let (mut state, repo) = test_state(e3_id, KeyshareState::Init);
     state.try_mutate_without_context(|mut state| {
@@ -519,6 +1011,7 @@ async fn start_actor_before_selection(
         state.params = insecure_threshold_params();
         Ok(state)
     })?;
+    let (recovery, recovery_repo) = test_recovery_with_repo();
     let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
         bus,
         cipher: Arc::new(Cipher::from_password("test-password").await?),
@@ -527,7 +1020,7 @@ async fn start_actor_before_selection(
         interfold_address: Address::ZERO,
         signer: alloy::signers::local::PrivateKeySigner::random(),
         effects_enabled: true,
-        recovery: test_recovery(),
+        recovery,
         recovery_payloads: test_recovery_payloads(),
         dkg_timing_reader: Arc::new(move |_| {
             Box::pin(async move {
@@ -539,7 +1032,7 @@ async fn start_actor_before_selection(
         }),
     })
     .start();
-    Ok((actor, repo))
+    Ok((actor, repo, recovery_repo))
 }
 
 fn keyshare_event(
@@ -1010,21 +1503,699 @@ async fn replayed_signed_c3_proof_is_stored_once() -> Result<()> {
     Ok(())
 }
 
+/// Dealers whose contribution hash is their party ID in every byte.
+fn dealers(ids: &[u64]) -> Vec<DkgDealer> {
+    ids.iter()
+        .map(|&party_id| DkgDealer {
+            party_id,
+            contribution_hash: [party_id as u8; 32],
+        })
+        .collect()
+}
+
 fn ready_message(party_id: u64, dealer_ids: &[u64], e3_id: &E3id) -> DkgCoordination {
     DkgCoordination {
         e3_id: e3_id.clone(),
         interfold_address: Address::ZERO,
         party_id,
         kind: DkgCoordinationKind::Ready,
-        dealers: dealer_ids
-            .iter()
-            .map(|&dealer_id| DkgDealer {
-                party_id: dealer_id,
-                contribution_hash: [dealer_id as u8; 32],
-            })
-            .collect(),
+        dealers: dealers(dealer_ids),
         signature: ArcBytes::from_bytes(&[]),
     }
+}
+
+/// A keyshare for party 0 in `AggregatingDecryptionKey(current)`, in a committee of the three
+/// `signers`. It signs as party 0. `setup` edits the recovery state.
+async fn committee_actor(
+    e3_id: &E3id,
+    signers: &[alloy::signers::local::PrivateKeySigner; 3],
+    current: AggregatingDecryptionKey,
+    cipher: Arc<Cipher>,
+    setup: impl FnOnce(&mut ThresholdKeyshareRecoveryState),
+) -> Result<CommitteeActor> {
+    let (bus, history) = test_bus();
+    let (state, _) = test_state(e3_id, KeyshareState::AggregatingDecryptionKey(current));
+    let (mut recovery, recovery_repo) = test_recovery_with_repo();
+    recovery.try_mutate_without_context(|mut recovery| {
+        recovery.ciphernode_selected = Some(TypedEvent::new(
+            CiphernodeSelected {
+                e3_id: e3_id.clone(),
+                threshold_m: 1,
+                threshold_n: 3,
+                party_id: 0,
+                committee: signers
+                    .iter()
+                    .map(|signer| signer.address().to_string())
+                    .collect(),
+                ..Default::default()
+            },
+            test_ec(1),
+        ));
+        setup(&mut recovery);
+        Ok(recovery)
+    })?;
+    let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bus: bus.clone(),
+        cipher,
+        state,
+        share_enc_preset: BfvPreset::InsecureDkg512,
+        interfold_address: Address::ZERO,
+        signer: signers[0].clone(),
+        effects_enabled: false,
+        recovery,
+        recovery_payloads: test_recovery_payloads(),
+        dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
+    });
+    Ok(CommitteeActor {
+        actor,
+        bus,
+        history,
+        recovery_repo,
+    })
+}
+
+struct CommitteeActor {
+    actor: ThresholdKeyshare,
+    bus: BusHandle,
+    history: Addr<HistoryCollector<InterfoldEvent>>,
+    recovery_repo: Repository<ThresholdKeyshareRecoveryState>,
+}
+
+fn three_signers() -> [alloy::signers::local::PrivateKeySigner; 3] {
+    std::array::from_fn(|_| alloy::signers::local::PrivateKeySigner::random())
+}
+
+/// A C2 proof of `proof_type` by `party_id`. Dealer identity hashes the statement, not the
+/// signature, so the proof is not signed.
+fn c2_proof(e3_id: &E3id, proof_type: ProofType, party_id: u64) -> SignedProofPayload {
+    let circuit = match proof_type {
+        ProofType::C2aSkShareComputation => CircuitName::SkShareComputation,
+        _ => CircuitName::ESmShareComputation,
+    };
+    SignedProofPayload {
+        payload: ProofPayload {
+            e3_id: e3_id.clone(),
+            proof_type,
+            proof: Proof::new(
+                circuit,
+                ArcBytes::from_bytes(&[party_id as u8]),
+                ArcBytes::from_bytes(&[party_id as u8, 1]),
+            ),
+        },
+        signature: ArcBytes::from_bytes(&[]),
+    }
+}
+
+/// A completed C2/C3 verification with no dishonest party.
+fn share_proofs_verified(e3_id: &E3id) -> TypedEvent<ShareVerificationComplete> {
+    TypedEvent::new(
+        ShareVerificationComplete {
+            e3_id: e3_id.clone(),
+            kind: VerificationKind::ShareProofs,
+            dishonest_parties: BTreeSet::new(),
+        },
+        test_ec(1),
+    )
+}
+
+/// A keyshare for party 0 in share aggregation, with its own shares and C0 proof, whose share
+/// batch held only dealer 1. Dealer 1 is expelled and dealer 2's share is recorded, so the batch
+/// can grow to `{2}`. `verified` says whether the first batch's verdict is already recorded.
+/// Peers 1 and 2 have sent their shares. `setup` sets the saved C2/C3 batch.
+async fn committee_with_two_shares(
+    e3_id: &E3id,
+    setup: impl FnOnce(&mut ThresholdKeyshareRecoveryState),
+) -> Result<CommitteeActor> {
+    let signers = three_signers();
+    let cipher = Arc::new(Cipher::from_password("test-password").await?);
+    // One row per own share: each peer needs one C3a and one C3b proof and one ESI share.
+    let rows = bincode::serialize(&vec![vec![1u64]])?;
+    let current = AggregatingDecryptionKey {
+        own_sk_share_raw: SensitiveBytes::new(rows.clone(), &cipher)?,
+        own_esi_shares_raw: vec![SensitiveBytes::new(rows, &cipher)?],
+        ..aggregating_decryption_key_for_roster_test()
+    };
+    // C0 output and C3 recipient-key input share one 32-byte field.
+    let proof = SignedProofPayload {
+        payload: ProofPayload {
+            e3_id: e3_id.clone(),
+            proof_type: ProofType::C3aSkShareEncryption,
+            proof: Proof::new(
+                CircuitName::PkBfv,
+                ArcBytes::from_bytes(&[]),
+                ArcBytes::from_bytes(&[7; 32]),
+            ),
+        },
+        signature: ArcBytes::from_bytes(&[]),
+    };
+    let mut committee = committee_actor(e3_id, &signers, current, cipher, setup).await?;
+    let actor = &mut committee.actor;
+    actor.record_encryption_key(&TypedEvent::new(
+        EncryptionKeyCreated {
+            e3_id: e3_id.clone(),
+            key: Arc::new(
+                EncryptionKey::new(0, ArcBytes::from_bytes(&[0]))
+                    .with_signed_payload(proof.clone()),
+            ),
+            external: false,
+        },
+        test_ec(1),
+    ))?;
+    for party_id in [1, 2] {
+        actor.record_threshold_share(&TypedEvent::new(
+            ThresholdShareCreated {
+                share: Arc::new(ThresholdShare {
+                    party_id,
+                    pk_share: ArcBytes::from_bytes(&[party_id as u8]),
+                    sk_sss: Default::default(),
+                    esi_sss: vec![Default::default()],
+                }),
+                signed_c2a_proof: Some(proof.clone()),
+                signed_c2b_proof: Some(proof.clone()),
+                signed_c3a_proofs: vec![proof.clone()],
+                signed_c3b_proofs: vec![proof.clone()],
+                ..peer_share(e3_id, party_id)
+            },
+            test_ec(party_id + 1),
+        ))?;
+    }
+    Ok(committee)
+}
+
+async fn batch_with_an_expelled_dealer(e3_id: &E3id, verified: bool) -> Result<CommitteeActor> {
+    let mut committee = committee_with_two_shares(e3_id, |recovery| {
+        recovery.collected_threshold_share_ids = Some(BTreeSet::from([1]));
+        if verified {
+            recovery.share_verification_complete = Some(share_proofs_verified(e3_id));
+        }
+    })
+    .await?;
+    committee
+        .actor
+        .handle_committee_member_expelled(expulsion_of(e3_id, 1), test_ec(4))?;
+    Ok(committee)
+}
+
+/// The context of the C2/C3 dispatch that the actor sent for `dealers`.
+async fn share_dispatch_of(
+    history: &Addr<HistoryCollector<InterfoldEvent>>,
+    dealers: &[u64],
+) -> Result<EventContext<Sequenced>> {
+    Ok(share_dispatch_event_of(history, dealers)
+        .await?
+        .get_ctx()
+        .clone())
+}
+
+/// The C2/C3 dispatch that the actor sent for `dealers`, as the event log holds it.
+async fn share_dispatch_event_of(
+    history: &Addr<HistoryCollector<InterfoldEvent>>,
+    dealers: &[u64],
+) -> Result<InterfoldEvent> {
+    actix::clock::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+            let dispatch = events.iter().find(|event| {
+                matches!(
+                    event.get_data(),
+                    InterfoldEventData::ShareVerificationDispatched(dispatch)
+                        if dispatch.kind == VerificationKind::ShareProofs
+                            && dispatch
+                                .share_proofs
+                                .iter()
+                                .map(|proofs| proofs.sender_party_id)
+                                .eq(dealers.iter().copied())
+                )
+            });
+            if let Some(dispatch) = dispatch {
+                return Ok(dispatch.clone());
+            }
+            actix::clock::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await?
+}
+
+/// Reports how many C2/C3 results a running actor keeps for a later dispatch.
+#[derive(Message)]
+#[rtype(result = "usize")]
+struct KeptShareVerdicts;
+
+impl Handler<KeptShareVerdicts> for ThresholdKeyshare {
+    type Result = usize;
+    fn handle(&mut self, _: KeptShareVerdicts, _: &mut Self::Context) -> usize {
+        self.pending.parked_share_verdicts.len()
+    }
+}
+
+async fn wait_for_kept_share_verdicts(actor: &Addr<ThresholdKeyshare>, count: usize) -> Result<()> {
+    actix::clock::timeout(std::time::Duration::from_secs(10), async {
+        while actor.send(KeptShareVerdicts).await? != count {
+            actix::clock::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        Ok(())
+    })
+    .await?
+}
+
+#[actix::test]
+async fn a_share_batch_grows_past_a_dealer_that_was_expelled() -> Result<()> {
+    let e3_id = E3id::new("batch-past-expelled", 1);
+    let CommitteeActor {
+        mut actor, history, ..
+    } = batch_with_an_expelled_dealer(&e3_id, true).await?;
+
+    actor.dispatch_expanded_threshold_share_batch(test_ec(5))?;
+
+    assert_eq!(
+        actor.recovery.try_get()?.collected_threshold_share_ids,
+        Some(BTreeSet::from([2]))
+    );
+    let dispatched = next_event(&history).await?;
+    let InterfoldEventData::ShareVerificationDispatched(dispatched) = dispatched.into_data() else {
+        panic!("expected the grown batch to be verified");
+    };
+    assert_eq!(
+        dispatched
+            .share_proofs
+            .iter()
+            .map(|party| party.sender_party_id)
+            .collect::<Vec<_>>(),
+        vec![2]
+    );
+    Ok(())
+}
+
+#[actix::test]
+async fn a_grown_batch_completes_when_its_verdict_equals_the_first() -> Result<()> {
+    let e3_id = E3id::new("grown-batch-verdict", 1);
+    let CommitteeActor {
+        actor,
+        bus,
+        history,
+        recovery_repo,
+    } = batch_with_an_expelled_dealer(&e3_id, false).await?;
+    let actor = actor.start();
+    bus.subscribe(
+        EventType::ShareVerificationComplete,
+        actor.clone().recipient(),
+    );
+    // Each verdict comes from its own dispatch, as in production; the payloads are equal.
+    let verdict = ShareVerificationComplete {
+        e3_id: e3_id.clone(),
+        kind: VerificationKind::ShareProofs,
+        dishonest_parties: BTreeSet::new(),
+    };
+    let dispatch_before_restart = |batch: &str| {
+        keyshare_event(TestEvent::new(batch, 1), 10, EventSource::Local)
+            .get_ctx()
+            .clone()
+    };
+
+    // The verdict for `{1}` arrives after dealer 1's expulsion, so the batch grows to `{2}`.
+    bus.publish(verdict.clone(), dispatch_before_restart("first batch"))?;
+    wait_for_record(&recovery_repo, |recovery| {
+        recovery.collected_threshold_share_ids == Some(BTreeSet::from([2]))
+            && recovery.share_verification_complete.is_none()
+    })
+    .await?;
+
+    // `{1}` was also sent before the restart with another payload. Its verdict counts dealer 2,
+    // which only the grown batch holds, so it is kept.
+    bus.publish(
+        verdict.clone(),
+        dispatch_before_restart("first batch, sent again"),
+    )?;
+    wait_for_kept_share_verdicts(&actor, 1).await?;
+    let recovery = recovery_repo.read().await?.expect("saved recovery state");
+    assert!(recovery.share_verification_complete.is_none());
+    assert_eq!(recovery.verified_dealer_ids, Some(BTreeSet::new()));
+
+    // The grown batch's verdict is equal to the first one and must still be delivered.
+    bus.publish(verdict, share_dispatch_of(&history, &[2]).await?)?;
+    let recovery = wait_for_record(&recovery_repo, |recovery| {
+        recovery.share_verification_complete.is_some()
+    })
+    .await?;
+    assert_eq!(recovery.verified_dealer_ids, Some(BTreeSet::from([2])));
+    Ok(())
+}
+
+#[actix::test]
+async fn a_verdict_of_an_earlier_batch_does_not_complete_a_grown_batch() -> Result<()> {
+    let e3_id = E3id::new("earlier-batch-verdict", 1);
+    let CommitteeActor {
+        mut actor,
+        bus,
+        history,
+        recovery_repo,
+    } = committee_with_two_shares(&e3_id, |recovery| {
+        recovery.collected_threshold_share_ids = Some(BTreeSet::from([2]));
+    })
+    .await?;
+    actor.verify_recorded_threshold_shares(test_ec(4))?;
+    let first_dispatch = share_dispatch_of(&history, &[2]).await?;
+    let actor = actor.start();
+    bus.subscribe(
+        EventType::ShareVerificationComplete,
+        actor.clone().recipient(),
+    );
+    let verdict = |dishonest_parties: BTreeSet<u64>| ShareVerificationComplete {
+        e3_id: e3_id.clone(),
+        kind: VerificationKind::ShareProofs,
+        dishonest_parties,
+    };
+
+    // `{2}` is verified, and the batch grows to `{1, 2}`.
+    bus.publish(verdict(BTreeSet::new()), first_dispatch.clone())?;
+    wait_for_record(&recovery_repo, |recovery| {
+        recovery.collected_threshold_share_ids == Some(BTreeSet::from([1, 2]))
+            && recovery.share_verification_complete.is_none()
+    })
+    .await?;
+
+    // Another verdict of the first dispatch does not count dealer 1 as verified.
+    bus.publish(verdict(BTreeSet::from([2])), first_dispatch)?;
+    wait_for_kept_share_verdicts(&actor, 1).await?;
+    let recovery = recovery_repo.read().await?.expect("saved recovery state");
+    assert!(recovery.share_verification_complete.is_none());
+    assert_eq!(recovery.verified_dealer_ids, Some(BTreeSet::from([2])));
+
+    bus.publish(
+        verdict(BTreeSet::new()),
+        share_dispatch_of(&history, &[1, 2]).await?,
+    )?;
+    let recovery = wait_for_record(&recovery_repo, |recovery| {
+        recovery.share_verification_complete.is_some()
+    })
+    .await?;
+    assert_eq!(recovery.verified_dealer_ids, Some(BTreeSet::from([1, 2])));
+    Ok(())
+}
+
+#[actix::test]
+async fn a_kept_verdict_applies_when_restart_sends_its_batch_again() -> Result<()> {
+    let e3_id = E3id::new("kept-share-verdict", 1);
+    let verdict = ShareVerificationComplete {
+        e3_id: e3_id.clone(),
+        kind: VerificationKind::ShareProofs,
+        dishonest_parties: BTreeSet::new(),
+    };
+    // Before the restart, the batch grew past expelled dealer 1 to `{2}` and was sent.
+    let before = batch_with_an_expelled_dealer(&e3_id, false).await?;
+    let first_actor = before.actor.start();
+    before.bus.subscribe(
+        EventType::ShareVerificationComplete,
+        first_actor.recipient(),
+    );
+    let first_dispatch = keyshare_event(TestEvent::new("first batch", 1), 10, EventSource::Local)
+        .get_ctx()
+        .clone();
+    before.bus.publish(verdict.clone(), first_dispatch)?;
+    let grown_dispatch = share_dispatch_of(&before.history, &[2]).await?;
+
+    // After the restart, replay delivers the grown batch's verdict before the batch is sent again.
+    let after = committee_with_two_shares(&e3_id, |recovery| {
+        recovery.collected_threshold_share_ids = Some(BTreeSet::from([2]));
+        recovery.verified_dealer_ids = Some(BTreeSet::new());
+    })
+    .await?;
+    let CommitteeActor {
+        mut actor,
+        bus,
+        recovery_repo,
+        ..
+    } = after;
+    actor.handle_committee_member_expelled(expulsion_of(&e3_id, 1), test_ec(4))?;
+    let actor = actor.start();
+    bus.subscribe(
+        EventType::ShareVerificationComplete,
+        actor.clone().recipient(),
+    );
+    bus.publish(verdict, grown_dispatch)?;
+    wait_for_kept_share_verdicts(&actor, 1).await?;
+
+    // The batch is sent again with the same payload, which applies the kept verdict.
+    actor
+        .send(keyshare_event(EffectsEnabled::new(), 3, EventSource::Local))
+        .await?;
+    let recovery = wait_for_record(&recovery_repo, |recovery| {
+        recovery.share_verification_complete.is_some()
+    })
+    .await?;
+    assert_eq!(recovery.verified_dealer_ids, Some(BTreeSet::from([2])));
+    Ok(())
+}
+
+/// The recovery state keeps the C2/C3 dispatch IDs of the current batch. After a restart, replay
+/// therefore applies the result of a dispatch sent before the restart where it applied before,
+/// without waiting for `EffectsEnabled` to send the batch again.
+#[actix::test]
+async fn a_restart_applies_the_result_of_a_dispatch_sent_before_it() -> Result<()> {
+    let e3_id = E3id::new("persisted-share-dispatch", 1);
+    let verdict = ShareVerificationComplete {
+        e3_id: e3_id.clone(),
+        kind: VerificationKind::ShareProofs,
+        dishonest_parties: BTreeSet::new(),
+    };
+    // Before the restart, the batch grew past expelled dealer 1 to `{2}` and was sent.
+    let before = batch_with_an_expelled_dealer(&e3_id, false).await?;
+    let first_actor = before.actor.start();
+    before.bus.subscribe(
+        EventType::ShareVerificationComplete,
+        first_actor.recipient(),
+    );
+    let first_dispatch = keyshare_event(TestEvent::new("first batch", 1), 10, EventSource::Local)
+        .get_ctx()
+        .clone();
+    before.bus.publish(verdict.clone(), first_dispatch)?;
+    let grown_dispatch = share_dispatch_of(&before.history, &[2]).await?;
+    let persisted = wait_for_record(&before.recovery_repo, |recovery| {
+        recovery.share_dispatch_ids.contains(&grown_dispatch.id())
+    })
+    .await?;
+
+    // After the restart, replay delivers the grown batch's verdict before the batch is sent again.
+    let after = committee_with_two_shares(&e3_id, |recovery| {
+        recovery.collected_threshold_share_ids = Some(BTreeSet::from([2]));
+        recovery.verified_dealer_ids = Some(BTreeSet::new());
+        recovery.share_dispatch_ids = persisted.share_dispatch_ids.clone();
+    })
+    .await?;
+    let CommitteeActor {
+        mut actor,
+        bus,
+        recovery_repo,
+        ..
+    } = after;
+    actor.handle_committee_member_expelled(expulsion_of(&e3_id, 1), test_ec(4));
+    let actor = actor.start();
+    bus.subscribe(
+        EventType::ShareVerificationComplete,
+        actor.clone().recipient(),
+    );
+    bus.publish(verdict, grown_dispatch)?;
+
+    let recovery = wait_for_record(&recovery_repo, |recovery| {
+        recovery.share_verification_complete.is_some()
+    })
+    .await?;
+    assert_eq!(recovery.verified_dealer_ids, Some(BTreeSet::from([2])));
+    assert_eq!(actor.send(KeptShareVerdicts).await?, 0);
+    Ok(())
+}
+
+/// A dispatch ID can be missing from the saved state: `EffectsEnabled` sends a recorded batch
+/// again without a logged cause, and the node can stop before that write is saved. Replay delivers
+/// the logged dispatch before its result, so the actor records the ID again, and the result applies
+/// where it applied before the restart instead of waiting for the next `EffectsEnabled`.
+#[actix::test]
+async fn replay_records_a_logged_dispatch_that_the_saved_state_lacks() -> Result<()> {
+    let e3_id = E3id::new("logged-share-dispatch", 1);
+    // The batch grew past expelled dealer 1 to `{2}`, and `{2}` has no result yet.
+    let saved_batch = |recovery: &mut ThresholdKeyshareRecoveryState| {
+        recovery.collected_threshold_share_ids = Some(BTreeSet::from([2]));
+        recovery.verified_dealer_ids = Some(BTreeSet::new());
+    };
+    let CommitteeActor {
+        mut actor, history, ..
+    } = committee_with_two_shares(&e3_id, saved_batch).await?;
+    actor.handle_committee_member_expelled(expulsion_of(&e3_id, 1), test_ec(4));
+    let actor = actor.start();
+    actor
+        .send(keyshare_event(EffectsEnabled::new(), 5, EventSource::Local))
+        .await?;
+    let (dispatch, dispatch_ec) = share_dispatch_event_of(&history, &[2])
+        .await?
+        .into_components();
+
+    // After the restart, the saved state has the batch but not the ID of that dispatch.
+    let CommitteeActor {
+        mut actor,
+        bus,
+        recovery_repo,
+        ..
+    } = committee_with_two_shares(&e3_id, saved_batch).await?;
+    actor.handle_committee_member_expelled(expulsion_of(&e3_id, 1), test_ec(4));
+    let actor = actor.start();
+    bus.subscribe(
+        EventType::ShareVerificationComplete,
+        actor.clone().recipient(),
+    );
+    actor
+        .send(keyshare_event(dispatch, 6, EventSource::Local))
+        .await?;
+    bus.publish(
+        ShareVerificationComplete {
+            e3_id: e3_id.clone(),
+            kind: VerificationKind::ShareProofs,
+            dishonest_parties: BTreeSet::new(),
+        },
+        dispatch_ec.clone(),
+    )?;
+
+    let recovery = wait_for_record(&recovery_repo, |recovery| {
+        recovery.share_verification_complete.is_some()
+    })
+    .await?;
+    assert_eq!(recovery.verified_dealer_ids, Some(BTreeSet::from([2])));
+    assert!(recovery.share_dispatch_ids.contains(&dispatch_ec.id()));
+    assert_eq!(actor.send(KeptShareVerdicts).await?, 0);
+    Ok(())
+}
+
+/// A batch that `EffectsEnabled` sends again is saved with the last saved context, which the store
+/// can refuse as stale. When the logged dispatch reaches the actor, the actor saves its recovery
+/// state again at the dispatch's own position, also though it already holds the ID, so a later
+/// snapshot cut keeps the ID.
+#[actix::test]
+async fn a_logged_dispatch_is_saved_at_its_own_position() -> Result<()> {
+    let e3_id = E3id::new("dispatch-position", 1);
+    let CommitteeActor {
+        mut actor,
+        history,
+        recovery_repo,
+        ..
+    } = committee_with_two_shares(&e3_id, |recovery| {
+        recovery.collected_threshold_share_ids = Some(BTreeSet::from([2]));
+        recovery.verified_dealer_ids = Some(BTreeSet::new());
+    })
+    .await?;
+    actor.handle_committee_member_expelled(expulsion_of(&e3_id, 1), test_ec(4));
+    let actor = actor.start();
+    actor
+        .send(keyshare_event(EffectsEnabled::new(), 5, EventSource::Local))
+        .await?;
+    let (dispatch, dispatch_ec) = share_dispatch_event_of(&history, &[2])
+        .await?
+        .into_components();
+    let resent = wait_for_record(&recovery_repo, |recovery| {
+        recovery.share_dispatch_ids.contains(&dispatch_ec.id())
+    })
+    .await?;
+    assert_ne!(resent.last_ec.map(|ec| ec.id()), Some(dispatch_ec.id()));
+
+    actor
+        .send(keyshare_event(dispatch, 6, EventSource::Local))
+        .await?;
+
+    wait_for_record(&recovery_repo, |recovery| {
+        recovery
+            .last_ec
+            .as_ref()
+            .is_some_and(|ec| ec.id() == dispatch_ec.id())
+            && recovery.share_dispatch_ids.contains(&dispatch_ec.id())
+    })
+    .await?;
+    Ok(())
+}
+
+/// A logged dispatch of an earlier batch does not verify a grown batch, so the actor does not
+/// record its ID, and another result of it is kept instead of completing the grown batch.
+#[actix::test]
+async fn a_logged_dispatch_of_an_earlier_batch_is_not_recorded_for_a_grown_batch() -> Result<()> {
+    let e3_id = E3id::new("earlier-logged-dispatch", 1);
+    let CommitteeActor {
+        mut actor,
+        bus,
+        history,
+        recovery_repo,
+    } = committee_with_two_shares(&e3_id, |recovery| {
+        recovery.collected_threshold_share_ids = Some(BTreeSet::from([2]));
+    })
+    .await?;
+    actor.verify_recorded_threshold_shares(test_ec(4))?;
+    let (first_dispatch, first_ec) = share_dispatch_event_of(&history, &[2])
+        .await?
+        .into_components();
+    let actor = actor.start();
+    bus.subscribe(
+        EventType::ShareVerificationComplete,
+        actor.clone().recipient(),
+    );
+    let verdict = |dishonest_parties: BTreeSet<u64>| ShareVerificationComplete {
+        e3_id: e3_id.clone(),
+        kind: VerificationKind::ShareProofs,
+        dishonest_parties,
+    };
+
+    // `{2}` is verified, and the batch grows to `{1, 2}`.
+    bus.publish(verdict(BTreeSet::new()), first_ec.clone())?;
+    wait_for_record(&recovery_repo, |recovery| {
+        recovery.collected_threshold_share_ids == Some(BTreeSet::from([1, 2]))
+            && recovery.share_verification_complete.is_none()
+    })
+    .await?;
+
+    // The first dispatch arrives again, then another result of it.
+    actor
+        .send(keyshare_event(first_dispatch, 6, EventSource::Local))
+        .await?;
+    bus.publish(verdict(BTreeSet::from([2])), first_ec.clone())?;
+    wait_for_kept_share_verdicts(&actor, 1).await?;
+    let recovery = recovery_repo.read().await?.expect("saved recovery state");
+    assert!(!recovery.share_dispatch_ids.contains(&first_ec.id()));
+    assert!(recovery.share_verification_complete.is_none());
+    Ok(())
+}
+
+/// A verified batch stays verified when the collector reports its live dealers again together
+/// with an expelled dealer: an expelled dealer is not growth, so the result is not cleared and the
+/// same batch is not sent for verification again.
+#[actix::test]
+async fn an_expelled_dealer_does_not_restart_a_verified_batch() -> Result<()> {
+    let e3_id = E3id::new("expelled-is-not-growth", 1);
+    let CommitteeActor { mut actor, .. } = committee_with_two_shares(&e3_id, |recovery| {
+        recovery.collected_threshold_share_ids = Some(BTreeSet::from([2]));
+        recovery.verified_dealer_ids = Some(BTreeSet::from([2]));
+        recovery.share_verification_complete = Some(share_proofs_verified(&e3_id));
+    })
+    .await?;
+    actor.handle_committee_member_expelled(expulsion_of(&e3_id, 1), test_ec(4));
+    let shares = [1u64, 2].map(|party_id| {
+        (
+            party_id,
+            Arc::new(ThresholdShare {
+                party_id,
+                pk_share: ArcBytes::from_bytes(&[party_id as u8]),
+                sk_sss: Default::default(),
+                esi_sss: vec![Default::default()],
+            }),
+        )
+    });
+    let replacement = AllThresholdSharesCollected::new(
+        std::collections::HashMap::from(shares),
+        Default::default(),
+    );
+
+    assert!(!actor.record_collected_threshold_shares(&TypedEvent::new(replacement, test_ec(5)))?);
+    let recovery = actor.recovery.try_get()?;
+    assert_eq!(
+        recovery.collected_threshold_share_ids,
+        Some(BTreeSet::from([2]))
+    );
+    assert!(recovery.share_verification_complete.is_some());
+    Ok(())
 }
 
 #[actix::test]

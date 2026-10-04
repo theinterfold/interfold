@@ -363,4 +363,49 @@ if PROC_ROOT="$health_dir/proc" \
     fail "uninitialized event persistence was considered healthy"
 fi
 
+# Chain ingestion heartbeat: the node writes one file per chain after each successful head read.
+# A stale poll, or a head and cursor that stopped moving, is unhealthy; no heartbeat yet is a node
+# that is still starting.
+mkdir -p "$health_dir/data/log.0" "$health_dir/data/ingestion"
+ln -sfn "$health_dir/bin/interfold" "$health_dir/proc/1/exe"
+write_heartbeat() {
+    printf 'chain_id=1\nhead=%s\ncursor=%s\npolled_at=%s\nprogressed_at=%s\n' \
+        "$1" "$2" "$3" "$4" > "$health_dir/data/ingestion/chain-1.heartbeat"
+}
+run_healthcheck() {
+    PROC_ROOT="$health_dir/proc" \
+    CONFIG_FILE="$health_dir/data/config.yaml" \
+    PASSWORD_FILE="$health_dir/data/password" \
+    DB_PATH="$health_dir/data/db" \
+    EVENT_LOG_PATH="$health_dir/data/log.0" \
+    INGESTION_DIR="$health_dir/data/ingestion" \
+    HEALTHCHECK_NOW=1000000 \
+    SS_BIN="$health_dir/bin/ss" \
+    STAT_BIN="$health_dir/bin/stat" \
+    sh "$ROOT_DIR/healthcheck.sh"
+}
+
+run_healthcheck || fail "a node without a heartbeat yet was considered unhealthy"
+
+write_heartbeat 500 499 999990 999900
+run_healthcheck || fail "a fresh ingestion heartbeat was rejected"
+
+write_heartbeat 500 499 999800 999800
+if run_healthcheck; then
+    fail "a reader that stopped polling two hundred seconds ago was considered healthy"
+fi
+
+write_heartbeat 500 500 999995 999000
+if run_healthcheck; then
+    fail "a reader that did not progress for a thousand seconds was considered healthy"
+fi
+
+printf 'chain_id=1\nhead=500\n' > "$health_dir/data/ingestion/chain-1.heartbeat"
+if run_healthcheck; then
+    fail "a heartbeat without timestamps was considered healthy"
+fi
+
+rm "$health_dir/data/ingestion/chain-1.heartbeat"
+run_healthcheck || fail "a removed heartbeat was not treated as a starting node"
+
 printf 'PASS: DAppNode credential and health hardening regressions\n'

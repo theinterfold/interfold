@@ -47,6 +47,12 @@ impl Handler<InterfoldEvent> for Sortition {
             InterfoldEventData::ConfigurationUpdatedAt(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
+            InterfoldEventData::EligibilityConfigurationVersionUpdatedAt(data) => {
+                self.notify_sync(ctx, TypedEvent::new(data, ec))
+            }
+            InterfoldEventData::BondingAssetConfigUpdatedAt(data) => {
+                self.notify_sync(ctx, TypedEvent::new(data, ec))
+            }
             InterfoldEventData::CommitteeRequested(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }

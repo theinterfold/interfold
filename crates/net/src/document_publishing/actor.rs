@@ -7,9 +7,9 @@
 use crate::net_interface_handle::NetEventSubscriber;
 use crate::{
     domain::{
-        add_candidate, datetime_to_instant_from_now, notification_is_well_formed, Cleanup,
-        CleanupQueue, DocumentPublishingService, FetchQueue, PublicationSchedule,
-        RestorableDocuments,
+        add_candidate, closed_e3s::record_closed_e3, datetime_to_instant_from_now,
+        notification_is_well_formed, Cleanup, CleanupQueue, DocumentPublishingService, FetchQueue,
+        PublicationSchedule, RestorableDocuments,
     },
     events::{
         call_and_await_response, DocumentPublishedNotification, GossipData, NetCommand, NetEvent,
@@ -506,12 +506,7 @@ impl DocumentPublisher {
                 abort.abort();
             }
         }
-        if !self.closed_e3s.contains(e3_id) {
-            if self.closed_e3s.len() == MAX_BUFFERED_NOTIFICATIONS {
-                self.closed_e3s.pop_front();
-            }
-            self.closed_e3s.push_back(e3_id.clone());
-        }
+        record_closed_e3(&mut self.closed_e3s, e3_id);
         let keys = self.service.complete_e3(e3_id);
         let closed: Vec<DocumentId> = self
             .publications

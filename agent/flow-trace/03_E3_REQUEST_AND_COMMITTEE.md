@@ -228,11 +228,19 @@ configured provider's `RandomnessFulfilled` event from the chain:
 
 Chain ingestion waits for one confirmation by default, even when the configured URL points to a
 local RPC proxy. Only a single-process development chain explicitly sets
-`ingestion_confirmations: 0`. If an RPC log carries its block timestamp, the reader uses it without
-another provider request. Otherwise, it retries a temporarily missing block. During initial
-historical sync, an error that remains after the configured retries stops the EVM stream because the
-node cannot start from incomplete history. During live ingestion, a rejected zero-confirmation log
-or a failed confirmed-log backfill closes the current subscription and reconnects for canonical
+`ingestion_confirmations: 0`. The same rule applies to the HTTP poll interval for receipts and new
+blocks: 7 seconds by default, and `rpc_poll_interval_ms: 250` only on such a chain
+(`ChainConfig::rpc_poll_interval`, `ProviderConfig::for_chain`). If an RPC log carries its block
+timestamp, the reader uses it without another provider request. Otherwise, it retries a temporarily
+missing block. During initial historical sync, an error that remains after the configured retries
+stops the EVM stream because the node cannot start from incomplete history. During live ingestion,
+the `eth_subscribe` stream is a wake-up signal at every confirmation depth: a canonical
+`eth_getLogs` backfill from the watermark to the confirmed head delivers every log and advances the
+watermark (`handle_live_log`, `consume_live_logs`). With zero confirmations a notification starts
+that backfill at once. With a positive depth the periodic backfill (every 5 seconds) delivers the
+block once it is confirmed. The periodic backfill runs at every depth, so a log mined between a
+backfill and the subscription that follows it, or a log that the provider never announced, arrives
+with the next poll. A failed backfill closes the current subscription and reconnects for canonical
 backfill.
 
 At startup, each ciphernode loads the saved request-time registry and verifier for every active E3.

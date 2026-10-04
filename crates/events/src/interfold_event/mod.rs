@@ -12,6 +12,7 @@ mod aggregation_proof_pending;
 mod aggregation_proof_signed;
 mod aggregator_changed;
 mod bond_owner_set;
+mod bonding_asset_config_updated;
 mod ciphernode_added;
 mod ciphernode_bond_updated;
 mod ciphernode_deregistration_requested;
@@ -46,6 +47,7 @@ mod e3_failed;
 mod e3_request_complete;
 mod e3_requested;
 mod e3_stage_changed;
+mod eligibility_configuration_version_updated;
 mod enable_effects;
 mod encryption_key_collection_failed;
 mod encryption_key_created;
@@ -98,6 +100,7 @@ pub use aggregation_proof_pending::*;
 pub use aggregation_proof_signed::*;
 pub use aggregator_changed::*;
 pub use bond_owner_set::*;
+pub use bonding_asset_config_updated::*;
 pub use ciphernode_added::*;
 pub use ciphernode_bond_updated::*;
 pub use ciphernode_deregistration_requested::*;
@@ -133,6 +136,7 @@ pub use e3_request_complete::*;
 pub use e3_requested::*;
 pub use e3_stage_changed::*;
 use e3_utils::{colorize, colorize_event_ids, Color};
+pub use eligibility_configuration_version_updated::*;
 pub use enable_effects::*;
 pub use encryption_key_collection_failed::*;
 pub use encryption_key_created::*;
@@ -374,6 +378,10 @@ pub enum InterfoldEventData {
     OperatorActivationChangedAt(OperatorActivationChangedAt),
     ConfigurationUpdatedAt(ConfigurationUpdatedAt),
     PlaintextVerificationResumed(PlaintextVerificationResumed),
+    EligibilityConfigurationVersionUpdated(EligibilityConfigurationVersionUpdated),
+    EligibilityConfigurationVersionUpdatedAt(EligibilityConfigurationVersionUpdatedAt),
+    BondingAssetConfigUpdated(BondingAssetConfigUpdated),
+    BondingAssetConfigUpdatedAt(BondingAssetConfigUpdatedAt),
 }
 
 impl InterfoldEventData {
@@ -581,32 +589,60 @@ mod serialization_tests {
     }
 
     #[test]
-    fn local_c6_results_distinguish_batches_but_deduplicate_retries() {
-        let outcome: InterfoldEventData = ShareVerificationComplete {
-            e3_id: E3id::new("1", 1),
-            kind: VerificationKind::ThresholdDecryptionProofs,
-            dishonest_parties: Default::default(),
-        }
-        .into();
-        let make_result = |batch: &str, ts| {
+    fn local_errors_distinguish_causes_but_deduplicate_repeats() -> anyhow::Result<()> {
+        let make_error = |cause: &str, ts| {
             let cause = EventContext::<Unsequenced>::from(InterfoldEventData::from(
-                TestEvent::new(batch, 1),
+                TestEvent::new(cause, 1),
             ))
             .sequence(0);
-            InterfoldEvent::<Unsequenced>::new_with_timestamp(
-                outcome.clone(),
-                Some(cause),
+            InterfoldEvent::<Unsequenced>::from_error(
+                EType::KeyGeneration,
+                anyhow::anyhow!("persistable store mailbox rejected snapshot write"),
                 ts,
-                None,
-                EventSource::Local,
+                Some(cause),
             )
         };
-        let first = make_result("first", 1);
-        let replacement = make_result("replacement", 2);
-        let replay = make_result("first", 3);
-        assert_eq!(first.event_id(), replacement.event_id());
-        assert_ne!(first.delivery_id(), replacement.delivery_id());
-        assert_eq!(first.delivery_id(), replay.delivery_id());
+        let first = make_error("event of E3 A", 1)?;
+        let other = make_error("event of E3 B", 2)?;
+        let repeat = make_error("event of E3 A", 3)?;
+        assert_eq!(first.event_id(), other.event_id());
+        assert_ne!(first.delivery_id(), other.delivery_id());
+        assert_eq!(first.delivery_id(), repeat.delivery_id());
+        Ok(())
+    }
+
+    #[test]
+    fn local_batch_verdicts_distinguish_batches_but_deduplicate_retries() {
+        for kind in [
+            VerificationKind::ShareProofs,
+            VerificationKind::ThresholdDecryptionProofs,
+        ] {
+            let outcome: InterfoldEventData = ShareVerificationComplete {
+                e3_id: E3id::new("1", 1),
+                kind: kind.clone(),
+                dishonest_parties: Default::default(),
+            }
+            .into();
+            let make_result = |batch: &str, ts| {
+                let cause = EventContext::<Unsequenced>::from(InterfoldEventData::from(
+                    TestEvent::new(batch, 1),
+                ))
+                .sequence(0);
+                InterfoldEvent::<Unsequenced>::new_with_timestamp(
+                    outcome.clone(),
+                    Some(cause),
+                    ts,
+                    None,
+                    EventSource::Local,
+                )
+            };
+            let first = make_result("first", 1);
+            let replacement = make_result("replacement", 2);
+            let replay = make_result("first", 3);
+            assert_eq!(first.event_id(), replacement.event_id(), "{kind:?}");
+            assert_ne!(first.delivery_id(), replacement.delivery_id(), "{kind:?}");
+            assert_eq!(first.delivery_id(), replay.delivery_id(), "{kind:?}");
+        }
     }
 }
 
@@ -663,15 +699,18 @@ impl<S: SeqState> Event for InterfoldEvent<S> {
                 self.ctx.block(),
                 self.ctx.ts(),
             )),
-            // Equal C6 verdicts can belong to different replacement batches. The cause binds
-            // the verdict to its request without changing persisted or network event payloads.
+            // Equal C2/C3 or C6 verdicts can belong to different batches: a share batch grows,
+            // and C6 batches are replaced. An error's ID is its payload, so the same failure of two
+            // different events has one ID. The cause tells such occurrences apart without changing
+            // persisted or network event payloads; a repeat of one occurrence stays one delivery.
             EventSource::Local
                 if matches!(
                     self.payload,
                     InterfoldEventData::ShareVerificationComplete(ShareVerificationComplete {
-                        kind: VerificationKind::ThresholdDecryptionProofs,
+                        kind: VerificationKind::ShareProofs
+                            | VerificationKind::ThresholdDecryptionProofs,
                         ..
-                    })
+                    }) | InterfoldEventData::InterfoldError(_)
                 ) =>
             {
                 EventId::hash((self.ctx.id(), self.ctx.causation_id()))
@@ -944,7 +983,11 @@ impl_event_types!(
     TicketBalanceUpdatedAt,
     OperatorActivationChangedAt,
     ConfigurationUpdatedAt,
-    PlaintextVerificationResumed
+    PlaintextVerificationResumed,
+    EligibilityConfigurationVersionUpdated,
+    EligibilityConfigurationVersionUpdatedAt,
+    BondingAssetConfigUpdated,
+    BondingAssetConfigUpdatedAt
 );
 
 impl TryFrom<&InterfoldEvent<Sequenced>> for InterfoldError {

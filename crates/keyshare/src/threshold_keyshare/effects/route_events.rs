@@ -20,19 +20,23 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
                 let committee_hash =
                     e3_committee_hash::hash_committee_addresses(&data.committee_addresses);
                 let pk = ArcBytes::from_bytes(&data.pubkey);
-                let _ = self.state.try_mutate(&ec, |mut s| {
-                    s.aggregated_pk = Some(pk);
-                    s.decryption_domain = Some(e3_committee_hash::DecryptionDomainContext {
-                        interfold_address: self.interfold_address,
-                        committee_hash,
-                        committee_public_key: data.pk_commitment.into(),
-                    });
-                    Ok(s)
+                let interfold_address = self.interfold_address;
+                trap(EType::KeyGeneration, &self.bus.with_ec(&ec), || {
+                    self.state.try_mutate(&ec, |mut s| {
+                        s.aggregated_pk = Some(pk);
+                        s.decryption_domain = Some(e3_committee_hash::DecryptionDomainContext {
+                            interfold_address,
+                            committee_hash,
+                            committee_public_key: data.pk_commitment.into(),
+                        });
+                        Ok(s)
+                    })
                 });
             }
             InterfoldEventData::ThresholdShareCreated(data) => {
-                let _ =
-                    self.handle_threshold_share_created(TypedEvent::new(data, ec), ctx.address());
+                trap(EType::KeyGeneration, &self.bus.with_ec(&ec), || {
+                    self.handle_threshold_share_created(TypedEvent::new(data, ec), ctx.address())
+                });
             }
             InterfoldEventData::DKGRecursiveAggregationComplete(data) => {
                 if self
@@ -44,6 +48,11 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
                         error!(%error, "Could not clear completed DKG proof work");
                     }
                 }
+            }
+            InterfoldEventData::ShareVerificationDispatched(data) => {
+                trap(EType::KeyGeneration, &self.bus.with_ec(&ec), || {
+                    self.record_logged_share_dispatch(&data, &ec)
+                });
             }
             InterfoldEventData::DkgCoordination(data) => {
                 let is_ready = matches!(data.kind, DkgCoordinationKind::Ready);
@@ -68,14 +77,19 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
                 }
             }
             InterfoldEventData::EncryptionKeyCreated(data) => {
-                let _ =
-                    self.handle_encryption_key_created(TypedEvent::new(data, ec), ctx.address());
+                trap(EType::KeyGeneration, &self.bus.with_ec(&ec), || {
+                    self.handle_encryption_key_created(TypedEvent::new(data, ec), ctx.address())
+                });
             }
             InterfoldEventData::PkGenerationProofSigned(data) => {
-                let _ = self.handle_pk_generation_proof_signed(TypedEvent::new(data, ec));
+                trap(EType::KeyGeneration, &self.bus.with_ec(&ec), || {
+                    self.handle_pk_generation_proof_signed(TypedEvent::new(data, ec))
+                });
             }
             InterfoldEventData::DkgProofSigned(data) => {
-                let _ = self.handle_share_computation_proof_signed(TypedEvent::new(data, ec));
+                trap(EType::KeyGeneration, &self.bus.with_ec(&ec), || {
+                    self.handle_share_computation_proof_signed(TypedEvent::new(data, ec))
+                });
             }
             InterfoldEventData::E3RequestComplete(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
@@ -234,10 +248,14 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
             InterfoldEventData::CommitteeMemberExpelled(data) => {
-                self.handle_committee_member_expelled(data, ec);
+                trap(EType::KeyGeneration, &self.bus.with_ec(&ec), || {
+                    self.handle_committee_member_expelled(data, ec)
+                });
             }
             InterfoldEventData::CommitteeMemberExcluded(data) => {
-                self.handle_committee_member_excluded(data, ec);
+                trap(EType::KeyGeneration, &self.bus.with_ec(&ec), || {
+                    self.handle_committee_member_excluded(data, ec)
+                });
             }
             InterfoldEventData::EffectsEnabled(_) => {
                 // Broadcast once at the end of boot sync. Re-drive any of this node's own

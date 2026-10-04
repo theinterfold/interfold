@@ -4,16 +4,18 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::domain::log_window::{
-    is_range_limit_error, LogWindow, MAX_WINDOW_SHRINKS, MIN_LOG_WINDOW,
-};
+use crate::adapters::ingestion_progress::{IngestionProgress, IngestionProgressSink};
+use crate::domain::log_window::{is_range_limit_error, LogWindow, MIN_LOG_WINDOW};
 use crate::messages::{EvmEventProcessor, EvmLog, InterfoldEvmEvent};
 use alloy::providers::Provider;
 use alloy::rpc::types::{Filter, Log};
 use anyhow::{anyhow, Context as _};
 use async_trait::async_trait;
 use e3_events::CorrelationId;
+use futures_util::stream::{Stream, StreamExt};
 use std::time::Duration;
+use tokio::select;
+use tokio::sync::oneshot;
 use tracing::{debug, info, warn};
 
 const GET_LOGS_MAX_RETRIES: u32 = 3;
@@ -63,21 +65,30 @@ pub(crate) async fn process_log<L: LogProvider>(
     Ok(id)
 }
 
-/// Handle a log delivered by the subscription stream.
+/// Handle a log that the subscription stream announced.
 ///
-/// With a positive confirmation depth the subscription is only a wake-up signal. Publishing the
-/// raw notification here would make the historical confirmation gate ineffective, so the periodic
-/// canonical backfill owns delivery instead. With zero confirmations this preserves the existing
-/// low-latency behavior.
-pub(crate) async fn process_live_log<L: LogProvider>(
+/// At every confirmation depth the subscription is a wake-up signal, and the canonical backfill
+/// owns delivery and the watermark. A subscription starts after the backfill that precedes it, so
+/// a log mined between the two never reaches the stream, and a provider can also drop a
+/// notification. A notification that advanced the watermark by itself moved it past such a log,
+/// and no later backfill read that block again.
+///
+/// With zero confirmations the backfill runs at once, so delivery keeps its low latency. With a
+/// positive depth the announced block is not confirmed yet, and the periodic backfill delivers it
+/// when it is. A notification for a block at or below the watermark needs no request, because the
+/// backfill read that block in full.
+pub(crate) async fn handle_live_log<L: LogProvider>(
     provider: &L,
-    log: Log,
+    log: &Log,
+    filter: &Filter,
     chain_id: u64,
     next: &EvmEventProcessor,
     timestamp_tracker: &mut TimestampTracker,
     last_block: &mut u64,
     confirmations: u64,
-) -> Result<Option<CorrelationId>, anyhow::Error> {
+    window: &mut LogWindow,
+    progress: Option<&IngestionProgressSink>,
+) -> Result<(), anyhow::Error> {
     if confirmations > 0 {
         debug!(
             chain_id,
@@ -85,15 +96,110 @@ pub(crate) async fn process_live_log<L: LogProvider>(
             confirmations,
             "Deferring live log to confirmed canonical backfill"
         );
-        return Ok(None);
+        return Ok(());
     }
 
-    let block_number = log.block_number;
-    let id = process_log(provider, log, chain_id, next, timestamp_tracker).await?;
-    if let Some(block_number) = block_number {
-        *last_block = (*last_block).max(block_number);
+    if log.block_number.is_some_and(|block| block <= *last_block) {
+        debug!(
+            chain_id,
+            block_number = log.block_number,
+            last_block,
+            "Live log is in a block that the backfill already read"
+        );
+        return Ok(());
     }
-    Ok(Some(id))
+
+    debug!(
+        chain_id,
+        block_number = log.block_number,
+        "Backfilling to the head for a live log"
+    );
+    backfill_to_head(
+        provider,
+        filter,
+        chain_id,
+        next,
+        timestamp_tracker,
+        last_block,
+        confirmations,
+        window,
+        progress,
+    )
+    .await
+}
+
+/// The reason that [`consume_live_logs`] returned.
+pub(crate) enum LiveStop {
+    /// The shutdown signal arrived.
+    Shutdown,
+    /// The provider closed the subscription stream.
+    StreamEnded,
+    /// The backfill that a live log started failed.
+    LiveLogBackfillFailed(anyhow::Error),
+    /// The periodic backfill to the confirmed head failed.
+    PollBackfillFailed(anyhow::Error),
+}
+
+/// Consume one live subscription until the shutdown signal, or until the reader must reconnect.
+///
+/// The caller owns the provider lifecycle: it subscribes, passes the stream here, and reconnects
+/// for the returned reason. This function owns only the work of an active subscription, so it runs
+/// against any [`LogProvider`] and any stream of logs.
+///
+/// The backfill also runs every `poll_interval` while the stream is quiet, at every confirmation
+/// depth. With a positive depth a log becomes confirmed because later blocks arrive, and those
+/// blocks need not contain a matching event. With zero confirmations the poll delivers a log that
+/// the stream never announced, and a log whose announcement arrived before the provider's head
+/// reached its block.
+pub(crate) async fn consume_live_logs<L, S>(
+    provider: &L,
+    stream: &mut S,
+    filter: &Filter,
+    chain_id: u64,
+    next: &EvmEventProcessor,
+    timestamp_tracker: &mut TimestampTracker,
+    last_block: &mut u64,
+    confirmations: u64,
+    window: &mut LogWindow,
+    poll_interval: Duration,
+    shutdown: &mut oneshot::Receiver<()>,
+    progress: Option<&IngestionProgressSink>,
+) -> LiveStop
+where
+    L: LogProvider,
+    S: Stream<Item = Log> + Unpin,
+{
+    let mut confirmation_poll = tokio::time::interval(poll_interval);
+    confirmation_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    // Tokio intervals tick immediately once. The caller already backfilled, so consume that tick
+    // and wait for the configured period before querying again.
+    confirmation_poll.tick().await;
+
+    loop {
+        select! {
+            maybe_log = stream.next() => {
+                let Some(log) = maybe_log else {
+                    // Stream ended (server-side close, idle timeout, etc.)
+                    return LiveStop::StreamEnded;
+                };
+                if let Err(error) = handle_live_log(
+                    provider, &log, filter, chain_id, next, timestamp_tracker, last_block,
+                    confirmations, window, progress,
+                ).await {
+                    return LiveStop::LiveLogBackfillFailed(error);
+                }
+            }
+            _ = confirmation_poll.tick() => {
+                if let Err(error) = backfill_to_head(
+                    provider, filter, chain_id, next, timestamp_tracker, last_block,
+                    confirmations, window, progress,
+                ).await {
+                    return LiveStop::PollBackfillFailed(error);
+                }
+            }
+            _ = &mut *shutdown => return LiveStop::Shutdown,
+        }
+    }
 }
 
 /// Fetch one chunk, narrowing `window` and retrying until the provider serves it.
@@ -103,10 +209,11 @@ pub(crate) async fn process_live_log<L: LogProvider>(
 /// the end of the range: a caller that recomputed it from the window afterwards would advance past
 /// blocks that were never fetched.
 ///
-/// Attempts and narrowings are budgeted separately. A narrowing is not a failed request to be
+/// Attempts and narrowings are counted separately. A narrowing is not a failed request to be
 /// backed off; it is a corrected request that must be reissued at once. One shared budget would let
 /// a provider with a tight cap exhaust the attempts before the window reached its limit, and the
-/// sync would fail on a provider it could have used.
+/// sync would fail on a provider it could have used. Narrowing has no budget of its own: the
+/// one-block floor bounds it, whatever range the chain configures.
 pub(crate) async fn fetch_chunk_adapting<L: LogProvider>(
     provider: &L,
     filter: &Filter,
@@ -133,7 +240,7 @@ pub(crate) async fn fetch_chunk_adapting<L: LogProvider>(
                     // `shrink` reports `false` at the floor. A provider that refuses a single
                     // block is not applying a range cap, so the error is reported rather than
                     // answered with a narrower range that cannot exist.
-                    if shrinks >= MAX_WINDOW_SHRINKS || !window.shrink() {
+                    if !window.shrink() {
                         return Err(anyhow!(
                             "Provider rejected the block range for chain {} blocks {}..={} at \
                              the smallest window of {} block(s) after {} narrowing(s): {}",
@@ -209,6 +316,8 @@ pub(crate) async fn fetch_chunk_adapting<L: LogProvider>(
 /// was taught to tolerate, and it fails before the pager is ever reached. That is the shape of the
 /// reported bug: a ciphernode that would not start against an endpoint the sync could have used.
 ///
+/// `max_log_window` is the chain's widest `eth_getLogs` range (`rpc_log_range_blocks`).
+///
 /// Returns the logs in chain order.
 pub(crate) async fn fetch_logs_adapting<L: LogProvider>(
     provider: &L,
@@ -216,12 +325,13 @@ pub(crate) async fn fetch_logs_adapting<L: LogProvider>(
     from_block: u64,
     to_block: u64,
     chain_id: u64,
+    max_log_window: u64,
 ) -> Result<Vec<Log>, anyhow::Error> {
     if to_block < from_block {
         return Ok(Vec::new());
     }
 
-    let mut window = LogWindow::new();
+    let mut window = LogWindow::with_max(max_log_window);
     let mut cursor = from_block;
     let mut logs = Vec::new();
 
@@ -246,6 +356,8 @@ pub(crate) async fn fetch_logs_adapting<L: LogProvider>(
 /// `eth_getLogs` range and do not publish that cap over the wire, so the range is narrowed when a
 /// provider rejects it and the narrowed range is then kept. A caller that made a fresh window for
 /// every call would rediscover the same cap and pay one failed request for each chunk.
+///
+/// `progress` learns the cursor after each chunk, so a health check sees a long first sync move.
 pub(crate) async fn fetch_logs_chunked<L: LogProvider>(
     provider: &L,
     filter: &Filter,
@@ -255,6 +367,7 @@ pub(crate) async fn fetch_logs_chunked<L: LogProvider>(
     next: &EvmEventProcessor,
     timestamp_tracker: &mut TimestampTracker,
     window: &mut LogWindow,
+    progress: Option<&IngestionProgressSink>,
 ) -> Result<Option<CorrelationId>, anyhow::Error> {
     if to_block < from_block {
         return Ok(None);
@@ -296,6 +409,7 @@ pub(crate) async fn fetch_logs_chunked<L: LogProvider>(
             last_id = Some(process_log(provider, log, chain_id, next, timestamp_tracker).await?);
         }
 
+        report_progress(progress, chain_id, to_block, chunk_end);
         cursor = chunk_end + 1;
     }
 
@@ -316,6 +430,10 @@ pub(crate) async fn fetch_logs_chunked<L: LogProvider>(
 /// failure part-way keeps that progress and the next call resumes above it. This holds when a
 /// narrowing splits the range: progress follows the chunks actually served, not a range computed
 /// before the provider rejected it.
+///
+/// `progress` learns the head and the cursor of a backfill that succeeded, with or without new
+/// blocks. A failed backfill reports nothing: a provider that answers `eth_blockNumber` and
+/// refuses `eth_getLogs` must look stalled to a health check.
 pub(crate) async fn backfill_to_head<L: LogProvider>(
     provider: &L,
     filter: &Filter,
@@ -325,6 +443,7 @@ pub(crate) async fn backfill_to_head<L: LogProvider>(
     last_block: &mut u64,
     confirmations: u64,
     window: &mut LogWindow,
+    progress: Option<&IngestionProgressSink>,
 ) -> Result<(), anyhow::Error> {
     let raw_head = provider
         .fetch_block_number()
@@ -336,6 +455,7 @@ pub(crate) async fn backfill_to_head<L: LogProvider>(
 
     let gap_start = *last_block + 1;
     if gap_start > current_head {
+        report_progress(progress, chain_id, raw_head, *last_block);
         return Ok(());
     }
 
@@ -368,7 +488,23 @@ pub(crate) async fn backfill_to_head<L: LogProvider>(
         cursor = chunk_end + 1;
     }
 
+    report_progress(progress, chain_id, raw_head, *last_block);
     Ok(())
+}
+
+fn report_progress(
+    progress: Option<&IngestionProgressSink>,
+    chain_id: u64,
+    head: u64,
+    cursor: u64,
+) {
+    if let Some(sink) = progress {
+        sink(IngestionProgress {
+            chain_id,
+            head,
+            cursor,
+        });
+    }
 }
 
 /// Resolves the block timestamp for a log, and remembers the last block it resolved.

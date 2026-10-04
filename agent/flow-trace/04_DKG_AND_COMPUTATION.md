@@ -144,10 +144,18 @@ EncryptionKeyCollector collects verified EncryptionKeyCreated events
 ├─ A key that arrives while the keyshare is in `Init` is only recorded in the
 │  recovery state: the collector needs the frozen DKG timing that the node reads
 │  at its own selection. `handle_ciphernode_selected` sends every recorded key to
-│  the collector. A key from an expelled party can count here; Step 4 removes it
+│  the collector
 │
-├─ A live key after the cutoff does not reach the collector, even if the
-│  collector's relative timer has not fired yet
+├─ A new collector (this one or the ThresholdShareCollector) first receives every
+│  expulsion that the keyshare recorded (ExpelPartyFromKeyCollection,
+│  ExpelPartyFromShareCollection), then its inputs. It ignores the input of an
+│  expelled party and does not wait for it. A running collector receives each
+│  later expulsion
+│
+├─ A live key after the cutoff is recorded but does not reach the collector, even
+│  if the collector's relative timer has not fired yet. A late input is expected,
+│  so the keyshare does not report it as an error; a failed write is reported as
+│  InterfoldError
 │
 ├─ Restart in CollectingEncryptionKeys (`resume_in_flight_work`):
 │   ├─ Sends every recorded key to the collector, then EncryptionKeysReplayed
@@ -159,9 +167,8 @@ EncryptionKeyCollector collects verified EncryptionKeyCreated events
 │   │  EffectsEnabled. A key whose proof check had not finished also misses
 │   │  this cutoff
 │   └─ Rebuilds the ThresholdShareCollector, as every recovery state that
-│      replays shares does: it sends every expelled party
-│      (ExpelPartyFromShareCollection), then every recorded share. A peer can
-│      send its share while this node still collects encryption keys
+│      replays shares does, and sends it every recorded share. A peer can send
+│      its share while this node still collects encryption keys
 │
 ├─ On TIMEOUT (derived DKG-phase cutoff):
 │   ├─ With at least H keys, including this party's key:
@@ -187,10 +194,9 @@ EncryptionKeyCollector collects verified EncryptionKeyCreated events
 ```
 ThresholdKeyshare receives AllEncryptionKeysCollected
 │
-├─ Removes keys from expelled parties: replay sends recorded keys from expelled
-│  parties, and an expulsion can reach the keyshare after the collector
-│  completes. With fewer than H keys, or without this node's key, the keyshare
-│  fails as at a cutoff with too few keys (Step 3)
+├─ Removes keys from expelled parties: an expulsion can reach the keyshare after
+│  the collector completes. With fewer than H keys, or without this node's key,
+│  the keyshare fails as at a cutoff with too few keys (Step 3)
 │
 ├─ State: CollectingEncryptionKeys → GeneratingThresholdShare
 ├─ Stores the verified BFV public keys available at the cutoff
@@ -427,6 +433,7 @@ ThresholdShareCollector collects this recipient's shares from the other N−1 pa
 ├─ ThresholdKeyshare.handle_threshold_share_created():
 │   ├─ Filters: only process shares where target_party_id == MY party_id
 │   │   → Each published share contains this recipient's encrypted material
+│   ├─ After the canonical DKG deadline: records the share, but does not forward it
 │   └─ Forwards filtered share to ThresholdShareCollector
 │
 ├─ At the 75% soft cutoff:
@@ -552,14 +559,32 @@ ShareVerificationActor receives ShareVerificationDispatched(kind=ShareProofs)
 │            kind: ShareProofs,
 │            dishonest_parties: {pre_dishonest ∪ ecdsa_fails ∪ consistency_fails ∪ zk_fails}
 │          }
+│          Its delivery ID includes the dispatch event that caused it, so equal verdicts for
+│          different batches, such as a batch and its later growth, are both delivered.
 │
 └─ ThresholdKeyshare receives ShareVerificationComplete:
+    ├─ Until a C2/C3 result is recorded, applies each one to the first batch. After that,
+    │  it applies a result only if its dispatch is one that this node sent for the current
+    │  batch. The recovery state keeps those dispatch IDs, so replay applies such a result
+    │  where it applied before a restart. When the logged dispatch reaches the node and
+    │  holds every live dealer of the current batch and no other, the node saves the ID
+    │  again at the dispatch's own position, also when it already holds it. A batch that
+    │  EffectsEnabled sends again has no logged cause, and its first save uses the last
+    │  saved context, which the store can refuse as stale: a later snapshot cut then keeps
+    │  the ID, and replay from an earlier cut restores it from the log. It keeps any other
+    │  result and applies it when it sends a dispatch with that ID, as when a restart
+    │  sends the saved batch again. A result of an earlier batch therefore cannot count a
+    │  dealer that only a grown batch holds as verified
     ├─ Excludes failed C2/C3 proofs and C3 proofs that target a different
     │  recipient key
     ├─ Saves the verified dealer IDs and their exact contribution hashes
     ├─ Publishes a signed DkgCoordination::Ready list when at least H dealers,
     │  including this party, remain
-    ├─ Re-verifies each strict late-share superset and publishes a new signed Ready list
+    ├─ Re-verifies each late-share batch that, without its expelled dealers, holds every
+    │  dealer of the saved batch that is not expelled, plus at least one more. An expelled
+    │  dealer in the new batch is not growth. It publishes a new signed Ready list only
+    │  when the list keeps every dealer of the earlier one, so a Ready list never drops a
+    │  dealer, even an expelled one
     ├─ If fewer than H pass locally, stays outside C4 without failing the E3
     └─ Waits for one H-dealer roster before Step 7
 
@@ -587,7 +612,11 @@ then doubles the wait up to 5 minutes, with up to 10 % jitter. A newer message f
 party, and kind replaces the cached one and restarts the schedule. The fresh delivery ID bypasses
 the libp2p duplicate cache. The stable embedded event ID preserves EventBus deduplication, and a
 receiver does not store a copy of an event that it has already stored. Key publication or a terminal
-E3 removes the cached messages. A cached message is also dropped 8 hours after it was cached.
+E3 removes the cached messages. A cached message is also dropped 8 hours after it was cached. The
+node remembers the last 1,024 E3s whose terminal stage came from the chain, also from replayed
+history, and does not cache their messages. After a restart, local replay caches the messages again
+in log order, and nothing is sent again before that replay finishes. The restart re-broadcast then
+sends each recent message once, skips the remembered E3s, and caches nothing.
 
 Dealer identity binds the E3, proof type, circuit, and public signals. It excludes randomized proof
 bytes, so replaying the same valid statement cannot create a second dealer identity. Replacing a
@@ -1193,7 +1222,13 @@ InterfoldSolReader decodes CiphertextOutputPublished event
     │   → Broadcast via P2P to committee members for buffering
     │   → The network actor re-sends the node's own share in a fresh transport envelope
     │     60 seconds later, then doubles the wait up to 10 minutes, until the E3 fails or
-    │     completes (at most 8 hours). Receivers keep the first share from each party.
+    │     completes (at most 8 hours). A local E3Failed stops the current re-sends only; a
+    │     terminal stage from the chain also stops later ones, for the last 1,024 such E3s.
+    │     After a restart, local replay schedules the re-sends again in log order, and
+    │     nothing is re-sent before it finishes. The restart re-broadcast sends the share
+    │     once unless the E3 is one of those remembered as ended. An E3 that ended while
+    │     the node was down can get its share again until that chain history arrives.
+    │     Receivers keep the first share from each party.
     │
     └─ State: Decrypting → Completed
 ```
@@ -1473,20 +1508,20 @@ job limit when the host or cgroup memory limit cannot support two 13 GiB prover 
 higher job limit remains subject to the same CPU and memory limits. Startup fails before protocol
 participation when the detected limit cannot cover the 4 GiB node reserve and one prover budget.
 
-| Failure scenario                                                       | Detection                                                                          | Recovery                                                                                                    | Verification                                                                                    |
-| ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| The configured job count exceeds the CPU or memory limit.              | Startup computes CPU and memory job limits.                                        | The scheduler uses the smallest safe limit. It refuses startup if no prover fits.                           | `memory::tests::*` and the configuration default test cover 16 GiB, 32 GiB, and 122 GiB limits. |
-| `bb prove` exits, receives a signal, or reports an allocation failure. | `ZkProver` returns `ProofGenerationFailed`.                                        | The scheduler retries the same request. Attempts after the first use `--slow_low_memory`.                   | The retry-policy and low-memory flag tests cover this path.                                     |
-| `bb verify` does not report the explicit invalid-proof result.         | `ZkProver` returns a verifier-process error instead of `false`.                    | The scheduler retries locally and does not accuse the proof sender.                                         | Prover and share-verification tests separate process errors from invalid proofs.                |
-| `bb prove` or `bb verify` runs longer than 12 hours.                   | `ZkProver` kills the process and returns a timeout error.                          | The scheduler retries the same request, as for any other prover process failure.                            | A prover test kills a hung stand-in process at its time limit.                                  |
-| A keyshare-owned TrBFV operation returns a local error.                | The worker returns a typed TrBFV error.                                            | The scheduler retries the same live request before any successful response becomes durable.                 | Retry-policy and keyshare-routing tests cover this path.                                        |
-| A Rayon task panics or its result channel closes.                      | `TaskPool` returns a structured pool error.                                        | The scheduler retries ZK and keyshare-owned TrBFV work with the same E3 task group.                         | Task-pool panic and retry-policy tests cover this path.                                         |
-| Resource pressure continues.                                           | The retry delay reaches a five-minute cap.                                         | Retries continue until success or a terminal E3 event cancels the task group and interrupts the delay.      | The capped delay and task-group cancellation tests cover this path.                             |
-| Many proof requests fail together.                                     | A node-scoped retry-log limiter counts suppressed messages.                        | The node emits at most one retry warning per minute. Other attempts use DEBUG logs.                         | The retry-log limiter test verifies the warning window and count.                               |
-| The process exits during proof work.                                   | The supervisor restarts the node.                                                  | EventStore replay restores the exact pending input. `ComputeEffectGate` reissues it after `EffectsEnabled`. | Proof actors test that local errors retain pending inputs and correlation IDs.                  |
-| The process restarts after a proof result was already durable.         | Node-proof recovery loads proofs by canonical sequence, including completed folds. | The proof actor republishes a complete recovered share bundle or computes only missing sequences.           | Unit tests cover full and partial recovery. A full-proof restart run confirms no recomputation. |
-| A proof attempt leaves output files.                                   | A per-job directory guard observes scope exit or finds a stale restart path.       | The prover removes the attempt directory after exit and before a restarted process reuses that path.        | Prover tests cover normal cleanup and a stale directory after process restart.                  |
-| A pre-v0.16 snapshot has stale registered-node membership.             | `interfold node validate` compares both sortition projections with EventStore.     | `interfold node validate --repair` rebuilds only derived membership and missing member history.             | Validator tests cover detection, reconstruction, preservation, and removal.                     |
+| Failure scenario                                                                    | Detection                                                                                                        | Recovery                                                                                                    | Verification                                                                                    |
+| ----------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| The configured job count exceeds the CPU or memory limit.                           | Startup computes CPU and memory job limits.                                                                      | The scheduler uses the smallest safe limit. It refuses startup if no prover fits.                           | `memory::tests::*` and the configuration default test cover 16 GiB, 32 GiB, and 122 GiB limits. |
+| `bb prove` exits, receives a signal, or reports an allocation failure.              | `ZkProver` returns `ProofGenerationFailed`.                                                                      | The scheduler retries the same request. Attempts after the first use `--slow_low_memory`.                   | The retry-policy and low-memory flag tests cover this path.                                     |
+| `bb verify` does not report the explicit invalid-proof result.                      | `ZkProver` returns a verifier-process error instead of `false`.                                                  | The scheduler retries locally and does not accuse the proof sender.                                         | Prover and share-verification tests separate process errors from invalid proofs.                |
+| `bb prove` or `bb verify` runs longer than `bb_timeout_secs` (12 hours by default). | `ZkProver` kills the process and returns a timeout error that names the elapsed time and the end of bb's stderr. | The scheduler retries the same request, as for any other prover process failure.                            | A prover test kills a hung stand-in process at its time limit.                                  |
+| A keyshare-owned TrBFV operation returns a local error.                             | The worker returns a typed TrBFV error.                                                                          | The scheduler retries the same live request before any successful response becomes durable.                 | Retry-policy and keyshare-routing tests cover this path.                                        |
+| A Rayon task panics or its result channel closes.                                   | `TaskPool` returns a structured pool error.                                                                      | The scheduler retries ZK and keyshare-owned TrBFV work with the same E3 task group.                         | Task-pool panic and retry-policy tests cover this path.                                         |
+| Resource pressure continues.                                                        | The retry delay reaches a five-minute cap.                                                                       | Retries continue until success or a terminal E3 event cancels the task group and interrupts the delay.      | The capped delay and task-group cancellation tests cover this path.                             |
+| Many proof requests fail together.                                                  | A node-scoped retry-log limiter counts suppressed messages.                                                      | The node emits at most one retry warning per minute. Other attempts use DEBUG logs.                         | The retry-log limiter test verifies the warning window and count.                               |
+| The process exits during proof work.                                                | The supervisor restarts the node.                                                                                | EventStore replay restores the exact pending input. `ComputeEffectGate` reissues it after `EffectsEnabled`. | Proof actors test that local errors retain pending inputs and correlation IDs.                  |
+| The process restarts after a proof result was already durable.                      | Node-proof recovery loads proofs by canonical sequence, including completed folds.                               | The proof actor republishes a complete recovered share bundle or computes only missing sequences.           | Unit tests cover full and partial recovery. A full-proof restart run confirms no recomputation. |
+| A proof attempt leaves output files.                                                | A per-job directory guard observes scope exit or finds a stale restart path.                                     | The prover removes the attempt directory after exit and before a restarted process reuses that path.        | Prover tests cover normal cleanup and a stale directory after process restart.                  |
+| A pre-v0.16 snapshot has stale registered-node membership.                          | `interfold node validate` compares both sortition projections with EventStore.                                   | `interfold node validate --repair` rebuilds only derived membership and missing member history.             | Validator tests cover detection, reconstruction, preservation, and removal.                     |
 
 A failed live randomized TrBFV attempt can retry because it has not published a protocol
 contribution. After a successful response becomes durable, replay reuses that exact response and
@@ -1633,22 +1668,26 @@ intent.
 
 The document publisher rebuilds its active outbox and received-document set from the durable event
 log before network effects start. Its DHT store is in memory, so at `SyncEnded` it also stores
-received documents in that store again, one at a time, and prunes them with the other records of
-their E3. This restore is best effort. Recovery chooses the candidates while it reads the local log:
-at most 512 documents and 128 MiB, the ones received last in event-log order. The chain history then
-drops the documents of E3s that closed while the node was offline, but those documents can already
-have taken the place of an open E3's document, which is then not restored. Expired documents, and
-documents that do not fit in a full store, are skipped. Document publication and receipt events use
-their E3's chain aggregate. Recovery reads the log in pages of at most 1,024 events and 16 MiB; a
-page holds at least one event, also a larger one. During DKG, the publisher first stores each
-document in its own DHT store, so that a peer whose lookup reaches this node can fetch it from here,
-and then gossips a small notification that names it. A lookup asks the about 20 peers closest to the
-key, so it reliably reaches the publisher only in a network of about that size; other peers fetch
-the document once an upload succeeds. The publisher announces the document again 30 seconds later,
-doubling the wait up to 5 minutes; these announcements store the document locally again and send
-only the notification. An announcement waits until the local store holds the document. Publications
-start only at `SyncEnded`, after the chain history, so a restarted node does not announce or upload
-a document of an E3 that closed while it was offline. Separately, the publisher uploads the full
+received broadcast documents in that store again, one at a time, and prunes them with the other
+records of their E3. A document with a party filter is not restored: its filter names this node, so
+no peer fetches it from here. This restore is best effort. Recovery chooses the candidates while it
+reads the local log: at most 512 documents and 128 MiB, the ones received last in event-log order.
+The chain history then drops the documents of E3s that closed while the node was offline, but those
+documents can already have taken the place of an open E3's document, which is then not restored.
+Expired documents, and documents that do not fit in a full store, are skipped. Document publication
+and receipt events use their E3's chain aggregate. Recovery reads the log in pages of at most 1,024
+events and 16 MiB; a page holds at least one event, also a larger one. During DKG, the publisher
+first stores each document in its own DHT store, so that a peer whose lookup reaches this node can
+fetch it from here, and then gossips a small notification that names it. A lookup asks the about 20
+peers closest to the key, so it reliably reaches the publisher only in a network of about that size;
+other peers fetch the document once an upload succeeds. The publisher announces the document again
+30 seconds later, doubling the wait up to 5 minutes; these announcements store the document locally
+again and send only the notification. An announcement waits until the local store holds the
+document. Publications start only at `SyncEnded`, after the chain history, so a restarted node does
+not announce or upload a document of an E3 that closed while it was offline. The chain gateway
+releases the events that it buffered live during startup in its own `SyncEnded` handler, so a
+`KeyPublished` seen live during startup reaches the publisher after publications started, and one
+announcement or upload of that E3 can still go out. Separately, the publisher uploads the full
 document to the DHT peers closest to its key, and again every 30 minutes until the DKG ends; a
 failing upload never delays an announcement. It starts one upload at a time, and each put has two
 attempts. A put returns after one peer stores the record, so its uploads to other peers can overlap

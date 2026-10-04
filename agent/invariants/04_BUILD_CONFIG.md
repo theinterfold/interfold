@@ -50,6 +50,11 @@ every section.
 - Upgradeable-contract storage baselines are committed and CI-gated (missing baselines, compiler
   drift, layout incompatibility, bad gap consumption all fail); baseline creation is an explicit
   maintainer command. — INDEX concern #27
+- The contract artifacts that git tracks under `packages/interfold-contracts/artifacts/` are the
+  source of the CLI's `sol!` bindings (`crates/cli/src/ciphernode/context.rs`). CI compares their
+  ABI with a fresh build (`pnpm check:bindings`, after `pnpm evm:build`, in the lib unit-test job):
+  an added, removed or changed function, event or error fails until the regenerated files are
+  committed. — `scripts/check-cli-bindings.ts`
 - Contracts CI requires at least 128 bytes below the EIP-170 limit for `Interfold`,
   `BondingRegistry`, `CiphernodeRegistryOwnable`, and the canonical `insecure-512/minimum`
   aggregator verifiers. Every deployed verifier variant must fit, but CI does not measure the other
@@ -62,19 +67,24 @@ every section.
   (`crates/cli/src/password.rs`, `crates/cli/src/wallet.rs`), and `deploy/local/nodes.sh` uses them.
   — `flow-trace/00`, `01`
 - **Deployment writes must be mined, not only sent.** Every configuration transaction in
-  `scripts/deployInterfold.ts` goes through the `send()` helper in `scripts/utils.ts`, which awaits
-  the receipt and fails on a missing receipt or a non-success status. `send()` also labels a
-  rejection from the send or the mining stage and keeps the original error as its `cause`. A bare
-  `await contract.setX(...)` resolves when the transaction is dispatched, not when it is mined.
-  **Gap:** `deployInterfold.ts` still sends `interfoldTicketToken.setRegistry(...)` with a bare
-  `await`, and several other writes call `.wait()` directly instead of `send()`.
+  `scripts/deployInterfold.ts` and `scripts/configureLocalSlashingPolicies.ts` goes through the
+  `send()` helper in `scripts/utils.ts`, which awaits the receipt and fails on a missing receipt or
+  a non-success status. `send()` also labels a rejection from the send or the mining stage and keeps
+  the original error as its `cause`. A bare `await contract.setX(...)` resolves when the transaction
+  is dispatched, not when it is mined.
 - **A deployment must end with a verified wiring graph.** After configuration, `deployInterfold.ts`
-  reads back every cross-contract reference (Interfold, CiphernodeRegistry, BondingRegistry,
-  InterfoldTicketToken, SlashingManager, E3RefundManager, FOLD as the BondingRegistry ciphernode
-  bond token) plus the BondingRegistry reward-distributor authorization for Interfold, and throws
-  with the full list of mismatches. Add a read-back for each new cross-contract setter and each
-  initializer reference. **Gap:** the check does not read back the references that `E3RefundManager`
-  receives in its initializer.
+  reads back every reference that it sets to another contract, a token, a treasury, or the FOLD
+  claim source (constructor and initializer arguments and setter values, including the BFV verifier
+  bindings and, with ZK verification, the BFV wrappers' circuit verifiers), and every authorization
+  that it grants (the BondingRegistry reward distributor, the FOLD transfer whitelist, the initial
+  E3 program, the fee-token admission). It throws with the full list of mismatches before it enables
+  requests. Owners and admins (the deployer) and configuration values (committee thresholds,
+  parameter sets, slash policies, the node release, timing and pricing amounts) are not references;
+  the integration check in `tests/integration/base.sh` covers the committee thresholds. Add a
+  read-back for each new reference or authorization. **Gap:** the check does not read the ERC-1967
+  implementation and admin slots of the proxies. A fresh deployment passes each new implementation
+  to the proxy constructor in the same `deployAndSave` helper, but a proxy that a helper reuses from
+  the deployment record, or that its admin upgraded later, is not checked.
 - **A deployment must also enable bonded voting.** `protocol/deployContracts` deploys
   `BondedCheckpoints` (bound to the BondingRegistry **proxy**, not the implementation) and the
   governance batch calls `setBondedCheckpoints` after `initialize`. `BondedVotes` comes later, from

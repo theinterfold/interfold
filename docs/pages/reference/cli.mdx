@@ -522,9 +522,11 @@ interfold ciphernode deregister [--operator <ADDRESS>] [--chain <CHAIN>]
 
 ### `interfold ciphernode activate`
 
-Sends the same `registerOperatorFor` transaction as `register`. After the registration, the contract
-calculates the activation state. For an operator that is already registered, the transaction reverts
-with `AlreadyRegistered`.
+Sends `refreshOperatorStatus` for a registered operator, so that the contract recomputes its
+activation state from its registration, release acknowledgement, bans, bond and tickets against the
+current requirements. The command prints the `Active` flag after the transaction. The admission
+cooldown is not part of `Active`; it affects eligibility, which `status` shows separately. For an
+operator that is not registered, the command stops and points to `register`.
 
 ```bash
 interfold ciphernode activate [--operator <ADDRESS>] [--chain <CHAIN>]
@@ -555,7 +557,9 @@ interfold ciphernode status [--operator <ADDRESS>] [--chain <CHAIN>]
 The output shows these values:
 
 - The operator key, the bond owner, and a pending bond owner
-- The `Registered`, `Active`, and `Exit pending` flags
+- The `Registered`, `Active`, and `Exit pending` flags, and `Eligible for new committees`:
+  `eligibilityAt` at the latest block time, which also applies the admission cooldown and the
+  admission policy. An operator in the cooldown is `Active` but not yet eligible.
 - The ticket balance and the number of available tickets
 - The FOLD bond and the pending exits
 - The requirements: `minTickets`, `ticketPrice`, and `ciphernodeBond`
@@ -568,9 +572,10 @@ complete or failed. A `candidate` holds a provisional seat while the sortition o
 The command reads the `CommitteeObligationUpdated` events of `BondingRegistry`, from the
 `deploy_block` of the contract to the latest block. When the configuration has no `deploy_block` for
 `bonding_registry`, the read starts at block 0. It sends one `eth_getLogs` request for each 10,000
-blocks, or for each smaller range that the RPC endpoint accepts. Thus the read can take some
-seconds, and longer on an endpoint with a small range limit. If the read fails, the command shows
-`Committees: unavailable` with the error, and it shows all the other values.
+blocks (or the chain's `rpc_log_range_blocks`), or for each smaller range that the RPC endpoint
+accepts. Thus the read can take some seconds, and longer on an endpoint with a small range limit. If
+the read fails, the command shows `Committees: unavailable` with the error, and it shows all the
+other values.
 
 ### `interfold faucet`
 
