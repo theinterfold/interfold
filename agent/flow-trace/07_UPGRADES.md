@@ -27,6 +27,11 @@ replaces the installed circuits and version record. Local and CI callers can exp
 nonempty subset. `noir setup --circuits-archive` accepts repeated `--circuits-configuration` options
 for this purpose. An archive cannot select its own required configuration set.
 
+If circuit replacement or the version update fails, the installer attempts rollback and returns the
+original installation error. It logs each failed rollback rename with its source and target paths.
+If the previous circuits cannot be restored, it retains the staging directory and logs its path for
+recovery.
+
 ```text
 build backward-compatible release
   -> keep protocol_version and node_generation unchanged

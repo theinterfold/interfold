@@ -85,7 +85,10 @@ every section.
   path in `crates/zk-prover/required-artifacts.json`, with a verified manifest entry. The release
   tooling's `requiredArtifactMarkers` uses that same inventory. Root manifests, `SOURCE_HASH`, and
   build stamps are metadata, not required prover artifacts. Validation failure preserves the
-  installed circuits and `version.json`. — `crates/zk-prover/src/backend/download.rs`
+  installed circuits and `version.json`. Installation errors trigger best-effort rollback and remain
+  the returned error even if rollback fails. Each rollback failure logs its source and target paths.
+  If restoration of the previous circuits fails, the installer retains the staging directory and
+  logs its path for recovery. — `crates/zk-prover/src/backend/download.rs`
 - Archive pins ship with the binary; neither the archive nor its download endpoint supplies the
   expected digest at runtime. The 0.18.0 pin comes from the published GitHub asset digest. Local
   archive installation trusts the operator's file and does not require a release pin. Release

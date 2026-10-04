@@ -396,6 +396,11 @@ without a release archive pin. To install a subset from a local archive, add
 `--circuits-configuration insecure-512/minimum` selects the development configuration. This option
 requires `--circuits-archive` and cannot reduce the network download requirements.
 
+If circuit replacement or the version update fails, the installer attempts rollback and returns the
+original installation error. Each rollback failure logs the source and target paths. If the previous
+circuits cannot be restored, the installer keeps the staging directory and logs its path for
+recovery.
+
 ### `interfold events query`
 
 Reads events from the local event store of the node. The command prints one JSON object for each

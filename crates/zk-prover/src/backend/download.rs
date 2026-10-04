@@ -14,7 +14,7 @@ use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 use tar::Archive;
 use tokio::fs;
-use tracing::info;
+use tracing::{info, warn};
 use walkdir::WalkDir;
 
 use super::ZkBackend;
@@ -286,20 +286,46 @@ impl ZkBackend {
         }
         if let Err(install_error) = fs::rename(&staged_circuits, &self.circuits_dir).await {
             if had_existing_circuits {
-                fs::rename(&backup_circuits, &self.circuits_dir).await?;
+                self.restore_previous_circuits(&backup_circuits, staging_dir)
+                    .await;
             }
             return Err(install_error.into());
         }
 
         if let Err(install_error) = fs::rename(&staged_version, self.version_file()).await {
-            fs::rename(&self.circuits_dir, &staged_circuits).await?;
+            if let Err(rollback_error) = fs::rename(&self.circuits_dir, &staged_circuits).await {
+                warn!(
+                    error = %rollback_error,
+                    from = %self.circuits_dir.display(),
+                    to = %staged_circuits.display(),
+                    "could not move new circuits during rollback"
+                );
+            }
             if had_existing_circuits {
-                fs::rename(&backup_circuits, &self.circuits_dir).await?;
+                self.restore_previous_circuits(&backup_circuits, staging_dir)
+                    .await;
             }
             return Err(install_error.into());
         }
         *version_info = installed_version;
         Ok(())
+    }
+
+    async fn restore_previous_circuits(
+        &self,
+        backup_circuits: &Path,
+        staging_dir: tempfile::TempDir,
+    ) {
+        if let Err(rollback_error) = fs::rename(backup_circuits, &self.circuits_dir).await {
+            let recovery_dir = staging_dir.keep();
+            warn!(
+                error = %rollback_error,
+                from = %backup_circuits.display(),
+                to = %self.circuits_dir.display(),
+                recovery_dir = %recovery_dir.display(),
+                "could not restore previous circuits; retained staging directory for recovery"
+            );
+        }
     }
 
     pub async fn verify_bb(&self) -> Result<String, ZkError> {
@@ -941,6 +967,127 @@ mod tests {
             fs::read(backend.version_file().join("retained")).unwrap(),
             b"version-path"
         );
+    }
+
+    // A single blocked worker lets the test change the filesystem between completed operations.
+    fn run_with_filesystem_changes<F: std::future::Future>(
+        runtime: &tokio::runtime::Runtime,
+        future: F,
+        mut after_step: impl FnMut(),
+    ) -> F::Output {
+        let mut future = std::pin::pin!(future);
+        let deadline = std::time::Instant::now() + Duration::from_secs(60);
+        loop {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "installation timed out"
+            );
+            let (started_tx, started_rx) = std::sync::mpsc::channel();
+            let (release_tx, release_rx) = std::sync::mpsc::channel();
+            let blocker = runtime.spawn_blocking(move || {
+                started_tx.send(()).unwrap();
+                release_rx.recv().unwrap();
+            });
+            started_rx.recv().unwrap();
+            let result = runtime.block_on(std::future::poll_fn(|cx| {
+                std::task::Poll::Ready(future.as_mut().poll(cx))
+            }));
+            release_tx.send(()).unwrap();
+            runtime.block_on(blocker).unwrap();
+            runtime.block_on(runtime.spawn_blocking(|| {})).unwrap();
+            after_step();
+            if let std::task::Poll::Ready(result) = result {
+                return result;
+            }
+        }
+    }
+
+    fn assert_failed_rollback_keeps_previous_circuits(fail_version_update: bool) {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .max_blocking_threads(1)
+            .build()
+            .unwrap();
+        let temp = TempDir::new().unwrap();
+        let mut backend = test_backend(&temp);
+        let previous_version = runtime.block_on(seed_installation(&backend));
+        let archive = circuit_archive(b"circuit", true);
+        backend
+            .config
+            .circuits_checksums
+            .insert("candidate".into(), sha256_hex(&archive));
+        let (url, server) = runtime.block_on(serve_archive(archive));
+        backend.config.circuits_download_url = url;
+
+        let mut staging_dir = None;
+        let mut injected = false;
+        let result = run_with_filesystem_changes(&runtime, backend.download_circuits(), || {
+            if staging_dir.is_none() {
+                staging_dir = fs::read_dir(&backend.base_dir)
+                    .unwrap()
+                    .map(|entry| entry.unwrap().path())
+                    .find(|path| {
+                        path.file_name()
+                            .unwrap()
+                            .to_string_lossy()
+                            .starts_with(".circuits-install-")
+                    });
+            }
+            let Some(staging_dir) = &staging_dir else {
+                return;
+            };
+            if injected
+                || !staging_dir.join("previous-circuits").exists()
+                || backend.circuits_dir.exists() != fail_version_update
+            {
+                return;
+            }
+
+            if fail_version_update {
+                fs::remove_file(staging_dir.join("version.json")).unwrap();
+                write_file(
+                    &staging_dir.join("payload/circuits"),
+                    "blocked",
+                    b"occupied",
+                );
+            } else {
+                fs::remove_dir_all(staging_dir.join("payload")).unwrap();
+                write_file(&backend.circuits_dir, "blocked", b"occupied");
+            }
+            injected = true;
+        });
+        runtime.block_on(server).unwrap();
+
+        assert!(injected, "rollback failure was not injected");
+        assert!(
+            matches!(result, Err(ZkError::IoError(ref error)) if error.kind() == std::io::ErrorKind::NotFound),
+            "original installation error was lost: {result:?}"
+        );
+        assert_eq!(fs::read(backend.version_file()).unwrap(), previous_version);
+        let recovery_dir = staging_dir.unwrap();
+        for configuration in ["insecure-512/minimum", "secure-8192/small"] {
+            assert_eq!(
+                fs::read(recovery_dir.join(format!(
+                    "previous-circuits/{configuration}/default/dkg/pk/pk.json"
+                )))
+                .unwrap(),
+                b"previous-circuit"
+            );
+        }
+        assert_eq!(
+            fs::read(recovery_dir.join("previous-circuits/installed.txt")).unwrap(),
+            b"installed"
+        );
+    }
+
+    #[test]
+    fn download_keeps_backup_if_circuit_install_rollback_fails() {
+        assert_failed_rollback_keeps_previous_circuits(false);
+    }
+
+    #[test]
+    fn download_keeps_backup_if_version_update_rollback_fails() {
+        assert_failed_rollback_keeps_previous_circuits(true);
     }
 
     #[tokio::test]
