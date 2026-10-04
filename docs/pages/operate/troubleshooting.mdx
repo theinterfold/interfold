@@ -152,6 +152,9 @@ closest to the document's key. The upload uses `Quorum::One`, so at least one re
 acknowledge it. These errors come from the upload; a failing upload does not hold back the
 notification.
 
+An inbound DHT put cannot replace the node's own published record. For a stored replica, the node
+keeps the later expiry. A record without an expiry keeps its unlimited lifetime.
+
 - **The retry sequence.** Each upload makes 2 attempts, 1 s apart.
 - **`success: []`.** Remote peers receive records with record filtering on
   (`StoreInserts::FilterBoth`). With this setting, a remote peer sends a response even when its
@@ -261,6 +264,9 @@ errors.
 
 The node uses QUIC over UDP. The node admits a peer only after the Identify check passes. The check
 compares the network identity and the supported Kademlia and sync protocols.
+
+Identify does not cache peer addresses. The node keeps admitted peer addresses in Kademlia and
+filters loopback addresses when it has a listener on a non-loopback interface.
 
 | Log line                                                                                      | Cause                                                                        | Action                                                                                                                                                                                                            |
 | --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

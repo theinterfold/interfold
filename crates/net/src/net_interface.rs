@@ -687,7 +687,8 @@ fn create_behaviour(
                 "interfold-ciphernode/{}",
                 env!("CARGO_PKG_VERSION")
             ))
-            .with_interval(Duration::from_secs(60)),
+            .with_interval(Duration::from_secs(60))
+            .with_cache_size(0),
     );
 
     let gossipsub_config = gossipsub::ConfigBuilder::default()
@@ -707,13 +708,15 @@ fn create_behaviour(
         filter,
     )?;
     let mut score_params = gossipsub::PeerScoreParams::default();
-    let mut topic_score = gossipsub::TopicScoreParams::default();
-    topic_score.time_in_mesh_quantum = Duration::from_secs(1);
-    topic_score.time_in_mesh_cap = 10.0;
-    topic_score.first_message_deliveries_cap = 100.0;
-    topic_score.mesh_message_deliveries_weight = 0.0;
-    topic_score.mesh_failure_penalty_weight = 0.0;
-    topic_score.invalid_message_deliveries_weight = -10.0;
+    let topic_score = gossipsub::TopicScoreParams {
+        time_in_mesh_quantum: Duration::from_secs(1),
+        time_in_mesh_cap: 10.0,
+        first_message_deliveries_cap: 100.0,
+        mesh_message_deliveries_weight: 0.0,
+        mesh_failure_penalty_weight: 0.0,
+        invalid_message_deliveries_weight: -10.0,
+        ..Default::default()
+    };
     score_params.topics.insert(topic.hash(), topic_score);
     gossipsub
         .with_peer_score(score_params, gossipsub::PeerScoreThresholds::default())
@@ -770,6 +773,7 @@ fn create_behaviour(
 }
 
 /// Process all swarm events
+#[allow(clippy::too_many_arguments)]
 async fn process_swarm_event(
     swarm: &mut Swarm<NodeBehaviour>,
     event_tx: &NetEventSender,
@@ -989,7 +993,7 @@ async fn process_swarm_event(
             request:
                 InboundRequest::PutRecord {
                     source,
-                    record: Some(record),
+                    record: Some(mut record),
                     ..
                 },
         })) => {
@@ -1012,13 +1016,25 @@ async fn process_swarm_event(
                 && key_matches
                 && within_quota
             {
-                let key_exists = swarm
-                    .behaviour_mut()
-                    .kademlia
-                    .store_mut()
-                    .get(&record.key)
-                    .is_some();
-                match swarm.behaviour_mut().kademlia.store_mut().put(record) {
+                let local_peer_id = *swarm.local_peer_id();
+                let store = swarm.behaviour_mut().kademlia.store_mut();
+                let key_exists = if let Some(existing) = store.get(&record.key) {
+                    // Remote puts cannot replace our publications or shorten a replica's lifetime.
+                    if existing.publisher == Some(local_peer_id)
+                        || existing.expires.is_none()
+                        || existing.expires >= record.expires
+                    {
+                        return Ok(());
+                    }
+                    record = Record {
+                        expires: record.expires,
+                        ..existing.into_owned()
+                    };
+                    true
+                } else {
+                    false
+                };
+                match store.put(record) {
                     Ok(()) if !key_exists => {
                         peer_keys.insert(key_bytes);
                     }

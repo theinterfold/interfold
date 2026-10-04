@@ -178,6 +178,7 @@ pub(crate) fn decode_sync<T: DeserializeOwned>(
         .context("failed to deserialize sync payload")
 }
 
+#[allow(clippy::type_complexity)]
 fn gossip_metadata(
     data: &GossipData,
     policy: &NetworkPolicy,

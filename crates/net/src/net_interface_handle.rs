@@ -87,6 +87,7 @@ impl NetEventSender {
     /// A broadcast send only fails when no receiver is alive. Consumers subscribe lazily, so that
     /// is not an error for the producer: the event has nobody to go to and is dropped, exactly as
     /// it would be for a receiver that subscribes a moment later.
+    #[allow(clippy::result_large_err)]
     pub fn send(&self, event: NetEvent) -> Result<usize, broadcast::error::SendError<NetEvent>> {
         if !event.requires_application_delivery() {
             return Ok(self.raw.send(event).unwrap_or(0));

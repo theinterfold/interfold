@@ -8,11 +8,16 @@
 //! `NodeBehaviour`.
 
 use std::collections::{HashMap, HashSet};
+use std::net::Ipv4Addr;
+use std::pin::Pin;
+use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
-use libp2p::kad::{Record, RecordKey};
+use libp2p::core::transport::{DialOpts, ListenerId, TransportError, TransportEvent};
+use libp2p::kad::{store::RecordStore, Record, RecordKey};
 use libp2p::swarm::ConnectionId;
-use libp2p::{Multiaddr, PeerId};
+use libp2p::{Multiaddr, PeerId, Transport};
 
 /// The state that `start` keeps for one node, so a test can feed swarm events to
 /// `process_swarm_event` without the timers of the event loop.
@@ -99,6 +104,316 @@ impl TestNode {
                 .build(),
         )
     }
+
+    async fn listen(&mut self) -> anyhow::Result<Multiaddr> {
+        self.interface
+            .swarm
+            .listen_on("/ip4/127.0.0.1/udp/0/quic-v1".parse()?)?;
+        loop {
+            let event = self.next_event().await?;
+            let address = match &event {
+                super::SwarmEvent::NewListenAddr { address, .. } => Some(address.clone()),
+                _ => None,
+            };
+            self.process(event).await?;
+            if let Some(address) = address {
+                return Ok(address);
+            }
+        }
+    }
+
+    async fn identify_with(&mut self, other: &mut Self) -> anyhow::Result<libp2p::identify::Info> {
+        let mut identified = None;
+        while identified.is_none()
+            || !self.admission.is_admitted(&other.peer_id())
+            || !other.admission.is_admitted(&self.peer_id())
+        {
+            tokio::select! {
+                event = self.next_event() => {
+                    let event = event?;
+                    if let super::SwarmEvent::Behaviour(super::NodeBehaviourEvent::Identify(
+                        libp2p::identify::Event::Received { info, .. },
+                    )) = &event {
+                        identified = Some(info.clone());
+                    }
+                    self.process(event).await?;
+                }
+                event = other.next_event() => other.process(event?).await?,
+            }
+        }
+        Ok(identified.expect("received Identify"))
+    }
+
+    async fn receive_put(&mut self, sender: &mut Self, record: Record) -> anyhow::Result<Record> {
+        let key = record.key.clone();
+        let query = sender
+            .interface
+            .swarm
+            .behaviour_mut()
+            .kademlia
+            .put_record(record, libp2p::kad::Quorum::One)?;
+        sender
+            .correlator
+            .track(query, e3_events::CorrelationId::new());
+        loop {
+            tokio::select! {
+                event = self.next_event() => {
+                    let event = event?;
+                    let received = match &event {
+                        super::SwarmEvent::Behaviour(super::NodeBehaviourEvent::Kademlia(
+                            libp2p::kad::Event::InboundRequest {
+                                request: libp2p::kad::InboundRequest::PutRecord {
+                                    record: Some(record), ..
+                                },
+                            },
+                        )) if record.key == key => Some(record.clone()),
+                        _ => None,
+                    };
+                    self.process(event).await?;
+                    if let Some(received) = received {
+                        return Ok(received);
+                    }
+                }
+                event = sender.next_event() => sender.process(event?).await?,
+            }
+        }
+    }
+}
+
+// Map documentation-range addresses to local QUIC sockets. The behaviour sees a public listener
+// and real Identify messages; the dial log records addresses before the transport maps them.
+struct AddressTestTransport<T> {
+    inner: T,
+    dials: Arc<Mutex<Vec<Multiaddr>>>,
+}
+
+fn with_ip(address: Multiaddr, ip: Ipv4Addr) -> Multiaddr {
+    address
+        .iter()
+        .map(|part| match part {
+            libp2p::multiaddr::Protocol::Ip4(_) => libp2p::multiaddr::Protocol::Ip4(ip),
+            part => part,
+        })
+        .collect()
+}
+
+impl<T: Transport + Unpin> Transport for AddressTestTransport<T> {
+    type Output = T::Output;
+    type Error = T::Error;
+    type ListenerUpgrade = T::ListenerUpgrade;
+    type Dial = T::Dial;
+
+    fn listen_on(
+        &mut self,
+        id: ListenerId,
+        address: Multiaddr,
+    ) -> Result<(), TransportError<Self::Error>> {
+        self.inner.listen_on(id, address)
+    }
+
+    fn remove_listener(&mut self, id: ListenerId) -> bool {
+        self.inner.remove_listener(id)
+    }
+
+    fn dial(
+        &mut self,
+        address: Multiaddr,
+        opts: DialOpts,
+    ) -> Result<Self::Dial, TransportError<Self::Error>> {
+        self.dials.lock().unwrap().push(address.clone());
+        self.inner.dial(with_ip(address, Ipv4Addr::LOCALHOST), opts)
+    }
+
+    fn poll(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<TransportEvent<Self::ListenerUpgrade, Self::Error>> {
+        Pin::new(&mut self.get_mut().inner)
+            .poll(cx)
+            .map(|event| match event {
+                TransportEvent::NewAddress {
+                    listener_id,
+                    listen_addr,
+                } => TransportEvent::NewAddress {
+                    listener_id,
+                    listen_addr: with_ip(listen_addr, Ipv4Addr::new(203, 0, 113, 1)),
+                },
+                event => event,
+            })
+    }
+}
+
+#[tokio::test]
+async fn identify_reconnections_dial_only_filtered_addresses() -> anyhow::Result<()> {
+    let mut node = TestNode::new()?;
+    let mut remote = TestNode::new()?;
+    let key = libp2p::identity::Keypair::generate_ed25519();
+    let dials = Arc::new(Mutex::new(Vec::new()));
+    let transport = AddressTestTransport {
+        inner: libp2p::quic::tokio::Transport::new(libp2p::quic::Config::new(&key)),
+        dials: dials.clone(),
+    }
+    .map(|(peer, connection), _| (peer, libp2p::core::muxing::StreamMuxerBox::new(connection)))
+    .boxed();
+    node.interface.swarm = libp2p::Swarm::new(
+        transport,
+        super::create_behaviour(&key, &node.interface.network)
+            .map_err(|error| anyhow::anyhow!("{error}"))?,
+        key.public().to_peer_id(),
+        libp2p::swarm::Config::with_tokio_executor(),
+    );
+    node.interface
+        .swarm
+        .behaviour_mut()
+        .gossipsub
+        .subscribe(&node.interface.topic)?;
+    node.listen().await?;
+    assert!(super::should_filter_loopback(&node.interface.swarm));
+    let loopback = remote.listen().await?;
+    let public = with_ip(loopback.clone(), Ipv4Addr::new(203, 0, 113, 2));
+    remote.interface.swarm.add_external_address(public.clone());
+    node.interface.swarm.dial(public.clone())?;
+
+    for _ in 0..2 {
+        let info = node.identify_with(&mut remote).await?;
+        assert!(info.listen_addrs.contains(&loopback));
+        assert!(info.listen_addrs.contains(&public));
+        node.interface
+            .swarm
+            .disconnect_peer_id(remote.peer_id())
+            .unwrap();
+        while node.admission.is_admitted(&remote.peer_id())
+            || remote.admission.is_admitted(&node.peer_id())
+        {
+            tokio::select! {
+                event = node.next_event() => node.process(event?).await?,
+                event = remote.next_event() => remote.process(event?).await?,
+            }
+        }
+        dials.lock().unwrap().clear();
+        node.interface.swarm.dial(remote.peer_id())?;
+        let attempted = dials.lock().unwrap().clone();
+        assert!(!attempted.is_empty());
+        assert!(
+            attempted
+                .iter()
+                .all(|address| !super::is_loopback_addr(address)),
+            "dialed an unfiltered address: {attempted:?}"
+        );
+        assert!(attempted
+            .iter()
+            .any(|address| super::strip_peer_id(address.clone()) == public));
+    }
+    node.identify_with(&mut remote).await?;
+    Ok(())
+}
+
+async fn check_inbound_put_expiry(published_here: bool) -> anyhow::Result<()> {
+    let mut node = TestNode::new()?;
+    let mut remote = TestNode::new()?;
+    let address = remote.listen().await?;
+    node.interface.swarm.dial(address)?;
+    node.identify_with(&mut remote).await?;
+    let value = b"document with a retained expiry".to_vec();
+    let key = super::ContentHash::from_content(&value);
+    let record_key = RecordKey::new(&key);
+    let expires = Some(Instant::now() + Duration::from_secs(3600));
+    let mut record = Record {
+        key: record_key.clone(),
+        value: value.clone(),
+        publisher: None,
+        expires,
+    };
+    if published_here {
+        super::handle_store_local(
+            &mut node.interface.swarm,
+            &node.interface.event_tx,
+            e3_events::CorrelationId::new(),
+            key,
+            expires,
+            e3_utils::ArcBytes::from_bytes(&value),
+        )?;
+    } else {
+        node.receive_put(&mut remote, record.clone()).await?;
+    }
+    let original = node
+        .interface
+        .swarm
+        .behaviour_mut()
+        .kademlia
+        .store_mut()
+        .get(&record_key)
+        .expect("stored document")
+        .into_owned();
+
+    record.expires = Some(Instant::now() + Duration::from_secs(60));
+    let incoming = node.receive_put(&mut remote, record.clone()).await?;
+    assert!(incoming.expires < original.expires);
+    let store = node.interface.swarm.behaviour_mut().kademlia.store_mut();
+    assert_eq!(store.get(&record_key).as_deref(), Some(&original));
+    super::prune_expired_records(store, incoming.expires.unwrap() + Duration::from_secs(1));
+    assert_eq!(store.get(&record_key).as_deref(), Some(&original));
+
+    record.expires = Some(Instant::now() + Duration::from_secs(7200));
+    let incoming = node.receive_put(&mut remote, record.clone()).await?;
+    let stored = node
+        .interface
+        .swarm
+        .behaviour_mut()
+        .kademlia
+        .store_mut()
+        .get(&record_key)
+        .unwrap()
+        .into_owned();
+    if published_here {
+        assert_eq!(
+            stored, original,
+            "only this node controls its published record"
+        );
+    } else {
+        assert!(stored.expires > original.expires);
+        assert_eq!(
+            stored,
+            Record {
+                expires: incoming.expires,
+                ..original
+            }
+        );
+    }
+
+    // A record without an expiry is not shortened to a finite lifetime.
+    let unbounded = Record {
+        expires: None,
+        ..stored
+    };
+    node.interface
+        .swarm
+        .behaviour_mut()
+        .kademlia
+        .store_mut()
+        .put(unbounded.clone())?;
+    node.receive_put(&mut remote, record).await?;
+    assert_eq!(
+        node.interface
+            .swarm
+            .behaviour_mut()
+            .kademlia
+            .store_mut()
+            .get(&record_key)
+            .as_deref(),
+        Some(&unbounded)
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn inbound_put_preserves_locally_published_record() -> anyhow::Result<()> {
+    check_inbound_put_expiry(true).await
+}
+
+#[tokio::test]
+async fn inbound_put_never_shortens_replica_expiry() -> anyhow::Result<()> {
+    check_inbound_put_expiry(false).await
 }
 
 fn is_redial_backoff(error: &libp2p::swarm::DialError) -> bool {

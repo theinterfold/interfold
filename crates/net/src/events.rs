@@ -611,7 +611,7 @@ where
     // hold the caller past its timeout. An expired send drops the command with it.
     let event = tokio::time::timeout(timeout, async move {
         net_cmds.send(command).await?;
-        Ok::<_, anyhow::Error>(response.recv().await?)
+        response.recv().await
     })
     .await
     .map_err(|_| anyhow::anyhow!("Timed out waiting for response from {command_summary}"))??;
