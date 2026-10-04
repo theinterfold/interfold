@@ -282,6 +282,9 @@ On restart:
 │   3. Reconcile and hydrate persisted per-E3 state
 │      → Extensions must preserve hydrated recipients; replayed committee events
 │        must not replace a restored per-E3 actor with a fresh instance
+│      → ThresholdKeyshareExtension restores canonical key-publication awareness from the
+│        E3 lifecycle projection before starting the actor. Collector failures cannot overwrite
+│        published progress when PublicKeyAggregated is absent from the saved keyshare state
 │      → CiphernodeSelector and finalized-committee snapshots must agree; one missing side is
 │        restored, terminal E3s are pruned, and contradictory snapshots fail startup
 │      → ShareVerificationActor loads canonical party slots from the durable

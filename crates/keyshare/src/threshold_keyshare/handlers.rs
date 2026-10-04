@@ -5,9 +5,23 @@
 use super::*;
 
 impl ThresholdKeyshare {
+    pub(crate) fn observe_canonical_stage(&mut self, e3_id: &E3id, stage: &E3Stage) {
+        if self.state.get().is_some_and(|state| state.e3_id == *e3_id)
+            && matches!(
+                stage,
+                E3Stage::KeyPublished | E3Stage::CiphertextReady | E3Stage::Complete
+            )
+        {
+            self.canonical_key_published = true;
+        }
+    }
+
     fn collector_failure_is_current(&self, e3_id: &E3id, phase: DkgTimeoutPhase) -> Result<bool> {
         let state = self.state.try_get()?;
-        if state.e3_id != *e3_id || Self::public_key_context_is_recovered(&state) {
+        if state.e3_id != *e3_id
+            || self.canonical_key_published
+            || Self::public_key_context_is_recovered(&state)
+        {
             return Ok(false);
         }
 

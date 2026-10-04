@@ -14,7 +14,11 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
                 ctx.spawn(timing);
             }
             InterfoldEventData::CiphertextOutputPublished(data) => {
+                self.observe_canonical_stage(&data.e3_id, &E3Stage::CiphertextReady);
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
+            }
+            InterfoldEventData::CommitteePublished(data) => {
+                self.observe_canonical_stage(&data.e3_id, &E3Stage::KeyPublished);
             }
             InterfoldEventData::PublicKeyAggregated(data) => {
                 let committee_hash =
@@ -105,7 +109,7 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
                 );
             }
             InterfoldEventData::E3StageChanged(data) => {
-                use e3_events::E3Stage;
+                self.observe_canonical_stage(&data.e3_id, &data.new_stage);
                 match &data.new_stage {
                     E3Stage::Complete | E3Stage::Failed => {
                         info!("E3 reached terminal stage {:?}. Shutting down ThresholdKeyshare for e3_id={}", data.new_stage, data.e3_id);

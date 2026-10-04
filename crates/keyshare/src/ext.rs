@@ -17,7 +17,9 @@ use async_trait::async_trait;
 use e3_crypto::Cipher;
 use e3_data::{AutoPersist, RepositoriesFactory};
 use e3_events::{prelude::*, BusHandle, EType, InterfoldEvent, InterfoldEventData, TypedEvent};
-use e3_request::{E3Context, E3ContextSnapshot, E3Extension, META_KEY};
+use e3_request::{
+    E3Context, E3ContextSnapshot, E3Extension, E3LifecycleRepositoryFactory, META_KEY,
+};
 
 use crate::KeyshareState;
 use std::{collections::HashMap, sync::Arc};
@@ -188,7 +190,7 @@ impl E3Extension for ThresholdKeyshareExtension {
             })?;
 
         // Construct from snapshot
-        let value = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        let mut actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
             bus: self.bus.clone(),
             cipher: self.cipher.clone(),
             state,
@@ -199,12 +201,23 @@ impl E3Extension for ThresholdKeyshareExtension {
             dkg_timing_reader: self.dkg_timing_reader.clone(),
             signer: self.signer.clone(),
             effects_enabled: false,
-        })
-        .start()
-        .into();
+        });
+        // The lifecycle projection is node-wide, outside the per-E3 context scope.
+        if let Some(stage) = ctx
+            .repositories()
+            .store
+            .base("")
+            .repositories()
+            .e3_lifecycle()
+            .read()
+            .await?
+            .and_then(|stages| stages.get(&snapshot.e3_id).cloned())
+        {
+            actor.observe_canonical_stage(&snapshot.e3_id, &stage);
+        }
 
         // send to context
-        ctx.set_event_recipient("threshold_keyshare", Some(value));
+        ctx.set_event_recipient("threshold_keyshare", Some(actor.start().into()));
 
         Ok(())
     }

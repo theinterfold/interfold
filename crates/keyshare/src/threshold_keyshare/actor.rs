@@ -184,6 +184,8 @@ pub struct ThresholdKeyshare {
     active_aggregator_party_id: Option<u64>,
     is_aggregator: bool,
     effects_enabled: bool,
+    // Derived from canonical events and the lifecycle projection at hydration.
+    canonical_key_published: bool,
     roster_inputs_ready: bool,
     roster_proposal_pending: bool,
     ready_summary: ReadySummaryGate,
@@ -245,6 +247,7 @@ impl ThresholdKeyshare {
             active_aggregator_party_id: recovered.active_aggregator_party_id,
             is_aggregator: recovered.is_aggregator,
             effects_enabled: params.effects_enabled,
+            canonical_key_published: false,
             roster_inputs_ready: false,
             roster_proposal_pending: false,
             ready_summary: ReadySummaryGate::default(),
