@@ -766,10 +766,11 @@ clearing a collector reference or publishing a failure. Encryption-key failures 
 `CollectingEncryptionKeys`. Threshold-share failures apply from `Init` through
 `AggregatingDecryptionKey`, including while local share generation is unfinished. They cannot
 replace `ReadyForDecryption` or later states. C4 failures apply in `ReadyForDecryption` only before
-C4 verification completes or keyshare publication is authorized. Saved public-key context or
-canonical key publication supersedes all three collectors. `CommitteePublished`,
-`E3StageChanged(KeyPublished)` and later successful stages record publication for the matching E3
-without waiting for `PublicKeyAggregated`. An earlier stage cannot clear that fact.
+C4 verification completes or keyshare publication is authorized. Canonical key publication
+supersedes all three collectors. A `PublicKeyAggregated` intent and its saved public-key context do
+not suppress a current collector failure. `CommitteePublished`, `E3StageChanged(KeyPublished)` and
+later successful stages record publication for the matching E3 without waiting for
+`PublicKeyAggregated`. An earlier stage cannot clear that fact.
 `ThresholdKeyshareExtension::hydrate` in `crates/keyshare/src/ext.rs` restores it from the existing
 E3 lifecycle projection before the actor starts. The other checks use the persisted state and
 recovery record.

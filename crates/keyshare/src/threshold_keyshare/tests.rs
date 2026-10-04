@@ -3356,19 +3356,17 @@ async fn collector_failures_ignore_superseded_phases() -> Result<()> {
                 KeyshareState::ReadyForDecryption(ready_for_c4_test())
             }
         };
-        for (state, published, authorized, verified, public_key) in [
+        for (state, published, authorized, verified) in [
             (
                 first_superseding,
                 phase == DkgTimeoutPhase::DecryptionKeySharedCollection,
                 false,
                 false,
-                false,
             ),
             (
                 KeyshareState::ReadyForDecryption(ready_for_c4_test()),
                 false,
                 true,
-                false,
                 false,
             ),
             (
@@ -3376,10 +3374,9 @@ async fn collector_failures_ignore_superseded_phases() -> Result<()> {
                 false,
                 false,
                 true,
-                false,
             ),
-            (decrypting.clone(), false, false, false, false),
-            (KeyshareState::Completed, false, false, false, false),
+            (decrypting.clone(), false, false, false),
+            (KeyshareState::Completed, false, false, false),
             (
                 KeyshareState::Failed {
                     failed_at_stage: E3Stage::CiphertextReady,
@@ -3388,26 +3385,6 @@ async fn collector_failures_ignore_superseded_phases() -> Result<()> {
                 false,
                 false,
                 false,
-                false,
-            ),
-            (
-                match phase {
-                    DkgTimeoutPhase::EncryptionKeyCollection => {
-                        collecting_encryption_keys_state(&e3_id)
-                    }
-                    DkgTimeoutPhase::ThresholdShareCollection => {
-                        KeyshareState::AggregatingDecryptionKey(
-                            aggregating_decryption_key_for_roster_test(),
-                        )
-                    }
-                    DkgTimeoutPhase::DecryptionKeySharedCollection => {
-                        KeyshareState::ReadyForDecryption(ready_for_c4_test())
-                    }
-                },
-                false,
-                false,
-                false,
-                true,
             ),
         ] {
             let (mut actor, repo, _, history) =
@@ -3432,24 +3409,6 @@ async fn collector_failures_ignore_superseded_phases() -> Result<()> {
             })?;
             let bus = actor.bus.clone();
             let actor = actor.start();
-            if public_key {
-                actor
-                    .send(keyshare_event(
-                        PublicKeyAggregated {
-                            e3_id: e3_id.clone(),
-                            pubkey: ArcBytes::from_bytes(&[7]),
-                            pk_commitment: [8; 32],
-                            nodes: OrderedSet::from(vec![Address::ZERO.to_string()]),
-                            committee_addresses: vec![Address::ZERO],
-                            honest_committee_addresses: vec![Address::ZERO],
-                            dkg_aggregator_proof: None,
-                            dkg_attestation_bundle: None,
-                        },
-                        2,
-                        EventSource::Evm,
-                    ))
-                    .await?;
-            }
             let expected = repo.read().await?.expect("current state");
             deliver_collector_failure(&actor, phase, &e3_id).await?;
             assert_eq!(
@@ -3462,6 +3421,222 @@ async fn collector_failures_ignore_superseded_phases() -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn network_publication_intent(e3_id: &E3id) -> InterfoldEvent {
+    keyshare_event(
+        PublicKeyAggregated {
+            e3_id: e3_id.clone(),
+            pubkey: ArcBytes::from_bytes(&[7]),
+            pk_commitment: [8; 32],
+            nodes: OrderedSet::from(vec![Address::ZERO.to_string()]),
+            committee_addresses: vec![Address::ZERO],
+            honest_committee_addresses: vec![Address::ZERO],
+            dkg_aggregator_proof: None,
+            dkg_attestation_bundle: None,
+        },
+        3,
+        EventSource::Net,
+    )
+}
+
+async fn share_deadline_after_publication_intent(phase: DkgTimeoutPhase) -> Result<()> {
+    let e3_id = E3id::new("unfinished-share-collection", 1);
+    let state = match phase {
+        DkgTimeoutPhase::ThresholdShareCollection => {
+            KeyshareState::AggregatingDecryptionKey(aggregating_decryption_key_for_roster_test())
+        }
+        DkgTimeoutPhase::DecryptionKeySharedCollection => {
+            KeyshareState::ReadyForDecryption(ready_for_c4_test())
+        }
+        DkgTimeoutPhase::EncryptionKeyCollection => unreachable!(),
+    };
+    let (mut actor, repo, _, history) = build_actor(&e3_id, state, 7_200, 7_200, &[]).await?;
+    actor.state.try_mutate_without_context(|mut state| {
+        state.honest_parties = Some(BTreeSet::from([0, 1]));
+        Ok(state)
+    })?;
+    let mut share_collector = None;
+    let mut c4_collector = None;
+    let actor = ThresholdKeyshare::create(|ctx| {
+        if phase == DkgTimeoutPhase::ThresholdShareCollection {
+            share_collector = Some(
+                actor
+                    .ensure_collector(
+                        ctx.address(),
+                        &test_ec(1),
+                        crate::domain::timeout_policy::now_unix_secs(),
+                    )
+                    .expect("threshold-share collector"),
+            );
+        } else {
+            c4_collector = Some(
+                actor
+                    .ensure_decryption_key_shared_collector(ctx.address())
+                    .expect("C4 collector"),
+            );
+        }
+        actor
+    });
+    actor.send(network_publication_intent(&e3_id)).await?;
+    let saved = repo.read().await?.expect("saved publication intent");
+    assert!(saved.aggregated_pk.is_some());
+    assert!(saved.decryption_domain.is_some());
+    if let Some(collector) = share_collector {
+        collector.send(ThresholdShareCollectionCutoff).await?;
+        collector.send(ThresholdShareCollectionTimeout).await?;
+    }
+    if let Some(collector) = c4_collector {
+        collector.send(DecryptionKeySharedCollectionTimeout).await?;
+    }
+    actor
+        .send(keyshare_event(
+            TestEvent::new("parent barrier", 1),
+            4,
+            EventSource::Local,
+        ))
+        .await?;
+    assert!(
+        matches!(
+            repo.read().await?.expect("persisted failure").state,
+            KeyshareState::Failed {
+                failed_at_stage: E3Stage::CommitteeFinalized,
+                reason: FailureReason::DKGTimeout,
+            }
+        ),
+        "{phase:?}: a publication intent must not suppress a current failure"
+    );
+    let count = if phase == DkgTimeoutPhase::DecryptionKeySharedCollection {
+        1
+    } else {
+        2
+    };
+    assert!(next_events(&history, count)
+        .await?
+        .iter()
+        .any(|event| matches!(
+            event.get_data(), InterfoldEventData::E3Failed(data)
+                if data.e3_id == e3_id
+                    && data.failed_at_stage == E3Stage::CommitteeFinalized
+                    && data.reason == FailureReason::DKGTimeout
+        )));
+    actor.send(Die).await?;
+    Ok(())
+}
+
+#[actix::test]
+async fn publication_intent_does_not_suppress_threshold_share_deadline() -> Result<()> {
+    share_deadline_after_publication_intent(DkgTimeoutPhase::ThresholdShareCollection).await
+}
+
+#[actix::test]
+async fn publication_intent_does_not_suppress_c4_deadline() -> Result<()> {
+    share_deadline_after_publication_intent(DkgTimeoutPhase::DecryptionKeySharedCollection).await
+}
+
+async fn encryption_deadline_after_publication_intent(restart: bool) -> Result<()> {
+    let e3_id = E3id::new("unfinished-key-collection", 1);
+    let (mut actor, repo, recovery_repo, history) = build_actor(
+        &e3_id,
+        collecting_encryption_keys_state(&e3_id),
+        7_200,
+        7_200,
+        &[],
+    )
+    .await?;
+    actor.record_encryption_key(&TypedEvent::new(peer_key(&e3_id, 0), test_ec(1)))?;
+    actor.state.try_mutate_without_context(|mut state| {
+        // The 10% encryption-key cutoff is three seconds away in this 7,200-second window.
+        state.dkg_deadline_unix_secs = Some(crate::domain::timeout_policy::now_unix_secs() + 6_483);
+        Ok(state)
+    })?;
+    let bus = actor.bus.clone();
+    let cipher = actor.cipher.clone();
+    let signer = actor.signer.clone();
+    let mut parent = actor.start();
+    parent
+        .send(keyshare_event(
+            E3StageChanged {
+                e3_id: e3_id.clone(),
+                previous_stage: E3Stage::Requested,
+                new_stage: E3Stage::CommitteeFinalized,
+            },
+            1,
+            EventSource::Evm,
+        ))
+        .await?;
+    if !restart {
+        parent
+            .send(keyshare_event(EffectsEnabled::new(), 2, EventSource::Local))
+            .await?;
+    }
+    parent.send(network_publication_intent(&e3_id)).await?;
+    let saved = repo.read().await?.expect("saved publication intent");
+    assert!(saved.aggregated_pk.is_some());
+    assert!(saved.decryption_domain.is_some());
+    if restart {
+        parent.send(Die).await?;
+        parent = ThresholdKeyshare::new(ThresholdKeyshareParams {
+            bus,
+            cipher,
+            state: repo.load().await?,
+            share_enc_preset: BfvPreset::InsecureDkg512,
+            interfold_address: Address::ZERO,
+            signer,
+            effects_enabled: false,
+            recovery: recovery_repo.load().await?,
+            recovery_payloads: test_recovery_payloads(),
+            dkg_timing_reader: Arc::new(|_| {
+                Box::pin(async { anyhow::bail!("recovery must use the saved deadline") })
+            }),
+        })
+        .start();
+        parent
+            .send(keyshare_event(EffectsEnabled::new(), 4, EventSource::Local))
+            .await?;
+    }
+    assert!(matches!(
+        next_event(&history).await?.get_data(),
+        InterfoldEventData::EncryptionKeyPending(data) if data.e3_id == e3_id
+    ));
+    let failed =
+        wait_for_keyshare_state(&repo, |state| matches!(state, KeyshareState::Failed { .. }))
+            .await
+            .context(
+                "publication intent must not suppress the unfinished encryption-key deadline",
+            )?;
+    assert!(matches!(
+        failed,
+        KeyshareState::Failed {
+            failed_at_stage: E3Stage::CommitteeFinalized,
+            reason: FailureReason::DKGTimeout,
+        }
+    ));
+    let events = next_events(&history, 2).await?;
+    assert!(events.iter().any(|event| matches!(event.get_data(),
+        InterfoldEventData::EncryptionKeyCollectionFailed(data)
+            if data.e3_id == e3_id
+                && data.missing_parties.iter().copied().collect::<BTreeSet<_>>()
+                    == BTreeSet::from([1, 2])
+    )));
+    assert!(events.iter().any(|event| matches!(event.get_data(),
+        InterfoldEventData::E3Failed(data)
+            if data.e3_id == e3_id
+                && data.failed_at_stage == E3Stage::CommitteeFinalized
+                && data.reason == FailureReason::DKGTimeout
+    )));
+    parent.send(Die).await?;
+    Ok(())
+}
+
+#[actix::test]
+async fn publication_intent_does_not_suppress_live_encryption_deadline() -> Result<()> {
+    encryption_deadline_after_publication_intent(false).await
+}
+
+#[actix::test]
+async fn publication_intent_does_not_suppress_encryption_deadline_after_restart() -> Result<()> {
+    encryption_deadline_after_publication_intent(true).await
 }
 
 fn canonical_publication_events(e3_id: &E3id) -> Vec<InterfoldEventData> {

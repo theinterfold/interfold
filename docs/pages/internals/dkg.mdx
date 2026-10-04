@@ -492,11 +492,11 @@ The node accepts a collector failure only for the same E3 while that collection 
 - C4 failures apply in `ReadyForDecryption` until C4 verification completes or keyshare publication
   is authorized.
 
-Saved public-key context or canonical key publication supersedes all three collectors. The node
-records canonical publication for the matching E3 even when `PublicKeyAggregated` has not arrived.
-An earlier stage does not reopen collection. On restart, the node restores publication awareness
-from the saved E3 lifecycle projection. An ignored failure changes no state and publishes no failure
-event.
+Canonical key publication supersedes all three collectors. A `PublicKeyAggregated` intent and its
+saved public-key context do not suppress a current collector failure. The node records canonical
+publication for the matching E3 even when `PublicKeyAggregated` has not arrived. An earlier stage
+does not reopen collection. On restart, the node restores publication awareness from the saved E3
+lifecycle projection. An ignored failure changes no state and publishes no failure event.
 
 When a current collector timeout is fatal, the node records a local `E3Failed` event. On-chain, the
 E3 stays at `CommitteeFinalized` until the DKG deadline. After that, `markE3Failed` records

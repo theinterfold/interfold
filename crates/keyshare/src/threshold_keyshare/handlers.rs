@@ -18,10 +18,7 @@ impl ThresholdKeyshare {
 
     fn collector_failure_is_current(&self, e3_id: &E3id, phase: DkgTimeoutPhase) -> Result<bool> {
         let state = self.state.try_get()?;
-        if state.e3_id != *e3_id
-            || self.canonical_key_published
-            || Self::public_key_context_is_recovered(&state)
-        {
+        if state.e3_id != *e3_id || self.canonical_key_published {
             return Ok(false);
         }
 

@@ -172,14 +172,15 @@ the code does not meet yet.
   outlive its CLI launcher must use the detached spawn path; dropping an owning child handle stops
   that child. — `flow-trace/06`
 - A threshold-keyshare collector failure must match the E3 and its current collection phase before
-  it clears collector references, writes state, or publishes events. Saved public-key context or
-  canonical key publication supersedes all DKG collector failures. `CommitteePublished` and
-  `E3StageChanged` at `KeyPublished` or a later successful stage preserve this fact even without
-  `PublicKeyAggregated`. Hydration restores it from the E3 lifecycle projection before the actor
-  starts. An earlier stage cannot reset it, and another E3 cannot establish it. Threshold-share
-  failures cannot replace `ReadyForDecryption` or a later phase. C4 failures apply in
-  `ReadyForDecryption` only before C4 verification completes or keyshare publication is authorized.
-  — `crates/keyshare/src/threshold_keyshare/handlers.rs`; `flow-trace/04`
+  it clears collector references, writes state, or publishes events. Canonical key publication
+  supersedes all DKG collector failures. A `PublicKeyAggregated` intent and its saved public-key
+  context do not establish canonical publication or suppress a current collector failure.
+  `CommitteePublished` and `E3StageChanged` at `KeyPublished` or a later successful stage preserve
+  this fact even without `PublicKeyAggregated`. Hydration restores it from the E3 lifecycle
+  projection before the actor starts. An earlier stage cannot reset it, and another E3 cannot
+  establish it. Threshold-share failures cannot replace `ReadyForDecryption` or a later phase. C4
+  failures apply in `ReadyForDecryption` only before C4 verification completes or keyshare
+  publication is authorized. — `crates/keyshare/src/threshold_keyshare/handlers.rs`; `flow-trace/04`
 - A fatal threshold-keyshare collector timeout commits `KeyshareState::Failed` before it publishes
   `E3Failed`. The persisted failure stage and reason are immutable. After hydration,
   `EffectsEnabled` redrives the saved failure and does not resume the earlier DKG phase. **Gap:**
