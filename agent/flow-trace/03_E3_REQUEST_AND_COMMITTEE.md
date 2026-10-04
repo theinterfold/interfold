@@ -372,46 +372,83 @@ attached-recipient keys, and dependency keys.
 For each missing recipient, `EventBuffer` retains events in arrival order. The recipient receives
 that queue before the event that creates it. Each queued recipient copy consumes one item and its
 bincode size plus the inline `InterfoldEvent` size. Shared payloads count again for each recipient.
-This is conservative payload accounting, not a measurement of allocator overhead. Item limits also
-bound queue entries. These limits apply across all missing recipients of an E3:
+This accounts for payloads, not exact resident memory. Item limits also bound queue entries. These
+limits apply across all missing recipients of an E3:
 
 | Scope  |  Items | Accounted bytes |
 | ------ | -----: | --------------: |
-| One E3 | 16,384 |           4 GiB |
-| Router | 65,536 |          16 GiB |
+| One E3 |  4,096 |           1 GiB |
+| Router | 16,384 |           3 GiB |
 
-The capacity envelope uses the largest supported committee, N=19 and H=14, with the secure
-8192-degree preset. There are three threshold limbs and two DKG limbs
-(`crates/fhe-params/src/constants.rs`). The current `gen_esi_sss` path creates one smudging
-polynomial. The following estimates cover the complete early DKG and decryption history for one
-missing recipient, including local events and document envelopes:
+The capacity envelope uses N=19, H=14, and the secure 8192-degree preset. There are three threshold
+limbs and two DKG limbs (`crates/fhe-params/src/constants.rs`). The current `gen_esi_sss` path
+creates one smudging polynomial. The creation points determine which histories overlap:
+
+| Recipient                                              | Creation event                                                 | Deferred history                              |
+| ------------------------------------------------------ | -------------------------------------------------------------- | --------------------------------------------- |
+| `accusation_manager`, `commitment_consistency_checker` | `CommitteeFinalized`                                           | Request and committee formation               |
+| `threshold_keyshare`, `publickey`                      | `CiphernodeSelected`                                           | Formation and early peer contributions        |
+| `plaintext`                                            | `CiphertextOutputPublished`, once committee dependencies exist | DKG, computation, and early decryption shares |
+
+The creation hooks are in
+`crates/slashing/src/{accusation_manager_ext,commitment_consistency_checker_ext}.rs`,
+`crates/keyshare/src/ext.rs`, and `crates/aggregator/src/ext.rs`. The local C1–C4 witness history
+starts after local selection. It therefore needs one deferred copy for `plaintext`. A node outside
+the committee produces no local DKG witness history.
+
+The late-recipient allowance includes local events and document envelopes:
 
 - C3 generates `2 × (N − 1) × 3 = 108` proofs. C0, C1, two C2 proofs, and two C4 proofs bring the
-  base count to 114. Reserve three routed records per proof for results, signing, and aggregation.
-- Reserve another 256 records for fold results, verification, roster coordination, and lifecycle
-  events. Reserve `32 × N = 608` records for keys, shares, document wrappers, and decryption. These
-  allowances total 1,206 records. Round up to 1,536 per recipient.
+  base count to 114. Reserve four routed records per proof, including a failed computation's request
+  payload, result, signing, and aggregation. Another 256 records cover fold results, verification,
+  roster coordination, and lifecycle events. `32 × N = 608` records cover keys, shares, document
+  wrappers, and decryption. These allowances total 1,320. Round up to 1,536.
 - A DKG ciphertext or public key has at most `2 × 2 × 8192 × 8 = 262,144` coefficient bytes. A C3
   request also has a 64 KiB share row and three 128 KiB randomness/error polynomials. Its
   coefficient data totals 960 KiB. The 108 requests, full encrypted share, C1 witness, and two C2
   share matrices fit a 160 MiB allowance for `ThresholdSharePending`.
+- Reserve another 128 MiB for the separately emitted C1–C3 `ComputeRequest` payloads. Plain
+  `ComputeRequest` events have no routing E3 ID and are ignored by this router.
+  `ComputeRequestError` retains the complete request and does have a routing E3 ID
+  (`crates/events/src/interfold_event/mod.rs`, `get_e3_id`). The allowance includes one such
+  additional copy of every request. It does not depend on payload sharing with the pending event.
 - Outbound shares target N−1 parties. Party-filtered ingress supplies at most N−1 peer shares. Allow
   2 MiB for each of those 36 shares, including its C2/C3 proofs. Count both the typed event and its
   `PublishDocumentRequested` or `DocumentReceived` envelope: 144 MiB.
 - Two C4 inputs use at most `2 × H × 3` DKG ciphertexts, or 21 MiB of coefficient data. Reserve 32
-  MiB for the input events and their metadata. Reserve 64 MiB for keys, TrBFV responses, decryption
-  shares, small proof records, and remaining control events.
+  MiB for `DecryptionShareProofsPending` and another 32 MiB for its computation failures. Reserve 64
+  MiB for keys, TrBFV responses, decryption shares, proof records, and control events.
 
-These payload allowances total 400 MiB. Round up to 512 MiB per recipient for serialization,
-metadata, and payload variation. The proof layouts use commitments rather than coefficient arrays as
-public signals (`crates/zk-helpers/src/circuits/output_layout.rs`). The estimates include the local
-witness arrays separately. They are capacity allowances, not new validation rules for events.
+These allowances total 560 MiB. Round up to 640 MiB for encoding, metadata, and payload variation.
+The allowance includes the separately routed request payloads. Repeated failures or contributions
+can consume the remaining margin and eventually trigger the overflow policy. These are capacity
+allowances, not event validation rules.
 
-Charging this entire envelope to all five installed recipient types requires 7,680 items and 2.5 GiB
-per E3. The limits provide more than twice the item allowance and 60% byte margin. The global limits
-accommodate four such E3s with the same margin. Most recipients start much earlier, and shared byte
-storage reduces actual retained payload memory. The router regression routes four padded envelopes
-concurrently, then checks ordered delivery for all five recipients.
+Before local selection, reserve 80 MiB and 256 records for peer contributions and formation. At most
+three recipients still need that history after `CommitteeFinalized`: 240 MiB and 768 entries. Before
+committee finalization, five such prefixes use 400 MiB and 1,280 entries. These prefixes drain
+before local witnesses arrive. The peak is thus the late-recipient envelope, not five copies of it.
+The per-E3 budget leaves 384 MiB (60%) above 640 MiB and 2,560 entries above 1,536. Four
+simultaneous E3s reserve 2.5 GiB and 6,144 entries. The shared byte limit leaves 512 MiB (20%) above
+that allowance.
+
+The shared byte limit is 3 GiB to allow for resident memory that serialized sizes omit. A Linux run
+with a 4 GiB byte limit reached 5.06 GiB of resident growth after the capacity histories drained.
+The allocator retained freed storage while subsequent queues filled. For an 8 GiB memory budget,
+reserve 1.5 GiB above the 3 GiB payload ceiling for collection capacity, allocation headers,
+fragmentation, and an in-flight event. This leaves 3.5 GiB for the process baseline, live actors,
+and the system. This is a buffer budget, not a minimum-memory requirement or a bound on proof-worker
+memory. Serialized sizes do not measure allocator capacity, other queues, or total node RSS.
+
+`crates/request/src/routing/capacity_tests.rs` routes four independent secure-preset histories. It
+uses real pending-share, share, computation-error, document, and proof-result event types. Opaque
+payloads have secure-preset sizes plus encoding allowances, and each construction allocates and
+fills new storage. The fixture includes all 108 C3 requests and both C4 inputs again through
+computation failures. It delays local selection until peer contributions arrive, then checks ordered
+delivery at each recipient's creation event. Its 1,536-record histories fit below 512 MiB each. The
+Linux check measures resident growth with four histories and near the shared byte ceiling. It
+requires distinct resident storage and at most 4.5 GiB of peak resident growth during saturation,
+including allocator overhead. Overflow assertions exercise the shipped defaults through `E3Router`.
 
 If an addition exceeds either limit, the router discards that E3's queue for the missing recipient.
 It records a deferred-delivery failure, logs at ERROR, and rejects further deferral for that queue.

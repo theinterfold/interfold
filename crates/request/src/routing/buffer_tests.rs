@@ -7,6 +7,9 @@ use e3_data::InMemStore;
 use e3_events::{DecryptionshareCreated, E3Requested, InterfoldEventData, Sequenced};
 use e3_utils::utility_types::ArcBytes;
 
+#[path = "capacity_tests.rs"]
+mod capacity_tests;
+
 #[derive(Default)]
 struct Recorder(Vec<(E3id, u64)>);
 
@@ -46,7 +49,22 @@ struct LateRecipient {
 #[async_trait]
 impl E3Extension for LateRecipient {
     fn on_event(&self, context: &mut E3Context, event: &InterfoldEvent) {
-        if matches!(event.get_data(), InterfoldEventData::TestEvent(data) if data.msg == "attach") {
+        let starts = matches!(
+            (self.key, event.get_data()),
+            (
+                "accusation_manager" | "commitment_consistency_checker",
+                InterfoldEventData::CommitteeFinalized(_)
+            ) | (
+                "threshold_keyshare" | "publickey",
+                InterfoldEventData::CiphernodeSelected(_)
+            ) | (
+                "plaintext",
+                InterfoldEventData::CiphertextOutputPublished(_)
+            )
+        );
+        if starts
+            || matches!(event.get_data(), InterfoldEventData::TestEvent(data) if data.msg == "attach")
+        {
             context.set_event_recipient(self.key, Some(self.recipient.clone()));
         }
     }
@@ -246,53 +264,8 @@ async fn check_deferred_limit(limit: &str) -> Result<()> {
     Ok(())
 }
 
-// Exercise the documented count and byte allowances without generating proofs.
-async fn check_largest_committee_capacity() -> Result<()> {
-    let store = DataStore::from_in_mem(&InMemStore::new(false).start());
-    let recorders: Vec<_> = (0..5).map(|_| Recorder::default().start()).collect();
-    let router = E3Router::from_params(router_params(&store, &recorders)).start();
-    let large = ArcBytes::from_bytes(&vec![0; 160 * 1024 * 1024]);
-    let medium = ArcBytes::from_bytes(&vec![0; 16 * 1024 * 1024]);
-    let ids: Vec<_> = (51..55).map(|id| E3id::new(id.to_string(), 1)).collect();
-    for id in &ids {
-        route(&router, admission(id)).await;
-        for sequence in 2..=1_536 {
-            let bytes = match sequence {
-                2 => large.clone(),
-                3..=24 => medium.clone(),
-                _ => ArcBytes::default(),
-            };
-            route(
-                &router,
-                InterfoldEvent::<Sequenced>::test_event("early")
-                    .data(DecryptionshareCreated {
-                        e3_id: id.clone(),
-                        party_id: 0,
-                        node: "member".into(),
-                        decryption_share: vec![bytes],
-                        signed_decryption_proofs: Vec::new(),
-                    })
-                    .seq(sequence)
-                    .build(),
-            )
-            .await;
-        }
-    }
-    for id in ids {
-        route(&router, attach(&id, 1_537)).await;
-        for recorder in &recorders {
-            assert_eq!(
-                recorder.send(Recorded(id.clone())).await?,
-                (1..=1_537).collect::<Vec<_>>()
-            );
-        }
-    }
-    Ok(())
-}
-
 #[actix::test]
-async fn per_e3_item_limit_preserves_capacity_and_isolates_overflow() -> Result<()> {
-    check_largest_committee_capacity().await?;
+async fn per_e3_item_limit_isolates_deferred_overflow() -> Result<()> {
     check_deferred_limit("per-E3 items").await
 }
 

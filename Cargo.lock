@@ -4376,10 +4376,13 @@ dependencies = [
  "async-trait",
  "bincode",
  "e3-config",
+ "e3-crypto",
  "e3-data",
  "e3-events",
  "e3-fhe-params",
+ "e3-trbfv",
  "e3-utils",
+ "e3-zk-helpers",
  "serde",
  "tracing",
 ]

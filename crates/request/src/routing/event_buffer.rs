@@ -20,10 +20,10 @@ pub(crate) struct EventBufferLimits {
 impl Default for EventBufferLimits {
     fn default() -> Self {
         Self {
-            per_e3_items: 16_384,
-            per_e3_bytes: 4 * 1024 * 1024 * 1024,
-            global_items: 65_536,
-            global_bytes: 16 * 1024 * 1024 * 1024,
+            per_e3_items: 4_096,
+            per_e3_bytes: 1024 * 1024 * 1024,
+            global_items: 16_384,
+            global_bytes: 3 * 1024 * 1024 * 1024,
         }
     }
 }

@@ -213,14 +213,16 @@ the code does not meet yet.
   correctness paths), including `BusHandle` publication, `Sequencer`, `DataStore::write`, snapshot
   batches, EVM routing, and keyshare collectors. `pnpm check:invariants` blocks growth of the total
   only. The request router's `EventBuffer` bounds missing-recipient queues by items and accounted
-  bytes, per E3 and globally. Installed extensions declare the expected recipients. A bootstrap
-  context expects none. Within the limits, deferred events precede the event that creates the
-  recipient, including early decryption shares. Overflow clears only the affected recipient's
-  deferred queue and records its delivery failure until teardown or restart. It logs at ERROR and
-  disables further deferral for that queue. Live delivery and other E3s continue. The E3 can fail at
-  its existing deadline. **Gap:** deferred events and their failure records remain in memory only.
-  Restart does not recover a backlog before the existing checkpoint. Capacity derivation:
-  `flow-trace/03` §Request-router deferred delivery. — `ARCHITECTURE.md`;
+  bytes, per E3 and globally: 4,096 entries / 1 GiB per E3 and 16,384 entries / 3 GiB per router.
+  The capacity envelope follows recipient creation points and reserves memory outside the byte
+  ceiling for allocation overhead and live work. Installed extensions declare the expected
+  recipients. A bootstrap context expects none. Within the limits, deferred events precede the event
+  that creates the recipient, including early decryption shares. Overflow clears only the affected
+  recipient's deferred queue and records its delivery failure until teardown or restart. It logs at
+  ERROR and disables further deferral for that queue. Live delivery and other E3s continue. The E3
+  can fail at its existing deadline. **Gap:** deferred events and their failure records remain in
+  memory only. Restart does not recover a backlog before the existing checkpoint. Capacity
+  derivation: `flow-trace/03` §Request-router deferred delivery. — `ARCHITECTURE.md`;
   `scripts/invariant-baselines.env`; `crates/request/src/context.rs`;
   `crates/request/src/routing/event_buffer.rs`
 - Timers: persist the absolute deadline + purpose, not an in-memory handle; on restart, compare to

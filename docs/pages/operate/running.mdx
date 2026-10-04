@@ -799,9 +799,23 @@ run `interfold node reset-data`, which keeps the wallet key.
 
 A full node can receive an E3 event before the actor that consumes it starts. The request router
 keeps these events in order for recipients declared by the installed extensions. Each E3 has a limit
-of 16,384 deferred entries and 4 GiB of accounted bytes. The router has a shared limit of 65,536
-entries and 16 GiB. Each recipient copy counts toward both limits, including shared payload bytes.
-These are buffer limits, not total node memory requirements.
+of 4,096 deferred entries and 1 GiB of accounted bytes. The router has a shared limit of 16,384
+entries and 3 GiB. Each recipient copy counts toward both limits, including shared payload bytes.
+Each entry is charged its serialized size plus its inline event size.
+
+These limits cover four concurrent E3s with the largest supported committee (N=19, H=14) and the
+secure 8192-degree preset. The slashing recipients start at committee finalization. Keyshare and
+public-key recipients start at local selection. Only the plaintext recipient retains the complete
+local DKG history until ciphertext output arrives.
+
+The late-recipient allowance is 1,536 records and 640 MiB per E3. It includes the C1–C3 witnesses,
+the complete request payloads retained by computation failures, C4 inputs, peer shares, and document
+envelopes. Four such histories use 2.5 GiB, leaving 512 MiB of margin below the shared byte limit.
+
+Serialized sizes do not measure exact resident memory. In an 8 GiB memory budget, allow 1.5 GiB
+above the 3 GiB payload ceiling for allocation overhead and an in-flight event. The remaining 3.5
+GiB covers other actors, the process baseline, and the system. These are buffer allowances, not
+total node memory requirements. See [Requirements](/operate/requirements) for node sizing.
 
 If a limit is exceeded, the router logs `Deferred delivery failed` at ERROR and clears the affected
 recipient's deferred queue. It retains the failure record until E3 teardown or restart and stops
