@@ -126,6 +126,9 @@ every section.
 - DKG dealer identity binds the public proof statement, not randomized proof bytes. Replacing a
   same-E3 proof plan must invalidate every prior correlation ID before the replacement can accept
   responses. — `flow-trace/04`
+- A local C2/C3 result counts only for the share batch that its dispatch carried. A result of an
+  earlier batch must not count a dealer that only a later, grown batch holds as verified. —
+  `crates/keyshare/src/threshold_keyshare/effects/verify_threshold_shares.rs`; `flow-trace/04`
 - DKG aggregation receives **exactly H** canonical honest NodeFold proofs (unique in-range party
   IDs) and **exactly N** ordered committee addresses; every supported committee size has `H < N` —
   never assert `H == N`. A mixed Some/None NodeFold set is a local test-configuration mismatch.

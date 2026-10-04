@@ -175,11 +175,14 @@ The keys below matter most on an operator node. The
 | `rpc_auth`                       | No auth  | `Basic` or `Bearer` credentials. See [RPC authentication](/reference/configuration#rpc-authentication).   |
 | `data_availability`              | Required | `mode: avail` and an HTTP `rpc_url`. See [Data availability](/reference/configuration#data-availability). |
 | `ingestion_confirmations`        | `1`      | Confirmations before the node applies a log.                                                              |
+| `rpc_poll_interval_ms`           | `7000`   | Milliseconds between the polls of an HTTP provider for a receipt or a new block.                          |
+| `rpc_log_range_blocks`           | `10000`  | Widest block range of one `eth_getLogs` request. See [RPC endpoints](/operate/rpc-endpoints).             |
 | `enabled`                        | `true`   | `false` makes the node ignore the entry.                                                                  |
 
-The default of one confirmation also applies when `rpc_url` uses `localhost` or `127.0.0.1`, because
-that URL can be a proxy to a live chain. Set `ingestion_confirmations: 0` only on a single-process
-development chain such as Anvil. Do not set it to zero on mainnet or Sepolia.
+The defaults of one confirmation and a 7-second poll interval also apply when `rpc_url` uses
+`localhost` or `127.0.0.1`, because that URL can be a proxy to a live chain. Set
+`ingestion_confirmations: 0` and `rpc_poll_interval_ms: 250` only on a single-process development
+chain such as Anvil. Do not set them on mainnet or Sepolia.
 
 The `autonetkey` key has no effect in this release. The node derives its libp2p key from the wallet
 key.
@@ -253,9 +256,11 @@ there, so backups of `/data` must be encrypted and access-controlled.
 After it stores the credentials, the package deletes the uploaded file. A restart uses the stored
 state and does not need a new upload. An upload with a different password stops startup.
 
-The package health check confirms that the process runs, the files exist, and the QUIC listener is
-bound. It does not prove that the node is synced or registered. Read the logs and the
-[on-chain status](/operate/registration) to confirm that.
+The package health check confirms that the process runs, the files exist, the QUIC listener is
+bound, and chain ingestion moves: the node writes a heartbeat file per chain after every successful
+read of the chain head, and the check fails when the heartbeat is older than 120 seconds or neither
+the head nor the cursor moved for 10 minutes. It does not prove that the node is registered. Read
+the logs and the [on-chain status](/operate/registration) to confirm that.
 
   </Tabs.Tab>
   <Tabs.Tab unmount={false}>

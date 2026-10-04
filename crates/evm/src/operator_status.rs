@@ -9,7 +9,6 @@
 use crate::{
     adapters::log_fetcher::fetch_logs_adapting,
     contracts::{IBondingRegistry, ICiphernodeRegistry, IInterfold},
-    domain::interfold_events::convert_u8_to_e3_stage,
     helpers::get_current_timestamp_from_provider,
     ProviderConfig,
 };
@@ -50,7 +49,7 @@ pub async fn fetch_operator_status(
     chain: &ChainConfig,
     operator: Address,
 ) -> anyhow::Result<OperatorChainStatus> {
-    let provider = ProviderConfig::new(chain.rpc_url()?, chain.rpc_auth.clone())
+    let provider = ProviderConfig::for_chain(chain)?
         .create_readonly_provider()
         .await?;
     let client = provider.provider().clone();
@@ -146,6 +145,7 @@ pub async fn fetch_operator_committees<P: Provider + Clone>(
     provider: &P,
     contracts: &ContractAddresses,
     operator: Address,
+    max_log_window: u64,
 ) -> anyhow::Result<Vec<OperatorCommittee>> {
     let interfold = contracts
         .interfold
@@ -163,7 +163,15 @@ pub async fn fetch_operator_committees<P: Provider + Clone>(
     let from_block = contracts.bonding_registry.deploy_block().unwrap_or(0);
     let chain_id = provider.get_chain_id().await?;
     let head = provider.get_block_number().await?;
-    let logs = fetch_logs_adapting(provider, &filter, from_block, head, chain_id).await?;
+    let logs = fetch_logs_adapting(
+        provider,
+        &filter,
+        from_block,
+        head,
+        chain_id,
+        max_log_window,
+    )
+    .await?;
 
     let mut committees = Vec::new();
     for (e3_id, registry) in open_obligations(logs)? {
@@ -189,7 +197,8 @@ pub async fn fetch_operator_committees<P: Provider + Clone>(
         committees.push(OperatorCommittee {
             e3_id,
             membership,
-            e3_stage: convert_u8_to_e3_stage(stage),
+            e3_stage: E3Stage::try_from(stage)
+                .with_context(|| format!("E3 {e3_id} reports a stage this node does not know"))?,
         });
     }
     Ok(committees)

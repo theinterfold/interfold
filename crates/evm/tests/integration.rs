@@ -107,7 +107,7 @@ async fn historical_owner_logs_restore_the_shortlist_after_resync() -> Result<()
         .with_contract(*contract.address(), |upstream| {
             BondingRegistrySolReader::setup(&upstream).recipient()
         })
-        .build();
+        .build()?;
     let mut config = EvmEventConfig::new();
     config.insert(provider.chain_id(), EvmEventConfigChain::new(0));
     bus.publish_without_context(HistoricalEvmSyncStart::new(sync, config))?;
@@ -208,7 +208,7 @@ async fn admission_chain_logs_filter_sortition_after_restart() -> Result<()> {
         .with_contract(*contract.address(), move |upstream| {
             BondingRegistrySolReader::setup(&upstream).recipient()
         })
-        .build();
+        .build()?;
     let mut config = EvmEventConfig::new();
     config.insert(provider.chain_id(), EvmEventConfigChain::new(0));
     bus.publish_without_context(HistoricalEvmSyncStart::new(sync, config))?;
@@ -315,6 +315,36 @@ impl Handler<HistoricalEvmEventsReceived> for FakeSyncActor {
 }
 
 #[actix::test]
+async fn a_chain_without_a_contract_route_is_rejected() -> Result<()> {
+    // NOTE: Anvil must be available on $PATH
+    let anvil = Anvil::new().try_spawn()?;
+    let provider = Arc::new(
+        EthProvider::new(
+            ProviderBuilder::new()
+                .connect_ws(WsConnect::new(anvil.ws_endpoint()))
+                .await?,
+        )
+        .await?,
+    );
+    let system = EventSystem::new().with_fresh_bus();
+    let bus = system.handle()?.enable("test");
+
+    // Without a route the reader's filter has no address, so it would fetch every log on the
+    // chain and route none of them.
+    let error = EvmSystemChainBuilder::new(&bus, &provider)
+        .build()
+        .expect_err("a chain reader without a contract route must not start");
+    assert!(
+        error.to_string().contains("no contract reader"),
+        "unexpected error: {error:#}"
+    );
+    // Let the bus actors start inside the runtime, so that the system can stop them in it.
+    tokio::task::yield_now().await;
+
+    Ok(())
+}
+
+#[actix::test]
 async fn ensure_historical_events() -> Result<()> {
     let _guard = e3_test_helpers::with_tracing("info");
 
@@ -354,7 +384,7 @@ async fn ensure_historical_events() -> Result<()> {
         .with_contract(contract_address, move |upstream| {
             TestEventParser::setup(&upstream).recipient()
         })
-        .build();
+        .build()?;
     let mut evm_info = EvmEventConfig::new();
     evm_info.insert(chain_id, EvmEventConfigChain::new(0));
     bus.publish_without_context(HistoricalEvmSyncStart::new(sync, evm_info))?;

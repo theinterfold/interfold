@@ -9,6 +9,8 @@
 //! These contain all decision/state logic that the actix actors and transport layer rely on.
 //! Nothing here touches actix, the event bus, channels, or libp2p directly.
 
+#[path = "closed_e3s.rs"]
+pub(crate) mod closed_e3s;
 #[path = "network_sync/correlator.rs"]
 pub(crate) mod correlator;
 #[path = "dht_put_summary.rs"]

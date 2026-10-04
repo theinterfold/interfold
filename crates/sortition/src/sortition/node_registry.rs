@@ -14,7 +14,10 @@
 //! writes the result back.
 
 use alloy::primitives::U256;
-use e3_events::{ChainPosition, ConfigurationUpdatedAt, E3id};
+use e3_events::{
+    BondingAssetConfigUpdatedAt, ChainPosition, ConfigurationUpdatedAt, E3id,
+    EligibilityConfigurationVersionUpdatedAt,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::{hash_map::Entry, HashMap};
 use tracing::{info, warn};
@@ -283,6 +286,31 @@ impl NodeRegistry {
             );
         }
         Self::invalidate_operator_activity(store, configuration.chain_id, event.position);
+    }
+
+    /// A new eligibility configuration version makes every operator on the chain inactive until
+    /// it refreshes; its `OperatorActivationChanged` then marks it active again. Applied the same
+    /// way during live delivery and offline repair.
+    pub fn update_eligibility_version(
+        store: &mut HashMap<u64, NodeStateStore>,
+        event: &EligibilityConfigurationVersionUpdatedAt,
+    ) {
+        Self::invalidate_operator_activity(store, event.update.chain_id, event.position);
+    }
+
+    /// A bonding-asset update sets the ticket price. It does not invalidate activity itself: the
+    /// same transaction emits `EligibilityConfigurationVersionUpdated` after it. Applied the same
+    /// way during live delivery and offline repair.
+    pub fn update_bonding_asset_config(
+        store: &mut HashMap<u64, NodeStateStore>,
+        event: &BondingAssetConfigUpdatedAt,
+    ) {
+        Self::set_ticket_price(
+            store,
+            event.config.chain_id,
+            event.config.ticket_price,
+            event.position,
+        );
     }
 
     pub fn record_sortition_snapshot(

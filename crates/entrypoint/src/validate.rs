@@ -570,6 +570,12 @@ fn registered_node_states_from_events(
                 InterfoldEventData::ConfigurationUpdatedAt(event) => {
                     NodeRegistry::update_configuration(&mut node_states, event);
                 }
+                InterfoldEventData::EligibilityConfigurationVersionUpdatedAt(event) => {
+                    NodeRegistry::update_eligibility_version(&mut node_states, event);
+                }
+                InterfoldEventData::BondingAssetConfigUpdatedAt(event) => {
+                    NodeRegistry::update_bonding_asset_config(&mut node_states, event);
+                }
                 InterfoldEventData::CommitteeFinalized(data) => {
                     NodeRegistry::reconcile_committee_jobs(
                         &mut node_states,
@@ -1435,6 +1441,84 @@ mod tests {
             42
         );
         assert_eq!(states[&1].nodes["0xaaa"].ticket_balance_log_index, 7);
+    }
+
+    #[test]
+    fn node_state_replay_applies_eligibility_version_and_bonding_asset_updates() {
+        let evm = |data: InterfoldEventData, seq: u64| {
+            InterfoldEvent::<Unsequenced>::new_with_timestamp(
+                data,
+                None,
+                seq as u128,
+                Some(seq),
+                EventSource::Evm,
+            )
+            .into_sequenced(seq)
+        };
+        let events = vec![(
+            AggregateId::new(1),
+            vec![
+                evm(
+                    CiphernodeAdded {
+                        address: "0xaaa".to_owned(),
+                        index: 0,
+                        num_nodes: 1,
+                        chain_id: 1,
+                    }
+                    .into(),
+                    1,
+                ),
+                evm(
+                    e3_events::OperatorActivationChangedAt {
+                        activation: e3_events::OperatorActivationChanged {
+                            operator: "0xaaa".to_owned(),
+                            active: true,
+                            chain_id: 1,
+                        },
+                        position: ChainPosition::new(1, 0),
+                    }
+                    .into(),
+                    2,
+                ),
+                evm(
+                    e3_events::BondingAssetConfigUpdatedAt {
+                        config: e3_events::BondingAssetConfigUpdated {
+                            ticket_token: "0x1".to_owned(),
+                            ciphernode_bond_token: "0x2".to_owned(),
+                            ticket_price: alloy::primitives::U256::from(25),
+                            required_ciphernode_bond: alloy::primitives::U256::from(1000),
+                            expected_ticket_decimals: 6,
+                            expected_ciphernode_bond_decimals: 18,
+                            configuration_version: 1,
+                            chain_id: 1,
+                        },
+                        position: ChainPosition::new(2, 0),
+                    }
+                    .into(),
+                    3,
+                ),
+                evm(
+                    e3_events::EligibilityConfigurationVersionUpdatedAt {
+                        update: e3_events::EligibilityConfigurationVersionUpdated {
+                            version: alloy::primitives::U256::from(2),
+                            chain_id: 1,
+                        },
+                        position: ChainPosition::new(2, 1),
+                    }
+                    .into(),
+                    4,
+                ),
+            ],
+        )];
+
+        let states =
+            registered_node_states_from_events(&events, &HashMap::from([(AggregateId::new(1), 4)]));
+
+        assert_eq!(states[&1].ticket_price, alloy::primitives::U256::from(25));
+        let node = &states[&1].nodes["0xaaa"];
+        assert!(!node.active);
+        assert!(node.active_at(1));
+        assert!(!node.active_at(2));
     }
 
     #[test]

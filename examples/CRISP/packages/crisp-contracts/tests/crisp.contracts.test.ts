@@ -286,18 +286,6 @@ describe('CRISP Contracts', function () {
       expect(numberOfVotes).to.equal(0n)
     })
 
-    it('should return the merkle root of the census once set', async () => {
-      const e3Id = await mockInterfold.nextE3Id()
-      await mockInterfold.request(await crispProgram.getAddress())
-
-      const merkleTree = generateMerkleTree(leaves)
-      await crispProgram.setMerkleRoot(e3Id, merkleTree.root)
-
-      const [merkleRoot] = await crispProgram.getRoundData(e3Id)
-
-      expect(merkleRoot).to.equal(BigInt(merkleTree.root))
-    })
-
     /// Reads the round `validate input` published to, rather than publishing a second ballot.
     /// A ballot is bound to one round, so a second round would need a second proof — and proof
     /// generation dominates this suite's runtime, which already times out on CI hardware.

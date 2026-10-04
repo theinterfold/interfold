@@ -227,24 +227,31 @@ the code does not meet yet.
   same chain. It must retain the new provider after a successful reconnect and reject the log if the
   retry still cannot verify the accepted request. — `flow-trace/03`
 - A chain gateway that fails closed after startup must make the node exit unsuccessfully after a
-  durability shutdown. A running node must not report healthy after chain ingestion stops. **Gap:**
-  `dappnode/healthcheck.sh` checks the process, local files, and the QUIC port, not chain ingestion.
-  — `crates/cli/src/start.rs`; `flow-trace/03`; `flow-trace/06`
+  durability shutdown. A running node must not report healthy after chain ingestion stops. The chain
+  reader reports each successful head read to an `IngestionProgressSink`; `interfold start` writes
+  one heartbeat file per chain under `<node data dir>/ingestion/`, and `dappnode/healthcheck.sh`
+  fails when a heartbeat is older than 120 s or neither its head nor its cursor moved for 600 s.
+  **Gap:** a node whose reader never reaches its first read (no heartbeat) still passes the check,
+  and a heartbeat write that fails after the startup probe is only logged. —
+  `crates/evm/src/chain_reader/progress.rs`; `dappnode/healthcheck.sh`; `flow-trace/03`;
+  `flow-trace/06`
 - A network event cannot create a request context for an unknown E3. Only chain events or restored
   snapshots admit an E3; peer events can only contribute to an admitted one. —
   `crates/request/src/routing/workflow.rs`
 - A periodic network re-send backs off to a cap, stops when its phase ends, and has a lifetime
-  bound. Re-announcing a DHT document sends only its notification; the full document is uploaded to
-  peers again only by a bounded refresh (once per 30 minutes, one upload started at a time).
-  Removing a publication stops its announcement and upload and cancels their scheduled retries. Its
-  cleanup commands wait in one queue of at most 4,096 keys that drops its oldest entries when full.
-  At startup, publications start only at `SyncEnded`. Library-driven record replication stays
-  disabled. A document is announced only after the publisher's own DHT store holds it, and a failing
-  upload never delays its announcement. **Gap:** stopping a publication ends the Kademlia query of a
-  DHT put only in its upload phase. Requests that the query already gave to the connection handlers,
-  queued or in progress, still go out, and a put that still looks up its closest peers runs on and
-  then uploads. — INDEX concerns #60, #62, #63, #74;
-  `crates/net/src/document_publishing/workflow.rs`;
+  bound. It does not start for one of the last 1,024 E3s whose terminal stage came from the chain,
+  also from replayed history. After a restart, local replay schedules the re-sends again in log
+  order and they wait until it finishes; the restart re-broadcast schedules none. Re-announcing a
+  DHT document sends only its notification; the full document is uploaded to peers again only by a
+  bounded refresh (once per 30 minutes, one upload started at a time). Removing a publication stops
+  its announcement and upload and cancels their scheduled retries. Its cleanup commands wait in one
+  queue of at most 4,096 keys that drops its oldest entries when full. At startup, publications
+  start only at `SyncEnded`. Library-driven record replication stays disabled. A document is
+  announced only after the publisher's own DHT store holds it, and a failing upload never delays its
+  announcement. **Gap:** stopping a publication ends the Kademlia query of a DHT put only in its
+  upload phase. Requests that the query already gave to the connection handlers, queued or in
+  progress, still go out, and a put that still looks up its closest peers runs on and then uploads.
+  — INDEX concerns #60, #62, #63, #74; `crates/net/src/document_publishing/workflow.rs`;
   `crates/net/src/network_sync/effects/rebroadcast.rs`
 - A node does not accept or forward a gossip message ID that it has already handled, including after
   the gossipsub duplicate cache expires. It does not store a peer event again while that event ID is

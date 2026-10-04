@@ -117,17 +117,17 @@ pnpm test:integration --no-prebuild
 	<tbody>
 		<tr>
 			<td align="center">
-				<a href="https://github.com/ryardley">
-					<img src="https://avatars.githubusercontent.com/u/1256409?v=4" width="100;" alt="ryardley"/>
-					<br />
-					<sub><b>гλ</b></sub>
-				</a>
-			</td>
-			<td align="center">
 				<a href="https://github.com/hmzakhalid">
 					<img src="https://avatars.githubusercontent.com/u/36852564?v=4" width="100;" alt="hmzakhalid"/>
 					<br />
 					<sub><b>Hamza Khalid</b></sub>
+				</a>
+			</td>
+			<td align="center">
+				<a href="https://github.com/ryardley">
+					<img src="https://avatars.githubusercontent.com/u/1256409?v=4" width="100;" alt="ryardley"/>
+					<br />
+					<sub><b>гλ</b></sub>
 				</a>
 			</td>
 			<td align="center">

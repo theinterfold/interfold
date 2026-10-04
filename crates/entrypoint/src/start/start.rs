@@ -12,6 +12,7 @@ use e3_zk_prover::ZkBackend;
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 use std::future::Future;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 #[cfg(feature = "test-only-skip-proof-aggregation")]
@@ -35,6 +36,11 @@ fn validate_proof_aggregation_mode(skip_proof_aggregation: bool) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// Directory of the per-chain ingestion heartbeat files that `dappnode/healthcheck.sh` reads.
+pub fn ingestion_heartbeat_dir(config: &AppConfig) -> PathBuf {
+    config.node_data_dir().join("ingestion")
 }
 
 /// Start the node. With `bootstrap`, the node only runs networking and chain reads, so peers can
@@ -69,6 +75,7 @@ pub async fn execute(config: &AppConfig, bootstrap: bool) -> Result<CiphernodeHa
             .with_chains(config.chains())
             .with_contract_interfold_reader()
             .with_max_buffered_evm_events(config.max_buffered_evm_events())
+            .with_ingestion_heartbeat(ingestion_heartbeat_dir(config))
             .with_network_buffer_limits(
                 config.max_buffered_net_events(),
                 config.max_buffered_net_bytes(),
@@ -79,7 +86,8 @@ pub async fn execute(config: &AppConfig, bootstrap: bool) -> Result<CiphernodeHa
         return await_startup(builder.build(), startup_timeout).await;
     }
 
-    let backend = ZkBackend::new(config.bb_binary(), config.circuits_dir(), config.work_dir());
+    let backend = ZkBackend::new(config.bb_binary(), config.circuits_dir(), config.work_dir())
+        .with_bb_timeout(config.bb_timeout());
 
     let reserve = config.multithread_reserve_threads();
     let concurrent_jobs = config.multithread_concurrent_jobs();
@@ -106,6 +114,7 @@ pub async fn execute(config: &AppConfig, bootstrap: bool) -> Result<CiphernodeHa
         )
         .with_contract_ciphernode_registry()
         .with_contract_slashing_manager()
+        .with_ingestion_heartbeat(ingestion_heartbeat_dir(config))
         .with_trbfv()
         .with_zkproof(backend)
         .with_pubkey_aggregation()

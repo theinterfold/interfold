@@ -7,7 +7,8 @@
 use super::*;
 use crate::replay_spool::ReplaySpool;
 use actix::{Actor, Handler, ResponseFuture};
-use e3_events::Subscribe;
+use e3_events::{DecryptionshareCreated, EventSource, Subscribe};
+use e3_utils::ArcBytes;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::sync::Notify;
 
@@ -185,6 +186,56 @@ async fn infrastructure_events_are_filtered_during_replay() -> anyhow::Result<()
         .collect();
 
     assert_eq!(msgs, vec!["before", "after"]);
+    Ok(())
+}
+
+/// A restart rebuilds the network's periodic re-sends of this node's decryption shares from
+/// replayed local `DecryptionshareCreated` events, and a replayed chain terminal stage ends them.
+/// Replay through the EventStore must deliver both with their sources.
+#[actix::test]
+async fn replay_delivers_the_shares_and_chain_stages_behind_resends() -> anyhow::Result<()> {
+    let system = EventSystem::new().with_fresh_bus();
+    let bus = system.handle()?.enable("test-replay-resends");
+    let history = bus.history();
+    let e3_id = E3id::new("9", 1);
+    let events = vec![
+        InterfoldEvent::<Unsequenced>::test_event("share")
+            .data(DecryptionshareCreated {
+                party_id: 1,
+                decryption_share: vec![ArcBytes::from_bytes(&[1])],
+                e3_id: e3_id.clone(),
+                node: "node".to_owned(),
+                signed_decryption_proofs: vec![],
+            })
+            .ts(1)
+            .seq(1)
+            .build()
+            .with_source(EventSource::Local),
+        InterfoldEvent::<Unsequenced>::test_event("terminal")
+            .data(E3StageChanged {
+                e3_id,
+                previous_stage: E3Stage::CiphertextReady,
+                new_stage: E3Stage::Complete,
+            })
+            .ts(2)
+            .seq(2)
+            .build()
+            .with_source(EventSource::Evm),
+    ];
+
+    let replayed = load_replay_fixture(events).await?.replay(&bus).await?;
+    assert_eq!(replayed, 2);
+    let received = history.send(TakeEvents::new(2)).await?;
+    assert!(matches!(
+        received.events[0].get_data(),
+        InterfoldEventData::DecryptionshareCreated(_)
+    ));
+    assert_eq!(received.events[0].source(), EventSource::Local);
+    assert!(matches!(
+        received.events[1].get_data(),
+        InterfoldEventData::E3StageChanged(_)
+    ));
+    assert_eq!(received.events[1].source(), EventSource::Evm);
     Ok(())
 }
 

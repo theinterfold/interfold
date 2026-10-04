@@ -392,11 +392,17 @@ impl RestorableDocuments {
         }
     }
 
-    /// Keep a document received after the ones kept before. The oldest documents make room for
-    /// it. An expired document, or one larger than the byte limit, is not kept.
+    /// Keep a received broadcast document after the ones kept before. The oldest documents make
+    /// room for it. A document with a party filter is not kept: this node received it because the
+    /// filter names this node, and no other peer fetches it, so a restored copy would only take
+    /// the place of a broadcast document. An expired document, or one larger than the byte limit,
+    /// is not kept either.
     pub fn push(&mut self, document: DocumentReceived, now: DateTime<Utc>) {
         let size = document.value.size();
-        if document.meta.expires_at <= now || size > self.max_bytes {
+        if !document.meta.filter.is_empty()
+            || document.meta.expires_at <= now
+            || size > self.max_bytes
+        {
             return;
         }
         self.documents.push_back(document);
@@ -970,36 +976,75 @@ mod tests {
         assert_eq!(restore_order(&mut restorable), ["c", "d"]);
     }
 
-    #[test]
-    fn restorable_documents_keep_the_newest_open_documents_within_their_limits() {
-        let now = Utc::now();
-        let document = |e3: &str, bytes: usize, expires_in: i64| DocumentReceived {
+    fn expiring(e3: &str, bytes: usize, expires_in: i64, now: DateTime<Utc>) -> DocumentReceived {
+        DocumentReceived {
             meta: DocumentMeta::new(
                 E3id::new(e3, 1),
                 DocumentKind::TrBFV,
                 vec![],
                 Some(now + chrono::Duration::seconds(expires_in)),
             ),
-            value: ArcBytes::from_bytes(&vec![e3.as_bytes()[0]; bytes]),
-        };
-        let e3_of = |document: Option<DocumentReceived>| document.map(|d| d.meta.e3_id);
-        let mut restorable = RestorableDocuments::with_limits(3, 10);
-
-        restorable.push(document("expired", 1, -1), now);
-        restorable.push(document("too large", 11, 60), now);
-        for e3 in ["a", "b", "c", "d"] {
-            restorable.push(document(e3, 2, 60), now);
+            value: ArcBytes::from_bytes(&vec![0; bytes]),
         }
-        // "a" made room for "d" (count). "b" and "c" make room for "e" (count, then bytes).
-        restorable.push(document("e", 7, 60), now);
-        restorable.push(document("f", 1, 1), now);
-        restorable.remove_e3(&E3id::new("e", 1));
-        restorable.push(document("g", 2, 60), now);
+    }
 
-        assert_eq!(e3_of(restorable.pop(now)), Some(E3id::new("d", 1)));
-        // "f" expires before it is restored.
+    #[test]
+    fn an_expired_document_is_not_kept() {
+        let now = Utc::now();
+        let mut restorable = RestorableDocuments::with_limits(1, 100);
+        restorable.push(received("a", 2), now);
+        // Kept, it would push out "a".
+        restorable.push(expiring("expired", 2, -1, now), now);
+        assert_eq!(restore_order(&mut restorable), ["a"]);
+    }
+
+    #[test]
+    fn a_document_larger_than_the_byte_limit_is_not_kept() {
+        let mut restorable = RestorableDocuments::with_limits(10, 10);
+        restorable.push(received("a", 4), Utc::now());
+        // Kept, it would push out "a" and then itself.
+        restorable.push(received("too large", 11), Utc::now());
+        assert_eq!(restore_order(&mut restorable), ["a"]);
+    }
+
+    #[test]
+    fn a_document_for_one_party_is_not_kept() {
+        let mut restorable = RestorableDocuments::with_limits(1, 100);
+        restorable.push(received("broadcast", 2), Utc::now());
+        let mut share = received("share", 2);
+        share.meta = DocumentMeta::new(
+            E3id::new("share", 1),
+            DocumentKind::TrBFV,
+            vec![Filter::Item(3)],
+            Some(Utc::now() + chrono::Duration::hours(1)),
+        );
+        // Kept, it would push out the broadcast document.
+        restorable.push(share, Utc::now());
+        assert_eq!(restore_order(&mut restorable), ["broadcast"]);
+    }
+
+    #[test]
+    fn a_document_that_expires_while_kept_is_not_restored() {
+        let now = Utc::now();
+        let mut restorable = RestorableDocuments::with_limits(10, 100);
+        restorable.push(expiring("f", 1, 1, now), now);
+        restorable.push(expiring("g", 1, 60, now), now);
         let later = now + chrono::Duration::seconds(2);
-        assert_eq!(e3_of(restorable.pop(later)), Some(E3id::new("g", 1)));
-        assert_eq!(e3_of(restorable.pop(later)), None);
+        let next = |restorable: &mut RestorableDocuments| {
+            restorable.pop(later).map(|document| document.meta.e3_id)
+        };
+        assert_eq!(next(&mut restorable), Some(E3id::new("g", 1)));
+        assert_eq!(next(&mut restorable), None);
+    }
+
+    #[test]
+    fn removing_an_e3_frees_its_bytes() {
+        let mut restorable = RestorableDocuments::with_limits(10, 10);
+        restorable.push(received("a", 4), Utc::now());
+        restorable.push(received("e", 6), Utc::now());
+        restorable.remove_e3(&E3id::new("e", 1));
+        // Fits only when the bytes of "e" are free again.
+        restorable.push(received("b", 6), Utc::now());
+        assert_eq!(restore_order(&mut restorable), ["a", "b"]);
     }
 }

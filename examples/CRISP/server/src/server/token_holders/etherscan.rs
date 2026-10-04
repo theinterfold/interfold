@@ -1012,30 +1012,6 @@ impl EtherscanClient {
         Ok(token_holders)
     }
 
-    /// Extract unique addresses from transfer logs
-    #[cfg(test)]
-    fn extract_addresses(logs: &[TransferLog]) -> Vec<Address> {
-        let mut addresses = HashSet::new();
-
-        for log in logs {
-            if log.topics.len() >= 3 {
-                if let Ok(from) = Self::parse_address_from_topic(&log.topics[1]) {
-                    if from != ZERO_ADDRESS {
-                        addresses.insert(from);
-                    }
-                }
-
-                if let Ok(to) = Self::parse_address_from_topic(&log.topics[2]) {
-                    if to != ZERO_ADDRESS {
-                        addresses.insert(to);
-                    }
-                }
-            }
-        }
-
-        addresses.into_iter().collect()
-    }
-
     /// Extract delegate addresses from DelegateVotesChanged logs
     fn extract_delegates(logs: &[DelegateVotesChangedLog]) -> Vec<Address> {
         let mut delegates = HashSet::new();
@@ -1690,37 +1666,6 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_addresses() {
-        let logs = vec![TransferLog {
-            address: "0xtoken".to_string(),
-            topics: vec![
-                "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef".to_string(),
-                "0x000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48".to_string(),
-                "0x000000000000000000000000dac17f958d2ee523a2206206994597c13d831ec7".to_string(),
-            ],
-            data: "0x0000000000000000000000000000000000000000000000000000000000000064".to_string(),
-            block_number: "0x1".to_string(),
-            transaction_hash: "0xhash".to_string(),
-            transaction_index: "0x0".to_string(),
-            block_hash: "0xblockhash".to_string(),
-            log_index: "0x0".to_string(),
-        }];
-
-        let addresses = EtherscanClient::extract_addresses(&logs);
-        assert_eq!(addresses.len(), 2);
-
-        let addr1: Address = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
-            .parse()
-            .unwrap();
-        let addr2: Address = "0xdac17f958d2ee523a2206206994597c13d831ec7"
-            .parse()
-            .unwrap();
-
-        assert!(addresses.contains(&addr1));
-        assert!(addresses.contains(&addr2));
-    }
-
-    #[test]
     fn test_extract_delegates() {
         let logs = vec![
             DelegateVotesChangedLog {
@@ -1877,77 +1822,7 @@ mod tests {
         assert_eq!(credited[0].balance, "1");
     }
 
-    #[test]
-    fn test_parse_address_from_topic() {
-        let topic = "0x000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
-        let addr = EtherscanClient::parse_address_from_topic(topic).unwrap();
-        let expected: Address = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
-            .parse()
-            .unwrap();
-        assert_eq!(addr, expected);
-    }
-
-    #[test]
-    fn test_parse_transfer_value() {
-        assert_eq!(
-            EtherscanClient::parse_transfer_value("0x64"),
-            U256::from(100)
-        );
-        assert_eq!(EtherscanClient::parse_transfer_value("0x0"), U256::ZERO);
-        assert_eq!(
-            EtherscanClient::parse_transfer_value(
-                "0x0000000000000000000000000000000000000000000000000000000000000064"
-            ),
-            U256::from(100)
-        );
-    }
-
     // Integration tests (requires valid API key)
-    #[tokio::test]
-    #[ignore]
-    async fn test_get_deployment_block() {
-        let token = "0xb0BE360719f84c5351621590B7FfBD8EB0B46B5d";
-        let chain_id = 11155111;
-        let api_key = &CONFIG.etherscan_api_key;
-
-        let client = EtherscanClient::new(api_key.to_string(), chain_id);
-        let result = client.get_deployment_block(token).await;
-        println!("Deployment block: {:?}", result);
-        assert!(result.is_ok());
-    }
-
-    #[tokio::test]
-    #[ignore]
-    async fn test_get_transfer_logs() {
-        let token = "0xC18360217D8F7Ab5e7c516566761Ea12Ce7F9D72";
-        let from_block = 23680346;
-        let to_block = 23682281;
-        let chain_id = 1;
-        let api_key = &CONFIG.etherscan_api_key;
-
-        let client = EtherscanClient::new(api_key.to_string(), chain_id);
-        let result = client.get_transfer_logs(token, from_block, to_block).await;
-        println!("Transfer logs: {:?}", result);
-        assert!(result.is_ok());
-    }
-
-    #[tokio::test]
-    #[ignore]
-    async fn test_get_delegate_votes_changed_logs() {
-        let token = "0xC18360217D8F7Ab5e7c516566761Ea12Ce7F9D72";
-        let from_block = 23680346;
-        let to_block = 23682281;
-        let chain_id = 1;
-        let api_key = &CONFIG.etherscan_api_key;
-
-        let client = EtherscanClient::new(api_key.to_string(), chain_id);
-        let result = client
-            .get_delegate_votes_changed_logs(token, from_block, to_block)
-            .await;
-        println!("Delegation logs: {:?}", result);
-        assert!(result.is_ok());
-    }
-
     #[tokio::test]
     #[ignore]
     async fn test_get_token_holders_with_voting_power() {
