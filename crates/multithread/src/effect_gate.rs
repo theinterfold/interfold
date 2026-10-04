@@ -19,6 +19,7 @@ use tracing::{debug, info};
 type RequestKey = (E3id, ComputeRequestKind);
 
 #[derive(Clone)]
+#[allow(clippy::large_enum_variant)]
 enum ComputeOutcome {
     Response(ComputeResponse),
     Error(ComputeRequestError),
@@ -50,6 +51,7 @@ pub(crate) struct ComputeEffectGate {
     request_keys_by_correlation: HashMap<CorrelationId, RequestKey>,
     replayed_responses: HashMap<RequestKey, ComputeOutcome>,
     stages: HashMap<E3id, E3Stage>,
+    canonical_keys: e3_request::canonical_key::CanonicalPublicKeys,
 }
 
 impl ComputeEffectGate {
@@ -63,6 +65,7 @@ impl ComputeEffectGate {
             request_keys_by_correlation: HashMap::new(),
             replayed_responses: HashMap::new(),
             stages: initial_stages,
+            canonical_keys: Default::default(),
         }
     }
 
@@ -180,6 +183,14 @@ impl ComputeEffectGate {
             let InterfoldEventData::ComputeRequest(request) = event.get_data() else {
                 return false;
             };
+            if let ComputeRequestKind::Zk(ZkRequest::ThresholdShareDecryption(proof)) =
+                &request.request
+            {
+                if !self.canonical_keys.accepts_request(&request.e3_id, proof) {
+                    debug!(e3_id = %request.e3_id, "Discarding C6 compute work without canonical public inputs");
+                    return false;
+                }
+            }
             let correlation_id = request.correlation_id;
             self.request_keys_by_correlation
                 .insert(correlation_id, key.clone());
@@ -300,10 +311,11 @@ impl ComputeEffectGate {
         bus: &BusHandle,
         target: Recipient<InterfoldEvent>,
         initial_stages: HashMap<E3id, E3Stage>,
+        canonical_keys: e3_request::canonical_key::CanonicalPublicKeys,
     ) {
-        let gate = Self::new(target, initial_stages)
-            .with_bus(bus.clone())
-            .start();
+        let mut gate = Self::new(target, initial_stages).with_bus(bus.clone());
+        gate.canonical_keys = canonical_keys;
+        let gate = gate.start();
         bus.subscribe_all(
             &[
                 EventType::ComputeRequest,
@@ -825,5 +837,71 @@ mod tests {
         gate.send(effects_enabled()).await.unwrap();
 
         assert_eq!(recorder.send(Received).await.unwrap(), vec![correlation_id]);
+    }
+    #[actix::test]
+    async fn replayed_c6_compute_requires_canonical_public_inputs() -> anyhow::Result<()> {
+        use alloy::primitives::Address;
+        use e3_fhe_params::BfvParamSet;
+        use e3_request::canonical_key::{CanonicalPublicKey, CanonicalPublicKeys};
+        let id = E3id::new("84", 1);
+        let params = BfvParamSet::from(BfvPreset::InsecureThreshold512);
+        let bytes = e3_bfv_client::client::generate_public_key(
+            params.degree,
+            params.plaintext_modulus,
+            params.moduli.to_vec(),
+        )?;
+        let key = CanonicalPublicKey {
+            pk_commitment: e3_bfv_client::compute_pk_commitment(
+                bytes.clone(),
+                params.degree,
+                params.plaintext_modulus,
+                params.moduli.to_vec(),
+            )?,
+            committee: vec![
+                Address::repeat_byte(1),
+                Address::repeat_byte(2),
+                Address::repeat_byte(3),
+            ],
+            honest_committee: vec![Address::repeat_byte(1), Address::repeat_byte(3)],
+            params_preset: BfvPreset::InsecureThreshold512,
+            committee_size: CiphernodesCommitteeSize::Minimum,
+            interfold_address: Address::repeat_byte(9),
+            sk_agg_commits: vec![],
+            esm_agg_commits: vec![],
+        };
+        let keys = CanonicalPublicKeys::default();
+        keys.insert(id.clone(), key.clone())?;
+        let mut request = e3_events::ThresholdShareDecryptionProofRequest {
+            ciphertext_bytes: vec![ArcBytes::from_bytes(&[5])],
+            aggregated_pk_bytes: ArcBytes::from_bytes(&bytes),
+            sk_poly_sum: e3_crypto::SensitiveBytes::from_encrypted(&[2]),
+            es_poly_sum: vec![e3_crypto::SensitiveBytes::from_encrypted(&[3])],
+            d_share_bytes: vec![ArcBytes::from_bytes(&[4])],
+            decryption_domain: key.domain(Address::ZERO),
+            params_preset: key.params_preset,
+            committee_size: key.committee_size,
+        };
+        let target = Recorder::default().start();
+        let mut gate = ComputeEffectGate::new(target.clone().recipient(), HashMap::new());
+        gate.canonical_keys = keys;
+        let gate = gate.start();
+        gate.send(outcome_event(ComputeRequest::zk(
+            ZkRequest::ThresholdShareDecryption(request.clone()),
+            CorrelationId::new(),
+            id.clone(),
+        )))
+        .await?;
+        request.decryption_domain = key.domain(key.interfold_address);
+        let accepted = CorrelationId::new();
+        gate.send(outcome_event(ComputeRequest::zk(
+            ZkRequest::ThresholdShareDecryption(request),
+            accepted,
+            id,
+        )))
+        .await?;
+        assert!(target.send(Received).await?.is_empty());
+        gate.send(outcome_event(EffectsEnabled::new())).await?;
+        assert_eq!(target.send(Received).await?, vec![accepted]);
+        Ok(())
     }
 }

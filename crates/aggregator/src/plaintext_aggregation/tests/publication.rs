@@ -243,6 +243,7 @@ async fn published_key_keeps_decryption(active: bool, restart: bool) -> Result<(
                     effects_enabled: true,
                     committee_addresses: committee.clone(),
                     honest_committee_addresses: honest,
+                    decryption_domain: test_decryption_domain(),
                     recovery: repositories
                         .trbfv_plaintext_recovery(&e3_id)
                         .send(Some(ThresholdPlaintextAggregatorRecoveryState::default())),

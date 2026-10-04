@@ -11,6 +11,7 @@ publish = false
 serde_json.workspace = true
 
 [dependencies]
+e3-request.workspace = true
 actix = { workspace = true }
 alloy = { workspace = true }
 alloy-primitives = { workspace = true }
@@ -39,14 +40,17 @@ url = { workspace = true }
 zeroize = { workspace = true }
 
 [dev-dependencies]
+alloy = { workspace = true, features = ["json-rpc"] }
 alloy-dyn-abi = { workspace = true }
 bincode = { workspace = true }
 e3-ciphernode-builder = { workspace = true }
 e3-entrypoint = { workspace = true }
 e3-events = { workspace = true, features = ["test-helpers"] }
 e3-evm = { workspace = true }
+e3-sync.workspace = true
 e3-test-helpers = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
 tracing-subscriber = { workspace = true }
+tower = { version = "0.5", features = ["util"] }

@@ -460,5 +460,57 @@ async fn standby_retains_dkg_fold_for_failover() -> Result<()> {
     Ok(())
 }
 
+#[actix::test]
+async fn mock_publication_carries_registry_roster() -> Result<()> {
+    let mut state = generating_c5_state(CorrelationId::new());
+    let PublicKeyAggregatorState::GeneratingC5Proof {
+        party_nodes,
+        honest_party_ids,
+        dkg_node_proofs,
+        c5_proof_pending,
+        last_ec,
+        dkg_aggregation_correlation,
+        ..
+    } = &mut state
+    else {
+        unreachable!()
+    };
+    *party_nodes = (0..3)
+        .map(|party| (party, format!("0x{:040x}", party + 1)))
+        .collect();
+    *honest_party_ids = BTreeSet::from([0, 2]);
+    *dkg_node_proofs = HashMap::from([(0, None), (2, None)]);
+    *dkg_aggregation_correlation = None;
+    *last_ec = Some(test_ctx(EffectsEnabled::new()));
+    let commitment = [7; 32];
+    let mut signals = vec![0; 3 * 32];
+    signals[64..].copy_from_slice(&commitment);
+    *c5_proof_pending = Some(Proof::new(
+        CircuitName::PkAggregation,
+        ArcBytes::from_bytes(&[1]),
+        ArcBytes::from_bytes(&signals),
+    ));
+    let (mut aggregator, history, _) = build_public_key_aggregator(state).await?;
+    aggregator.try_publish_complete()?;
+    let event = next_event(&history).await?;
+    let InterfoldEventData::PublicKeyAggregated(result) = event.get_data() else {
+        panic!("expected key publication");
+    };
+    let proof = result.dkg_aggregator_proof.as_ref().unwrap();
+    let fields: Vec<_> = proof.public_signals.chunks_exact(32).collect();
+    assert_eq!(fields.len(), 12, "registry requires 6 + 3H fields");
+    assert_eq!(fields[2], &[0; 32]);
+    assert_eq!(
+        fields[3],
+        &alloy::primitives::U256::from(2).to_be_bytes::<32>()
+    );
+    assert_eq!(fields[11], &commitment);
+    assert_eq!(
+        result.honest_committee_addresses,
+        vec![result.committee_addresses[0], result.committee_addresses[2]]
+    );
+    Ok(())
+}
+
 mod attestations;
 mod failures;

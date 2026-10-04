@@ -54,6 +54,7 @@ e3-ciphernode-builder = { workspace = true }
 e3-net = { workspace = true }
 e3-sync = { workspace = true }
 e3-sortition = { workspace = true }
+e3-bfv-client.workspace = true
 e3-test-helpers = { workspace = true }
 e3-layout-lock = { workspace = true }
 e3-evm = { workspace = true }

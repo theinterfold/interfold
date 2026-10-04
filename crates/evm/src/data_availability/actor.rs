@@ -26,7 +26,7 @@ use std::{
 use tracing::{info, warn};
 
 const OUTPUT_RETRY_DELAY: Duration = Duration::from_secs(30);
-const MAX_PUBLIC_KEY_BYTES: usize = 512 * 1024;
+pub(crate) const MAX_PUBLIC_KEY_BYTES: usize = 512 * 1024;
 const PUBLIC_KEY_CHUNK_BYTES: usize = 90 * 1024;
 pub const DATA_AVAILABILITY_RECOVERY_SCHEMA_VERSION: u32 = 2;
 
@@ -66,7 +66,7 @@ struct OutputReference {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-struct KeyAssembly {
+pub(crate) struct KeyAssembly {
     nodes: Vec<String>,
     pk_commitment: [u8; 32],
     total_length: u32,
@@ -104,7 +104,7 @@ impl Default for DataAvailabilityRecoveryState {
 }
 
 impl KeyAssembly {
-    fn event_shape_is_valid(event: &CommitteePublicKeyChunkPublished) -> bool {
+    pub(crate) fn event_shape_is_valid(event: &CommitteePublicKeyChunkPublished) -> bool {
         let total_length = event.total_length as usize;
         if total_length == 0 || total_length > MAX_PUBLIC_KEY_BYTES {
             return false;
@@ -120,7 +120,7 @@ impl KeyAssembly {
         event.chunk.len() == expected_length
     }
 
-    fn new(event: &CommitteePublicKeyChunkPublished) -> Self {
+    pub(crate) fn new(event: &CommitteePublicKeyChunkPublished) -> Self {
         Self {
             nodes: event.nodes.clone(),
             pk_commitment: event.pk_commitment,
@@ -136,7 +136,7 @@ impl KeyAssembly {
             && self.chunks.len() == usize::from(event.chunk_count)
     }
 
-    fn insert(&mut self, event: &CommitteePublicKeyChunkPublished) -> bool {
+    pub(crate) fn insert(&mut self, event: &CommitteePublicKeyChunkPublished) -> bool {
         if !self.metadata_matches(event) {
             return false;
         }
@@ -148,6 +148,35 @@ impl KeyAssembly {
         }
         *slot = Some(event.chunk.clone());
         true
+    }
+
+    pub(crate) fn validated_bytes(
+        &self,
+        candidate_hash: [u8; 32],
+        preset: BfvPreset,
+    ) -> Option<Vec<u8>> {
+        let bytes = self.bytes()?;
+        if keccak256(&bytes).0 != candidate_hash
+            || validate_committee_public_key(&bytes, self.pk_commitment, preset).is_err()
+        {
+            return None;
+        }
+        Some(bytes)
+    }
+
+    pub(crate) fn matches_authority(
+        &self,
+        nodes: &[alloy::primitives::Address],
+        commitment: [u8; 32],
+    ) -> bool {
+        self.pk_commitment == commitment
+            && self
+                .nodes
+                .iter()
+                .map(|node| node.parse())
+                .collect::<Result<Vec<alloy::primitives::Address>, _>>()
+                .as_deref()
+                == Ok(nodes)
     }
 
     fn bytes(&self) -> Option<Vec<u8>> {
@@ -292,15 +321,8 @@ impl DataAvailabilityCoordinator {
             let Some(bytes) = assembly.bytes() else {
                 continue;
             };
-            if keccak256(&bytes).0 != key.2 {
-                warn!(e3_id = %key.0, publisher = %key.1, "Rejecting public-key chunks with a mismatched candidate hash");
-                self.invalid_candidates.insert(key);
-                continue;
-            }
-            if let Err(error) =
-                validate_committee_public_key(&bytes, assembly.pk_commitment, preset)
-            {
-                warn!(e3_id = %key.0, publisher = %key.1, %error, "Rejecting a committee public key that does not match its proven C5 commitment");
+            if assembly.validated_bytes(key.2, preset).is_none() {
+                warn!(e3_id = %key.0, publisher = %key.1, "Rejecting public-key chunks that do not match the candidate hash or key commitment");
                 self.invalid_candidates.insert(key);
                 continue;
             }

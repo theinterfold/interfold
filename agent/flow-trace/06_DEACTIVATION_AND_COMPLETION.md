@@ -434,17 +434,20 @@ flowchart TD
     SelectorRepo --> Hydrate
     RecoveryRepo --> Hydrate
 
-    PublicKeyRepo --> PTAHydrate
-    KeyshareRepo --> PTAHydrate
+    PublicKeyRepo --> PKHydrate
+    KeyshareRepo --> KeyHydrate
+    EventStore --> ChainKey["CanonicalKeyProjection<br/>rebuilds authority and key bytes before hydration"]
+    ChainKey --> KeyHydrate
+    ChainKey --> PTAHydrate
     PTAHydrate --> FullCommittee["committee_addresses = full party-order topNodes"]
-    PTAHydrate --> HonestCommittee["honest_committee_addresses = honest_parties mapped through topNodes"]
+    PTAHydrate --> HonestCommittee["honest_committee_addresses = registry DKG party IDs mapped through topNodes"]
     PlaintextRepo --> ExistingPlaintext{"Plaintext actor state exists?"}
     ExistingPlaintext -- yes --> StartExisting["Hydrate ThresholdPlaintextAggregator"]
-    ExistingPlaintext -- no --> WaitCiphertext["No plaintext actor yet; wait for ciphertext"]
+    ExistingPlaintext -- no --> WaitCiphertext["Recover deferred ciphertext from event history<br/>or wait for ciphertext"]
 
     Actors --> Replay["sync(): replay EventStore<br/>effects disabled"]
     EventStore --> Replay
-    Replay --> CommitteeReplay["CommitteePublished replay<br/>restores full committee"]
+    Replay --> CommitteeReplay["CommitteePublished replay<br/>supplies commitment-checked key bytes"]
 
     Replay --> Effects["EffectsEnabled"]
     Effects --> Gate["ComputeEffectGate releases replay-safe compute work"]
@@ -500,22 +503,65 @@ produce a DKG failure after that publication. This flag adds no persisted field.
 For crashes after key publication but before ciphertext publication, the recovered active aggregator
 may not have a `ThresholdPlaintextAggregator` actor yet. The plaintext extension starts with the
 recovered role in the live E3 context, then seeds the later `DecryptionshareCreatedBuffer` from it.
-Committee and honest-committee addresses are recovered from completed public-key aggregation state,
-in-flight public-key aggregation state, or the persisted `ThresholdKeyshareState.honest_parties` set
-during async context hydration. Replayed `CommitteePublished` can also restore the full committee
-address dependency, but cannot infer the H-sized honest subset when `N > H`; that subset must come
-from `PublicKeyAggregated`, `PublicKeyAggregatorState::GeneratingC5Proof`, or threshold-keyshare
-state. The synchronous `on_event` path must not read actor-backed repositories directly, because
-blocking the router while waiting for the store can freeze live gossip and make peers time out. If
-`CiphertextOutputPublished` arrives before those committee dependencies are ready, the extension
-records the ciphertext in the E3 context and retries plaintext actor creation when
-`PublicKeyAggregated` or `CommitteePublished` supplies the missing facts; the router's existing
-recipient buffer then drains retained ciphertext/decryption-share events into the newly-created
-plaintext path, ahead of the triggering event. Deferral has per-E3 and global item and byte limits
-(Part 3, Request-router deferred delivery). Overflow records a delivery failure for that recipient
-and clears its deferred events. Live routing continues. Hydration derives expected recipients from
-the installed extensions, but neither the deferred queue nor its failure record survives restart.
-The existing checkpoint and replay suffix remain unchanged.
+`CanonicalKeyProjection` scans the retained chain event log before actors hydrate or replay their
+suffix. It rebuilds the registry commitment, finalized committee, honest party IDs, and SK/ESM
+anchors from confirmed chain observations. Existing chunk assembly recovers commitment-checked key
+bytes, including publications before a snapshot cursor. This projection needs no historical storage
+RPC and uses the existing serialized layouts. If terminal history follows an older context snapshot,
+the projection keeps that context's rosters through hydration. Terminal delivery retires them;
+completed contexts without snapshots retain none.
+
+The plaintext extension restores its full and honest committee dependencies from this projection,
+including when it hydrates an existing plaintext actor. It reads retained ciphertext events before
+snapshot cursors to restore ciphertext deferred while key authority was unavailable. A missing
+plaintext actor recovers authenticated shares from the same full history before effects resume. No
+second ciphertext or share publication is required. If authority is missing, a dormant recipient
+retains the saved state, an event-log sequence range, and one current-boot `EffectsEnabled` signal.
+Confirmed authority resumes recovery through pages limited to 1024 events and 16 MiB. Payloads stay
+in durable history while authority is absent. Startup does not replace the saved snapshot.
+
+Events for an expected recipient that does not exist yet wait in the router's deferred queue. That
+queue has per-E3 and global item and byte limits (Part 3, Request-router deferred delivery).
+Overflow records a delivery failure for that recipient and clears its deferred events, and live
+routing continues. Hydration derives expected recipients from the installed extensions. Neither the
+deferred queue nor its failure record survives restart.
+
+Before an existing plaintext actor starts, hydration validates saved signed C6 shares and the C6
+inputs retained in later phases against the canonical domain. Invalid work clears verification
+outcomes, C7 proofs, and final proofs, including the `Complete` republication record. Signed history
+rebuilds collection with effects disabled. Corrected shares can occupy the released slots. Valid
+retained C6 work keeps its phase. Retained C7 proofs must match the selected C6 commitments, party
+IDs, and plaintext. A mismatch clears C7 and final proofs and resumes C7 generation, including from
+`Complete`. Replayed C7 intents deduplicate by request, and replacement work invalidates earlier
+worker correlations. Recovery pages the local event log and performs no chain RPC.
+
+Keyshare replaces invalid snapshot bytes with the recovered key and rebuilds the domain.
+`Decrypting`, `GeneratingDecryptionProof`, and `Completed` can resume retained decryption work when
+authority becomes available. C6 recovery keeps the exact secret, ciphertext, and decryption-share
+witnesses and persists repaired public inputs. It does not need another key publication after
+restart. Hydration clears the process-local decryption dispatch markers. `EffectsEnabled` resumes
+each phase once, and late authority or key bytes can start work that still waits for them. Repeated
+matching publications and chain observations do not add compute correlations or repeat C6 proof
+intents. The worker retries local failures with the same request.
+
+Replayed C6 intents pass canonical admission before proof-intent deduplication. Logged C6 compute
+requests also pass admission before dispatch or response reuse. Other E3s continue routing while one
+request waits for its key. Confirmed chain ingestion is the only source of authority; head-state RPC
+results and gossip cannot populate the projection. The projection also retains ciphertext hashes for
+the EVM writer. Final plaintext intents wait for this authority before deduplication. The writer
+discards and logs mismatched final domains, so a corrected local intent can proceed. Writer startup
+seeds terminal E3 IDs from the confirmed chain projection. Confirmed terminal stages clear deferred
+history ranges and pending plaintext publication work; later intents for those E3s are discarded.
+Local `E3RequestComplete` alone does not retire publication or deadline watches. For an active E3
+without authority, the writer retains one sequence range instead of proof payloads. When that E3's
+authority arrives, it reads the range with a 1024-event limit and a 16 MiB byte budget. One large
+event can exceed the byte budget so the cursor can advance. Each page advances the cursor, and
+observations for other E3s do not rescan the range.
+
+File: `crates/keyshare/src/threshold_keyshare/effects/recovery.rs`,
+`crates/request/src/canonical_key.rs`, `crates/evm/src/canonical_key.rs`,
+`crates/aggregator/src/ext.rs`, `crates/multithread/src/effect_gate.rs`,
+`crates/evm/src/interfold_writing/handlers.rs`, `crates/evm/src/interfold_writing/effects.rs`.
 
 `ShareVerificationActor` gates C1/C6 proof verification behind `CommitmentConsistencyCheckRequested`
 / `CommitmentConsistencyCheckComplete`. The per-E3 `CommitmentConsistencyChecker` is therefore

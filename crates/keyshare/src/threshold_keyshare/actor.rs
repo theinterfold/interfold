@@ -166,9 +166,13 @@ struct PendingKeyshareWork {
     own_dkg_shares: Option<(SensitiveBytes, Vec<SensitiveBytes>)>,
     /// C4 completed before the signed C1 artifact became available.
     keyshare_publish: bool,
+    /// Decryption work issued in this process. The worker owns local retries.
+    decryption_share_requested: bool,
+    decryption_proof_requested: bool,
 }
 
 pub struct ThresholdKeyshare {
+    canonical_keys: crate::canonical_key::CanonicalPublicKeys,
     bus: BusHandle,
     cipher: Arc<Cipher>,
     decryption_key_collector: Option<Addr<ThresholdShareCollector>>,
@@ -232,6 +236,7 @@ impl ThresholdKeyshare {
                 .collect()
         });
         Self {
+            canonical_keys: Default::default(),
             bus: params.bus,
             cipher: params.cipher,
             decryption_key_collector: None,
@@ -260,6 +265,11 @@ impl ThresholdKeyshare {
                 ..Default::default()
             },
         }
+    }
+
+    pub fn with_canonical_keys(mut self, keys: crate::canonical_key::CanonicalPublicKeys) -> Self {
+        self.canonical_keys = keys;
+        self
     }
 
     fn store_signed_pk_generation_proof(

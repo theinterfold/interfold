@@ -77,6 +77,7 @@ pub(crate) async fn process_log<L: LogProvider>(
 /// positive depth the announced block is not confirmed yet, and the periodic backfill delivers it
 /// when it is. A notification for a block at or below the watermark needs no request, because the
 /// backfill read that block in full.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn handle_live_log<L: LogProvider>(
     provider: &L,
     log: &Log,
@@ -151,6 +152,7 @@ pub(crate) enum LiveStop {
 /// blocks need not contain a matching event. With zero confirmations the poll delivers a log that
 /// the stream never announced, and a log whose announcement arrived before the provider's head
 /// reached its block.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn consume_live_logs<L, S>(
     provider: &L,
     stream: &mut S,
@@ -358,6 +360,7 @@ pub(crate) async fn fetch_logs_adapting<L: LogProvider>(
 /// every call would rediscover the same cap and pay one failed request for each chunk.
 ///
 /// `progress` learns the cursor after each chunk, so a health check sees a long first sync move.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn fetch_logs_chunked<L: LogProvider>(
     provider: &L,
     filter: &Filter,
@@ -434,6 +437,7 @@ pub(crate) async fn fetch_logs_chunked<L: LogProvider>(
 /// `progress` learns the head and the cursor of a backfill that succeeded, with or without new
 /// blocks. A failed backfill reports nothing: a provider that answers `eth_blockNumber` and
 /// refuses `eth_getLogs` must look stalled to a health check.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn backfill_to_head<L: LogProvider>(
     provider: &L,
     filter: &Filter,

@@ -95,6 +95,27 @@ the code does not meet yet.
   fail closed. — INDEX concern #15
 - Crash-torn log tails: truncate only an unindexed CRC/length-invalid physical suffix; indexed
   corruption is fatal. — INDEX concern #16
+- Canonical decryption authority is a derivable projection of confirmed chain observations. Startup
+  rebuilds it from the full retained log before proof replay and actor hydration. Key recovery must
+  include publication and chunk history before snapshot cursors. C6 intent admission precedes
+  deduplication, and compute admission precedes dispatch and response reuse. Final plaintext intents
+  also pass canonical domain admission before publication deduplication and release. The writer
+  seeds terminal E3 IDs from confirmed chain history and retires pending publication work on
+  confirmed terminal stages. It discards later intents for those E3s. Missing authority retains one
+  sequence range per active E3; payloads stay in the event log. Admission reads bounded pages only
+  for the E3 whose authority becomes available, without rescanning other deferred work. The shared
+  request router performs no key-authority RPC or retry wait. — `crates/evm/src/canonical_key.rs`;
+  `crates/request/src/canonical_key.rs`; `flow-trace/06`
+- Plaintext hydration recovers deferred ciphertext from the full retained event log, including the
+  prefix covered by snapshots. A missing actor rebuilds authenticated shares from that prefix before
+  effects resume. Existing snapshots remain dormant until confirmed key authority arrives; missing
+  authority must not abort startup or replace retained state. Deferred recipients keep a history
+  range and one effects-enabled signal, not payload queues. Recovery reads bounded event-log pages.
+  Retained or replayed C6 shares cannot reserve a slot with a noncanonical domain. Hydration removes
+  invalid work, clears its verification outcomes and derived proofs, and rebuilds collection from
+  signed history with effects disabled. Retained C7 proofs also bind to the selected C6 batch and
+  plaintext. Mismatched C7 work is regenerated without discarding valid C6 work. —
+  `crates/aggregator/src/ext.rs`; `crates/aggregator/src/plaintext_aggregation/effects/recovery.rs`
 - Process-infrastructure events belong to one boot and are never EventStore replay inputs. The
   current boot must publish fresh sync, readiness, effect, and shutdown phase events; otherwise a
   payload-derived event ID can suppress the event that startup is waiting for. The `NetReady`
@@ -239,6 +260,11 @@ the code does not meet yet.
   response or error to every waiting correlation ID. It reuses a response seen during replay, but
   not a replayed error, so the regenerated request runs again. —
   `crates/multithread/src/effect_gate.rs`; `CRATES_ARCHITECTURE.md`
+- Keyshare coalesces decryption work per phase in each process. Admission of an already-retained
+  canonical key is a no-op. Repeated chain observations and resume signals cannot add share
+  correlations or repeat C6 proof intents. Hydration clears the dispatch markers, and the worker
+  retains the same request for local retries. —
+  `crates/keyshare/src/threshold_keyshare/effects/create_decryption_share.rs`; `flow-trace/04`
 - A terminal E3 cancels its local node-scoped compute-task group. Work already executing may finish,
   but queued proof jobs from that E3 must not consume task-pool capacity ahead of a later active E3.
   One node's local failure must not cancel another node's work when tests or embeddings share a task

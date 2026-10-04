@@ -34,6 +34,7 @@ pub struct ZkActorRecovery {
     dkg_fold_attestation_contexts: HashMap<E3id, DkgFoldAttestationContext>,
     node_proofs: NodeProofRecovery,
     pending_c0: Vec<TypedEvent<EncryptionKeyReceived>>,
+    canonical_keys: e3_request::canonical_key::CanonicalPublicKeys,
 }
 
 impl ZkActorRecovery {
@@ -48,7 +49,16 @@ impl ZkActorRecovery {
             dkg_fold_attestation_contexts,
             node_proofs: NodeProofRecovery::default(),
             pending_c0: Vec::new(),
+            canonical_keys: Default::default(),
         }
+    }
+
+    pub fn with_canonical_keys(
+        mut self,
+        keys: e3_request::canonical_key::CanonicalPublicKeys,
+    ) -> Self {
+        self.canonical_keys = keys;
+        self
     }
 
     pub async fn hydrate(
@@ -103,6 +113,7 @@ pub fn setup_zk_actors(
         dkg_fold_attestation_contexts,
         node_proofs,
         pending_c0,
+        canonical_keys,
     } = recovery;
     let zk_actor = ZkActor::new(backend).start();
     let verifier = zk_actor.clone().recipient();
@@ -112,6 +123,7 @@ pub fn setup_zk_actors(
         signer.clone(),
         proof_aggregation_enabled,
         node_proofs.proofs.clone(),
+        canonical_keys,
     );
     let proof_verification = ProofVerificationActor::setup_with_recovery(
         bus,

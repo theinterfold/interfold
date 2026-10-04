@@ -13,20 +13,109 @@ const FAILURE_RETRY_DELAY: Duration = Duration::from_secs(30);
 const FAILURE_PARTY_STAGGER_SECS: u64 = 15;
 
 impl<P: Provider + WalletProvider + Clone + 'static> InterfoldSolWriter<P> {
+    /// Return false only when canonical authority is still unavailable.
+    fn admit_plaintext(&mut self, intent: PlaintextAggregated) -> bool {
+        if self.terminal_e3s.contains(&intent.e3_id) {
+            return true;
+        }
+        if let Err(error) = validate_plaintext_output(
+            &intent.e3_id,
+            &intent.decrypted_output,
+            &intent.decryption_aggregator_proofs,
+        ) {
+            tracing::warn!(e3_id = %intent.e3_id, %error, "Discarding invalid plaintext publication intent");
+            return true;
+        }
+        match plaintext_has_canonical_domain(&intent, &self.canonical_keys, self.contract_address) {
+            Some(true) => self.publication.record(intent.e3_id.clone(), intent),
+            Some(false) => {
+                tracing::warn!(e3_id = %intent.e3_id, "Discarding plaintext publication intent with a noncanonical domain");
+            }
+            None => return false,
+        }
+        true
+    }
+
     /// Submit a locally computed plaintext. The node that computed it submits it even after a
     /// failover demoted it: failover promotes a standby after a fixed budget, also while an
     /// honest aggregator is still proving. The submission skips a plaintext that is already on
     /// chain, so the first valid result wins.
     fn try_start_plaintext(&mut self, e3_id: &E3id, ctx: &mut actix::Context<Self>) {
+        if self.terminal_e3s.contains(e3_id) {
+            return;
+        }
         if let Some(intent) = self.publication.start(e3_id) {
             ctx.notify(SubmitPlaintext(intent));
         }
     }
 
     fn try_start_pending_plaintexts(&mut self, ctx: &mut actix::Context<Self>) {
+        for e3_id in self.deferred_plaintexts.keys().cloned().collect::<Vec<_>>() {
+            self.try_resume_deferred_plaintexts(&e3_id, ctx);
+        }
         for e3_id in self.publication.pending_keys() {
             self.try_start_plaintext(&e3_id, ctx);
         }
+    }
+
+    fn try_resume_deferred_plaintexts(&mut self, e3_id: &E3id, ctx: &mut Context<Self>) {
+        if self.terminal_e3s.contains(e3_id)
+            || self.canonical_keys.decryption_domains(e3_id).is_none()
+        {
+            return;
+        }
+        let Some(range) = self.deferred_plaintexts.get(e3_id).cloned() else {
+            return;
+        };
+        if !self.plaintext_reads.insert(e3_id.clone()) {
+            return;
+        }
+        let store = self.eventstore.clone();
+        let id = e3_id.clone();
+        ctx.spawn(
+            async move {
+                let result = read_plaintext_intents(&store, &id, range).await;
+                (id, result)
+            }
+            .into_actor(self)
+            .map(|(id, result), actor, ctx| {
+                actor.plaintext_reads.remove(&id);
+                if actor.terminal_e3s.contains(&id)
+                    || actor.canonical_keys.decryption_domains(&id).is_none()
+                {
+                    return;
+                }
+                match result {
+                    Ok((intents, next)) => {
+                        for intent in intents {
+                            actor.admit_plaintext(intent);
+                        }
+                        if let Some(range) = actor.deferred_plaintexts.remove(&id) {
+                            if next <= *range.end() {
+                                actor
+                                    .deferred_plaintexts
+                                    .insert(id.clone(), next..=*range.end());
+                            }
+                        }
+                        actor.try_start_plaintext(&id, ctx);
+                        actor.try_resume_deferred_plaintexts(&id, ctx);
+                    }
+                    Err(error) => {
+                        actor.bus.err(EType::Evm, error);
+                        ctx.run_later(PUBLICATION_RETRY_DELAY, move |actor, ctx| {
+                            actor.try_resume_deferred_plaintexts(&id, ctx);
+                        });
+                    }
+                }
+            }),
+        );
+    }
+
+    fn retire_plaintext(&mut self, e3_id: &E3id) {
+        self.terminal_e3s.insert(e3_id.clone());
+        self.deferred_plaintexts.remove(e3_id);
+        self.publication.finish(e3_id, true);
+        self.active_aggregators.remove(e3_id);
     }
 
     fn try_start_failure_watch(&self, e3_id: &E3id, ctx: &mut actix::Context<Self>) {
@@ -114,6 +203,9 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<InterfoldEvent>
 
     fn handle(&mut self, msg: InterfoldEvent, ctx: &mut Self::Context) -> Self::Result {
         let source = msg.source();
+        let sequence = msg.seq();
+        let confirmed = source == EventSource::Evm && msg.block().is_some();
+        let e3_id = msg.get_e3_id();
         match msg.into_data() {
             InterfoldEventData::EffectsEnabled(data) => self.notify_sync(ctx, data),
             InterfoldEventData::AggregatorChanged(data) => self.notify_sync(ctx, data),
@@ -128,12 +220,34 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<InterfoldEvent>
                 // inputs for protocol observers and must not cross the EVM write boundary.
                 if source == EventSource::Local && self.provider.chain_id() == data.e3_id.chain_id()
                 {
-                    ctx.notify(data);
+                    let id = data.e3_id.clone();
+                    if self.admit_plaintext(data) {
+                        self.try_start_plaintext(&id, ctx);
+                    } else {
+                        self.deferred_plaintexts
+                            .entry(id)
+                            .and_modify(|range| {
+                                *range =
+                                    (*range.start()).min(sequence)..=(*range.end()).max(sequence);
+                            })
+                            .or_insert(sequence..=sequence);
+                    }
+                }
+            }
+            InterfoldEventData::CiphertextOutputPublished(_)
+            | InterfoldEventData::EvmLogObserved(_)
+            | InterfoldEventData::CommitteePublished(_)
+                if source != EventSource::Net =>
+            {
+                if let Some(id) = e3_id {
+                    if id.chain_id() == self.provider.chain_id() {
+                        self.try_resume_deferred_plaintexts(&id, ctx);
+                    }
                 }
             }
             InterfoldEventData::E3StageChanged(data) => {
-                if source == EventSource::Evm && self.provider.chain_id() == data.e3_id.chain_id() {
-                    ctx.notify(data);
+                if confirmed && self.provider.chain_id() == data.e3_id.chain_id() {
+                    self.notify_sync(ctx, data);
                 }
             }
             InterfoldEventData::E3RequestComplete(data) => self.notify_sync(ctx, data),
@@ -234,20 +348,6 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<E3RequestComplete>
     }
 }
 
-impl<P: Provider + WalletProvider + Clone + 'static> Handler<PlaintextAggregated>
-    for InterfoldSolWriter<P>
-{
-    type Result = ();
-
-    fn handle(&mut self, msg: PlaintextAggregated, ctx: &mut Self::Context) -> Self::Result {
-        let e3_id = msg.e3_id.clone();
-        // Only this node's own result reaches here (see the router above). The aggregator that
-        // computed it may have been demoted by failover since; it still publishes it.
-        self.publication.record(e3_id.clone(), msg);
-        self.try_start_plaintext(&e3_id, ctx);
-    }
-}
-
 #[derive(Message)]
 #[rtype(result = "()")]
 struct SubmitPlaintext(PlaintextAggregated);
@@ -333,7 +433,7 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<SubmitPlaintext>
             .into_actor(self)
             .map(|(e3_id, terminal), actor, ctx| {
                 actor.publication.finish(&e3_id, terminal);
-                if !terminal {
+                if !terminal && !actor.terminal_e3s.contains(&e3_id) {
                     ctx.run_later(PUBLICATION_RETRY_DELAY, move |actor, ctx| {
                         actor.try_start_plaintext(&e3_id, ctx);
                     });
@@ -361,6 +461,11 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<E3StageChanged>
 
     fn handle(&mut self, msg: E3StageChanged, ctx: &mut Self::Context) -> Self::Result {
         let e3_id = msg.e3_id.clone();
+        if msg.new_stage.is_terminal() {
+            self.retire_plaintext(&e3_id);
+        } else if self.terminal_e3s.contains(&e3_id) {
+            return;
+        }
         self.failure_stage_discoveries.invalidate(&e3_id);
         match &msg.new_stage {
             E3Stage::Requested
@@ -609,6 +714,235 @@ mod tests {
     use e3_events::TakeEvents;
 
     #[actix::test]
+    async fn replay_discards_noncanonical_plaintext_before_corrected_publication() -> Result<()> {
+        use alloy::{
+            primitives::B256,
+            rpc::{
+                client::RpcClient,
+                json_rpc::{RequestPacket, Response, ResponsePacket, ResponsePayload},
+            },
+            sol_types::SolCall,
+            transports::TransportErrorKind,
+        };
+        use e3_data::{InMemEventLog, InMemSequenceIndex};
+        use e3_events::{
+            CiphertextOutputPublished, CircuitName, EventBusFanout, EventStore, EventStoreRouter,
+            Unsequenced,
+        };
+        use e3_fhe_params::BfvPreset;
+        use e3_request::canonical_key::CanonicalPublicKey;
+        use e3_utils::ArcBytes;
+        use e3_zk_helpers::CiphernodesCommitteeSize;
+        use std::sync::{Arc, Mutex};
+
+        for authority_after_replay in [false, true] {
+            let captured = Arc::new(Mutex::new(Vec::new()));
+            let calls = captured.clone();
+            // Capture the production writer's transaction calldata at gas estimation.
+            let transport = tower::service_fn(
+                move |packet: RequestPacket| -> alloy::transports::TransportFut<'static> {
+                    let calls = calls.clone();
+                    Box::pin(async move {
+                        let RequestPacket::Single(request) = packet else {
+                            panic!("unexpected RPC batch")
+                        };
+                        let result = match request.method() {
+                            "eth_chainId" => serde_json::json!("0x1"),
+                            "eth_getTransactionCount" => serde_json::json!("0x0"),
+                            "eth_call" => {
+                                let params: serde_json::Value =
+                                    serde_json::from_str(request.params().unwrap().get()).unwrap();
+                                let input = params[0]["input"]
+                                    .as_str()
+                                    .or_else(|| params[0]["data"].as_str())
+                                    .unwrap();
+                                let bytes = hex::decode(input.trim_start_matches("0x")).unwrap();
+                                if bytes.starts_with(&IInterfold::getE3StageCall::SELECTOR) {
+                                    serde_json::json!(Bytes::from(U256::from(4).abi_encode()))
+                                } else {
+                                    assert!(bytes.starts_with(&IInterfold::getE3Call::SELECTOR));
+                                    let e3 = IInterfold::E3 {
+                                        seed: U256::ZERO,
+                                        committeeSize: 0,
+                                        requestBlock: U256::ZERO,
+                                        inputWindow: [U256::ZERO; 2],
+                                        encryptionSchemeId: B256::ZERO,
+                                        e3Program: Address::ZERO,
+                                        paramSet: 0,
+                                        customParams: Bytes::new(),
+                                        decryptionVerifier: Address::ZERO,
+                                        pkVerifier: Address::ZERO,
+                                        committeePublicKey: B256::ZERO,
+                                        ciphertextOutput: B256::ZERO,
+                                        plaintextOutput: Bytes::new(),
+                                        requester: Address::ZERO,
+                                        ciphertextCommitment: B256::ZERO,
+                                    };
+                                    serde_json::json!(Bytes::from((e3,).abi_encode_params()))
+                                }
+                            }
+                            "eth_estimateGas" => {
+                                let params: serde_json::Value =
+                                    serde_json::from_str(request.params().unwrap().get()).unwrap();
+                                let input = params[0]["input"]
+                                    .as_str()
+                                    .or_else(|| params[0]["data"].as_str())
+                                    .unwrap();
+                                calls
+                                    .lock()
+                                    .unwrap()
+                                    .push(hex::decode(input.trim_start_matches("0x")).unwrap());
+                                return Err(TransportErrorKind::custom_str("submission captured"));
+                            }
+                            _ => {
+                                return Err(TransportErrorKind::custom_str(
+                                    "unexpected publication RPC",
+                                ))
+                            }
+                        };
+                        Ok(ResponsePacket::Single(Response {
+                            id: request.id().clone(),
+                            payload: ResponsePayload::Success(
+                                serde_json::value::RawValue::from_string(result.to_string())
+                                    .unwrap(),
+                            ),
+                        }))
+                    })
+                },
+            );
+            let provider = EthProvider::new(
+                ProviderBuilder::new()
+                    .disable_recommended_fillers()
+                    .with_gas_estimation()
+                    .wallet(EthereumWallet::from(PrivateKeySigner::random()))
+                    .connect_client(RpcClient::new(transport, true)),
+            )
+            .await?;
+            let system = EventSystem::new().with_fresh_bus();
+            let bus = system.handle()?.enable("plaintext-replay");
+            let keys = CanonicalPublicKeys::default();
+            let id = E3id::new("42", 1);
+            let contract = Address::repeat_byte(9);
+            let key = CanonicalPublicKey {
+                pk_commitment: [7; 32],
+                committee: vec![Address::repeat_byte(1); 3],
+                honest_committee: vec![Address::repeat_byte(1); 2],
+                params_preset: BfvPreset::InsecureThreshold512,
+                committee_size: CiphernodesCommitteeSize::Minimum,
+                interfold_address: contract,
+                sk_agg_commits: vec![],
+                esm_agg_commits: vec![],
+            };
+            let ciphertext = vec![ArcBytes::from_bytes(&[3])];
+            keys.insert(id.clone(), key.clone())?;
+            keys.remember_ciphertexts(&id, &ciphertext)?;
+            let domain = keys.decryption_domains(&id).unwrap()[0];
+            let mut signals = vec![0; 7 * 32];
+            signals[4 * 32..5 * 32].copy_from_slice(&U256::from(domain.hi).to_be_bytes::<32>());
+            signals[5 * 32..6 * 32].copy_from_slice(&U256::from(domain.lo).to_be_bytes::<32>());
+            let corrected = PlaintextAggregated {
+                e3_id: id.clone(),
+                decrypted_output: vec![ArcBytes::from_bytes(&[4])],
+                decryption_aggregator_proofs: vec![Proof::new(
+                    CircuitName::DecryptionAggregator,
+                    ArcBytes::from_bytes(&[1]),
+                    ArcBytes::from_bytes(&signals),
+                )],
+            };
+            signals[5 * 32] ^= 1;
+            let mut old = corrected.clone();
+            old.decryption_aggregator_proofs[0].public_signals = ArcBytes::from_bytes(&signals);
+            if authority_after_replay {
+                keys.remove(&id);
+            }
+            let mut log = EventStore::new(InMemSequenceIndex::new(), InMemEventLog::new())?;
+            let mut events = Vec::new();
+            for (index, intent) in [old, corrected.clone()].into_iter().enumerate() {
+                events.push(
+                    log.store_event(InterfoldEvent::<Unsequenced>::new_with_timestamp(
+                        intent.into(),
+                        None,
+                        index as u128 + 1,
+                        None,
+                        EventSource::Local,
+                    ))?
+                    .unwrap(),
+                );
+            }
+            let eventstore = EventStoreRouter::new(HashMap::from([(1, log.start())]))
+                .start()
+                .recipient();
+            let writer = InterfoldSolWriter::new_with_recovery(
+                &bus,
+                provider,
+                contract,
+                HashMap::new(),
+                HashMap::new(),
+                HashMap::new(),
+                HashMap::new(),
+                HashSet::new(),
+                HashSet::new(),
+                keys.clone(),
+                eventstore,
+            )?
+            .start();
+            bus.subscribe(EventType::All, writer.clone().recipient());
+            for event in events {
+                bus.event_bus().send(EventBusFanout(event)).await??;
+            }
+            // A mailbox barrier completes event routing before effects resume.
+            writer.send(E3RequestComplete { e3_id: id.clone() }).await?;
+            assert!(
+                captured.lock().unwrap().is_empty(),
+                "replay released a transaction"
+            );
+            writer.send(EffectsEnabled::new()).await?;
+            if authority_after_replay {
+                assert!(
+                    captured.lock().unwrap().is_empty(),
+                    "missing authority released a transaction"
+                );
+                keys.insert(id.clone(), key)?;
+                keys.remember_ciphertexts(&id, &ciphertext)?;
+                writer
+                    .send(
+                        InterfoldEvent::<Unsequenced>::new_with_timestamp(
+                            CiphertextOutputPublished {
+                                e3_id: id.clone(),
+                                ciphertext_output: ciphertext,
+                                ciphertext_commitment: [0; 32],
+                            }
+                            .into(),
+                            None,
+                            3,
+                            Some(3),
+                            EventSource::Evm,
+                        )
+                        .into_sequenced(3),
+                    )
+                    .await?;
+            }
+            tokio::time::timeout(Duration::from_secs(5), async {
+                while captured.lock().unwrap().is_empty() {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await?;
+            let submissions = captured.lock().unwrap();
+            assert_eq!(submissions.len(), 1);
+            let call = IInterfold::publishPlaintextOutputCall::abi_decode(&submissions[0])?;
+            assert_eq!(call.e3Id, U256::from(42));
+            assert_eq!(call.plaintextOutput.as_ref(), &[4]);
+            assert_eq!(
+                call.proof,
+                encode_zk_proof(&corrected.decryption_aggregator_proofs[0])?,
+                "the writer released the retained noncanonical proof"
+            );
+        }
+        Ok(())
+    }
+
+    #[actix::test]
     async fn blocked_settlement_sends_no_transaction_and_no_error() -> Result<()> {
         let system = EventSystem::new().with_fresh_bus();
         let bus = system.handle()?.enable("blocked-settlement");
@@ -638,6 +972,9 @@ mod tests {
             HashMap::new(),
             HashMap::new(),
             HashSet::from([E3id::new("7", 1)]),
+            HashSet::new(),
+            CanonicalPublicKeys::default(),
+            system.eventstore_reader()?.seq(),
         )?
         .start();
         writer.send(EffectsEnabled::new()).await?;

@@ -380,8 +380,24 @@ every section.
 - **Decryption-proof replay prevention (C-03):** every secret-bearing C6 proof commits to the domain
   `(chainId, Interfold address, e3Id, committeeHash, ciphertextOutputHash, committeePublicKey)`;
   folding requires one common domain; the wrapper rejects any domain differing from the contract's
-  recomputed value and checks per-party SK/ESM commitments against registry-stored DKG anchors. —
-  `flow-trace/04`; INDEX concern #34
+  recomputed value and checks per-party SK/ESM commitments against registry-stored DKG anchors.
+  Keyshare and plaintext aggregation use the chain commitment, ordered finalized committee, and DKG
+  anchor party IDs. A `PublicKeyAggregated` must match these facts and open the key commitment.
+  Keyshare retains the first matching key. Before hydration and replay, confirmed event history
+  rebuilds authority and commitment-checked key bytes. Retained C6 intents are repaired before
+  deduplication; logged compute requests must pass canonical admission before release. No registry
+  storage RPC supplies this authority. Plaintext admission checks each C6 domain before reserving a
+  party slot. Hydration checks signed shares and retained C6 inputs in every phase, including
+  `Complete`. Invalid work is rebuilt from signed history before verification or publication
+  resumes. State written before v0.19 is not repaired because the release requires a store reset to
+  schema 8. The EVM writer checks final-proof domain limbs against confirmed key authority and
+  ciphertext hashes before intent deduplication. Missing authority defers admission; a mismatch
+  discards the intent and permits a corrected result. C7 intent deduplication binds to the exact
+  request. Live and retained C7 results must match the selected C6 commitments, ordered party IDs,
+  and plaintext. A replacement batch invalidates earlier worker correlations and regenerates
+  matching proofs. — `crates/aggregator/src/plaintext_aggregation/effects/recovery.rs`;
+  `crates/request/src/canonical_key.rs`; `crates/evm/src/canonical_key.rs`; `flow-trace/04`; INDEX
+  concern #34
 - **Ctx-witness binding (C-04, commit `cd7cbceea`):** the off-chain SAFE ciphertext commitment is
   stored at ciphertext publication, propagated as a final-proof public input, and compared on-chain
   (no BFV decoding/Poseidon2 in Solidity); C3/C6 commitments are checked against their ciphertext
@@ -501,7 +517,8 @@ every section.
   candidate cannot block a valid candidate from another member. — INDEX concerns #33, Z-31
 - **No proof-disabled bypass (C-02):** both final verifier calls are mandatory in production;
   `skip_proof_aggregation` works only under the `test-only-skip-proof-aggregation` Cargo feature;
-  production verifiers reject placeholder C5/C7 proofs. — INDEX concern #32
+  mock placeholders carry the final roster or canonical decryption domain fields, but production
+  verifiers reject their C5/C7 proof bytes. — INDEX concern #32
 - Circuit soundness fixes to preserve: `ModU64::div_mod` verifies
   `result*divisor == dividend (mod modulus)` (IF-001); C7 compares **every** decoded coefficient,
   including zeros, to the claimed message (IF-002).

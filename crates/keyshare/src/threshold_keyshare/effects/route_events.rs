@@ -15,26 +15,48 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
             }
             InterfoldEventData::CiphertextOutputPublished(data) => {
                 self.observe_canonical_stage(&data.e3_id, &E3Stage::CiphertextReady);
+                if let Err(error) = self.restore_public_key_context(&ec) {
+                    self.bus.with_ec(&ec).err(EType::KeyGeneration, error);
+                }
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
-            InterfoldEventData::CommitteePublished(data) => {
-                self.observe_canonical_stage(&data.e3_id, &E3Stage::KeyPublished);
-            }
             InterfoldEventData::PublicKeyAggregated(data) => {
-                let committee_hash =
-                    e3_committee_hash::hash_committee_addresses(&data.committee_addresses);
-                let pk = ArcBytes::from_bytes(&data.pubkey);
-                let interfold_address = self.interfold_address;
+                let Some(key) = self.canonical_keys.get(&data.e3_id) else {
+                    return;
+                };
+                if !key.accepts(&data) {
+                    return;
+                }
                 trap(EType::KeyGeneration, &self.bus.with_ec(&ec), || {
-                    self.state.try_mutate(&ec, |mut s| {
-                        s.aggregated_pk = Some(pk);
-                        s.decryption_domain = Some(e3_committee_hash::DecryptionDomainContext {
-                            interfold_address,
-                            committee_hash,
-                            committee_public_key: data.pk_commitment.into(),
-                        });
-                        Ok(s)
-                    })
+                    self.admit_public_key(data.pubkey, &ec)
+                });
+            }
+            InterfoldEventData::EvmLogObserved(_)
+            | InterfoldEventData::CommitteePublicKeyChunkPublished(_) => {
+                if ec.source() == e3_events::EventSource::Evm {
+                    trap(EType::KeyGeneration, &self.bus.with_ec(&ec), || {
+                        self.restore_public_key_context(&ec)?;
+                        self.resume_decryption_work(ec.clone())
+                    });
+                }
+            }
+            InterfoldEventData::CommitteePublished(data) => {
+                if ec.source() == e3_events::EventSource::Net {
+                    return;
+                }
+                self.observe_canonical_stage(&data.e3_id, &E3Stage::KeyPublished);
+                let Some(key) = self.canonical_keys.get(&data.e3_id) else {
+                    return;
+                };
+                let nodes: Result<Vec<Address>, _> =
+                    data.nodes.iter().map(|node| node.parse()).collect();
+                if nodes.as_ref().ok() != Some(&key.committee)
+                    || key.validate_key(&data.public_key).is_err()
+                {
+                    return;
+                }
+                trap(EType::KeyGeneration, &self.bus.with_ec(&ec), || {
+                    self.admit_public_key(data.public_key, &ec)
                 });
             }
             InterfoldEventData::ThresholdShareCreated(data) => {

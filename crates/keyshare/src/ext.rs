@@ -31,6 +31,7 @@ pub struct ThresholdKeyshareExtension {
     interfold_addresses: HashMap<u64, Address>,
     dkg_timing_reader: DkgTimingReader,
     signer: PrivateKeySigner,
+    canonical_keys: crate::canonical_key::CanonicalPublicKeys,
 }
 
 impl ThresholdKeyshareExtension {
@@ -41,6 +42,7 @@ impl ThresholdKeyshareExtension {
         interfold_addresses: HashMap<u64, Address>,
         dkg_timing_reader: DkgTimingReader,
         signer: PrivateKeySigner,
+        canonical_keys: crate::canonical_key::CanonicalPublicKeys,
     ) -> Box<Self> {
         Box::new(Self {
             bus: bus.clone(),
@@ -49,6 +51,7 @@ impl ThresholdKeyshareExtension {
             interfold_addresses,
             dkg_timing_reader,
             signer,
+            canonical_keys,
         })
     }
 }
@@ -125,6 +128,7 @@ impl E3Extension for ThresholdKeyshareExtension {
                     signer: self.signer.clone(),
                     effects_enabled: true,
                 })
+                .with_canonical_keys(self.canonical_keys.clone())
                 .start()
                 .into(),
             ),
@@ -201,7 +205,8 @@ impl E3Extension for ThresholdKeyshareExtension {
             dkg_timing_reader: self.dkg_timing_reader.clone(),
             signer: self.signer.clone(),
             effects_enabled: false,
-        });
+        })
+        .with_canonical_keys(self.canonical_keys.clone());
         // The lifecycle projection is node-wide, outside the per-E3 context scope.
         if let Some(stage) = ctx
             .repositories()

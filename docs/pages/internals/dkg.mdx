@@ -446,11 +446,12 @@ The node publishes `DecryptionshareCreated` with one signed C6 proof for each ci
 ### Plaintext aggregation
 
 Every committee member stores valid shares. A valid share comes from an accepted roster member. Its
-signature, E3, proof type, raw share commitment, and ciphertext position must also be correct. When
-T + 1 distinct roster shares are durable, the member publishes `AggregationInputsReady(Plaintext)`.
-For `small`, that is 10 shares, not all 14. Shares that arrive during C6 verification go to a
-durable backup queue. If a proof or a raw share check fails, the active aggregator uses backups
-while T + 1 valid roster shares are still possible.
+signature, E3, proof type, raw share commitment, ciphertext position, and canonical decryption
+domain must also be correct. These checks run before the share reserves a party slot. When T + 1
+distinct roster shares are durable, the member publishes `AggregationInputsReady(Plaintext)`. For
+`small`, that is 10 shares, not all 14. Shares that arrive during C6 verification go to a durable
+backup queue. If a proof or a raw share check fails, the active aggregator uses backups while T + 1
+valid roster shares are still possible.
 
 ### C7: reconstruction
 
@@ -648,6 +649,32 @@ anchors let later steps map each DKG output to `topNodes[partyId]`.
 complete chunk set, checks `keccak256(publicKey) == candidateHash`, and recomputes the commitment
 before it uses the key.
 
+Ciphernodes also check peer key publications against the registry commitment, finalized committee,
+and DKG anchor party IDs. They recompute the commitment from the key bytes and retain the first
+matching key. Peer publications cannot replace the decryption domain or either committee roster.
+Nodes derive these facts from confirmed registry events. After a restart, they rebuild the
+projection and validated key bytes from retained event and chunk history before proof replay. They
+repair retained C6 intents before deduplication and reject logged compute requests with noncanonical
+public inputs. This recovery needs no historical registry storage reads or new key publication.
+
+Plaintext hydration recovers deferred ciphertext from retained history, including events before the
+snapshot cursor. It also recovers authenticated shares received before that cursor. A missing
+plaintext actor can therefore resume without another ciphertext or share publication. An existing
+snapshot remains dormant until confirmed key authority arrives. Startup continues, and the node
+retains the snapshot, a durable-history range, and one effects-enabled signal. It reads deferred
+payloads in bounded pages when authority arrives. Hydration also checks saved C6 shares and the C6
+inputs retained in later aggregation phases. If a domain is invalid, the node clears the affected
+verification results and derived proofs, including a retained final proof. It rebuilds collection
+from signed history with effects disabled. A corrected share can then occupy the same party slot.
+Valid retained C6 work keeps its phase. Retained C7 proofs must also match that batch and its
+plaintext. A mismatch regenerates C7 and the final proof, including for a saved completed actor. The
+EVM writer separately checks each final proof against the canonical decryption domain before it
+retains a publication intent. It waits for missing authority and discards mismatched intents. A
+corrected local result can then proceed to publication. Confirmed terminal stages retire deferred
+and pending plaintext publication work, including after a restart. Later intents for a terminal E3
+are discarded. A waiting active E3 retains one event-log sequence range, and admission reads that
+range in bounded pages when canonical authority arrives.
+
 ### Decryption proof
 
 `publishPlaintextOutput` computes the decryption domain on-chain and calls the E3 decryption
@@ -702,9 +729,11 @@ works only when no verifier is set. A new verifier applies only to later E3 requ
 ### Test-only aggregation bypass
 
 A binary built with the Cargo feature `test-only-skip-proof-aggregation` accepts the node setting
-`skip_proof_aggregation`. The node then reuses the C5 and C7 proofs as placeholders for mock
-verifiers. A production binary rejects this setting at startup. The contracts still call their
-verifiers.
+`skip_proof_aggregation`. The node wraps C5 and C7 proof bytes in payloads for mock verifiers. The
+DKG placeholder carries the final roster, committee hash, and key commitment fields. The decryption
+placeholder carries the verified C6 domain. These fields let confirmed ingestion and the plaintext
+writer keep their admission checks. A production binary rejects this setting at startup, and
+production verifiers reject the placeholder bytes. The contracts still call their verifiers.
 
 ## Proof lifecycle
 
@@ -714,6 +743,10 @@ A `*Pending` event reaches `ProofRequestActor`, which dispatches `ComputeRequest
 `ZkRequest`. `ZkActor` writes the witness and runs `bb prove`, then returns
 `Proof { data, public_signals }`. A failed attempt retries the same request. Attempts after the
 first use the Barretenberg low-memory mode.
+
+C7 requests bind to the exact share batch and plaintext. A replacement request invalidates earlier
+worker responses. Plaintext aggregation checks C7 commitments, party IDs, and plaintext against the
+selected C6 batch. Restart recovery regenerates mismatched C7 work before final aggregation.
 
 ### Signing
 

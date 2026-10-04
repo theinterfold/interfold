@@ -138,6 +138,7 @@ impl Multithread {
         std::cmp::max(1, total_threads.saturating_sub(amount))
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn attach(
         bus: &BusHandle,
         rng: SharedRng,
@@ -146,6 +147,7 @@ impl Multithread {
         task_scope: String,
         report: Option<Addr<MultithreadReport>>,
         lifecycle_stages: HashMap<E3id, E3Stage>,
+        canonical_keys: e3_request::canonical_key::CanonicalPublicKeys,
     ) -> Addr<Self> {
         let addr = Self::new(
             bus.clone(),
@@ -158,12 +160,18 @@ impl Multithread {
         .start();
 
         Self::subscribe_to_lifecycle(bus, &addr);
-        ComputeEffectGate::attach(bus, addr.clone().recipient(), lifecycle_stages);
+        ComputeEffectGate::attach(
+            bus,
+            addr.clone().recipient(),
+            lifecycle_stages,
+            canonical_keys,
+        );
         info!("Multithread actor waiting behind the replay-safe effect gate.");
 
         addr
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn attach_with_zk(
         bus: &BusHandle,
         rng: SharedRng,
@@ -173,6 +181,7 @@ impl Multithread {
         report: Option<Addr<MultithreadReport>>,
         zk_backend: &ZkBackend,
         lifecycle_stages: HashMap<E3id, E3Stage>,
+        canonical_keys: e3_request::canonical_key::CanonicalPublicKeys,
     ) -> Addr<Self> {
         let zk_prover = Arc::new(ZkProver::new(zk_backend));
         let actor = Self::new(
@@ -187,7 +196,12 @@ impl Multithread {
         let addr = actor.start();
         Self::subscribe_to_lifecycle(bus, &addr);
 
-        ComputeEffectGate::attach(bus, addr.clone().recipient(), lifecycle_stages);
+        ComputeEffectGate::attach(
+            bus,
+            addr.clone().recipient(),
+            lifecycle_stages,
+            canonical_keys,
+        );
         info!("Multithread actor with ZK waiting behind the replay-safe effect gate.");
 
         addr
@@ -349,6 +363,7 @@ impl Handler<TypedEvent<ComputeRequest>> for Multithread {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_compute_request_event(
     msg: TypedEvent<ComputeRequest>,
     bus: BusHandle,

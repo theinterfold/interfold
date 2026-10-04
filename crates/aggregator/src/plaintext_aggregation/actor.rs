@@ -8,8 +8,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::str::FromStr;
 
 use crate::workflow::threshold_plaintext_aggregation::{
-    build_decryption_aggregation_jobs, format_decrypted_plaintext, C6ShareVerifier,
-    ThresholdPlaintextAggregation,
+    build_decryption_aggregation_jobs, c7_proofs_match_batch, format_decrypted_plaintext,
+    C6ShareVerifier, ThresholdPlaintextAggregation,
 };
 use actix::prelude::*;
 use alloy::primitives::Address;
@@ -76,12 +76,12 @@ pub struct ThresholdPlaintextAggregator {
     state: Persistable<ThresholdPlaintextAggregatorState>,
     recovery: Persistable<ThresholdPlaintextAggregatorRecoveryState>,
     /// Full registered committee (`topNodes`, length `N`) for decryption-aggregator
-    /// `committee_hash_*` inputs. Same value as `PublicKeyAggregated.committee_addresses`.
+    /// `committee_hash_*` inputs, read from the chain.
     committee_addresses: Vec<Address>,
-    /// Canonical honest subset from DKG (length `H ≤ N`, from
-    /// `PublicKeyAggregated.honest_committee_addresses`). Only these parties can
+    /// Canonical honest subset from the chain DKG anchors (length `H ≤ N`). These parties can
     /// supply shares; T+1 valid shares suffice for decryption.
     honest_committee_addresses: Vec<Address>,
+    decryption_domain: e3_committee_hash::DecryptionDomainContext,
     is_aggregator: bool,
     /// Whether this node started aggregation work for this E3 as the active aggregator. Failover
     /// demotes an aggregator after a fixed budget even while it is still proving, so a demoted node
@@ -102,12 +102,13 @@ pub struct ThresholdPlaintextAggregatorParams {
     pub proof_aggregation_enabled: bool,
     pub initial_is_aggregator: bool,
     pub effects_enabled: bool,
-    /// Full committee from `PublicKeyAggregated.committee_addresses` (length `N`).
+    /// Full finalized committee from the chain (length `N`).
     /// Used for `committee_hash_*` payload binding to on-chain `topNodes`.
     pub committee_addresses: Vec<Address>,
-    /// Honest committee from `PublicKeyAggregated.honest_committee_addresses`
-    /// (length `H`). Roster for decryption-share collection and sender gating.
+    /// Honest committee from the chain DKG anchors (length `H`).
+    /// Roster for decryption-share collection and sender gating.
     pub honest_committee_addresses: Vec<Address>,
+    pub decryption_domain: e3_committee_hash::DecryptionDomainContext,
     pub recovery: Persistable<ThresholdPlaintextAggregatorRecoveryState>,
 }
 
@@ -166,6 +167,7 @@ impl ThresholdPlaintextAggregator {
             recovery: params.recovery,
             committee_addresses: params.committee_addresses,
             honest_committee_addresses: params.honest_committee_addresses,
+            decryption_domain: params.decryption_domain,
             is_aggregator: params.initial_is_aggregator,
             started_as_aggregator,
             effects_enabled: params.effects_enabled,
@@ -239,6 +241,7 @@ impl ThresholdPlaintextAggregator {
 
 #[path = "effects/mod.rs"]
 mod effects;
+pub(crate) use effects::recovery::{visit_plaintext_history, visit_plaintext_history_range};
 #[path = "handlers.rs"]
 mod handlers;
 

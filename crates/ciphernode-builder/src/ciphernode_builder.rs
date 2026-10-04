@@ -82,6 +82,9 @@ enum EventSystemType {
 }
 
 struct EvmStartupRecovery<'a> {
+    canonical_keys: &'a e3_request::canonical_key::CanonicalPublicKeys,
+    terminal_plaintext_e3s: &'a HashSet<E3id>,
+    eventstore: &'a actix::Recipient<e3_events::EventStoreQueryBy<e3_events::SeqAgg>>,
     dkg_fold_contexts_by_e3: &'a HashMap<E3id, DkgFoldAttestationContext>,
     active_aggregators: &'a HashMap<E3id, bool>,
     selected_party_ids: &'a HashMap<E3id, u64>,
@@ -764,6 +767,49 @@ impl CiphernodeBuilder {
             attach_protocol_logger(logger_name, &bus);
         }
 
+        let canonical_keys = e3_request::canonical_key::CanonicalPublicKeys::default();
+        let mut terminal_plaintext_e3s = HashSet::new();
+        let mut key_chains = HashMap::new();
+        if self.keyshare.is_some()
+            || self.threshold_plaintext_agg
+            || self.pubkey_agg
+            || self.contract_components.interfold
+        {
+            for chain in &self.chains {
+                let chain_id = if chain.enabled.unwrap_or(true) {
+                    Some(provider_cache.ensure_read_provider(chain).await?.chain_id())
+                } else {
+                    chain.chain_id
+                };
+                if let Some(chain_id) = chain_id {
+                    key_chains.insert(chain_id, chain.contracts.interfold.address()?);
+                }
+            }
+            let mut projection = e3_evm::canonical_key::CanonicalKeyProjection::new(
+                canonical_keys.clone(),
+                key_chains.clone(),
+            );
+            let aggregates = eventstore_aggregate_config
+                .indexed_ids()
+                .into_iter()
+                .filter(|id| key_chains.contains_key(&(*id as u64)))
+                .map(AggregateId::new)
+                .collect::<Vec<_>>();
+            let hydrating_contexts =
+                e3_request::RouterRepositoryFactory::request_router_checkpoint(
+                    repositories.as_ref(),
+                )
+                .read()
+                .await?
+                .map(|checkpoint| checkpoint.contexts.into_iter().collect())
+                .unwrap_or_default();
+            projection
+                .recover(&seq_eventstore, &aggregates, hydrating_contexts)
+                .await?;
+            terminal_plaintext_e3s = projection.confirmed_terminal_e3s();
+            projection.attach(&bus).await?;
+        }
+
         // Setup sortition
         let (sortition, _ciphernode_selector, selector_state) =
             self.setup_sortition(&bus, &repositories, &addr).await?;
@@ -810,6 +856,9 @@ impl CiphernodeBuilder {
                 &repositories,
                 &slashing_managers,
                 EvmStartupRecovery {
+                    canonical_keys: &canonical_keys,
+                    terminal_plaintext_e3s: &terminal_plaintext_e3s,
+                    eventstore: &seq_eventstore,
                     dkg_fold_contexts_by_e3: &dkg_fold_contexts_by_e3,
                     active_aggregators: &selector_state.is_aggregator,
                     selected_party_ids: &selected_party_ids,
@@ -838,6 +887,8 @@ impl CiphernodeBuilder {
             &selector_state,
             &lifecycle_stages,
             &event_system,
+            &canonical_keys,
+            &seq_eventstore,
         ))
         .await?;
 
@@ -1143,6 +1194,8 @@ impl CiphernodeBuilder {
         selector_state: &CiphernodeSelectorState,
         lifecycle_stages: &HashMap<E3id, E3Stage>,
         event_system: &EventSystem,
+        canonical_keys: &e3_request::canonical_key::CanonicalPublicKeys,
+        eventstore: &actix::Recipient<e3_events::EventStoreQueryBy<e3_events::SeqAgg>>,
     ) -> Result<e3_request::E3RouterBuilder> {
         let recovered_selections = recovered_ciphernode_selections(selector_state, addr)?;
         // A slashably-failed context also outlives the longest accusation vote.
@@ -1190,7 +1243,7 @@ impl CiphernodeBuilder {
 
         // ── Threshold keyshare + ZK actors ──
         if let Some(KeyshareKind::Threshold) = self.keyshare {
-            let _ = self.ensure_multithread(bus, addr, lifecycle_stages);
+            let _ = self.ensure_multithread(bus, addr, lifecycle_stages, canonical_keys);
             let backend = self
                 .zk_backend
                 .as_ref()
@@ -1249,6 +1302,7 @@ impl CiphernodeBuilder {
                     interfold_addresses,
                     dkg_timing_reader,
                     _signer.clone(),
+                    canonical_keys.clone(),
                 ),
             );
 
@@ -1258,7 +1312,9 @@ impl CiphernodeBuilder {
                 backend,
                 _signer,
                 dkg_fold_context_by_chain.clone(),
-                zk_recovery.clone(),
+                zk_recovery
+                    .clone()
+                    .with_canonical_keys(canonical_keys.clone()),
                 self.proof_aggregation_enabled,
                 repositories.clone(),
             );
@@ -1270,7 +1326,7 @@ impl CiphernodeBuilder {
             e3_builder = e3_builder.with(FheExtension::create(bus, &self.rng));
 
             info!("Setting up PublicKeyAggregationExtension");
-            let _ = self.ensure_multithread(bus, addr, lifecycle_stages);
+            let _ = self.ensure_multithread(bus, addr, lifecycle_stages, canonical_keys);
             e3_builder =
                 e3_builder.with_recipient("publickey", PublicKeyAggregatorExtension::create(bus));
 
@@ -1286,7 +1342,7 @@ impl CiphernodeBuilder {
                     backend,
                     signer,
                     dkg_fold_context_by_chain.clone(),
-                    zk_recovery,
+                    zk_recovery.with_canonical_keys(canonical_keys.clone()),
                     self.proof_aggregation_enabled,
                     repositories.clone(),
                 );
@@ -1296,13 +1352,15 @@ impl CiphernodeBuilder {
         // ── Threshold plaintext aggregation ──
         if self.threshold_plaintext_agg {
             info!("Setting up ThresholdPlaintextAggregatorExtension");
-            let _ = self.ensure_multithread(bus, addr, lifecycle_stages);
+            let _ = self.ensure_multithread(bus, addr, lifecycle_stages, canonical_keys);
             e3_builder = e3_builder.with_recipient(
                 "plaintext",
                 ThresholdPlaintextAggregatorExtension::create(
                     bus,
                     sortition,
                     self.proof_aggregation_enabled,
+                    canonical_keys.clone(),
+                    eventstore.clone(),
                 ),
             );
         }
@@ -1448,6 +1506,7 @@ impl CiphernodeBuilder {
         bus: &BusHandle,
         task_scope: &str,
         lifecycle_stages: &HashMap<E3id, E3Stage>,
+        canonical_keys: &e3_request::canonical_key::CanonicalPublicKeys,
     ) -> Addr<Multithread> {
         if let Some(cached) = self.multithread_cache.clone() {
             return cached;
@@ -1472,6 +1531,7 @@ impl CiphernodeBuilder {
                 self.multithread_report.clone(),
                 backend,
                 lifecycle_stages.clone(),
+                canonical_keys.clone(),
             )
         } else {
             Multithread::attach(
@@ -1482,6 +1542,7 @@ impl CiphernodeBuilder {
                 task_scope.to_owned(),
                 self.multithread_report.clone(),
                 lifecycle_stages.clone(),
+                canonical_keys.clone(),
             )
         };
 
@@ -1633,6 +1694,9 @@ async fn setup_evm_system(
     recovery: EvmStartupRecovery<'_>,
 ) -> Result<(EvmEventConfig, Vec<EvmChainGatewayHandle>)> {
     let EvmStartupRecovery {
+        canonical_keys,
+        terminal_plaintext_e3s,
+        eventstore,
         dkg_fold_contexts_by_e3,
         active_aggregators,
         selected_party_ids,
@@ -1728,6 +1792,13 @@ async fn setup_evm_system(
                 chain_request_registries,
                 chain_failure_stages,
                 chain_failure_settlements,
+                terminal_plaintext_e3s
+                    .iter()
+                    .filter(|id| id.chain_id() == chain_id)
+                    .cloned()
+                    .collect(),
+                canonical_keys.clone(),
+                eventstore.clone(),
             );
             system.with_contract(contract.address()?, move |next| {
                 InterfoldSolReader::setup(&next).recipient()
@@ -2533,6 +2604,8 @@ mod tests {
                 &selector,
                 &HashMap::new(),
                 &system,
+                &e3_request::canonical_key::CanonicalPublicKeys::default(),
+                &system.eventstore_reader()?.seq(),
             )
             .await?
             .with(Box::new(ObserveRecipients(

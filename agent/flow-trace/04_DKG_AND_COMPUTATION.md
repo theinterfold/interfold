@@ -913,8 +913,8 @@ phase.
   ├─ Uses the registry from DkgFoldAttestationContextEstablished, including after a rotation
   ├─ Reads chain state to determine whether the proof-backed commitment is unset
   ├─ Encodes the DkgAggregator proof in production
-  ├─ Feature-gated test/CI nodes with `skip_proof_aggregation` reuse the non-empty C5 proof as a
-  │  mock-verifier placeholder; this does not bypass contract verification
+  ├─ Feature-gated test/CI nodes with `skip_proof_aggregation` wrap C5 bytes in a mock placeholder
+  │  with the final roster, committee hash, and key commitment fields for confirmed ingestion
   │  and every node in a test swarm must use the same flag value
   ├─ Calls contract.publishCommittee(
   │    e3_id, pkCommitment, proof, dkgAttestationBundle
@@ -1209,6 +1209,30 @@ output. `Interfold.registerE3Program` therefore probes the candidate program wit
 
 ## Phase 4: Decryption Share Generation (Each Committee Member, with C6 Proof)
 
+`CanonicalKeyProjection` derives key authority from confirmed, chain-sourced observations.
+`CommitteeProofPublished`, retained as `EvmLogObserved`, supplies the ordered committee, key
+commitment, honest party IDs, and SK/ESM anchors from the verified proof. The request supplies the
+BFV preset and committee size. The configured deployment supplies the Interfold address. The
+projection updates before EventBus domain delivery. The request router performs no registry reads.
+
+`ThresholdKeyshare` accepts `PublicKeyAggregated` only when its commitment and both rosters match
+that projection. It also decodes the key and recomputes its commitment. It keeps the first valid key
+and derives the decryption domain from chain facts. Early peer publications supply bounded candidate
+bytes until the chain observation arrives. Durable chunks or `CommitteePublished` supply validated
+bytes independently of gossip. Ciphertext received before the key remains in `Decrypting`; first key
+admission resumes share calculation. A matching publication cannot resume an already-retained key.
+The plaintext extension derives both rosters from the projection.
+
+Before C6 intent deduplication, `ProofRequestActor` repairs the public key, domain, preset, and
+committee size from this authority. It retains intents while authority is unavailable.
+`ComputeEffectGate` rejects logged C6 requests whose public inputs differ from that authority before
+it releases compute work or reuses a response.
+
+File: `crates/request/src/canonical_key.rs`, `crates/evm/src/canonical_key.rs`,
+`crates/keyshare/src/threshold_keyshare/effects/route_events.rs`, `crates/aggregator/src/ext.rs`,
+`crates/zk-prover/src/proof_request/effects/decryption_share_proofs.rs`,
+`crates/multithread/src/effect_gate.rs`.
+
 Before proof verification, the BFV wrapper requires every public input to use its canonical BN254
 field representation. Message coefficients must also fit exactly in 64 bits. This second check is
 defense in depth because the wrapper does not store the BFV plaintext modulus for each parameter
@@ -1241,8 +1265,11 @@ InterfoldSolReader decodes CiphertextOutputPublished event
     │   │  │  Output: Vec<decryption_share_polynomial>           │
     │   │  └─────────────────────────────────────────────────────┘
       │
-      ├─ `ThresholdKeyshare` tracks the `CalculateDecryptionShare` correlation id:
-      │   → A local worker or task-pool failure retries the same request.
+      ├─ `ThresholdKeyshare` issues one share calculation and one C6 proof intent per process:
+      │   → Repeated key publications, chain observations, ciphertexts, and resume signals
+      │     cannot create another outstanding request for either phase.
+      │   → Hydration clears these process-local markers; `EffectsEnabled` resumes retained work.
+      │   → A local worker or task-pool failure retries the same request and correlation ID.
       │   → The node does not report a local failure as invalid decryption shares.
     │
     ├─ REQUEST C6 PROOF:
@@ -1300,8 +1327,17 @@ InterfoldSolReader decodes CiphertextOutputPublished event
   ├─ ThresholdPlaintextAggregator persists shares on active and standby nodes
   │   ├─ Checks the sender's canonical party ID against the accepted H-member DKG roster
   │   ├─ Checks each C6 signature, E3, proof type, raw-share commitment, and ciphertext position
+  │   ├─ Checks every C6 domain against canonical key authority and the matching ciphertext hash
   │   ├─ Stores the first share/proof bundle from each eligible party
   │   └─ Ignores unauthenticated bundles without reserving or excluding the claimed party
+  │       Hydration applies these checks to saved collection and backup shares. It also checks
+  │       retained C6 inputs in Computing, GeneratingC7Proof, and Complete before resuming effects.
+  │       Invalid work clears cached verification results, C7 proofs, and final proofs. Collection
+  │       is rebuilt from signed event history, so a corrected share can occupy the same party slot.
+  │       Empty collectors also recover shares before snapshot cursors. A saved actor waits dormant
+  │       for missing chain authority, retaining its snapshot, a history range, and one EffectsEnabled
+  │       signal. Deferred payloads stay in the event log and resume through bounded pages.
+  │       File: crates/aggregator/src/plaintext_aggregation/effects/recovery.rs
 │
   ├─ Once T+1 distinct roster shares are durable (10 for Small, not all 14):
   │   ├─ Persist VerifyingC6 before publishing AggregationInputsReady(Plaintext)
@@ -1372,6 +1408,7 @@ InterfoldSolReader decodes CiphertextOutputPublished event
 │   │   │   → Circuit: DecryptedSharesAggregation (C7)
 │   │   │   → Proves plaintext was correctly reconstructed from T+1 shares
 │   │   ├─ ZkActor generates proof(s) via bb binary
+│   │   ├─ Deduplicates the exact request; a replacement batch invalidates old worker correlations
 │   │   ├─ Signs each C7 proof (one per ciphertext index)
 │   │   └─ Publishes AggregationProofSigned {
 │   │        e3_id, party_id, signed_proof(C7)
@@ -1380,6 +1417,9 @@ InterfoldSolReader decodes CiphertextOutputPublished event
 │   ├─ DECRYPTION AGGREGATION REQUEST:
 │   │   ├─ ThresholdPlaintextAggregator stores the signed C7 proofs plus the honest C6 inner
 │   │   │   proofs for the first `T + 1` parties after sorting by `party_id`
+│   │   ├─ Admits C7 only when its ordered share commitments, party IDs, and plaintext match
+│   │   │   that batch. A stale result requests matching work. Hydration applies the same check
+│   │   │   to retained C7 proofs, including Complete, before it reuses a final proof
 │   │   ├─ Dispatches ComputeRequest::zk(ZkRequest::DecryptionAggregation {
 │   │   │     c6_total_slots, jobs, params_preset
 │   │   │   })
@@ -1402,15 +1442,18 @@ InterfoldSolReader decodes CiphertextOutputPublished event
 │
 └─ InterfoldSolWriter receives PlaintextAggregated:
   ├─ Accepts publication intents only from locally produced events
-  ├─ During live operation, requires active_aggregators[e3_id] == true when admitting the intent
-  ├─ During startup replay, can retain one durable local intent while the persisted role is restored
-  ├─ Starts a retained submission only while active_aggregators[e3_id] == true
+  ├─ Checks final-proof domain limbs against confirmed key authority and retained ciphertext hashes
+  ├─ Defers admission while authority is missing; discards a mismatched intent before deduplication
+  ├─ Keeps one durable-history sequence range per waiting E3 and reads it in bounded pages
+  ├─ Discards intents for recovered terminal E3s; confirmed terminal stages retire pending work
+  │  and prevent later intents from restarting publication
+  ├─ Keeps the first admitted intent and permits a corrected result after a rejected one
+  ├─ Submits admitted local work even if failover demoted the producing aggregator
   ├─ Defers and coalesces retained intents until EffectsEnabled
   ├─ Reads chain state to confirm plaintextOutput is still empty
   ├─ Encodes the final DecryptionAggregator proof in production
-  ├─ Feature-gated test/CI nodes with `skip_proof_aggregation` reuse the non-empty C7 proof as a
-  │  mock-verifier placeholder; this does not bypass contract verification
-  │  and every node in a test swarm must use the same flag value
+  ├─ Requires a domain-bound DecryptionAggregator payload in every mode. Test-only placeholders
+  │  carry the verified C6 domain and C7 proof bytes; production verifiers reject those bytes
   └─ Calls contract.publishPlaintextOutput(e3Id, output, proof)
      → A terminal result clears the intent; a retryable failure keeps it and retries after 30s
         │
@@ -1716,9 +1759,10 @@ The Interfold and registry writers also subscribe before EventStore replay. A lo
 `PlaintextAggregated` or `PublicKeyAggregated` event is the durable publication intent. Each writer
 coalesces the intent by E3, waits for `EffectsEnabled`, checks chain state before submitting, and
 keeps retryable failures for a later attempt. `E3RequestComplete` does not erase an unfinished
-publication, and only an active aggregator can start a retained submission. `PlaintextAggregated` is
-not gossiped or returned by historical peer sync; only the producing node can create this EVM write
-intent.
+publication. The plaintext writer admits final proofs against the canonical decryption domain before
+deduplication and submission. A rejected intent cannot displace a corrected one.
+`PlaintextAggregated` is not gossiped or returned by historical peer sync; only the producing node
+can create this EVM write intent.
 
 The document publisher rebuilds its active outbox and received-document set from the durable event
 log before network effects start. Its DHT store is in memory, so at `SyncEnded` it also stores

@@ -11,6 +11,7 @@ actix = { workspace = true }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 bincode = { workspace = true }
+e3-bfv-client = { workspace = true }
 e3-config = { workspace = true }
 e3-committee-hash = { workspace = true }
 e3-data = { workspace = true }
@@ -36,3 +37,5 @@ zeroize = { workspace = true }
 
 [dev-dependencies]
 e3-zk-prover = { workspace = true }
+e3-evm.workspace = true
+e3-ciphernode-builder.workspace = true

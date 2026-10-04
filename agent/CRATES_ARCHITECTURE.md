@@ -332,6 +332,13 @@ actors are request-scoped recipients created by `E3Router` extensions and reache
 `E3Context`; they are not direct EventBus subscribers. Per-E3 accusation and consistency actors are
 context-owned but also install direct subscriptions for the proof and slash events they consume.
 
+`CanonicalKeyProjection` updates the shared key authority before EventBus domain fan-out.
+`CiphernodeBuilder` first rebuilds it from the full retained event log, including key chunks before
+snapshot cursors. Confirmed registry observations supply authority; validated publications supply
+key bytes. `e3-request::canonical_key` owns the shared admission checks used by keyshare, C6 proof
+dispatch, compute release, and plaintext aggregation. The request router performs no RPC
+preparation.
+
 ### Capability refactor map
 
 Every production actor was inventoried during the architecture refactor. Thinness is judged by
@@ -816,6 +823,11 @@ correlation ID, the gate republishes the durable response under that ID instead 
 again. It does not cache replayed `ComputeRequestError` events. An old OOM or process failure must
 therefore retry, while completed C1-C4 proof work and randomized TrBFV output are reused exactly.
 
+A restored plaintext recipient can remain dormant while confirmed key authority is missing. It keeps
+the saved actor state and ordered replay inputs, then validates recovery before forwarding them.
+Empty collectors recover authenticated shares from the full retained event log, including shares
+covered by snapshot cursors. Recovery keeps effects disabled until `EffectsEnabled` is delivered.
+
 ## Replay-safe EVM result publication
 
 `InterfoldSolWriter` and `CiphernodeRegistrySolWriter` subscribe before EventStore replay. Locally
@@ -829,6 +841,10 @@ node that computed the plaintext submits it after a demotion too. It submits onl
 `CiphertextReady` with no plaintext, so the first valid result wins. Contract-state preflights
 provide cross-restart idempotency. Terminal outcomes remove the intent; retryable failures retain it
 and retry after 30 seconds.
+
+Plaintext admission compares the final-proof domain with confirmed key authority and ciphertext
+hashes before the publication gate retains an intent. Missing authority defers admission. A mismatch
+discards the intent, so a corrected local result can replace it.
 
 Only locally sourced result events cross these EVM write boundaries. A remote result cannot make a
 node submit a transaction. `E3RequestComplete` does not discard an unfinished publication intent.

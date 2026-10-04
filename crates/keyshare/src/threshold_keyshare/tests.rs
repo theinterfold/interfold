@@ -875,17 +875,6 @@ async fn the_event_router_reports_failed_state_writes() -> Result<()> {
     let e3_id = E3id::new("unwritable", 1);
     let own_proof = c2_proof(&e3_id, ProofType::C2aSkShareComputation, 0);
     let events: Vec<InterfoldEventData> = vec![
-        PublicKeyAggregated {
-            pubkey: ArcBytes::from_bytes(&[1]),
-            e3_id: e3_id.clone(),
-            nodes: OrderedSet::new(),
-            committee_addresses: Vec::new(),
-            honest_committee_addresses: Vec::new(),
-            pk_commitment: [1; 32],
-            dkg_aggregator_proof: None,
-            dkg_attestation_bundle: None,
-        }
-        .into(),
         peer_share(&e3_id, 2).into(),
         PkGenerationProofSigned {
             e3_id: e3_id.clone(),
@@ -2816,7 +2805,13 @@ async fn start_actor_with_state(
 )> {
     let (bus, history) = test_bus();
     let e3_id = E3id::new("42", 1);
-    let (state, repo) = test_state(&e3_id, keyshare_state);
+    let (mut state, repo) = test_state(&e3_id, keyshare_state);
+    let (keys, publication) = canonical_key_fixture(&e3_id).await?;
+    state.try_mutate_without_context(|mut state| {
+        state.aggregated_pk = Some(publication.pubkey);
+        state.decryption_domain = Some(keys.get(&e3_id).unwrap().domain(Address::ZERO));
+        Ok(state)
+    })?;
     let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
         bus,
         cipher: Arc::new(Cipher::from_password("test-password").await?),
@@ -2829,6 +2824,7 @@ async fn start_actor_with_state(
         recovery_payloads: test_recovery_payloads(),
         dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
     })
+    .with_canonical_keys(keys)
     .start();
 
     Ok((actor, history, e3_id, repo))
@@ -3493,9 +3489,10 @@ async fn share_deadline_after_publication_intent(phase: DkgTimeoutPhase) -> Resu
         actor
     });
     actor.send(network_publication_intent(&e3_id)).await?;
-    let saved = repo.read().await?.expect("saved publication intent");
-    assert!(saved.aggregated_pk.is_some());
-    assert!(saved.decryption_domain.is_some());
+    // An unverified network publication sets no key or domain, and it must not hide the deadline.
+    let saved = repo.read().await?.expect("saved keyshare state");
+    assert!(saved.aggregated_pk.is_none());
+    assert!(saved.decryption_domain.is_none());
     if let Some(collector) = share_collector {
         collector.send(ThresholdShareCollectionCutoff).await?;
         collector.send(ThresholdShareCollectionTimeout).await?;
@@ -3585,9 +3582,10 @@ async fn encryption_deadline_after_publication_intent(restart: bool) -> Result<(
             .await?;
     }
     parent.send(network_publication_intent(&e3_id)).await?;
-    let saved = repo.read().await?.expect("saved publication intent");
-    assert!(saved.aggregated_pk.is_some());
-    assert!(saved.decryption_domain.is_some());
+    // An unverified network publication sets no key or domain, and it must not hide the deadline.
+    let saved = repo.read().await?.expect("saved keyshare state");
+    assert!(saved.aggregated_pk.is_none());
+    assert!(saved.decryption_domain.is_none());
     if restart {
         parent.send(Die).await?;
         parent = ThresholdKeyshare::new(ThresholdKeyshareParams {
@@ -3861,6 +3859,7 @@ async fn hydration_restores_canonical_publication_before_c4_deadline() -> Result
                 Box::pin(async { anyhow::bail!("hydration must use the saved deadline") })
             }),
             alloy::signers::local::PrivateKeySigner::random(),
+            Default::default(),
         );
         extension
             .hydrate(
@@ -4040,68 +4039,6 @@ async fn a_replayed_decryption_share_response_does_not_fault_after_the_state_adv
         repo.read().await?.expect("persisted keyshare state").state,
         KeyshareState::GeneratingDecryptionProof(_)
     ));
-    Ok(())
-}
-
-#[actix::test]
-async fn restart_skips_dkg_work_after_public_key_context_is_persisted() -> Result<()> {
-    let e3_id = E3id::new("42", 1);
-    let ready = ReadyForDecryption {
-        pk_share: ArcBytes::from_bytes(&[1]),
-        sk_poly_sum: SensitiveBytes::from_encrypted(&[2]),
-        es_poly_sum: vec![SensitiveBytes::from_encrypted(&[3])],
-        signed_pk_generation_proof: None,
-        signed_sk_share_computation_proof: None,
-        signed_e_sm_share_computation_proof: None,
-        signed_sk_share_encryption_proofs: Vec::new(),
-        signed_e_sm_share_encryption_proofs: Vec::new(),
-    };
-    let (bus, history) = test_bus();
-    let (mut state, _) = test_state(&e3_id, KeyshareState::ReadyForDecryption(ready));
-    state.try_mutate_without_context(|mut state| {
-        state.keyshare_published = true;
-        state.aggregated_pk = Some(ArcBytes::from_bytes(&[4]));
-        state.decryption_domain = Some(e3_committee_hash::DecryptionDomainContext {
-            interfold_address: Address::ZERO,
-            committee_hash: [5; 32].into(),
-            committee_public_key: [6; 32].into(),
-        });
-        Ok(state)
-    })?;
-    let recovery_store = InMemStore::new(false).start();
-    let recovery_repo =
-        Repository::<ThresholdKeyshareRecoveryState>::new(DataStore::from_in_mem(&recovery_store));
-    let recovery = recovery_repo.send(Some(ThresholdKeyshareRecoveryState {
-        keyshare_publish_authorized: true,
-        ..Default::default()
-    }));
-    let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
-        bus,
-        cipher: Arc::new(Cipher::from_password("test-password").await?),
-        state,
-        share_enc_preset: DEFAULT_BFV_PRESET,
-        interfold_address: Address::ZERO,
-        signer: alloy::signers::local::PrivateKeySigner::random(),
-        effects_enabled: true,
-        recovery,
-        recovery_payloads: test_recovery_payloads(),
-        dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
-    })
-    .start();
-    let effects_enabled = InterfoldEvent::<Unsequenced>::new_with_timestamp(
-        EffectsEnabled::new().into(),
-        None,
-        1,
-        None,
-        EventSource::Local,
-    )
-    .into_sequenced(1);
-
-    actor.send(effects_enabled).await?;
-    actix::clock::sleep(std::time::Duration::from_millis(25)).await;
-
-    let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
-    assert!(events.is_empty(), "restart replayed superseded DKG work");
     Ok(())
 }
 
@@ -4309,6 +4246,941 @@ fn peer_c4_event(e3_id: &E3id, seq: u64) -> InterfoldEvent {
         EventSource::Net,
     )
     .into_sequenced(seq)
+}
+
+async fn canonical_key_fixture(
+    id: &E3id,
+) -> Result<(
+    crate::canonical_key::CanonicalPublicKeys,
+    PublicKeyAggregated,
+)> {
+    use alloy::{
+        primitives::{Bytes, B256, U256},
+        sol_types::{SolEvent, SolValue},
+    };
+    use e3_ciphernode_builder::EventSystem;
+    use e3_events::{
+        AggregateConfig, AggregateId, CommitteePublicKeyChunkPublished, E3Requested, EvmLogObserved,
+    };
+    use std::{collections::HashMap, time::Duration};
+    let preset = BfvPreset::InsecureThreshold512;
+    let params = BfvParamSet::from(preset);
+    let pk = e3_bfv_client::client::generate_public_key(
+        params.degree,
+        params.plaintext_modulus,
+        params.moduli.to_vec(),
+    )?;
+    let pk_commitment = e3_bfv_client::compute_pk_commitment(
+        pk.clone(),
+        params.degree,
+        params.plaintext_modulus,
+        params.moduli.to_vec(),
+    )?;
+    let committee = vec![
+        Address::repeat_byte(1),
+        Address::repeat_byte(2),
+        Address::repeat_byte(3),
+    ];
+    let honest_committee = vec![committee[0], committee[2]];
+    let mut inputs = vec![B256::ZERO; 12];
+    inputs[3] = B256::from(U256::from(2).to_be_bytes::<32>());
+    inputs[11] = pk_commitment.into();
+    let raw = e3_evm::ICiphernodeRegistry::CommitteeProofPublished {
+        e3Id: id.clone().try_into()?,
+        nodes: committee.clone(),
+        pkCommitment: pk_commitment.into(),
+        proof: Bytes::from((Bytes::new(), inputs).abi_encode_params()),
+    }
+    .encode_log_data();
+    let aggregate = AggregateId::from_chain_id(Some(id.chain_id()));
+    let system = EventSystem::new()
+        .with_fresh_bus()
+        .with_aggregate_config(AggregateConfig::new(HashMap::from([(
+            aggregate,
+            Duration::ZERO,
+        )])));
+    let bus = system.handle()?.enable("key-history");
+    bus.publish_from_remote(
+        E3Requested {
+            e3_id: id.clone(),
+            threshold_m: 1,
+            threshold_n: 3,
+            params_preset: preset,
+            ..Default::default()
+        },
+        0,
+        Some(1),
+        EventSource::Evm,
+    )?;
+    bus.publish_from_remote(
+        EvmLogObserved {
+            contract: "CiphernodeRegistry".into(),
+            chain_id: id.chain_id(),
+            e3_id: Some(id.clone()),
+            event_name: "CommitteeProofPublished".into(),
+            signature: Some(e3_evm::ICiphernodeRegistry::CommitteeProofPublished::SIGNATURE.into()),
+            known: true,
+            topics: raw.topics().iter().map(ToString::to_string).collect(),
+            data: ArcBytes::from_bytes(&raw.data),
+        },
+        0,
+        Some(2),
+        EventSource::Evm,
+    )?;
+    // Recover the assembly even when no derived publication is in the replay suffix.
+    bus.publish_from_remote(
+        CommitteePublicKeyChunkPublished {
+            e3_id: id.clone(),
+            publisher: committee[0].to_string(),
+            candidate_hash: alloy::primitives::keccak256(&pk).0,
+            nodes: committee.iter().map(ToString::to_string).collect(),
+            pk_commitment,
+            chunk_index: 0,
+            chunk_count: 1,
+            total_length: pk.len() as u32,
+            chunk: ArcBytes::from_bytes(&pk),
+        },
+        0,
+        Some(3),
+        EventSource::Evm,
+    )?;
+    bus.flush_event_pipeline().await?;
+    let keys = crate::canonical_key::CanonicalPublicKeys::default();
+    let mut projection = e3_evm::canonical_key::CanonicalKeyProjection::new(
+        keys.clone(),
+        HashMap::from([(id.chain_id(), Address::repeat_byte(9))]),
+    );
+    projection
+        .recover(
+            &system.eventstore_reader()?.seq(),
+            &[aggregate],
+            Default::default(),
+        )
+        .await?;
+    Ok((
+        keys,
+        PublicKeyAggregated {
+            pubkey: ArcBytes::from_bytes(&pk),
+            e3_id: id.clone(),
+            nodes: OrderedSet::new(),
+            committee_addresses: committee,
+            honest_committee_addresses: honest_committee,
+            pk_commitment,
+            dkg_aggregator_proof: None,
+            dkg_attestation_bundle: None,
+        },
+    ))
+}
+
+#[actix::test]
+async fn keyshare_keeps_chain_key_when_network_publication_conflicts() -> Result<()> {
+    let id = E3id::new("73", 1);
+    let (keys, publication) = canonical_key_fixture(&id).await?;
+    let (bus, history) = test_bus();
+    let (state, repo) = test_state(&id, KeyshareState::ReadyForDecryption(ready_for_c4_test()));
+    let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bus,
+        cipher: Arc::new(Cipher::from_password("test-password").await?),
+        state,
+        share_enc_preset: BfvPreset::InsecureDkg512,
+        interfold_address: Address::repeat_byte(9),
+        signer: alloy::signers::local::PrivateKeySigner::random(),
+        effects_enabled: true,
+        recovery: test_recovery(),
+        recovery_payloads: test_recovery_payloads(),
+        dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
+    })
+    .with_canonical_keys(keys.clone())
+    .start();
+    actor
+        .send(keyshare_event(publication.clone(), 1, EventSource::Net))
+        .await?;
+    let canonical = repo.read().await?.unwrap();
+    assert_eq!(canonical.aggregated_pk, Some(publication.pubkey.clone()));
+    assert_eq!(
+        canonical.decryption_domain,
+        Some(keys.get(&id).unwrap().domain(Address::repeat_byte(9)))
+    );
+
+    for variant in 0..4 {
+        let mut other = publication.clone();
+        match variant {
+            0 => {
+                other.pk_commitment = [0x77; 32];
+                other.pubkey = ArcBytes::from_bytes(&[7]);
+            }
+            1 => other.committee_addresses.swap(0, 1),
+            2 => other.honest_committee_addresses = other.committee_addresses[..2].to_vec(),
+            _ => other.pubkey = ArcBytes::from_bytes(&[7]),
+        }
+        actor
+            .send(keyshare_event(other, 2 + variant, EventSource::Net))
+            .await?;
+        let state = repo.read().await?.unwrap();
+        assert_eq!(
+            state.aggregated_pk, canonical.aggregated_pk,
+            "key changed for variant {variant}"
+        );
+        assert_eq!(
+            state.decryption_domain, canonical.decryption_domain,
+            "domain changed for variant {variant}"
+        );
+    }
+    actor
+        .send(keyshare_event(
+            CiphertextOutputPublished {
+                e3_id: id.clone(),
+                ciphertext_output: vec![ArcBytes::from_bytes(&[8])],
+                ciphertext_commitment: [0; 32],
+            },
+            6,
+            EventSource::Evm,
+        ))
+        .await?;
+    let response = ComputeResponse::trbfv(
+        TrBFVResponse::CalculateDecryptionShare(CalculateDecryptionShareResponse {
+            d_share_poly: vec![ArcBytes::from_bytes(&[3])],
+        }),
+        CorrelationId::new(),
+        id.clone(),
+    );
+    actor
+        .send(keyshare_event(response, 7, EventSource::Local))
+        .await?;
+    let events = next_events(&history, 2).await?;
+    let pending = events
+        .iter()
+        .find_map(|event| match event.get_data() {
+            InterfoldEventData::ShareDecryptionProofPending(data) => Some(data),
+            _ => None,
+        })
+        .expect("C6 proof request");
+    assert_eq!(
+        pending.proof_request.aggregated_pk_bytes,
+        publication.pubkey
+    );
+    assert_eq!(
+        Some(pending.proof_request.decryption_domain),
+        canonical.decryption_domain
+    );
+    Ok(())
+}
+
+#[actix::test]
+async fn keyshare_restart_revalidates_snapshot_public_key_context() -> Result<()> {
+    let id = E3id::new("74", 1);
+    let (keys, publication) = canonical_key_fixture(&id).await?;
+    for valid_key in [true, false] {
+        let (bus, history) = test_bus();
+        let (mut state, repo) =
+            test_state(&id, KeyshareState::ReadyForDecryption(ready_for_c4_test()));
+        state.try_mutate_without_context(|mut state| {
+            state.keyshare_published = true;
+            state.aggregated_pk = Some(if valid_key {
+                publication.pubkey.clone()
+            } else {
+                ArcBytes::from_bytes(&[7])
+            });
+            state.decryption_domain = Some(e3_committee_hash::DecryptionDomainContext {
+                interfold_address: Address::ZERO,
+                committee_hash: [7; 32].into(),
+                committee_public_key: [8; 32].into(),
+            });
+            Ok(state)
+        })?;
+        // Reload the unchanged snapshot layout, as a node does on restart.
+        let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+            bus,
+            cipher: Arc::new(Cipher::from_password("test-password").await?),
+            state: repo.load().await?,
+            share_enc_preset: BfvPreset::InsecureDkg512,
+            interfold_address: Address::repeat_byte(9),
+            signer: alloy::signers::local::PrivateKeySigner::random(),
+            effects_enabled: false,
+            recovery: test_recovery(),
+            recovery_payloads: test_recovery_payloads(),
+            dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
+        })
+        .with_canonical_keys(keys.clone())
+        .start();
+        actor
+            .send(keyshare_event(EffectsEnabled::new(), 1, EventSource::Local))
+            .await?;
+        let recovered = repo.read().await?.unwrap();
+        assert_eq!(recovered.aggregated_pk, Some(publication.pubkey.clone()));
+        assert_eq!(
+            recovered.decryption_domain,
+            Some(keys.get(&id).unwrap().domain(Address::repeat_byte(9)))
+        );
+        assert!(
+            history
+                .send(GetEvents::<InterfoldEvent>::new())
+                .await?
+                .is_empty(),
+            "published chain key must suppress superseded DKG work"
+        );
+        let mut other = publication.clone();
+        other.pk_commitment = [7; 32];
+        other.pubkey = ArcBytes::from_bytes(&[7]);
+        actor
+            .send(keyshare_event(other, 3, EventSource::Net))
+            .await?;
+        let restored = repo.read().await?.unwrap();
+        assert_eq!(restored.aggregated_pk, Some(publication.pubkey.clone()));
+        assert_eq!(
+            restored.decryption_domain,
+            Some(keys.get(&id).unwrap().domain(Address::repeat_byte(9)))
+        );
+        actor
+            .send(keyshare_event(
+                CiphertextOutputPublished {
+                    e3_id: id.clone(),
+                    ciphertext_output: vec![ArcBytes::from_bytes(&[8])],
+                    ciphertext_commitment: [0; 32],
+                },
+                4,
+                EventSource::Evm,
+            ))
+            .await?;
+        let requests = next_events(&history, 1).await?;
+        assert!(requests.iter().any(|event| matches!(event.get_data(), InterfoldEventData::ComputeRequest(data)
+            if matches!(data.request, ComputeRequestKind::TrBFV(TrBFVRequest::CalculateDecryptionShare(_))))));
+    }
+    Ok(())
+}
+
+#[actix::test]
+async fn retained_c6_work_recovers_key_bytes_in_every_decryption_phase() -> Result<()> {
+    let id = E3id::new("75", 1);
+    let (recovered_keys, publication) = canonical_key_fixture(&id).await?;
+    let canonical = recovered_keys.get(&id).unwrap();
+    for phase in ["Decrypting", "GeneratingDecryptionProof", "Completed"] {
+        for late_authority in [false, true] {
+            let (bus, history) = test_bus();
+            let ready = ready_for_c4_test();
+            let pending = ShareDecryptionProofPending {
+                e3_id: id.clone(),
+                party_id: 0,
+                node: Address::repeat_byte(1).to_string(),
+                decryption_share: vec![ArcBytes::from_bytes(&[4])],
+                proof_request: ThresholdShareDecryptionProofRequest {
+                    ciphertext_bytes: vec![ArcBytes::from_bytes(&[5])],
+                    aggregated_pk_bytes: ArcBytes::from_bytes(&[7]),
+                    sk_poly_sum: ready.sk_poly_sum.clone(),
+                    es_poly_sum: ready.es_poly_sum.clone(),
+                    d_share_bytes: vec![ArcBytes::from_bytes(&[4])],
+                    decryption_domain: canonical.domain(Address::ZERO),
+                    params_preset: canonical.params_preset,
+                    committee_size: canonical.committee_size,
+                },
+            };
+            let state_kind = match phase {
+                "Decrypting" => KeyshareState::Decrypting(Decrypting {
+                    pk_share: ready.pk_share.clone(),
+                    sk_poly_sum: ready.sk_poly_sum.clone(),
+                    es_poly_sum: ready.es_poly_sum.clone(),
+                    ciphertext_output: pending.proof_request.ciphertext_bytes.clone(),
+                    signed_pk_generation_proof: None,
+                    signed_sk_share_computation_proof: None,
+                    signed_e_sm_share_computation_proof: None,
+                    signed_sk_share_encryption_proofs: vec![],
+                    signed_e_sm_share_encryption_proofs: vec![],
+                }),
+                "GeneratingDecryptionProof" => {
+                    KeyshareState::GeneratingDecryptionProof(GeneratingDecryptionProof {
+                        pk_share: ready.pk_share.clone(),
+                        decryption_share: pending.decryption_share.clone(),
+                        signed_pk_generation_proof: None,
+                        signed_sk_share_computation_proof: None,
+                        signed_e_sm_share_computation_proof: None,
+                        signed_sk_share_encryption_proofs: vec![],
+                        signed_e_sm_share_encryption_proofs: vec![],
+                    })
+                }
+                _ => KeyshareState::Completed,
+            };
+            let (mut state, repo) = test_state(&id, state_kind);
+            state.try_mutate_without_context(|mut state| {
+                state.aggregated_pk = Some(ArcBytes::from_bytes(&[7]));
+                state.decryption_domain = Some(canonical.domain(Address::ZERO));
+                Ok(state)
+            })?;
+            let (mut recovery, recovery_repo) = test_recovery_with_repo();
+            recovery.try_mutate_without_context(|mut recovery| {
+                recovery.share_decryption_proof_pending =
+                    Some(TypedEvent::new(pending.clone(), test_ec(1)));
+                Ok(recovery)
+            })?;
+            let keys = if late_authority {
+                crate::canonical_key::CanonicalPublicKeys::default()
+            } else {
+                recovered_keys.clone()
+            };
+            let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+                bus,
+                cipher: Arc::new(Cipher::from_password("test-password").await?),
+                state: repo.load().await?,
+                share_enc_preset: BfvPreset::InsecureDkg512,
+                interfold_address: Address::repeat_byte(9),
+                signer: alloy::signers::local::PrivateKeySigner::random(),
+                effects_enabled: false,
+                recovery: recovery_repo.load().await?,
+                recovery_payloads: test_recovery_payloads(),
+                dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
+            })
+            .with_canonical_keys(keys.clone())
+            .start();
+            actor
+                .send(keyshare_event(EffectsEnabled::new(), 2, EventSource::Local))
+                .await?;
+            if late_authority {
+                assert!(history
+                    .send(GetEvents::<InterfoldEvent>::new())
+                    .await?
+                    .is_empty());
+                keys.insert(id.clone(), canonical.clone())?;
+                keys.remember_key(&id, publication.pubkey.clone())?;
+                actor
+                    .send(keyshare_event(publication.clone(), 3, EventSource::Net))
+                    .await?;
+            }
+            let events = next_events(&history, 1).await?;
+            let restored = repo.read().await?.unwrap();
+            assert_eq!(
+                restored.aggregated_pk,
+                Some(publication.pubkey.clone()),
+                "{phase}"
+            );
+            if phase == "Decrypting" {
+                assert!(events.iter().any(|event| matches!(
+                    event.get_data(),
+                    InterfoldEventData::ComputeRequest(_)
+                )));
+            } else {
+                let repaired = events
+                    .iter()
+                    .find_map(|event| match event.get_data() {
+                        InterfoldEventData::ShareDecryptionProofPending(data) => Some(data),
+                        _ => None,
+                    })
+                    .expect("repaired C6 intent");
+                assert_eq!(
+                    repaired.proof_request.aggregated_pk_bytes, publication.pubkey,
+                    "{phase}"
+                );
+                assert_eq!(
+                    repaired.proof_request.decryption_domain,
+                    canonical.domain(Address::repeat_byte(9))
+                );
+                assert_eq!(
+                    repaired.proof_request.sk_poly_sum,
+                    pending.proof_request.sk_poly_sum
+                );
+                assert_eq!(
+                    repaired.proof_request.ciphertext_bytes,
+                    pending.proof_request.ciphertext_bytes
+                );
+                let saved = recovery_repo
+                    .read()
+                    .await?
+                    .unwrap()
+                    .share_decryption_proof_pending
+                    .unwrap();
+                assert_eq!(saved.proof_request, repaired.proof_request);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn key_chunk(publication: &PublicKeyAggregated) -> e3_events::CommitteePublicKeyChunkPublished {
+    e3_events::CommitteePublicKeyChunkPublished {
+        e3_id: publication.e3_id.clone(),
+        publisher: publication.committee_addresses[0].to_string(),
+        candidate_hash: alloy::primitives::keccak256(&publication.pubkey[..]).0,
+        nodes: publication
+            .committee_addresses
+            .iter()
+            .map(ToString::to_string)
+            .collect(),
+        pk_commitment: publication.pk_commitment,
+        chunk_index: 0,
+        chunk_count: 1,
+        total_length: publication.pubkey.len() as u32,
+        chunk: publication.pubkey.clone(),
+    }
+}
+
+fn start_decryption_actor(
+    bus: BusHandle,
+    state: Persistable<ThresholdKeyshareState>,
+    recovery: Persistable<ThresholdKeyshareRecoveryState>,
+    keys: crate::canonical_key::CanonicalPublicKeys,
+    cipher: Arc<Cipher>,
+    effects_enabled: bool,
+) -> Addr<ThresholdKeyshare> {
+    ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bus,
+        cipher,
+        state,
+        share_enc_preset: BfvPreset::InsecureDkg512,
+        interfold_address: Address::repeat_byte(9),
+        signer: alloy::signers::local::PrivateKeySigner::random(),
+        effects_enabled,
+        recovery,
+        recovery_payloads: test_recovery_payloads(),
+        dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
+    })
+    .with_canonical_keys(keys)
+    .start()
+}
+
+fn decryption_bus(id: &E3id) -> Result<BusHandle> {
+    use e3_events::{AggregateConfig, AggregateId};
+    use std::time::Duration;
+
+    e3_ciphernode_builder::EventSystem::new()
+        .with_fresh_bus()
+        .with_aggregate_config(AggregateConfig::new(HashMap::from([
+            (AggregateId::from_chain_id(None), Duration::ZERO),
+            (
+                AggregateId::from_chain_id(Some(id.chain_id())),
+                Duration::ZERO,
+            ),
+        ])))
+        .handle()
+        .map(|bus| bus.enable("decryption-resume"))
+}
+
+#[actix::test]
+async fn matching_key_publications_keep_one_pending_decryption_request() -> Result<()> {
+    use e3_multithread::{Multithread, TaskPool, TaskTimeouts};
+    use fhe_traits::DeserializeParametrized;
+    use rand::SeedableRng;
+    use std::{sync::atomic::Ordering, time::Duration};
+
+    let id = E3id::new("76", 1);
+    let (recovered_keys, publication) = canonical_key_fixture(&id).await?;
+    let canonical = recovered_keys.get(&id).unwrap();
+    let cipher = Arc::new(Cipher::from_password("test-password").await?);
+    let params_set = BfvParamSet::from(canonical.params_preset);
+    let params = params_set.build_arc();
+    let ciphertext = e3_bfv_client::client::bfv_encrypt(
+        vec![1u64],
+        publication.pubkey.extract_bytes(),
+        params_set.degree,
+        params_set.plaintext_modulus,
+        params_set.moduli,
+    )?;
+    let poly = fhe::bfv::Ciphertext::from_bytes(&ciphertext, &params)?[0]
+        .clone()
+        .into_power_basis();
+    let mut zero = poly.clone();
+    zero -= &poly;
+    let ready = ReadyForDecryption {
+        sk_poly_sum: SensitiveBytes::new(zero.to_bytes(), &cipher)?,
+        es_poly_sum: vec![SensitiveBytes::new(zero.to_bytes(), &cipher)?],
+        ..ready_for_c4_test()
+    };
+    let output = CiphertextOutputPublished {
+        e3_id: id.clone(),
+        ciphertext_output: vec![ArcBytes::from_bytes(&ciphertext)],
+        ciphertext_commitment: [0; 32],
+    };
+
+    for resume in [
+        "ciphertext",
+        "late authority",
+        "late bytes",
+        "restart",
+        "retained key",
+    ] {
+        let bus = decryption_bus(&id)?;
+        let history = bus.history();
+        let keys = crate::canonical_key::CanonicalPublicKeys::default();
+        if resume != "late authority" {
+            keys.insert(id.clone(), canonical.clone())?;
+        }
+        if matches!(resume, "ciphertext" | "restart" | "retained key") {
+            keys.remember_key(&id, publication.pubkey.clone())?;
+        }
+        let state_kind = if resume == "ciphertext" {
+            KeyshareState::ReadyForDecryption(ready.clone())
+        } else {
+            KeyshareState::Decrypting(Decrypting {
+                pk_share: ready.pk_share.clone(),
+                sk_poly_sum: ready.sk_poly_sum.clone(),
+                es_poly_sum: ready.es_poly_sum.clone(),
+                ciphertext_output: output.ciphertext_output.clone(),
+                signed_pk_generation_proof: None,
+                signed_sk_share_computation_proof: None,
+                signed_e_sm_share_computation_proof: None,
+                signed_sk_share_encryption_proofs: vec![],
+                signed_e_sm_share_encryption_proofs: vec![],
+            })
+        };
+        let (mut state, repo) = test_state(&id, state_kind);
+        state.try_mutate_without_context(|mut state| {
+            state.params = ArcBytes::from_bytes(&encode_bfv_params(&params));
+            if matches!(resume, "restart" | "retained key") {
+                state.aggregated_pk = Some(publication.pubkey.clone());
+                state.decryption_domain = Some(canonical.domain(Address::repeat_byte(9)));
+            }
+            Ok(state)
+        })?;
+        let actor = start_decryption_actor(
+            bus.clone(),
+            repo.load().await?,
+            test_recovery(),
+            keys.clone(),
+            cipher.clone(),
+            resume == "retained key",
+        );
+        bus.subscribe(EventType::ComputeResponse, actor.clone().recipient());
+
+        let pool = TaskPool::new(1, 1);
+        let occupied = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let occupied_worker = occupied.clone();
+        let blocked_pool = pool.clone();
+        let (release, blocked) = std::sync::mpsc::channel();
+        let blocker = actix::spawn(async move {
+            blocked_pool
+                .spawn(
+                    "pending worker".into(),
+                    TaskTimeouts::default(),
+                    move || {
+                        occupied_worker.store(true, Ordering::SeqCst);
+                        let _ = blocked.recv_timeout(Duration::from_secs(30));
+                    },
+                )
+                .await
+        });
+        actix::clock::timeout(Duration::from_secs(2), async {
+            while !occupied.load(Ordering::SeqCst) {
+                actix::clock::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await?;
+        let worker = Multithread::attach(
+            &bus,
+            Arc::new(std::sync::Mutex::new(
+                rand_chacha::ChaCha20Rng::seed_from_u64(42),
+            )),
+            cipher.clone(),
+            pool,
+            "decryption-resume".into(),
+            None,
+            HashMap::new(),
+            keys.clone(),
+        );
+        bus.publish_without_context(EffectsEnabled::new())?;
+        bus.flush_event_pipeline().await?;
+        if resume == "retained key" {
+            actor
+                .send(keyshare_event(publication.clone(), 1, EventSource::Net))
+                .await?;
+            bus.flush_event_pipeline().await?;
+            assert!(
+                history
+                    .send(GetEvents::<InterfoldEvent>::new())
+                    .await?
+                    .iter()
+                    .all(|event| !matches!(
+                        event.get_data(),
+                        InterfoldEventData::ComputeRequest(_)
+                    )),
+                "retained key admission must not resume work"
+            );
+        }
+        actor
+            .send(keyshare_event(EffectsEnabled::new(), 1, EventSource::Local))
+            .await?;
+
+        if matches!(resume, "late authority" | "late bytes") {
+            bus.flush_event_pipeline().await?;
+            assert!(history
+                .send(GetEvents::<InterfoldEvent>::new())
+                .await?
+                .iter()
+                .all(|event| !matches!(event.get_data(), InterfoldEventData::ComputeRequest(_))));
+            if resume == "late authority" {
+                keys.insert(id.clone(), canonical.clone())?;
+            }
+            keys.remember_key(&id, publication.pubkey.clone())?;
+            actor
+                .send(keyshare_event(key_chunk(&publication), 2, EventSource::Evm))
+                .await?;
+        } else if resume == "ciphertext" {
+            actor
+                .send(keyshare_event(publication.clone(), 2, EventSource::Net))
+                .await?;
+            actor
+                .send(keyshare_event(output.clone(), 3, EventSource::Evm))
+                .await?;
+        }
+
+        for seq in 4..20 {
+            let mut matching = publication.clone();
+            matching.nodes.insert(format!("publication-{seq}"));
+            actor
+                .send(keyshare_event(matching, seq, EventSource::Net))
+                .await?;
+        }
+        actor
+            .send(keyshare_event(
+                key_chunk(&publication),
+                20,
+                EventSource::Evm,
+            ))
+            .await?;
+        actor
+            .send(keyshare_event(output.clone(), 21, EventSource::Evm))
+            .await?;
+        actor
+            .send(keyshare_event(
+                EffectsEnabled::new(),
+                22,
+                EventSource::Local,
+            ))
+            .await?;
+        bus.flush_event_pipeline().await?;
+        let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+        let requests: Vec<_> = events
+            .iter()
+            .filter_map(|event| match event.get_data() {
+                InterfoldEventData::ComputeRequest(request) => Some(request),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            requests.len(),
+            1,
+            "{resume}: retained extra gate correlations"
+        );
+        let correlation = requests[0].correlation_id;
+        assert!(
+            events
+                .iter()
+                .all(|event| !matches!(event.get_data(), InterfoldEventData::ComputeResponse(_))),
+            "{resume}: worker must remain pending"
+        );
+
+        release.send(())?;
+        blocker.await??;
+        wait_for_keyshare_state(&repo, |state| {
+            matches!(state, KeyshareState::GeneratingDecryptionProof(_))
+        })
+        .await?;
+        bus.flush_event_pipeline().await?;
+        let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+        let responses: Vec<_> = events
+            .iter()
+            .filter_map(|event| match event.get_data() {
+                InterfoldEventData::ComputeResponse(response) => Some(response),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(responses.len(), 1, "{resume}: gate retained extra waiters");
+        assert_eq!(responses[0].correlation_id, correlation);
+        assert!(matches!(
+            responses[0].response,
+            ComputeResponseKind::TrBFV(TrBFVResponse::CalculateDecryptionShare(_))
+        ));
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(
+                    event.get_data(),
+                    InterfoldEventData::ShareDecryptionProofPending(_)
+                ))
+                .count(),
+            1
+        );
+        actor.send(Die).await?;
+        worker
+            .send(keyshare_event(
+                E3RequestComplete { e3_id: id.clone() },
+                23,
+                EventSource::Local,
+            ))
+            .await?;
+    }
+    Ok(())
+}
+
+#[actix::test]
+async fn decryption_proof_recovery_coalesces_repeated_resume_triggers() -> Result<()> {
+    let id = E3id::new("77", 1);
+    let (recovered_keys, publication) = canonical_key_fixture(&id).await?;
+    let canonical = recovered_keys.get(&id).unwrap();
+    let cipher = Arc::new(Cipher::from_password("test-password").await?);
+    let ready = ready_for_c4_test();
+    let pending = ShareDecryptionProofPending {
+        e3_id: id.clone(),
+        party_id: 0,
+        node: Address::repeat_byte(1).to_string(),
+        decryption_share: vec![ArcBytes::from_bytes(&[4])],
+        proof_request: ThresholdShareDecryptionProofRequest {
+            ciphertext_bytes: vec![ArcBytes::from_bytes(&[5])],
+            aggregated_pk_bytes: publication.pubkey.clone(),
+            sk_poly_sum: ready.sk_poly_sum,
+            es_poly_sum: ready.es_poly_sum,
+            d_share_bytes: vec![ArcBytes::from_bytes(&[4])],
+            decryption_domain: canonical.domain(Address::repeat_byte(9)),
+            params_preset: canonical.params_preset,
+            committee_size: canonical.committee_size,
+        },
+    };
+    for phase in ["Decrypting", "GeneratingDecryptionProof", "Completed"] {
+        for late_authority in [false, true] {
+            // Observe each emitted intent before transport deduplication.
+            let bus = decryption_bus(&id)?;
+            let history = HistoryCollector::<InterfoldEvent>::new().start();
+            bus.event_bus()
+                .send(e3_events::SubscribePreFanout::new(
+                    history.clone().recipient(),
+                ))
+                .await?;
+            let state_kind = match phase {
+                "Decrypting" => KeyshareState::Decrypting(Decrypting {
+                    pk_share: ready.pk_share.clone(),
+                    sk_poly_sum: pending.proof_request.sk_poly_sum.clone(),
+                    es_poly_sum: pending.proof_request.es_poly_sum.clone(),
+                    ciphertext_output: pending.proof_request.ciphertext_bytes.clone(),
+                    signed_pk_generation_proof: None,
+                    signed_sk_share_computation_proof: None,
+                    signed_e_sm_share_computation_proof: None,
+                    signed_sk_share_encryption_proofs: vec![],
+                    signed_e_sm_share_encryption_proofs: vec![],
+                }),
+                "GeneratingDecryptionProof" => {
+                    KeyshareState::GeneratingDecryptionProof(GeneratingDecryptionProof {
+                        pk_share: ready.pk_share.clone(),
+                        decryption_share: pending.decryption_share.clone(),
+                        signed_pk_generation_proof: None,
+                        signed_sk_share_computation_proof: None,
+                        signed_e_sm_share_computation_proof: None,
+                        signed_sk_share_encryption_proofs: vec![],
+                        signed_e_sm_share_encryption_proofs: vec![],
+                    })
+                }
+                _ => KeyshareState::Completed,
+            };
+            let (mut state, repo) = test_state(&id, state_kind);
+            state.try_mutate_without_context(|mut state| {
+                state.aggregated_pk = Some(publication.pubkey.clone());
+                state.decryption_domain = Some(pending.proof_request.decryption_domain);
+                Ok(state)
+            })?;
+            let (mut recovery, recovery_repo) = test_recovery_with_repo();
+            recovery.try_mutate_without_context(|mut recovery| {
+                recovery.share_decryption_proof_pending =
+                    Some(TypedEvent::new(pending.clone(), test_ec(1)));
+                Ok(recovery)
+            })?;
+            let keys = if late_authority {
+                crate::canonical_key::CanonicalPublicKeys::default()
+            } else {
+                recovered_keys.clone()
+            };
+            let actor = start_decryption_actor(
+                bus.clone(),
+                repo.load().await?,
+                recovery_repo.load().await?,
+                keys.clone(),
+                cipher.clone(),
+                false,
+            );
+            actor
+                .send(keyshare_event(EffectsEnabled::new(), 2, EventSource::Local))
+                .await?;
+            if late_authority {
+                bus.flush_event_pipeline().await?;
+                assert!(history
+                    .send(GetEvents::<InterfoldEvent>::new())
+                    .await?
+                    .is_empty());
+                keys.insert(id.clone(), canonical.clone())?;
+                keys.remember_key(&id, publication.pubkey.clone())?;
+                actor
+                    .send(keyshare_event(key_chunk(&publication), 3, EventSource::Evm))
+                    .await?;
+            }
+            if phase == "Decrypting" {
+                bus.flush_event_pipeline().await?;
+                let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+                let correlation = events
+                    .iter()
+                    .find_map(|event| match event.get_data() {
+                        InterfoldEventData::ComputeRequest(request) => Some(request.correlation_id),
+                        _ => None,
+                    })
+                    .expect("resumed decryption-share request");
+                actor
+                    .send(keyshare_event(
+                        ComputeResponse::trbfv(
+                            TrBFVResponse::CalculateDecryptionShare(
+                                CalculateDecryptionShareResponse {
+                                    d_share_poly: pending.decryption_share.clone(),
+                                },
+                            ),
+                            correlation,
+                            id.clone(),
+                        ),
+                        4,
+                        EventSource::Local,
+                    ))
+                    .await?;
+                wait_for_keyshare_state(&repo, |state| {
+                    matches!(state, KeyshareState::GeneratingDecryptionProof(_))
+                })
+                .await?;
+            }
+            for seq in 5..21 {
+                let mut matching = publication.clone();
+                matching.nodes.insert(format!("publication-{seq}"));
+                actor
+                    .send(keyshare_event(matching, seq, EventSource::Net))
+                    .await?;
+            }
+            actor
+                .send(keyshare_event(
+                    key_chunk(&publication),
+                    21,
+                    EventSource::Evm,
+                ))
+                .await?;
+            actor
+                .send(keyshare_event(
+                    EffectsEnabled::new(),
+                    22,
+                    EventSource::Local,
+                ))
+                .await?;
+            bus.flush_event_pipeline().await?;
+            let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+            assert_eq!(
+                events.len(),
+                1 + usize::from(phase == "Decrypting"),
+                "phase={phase}, late_authority={late_authority}"
+            );
+            let proofs: Vec<_> = events
+                .iter()
+                .filter_map(|event| match event.get_data() {
+                    InterfoldEventData::ShareDecryptionProofPending(data) => Some(data),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(
+                proofs.len(),
+                1,
+                "phase={phase}, late_authority={late_authority}"
+            );
+            assert_eq!(proofs[0].proof_request, pending.proof_request);
+            actor.send(Die).await?;
+        }
+    }
+    Ok(())
 }
 
 #[path = "tests/admission.rs"]

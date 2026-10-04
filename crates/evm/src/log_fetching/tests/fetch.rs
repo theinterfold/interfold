@@ -561,7 +561,7 @@ async fn a_configured_range_serves_a_provider_with_an_unrecognized_refusal() {
     assert_eq!(blocks, vec![120, 3_500]);
     for (from, to) in provider.served() {
         assert!(
-            to - from + 1 <= 2_000,
+            to - from < 2_000,
             "served range {from}..={to} is over the cap"
         );
     }
@@ -583,9 +583,6 @@ async fn a_large_configured_range_still_narrows_to_a_small_cap() {
     blocks.sort_unstable();
     assert_eq!(blocks, vec![120, 4_990]);
     for (from, to) in provider.served() {
-        assert!(
-            to - from + 1 <= 10,
-            "served range {from}..={to} is over the cap"
-        );
+        assert!(to - from < 10, "served range {from}..={to} is over the cap");
     }
 }

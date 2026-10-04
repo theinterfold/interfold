@@ -1481,6 +1481,15 @@ async fn test_trbfv_actor() -> Result<()> {
         String,
         BenchmarkRestartIdentity,
     >::new()));
+    let trigger_pipes = std::sync::Mutex::new(HashMap::new());
+    let connect_trigger = |node: &e3_ciphernode_builder::CiphernodeHandle| {
+        // Chain observations must pass through each node's durable event pipeline.
+        let pipe = e3_events::BusHandlePipe::new(node.bus().clone(), |_| true)
+            .start()
+            .recipient();
+        bus.subscribe(EventType::All, pipe.clone());
+        trigger_pipes.lock().unwrap().insert(node.address(), pipe);
+    };
     let restart_during_dkg =
         std::env::var("BENCHMARK_RESTART_DURING_DKG").is_ok_and(|value| value == "1");
     let restart_during_decryption =
@@ -1523,7 +1532,6 @@ async fn test_trbfv_actor() -> Result<()> {
                     .with_pubkey_aggregation()
                     .with_sortition_score()
                     .with_threshold_plaintext_aggregation()
-                    .with_forked_bus(bus.event_bus())
                     .with_eventstore_aggregate_config_for_testing(
                         benchmark_aggregate_config.clone(),
                     )
@@ -1537,6 +1545,7 @@ async fn test_trbfv_actor() -> Result<()> {
                     b = b.with_persistence(log_path, kv_path);
                 }
                 let node = b.build().await?;
+                connect_trigger(&node);
                 if let Some((log_path, kv_path)) = paths {
                     restart_identities.lock().unwrap().insert(
                         node.address(),
@@ -1578,7 +1587,6 @@ async fn test_trbfv_actor() -> Result<()> {
                         .with_pubkey_aggregation()
                         .with_sortition_score()
                         .with_threshold_plaintext_aggregation()
-                        .with_forked_bus(bus.event_bus())
                         .with_eventstore_aggregate_config_for_testing(
                             benchmark_aggregate_config.clone(),
                         )
@@ -1592,6 +1600,7 @@ async fn test_trbfv_actor() -> Result<()> {
                         b = b.with_persistence(log_path, kv_path);
                     }
                     let node = b.build().await?;
+                    connect_trigger(&node);
                     if let Some((log_path, kv_path)) = paths {
                         restart_identities.lock().unwrap().insert(
                             node.address(),
@@ -1687,7 +1696,12 @@ async fn test_trbfv_actor() -> Result<()> {
         ticket_price: U256::from(10_000_000u64),
         chain_id,
     })?;
-    bus.publish_without_context(e3_requested)?;
+    bus.publish_from_remote(
+        e3_requested,
+        0,
+        Some(request_block),
+        e3_events::EventSource::Evm,
+    )?;
 
     if let Some(verifying_contract) = benchmark_dkg_fold_attestation_verifier_address() {
         // The benchmark has no live registry event. Seed the request-time signing context so
@@ -1906,38 +1920,44 @@ async fn test_trbfv_actor() -> Result<()> {
             .cloned()
             .context("restart identity is missing")?;
         println!("Stopping committee party {restart_party_id} during C4");
+        let trigger_pipe = trigger_pipes
+            .lock()
+            .unwrap()
+            .remove(&nodes[node_index].address())
+            .context("restart event pipe is missing")?;
         bus.event_bus()
-            .send(Unsubscribe::new(
-                EventType::All,
-                nodes[node_index].bus().event_bus().clone().recipient(),
-            ))
+            .send(Unsubscribe::new(EventType::All, trigger_pipe))
             .await?;
         nodes
-            .restart_node(node_index, async {
-                let mut builder = CiphernodeBuilder::new(identity.rng, cipher.clone())
-                    .with_history_collector()
-                    .with_shared_taskpool(&task_pool)
-                    .with_multithread_concurrent_jobs(concurrent_jobs)
-                    .with_shared_multithread_report(&multithread_report)
-                    .with_trbfv()
-                    .with_zkproof(zk_backend.clone())
-                    .with_signer(identity.signer)
-                    .with_pubkey_aggregation()
-                    .with_sortition_score()
-                    .with_threshold_plaintext_aggregation()
-                    .with_forked_bus(bus.event_bus())
-                    .with_eventstore_aggregate_config_for_testing(
-                        benchmark_aggregate_config.clone(),
-                    )
-                    .with_dkg_timing_reader_for_testing(dkg_timing_reader.clone())
-                    .with_chains(std::slice::from_ref(&bench_chain_config))
-                    .with_persistence(&identity.log_path, &identity.kv_path)
-                    .with_logging();
-                if !proof_aggregation_enabled {
-                    builder = builder.with_proof_aggregation_disabled_for_testing();
-                }
-                builder.build().await
-            })
+            .restart_node(
+                node_index,
+                Box::pin(async {
+                    let mut builder = CiphernodeBuilder::new(identity.rng, cipher.clone())
+                        .with_history_collector()
+                        .with_shared_taskpool(&task_pool)
+                        .with_multithread_concurrent_jobs(concurrent_jobs)
+                        .with_shared_multithread_report(&multithread_report)
+                        .with_trbfv()
+                        .with_zkproof(zk_backend.clone())
+                        .with_signer(identity.signer)
+                        .with_pubkey_aggregation()
+                        .with_sortition_score()
+                        .with_threshold_plaintext_aggregation()
+                        .with_eventstore_aggregate_config_for_testing(
+                            benchmark_aggregate_config.clone(),
+                        )
+                        .with_dkg_timing_reader_for_testing(dkg_timing_reader.clone())
+                        .with_chains(std::slice::from_ref(&bench_chain_config))
+                        .with_persistence(&identity.log_path, &identity.kv_path)
+                        .with_logging();
+                    if !proof_aggregation_enabled {
+                        builder = builder.with_proof_aggregation_disabled_for_testing();
+                    }
+                    let node = builder.build().await?;
+                    connect_trigger(&node);
+                    Ok(node)
+                }),
+            )
             .await?;
         println!("Restarted committee party {restart_party_id} during C4");
     }
@@ -2214,6 +2234,54 @@ async fn test_trbfv_actor() -> Result<()> {
         "PublicKeyAggregated must always carry a non-empty DKG attestation payload"
     );
 
+    // The synthetic registry records the same confirmed observation as chain ingestion.
+    {
+        use alloy::sol_types::SolEvent;
+        let proof = e3_evm::encode_zk_proof(dkg_aggregator_proof.as_ref().unwrap())?;
+        let observation = e3_evm::ICiphernodeRegistry::CommitteeProofPublished {
+            e3Id: U256::ZERO,
+            nodes: pubkey_event.committee_addresses.clone(),
+            pkCommitment: pubkey_event.pk_commitment.into(),
+            proof,
+        }
+        .encode_log_data();
+        bus.publish_from_remote(
+            e3_events::EvmLogObserved {
+                contract: "CiphernodeRegistry".into(),
+                chain_id: 1,
+                e3_id: Some(e3_id.clone()),
+                event_name: "CommitteeProofPublished".into(),
+                known: true,
+                signature: Some(
+                    e3_evm::ICiphernodeRegistry::CommitteeProofPublished::SIGNATURE.into(),
+                ),
+                topics: observation
+                    .topics()
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect(),
+                data: ArcBytes::from_bytes(&observation.data),
+            },
+            0,
+            Some(request_block + 1),
+            e3_events::EventSource::Evm,
+        )?;
+        bus.publish_without_context(e3_events::CommitteePublished {
+            e3_id: e3_id.clone(),
+            nodes: pubkey_event
+                .committee_addresses
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
+            public_key: pubkey_bytes.clone(),
+            proof: ArcBytes::from_bytes(&[]),
+        })?;
+        bus.flush_event_pipeline().await?;
+        for node in nodes.iter() {
+            node.bus().flush_event_pipeline().await?;
+        }
+    }
+
     let pubkey = PublicKey::from_bytes(&pubkey_bytes, &params_raw)?;
 
     println!("Generating inputs this takes some time...");
@@ -2307,38 +2375,44 @@ async fn test_trbfv_actor() -> Result<()> {
             );
         }
         println!("Stopping committee party {restart_party_id} at node index {node_index}");
+        let trigger_pipe = trigger_pipes
+            .lock()
+            .unwrap()
+            .remove(&nodes[node_index].address())
+            .context("restart event pipe is missing")?;
         bus.event_bus()
-            .send(Unsubscribe::new(
-                EventType::All,
-                nodes[node_index].bus().event_bus().clone().recipient(),
-            ))
+            .send(Unsubscribe::new(EventType::All, trigger_pipe))
             .await?;
         nodes
-            .restart_node(node_index, async {
-                let mut builder = CiphernodeBuilder::new(identity.rng, cipher.clone())
-                    .with_history_collector()
-                    .with_shared_taskpool(&task_pool)
-                    .with_multithread_concurrent_jobs(concurrent_jobs)
-                    .with_shared_multithread_report(&multithread_report)
-                    .with_trbfv()
-                    .with_zkproof(zk_backend.clone())
-                    .with_signer(identity.signer)
-                    .with_pubkey_aggregation()
-                    .with_sortition_score()
-                    .with_threshold_plaintext_aggregation()
-                    .with_forked_bus(bus.event_bus())
-                    .with_eventstore_aggregate_config_for_testing(
-                        benchmark_aggregate_config.clone(),
-                    )
-                    .with_dkg_timing_reader_for_testing(dkg_timing_reader.clone())
-                    .with_chains(std::slice::from_ref(&bench_chain_config))
-                    .with_persistence(&identity.log_path, &identity.kv_path)
-                    .with_logging();
-                if !proof_aggregation_enabled {
-                    builder = builder.with_proof_aggregation_disabled_for_testing();
-                }
-                builder.build().await
-            })
+            .restart_node(
+                node_index,
+                Box::pin(async {
+                    let mut builder = CiphernodeBuilder::new(identity.rng, cipher.clone())
+                        .with_history_collector()
+                        .with_shared_taskpool(&task_pool)
+                        .with_multithread_concurrent_jobs(concurrent_jobs)
+                        .with_shared_multithread_report(&multithread_report)
+                        .with_trbfv()
+                        .with_zkproof(zk_backend.clone())
+                        .with_signer(identity.signer)
+                        .with_pubkey_aggregation()
+                        .with_sortition_score()
+                        .with_threshold_plaintext_aggregation()
+                        .with_eventstore_aggregate_config_for_testing(
+                            benchmark_aggregate_config.clone(),
+                        )
+                        .with_dkg_timing_reader_for_testing(dkg_timing_reader.clone())
+                        .with_chains(std::slice::from_ref(&bench_chain_config))
+                        .with_persistence(&identity.log_path, &identity.kv_path)
+                        .with_logging();
+                    if !proof_aggregation_enabled {
+                        builder = builder.with_proof_aggregation_disabled_for_testing();
+                    }
+                    let node = builder.build().await?;
+                    connect_trigger(&node);
+                    Ok(node)
+                }),
+            )
             .await?;
         println!("Restarted committee party {restart_party_id} at node index {node_index}");
     }

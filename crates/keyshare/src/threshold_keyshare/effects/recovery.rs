@@ -43,17 +43,96 @@ impl ThresholdKeyshare {
     }
 
     pub(in crate::actors::threshold_keyshare) fn public_key_context_is_recovered(
+        &self,
         state: &ThresholdKeyshareState,
     ) -> bool {
-        state.aggregated_pk.is_some() && state.decryption_domain.is_some()
+        self.canonical_keys.get(&state.e3_id).is_some_and(|key| {
+            state.decryption_domain == Some(key.domain(self.interfold_address))
+                && state
+                    .aggregated_pk
+                    .as_ref()
+                    .is_some_and(|pk| key.validate_key(pk).is_ok())
+        })
     }
 
     pub(in crate::actors::threshold_keyshare) fn needs_keyshare_republication(
+        &self,
         state: &ThresholdKeyshareState,
         recovery: &ThresholdKeyshareRecoveryState,
     ) -> bool {
-        !Self::public_key_context_is_recovered(state)
+        self.canonical_keys.get(&state.e3_id).is_none()
             && (recovery.keyshare_publish_authorized || state.keyshare_published)
+    }
+
+    pub(in crate::actors::threshold_keyshare) fn admit_public_key(
+        &mut self,
+        pk: ArcBytes,
+        ec: &EventContext<Sequenced>,
+    ) -> Result<()> {
+        let state = self.state.try_get()?;
+        if self.public_key_context_is_recovered(&state) {
+            return Ok(());
+        }
+        let key = self
+            .canonical_keys
+            .get(&state.e3_id)
+            .ok_or_else(|| anyhow!("chain public-key context is unavailable"))?;
+        key.validate_key(&pk)?;
+        let domain = key.domain(self.interfold_address);
+        self.state.try_mutate(ec, |mut state| {
+            state.aggregated_pk = Some(pk);
+            state.decryption_domain = Some(domain);
+            Ok(state)
+        })?;
+        self.resume_decryption_work(ec.clone())
+    }
+
+    pub(in crate::actors::threshold_keyshare) fn restore_public_key_context(
+        &mut self,
+        ec: &EventContext<Sequenced>,
+    ) -> Result<()> {
+        let state = self.state.try_get()?;
+        if self.public_key_context_is_recovered(&state) {
+            return Ok(());
+        }
+        if let Some(key) = self.canonical_keys.get(&state.e3_id) {
+            if let Some(pk) = self.canonical_keys.public_key(&state.e3_id).or_else(|| {
+                state
+                    .aggregated_pk
+                    .clone()
+                    .filter(|pk| key.validate_key(pk).is_ok())
+            }) {
+                return self.admit_public_key(pk, ec);
+            }
+        }
+        if state.aggregated_pk.is_some() || state.decryption_domain.is_some() {
+            self.state.try_mutate(ec, |mut state| {
+                state.aggregated_pk = None;
+                state.decryption_domain = None;
+                Ok(state)
+            })?;
+        }
+        Ok(())
+    }
+
+    pub(in crate::actors::threshold_keyshare) fn resume_decryption_work(
+        &mut self,
+        ec: EventContext<Sequenced>,
+    ) -> Result<()> {
+        if !self.effects_enabled {
+            return Ok(());
+        }
+        let state = self.state.try_get()?;
+        match state.state {
+            KeyshareState::Decrypting(_) => self.issue_decryption_share_request(ec),
+            KeyshareState::GeneratingDecryptionProof(_) | KeyshareState::Completed => {
+                let Some(pending) = self.recovery.try_get()?.share_decryption_proof_pending else {
+                    return Ok(());
+                };
+                self.issue_decryption_proof_request(pending.into_inner(), ec)
+            }
+            _ => Ok(()),
+        }
     }
 
     pub(in crate::actors::threshold_keyshare) fn record_encryption_key(
@@ -396,6 +475,7 @@ impl ThresholdKeyshare {
             recovery.schema_version
         );
         let ec = recovery.last_ec.clone().unwrap_or(effects_context);
+        self.restore_public_key_context(&ec)?;
         let state = self.state.try_get()?;
         info!(
             e3_id = %state.e3_id,
@@ -469,14 +549,12 @@ impl ThresholdKeyshare {
                 self.replay_threshold_shares(self_addr, &ec)
             }
             KeyshareState::ReadyForDecryption(_) => {
-                // PublicKeyAggregated is a newer durable fact than the retained C2/C3/C4
-                // recovery inputs below. Replaying those superseded jobs would rebuild the
-                // complete DKG proof pipeline before this node can decrypt.
-                if Self::public_key_context_is_recovered(&state) {
+                // Chain key publication supersedes the retained DKG recovery work.
+                if self.canonical_keys.get(&state.e3_id).is_some() {
                     return Ok(());
                 }
                 if recovery.decryption_verification_complete.is_none()
-                    && !Self::needs_keyshare_republication(&state, &recovery)
+                    && !self.needs_keyshare_republication(&state, &recovery)
                 {
                     self.replay_decryption_key_shares(&recovery, self_addr)?;
                 }
@@ -490,27 +568,20 @@ impl ThresholdKeyshare {
                 }
                 if let Some(verification) = recovery.decryption_verification_complete.clone() {
                     self.handle_share_verification_complete(verification)
-                } else if Self::needs_keyshare_republication(&state, &recovery) {
+                } else if self.needs_keyshare_republication(&state, &recovery) {
                     self.publish_keyshare_created(ec)
                 } else {
                     Ok(())
                 }
             }
             KeyshareState::Decrypting(_) => {
-                if Self::needs_keyshare_republication(&state, &recovery) {
+                if self.needs_keyshare_republication(&state, &recovery) {
                     self.publish_keyshare_created(ec.clone())?;
                 }
                 self.issue_decryption_share_request(ec)
             }
             KeyshareState::GeneratingDecryptionProof(_) | KeyshareState::Completed => {
-                let pending = recovery.share_decryption_proof_pending.ok_or_else(|| {
-                    anyhow!(
-                        "missing C6 proof request while resuming threshold-keyshare for E3 {}",
-                        state.e3_id
-                    )
-                })?;
-                let (pending, pending_ec) = pending.into_components();
-                self.bus.publish(pending, pending_ec)
+                self.resume_decryption_work(ec)
             }
             KeyshareState::Failed {
                 failed_at_stage,
