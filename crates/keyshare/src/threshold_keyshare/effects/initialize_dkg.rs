@@ -9,8 +9,9 @@ impl ThresholdKeyshare {
     pub fn handle_ciphernode_selected(
         &mut self,
         msg: TypedEvent<CiphernodeSelected>,
-        address: Addr<Self>,
+        ctx: &mut <Self as Actor>::Context,
     ) -> Result<()> {
+        let address = ctx.address();
         let (msg, ec) = msg.into_components();
         let state = self.state.try_get()?;
         if !matches!(state.state, KeyshareState::Init) {
@@ -52,35 +53,93 @@ impl ThresholdKeyshare {
         self.replay_encryption_keys(&collector)?;
         self.ensure_collector(address.clone(), &ec, now)?;
 
-        let BfvKeypairMaterial {
-            sk_bfv: sk_bfv_encrypted,
-            pk_bfv: pk_bfv_bytes,
-        } = generate_bfv_keypair(&self.share_enc_preset, &self.cipher)?;
+        // Peers encrypt their DKG shares to the key that this node publishes, so a start that
+        // lost the keyshare's snapshot reuses the recorded keypair instead of generating another.
+        if let Some(key) = self.bfv_key.clone() {
+            return self.collect_with_bfv_key(key, msg, ec);
+        }
+        let BfvKeypairMaterial { sk_bfv, pk_bfv } =
+            generate_bfv_keypair(&self.share_enc_preset, &self.cipher)?;
+        let key = BfvKeyIntent { sk_bfv, pk_bfv };
+        // The keypair is on disk before anything uses it, and the actor handles no other message
+        // until then.
+        let keys = self.bfv_keys.clone();
+        let recorded = key.clone();
+        ctx.wait(
+            async move { keys.record(&recorded).await }
+                .into_actor(self)
+                .map(move |result, actor, _| {
+                    let result = result.and_then(|()| {
+                        actor.bfv_key = Some(key.clone());
+                        actor.collect_with_bfv_key(key, msg, ec.clone())
+                    });
+                    if let Err(error) = result {
+                        actor.bus.with_ec(&ec).err(EType::KeyGeneration, error);
+                    }
+                }),
+        );
+        Ok(())
+    }
 
-        let e3_id = state.e3_id.clone();
-
+    /// Enter encryption-key collection with this node's recorded keypair, and publish its public
+    /// key once effects run. In replay, resume publishes it when effects start.
+    fn collect_with_bfv_key(
+        &mut self,
+        key: BfvKeyIntent,
+        selected: CiphernodeSelected,
+        ec: EventContext<Sequenced>,
+    ) -> Result<()> {
         self.state.try_mutate(&ec, |s| {
             s.new_state(KeyshareState::CollectingEncryptionKeys(
                 CollectingEncryptionKeysData {
-                    sk_bfv: sk_bfv_encrypted.clone(),
-                    pk_bfv: pk_bfv_bytes.clone(),
-                    ciphernode_selected: msg,
+                    sk_bfv: key.sk_bfv.clone(),
+                    pk_bfv: key.pk_bfv.clone(),
+                    ciphernode_selected: selected,
                 },
             ))
         })?;
+        if self.effects_enabled {
+            self.publish_own_encryption_key(ec)?;
+        }
+        Ok(())
+    }
 
-        let committee_size = state.committee_size()?;
+    /// Publish this node's encryption key for its proof. When the log holds another key of this
+    /// node, the node lost the secret of the key that its peers hold: it abstains instead of
+    /// publishing a second key, and the protocol treats it as absent.
+    pub(in crate::actors::threshold_keyshare) fn publish_own_encryption_key(
+        &mut self,
+        ec: EventContext<Sequenced>,
+    ) -> Result<()> {
+        let state = self.state.try_get()?;
+        let KeyshareState::CollectingEncryptionKeys(data) = &state.state else {
+            return Ok(());
+        };
+        if let Some(logged) = self
+            .recovery
+            .try_get()?
+            .encryption_keys
+            .get(&state.party_id)
+        {
+            if logged.key.pk_bfv != data.pk_bfv {
+                error!(
+                    e3_id = %state.e3_id,
+                    party_id = state.party_id,
+                    "The log holds another encryption key of this node, whose secret is lost. This \
+                     node publishes no second key and takes no further part in this E3's DKG."
+                );
+                return Ok(());
+            }
+        }
         self.bus.publish(
             EncryptionKeyPending {
-                e3_id,
-                key: Arc::new(EncryptionKey::new(state.party_id, pk_bfv_bytes)),
+                e3_id: state.e3_id.clone(),
+                key: Arc::new(EncryptionKey::new(state.party_id, data.pk_bfv.clone())),
                 params_preset: self.share_enc_preset,
-                committee_size,
+                committee_size: state.committee_size()?,
             },
             ec,
-        )?;
-
-        Ok(())
+        )
     }
 
     /// 1a. AllEncryptionKeysCollected - All BFV keys received, start share generation

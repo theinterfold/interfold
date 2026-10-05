@@ -56,6 +56,7 @@ async fn late_selection_does_not_fail_the_shared_e3() -> Result<()> {
     let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let read_calls = Arc::clone(&calls);
     let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
         bus,
         cipher: Arc::new(Cipher::from_password("test-password").await?),
         state,
@@ -840,6 +841,7 @@ async fn start_unwritable_actor(
     })
     .await;
     let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
         bus,
         cipher: Arc::new(Cipher::from_password("test-password").await?),
         state,
@@ -975,6 +977,7 @@ async fn build_actor(
         Ok(recovery)
     })?;
     let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
         bus,
         cipher: Arc::new(Cipher::from_password("test-password").await?),
         state,
@@ -1028,6 +1031,7 @@ async fn start_actor_before_selection_with_recovery(
         Ok(recovery)
     })?;
     let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
         bus,
         cipher: Arc::new(Cipher::from_password("test-password").await?),
         state,
@@ -1048,6 +1052,188 @@ async fn start_actor_before_selection_with_recovery(
     })
     .start();
     Ok((actor, repo, recovery_repo))
+}
+
+/// A keyshare before its selection, with its state, recovery state and recorded BFV key in
+/// `store`, so that a second one over the same store is a restart. The saved state is `Init`, as
+/// after a crash that lost the snapshot of the selection.
+async fn keyshare_in_init_over(
+    store: &Addr<InMemStore>,
+    e3_id: &E3id,
+    bus: BusHandle,
+    cipher: Arc<Cipher>,
+    effects_enabled: bool,
+) -> Result<ThresholdKeyshare> {
+    let (mut state, _) = test_state_in(store, e3_id, KeyshareState::Init);
+    state.try_mutate_without_context(|mut state| {
+        let now = crate::domain::timeout_policy::now_unix_secs();
+        state.dkg_deadline_unix_secs = Some(now + 7_200);
+        state.dkg_window_secs = Some(3_600);
+        state.params = insecure_threshold_params();
+        Ok(state)
+    })?;
+    let (mut recovery, _) = test_recovery_in(store);
+    recovery.try_mutate_without_context(|mut recovery| {
+        recovery.ciphernode_selected = Some(TypedEvent::new(selection(e3_id), test_ec(0)));
+        Ok(recovery)
+    })?;
+    Ok(ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key_in(store),
+        bus,
+        cipher,
+        state,
+        share_enc_preset: BfvPreset::InsecureDkg512,
+        interfold_address: Address::ZERO,
+        signer: dealer_signer(0),
+        effects_enabled,
+        recovery,
+        recovery_payloads: test_recovery_payloads(),
+        dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
+    }))
+}
+
+/// Wait until `history` holds `count` `EncryptionKeyPending` events, and return their keys. With
+/// `count` zero, wait a while and return what arrived.
+async fn wait_for_pending_keys(
+    history: &Addr<HistoryCollector<InterfoldEvent>>,
+    count: usize,
+) -> Result<Vec<ArcBytes>> {
+    if count == 0 {
+        actix::clock::sleep(std::time::Duration::from_millis(200)).await;
+        return pending_keys(history).await;
+    }
+    actix::clock::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let keys = pending_keys(history).await?;
+            if keys.len() >= count {
+                return Ok::<_, anyhow::Error>(keys);
+            }
+            actix::clock::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await?
+}
+
+/// The public keys of the `EncryptionKeyPending` events in `history`.
+async fn pending_keys(history: &Addr<HistoryCollector<InterfoldEvent>>) -> Result<Vec<ArcBytes>> {
+    Ok(history
+        .send(GetEvents::<InterfoldEvent>::new())
+        .await?
+        .into_iter()
+        .filter_map(|event| match event.into_data() {
+            InterfoldEventData::EncryptionKeyPending(pending) => Some(pending.key.pk_bfv.clone()),
+            _ => None,
+        })
+        .collect())
+}
+
+/// Peers encrypt their DKG shares to the key that this node publishes. The node records its
+/// keypair before it publishes the key, and a restart that lost the snapshot of the selection
+/// reuses the recorded keypair. In replay it publishes nothing; resume publishes the same key.
+#[actix::test]
+async fn a_restart_reuses_the_recorded_bfv_key() -> Result<()> {
+    let e3_id = E3id::new("70", 1);
+    let store = InMemStore::new(false).start();
+    let cipher = Arc::new(Cipher::from_password("test-password").await?);
+    let state_repo = Repository::<ThresholdKeyshareState>::new(DataStore::from_in_mem(&store));
+    let (bus, history) = test_bus();
+    let first = keyshare_in_init_over(&store, &e3_id, bus.clone(), cipher.clone(), true)
+        .await?
+        .start();
+    first
+        .send(TypedEvent::new(selection(&e3_id), test_ec(1)))
+        .await?;
+    wait_for_keyshare_state(&state_repo, |state| {
+        matches!(state, KeyshareState::CollectingEncryptionKeys(_))
+    })
+    .await?;
+    let published = wait_for_pending_keys(&history, 1).await?;
+    assert_eq!(published.len(), 1, "the selection publishes the key");
+    first.send(Die).await?;
+
+    // A new process over the same store, whose saved state lost the selection.
+    let (bus, history) = test_bus();
+    let second = keyshare_in_init_over(&store, &e3_id, bus.clone(), cipher, false)
+        .await?
+        .start();
+    second
+        .send(TypedEvent::new(selection(&e3_id), test_ec(1)))
+        .await?;
+    wait_for_keyshare_state(&state_repo, |state| {
+        matches!(state, KeyshareState::CollectingEncryptionKeys(_))
+    })
+    .await?;
+    assert!(
+        wait_for_pending_keys(&history, 0).await?.is_empty(),
+        "replay publishes no key"
+    );
+    second
+        .send(keyshare_event(EffectsEnabled::new(), 2, EventSource::Local))
+        .await?;
+    assert_eq!(
+        wait_for_pending_keys(&history, 1).await?,
+        published,
+        "resume publishes the recorded key"
+    );
+    Ok(())
+}
+
+/// When the log holds another encryption key of this node, the node lost the secret of the key
+/// that its peers hold. It publishes no second key at resume. With its own key in the log, it
+/// publishes that key again.
+#[actix::test]
+async fn a_node_that_lost_its_key_publishes_no_second_one() -> Result<()> {
+    for (logged, expected) in [(&[2_u8][..], 1), (&[9_u8][..], 0)] {
+        let e3_id = E3id::new("71", 1);
+        let (bus, history) = test_bus();
+        let (mut state, _) = test_state(&e3_id, collecting_encryption_keys_state(&e3_id));
+        state.try_mutate_without_context(|mut state| {
+            let now = crate::domain::timeout_policy::now_unix_secs();
+            state.dkg_deadline_unix_secs = Some(now + 7_200);
+            state.dkg_window_secs = Some(3_600);
+            state.params = insecure_threshold_params();
+            Ok(state)
+        })?;
+        let (mut recovery, _) = test_recovery_with_repo();
+        recovery.try_mutate_without_context(|mut recovery| {
+            recovery.ciphernode_selected = Some(TypedEvent::new(selection(&e3_id), test_ec(0)));
+            recovery.encryption_keys.insert(
+                0,
+                TypedEvent::new(
+                    EncryptionKeyCreated {
+                        e3_id: e3_id.clone(),
+                        key: Arc::new(EncryptionKey::new(0, ArcBytes::from_bytes(logged))),
+                        external: false,
+                    },
+                    test_ec(1),
+                ),
+            );
+            Ok(recovery)
+        })?;
+        let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+            bfv_key: test_bfv_key(),
+            bus: bus.clone(),
+            cipher: Arc::new(Cipher::from_password("test-password").await?),
+            state,
+            share_enc_preset: BfvPreset::InsecureDkg512,
+            interfold_address: Address::ZERO,
+            signer: dealer_signer(0),
+            effects_enabled: false,
+            recovery,
+            recovery_payloads: test_recovery_payloads(),
+            dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
+        })
+        .start();
+        actor
+            .send(keyshare_event(EffectsEnabled::new(), 2, EventSource::Local))
+            .await?;
+        assert_eq!(
+            wait_for_pending_keys(&history, expected).await?.len(),
+            expected,
+            "logged key {logged:?}"
+        );
+    }
+    Ok(())
 }
 
 fn keyshare_event(
@@ -1238,6 +1424,15 @@ fn test_recovery_payloads() -> ThresholdKeyshareRecoveryPayloads {
     ThresholdKeyshareRecoveryPayloads::new(DataStore::from_in_mem(&store))
 }
 
+fn test_bfv_key() -> DurableIntent<BfvKeyIntent> {
+    test_bfv_key_in(&InMemStore::new(false).start())
+}
+
+/// The recorded BFV keypair in `store`, so that an actor that restarts over the store reads it.
+fn test_bfv_key_in(store: &Addr<InMemStore>) -> DurableIntent<BfvKeyIntent> {
+    DurableIntent::new(DataStore::from_in_mem(store).scope("bfv_key"))
+}
+
 fn test_ec(seq: u64) -> EventContext<Sequenced> {
     InterfoldEvent::<Unsequenced>::new_with_timestamp(
         EffectsEnabled::new().into(),
@@ -1303,6 +1498,7 @@ async fn replayed_dkg_outputs_wait_for_their_prerequisites() -> Result<()> {
     let cipher = Arc::new(Cipher::from_password("test-password").await?);
     let (state, _) = test_state(&e3_id, collecting_encryption_keys_state(&e3_id));
     let mut actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
         bus,
         cipher: cipher.clone(),
         state,
@@ -1342,6 +1538,7 @@ async fn recovered_encryption_keys_reuse_the_replayed_key_output() -> Result<()>
     let cipher = Arc::new(Cipher::from_password("test-password").await?);
     let (state, _) = test_state(&e3_id, collecting_encryption_keys_state(&e3_id));
     let mut actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
         bus,
         cipher: cipher.clone(),
         state,
@@ -1427,6 +1624,7 @@ async fn early_threshold_share_batch_is_verified_after_own_shares_exist() -> Res
         }),
     );
     let mut actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
         bus,
         cipher: cipher.clone(),
         state,
@@ -1534,6 +1732,7 @@ async fn replayed_signed_c3_proof_is_stored_once() -> Result<()> {
         &signer,
     )?;
     let mut actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
         bus,
         cipher: Arc::new(Cipher::from_password("test-password").await?),
         state,
@@ -1628,6 +1827,7 @@ async fn committee_actor(
         effects_enabled: false,
         recovery,
         recovery_payloads: test_recovery_payloads(),
+        bfv_key: test_bfv_key(),
         dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
     });
     Ok(CommitteeActor {
@@ -1856,6 +2056,7 @@ async fn retired_share_batch(
         Ok(recovery)
     })?;
     let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
         bus: bus.clone(),
         cipher: Arc::new(Cipher::from_password("test-password").await?),
         state,
@@ -2462,6 +2663,7 @@ async fn only_the_active_aggregator_proposes_a_ready_roster() -> Result<()> {
         Ok(recovery)
     })?;
     let mut actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
         bus,
         cipher: Arc::new(Cipher::from_password("test-password").await?),
         state,
@@ -2627,6 +2829,7 @@ async fn roster_from_future_aggregator_is_held_until_promotion() -> Result<()> {
         Ok(recovery)
     })?;
     let mut actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
         bus,
         cipher: Arc::new(Cipher::from_password("test-password").await?),
         state,
@@ -3319,6 +3522,7 @@ async fn a_saved_failure_is_redriven_before_any_ready_settlement() -> Result<()>
     let mut state = state.try_get()?;
     state.expelled_parties.insert(1);
     let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
         bus,
         cipher: Arc::new(Cipher::from_password("test-password").await?),
         state: unwritable(state).await,
@@ -3498,6 +3702,7 @@ async fn held_roster_starts_failover_without_every_peer_ready_report() -> Result
         Ok(recovery)
     })?;
     let mut actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
         bus,
         cipher: Arc::new(Cipher::from_password("test-password").await?),
         state,
@@ -3603,6 +3808,7 @@ async fn lower_ranked_roster_replaces_an_accepted_roster_before_c4() -> Result<(
         Ok(recovery)
     })?;
     let mut actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
         bus,
         cipher: Arc::new(Cipher::from_password("test-password").await?),
         state,
@@ -3715,6 +3921,7 @@ async fn conflicting_roster_after_acceptance_is_ignored() -> Result<()> {
         Ok(recovery)
     })?;
     let mut actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
         bus,
         cipher: Arc::new(Cipher::from_password("test-password").await?),
         state,
@@ -3772,6 +3979,7 @@ async fn start_actor_with_state(
         Ok(state)
     })?;
     let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
         bus,
         cipher: Arc::new(Cipher::from_password("test-password").await?),
         state,
@@ -4101,6 +4309,7 @@ async fn stale_threshold_share_deadline_preserves_decryption(decrypting: bool) -
 
     parent.send(Die).await?;
     let recovered = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
         bus: bus.clone(),
         cipher,
         state: repo.load().await?,
@@ -4515,7 +4724,15 @@ async fn encryption_deadline_after_publication_intent(restart: bool) -> Result<(
         &[],
     )
     .await?;
-    actor.record_encryption_key(&TypedEvent::new(peer_key(&e3_id, 0), test_ec(1)))?;
+    // This node's own key, with the public key of its state.
+    actor.record_encryption_key(&TypedEvent::new(
+        EncryptionKeyCreated {
+            e3_id: e3_id.clone(),
+            key: Arc::new(EncryptionKey::new(0, ArcBytes::from_bytes(&[2]))),
+            external: false,
+        },
+        test_ec(1),
+    ))?;
     actor.state.try_mutate_without_context(|mut state| {
         // The 10% encryption-key cutoff is three seconds away in this 7,200-second window.
         state.dkg_deadline_unix_secs = Some(crate::domain::timeout_policy::now_unix_secs() + 6_483);
@@ -4549,6 +4766,7 @@ async fn encryption_deadline_after_publication_intent(restart: bool) -> Result<(
     if restart {
         parent.send(Die).await?;
         parent = ThresholdKeyshare::new(ThresholdKeyshareParams {
+            bfv_key: test_bfv_key(),
             bus,
             cipher,
             state: repo.load().await?,
@@ -5167,6 +5385,7 @@ async fn a_terminal_event_stops_decryption_redelivery_while_its_cleanup_retries(
     };
     // Every write fails, so the terminal cleanup retries later.
     let mut keyshare = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
         bus,
         cipher: Arc::new(Cipher::from_password("test-password").await?),
         state: unwritable(state.try_get()?).await,
@@ -5277,6 +5496,7 @@ async fn restart_rebuilds_c4_collector_before_peer_share_arrives() -> Result<()>
         Ok(recovery)
     })?;
     let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
         bus,
         cipher: Arc::new(Cipher::from_password("test-password").await?),
         state,
@@ -5339,6 +5559,7 @@ async fn duplicate_c4_after_collection_does_not_start_another_collector() -> Res
         Ok(recovery)
     })?;
     let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
         bus,
         cipher: Arc::new(Cipher::from_password("test-password").await?),
         state,
@@ -5364,6 +5585,7 @@ async fn recovery_keeps_the_first_c0_and_c4_from_each_party() -> Result<()> {
     let (bus, _) = test_bus();
     let (state, _) = test_state(&e3_id, KeyshareState::Init);
     let mut actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
         bus,
         cipher: Arc::new(Cipher::from_password("test-password").await?),
         state,
@@ -5596,6 +5818,7 @@ async fn keyshare_keeps_chain_key_when_network_publication_conflicts() -> Result
     let (bus, history) = test_bus();
     let (state, repo) = test_state(&id, KeyshareState::ReadyForDecryption(ready_for_c4_test()));
     let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
         bus,
         cipher: Arc::new(Cipher::from_password("test-password").await?),
         state,
@@ -5707,6 +5930,7 @@ async fn keyshare_restart_revalidates_snapshot_public_key_context() -> Result<()
         })?;
         // Reload the unchanged snapshot layout, as a node does on restart.
         let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+            bfv_key: test_bfv_key(),
             bus,
             cipher: Arc::new(Cipher::from_password("test-password").await?),
             state: repo.load().await?,
@@ -5835,6 +6059,7 @@ async fn retained_c6_work_recovers_key_bytes_in_every_decryption_phase() -> Resu
                 recovered_keys.clone()
             };
             let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+                bfv_key: test_bfv_key(),
                 bus,
                 cipher: Arc::new(Cipher::from_password("test-password").await?),
                 state: repo.load().await?,
@@ -5938,6 +6163,7 @@ fn start_decryption_actor(
     effects_enabled: bool,
 ) -> Addr<ThresholdKeyshare> {
     ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
         bus,
         cipher,
         state,

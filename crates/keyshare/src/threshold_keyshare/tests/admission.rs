@@ -53,6 +53,7 @@ struct AdmissionHarness {
     state: Repository<ThresholdKeyshareState>,
     recovery: Repository<ThresholdKeyshareRecoveryState>,
     payloads: DataStore,
+    bfv_keys: DurableIntent<BfvKeyIntent>,
     cipher: Arc<Cipher>,
 }
 
@@ -137,6 +138,7 @@ impl AdmissionHarness {
             state: state_repo,
             recovery: recovery_repo,
             payloads: DataStore::from_in_mem(&store),
+            bfv_keys: test_bfv_key_in(&store),
             cipher,
         };
         let actor = harness.actor(
@@ -167,6 +169,7 @@ impl AdmissionHarness {
             effects_enabled: true,
             recovery,
             recovery_payloads,
+            bfv_key: self.bfv_keys.clone(),
             dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
         })
     }

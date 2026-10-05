@@ -528,9 +528,6 @@ impl ThresholdKeyshare {
             c4_proof_intent = recovery.decryption_share_proofs_pending.is_some(),
             "resuming persisted threshold keyshare work"
         );
-        // Derived before the match moves `state.state`; only the CollectingEncryptionKeys arm
-        // needs it, so an error surfaces there and nowhere else.
-        let committee_size = state.committee_size();
 
         match state.state {
             KeyshareState::Init => {
@@ -540,22 +537,13 @@ impl ThresholdKeyshare {
                 self_addr.try_send(selected)?;
                 Ok(())
             }
-            KeyshareState::CollectingEncryptionKeys(data) => {
+            KeyshareState::CollectingEncryptionKeys(_) => {
                 let collector = self.recover_encryption_key_collector(self_addr.clone(), &ec)?;
                 self.replay_encryption_keys(&collector)?;
                 // Selection creates the threshold-share collector too. A peer can send this node
                 // its share while this node still collects encryption keys.
                 self.rebuild_threshold_share_collector(self_addr, &ec)?;
-                let committee_size = committee_size?;
-                self.bus.publish(
-                    EncryptionKeyPending {
-                        e3_id: state.e3_id,
-                        key: Arc::new(EncryptionKey::new(state.party_id, data.pk_bfv)),
-                        params_preset: self.share_enc_preset,
-                        committee_size,
-                    },
-                    ec,
-                )
+                self.publish_own_encryption_key(ec)
             }
             KeyshareState::GeneratingThresholdShare(data) => {
                 self.replay_threshold_shares(self_addr, &ec)?;

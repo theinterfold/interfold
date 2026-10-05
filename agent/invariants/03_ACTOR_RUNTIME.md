@@ -60,8 +60,10 @@ the code does not meet yet.
   → execute intents outside the critical section → persist correlated results before they unlock the
   next transition. Never mutate memory and rely on fire-and-forget persistence. **Gap:**
   `Persistable::try_mutate` enqueues its snapshot write and does not wait for it. Slash submissions
-  have a durable intent record; no general transactional outbox exists. — `ARCHITECTURE.md`;
-  `crates/data/src/persistable.rs`
+  have a durable intent record, and threshold-keyshare records its BFV encryption keypair with
+  `DurableIntent` (written and flushed outside the snapshot batches) before it publishes the key;
+  no general transactional outbox exists. — `ARCHITECTURE.md`; `crates/data/src/persistable.rs`;
+  `crates/data/src/durable_intent.rs`
 - The append-only event log is the durable source of truth; snapshots and the timestamp index are
   derived optimizations. Replay-from-checkpoint and snapshot-hydration at the same logical point
   must produce equivalent state and pending intents. **Gap:** startup replays only the suffix after

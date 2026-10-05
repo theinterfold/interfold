@@ -127,6 +127,11 @@ fn layout_rows() -> Vec<String> {
         |r| r.threshold_keyshare_recovery(&e3()),
         &mut rows,
     );
+    // This node's BFV keypair, which `threshold_keyshare_bfv_key` records directly.
+    rows.extend(sample_rows::<e3_keyshare::BfvKeyIntent, _>(
+        "threshold_keyshare_bfv_key",
+        none,
+    ));
     // e3-aggregator
     repository(
         "committee_finalizer_recovery",

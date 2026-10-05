@@ -9,7 +9,7 @@ use alloy::primitives::Address;
 use alloy::signers::local::PrivateKeySigner;
 use anyhow::{anyhow, bail, Context, Result};
 use e3_crypto::{Cipher, SensitiveBytes};
-use e3_data::Persistable;
+use e3_data::{DurableIntent, Persistable};
 use e3_events::{
     prelude::*, trap, AggregationInputsReady, AggregationPhase, AggregatorChanged, BusHandle,
     CiphernodeSelected, CiphertextOutputPublished, CommitmentRosterSelected,
@@ -74,7 +74,8 @@ use crate::domain::{
 #[path = "recovery_state.rs"]
 mod recovery_state;
 pub use recovery_state::{
-    RecoveryPayloadRef, ThresholdKeyshareRecoveryState, THRESHOLD_KEYSHARE_RECOVERY_SCHEMA_VERSION,
+    BfvKeyIntent, RecoveryPayloadRef, ThresholdKeyshareRecoveryState,
+    THRESHOLD_KEYSHARE_RECOVERY_SCHEMA_VERSION,
 };
 #[path = "recovery_payloads.rs"]
 mod recovery_payloads;
@@ -136,6 +137,8 @@ pub struct ThresholdKeyshareParams {
     pub interfold_address: Address,
     pub recovery: Persistable<ThresholdKeyshareRecoveryState>,
     pub recovery_payloads: ThresholdKeyshareRecoveryPayloads,
+    /// Where this node's BFV encryption keypair is recorded.
+    pub bfv_key: DurableIntent<BfvKeyIntent>,
     pub dkg_timing_reader: DkgTimingReader,
     pub signer: PrivateKeySigner,
     pub effects_enabled: bool,
@@ -206,6 +209,9 @@ pub struct ThresholdKeyshare {
     state: Persistable<ThresholdKeyshareState>,
     recovery: Persistable<ThresholdKeyshareRecoveryState>,
     recovery_payloads: ThresholdKeyshareRecoveryPayloads,
+    bfv_keys: DurableIntent<BfvKeyIntent>,
+    /// This node's BFV keypair for the E3, read when the actor starts and set when it records it.
+    bfv_key: Option<BfvKeyIntent>,
     share_enc_preset: BfvPreset,
     interfold_address: Address,
     dkg_timing_reader: DkgTimingReader,
@@ -270,6 +276,8 @@ impl ThresholdKeyshare {
             state: params.state,
             recovery: params.recovery,
             recovery_payloads: params.recovery_payloads,
+            bfv_keys: params.bfv_key,
+            bfv_key: None,
             share_enc_preset: params.share_enc_preset,
             interfold_address: params.interfold_address,
             dkg_timing_reader: params.dkg_timing_reader,
@@ -355,6 +363,19 @@ impl Actor for ThresholdKeyshare {
     type Context = actix::Context<Self>;
     fn started(&mut self, ctx: &mut Self::Context) {
         ctx.set_mailbox_capacity(MAILBOX_LIMIT);
+        // Read this node's BFV keypair before any input, also for a keyshare that a replayed event
+        // created: the mailbox holds every input until the read completes.
+        let keys = self.bfv_keys.clone();
+        ctx.wait(async move { keys.restore().await }.into_actor(self).map(
+            |restored, actor, ctx| match restored {
+                Ok(key) => actor.bfv_key = key,
+                Err(error) => {
+                    error!(%error, "Could not restore the keyshare's recorded BFV key");
+                    actor.bus.err(EType::KeyGeneration, error);
+                    ctx.stop();
+                }
+            },
+        ));
         ctx.run_interval(DECRYPTION_REDELIVERY_DELAY / 5, |_, ctx| {
             ctx.notify(RedeliverDecryptionWork(std::time::Instant::now()));
         });

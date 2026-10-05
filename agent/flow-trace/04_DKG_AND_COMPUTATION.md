@@ -41,14 +41,18 @@ CiphernodeSelected event arrives at ThresholdKeyshare
 │   │       `replay_encryption_keys` sends every recorded key to the new
 │   │       EncryptionKeyCollector, as restart recovery does
 │   │
-│   ├─ 2. Generate fresh BFV keypair:
+│   ├─ 2. Reuse the recorded BFV keypair, or generate a fresh one:
 │   │     (secret_key, public_key) = BFV::keygen(share_encryption_preset)
 │   │     → This is the node's SHARE ENCRYPTION key
 │   │     → Used to encrypt Shamir shares sent to this node
+│   │     → Peers encrypt to the key that this node published, so a start that
+│   │       lost the keyshare's snapshot reuses the keypair that it recorded
 │   │
-│   ├─ 3. Encrypt BFV secret key at rest:
-│   │     encrypted_sk = Cipher.encrypt(secret_key)
-│   │     → Stored locally, password-protected
+│   ├─ 3. Record the keypair durably (`BfvKeyIntent` with `DurableIntent`), the
+│   │     secret key encrypted with the node's Cipher, before anything uses it.
+│   │     The actor handles no other message until the record is on disk. It goes
+│   │     when the E3 ends
+│   │     File: crates/keyshare/src/threshold_keyshare/effects/initialize_dkg.rs
 │   │
 │   ├─ 4. State transition: Init → CollectingEncryptionKeys
 │   │
@@ -56,6 +60,9 @@ CiphernodeSelected event arrives at ThresholdKeyshare
 │   │     e3_id, party_id, bfv_public_key
 │   │   }
 │   │   → ZK proof actor picks this up
+│   │   → Only once effects run: in replay, resume publishes it. When the log
+│   │     holds another key of this node, the node lost the secret of the key that
+│   │     its peers hold, and publishes no second key (it abstains)
 │   │
 │   └─ Collector schedules use the frozen per-E3 window and absolute deadline:
 │         ├─ EncryptionKeyCollector: hard cutoff at 10% of the window
