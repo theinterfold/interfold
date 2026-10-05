@@ -613,10 +613,19 @@ request.
 A starting node fetches each aggregate's history from two admitted peers, because one peer can lack
 part of the range after a restart or a reset and still answer `Done`. Each peer starts from the
 requested timestamp, every page of its history goes to that peer, and the node keeps the union, one
-copy per event ID, with the earliest timestamp. A failed peer is replaced by another one. Each reply
-carries `observed_from`: the time when the responder's own startup history fetch ended, so it
-vouches only for later history. While no successful peer vouches for the whole range, the node asks
-up to four peers, and then logs that the history may be incomplete. One connected peer serves alone.
+copy per event ID, with the earliest timestamp. Each event's ID must be the hash of its payload, so
+a peer cannot hide another peer's copy of a different event under the same ID. A failed peer is
+replaced by another one. A peer that a later peer can replace gets one attempt per page, so silent
+peers cannot use up the five-minute fetch deadline before the node reaches a healthy one; a peer
+that no later peer can replace gets three. Each reply carries `observed_from`: the time from which
+the responder stores history live. The responder sets it once the gossip that it held during its own
+startup is durable: its startup buffer releases that gossip at `SyncEnded` and then a marker, and
+the translator begins live history after the marker, when the event pipeline has stored what it
+handed over. A reply carries the value from when the node admitted the request, before its storage
+read. The responder vouches only for later history, and a requester fails a source whose value
+changes between pages, as after a reset. While no successful peer vouches for the whole range, the
+node asks up to four peers, and then logs that the history may be incomplete. One connected peer
+serves alone.
 
 The document publisher fetches documents in spawned tasks, so a slow DHT read does not hold its
 ingress loop. At most 8 fetches run and 512 documents wait. Four concurrent N=19 E3s need

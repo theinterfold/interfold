@@ -18,6 +18,7 @@ mod gossip_ingress;
 mod gossip_subscription_health;
 mod ingress_limits;
 mod keypair;
+mod live_history;
 mod net_interface;
 mod net_interface_handle;
 mod network;
@@ -44,6 +45,7 @@ pub use actors::*;
 pub use cid::ContentHash;
 pub use domain::{ConnectedPeer, NetworkSnapshot, NetworkStatus};
 pub use keypair::*;
+pub use live_history::LiveHistory;
 pub use net_interface::*;
 pub use net_interface_handle::*;
 pub use network::*;
@@ -151,6 +153,9 @@ pub fn setup_net_with_limits_and_interests(
         bail!("network startup buffer limits must both be greater than zero");
     }
     let topic = network.protocols().gossip_topic();
+    // The translator begins it once the gossip held during startup is durable; history replies
+    // vouch for it.
+    let live_history = LiveHistory::default();
     // NOTE: Pass the unbuffered rx to SyncManager as it must operate before live events are
     // processed
     let _net_sync = NetSyncManager::setup(
@@ -161,6 +166,7 @@ pub fn setup_net_with_limits_and_interests(
         topic,
         network.clone(),
         peer_history_optional,
+        live_history.clone(),
     );
 
     // Buffer application events until SyncEnded. The producer keeps control events on the raw
@@ -189,7 +195,14 @@ pub fn setup_net_with_limits_and_interests(
         let topic = topic.to_owned();
         let tx = tx.clone();
         move |_| {
-            NetEventTranslator::setup(&bus, &tx, &rx, &topic, network.clone());
+            NetEventTranslator::setup(
+                &bus,
+                &tx,
+                &rx,
+                &topic,
+                network.clone(),
+                live_history.clone(),
+            );
             EventConverter::setup(&bus);
             Ok(())
         }

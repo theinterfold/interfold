@@ -22,7 +22,9 @@ const MAX_HISTORY_PEERS: usize = 4;
 /// `Done`. So the node asks two peers, each from `since` and with every page pinned to that peer,
 /// and keeps the union. It asks up to four peers while none of the successful ones observed the
 /// whole range live (its `observed_from` is at or before `since`). A peer that fails is replaced by
-/// another one. One connected peer serves alone.
+/// another one. A peer that a later peer can replace gets one attempt per page, so silent peers
+/// cannot use up the deadline before the node reaches a healthy one. One connected peer serves
+/// alone.
 pub(in crate::actors::net_sync_manager) async fn fetch_historical_events_for_aggregate(
     net_cmds: &mpsc::Sender<NetCommand>,
     net_events: &NetEventSubscriber,
@@ -61,12 +63,13 @@ pub(in crate::actors::net_sync_manager) async fn fetch_history_from_peers(
     let mut sources = 0usize;
     let mut vouched = false;
     let mut last_error = None;
-    for peer in peers.into_iter().take(MAX_HISTORY_PEERS) {
+    let candidates = peers.len().min(MAX_HISTORY_PEERS);
+    for (index, peer) in peers.into_iter().take(MAX_HISTORY_PEERS).enumerate() {
         if sources >= HISTORY_SOURCES && vouched {
             break;
         }
         let requester = DirectRequester::builder(net_cmds.clone(), net_events.clone())
-            .max_retries(SYNC_FETCH_MAX_RETRIES)
+            .max_retries(attempts_per_page(candidates - index - 1, sources))
             .retry_timeout(SYNC_FETCH_RETRY_TIMEOUT)
             .build();
         let history = match fetch_all_batched_events_with_budget::<InterfoldEvent<Unsequenced>>(
@@ -117,8 +120,20 @@ pub(in crate::actors::net_sync_manager) async fn fetch_history_from_peers(
     Ok(events)
 }
 
+/// Attempts for each page of one peer's history. When the `later` peers can still supply the
+/// sources that the node lacks if this peer fails, the peer gets one attempt: a silent peer then
+/// costs one request timeout, and four peers fit the fetch deadline. Otherwise it gets every retry.
+fn attempts_per_page(later: usize, sources: usize) -> u32 {
+    if later >= HISTORY_SOURCES.saturating_sub(sources) {
+        1
+    } else {
+        SYNC_FETCH_MAX_RETRIES
+    }
+}
+
 /// Keep one copy of each event. Peers stamp the same event with their own reception time, so the
-/// earliest timestamp wins, which makes the choice independent of the order of the peers.
+/// earliest timestamp wins, which makes the choice independent of the order of the peers. The IDs
+/// were checked against the payloads, so two copies with one ID carry one payload.
 fn merge_by_event_id(
     merged: &mut HashMap<EventId, InterfoldEvent<Unsequenced>>,
     event: InterfoldEvent<Unsequenced>,
@@ -164,6 +179,16 @@ pub(in crate::actors::net_sync_manager) fn validate_historical_events(
     network: &NetworkPolicy,
 ) -> Result<Vec<InterfoldEvent<Unsequenced>>> {
     for event in &events {
+        // The peer supplies the context ID. The merge keeps one event per ID, so a mislabeled
+        // event could hide another peer's copy of a different event.
+        let payload_id = EventId::hash(event.get_data());
+        if event.id() != payload_id {
+            bail!(
+                "historical sync peer returned event {} whose payload has ID {}",
+                event.id(),
+                payload_id
+            );
+        }
         if event.aggregate_id() != aggregate_id {
             bail!(
                 "historical sync peer returned event for aggregate {} while fetching {}",

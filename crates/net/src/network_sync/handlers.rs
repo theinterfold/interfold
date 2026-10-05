@@ -154,9 +154,6 @@ impl Handler<TypedEvent<SyncRequestSucceeded>> for NetSyncManager {
     ) -> Self::Result {
         trap(EType::Net, &self.bus.with_ec(msg.get_ctx()), || {
             info!("SYNC REQUEST SUCCEEDED");
-            if self.observed_from.is_none() {
-                self.observed_from = Some(self.bus.ts()?);
-            }
             let (msg, ctx) = msg.into_components();
             let response = msg.response;
             self.bus.publish_from_remote_as_response(
@@ -221,8 +218,14 @@ impl Handler<IncomingRequest> for NetSyncManager {
             );
             let query: HashMap<AggregateId, u128> =
                 HashMap::from([(fetch_request.aggregate_id(), fetch_request.since())]);
-            self.requests
-                .insert(id, PendingSyncRequest { peer, responder });
+            self.requests.insert(
+                id,
+                PendingSyncRequest {
+                    peer,
+                    responder,
+                    observed_from: self.live_history.since(),
+                },
+            );
             let storage_query =
                 EventStoreQueryBy::<TsAgg>::new(id, query, ctx.address().recipient())
                     .with_limit(scan_limit as u64)
@@ -298,7 +301,7 @@ impl Handler<EventStoreQueryResponse> for NetSyncManager {
                 ))?;
                 bail!("event store answered a historical-sync page without scan progress");
             };
-            match build_sync_batch(events, history, self.observed_from, &fetch_request) {
+            match build_sync_batch(events, history, pending.observed_from, &fetch_request) {
                 SyncBatchOutcome::BadRequest(reason) => pending.responder.bad_request(reason)?,
                 SyncBatchOutcome::Failed(reason) => {
                     warn!(%reason, "Cannot serve a historical-sync request");

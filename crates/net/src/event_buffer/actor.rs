@@ -60,7 +60,9 @@ impl NetEventBuffer {
         max_bytes: usize,
     ) -> (NetEventSubscriber, NetEventBufferHandle) {
         let input_rx = input.subscribe();
-        let (output_tx, _) = broadcast::channel(max_events);
+        // Room for every held event and the marker that follows them, so a full buffer cannot
+        // make a consumer lag when it is released.
+        let (output_tx, _) = broadcast::channel(max_events.saturating_add(1));
         // Command results do not wait for `SyncEnded`: the callers of the output register at the
         // input channel. The document publisher sends no command that waits for a result before
         // `SyncEnded`. The translator's publications do not wait for `SyncEnded`, and a gossip
@@ -106,6 +108,9 @@ impl NetEventBuffer {
         for event in pending {
             self.forward_event(event)?;
         }
+        // The marker follows the held events and precedes every live one, so the translator
+        // knows when it has handed all held gossip to storage.
+        self.forward_event(NetEvent::StartupBufferReleased)?;
         self.signal_startup(Ok(()));
         Ok(())
     }

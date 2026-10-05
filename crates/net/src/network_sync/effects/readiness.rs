@@ -39,6 +39,7 @@ impl NetSyncManager {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn setup(
         bus: &BusHandle,
         tx: &mpsc::Sender<NetCommand>,
@@ -47,9 +48,11 @@ impl NetSyncManager {
         topic: &str,
         network: NetworkPolicy,
         peer_history_optional: bool,
+        live_history: LiveHistory,
     ) -> Addr<Self> {
         let mut events = rx.subscribe();
-        let mut manager = Self::new(bus, tx, rx, eventstore, topic, network);
+        let mut manager =
+            Self::new(bus, tx, rx, eventstore, topic, network).with_live_history(live_history);
         manager.peer_history_optional = peer_history_optional;
         let addr = manager.start();
 

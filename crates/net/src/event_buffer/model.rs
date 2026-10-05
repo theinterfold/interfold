@@ -123,9 +123,10 @@ pub struct EventBatch<E: Debug> {
     pub events: Vec<E>,
     pub next: BatchCursor,
     pub aggregate_id: AggregateId,
-    /// Timestamp from which the responder has observed this network live: the time its own startup
-    /// history fetch ended. `None` while it still starts up. A responder vouches only for history
-    /// at or after this time; earlier records come from its log and from its own peers.
+    /// Timestamp from which the responder stores this network's history live: the time when the
+    /// gossip that it held during its own startup became durable. `None` while it still starts
+    /// up. A responder vouches only for history at or after this time; earlier records come from
+    /// its log and from its own peers.
     pub observed_from: Option<u128>,
 }
 
@@ -213,7 +214,7 @@ where
 #[derive(Debug)]
 pub(crate) struct PeerHistory<E> {
     pub events: Vec<E>,
-    /// The responder's `observed_from` on its first page.
+    /// The responder's `observed_from`, the same on every page.
     pub observed_from: Option<u128>,
 }
 
@@ -276,9 +277,18 @@ where
             .try_into()
             .context("historical sync page size does not fit usize")?;
         budget.record_page(batch.events.len(), page_bytes)?;
+        // A responder that restarts or resets between two pages serves the rest from another log,
+        // and its time changes. Its pages then do not form one history, so the source fails.
         if first_page {
             observed_from = batch.observed_from;
             first_page = false;
+        } else {
+            ensure!(
+                batch.observed_from == observed_from,
+                "sync peer changed its live-history time from {observed_from:?} to {:?} between \
+                 pages",
+                batch.observed_from
+            );
         }
         all_events
             .try_reserve(batch.events.len())

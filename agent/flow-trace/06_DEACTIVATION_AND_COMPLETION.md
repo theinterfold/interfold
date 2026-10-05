@@ -369,7 +369,10 @@ channel, also when it reads the `NetEventBuffer` output. The producer gives the 
 caller before the broadcast, so lag cannot drop it and the buffer does not hold it until
 `SyncEnded`. The document publisher sends no such command before `SyncEnded`. The translator's
 publications do not wait for `SyncEnded`, and a gossip result only decides whether the translator
-publishes the event again.
+publishes the event again. After the held events, the buffer sends a `StartupBufferReleased` marker,
+and its output channel has room for both. The translator hands every held event to storage before it
+handles the marker, then flushes the event pipeline and begins live history; only then do the node's
+history replies vouch for a range.
 
 EventStore replay uses a disk-backed external merge: per-aggregate pages are sorted into secure
 temporary runs, then compacted and merged with bounded file-descriptor fan-in. Replay waits for

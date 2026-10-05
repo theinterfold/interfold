@@ -40,14 +40,15 @@ use crate::{
         await_event, GossipData, IncomingRequest, NetCommand, NetEvent, PeerTarget,
         ProtocolResponse,
     },
-    NetworkPolicy,
+    LiveHistory, NetworkPolicy,
 };
 
 /// Maximum time to wait for a `ConnectionEstablished` event after all dials
 /// failed before publishing `NetReady` anyway.
 const NET_READY_CONNECT_TIMEOUT: Duration = Duration::from_secs(60);
 
-/// Direct-request retry settings for a single historical sync fetch attempt.
+/// Attempts for each history page from a peer that no later peer can replace, and the delay
+/// before the first retry. A replaceable peer gets one attempt.
 const SYNC_FETCH_MAX_RETRIES: u32 = 3;
 const SYNC_FETCH_RETRY_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -113,6 +114,9 @@ pub struct SyncRequestSucceeded {
 struct PendingSyncRequest {
     peer: PeerId,
     responder: DirectResponder,
+    /// The live-history time when the request was admitted, before its storage read. The reply
+    /// vouches only for what that read can see.
+    observed_from: Option<u128>,
 }
 
 pub struct NetSyncManager {
@@ -153,9 +157,9 @@ pub struct NetSyncManager {
     /// Set when local replay has finished, at `HistoricalNetSyncStart`. Re-sends wait for it, so
     /// that a replayed message is not sent before the replay reaches the end of its E3.
     replay_finished: bool,
-    /// Time from which this node has observed the network live: when its own startup history
-    /// fetch ended. History replies carry it, so a requester knows which range a reply vouches for.
-    observed_from: Option<u128>,
+    /// Time from which this node stores the network's history live. History replies carry it, so
+    /// a requester knows which range a reply vouches for.
+    live_history: LiveHistory,
 }
 
 /// Identifies one message that the node keeps re-sending.
@@ -225,8 +229,14 @@ impl NetSyncManager {
             announcements: HashMap::new(),
             ended_e3s: VecDeque::new(),
             replay_finished: false,
-            observed_from: None,
+            live_history: LiveHistory::default(),
         }
+    }
+
+    /// Serve history with the live-history time that the translator begins.
+    pub(crate) fn with_live_history(mut self, live_history: LiveHistory) -> Self {
+        self.live_history = live_history;
+        self
     }
 }
 

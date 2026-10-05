@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use super::*;
+use crate::actors::{NetEventBuffer, NetEventTranslator};
 use crate::domain::net_event_batch::{BatchCursor, EventBatch};
 use crate::net_interface_handle::{NetEventChannel, NetEventSubscriber};
 use crate::{
@@ -213,16 +214,16 @@ async fn served_pages(
     panic!("history did not end");
 }
 
-/// The `observed_from` of one history page that `manager` serves.
-async fn served_observed_from(
+/// Ask `manager` for the first page of aggregate 1's history.
+async fn request_history_page(
     manager: &Addr<NetSyncManager>,
     net_tx: &mpsc::Sender<NetCommand>,
-    net_rx: &mut mpsc::Receiver<NetCommand>,
-) -> Option<u128> {
-    let request: Vec<u8> = FetchEventsSince::new(AggregateId::new(1), 0, 1)
+    id: u64,
+) {
+    let request: Vec<u8> = FetchEventsSince::new(AggregateId::new(1), 0, 10)
         .try_into()
         .unwrap();
-    let responder = DirectResponder::new(0, ChannelType::Test("observed".to_string()), net_tx)
+    let responder = DirectResponder::new(id, ChannelType::Test(format!("page-{id}")), net_tx)
         .with_request(request);
     manager
         .send(IncomingRequest {
@@ -231,20 +232,59 @@ async fn served_observed_from(
         })
         .await
         .unwrap();
-    let command = tokio::time::timeout(Duration::from_secs(5), net_rx.recv())
-        .await
-        .unwrap()
-        .unwrap();
-    let ProtocolResponse::Ok(bytes) = protocol_response(command) else {
-        panic!("expected a history page");
-    };
-    EventBatch::<InterfoldEvent<Unsequenced>>::try_from(bytes)
-        .unwrap()
-        .observed_from
+}
+
+/// The next history page that the node sends. Other commands, such as gossip, are skipped.
+async fn next_history_page(
+    net_rx: &mut mpsc::Receiver<NetCommand>,
+) -> EventBatch<InterfoldEvent<Unsequenced>> {
+    loop {
+        let command = tokio::time::timeout(Duration::from_secs(5), net_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        if !matches!(command, NetCommand::IncomingResponse(_)) {
+            continue;
+        }
+        let ProtocolResponse::Ok(bytes) = protocol_response(command) else {
+            panic!("expected a history page");
+        };
+        return EventBatch::try_from(bytes).unwrap();
+    }
+}
+
+/// Holds storage queries until the test releases them to the store.
+struct HeldStore {
+    store: Recipient<EventStoreQueryBy<TsAgg>>,
+    held: Vec<EventStoreQueryBy<TsAgg>>,
+}
+
+impl Actor for HeldStore {
+    type Context = ActixContext<Self>;
+}
+
+impl Handler<EventStoreQueryBy<TsAgg>> for HeldStore {
+    type Result = ();
+    fn handle(&mut self, query: EventStoreQueryBy<TsAgg>, _: &mut Self::Context) {
+        self.held.push(query);
+    }
+}
+
+#[derive(Message)]
+#[rtype(result = "()")]
+struct ReleaseQueries;
+
+impl Handler<ReleaseQueries> for HeldStore {
+    type Result = ();
+    fn handle(&mut self, _: ReleaseQueries, _: &mut Self::Context) {
+        for query in self.held.drain(..) {
+            self.store.try_send(query).unwrap();
+        }
+    }
 }
 
 #[actix::test]
-async fn history_replies_vouch_only_after_the_startup_fetch_ended() {
+async fn a_history_reply_vouches_only_for_what_its_storage_read_could_see() {
     let system = EventSystem::new()
         .with_fresh_bus()
         .with_aggregate_config(AggregateConfig::new(HashMap::from([(
@@ -255,47 +295,103 @@ async fn history_replies_vouch_only_after_the_startup_fetch_ended() {
     let (net_tx, mut net_rx) = mpsc::channel::<NetCommand>(100);
     let evt_tx = NetEventChannel::new(100);
     let _evt_rx = evt_tx.subscribe();
+    let store = HeldStore {
+        store: system.eventstore_reader().unwrap().ts(),
+        held: Vec::new(),
+    }
+    .start();
+    let live_history = LiveHistory::default();
     let manager = NetSyncManager::new(
         &bus,
         &net_tx,
         &NetEventSubscriber::from(&evt_tx),
-        system.eventstore_reader().unwrap().ts(),
+        store.clone().recipient(),
         "my-topic",
         NetworkPolicy::local_unrestricted(),
     )
+    .with_live_history(live_history.clone())
     .start();
 
-    assert_eq!(
-        served_observed_from(&manager, &net_tx, &mut net_rx).await,
-        None
+    // The node admits the request and queues its storage read; live history begins before the
+    // read completes.
+    request_history_page(&manager, &net_tx, 0).await;
+    live_history.begin(7);
+    store.send(ReleaseQueries).await.unwrap();
+    assert_eq!(next_history_page(&mut net_rx).await.observed_from, None);
+
+    request_history_page(&manager, &net_tx, 1).await;
+    store.send(ReleaseQueries).await.unwrap();
+    assert_eq!(next_history_page(&mut net_rx).await.observed_from, Some(7));
+}
+
+#[actix::test]
+async fn history_replies_vouch_only_once_the_gossip_held_during_startup_is_stored() {
+    let system = EventSystem::new()
+        .with_fresh_bus()
+        .with_aggregate_config(AggregateConfig::new(HashMap::from([(
+            AggregateId::new(1),
+            Duration::ZERO,
+        )])));
+    let bus = system.handle().unwrap().enable("test");
+    let policy = NetworkPolicy::local_unrestricted();
+    let (net_tx, mut net_rx) = mpsc::channel::<NetCommand>(100);
+    let interface_events = NetEventChannel::new(100);
+    let _keep_open = interface_events.subscribe();
+    let application = NetEventSubscriber::from(&interface_events);
+    let live_history = LiveHistory::default();
+    let manager = NetSyncManager::new(
+        &bus,
+        &net_tx,
+        &application,
+        system.eventstore_reader().unwrap().ts(),
+        "my-topic",
+        policy.clone(),
+    )
+    .with_live_history(live_history.clone())
+    .start();
+    let (released, _buffer) = NetEventBuffer::setup_with_limits(&bus, &application, 16, 1 << 20);
+    NetEventTranslator::setup(
+        &bus,
+        &net_tx,
+        &released,
+        "my-topic",
+        policy,
+        live_history.clone(),
     );
 
-    let ended = SyncRequestSucceeded {
-        response: SyncResponseValue {
-            events: vec![],
-            ts: 0,
-        },
-    };
-    manager
-        .send(TypedEvent::new(
-            ended,
-            InterfoldEvent::<Unsequenced>::new_with_timestamp(
-                TestEvent::new("startup-history", 1).into(),
-                None,
-                1,
-                None,
-                EventSource::Local,
-            )
-            .into_sequenced(1)
-            .get_ctx()
-            .clone(),
-        ))
-        .await
+    // Gossip that arrives during startup waits in the buffer.
+    let gossip: GossipData = local_forwardable_event("11").try_into().unwrap();
+    interface_events
+        .send(NetEvent::GossipIngress {
+            propagation_source: PeerId::random(),
+            data: gossip,
+        })
+        .unwrap();
+    request_history_page(&manager, &net_tx, 0).await;
+    let page = next_history_page(&mut net_rx).await;
+    assert!(page.events.is_empty());
+    assert_eq!(page.observed_from, None);
+
+    bus.publish_without_context(e3_events::SyncEnded::new())
         .unwrap();
 
-    assert!(served_observed_from(&manager, &net_tx, &mut net_rx)
-        .await
-        .is_some());
+    // The first reply that vouches holds the gossip that the buffer released.
+    for id in 1..200 {
+        request_history_page(&manager, &net_tx, id).await;
+        let page = next_history_page(&mut net_rx).await;
+        if page.observed_from.is_some() {
+            assert_eq!(
+                fetched_e3s(&page.events)
+                    .into_iter()
+                    .map(|(e3, _)| e3)
+                    .collect::<Vec<_>>(),
+                vec!["11".to_string()]
+            );
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("history replies never vouched for a range");
 }
 
 #[actix::test]
@@ -429,13 +525,14 @@ async fn history_pages_continue_past_pages_of_quarantined_records() {
 }
 
 /// One peer of a fake network: the history it serves, the time it observed the network from,
-/// and whether it fails every request.
+/// whether it fails every request, and whether it never answers.
 #[derive(Clone)]
 struct FakeHistoryPeer {
     peer: PeerId,
     events: Vec<InterfoldEvent<Unsequenced>>,
     observed_from: Option<u128>,
     fails: bool,
+    silent: bool,
 }
 
 fn keyshare_payload(e3: &str) -> InterfoldEventData {
@@ -484,6 +581,9 @@ fn spawn_fake_history_network(
                     };
                     seen.lock().unwrap().push(target);
                     let peer = peers.iter().find(|peer| peer.peer == target).unwrap();
+                    if peer.silent {
+                        continue;
+                    }
                     let fetch = FetchEventsSince::try_from(request.payload).unwrap();
                     let payload = if peer.fails {
                         ProtocolResponse::Error("unavailable".to_string())
@@ -588,12 +688,14 @@ async fn history_from_two_peers_is_merged_and_each_peer_is_paged_alone() {
             events: vec![received("e1", 11), received("e2", 20), received("e4", 41)],
             observed_from: Some(0),
             fails: false,
+            silent: false,
         },
         FakeHistoryPeer {
             peer: a,
             events: vec![received("e1", 10), received("e3", 30), received("e4", 40)],
             observed_from: Some(0),
             fails: false,
+            silent: false,
         },
     ];
 
@@ -622,6 +724,7 @@ async fn startup_history_asks_two_admitted_peers() {
         events: vec![received(e3, 10)],
         observed_from: Some(0),
         fails: false,
+        silent: false,
     };
 
     let (fetched, requests) = fetch_from_fake_peers(vec![peer("e1"), peer("e2")], 0, false).await;
@@ -639,6 +742,7 @@ async fn history_is_sought_from_a_peer_that_observed_the_range_live() {
         events: vec![received("e6", 60)],
         observed_from: Some(55),
         fails: false,
+        silent: false,
     };
     let peers = vec![
         late(PeerId::random()),
@@ -648,6 +752,7 @@ async fn history_is_sought_from_a_peer_that_observed_the_range_live() {
             events: vec![received("e5", 45), received("e6", 61)],
             observed_from: Some(30),
             fails: false,
+            silent: false,
         },
     ];
 
@@ -667,6 +772,7 @@ async fn a_failing_history_peer_is_replaced() {
         events: vec![received(e3, 10)],
         observed_from: Some(0),
         fails: false,
+        silent: false,
     };
     let peers = vec![
         FakeHistoryPeer {
@@ -674,6 +780,7 @@ async fn a_failing_history_peer_is_replaced() {
             events: vec![],
             observed_from: Some(0),
             fails: true,
+            silent: false,
         },
         serving(PeerId::random(), "e1"),
         serving(PeerId::random(), "e2"),
@@ -687,6 +794,120 @@ async fn a_failing_history_peer_is_replaced() {
         .collect();
     e3s.sort();
     assert_eq!(e3s, vec!["e1".to_string(), "e2".to_string()]);
+}
+
+/// `payload_e3`'s event under the context of `label_e3`'s, as a peer that mislabels events serves
+/// it.
+fn mislabeled(payload_e3: &str, label_e3: &str, ts: u128) -> InterfoldEvent<Unsequenced> {
+    #[derive(serde::Serialize)]
+    struct Raw<'a> {
+        payload: &'a InterfoldEventData,
+        ctx: &'a e3_events::EventContext<Unsequenced>,
+    }
+    let (_, ctx) = received(label_e3, ts).into_components();
+    let bytes = bincode::serialize(&Raw {
+        payload: &keyshare_payload(payload_e3),
+        ctx: &ctx,
+    })
+    .unwrap();
+    InterfoldEvent::from_bytes(&bytes).unwrap()
+}
+
+#[actix::test]
+async fn a_peer_that_mislabels_an_event_cannot_hide_another_peers_copy() {
+    let mislabeled = mislabeled("e9", "e1", 5);
+    assert_eq!(mislabeled.id(), received("e1", 10).id());
+    let peers = vec![
+        // Its copy is earlier, so a merge by context ID alone would keep it.
+        FakeHistoryPeer {
+            peer: PeerId::random(),
+            events: vec![mislabeled],
+            observed_from: Some(0),
+            fails: false,
+            silent: false,
+        },
+        FakeHistoryPeer {
+            peer: PeerId::random(),
+            events: vec![received("e1", 10)],
+            observed_from: Some(0),
+            fails: false,
+            silent: false,
+        },
+    ];
+
+    let (fetched, _) = fetch_from_fake_peers(peers, 0, true).await;
+
+    assert_eq!(fetched_e3s(&fetched), vec![("e1".to_string(), 10)]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn silent_history_peers_leave_time_for_a_healthy_one() {
+    let silent = |peer| FakeHistoryPeer {
+        peer,
+        events: vec![],
+        observed_from: Some(0),
+        fails: false,
+        silent: true,
+    };
+    let (first, second, third) = (PeerId::random(), PeerId::random(), PeerId::random());
+    let healthy = PeerId::random();
+    let peers = vec![
+        silent(first),
+        silent(second),
+        silent(third),
+        FakeHistoryPeer {
+            peer: healthy,
+            events: vec![received("e1", 10)],
+            observed_from: Some(0),
+            fails: false,
+            silent: false,
+        },
+    ];
+
+    let (fetched, requests) = fetch_from_fake_peers(peers, 0, true).await;
+
+    assert_eq!(fetched_e3s(&fetched), vec![("e1".to_string(), 10)]);
+    // Two later peers can replace each of the first two, so each gets one attempt. The third
+    // has only one replacement left for the two sources, so it gets every retry.
+    assert_eq!(requests, vec![first, second, third, third, third, healthy]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_silent_peer_gets_one_attempt_while_a_later_peer_can_supply_the_missing_source() {
+    let silent = |peer| FakeHistoryPeer {
+        peer,
+        events: vec![],
+        observed_from: Some(0),
+        fails: false,
+        silent: true,
+    };
+    let serving = |peer, e3: &'static str| FakeHistoryPeer {
+        peer,
+        events: vec![received(e3, 10)],
+        // It does not vouch for the range, so the node asks every peer.
+        observed_from: None,
+        fails: false,
+        silent: false,
+    };
+    let (first, second, third, fourth) = (
+        PeerId::random(),
+        PeerId::random(),
+        PeerId::random(),
+        PeerId::random(),
+    );
+    let peers = vec![
+        serving(first, "e1"),
+        silent(second),
+        silent(third),
+        serving(fourth, "e2"),
+    ];
+
+    let (fetched, requests) = fetch_from_fake_peers(peers, 0, true).await;
+
+    assert_eq!(fetched.len(), 2);
+    // The first peer served one source, so one later peer can supply the other: the third peer
+    // gets one attempt too.
+    assert_eq!(requests, vec![first, second, third, fourth]);
 }
 
 #[test]
@@ -1006,6 +1227,7 @@ async fn a_published_decryption_share_is_scheduled_for_resending() {
         "my-topic",
         NetworkPolicy::local_unrestricted(),
         false,
+        LiveHistory::default(),
     );
     let e3_id = E3id::new("decrypting", 1);
     let (_, share) = local_decryption_share(&e3_id, 4);
@@ -1099,6 +1321,7 @@ fn started_manager() -> (Addr<NetSyncManager>, EventSystem) {
         "my-topic",
         NetworkPolicy::local_unrestricted(),
         false,
+        LiveHistory::default(),
     );
     (manager, system)
 }
@@ -1291,6 +1514,7 @@ async fn the_restart_rebroadcast_leaves_resends_to_replay() {
         "my-topic",
         NetworkPolicy::local_unrestricted(),
         false,
+        LiveHistory::default(),
     );
 
     // Replay, in log order: one E3 ends after this node's share, the other before a late share.
@@ -1534,9 +1758,14 @@ async fn timed_out_sync_request_releases_its_in_flight_slot() {
     let peer = PeerId::random();
     let IncomingRequest { responder, .. } = incoming_sync_request(peer, 1, 1, &net_tx);
     let id = CorrelationId::new();
-    manager
-        .requests
-        .insert(id, PendingSyncRequest { peer, responder });
+    manager.requests.insert(
+        id,
+        PendingSyncRequest {
+            peer,
+            responder,
+            observed_from: None,
+        },
+    );
 
     manager.expire_sync_request(id);
 
@@ -1572,6 +1801,7 @@ fn start_history_fetch_without_peers(
         "my-topic",
         NetworkPolicy::local_unrestricted(),
         peer_history_optional,
+        LiveHistory::default(),
     );
     let (failure, failed) = e3_utils::actix::channel::oneshot::<HistoricalNetSyncFailed>();
     let received = bus.wait_for(EventType::HistoricalNetSyncEventsReceived);

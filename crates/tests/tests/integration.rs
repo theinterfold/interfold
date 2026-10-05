@@ -2925,6 +2925,7 @@ async fn test_p2p_actor_forwards_events_to_network() -> Result<()> {
         &event_rx,
         "my-topic",
         e3_net::NetworkPolicy::local_unrestricted(),
+        e3_net::LiveHistory::default(),
     );
 
     // Capture messages from output on msgs vec
@@ -3030,6 +3031,7 @@ async fn test_p2p_actor_stores_a_repeated_gossip_event_once() -> Result<()> {
         &e3_net::NetEventSubscriber::from(&event_tx),
         "mytopic",
         e3_net::NetworkPolicy::local_unrestricted(),
+        e3_net::LiveHistory::default(),
     );
 
     let keyshare = |party_id: u64| KeyshareCreated {
@@ -3124,6 +3126,7 @@ async fn test_p2p_actor_stores_a_replayed_event_at_most_once_more() -> Result<()
         &e3_net::NetEventSubscriber::from(&event_tx),
         "mytopic",
         e3_net::NetworkPolicy::local_unrestricted(),
+        e3_net::LiveHistory::default(),
     );
 
     // A peer re-sends it three times, then sends another event.
@@ -3180,6 +3183,7 @@ async fn test_p2p_actor_mislabeled_event_does_not_suppress_the_real_one() -> Res
         &e3_net::NetEventSubscriber::from(&event_tx),
         "mytopic",
         e3_net::NetworkPolicy::local_unrestricted(),
+        e3_net::LiveHistory::default(),
     );
 
     let keyshare = |party_id: u64| KeyshareCreated {

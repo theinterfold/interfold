@@ -462,6 +462,9 @@ pub enum NetEvent {
         correlation_id: CorrelationId,
         peers: Vec<PeerId>,
     },
+    /// The startup buffer sends this on its output after the last event that it held, so a
+    /// consumer knows that every later event is live. The network interface never sends it.
+    StartupBufferReleased,
 }
 
 #[derive(Clone, Debug)]
@@ -488,7 +491,8 @@ impl NetEvent {
             | Self::DhtGetRecordError { .. }
             | Self::DhtPutRecordError { .. }
             | Self::DhtStoreLocalSucceeded { .. }
-            | Self::DhtStoreLocalError { .. } => true,
+            | Self::DhtStoreLocalError { .. }
+            | Self::StartupBufferReleased => true,
             Self::DialError { .. }
             | Self::ConnectionEstablished { .. }
             | Self::ConfiguredDialAdmitted { .. }
@@ -551,7 +555,8 @@ impl NetEvent {
             | Self::DhtPutRecordError { .. }
             | Self::DhtStoreLocalSucceeded { .. }
             | Self::DhtStoreLocalError { .. }
-            | Self::AllPeersDialed { .. } => 0,
+            | Self::AllPeersDialed { .. }
+            | Self::StartupBufferReleased => 0,
         };
 
         std::mem::size_of::<Self>().saturating_add(dynamic)

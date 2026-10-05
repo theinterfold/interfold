@@ -198,6 +198,9 @@ async fn test_buffers_until_sync_ended() -> Result<()> {
     assert!(
         matches!(received2, NetEvent::GossipData(GossipData::GossipBytes(ref bytes)) if bytes == &vec![4, 5, 6])
     );
+    // A marker ends the held events, before every live one.
+    let released = timeout(DELIVERY_TIMEOUT, output_rx.recv()).await??;
+    assert!(matches!(released, NetEvent::StartupBufferReleased));
 
     // Send new event after sync - should forward immediately
     let event3 = NetEvent::GossipData(GossipData::GossipBytes(vec![7, 8, 9]));
@@ -299,6 +302,10 @@ async fn sync_control_burst_does_not_lag_or_consume_the_application_buffer() -> 
     ));
     assert!(matches!(
         output_rx.try_recv(),
+        Ok(NetEvent::StartupBufferReleased)
+    ));
+    assert!(matches!(
+        output_rx.try_recv(),
         Err(broadcast::error::TryRecvError::Empty)
     ));
     Ok(())
@@ -330,7 +337,14 @@ async fn startup_drain_stores_every_accepted_protocol_event() -> Result<()> {
     );
     let (commands, _command_rx) = mpsc::channel(8);
     let policy = NetworkPolicy::local_unrestricted();
-    let _translator = NetEventTranslator::setup(&bus, &commands, &output, "topic", policy.clone());
+    let _translator = NetEventTranslator::setup(
+        &bus,
+        &commands,
+        &output,
+        "topic",
+        policy.clone(),
+        crate::LiveHistory::default(),
+    );
     let peer = PeerId::random();
     let mut ingress = GossipIngress::new();
     let start = Instant::now();
