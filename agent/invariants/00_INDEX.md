@@ -114,9 +114,14 @@ item in code before you rely on it.
   `NetEventBuffer`, so they are not held until `SyncEnded`. The document publisher sends no command
   that waits for a result before `SyncEnded`, and application events stay buffered. libp2p-gossipsub
   0.49.4 does not decrement its publish counter when it drops an expired queued publish. The DHT
-  replication factor stays at 20, so a refresh still sends a document to up to 20 peers. A put
-  returns after one peer stores the record. An aborted put ends its Kademlia query only in the
-  upload phase, and requests that the query already gave to the connection handlers, queued or in
+  replication factor stays at 20, so a refresh still sends a document to up to 20 peers. Kademlia
+  acknowledges an inbound put before the receiver decides to store it, so a put counts as stored
+  only when, after its upload, a lookup of the key returns the record from another peer; then it
+  returns. That shows that a peer served the record at that time, not that it keeps it across its
+  own restart. The network interface owns each put until its result, at most 16 at once, and ends
+  one that has no result after 240 s, before its caller stops waiting. An aborted put reports that
+  it was cancelled at once and starts no check. It ends its Kademlia query only in the upload phase
+  or the check, and requests that the query already gave to the connection handlers, queued or in
   progress, still go out. A put that still looks up its closest peers runs on and then uploads. So
   uploads can overlap the next replication; a full cancel is follow-up work. —
   `crates/net/src/events.rs`; `crates/net/src/document_publishing/`

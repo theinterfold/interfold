@@ -471,6 +471,14 @@ pub enum NetEvent {
 pub enum PutOrStoreError {
     PutRecordError(PutRecordError),
     StoreError(store::Error),
+    /// The upload ended, but no other peer served the record back.
+    NotReplicated,
+    /// The put did not end by its deadline.
+    Expired,
+    /// This node cancelled the put.
+    Cancelled,
+    /// The interface already runs as many puts as it allows.
+    Busy,
 }
 
 impl NetEvent {

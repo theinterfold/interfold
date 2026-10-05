@@ -29,7 +29,7 @@ struct TestNode {
     peer_addresses: HashMap<PeerId, super::PeerAddresses>,
     dht_records: HashMap<PeerId, HashSet<Vec<u8>>>,
     seen_gossip: super::GossipIngress,
-    dht_puts: super::DhtPutSummary,
+    dht_puts: super::DhtPuts,
 }
 
 impl TestNode {
@@ -54,7 +54,7 @@ impl TestNode {
             peer_addresses: HashMap::new(),
             dht_records: Default::default(),
             seen_gossip: super::GossipIngress::new(),
-            dht_puts: super::DhtPutSummary::default(),
+            dht_puts: super::DhtPuts::default(),
         })
     }
 
@@ -95,6 +95,19 @@ impl TestNode {
             &self.interface.network,
             &self.interface.status,
             event,
+        )
+        .await
+    }
+
+    async fn command(&mut self, command: crate::events::NetCommand) -> anyhow::Result<()> {
+        super::process_swarm_command(
+            &mut self.interface.swarm,
+            &self.interface.event_tx,
+            &mut self.correlator,
+            &mut self.dht_puts,
+            &self.admission,
+            &self.interface.network,
+            command,
         )
         .await
     }
@@ -802,33 +815,192 @@ async fn subscription_before_admission_ends_the_redial_backoff() -> anyhow::Resu
     Ok(())
 }
 
-/// Every finished DHT upload reaches the summary, also one that the network interface cannot
-/// match to a command.
-#[tokio::test]
-async fn finished_dht_upload_is_counted_for_the_summary() -> anyhow::Result<()> {
-    let mut node = TestNode::new()?;
-    let record = Record::new(RecordKey::new(&b"document"), b"value".to_vec());
-    let query = node
-        .interface
-        .swarm
-        .behaviour_mut()
-        .kademlia
-        .put_record(record, libp2p::kad::Quorum::One)?;
-
-    loop {
-        let event = node.next_event().await?;
-        let finished = matches!(
-            &event,
-            super::SwarmEvent::Behaviour(super::NodeBehaviourEvent::Kademlia(
-                libp2p::kad::Event::OutboundQueryProgressed { id, .. },
-            )) if *id == query
-        );
-        let _ = node.process(event).await;
-        if finished {
-            break;
+/// The result of a put that `sender` reports, while both nodes run. The receiver drops inbound
+/// puts unless it `stores`, which Kademlia acknowledges all the same. Every event of the put after
+/// its result is collected too.
+async fn put_through(
+    sender: &mut TestNode,
+    receiver: &mut TestNode,
+    stores: bool,
+    command: crate::events::NetCommand,
+) -> anyhow::Result<Vec<crate::events::NetEvent>> {
+    use crate::events::NetEvent;
+    let correlation_id = command
+        .correlation_id()
+        .expect("a put has a correlation ID");
+    let mut events = sender.interface.event_tx.subscribe();
+    sender.command(command).await?;
+    let mut results = Vec::new();
+    let mut quiet_after_result = 0;
+    while quiet_after_result < 20 {
+        tokio::select! {
+            event = sender.next_event() => sender.process(event?).await?,
+            event = receiver.next_event() => {
+                let event = event?;
+                let inbound_put = matches!(
+                    &event,
+                    super::SwarmEvent::Behaviour(super::NodeBehaviourEvent::Kademlia(
+                        libp2p::kad::Event::InboundRequest {
+                            request: libp2p::kad::InboundRequest::PutRecord { .. },
+                        },
+                    ))
+                );
+                if stores || !inbound_put {
+                    receiver.process(event).await?;
+                }
+            }
+            _ = tokio::time::sleep(Duration::from_millis(50)), if !results.is_empty() => {
+                quiet_after_result += 1;
+            }
+        }
+        while let Ok(event) = events.try_recv() {
+            let ours = matches!(
+                &event,
+                NetEvent::DhtPutRecordSucceeded { correlation_id: id, .. }
+                    | NetEvent::DhtPutRecordError { correlation_id: id, .. } if *id == correlation_id
+            );
+            if ours {
+                results.push(event);
+            }
         }
     }
-    assert_eq!(node.dht_puts.take(), Some((0, 1)));
+    Ok(results)
+}
+
+fn put_command(value: &[u8]) -> (crate::events::NetCommand, e3_events::CorrelationId) {
+    let correlation_id = e3_events::CorrelationId::new();
+    let command = crate::events::NetCommand::DhtPutRecord {
+        correlation_id,
+        key: super::ContentHash::from_content(value),
+        expires: Some(Instant::now() + Duration::from_secs(3600)),
+        value: e3_utils::ArcBytes::from_bytes(value),
+    };
+    (command, correlation_id)
+}
+
+/// Kademlia acknowledges an inbound put before the receiver decides to store the record. A put
+/// counts as stored only when the receiver serves the record back. When the receiver drops it, the
+/// put fails as not replicated, once, under its own correlation ID.
+#[tokio::test]
+async fn a_put_counts_only_when_another_peer_serves_the_record_back() -> anyhow::Result<()> {
+    use crate::events::{NetEvent, PutOrStoreError};
+    for stores in [true, false] {
+        let mut sender = TestNode::new()?;
+        let mut receiver = TestNode::new()?;
+        let (_, address) = receiver.listen().await?;
+        sender.interface.swarm.dial(address)?;
+        sender.identify_with(&mut receiver).await?;
+        let (command, correlation_id) = put_command(b"a replicated document");
+
+        let results = put_through(&mut sender, &mut receiver, stores, command).await?;
+
+        assert_eq!(results.len(), 1, "stores={stores}: {results:?}");
+        match &results[0] {
+            NetEvent::DhtPutRecordSucceeded {
+                correlation_id: id, ..
+            } => {
+                assert!(stores);
+                assert_eq!(*id, correlation_id);
+            }
+            NetEvent::DhtPutRecordError {
+                correlation_id: id,
+                error: PutOrStoreError::NotReplicated,
+            } => {
+                assert!(!stores);
+                assert_eq!(*id, correlation_id);
+            }
+            other => panic!("stores={stores}: unexpected result {other:?}"),
+        }
+        let summary = sender.dht_puts.take_summary();
+        assert_eq!(summary, Some(if stores { (1, 0) } else { (0, 1) }));
+        assert!(sender.dht_puts.is_empty(), "stores={stores}");
+    }
+    Ok(())
+}
+
+/// A cancel while the put still looks up its closest peers reports the put cancelled at once. The
+/// upload that follows starts no check and counts nothing.
+#[tokio::test]
+async fn a_put_cancelled_in_its_lookup_reports_once_and_checks_nothing() -> anyhow::Result<()> {
+    use crate::events::{NetCommand, NetEvent, PutOrStoreError};
+    let mut sender = TestNode::new()?;
+    let mut receiver = TestNode::new()?;
+    let (_, address) = receiver.listen().await?;
+    sender.interface.swarm.dial(address)?;
+    sender.identify_with(&mut receiver).await?;
+    let value = b"a document whose E3 ended";
+    let (command, correlation_id) = put_command(value);
+    let mut events = sender.interface.event_tx.subscribe();
+    sender.command(command).await?;
+    assert!(sender
+        .interface
+        .swarm
+        .behaviour()
+        .kademlia
+        .iter_queries()
+        .any(|query| matches!(
+            query.info(),
+            libp2p::kad::QueryInfo::PutRecord {
+                phase: libp2p::kad::PutRecordPhase::GetClosestPeers,
+                ..
+            }
+        )));
+    sender
+        .command(NetCommand::DhtCancelPut {
+            key: super::ContentHash::from_content(value),
+        })
+        .await?;
+    assert!(matches!(
+        events.try_recv(),
+        Ok(NetEvent::DhtPutRecordError {
+            correlation_id: id,
+            error: PutOrStoreError::Cancelled,
+        }) if id == correlation_id
+    ));
+
+    // The lookup runs on and uploads; its end starts no check.
+    let record_key = RecordKey::new(&super::ContentHash::from_content(value));
+    while !sender.dht_puts.is_empty() {
+        tokio::select! {
+            event = sender.next_event() => sender.process(event?).await?,
+            event = receiver.next_event() => receiver.process(event?).await?,
+        }
+        assert!(!sender
+            .interface
+            .swarm
+            .behaviour()
+            .kademlia
+            .iter_queries()
+            .any(|query| matches!(
+                query.info(),
+                libp2p::kad::QueryInfo::GetRecord { key, .. } if *key == record_key
+            )));
+    }
+    while let Ok(event) = events.try_recv() {
+        assert!(
+            !matches!(
+                &event,
+                NetEvent::DhtPutRecordSucceeded { correlation_id: id, .. }
+                    | NetEvent::DhtPutRecordError { correlation_id: id, .. } if *id == correlation_id
+            ),
+            "a second result: {event:?}"
+        );
+    }
+    assert_eq!(sender.dht_puts.take_summary(), None);
+    Ok(())
+}
+
+/// A put that fails reaches the summary as failed.
+#[tokio::test]
+async fn a_failed_dht_upload_is_counted_for_the_summary() -> anyhow::Result<()> {
+    let mut node = TestNode::new()?;
+    let (command, _) = put_command(b"value");
+    node.command(command).await?;
+    while !node.dht_puts.is_empty() {
+        let event = node.next_event().await?;
+        node.process(event).await?;
+    }
+    assert_eq!(node.dht_puts.take_summary(), Some((0, 1)));
     Ok(())
 }
 

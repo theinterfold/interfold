@@ -17,7 +17,7 @@ use crate::{
     direct_responder::{ChannelType, DirectResponder},
     domain::{
         correlator::Correlator,
-        dht_put_summary::DhtPutSummary,
+        dht_puts::{DhtPutResult, DhtPutStep, DhtPuts, EndedQuery, MAX_DHT_PUTS},
         peer_failure_tracker::PeerFailureTracker,
         wire::{encode_gossip, MAX_DHT_DOCUMENT_BYTES, MAX_GOSSIP_BYTES},
     },
@@ -87,6 +87,8 @@ const GOSSIP_HEALTH_INTERVAL: Duration = Duration::from_secs(5);
 const DHT_EXPIRY_INTERVAL: Duration = Duration::from_secs(60);
 /// How often the interface reports finished DHT uploads at INFO.
 const DHT_PUT_SUMMARY_INTERVAL: Duration = Duration::from_secs(60);
+/// How often the interface ends the DHT puts that passed their deadline.
+const DHT_PUT_DEADLINE_INTERVAL: Duration = Duration::from_secs(5);
 pub(crate) const EVENT_CHANNEL_SIZE: usize = 1000;
 const CMD_CHANNEL_SIZE: usize = 1000;
 const MAX_IDENTIFY_ADDRESSES: usize = 8;
@@ -494,7 +496,10 @@ impl Libp2pNetInterface {
         let mut dht_put_summary_tick = tokio::time::interval(DHT_PUT_SUMMARY_INTERVAL);
         dht_put_summary_tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
         dht_put_summary_tick.tick().await;
-        let mut dht_puts = DhtPutSummary::default();
+        let mut dht_put_deadline_tick = tokio::time::interval(DHT_PUT_DEADLINE_INTERVAL);
+        dht_put_deadline_tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        dht_put_deadline_tick.tick().await;
+        let mut dht_puts = DhtPuts::default();
         let mut configured_peers: Vec<_> = self
             .peers
             .iter()
@@ -587,8 +592,17 @@ impl Libp2pNetInterface {
                         &peer_admission,
                     );
                 }
+                _ = dht_put_deadline_tick.tick() => {
+                    let (queries, steps) = dht_puts.expire(Instant::now());
+                    end_dht_put_queries(&mut self.swarm.behaviour_mut().kademlia, queries);
+                    for step in steps {
+                        if let Err(e) = apply_dht_put_step(&mut self.swarm, &event_tx, &mut dht_puts, step) {
+                            error!("Error ending an expired DHT put: {e}");
+                        }
+                    }
+                }
                 _ = dht_put_summary_tick.tick() => {
-                    if let Some((stored, failed)) = dht_puts.take() {
+                    if let Some((stored, failed)) = dht_puts.take_summary() {
                         info!(
                             stored,
                             failed,
@@ -631,6 +645,7 @@ impl Libp2pNetInterface {
                         &mut self.swarm,
                         &event_tx,
                         &mut correlator,
+                        &mut dht_puts,
                         &peer_admission,
                         &self.network,
                         command,
@@ -879,7 +894,7 @@ async fn process_swarm_event(
     configured_peers: &mut [ConfiguredPeer],
     dht_records_by_peer: &mut HashMap<libp2p::PeerId, HashSet<Vec<u8>>>,
     seen_gossip: &mut GossipIngress,
-    dht_puts: &mut DhtPutSummary,
+    dht_puts: &mut DhtPuts,
     network: &NetworkPolicy,
     status: &NetworkStatus,
     event: SwarmEvent<NodeBehaviourEvent>,
@@ -1163,6 +1178,36 @@ async fn process_swarm_event(
             // consuming the provider-record budget.
         }
 
+        // The lookup that checks a put. Only another peer's copy of the record counts; this node's
+        // own copy and a different record are ignored, and the query runs on.
+        SwarmEvent::Behaviour(NodeBehaviourEvent::Kademlia(
+            kad::Event::OutboundQueryProgressed {
+                id,
+                result: QueryResult::GetRecord(result),
+                step,
+                ..
+            },
+        )) if dht_puts.owns(&id) => {
+            if let Ok(GetRecordOk::FoundRecord(found)) = &result {
+                let served = found.peer.is_some()
+                    && dht_puts.checked_key(&id).is_some_and(|key| {
+                        found.record.key == RecordKey::new(key)
+                            && ContentHash::from_content(&found.record.value) == *key
+                    });
+                if served {
+                    if let Some(stored) = dht_puts.served_by_peer(&id) {
+                        if let Some(mut query) = swarm.behaviour_mut().kademlia.query_mut(&id) {
+                            query.finish();
+                        }
+                        apply_dht_put_step(swarm, event_tx, dht_puts, stored)?;
+                    }
+                }
+            }
+            if let Some(ended) = dht_puts.check_progressed(&id, step.last) {
+                apply_dht_put_step(swarm, event_tx, dht_puts, ended)?;
+            }
+        }
+
         SwarmEvent::Behaviour(NodeBehaviourEvent::Kademlia(
             kad::Event::OutboundQueryProgressed {
                 id,
@@ -1224,12 +1269,14 @@ async fn process_swarm_event(
         SwarmEvent::Behaviour(NodeBehaviourEvent::Kademlia(
             kad::Event::OutboundQueryProgressed {
                 id,
-                result: QueryResult::PutRecord(record),
+                result: QueryResult::PutRecord(result),
                 ..
             },
-        )) => {
-            report_put_record_result(event_tx, correlator, dht_puts, id, record)?;
-        }
+        )) => match dht_puts.upload_ended(id, result.map(|_| ())) {
+            Some(next) => apply_dht_put_step(swarm, event_tx, dht_puts, next)?,
+            // A put that this node cancelled, or that ended at its deadline.
+            None => debug!(?id, "A DHT upload ended that no caller waits for"),
+        },
 
         SwarmEvent::Behaviour(NodeBehaviourEvent::Gossipsub(gossipsub::Event::Message {
             propagation_source: peer_id,
@@ -1618,6 +1665,7 @@ async fn process_swarm_command(
     swarm: &mut Swarm<NodeBehaviour>,
     event_tx: &NetEventSender,
     correlator: &mut Correlator,
+    dht_puts: &mut DhtPuts,
     peer_admission: &PeerAdmission,
     network: &NetworkPolicy,
     command: NetCommand,
@@ -1663,7 +1711,7 @@ async fn process_swarm_command(
             handle_put_record(
                 swarm,
                 event_tx,
-                correlator,
+                dht_puts,
                 correlation_id,
                 key,
                 expires,
@@ -1672,7 +1720,11 @@ async fn process_swarm_command(
             Ok(())
         }
         NetCommand::DhtCancelPut { key } => {
-            cancel_record_uploads(&mut swarm.behaviour_mut().kademlia, correlator, &key);
+            let (queries, steps) = dht_puts.cancel(&key);
+            end_dht_put_queries(&mut swarm.behaviour_mut().kademlia, queries);
+            for step in steps {
+                apply_dht_put_step(swarm, event_tx, dht_puts, step)?;
+            }
             Ok(())
         }
         NetCommand::DhtGetRecord {
@@ -1915,16 +1967,26 @@ fn prune_dht_peer_quotas(
     records_by_peer.retain(|_, keys| !keys.is_empty());
 }
 
+/// Store a record and upload it to the peers closest to its key. The put is owned in `dht_puts`
+/// until another peer serves the record back or it fails, and reports one result.
 fn handle_put_record(
     swarm: &mut Swarm<NodeBehaviour>,
     event_tx: &NetEventSender,
-    correlator: &mut Correlator,
+    dht_puts: &mut DhtPuts,
     correlation_id: CorrelationId,
     key: ContentHash,
     expires: Option<Instant>,
     value: ArcBytes,
 ) -> Result<()> {
     debug!("DHT PUT RECORD");
+    if !dht_puts.has_room() {
+        warn!("DHT put refused: {MAX_DHT_PUTS} puts already run");
+        event_tx.send(NetEvent::DhtPutRecordError {
+            correlation_id,
+            error: PutOrStoreError::Busy,
+        })?;
+        return Ok(());
+    }
     let record = Record {
         key: RecordKey::new(&key),
         value: value.extract_bytes(),
@@ -1947,7 +2009,7 @@ fn handle_put_record(
     });
     match result {
         Ok(qid) => {
-            correlator.track(qid, correlation_id);
+            dht_puts.start(correlation_id, key, qid, Instant::now());
             debug!("PUT RECORD OK qid={:?} cid={}", qid, correlation_id);
         }
         Err(error) => {
@@ -1961,88 +2023,92 @@ fn handle_put_record(
     Ok(())
 }
 
-/// End the puts of `key` that are in their upload phase, so that their queries stop waiting for
-/// answers and release the record. An ended put still reports its result, which nobody waits for.
-/// This is not a full cancel. Requests that a query already gave to the connection handlers,
-/// queued or in progress, still go out: Kademlia has no call that takes them back.
-///
-/// A put first looks up the peers closest to the key. Ending that lookup makes Kademlia upload the
-/// record to the peers found so far, so a put in its lookup runs on to its normal end and uploads.
-/// End the puts of `key` that upload their record, and mark them cancelled, so that their quorum
-/// failure is not reported as a failed upload. A put that still looks up its closest peers runs on.
-fn cancel_record_uploads(
+/// End the queries of puts that nobody waits for any more, so they release the record. A check
+/// lookup ends at once. An upload ends only in its upload phase: ending its closest-peer lookup
+/// would make Kademlia upload the record to the peers found so far, so such a put runs on to its
+/// normal end and is ignored then. This is not a full cancel: requests that a query already gave to
+/// the connection handlers still go out. Returns the queries that ended.
+fn end_dht_put_queries(
     kademlia: &mut KademliaBehaviour<MemoryStore>,
-    correlator: &mut Correlator,
-    key: &ContentHash,
-) {
-    for query_id in finish_record_uploads(kademlia, key) {
-        correlator.mark_cancelled(query_id);
+    queries: Vec<EndedQuery>,
+) -> Vec<kad::QueryId> {
+    let mut finished = Vec::new();
+    for EndedQuery { query, checking } in queries {
+        let Some(mut running) = kademlia.query_mut(&query) else {
+            continue;
+        };
+        let uploading = matches!(
+            running.info(),
+            kad::QueryInfo::PutRecord {
+                phase: kad::PutRecordPhase::PutRecord { .. },
+                ..
+            }
+        );
+        if checking || uploading {
+            running.finish();
+            finished.push(query);
+        }
     }
+    finished
 }
 
-/// Send the result of a put to its caller and count it in the upload summary. Every finished put
-/// is counted, also one that the interface cannot match to a command, except a put that this node
-/// cancelled: it ends with a quorum failure too, but it was neither stored nor a failed upload, so
-/// it is only logged at DEBUG.
-fn report_put_record_result(
+/// Carry out the next step of a put: start its check, or send its result to the caller. A
+/// cancelled put is only logged at DEBUG.
+fn apply_dht_put_step(
+    swarm: &mut Swarm<NodeBehaviour>,
     event_tx: &NetEventSender,
-    correlator: &mut Correlator,
-    dht_puts: &mut DhtPutSummary,
-    id: kad::QueryId,
-    result: kad::PutRecordResult,
+    dht_puts: &mut DhtPuts,
+    step: DhtPutStep,
 ) -> Result<()> {
-    let expired = correlator.expire_cancellable(id);
-    let cancelled = matches!(expired, Ok((_, true)));
-    if !cancelled {
-        dht_puts.record(result.is_ok());
-    }
-    let (correlation_id, _) = expired?;
-    match result {
-        Ok(record) => {
-            let key = ContentHash(record.key.to_vec());
-            debug!("DHT put record succeeded: {:?}", key);
+    let (correlation_id, key, result) = match step {
+        DhtPutStep::Check {
+            correlation_id,
+            key,
+        } => {
+            let query = swarm
+                .behaviour_mut()
+                .kademlia
+                .get_record(RecordKey::new(&key));
+            dht_puts.checking(correlation_id, query);
+            return Ok(());
+        }
+        DhtPutStep::Report {
+            correlation_id,
+            key,
+            result,
+        } => (correlation_id, key, result),
+    };
+    let error = match result {
+        DhtPutResult::Stored => {
+            debug!("DHT put record stored by another peer: {:?}", key);
             event_tx.send(NetEvent::DhtPutRecordSucceeded {
                 key,
                 correlation_id,
             })?;
+            return Ok(());
         }
-        Err(error) => {
-            if cancelled {
-                debug!("DHT put record cancelled: {}", error);
-            } else {
-                error!("DHT put record failed: {}", error);
-            }
-            event_tx.send(NetEvent::DhtPutRecordError {
-                correlation_id,
-                error: PutOrStoreError::PutRecordError(error),
-            })?;
+        DhtPutResult::UploadFailed(error) => {
+            error!("DHT put record failed: {}", error);
+            PutOrStoreError::PutRecordError(error)
         }
-    }
+        DhtPutResult::NotReplicated => {
+            error!("DHT put record failed: no other peer serves {:?}", key);
+            PutOrStoreError::NotReplicated
+        }
+        DhtPutResult::Expired => {
+            warn!("DHT put record did not end by its deadline: {:?}", key);
+            PutOrStoreError::Expired
+        }
+        DhtPutResult::Cancelled => {
+            debug!("DHT put record cancelled: {:?}", key);
+            PutOrStoreError::Cancelled
+        }
+    };
+    event_tx.send(NetEvent::DhtPutRecordError {
+        correlation_id,
+        error,
+    })?;
     Ok(())
-}
-
-/// End the puts of `key` that upload their record, and return their query IDs.
-fn finish_record_uploads(
-    kademlia: &mut KademliaBehaviour<MemoryStore>,
-    key: &ContentHash,
-) -> Vec<kad::QueryId> {
-    let key = RecordKey::new(key);
-    let mut finished = Vec::new();
-    for mut query in kademlia.iter_queries_mut() {
-        let uploading = matches!(
-            query.info(),
-            kad::QueryInfo::PutRecord {
-                record,
-                phase: kad::PutRecordPhase::PutRecord { .. },
-                ..
-            } if record.key == key
-        );
-        if uploading {
-            query.finish();
-            finished.push(query.id());
-        }
-    }
-    finished
 }
 
 fn handle_get_record(
@@ -2472,11 +2538,11 @@ mod tests {
         ));
     }
 
-    /// A cancelled upload ends with a quorum failure that is logged at DEBUG and left out of the
-    /// upload summary, while a real failure stays an ERROR and counts as failed. Both reach their
-    /// caller under their own correlation ID.
+    /// A cancelled put reports at DEBUG and stays out of the upload summary, while a real failure
+    /// stays an ERROR and counts as failed. Both reach their caller under their own correlation ID.
     #[test]
     fn cancelled_put_logs_debug_and_real_failure_logs_error() {
+        use super::{DhtPutStep, DhtPuts};
         use libp2p::kad::{self, Quorum};
         use std::sync::{Arc, Mutex};
 
@@ -2492,26 +2558,36 @@ mod tests {
             }
         }
 
-        let local = PeerId::random();
-        let mut kademlia = kad::Behaviour::new(local, MemoryStore::new(local));
+        let mut node = super::Libp2pNetInterface::new(
+            super::Libp2pKeypair::generate(),
+            vec![],
+            None,
+            super::NetworkPolicy::local_unrestricted(),
+        )
+        .unwrap();
+        let swarm = &mut node.swarm;
         let peer = PeerId::random();
-        kademlia.add_address(&peer, "/ip4/192.0.2.1/udp/1/quic-v1".parse().unwrap());
+        swarm
+            .behaviour_mut()
+            .kademlia
+            .add_address(&peer, "/ip4/192.0.2.1/udp/1/quic-v1".parse().unwrap());
         let document = super::ContentHash::from_content(b"document");
         let other = super::ContentHash::from_content(b"other document");
         let record_of = |key: &super::ContentHash| Record::new(RecordKey::new(key), vec![1]);
+        let kademlia = &mut swarm.behaviour_mut().kademlia;
         let cancelled =
             kademlia.put_record_to(record_of(&document), [peer].into_iter(), Quorum::One);
         let failed = kademlia.put_record_to(record_of(&other), [peer].into_iter(), Quorum::One);
-        let mut correlator = super::Correlator::new();
+        let mut dht_puts = DhtPuts::default();
         let (cancelled_id, failed_id) = (
             e3_events::CorrelationId::new(),
             e3_events::CorrelationId::new(),
         );
-        correlator.track(cancelled, cancelled_id);
-        correlator.track(failed, failed_id);
+        let now = std::time::Instant::now();
+        dht_puts.start(cancelled_id, document.clone(), cancelled, now);
+        dht_puts.start(failed_id, other.clone(), failed, now);
         let event_tx = super::NetEventSender::new(8, 8);
         let mut events = event_tx.subscribe();
-        let mut dht_puts = super::DhtPutSummary::default();
         let quorum_failed = |key: &super::ContentHash| {
             Err(kad::PutRecordError::QuorumFailed {
                 key: RecordKey::new(key),
@@ -2528,23 +2604,19 @@ mod tests {
             .with_writer(move || writer.clone())
             .finish();
         tracing::subscriber::with_default(subscriber, || {
-            super::cancel_record_uploads(&mut kademlia, &mut correlator, &document);
-            super::report_put_record_result(
-                &event_tx,
-                &mut correlator,
-                &mut dht_puts,
-                cancelled,
-                quorum_failed(&document),
-            )
-            .unwrap();
-            super::report_put_record_result(
-                &event_tx,
-                &mut correlator,
-                &mut dht_puts,
-                failed,
-                quorum_failed(&other),
-            )
-            .unwrap();
+            let (queries, steps) = dht_puts.cancel(&document);
+            super::end_dht_put_queries(&mut swarm.behaviour_mut().kademlia, queries);
+            for step in steps {
+                super::apply_dht_put_step(swarm, &event_tx, &mut dht_puts, step).unwrap();
+            }
+            // The cancelled upload's own end reports nothing more.
+            assert!(dht_puts
+                .upload_ended(cancelled, quorum_failed(&document))
+                .is_none());
+            let step: DhtPutStep = dht_puts
+                .upload_ended(failed, quorum_failed(&other))
+                .expect("the failure is reported");
+            super::apply_dht_put_step(swarm, &event_tx, &mut dht_puts, step).unwrap();
         });
 
         let logs = String::from_utf8(logs.lock().unwrap().clone()).unwrap();
@@ -2563,13 +2635,15 @@ mod tests {
         assert_eq!(correlation(events.try_recv().unwrap()), cancelled_id);
         assert_eq!(correlation(events.try_recv().unwrap()), failed_id);
         // The upload summary counts the real failure only.
-        assert_eq!(dht_puts.take(), Some((0, 1)));
+        assert_eq!(dht_puts.take_summary(), Some((0, 1)));
     }
 
-    /// A cancel ends the upload of its key only. A put that still looks up its closest peers runs
-    /// on: ending that lookup would upload the record to the peers found so far.
+    /// Ending the queries of cancelled puts finishes an upload and a check. A put that still looks
+    /// up its closest peers runs on: ending that lookup would upload the record to the peers found
+    /// so far.
     #[test]
-    fn a_cancel_ends_only_the_uploads_of_its_key() {
+    fn ending_a_put_finishes_only_uploads_and_checks() {
+        use super::EndedQuery;
         use libp2p::kad::{self, QueryInfo, Quorum};
         use std::task::{Context, Poll};
 
@@ -2578,38 +2652,49 @@ mod tests {
         let peer = PeerId::random();
         kademlia.add_address(&peer, "/ip4/192.0.2.1/udp/1/quic-v1".parse().unwrap());
         let document = super::ContentHash::from_content(b"document");
-        let other = super::ContentHash::from_content(b"other document");
         let record_of = |key: &super::ContentHash| Record::new(RecordKey::new(key), vec![1]);
 
         let lookup = kademlia
             .put_record(record_of(&document), Quorum::One)
             .unwrap();
         let upload = kademlia.put_record_to(record_of(&document), [peer].into_iter(), Quorum::One);
-        let other_upload =
-            kademlia.put_record_to(record_of(&other), [peer].into_iter(), Quorum::One);
+        let check = kademlia.get_record(RecordKey::new(&document));
+        let untouched =
+            kademlia.put_record_to(record_of(&document), [peer].into_iter(), Quorum::One);
 
-        assert_eq!(
-            super::finish_record_uploads(&mut kademlia, &document),
-            vec![upload]
+        let ended = super::end_dht_put_queries(
+            &mut kademlia,
+            vec![
+                EndedQuery {
+                    query: lookup,
+                    checking: false,
+                },
+                EndedQuery {
+                    query: upload,
+                    checking: false,
+                },
+                EndedQuery {
+                    query: check,
+                    checking: true,
+                },
+            ],
         );
+        assert_eq!(ended, vec![upload, check]);
 
         let mut context = Context::from_waker(futures::task::noop_waker_ref());
         let mut reported = Vec::new();
         for _ in 0..100 {
             match NetworkBehaviour::poll(&mut kademlia, &mut context) {
                 Poll::Ready(libp2p::swarm::ToSwarm::GenerateEvent(
-                    kad::Event::OutboundQueryProgressed {
-                        id,
-                        result: kad::QueryResult::PutRecord(_),
-                        ..
-                    },
-                )) => reported.push(id),
+                    kad::Event::OutboundQueryProgressed { id, step, .. },
+                )) if step.last => reported.push(id),
                 Poll::Ready(_) => {}
                 Poll::Pending => break,
             }
         }
-        assert_eq!(reported, vec![upload]);
-        assert!(kademlia.query(&other_upload).is_some());
+        assert_eq!(reported.len(), 2);
+        assert!(reported.contains(&upload) && reported.contains(&check));
+        assert!(kademlia.query(&untouched).is_some());
         assert!(matches!(
             kademlia.query(&lookup).map(|query| query.info().clone()),
             Some(QueryInfo::PutRecord {

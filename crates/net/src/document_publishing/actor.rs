@@ -41,9 +41,10 @@ use tracing::{debug, info, warn};
 
 use super::event_converter::EventConverter;
 
-/// Covers the Kademlia closest-peer lookup and the put that follows it; each has its own query
-/// timeout in the network interface.
-const KADEMLIA_PUT_TIMEOUT: Duration = Duration::from_secs(150);
+/// Longer than the network interface's deadline for a put (240 s), which covers the closest-peer
+/// lookup, the upload, and the lookup that checks that another peer serves the record back, so the
+/// interface reports every put's result before its caller stops waiting.
+const KADEMLIA_PUT_TIMEOUT: Duration = Duration::from_secs(270);
 const KADEMLIA_GET_TIMEOUT: Duration = Duration::from_secs(90);
 const KADEMLIA_BROADCAST_TIMEOUT: Duration = Duration::from_secs(30);
 /// The network interface stores a local record without network I/O, so the reply comes at once
