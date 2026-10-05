@@ -249,6 +249,75 @@ async fn history_pages_serve_every_record_when_the_log_holds_older_timestamps_la
     );
 }
 
+/// A legacy log can hold another chain's records in this aggregate's store. The router drops them,
+/// so a whole page can return no record. The reply then names the next timestamp instead of
+/// `Done`, and the peer still receives the valid record after those pages.
+#[actix::test]
+async fn history_pages_continue_past_pages_of_quarantined_records() {
+    let system = EventSystem::new()
+        .with_fresh_bus()
+        .with_aggregate_config(AggregateConfig::new(HashMap::from([(
+            AggregateId::new(1),
+            Duration::ZERO,
+        )])));
+    let bus = system.handle().unwrap().enable("test");
+    let e3_ciphernode_builder::EventStoreAddrs::InMem(stores) = system.eventstore_addrs().unwrap()
+    else {
+        panic!("expected in-memory stores");
+    };
+    let store = stores.get(&1).expect("aggregate 1 store").clone();
+    let responses = IgnoreStoreResponses.start();
+    let misrouted = |ts: u128| {
+        let mut event = keyshare_at(ts);
+        if let InterfoldEventData::KeyshareCreated(data) = event.get_data().clone() {
+            event = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+                KeyshareCreated {
+                    e3_id: E3id::new(ts.to_string(), 2),
+                    ..data
+                }
+                .into(),
+                None,
+                ts,
+                None,
+                EventSource::Net,
+            );
+        }
+        event
+    };
+    for event in [
+        misrouted(10),
+        misrouted(11),
+        misrouted(12),
+        misrouted(13),
+        keyshare_at(20),
+    ] {
+        store
+            .send(e3_events::StoreEventRequested::new(
+                event,
+                responses.clone().recipient(),
+            ))
+            .await
+            .unwrap();
+    }
+    let (net_tx, mut net_rx) = mpsc::channel::<NetCommand>(100);
+    let evt_tx = NetEventChannel::new(100);
+    let _evt_rx = evt_tx.subscribe();
+    let manager = NetSyncManager::new(
+        &bus,
+        &net_tx,
+        &NetEventSubscriber::from(&evt_tx),
+        system.eventstore_reader().unwrap().ts(),
+        "my-topic",
+        NetworkPolicy::local_unrestricted(),
+    )
+    .start();
+
+    assert_eq!(
+        served_history(&manager, &net_tx, &mut net_rx, 2).await,
+        vec![20]
+    );
+}
+
 #[test]
 fn historical_sync_rejects_non_forwardable_remote_events() {
     let error = validate_historical_events(

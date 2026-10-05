@@ -235,15 +235,41 @@ pub trait EventLog: Unpin + 'static {
     }
     /// The 1-indexed sequence number of the last appended event, or `0` if the log is empty.
     fn head(&self) -> u64;
-    /// Read the event at `seq`, or `None` when the log holds no event there. The default reads
-    /// through the bounded reader; a durable log can read one record without the records after it.
+    /// Read the event at `seq`, or `None` when the log holds no event there.
     fn read_one(&self, seq: u64) -> Result<Option<InterfoldEvent<Unsequenced>>> {
-        Ok(self
+        Ok(match self.read_one_within(seq, None)? {
+            Some(LogRecord::Event(event, _)) => Some(event),
+            Some(LogRecord::TooLarge(_)) | None => None,
+        })
+    }
+    /// Read the record at `seq`, or `None` when the log holds no event there. A record larger than
+    /// `max_bytes` is reported by its size and not decoded. The default reads through the bounded
+    /// reader; a durable log reads the record's size before it decodes, and does not read the
+    /// records after it.
+    fn read_one_within(&self, seq: u64, max_bytes: Option<usize>) -> Result<Option<LogRecord>> {
+        let Some(event) = self
             .read_from_bounded(seq, 1)?
             .next()
             .filter(|(read_seq, _)| *read_seq == seq)
-            .map(|(_, event)| event))
+            .map(|(_, event)| event)
+        else {
+            return Ok(None);
+        };
+        let bytes = usize::try_from(bincode::serialized_size(&event)?)?;
+        Ok(Some(if max_bytes.is_some_and(|max| bytes > max) {
+            LogRecord::TooLarge(bytes)
+        } else {
+            LogRecord::Event(event, bytes)
+        }))
     }
+}
+
+/// One record that an event log read by sequence, with its encoded size.
+#[allow(clippy::large_enum_variant)]
+pub enum LogRecord {
+    Event(InterfoldEvent<Unsequenced>, usize),
+    /// The record exceeds the reader's byte budget; it was not decoded.
+    TooLarge(usize),
 }
 
 /// EventContext allows consumers to extract infrastructure metadata from event objects

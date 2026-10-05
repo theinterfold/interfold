@@ -7,8 +7,8 @@
 use crate::{
     events::{EventStoreClockFloor, FlushEventStores, StoreEventRequested, StoreEventResponse},
     Event, EventContextAccessors, EventLog, EventStoreFilter, EventStoreQueryBy,
-    EventStoreQueryResponse, HistoryProgress, InterfoldEvent, Seq, SequenceIndex, Sequenced, Ts,
-    Unsequenced,
+    EventStoreQueryResponse, HistoryProgress, InterfoldEvent, LogRecord, Seq, SequenceIndex,
+    Sequenced, Ts, Unsequenced,
 };
 use actix::{Actor, ActorContext, AsyncContext, Handler, Recipient, WrapFuture};
 use anyhow::{bail, Context as _, Result};
@@ -222,27 +222,32 @@ impl<I: SequenceIndex, L: EventLog> EventStore<I, L> {
         let mut bytes = 0usize;
         let mut last_scanned_ts = None;
         for &(ts, seq) in entries.iter().take(limit) {
-            let event = self.log.read_one(seq)?.with_context(|| {
+            // The first record is read whatever its size, so a page always makes progress. Any
+            // later record is sized before it is decoded.
+            let budget = (!events.is_empty()).then(|| max_bytes.saturating_sub(bytes));
+            let record = self.log.read_one_within(seq, budget)?.with_context(|| {
                 format!(
                     "event index corruption at timestamp {ts}: sequence {seq} is missing from the \
                      event log"
                 )
             })?;
+            let (event, event_bytes) = match record {
+                LogRecord::Event(event, event_bytes) => (event, event_bytes),
+                LogRecord::TooLarge(_) => {
+                    return Ok((
+                        events,
+                        HistoryProgress {
+                            last_scanned_ts,
+                            exhausted: false,
+                        },
+                    ));
+                }
+            };
             if event.ts() != ts {
                 bail!(
                     "event index corruption at timestamp {ts}: sequence {seq} holds timestamp {}",
                     event.ts()
                 );
-            }
-            let event_bytes = usize::try_from(bincode::serialized_size(&event)?)?;
-            if !events.is_empty() && bytes.saturating_add(event_bytes) > max_bytes {
-                return Ok((
-                    events,
-                    HistoryProgress {
-                        last_scanned_ts,
-                        exhausted: false,
-                    },
-                ));
             }
             bytes = bytes.saturating_add(event_bytes);
             last_scanned_ts = Some(ts);

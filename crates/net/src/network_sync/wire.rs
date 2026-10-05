@@ -20,6 +20,9 @@ use crate::{
 
 pub(crate) const MAX_GOSSIP_BYTES: usize = 10 * 1024 * 1024;
 pub(crate) const MAX_DIRECT_MESSAGE_BYTES: usize = 10 * 1024 * 1024;
+/// The largest sync envelope that a direct reply carries. The transport frame adds the CBOR enum
+/// and byte-string headers to the envelope, and must stay within the 10 MiB response limit.
+pub(crate) const MAX_SYNC_ENVELOPE_BYTES: usize = MAX_DIRECT_MESSAGE_BYTES - 64;
 pub(crate) const MAX_DHT_DOCUMENT_BYTES: usize = 25 * 1024 * 1024;
 
 const GOSSIP_MAGIC: [u8; 4] = *b"IFG3";
@@ -187,9 +190,9 @@ pub(crate) fn encode_sync<T: Serialize>(kind: SyncMessageKind, value: &T) -> Res
     };
     let encoded = bincode::serialize(&envelope).context("failed to serialize sync envelope")?;
     ensure!(
-        encoded.len() <= MAX_DIRECT_MESSAGE_BYTES,
+        encoded.len() <= MAX_SYNC_ENVELOPE_BYTES,
         "sync envelope exceeds the {} byte limit",
-        MAX_DIRECT_MESSAGE_BYTES
+        MAX_SYNC_ENVELOPE_BYTES
     );
     Ok(encoded)
 }
@@ -324,8 +327,8 @@ mod tests {
         "f97998b7e97afffc2e11ce5e778227070f0a41044c69be6a093cfd9aadc8789e",
     );
     const OK_FRAME: (usize, &str) = (
-        123,
-        "604d00963f6282847f93c55d1004dbad4794ef34af286a9c534855f9c905a8f9",
+        88,
+        "65f5ad420e77fcc16887e1700ec8024bc77d6971697dabb001a550315c6dae0f",
     );
     const BAD_REQUEST_FRAME: (usize, &str) = (
         24,

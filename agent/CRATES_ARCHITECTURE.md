@@ -596,12 +596,16 @@ recording before the commit cannot hide an event from a running node. After a re
 copy of an already stored event is stored once more.
 
 A peer's historical-sync request reads this node's history in timestamp order through the timestamp
-index (`EventStore::query_history_page`), at most 400 records and 32 MiB per page. The log can hold
-an older timestamp after a newer one, so a read in log order from the first matching record could
-miss records. Storage reports the last timestamp that it read and whether it holds more. The reply
-moves its cursor one timestamp past the last record that it consumed, returned or filtered, and says
-`Done` only when storage holds nothing more. A reply stays below the 10 MiB direct-message limit; a
-single event above that limit fails the request.
+index (`EventStore::query_history_page`), at most 400 records and 32 MiB per page. The first record
+of a page is read whatever its size, so a page always makes progress; storage sizes each later
+record before it decodes it, and stops the page before one that would exceed the budget. A single
+record read covers that record and fewer bytes than it of the records after it. The log can hold an
+older timestamp after a newer one, so a read in log order from the first matching record could miss
+records. Storage reports the last timestamp that it read and whether it holds more. The reply moves
+its cursor one timestamp past the last record that it consumed, returned or filtered, and says
+`Done` only when storage holds nothing more. A reply's bytes travel as one CBOR byte string, and its
+envelope stays within the 10 MiB response limit less the frame header; a single event above that
+limit fails the request.
 
 The document publisher fetches documents in spawned tasks, so a slow DHT read does not hold its
 ingress loop. At most 8 fetches run and 512 documents wait. Four concurrent N=19 E3s need

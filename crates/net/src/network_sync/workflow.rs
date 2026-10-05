@@ -111,7 +111,7 @@ pub enum SyncBatchOutcome {
 }
 
 /// Encoded bytes of the events in one sync response. The rest of the 10 MiB direct-message limit
-/// holds the batch and envelope fields.
+/// holds the batch and envelope fields, and the CBOR byte-string header of the transport frame.
 pub(crate) const MAX_SYNC_RESPONSE_EVENT_BYTES: usize =
     crate::domain::wire::MAX_DIRECT_MESSAGE_BYTES - 4 * 1024;
 
