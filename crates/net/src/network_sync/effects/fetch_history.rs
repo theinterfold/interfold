@@ -4,6 +4,7 @@
 
 use super::*;
 use crate::direct_requester::WithoutPeer;
+use crate::domain::net_event_batch::LatestTs;
 use crate::events::call_and_await_response;
 use crate::net_interface_handle::NetEventSubscriber;
 use anyhow::ensure;
@@ -37,9 +38,10 @@ const MAX_STORED_CLAIMS: usize = 100_000;
 
 /// What a peer's history must fit at this node.
 pub(in crate::actors::net_sync_manager) struct HistoryBounds {
-    /// The latest event time that the node accepts: the time at which it publishes the history,
-    /// plus its clock-drift allowance.
-    pub(in crate::actors::net_sync_manager) latest_ts: u128,
+    /// The latest event time that the node accepts now: the current time plus its clock-drift
+    /// allowance. The node publishes the history at its latest event time and applies the
+    /// allowance again then; it has only grown since a source was checked.
+    pub(in crate::actors::net_sync_manager) latest_ts: LatestTs,
     /// The node's event store. A peer's event must not take the timestamp of a stored event.
     pub(in crate::actors::net_sync_manager) eventstore: Recipient<EventStoreQueryBy<TsAgg>>,
 }
@@ -288,7 +290,9 @@ async fn fetch_validated_history(
         source_time,
     )
     .await?;
-    let events = validate_historical_events(history, fetched.events, network, budget.latest_ts())?;
+    // The allowance at the end of this source's fetch: a peer ahead of this node within the
+    // allowance can store events while the node pages through its history.
+    let events = validate_historical_events(history, fetched.events, network, budget.latest_ts()?)?;
     Ok((events, fetched.observed_from))
 }
 
@@ -371,7 +375,7 @@ pub(in crate::actors::net_sync_manager) fn validate_historical_events(
         }
         // The same event only: the ID that a stored event carries need not be its payload's.
         if let Some(claim) = history.stored.get(&event.ts()) {
-            if !claim.admits(event) {
+            if !claim.admits(event)? {
                 bail!(
                     "historical sync peer returned event {} at the timestamp of this node's event \
                      {}",
@@ -432,8 +436,9 @@ pub(in crate::actors::net_sync_manager) fn eligible_sync_cursor(
         .collect()
 }
 
-/// The claims of the node's own stored events of `aggregate_id` at or after `since` on their
-/// timestamps, read in pages. More than `capacity` of them fail the read.
+/// The claims on their timestamps of the records that the node's store of `aggregate_id` holds at
+/// or after `since`, including legacy records of another aggregate, read in pages. More than
+/// `capacity` of them fail the read.
 pub(in crate::actors::net_sync_manager) async fn stored_event_ids(
     eventstore: &Recipient<EventStoreQueryBy<TsAgg>>,
     aggregate_id: AggregateId,
@@ -453,7 +458,10 @@ pub(in crate::actors::net_sync_manager) async fn stored_event_ids(
                 )
                 .with_limit(STORED_PAGE_EVENTS)
                 .with_max_bytes(STORED_PAGE_BYTES)
-                .in_timestamp_order(),
+                .in_timestamp_order()
+                // A legacy record of another aggregate in this store is not the aggregate's
+                // event, but it holds its timestamp in the store.
+                .with_misrouted(),
             )
             .context("the event store did not take the read of this node's stored history")?;
         let response = tokio::time::timeout(STORED_PAGE_TIMEOUT, response)
@@ -462,7 +470,7 @@ pub(in crate::actors::net_sync_manager) async fn stored_event_ids(
             .context("the event store dropped the read of this node's stored history")?;
         let progress = response.history();
         for event in response.into_events()? {
-            stored.insert(event.ts(), TimestampClaim::of(&event));
+            stored.insert(event.ts(), TimestampClaim::of(&event)?);
         }
         ensure!(
             stored.len() <= capacity,

@@ -3,7 +3,9 @@
 //! Actix routing for local replay, remote sync requests, and readiness signals.
 
 use super::*;
+use crate::domain::net_event_batch::LatestTs;
 use e3_events::E3Stage;
+use std::sync::Arc;
 
 impl Actor for NetSyncManager {
     type Context = actix::Context<Self>;
@@ -84,15 +86,16 @@ impl Handler<TypedEvent<HistoricalNetSyncStart>> for NetSyncManager {
         let failure = msg.failure.clone();
         self.history_failure = failure.clone();
         let address = ctx.address();
-        // Peers' events must stay within the clock-drift allowance at which the node publishes
-        // the history. The bound at the start of the fetch is the strictest.
-        let latest_ts = match self.bus.latest_admissible_ts() {
-            Ok(latest_ts) => latest_ts,
-            Err(error) => {
-                report_required_history_failure(&bus, failure, error);
-                return Box::pin(async {});
-            }
-        };
+        // Peers' events must stay within the clock-drift allowance, which the node applies again
+        // when it publishes the history. The allowance grows with the clock, so each source is
+        // checked against it when its history is complete. A clock that cannot tell it fails the
+        // fetch before any peer is asked.
+        if let Err(error) = self.bus.latest_admissible_ts() {
+            report_required_history_failure(&bus, failure, error);
+            return Box::pin(async {});
+        }
+        let clock = self.bus.clone();
+        let latest_ts: LatestTs = Arc::new(move || clock.latest_admissible_ts());
         let fetch = handle_sync_request_event(
             self.tx.clone(),
             self.rx.clone(),

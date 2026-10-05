@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use std::fmt::Debug;
+use std::sync::Arc;
 
 use std::time::Duration;
 
@@ -39,10 +40,13 @@ pub(crate) struct SyncFetchBudget {
     max_bytes: usize,
     max_duration: Duration,
     exhausted: bool,
-    /// The latest event time that the fetch accepts: a later one would exceed this node's
-    /// clock-drift allowance when the history is published.
-    latest_ts: u128,
+    /// The latest event time that the fetch accepts now: a later one exceeds this node's
+    /// clock-drift allowance, which applies again when the history is published.
+    latest_ts: LatestTs,
 }
+
+/// The latest event time that the node accepts at the time of the call.
+pub(crate) type LatestTs = Arc<dyn Fn() -> Result<u128> + Send + Sync>;
 
 impl SyncFetchBudget {
     pub(crate) fn production() -> Self {
@@ -64,18 +68,19 @@ impl SyncFetchBudget {
             max_bytes,
             max_duration: MAX_SYNC_FETCH_DURATION,
             exhausted: false,
-            latest_ts: u128::MAX,
+            latest_ts: Arc::new(|| Ok(u128::MAX)),
         }
     }
 
-    /// Refuse events stamped after `latest_ts`.
-    pub(crate) fn with_latest_ts(mut self, latest_ts: u128) -> Self {
+    /// Refuse events stamped after the time that `latest_ts` returns when a history is checked.
+    pub(crate) fn with_latest_ts(mut self, latest_ts: LatestTs) -> Self {
         self.latest_ts = latest_ts;
         self
     }
 
-    pub(crate) fn latest_ts(&self) -> u128 {
-        self.latest_ts
+    /// The latest event time that the fetch accepts now.
+    pub(crate) fn latest_ts(&self) -> Result<u128> {
+        (self.latest_ts)()
     }
 
     pub(crate) fn is_exhausted(&self) -> bool {

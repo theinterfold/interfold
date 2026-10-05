@@ -617,12 +617,14 @@ copy per event ID, with the earliest timestamp. Each event's ID must be the hash
 a peer cannot hide another peer's copy of a different event under the same ID; the ID does not fix
 the whole payload, so two copies with one ID and different payloads fail the fetch. The event store
 holds one event at a timestamp and stops the node at a second one, so the node first reads the
-claims of its own stored events after the cursor on their timestamps (each event's ID and its
-payload's digest, within the fetch deadline and at most 100,000 of them), and adds those of the
-historical EVM events that startup publishes with the peer history. It refuses a peer that serves an
-event from before the requested time, two events at one timestamp, or an event at a claimed
-timestamp whose ID is not both the claim's ID and its payload digest; two sources that put different
-events at one timestamp fail the fetch. A failed peer is replaced by another one. When the listed
+claims of the records in its store after the cursor on their timestamps (each record's ID and the
+SHA-256 digest of its payload's encoding, within the fetch deadline and at most 100,000 of them).
+The read includes the legacy records of another aggregate that queries otherwise quarantine: they
+hold their timestamps in the store too. It adds the claims of the historical EVM events that
+startup publishes with the peer history. It refuses a peer that serves an event from before the
+requested time, two events at one timestamp, or an event at a claimed timestamp whose ID or payload
+digest differs from the claim's; two sources that put different events at one timestamp fail the
+fetch. A failed peer is replaced by another one. When the listed
 peers do not supply two sources, the aggregate's fetch fails and a recovery round asks again; one
 connected peer serves alone. A peer that a later peer can replace gets one attempt per page and the
 time left less 60 s for each source that the node would then still lack (at least 30 s), so slow or
@@ -644,8 +646,11 @@ optional reads cannot leave a required one without budget. Such a peer gets one 
 at most 30 s and half the time left. When it fails, serves a different payload under an event ID
 that the sources served, or puts a different event at the timestamp of a source's event, it adds
 nothing and the sources stand. The node publishes the history at its latest event time, so it
-refuses a peer's history with an event stamped beyond its clock-drift allowance; a history that it
-still cannot publish fails startup through the startup coordinator. The hint does not make a reply
+refuses a peer's history with an event stamped beyond its clock-drift allowance. It checks each
+source against the allowance when that source's history is complete, because a peer ahead of the
+node within the allowance stores events while the node pages; the allowance has only grown when the
+node applies it again at publication. A history that it still cannot publish fails startup through
+the startup coordinator. The hint does not make a reply
 complete: gossip that the responder received but has not stored yet, in its translator or event
 pipeline, is missing from a read. So the node relies on the union of two sources, and a wrong hint
 only means that it asks no more peers than two.

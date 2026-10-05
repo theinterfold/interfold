@@ -456,8 +456,12 @@ where
     net_ready.await?;
     info!("NetReady!");
     info!("Loading historical libp2p events...");
-    let historical_net_events =
-        fetch_peer_history(bus, net_config, reserved_timestamps(&historical_evm_events)).await?;
+    let historical_net_events = fetch_peer_history(
+        bus,
+        net_config,
+        reserved_timestamps(&historical_evm_events)?,
+    )
+    .await?;
     info!(
         "{} historical libp2p events loaded.",
         historical_net_events.len()
@@ -483,15 +487,15 @@ where
 
 /// The timestamps of the historical EVM events, which startup publishes with the peer history: a
 /// peer's event must not take one of them.
-fn reserved_timestamps(events: &[InterfoldEvent<Unsequenced>]) -> ReservedTimestamps {
+fn reserved_timestamps(events: &[InterfoldEvent<Unsequenced>]) -> Result<ReservedTimestamps> {
     let mut reserved = ReservedTimestamps::new();
     for event in events {
         reserved
             .entry(event.aggregate_id())
             .or_default()
-            .insert(event.ts(), TimestampClaim::of(event));
+            .insert(event.ts(), TimestampClaim::of(event)?);
     }
-    reserved
+    Ok(reserved)
 }
 
 /// Ask the network for the peer history after `since`, and wait for the history or for the

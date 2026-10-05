@@ -12,12 +12,14 @@ use actix::{Message, Recipient};
 use anyhow::Context;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::{self, Display};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use super::InterfoldEvent;
+use super::InterfoldEventData;
 use super::Unsequenced;
 
 /// Dispatched by the Sync actor when initial data is read and the sync process needs to be started
@@ -85,27 +87,38 @@ pub struct HistoricalNetSyncStart {
 /// Timestamps that events already hold, per aggregate.
 pub type ReservedTimestamps = BTreeMap<AggregateId, HashMap<u128, TimestampClaim>>;
 
-/// The event that holds a timestamp: its ID, and the ID that its payload hashes to. An event at
-/// that timestamp is the same event only when its ID equals both.
+/// The event that holds a timestamp: its ID, and the SHA-256 digest of its payload's encoding.
+/// The event store takes another copy at that timestamp only when the copy's ID and payload equal
+/// the stored event's, so an event at that timestamp is the same event only when its ID and its
+/// payload digest equal these. The ID alone cannot stand for the payload: it hashes a 64-bit
+/// digest of it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TimestampClaim {
     pub id: EventId,
-    pub digest: EventId,
+    pub payload: [u8; 32],
 }
 
 impl TimestampClaim {
     /// The claim of `event` on its timestamp.
-    pub fn of<S: crate::SeqState>(event: &InterfoldEvent<S>) -> Self {
-        Self {
+    pub fn of<S: crate::SeqState>(event: &InterfoldEvent<S>) -> Result<Self> {
+        Ok(Self {
             id: event.id(),
-            digest: EventId::hash(event.get_data()),
-        }
+            payload: payload_digest(event.get_data())?,
+        })
     }
 
-    /// `event` is the event that holds the timestamp.
-    pub fn admits<S: crate::SeqState>(&self, event: &InterfoldEvent<S>) -> bool {
-        self.id == event.id() && self.digest == event.id()
+    /// Whether `event` is the event that holds the timestamp.
+    pub fn admits<S: crate::SeqState>(&self, event: &InterfoldEvent<S>) -> Result<bool> {
+        Ok(self.id == event.id() && self.payload == payload_digest(event.get_data())?)
     }
+}
+
+/// The SHA-256 digest of a payload's bincode encoding. Equal payloads encode alike: no payload
+/// holds a hash map, and a field that the encoding skips is outside payload equality or, in a
+/// decoded payload such as a peer's, at its default.
+fn payload_digest(data: &InterfoldEventData) -> Result<[u8; 32]> {
+    let encoded = bincode::serialize(data).context("failed to encode an event payload")?;
+    Ok(Sha256::digest(encoded).into())
 }
 
 impl HistoricalNetSyncStart {
@@ -208,5 +221,34 @@ impl HistoricalNetSyncEventsReceived {
 impl Display for HistoricalNetSyncEventsReceived {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{:?}", self)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{EventContext, EventSource, TestEvent};
+
+    /// `label`'s test event under the ID `id`.
+    fn labeled(label: &str, id: EventId) -> InterfoldEvent<Unsequenced> {
+        InterfoldEvent {
+            payload: TestEvent::new(label, 1).into(),
+            ctx: EventContext::new_origin(id, 70, AggregateId::new(1), None, EventSource::Net),
+        }
+    }
+
+    /// A claim admits its own event only: another payload under the claimed ID, as an ID
+    /// collision gives, is another event to the event store.
+    #[test]
+    fn a_claim_admits_only_its_own_payload_under_its_own_id() {
+        let id = EventId::hash("stored");
+        let stored = labeled("stored", id);
+        let claim = TimestampClaim::of(&stored).unwrap();
+
+        assert!(claim.admits(&stored).unwrap());
+        assert!(!claim.admits(&labeled("other", id)).unwrap());
+        assert!(!claim
+            .admits(&labeled("stored", EventId::hash("other")))
+            .unwrap());
     }
 }

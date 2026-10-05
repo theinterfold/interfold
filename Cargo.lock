@@ -4321,6 +4321,8 @@ dependencies = [
  "e3-data",
  "e3-events",
  "e3-layout-lock",
+ "e3-request",
+ "e3-sync",
  "e3-utils",
  "futures",
  "hex",

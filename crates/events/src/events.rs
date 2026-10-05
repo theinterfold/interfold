@@ -179,6 +179,7 @@ pub struct EventStoreQueryBy<Q: QueryKind> {
     max_bytes: Option<u64>,
     filter: Option<EventStoreFilter>,
     timestamp_order: bool,
+    misrouted: bool,
 }
 
 impl EventStoreQueryBy<SeqAgg> {
@@ -195,6 +196,7 @@ impl EventStoreQueryBy<SeqAgg> {
             max_bytes: None,
             filter: None,
             timestamp_order: false,
+            misrouted: false,
         }
     }
 
@@ -235,6 +237,7 @@ impl EventStoreQueryBy<TsAgg> {
             max_bytes: None,
             filter: None,
             timestamp_order: false,
+            misrouted: false,
         }
     }
 
@@ -275,6 +278,7 @@ impl EventStoreQueryBy<Ts> {
             max_bytes: None,
             filter: None,
             timestamp_order: false,
+            misrouted: false,
         }
     }
 
@@ -315,6 +319,7 @@ impl EventStoreQueryBy<Seq> {
             max_bytes: None,
             filter: None,
             timestamp_order: false,
+            misrouted: false,
         }
     }
 
@@ -371,6 +376,17 @@ impl<Q: QueryKind> EventStoreQueryBy<Q> {
 
     pub fn timestamp_order(&self) -> bool {
         self.timestamp_order
+    }
+
+    /// Keep the legacy records that a store holds for another aggregate, which a query otherwise
+    /// drops. They are not the aggregate's events, but they hold their timestamps in its store.
+    pub fn with_misrouted(mut self) -> Self {
+        self.misrouted = true;
+        self
+    }
+
+    pub fn misrouted(&self) -> bool {
+        self.misrouted
     }
 
     pub fn with_options(
