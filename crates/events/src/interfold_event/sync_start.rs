@@ -4,15 +4,18 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+use crate::prelude::*;
 use crate::AggregateId;
+use crate::EventId;
 use crate::{EvmEventConfig, EvmEventConfigChain};
 use actix::{Message, Recipient};
 use anyhow::Context;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt::{self, Display};
 use std::hash::{Hash, Hasher};
+use std::sync::Arc;
 
 use super::InterfoldEvent;
 use super::Unsequenced;
@@ -70,6 +73,39 @@ pub struct HistoricalNetSyncStart {
     /// Must be Option for serde. The event is local to this process, so the field is never
     /// shared.
     pub failure: Option<Recipient<HistoricalNetSyncFailed>>,
+
+    #[serde(skip)]
+    /// The timestamps of the events that startup publishes with the peer history, such as its
+    /// historical EVM events, per aggregate. The event store holds one event at a timestamp, so a
+    /// peer's event must not take one of them unless it is the same event. Local to this process,
+    /// like `failure`.
+    pub reserved: Arc<ReservedTimestamps>,
+}
+
+/// Timestamps that events already hold, per aggregate.
+pub type ReservedTimestamps = BTreeMap<AggregateId, HashMap<u128, TimestampClaim>>;
+
+/// The event that holds a timestamp: its ID, and the ID that its payload hashes to. An event at
+/// that timestamp is the same event only when its ID equals both.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TimestampClaim {
+    pub id: EventId,
+    pub digest: EventId,
+}
+
+impl TimestampClaim {
+    /// The claim of `event` on its timestamp.
+    pub fn of<S: crate::SeqState>(event: &InterfoldEvent<S>) -> Self {
+        Self {
+            id: event.id(),
+            digest: EventId::hash(event.get_data()),
+        }
+    }
+
+    /// `event` is the event that holds the timestamp.
+    pub fn admits<S: crate::SeqState>(&self, event: &InterfoldEvent<S>) -> bool {
+        self.id == event.id() && self.digest == event.id()
+    }
 }
 
 impl HistoricalNetSyncStart {
@@ -77,7 +113,14 @@ impl HistoricalNetSyncStart {
         Self {
             since,
             failure: None,
+            reserved: Arc::default(),
         }
+    }
+
+    /// Reserve the timestamps of the events that startup publishes with the peer history.
+    pub fn with_reserved(mut self, reserved: ReservedTimestamps) -> Self {
+        self.reserved = Arc::new(reserved);
+        self
     }
 
     pub fn with_failure_recipient(
@@ -95,14 +138,22 @@ impl HistoricalNetSyncStart {
 // until it is placed in or out of the identity here.
 impl Hash for HistoricalNetSyncStart {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        let Self { since, failure: _ } = self;
+        let Self {
+            since,
+            failure: _,
+            reserved: _,
+        } = self;
         since.hash(state);
     }
 }
 
 impl PartialEq for HistoricalNetSyncStart {
     fn eq(&self, other: &Self) -> bool {
-        let Self { since, failure: _ } = self;
+        let Self {
+            since,
+            failure: _,
+            reserved: _,
+        } = self;
         *since == other.since
     }
 }

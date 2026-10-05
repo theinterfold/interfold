@@ -19,9 +19,10 @@ use e3_config::NetworkProfile;
 use e3_events::{
     AggregateConfig, DecryptionshareCreated, DkgCoordination, DkgCoordinationKind, DkgDealer,
     E3Failed, E3Stage, E3StageChanged, E3id, EventSource, FailureReason, HistoricalNetSyncFailed,
-    InterfoldEvent, KeyshareCreated, TestEvent, Unsequenced,
+    InterfoldEvent, KeyshareCreated, TestEvent, TimestampClaim, Unsequenced,
 };
 use e3_utils::ArcBytes;
+use std::sync::Arc;
 use tokio::sync::{mpsc, mpsc::UnboundedSender};
 
 /// Minimal EventStore stand-in so `NetSyncManager::new` can be constructed in tests; the
@@ -731,7 +732,7 @@ async fn fetch_from_fake_peers(
             &commands_tx,
             &subscriber,
             order,
-            AggregateHistory::new(AggregateId::new(1), since, HashMap::new()),
+            AggregateHistory::new(AggregateId::new(1), since, Default::default()),
             &mut budget,
             &policy,
         )
@@ -740,7 +741,7 @@ async fn fetch_from_fake_peers(
         fetch_historical_events_for_aggregate(
             &commands_tx,
             &subscriber,
-            AggregateHistory::new(AggregateId::new(1), since, HashMap::new()),
+            AggregateHistory::new(AggregateId::new(1), since, Default::default()),
             &mut budget,
             &policy,
         )
@@ -1135,7 +1136,7 @@ async fn a_slow_further_peer_keeps_the_sources_and_leaves_time_for_the_next() {
         &commands_tx,
         &subscriber,
         order,
-        AggregateHistory::new(AggregateId::new(1), 0, HashMap::new()),
+        AggregateHistory::new(AggregateId::new(1), 0, Default::default()),
         &mut budget,
         &policy,
     )
@@ -1314,7 +1315,7 @@ async fn unanswered_peer_lists_end_at_the_fetch_deadline() {
 #[test]
 fn historical_sync_rejects_non_forwardable_remote_events() {
     let error = validate_historical_events(
-        &AggregateHistory::new(AggregateId::new(0), 0, HashMap::new()),
+        &AggregateHistory::new(AggregateId::new(0), 0, Default::default()),
         vec![remote_unsequenced(local_non_forwardable_event())],
         &NetworkPolicy::local_unrestricted(),
         u128::MAX,
@@ -1331,7 +1332,7 @@ fn historical_sync_rejects_events_from_another_aggregate() {
     let event = remote_unsequenced(local_forwardable_event("1234"));
 
     let error = validate_historical_events(
-        &AggregateHistory::new(AggregateId::new(999), 0, HashMap::new()),
+        &AggregateHistory::new(AggregateId::new(999), 0, Default::default()),
         vec![event],
         &NetworkPolicy::local_unrestricted(),
         u128::MAX,
@@ -1347,10 +1348,15 @@ fn historical_sync_rejects_events_from_another_aggregate() {
 #[test]
 fn a_peer_history_must_keep_to_the_range_and_to_free_timestamps() {
     let stored = received("stored", 30);
+    // A record that a node stored before peers' IDs were checked can carry another payload's ID.
+    let mislabeled_record = mislabeled("payload", "label", 70);
     let history = AggregateHistory::new(
         AggregateId::new(1),
         10,
-        HashMap::from([(stored.ts(), stored.id())]),
+        Arc::new(HashMap::from([
+            (stored.ts(), TimestampClaim::of(&stored)),
+            (70, TimestampClaim::of(&mislabeled_record)),
+        ])),
     );
     let policy = NetworkPolicy::local_unrestricted();
     let check = |events| {
@@ -1364,7 +1370,10 @@ fn a_peer_history_must_keep_to_the_range_and_to_free_timestamps() {
     let shared = check(vec![received("e1", 40), received("e2", 40)]).unwrap_err();
     assert!(shared.contains("at the same timestamp"), "{shared}");
     let taken = check(vec![received("e1", 30)]).unwrap_err();
-    assert!(taken.contains("stored event"), "{taken}");
+    assert!(taken.contains("this node's event"), "{taken}");
+    // The genuine event under the stored record's ID is not the stored event either.
+    let relabeled = check(vec![received("label", 70)]).unwrap_err();
+    assert!(relabeled.contains("this node's event"), "{relabeled}");
     check(vec![stored.clone(), received("e1", 40), received("e1", 41)]).unwrap();
 }
 
@@ -1376,13 +1385,178 @@ async fn the_node_reads_every_page_of_its_stored_history() {
         .collect();
     let eventstore = StoredHistory(stored.clone()).start().recipient();
 
-    let ids = stored_event_ids(&eventstore, AggregateId::new(1), 1_000)
+    let ids = stored_event_ids(&eventstore, AggregateId::new(1), 1_000, 1_600)
         .await
         .unwrap();
 
     assert_eq!(ids.len(), 1_600);
-    assert_eq!(ids.get(&2_599), Some(&stored[2_499].id()));
+    assert_eq!(ids.get(&2_599), Some(&TimestampClaim::of(&stored[2_499])));
     assert!(!ids.contains_key(&999));
+
+    // One event more than the node keeps fails the read.
+    let error = stored_event_ids(&eventstore, AggregateId::new(1), 1_000, 1_599)
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("more than 1599"), "{error}");
+}
+
+/// An event store that answers each page of the stored history only after `delay`.
+struct SlowStoredHistory {
+    events: Vec<InterfoldEvent<Unsequenced>>,
+    delay: Duration,
+}
+impl Actor for SlowStoredHistory {
+    type Context = ActixContext<Self>;
+}
+impl Handler<EventStoreQueryBy<TsAgg>> for SlowStoredHistory {
+    type Result = ();
+    fn handle(&mut self, msg: EventStoreQueryBy<TsAgg>, ctx: &mut Self::Context) {
+        let since = msg.query().values().copied().min().unwrap_or(0);
+        let limit = msg.limit().map_or(usize::MAX, |limit| limit as usize);
+        let matching: Vec<InterfoldEvent> = self
+            .events
+            .iter()
+            .filter(|event| event.ts() >= since)
+            .enumerate()
+            .map(|(seq, event)| event.clone().into_sequenced(seq as u64 + 1))
+            .collect();
+        let exhausted = matching.len() <= limit;
+        let events: Vec<InterfoldEvent> = matching.into_iter().take(limit).collect();
+        let last_scanned_ts = events.last().map(|event| event.ts());
+        let id = msg.id();
+        let sender = msg.sender();
+        ctx.run_later(self.delay, move |_, _| {
+            let _ = sender.try_send(
+                EventStoreQueryResponse::from_result(id, Ok(events)).with_history(Some(
+                    e3_events::HistoryProgress {
+                        last_scanned_ts,
+                        exhausted,
+                    },
+                )),
+            );
+        });
+    }
+}
+
+/// The read of the node's stored history counts against the fetch deadline: slow pages end the
+/// fetch at the deadline before any peer is asked.
+#[actix::test]
+async fn a_slow_read_of_the_stored_history_ends_at_the_fetch_deadline() {
+    tokio::time::pause();
+    let eventstore = SlowStoredHistory {
+        events: (0..12_000)
+            .map(|ts| received(&format!("s{ts}"), 100 + ts))
+            .collect(),
+        delay: Duration::from_secs(29),
+    }
+    .start()
+    .recipient();
+    let (net_tx, mut net_rx) = mpsc::channel::<NetCommand>(64);
+    let event_tx = NetEventChannel::new(64);
+    let _event_rx = event_tx.subscribe();
+    let asked = tokio::spawn(async move { net_rx.recv().await.is_some() });
+    let (response_tx, _response_rx) =
+        e3_utils::actix::channel::oneshot::<TypedEvent<SyncRequestSucceeded>>();
+    let start = HistoricalNetSyncStart::new(BTreeMap::from([(AggregateId::new(1), 0)]));
+    let context: e3_events::EventContext<Unsequenced> =
+        InterfoldEventData::HistoricalNetSyncStart(start.clone()).into();
+    let started = tokio::time::Instant::now();
+
+    let error = handle_sync_request_event(
+        net_tx,
+        NetEventSubscriber::from(&event_tx),
+        TypedEvent::new(start, context.sequence(1)),
+        response_tx,
+        false,
+        NetworkPolicy::local_unrestricted(),
+        HistoryBounds {
+            latest_ts: u128::MAX,
+            eventstore,
+        },
+    )
+    .await
+    .unwrap_err();
+
+    assert!(format!("{error:#}").contains("deadline"), "{error:#}");
+    assert!(started.elapsed() <= Duration::from_secs(5 * 60 + 1));
+    asked.abort();
+}
+
+/// The historical EVM events that startup publishes with the peer history hold their timestamps:
+/// a peer that puts another event at one of them adds nothing, and the event store takes the
+/// combined history.
+#[actix::test]
+async fn evm_history_keeps_its_timestamps_in_the_combined_history() {
+    let aggregate = AggregateId::new(1);
+    let system = EventSystem::new()
+        .with_fresh_bus()
+        .with_aggregate_config(AggregateConfig::new(HashMap::from([(
+            aggregate,
+            Duration::ZERO,
+        )])));
+    let bus = system.handle().unwrap().enable("test");
+    let failure = system.failure_receiver();
+    let evm = received("from-chain", 50);
+    let reserved = e3_events::ReservedTimestamps::from([(
+        aggregate,
+        HashMap::from([(evm.ts(), TimestampClaim::of(&evm))]),
+    )]);
+    let peer = |events, observed_from| FakeHistoryPeer {
+        peer: PeerId::random(),
+        events,
+        observed_from,
+        fails: 0,
+        silent: 0,
+        slow: None,
+    };
+    let peers = vec![
+        peer(vec![received("e1", 40), received("e2", 60)], None),
+        peer(vec![received("e1", 41), received("e2", 61)], None),
+        // Another event at the EVM event's timestamp.
+        peer(vec![received("e3", 50)], Some(0)),
+    ];
+    let (net_tx, net_rx) = mpsc::channel::<NetCommand>(64);
+    let event_tx = NetEventChannel::new(64);
+    let _event_rx = event_tx.subscribe();
+    spawn_fake_history_network(peers, net_rx, event_tx.clone());
+    let (response_tx, response_rx) =
+        e3_utils::actix::channel::oneshot::<TypedEvent<SyncRequestSucceeded>>();
+    let start =
+        HistoricalNetSyncStart::new(BTreeMap::from([(aggregate, 0)])).with_reserved(reserved);
+    let context: e3_events::EventContext<Unsequenced> =
+        InterfoldEventData::HistoricalNetSyncStart(start.clone()).into();
+
+    handle_sync_request_event(
+        net_tx,
+        NetEventSubscriber::from(&event_tx),
+        TypedEvent::new(start, context.sequence(1)),
+        response_tx,
+        false,
+        NetworkPolicy::local_unrestricted(),
+        HistoryBounds {
+            latest_ts: u128::MAX,
+            eventstore: system.eventstore_reader().unwrap().ts(),
+        },
+    )
+    .await
+    .unwrap();
+    let (succeeded, _) = response_rx.await.unwrap().into_components();
+    let mut e3s: Vec<_> = fetched_e3s(&succeeded.response.events)
+        .into_iter()
+        .map(|(e3, _)| e3)
+        .collect();
+    e3s.sort();
+    assert_eq!(e3s, vec!["e1", "e2"]);
+
+    // Startup publishes both histories together, in timestamp order.
+    let mut combined = succeeded.response.events;
+    combined.push(evm);
+    combined.sort_by_key(|event| event.ts());
+    for event in combined {
+        bus.naked_dispatch_async(event).await.unwrap();
+    }
+    bus.flush_event_pipeline().await.unwrap();
+    assert_eq!(*failure.borrow(), None);
 }
 
 /// A source that puts another event at the timestamp of an event that the node stores is refused,
@@ -1417,7 +1591,7 @@ async fn a_source_that_takes_a_stored_timestamp_is_replaced() {
         AggregateHistory::new(
             AggregateId::new(1),
             0,
-            HashMap::from([(stored.ts(), stored.id())]),
+            Arc::new(HashMap::from([(stored.ts(), TimestampClaim::of(&stored))])),
         ),
         &mut budget,
         &NetworkPolicy::local_unrestricted(),
@@ -1449,8 +1623,13 @@ async fn further_peers_cannot_make_the_stored_history_collide() {
     bus.naked_dispatch_async(stored.clone()).await.unwrap();
     bus.flush_event_pipeline().await.unwrap();
     let eventstore = system.eventstore_reader().unwrap().ts();
-    let stored_ids = stored_event_ids(&eventstore, aggregate, 0).await.unwrap();
-    assert_eq!(stored_ids, HashMap::from([(stored.ts(), stored.id())]));
+    let stored_ids = stored_event_ids(&eventstore, aggregate, 0, 10)
+        .await
+        .unwrap();
+    assert_eq!(
+        stored_ids,
+        HashMap::from([(stored.ts(), TimestampClaim::of(&stored))])
+    );
 
     let peer = |events, observed_from| FakeHistoryPeer {
         peer: PeerId::random(),
@@ -1480,7 +1659,7 @@ async fn further_peers_cannot_make_the_stored_history_collide() {
         &commands_tx,
         &subscriber,
         order.clone(),
-        AggregateHistory::new(aggregate, 0, stored_ids),
+        AggregateHistory::new(aggregate, 0, Arc::new(stored_ids)),
         &mut budget,
         &policy,
     )
@@ -1507,7 +1686,9 @@ async fn further_peers_cannot_make_the_stored_history_collide() {
     }
     bus.flush_event_pipeline().await.unwrap();
     assert_eq!(*failure.borrow(), None);
-    let stored_after = stored_event_ids(&eventstore, aggregate, 0).await.unwrap();
+    let stored_after = stored_event_ids(&eventstore, aggregate, 0, 10)
+        .await
+        .unwrap();
     assert_eq!(stored_after.len(), 3);
 }
 

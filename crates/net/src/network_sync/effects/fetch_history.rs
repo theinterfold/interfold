@@ -7,9 +7,10 @@ use crate::direct_requester::WithoutPeer;
 use crate::events::call_and_await_response;
 use crate::net_interface_handle::NetEventSubscriber;
 use anyhow::ensure;
-use e3_events::{EventId, HistoryProgress};
+use e3_events::{EventId, HistoryProgress, TimestampClaim};
 use libp2p::PeerId;
 use rand::seq::SliceRandom;
+use std::sync::Arc;
 use std::time::Duration;
 
 /// Peers whose histories a node merges for each aggregate.
@@ -29,6 +30,10 @@ const STORED_PAGE_EVENTS: u64 = 1_000;
 const STORED_PAGE_BYTES: u64 = 8 * 1024 * 1024;
 /// Deadline for the node's event store to answer one such page.
 const STORED_PAGE_TIMEOUT: Duration = Duration::from_secs(30);
+/// Most timestamps that the node keeps from its own stored history for the check, over all
+/// aggregates. The history after the snapshot cursors is short; a longer one fails the fetch
+/// rather than grow without bound.
+const MAX_STORED_CLAIMS: usize = 100_000;
 
 /// What a peer's history must fit at this node.
 pub(in crate::actors::net_sync_manager) struct HistoryBounds {
@@ -44,8 +49,9 @@ pub(in crate::actors::net_sync_manager) struct HistoryBounds {
 pub(in crate::actors::net_sync_manager) struct AggregateHistory {
     aggregate_id: AggregateId,
     since: u128,
-    /// The IDs of the node's own stored events at or after `since`, by timestamp.
-    stored: HashMap<u128, EventId>,
+    /// The timestamps that events already hold at or after `since`: the node's stored events,
+    /// and the events that startup publishes with the history.
+    stored: Arc<HashMap<u128, TimestampClaim>>,
     merged: MergedEvents,
     /// Whether a peer that served the history observed the whole range live: its `observed_from`
     /// is at or before `since`.
@@ -59,7 +65,7 @@ impl AggregateHistory {
     pub(in crate::actors::net_sync_manager) fn new(
         aggregate_id: AggregateId,
         since: u128,
-        stored: HashMap<u128, EventId>,
+        stored: Arc<HashMap<u128, TimestampClaim>>,
     ) -> Self {
         Self {
             aggregate_id,
@@ -363,13 +369,14 @@ pub(in crate::actors::net_sync_manager) fn validate_historical_events(
                 event.id()
             );
         }
-        if let Some(stored) = history.stored.get(&event.ts()) {
-            if *stored != event.id() {
+        // The same event only: the ID that a stored event carries need not be its payload's.
+        if let Some(claim) = history.stored.get(&event.ts()) {
+            if !claim.admits(event) {
                 bail!(
-                    "historical sync peer returned event {} at the timestamp of this node's stored \
-                     event {}",
+                    "historical sync peer returned event {} at the timestamp of this node's event \
+                     {}",
                     event.id(),
-                    stored
+                    claim.id
                 );
             }
         }
@@ -425,13 +432,14 @@ pub(in crate::actors::net_sync_manager) fn eligible_sync_cursor(
         .collect()
 }
 
-/// The IDs of the node's own stored events of `aggregate_id` at or after `since`, by timestamp, read
-/// in pages.
+/// The claims of the node's own stored events of `aggregate_id` at or after `since` on their
+/// timestamps, read in pages. More than `capacity` of them fail the read.
 pub(in crate::actors::net_sync_manager) async fn stored_event_ids(
     eventstore: &Recipient<EventStoreQueryBy<TsAgg>>,
     aggregate_id: AggregateId,
     since: u128,
-) -> Result<HashMap<u128, EventId>> {
+    capacity: usize,
+) -> Result<HashMap<u128, TimestampClaim>> {
     let mut stored = HashMap::new();
     let mut from = since;
     loop {
@@ -454,8 +462,12 @@ pub(in crate::actors::net_sync_manager) async fn stored_event_ids(
             .context("the event store dropped the read of this node's stored history")?;
         let progress = response.history();
         for event in response.into_events()? {
-            stored.insert(event.ts(), event.id());
+            stored.insert(event.ts(), TimestampClaim::of(&event));
         }
+        ensure!(
+            stored.len() <= capacity,
+            "this node stores more than {capacity} events after the history cursors"
+        );
         match progress {
             Some(HistoryProgress {
                 exhausted: true, ..
@@ -542,13 +554,25 @@ pub(in crate::actors::net_sync_manager) async fn handle_sync_request_event(
     let mut histories: Vec<AggregateHistory> = Vec::new();
     let mut failed_aggregates: Vec<AggregateId> = Vec::new();
     let mut budget = SyncFetchBudget::production().with_latest_ts(bounds.latest_ts);
-    // A peer's event must not take the timestamp of an event that the node stores after the cursor.
+    // A peer's event must not take the timestamp of an event that the node stores after the
+    // cursor, or of one that startup publishes with the history. The read counts against the
+    // fetch deadline.
     let mut stored = HashMap::new();
+    let mut capacity = MAX_STORED_CLAIMS;
     for (aggregate_id, since) in &sync_cursor {
-        stored.insert(
-            *aggregate_id,
-            stored_event_ids(&bounds.eventstore, *aggregate_id, *since).await?,
-        );
+        let mut claims = budget
+            .within(stored_event_ids(
+                &bounds.eventstore,
+                *aggregate_id,
+                *since,
+                capacity,
+            ))
+            .await?;
+        capacity -= claims.len();
+        for (ts, claim) in event.reserved.get(aggregate_id).into_iter().flatten() {
+            claims.entry(*ts).or_insert(*claim);
+        }
+        stored.insert(*aggregate_id, Arc::new(claims));
     }
     let empty_history = |aggregate_id: AggregateId, since: u128| {
         AggregateHistory::new(

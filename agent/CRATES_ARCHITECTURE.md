@@ -616,17 +616,19 @@ requested timestamp, every page of its history goes to that peer, and the node k
 copy per event ID, with the earliest timestamp. Each event's ID must be the hash of its payload, so
 a peer cannot hide another peer's copy of a different event under the same ID; the ID does not fix
 the whole payload, so two copies with one ID and different payloads fail the fetch. The event store
-holds one event at a timestamp and stops the node at a second one, so the node first reads the IDs
-of its own stored events after the cursor. It refuses a peer that serves an event from before the
-requested time, two events at one timestamp, or an event at the timestamp of a different stored
-event; two sources that put different events at one timestamp fail the fetch. A failed peer is
-replaced by another one. When the listed peers do not supply two sources, the aggregate's fetch
-fails and a recovery round asks again; one connected peer serves alone. A peer that a later peer can
-replace gets one attempt per page and the time left less 60 s for each source that the node would
-then still lack (at least 30 s), so slow or silent peers cannot use up the five-minute fetch
-deadline before the node reaches a healthy one; a peer that no later peer can replace gets three
-attempts and all the time left. Listing the admitted peers and the waits between recovery rounds
-count against the deadline too.
+holds one event at a timestamp and stops the node at a second one, so the node first reads the
+claims of its own stored events after the cursor on their timestamps (each event's ID and its
+payload's digest, within the fetch deadline and at most 100,000 of them), and adds those of the
+historical EVM events that startup publishes with the peer history. It refuses a peer that serves an
+event from before the requested time, two events at one timestamp, or an event at a claimed
+timestamp whose ID is not both the claim's ID and its payload digest; two sources that put different
+events at one timestamp fail the fetch. A failed peer is replaced by another one. When the listed
+peers do not supply two sources, the aggregate's fetch fails and a recovery round asks again; one
+connected peer serves alone. A peer that a later peer can replace gets one attempt per page and the
+time left less 60 s for each source that the node would then still lack (at least 30 s), so slow or
+silent peers cannot use up the five-minute fetch deadline before the node reaches a healthy one; a
+peer that no later peer can replace gets three attempts and all the time left. Listing the admitted
+peers and the waits between recovery rounds count against the deadline too.
 
 Each reply carries `observed_from`, a hint of the time from which the responder stores history live.
 The responder sets it once the gossip that it held during its own startup is durable: its startup

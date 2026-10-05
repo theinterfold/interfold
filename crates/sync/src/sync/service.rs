@@ -19,8 +19,9 @@ use e3_events::{
     E3Requested, E3id, EffectsEnabled, Event, EventContext, EventContextAccessors, EventPublisher,
     EventStoreQueryBy, EventStoreQueryResponse, EventSubscriber, EventType, EvmEventConfig,
     HistoricalEvmEventsReceived, HistoricalEvmSyncStart, HistoricalNetSyncFailed,
-    HistoricalNetSyncStart, InterfoldEvent, InterfoldEventData, Seed, SeqAgg, Sequenced,
-    SlashExecuted, StoreKeys, SyncEffect, SyncEnded, TicketGenerated, TypedEvent, Unsequenced,
+    HistoricalNetSyncStart, InterfoldEvent, InterfoldEventData, ReservedTimestamps, Seed, SeqAgg,
+    Sequenced, SlashExecuted, StoreKeys, SyncEffect, SyncEnded, TicketGenerated, TimestampClaim,
+    TypedEvent, Unsequenced,
 };
 use e3_utils::actix::channel as actix_toolbox;
 use std::{
@@ -455,7 +456,8 @@ where
     net_ready.await?;
     info!("NetReady!");
     info!("Loading historical libp2p events...");
-    let historical_net_events = fetch_peer_history(bus, net_config).await?;
+    let historical_net_events =
+        fetch_peer_history(bus, net_config, reserved_timestamps(&historical_evm_events)).await?;
     info!(
         "{} historical libp2p events loaded.",
         historical_net_events.len()
@@ -479,16 +481,32 @@ where
     Ok(())
 }
 
+/// The timestamps of the historical EVM events, which startup publishes with the peer history: a
+/// peer's event must not take one of them.
+fn reserved_timestamps(events: &[InterfoldEvent<Unsequenced>]) -> ReservedTimestamps {
+    let mut reserved = ReservedTimestamps::new();
+    for event in events {
+        reserved
+            .entry(event.aggregate_id())
+            .or_default()
+            .insert(event.ts(), TimestampClaim::of(event));
+    }
+    reserved
+}
+
 /// Ask the network for the peer history after `since`, and wait for the history or for the
 /// failure of the fetch.
 async fn fetch_peer_history(
     bus: &BusHandle,
     since: BTreeMap<AggregateId, u128>,
+    reserved: ReservedTimestamps,
 ) -> Result<Vec<InterfoldEvent<Unsequenced>>> {
     let (failure, failed) = actix_toolbox::oneshot::<HistoricalNetSyncFailed>();
     let events_received = bus.wait_for(EventType::HistoricalNetSyncEventsReceived);
     bus.publish_without_context(
-        HistoricalNetSyncStart::new(since).with_failure_recipient(failure),
+        HistoricalNetSyncStart::new(since)
+            .with_failure_recipient(failure)
+            .with_reserved(reserved),
     )?;
     await_peer_history(events_received, failed).await
 }
