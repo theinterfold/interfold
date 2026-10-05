@@ -286,10 +286,16 @@ impl ThresholdKeyshare {
                 self.recovery.try_mutate(&ec, |mut recovery| {
                     // Keep the first supported roster of a proposer. A later roster replaces one
                     // that the local Ready state does not support.
-                    let replace_held = recovery
-                        .pending_rosters
-                        .get(&message.party_id)
-                        .is_none_or(|held| !roster_is_supported_by_local_state(&recovery, held));
+                    // A held roster with an expelled member can never be accepted, also when a
+                    // refused write kept it after the expulsion.
+                    let replace_held =
+                        recovery
+                            .pending_rosters
+                            .get(&message.party_id)
+                            .is_none_or(|held| {
+                                !roster_is_supported_by_local_state(&recovery, held)
+                                    || !roster_members_are_live(held, &state.expelled_parties)
+                            });
                     if replace_held {
                         recovery
                             .pending_rosters
@@ -380,9 +386,9 @@ impl ThresholdKeyshare {
     }
 
     /// Apply the held Ready updates that the current expulsions make extensions, drop the ones that
-    /// can no longer become one, and drop pending rosters with an expelled member. An accepted
-    /// roster with an expelled member is dropped too while it is not fixed. Run in the DKG phases
-    /// after an expulsion, after a direct Ready update, and when effects resume after a restart.
+    /// can no longer become one, and drop pending rosters with an expelled member. Run in the DKG
+    /// phases after an expulsion, after a direct Ready update, and when effects resume after a
+    /// restart.
     pub(in crate::actors::threshold_keyshare) fn apply_held_ready_updates(
         &mut self,
         ec: EventContext<Sequenced>,
@@ -425,14 +431,7 @@ impl ThresholdKeyshare {
             .filter(|(_, roster)| !roster_members_are_live(roster, expelled))
             .map(|(proposer, _)| *proposer)
             .collect();
-        // An accepted roster binds this node only once its C4 starts. Before that, as at
-        // acceptance, a roster with an expelled member cannot finish.
-        let drop_accepted = recovery
-            .dkg_roster
-            .as_ref()
-            .is_some_and(|roster| !roster_members_are_live(roster, expelled))
-            && !self.dkg_roster_is_fixed(&state);
-        if applied.is_empty() && settled.is_empty() && stale_rosters.is_empty() && !drop_accepted {
+        if applied.is_empty() && settled.is_empty() && stale_rosters.is_empty() {
             return Ok(());
         }
         self.recovery.try_mutate(&ec, |mut recovery| {
@@ -451,22 +450,9 @@ impl ThresholdKeyshare {
             for proposer in &stale_rosters {
                 recovery.pending_rosters.remove(proposer);
             }
-            if drop_accepted {
-                recovery.dkg_roster = None;
-            }
             recovery.last_ec = Some(ec.clone());
             Ok(recovery)
         })?;
-        if drop_accepted {
-            warn!(
-                e3_id = %state.e3_id,
-                "Dropping the accepted DKG roster: a member was expelled before C4 started"
-            );
-            self.state.try_mutate(&ec, |mut state| {
-                state.honest_parties = None;
-                Ok(state)
-            })?;
-        }
         for (reporter, _) in applied {
             info!(
                 e3_id = %state.e3_id,
@@ -617,8 +603,20 @@ impl ThresholdKeyshare {
         })?;
         self.roster_proposal_pending = false;
         self.roster_inputs_ready = false;
+        // Live, an expulsion takes the dealer out of the honest parties of an accepted roster.
+        // Restoring the roster after a restart does the same until C4 starts. A fixed roster is
+        // restored in full: the calculation that started from it used every dealer.
+        let honest: BTreeSet<u64> = if self.dkg_roster_is_fixed(&state) {
+            party_ids.clone()
+        } else {
+            party_ids
+                .iter()
+                .copied()
+                .filter(|party_id| !state.expelled_parties.contains(party_id))
+                .collect()
+        };
         self.state.try_mutate(&ec, |mut state| {
-            state.honest_parties = Some(party_ids.clone());
+            state.honest_parties = Some(honest.clone());
             Ok(state)
         })?;
         info!(

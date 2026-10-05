@@ -649,10 +649,14 @@ that held Ready reports contradict stays held in the same way. Acceptance checks
 again and that neither its proposer nor a selected dealer is expelled; a held roster with an
 expelled member is dropped. A later roster from the same proposer replaces a held roster that the
 local Ready state does not support. Before C4
-starts, a roster from a lower party ID replaces a roster from a higher party ID, and an accepted
-roster with an expelled member is dropped, as at acceptance. C4 starts when the node sends its
-decryption-key calculation; it saves that fact with the selected parties, so after a restart that
-loses the calculation the roster stays fixed. A promoted aggregator re-proposes the accepted dealer list instead of deriving
+starts, a roster from a lower party ID replaces a roster from a higher party ID. An accepted
+roster is never dropped, so the commitment checker keeps its selection; until C4 starts, an
+expelled dealer is not an honest party, also when a restart restores the roster, and a fixed
+roster is restored with every dealer. C4 starts when the node sends its decryption-key
+calculation. It saves that fact with the selected parties, and replay of the logged calculation
+request saves it again, so a restart that loses the calculation keeps the roster fixed. A held
+roster with an expelled member gives way to a later roster of the same proposer. A promoted
+aggregator re-proposes the accepted dealer list instead of deriving
 a different list from its local delivery order.
 
 Once a node can derive a valid roster, or receives a supported roster that it cannot yet derive

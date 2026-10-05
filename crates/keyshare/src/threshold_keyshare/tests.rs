@@ -2803,11 +2803,17 @@ async fn a_restart_keeps_the_roster_that_its_c4_started_from() -> Result<()> {
     Ok(())
 }
 
-/// An accepted roster binds the node only once its C4 starts. After a restart, a restored roster
-/// with an expelled member is dropped if C4 had not started, and kept if it had.
+/// After a restart, a restored roster keeps every dealer once C4 started from it: the calculation
+/// used them all. Before that, as live, an expelled dealer is not an honest party. The roster stays
+/// accepted either way, also when only its proposer was expelled, so the commitment checker keeps
+/// the same selection.
 #[actix::test]
-async fn a_restored_roster_with_an_expelled_member_binds_only_after_c4_started() -> Result<()> {
-    for fixed in [false, true] {
+async fn a_restored_roster_leaves_out_an_expelled_dealer_until_c4_started() -> Result<()> {
+    for (fixed, expelled, honest) in [
+        (false, 1, BTreeSet::from([0])),
+        (true, 1, BTreeSet::from([0, 1])),
+        (false, 2, BTreeSet::from([0, 1])),
+    ] {
         let e3_id = E3id::new("55", 1);
         let signers = three_signers();
         let own_ready = DkgCoordination::sign(
@@ -2818,13 +2824,14 @@ async fn a_restored_roster_with_an_expelled_member_binds_only_after_c4_started()
             dealers(&[0, 1]),
             &signers[0],
         )?;
+        // Party 2 proposed the dealers 0 and 1.
         let roster = DkgCoordination::sign(
             e3_id.clone(),
             Address::ZERO,
-            1,
+            2,
             DkgCoordinationKind::Roster,
             dealers(&[0, 1]),
-            &signers[1],
+            &signers[2],
         )?;
         let cipher = Arc::new(Cipher::from_password("test-password").await?);
         let mut committee = committee_actor(
@@ -2839,33 +2846,155 @@ async fn a_restored_roster_with_an_expelled_member_binds_only_after_c4_started()
             },
         )
         .await?;
-        // Dealer 1 was expelled after the acceptance was saved.
+        // A party was expelled after the acceptance was saved.
         committee
             .actor
             .state
             .try_mutate_without_context(|mut state| {
-                state.expelled_parties.insert(1);
-                state.honest_parties = Some(BTreeSet::from([0]));
+                state.expelled_parties.insert(expelled);
                 state.dkg_roster_fixed = fixed;
                 Ok(state)
             })?;
-        let actor = committee.actor.start();
 
-        actor
-            .send(keyshare_event(EffectsEnabled::new(), 3, EventSource::Local))
-            .await?;
+        committee
+            .actor
+            .accept_dkg_roster(roster.clone(), test_ec(3))?;
 
-        if fixed {
-            actix::clock::sleep(std::time::Duration::from_millis(200)).await;
-            let recovery = committee.recovery_repo.read().await?.unwrap_or_default();
-            assert_eq!(recovery.dkg_roster, Some(roster));
-        } else {
-            wait_for_record(&committee.recovery_repo, |recovery| {
-                recovery.dkg_roster.is_none()
-            })
-            .await?;
-        }
+        let case = format!("fixed={fixed} expelled={expelled}");
+        assert_eq!(
+            committee.actor.recovery.try_get()?.dkg_roster,
+            Some(roster.clone()),
+            "{case}"
+        );
+        assert_eq!(
+            committee.actor.state.try_get()?.honest_parties,
+            Some(honest),
+            "{case}"
+        );
     }
+    Ok(())
+}
+
+/// The flag that fixes the roster can be lost at dispatch, when the write's context trails the
+/// saved snapshot cursor. Replay delivers the logged calculation request, which sets the flag
+/// again, so a lower-ranked roster that arrives later does not replace the roster that the
+/// calculation used.
+#[actix::test]
+async fn a_logged_key_calculation_fixes_the_roster_again() -> Result<()> {
+    let e3_id = E3id::new("58", 1);
+    let signers = three_signers();
+    let sign = |party_id: u64, kind, dealer_ids: &[u64]| {
+        DkgCoordination::sign(
+            e3_id.clone(),
+            Address::ZERO,
+            party_id,
+            kind,
+            dealers(dealer_ids),
+            &signers[party_id as usize],
+        )
+    };
+    let own_ready = sign(0, DkgCoordinationKind::Ready, &[0, 1, 2])?;
+    let accepted = sign(1, DkgCoordinationKind::Roster, &[1, 2])?;
+    let outranking = sign(0, DkgCoordinationKind::Roster, &[0, 1])?;
+    let cipher = Arc::new(Cipher::from_password("test-password").await?);
+    let committee = committee_actor(
+        &e3_id,
+        &signers,
+        aggregating_decryption_key_for_roster_test(),
+        cipher,
+        |recovery| {
+            recovery.dkg_ready = Some(own_ready.clone());
+            recovery.ready_by_party.insert(0, own_ready.clone());
+            for party_id in [1, 2] {
+                recovery
+                    .ready_by_party
+                    .insert(party_id, ready_message(party_id, &[0, 1, 2], &e3_id));
+            }
+            recovery.dkg_roster = Some(accepted.clone());
+            recovery.active_aggregator_party_id = Some(1);
+        },
+    )
+    .await?;
+    let actor = committee.actor.start();
+
+    let calculation = ComputeRequest::trbfv(
+        TrBFVRequest::CalculateDecryptionKey(
+            e3_trbfv::calculate_decryption_key::CalculateDecryptionKeyRequest {
+                trbfv_config: TrBFVConfig::new(ArcBytes::from_bytes(b"params"), 3, 1),
+                sk_sss_collected: Vec::new(),
+                esi_sss_collected: Vec::new(),
+            },
+        ),
+        CorrelationId::new(),
+        e3_id.clone(),
+    );
+    actor
+        .send(keyshare_event(calculation, 2, EventSource::Local))
+        .await?;
+    actor
+        .send(keyshare_event(outranking, 3, EventSource::Net))
+        .await?;
+
+    actix::clock::sleep(std::time::Duration::from_millis(100)).await;
+    let recovery = committee
+        .recovery_repo
+        .read()
+        .await?
+        .expect("saved recovery state");
+    assert_eq!(recovery.dkg_roster, Some(accepted));
+    assert!(!recovery.pending_rosters.contains_key(&0));
+    Ok(())
+}
+
+/// A refused write can keep a pending roster after one of its dealers was expelled. A later roster
+/// of the same proposer replaces it: the old one can never be accepted.
+#[actix::test]
+async fn a_pending_roster_with_an_expelled_dealer_is_replaced() -> Result<()> {
+    let e3_id = E3id::new("59", 1);
+    let signers = three_signers();
+    let sign = |party_id: u64, kind, dealer_ids: &[u64]| {
+        DkgCoordination::sign(
+            e3_id.clone(),
+            Address::ZERO,
+            party_id,
+            kind,
+            dealers(dealer_ids),
+            &signers[party_id as usize],
+        )
+    };
+    let own_ready = sign(0, DkgCoordinationKind::Ready, &[0, 1, 2])?;
+    let obsolete = sign(1, DkgCoordinationKind::Roster, &[1, 2])?;
+    let replacement = sign(1, DkgCoordinationKind::Roster, &[0, 1])?;
+    let cipher = Arc::new(Cipher::from_password("test-password").await?);
+    let mut committee = committee_actor(
+        &e3_id,
+        &signers,
+        aggregating_decryption_key_for_roster_test(),
+        cipher,
+        |recovery| {
+            recovery.dkg_ready = Some(own_ready.clone());
+            recovery.ready_by_party.insert(0, own_ready.clone());
+            recovery
+                .ready_by_party
+                .insert(1, ready_message(1, &[0, 1, 2], &e3_id));
+            recovery.pending_rosters.insert(1, obsolete.clone());
+        },
+    )
+    .await?;
+    committee
+        .actor
+        .state
+        .try_mutate_without_context(|mut state| {
+            state.expelled_parties.insert(2);
+            Ok(state)
+        })?;
+
+    committee
+        .actor
+        .record_dkg_coordination(replacement.clone(), test_ec(2))?;
+
+    let recovery = committee.actor.recovery.try_get()?;
+    assert_eq!(recovery.pending_rosters.get(&1), Some(&replacement));
     Ok(())
 }
 

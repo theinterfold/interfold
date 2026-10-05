@@ -95,6 +95,35 @@ impl ThresholdKeyshare {
         Ok(())
     }
 
+    /// Save that C4 started at the logged decryption-key calculation's own position. The write at
+    /// dispatch can be lost: after a restart its context can trail the saved snapshot cursor, and
+    /// the store refuses it as stale. Replay delivers the logged request before effects resume, so
+    /// the roster that the calculation used stays fixed.
+    pub(in crate::actors::threshold_keyshare) fn record_logged_key_calculation(
+        &mut self,
+        request: &ComputeRequest,
+        ec: &EventContext<Sequenced>,
+    ) -> Result<()> {
+        if !matches!(
+            request.request,
+            e3_events::ComputeRequestKind::TrBFV(TrBFVRequest::CalculateDecryptionKey(_))
+        ) || ec.source() != e3_events::EventSource::Local
+        {
+            return Ok(());
+        }
+        let state = self.state.try_get()?;
+        if request.e3_id != state.e3_id
+            || state.dkg_roster_fixed
+            || !matches!(state.state, KeyshareState::AggregatingDecryptionKey(_))
+        {
+            return Ok(());
+        }
+        self.state.try_mutate(ec, |mut state| {
+            state.dkg_roster_fixed = true;
+            Ok(state)
+        })
+    }
+
     /// 5a. CalculateDecryptionKeyResponse — transition to ReadyForDecryption,
     /// then publish DecryptionShareProofsPending so ProofRequestActor can
     /// generate C4 proofs, sign them, and publish DecryptionKeyShared.
