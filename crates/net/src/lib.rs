@@ -171,11 +171,12 @@ pub fn setup_net_with_limits_and_interests(
 
     // Buffer application events until SyncEnded. The producer keeps control events on the raw
     // channel that the sync manager consumes.
-    let (rx, buffer_handle) = NetEventBuffer::setup_with_limits(
+    let (rx, buffer_handle) = NetEventBuffer::setup_with_live_history(
         &bus,
         &interface.application_events(),
         max_buffered_events,
         max_buffered_bytes,
+        live_history.clone(),
     );
     let tx = interface.tx();
     let network = network.clone();

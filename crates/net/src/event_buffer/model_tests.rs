@@ -62,6 +62,7 @@ async fn test_non_advancing_cursor_is_rejected() {
         0,
         1,
         &mut SyncFetchBudget::production(),
+        None,
     )
     .await
     .unwrap_err();
@@ -114,6 +115,7 @@ async fn test_three_batches_with_cursor_continuity() {
         0,
         2,
         &mut SyncFetchBudget::production(),
+        None,
     )
     .await
     .unwrap()
@@ -168,6 +170,7 @@ async fn a_responder_that_resets_between_pages_fails_as_a_source() {
         0,
         1,
         &mut SyncFetchBudget::production(),
+        None,
     )
     .await
     .unwrap_err();

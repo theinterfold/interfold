@@ -301,7 +301,12 @@ impl Handler<EventStoreQueryResponse> for NetSyncManager {
                 ))?;
                 bail!("event store answered a historical-sync page without scan progress");
             };
-            match build_sync_batch(events, history, pending.observed_from, &fetch_request) {
+            // The live-history time from the admission counts only if it still holds: a reply
+            // must not say that the node observed a range live after the node lost gossip.
+            let observed_from = pending
+                .observed_from
+                .filter(|_| self.live_history.since() == pending.observed_from);
+            match build_sync_batch(events, history, observed_from, &fetch_request) {
                 SyncBatchOutcome::BadRequest(reason) => pending.responder.bad_request(reason)?,
                 SyncBatchOutcome::Failed(reason) => {
                     warn!(%reason, "Cannot serve a historical-sync request");

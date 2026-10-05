@@ -19,6 +19,7 @@ use tracing::warn;
 use crate::domain::net_buffer::{BufferDecision, NetEventBufferState};
 use crate::events::NetEvent;
 use crate::net_interface_handle::NetEventSubscriber;
+use crate::LiveHistory;
 
 pub const DEFAULT_MAX_BUFFERED_NET_EVENTS: usize = 1_024;
 pub const DEFAULT_MAX_BUFFERED_NET_BYTES: usize = 256 * 1024 * 1024;
@@ -50,14 +51,28 @@ pub struct NetEventBuffer {
     max_bytes: usize,
     readiness: Option<oneshot::Sender<std::result::Result<(), String>>>,
     last_drop_warn: Option<Instant>,
+    /// Revoked when input lags after startup: the skipped gossip never reaches storage.
+    live_history: LiveHistory,
 }
 
 impl NetEventBuffer {
+    #[cfg(test)]
     pub(crate) fn setup_with_limits(
         bus: &BusHandle,
         input: &NetEventSubscriber,
         max_events: usize,
         max_bytes: usize,
+    ) -> (NetEventSubscriber, NetEventBufferHandle) {
+        Self::setup_with_live_history(bus, input, max_events, max_bytes, LiveHistory::default())
+    }
+
+    /// Set up the buffer. Input lag after startup revokes `live_history`.
+    pub(crate) fn setup_with_live_history(
+        bus: &BusHandle,
+        input: &NetEventSubscriber,
+        max_events: usize,
+        max_bytes: usize,
+        live_history: LiveHistory,
     ) -> (NetEventSubscriber, NetEventBufferHandle) {
         let input_rx = input.subscribe();
         // Room for every held event and the marker that follows them, so a full buffer cannot
@@ -79,6 +94,7 @@ impl NetEventBuffer {
             max_bytes,
             readiness: Some(readiness_tx),
             last_drop_warn: None,
+            live_history,
         };
 
         let addr = actor.start();

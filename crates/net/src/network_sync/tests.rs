@@ -322,6 +322,12 @@ async fn a_history_reply_vouches_only_for_what_its_storage_read_could_see() {
     request_history_page(&manager, &net_tx, 1).await;
     store.send(ReleaseQueries).await.unwrap();
     assert_eq!(next_history_page(&mut net_rx).await.observed_from, Some(7));
+
+    // The node loses gossip while a read is pending: the reply no longer says it observed live.
+    request_history_page(&manager, &net_tx, 2).await;
+    live_history.revoke();
+    store.send(ReleaseQueries).await.unwrap();
+    assert_eq!(next_history_page(&mut net_rx).await.observed_from, None);
 }
 
 #[actix::test]
@@ -525,7 +531,8 @@ async fn history_pages_continue_past_pages_of_quarantined_records() {
 }
 
 /// One peer of a fake network: the history it serves, the time it observed the network from,
-/// whether it fails every request, and whether it never answers.
+/// whether it fails every request, whether it never answers, and whether it answers each request
+/// after a delay and then falls silent.
 #[derive(Clone)]
 struct FakeHistoryPeer {
     peer: PeerId,
@@ -533,6 +540,7 @@ struct FakeHistoryPeer {
     observed_from: Option<u128>,
     fails: bool,
     silent: bool,
+    slow: Option<(Duration, usize)>,
 }
 
 fn keyshare_payload(e3: &str) -> InterfoldEventData {
@@ -566,6 +574,7 @@ fn spawn_fake_history_network(
 ) -> std::sync::Arc<std::sync::Mutex<Vec<PeerId>>> {
     let requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let seen = requests.clone();
+    let mut answered: HashMap<PeerId, usize> = HashMap::new();
     tokio::spawn(async move {
         while let Some(command) = commands.recv().await {
             match command {
@@ -583,6 +592,14 @@ fn spawn_fake_history_network(
                     let peer = peers.iter().find(|peer| peer.peer == target).unwrap();
                     if peer.silent {
                         continue;
+                    }
+                    if let Some((delay, answers)) = peer.slow {
+                        let count = answered.entry(target).or_default();
+                        if *count >= answers {
+                            continue;
+                        }
+                        *count += 1;
+                        tokio::time::sleep(delay).await;
                     }
                     let fetch = FetchEventsSince::try_from(request.payload).unwrap();
                     let payload = if peer.fails {
@@ -689,6 +706,7 @@ async fn history_from_two_peers_is_merged_and_each_peer_is_paged_alone() {
             observed_from: Some(0),
             fails: false,
             silent: false,
+            slow: None,
         },
         FakeHistoryPeer {
             peer: a,
@@ -696,6 +714,7 @@ async fn history_from_two_peers_is_merged_and_each_peer_is_paged_alone() {
             observed_from: Some(0),
             fails: false,
             silent: false,
+            slow: None,
         },
     ];
 
@@ -725,6 +744,7 @@ async fn startup_history_asks_two_admitted_peers() {
         observed_from: Some(0),
         fails: false,
         silent: false,
+        slow: None,
     };
 
     let (fetched, requests) = fetch_from_fake_peers(vec![peer("e1"), peer("e2")], 0, false).await;
@@ -743,6 +763,7 @@ async fn history_is_sought_from_a_peer_that_observed_the_range_live() {
         observed_from: Some(55),
         fails: false,
         silent: false,
+        slow: None,
     };
     let peers = vec![
         late(PeerId::random()),
@@ -753,6 +774,7 @@ async fn history_is_sought_from_a_peer_that_observed_the_range_live() {
             observed_from: Some(30),
             fails: false,
             silent: false,
+            slow: None,
         },
     ];
 
@@ -773,6 +795,7 @@ async fn a_failing_history_peer_is_replaced() {
         observed_from: Some(0),
         fails: false,
         silent: false,
+        slow: None,
     };
     let peers = vec![
         FakeHistoryPeer {
@@ -781,6 +804,7 @@ async fn a_failing_history_peer_is_replaced() {
             observed_from: Some(0),
             fails: true,
             silent: false,
+            slow: None,
         },
         serving(PeerId::random(), "e1"),
         serving(PeerId::random(), "e2"),
@@ -825,6 +849,7 @@ async fn a_peer_that_mislabels_an_event_cannot_hide_another_peers_copy() {
             observed_from: Some(0),
             fails: false,
             silent: false,
+            slow: None,
         },
         FakeHistoryPeer {
             peer: PeerId::random(),
@@ -832,6 +857,7 @@ async fn a_peer_that_mislabels_an_event_cannot_hide_another_peers_copy() {
             observed_from: Some(0),
             fails: false,
             silent: false,
+            slow: None,
         },
     ];
 
@@ -848,6 +874,7 @@ async fn silent_history_peers_leave_time_for_a_healthy_one() {
         observed_from: Some(0),
         fails: false,
         silent: true,
+        slow: None,
     };
     let (first, second, third) = (PeerId::random(), PeerId::random(), PeerId::random());
     let healthy = PeerId::random();
@@ -861,6 +888,7 @@ async fn silent_history_peers_leave_time_for_a_healthy_one() {
             observed_from: Some(0),
             fails: false,
             silent: false,
+            slow: None,
         },
     ];
 
@@ -880,6 +908,7 @@ async fn a_silent_peer_gets_one_attempt_while_a_later_peer_can_supply_the_missin
         observed_from: Some(0),
         fails: false,
         silent: true,
+        slow: None,
     };
     let serving = |peer, e3: &'static str| FakeHistoryPeer {
         peer,
@@ -888,6 +917,7 @@ async fn a_silent_peer_gets_one_attempt_while_a_later_peer_can_supply_the_missin
         observed_from: None,
         fails: false,
         silent: false,
+        slow: None,
     };
     let (first, second, third, fourth) = (
         PeerId::random(),
@@ -908,6 +938,80 @@ async fn a_silent_peer_gets_one_attempt_while_a_later_peer_can_supply_the_missin
     // The first peer served one source, so one later peer can supply the other: the third peer
     // gets one attempt too.
     assert_eq!(requests, vec![first, second, third, fourth]);
+}
+
+/// A peer that serves its pages slowly and then falls silent cannot use up the deadline: a peer
+/// that others can replace gets the fetch time less a reserve for the sources that would replace
+/// it, and the node then fetches from healthy peers.
+#[tokio::test(start_paused = true)]
+async fn a_slow_source_that_falls_silent_leaves_time_for_healthy_ones() {
+    let slow = FakeHistoryPeer {
+        peer: PeerId::random(),
+        events: (0..20).map(|index| received("slow", 100 + index)).collect(),
+        observed_from: Some(0),
+        fails: false,
+        silent: false,
+        slow: Some((Duration::from_secs(29), 10)),
+    };
+    let healthy = |e3: &'static str| FakeHistoryPeer {
+        peer: PeerId::random(),
+        events: vec![received(e3, 10)],
+        observed_from: Some(0),
+        fails: false,
+        silent: false,
+        slow: None,
+    };
+    let started = tokio::time::Instant::now();
+
+    let (fetched, _) = fetch_from_fake_peers(
+        vec![slow, healthy("e1"), healthy("e2"), healthy("e3")],
+        0,
+        true,
+    )
+    .await;
+
+    let mut e3s: Vec<_> = fetched_e3s(&fetched)
+        .into_iter()
+        .map(|(e3, _)| e3)
+        .collect();
+    e3s.sort();
+    assert_eq!(e3s, vec!["e1".to_string(), "e2".to_string()]);
+    assert!(started.elapsed() < Duration::from_secs(5 * 60));
+}
+
+/// Listing the admitted peers counts against the fetch deadline too. With no answer, the fetch of
+/// many aggregates ends at the deadline with the budget exhausted.
+#[actix::test]
+async fn unanswered_peer_lists_end_at_the_fetch_deadline() {
+    tokio::time::pause();
+    let (net_tx, mut net_rx) = mpsc::channel::<NetCommand>(64);
+    let event_tx = NetEventChannel::new(64);
+    let _event_rx = event_tx.subscribe();
+    let event_rx = NetEventSubscriber::from(&event_tx);
+    tokio::spawn(async move { while net_rx.recv().await.is_some() {} });
+    let (response_tx, _response_rx) =
+        e3_utils::actix::channel::oneshot::<TypedEvent<SyncRequestSucceeded>>();
+    let since = (1..=8)
+        .map(|chain| (AggregateId::from_chain_id(Some(chain)), 10))
+        .collect();
+    let start = HistoricalNetSyncStart::new(since);
+    let context: e3_events::EventContext<Unsequenced> =
+        InterfoldEventData::HistoricalNetSyncStart(start.clone()).into();
+    let started = tokio::time::Instant::now();
+
+    let error = handle_sync_request_event(
+        net_tx,
+        event_rx,
+        TypedEvent::new(start, context.sequence(1)),
+        response_tx,
+        false,
+        NetworkPolicy::local_unrestricted(),
+    )
+    .await
+    .unwrap_err();
+
+    assert!(format!("{error:#}").contains("global budget"), "{error:#}");
+    assert!(started.elapsed() <= Duration::from_secs(5 * 60 + 1));
 }
 
 #[test]

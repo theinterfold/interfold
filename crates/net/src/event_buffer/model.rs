@@ -68,10 +68,26 @@ impl SyncFetchBudget {
         self.exhausted
     }
 
-    fn remaining(&mut self) -> Result<Duration> {
+    /// The time left, or an error that marks the budget exhausted.
+    pub(crate) fn remaining(&mut self) -> Result<Duration> {
         match self.max_duration.checked_sub(self.started.elapsed()) {
             Some(remaining) => Ok(remaining),
             None => {
+                self.exhausted = true;
+                bail!("historical sync exceeded total deadline")
+            }
+        }
+    }
+
+    /// Run `work` within the time left, and mark the budget exhausted when the time runs out.
+    pub(crate) async fn within<T>(
+        &mut self,
+        work: impl std::future::Future<Output = Result<T>>,
+    ) -> Result<T> {
+        let remaining = self.remaining()?;
+        match tokio::time::timeout(remaining, work).await {
+            Ok(result) => result,
+            Err(_) => {
                 self.exhausted = true;
                 bail!("historical sync exceeded total deadline")
             }
@@ -218,6 +234,8 @@ pub(crate) struct PeerHistory<E> {
     pub observed_from: Option<u128>,
 }
 
+/// Fetch the history of `aggregate_id` after `since`, page by page. With `source_time`, the source
+/// fails when it has not ended in that time, which leaves the rest of the budget to other sources.
 pub(crate) async fn fetch_all_batched_events_with_budget<E>(
     requester: DirectRequester<WithoutPeer>,
     peer: PeerTarget,
@@ -225,6 +243,7 @@ pub(crate) async fn fetch_all_batched_events_with_budget<E>(
     since: u128,
     batch_size: usize,
     budget: &mut SyncFetchBudget,
+    source_time: Option<Duration>,
 ) -> Result<PeerHistory<E>>
 where
     E: Debug + Serialize + TryFrom<Vec<u8>> + Send + Sync + 'static,
@@ -237,6 +256,7 @@ where
     let mut cursor = since;
     let mut observed_from = None;
     let mut first_page = true;
+    let source_deadline = source_time.map(|time| Instant::now() + time);
 
     loop {
         let request = FetchEventsSince::new(aggregate_id, cursor, batch_size);
@@ -245,14 +265,20 @@ where
             aggregate_id, cursor, batch_size
         );
         let remaining = budget.remaining()?;
-        let batch =
-            match tokio::time::timeout(remaining, fetch_events_since(&requester, request)).await {
-                Ok(result) => result?,
-                Err(_) => {
-                    budget.exhausted = true;
-                    bail!("historical sync exceeded total deadline");
-                }
-            };
+        let source_left =
+            source_deadline.map(|deadline| deadline.saturating_duration_since(Instant::now()));
+        let wait = source_left.map_or(remaining, |left| left.min(remaining));
+        let batch = match tokio::time::timeout(wait, fetch_events_since(&requester, request)).await
+        {
+            Ok(result) => result?,
+            Err(_) if source_left.is_some_and(|left| left < remaining) => {
+                bail!("the history source used its share of the fetch deadline");
+            }
+            Err(_) => {
+                budget.exhausted = true;
+                bail!("historical sync exceeded total deadline");
+            }
+        };
         ensure!(
             batch.aggregate_id == aggregate_id,
             "sync peer returned aggregate {} while fetching {}",

@@ -15,16 +15,21 @@ use std::time::Duration;
 const HISTORY_SOURCES: usize = 2;
 /// Peers a node asks for one aggregate before it accepts history that no peer observed live.
 const MAX_HISTORY_PEERS: usize = 4;
+/// Fetch time kept back for each source that a failed source leaves the node short of.
+const SOURCE_RESERVE: Duration = Duration::from_secs(60);
+/// Least fetch time that a source that another peer can replace gets.
+const MIN_SOURCE_TIME: Duration = Duration::from_secs(30);
 
 /// Fetch one aggregate's history from several admitted peers and merge it by event ID.
 ///
 /// A peer can lack part of the range, for example after a restart or a reset, and still answer
 /// `Done`. So the node asks two peers, each from `since` and with every page pinned to that peer,
 /// and keeps the union. It asks up to four peers while none of the successful ones observed the
-/// whole range live (its `observed_from` is at or before `since`). A peer that fails is replaced by
-/// another one. A peer that a later peer can replace gets one attempt per page, so silent peers
-/// cannot use up the deadline before the node reaches a healthy one. One connected peer serves
-/// alone.
+/// whole range live (its `observed_from` is at or before `since`); that time is a hint, and the two
+/// sources are what the node relies on. A peer that fails is replaced by another one. A peer that a
+/// later peer can replace gets one attempt per page, and the fetch time less a reserve for the
+/// sources that would replace it, so slow or silent peers cannot use up the deadline before the
+/// node reaches a healthy one. One connected peer serves alone.
 pub(in crate::actors::net_sync_manager) async fn fetch_historical_events_for_aggregate(
     net_cmds: &mpsc::Sender<NetCommand>,
     net_events: &NetEventSubscriber,
@@ -33,7 +38,7 @@ pub(in crate::actors::net_sync_manager) async fn fetch_historical_events_for_agg
     budget: &mut SyncFetchBudget,
     network: &NetworkPolicy,
 ) -> Result<Vec<InterfoldEvent<Unsequenced>>> {
-    let mut peers = admitted_peers(net_cmds, net_events).await?;
+    let mut peers = budget.within(admitted_peers(net_cmds, net_events)).await?;
     ensure!(!peers.is_empty(), "No connected peers available");
     peers.shuffle(&mut rand::rng());
     fetch_history_from_peers(
@@ -68,10 +73,12 @@ pub(in crate::actors::net_sync_manager) async fn fetch_history_from_peers(
         if sources >= HISTORY_SOURCES && vouched {
             break;
         }
+        let later = candidates - index - 1;
         let requester = DirectRequester::builder(net_cmds.clone(), net_events.clone())
-            .max_retries(attempts_per_page(candidates - index - 1, sources))
+            .max_retries(attempts_per_page(later, sources))
             .retry_timeout(SYNC_FETCH_RETRY_TIMEOUT)
             .build();
+        let source_time = source_time(later, sources, budget.remaining()?);
         let history = match fetch_all_batched_events_with_budget::<InterfoldEvent<Unsequenced>>(
             requester,
             PeerTarget::Specific(peer),
@@ -79,6 +86,7 @@ pub(in crate::actors::net_sync_manager) async fn fetch_history_from_peers(
             since,
             100,
             budget,
+            source_time,
         )
         .await
         .and_then(|history| {
@@ -99,7 +107,7 @@ pub(in crate::actors::net_sync_manager) async fn fetch_history_from_peers(
         sources += 1;
         vouched |= observed_from.is_some_and(|observed| observed <= since);
         for event in events {
-            merge_by_event_id(&mut merged, event);
+            merge_by_event_id(&mut merged, event)?;
         }
     }
     if sources == 0 {
@@ -120,34 +128,57 @@ pub(in crate::actors::net_sync_manager) async fn fetch_history_from_peers(
     Ok(events)
 }
 
-/// Attempts for each page of one peer's history. When the `later` peers can still supply the
-/// sources that the node lacks if this peer fails, the peer gets one attempt: a silent peer then
-/// costs one request timeout, and four peers fit the fetch deadline. Otherwise it gets every retry.
+/// Whether the `later` peers can still supply the sources that the node lacks if this peer fails.
+fn replaceable(later: usize, sources: usize) -> bool {
+    later >= HISTORY_SOURCES.saturating_sub(sources)
+}
+
+/// Attempts for each page of one peer's history. A peer that a later peer can replace gets one
+/// attempt: a silent peer then costs one request timeout, and four peers fit the fetch deadline.
+/// Otherwise it gets every retry.
 fn attempts_per_page(later: usize, sources: usize) -> u32 {
-    if later >= HISTORY_SOURCES.saturating_sub(sources) {
+    if replaceable(later, sources) {
         1
     } else {
         SYNC_FETCH_MAX_RETRIES
     }
 }
 
+/// The fetch time of one peer's history. A peer that a later peer can replace leaves a reserve for
+/// each source that the node would then still lack. Otherwise the peer can use all `remaining`.
+fn source_time(later: usize, sources: usize, remaining: Duration) -> Option<Duration> {
+    replaceable(later, sources).then(|| {
+        let missing = HISTORY_SOURCES.saturating_sub(sources) as u32;
+        remaining
+            .saturating_sub(SOURCE_RESERVE * missing)
+            .max(MIN_SOURCE_TIME)
+    })
+}
+
 /// Keep one copy of each event. Peers stamp the same event with their own reception time, so the
-/// earliest timestamp wins, which makes the choice independent of the order of the peers. The IDs
-/// were checked against the payloads, so two copies with one ID carry one payload.
+/// earliest timestamp wins, which makes the choice independent of the order of the peers. The event
+/// ID does not fix the whole payload, so two copies with one ID must carry one payload; otherwise
+/// the fetch fails rather than drop one of them.
 fn merge_by_event_id(
     merged: &mut HashMap<EventId, InterfoldEvent<Unsequenced>>,
     event: InterfoldEvent<Unsequenced>,
-) {
+) -> Result<()> {
     match merged.entry(event.id()) {
         std::collections::hash_map::Entry::Vacant(entry) => {
             entry.insert(event);
         }
         std::collections::hash_map::Entry::Occupied(mut entry) => {
+            ensure!(
+                entry.get().get_data() == event.get_data(),
+                "history peers served different payloads under event ID {}",
+                event.id()
+            );
             if event.ts() < entry.get().ts() {
                 entry.insert(event);
             }
         }
     }
+    Ok(())
 }
 
 /// The connected peers that passed network admission.
@@ -348,6 +379,13 @@ pub(in crate::actors::net_sync_manager) async fn handle_sync_request_event(
         while !failed_aggregates.is_empty() && recovery_attempt < SYNC_RECOVERY_MAX_ATTEMPTS {
             recovery_attempt += 1;
 
+            // The wait counts against the fetch deadline too.
+            let wait = match budget.remaining() {
+                Ok(remaining) => SYNC_RECOVERY_RETRY_INTERVAL.min(remaining),
+                Err(error) => {
+                    return Err(error).context("historical net sync exhausted its global budget")
+                }
+            };
             match await_event(
                 &net_events,
                 |e| {
@@ -357,7 +395,7 @@ pub(in crate::actors::net_sync_manager) async fn handle_sync_request_event(
                         None
                     }
                 },
-                SYNC_RECOVERY_RETRY_INTERVAL,
+                wait,
             )
             .await
             {
@@ -446,4 +484,60 @@ pub(in crate::actors::net_sync_manager) async fn handle_sync_request_event(
 
     address.into().try_send(TypedEvent::new(value, ctx))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod merge_tests {
+    use super::*;
+    use e3_events::{E3id, EventConstructorWithTimestamp, EventSource, KeyshareCreated};
+    use e3_utils::ArcBytes;
+
+    fn keyshare(pubkey: &[u8], ts: u128) -> InterfoldEvent<Unsequenced> {
+        InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            KeyshareCreated {
+                pubkey: ArcBytes::from_bytes(pubkey),
+                e3_id: E3id::new("1", 1),
+                node: "node-1".to_string(),
+                party_id: 1,
+                signed_pk_generation_proof: None,
+            }
+            .into(),
+            None,
+            ts,
+            None,
+            EventSource::Net,
+        )
+    }
+
+    /// `payload`'s event under the context of `label`, as two payloads with one ID would arrive.
+    fn under_the_id_of(
+        payload: &[u8],
+        label: &InterfoldEvent<Unsequenced>,
+    ) -> InterfoldEvent<Unsequenced> {
+        #[derive(serde::Serialize)]
+        struct Raw<'a> {
+            payload: &'a InterfoldEventData,
+            ctx: &'a e3_events::EventContext<Unsequenced>,
+        }
+        let (data, _) = keyshare(payload, 5).into_components();
+        let (_, ctx) = label.clone().into_components();
+        let bytes = bincode::serialize(&Raw {
+            payload: &data,
+            ctx: &ctx,
+        })
+        .unwrap();
+        InterfoldEvent::from_bytes(&bytes).unwrap()
+    }
+
+    #[test]
+    fn copies_of_one_event_merge_to_the_earliest_and_different_payloads_fail() {
+        let mut merged = HashMap::new();
+        merge_by_event_id(&mut merged, keyshare(&[1], 20)).unwrap();
+        merge_by_event_id(&mut merged, keyshare(&[1], 10)).unwrap();
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged.values().next().unwrap().ts(), 10);
+
+        let conflicting = under_the_id_of(&[2], &keyshare(&[1], 30));
+        assert!(merge_by_event_id(&mut merged, conflicting).is_err());
+    }
 }

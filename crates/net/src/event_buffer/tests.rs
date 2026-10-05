@@ -410,3 +410,38 @@ async fn startup_drain_stores_every_accepted_protocol_event() -> Result<()> {
     .await??;
     Ok(())
 }
+
+/// Input that lags after startup skips gossip that never reaches storage, so the node no longer
+/// says that it observed the network live.
+#[actix::test]
+async fn input_lag_after_startup_revokes_live_history() -> Result<()> {
+    let system = EventSystem::new().with_fresh_bus();
+    let bus = system.handle()?.enable("live-history-lag");
+    let input_tx = NetEventChannel::new(2);
+    let _input_rx = input_tx.subscribe();
+    let input = NetEventSubscriber::from(&input_tx);
+    let live_history = crate::LiveHistory::default();
+    let (output, handle) = NetEventBuffer::setup_with_live_history(
+        &bus,
+        &input,
+        DEFAULT_MAX_BUFFERED_NET_EVENTS,
+        DEFAULT_MAX_BUFFERED_NET_BYTES,
+        live_history.clone(),
+    );
+    let _output_rx = output.subscribe();
+    bus.publish_without_context(SyncEnded::new())?;
+    timeout(DELIVERY_TIMEOUT, handle.wait_until_running()).await??;
+    live_history.begin(5);
+
+    for byte in 0..10u8 {
+        input_tx.send(NetEvent::GossipData(GossipData::GossipBytes(vec![byte])))?;
+    }
+    timeout(DELIVERY_TIMEOUT, async {
+        while live_history.since().is_some() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .context("input lag did not revoke live history")?;
+    Ok(())
+}

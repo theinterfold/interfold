@@ -96,7 +96,7 @@ impl NetEventTranslator {
         live_history: LiveHistory,
     ) -> Addr<Self> {
         let mut translator = NetEventTranslator::new(bus, tx, rx, topic, network);
-        translator.live_history = live_history;
+        translator.live_history = live_history.clone();
         let addr = translator.start();
         let mut rx = rx.subscribe();
 
@@ -105,10 +105,23 @@ impl NetEventTranslator {
         info!("NetEventTranslator is running");
         tokio::spawn({
             let addr = addr.clone();
+            let live_history = live_history.clone();
             async move {
-                while let Some(event) =
-                    crate::event_subscription::recv_net_event(&mut rx, "NetEventTranslator").await
-                {
+                loop {
+                    let event = match rx.recv().await {
+                        Ok(event) => event,
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped_events)) => {
+                            // Skipped gossip never reaches storage, so history replies stop saying
+                            // that this node observed the network live.
+                            warn!(
+                                skipped_events,
+                                "NetEventTranslator lagged; resuming from retained events"
+                            );
+                            live_history.revoke();
+                            continue;
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    };
                     // Each send waits for the actor, so the actor handles the marker after
                     // every gossip event that the buffer released before it.
                     let delivery = match event {
@@ -338,6 +351,37 @@ mod tests {
     use e3_events::{E3id, EventConstructorWithTimestamp, KeyshareCreated, Unsequenced};
     use e3_utils::ArcBytes;
     use libp2p::gossipsub::MessageId;
+
+    /// Gossip that the translator skips on lag never reaches storage, so the node no longer says
+    /// that it observed the network live.
+    #[actix::test]
+    async fn translator_lag_revokes_live_history() -> anyhow::Result<()> {
+        let system = EventSystem::new().with_fresh_bus();
+        let bus = system.handle()?.enable("translator-lag");
+        let (tx, _commands) = mpsc::channel(8);
+        let events = NetEventChannel::new(2);
+        let live_history = LiveHistory::default();
+        live_history.begin(5);
+        let _translator = NetEventTranslator::setup(
+            &bus,
+            &tx,
+            &NetEventSubscriber::from(&events),
+            "topic",
+            NetworkPolicy::local_unrestricted(),
+            live_history.clone(),
+        );
+
+        for byte in 0..10u8 {
+            let _ = events.send(NetEvent::GossipData(GossipData::GossipBytes(vec![byte])));
+        }
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while live_history.since().is_some() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await?;
+        Ok(())
+    }
 
     fn local_forwardable_event() -> InterfoldEvent {
         let event: InterfoldEvent<Unsequenced> = InterfoldEvent::new_with_timestamp(
