@@ -42,14 +42,16 @@ where
         }
     }
 
-    /// Record `intent`, durably. Recording the intent that is already recorded does nothing. A
-    /// different one fails, so a recorded intent is never replaced.
+    /// Record `intent`, durably. Recording the intent that is already recorded does nothing more
+    /// than make it durable. A different one fails, so a recorded intent is never replaced.
     pub async fn record(&self, intent: &T) -> Result<()> {
         if self.store.write_if_absent_sync(intent).await? {
             return Ok(());
         }
         match self.restore().await? {
-            Some(recorded) if &recorded == intent => Ok(()),
+            // Another `record` of the same intent can have inserted it without flushing yet: the
+            // caller dispatches the work once this returns, so the intent must be on disk first.
+            Some(recorded) if &recorded == intent => self.store.flush_sync().await,
             Some(_) => bail!("a different intent is already recorded"),
             None => bail!("the recorded intent was removed while another was recorded"),
         }
@@ -91,6 +93,55 @@ mod tests {
         assert_eq!(other.restore().await?, None);
         other.record(&(2, "roster b".into())).await?;
         assert_eq!(intent.restore().await?, Some((2, "roster b".into())));
+        Ok(())
+    }
+
+    /// Counts the flushes that reach the store.
+    struct CountFlushes {
+        store: actix::Addr<InMemStore>,
+        count: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl Actor for CountFlushes {
+        type Context = actix::Context<Self>;
+    }
+
+    impl actix::Handler<e3_events::Flush> for CountFlushes {
+        type Result = actix::ResponseFuture<anyhow::Result<()>>;
+
+        fn handle(&mut self, flush: e3_events::Flush, _: &mut Self::Context) -> Self::Result {
+            self.count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let store = self.store.clone();
+            Box::pin(async move { store.send(flush).await? })
+        }
+    }
+
+    /// Recording the intent that is already recorded flushes the store too: another `record` of
+    /// the same intent can have inserted it without flushing yet, and the caller dispatches the
+    /// work once `record` returns.
+    #[actix::test]
+    async fn recording_the_recorded_intent_again_flushes_it() -> anyhow::Result<()> {
+        let store = InMemStore::new(false).start();
+        let count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let flushes = CountFlushes {
+            store: store.clone(),
+            count: count.clone(),
+        }
+        .start();
+        let intent = DurableIntent::<(u64, String)>::new(
+            DataStore::from_in_mem(&store)
+                .with_flush_recipient(flushes.recipient())
+                .scope("intent"),
+        );
+
+        intent.record(&(1, "roster a".into())).await?;
+        assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 1);
+        intent.record(&(1, "roster a".into())).await?;
+        assert_eq!(
+            count.load(std::sync::atomic::Ordering::SeqCst),
+            2,
+            "the second record flushes the intent that the first inserted"
+        );
         Ok(())
     }
 

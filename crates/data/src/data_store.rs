@@ -315,6 +315,18 @@ impl DataStore {
         Ok(inserted)
     }
 
+    /// Flush every write that the backing store accepted so far.
+    pub async fn flush_sync(&self) -> Result<()> {
+        self.flush.send(Flush).await?
+    }
+
+    /// The same store with another flush recipient, to observe the flushes in tests.
+    #[cfg(test)]
+    pub(crate) fn with_flush_recipient(mut self, flush: Recipient<Flush>) -> Self {
+        self.flush = flush;
+        self
+    }
+
     /// Remove the data at the scope location and flush the removal.
     pub async fn remove_sync(&self) -> Result<()> {
         self.remove.send(Remove::new(&self.scope)).await?;
