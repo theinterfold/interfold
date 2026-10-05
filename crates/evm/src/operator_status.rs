@@ -206,10 +206,10 @@ pub async fn fetch_operator_committees<P: Provider + Clone>(
 
 /// Returns each E3 whose last `CommitteeObligationUpdated` log left the obligation open, with the
 /// registry that sent the update.
-fn open_obligations(mut logs: Vec<Log>) -> anyhow::Result<BTreeMap<U256, Address>> {
-    // `eth_getLogs` does not guarantee the log order, and the last update of an E3 decides whether
-    // its obligation is open.
-    logs.sort_by_key(|log| (log.block_number, log.log_index));
+///
+/// `logs` must be in chain order, as `fetch_logs_adapting` returns them, because the last update of
+/// an E3 decides whether its obligation is open.
+fn open_obligations(logs: Vec<Log>) -> anyhow::Result<BTreeMap<U256, Address>> {
     let mut open = BTreeMap::new();
     for log in logs {
         let event = IBondingRegistry::CommitteeObligationUpdated::decode_log_data(log.data())
@@ -249,16 +249,15 @@ mod tests {
     fn open_obligations_follow_the_last_update_in_chain_order() {
         let registry = Address::repeat_byte(0x01);
         let replacement = Address::repeat_byte(0x02);
-        // Provider order, not chain order.
         let logs = vec![
-            // E3 1: released after the E3 ended.
-            obligation_log(20, 0, 1, registry, false),
             obligation_log(10, 3, 1, registry, true),
-            // E3 2: a better ticket displaced the operator in the same block.
-            obligation_log(12, 1, 2, registry, false),
             obligation_log(12, 0, 2, registry, true),
-            // E3 3: still open, under another registry.
+            // A better ticket displaced the operator from E3 2 in the same block.
+            obligation_log(12, 1, 2, registry, false),
+            // E3 3 is still open, under another registry.
             obligation_log(15, 0, 3, replacement, true),
+            // E3 1 is released after the E3 ended.
+            obligation_log(20, 0, 1, registry, false),
         ];
 
         let open = open_obligations(logs).unwrap();

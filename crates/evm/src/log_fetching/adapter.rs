@@ -206,7 +206,8 @@ where
 
 /// Fetch one chunk, narrowing `window` and retrying until the provider serves it.
 ///
-/// Returns the chunk's logs and the last block it covers, which is where the caller resumes from.
+/// Returns the chunk's logs in chain order and the last block it covers, which is where the caller
+/// resumes from.
 /// The covered end is returned rather than recomputed, because a narrowing inside this call moves
 /// the end of the range: a caller that recomputed it from the window afterwards would advance past
 /// blocks that were never fetched.
@@ -234,7 +235,12 @@ pub(crate) async fn fetch_chunk_adapting<L: LogProvider>(
         let chunk_filter = filter.clone().from_block(cursor).to_block(end);
 
         match provider.fetch_logs(&chunk_filter).await {
-            Ok(logs) => return Ok((logs, end)),
+            Ok(mut logs) => {
+                // `eth_getLogs` does not guarantee the log order, and event consumers depend on
+                // chain order.
+                logs.sort_by_key(|log| (log.block_number, log.log_index));
+                return Ok((logs, end));
+            }
             Err(e) => {
                 let message = format!("{e:#}");
 

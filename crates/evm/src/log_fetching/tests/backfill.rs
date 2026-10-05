@@ -68,6 +68,51 @@ async fn test_backfill_with_gap() {
     assert_eq!(count, 2);
 }
 
+/// A provider can return the logs of a range out of order, and event consumers depend on chain
+/// order.
+#[actix::test]
+async fn a_backfill_delivers_logs_in_chain_order() {
+    let log_at = |block_number, log_index| Log {
+        block_number: Some(block_number),
+        log_index: Some(log_index),
+        ..Default::default()
+    };
+    let mock = MockLogProvider::new(200);
+    mock.push_logs(vec![log_at(180, 0), log_at(150, 1), log_at(150, 0)]);
+    let (next, mut rx) = setup_collector();
+    let mut ts = TimestampTracker::new();
+    let mut window = LogWindow::new();
+    let mut last_block = 100u64;
+
+    backfill_to_head(
+        &mock,
+        &Filter::new(),
+        1,
+        &next,
+        &mut ts,
+        &mut last_block,
+        0,
+        &mut window,
+        None,
+    )
+    .await
+    .expect("the provider serves the gap");
+
+    tokio::task::yield_now().await;
+    let mut delivered = Vec::new();
+    while let Ok(InterfoldEvmEvent::Log(log)) = rx.try_recv() {
+        delivered.push((log.log.block_number, log.log.log_index));
+    }
+    assert_eq!(
+        delivered,
+        vec![
+            (Some(150), Some(0)),
+            (Some(150), Some(1)),
+            (Some(180), Some(0))
+        ]
+    );
+}
+
 #[actix::test]
 async fn test_backfill_partial_failure_preserves_progress() {
     tokio::time::pause();
