@@ -334,9 +334,11 @@ arguments.
 <Callout type='info'>
   On Sepolia, `interfold ciphernode setup --network sepolia` does the file, password, and key steps
   in one command. It asks for the password, the WebSocket RPC URL, the private key, and the
-  configuration directory. It writes the Sepolia addresses that the CLI was built with. It does not
-  write `data_availability`, so add that entry before you start the node. The command supports only
-  `sepolia` and `local`, and it refuses to run when a configuration file already exists.
+  configuration directory, unless `--password-stdin`, `--rpc-url`, `--private-key-stdin`, and
+  `--config-dir` give them. Without a terminal, it needs all four. It writes the Sepolia addresses
+  that the CLI was built with, and a `data_availability` block for Avail Turing. The command
+  supports only `sepolia`; for a local chain, start from the project template's
+  `interfold.config.yaml`. It refuses to run when a configuration file already exists.
 </Callout>
 
 Run the node under a process manager, for example systemd. The node exits with an error when a chain

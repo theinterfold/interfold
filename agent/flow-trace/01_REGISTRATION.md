@@ -60,7 +60,12 @@ User runs: interfold ciphernode setup
 │     └─ Stored encrypted via Cipher → written to local keystore
 │        File: ~/.config/interfold/<name>/password (encrypted blob)
 │
-├─ 3. Prompts for WEBSOCKET RPC URL
+├─ 0. Refuses a network other than sepolia (the binary carries only the Sepolia
+│     deployment; `local` names the project template). Without a terminal on stdin, it
+│     refuses unless --rpc-url, --config-dir, --password-stdin and --private-key-stdin
+│     are all given, before it reads stdin.
+│
+├─ 3. Prompts for WEBSOCKET RPC URL, unless --rpc-url gives it
 │     └─ Default: wss://ethereum-sepolia-rpc.publicnode.com
 │     └─ Validates it's a valid URL
 │
@@ -69,13 +74,14 @@ User runs: interfold ciphernode setup
 │     └─ Stored in local keystore
 │     └─ NEVER stored in plaintext
 │
-├─ 5. Prompts for CONFIG DIRECTORY
+├─ 5. Prompts for CONFIG DIRECTORY, unless --config-dir gives it
 │     └─ Default: ~/.config/interfold
 │
 ├─ 6. Creates config file (YAML):
 │     chains:
-│       - name: "default"
+│       - name: "sepolia"
 │         rpc_url: <user's URL>
+│         data_availability: { mode: avail, rpc_url: https://turing-rpc.avail.so/rpc }
 │         contracts:
 │           interfold: <address>
 │           bonding_registry: <address>

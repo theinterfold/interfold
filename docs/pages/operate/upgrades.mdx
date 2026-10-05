@@ -462,9 +462,9 @@ Validation skips the event and snapshot checks for that store, including with `-
 ## Configuration for protocol version 4
 
 Each enabled chain that configures the `interfold` contract needs a `data_availability` block. A
-configuration from `interfold ciphernode setup` does not have this block, so add it before the first
-start. The node reads proof-backed ciphertext outputs from the data-availability layer. Without the
-block, the node exits after it accepts the release:
+configuration from `interfold ciphernode setup` of an earlier release does not have this block, so
+add it before the first start. The node reads proof-backed ciphertext outputs from the
+data-availability layer. Without the block, the node exits after it accepts the release:
 
 ```text
 chain 'mainnet' has Interfold enabled but no data_availability reader; this protocol release must retrieve proof-backed ciphertext outputs

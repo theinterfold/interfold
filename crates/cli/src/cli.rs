@@ -121,6 +121,7 @@ impl Cli {
                         command: CiphernodeCommands::Setup {
                             network,
                             rpc_url,
+                            config_dir,
                             password_stdin,
                             private_key_stdin,
                         }
@@ -129,6 +130,7 @@ impl Cli {
                             out,
                             network,
                             rpc_url,
+                            config_dir,
                             password_stdin,
                             private_key_stdin,
                         )
@@ -139,6 +141,7 @@ impl Cli {
                         ciphernode::setup::execute(
                             out,
                             "sepolia".to_string(),
+                            None,
                             None,
                             false,
                             false,

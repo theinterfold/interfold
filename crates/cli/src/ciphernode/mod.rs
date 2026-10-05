@@ -36,13 +36,26 @@ impl ChainArgs {
 pub enum CiphernodeCommands {
     /// Setup local ciphernode configuration
     Setup {
-        /// P2P network profile for this development configuration
-        #[arg(long, value_parser = ["sepolia", "local"], default_value = "sepolia")]
+        /// P2P network profile and chain for this configuration. The command writes the Sepolia
+        /// deployment that is built into the binary.
+        #[arg(
+            long,
+            default_value = "sepolia",
+            value_parser = clap::builder::PossibleValuesParser::new([
+                clap::builder::PossibleValue::new("sepolia"),
+                // Earlier releases accepted `local`. The command refuses it and names the template.
+                clap::builder::PossibleValue::new("local").hide(true),
+            ])
+        )]
         network: String,
 
         /// An rpc url for interfold to connect to
         #[arg(long = "rpc-url", short = 'r')]
         rpc_url: Option<String>,
+
+        /// The folder for the configuration file. Without it, the command prompts for one.
+        #[arg(long = "config-dir", value_name = "PATH")]
+        config_dir: Option<std::path::PathBuf>,
 
         /// Read the password from the first requested line on stdin
         #[arg(long)]

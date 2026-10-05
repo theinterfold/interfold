@@ -255,35 +255,38 @@ Makes a configuration file for one ciphernode and stores its password and wallet
 runs only when the CLI finds no configuration file.
 
 ```bash
-interfold ciphernode setup [--network <sepolia|local>] [-r <RPC_URL>] [--password-stdin] [--private-key-stdin]
+interfold ciphernode setup [--network sepolia] [-r <RPC_URL>] [--config-dir <PATH>] [--password-stdin] [--private-key-stdin]
 ```
 
-| Flag                  | Value              | Default   | Description                                                                                                               |
-| --------------------- | ------------------ | --------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `--network`           | `sepolia`, `local` | `sepolia` | P2P network profile and chain for the file. The value `sepolia` uses chain ID `11155111`. The value `local` uses `31337`. |
-| `-r`, `--rpc-url`     | `<RPC_URL>`        | Prompt    | Ethereum RPC URL. The scheme must be `http`, `https`, `ws`, or `wss`.                                                     |
-| `--password-stdin`    | None               | Off       | Reads the password from the first requested line of standard input.                                                       |
-| `--private-key-stdin` | None               | Off       | Reads the wallet key from the next requested line of standard input.                                                      |
+| Flag                  | Value       | Default   | Description                                                                               |
+| --------------------- | ----------- | --------- | ----------------------------------------------------------------------------------------- |
+| `--network`           | `sepolia`   | `sepolia` | P2P network profile and chain for the file. The value `sepolia` uses chain ID `11155111`. |
+| `-r`, `--rpc-url`     | `<RPC_URL>` | Prompt    | Ethereum RPC URL. The scheme must be `http`, `https`, `ws`, or `wss`.                     |
+| `--password-stdin`    | None        | Off       | Reads the password from the first requested line of standard input.                       |
+| `--private-key-stdin` | None        | Off       | Reads the wallet key from the next requested line of standard input.                      |
+| `--config-dir`        | `<PATH>`    | Prompt    | Folder for the configuration file.                                                        |
 
 Without a stdin flag, the command uses a hidden prompt for that secret. It rejects secret values in
 command arguments. The password must not be blank. The wallet key must contain 32 bytes in
-hexadecimal. The RPC prompt proposes `wss://ethereum-sepolia-rpc.publicnode.com` for `sepolia` and
-`ws://127.0.0.1:8545` for `local`. The last prompt asks for the configuration folder. The default is
-`interfold` in the operating system configuration folder, for example `~/.config/interfold` on
-Linux.
+hexadecimal. The RPC prompt proposes `wss://ethereum-sepolia-rpc.publicnode.com`. Without
+`--config-dir`, the last prompt asks for the configuration folder. The default is `interfold` in the
+operating system configuration folder, for example `~/.config/interfold` on Linux. Without a
+terminal, the command cannot prompt: give `--rpc-url`, `--config-dir`, `--password-stdin`, and
+`--private-key-stdin`.
 
 The command writes `interfold.config.yaml` with these values:
 
 - `node.network` and `node.address`, which comes from the private key
 - One chain named after the network, with `chain_id` and `rpc_url`
+- A `data_availability` block that reads the Sepolia deployment's data from Avail Turing
+  (`https://turing-rpc.avail.so/rpc`)
 - The `interfold`, `ciphernode_registry`, `bonding_registry`, and `slashing_manager` contracts with
   their deploy blocks
 
-The contract addresses are the Sepolia deployment that was built into the binary. The file uses
-these addresses also with `--network local`, so replace them with the addresses of your local
-deployment. To compare them with the current deployment, run `interfold config check`. The file does
-not contain a `data_availability` block, and `interfold start` needs one. See
-[data availability](/reference/configuration#data-availability).
+The contract addresses are the Sepolia deployment that was built into the binary. To compare them
+with the current deployment, run `interfold config check`. The binary has no local deployment, so
+the command refuses a local network: for a local chain, start from the project template's
+`interfold.config.yaml`. See [data availability](/reference/configuration#data-availability).
 
 <Callout type='info'>
   Use a hidden prompt or pipe secrets from a file or secret manager with `--password-stdin` and
