@@ -97,8 +97,10 @@ impl ThresholdKeyshare {
 
     /// Save that C4 started at the logged decryption-key calculation's own position. The write at
     /// dispatch can be lost: after a restart its context can trail the saved snapshot cursor, and
-    /// the store refuses it as stale. Replay delivers the logged request before effects resume, so
-    /// the roster that the calculation used stays fixed.
+    /// the store refuses it as stale while memory already holds the change. So the state is saved
+    /// again here even when memory says C4 started, before a later event can checkpoint past the
+    /// request. Replay delivers the logged request before effects resume, so the roster that the
+    /// calculation used stays fixed.
     pub(in crate::actors::threshold_keyshare) fn record_logged_key_calculation(
         &mut self,
         request: &ComputeRequest,
@@ -113,7 +115,6 @@ impl ThresholdKeyshare {
         }
         let state = self.state.try_get()?;
         if request.e3_id != state.e3_id
-            || state.dkg_roster_fixed
             || !matches!(state.state, KeyshareState::AggregatingDecryptionKey(_))
         {
             return Ok(());

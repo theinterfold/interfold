@@ -1174,8 +1174,18 @@ fn test_state(
     Persistable<ThresholdKeyshareState>,
     Repository<ThresholdKeyshareState>,
 ) {
-    let store = InMemStore::new(false).start();
-    let repo = Repository::<ThresholdKeyshareState>::new(DataStore::from_in_mem(&store));
+    test_state_in(&InMemStore::new(false).start(), e3_id, keyshare_state)
+}
+
+fn test_state_in(
+    store: &Addr<InMemStore>,
+    e3_id: &E3id,
+    keyshare_state: KeyshareState,
+) -> (
+    Persistable<ThresholdKeyshareState>,
+    Repository<ThresholdKeyshareState>,
+) {
+    let repo = Repository::<ThresholdKeyshareState>::new(DataStore::from_in_mem(store));
     let mut state = ThresholdKeyshareState::new(
         e3_id.clone(),
         0,
@@ -1567,7 +1577,12 @@ async fn committee_actor(
     setup: impl FnOnce(&mut ThresholdKeyshareRecoveryState),
 ) -> Result<CommitteeActor> {
     let (bus, history) = test_bus();
-    let (state, _) = test_state(e3_id, KeyshareState::AggregatingDecryptionKey(current));
+    let state_store = InMemStore::new(false).start();
+    let (state, state_repo) = test_state_in(
+        &state_store,
+        e3_id,
+        KeyshareState::AggregatingDecryptionKey(current),
+    );
     let (mut recovery, recovery_repo) = test_recovery_with_repo();
     recovery.try_mutate_without_context(|mut recovery| {
         recovery.ciphernode_selected = Some(TypedEvent::new(
@@ -1604,6 +1619,8 @@ async fn committee_actor(
         bus,
         history,
         recovery_repo,
+        state_repo,
+        state_store,
     })
 }
 
@@ -1612,6 +1629,8 @@ struct CommitteeActor {
     bus: BusHandle,
     history: Addr<HistoryCollector<InterfoldEvent>>,
     recovery_repo: Repository<ThresholdKeyshareRecoveryState>,
+    state_repo: Repository<ThresholdKeyshareState>,
+    state_store: Addr<InMemStore>,
 }
 
 fn three_signers() -> [alloy::signers::local::PrivateKeySigner; 3] {
@@ -1827,6 +1846,7 @@ async fn a_grown_batch_completes_when_its_verdict_equals_the_first() -> Result<(
         bus,
         history,
         recovery_repo,
+        ..
     } = batch_with_an_expelled_dealer(&e3_id, false).await?;
     let actor = actor.start();
     bus.subscribe(
@@ -1882,6 +1902,7 @@ async fn a_verdict_of_an_earlier_batch_does_not_complete_a_grown_batch() -> Resu
         bus,
         history,
         recovery_repo,
+        ..
     } = committee_with_two_shares(&e3_id, |recovery| {
         recovery.collected_threshold_share_ids = Some(BTreeSet::from([2]));
     })
@@ -2153,6 +2174,7 @@ async fn a_logged_dispatch_of_an_earlier_batch_is_not_recorded_for_a_grown_batch
         bus,
         history,
         recovery_repo,
+        ..
     } = committee_with_two_shares(&e3_id, |recovery| {
         recovery.collected_threshold_share_ids = Some(BTreeSet::from([2]));
     })
@@ -2946,6 +2968,72 @@ async fn a_logged_key_calculation_fixes_the_roster_again() -> Result<()> {
     Ok(())
 }
 
+/// The dispatch write of the fixed-roster flag is refused as stale when the saved snapshot cursor
+/// of the E3's aggregate is ahead of the dispatch context, and memory keeps the flag. The logged
+/// calculation request saves the state again at its own position, so the saved state that a
+/// restart loads has the flag.
+#[actix::test]
+async fn a_logged_key_calculation_saves_the_flag_that_a_stale_dispatch_write_lost() -> Result<()> {
+    let e3_id = E3id::new("60", 1);
+    let signers = three_signers();
+    let cipher = Arc::new(Cipher::from_password("test-password").await?);
+    let mut committee = committee_actor(
+        &e3_id,
+        &signers,
+        aggregating_decryption_key_for_roster_test(),
+        cipher,
+        |_| {},
+    )
+    .await?;
+    let calculation = ComputeRequest::trbfv(
+        TrBFVRequest::CalculateDecryptionKey(
+            e3_trbfv::calculate_decryption_key::CalculateDecryptionKeyRequest {
+                trbfv_config: TrBFVConfig::new(ArcBytes::from_bytes(b"params"), 3, 1),
+                sk_sss_collected: Vec::new(),
+                esi_sss_collected: Vec::new(),
+            },
+        ),
+        CorrelationId::new(),
+        e3_id.clone(),
+    );
+    let logged = keyshare_event(calculation.clone(), 101, EventSource::Local);
+    // A later event of the E3's aggregate moved the saved snapshot cursor to 100.
+    committee
+        .state_store
+        .send(Insert::new(
+            e3_events::StoreKeys::aggregate_seq(logged.aggregate_id()),
+            100u64.to_le_bytes().to_vec(),
+        ))
+        .await?;
+    let stale = keyshare_event(calculation, 5, EventSource::Local)
+        .get_ctx()
+        .clone();
+    committee.actor.state.try_mutate(&stale, |mut state| {
+        state.dkg_roster_fixed = true;
+        Ok(state)
+    })?;
+    let saved = || async {
+        Ok::<_, anyhow::Error>(
+            committee
+                .state_repo
+                .read()
+                .await?
+                .expect("saved keyshare state")
+                .dkg_roster_fixed,
+        )
+    };
+    assert!(
+        !saved().await?,
+        "the store refuses the stale dispatch write"
+    );
+
+    let actor = committee.actor.start();
+    actor.send(logged).await?;
+    actix::clock::sleep(std::time::Duration::from_millis(100)).await;
+    assert!(saved().await?);
+    Ok(())
+}
+
 /// A refused write can keep a pending roster after one of its dealers was expelled. A later roster
 /// of the same proposer replaces it: the old one can never be accepted.
 #[actix::test]
@@ -3691,6 +3779,7 @@ async fn stale_threshold_share_deadline_preserves_decryption(decrypting: bool) -
         bus,
         history,
         recovery_repo,
+        ..
     } = committee_with_two_shares(&e3_id, |_| {}).await?;
     let (mut state, repo) = test_state(&e3_id, actor.state.try_get()?.state);
     state.try_mutate_without_context(|mut state| {

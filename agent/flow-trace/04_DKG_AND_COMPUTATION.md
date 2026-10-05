@@ -653,8 +653,10 @@ starts, a roster from a lower party ID replaces a roster from a higher party ID.
 roster is never dropped, so the commitment checker keeps its selection; until C4 starts, an
 expelled dealer is not an honest party, also when a restart restores the roster, and a fixed
 roster is restored with every dealer. C4 starts when the node sends its decryption-key
-calculation. It saves that fact with the selected parties, and replay of the logged calculation
-request saves it again, so a restart that loses the calculation keeps the roster fixed. A held
+calculation. It saves that fact with the selected parties. The logged calculation request saves
+the state again at its own position, also when the store refused the dispatch write as stale and
+memory already holds the fact, and replay delivers that request again, so a restart that loses the
+calculation keeps the roster fixed. A held
 roster with an expelled member gives way to a later roster of the same proposer. A promoted
 aggregator re-proposes the accepted dealer list instead of deriving
 a different list from its local delivery order.
