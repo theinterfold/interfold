@@ -17,6 +17,16 @@ const PUBLICATION_ROUND: usize = CONCURRENT_E3S * PUBLICATIONS_PER_E3 * MARGIN;
 // Reserve the initial round and the three retries before the five-minute retry interval.
 pub(crate) const SEEN_BURST: usize = 4 * PUBLICATION_ROUND;
 pub(crate) const SEEN_RATE: usize = PUBLICATION_ROUND.div_ceil(5 * 60);
+// A node holds the replicas of the documents of the other dealers: with replication factor 20
+// and committees of 19, every node is among the closest peers of every key.
+const DOCUMENTS_PER_DEALER: usize = DOCUMENTS_PER_E3 / COMMITTEE_SIZE;
+pub(crate) const REPLICAS_PER_PEER: usize = DOCUMENTS_PER_DEALER * CONCURRENT_E3S * MARGIN;
+pub(crate) const REPLICAS: usize = DOCUMENTS_PER_E3 * CONCURRENT_E3S * MARGIN;
+/// A memory ceiling, not the whole load: four E3s of threshold-share documents near their
+/// historical 1.78 MB need about 2.3 GB of replicas, so at that load a node keeps the newest 2 GiB
+/// and evicts the oldest. The dealers keep their own documents, and other closest peers keep
+/// replicas too.
+pub(crate) const REPLICA_BYTES: usize = 2 * 1024 * 1024 * 1024;
 // Before selection the receiver does not yet know which recipient bundles it needs.
 pub(crate) const EARLY_NOTIFICATIONS: usize = CONCURRENT_E3S * DOCUMENTS_PER_E3 * MARGIN;
 // Each selected node needs three remote documents from each other dealer.
