@@ -9,7 +9,7 @@ use crate::server::models::{
 };
 
 use super::{
-    database::{generate_emoji, CIPHERTEXT_KEY_PREFIX},
+    database::{generate_emoji, CIPHERTEXT_KEY_PREFIX, INPUT_GENERATION_KEY_PREFIX},
     models::{CurrentRound, E3Crisp, E3StateLite, WebResultRequest},
 };
 use alloy::primitives::keccak256;
@@ -20,9 +20,14 @@ use eyre::Result;
 use fhe::bfv::BfvParameters;
 use log::info;
 use num_bigint::BigUint;
+use std::collections::HashMap;
+use std::sync::{Arc, LazyLock, Mutex};
 
 /// The key prefix of a round record. The round ID follows it.
 pub const CRISP_KEY_PREFIX: &str = "_e3:crisp:";
+
+/// How many rounds the input cache holds. Voters poll the rounds that are open, which are few.
+const INPUT_CACHE_ROUNDS: usize = 8;
 
 #[derive(Debug, Default, serde::Deserialize, serde::Serialize)]
 struct RoundIndex {
@@ -133,36 +138,41 @@ pub struct InputSnapshot {
 }
 
 impl InputSnapshot {
-    /// The position of each slot's head over the entries before position `end`.
+    /// The position of the head of one slot, given the positions of that slot's entries in
+    /// tree-index order.
     ///
     /// The Secure Process's own rule decides (`chain_head_per_slot`): an entry becomes the head
     /// only when its published bytes reproduce its commitment and it names the head before it, so
     /// an entry nobody can open never becomes the head and never blocks the slot. The usability
-    /// decision made at indexing stands in for the commitment check.
-    fn heads_before(&self, end: usize) -> Vec<usize> {
+    /// decision made at indexing stands in for the commitment check. The rule compares a parent
+    /// only with the head of the entry's own slot, so the entries of other slots cannot move this
+    /// head and are left out.
+    fn slot_head(&self, entries: &[usize]) -> Option<usize> {
         let commitment = [0u8; 32];
         // The layout `CRISPProgram` publishes: the slot, then the parent plus one as a uint40.
-        let metadata: Vec<[u8; 25]> = (0..end)
-            .map(|position| {
+        let metadata: Vec<[u8; 25]> = entries
+            .iter()
+            .map(|&position| {
                 let mut bytes = [0u8; 25];
                 bytes[..20].copy_from_slice(&self.slots[position]);
                 bytes[20..].copy_from_slice(&self.parents[position].to_be_bytes()[3..]);
                 bytes
             })
             .collect();
-        let inputs: Vec<PublishedInput> = (0..end)
-            .map(|position| PublishedInput {
+        let inputs: Vec<PublishedInput> = entries
+            .iter()
+            .zip(&metadata)
+            .map(|(&position, metadata)| PublishedInput {
                 index: self.ciphertexts[position].1 as usize,
                 ciphertext: &[],
                 commitment: Some(&commitment),
-                metadata: &metadata[position],
+                metadata,
                 recomputed: self.usable[position].then_some(commitment),
             })
             .collect();
         chain_head_per_slot(&inputs)
-            .into_iter()
-            .filter_map(|index| self.position_of(index as u64))
-            .collect()
+            .first()
+            .and_then(|&index| self.position_of(index as u64))
     }
 
     /// The position of the entry with tree index `index`. The entries are sorted by tree index.
@@ -172,33 +182,27 @@ impl InputSnapshot {
             .ok()
     }
 
-    /// The head of `slot` among `heads`, as `heads_before` returns them.
-    fn head_of(&self, heads: &[usize], slot: [u8; 20]) -> Option<usize> {
-        heads
-            .iter()
-            .copied()
-            .find(|&position| self.slots[position] == slot)
-    }
-
     /// Where the input `(slot, commitment, parent_index_plus_one)` with bytes of hash
-    /// `content_hash` stands in the selection of its slot. `hashes` holds the content hash of each
-    /// entry, in the order of the snapshot.
+    /// `content_hash` stands in the selection of its slot. `entries` holds the positions of the
+    /// slot's entries in tree-index order, and `hashes` the content hash of each entry, in the
+    /// order of the snapshot.
     ///
     /// The verdict for an entry is final only when every lower tree index is indexed here: tree
     /// indexes are dense, and a missing entry can still take the slot or be the parent of the entry.
     fn selection(
         &self,
         hashes: &[[u8; 32]],
+        entries: &[usize],
         slot: [u8; 20],
         commitment: [u8; 32],
         parent_index_plus_one: u64,
         content_hash: [u8; 32],
     ) -> InputSelectionResponse {
-        let head = self.head_of(&self.heads_before(self.slots.len()), slot);
-        let head_index = head.map(|position| self.ciphertexts[position].1);
-        let input = (0..self.slots.len()).find(|&position| {
-            self.slots[position] == slot
-                && self.commitments[position] == commitment
+        let head_index = self
+            .slot_head(entries)
+            .map(|position| self.ciphertexts[position].1);
+        let input = entries.iter().copied().find(|&position| {
+            self.commitments[position] == commitment
                 && self.parents[position] == parent_index_plus_one
                 && hashes[position] == content_hash
         });
@@ -213,7 +217,8 @@ impl InputSnapshot {
         let index = self.ciphertexts[position].1;
         // A head at its turn stays selected when a later entry extends it.
         let was_head = |position: usize| {
-            self.head_of(&self.heads_before(position + 1), slot) == Some(position)
+            let turn = entries.partition_point(|&entry| entry <= position);
+            self.slot_head(&entries[..turn]) == Some(position)
         };
         let (status, reason) = if position as u64 != index {
             (InputSelectionStatus::SelectionPending, None)
@@ -251,6 +256,85 @@ impl InputSnapshot {
     }
 }
 
+/// A round's inputs as the slot head and the selection read them, with the entries of each slot.
+struct IndexedInputs {
+    records: InputSnapshot,
+    /// The content hash of each entry, in the order of `records`.
+    hashes: Vec<[u8; 32]>,
+    /// The positions of each slot's entries, in tree-index order.
+    by_slot: HashMap<[u8; 20], Vec<usize>>,
+}
+
+impl IndexedInputs {
+    fn new(records: InputSnapshot, hashes: Vec<[u8; 32]>) -> Self {
+        let mut by_slot: HashMap<[u8; 20], Vec<usize>> = HashMap::new();
+        for (position, slot) in records.slots.iter().enumerate() {
+            by_slot.entry(*slot).or_default().push(position);
+        }
+        Self {
+            records,
+            hashes,
+            by_slot,
+        }
+    }
+
+    /// The positions of the entries of `slot`, in tree-index order.
+    fn entries_of(&self, slot: [u8; 20]) -> &[usize] {
+        self.by_slot.get(&slot).map_or(&[], Vec::as_slice)
+    }
+}
+
+/// How far the inputs of a round have changed, for the input cache. It is kept under
+/// `INPUT_GENERATION_KEY_PREFIX`.
+///
+/// `epoch` is random and chosen with the first change, so two stores never share a generation.
+/// `started` and `finished` count the changes that began and the changes that completed. A change
+/// in progress, or one that failed after it began, leaves them unequal.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+struct InputGeneration {
+    epoch: String,
+    started: u64,
+    finished: u64,
+}
+
+/// One round's inputs that this process read, with the settled input generation they were read
+/// under.
+struct CachedInputs {
+    e3_id: String,
+    generation: InputGeneration,
+    inputs: Arc<IndexedInputs>,
+}
+
+/// The rounds whose inputs this process read, the newest last.
+static INPUT_CACHE: LazyLock<Mutex<Vec<CachedInputs>>> = LazyLock::new(|| Mutex::new(Vec::new()));
+
+/// The inputs of round `e3_id` that this process read at `generation`.
+fn cached_inputs(e3_id: &str, generation: &InputGeneration) -> Option<Arc<IndexedInputs>> {
+    let cache = INPUT_CACHE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    cache
+        .iter()
+        .find(|cached| cached.e3_id == e3_id && cached.generation == *generation)
+        .map(|cached| Arc::clone(&cached.inputs))
+}
+
+/// Keep the inputs of round `e3_id` read at `generation`, in place of an older read of the round.
+fn cache_inputs(e3_id: &str, generation: InputGeneration, inputs: Arc<IndexedInputs>) {
+    let mut cache = INPUT_CACHE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    cache.retain(|cached| cached.e3_id != e3_id);
+    if cache.len() == INPUT_CACHE_ROUNDS {
+        cache.remove(0);
+    }
+    cache.push(CachedInputs {
+        e3_id: e3_id.to_owned(),
+        generation,
+        inputs,
+    });
+}
+
 pub struct CrispE3Repository<S: DataStore> {
     store: SharedStore<S>,
     e3_id: String,
@@ -266,6 +350,14 @@ impl<S: DataStore> CrispE3Repository<S> {
 
     #[cfg(test)]
     async fn set_crisp(&mut self, value: E3Crisp) -> Result<()> {
+        // The record is written whole and without a generation, so reads skip the input cache.
+        let generation_key = self.input_generation_key();
+        self.store
+            .modify(&generation_key, |_: Option<InputGeneration>| None)
+            .await
+            .map_err(|_| {
+                eyre::eyre!("Could not clear the input generation at '{generation_key}'")
+            })?;
         let key = self.crisp_key();
         self.store
             .insert(&key, &value)
@@ -320,6 +412,107 @@ impl<S: DataStore> CrispE3Repository<S> {
         Ok(e3_crisp)
     }
 
+    /// The round's inputs for the slot head and the selection, or `None` when there is no round
+    /// record.
+    ///
+    /// Served from this process's cache while the round's input generation is settled, with as many
+    /// changes finished as started, and is the one they were read under. A round whose generation
+    /// is not settled, or that has none because no input reached it since the upgrade, is read from
+    /// the store every time.
+    async fn indexed_inputs(&self) -> Result<Option<Arc<IndexedInputs>>> {
+        // Read before the record. Every change counted as finished here wrote the record first, so
+        // the record read below holds it. A change that starts later raises `started` for good, so
+        // this generation is never settled again and a read cached under it is never served.
+        let generation_key = self.input_generation_key();
+        let generation: Option<InputGeneration> =
+            self.store.get(&generation_key).await.map_err(|e| {
+                eyre::eyre!("Could not read the input generation at '{generation_key}': {e}")
+            })?;
+        let settled = generation.filter(|generation| generation.started == generation.finished);
+        if let Some(cached) = settled
+            .as_ref()
+            .and_then(|generation| cached_inputs(&self.e3_id, generation))
+        {
+            return Ok(Some(cached));
+        }
+        let Some(round) = self.try_get_crisp().await? else {
+            return Ok(None);
+        };
+        let (records, hashes) = Self::records_of(round)?;
+        let inputs = Arc::new(IndexedInputs::new(records, hashes));
+        if let Some(generation) = settled {
+            cache_inputs(&self.e3_id, generation, Arc::clone(&inputs));
+        }
+        Ok(Some(inputs))
+    }
+
+    /// Apply `change` to the inputs of the round record, and count it in the input generation.
+    ///
+    /// Every change to the input fields goes through here. It is counted as started before the
+    /// record changes and as finished after, so no read caches the round while the change is in
+    /// progress. A change that fails after it started leaves the round unsettled, and its inputs
+    /// are then read from the store until `settle_input_generation` runs at the next start.
+    async fn modify_inputs(&mut self, mut change: impl FnMut(&mut E3Crisp) + Send) -> Result<()> {
+        let generation_key = self.input_generation_key();
+        self.store
+            .modify(&generation_key, |generation: Option<InputGeneration>| {
+                let mut generation = generation.unwrap_or_else(|| InputGeneration {
+                    epoch: format!("{:032x}", rand::random::<u128>()),
+                    started: 0,
+                    finished: 0,
+                });
+                generation.started += 1;
+                Some(generation)
+            })
+            .await
+            .map_err(|e| {
+                eyre::eyre!("Could not start a change of the inputs at '{generation_key}': {e}")
+            })?;
+        let key = self.crisp_key();
+        self.store
+            .modify(&key, |round: Option<E3Crisp>| {
+                round.map(|mut round| {
+                    change(&mut round);
+                    round
+                })
+            })
+            .await
+            .map_err(|e| eyre::eyre!("Could not update the inputs at '{key}': {e}"))?;
+        self.store
+            .modify(&generation_key, |generation: Option<InputGeneration>| {
+                generation.map(|mut generation| {
+                    generation.finished += 1;
+                    generation
+                })
+            })
+            .await
+            .map_err(|e| {
+                eyre::eyre!("Could not finish a change of the inputs at '{generation_key}': {e}")
+            })?;
+        Ok(())
+    }
+
+    /// Count every change of the inputs that started before this start as finished.
+    ///
+    /// Call it at startup, before the indexer runs, when no change is in progress. The round record
+    /// then holds what each earlier change wrote, so the generation can settle and the cache can
+    /// serve the round again.
+    pub async fn settle_input_generation(&mut self) -> Result<()> {
+        let generation_key = self.input_generation_key();
+        self.store
+            .modify(&generation_key, |generation: Option<InputGeneration>| {
+                generation.map(|mut generation| {
+                    generation.finished = generation.started;
+                    generation
+                })
+            })
+            .await
+            .map_err(|e| {
+                eyre::eyre!("Could not settle the input generation at '{generation_key}': {e}")
+            })?;
+        Ok(())
+    }
+
     /// Start a requested round once. Duplicate committee events do not reset its deadline state.
     pub async fn try_start_round(&mut self) -> Result<bool> {
         let key = self.crisp_key();
@@ -367,44 +560,38 @@ impl<S: DataStore> CrispE3Repository<S> {
         )
         .is_ok_and(|recomputed| recomputed == commitment);
 
-        self.store
-            .modify(&key, |e3_obj: Option<E3Crisp>| {
-                e3_obj.map(|mut e| {
-                    match e
-                        .input_ciphertext_hashes
-                        .iter_mut()
-                        .find(|(i, _)| *i == index)
-                    {
-                        Some(existing) => existing.1 = hash,
-                        None => e.input_ciphertext_hashes.push((index, hash)),
-                    }
-                    if let Some(existing) =
-                        e.input_commitments.iter_mut().find(|(i, _)| *i == index)
-                    {
-                        existing.1 = commitment;
-                    } else {
-                        e.input_commitments.push((index, commitment));
-                    }
-                    if let Some(existing) = e.input_slots.iter_mut().find(|(i, _)| *i == index) {
-                        existing.1 = slot;
-                    } else {
-                        e.input_slots.push((index, slot));
-                    }
-                    if let Some(existing) = e.input_parents.iter_mut().find(|(i, _)| *i == index) {
-                        existing.1 = parent_index_plus_one;
-                    } else {
-                        e.input_parents.push((index, parent_index_plus_one));
-                    }
-                    if let Some(existing) = e.input_usable.iter_mut().find(|(i, _)| *i == index) {
-                        existing.1 = usable;
-                    } else {
-                        e.input_usable.push((index, usable));
-                    }
-                    e
-                })
-            })
-            .await
-            .map_err(|_| eyre::eyre!("Could not append ciphertext_input for '{key}'"))?;
+        self.modify_inputs(|e| {
+            match e
+                .input_ciphertext_hashes
+                .iter_mut()
+                .find(|(i, _)| *i == index)
+            {
+                Some(existing) => existing.1 = hash,
+                None => e.input_ciphertext_hashes.push((index, hash)),
+            }
+            if let Some(existing) = e.input_commitments.iter_mut().find(|(i, _)| *i == index) {
+                existing.1 = commitment;
+            } else {
+                e.input_commitments.push((index, commitment));
+            }
+            if let Some(existing) = e.input_slots.iter_mut().find(|(i, _)| *i == index) {
+                existing.1 = slot;
+            } else {
+                e.input_slots.push((index, slot));
+            }
+            if let Some(existing) = e.input_parents.iter_mut().find(|(i, _)| *i == index) {
+                existing.1 = parent_index_plus_one;
+            } else {
+                e.input_parents.push((index, parent_index_plus_one));
+            }
+            if let Some(existing) = e.input_usable.iter_mut().find(|(i, _)| *i == index) {
+                existing.1 = usable;
+            } else {
+                e.input_usable.push((index, usable));
+            }
+        })
+        .await
+        .map_err(|e| eyre::eyre!("Could not append ciphertext_input for '{key}': {e}"))?;
 
         Ok(())
     }
@@ -438,21 +625,17 @@ impl<S: DataStore> CrispE3Repository<S> {
         sync()?;
         let key = self.crisp_key();
         let is_moved = |index: &u64| moved.iter().any(|(i, _)| i == index);
-        self.store
-            .modify(&key, |round: Option<E3Crisp>| {
-                round.map(|mut round| {
-                    round
-                        .ciphertext_inputs
-                        .retain(|(_, index)| !is_moved(index));
-                    round
-                        .input_ciphertext_hashes
-                        .retain(|(index, _)| !is_moved(index));
-                    round.input_ciphertext_hashes.extend(moved.iter().copied());
-                    round
-                })
-            })
-            .await
-            .map_err(|e| eyre::eyre!("Could not clear the inline ciphertexts at '{key}': {e}"))?;
+        self.modify_inputs(|round| {
+            round
+                .ciphertext_inputs
+                .retain(|(_, index)| !is_moved(index));
+            round
+                .input_ciphertext_hashes
+                .retain(|(index, _)| !is_moved(index));
+            round.input_ciphertext_hashes.extend(moved.iter().copied());
+        })
+        .await
+        .map_err(|e| eyre::eyre!("Could not clear the inline ciphertexts at '{key}': {e}"))?;
         Ok(())
     }
 
@@ -858,24 +1041,27 @@ impl<S: DataStore> CrispE3Repository<S> {
 
     /// The end of a slot's chain of usable entries: the entry a new input must name as its parent.
     ///
-    /// Resolved by the Secure Process's own rule (`InputSnapshot::heads_before`), so a client that
+    /// Resolved by the Secure Process's own rule (`InputSnapshot::slot_head`), so a client that
     /// builds on this answer produces an input the tally will take.
     ///
     /// Reads the usability decision rather than recomputing it. Recomputing costs a BFV commitment
     /// per candidate — about 5ms each, comparable to deserializing a thousand-input round — and
     /// every voter calls this before every ballot. The decision is made once, when the input is
-    /// indexed.
+    /// indexed, and the round's inputs are read once per input generation (`indexed_inputs`).
     ///
     /// `None` when the slot holds nothing usable, which is what a first vote sees.
     pub async fn get_slot_head(&self, slot: [u8; 20]) -> Result<Option<(Vec<u8>, u64)>> {
-        let (records, hashes) = self.input_records().await?;
-        let head = records.head_of(&records.heads_before(records.slots.len()), slot);
+        let inputs = self
+            .indexed_inputs()
+            .await?
+            .ok_or_else(|| eyre::eyre!("No data found at {}", self.crisp_key()))?;
+        let head = inputs.records.slot_head(inputs.entries_of(slot));
 
         // Only the head's bytes: a slot's chain can hold many entries.
         match head {
             Some(position) => {
-                let index = records.ciphertexts[position].1;
-                let bytes = self.get_ciphertext(index, hashes[position]).await?;
+                let index = inputs.records.ciphertexts[position].1;
+                let bytes = self.get_ciphertext(index, inputs.hashes[position]).await?;
                 Ok(Some((bytes, index)))
             }
             None => Ok(None),
@@ -885,8 +1071,8 @@ impl<S: DataStore> CrispE3Repository<S> {
     /// Where one submitted input stands in the selection of its slot, and the current slot head.
     ///
     /// The input is the round entry with this slot, commitment, parent, and content hash, the
-    /// keccak256 of its bytes that the round record names. `None` when this server has no record
-    /// of the round.
+    /// keccak256 of its bytes that the round record names. Only the entries of that slot are
+    /// replayed. `None` when this server has no record of the round.
     pub async fn get_input_selection(
         &self,
         slot: [u8; 20],
@@ -894,12 +1080,12 @@ impl<S: DataStore> CrispE3Repository<S> {
         parent_index_plus_one: u64,
         content_hash: [u8; 32],
     ) -> Result<Option<InputSelectionResponse>> {
-        let Some(e3_crisp) = self.try_get_crisp().await? else {
+        let Some(inputs) = self.indexed_inputs().await? else {
             return Ok(None);
         };
-        let (records, hashes) = Self::records_of(e3_crisp)?;
-        Ok(Some(records.selection(
-            &hashes,
+        Ok(Some(inputs.records.selection(
+            &inputs.hashes,
+            inputs.entries_of(slot),
             slot,
             commitment,
             parent_index_plus_one,
@@ -998,6 +1184,10 @@ impl<S: DataStore> CrispE3Repository<S> {
         format!("{CRISP_KEY_PREFIX}{}", self.e3_id)
     }
 
+    fn input_generation_key(&self) -> String {
+        format!("{INPUT_GENERATION_KEY_PREFIX}{}", self.e3_id)
+    }
+
     /// The index has a fixed width, so a round's ciphertexts sort in index order. sled then adds
     /// each new ballot to the last page and does not write the full pages of earlier ballots again.
     /// The content hash keeps a ballot that replaces another at the same index apart from it.
@@ -1043,8 +1233,9 @@ pub fn parse_slot_address(address: &str) -> Result<[u8; 20]> {
 mod tests {
     use super::{
         count_active_slots, parse_slot_address, snapshot_block, CrispE3Repository,
-        CurrentRoundRepository,
+        CurrentRoundRepository, InputGeneration,
     };
+    use crate::server::database::INPUT_GENERATION_KEY_PREFIX;
     use crate::server::models::{
         CensusMode, CreditMode, CustomParams, E3Crisp, ExclusionReason, InputSelectionResponse,
         InputSelectionStatus,
@@ -1096,6 +1287,47 @@ mod tests {
         {
             if self.failing.load(Ordering::SeqCst) {
                 return Err(eyre::eyre!("the write failed"));
+            }
+            self.store.modify(key, f).await
+        }
+    }
+
+    /// A store that, while `failing` is set, refuses the write that counts a change of the inputs
+    /// as finished. The change and its start are written, as when the disk fails between them.
+    struct FailingFinish {
+        store: InMemoryStore,
+        failing: Arc<AtomicBool>,
+    }
+
+    #[async_trait]
+    impl DataStore for FailingFinish {
+        type Error = eyre::Error;
+
+        async fn insert<T: Serialize + Send + Sync>(
+            &mut self,
+            key: &str,
+            value: &T,
+        ) -> Result<(), Self::Error> {
+            self.store.insert(key, value).await
+        }
+
+        async fn get<T: DeserializeOwned + Send + Sync>(
+            &self,
+            key: &str,
+        ) -> Result<Option<T>, Self::Error> {
+            self.store.get(key).await
+        }
+
+        async fn modify<T, F>(&mut self, key: &str, f: F) -> Result<Option<T>, Self::Error>
+        where
+            T: Serialize + DeserializeOwned + Send + Sync,
+            F: FnMut(Option<T>) -> Option<T> + Send,
+        {
+            if self.failing.load(Ordering::SeqCst) && key.starts_with(INPUT_GENERATION_KEY_PREFIX) {
+                let current: Option<InputGeneration> = self.store.get(key).await?;
+                if current.is_some_and(|generation| generation.started > generation.finished) {
+                    return Err(eyre::eyre!("the write failed"));
+                }
             }
             self.store.modify(key, f).await
         }
@@ -1557,6 +1789,111 @@ mod tests {
                 None,
                 Some(ExclusionReason::Unusable)
             )
+        );
+    }
+
+    /// A read of the round's inputs is kept for its input generation. An input indexed after the
+    /// read changes the generation, so the next read sees the input.
+    #[tokio::test]
+    async fn a_selection_sees_an_input_indexed_after_an_earlier_read() {
+        let mut round = CrispE3Repository::new(test_store(), "14");
+        round
+            .set_crisp(crisp_round("requester", "Active"))
+            .await
+            .unwrap();
+        let bfv = build_bfv_params_from_set_arc(BfvParamSet::from(BfvPreset::InsecureThreshold512));
+        // An input to another slot, so the round has a generation when it is first read.
+        round
+            .insert_ciphertext_input(vec![9; 3], 0, [9; 32], [0x88; 20], 0, &bfv)
+            .await
+            .unwrap();
+        let ballot = vec![1; 3];
+        let hash = keccak256(&ballot).0;
+        let before = round
+            .get_input_selection(SLOT, [1; 32], 0, hash)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(before.status, InputSelectionStatus::NotIndexed);
+
+        round
+            .insert_ciphertext_input(ballot, 1, [1; 32], SLOT, 0, &bfv)
+            .await
+            .unwrap();
+        // The bytes are not a ciphertext, so the entry is indexed as unusable.
+        assert_eq!(
+            round
+                .get_input_selection(SLOT, [1; 32], 0, hash)
+                .await
+                .unwrap()
+                .unwrap(),
+            answer(
+                InputSelectionStatus::Excluded,
+                Some(1),
+                None,
+                Some(ExclusionReason::Unusable)
+            )
+        );
+    }
+
+    /// A change that fails after its record write leaves the generation unsettled, so reads go to
+    /// the store and see the change. The next start settles the generation, and reads still see it.
+    #[tokio::test]
+    async fn a_change_that_fails_to_finish_is_read_from_the_store() {
+        let failing = Arc::new(AtomicBool::new(false));
+        let store = FailingFinish {
+            store: InMemoryStore::new(),
+            failing: Arc::clone(&failing),
+        };
+        let mut round =
+            CrispE3Repository::new(SharedStore::new(Arc::new(RwLock::new(store))), "15");
+        round
+            .set_crisp(crisp_round("requester", "Active"))
+            .await
+            .unwrap();
+        let bfv = build_bfv_params_from_set_arc(BfvParamSet::from(BfvPreset::InsecureThreshold512));
+        round
+            .insert_ciphertext_input(vec![9; 3], 0, [9; 32], [0x88; 20], 0, &bfv)
+            .await
+            .unwrap();
+        let ballot = vec![1; 3];
+        let hash = keccak256(&ballot).0;
+        let before = round
+            .get_input_selection(SLOT, [1; 32], 0, hash)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(before.status, InputSelectionStatus::NotIndexed);
+
+        failing.store(true, Ordering::SeqCst);
+        assert!(round
+            .insert_ciphertext_input(ballot, 1, [1; 32], SLOT, 0, &bfv)
+            .await
+            .is_err());
+        failing.store(false, Ordering::SeqCst);
+        let indexed = answer(
+            InputSelectionStatus::Excluded,
+            Some(1),
+            None,
+            Some(ExclusionReason::Unusable),
+        );
+        assert_eq!(
+            round
+                .get_input_selection(SLOT, [1; 32], 0, hash)
+                .await
+                .unwrap()
+                .unwrap(),
+            indexed
+        );
+
+        round.settle_input_generation().await.unwrap();
+        assert_eq!(
+            round
+                .get_input_selection(SLOT, [1; 32], 0, hash)
+                .await
+                .unwrap()
+                .unwrap(),
+            indexed
         );
     }
 }

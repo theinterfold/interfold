@@ -144,12 +144,17 @@ const sameInput = (a: InputIdentity, b: InputIdentity): boolean =>
 /// above, which an action drops once their availability is final. An excluded input keeps its
 /// record, so later visits still show the exclusion, until the next input of the same kind
 /// replaces it. A vote and a mask get one record each, so a mask does not replace the status of
-/// the vote.
+/// the vote. `selectedAt` is the time, in milliseconds, when the server first reported the input
+/// as selected while its job was committed. `selectionSettled` records a later `selected` answer
+/// that came at least `SELECTION_SETTLE_MS` after it. From then on the checks ask only for the
+/// availability job.
 interface SubmittedInput {
   jobId: string
   input: InputIdentity
   route?: SubmissionRoute
   txHash?: string
+  selectedAt?: number
+  selectionSettled?: true
 }
 
 const submittedInputKey = (isMask: boolean, chainId: number, roundId: string, address: string): string => {
@@ -169,6 +174,11 @@ const readSubmittedInput = (key: string): SubmittedInput | undefined => {
       input,
       route: 'route' in parsed && (parsed.route === 'wallet' || parsed.route === 'relay') ? parsed.route : undefined,
       txHash: 'txHash' in parsed && typeof parsed.txHash === 'string' ? parsed.txHash : undefined,
+      selectedAt:
+        'selectedAt' in parsed && typeof parsed.selectedAt === 'number' && Number.isFinite(parsed.selectedAt)
+          ? parsed.selectedAt
+          : undefined,
+      selectionSettled: 'selectionSettled' in parsed && parsed.selectionSettled === true ? true : undefined,
     }
   } catch {
     return undefined
@@ -213,6 +223,15 @@ const waitForCommitmentDecision = async (
 const SUBMISSION_CHECK_MIN_MS = 10_000
 const SUBMISSION_CHECK_MAX_MS = 60_000
 const SUBMISSION_CHECK_WAIT_MS = 3 * 60 * 60_000
+
+/// How long after the first `selected` answer the checks wait for another `selected` answer before
+/// they stop asking. The server indexes from the chain head, so a reorganization can still give the
+/// slot to another input until the block is final, which takes about 13 minutes on Ethereum.
+const SELECTION_SETTLE_MS = 30 * 60_000
+
+/// The selection answer of an input whose selection settled. The stage reads it from the record
+/// instead of asking again.
+const SELECTED: InputSelectionResponse = { status: 'selected', index: null, head_index: null, reason: null }
 
 /// Bounds the slot-head read, which runs before the proof. A stuck read must not hold the action.
 const SLOT_HEAD_TIMEOUT_MS = 30_000
@@ -332,8 +351,12 @@ const useSubmissionCheck = (
       const availability = view?.status ?? null
 
       // An uncommitted or failed job has no entry in the input tree yet.
-      let selection: InputSelectionResponse | null = null
-      if (availability !== 'failed_broadcast' && availability !== 'pending_commitment' && availability !== 'ready_for_commitment') {
+      const committed =
+        availability !== 'failed_broadcast' && availability !== 'pending_commitment' && availability !== 'ready_for_commitment'
+      // A settled selection stands, so only the availability job is asked.
+      const settled = committed && record.selectionSettled === true
+      let selection: InputSelectionResponse | null = settled ? SELECTED : null
+      if (committed && !settled) {
         try {
           selection = (await getInputSelection(INTERFOLD_API, BigInt(round), record.input)) ?? null
         } catch (error) {
@@ -342,6 +365,16 @@ const useSubmissionCheck = (
           return
         }
         if (cancelled) return
+      }
+      // Keep the time of the first `selected` answer while the input stays selected and committed.
+      // The selection settles on a `selected` answer that comes the settle time after it.
+      const now = Date.now()
+      const selectedAt = settled || selection?.status === 'selected' ? (record.selectedAt ?? now) : undefined
+      const selectionSettled = selectedAt !== undefined && (settled || now - selectedAt >= SELECTION_SETTLE_MS) ? true : undefined
+      if (selectedAt !== record.selectedAt || selectionSettled !== record.selectionSettled) {
+        // Read again, so that a newer input that replaced the record keeps its own state.
+        const current = readSubmittedInput(key)
+        if (current && sameInput(current.input, record.input)) writeSubmittedInput(key, { ...current, selectedAt, selectionSettled })
       }
 
       const { stage, retryOffered } = getSubmissionStage({

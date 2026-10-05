@@ -456,6 +456,16 @@ every section.
   a drop is visible only while a client checks, there is no retry after the commitment deadline, the
   answer depends on the server holding every indexed input, and the governance apps do not run the
   check. — `flow-trace/04`
+- **Every change to the inputs of a CRISP round is counted in the round's input generation.**
+  `state/previous-ciphertext` and `POST /voting/selection` read the inputs through a cache in the
+  server process (`indexed_inputs`). A read is cached only while the generation under
+  `_e3:crisp_inputs:{id}` has as many changes finished as started, and it is served only while
+  the generation stays the same. A write to `input_commitments`, `input_slots`, `input_parents`,
+  `input_usable`, `input_ciphertext_hashes` or `ciphertext_inputs` must go through
+  `modify_inputs`, which counts the change as started before the record write and as finished
+  after it. Another write leaves the cache with the old inputs: voters then build on a stale head,
+  and the Secure Process drops their inputs. `settle_input_generation` may make the counts equal
+  only at startup, before the indexer runs. — `flow-trace/04`
 
 - **CRISP's three ballot operations prove one relation and publish one shape.** Voting, updating,
   and masking all prove `published = addend + ballot`, with the addend selected by the private

@@ -1818,15 +1818,32 @@ keeps the transaction out of a public mempool, which is where the race would be 
 **How a voter sees a dropped input.** `POST /voting/selection` takes the input's slot, commitment,
 content hash, and parent, and replays the slot's chain with the Secure Process's own rule: the
 server calls `chain_head_per_slot` from the CRISP program crate for this and for `get_slot_head`
-(`InputSnapshot::selection`). It answers `selected` when the input became the head at its turn,
-which stays true when a later mask or re-vote extends it, so the check follows chain ancestry, not
-head equality. It answers `excluded` with the reason (`earlier_sibling`, `stale_parent`,
-`unusable`), and `selection_pending` while any lower tree index is missing from the server's index,
-because an earlier entry can still take the slot. The SDK combines that answer with the availability
-job (`getSubmissionStage`): a committed ballot is `selection_pending`, then `availability_pending`
-or `counted`, or `excluded`. The CRISP client keeps the input identity in local storage, resumes the
-check after a reload, marks the round as voted only at `counted`, and offers a new proof against the
-current head while the commitment deadline is ahead.
+(`InputSnapshot::slot_head`, `InputSnapshot::selection`). The rule compares a parent only with the
+head of the entry's own slot, so only the entries of that slot are replayed. It answers `selected`
+when the input became the head at its turn, which stays true when a later mask or re-vote extends
+it, so the check follows chain ancestry, not head equality. It answers `excluded` with the reason
+(`earlier_sibling`, `stale_parent`, `unusable`), and `selection_pending` while any lower tree index
+is missing from the server's index, because an earlier entry can still take the slot.
+
+Both routes read the round's inputs through a cache in the server process (`indexed_inputs`). The
+round's input generation, kept under `_e3:crisp_inputs:{id}` in a sled tree of its own, holds a
+random epoch and counts the changes to the input fields that started and that finished:
+`modify_inputs` counts a change as started before it writes the round record and as finished after.
+A read is cached only under a settled generation, with the counts equal, and served only while the
+generation is unchanged. A change that starts later raises `started` for good, so a cached read
+never outlives the inputs it was built from. A change that fails after it started leaves the round
+unsettled, and the round is read from the store until `settle_input_generation` makes the counts
+equal at the next start, before the indexer runs. Each selection call costs 1 in the caller's read
+window (`ChainRateLimiter`), and the refusal is logged without the caller.
+
+The SDK combines that answer with the availability job (`getSubmissionStage`): a committed ballot is
+`selection_pending`, then `availability_pending` or `counted`, or `excluded`. The CRISP client keeps
+the input identity in local storage, resumes the check after a reload, marks the round as voted only
+at `counted`, and offers a new proof against the current head while the commitment deadline is
+ahead. The server indexes from the chain head, so a reorganization can still change an answer. The
+client therefore keeps asking for the selection until a `selected` answer comes at least 30 minutes
+after the first one, past Ethereum finality. A different answer, or a job that is no longer
+committed, starts the 30 minutes again.
 
 The gap that remains: the voter learns of a drop only while a client checks, and after the
 commitment deadline there is no retry. The answer is only as complete as the server's index: a

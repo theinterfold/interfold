@@ -356,9 +356,10 @@ export type InputIdentity = {
  * - `not_indexed`: the server has no entry with this identity yet.
  * - `selection_pending`: the server has not indexed every earlier entry, so one of them can still
  *   take the slot.
- * - `selected`: the input took the slot at its turn. Later entries only extend the chain, so this
- *   answer is final.
- * - `excluded`: the input did not take the slot. This answer is final.
+ * - `selected`: the input took the slot at its turn. A later entry does not change this answer, but
+ *   a reorganization of the chain before the input's block is final can.
+ * - `excluded`: the input did not take the slot. Only a reorganization of the chain can change this
+ *   answer.
  */
 export type InputSelectionStatus = 'not_indexed' | 'selection_pending' | 'selected' | 'excluded'
 

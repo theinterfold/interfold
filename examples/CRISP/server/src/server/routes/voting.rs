@@ -4,6 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+use super::chain::admit;
 use crate::server::{
     app_data::AppData,
     data_availability::{input_rejection_message, AvailabilityService},
@@ -11,7 +12,7 @@ use crate::server::{
         canonical_e3_id, e3_id_to_u256, InputSelectionRequest, VoteRequest, VoteResponse,
         VoteResponseStatus, VoteStatusRequest, VoteStatusResponse,
     },
-    rate_limit::RateLimiter,
+    rate_limit::{ChainRateLimiter, RateLimiter},
     repo::parse_slot_address,
     CONFIG,
 };
@@ -19,6 +20,10 @@ use actix_web::{web, HttpRequest, HttpResponse, Responder};
 use alloy::primitives::{Bytes, B256};
 use log::{error, info, warn};
 use std::str::FromStr;
+
+/// Cost of one selection read in the caller's read window. The server answers from its own index
+/// and makes no upstream call.
+const SELECTION_READ_COST: usize = 1;
 
 pub fn setup_routes(config: &mut web::ServiceConfig) {
     config.route(
@@ -117,11 +122,21 @@ async fn get_vote_status(
 /// The body names the input by round, slot, commitment, content hash, and parent, so no
 /// identifier travels in the URL. The answer is `not_indexed`, `selection_pending`, `selected`,
 /// or `excluded` with a reason, and the tree index of the current slot head. 404 when this
-/// server has no record of the round.
+/// server has no record of the round. Each call is charged to the caller's read window, and 429
+/// answers a caller past it.
 async fn get_input_selection(
+    http_request: HttpRequest,
     data: web::Json<InputSelectionRequest>,
     store: web::Data<AppData>,
+    limiter: web::Data<ChainRateLimiter>,
 ) -> impl Responder {
+    if admit(&http_request, &limiter, SELECTION_READ_COST).is_err() {
+        // The caller stays out of the log line: on a voting route it would tie a caller to the
+        // inputs that it follows.
+        warn!("Rate limit refused /voting/selection");
+        return HttpResponse::TooManyRequests()
+            .json("Too many requests from this address, slow down");
+    }
     let request = data.into_inner();
     let e3_id = match canonical_e3_id(&request.round_id) {
         Ok(e3_id) => e3_id,
@@ -342,6 +357,7 @@ mod tests {
         app_data::AppData,
         database::SledDB,
         models::{CensusMode, CreditMode, CustomParams},
+        rate_limit::ChainRateLimiter,
     };
     use actix_web::{http::StatusCode, test, web, App};
     use e3_sdk::indexer::SharedStore;
@@ -378,6 +394,7 @@ mod tests {
         let app = test::init_service(
             App::new()
                 .app_data(web::Data::new(data))
+                .app_data(web::Data::new(ChainRateLimiter::new()))
                 .configure(super::super::setup_routes),
         )
         .await;

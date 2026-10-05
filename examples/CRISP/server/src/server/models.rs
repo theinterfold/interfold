@@ -175,8 +175,8 @@ pub enum InputSelectionStatus {
     /// The entry is indexed, but an entry with a lower tree index is not, and that entry can
     /// still take the slot.
     SelectionPending,
-    /// The entry became the slot head at its turn. Later entries only extend the chain, so this
-    /// is final.
+    /// The entry became the slot head at its turn. A later entry does not change this, but a
+    /// reorganization of the chain can: this server indexes from the chain head.
     Selected,
     /// The entry did not become the slot head at its turn, so the tally does not count it.
     Excluded,
