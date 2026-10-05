@@ -5,7 +5,6 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use alloy::{
-    eips::BlockId,
     network::{Ethereum, EthereumWallet},
     primitives::{Address, Bytes, B256, I256, U256},
     providers::{
@@ -34,8 +33,6 @@ sol! {
     #[derive(Debug)]
     #[sol(rpc)]
     contract CRISPProgram {
-        /// An input would write a new slot after the round holds its maximum of written slots.
-        error SlotLimitReached(uint256 e3Id, uint256 maxSlots);
         /// The relay key sent `publishInput` after the contract's relay limit for the slot or the
         /// round was used up.
         error RelayLimitReached(uint256 e3Id, address slot);
@@ -155,10 +152,6 @@ const CENSUS_MODE_ONCHAIN: u8 = 2;
 pub enum SimulateError {
     /// The node evaluated the call and the contract refused the input.
     Reverted(String),
-    /// The contract refused the input with `SlotLimitReached`: the input would write a new slot,
-    /// and the round already holds its maximum of written slots. The written slots of a round
-    /// only grow, so the refusal is final for this round. Inputs to written slots still pass.
-    SlotLimitReached,
     /// The contract refused a `publishInput` from the relay key with `RelayLimitReached`: its
     /// relay limit for the slot or the round is used up. The input itself can still be valid.
     RelayLimitReached,
@@ -171,9 +164,6 @@ impl std::fmt::Display for SimulateError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Reverted(message) => write!(f, "contract simulation reverted: {message}"),
-            Self::SlotLimitReached => {
-                write!(f, "the round holds its maximum of distinct written slots")
-            }
             Self::RelayLimitReached => {
                 write!(
                     f,
@@ -189,20 +179,13 @@ impl std::error::Error for SimulateError {}
 
 /// Classify the error of a dry-run call.
 ///
-/// An error answer with `SlotLimitReached` or `RelayLimitReached` revert data is that limit.
-/// Other revert data, or a revert-shaped message where a node strips the data, means the contract
-/// refused the input. Anything else (rate limits, method errors, transport failures) is the
-/// provider's problem.
+/// An error answer with `RelayLimitReached` revert data is that limit. Other revert data, or a
+/// revert-shaped message where a node strips the data, means the contract refused the input.
+/// Anything else (rate limits, method errors, transport failures) is the provider's problem.
 fn simulation_error(error: alloy::contract::Error) -> SimulateError {
     let alloy::contract::Error::TransportError(RpcError::ErrorResp(payload)) = error else {
         return SimulateError::Provider(error.to_string());
     };
-    if payload
-        .as_decoded_error::<CRISPProgram::SlotLimitReached>()
-        .is_some()
-    {
-        return SimulateError::SlotLimitReached;
-    }
     if payload
         .as_decoded_error::<CRISPProgram::RelayLimitReached>()
         .is_some()
@@ -330,8 +313,7 @@ impl CRISPContract<CRISPWriteProvider> {
         Ok(round.merkleRoot)
     }
 
-    /// Dry-run `publishInput` as an `eth_call` from the relay's own account, against the state of
-    /// `block`.
+    /// Dry-run `publishInput` as an `eth_call` from the relay's own account.
     ///
     /// The relay signs and pays for whatever it is handed, so an input that would revert — a bad
     /// proof, a stale parent, a closed window — must be refused before it costs a transaction.
@@ -343,12 +325,10 @@ impl CRISPContract<CRISPWriteProvider> {
         &self,
         e3_id: U256,
         data: Bytes,
-        block: BlockId,
     ) -> Result<(), SimulateError> {
         let contract = CRISPProgram::new(self.contract_address, self.provider.as_ref());
         contract
             .publishInput(e3_id, data)
-            .block(block)
             .call()
             .await
             .map(|_| ())

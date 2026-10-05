@@ -107,24 +107,17 @@ fn minimum_input_duration(voting_window: u64, finalization_window: u64) -> anyho
         .ok_or_else(|| anyhow::anyhow!("required CRISP input duration overflows u64"))
 }
 
-/// The client message for an input that the contract refuses with `SlotLimitReached`. The written
-/// slots of a round only grow, so a retry of the same input gets the same refusal. It is short
-/// enough for the CRISP client to show it whole (`extractCleanErrorMessage`).
-const SLOT_LIMIT_REJECTION: &str =
-    "This round has no free voting slots. A slot that holds an input can still be updated or masked.";
-
 /// Return a stable client message only when the caller's ballot was conclusively rejected.
 pub fn input_rejection_message(error: &anyhow::Error) -> Option<&'static str> {
     for cause in error.chain() {
         if let Some(rejection) = cause.downcast_ref::<InputRejected>() {
             return Some(rejection.0);
         }
-        match cause.downcast_ref::<SimulateError>() {
-            Some(SimulateError::SlotLimitReached) => return Some(SLOT_LIMIT_REJECTION),
-            Some(SimulateError::Reverted(_)) => {
-                return Some("The vote proof or ciphertext was rejected")
-            }
-            _ => {}
+        if matches!(
+            cause.downcast_ref::<SimulateError>(),
+            Some(SimulateError::Reverted(_))
+        ) {
+            return Some("The vote proof or ciphertext was rejected");
         }
     }
     None
@@ -2394,8 +2387,7 @@ impl AvailabilityService {
         Ok(removed)
     }
 
-    /// Relay one input commitment and return the state that records the outcome
-    /// (`relay_signed_commitment`).
+    /// Relay one input commitment and return the provisional state that records it.
     async fn relay_input_commitment(
         &self,
         job: &AvailabilityJob,
@@ -2407,20 +2399,12 @@ impl AvailabilityService {
     }
 
     /// Send a signed commitment payload through the relay, or give it to the voter's wallet when
-    /// the relay cannot send it. Return the provisional state that records the choice, or a failed
-    /// state when no block can take the input.
+    /// the relay cannot send it. Return the provisional state that records the choice.
     ///
     /// If the contract refuses the relay key with `RelayLimitReached`, the job takes the wallet
     /// path at once. The contract counts the relays of every instance that holds the key, and a
     /// retry fails until the round closes. A relayed transaction that reverts gets the same
     /// answer from the dry run of the next attempt.
-    ///
-    /// If the contract refuses the input with `SlotLimitReached` at the head and at the finalized
-    /// block, the job fails with the slot-limit message. Finalized state then holds the round at
-    /// its limit without this input's slot, and the written slots only grow from there, so no
-    /// later block can take the input, from the relay or from the voter's wallet. A refusal at
-    /// the head alone can be reorganized away, and a commitment of this input that comes back
-    /// needs the bytes that a failed job gives up, so the job retries instead.
     ///
     /// If the relay key cannot pay for the transaction, the job takes the wallet path with the same
     /// signed payload, and the voter's wallet sends the commitment before the cutoff. A retry with
@@ -2450,26 +2434,6 @@ impl AvailabilityService {
                     "The contract relay limit is used up; the voter's wallet sends the commitment"
                 );
                 None
-            }
-            Err(error)
-                if matches!(
-                    error.downcast_ref::<SimulateError>(),
-                    Some(SimulateError::SlotLimitReached)
-                ) =>
-            {
-                if !self
-                    .slot_limit_refuses_at_finalized(job, &ethereum_payload)
-                    .await?
-                {
-                    return Err(error);
-                }
-                warn!(
-                    job_id = job.id.as_str(),
-                    "The round holds its most distinct slots in finalized state; the input fails"
-                );
-                return Ok(JobState::Failed {
-                    message: SLOT_LIMIT_REJECTION.to_owned(),
-                });
             }
             Err(error) => {
                 let Some(unfunded) = error.downcast_ref::<RelayUnfunded>() else {
@@ -2526,10 +2490,10 @@ impl AvailabilityService {
         now.saturating_sub(started) >= RELAY_FUNDING_GRACE_SECONDS
     }
 
-    /// Send `publishInput` for a relayed input after a dry run at the head. A dry run that the
-    /// contract refuses with `RelayLimitReached` or `SlotLimitReached` comes back as that
-    /// `SimulateError`. A refusal for lack of funds comes back as `RelayUnfunded`, which records
-    /// whether other transactions of the relay key were pending.
+    /// Send `publishInput` for a relayed input after a dry run. A dry run that the contract
+    /// refuses with `RelayLimitReached` comes back as `SimulateError::RelayLimitReached`. A
+    /// refusal for lack of funds comes back as `RelayUnfunded`, which records whether other
+    /// transactions of the relay key were pending.
     async fn submit_input_commitment_payload(
         &self,
         job: &AvailabilityJob,
@@ -2548,7 +2512,7 @@ impl AvailabilityService {
         let e3_id = e3_id_to_u256(e3_id)?;
         let payload = Bytes::from(payload);
         contract
-            .simulate_publish_input(e3_id, payload.clone(), BlockId::latest())
+            .simulate_publish_input(e3_id, payload.clone())
             .await
             .map_err(anyhow::Error::new)?;
         let error = match contract.publish_input(e3_id, payload).await {
@@ -2562,34 +2526,6 @@ impl AvailabilityService {
             }));
         }
         Err(anyhow::anyhow!(error.to_string()))
-    }
-
-    /// Whether the contract refuses `payload` with `SlotLimitReached` against the state of the
-    /// finalized block.
-    async fn slot_limit_refuses_at_finalized(
-        &self,
-        job: &AvailabilityJob,
-        payload: &[u8],
-    ) -> anyhow::Result<bool> {
-        let JobKind::Input { e3_id, .. } = &job.kind else {
-            return Ok(false);
-        };
-        let (finalized_block, _) = self.finalized_block().await?;
-        let contract = CRISPContract::new(
-            &self.http_rpc_url,
-            &self.private_key,
-            &self.e3_program_address,
-        )
-        .await
-        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        let refusal = contract
-            .simulate_publish_input(
-                e3_id_to_u256(e3_id)?,
-                Bytes::copy_from_slice(payload),
-                BlockId::number(finalized_block),
-            )
-            .await;
-        Ok(matches!(refusal, Err(SimulateError::SlotLimitReached)))
     }
 
     /// Whether the relay key has transactions that the chain has not mined: its pending
@@ -3940,20 +3876,12 @@ mod tests {
             .unwrap());
     }
 
-    /// Runtime code that answers `isInputCommitted` with false, as for a new input, and reverts
-    /// every other call with `data`.
+    /// Runtime code that reverts every call with `data`.
     fn reverting_code(data: &[u8]) -> Bytes {
-        use alloy::sol_types::SolCall;
-
         let size = u8::try_from(data.len()).unwrap();
-        let [s0, s1, s2, s3] = evm_helpers::CRISPProgram::isInputCommittedCall::SELECTOR;
+        // CODECOPY(0, 12, size); REVERT(0, size). The data starts after these 12 bytes.
         let mut code = vec![
-            // Jump to 27 when the first four calldata bytes are the selector.
-            0x60, 0x00, 0x35, 0x60, 0xe0, 0x1c, 0x63, s0, s1, s2, s3, 0x14, 0x60, 27, 0x57,
-            // CODECOPY(0, 33, size); REVERT(0, size). The data starts after these 33 bytes.
-            0x60, size, 0x60, 33, 0x60, 0x00, 0x39, 0x60, size, 0x60, 0x00, 0xfd,
-            // 27: JUMPDEST; RETURN(0, 32) of zeroed memory, the encoding of false.
-            0x5b, 0x60, 0x20, 0x60, 0x00, 0xf3,
+            0x60, size, 0x60, 12, 0x60, 0x00, 0x39, 0x60, size, 0x60, 0x00, 0xfd,
         ];
         code.extend_from_slice(data);
         Bytes::from(code)
@@ -4028,82 +3956,6 @@ mod tests {
             .relay_signed_commitment(&job, vec![0x33], 600, 100)
             .await
             .is_err());
-    }
-
-    /// The round has no slot left for a relayed input. The job fails with the slot-limit message
-    /// only when finalized state refuses the input too. A refusal at the head alone can be
-    /// reorganized away, and a commitment of the input that comes back needs the bytes that a
-    /// failed job gives up.
-    #[tokio::test]
-    async fn a_relayed_input_past_the_slot_limit_fails_only_on_finalized_state() {
-        use alloy::providers::ext::AnvilApi;
-        use evm_helpers::CRISPProgram;
-
-        // One slot for each epoch puts the finalized block two blocks behind the head.
-        let anvil = alloy::node_bindings::Anvil::new()
-            .args(["--slots-in-an-epoch", "1"])
-            .try_spawn()
-            .unwrap();
-        let provider = ProviderBuilder::new()
-            .connect(&anvil.endpoint())
-            .await
-            .unwrap();
-        provider.anvil_mine(Some(3), None).await.unwrap();
-        let service = service_against_reverting_program(
-            &anvil,
-            CRISPProgram::SlotLimitReached {
-                e3Id: U256::from(7),
-                maxSlots: U256::from(99),
-            },
-        )
-        .await;
-        let job = round_input_job("slot-limited", "7", Address::repeat_byte(0x77));
-
-        // Only the head holds the refusing program, so the job stays for a later attempt.
-        assert!(service
-            .relay_signed_commitment(&job, vec![0x33], 600, 100)
-            .await
-            .is_err());
-
-        provider.anvil_mine(Some(3), None).await.unwrap();
-        let state = service
-            .relay_signed_commitment(&job, vec![0x33], 600, 100)
-            .await
-            .unwrap();
-
-        assert!(
-            matches!(&state, JobState::Failed { message } if message == SLOT_LIMIT_REJECTION),
-            "expected the slot-limit failure, got {state:?}"
-        );
-    }
-
-    /// When the round holds its maximum of written slots, the contract refuses an input that
-    /// would write a new slot. Intake answers with the final slot-limit refusal, not with the
-    /// refusal of an invalid proof.
-    #[tokio::test]
-    async fn intake_refuses_a_new_slot_after_the_slot_limit_with_its_own_message() {
-        use evm_helpers::CRISPProgram;
-
-        let anvil = alloy::node_bindings::Anvil::new().try_spawn().unwrap();
-        let service = service_against_reverting_program(
-            &anvil,
-            CRISPProgram::SlotLimitReached {
-                e3Id: U256::from(7),
-                maxSlots: U256::from(99),
-            },
-        )
-        .await;
-        let object = b"ballot-for-a-new-slot";
-        let envelope = staged_envelope_with_object(
-            Address::repeat_byte(0x77),
-            B256::repeat_byte(0x11),
-            object,
-        );
-
-        let Err(error) = service.stage_input("7", envelope, false, None).await else {
-            panic!("intake admitted an input that would write a new slot past the limit");
-        };
-        assert_eq!(input_rejection_message(&error), Some(SLOT_LIMIT_REJECTION));
     }
 
     /// A mask needs no signature from the slot owner, so an uncommitted job for a slot must not

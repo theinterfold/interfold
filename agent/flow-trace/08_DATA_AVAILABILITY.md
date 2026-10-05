@@ -392,13 +392,7 @@ from the same two variables in `deploy/crisp.ts`; mainnet requires the round cap
 `setRelayLimits`. The check runs before the proof check, so a relay past its cap pays for a cheap
 revert only. A relay dry run that reverts with `RelayLimitReached`
 (`SimulateError::RelayLimitReached`) moves the job to the wallet path at once, with no grace period,
-and a relayed transaction that reverted takes the same path at its next attempt. A dry run that
-reverts with `SlotLimitReached` fails the job with the slot-limit message only when a dry run
-against the finalized block reverts the same way (`relay_signed_commitment`,
-`slot_limit_refuses_at_finalized`). Finalized state then holds the round at its limit without the
-input's slot, and the written slots only grow, so no later block takes the input from the relay or
-from the voter's wallet. A refusal at the head alone retries, because a reorganization can bring
-back a commitment of the input, and that commitment needs the bytes that a failed job gives up.
+and a relayed transaction that reverted takes the same path at its next attempt.
 
 The local ledger records its start (`RELAY_LEDGER_EPOCH_KEY`) the first time it opens, and keeps
 that marker across restarts and pruning. A round whose input window opened before that start can

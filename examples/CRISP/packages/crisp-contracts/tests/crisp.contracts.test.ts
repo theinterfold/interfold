@@ -32,7 +32,6 @@ import {
   deployHonkVerifier,
   deployMockInterfold,
   ethers,
-  INSECURE_BFV_PARAMS,
   inputCommitmentPayload,
   publishAvailableInput,
   splitInputEnvelope,
@@ -256,8 +255,8 @@ describe('CRISP Contracts', function () {
   describe('get round data', () => {
     // The dynamic input tree has a minimum depth of one (InternalLazyIMT.Z_1).
     const EMPTY_TREE_ROOT = 14744269619966411208579211824598458697587494354926760081771325075741142829156n
-    // MockInterfold calls validate with the insecure-512 parameter set.
-    const PARAMS_HASH = ethers.keccak256(INSECURE_BFV_PARAMS)
+    // MockInterfold calls validate with empty e3ProgramParams
+    const EMPTY_PARAMS_HASH = ethers.keccak256('0x')
 
     it('should return empty data for an e3 which was not initialized', async () => {
       const e3Id = await mockInterfold.nextE3Id()
@@ -279,7 +278,7 @@ describe('CRISP Contracts', function () {
       const [merkleRoot, paramsHash, numOptions, creditMode, inputRoot, numberOfVotes] = await crispProgram.getRoundData(e3Id)
 
       expect(merkleRoot).to.equal(0n)
-      expect(paramsHash).to.equal(PARAMS_HASH)
+      expect(paramsHash).to.equal(EMPTY_PARAMS_HASH)
       expect(numOptions).to.equal(2n)
       // CreditMode.CONSTANT
       expect(creditMode).to.equal(0n)

@@ -85,16 +85,6 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     uint32 maxInputsPerRound;
   }
 
-  /// @notice The BFV parameter set that Interfold registers and passes to {validate}.
-  /// @dev The layout of `encode_bfv_params` and the protocol scripts:
-  /// `abi.encode((uint256 degree, uint256 plaintext_modulus, uint256[] moduli, string error1_variance))`.
-  struct BfvParameters {
-    uint256 degree;
-    uint256 plaintextModulus;
-    uint256[] moduli;
-    string error1Variance;
-  }
-
   /// @notice Struct to store all data related to a voting round
   struct RoundData {
     uint256 merkleRoot;
@@ -149,14 +139,6 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     /// @notice Divides raw token voting power into the units the ballot is encoded in. Only used
     /// by `CensusMode.ONCHAIN`. Never zero for such a round.
     uint256 votingPowerDivisor;
-    /// @notice Most distinct slots this round may write: the plaintext modulus minus one.
-    /// @dev Every coefficient of a ballot plaintext is 0 or 1, and the tally adds one ballot per
-    /// selected slot. The committee decrypts each sum modulo the plaintext modulus, so a round
-    /// with more slots could wrap a coefficient to its residue, and the decoded count would be
-    /// wrong with every proof valid. At this limit no sum reaches the modulus.
-    uint32 slotLimit;
-    /// @notice Distinct slots that hold at least one committed input.
-    uint32 writtenSlotCount;
     /// @notice Inputs that the relay key committed in this round, across all slots.
     uint32 relayedInputCount;
     /// @notice Inputs that the relay key committed in this round, per slot.
@@ -292,11 +274,6 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
   error InvalidDataAvailabilityVerifier();
   error DataAvailabilityHashMismatch(bytes32 expected, bytes32 actual);
   error ZeroEncryptedVoteHash();
-  /// @notice The BFV parameters give no plaintext modulus that a tally can be decoded under.
-  error InvalidPlaintextModulus();
-  /// @notice The round already holds the most distinct slots that its tally can count exactly.
-  /// @dev Updates and masks to a slot that already holds an input are still accepted.
-  error SlotLimitReached(uint256 e3Id, uint256 maxSlots);
   /// @notice The relay key used all of its inputs for this slot or this round.
   /// @dev The wallet of the voter can still send the same input.
   error RelayLimitReached(uint256 e3Id, address slot);
@@ -512,20 +489,6 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     return e3Data[e3Id].censusMode;
   }
 
-  /// @notice The most distinct slots a round may write.
-  /// @param e3Id The E3 to look up.
-  /// @return The limit recorded at validation.
-  function slotLimitOf(uint256 e3Id) external view returns (uint256) {
-    return e3Data[e3Id].slotLimit;
-  }
-
-  /// @notice The distinct slots that hold at least one committed input.
-  /// @param e3Id The E3 to look up.
-  /// @return The number of written slots.
-  function writtenSlotCountOf(uint256 e3Id) external view returns (uint256) {
-    return e3Data[e3Id].writtenSlotCount;
-  }
-
   /// @notice The inputs that the relay key committed to one slot of a round.
   /// @param e3Id The E3 to look up.
   /// @param slot The slot address.
@@ -555,7 +518,6 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     // Read that record and refuse an E3 that Interfold assigned to a different program. Without
     // this check the owner can create parallel CRISP round state for another program's E3.
     _requireAssignedE3(e3Id);
-    _initSlotLimit(e3Id, e3ProgramParams);
 
     // Delegated to its own frame rather than scoped inline: `validate` is close enough to the
     // stack limit that holding the six decoded values alongside the parameters exceeds it.
@@ -585,20 +547,6 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
   /// @param e3Id The E3 to check.
   function _requireAssignedE3(uint256 e3Id) internal view {
     if (address(interfold.getE3(e3Id).e3Program) != address(this)) revert E3NotAssignedToProgram(e3Id);
-  }
-
-  /// @notice Record how many distinct slots the round may write.
-  /// @dev Reads the plaintext modulus from the BFV parameter set that Interfold registered for the
-  /// E3. The input tree also bounds the slot count, so the smaller of the two limits applies.
-  /// @param e3Id The E3 being configured.
-  /// @param e3ProgramParams The ABI-encoded BFV parameter set.
-  function _initSlotLimit(uint256 e3Id, bytes calldata e3ProgramParams) internal {
-    BfvParameters memory bfv = abi.decode(e3ProgramParams, (BfvParameters));
-    if (bfv.plaintextModulus < 2) revert InvalidPlaintextModulus();
-
-    uint256 limit = bfv.plaintextModulus - 1;
-    uint256 treeCapacity = (uint256(1) << TREE_DEPTH) - 1;
-    e3Data[e3Id].slotLimit = uint32(limit < treeCapacity ? limit : treeCapacity);
   }
 
   /// @notice Return the earliest voting start under the current committee timeouts.
@@ -905,7 +853,6 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     // no committed input can later finalize against data that no party published, and so that
     // `validateInputProof` cannot accept a statement that `publishInput` rejects.
     if (encryptedVoteHash == bytes32(0)) revert ZeroEncryptedVoteHash();
-    _requireSlotCapacity(e3Id, slotAddress);
 
     uint256 leaf = inputLeaf(encryptedVoteHash, encryptedVoteCommitment, slotAddress, parentIndexPlusOne);
     if (e3Data[e3Id].appendedLeaf[leaf]) revert InputAlreadyPublished(leaf);
@@ -958,16 +905,6 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     if (commitment == bytes32(0)) revert UnknownParentInput(parentIndexPlusOne - 1);
 
     return commitment;
-  }
-
-  /// @notice Refuse an input that would open a new slot in a round that holds its most slots.
-  /// @param e3Id The round.
-  /// @param slotAddress The slot the input is written to.
-  function _requireSlotCapacity(uint256 e3Id, address slotAddress) internal view {
-    RoundData storage round = e3Data[e3Id];
-    if (round.voteSlots[slotAddress] == 0 && round.writtenSlotCount >= round.slotLimit) {
-      revert SlotLimitReached(e3Id, round.slotLimit);
-    }
   }
 
   /// @notice Count one input that the relay key sends, within the relay caps.
@@ -1056,8 +993,10 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
   }
 
   /// @notice Decode the tally from the plaintext output
-  /// @dev Each coefficient is exact: it counts the selected slots whose ballot sets that bit, and
-  /// the slot limit keeps that count below the plaintext modulus the committee decrypts under.
+  /// @dev Each coefficient counts the selected slots whose ballot sets that bit, modulo the
+  /// plaintext modulus that the committee decrypts under: 100 for insecure-512 and 1,000,000 for
+  /// secure-8192. The count is exact only while fewer ballots than the modulus set the same bit in
+  /// one round. This contract does not enforce that bound.
   /// @param e3Id The E3 program ID
   /// @return votes - an array of vote counts for each option
   function decodeTally(uint256 e3Id) public view returns (uint256[] memory votes) {
@@ -1194,7 +1133,6 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     voteIndex = round.votes.numberOfLeaves;
     round.votes._insert(leaf);
 
-    if (round.voteSlots[slotAddress] == 0) round.writtenSlotCount++;
     round.voteSlots[slotAddress] = voteIndex + 1;
     round.inputCommitment[slotAddress][voteIndex] = encryptedVoteCommitment;
   }

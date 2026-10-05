@@ -1839,14 +1839,14 @@ that distinction — the thing the whole design exists to hide.
 Capacity: `TREE_DEPTH = 20` gives 2^20 entries, against a physical ceiling of roughly three writes
 per block at the secure preset — append-only is not capacity-bound.
 
-**Slot limit.** A round writes at most `t - 1` distinct slots, where `t` is the plaintext modulus of
-the round's BFV parameters: 99 slots for insecure-512 and 999,999 for secure-8192.
-`CRISPProgram.validate` decodes `t` from the registered parameter set, and `validateInputProof` and
-`publishInput` refuse an input that would open slot `t` with `SlotLimitReached`. Every ballot
-coefficient is 0 or 1 and the tally adds one ballot per selected slot, so each decrypted coefficient
-is at most the slot count and never wraps modulo `t`. Updates and masks to a written slot stay open
-at the limit. A mask needs no signature, so masks to `t - 1` distinct unwritten census slots stop
-every later first vote in the round: 99 inputs at insecure-512, about a million at secure-8192.
+**Plaintext modulus bound.** The committee decrypts each tally coefficient modulo the plaintext
+modulus `t` of the round's BFV parameters: 100 for insecure-512 and 1,000,000 for secure-8192. Every
+ballot coefficient is 0 or 1 and the tally adds one ballot per selected slot, so a coefficient
+counts the ballots that set that bit, and the decoded count is exact only while fewer than `t`
+ballots set it. `CRISPProgram` does not enforce the bound, and the input tree (`2^20` entries) does
+not prevent a round past it. At secure-8192 a wrong count needs a million ballots in one round; at
+insecure-512 it needs 100, so a round on that preset with 100 or more voters for one option can
+decode a wrong result with every proof valid.
 
 A round where _every_ entry is unusable fails at the output commitment, because the processor's
 empty ciphertext does not deserialize. That is only reachable when no honest input exists, and is

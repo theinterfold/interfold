@@ -477,15 +477,15 @@ every section.
   a change to either ballot circuit must regenerate those constants (`pnpm compute:vk-hash`, both
   presets) and the generated verifiers; a deployed `CRISPProgram` keeps the circuit its verifier was
   built from. — `flow-trace/04`
-- **A CRISP round writes at most `t - 1` distinct slots.** `CRISPProgram.validate` reads the
-  plaintext modulus `t` from the registered BFV parameters, and `validateInputProof` and
-  `publishInput` refuse an input that would open slot `t` (`SlotLimitReached`). Every ballot
-  coefficient is 0 or 1 and the tally adds one ballot per selected slot, so no decrypted coefficient
-  reaches `t`; past that, the committee decrypts the residue and the decoded count is wrong with
-  every proof valid. Updates and masks to written slots stay open. A tally format that is not one
-  bit per coefficient per ballot must replace this bound. **Gap:** a mask needs no signature, so
-  masks to `t - 1` distinct unwritten census slots stop every later first vote in the round. That
-  costs 99 inputs at insecure-512 and about a million at secure-8192. — `flow-trace/04`
+- **A CRISP tally coefficient is exact only below the plaintext modulus.** Every ballot coefficient
+  is 0 or 1, and the tally adds one ballot per selected slot, so each decrypted coefficient counts
+  the ballots that set that bit of that option. The committee decrypts it modulo the plaintext
+  modulus `t` of the round's BFV parameters: 100 at insecure-512 and 1,000,000 at secure-8192.
+  Voting power does not change the bound, because a ballot adds at most 1 to each coefficient. A
+  tally format that is not one bit per coefficient per ballot needs a new bound. **Gap:**
+  `CRISPProgram` does not limit the slots of a round. When `t` or more ballots in one round set the
+  same bit, `decodeTally` reads the residue and the count is wrong with every proof valid. That
+  takes 100 ballots at insecure-512 and a million at secure-8192. — `flow-trace/04`
 - **The relay caps of the shared relay key are enforced on chain.** `publishInput` counts the inputs
   that `inputAvailabilitySigner` sends, per slot and per round, and reverts with `RelayLimitReached`
   past the caps set at deployment (`setRelayLimits` adjusts them) before the proof check. Every

@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 import { expect } from 'chai'
-import { deployCRISPProgram, ethers, INSECURE_BFV_PARAMS } from './utils'
+import { deployCRISPProgram, ethers } from './utils'
 import type { CRISPProgram } from '../types'
 
 const CONSTANT = 0
@@ -44,7 +44,7 @@ describe('CRISPProgram census mode', function () {
     return ethers.AbiCoder.defaultAbiCoder().encode(types, values)
   }
 
-  const validate = (e3Id: number, params: string) => crispProgram.validate(e3Id, 0, INSECURE_BFV_PARAMS, '0x', params)
+  const validate = (e3Id: number, params: string) => crispProgram.validate(e3Id, 0, '0x', '0x', params)
 
   beforeEach(async () => {
     crispProgram = await deployCRISPProgram()
@@ -84,7 +84,7 @@ describe('CRISPProgram census mode', function () {
   it('keeps census root publication owner-only', async () => {
     const [, availabilitySigner] = await ethers.getSigners()
     const program = await deployCRISPProgram({ inputAvailabilitySigner: availabilitySigner.address })
-    await program.validate(7, 0, INSECURE_BFV_PARAMS, '0x', encode(CUSTOM, TOKEN))
+    await program.validate(7, 0, '0x', '0x', encode(CUSTOM, TOKEN))
 
     await expect(program.connect(availabilitySigner).setMerkleRoot(7, 123))
       .to.be.revertedWithCustomError(program, 'OwnableUnauthorizedAccount')
