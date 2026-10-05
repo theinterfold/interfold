@@ -6,14 +6,16 @@
 
 //! The check that each command that deletes node state runs (`node reset-data`, `nodes purge`).
 //!
-//! The chain cannot restore a key share, so these commands refuse to delete key-share state for
-//! an E3 that the node has not seen complete.
+//! The chain cannot restore a key share or the evidence of a slash report, so these commands
+//! refuse to delete key-share state for an E3 that the node has not seen complete, and slash
+//! reports that the node has not submitted.
 
 use anyhow::{bail, Context, Result};
 use e3_data::{DataStore, Repositories};
 use e3_events::{E3Stage, E3id, StoreKeys};
+use e3_evm::{SlashingWriterRecoveryState, SlashingWriterRepositoryFactory};
 use e3_request::E3LifecycleRepositoryFactory;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 /// The command and the node that a refusal names.
 pub(crate) struct Deletion<'a> {
@@ -133,6 +135,67 @@ fn e3_id_after_prefix(key: &[u8], prefix: &str) -> Result<E3id> {
     Ok(E3id::new(id, chain_id))
 }
 
+/// Slash reports on one chain that this node has not submitted or seen settled.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PendingSlashReports {
+    pub(crate) chain_id: u64,
+    pub(crate) count: usize,
+}
+
+/// Find each chain on which this node holds slash reports that it has not submitted or seen
+/// settled. The completion of an E3 does not settle its slash reports, so a complete E3 can still
+/// have one. A record that does not decode fails the check, as a failed read does.
+pub(crate) async fn pending_slash_reports(
+    repositories: &Repositories,
+) -> Result<Vec<PendingSlashReports>> {
+    let keys = repositories
+        .store
+        .keys_with_prefix(StoreKeys::SLASHING_WRITER_PREFIX)
+        .await
+        .context("failed to list the slash writer records")?;
+    let mut chain_ids = BTreeSet::new();
+    for key in &keys {
+        let chain_id = chain_after_slashing_prefix(key)?;
+        // The slash writer stores one record per chain, at this exact key. A record under any other
+        // key would not be read below, so it fails the check instead of passing it unread.
+        if key.as_slice() != StoreKeys::slashing_writer_recovery(chain_id).as_bytes() {
+            bail!(
+                "found a slash writer record that this binary cannot read: {}",
+                String::from_utf8_lossy(key)
+            );
+        }
+        chain_ids.insert(chain_id);
+    }
+    let mut pending = Vec::new();
+    for chain_id in chain_ids {
+        let state: Option<SlashingWriterRecoveryState> =
+            DataStore::from(repositories.slashing_writer_recovery(chain_id))
+                .read_checked()
+                .await
+                .with_context(|| format!("failed to read the slash reports of chain {chain_id}"))?;
+        let count = state.map_or(0, |state| state.pending_count());
+        if count > 0 {
+            pending.push(PendingSlashReports { chain_id, count });
+        }
+    }
+    Ok(pending)
+}
+
+/// The chain ID in a slash writer record key: the first path segment after the prefix.
+fn chain_after_slashing_prefix(key: &[u8]) -> Result<u64> {
+    std::str::from_utf8(key)
+        .ok()
+        .and_then(|key| key.strip_prefix(StoreKeys::SLASHING_WRITER_PREFIX))
+        .and_then(|rest| rest.split('/').next())
+        .and_then(|chain_id| chain_id.parse().ok())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "found a slash writer record whose chain this binary cannot read: {}",
+                String::from_utf8_lossy(key)
+            )
+        })
+}
+
 /// Refuse the deletion when it would delete a key share that an active E3 needs.
 ///
 /// `allow_active_e3s` overrides the refusal, and also a failed check, so that an operator can
@@ -200,16 +263,143 @@ pub(crate) fn check_active_e3s(
     )
 }
 
+/// Refuse the deletion when it would delete slash reports that this node has not submitted.
+///
+/// `allow_active_e3s` overrides the refusal, and also a failed check, as for active E3s. An
+/// override returns the warning to print.
+pub(crate) fn check_pending_slash_reports(
+    pending: Result<Vec<PendingSlashReports>>,
+    allow_active_e3s: bool,
+    deletion: &Deletion,
+) -> Result<Option<String>> {
+    let pending = match pending {
+        Ok(pending) => pending,
+        Err(error) if allow_active_e3s => {
+            return Ok(Some(format!(
+                "Could not check for unsubmitted slash reports{}. Continuing because \
+                 --allow-active-e3s is set: {error:#}",
+                deletion.on_node()
+            )));
+        }
+        Err(error) => bail!(
+            "Refusing to {}, because the command cannot show that {} holds no unsubmitted slash \
+             report: {error:#}. The command deleted nothing. Start the node again with the \
+             release that it ran before, and find the cause of the error.",
+            deletion.verb,
+            deletion.subject()
+        ),
+    };
+    if pending.is_empty() {
+        return Ok(None);
+    }
+    let list = pending
+        .iter()
+        .map(|chain| format!("  - chain {}: {} report(s)", chain.chain_id, chain.count))
+        .collect::<Vec<_>>()
+        .join("\n");
+    if allow_active_e3s {
+        return Ok(Some(format!(
+            "--allow-active-e3s is set. The {} deletes {} unsubmitted slash reports:\n{list}",
+            deletion.verb,
+            deletion.possessive()
+        )));
+    }
+    bail!(
+        "Refusing to {}. {} holds slash reports that it has not submitted:\n{list}\nThe command \
+         deleted nothing. A {} deletes them, also for an E3 that is complete, and the chain cannot \
+         restore their evidence. Start the node again with the release that it ran before, so \
+         that it submits them, and run this command again when it holds none. To delete them \
+         anyway, run this command again with --allow-active-e3s.",
+        deletion.verb,
+        capitalize(&deletion.subject()),
+        deletion.verb
+    )
+}
+
+/// Run both checks before refusing, so that one refusal lists every reason. An operator who
+/// overrides a refusal for key shares must also see the slash reports that the override deletes.
+pub(crate) fn check_deletion(
+    active_e3s: Result<Vec<ActiveE3>>,
+    slash_reports: Result<Vec<PendingSlashReports>>,
+    allow_active_e3s: bool,
+    deletion: &Deletion,
+) -> Result<Option<String>> {
+    merge_checks(
+        check_active_e3s(active_e3s, allow_active_e3s, deletion),
+        check_pending_slash_reports(slash_reports, allow_active_e3s, deletion),
+    )
+}
+
+/// Combine two check results: one refusal with both reasons, or one warning with both.
+pub(crate) fn merge_checks(
+    first: Result<Option<String>>,
+    second: Result<Option<String>>,
+) -> Result<Option<String>> {
+    match (first, second) {
+        // The CLI prints only the top-level message, so both refusals go into one message.
+        (Err(first), Err(second)) => bail!("{first}\n\n{second}"),
+        (Err(refusal), Ok(_)) | (Ok(_), Err(refusal)) => Err(refusal),
+        (Ok(Some(first)), Ok(Some(second))) => Ok(Some(format!("{first}\n{second}"))),
+        (Ok(first), Ok(second)) => Ok(first.or(second)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        active_e3s_with_key_shares, check_active_e3s, e3_id_after_prefix, ActiveE3, Deletion,
+        active_e3s_with_key_shares, check_active_e3s, check_deletion, e3_id_after_prefix,
+        pending_slash_reports, ActiveE3, Deletion, PendingSlashReports,
     };
     use e3_data::{DataStore, Repositories};
     use e3_events::{E3Stage, E3id, StoreKeys};
     use e3_keyshare::ThresholdKeyshareRepositoryFactory;
     use e3_request::E3LifecycleRepositoryFactory;
     use std::collections::HashMap;
+
+    /// A slash report for `e3_id` that the slash writer has recorded and not yet submitted.
+    pub(crate) fn unsubmitted_slash_report(e3_id: &E3id) -> e3_events::AccusationQuorumReached {
+        e3_events::AccusationQuorumReached {
+            e3_id: e3_id.clone(),
+            accuser: alloy::primitives::Address::repeat_byte(1),
+            accused: alloy::primitives::Address::repeat_byte(2),
+            proof_type: e3_events::ProofType::C1PkGeneration,
+            votes_for: Vec::new(),
+            outcome: e3_events::AccusationOutcome::AccusedFaulted,
+            evidence: alloy::primitives::Bytes::new(),
+        }
+    }
+
+    /// A slash report that the node has not submitted counts on its chain, also for an E3 that is
+    /// complete. A chain whose slash writer holds no report does not count.
+    #[actix::test]
+    async fn finds_unsubmitted_slash_reports() -> anyhow::Result<()> {
+        use e3_evm::{SlashingWriterRecoveryState, SlashingWriterRepositoryFactory};
+        let repositories = Repositories::in_mem();
+        let complete = E3id::new("4", 1);
+        repositories
+            .e3_lifecycle()
+            .write_sync(&HashMap::from([(complete.clone(), E3Stage::Complete)]))
+            .await?;
+        let mut pending = SlashingWriterRecoveryState::default();
+        pending.record(unsubmitted_slash_report(&complete))?;
+        repositories
+            .slashing_writer_recovery(1)
+            .write_sync(&pending)
+            .await?;
+        repositories
+            .slashing_writer_recovery(2)
+            .write_sync(&SlashingWriterRecoveryState::default())
+            .await?;
+
+        assert_eq!(
+            pending_slash_reports(&repositories).await?,
+            vec![PendingSlashReports {
+                chain_id: 1,
+                count: 1
+            }]
+        );
+        Ok(())
+    }
 
     /// Every E3 that is not `Complete` and has a key-share record blocks the reset, including a
     /// `Failed` one, because the node also records its own local failures as `Failed`. The
@@ -389,6 +579,76 @@ mod tests {
         assert!(
             warning.is_some_and(|warning| warning.contains("--allow-active-e3s is set")),
             "the override must produce a warning"
+        );
+        Ok(())
+    }
+
+    /// The slash writer stores one record per chain at one exact key. A record under any other key
+    /// under its prefix fails the check, also beside an empty record at the exact key, because the
+    /// check would otherwise pass it unread.
+    #[actix::test]
+    async fn slash_records_under_unknown_keys_fail_the_check() -> anyhow::Result<()> {
+        use e3_evm::{SlashingWriterRecoveryState, SlashingWriterRepositoryFactory};
+        for unknown in [
+            "//evm_writers/slashing/1/recovery/v2",
+            "//evm_writers/slashing/01/recovery/v1",
+        ] {
+            let repositories = Repositories::in_mem();
+            repositories
+                .slashing_writer_recovery(1)
+                .write_sync(&SlashingWriterRecoveryState::default())
+                .await?;
+            repositories
+                .store
+                .scope(unknown)
+                .write_sync(vec![1_u8, 2, 3])
+                .await?;
+
+            let error = pending_slash_reports(&repositories)
+                .await
+                .expect_err("an unknown slash writer record must fail the check");
+            assert!(
+                error.to_string().contains("cannot read"),
+                "the error must name the unreadable record {unknown}, got: {error}"
+            );
+        }
+        Ok(())
+    }
+
+    /// One refusal lists the key shares and the slash reports. An operator who overrides a refusal
+    /// for key shares therefore sees the slash reports that the override also deletes.
+    #[test]
+    fn one_refusal_lists_key_shares_and_slash_reports() -> anyhow::Result<()> {
+        let active = || -> anyhow::Result<Vec<ActiveE3>> {
+            Ok(vec![ActiveE3 {
+                e3_id: E3id::new("3", 1),
+                stage: Some(E3Stage::Failed),
+            }])
+        };
+        let reports = || -> anyhow::Result<Vec<PendingSlashReports>> {
+            Ok(vec![PendingSlashReports {
+                chain_id: 1,
+                count: 2,
+            }])
+        };
+
+        let error = check_deletion(active(), reports(), false, &Deletion::RESET)
+            .expect_err("key shares and slash reports must block the deletion");
+        let message = error.to_string();
+        assert!(
+            message.contains("E3 1:3 at stage Failed"),
+            "the refusal must list the E3, got: {message}"
+        );
+        assert!(
+            message.contains("chain 1: 2 report(s)"),
+            "the refusal must list the slash reports, got: {message}"
+        );
+
+        let warning = check_deletion(active(), reports(), true, &Deletion::RESET)?
+            .expect("the override must produce a warning");
+        assert!(
+            warning.contains("E3 1:3 at stage Failed") && warning.contains("chain 1: 2 report(s)"),
+            "the override warning must list both, got: {warning}"
         );
         Ok(())
     }

@@ -20,7 +20,10 @@ use super::plan::{Plan, PlannedLock, PlannedStore};
 use super::{locate, resolve, PurgeTargets, MARKER_FILE_NAME, MARKER_TEXT};
 use crate::fence::{FenceHeld, ProcessFence, LOCK_FILE_NAME};
 use crate::helpers::datastore::get_sled_store;
-use crate::nodes::state_guard::{active_e3s_with_key_shares, check_active_e3s, ActiveE3, Deletion};
+use crate::nodes::state_guard::{
+    active_e3s_with_key_shares, check_active_e3s, check_deletion, merge_checks,
+    pending_slash_reports, ActiveE3, Deletion, PendingSlashReports,
+};
 
 /// Takes the planned locks whose folders exist.
 pub(super) fn hold_existing(plan: &Plan) -> Result<Vec<ProcessFence>> {
@@ -164,15 +167,27 @@ async fn check_store(store: &PlannedStore, allow_active_e3s: bool) -> Result<Opt
         }
         Err(error) => return check_active_e3s(Err(error), allow_active_e3s, &deletion),
     };
-    if store.needs_identity && !contents.has_identity {
+    // The refusal for a missing operator key also lists the key shares and the slash reports that
+    // the store holds, so an override of it cannot delete them unseen.
+    let identity = if store.needs_identity && !contents.has_identity {
         let reason = format!(
             "the store at {} holds no operator key, so it is not the store that the node's key \
              file protects",
             store.db_file.display()
         );
-        return refuse_unchecked(&store.node, &reason, allow_active_e3s);
-    }
-    check_active_e3s(contents.active, allow_active_e3s, &deletion)
+        refuse_unchecked(&store.node, &reason, allow_active_e3s)
+    } else {
+        Ok(None)
+    };
+    merge_checks(
+        identity,
+        check_deletion(
+            contents.active,
+            contents.slash_reports,
+            allow_active_e3s,
+            &deletion,
+        ),
+    )
 }
 
 /// The refusal for a node that the purge cannot check, or the warning when `allow_active_e3s`
@@ -196,6 +211,8 @@ fn refuse_unchecked(node: &str, reason: &str, allow_active_e3s: bool) -> Result<
 struct StoreContents {
     /// The E3s with key-share state that the node has not seen complete, or the read error.
     active: Result<Vec<ActiveE3>>,
+    /// The chains with slash reports that the node has not submitted, or the read error.
+    slash_reports: Result<Vec<PendingSlashReports>>,
     /// The store holds the encrypted operator key.
     has_identity: bool,
 }
@@ -205,6 +222,7 @@ async fn read_store(db_file: &Path) -> Result<StoreContents> {
     let bus = get_interfold_bus_handle()?;
     let repositories = get_sled_store(&bus, &db_file.to_path_buf())?.repositories();
     let active = active_e3s_with_key_shares(&repositories).await;
+    let slash_reports = pending_slash_reports(&repositories).await;
     // A read error counts as no identity, so the check fails closed.
     let has_identity = repositories
         .store
@@ -216,6 +234,7 @@ async fn read_store(db_file: &Path) -> Result<StoreContents> {
     SledDb::close_all_connections();
     Ok(StoreContents {
         active,
+        slash_reports,
         has_identity,
     })
 }

@@ -870,10 +870,11 @@ The gateway stores ticket, activation, and configuration facts in their appended
 variants. Each variant carries the source block timestamp in seconds and log index, captured before
 the event bus merges its clock. Sortition and offline projection repair use those source positions,
 not receipt time. Each ticket, activation, and price projection retains its latest source position
-so overlapping restart backfill cannot replace newer state or append an older checkpoint. Schema 7
-rejects schema-6 stores because their histories can contain incorrect checkpoint times. Old variants
-remain readable for validation, but cannot build new trusted eligibility history. A store written
-before the node decoded `EligibilityConfigurationVersionUpdated` and `BondingAssetConfigUpdated`
-holds them only as raw `EvmLogObserved` records, which no projection reads again. Such a store must
-be reset (the v0.19 schema 8 reset) so that the reader resyncs from the deploy block and decodes
-every version bump.
+so overlapping restart backfill cannot replace newer state or append an older checkpoint. Releases
+from schema 7 on reject schema-6 stores, because their histories can contain incorrect checkpoint
+times. The decoder keeps the old variants, but they cannot build new trusted eligibility history,
+and `interfold node validate` rejects an unsupported store before it reads its events. A store
+written before the node decoded `EligibilityConfigurationVersionUpdated` and
+`BondingAssetConfigUpdated` holds them only as raw `EvmLogObserved` records, which no projection
+reads again. Such a store must be reset (the v0.19 schema 8 reset) so that the reader resyncs from
+the deploy block and decodes every version bump.

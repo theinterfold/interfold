@@ -30,7 +30,9 @@ use tracing::{info, warn};
 
 use crate::fence::ProcessFence;
 use crate::helpers::datastore::setup_datastore;
-use crate::nodes::state_guard::{active_e3s_with_key_shares, check_active_e3s, Deletion};
+use crate::nodes::state_guard::{
+    active_e3s_with_key_shares, check_deletion, pending_slash_reports, Deletion,
+};
 
 /// The encrypted identity pair, held while the store is rebuilt.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -224,19 +226,25 @@ pub async fn execute(config: &AppConfig, allow_active_e3s: bool) -> Result<Reset
          then re-run this command",
     )?;
 
-    let (identity, active_e3s) = {
+    let (identity, active_e3s, slash_reports) = {
         let bus = get_interfold_bus_handle()?;
         let store = setup_datastore(config, &bus)?;
         let repositories = store.repositories();
         let identity = read_identity(&repositories).await;
         let active_e3s = active_e3s_with_key_shares(&repositories).await;
+        let slash_reports = pending_slash_reports(&repositories).await;
         repositories.store.shutdown().await.ok();
-        (identity, active_e3s)
+        (identity, active_e3s, slash_reports)
     };
     // Release the sled handle before the directory is removed; a live handle would recreate it.
     SledDb::close_all_connections();
     let identity = identity?;
-    if let Some(warning) = check_active_e3s(active_e3s, allow_active_e3s, &Deletion::RESET)? {
+    if let Some(warning) = check_deletion(
+        active_e3s,
+        slash_reports,
+        allow_active_e3s,
+        &Deletion::RESET,
+    )? {
         warn!("{warning}");
     }
 
