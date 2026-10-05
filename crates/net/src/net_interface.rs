@@ -593,7 +593,9 @@ impl Libp2pNetInterface {
                     );
                 }
                 _ = dht_put_deadline_tick.tick() => {
-                    let (queries, steps) = dht_puts.expire(Instant::now());
+                    let kademlia = &self.swarm.behaviour().kademlia;
+                    let (queries, steps) =
+                        dht_puts.expire(Instant::now(), |query| kademlia.query(query).is_some());
                     end_dht_put_queries(&mut self.swarm.behaviour_mut().kademlia, queries);
                     for step in steps {
                         if let Err(e) = apply_dht_put_step(&mut self.swarm, &event_tx, &mut dht_puts, step) {
@@ -1188,24 +1190,7 @@ async fn process_swarm_event(
                 ..
             },
         )) if dht_puts.owns(&id) => {
-            if let Ok(GetRecordOk::FoundRecord(found)) = &result {
-                let served = found.peer.is_some()
-                    && dht_puts.checked_key(&id).is_some_and(|key| {
-                        found.record.key == RecordKey::new(key)
-                            && ContentHash::from_content(&found.record.value) == *key
-                    });
-                if served {
-                    if let Some(stored) = dht_puts.served_by_peer(&id) {
-                        if let Some(mut query) = swarm.behaviour_mut().kademlia.query_mut(&id) {
-                            query.finish();
-                        }
-                        apply_dht_put_step(swarm, event_tx, dht_puts, stored)?;
-                    }
-                }
-            }
-            if let Some(ended) = dht_puts.check_progressed(&id, step.last) {
-                apply_dht_put_step(swarm, event_tx, dht_puts, ended)?;
-            }
+            handle_put_check(swarm, event_tx, dht_puts, id, &result, step.last)?;
         }
 
         SwarmEvent::Behaviour(NodeBehaviourEvent::Kademlia(
@@ -1707,6 +1692,7 @@ async fn process_swarm_command(
             key,
             expires,
             value,
+            deadline,
         } => {
             handle_put_record(
                 swarm,
@@ -1716,6 +1702,7 @@ async fn process_swarm_command(
                 key,
                 expires,
                 value,
+                deadline,
             )?;
             Ok(())
         }
@@ -1967,8 +1954,42 @@ fn prune_dht_peer_quotas(
     records_by_peer.retain(|_, keys| !keys.is_empty());
 }
 
+/// A progress step of the lookup that checks a put. Only another peer's copy of the requested
+/// record counts: this node's own copy, a record under another key, and a record whose content
+/// does not hash to the key are ignored, and the query runs on. At the last step a put that no
+/// peer served fails as not replicated.
+fn handle_put_check(
+    swarm: &mut Swarm<NodeBehaviour>,
+    event_tx: &NetEventSender,
+    dht_puts: &mut DhtPuts,
+    id: kad::QueryId,
+    result: &Result<GetRecordOk, kad::GetRecordError>,
+    last: bool,
+) -> Result<()> {
+    if let Ok(GetRecordOk::FoundRecord(found)) = result {
+        let served = found.peer.is_some()
+            && dht_puts.checked_key(&id).is_some_and(|key| {
+                found.record.key == RecordKey::new(key)
+                    && ContentHash::from_content(&found.record.value) == *key
+            });
+        if served {
+            if let Some(stored) = dht_puts.served_by_peer(&id) {
+                if let Some(mut query) = swarm.behaviour_mut().kademlia.query_mut(&id) {
+                    query.finish();
+                }
+                apply_dht_put_step(swarm, event_tx, dht_puts, stored)?;
+            }
+        }
+    }
+    if let Some(ended) = dht_puts.check_progressed(&id, last) {
+        apply_dht_put_step(swarm, event_tx, dht_puts, ended)?;
+    }
+    Ok(())
+}
+
 /// Store a record and upload it to the peers closest to its key. The put is owned in `dht_puts`
-/// until another peer serves the record back or it fails, and reports one result.
+/// until another peer serves the record back or it fails, and reports one result by `deadline`.
+#[allow(clippy::too_many_arguments)]
 fn handle_put_record(
     swarm: &mut Swarm<NodeBehaviour>,
     event_tx: &NetEventSender,
@@ -1977,8 +1998,15 @@ fn handle_put_record(
     key: ContentHash,
     expires: Option<Instant>,
     value: ArcBytes,
+    deadline: Instant,
 ) -> Result<()> {
     debug!("DHT PUT RECORD");
+    let now = Instant::now();
+    if now >= deadline {
+        // The caller stops waiting before an upload could finish.
+        let step = dht_puts.expired_before_start(correlation_id, key);
+        return apply_dht_put_step(swarm, event_tx, dht_puts, step);
+    }
     if !dht_puts.has_room() {
         warn!("DHT put refused: {MAX_DHT_PUTS} puts already run");
         event_tx.send(NetEvent::DhtPutRecordError {
@@ -2009,7 +2037,7 @@ fn handle_put_record(
     });
     match result {
         Ok(qid) => {
-            dht_puts.start(correlation_id, key, qid, Instant::now());
+            dht_puts.start(correlation_id, key, qid, now, deadline);
             debug!("PUT RECORD OK qid={:?} cid={}", qid, correlation_id);
         }
         Err(error) => {
@@ -2584,8 +2612,9 @@ mod tests {
             e3_events::CorrelationId::new(),
         );
         let now = std::time::Instant::now();
-        dht_puts.start(cancelled_id, document.clone(), cancelled, now);
-        dht_puts.start(failed_id, other.clone(), failed, now);
+        let deadline = now + Duration::from_secs(240);
+        dht_puts.start(cancelled_id, document.clone(), cancelled, now, deadline);
+        dht_puts.start(failed_id, other.clone(), failed, now, deadline);
         let event_tx = super::NetEventSender::new(8, 8);
         let mut events = event_tx.subscribe();
         let quorum_failed = |key: &super::ContentHash| {

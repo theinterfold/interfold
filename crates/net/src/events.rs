@@ -240,6 +240,9 @@ pub enum NetCommand {
         expires: Option<Instant>,
         value: ArcBytes,
         key: ContentHash,
+        /// The put reports its result by this time, before its caller stops waiting. A command
+        /// that the interface takes after it reports the put expired at once.
+        deadline: Instant,
     },
     /// End the Kademlia queries of a key's DHT puts that are in their upload phase. It has no
     /// reply. This is not a full cancel: requests that a query already gave to the connection
@@ -876,6 +879,7 @@ mod tests {
             expires: None,
             value,
             key,
+            deadline: std::time::Instant::now(),
         }
         .summary();
         assert!(summary.contains("value_bytes: 1776213"), "{summary}");

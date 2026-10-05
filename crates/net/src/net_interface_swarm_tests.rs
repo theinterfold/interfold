@@ -874,6 +874,7 @@ fn put_command(value: &[u8]) -> (crate::events::NetCommand, e3_events::Correlati
         key: super::ContentHash::from_content(value),
         expires: Some(Instant::now() + Duration::from_secs(3600)),
         value: e3_utils::ArcBytes::from_bytes(value),
+        deadline: Instant::now() + Duration::from_secs(240),
     };
     (command, correlation_id)
 }
@@ -987,6 +988,186 @@ async fn a_put_cancelled_in_its_lookup_reports_once_and_checks_nothing() -> anyh
         );
     }
     assert_eq!(sender.dht_puts.take_summary(), None);
+    Ok(())
+}
+
+/// A put command that the interface takes after its caller's deadline reports expired at once and
+/// starts nothing.
+#[tokio::test]
+async fn a_put_taken_after_its_deadline_reports_expired_and_starts_nothing() -> anyhow::Result<()> {
+    use crate::events::{NetCommand, NetEvent, PutOrStoreError};
+    let mut node = TestNode::new()?;
+    let mut events = node.interface.event_tx.subscribe();
+    let (
+        NetCommand::DhtPutRecord {
+            correlation_id,
+            key,
+            expires,
+            value,
+            ..
+        },
+        _,
+    ) = put_command(b"a document whose caller stopped waiting")
+    else {
+        unreachable!();
+    };
+    node.command(NetCommand::DhtPutRecord {
+        correlation_id,
+        key,
+        expires,
+        value,
+        deadline: Instant::now(),
+    })
+    .await?;
+
+    assert!(matches!(
+        events.try_recv(),
+        Ok(NetEvent::DhtPutRecordError {
+            correlation_id: id,
+            error: PutOrStoreError::Expired,
+        }) if id == correlation_id
+    ));
+    assert!(node.dht_puts.is_empty());
+    assert_eq!(node.dht_puts.take_summary(), Some((0, 1)));
+    Ok(())
+}
+
+/// The interface runs at most 16 puts. The next one is refused at once.
+#[tokio::test]
+async fn a_put_beyond_the_capacity_is_refused() -> anyhow::Result<()> {
+    use crate::events::{NetEvent, PutOrStoreError};
+    let mut node = TestNode::new()?;
+    let mut events = node.interface.event_tx.subscribe();
+    for index in 0..super::MAX_DHT_PUTS {
+        let (command, _) = put_command(format!("document {index}").as_bytes());
+        node.command(command).await?;
+    }
+    let (command, correlation_id) = put_command(b"one document too many");
+    node.command(command).await?;
+
+    let mut refused = Vec::new();
+    while let Ok(event) = events.try_recv() {
+        if let NetEvent::DhtPutRecordError {
+            correlation_id: id,
+            error: PutOrStoreError::Busy,
+        } = event
+        {
+            refused.push(id);
+        }
+    }
+    assert_eq!(refused, vec![correlation_id]);
+    Ok(())
+}
+
+/// The lookup that checks a put counts only another peer's copy of the requested record. A record
+/// under another key, one whose content does not hash to the key, the requested content under
+/// another key, and this node's own copy are ignored; a valid copy reports the put stored once; a check that ends without one reports it not
+/// replicated.
+#[tokio::test]
+async fn a_put_check_counts_only_a_peers_valid_copy_of_the_requested_record() -> anyhow::Result<()>
+{
+    use crate::events::{NetEvent, PutOrStoreError};
+    use libp2p::kad::{GetRecordOk, PeerRecord};
+    let mut node = TestNode::new()?;
+    let mut events = node.interface.event_tx.subscribe();
+    let peer = PeerId::random();
+    let now = Instant::now();
+    let deadline = now + Duration::from_secs(240);
+    let value = b"the requested document".to_vec();
+    let key = super::ContentHash::from_content(&value);
+    let record = |key: RecordKey, value: &[u8]| Record::new(key, value.to_vec());
+    let found = |peer: Option<PeerId>,
+                 record: Record|
+     -> Result<GetRecordOk, libp2p::kad::GetRecordError> {
+        Ok(GetRecordOk::FoundRecord(PeerRecord { peer, record }))
+    };
+    // A put whose upload ended, now in its check.
+    let check_put = |node: &mut TestNode, correlation_id| {
+        let kademlia = &mut node.interface.swarm.behaviour_mut().kademlia;
+        let upload = kademlia.get_closest_peers(PeerId::random());
+        let check = kademlia.get_record(RecordKey::new(&key));
+        node.dht_puts
+            .start(correlation_id, key.clone(), upload, now, deadline);
+        assert!(node.dht_puts.upload_ended(upload, Ok(())).is_some());
+        node.dht_puts.checking(correlation_id, check);
+        check
+    };
+    let results = |events: &mut tokio::sync::broadcast::Receiver<NetEvent>, put| {
+        let mut results = Vec::new();
+        while let Ok(event) = events.try_recv() {
+            match event {
+                NetEvent::DhtPutRecordSucceeded { correlation_id, .. } if correlation_id == put => {
+                    results.push("stored")
+                }
+                NetEvent::DhtPutRecordError {
+                    correlation_id,
+                    error: PutOrStoreError::NotReplicated,
+                } if correlation_id == put => results.push("not replicated"),
+                _ => {}
+            }
+        }
+        results
+    };
+
+    let stored = e3_events::CorrelationId::new();
+    let check = check_put(&mut node, stored);
+    let other = b"another document";
+    let wrong = [
+        found(
+            Some(peer),
+            record(
+                RecordKey::new(&super::ContentHash::from_content(other)),
+                other,
+            ),
+        ),
+        found(Some(peer), record(RecordKey::new(&key), b"other content")),
+        found(
+            Some(peer),
+            record(
+                RecordKey::new(&super::ContentHash::from_content(other)),
+                &value,
+            ),
+        ),
+        found(None, record(RecordKey::new(&key), &value)),
+    ];
+    for result in &wrong {
+        super::handle_put_check(
+            &mut node.interface.swarm,
+            &node.interface.event_tx,
+            &mut node.dht_puts,
+            check,
+            result,
+            false,
+        )?;
+    }
+    assert!(results(&mut events, stored).is_empty());
+    let valid = found(Some(peer), record(RecordKey::new(&key), &value));
+    for last in [false, false, true] {
+        super::handle_put_check(
+            &mut node.interface.swarm,
+            &node.interface.event_tx,
+            &mut node.dht_puts,
+            check,
+            &valid,
+            last,
+        )?;
+    }
+    assert_eq!(results(&mut events, stored), vec!["stored"]);
+
+    let missing = e3_events::CorrelationId::new();
+    let check = check_put(&mut node, missing);
+    for (result, last) in wrong.iter().zip([false, false, false, true]) {
+        super::handle_put_check(
+            &mut node.interface.swarm,
+            &node.interface.event_tx,
+            &mut node.dht_puts,
+            check,
+            result,
+            last,
+        )?;
+    }
+    assert_eq!(results(&mut events, missing), vec!["not replicated"]);
+    assert!(node.dht_puts.is_empty());
     Ok(())
 }
 

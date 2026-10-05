@@ -559,6 +559,7 @@ async fn test_publishes_document() -> Result<()> {
         expires,
         value: uploaded,
         key,
+        ..
     } = commands.take(is_upload).await?
     else {
         bail!("expected a DHT put");

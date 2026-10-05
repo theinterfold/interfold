@@ -118,12 +118,14 @@ item in code before you rely on it.
   acknowledges an inbound put before the receiver decides to store it, so a put counts as stored
   only when, after its upload, a lookup of the key returns the record from another peer; then it
   returns. That shows that a peer served the record at that time, not that it keeps it across its
-  own restart. The network interface owns each put until its result, at most 16 at once, and ends
-  one that has no result after 240 s, before its caller stops waiting. An aborted put reports that
-  it was cancelled at once and starts no check. It ends its Kademlia query only in the upload phase
-  or the check, and requests that the query already gave to the connection handlers, queued or in
-  progress, still go out. A put that still looks up its closest peers runs on and then uploads. So
-  uploads can overlap the next replication; a full cancel is follow-up work. —
+  own restart. The network interface owns each put until its result, at most 16 at once; a put whose
+  result is reported keeps its place until Kademlia ends its query. The put command carries its
+  caller's deadline (240 s after it is sent; the caller waits 270 s), the interface reports an
+  expired put then, and a command that it takes after its deadline reports expired at once. An
+  aborted put reports that it was cancelled at once and starts no check. It ends its Kademlia query
+  only in the upload phase or the check, and requests that the query already gave to the connection
+  handlers, queued or in progress, still go out. A put that still looks up its closest peers runs on
+  and then uploads. So uploads can overlap the next replication; a full cancel is follow-up work. —
   `crates/net/src/events.rs`; `crates/net/src/document_publishing/`
 - Residual runtime risks: `e3-evm` serializes nonces in memory; only slash submissions have a
   durable intent record, and other transactions rely on preflight reads. Chain ingestion relies on

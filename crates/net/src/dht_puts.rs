@@ -22,10 +22,8 @@ use std::time::{Duration, Instant};
 /// Puts that the interface runs at once, also ended ones whose queries still run. The publisher
 /// runs one replication at a time, so only puts that it cancelled or stopped waiting for add more.
 pub(crate) const MAX_DHT_PUTS: usize = 16;
-/// A put reports its result by this time, before its caller stops waiting. Its closest-peer lookup,
-/// its upload, and the lookup that checks it each end within the 60-second query timeout.
-pub(crate) const DHT_PUT_DEADLINE: Duration = Duration::from_secs(240);
-/// A reported put whose query never reported its end is forgotten after this time.
+/// A reported put whose query is gone without reporting its end is forgotten after this time. A
+/// put whose query still runs keeps its place, so the queries stay bounded.
 const FORGET_AFTER: Duration = Duration::from_secs(10 * 60);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -41,6 +39,8 @@ struct DhtPut {
     phase: Phase,
     query: kad::QueryId,
     started: Instant,
+    /// The caller's deadline for the result.
+    deadline: Instant,
     /// Whether the caller has the result. A reported put stays until its query ends.
     reported: bool,
 }
@@ -148,13 +148,14 @@ impl DhtPuts {
         (put.phase == Phase::Check).then_some(&put.key)
     }
 
-    /// Own a put whose upload query started.
+    /// Own a put whose upload query started. It reports its result by `deadline`.
     pub(crate) fn start(
         &mut self,
         correlation_id: CorrelationId,
         key: ContentHash,
         query: kad::QueryId,
         now: Instant,
+        deadline: Instant,
     ) {
         self.by_query.insert(query, correlation_id);
         self.puts.insert(
@@ -164,9 +165,20 @@ impl DhtPuts {
                 phase: Phase::Upload,
                 query,
                 started: now,
+                deadline,
                 reported: false,
             },
         );
+    }
+
+    /// A put command that the interface took after its caller's deadline: it reports expired at
+    /// once and starts no query.
+    pub(crate) fn expired_before_start(
+        &mut self,
+        correlation_id: CorrelationId,
+        key: ContentHash,
+    ) -> DhtPutStep {
+        self.report(correlation_id, key, DhtPutResult::Expired)
     }
 
     /// The upload query of a put ended. A successful upload is checked next.
@@ -237,23 +249,26 @@ impl DhtPuts {
         self.end_where(|put| &put.key == key, DhtPutResult::Cancelled)
     }
 
-    /// End the puts that passed their deadline, and forget reported puts whose queries never
-    /// reported their end.
-    pub(crate) fn expire(&mut self, now: Instant) -> (Vec<EndedQuery>, Vec<DhtPutStep>) {
+    /// End the puts that passed their deadline, and forget reported puts whose queries are gone
+    /// without reporting their end. `running` says whether Kademlia still runs a query.
+    pub(crate) fn expire(
+        &mut self,
+        now: Instant,
+        running: impl Fn(&kad::QueryId) -> bool,
+    ) -> (Vec<EndedQuery>, Vec<DhtPutStep>) {
         let forgotten: Vec<_> = self
             .puts
             .iter()
-            .filter(|(_, put)| put.reported && now >= put.started + FORGET_AFTER)
+            .filter(|(_, put)| {
+                put.reported && now >= put.started + FORGET_AFTER && !running(&put.query)
+            })
             .map(|(correlation_id, put)| (*correlation_id, put.query))
             .collect();
         for (correlation_id, query) in forgotten {
             self.puts.remove(&correlation_id);
             self.by_query.remove(&query);
         }
-        self.end_where(
-            |put| now >= put.started + DHT_PUT_DEADLINE,
-            DhtPutResult::Expired,
-        )
+        self.end_where(|put| now >= put.deadline, DhtPutResult::Expired)
     }
 
     fn end_where(
@@ -286,6 +301,8 @@ impl DhtPuts {
 mod tests {
     use super::*;
 
+    const DEADLINE: Duration = Duration::from_secs(240);
+
     fn queries(count: usize) -> Vec<kad::QueryId> {
         let local = libp2p::PeerId::random();
         let mut kademlia = kad::Behaviour::new(local, kad::store::MemoryStore::new(local));
@@ -311,8 +328,9 @@ mod tests {
         let (stored, missing) = (CorrelationId::new(), CorrelationId::new());
         let mut puts = DhtPuts::default();
         let now = Instant::now();
-        puts.start(stored, ContentHash(vec![1]), upload, now);
-        puts.start(missing, ContentHash(vec![2]), other_upload, now);
+        let deadline = now + DEADLINE;
+        puts.start(stored, ContentHash(vec![1]), upload, now, deadline);
+        puts.start(missing, ContentHash(vec![2]), other_upload, now, deadline);
 
         for (put, upload, check) in [
             (stored, upload, check),
@@ -351,8 +369,8 @@ mod tests {
         let key = ContentHash(vec![7]);
         let mut puts = DhtPuts::default();
         let now = Instant::now();
-        puts.start(in_lookup, key.clone(), lookup, now);
-        puts.start(in_check, key.clone(), upload, now);
+        puts.start(in_lookup, key.clone(), lookup, now, now + DEADLINE);
+        puts.start(in_check, key.clone(), upload, now, now + DEADLINE);
         assert!(puts.upload_ended(upload, Ok(())).is_some());
         puts.checking(in_check, check_query);
 
@@ -384,15 +402,15 @@ mod tests {
     }
 
     #[test]
-    fn a_put_past_its_deadline_reports_once_and_is_forgotten_later() {
+    fn a_put_past_its_deadline_reports_once_and_keeps_its_place_while_its_query_runs() {
         let [upload] = queries(1).try_into().unwrap();
         let put = CorrelationId::new();
         let mut puts = DhtPuts::default();
         let start = Instant::now();
-        puts.start(put, ContentHash(vec![3]), upload, start);
+        puts.start(put, ContentHash(vec![3]), upload, start, start + DEADLINE);
 
-        assert!(puts.expire(start + DHT_PUT_DEADLINE / 2).1.is_empty());
-        let (ended, steps) = puts.expire(start + DHT_PUT_DEADLINE);
+        assert!(puts.expire(start + DEADLINE / 2, |_| true).1.is_empty());
+        let (ended, steps) = puts.expire(start + DEADLINE, |_| true);
         assert_eq!(
             ended,
             vec![EndedQuery {
@@ -407,12 +425,30 @@ mod tests {
                 ..
             }]
         ));
-        assert!(puts.expire(start + DHT_PUT_DEADLINE).1.is_empty());
-        // Its query still counts against the capacity until it ends or is forgotten.
+        assert!(puts.expire(start + DEADLINE, |_| true).1.is_empty());
+        // Its query still runs, so it keeps its place in the capacity.
+        puts.expire(start + FORGET_AFTER, |_| true);
         assert!(puts.owns(&upload));
-        puts.expire(start + FORGET_AFTER);
+        // A query that is gone without reporting its end is forgotten.
+        puts.expire(start + FORGET_AFTER, |_| false);
         assert!(!puts.owns(&upload));
         assert!(puts.puts.is_empty());
+    }
+
+    #[test]
+    fn a_put_taken_after_its_deadline_reports_expired_and_counts_as_failed() {
+        let mut puts = DhtPuts::default();
+        let put = CorrelationId::new();
+        assert!(matches!(
+            puts.expired_before_start(put, ContentHash(vec![4])),
+            DhtPutStep::Report {
+                correlation_id,
+                result: DhtPutResult::Expired,
+                ..
+            } if correlation_id == put
+        ));
+        assert!(puts.is_empty());
+        assert_eq!(puts.take_summary(), Some((0, 1)));
     }
 
     #[test]
@@ -422,7 +458,13 @@ mod tests {
         let now = Instant::now();
         for query in &ids[..MAX_DHT_PUTS] {
             assert!(puts.has_room());
-            puts.start(CorrelationId::new(), ContentHash(vec![0]), *query, now);
+            puts.start(
+                CorrelationId::new(),
+                ContentHash(vec![0]),
+                *query,
+                now,
+                now + DEADLINE,
+            );
         }
         assert!(!puts.has_room());
         let error = kad::PutRecordError::QuorumFailed {

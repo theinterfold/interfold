@@ -33,6 +33,7 @@ async fn test_dht(peer: &mut TestPeer) -> Result<()> {
                 key: key.clone(),
                 value: ArcBytes::from_bytes(value),
                 expires: None,
+                deadline: std::time::Instant::now() + std::time::Duration::from_secs(240),
             })
             .await?;
         receive_until_collect(

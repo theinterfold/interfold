@@ -1795,14 +1795,15 @@ an inbound put before the receiver decides to store it, so the network interface
 stored only when, after the upload, a lookup of the key returns the record from another peer; a put
 whose lookup finds no other peer's copy fails as not replicated. A put returns once a peer serves
 the record back, so its uploads to other peers can overlap the next upload. The interface owns each
-put until its result, at most 16 at once, and reports an expired one after 240 s, before the
-publisher's 270 s wait ends. The Kademlia library's own hourly replication of stored records is
-disabled. A failed upload or announcement is retried after 15 seconds, doubling up to 5 minutes,
-including when no peer subscribed to the topic at the first attempt. A failed announcement does not
-upload the document again. Before gossip acceptance, the wire decoder checks the notification's key
-and E3 identifier lengths, party-filter shape, and expiry. Malformed messages get `Reject`. A
-well-formed but expired notification gets `Ignore`, without a relay score penalty. Valid
-notifications for other parties still relay. No per-peer message-count or byte-rate throttle
+put until its result, at most 16 at once. The put command carries a deadline 240 s after the
+publisher sends it, and the interface reports the put expired then, also when it takes the command
+late, before the publisher's 270 s wait ends. The Kademlia library's own hourly replication of
+stored records is disabled. A failed upload or announcement is retried after 15 seconds, doubling up
+to 5 minutes, including when no peer subscribed to the topic at the first attempt. A failed
+announcement does not upload the document again. Before gossip acceptance, the wire decoder checks
+the notification's key and E3 identifier lengths, party-filter shape, and expiry. Malformed messages
+get `Reject`. A well-formed but expired notification gets `Ignore`, without a relay score penalty.
+Valid notifications for other parties still relay. No per-peer message-count or byte-rate throttle
 discards valid relay traffic, and ingress does not wait for a DHT fetch. A receiver holds early
 notifications until its committee slot is known, one per peer, document, and party filter with the
 latest expiry, and checks expiry again after that wait. Transient ingress metadata retains the

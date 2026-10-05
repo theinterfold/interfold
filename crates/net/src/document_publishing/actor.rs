@@ -41,9 +41,12 @@ use tracing::{debug, info, warn};
 
 use super::event_converter::EventConverter;
 
-/// Longer than the network interface's deadline for a put (240 s), which covers the closest-peer
-/// lookup, the upload, and the lookup that checks that another peer serves the record back, so the
-/// interface reports every put's result before its caller stops waiting.
+/// The deadline that a put command carries: the network interface reports the put's result by then.
+/// It covers the closest-peer lookup, the upload, and the lookup that checks that another peer
+/// serves the record back, each within the 60-second query timeout, and time in the command queue.
+const DHT_PUT_DEADLINE: Duration = Duration::from_secs(240);
+/// The publisher waits this long for a put's result, longer than the deadline that the put
+/// carries, so the interface reports every result before its caller stops waiting.
 const KADEMLIA_PUT_TIMEOUT: Duration = Duration::from_secs(270);
 const KADEMLIA_GET_TIMEOUT: Duration = Duration::from_secs(90);
 const KADEMLIA_BROADCAST_TIMEOUT: Duration = Duration::from_secs(30);
