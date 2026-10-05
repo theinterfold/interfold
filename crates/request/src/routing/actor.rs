@@ -113,7 +113,8 @@ pub struct E3Router {
     /// Finished E3s whose restored contexts complete at `EffectsEnabled` without resuming.
     complete_on_restart: HashSet<E3id>,
     /// E3s that failed on chain with accusation or slashing work, with their local lifecycle stage.
-    /// At `EffectsEnabled` their restored contexts learn of the failure before effects resume.
+    /// At `EffectsEnabled` their restored contexts learn of the failure before effects resume, and
+    /// their recovered selections start no protocol actor.
     fail_on_restart: HashMap<E3id, E3Stage>,
 }
 

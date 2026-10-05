@@ -145,10 +145,13 @@ the code does not meet yet.
   restored key assembly and ciphertext retrieval of such an E3 before `EffectsEnabled`, and ignores
   later facts for it. Any other E3 that failed at the finalized block keeps its context for
   accusation or slashing work, but its other work ends: the router forwards a Failed
-  `E3StageChanged` to the context before `EffectsEnabled`, so its keyshare stops; the compute gate
-  starts with the Failed stage for it; and the data-availability coordinator drops its restored
-  work. A disabled chain covers the contexts of its configured `chain_id`; a context of a chain that
-  the configuration does not have fails startup. **Gap:** a context whose local lifecycle stage is
+  `E3StageChanged` to the context before `EffectsEnabled`, so its keyshare stops, and a recipient
+  that the context creates later gets it first; a recovered selection of the E3 starts no protocol
+  actor; the compute gate starts with the Failed stage for it, which still admits accusation
+  re-verification; and the data-availability coordinator drops its restored work. The Failed event
+  has the E3's aggregate and the router's cursor of it, so the actors' cleanup writes are not stale.
+  A disabled chain covers the contexts of its configured `chain_id`; a context of a chain that the
+  configuration does not have fails startup. **Gap:** a context whose local lifecycle stage is
   Failed completes at `EffectsEnabled` even when its failure reason needs accusation work, because
   the lifecycle does not keep the reason. This is follow-up work. Document publication recovery does
   not read the lifecycle. — `crates/ciphernode-builder/src/finalized_lifecycle.rs`;
@@ -271,8 +274,10 @@ the code does not meet yet.
   `crates/keyshare/src/threshold_keyshare/effects/create_decryption_share.rs`; `flow-trace/04`
 - A terminal E3 cancels its local node-scoped compute-task group. Work already executing may finish,
   but queued proof jobs from that E3 must not consume task-pool capacity ahead of a later active E3.
-  One node's local failure must not cancel another node's work when tests or embeddings share a task
-  pool. — `flow-trace/04`
+  Accusation re-verification runs in its own group: a failure does not cancel it, so a node can
+  still vote on an accusation of a failed E3; the end of the request cancels it. One node's local
+  failure must not cancel another node's work when tests or embeddings share a task pool. —
+  `flow-trace/04`
 - A local prover, verifier, task-pool, or resource failure is not evidence of peer misbehavior.
   Retry the exact ZK request, preserve its durable input, and let canonical E3 lifecycle facts end
   recovery. Only a completed cryptographic check can classify a peer proof as invalid. —

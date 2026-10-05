@@ -137,7 +137,8 @@ fn forwarded_accusations_only_reverify_c3() {
                 _ => None,
             })
             .expect("forwarded C3 must be verified before voting");
-        let ComputeRequestKind::Zk(ZkRequest::VerifyShareProofs(batch)) = &request.request else {
+        let ComputeRequestKind::Zk(ZkRequest::ReverifyAccusedProof(batch)) = &request.request
+        else {
             panic!("expected forwarded share proof verification");
         };
         assert_eq!(batch.committee_size, CiphernodesCommitteeSize::Minimum);

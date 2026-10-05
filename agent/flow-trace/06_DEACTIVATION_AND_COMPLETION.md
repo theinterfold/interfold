@@ -282,8 +282,11 @@ On restart:
 │        its restored work for that E3 before EffectsEnabled; document publication recovery
 │        does not read the lifecycle. Any other failed E3 keeps its context for accusation or
 │        slashing work: the router forwards a Failed `E3StageChanged` to the context before
-│        EffectsEnabled, the compute gate starts with the Failed stage for it, and the
-│        data-availability coordinator drops its restored work
+│        EffectsEnabled, also to a recipient that the context creates later; a recovered
+│        selection of the E3 starts no protocol actor; the compute gate starts with the
+│        Failed stage for it, which still admits accusation re-verification; and the
+│        data-availability coordinator drops its restored work. The Failed event has the
+│        E3's aggregate and the router's cursor of it, like a recovered selection
 │        An E3 absent at chain head, a chain missing from the config, an RPC error after two
 │        retries, or 60 s for one read of 16 contexts fails startup. The contexts of a
 │        disabled chain resume unchecked

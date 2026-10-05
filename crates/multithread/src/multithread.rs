@@ -221,19 +221,102 @@ impl Multithread {
     pub fn create_taskpool(threads: usize, max_tasks: usize) -> TaskPool {
         TaskPool::new(threads, max_tasks)
     }
-
-    fn task_group(&self, e3_id: &E3id) -> String {
-        task_group(&self.task_scope, e3_id)
-    }
 }
 
 fn task_group(scope: &str, e3_id: &E3id) -> String {
     format!("{scope}:{e3_id}")
 }
 
+/// Accusation re-verification outlives a failed E3, so it runs in its own group. A cancelled
+/// group stays cancelled, so the failure could not spare it in the E3's group.
+fn accusation_task_group(scope: &str, e3_id: &E3id) -> String {
+    format!("{scope}:{e3_id}:accusation")
+}
+
+fn request_task_group(scope: &str, request: &ComputeRequest) -> String {
+    match request.request {
+        ComputeRequestKind::Zk(ZkRequest::ReverifyAccusedProof(_)) => {
+            accusation_task_group(scope, &request.e3_id)
+        }
+        _ => task_group(scope, &request.e3_id),
+    }
+}
+
+/// The task groups of the work that `event` ends. A failure ends the protocol work; the end of the
+/// request also ends its accusation work.
+fn ended_task_groups(scope: &str, event: &InterfoldEventData) -> Vec<String> {
+    let (e3_id, ends_accusations) = match event {
+        InterfoldEventData::E3Failed(data) => (&data.e3_id, false),
+        InterfoldEventData::E3StageChanged(data) if data.new_stage == E3Stage::Failed => {
+            (&data.e3_id, false)
+        }
+        InterfoldEventData::E3StageChanged(data) if data.new_stage.is_terminal() => {
+            (&data.e3_id, true)
+        }
+        InterfoldEventData::E3RequestComplete(data) => (&data.e3_id, true),
+        _ => return Vec::new(),
+    };
+    let mut groups = vec![task_group(scope, e3_id)];
+    if ends_accusations {
+        groups.push(accusation_task_group(scope, e3_id));
+    }
+    groups
+}
+
 #[cfg(test)]
 mod task_group_tests {
     use super::*;
+
+    #[test]
+    fn a_failure_ends_protocol_work_and_the_request_end_ends_accusation_work() {
+        let e3_id = E3id::new("7", 1);
+        let protocol = task_group("node", &e3_id);
+        let accusation = accusation_task_group("node", &e3_id);
+        let stage = |new_stage| {
+            InterfoldEventData::from(e3_events::E3StageChanged {
+                e3_id: e3_id.clone(),
+                previous_stage: E3Stage::CommitteeFinalized,
+                new_stage,
+            })
+        };
+        let failed = InterfoldEventData::from(e3_events::E3Failed {
+            e3_id: e3_id.clone(),
+            failed_at_stage: E3Stage::CommitteeFinalized,
+            reason: e3_events::FailureReason::DKGInvalidShares,
+        });
+        let complete = InterfoldEventData::from(e3_events::E3RequestComplete {
+            e3_id: e3_id.clone(),
+        });
+
+        assert_eq!(ended_task_groups("node", &failed), vec![protocol.clone()]);
+        assert_eq!(
+            ended_task_groups("node", &stage(E3Stage::Failed)),
+            vec![protocol.clone()]
+        );
+        let both = vec![protocol.clone(), accusation.clone()];
+        assert_eq!(ended_task_groups("node", &complete), both);
+        assert_eq!(ended_task_groups("node", &stage(E3Stage::Complete)), both);
+        assert!(ended_task_groups("node", &stage(E3Stage::KeyPublished)).is_empty());
+
+        let request =
+            |kind| ComputeRequest::zk(kind, e3_events::CorrelationId::new(), e3_id.clone());
+        let proofs = VerifyShareProofsRequest {
+            party_proofs: vec![],
+            params_preset: e3_fhe_params::BfvPreset::default(),
+            committee_size: e3_zk_helpers::CiphernodesCommitteeSize::Micro,
+        };
+        assert_eq!(
+            request_task_group(
+                "node",
+                &request(ZkRequest::ReverifyAccusedProof(proofs.clone()))
+            ),
+            accusation
+        );
+        assert_eq!(
+            request_task_group("node", &request(ZkRequest::VerifyShareProofs(proofs))),
+            protocol
+        );
+    }
 
     #[test]
     fn shared_pool_groups_are_isolated_by_node() {
@@ -326,18 +409,12 @@ impl Handler<InterfoldEvent> for Multithread {
     type Result = ();
     fn handle(&mut self, msg: InterfoldEvent, ctx: &mut Self::Context) -> Self::Result {
         let (data, ec) = msg.into_components();
-        match data {
-            InterfoldEventData::ComputeRequest(data) => ctx.notify(TypedEvent::new(data, ec)),
-            InterfoldEventData::E3Failed(data) => {
-                self.task_pool.cancel_group(&self.task_group(&data.e3_id))
-            }
-            InterfoldEventData::E3RequestComplete(data) => {
-                self.task_pool.cancel_group(&self.task_group(&data.e3_id))
-            }
-            InterfoldEventData::E3StageChanged(data) if data.new_stage.is_terminal() => {
-                self.task_pool.cancel_group(&self.task_group(&data.e3_id))
-            }
-            _ => {}
+        if let InterfoldEventData::ComputeRequest(data) = data {
+            ctx.notify(TypedEvent::new(data, ec));
+            return;
+        }
+        for group in ended_task_groups(&self.task_scope, &data) {
+            self.task_pool.cancel_group(&group);
         }
     }
 }
@@ -379,7 +456,7 @@ async fn handle_compute_request_event(
     let job_name = msg_string.clone();
     let (msg, ctx) = msg.into_components();
     let request_snapshot = msg.clone();
-    let task_group = task_group(&task_scope, &msg.e3_id);
+    let task_group = request_task_group(&task_scope, &msg);
 
     let is_zk = matches!(&request_snapshot.request, ComputeRequestKind::Zk(_));
     let retries_local_worker_failures =
@@ -1068,6 +1145,9 @@ fn handle_zk_request(
             handle_dkg_share_decryption_proof(&prover, &cipher, req, request.clone())
         }),
         ZkRequest::VerifyShareProofs(req) => timefunc("zk_verify_share_proofs", id, || {
+            handle_verify_share_proofs(&prover, req, request.clone())
+        }),
+        ZkRequest::ReverifyAccusedProof(req) => timefunc("zk_reverify_accused_proof", id, || {
             handle_verify_share_proofs(&prover, req, request.clone())
         }),
         ZkRequest::VerifyShareDecryptionProofs(req) => {

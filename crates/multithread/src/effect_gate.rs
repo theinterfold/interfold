@@ -136,8 +136,18 @@ impl ComputeEffectGate {
         Self::request_is_obsolete_at_stage(self.stages.get(e3_id), kind)
     }
 
+    /// Accusation work of a failed E3 runs until the request completes, so that a node can still
+    /// vote on an accusation whose proof it has not verified.
+    fn is_accusation_request(kind: &ComputeRequestKind) -> bool {
+        matches!(
+            kind,
+            ComputeRequestKind::Zk(ZkRequest::ReverifyAccusedProof(_))
+        )
+    }
+
     fn request_is_obsolete_at_stage(stage: Option<&E3Stage>, kind: &ComputeRequestKind) -> bool {
         match stage {
+            Some(E3Stage::Failed) if Self::is_accusation_request(kind) => false,
             Some(E3Stage::Complete | E3Stage::Failed) => true,
             Some(stage) if Self::stage_rank(stage) >= Self::stage_rank(&E3Stage::KeyPublished) => {
                 Self::is_dkg_request(kind)
@@ -147,10 +157,14 @@ impl ComputeEffectGate {
     }
 
     fn record_stage(&mut self, e3_id: E3id, new_stage: E3Stage) {
+        // A complete request is final, also after a failure: its accusation work ended too.
         let should_advance = self
             .stages
             .get(&e3_id)
-            .map(|current| Self::stage_rank(&new_stage) > Self::stage_rank(current))
+            .map(|current| {
+                *current != E3Stage::Complete
+                    && Self::stage_rank(&new_stage) > Self::stage_rank(current)
+            })
             .unwrap_or(true);
         if should_advance {
             self.stages.insert(e3_id.clone(), new_stage);
@@ -361,15 +375,17 @@ impl ComputeEffectGate {
         info!(count, "released replay-safe compute effects");
     }
 
+    /// Clear the keys of the work of `e3_id` that its stage makes obsolete. A failure keeps the
+    /// accusation work; a complete request keeps nothing.
     fn cancel(&mut self, e3_id: &E3id) {
-        self.pending
-            .retain(|(pending_id, _), _| pending_id != e3_id);
-        self.forwarded
-            .retain(|(forwarded_id, _), _| forwarded_id != e3_id);
-        self.replayed_responses
-            .retain(|(response_id, _), _| response_id != e3_id);
-        self.request_keys_by_correlation
-            .retain(|_, (request_id, _)| request_id != e3_id);
+        let stage = self.stages.get(e3_id).cloned();
+        let ends = |(request_id, kind): &RequestKey| {
+            request_id == e3_id && Self::request_is_obsolete_at_stage(stage.as_ref(), kind)
+        };
+        self.pending.retain(|key, _| !ends(key));
+        self.forwarded.retain(|key, _| !ends(key));
+        self.replayed_responses.retain(|key, _| !ends(key));
+        self.request_keys_by_correlation.retain(|_, key| !ends(key));
     }
 }
 
@@ -395,7 +411,9 @@ impl Handler<InterfoldEvent> for ComputeEffectGate {
             }
             InterfoldEventData::EffectsEnabled(_) => self.enable(),
             InterfoldEventData::E3RequestComplete(complete) => {
-                self.record_stage(complete.e3_id.clone(), E3Stage::Complete);
+                // The request ends after a failure too, so Complete replaces Failed here.
+                self.stages
+                    .insert(complete.e3_id.clone(), E3Stage::Complete);
                 self.cancel(&complete.e3_id);
             }
             InterfoldEventData::E3Failed(failed) => {
@@ -592,6 +610,53 @@ mod tests {
             EventSource::Local,
         )
         .into_sequenced(1)
+    }
+
+    /// An accusation's re-verification of the forwarded C3a proof of `party`.
+    fn accusation_compute(
+        correlation_id: CorrelationId,
+        timestamp: u128,
+        party: u64,
+    ) -> InterfoldEvent {
+        let InterfoldEventData::ComputeRequest(mut request) = share_verification_compute(
+            correlation_id,
+            timestamp,
+            ProofType::C3aSkShareEncryption,
+            CircuitName::ShareEncryption,
+        )
+        .into_data() else {
+            unreachable!();
+        };
+        let ComputeRequestKind::Zk(ZkRequest::VerifyShareProofs(mut proofs)) = request.request
+        else {
+            unreachable!();
+        };
+        proofs.party_proofs[0].sender_party_id = party;
+        request.request = ComputeRequestKind::Zk(ZkRequest::ReverifyAccusedProof(proofs));
+        InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            request.into(),
+            None,
+            timestamp,
+            None,
+            EventSource::Local,
+        )
+        .into_sequenced(1)
+    }
+
+    fn failed() -> InterfoldEvent {
+        InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            e3_events::E3Failed {
+                e3_id: E3id::new("4", 1),
+                failed_at_stage: E3Stage::CommitteeFinalized,
+                reason: e3_events::FailureReason::DKGInvalidShares,
+            }
+            .into(),
+            None,
+            35,
+            None,
+            EventSource::Evm,
+        )
+        .into_sequenced(3)
     }
 
     fn effects_enabled() -> InterfoldEvent {
@@ -795,6 +860,52 @@ mod tests {
             next_outcome(&history).await.into_data(),
             InterfoldEventData::ComputeResponse(result) if result.correlation_id == current
         ));
+    }
+
+    #[actix::test]
+    async fn a_failed_e3_keeps_its_accusation_work_until_the_request_completes() {
+        let recorder = Recorder::default().start();
+        let stages = HashMap::from([(E3id::new("4", 1), E3Stage::Failed)]);
+        let gate = ComputeEffectGate::new(recorder.clone().recipient(), stages).start();
+        let dkg = CorrelationId::new();
+        let accusation = CorrelationId::new();
+
+        gate.send(effects_enabled()).await.unwrap();
+        gate.send(share_verification_compute(
+            dkg,
+            40,
+            ProofType::C3aSkShareEncryption,
+            CircuitName::ShareEncryption,
+        ))
+        .await
+        .unwrap();
+        gate.send(accusation_compute(accusation, 41, 0))
+            .await
+            .unwrap();
+        assert_eq!(recorder.send(Received).await.unwrap(), vec![accusation]);
+
+        // Another accused proof after the request completed.
+        gate.send(completed()).await.unwrap();
+        gate.send(accusation_compute(CorrelationId::new(), 42, 1))
+            .await
+            .unwrap();
+        assert_eq!(recorder.send(Received).await.unwrap(), vec![accusation]);
+    }
+
+    #[actix::test]
+    async fn a_failure_keeps_queued_accusation_work_and_drops_the_rest() {
+        let recorder = Recorder::default().start();
+        let gate = ComputeEffectGate::new(recorder.clone().recipient(), HashMap::new()).start();
+        let accusation = CorrelationId::new();
+
+        gate.send(compute(CorrelationId::new(), 10)).await.unwrap();
+        gate.send(accusation_compute(accusation, 11, 0))
+            .await
+            .unwrap();
+        gate.send(failed()).await.unwrap();
+        gate.send(effects_enabled()).await.unwrap();
+
+        assert_eq!(recorder.send(Received).await.unwrap(), vec![accusation]);
     }
 
     #[actix::test]

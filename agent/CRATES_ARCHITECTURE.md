@@ -853,7 +853,11 @@ prover budget.
 
 `TaskPool` applies one semaphore to ZK and TrBFV work. Each ZK request also belongs to a node-scoped
 E3 task group. A terminal E3 cancels queued work in that group. The cancellation does not affect a
-different node that shares the process during tests or embedding.
+different node that shares the process during tests or embedding. An accusation's re-verification of
+a forwarded C3a/C3b proof (`ReverifyAccusedProof`) runs in a separate accusation group of the E3. A
+failure cancels only the protocol group, and the end of the request cancels both, so the accusation
+manager can still vote after the E3 fails. `ComputeEffectGate` likewise keeps admitting that request
+at the Failed stage until `E3RequestComplete`.
 
 A `ProofGenerationFailed` result or a ZK task-pool failure retries the exact request. The first ZK
 retry adds Barretenberg `--slow_low_memory`. The scheduler also retries local worker and task-pool

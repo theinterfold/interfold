@@ -95,6 +95,7 @@ impl fmt::Display for ComputeRequest {
                 ZkRequest::NodesFoldStep(_) => "ZkNodesFoldStep",
                 ZkRequest::DkgAggregation(_) => "ZkDkgAggregation",
                 ZkRequest::DecryptionAggregation(_) => "ZkDecryptionAggregation",
+                ZkRequest::ReverifyAccusedProof(_) => "ZkReverifyAccusedProof",
             },
         };
         write!(f, "{}", s)

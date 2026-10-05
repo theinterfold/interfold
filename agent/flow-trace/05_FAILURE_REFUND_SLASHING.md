@@ -535,7 +535,8 @@ ProofFailureAccusation arrives via P2P from another committee member
 │     │
 │     └─ Case C: Unknown (haven't verified yet):
 │         ├─ For C3a/C3b: re-verify using signed_payload from accusation
-│         │   → Dispatch to ZkActor for local re-verification
+│         │   → Dispatch a ReverifyAccusedProof compute request
+│         │   → It still runs after the E3 fails, until E3RequestComplete
 │         │   → Vote after re-verification completes
 │         └─ For other proofs: require local evidence and no forwarded payload
 │

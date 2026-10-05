@@ -217,7 +217,7 @@ impl AccusationVoting {
                 signed_proofs: vec![forwarded_clone],
             };
             let request = ComputeRequest::zk(
-                ZkRequest::VerifyShareProofs(VerifyShareProofsRequest {
+                ZkRequest::ReverifyAccusedProof(VerifyShareProofsRequest {
                     party_proofs: vec![party_proof],
                     params_preset: self.params_preset,
                     committee_size,
