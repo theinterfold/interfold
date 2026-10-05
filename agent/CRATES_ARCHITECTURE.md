@@ -632,11 +632,14 @@ at the buffer or the translator, skips gossip that never reaches storage, and re
 the rest of the process. A reply carries the value from when the node admitted the request, before
 its storage read, and none when the value changed by the reply. A requester fails a source whose
 value changes between pages, as after a reset. While no source's hint covers the whole range, the
-node asks further peers, up to four in all, and then logs that the history may be incomplete. Such a
-peer gets one attempt per page and at most 30 s and half the time left, and when it fails, the node
-keeps its sources. The hint does not make a reply complete: gossip that the responder received but
-has not stored yet, in its translator or event pipeline, is missing from a read. So the node relies
-on the union of two sources, and a wrong hint only means that it asks no more peers than two.
+node asks further peers, up to four in all, and then logs that the history may be incomplete. It
+asks them only after every aggregate has its sources, with what the fetch budget has left, so these
+optional reads cannot leave a required one without budget. Such a peer gets one attempt per page and
+at most 30 s and half the time left. When it fails, or serves a different payload under an event ID
+that the sources served, it adds nothing and the sources stand. The hint does not make a reply
+complete: gossip that the responder received but has not stored yet, in its translator or event
+pipeline, is missing from a read. So the node relies on the union of two sources, and a wrong hint
+only means that it asks no more peers than two.
 
 The document publisher fetches documents in spawned tasks, so a slow DHT read does not hold its
 ingress loop. At most 8 fetches run and 512 documents wait. Four concurrent N=19 E3s need

@@ -3,6 +3,7 @@
 //! Bounded historical-event fetching, validation, and recovery retries.
 
 use super::*;
+use crate::direct_requester::WithoutPeer;
 use crate::events::call_and_await_response;
 use crate::net_interface_handle::NetEventSubscriber;
 use anyhow::ensure;
@@ -23,6 +24,38 @@ const MIN_SOURCE_TIME: Duration = Duration::from_secs(30);
 /// them observed the range live. Such a peer also gets at most half of the time left.
 const PROBE_TIME: Duration = Duration::from_secs(30);
 
+/// One aggregate's history from its sources, and the admitted peers that the node can still ask
+/// for the live-history hint.
+pub(in crate::actors::net_sync_manager) struct AggregateHistory {
+    aggregate_id: AggregateId,
+    since: u128,
+    merged: HashMap<EventId, InterfoldEvent<Unsequenced>>,
+    /// Whether a peer that served the history observed the whole range live: its `observed_from`
+    /// is at or before `since`.
+    vouched: bool,
+    /// Peers that the node has not asked, as many as keep it within four peers in all.
+    further: Vec<PeerId>,
+}
+
+impl AggregateHistory {
+    /// The merged events in timestamp order. A history that no peer observed live may be
+    /// incomplete, which is logged.
+    pub(in crate::actors::net_sync_manager) fn into_events(
+        self,
+    ) -> Vec<InterfoldEvent<Unsequenced>> {
+        if !self.vouched {
+            warn!(
+                aggregate_id = %self.aggregate_id,
+                since = self.since,
+                "No peer observed the requested history range live; it may be incomplete"
+            );
+        }
+        let mut events: Vec<_> = self.merged.into_values().collect();
+        events.sort_by_key(|event| event.ts());
+        events
+    }
+}
+
 /// Fetch one aggregate's history from several admitted peers and merge it by event ID.
 ///
 /// A peer can lack part of the range, for example after a restart or a reset, and still answer
@@ -32,9 +65,7 @@ const PROBE_TIME: Duration = Duration::from_secs(30);
 /// peer serves alone. A peer that a later peer can replace gets one attempt per page, and the fetch
 /// time less a reserve for the sources that would replace it, so slow or silent peers cannot use up
 /// the deadline before the node reaches a healthy one. While none of the sources observed the
-/// whole range live (its `observed_from` is at or before `since`), the node asks further peers, up
-/// to four in all. That time is a hint, so such a peer gets one attempt per page and a bounded share
-/// of the time, and the node keeps its sources when it fails.
+/// whole range live, [`ask_further_peers`] can ask more peers once every aggregate has its sources.
 pub(in crate::actors::net_sync_manager) async fn fetch_historical_events_for_aggregate(
     net_cmds: &mpsc::Sender<NetCommand>,
     net_events: &NetEventSubscriber,
@@ -42,7 +73,7 @@ pub(in crate::actors::net_sync_manager) async fn fetch_historical_events_for_agg
     since: u128,
     budget: &mut SyncFetchBudget,
     network: &NetworkPolicy,
-) -> Result<Vec<InterfoldEvent<Unsequenced>>> {
+) -> Result<AggregateHistory> {
     let mut peers = budget.within(admitted_peers(net_cmds, net_events)).await?;
     ensure!(!peers.is_empty(), "No connected peers available");
     peers.shuffle(&mut rand::rng());
@@ -58,7 +89,7 @@ pub(in crate::actors::net_sync_manager) async fn fetch_historical_events_for_agg
     .await
 }
 
-/// Fetch one aggregate's history from `peers`, in their order, as
+/// Fetch one aggregate's history from its sources among `peers`, in their order, as
 /// [`fetch_historical_events_for_aggregate`] describes.
 pub(in crate::actors::net_sync_manager) async fn fetch_history_from_peers(
     net_cmds: &mpsc::Sender<NetCommand>,
@@ -68,56 +99,40 @@ pub(in crate::actors::net_sync_manager) async fn fetch_history_from_peers(
     since: u128,
     budget: &mut SyncFetchBudget,
     network: &NetworkPolicy,
-) -> Result<Vec<InterfoldEvent<Unsequenced>>> {
-    let mut merged: HashMap<EventId, InterfoldEvent<Unsequenced>> = HashMap::new();
+) -> Result<AggregateHistory> {
+    let mut history = AggregateHistory {
+        aggregate_id,
+        since,
+        merged: HashMap::new(),
+        vouched: false,
+        further: Vec::new(),
+    };
     let mut sources = 0usize;
-    let mut vouched = false;
     let mut last_error = None;
     let candidates = peers.len().min(MAX_HISTORY_PEERS);
     let required = HISTORY_SOURCES.min(candidates);
-    for (index, peer) in peers.into_iter().take(MAX_HISTORY_PEERS).enumerate() {
+    let mut peers = peers.into_iter().take(MAX_HISTORY_PEERS).enumerate();
+    for (index, peer) in peers.by_ref() {
         let later = candidates - index - 1;
-        // Once the node has its sources, a further peer is asked only for the live-history hint.
-        let probe = sources >= required;
-        if (probe && vouched) || sources + later + 1 < required {
+        if sources + later + 1 < required {
             break;
         }
-        let (attempts, source_time) = if probe {
-            let Ok(remaining) = budget.remaining() else {
-                break;
-            };
-            (1, Some(PROBE_TIME.min(remaining / 2)))
-        } else {
-            (
-                attempts_per_page(later, sources),
-                source_time(later, sources, budget.remaining()?),
-            )
-        };
         let requester = DirectRequester::builder(net_cmds.clone(), net_events.clone())
-            .max_retries(attempts)
+            .max_retries(attempts_per_page(later, sources))
             .retry_timeout(SYNC_FETCH_RETRY_TIMEOUT)
             .build();
-        let history = match fetch_all_batched_events_with_budget::<InterfoldEvent<Unsequenced>>(
-            requester,
-            PeerTarget::Specific(peer),
-            aggregate_id,
-            since,
-            100,
-            budget,
-            source_time,
-        )
-        .await
-        .and_then(|history| {
-            validate_historical_events(aggregate_id, history.events, network)
-                .map(|events| (events, history.observed_from))
-        }) {
-            Ok(history) => history,
-            Err(error) if probe => {
-                warn!(%peer, %aggregate_id, "History fetch from a further peer failed: {error:#}");
-                if budget.is_exhausted() {
+        let source_time = source_time(later, sources, budget.remaining()?);
+        match fetch_validated_history(requester, peer, &history, budget, network, source_time).await
+        {
+            Ok((events, observed_from)) => {
+                sources += 1;
+                history.vouched |= observed_from.is_some_and(|observed| observed <= since);
+                for event in events {
+                    merge_by_event_id(&mut history.merged, event)?;
+                }
+                if sources == required {
                     break;
                 }
-                continue;
             }
             Err(error) => {
                 if budget.is_exhausted() {
@@ -125,14 +140,7 @@ pub(in crate::actors::net_sync_manager) async fn fetch_history_from_peers(
                 }
                 warn!(%peer, %aggregate_id, "History fetch from a peer failed: {error:#}");
                 last_error = Some(error);
-                continue;
             }
-        };
-        let (events, observed_from) = history;
-        sources += 1;
-        vouched |= observed_from.is_some_and(|observed| observed <= since);
-        for event in events {
-            merge_by_event_id(&mut merged, event)?;
         }
     }
     if sources < required {
@@ -142,17 +150,80 @@ pub(in crate::actors::net_sync_manager) async fn fetch_history_from_peers(
             "{sources} of the {required} history sources that the node needs served it"
         )));
     }
-    if !vouched {
-        warn!(
-            %aggregate_id,
-            since,
-            sources,
-            "No peer observed the requested history range live; it may be incomplete"
-        );
+    history.further = peers.map(|(_, peer)| peer).collect();
+    Ok(history)
+}
+
+/// Ask further peers for an aggregate whose sources did not observe its range live, until one
+/// did, as long as the budget lasts. The node does this only after every aggregate has its
+/// sources, so these optional reads cannot leave a required one without budget. Each peer gets
+/// one attempt per page and at most 30 s and half of the time left. A peer that fails, or that
+/// serves a different payload under an event ID that the sources served, adds nothing: the
+/// sources stand, and the history keeps its incompleteness warning.
+pub(in crate::actors::net_sync_manager) async fn ask_further_peers(
+    history: &mut AggregateHistory,
+    net_cmds: &mpsc::Sender<NetCommand>,
+    net_events: &NetEventSubscriber,
+    budget: &mut SyncFetchBudget,
+    network: &NetworkPolicy,
+) {
+    let aggregate_id = history.aggregate_id;
+    for peer in std::mem::take(&mut history.further) {
+        if history.vouched || budget.is_exhausted() {
+            return;
+        }
+        let Ok(remaining) = budget.remaining() else {
+            return;
+        };
+        let requester = DirectRequester::builder(net_cmds.clone(), net_events.clone())
+            .max_retries(1)
+            .retry_timeout(SYNC_FETCH_RETRY_TIMEOUT)
+            .build();
+        let probe_time = Some(PROBE_TIME.min(remaining / 2));
+        let fetched =
+            fetch_validated_history(requester, peer, history, budget, network, probe_time).await;
+        let (events, observed_from) = match fetched {
+            Ok(fetched) => fetched,
+            Err(error) => {
+                warn!(%peer, %aggregate_id, "History fetch from a further peer failed: {error:#}");
+                continue;
+            }
+        };
+        let mut merged = history.merged.clone();
+        if let Err(error) = events
+            .into_iter()
+            .try_for_each(|event| merge_by_event_id(&mut merged, event))
+        {
+            warn!(%peer, %aggregate_id, "History from a further peer is not used: {error:#}");
+            continue;
+        }
+        history.merged = merged;
+        history.vouched |= observed_from.is_some_and(|observed| observed <= history.since);
     }
-    let mut events: Vec<_> = merged.into_values().collect();
-    events.sort_by_key(|event| event.ts());
-    Ok(events)
+}
+
+/// One peer's history of the aggregate after `history.since`, validated, and its live-history
+/// time.
+async fn fetch_validated_history(
+    requester: DirectRequester<WithoutPeer>,
+    peer: PeerId,
+    history: &AggregateHistory,
+    budget: &mut SyncFetchBudget,
+    network: &NetworkPolicy,
+    source_time: Option<Duration>,
+) -> Result<(Vec<InterfoldEvent<Unsequenced>>, Option<u128>)> {
+    let fetched = fetch_all_batched_events_with_budget::<InterfoldEvent<Unsequenced>>(
+        requester,
+        PeerTarget::Specific(peer),
+        history.aggregate_id,
+        history.since,
+        100,
+        budget,
+        source_time,
+    )
+    .await?;
+    let events = validate_historical_events(history.aggregate_id, fetched.events, network)?;
+    Ok((events, fetched.observed_from))
 }
 
 /// Whether the `later` peers can still supply the sources that the node lacks if this peer fails.
@@ -346,8 +417,7 @@ pub(in crate::actors::net_sync_manager) async fn handle_sync_request_event(
     }
     info!("handle_sync_request_event: ready to sync");
 
-    let mut all_events: Vec<InterfoldEvent<Unsequenced>> = Vec::new();
-    let mut latest_timestamp: u128 = 0;
+    let mut histories: Vec<AggregateHistory> = Vec::new();
     let mut failed_aggregates: Vec<AggregateId> = Vec::new();
     let mut budget = SyncFetchBudget::production();
 
@@ -366,19 +436,13 @@ pub(in crate::actors::net_sync_manager) async fn handle_sync_request_event(
         )
         .await
         {
-            Ok(events) => {
+            Ok(history) => {
                 info!(
                     "Received {} events for aggregate_id={}",
-                    events.len(),
+                    history.merged.len(),
                     aggregate_id
                 );
-                for interfold_event in events {
-                    let ts = interfold_event.ts();
-                    if ts > latest_timestamp {
-                        latest_timestamp = ts;
-                    }
-                    all_events.push(interfold_event);
-                }
+                histories.push(history);
             }
             Err(e) => {
                 if budget.is_exhausted() {
@@ -454,20 +518,14 @@ pub(in crate::actors::net_sync_manager) async fn handle_sync_request_event(
                 )
                 .await
                 {
-                    Ok(events) => {
+                    Ok(history) => {
                         info!(
                             attempt = recovery_attempt,
                             "Retry succeeded: {} events for aggregate_id={}",
-                            events.len(),
+                            history.merged.len(),
                             aggregate_id
                         );
-                        for interfold_event in events {
-                            let ts = interfold_event.ts();
-                            if ts > latest_timestamp {
-                                latest_timestamp = ts;
-                            }
-                            all_events.push(interfold_event);
-                        }
+                        histories.push(history);
                     }
                     Err(e) => {
                         if budget.is_exhausted() {
@@ -494,6 +552,15 @@ pub(in crate::actors::net_sync_manager) async fn handle_sync_request_event(
             );
         }
     }
+
+    // Every aggregate has its sources. Only now does the node ask further peers for the
+    // live-history hint, with what the budget has left: their failures fail nothing.
+    let mut all_events: Vec<InterfoldEvent<Unsequenced>> = Vec::new();
+    for mut history in histories {
+        ask_further_peers(&mut history, &net_cmds, &net_events, &mut budget, &network).await;
+        all_events.extend(history.into_events());
+    }
+    let latest_timestamp = all_events.iter().map(|event| event.ts()).max().unwrap_or(0);
 
     info!(
         "Sync complete: collected {} events across {} aggregates, latest_timestamp={}",

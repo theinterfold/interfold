@@ -250,8 +250,8 @@ use handlers::{AllPeersDialed, PeerConnected};
 
 #[cfg(test)]
 use effects::historical_sync::{
-    eligible_sync_cursor, fetch_historical_events_for_aggregate, fetch_history_from_peers,
-    validate_historical_events,
+    ask_further_peers, eligible_sync_cursor, fetch_historical_events_for_aggregate,
+    fetch_history_from_peers, validate_historical_events,
 };
 
 #[cfg(test)]

@@ -556,6 +556,19 @@ fn keyshare_payload(e3: &str) -> InterfoldEventData {
     .into()
 }
 
+/// A peer's copy of the gossip event `e3` of `chain`, stamped with the peer's reception time `ts`.
+fn received_on(chain: u64, e3: &str, ts: u128) -> InterfoldEvent<Unsequenced> {
+    let data: InterfoldEventData = KeyshareCreated {
+        pubkey: ArcBytes::from_bytes(&[1, 2, 3, 4]),
+        e3_id: E3id::new(e3, chain),
+        node: "node-1".to_string(),
+        party_id: 1,
+        signed_pk_generation_proof: None,
+    }
+    .into();
+    InterfoldEvent::<Unsequenced>::new_with_timestamp(data, None, ts, None, EventSource::Net)
+}
+
 /// A peer's copy of the gossip event `e3`, stamped with the peer's reception time `ts`.
 fn received(e3: &str, ts: u128) -> InterfoldEvent<Unsequenced> {
     InterfoldEvent::<Unsequenced>::new_with_timestamp(
@@ -614,7 +627,10 @@ fn spawn_fake_history_network(
                         let mut history: Vec<_> = peer
                             .events
                             .iter()
-                            .filter(|event| event.ts() >= fetch.since())
+                            .filter(|event| {
+                                event.aggregate_id() == fetch.aggregate_id()
+                                    && event.ts() >= fetch.since()
+                            })
                             .cloned()
                             .collect();
                         history.sort_by_key(|event| event.ts());
@@ -661,7 +677,7 @@ async fn fetch_from_fake_peers(
     let subscriber = NetEventSubscriber::from(&events);
     let mut budget = SyncFetchBudget::production();
     let policy = NetworkPolicy::local_unrestricted();
-    let fetched = if in_order {
+    let mut history = if in_order {
         fetch_history_from_peers(
             &commands_tx,
             &subscriber,
@@ -684,8 +700,16 @@ async fn fetch_from_fake_peers(
         .await
     }
     .unwrap();
+    ask_further_peers(
+        &mut history,
+        &commands_tx,
+        &subscriber,
+        &mut budget,
+        &policy,
+    )
+    .await;
     let requests = requests.lock().unwrap().clone();
-    (fetched, requests)
+    (history.into_events(), requests)
 }
 
 fn fetched_e3s(events: &[InterfoldEvent<Unsequenced>]) -> Vec<(String, u128)> {
@@ -1050,19 +1074,30 @@ async fn a_slow_further_peer_keeps_the_sources_and_leaves_time_for_the_next() {
     let _keep_open = events.subscribe();
     spawn_fake_history_network(peers, commands_rx, events.clone());
     let mut budget = SyncFetchBudget::production();
+    let subscriber = NetEventSubscriber::from(&events);
+    let policy = NetworkPolicy::local_unrestricted();
     let started = tokio::time::Instant::now();
 
-    let fetched = fetch_history_from_peers(
+    let mut history = fetch_history_from_peers(
         &commands_tx,
-        &NetEventSubscriber::from(&events),
+        &subscriber,
         order,
         AggregateId::new(1),
         0,
         &mut budget,
-        &NetworkPolicy::local_unrestricted(),
+        &policy,
     )
     .await
     .unwrap();
+    ask_further_peers(
+        &mut history,
+        &commands_tx,
+        &subscriber,
+        &mut budget,
+        &policy,
+    )
+    .await;
+    let fetched = history.into_events();
 
     let mut e3s: Vec<_> = fetched_e3s(&fetched)
         .into_iter()
@@ -1121,6 +1156,65 @@ async fn a_second_source_that_fails_once_is_asked_again_in_recovery() {
         fetched_e3s(&succeeded.response.events),
         vec![("e1".to_string(), 10)]
     );
+}
+
+/// Further peers that the node asks only for the live-history hint use what the fetch budget
+/// has left once every aggregate has its sources. Here they use up the page budget, and the next
+/// aggregate's history arrives all the same.
+#[actix::test]
+async fn hint_probes_cannot_take_the_budget_of_a_later_aggregate() {
+    tokio::time::pause();
+    // Every peer holds the same long history of aggregate 1 (130 pages) and one event of
+    // aggregate 2, and none observed either range live: the node asks all four peers for
+    // aggregate 1, and four such histories exceed the 512-page budget.
+    let peers: Vec<_> = (0..4)
+        .map(|index| FakeHistoryPeer {
+            peer: PeerId::random(),
+            events: (0..260)
+                .map(|ts| received(&format!("a{ts}"), 100 + ts))
+                .chain(std::iter::once(received_on(2, &format!("b{index}"), 5)))
+                .collect(),
+            observed_from: None,
+            fails: 0,
+            silent: 0,
+            slow: None,
+        })
+        .collect();
+    let (net_tx, net_rx) = mpsc::channel::<NetCommand>(64);
+    let event_tx = NetEventChannel::new(64);
+    let _event_rx = event_tx.subscribe();
+    spawn_fake_history_network(peers, net_rx, event_tx.clone());
+    let (response_tx, response_rx) =
+        e3_utils::actix::channel::oneshot::<TypedEvent<SyncRequestSucceeded>>();
+    let start = HistoricalNetSyncStart::new(
+        [(AggregateId::new(1), 0), (AggregateId::new(2), 0)]
+            .into_iter()
+            .collect(),
+    );
+    let context: e3_events::EventContext<Unsequenced> =
+        InterfoldEventData::HistoricalNetSyncStart(start.clone()).into();
+
+    handle_sync_request_event(
+        net_tx,
+        NetEventSubscriber::from(&event_tx),
+        TypedEvent::new(start, context.sequence(1)),
+        response_tx,
+        false,
+        NetworkPolicy::local_unrestricted(),
+    )
+    .await
+    .unwrap();
+
+    let (succeeded, _) = response_rx.await.unwrap().into_components();
+    let events = &succeeded.response.events;
+    let of = |chain: usize| {
+        events
+            .iter()
+            .filter(|event| event.aggregate_id() == AggregateId::new(chain))
+            .count()
+    };
+    assert_eq!(of(1), 260);
+    assert!(of(2) >= 2, "the second aggregate lacks its sources");
 }
 
 /// Listing the admitted peers counts against the fetch deadline too. With no answer, the fetch of
