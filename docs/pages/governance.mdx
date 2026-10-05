@@ -113,6 +113,21 @@ penalties.
 Eligible vesting FOLD counts automatically toward governance voting power. It does not require
 delegation.
 
+### Delegating bonded and vesting FOLD
+
+Bonded and vesting FOLD count for the bond owner or the vesting holder without delegation. An
+account that cannot vote itself, such as a Safe, can give this voting power to one other address:
+
+1. From the owner account, call `delegateBonded(delegate)` on the `BondedVotes` contract.
+2. From the delegate account, call `acceptBonded(owner)`. The voting power moves at this step.
+
+A delegate can represent up to three owners at a time. The owner can take the voting power back at
+any time with `delegateBonded` and the zero address. The delegate can give it back with
+`dropBonded(owner)`. Only the current delegate of that owner can call it. If the owner asks a
+different delegate, the current delegation stops immediately, and the voting power stays with the
+owner until the new delegate accepts. A change does not affect a vote that already took its
+snapshot. Locked FOLD keeps its own delegation, which you set in the governance interface.
+
 ### How the contracts add the three sources
 
 The `BondedVotes` contract computes the voting power of an account. It reads all three sources at
@@ -121,13 +136,16 @@ the same timepoint and adds them:
 - **Locked FOLD:** the voting power that the voting escrow gives the account. This part follows
   delegation.
 - **Bonded FOLD:** the bonded total of the account as a bond owner, from the `BondedCheckpoints`
-  contract.
+  contract. While a delegation is in force, the bonded and vesting FOLD of the owner count for its
+  delegate instead.
 - **Vesting FOLD:** FOLD that is still under a lock policy in the FOLD contract. The contract
   subtracts the part that the bond already covers, and caps the result at the wallet balance.
 
 <Callout type='info'>
-  Bonded voting power belongs to the bond owner of a ciphernode, not to the operator key. The
-  `BondedVotes` contract does not let an account delegate bonded voting power.
+  Bonded voting power belongs to the bond owner of a ciphernode, not to the operator key. The bond
+  owner can give it to a delegate that accepts it, as [Delegating bonded and vesting
+  FOLD](#delegating-bonded-and-vesting-fold) shows. It does not follow the delegation of locked
+  FOLD.
 </Callout>
 
 ## Voting weight and eligibility

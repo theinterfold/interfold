@@ -141,10 +141,14 @@ for that chain.
 
 ## Contract addresses
 
-`packages/interfold-contracts/deployed_contracts.json` records what the deploy scripts put on each
-network. `pnpm gen:manifest` derives `deployments/manifest.json` from it, and that manifest is the
-single source of truth for every published address. It is attached to each release, and
+`packages/interfold-contracts/deployed_contracts.json` records the contracts that each network uses
+now. `pnpm gen:manifest` derives `deployments/manifest.json` from this file, and that manifest is
+the single source of truth for every published address. It is attached to each release, and
 `interfold config check` fetches it to tell an operator that a redeploy happened.
+
+The deploy scripts write `deployed_contracts.json`. When governance replaces or retires a recorded
+contract, change its record by hand. A mock record that stays after its replacement makes the
+manifest mark the network with `mocks: true`.
 
 After a redeploy, update every consumer in the same PR: the operator docs, the dashboard, the
 DAppNode package, and the CRISP example. `pnpm check:addresses` (pre-push) enforces this. It fails

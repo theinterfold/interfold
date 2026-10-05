@@ -17,14 +17,16 @@ use crate::{
     direct_responder::{ChannelType, DirectResponder},
     domain::{
         correlator::Correlator,
+        dht_put_summary::DhtPutSummary,
         peer_failure_tracker::PeerFailureTracker,
-        wire::{decode_gossip, encode_gossip, MAX_DHT_DOCUMENT_BYTES, MAX_GOSSIP_BYTES},
+        wire::{encode_gossip, MAX_DHT_DOCUMENT_BYTES, MAX_GOSSIP_BYTES},
     },
     events::{IncomingResponse, OutgoingRequest, ProtocolResponse},
+    gossip_ingress::GossipIngress,
+    gossip_subscription_health::{GossipSubscriptionHealth, GOSSIP_SUBSCRIPTION_GRACE},
     keypair::Libp2pKeypair,
     net_interface_handle::{NetEventSender, NetInterfaceHandle},
     peer_admission::PeerAdmission,
-    seen_messages::SeenIds,
     NetworkPolicy, NetworkStatus,
 };
 use anyhow::{bail, Context, Result};
@@ -47,7 +49,9 @@ use libp2p::{
         self, cbor, Event as RequestResponseEvent, Message as RequestResponseMessage,
         ProtocolSupport,
     },
-    swarm::{dial_opts::DialOpts, DialError, ListenError, NetworkBehaviour, SwarmEvent},
+    swarm::{
+        dial_opts::DialOpts, ConnectionId, DialError, ListenError, NetworkBehaviour, SwarmEvent,
+    },
     Multiaddr, Swarm,
 };
 use rand::prelude::IteratorRandom;
@@ -70,12 +74,6 @@ const DHT_SUBSTREAM_TIMEOUT: Duration = Duration::from_secs(60);
 /// gossipsub heartbeat. The library's tick-based defaults (message history, gossip windows,
 /// graft timing) assume one second.
 const GOSSIP_HEARTBEAT: Duration = Duration::from_secs(1);
-/// How long, and for how many IDs, the node ignores a gossip message from an admitted peer that it
-/// has already handled. This covers copies that return after the gossipsub duplicate cache (60 s)
-/// has expired. The duplicate cache keeps its default: it also holds messages that arrived before
-/// the sender was admitted, and a longer cache would delay a later copy of such a message.
-const SEEN_GOSSIP_TTL: Duration = Duration::from_secs(6 * 60 * 60);
-const SEEN_GOSSIP_CAPACITY: usize = 100_000;
 const DHT_MAX_RECORDS: usize = 1024;
 const DHT_MAX_RECORDS_PER_PEER: usize = 64;
 const DHT_MAX_TTL: Duration = Duration::from_secs(31 * 24 * 60 * 60);
@@ -87,9 +85,12 @@ const GOSSIP_HEALTH_INTERVAL: Duration = Duration::from_secs(5);
 /// How often expired DHT records are removed. Kademlia's own record jobs, which also removed them,
 /// are disabled, and `MemoryStore` counts an expired record against its limits until it is removed.
 const DHT_EXPIRY_INTERVAL: Duration = Duration::from_secs(60);
-const GOSSIP_SUBSCRIPTION_GRACE: Duration = Duration::from_secs(30);
+/// How often the interface reports finished DHT uploads at INFO.
+const DHT_PUT_SUMMARY_INTERVAL: Duration = Duration::from_secs(60);
 pub(crate) const EVENT_CHANNEL_SIZE: usize = 1000;
 const CMD_CHANNEL_SIZE: usize = 1000;
+const MAX_IDENTIFY_ADDRESSES: usize = 8;
+const MAX_IDENTIFY_ADDRESS_BYTES: usize = 2 * 1024;
 const LIBP2P_ESTABLISHED_PER_PEER_LIMIT_TEXT: &str = "established connections per peer";
 
 type GossipBehaviour =
@@ -169,33 +170,6 @@ impl PeerConnectionFailures {
     }
 }
 
-#[derive(Default)]
-struct GossipSubscriptionHealth {
-    missing_since: HashMap<libp2p::PeerId, Instant>,
-}
-
-impl GossipSubscriptionHealth {
-    fn stale_peers(
-        &mut self,
-        connected: &HashSet<libp2p::PeerId>,
-        subscribed: &HashSet<libp2p::PeerId>,
-        now: Instant,
-    ) -> Vec<libp2p::PeerId> {
-        self.missing_since
-            .retain(|peer, _| connected.contains(peer) && !subscribed.contains(peer));
-        for peer in connected.difference(subscribed) {
-            self.missing_since.entry(*peer).or_insert(now);
-        }
-        self.missing_since
-            .iter()
-            .filter_map(|(peer, since)| {
-                (now.saturating_duration_since(*since) >= GOSSIP_SUBSCRIPTION_GRACE)
-                    .then_some(*peer)
-            })
-            .collect()
-    }
-}
-
 /// Returns true if the multiaddr contains a loopback IP (127.0.0.0/8 or ::1).
 /// Loopback addresses are only meaningful on the local machine and must not be
 /// added to the Kademlia routing table, otherwise they get propagated to remote
@@ -229,6 +203,99 @@ fn strip_peer_id(mut addr: Multiaddr) -> Multiaddr {
         addr.pop();
     }
     addr
+}
+
+#[derive(Default)]
+struct PeerAddresses {
+    identify: Vec<Multiaddr>,
+    connections: HashMap<ConnectionId, Multiaddr>,
+}
+
+impl PeerAddresses {
+    fn refresh(
+        &mut self,
+        peer: libp2p::PeerId,
+        advertised: Vec<Multiaddr>,
+        filter_loopback: bool,
+        kademlia: &mut KademliaBehaviour<MemoryStore>,
+    ) {
+        let mut advertised: Vec<_> = advertised
+            .into_iter()
+            .map(|address| strip_peer_id(address).with(Protocol::P2p(peer)))
+            .collect();
+        // Keep advertised live endpoints first so they remain available after disconnect.
+        advertised.sort_by_key(|address| !self.connections.values().any(|live| live == address));
+        let mut next = Vec::new();
+        let mut bytes = 0;
+        for address in advertised {
+            if filter_loopback && is_loopback_addr(&address) {
+                continue;
+            }
+            if next.contains(&address) || bytes + address.len() > MAX_IDENTIFY_ADDRESS_BYTES {
+                continue;
+            }
+            bytes += address.len();
+            next.push(address);
+            if next.len() == MAX_IDENTIFY_ADDRESSES {
+                break;
+            }
+        }
+
+        // Remove old advertisements before inserting the bounded replacement. Live endpoints
+        // stay until their connection closes, even when Identify no longer advertises them.
+        let retired: Vec<_> = self
+            .identify
+            .iter()
+            .filter(|address| {
+                !next.contains(address) && !self.connections.values().any(|live| live == *address)
+            })
+            .cloned()
+            .collect();
+        remove_kademlia_addresses(kademlia, peer, &retired);
+        for address in &next {
+            kademlia.add_address(&peer, address.clone());
+        }
+        self.identify = next;
+    }
+}
+
+fn remove_kademlia_addresses(
+    kademlia: &mut KademliaBehaviour<MemoryStore>,
+    peer: libp2p::PeerId,
+    removed: &[Multiaddr],
+) {
+    if removed.is_empty() {
+        return;
+    }
+    // Kademlia can insert a dial endpoint without its peer ID, but remove_address only matches
+    // qualified addresses. Rebuild this entry to remove both forms and normalize the survivors.
+    if let Some(entry) = kademlia.remove_peer(&peer) {
+        for address in entry.node.value.into_vec() {
+            let address = strip_peer_id(address).with(Protocol::P2p(peer));
+            if !removed.contains(&address) {
+                kademlia.add_address(&peer, address);
+            }
+        }
+    }
+}
+
+fn prune_peer_addresses(
+    peers: &mut HashMap<libp2p::PeerId, PeerAddresses>,
+    kademlia: &mut KademliaBehaviour<MemoryStore>,
+) {
+    peers.retain(|peer, addresses| {
+        if !addresses.connections.is_empty()
+            || kademlia
+                .kbucket(*peer)
+                .is_some_and(|bucket| bucket.iter().any(|entry| entry.node.key.preimage() == peer))
+        {
+            return true;
+        }
+        // A disconnected peer without a routing entry needs no tracking. Remove any pending
+        // insertion as well, so it cannot later retain addresses whose ownership we forgot.
+        kademlia.remove_peer(peer);
+        false
+    });
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -313,6 +380,8 @@ fn is_redundant_peer_connection_denial(error: &ListenError) -> bool {
 
 #[derive(NetworkBehaviour)]
 pub struct NodeBehaviour {
+    /// First, so it holds back a dial before the other behaviours prepare it.
+    gossip_health: GossipSubscriptionHealth,
     gossipsub: GossipBehaviour,
     kademlia: KademliaBehaviour<MemoryStore>,
     connection_limits: connection_limits::Behaviour,
@@ -408,8 +477,9 @@ impl Libp2pNetInterface {
         let mut correlator = Correlator::new();
         let mut peer_failures = PeerConnectionFailures::new();
         let mut peer_admission = PeerAdmission::default();
+        let mut peer_addresses = HashMap::<libp2p::PeerId, PeerAddresses>::new();
         let mut dht_records_by_peer: HashMap<libp2p::PeerId, HashSet<Vec<u8>>> = HashMap::new();
-        let mut seen_gossip = SeenIds::new(SEEN_GOSSIP_TTL, SEEN_GOSSIP_CAPACITY);
+        let mut seen_gossip = GossipIngress::new();
         let mut admission_tick = tokio::time::interval(Duration::from_secs(5));
         admission_tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
         let mut configured_peer_tick = tokio::time::interval(CONFIGURED_PEER_REDIAL_INTERVAL);
@@ -421,7 +491,10 @@ impl Libp2pNetInterface {
         let mut dht_expiry_tick = tokio::time::interval(DHT_EXPIRY_INTERVAL);
         dht_expiry_tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
         dht_expiry_tick.tick().await;
-        let mut gossip_health = GossipSubscriptionHealth::default();
+        let mut dht_put_summary_tick = tokio::time::interval(DHT_PUT_SUMMARY_INTERVAL);
+        dht_put_summary_tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        dht_put_summary_tick.tick().await;
+        let mut dht_puts = DhtPutSummary::default();
         let mut configured_peers: Vec<_> = self
             .peers
             .iter()
@@ -500,6 +573,7 @@ impl Libp2pNetInterface {
                             });
                         }
                     }
+                    prune_peer_addresses(&mut peer_addresses, &mut self.swarm.behaviour_mut().kademlia);
                 }
                 _ = dht_expiry_tick.tick() => {
                     prune_expired_dht_records(&mut self.swarm);
@@ -513,13 +587,22 @@ impl Libp2pNetInterface {
                         &peer_admission,
                     );
                 }
+                _ = dht_put_summary_tick.tick() => {
+                    if let Some((stored, failed)) = dht_puts.take() {
+                        info!(
+                            stored,
+                            failed,
+                            interval_seconds = DHT_PUT_SUMMARY_INTERVAL.as_secs(),
+                            "DHT document uploads finished"
+                        );
+                    }
+                }
                 _ = gossip_health_tick.tick() => {
                     reconcile_gossip_subscriptions(
                         &mut self.swarm,
                         &peer_admission,
                         &self.topic,
                         &self.status,
-                        &mut gossip_health,
                     );
                 }
                 // Process commands
@@ -564,9 +647,11 @@ impl Libp2pNetInterface {
                         &mut correlator,
                         &mut peer_failures,
                         &mut peer_admission,
+                        &mut peer_addresses,
                         &mut configured_peers,
                         &mut dht_records_by_peer,
                         &mut seen_gossip,
+                        &mut dht_puts,
                         &self.network,
                         &self.status,
                         event,
@@ -596,7 +681,6 @@ fn reconcile_gossip_subscriptions(
     admission: &PeerAdmission,
     topic: &gossipsub::IdentTopic,
     status: &NetworkStatus,
-    health: &mut GossipSubscriptionHealth,
 ) {
     let topic_hash = topic.hash();
     let subscribed: HashSet<_> = swarm
@@ -613,15 +697,26 @@ fn reconcile_gossip_subscriptions(
         .filter(|peer| admission.is_admitted(peer))
         .copied()
         .collect();
-    for peer in health.stale_peers(&connected, &subscribed, Instant::now()) {
+    let now = Instant::now();
+    let stale = swarm
+        .behaviour_mut()
+        .gossip_health
+        .stale_peers(&connected, &subscribed, now);
+    for peer in stale {
+        if swarm.disconnect_peer_id(peer).is_err() {
+            continue;
+        }
+        // As for a quarantined peer, so it is not an initial candidate of new DHT queries. A query
+        // can still choose it from another peer's answer; the backoff refuses that dial.
+        let behaviour = swarm.behaviour_mut();
+        behaviour.kademlia.remove_peer(&peer);
+        let redial_delay = behaviour.gossip_health.disconnected_unsubscribed(peer, now);
         warn!(
             %peer,
             grace_seconds = GOSSIP_SUBSCRIPTION_GRACE.as_secs(),
-            "Replacing peer connections that did not establish the gossip subscription"
+            redial_after_seconds = redial_delay.as_secs(),
+            "Disconnected a peer that did not establish the gossip subscription"
         );
-        if swarm.disconnect_peer_id(peer).is_ok() {
-            health.missing_since.remove(&peer);
-        }
     }
 }
 
@@ -631,6 +726,7 @@ fn redial_disconnected_configured_peers(
     failures: &mut PeerConnectionFailures,
     admission: &PeerAdmission,
 ) {
+    let now = Instant::now();
     for configured_peer in configured {
         let Some(peer_id) = configured_peer.peer_id else {
             continue;
@@ -639,6 +735,8 @@ fn redial_disconnected_configured_peers(
             || swarm.is_connected(&peer_id)
             || failures.is_identity_quarantined(&peer_id)
             || admission.is_rejected(&peer_id)
+            // The dial gate refuses a dial during the backoff, so do not try it every tick.
+            || !swarm.behaviour().gossip_health.may_redial(&peer_id, now)
         {
             continue;
         }
@@ -683,7 +781,8 @@ fn create_behaviour(
                 "interfold-ciphernode/{}",
                 env!("CARGO_PKG_VERSION")
             ))
-            .with_interval(Duration::from_secs(60)),
+            .with_interval(Duration::from_secs(60))
+            .with_cache_size(0),
     );
 
     let gossipsub_config = gossipsub::ConfigBuilder::default()
@@ -703,13 +802,15 @@ fn create_behaviour(
         filter,
     )?;
     let mut score_params = gossipsub::PeerScoreParams::default();
-    let mut topic_score = gossipsub::TopicScoreParams::default();
-    topic_score.time_in_mesh_quantum = Duration::from_secs(1);
-    topic_score.time_in_mesh_cap = 10.0;
-    topic_score.first_message_deliveries_cap = 100.0;
-    topic_score.mesh_message_deliveries_weight = 0.0;
-    topic_score.mesh_failure_penalty_weight = 0.0;
-    topic_score.invalid_message_deliveries_weight = -10.0;
+    let topic_score = gossipsub::TopicScoreParams {
+        time_in_mesh_quantum: Duration::from_secs(1),
+        time_in_mesh_cap: 10.0,
+        first_message_deliveries_cap: 100.0,
+        mesh_message_deliveries_weight: 0.0,
+        mesh_failure_penalty_weight: 0.0,
+        invalid_message_deliveries_weight: -10.0,
+        ..Default::default()
+    };
     score_params.topics.insert(topic.hash(), topic_score);
     gossipsub
         .with_peer_score(score_params, gossipsub::PeerScoreThresholds::default())
@@ -756,6 +857,7 @@ fn create_behaviour(
     kademlia.set_mode(Some(kad::Mode::Server));
 
     Ok(NodeBehaviour {
+        gossip_health: GossipSubscriptionHealth::default(),
         gossipsub,
         kademlia,
         connection_limits,
@@ -765,6 +867,7 @@ fn create_behaviour(
 }
 
 /// Process all swarm events
+#[allow(clippy::too_many_arguments)]
 async fn process_swarm_event(
     swarm: &mut Swarm<NodeBehaviour>,
     event_tx: &NetEventSender,
@@ -772,9 +875,11 @@ async fn process_swarm_event(
     correlator: &mut Correlator,
     peer_failures: &mut PeerConnectionFailures,
     peer_admission: &mut PeerAdmission,
+    peer_addresses: &mut HashMap<libp2p::PeerId, PeerAddresses>,
     configured_peers: &mut [ConfiguredPeer],
     dht_records_by_peer: &mut HashMap<libp2p::PeerId, HashSet<Vec<u8>>>,
-    seen_gossip: &mut SeenIds<gossipsub::MessageId>,
+    seen_gossip: &mut GossipIngress,
+    dht_puts: &mut DhtPutSummary,
     network: &NetworkPolicy,
     status: &NetworkStatus,
     event: SwarmEvent<NodeBehaviourEvent>,
@@ -790,6 +895,14 @@ async fn process_swarm_event(
             // The authenticated transport identity is necessary but not sufficient. Keep the
             // connection staged until Identify confirms the Interfold network and capabilities.
             let remote_addr = endpoint.get_remote_address().clone();
+            peer_addresses
+                .entry(peer_id)
+                .or_default()
+                .connections
+                .insert(
+                    connection_id,
+                    strip_peer_id(remote_addr.clone()).with(Protocol::P2p(peer_id)),
+                );
             let direction = if endpoint.is_dialer() {
                 "outbound"
             } else {
@@ -983,7 +1096,7 @@ async fn process_swarm_event(
             request:
                 InboundRequest::PutRecord {
                     source,
-                    record: Some(record),
+                    record: Some(mut record),
                     ..
                 },
         })) => {
@@ -1006,13 +1119,25 @@ async fn process_swarm_event(
                 && key_matches
                 && within_quota
             {
-                let key_exists = swarm
-                    .behaviour_mut()
-                    .kademlia
-                    .store_mut()
-                    .get(&record.key)
-                    .is_some();
-                match swarm.behaviour_mut().kademlia.store_mut().put(record) {
+                let local_peer_id = *swarm.local_peer_id();
+                let store = swarm.behaviour_mut().kademlia.store_mut();
+                let key_exists = if let Some(existing) = store.get(&record.key) {
+                    // Remote puts cannot replace our publications or shorten a replica's lifetime.
+                    if existing.publisher == Some(local_peer_id)
+                        || existing.expires.is_none()
+                        || existing.expires >= record.expires
+                    {
+                        return Ok(());
+                    }
+                    record = Record {
+                        expires: record.expires,
+                        ..existing.into_owned()
+                    };
+                    true
+                } else {
+                    false
+                };
+                match store.put(record) {
                     Ok(()) if !key_exists => {
                         peer_keys.insert(key_bytes);
                     }
@@ -1103,24 +1228,7 @@ async fn process_swarm_event(
                 ..
             },
         )) => {
-            let correlation_id = correlator.expire(id)?;
-            match record {
-                Ok(record) => {
-                    let key = ContentHash(record.key.to_vec());
-                    debug!("DHT put record succeeded: {:?}", key);
-                    event_tx.send(NetEvent::DhtPutRecordSucceeded {
-                        key,
-                        correlation_id,
-                    })?;
-                }
-                Err(error) => {
-                    error!("DHT put record failed: {}", error);
-                    event_tx.send(NetEvent::DhtPutRecordError {
-                        correlation_id,
-                        error: PutOrStoreError::PutRecordError(error),
-                    })?;
-                }
-            }
+            report_put_record_result(event_tx, correlator, dht_puts, id, record)?;
         }
 
         SwarmEvent::Behaviour(NodeBehaviourEvent::Gossipsub(gossipsub::Event::Message {
@@ -1129,19 +1237,7 @@ async fn process_swarm_event(
             message,
         })) => {
             trace!("Got message with id: {id} from peer: {peer_id}");
-            if peer_admission.is_admitted(&peer_id)
-                && seen_gossip.check_and_record(&id, Instant::now())
-            {
-                swarm
-                    .behaviour_mut()
-                    .gossipsub
-                    .report_message_validation_result(
-                        &id,
-                        &peer_id,
-                        gossipsub::MessageAcceptance::Ignore,
-                    );
-                trace!(%peer_id, %id, "Ignored a gossip message this node already handled");
-            } else if !peer_admission.is_admitted(&peer_id) {
+            if !peer_admission.is_admitted(&peer_id) {
                 swarm
                     .behaviour_mut()
                     .gossipsub
@@ -1152,8 +1248,15 @@ async fn process_swarm_event(
                     );
                 debug!(%peer_id, %id, "Ignored gossip from a peer that has not passed Identify");
             } else {
-                match decode_gossip(&message.data, network) {
-                    Ok(gossip_data) => {
+                match seen_gossip.validate(
+                    peer_id,
+                    &id,
+                    &message.data,
+                    network,
+                    Instant::now(),
+                    chrono::Utc::now(),
+                ) {
+                    Ok(Some(gossip_data)) => {
                         swarm
                             .behaviour_mut()
                             .gossipsub
@@ -1162,7 +1265,32 @@ async fn process_swarm_event(
                                 &peer_id,
                                 gossipsub::MessageAcceptance::Accept,
                             );
-                        event_tx.send(NetEvent::GossipData(gossip_data))?;
+                        let event = match gossip_data {
+                            GossipData::DocumentPublishedNotification(notification) => {
+                                NetEvent::DocumentIngress(Box::new(
+                                    crate::events::DocumentIngress {
+                                        propagation_source: Some(peer_id),
+                                        notification,
+                                    },
+                                ))
+                            }
+                            data => NetEvent::GossipIngress {
+                                propagation_source: peer_id,
+                                data,
+                            },
+                        };
+                        event_tx.send(event)?;
+                    }
+                    Ok(None) => {
+                        swarm
+                            .behaviour_mut()
+                            .gossipsub
+                            .report_message_validation_result(
+                                &id,
+                                &peer_id,
+                                gossipsub::MessageAcceptance::Ignore,
+                            );
+                        trace!(%peer_id, %id, "Ignored duplicate or expired gossip");
                     }
                     Err(error) => {
                         swarm
@@ -1193,6 +1321,9 @@ async fn process_swarm_event(
                 return Ok(());
             }
             debug!("Peer {} subscribed to {}", peer_id, topic);
+            if topic == gossipsub::IdentTopic::new(network.protocols().gossip_topic()).hash() {
+                swarm.behaviour_mut().gossip_health.subscribed(&peer_id);
+            }
             let count = swarm
                 .behaviour()
                 .gossipsub
@@ -1353,8 +1484,20 @@ async fn process_swarm_event(
                 return Ok(());
             }
 
-            let Some(pending_connections) = peer_admission.admit(peer_id) else {
-                debug!(%peer_id, "Received Identify for an admitted or unstaged peer");
+            let pending_connections = peer_admission.admit(peer_id);
+            if !peer_admission.is_admitted(&peer_id) {
+                debug!(%peer_id, "Received Identify for an unstaged peer");
+                return Ok(());
+            }
+            let filter = should_filter_loopback(swarm);
+            peer_addresses.entry(peer_id).or_default().refresh(
+                peer_id,
+                info.listen_addrs,
+                filter,
+                &mut swarm.behaviour_mut().kademlia,
+            );
+            trace!(observed_address = %info.observed_addr, "Peer reported our observed address");
+            let Some(pending_connections) = pending_connections else {
                 return Ok(());
             };
             peer_failures.connection_succeeded(&peer_id);
@@ -1374,7 +1517,6 @@ async fn process_swarm_event(
                 status_pending.direction,
                 status_pending.connections,
             );
-            let filter = should_filter_loopback(swarm);
             for pending in &pending_connections {
                 if !(filter && is_loopback_addr(&pending.remote_address)) {
                     swarm
@@ -1383,16 +1525,16 @@ async fn process_swarm_event(
                         .add_address(&peer_id, strip_peer_id(pending.remote_address.clone()));
                 }
             }
-            for addr in &info.listen_addrs {
-                if !(filter && is_loopback_addr(addr)) {
-                    swarm
-                        .behaviour_mut()
-                        .kademlia
-                        .add_address(&peer_id, strip_peer_id(addr.clone()));
-                }
-            }
-            trace!(observed_address = %info.observed_addr, "Peer reported our observed address");
             let topic = gossipsub::IdentTopic::new(network.protocols().gossip_topic()).hash();
+            // The subscribe event of a peer that subscribed before its admission was ignored.
+            let subscribed_before_admission = swarm
+                .behaviour()
+                .gossipsub
+                .all_peers()
+                .any(|(peer, topics)| *peer == peer_id && topics.contains(&&topic));
+            if subscribed_before_admission {
+                swarm.behaviour_mut().gossip_health.subscribed(&peer_id);
+            }
             let count = swarm
                 .behaviour()
                 .gossipsub
@@ -1430,6 +1572,20 @@ async fn process_swarm_event(
             ..
         } => {
             peer_admission.closed(&peer_id, connection_id, num_established);
+            if let Some(addresses) = peer_addresses.get_mut(&peer_id) {
+                if let Some(address) = addresses.connections.remove(&connection_id) {
+                    if !addresses.identify.contains(&address)
+                        && !addresses.connections.values().any(|live| live == &address)
+                    {
+                        remove_kademlia_addresses(
+                            &mut swarm.behaviour_mut().kademlia,
+                            peer_id,
+                            &[address],
+                        );
+                    }
+                }
+            }
+            prune_peer_addresses(peer_addresses, &mut swarm.behaviour_mut().kademlia);
             status.disconnected(&peer_id.to_string(), num_established);
             if num_established == 0 {
                 let total = swarm.connected_peers().count();
@@ -1513,6 +1669,10 @@ async fn process_swarm_command(
                 expires,
                 value,
             )?;
+            Ok(())
+        }
+        NetCommand::DhtCancelPut { key } => {
+            cancel_record_uploads(&mut swarm.behaviour_mut().kademlia, correlator, &key);
             Ok(())
         }
         NetCommand::DhtGetRecord {
@@ -1789,6 +1949,90 @@ fn handle_put_record(
     Ok(())
 }
 
+/// End the puts of `key` that are in their upload phase, so that their queries stop waiting for
+/// answers and release the record. An ended put still reports its result, which nobody waits for.
+/// This is not a full cancel. Requests that a query already gave to the connection handlers,
+/// queued or in progress, still go out: Kademlia has no call that takes them back.
+///
+/// A put first looks up the peers closest to the key. Ending that lookup makes Kademlia upload the
+/// record to the peers found so far, so a put in its lookup runs on to its normal end and uploads.
+/// End the puts of `key` that upload their record, and mark them cancelled, so that their quorum
+/// failure is not reported as a failed upload. A put that still looks up its closest peers runs on.
+fn cancel_record_uploads(
+    kademlia: &mut KademliaBehaviour<MemoryStore>,
+    correlator: &mut Correlator,
+    key: &ContentHash,
+) {
+    for query_id in finish_record_uploads(kademlia, key) {
+        correlator.mark_cancelled(query_id);
+    }
+}
+
+/// Send the result of a put to its caller and count it in the upload summary. Every finished put
+/// is counted, also one that the interface cannot match to a command, except a put that this node
+/// cancelled: it ends with a quorum failure too, but it was neither stored nor a failed upload, so
+/// it is only logged at DEBUG.
+fn report_put_record_result(
+    event_tx: &NetEventSender,
+    correlator: &mut Correlator,
+    dht_puts: &mut DhtPutSummary,
+    id: kad::QueryId,
+    result: kad::PutRecordResult,
+) -> Result<()> {
+    let expired = correlator.expire_cancellable(id);
+    let cancelled = matches!(expired, Ok((_, true)));
+    if !cancelled {
+        dht_puts.record(result.is_ok());
+    }
+    let (correlation_id, _) = expired?;
+    match result {
+        Ok(record) => {
+            let key = ContentHash(record.key.to_vec());
+            debug!("DHT put record succeeded: {:?}", key);
+            event_tx.send(NetEvent::DhtPutRecordSucceeded {
+                key,
+                correlation_id,
+            })?;
+        }
+        Err(error) => {
+            if cancelled {
+                debug!("DHT put record cancelled: {}", error);
+            } else {
+                error!("DHT put record failed: {}", error);
+            }
+            event_tx.send(NetEvent::DhtPutRecordError {
+                correlation_id,
+                error: PutOrStoreError::PutRecordError(error),
+            })?;
+        }
+    }
+    Ok(())
+}
+
+/// End the puts of `key` that upload their record, and return their query IDs.
+fn finish_record_uploads(
+    kademlia: &mut KademliaBehaviour<MemoryStore>,
+    key: &ContentHash,
+) -> Vec<kad::QueryId> {
+    let key = RecordKey::new(key);
+    let mut finished = Vec::new();
+    for mut query in kademlia.iter_queries_mut() {
+        let uploading = matches!(
+            query.info(),
+            kad::QueryInfo::PutRecord {
+                record,
+                phase: kad::PutRecordPhase::PutRecord { .. },
+                ..
+            } if record.key == key
+        );
+        if uploading {
+            query.finish();
+            finished.push(query.id());
+        }
+    }
+    finished
+}
+
 fn handle_get_record(
     swarm: &mut Swarm<NodeBehaviour>,
     correlator: &mut Correlator,
@@ -1887,58 +2131,7 @@ mod tests {
     use libp2p::kad::{Record, RecordKey};
     use libp2p::swarm::{ConnectionDenied, ConnectionId, ListenError, NetworkBehaviour};
     use libp2p::{Multiaddr, PeerId};
-    use std::collections::HashSet;
     use std::time::{Duration, Instant};
-
-    #[test]
-    fn missing_gossip_subscription_becomes_stale_after_grace_period() {
-        let peer = PeerId::random();
-        let connected = HashSet::from([peer]);
-        let subscribed = HashSet::new();
-        let started = Instant::now();
-        let mut health = super::GossipSubscriptionHealth::default();
-
-        assert!(health
-            .stale_peers(&connected, &subscribed, started)
-            .is_empty());
-        assert!(health
-            .stale_peers(
-                &connected,
-                &subscribed,
-                started + super::GOSSIP_SUBSCRIPTION_GRACE - Duration::from_millis(1),
-            )
-            .is_empty());
-        assert_eq!(
-            health.stale_peers(
-                &connected,
-                &subscribed,
-                started + super::GOSSIP_SUBSCRIPTION_GRACE,
-            ),
-            vec![peer]
-        );
-    }
-
-    #[test]
-    fn gossip_subscription_clears_missing_peer_state() {
-        let peer = PeerId::random();
-        let connected = HashSet::from([peer]);
-        let started = Instant::now();
-        let mut health = super::GossipSubscriptionHealth::default();
-
-        assert!(health
-            .stale_peers(&connected, &HashSet::new(), started)
-            .is_empty());
-        assert!(health
-            .stale_peers(&connected, &HashSet::from([peer]), started)
-            .is_empty());
-        assert!(health
-            .stale_peers(
-                &connected,
-                &HashSet::new(),
-                started + super::GOSSIP_SUBSCRIPTION_GRACE,
-            )
-            .is_empty());
-    }
 
     #[test]
     fn quarantined_peer_is_restored_after_a_successful_admission() {
@@ -2266,4 +2459,155 @@ mod tests {
             Err(libp2p::kad::store::Error::MaxRecords)
         ));
     }
+
+    /// A cancelled upload ends with a quorum failure that is logged at DEBUG and left out of the
+    /// upload summary, while a real failure stays an ERROR and counts as failed. Both reach their
+    /// caller under their own correlation ID.
+    #[test]
+    fn cancelled_put_logs_debug_and_real_failure_logs_error() {
+        use libp2p::kad::{self, Quorum};
+        use std::sync::{Arc, Mutex};
+
+        #[derive(Clone)]
+        struct Captured(Arc<Mutex<Vec<u8>>>);
+        impl std::io::Write for Captured {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let local = PeerId::random();
+        let mut kademlia = kad::Behaviour::new(local, MemoryStore::new(local));
+        let peer = PeerId::random();
+        kademlia.add_address(&peer, "/ip4/192.0.2.1/udp/1/quic-v1".parse().unwrap());
+        let document = super::ContentHash::from_content(b"document");
+        let other = super::ContentHash::from_content(b"other document");
+        let record_of = |key: &super::ContentHash| Record::new(RecordKey::new(key), vec![1]);
+        let cancelled =
+            kademlia.put_record_to(record_of(&document), [peer].into_iter(), Quorum::One);
+        let failed = kademlia.put_record_to(record_of(&other), [peer].into_iter(), Quorum::One);
+        let mut correlator = super::Correlator::new();
+        let (cancelled_id, failed_id) = (
+            e3_events::CorrelationId::new(),
+            e3_events::CorrelationId::new(),
+        );
+        correlator.track(cancelled, cancelled_id);
+        correlator.track(failed, failed_id);
+        let event_tx = super::NetEventSender::new(8, 8);
+        let mut events = event_tx.subscribe();
+        let mut dht_puts = super::DhtPutSummary::default();
+        let quorum_failed = |key: &super::ContentHash| {
+            Err(kad::PutRecordError::QuorumFailed {
+                key: RecordKey::new(key),
+                success: Vec::new(),
+                quorum: std::num::NonZeroUsize::new(1).unwrap(),
+            })
+        };
+
+        let logs = Arc::new(Mutex::new(Vec::new()));
+        let writer = Captured(logs.clone());
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::DEBUG)
+            .with_ansi(false)
+            .with_writer(move || writer.clone())
+            .finish();
+        tracing::subscriber::with_default(subscriber, || {
+            super::cancel_record_uploads(&mut kademlia, &mut correlator, &document);
+            super::report_put_record_result(
+                &event_tx,
+                &mut correlator,
+                &mut dht_puts,
+                cancelled,
+                quorum_failed(&document),
+            )
+            .unwrap();
+            super::report_put_record_result(
+                &event_tx,
+                &mut correlator,
+                &mut dht_puts,
+                failed,
+                quorum_failed(&other),
+            )
+            .unwrap();
+        });
+
+        let logs = String::from_utf8(logs.lock().unwrap().clone()).unwrap();
+        let line = |text: &str| {
+            logs.lines()
+                .find(|line| line.contains(text))
+                .unwrap_or_default()
+        };
+        assert!(line("DHT put record cancelled").contains("DEBUG"), "{logs}");
+        assert!(line("DHT put record failed").contains("ERROR"), "{logs}");
+        assert_eq!(logs.matches("DHT put record failed").count(), 1, "{logs}");
+        let correlation = |event| match event {
+            super::NetEvent::DhtPutRecordError { correlation_id, .. } => correlation_id,
+            other => panic!("expected a put error, got {other:?}"),
+        };
+        assert_eq!(correlation(events.try_recv().unwrap()), cancelled_id);
+        assert_eq!(correlation(events.try_recv().unwrap()), failed_id);
+        // The upload summary counts the real failure only.
+        assert_eq!(dht_puts.take(), Some((0, 1)));
+    }
+
+    /// A cancel ends the upload of its key only. A put that still looks up its closest peers runs
+    /// on: ending that lookup would upload the record to the peers found so far.
+    #[test]
+    fn a_cancel_ends_only_the_uploads_of_its_key() {
+        use libp2p::kad::{self, QueryInfo, Quorum};
+        use std::task::{Context, Poll};
+
+        let local = PeerId::random();
+        let mut kademlia = kad::Behaviour::new(local, MemoryStore::new(local));
+        let peer = PeerId::random();
+        kademlia.add_address(&peer, "/ip4/192.0.2.1/udp/1/quic-v1".parse().unwrap());
+        let document = super::ContentHash::from_content(b"document");
+        let other = super::ContentHash::from_content(b"other document");
+        let record_of = |key: &super::ContentHash| Record::new(RecordKey::new(key), vec![1]);
+
+        let lookup = kademlia
+            .put_record(record_of(&document), Quorum::One)
+            .unwrap();
+        let upload = kademlia.put_record_to(record_of(&document), [peer].into_iter(), Quorum::One);
+        let other_upload =
+            kademlia.put_record_to(record_of(&other), [peer].into_iter(), Quorum::One);
+
+        assert_eq!(
+            super::finish_record_uploads(&mut kademlia, &document),
+            vec![upload]
+        );
+
+        let mut context = Context::from_waker(futures::task::noop_waker_ref());
+        let mut reported = Vec::new();
+        for _ in 0..100 {
+            match NetworkBehaviour::poll(&mut kademlia, &mut context) {
+                Poll::Ready(libp2p::swarm::ToSwarm::GenerateEvent(
+                    kad::Event::OutboundQueryProgressed {
+                        id,
+                        result: kad::QueryResult::PutRecord(_),
+                        ..
+                    },
+                )) => reported.push(id),
+                Poll::Ready(_) => {}
+                Poll::Pending => break,
+            }
+        }
+        assert_eq!(reported, vec![upload]);
+        assert!(kademlia.query(&other_upload).is_some());
+        assert!(matches!(
+            kademlia.query(&lookup).map(|query| query.info().clone()),
+            Some(QueryInfo::PutRecord {
+                phase: kad::PutRecordPhase::GetClosestPeers,
+                ..
+            })
+        ));
+    }
 }
+
+#[cfg(test)]
+#[path = "net_interface_swarm_tests.rs"]
+mod swarm_tests;

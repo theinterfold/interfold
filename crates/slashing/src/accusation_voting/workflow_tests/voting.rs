@@ -144,6 +144,7 @@ fn signed_accusation(
     who: &PrivateKeySigner,
     e3_id: &E3id,
     accused: Address,
+    accused_party_id: u64,
     data_hash: [u8; 32],
     issued_at: u64,
     deadline: u64,
@@ -152,7 +153,7 @@ fn signed_accusation(
         e3_id: e3_id.clone(),
         accuser: who.address(),
         accused,
-        accused_party_id: 1,
+        accused_party_id,
         proof_type: ProofType::C1PkGeneration,
         data_hash,
         issued_at,
@@ -180,7 +181,7 @@ fn concurrent_accusers_converge_on_one_vote_window() {
     let data_hash = [0x11; 32];
 
     // I saw the fault first: my own accusation with my window.
-    let mine = signed_accusation(&me, &v.e3_id, accused, data_hash, NOW, NOW + VALIDITY);
+    let mine = signed_accusation(&me, &v.e3_id, accused, 3, data_hash, NOW, NOW + VALIDITY);
     let id = AccusationVoting::accusation_id(&mine);
     let own = signed_vote(&me, sm, &v.e3_id, id, data_hash, NOW + VALIDITY);
     insert_pending(&mut v, &me, accused, data_hash, NOW + VALIDITY, own);
@@ -198,7 +199,8 @@ fn concurrent_accusers_converge_on_one_vote_window() {
     let vote_c = signed_vote(&c, sm, &v.e3_id, id, data_hash, later + VALIDITY);
     let mut actions = v.on_vote_received(vote_c, &ctx());
 
-    let b_accusation = signed_accusation(&b, &v.e3_id, accused, data_hash, later, later + VALIDITY);
+    let b_accusation =
+        signed_accusation(&b, &v.e3_id, accused, 3, data_hash, later, later + VALIDITY);
     assert_eq!(AccusationVoting::accusation_id(&b_accusation), id);
     actions.extend(v.on_accusation_received(b_accusation, &ctx()));
 
@@ -250,7 +252,7 @@ fn vote_window_moves_once_per_peer_and_never_for_the_accused() {
     let (sm, e3_id, target) = (v.slashing_manager, v.e3_id.clone(), accused.address());
     let data_hash = [0x11; 32];
     let accuse = |who: &PrivateKeySigner, issued_at: u64, deadline: u64| {
-        signed_accusation(who, &e3_id, target, data_hash, issued_at, deadline)
+        signed_accusation(who, &e3_id, target, 2, data_hash, issued_at, deadline)
     };
     let id = AccusationVoting::accusation_id(&accuse(&me, NOW, NOW + VALIDITY));
     let own = signed_vote(&me, sm, &e3_id, id, data_hash, NOW + VALIDITY);

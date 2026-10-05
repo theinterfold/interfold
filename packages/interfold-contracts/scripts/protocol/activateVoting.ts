@@ -2,7 +2,12 @@
 import { connect } from "./cli";
 import { deploymentPath, readJson, writeJson } from "./files";
 import type { ProtocolDeployment } from "./types";
-import { deployedAddress, loadConfig, requireContract } from "./values";
+import {
+  deployedAddress,
+  hasBondedDelegation,
+  loadConfig,
+  requireContract,
+} from "./values";
 
 /**
  * Deploy `BondedVotes` and hand back the address governance points at.
@@ -12,7 +17,10 @@ import { deployedAddress, loadConfig, requireContract } from "./values";
  * the registry is only initialized by the governance batch that `--action deploy` writes. Running this
  * before that batch executes fails loudly rather than producing an adapter bound to nothing.
  *
- * Nothing here needs a Safe transaction: `BondedVotes` holds no state and no privileges.
+ * A recorded adapter from before bonded delegation is refused, not reused. Replacing it moves the
+ * address that governance and CRISP rounds read, so the operator clears the record on purpose.
+ *
+ * Nothing here needs a Safe transaction: `BondedVotes` has no owner and no privileged functions.
  */
 export async function actionActivateVoting(): Promise<void> {
   const { ethers } = await connect();
@@ -53,6 +61,18 @@ export async function actionActivateVoting(): Promise<void> {
   }
 
   if (deployment.bondedVotes) {
+    await requireContract(
+      ethers.provider,
+      deployment.bondedVotes,
+      "bondedVotes",
+    );
+    if (!(await hasBondedDelegation(ethers.provider, deployment.bondedVotes))) {
+      throw new Error(
+        `BondedVotes at ${deployment.bondedVotes} predates bonded delegation. To replace it, ` +
+          `remove bondedVotes from ${deploymentPath(config)} and run this action again, ` +
+          "then point the governance plugin and new CRISP rounds at the new address.",
+      );
+    }
     console.log(`BondedVotes already deployed at ${deployment.bondedVotes}`);
     return;
   }

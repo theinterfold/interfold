@@ -6,9 +6,9 @@
 
 use super::*;
 use crate::direct_requester::DirectRequesterTester;
-use crate::events::{NetCommand, NetEvent, PeerTarget};
-use crate::net_interface_handle::NetEventSubscriber;
-use tokio::sync::{broadcast, mpsc};
+use crate::events::{NetCommand, PeerTarget};
+use crate::net_interface_handle::{NetEventChannel, NetEventSubscriber};
+use tokio::sync::mpsc;
 
 #[test]
 fn sync_fetch_budget_rejects_each_resource_limit_without_mutating_state() {
@@ -39,7 +39,8 @@ fn sync_fetch_budget_rejects_each_resource_limit_without_mutating_state() {
 #[tokio::test]
 async fn test_non_advancing_cursor_is_rejected() {
     let (net_cmds_tx, net_cmds_rx) = mpsc::channel::<NetCommand>(16);
-    let (net_events_tx, _net_events_rx) = broadcast::channel::<NetEvent>(16);
+    let net_events_tx = NetEventChannel::new(16);
+    let _net_events_rx = net_events_tx.subscribe();
     let net_events = NetEventSubscriber::from(&net_events_tx);
 
     let requester = DirectRequester::builder(net_cmds_tx, net_events).build();
@@ -71,7 +72,8 @@ async fn test_non_advancing_cursor_is_rejected() {
 #[tokio::test]
 async fn test_three_batches_with_cursor_continuity() {
     let (net_cmds_tx, net_cmds_rx) = mpsc::channel::<NetCommand>(16);
-    let (net_events_tx, _net_events_rx) = broadcast::channel::<NetEvent>(16);
+    let net_events_tx = NetEventChannel::new(16);
+    let _net_events_rx = net_events_tx.subscribe();
     let net_events = NetEventSubscriber::from(&net_events_tx);
 
     let requester = DirectRequester::builder(net_cmds_tx, net_events).build();

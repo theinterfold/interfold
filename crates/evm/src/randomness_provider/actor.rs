@@ -207,7 +207,7 @@ async fn read_accepted_sortition<P: Provider + Clone + 'static>(
     let registry = ICiphernodeRegistry::new(registry_address, provider.provider());
     let pinned = match registry
         .sortitionSeed(e3_id)
-        .block(event_block.clone())
+        .block(event_block)
         .call()
         .await
     {

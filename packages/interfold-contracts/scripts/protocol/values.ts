@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { ethers as ethersLib } from "ethers";
 
-import { bfvConfigsForChain } from "../utils";
+import { bfvConfigsForChain, isTestnetOrLocalChainId } from "../utils";
 import { assertSupportedVrfChain, assertVrfRequestTimeout } from "./chains";
 import { arg } from "./cli";
 import { ZERO, abi } from "./constants";
@@ -31,6 +31,61 @@ export async function requireContract(
 ): Promise<void> {
   const code = await provider.getCode(target);
   if (code === "0x") throw new Error(`${label} has no code: ${target}`);
+}
+
+/**
+ * True when a call failed because the target has no such function. A contract without the
+ * selector and without a fallback reverts with no data, and decoding the empty answer of an account
+ * without code fails the same way. A transport error or a revert with a reason is not this, and a
+ * caller must not read it as a missing function.
+ */
+export function isMissingFunctionError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const rpcError = error as {
+    code?: string | number;
+    data?: unknown;
+    value?: unknown;
+  };
+  if (
+    rpcError.code === 3 &&
+    (rpcError.data === undefined || rpcError.data === "0x")
+  ) {
+    return true;
+  }
+  return (
+    (rpcError.data === "0x" &&
+      (rpcError.code === undefined ||
+        rpcError.code === "CALL_EXCEPTION" ||
+        rpcError.code === 3)) ||
+    (rpcError.code === "BAD_DATA" && rpcError.value === "0x")
+  );
+}
+
+const bondedDelegateCall = new ethersLib.Interface([
+  "function bondedDelegate(address owner) view returns (address)",
+]).encodeFunctionData("bondedDelegate", [ZERO]);
+
+/**
+ * Whether the `BondedVotes` at `target` has bonded delegation.
+ *
+ * An adapter from before bonded delegation takes the same constructor arguments, so a deployment
+ * record cannot tell the two apart. That adapter has no `bondedDelegate` function. Any failure
+ * other than a missing function says nothing about the adapter, and is thrown.
+ */
+export async function hasBondedDelegation(
+  provider: ethersLib.Provider,
+  target: string,
+): Promise<boolean> {
+  try {
+    const result = await provider.call({
+      to: target,
+      data: bondedDelegateCall,
+    });
+    return result !== "0x";
+  } catch (error) {
+    if (isMissingFunctionError(error)) return false;
+    throw error;
+  }
 }
 
 export async function deployedAddress(contract: {
@@ -477,6 +532,27 @@ function validateConfig(config: ProtocolConfigFile): void {
   if (config.deployMockE3Program && config.bindInitialE3Program) {
     throw new Error(
       "bindInitialE3Program must be false when deployMockE3Program is true",
+    );
+  }
+}
+
+/**
+ * Refuse to deploy mock contracts on a chain that is not a testnet or a local chain.
+ * `DeployableMockCiphertextVerifier` accepts every proof, and `MockE3Program` applies no
+ * application rules. The deploy actions call this check, not `loadConfig`: the mainnet
+ * configuration records the first deployment, which used both mocks, and the upgrade scripts
+ * still load it.
+ */
+export function assertMockDeploymentAllowed(config: ProtocolConfigFile): void {
+  if (isTestnetOrLocalChainId(config.chainId)) return;
+  const mocks = [
+    config.deployMockE3Program && "deployMockE3Program",
+    config.deployMockCiphertextVerifier && "deployMockCiphertextVerifier",
+  ].filter(Boolean);
+  if (mocks.length > 0) {
+    throw new Error(
+      `${mocks.join(" and ")} must be false on chainId ${config.chainId}: ` +
+        "mock contracts are for testnets and local chains only",
     );
   }
 }

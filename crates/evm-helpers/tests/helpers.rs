@@ -16,12 +16,6 @@ use EmitLogs::EmitLogsInstance;
 
 sol!(
     #[sol(rpc)]
-    Interfold,
-    "tests/fixtures/fake_interfold.json"
-);
-
-sol!(
-    #[sol(rpc)]
     EmitLogs,
     "tests/fixtures/emit_logs.json"
 );

@@ -8,8 +8,8 @@ use crate::net_interface_handle::NetEventSubscriber;
 use actix::{Actor, Addr, AsyncContext, Handler, Message, Recipient, ResponseFuture};
 use anyhow::{bail, Context, Result};
 use e3_events::{
-    prelude::*, trap, trap_fut, AggregateId, BusHandle, CorrelationId, DkgCoordinationKind, E3id,
-    EType, EventSource, EventStoreFilter, EventStoreQueryBy, EventStoreQueryResponse, EventType,
+    prelude::*, trap, AggregateId, BusHandle, CorrelationId, DkgCoordinationKind, E3id, EType,
+    EventSource, EventStoreFilter, EventStoreQueryBy, EventStoreQueryResponse, EventType,
     HistoricalNetSyncEventsReceived, HistoricalNetSyncStart, InterfoldEvent, InterfoldEventData,
     NetReady, Sequenced, TsAgg, TypedEvent, Unsequenced,
 };
@@ -17,7 +17,7 @@ use e3_utils::MAILBOX_LIMIT;
 use libp2p::PeerId;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet, VecDeque},
     convert::TryInto,
     time::{Duration, Instant},
 };
@@ -147,6 +147,12 @@ pub struct NetSyncManager {
     /// Roster messages, and this node's decryption shares. They go directly to libp2p with a new
     /// delivery ID because EventBus stable-ID dedup suppresses identical re-publications.
     announcements: HashMap<AnnouncementKey, Reannouncement>,
+    /// E3s whose terminal stage came from the chain, also in replayed history, newest last. The
+    /// node does not re-send their messages, also when the restart re-broadcast returns them.
+    ended_e3s: VecDeque<E3id>,
+    /// Set when local replay has finished, at `HistoricalNetSyncStart`. Re-sends wait for it, so
+    /// that a replayed message is not sent before the replay reaches the end of its E3.
+    replay_finished: bool,
 }
 
 /// Identifies one message that the node keeps re-sending.
@@ -157,6 +163,22 @@ enum AnnouncementKey {
 }
 
 impl AnnouncementKey {
+    /// The key of an event that the node re-sends until its phase ends, or `None` for an event
+    /// that it does not re-send.
+    fn for_event(data: &InterfoldEventData) -> Option<Self> {
+        match data {
+            InterfoldEventData::DkgCoordination(message) => Some(Self::Dkg(
+                message.e3_id.clone(),
+                message.party_id,
+                message.kind,
+            )),
+            InterfoldEventData::DecryptionshareCreated(share) => {
+                Some(Self::DecryptionShare(share.e3_id.clone(), share.party_id))
+            }
+            _ => None,
+        }
+    }
+
     fn e3_id(&self) -> &E3id {
         match self {
             Self::Dkg(e3_id, ..) | Self::DecryptionShare(e3_id, _) => e3_id,
@@ -198,6 +220,8 @@ impl NetSyncManager {
             rebroadcast_started: false,
             peer_history_optional: false,
             announcements: HashMap::new(),
+            ended_e3s: VecDeque::new(),
+            replay_finished: false,
         }
     }
 }

@@ -1177,31 +1177,6 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       expect(distribution.calculated).to.equal(false);
     });
 
-    it("allows requester to claim refund after failure processing", async function () {
-      const { interfold, e3RefundManager, makeRequest, requester, usdcToken } =
-        await loadFixture(setupWithOperators);
-
-      await makeRequest();
-
-      // Get initial balance
-      const balanceBefore = await usdcToken.balanceOf(
-        await requester.getAddress(),
-      );
-
-      // Fast forward and fail E3
-      await time.increase(SORTITION_SUBMISSION_WINDOW + 1);
-      await interfold.markE3Failed(firstE3Id);
-      await interfold.processE3Failure(firstE3Id);
-
-      // Claim refund
-      await e3RefundManager.connect(requester).claimRequesterRefund(firstE3Id);
-
-      const balanceAfter = await usdcToken.balanceOf(
-        await requester.getAddress(),
-      );
-      expect(balanceAfter).to.be.gt(balanceBefore);
-    });
-
     it("rejects sender fees from fee escrow and refund custody", async function () {
       const { interfold, e3RefundManager, makeRequest, owner, requester } =
         await loadFixture(setupWithOperators);

@@ -20,16 +20,17 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<InterfoldEvent>
                 if self.provider.chain_id() == data.e3_id.chain_id()
                     && is_slashable_outcome(&data.outcome)
                 {
-                    if let Some(recovery) = self.recovery.as_mut() {
-                        if let Err(error) = recovery.try_mutate(&event_context, |mut recovery| {
-                            recovery.record(data.clone())?;
-                            Ok(recovery)
-                        }) {
-                            self.bus.with_ec(&event_context).err(EType::Evm, error);
-                            return;
+                    let recovery = &mut self.recovery;
+                    let decision = self.submissions.record_and_admit(data.clone(), |event| {
+                        if let Some(recovery) = recovery.as_mut() {
+                            recovery.try_mutate(&event_context, |mut recovery| {
+                                recovery.record(event.clone())?;
+                                Ok(recovery)
+                            })?;
                         }
-                    }
-                    match self.submissions.admit(data.clone()) {
+                        Ok(())
+                    });
+                    match decision {
                         Ok((key, SlashSubmissionDecision::Submit)) => {
                             ctx.notify(SubmitSlashIntent { key, event: data });
                         }
@@ -39,7 +40,7 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<InterfoldEvent>
                         Ok((_, SlashSubmissionDecision::IgnoreDuplicate)) => {
                             info!(e3_id = %data.e3_id, "Ignored duplicate slash intent");
                         }
-                        Err(error) => self.bus.err(EType::Evm, error),
+                        Err(error) => self.bus.with_ec(&event_context).err(EType::Evm, error),
                     }
                 }
             }

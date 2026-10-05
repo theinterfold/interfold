@@ -384,6 +384,10 @@ jobs:
       - name: Compile contracts for ABI catalog tests
         run: pnpm evm:build
 
+      - name: Check the committed contract artifacts against the build
+        if: matrix.suite == 'lib'
+        run: pnpm check:bindings
+
       - name: Install cargo-nextest
         uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
         with:
@@ -399,11 +403,11 @@ jobs:
         if: matrix.suite == 'doc'
         run: cargo test --doc
 
-      # The entrypoint guard and older-schema tests are their own test targets, and the CLI tests are
-      # in the `interfold` binary, so the library run skips them.
+      # The library run skips the entrypoint integration tests, the CLI binary tests, and the CLI
+      # secret-input integration tests.
       - name: Run the entrypoint guard and older-schema tests and the CLI tests
         if: matrix.suite == 'doc'
-        run: cargo nextest run -p e3-entrypoint --test reset_data_guard --test purge_guard --test validate_older_schema -p e3-cli --bins
+        run: cargo nextest run -p e3-entrypoint --test reset_data_guard --test purge_guard --test validate_older_schema -p e3-cli --bins --test cli_secrets
 
       # `parallel` is off by default, so the library tests compile the sequential fallback of
       # `recompute_commitments` and the rayon body of that function ships untested. This step is
@@ -562,6 +566,7 @@ jobs:
         run: |
           test -f .ci-noir/circuits/insecure-512/minimum/default/dkg/pk/pk.json
           test -f .ci-noir/circuits/secure-8192/minimum/default/dkg/pk/pk.json
+          pnpm tsx scripts/circuit-artifacts.ts checksums --dir .ci-noir/circuits
           mkdir -p "$RUNNER_TEMP/circuit-release"
           tar -czf "$RUNNER_TEMP/circuit-release/circuits-candidate.tar.gz" \
             -C .ci-noir circuits
@@ -576,6 +581,7 @@ jobs:
         env:
           E3_TEST_CIRCUITS_DOWNLOAD_URL: http://127.0.0.1:8123/circuits-candidate.tar.gz
         run: |
+          export E3_TEST_CIRCUITS_SHA256=$(sha256sum "$RUNNER_TEMP/circuit-release/circuits-candidate.tar.gz" | cut -d ' ' -f1)
           python3 -m http.server 8123 --bind 127.0.0.1 --directory "$RUNNER_TEMP/circuit-release" >"$RUNNER_TEMP/circuit-server.log" 2>&1 &
           SERVER_PID=$!
           trap 'kill "$SERVER_PID"' EXIT
@@ -1253,7 +1259,8 @@ jobs:
         working-directory: ./examples/CRISP
         run: |
           tar -C "$GITHUB_WORKSPACE/dist" -czf "$RUNNER_TEMP/circuits-candidate.tar.gz" circuits/
-          interfold noir setup --circuits-archive "$RUNNER_TEMP/circuits-candidate.tar.gz"
+          interfold noir setup --circuits-archive "$RUNNER_TEMP/circuits-candidate.tar.gz" \
+            --circuits-configuration insecure-512/minimum
           interfold noir setup
 
       - name: Run Playwright tests
@@ -1543,6 +1550,9 @@ jobs:
       - name: Run ZK prover e2e tests
         run: cargo test -p e3-zk-prover --test local_e2e_tests -- --nocapture --test-threads=1
 
+      - name: Verify C0 recovery after local verifier errors
+        run: cargo test -p e3-zk-prover --lib c0_local_verifier_failures_retry_without_peer_blame -- --nocapture
+
       - name: Verify fold accumulators and the correlated node proof
         timeout-minutes: 30
         run:
@@ -1812,7 +1822,8 @@ jobs:
         working-directory: ./templates/default
         run: |
           tar -C "$GITHUB_WORKSPACE/dist" -czf "$RUNNER_TEMP/circuits-candidate.tar.gz" circuits/
-          interfold noir setup --circuits-archive "$RUNNER_TEMP/circuits-candidate.tar.gz"
+          interfold noir setup --circuits-archive "$RUNNER_TEMP/circuits-candidate.tar.gz" \
+            --circuits-configuration insecure-512/minimum
           interfold noir setup
 
       - name: Verify downloaded artifacts

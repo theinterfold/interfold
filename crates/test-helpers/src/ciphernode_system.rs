@@ -19,8 +19,6 @@ use tracing::info;
 // This type allows us to store various dynamic async callbacks
 type SetupFn<'a> =
     Box<dyn Fn() -> Pin<Box<dyn Future<Output = Result<CiphernodeHandle>> + 'a>> + 'a>;
-type ThenFn<'a> =
-    Box<dyn Fn(&CiphernodeHandle) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> + 'a>;
 
 /// This builds a ciphernode system using the actor model only. This helps us simulate the network
 /// in tests that we can run in the /crates/tests crate
@@ -38,7 +36,6 @@ type ThenFn<'a> =
 pub struct CiphernodeSystemBuilder<'a> {
     // Various groups with different setup functions
     groups: Vec<(u32, SetupFn<'a>)>,
-    thens: Vec<ThenFn<'a>>,
     simulate: bool,
 }
 
@@ -52,7 +49,6 @@ impl<'a> CiphernodeSystemBuilder<'a> {
     pub fn new() -> Self {
         Self {
             groups: Vec::new(),
-            thens: Vec::new(),
             simulate: false,
         }
     }
@@ -95,12 +91,6 @@ impl<'a> CiphernodeSystemBuilder<'a> {
         } else {
             None
         };
-
-        for then_fn in self.thens {
-            for node in nodes.iter() {
-                then_fn(node).await?;
-            }
-        }
 
         Ok(CiphernodeSystem {
             nodes,
@@ -188,11 +178,6 @@ impl CiphernodeSystem {
         Ok(CiphernodeHistory(history))
     }
 
-    pub async fn take_history(&self, index: usize, count: usize) -> Result<CiphernodeHistory> {
-        self.take_history_with_timeout(index, count, Duration::from_millis(4000))
-            .await
-    }
-
     /// expect events to fire with the default timeout 1000sec per event
     pub async fn expect_events(&self, expected: &[&str]) -> Result<CiphernodeHistory> {
         let h = self
@@ -208,59 +193,6 @@ impl CiphernodeSystem {
         println!(">> {:?} == {:?}", h.event_types(), expected.to_vec());
         h.expect(expected.to_vec());
         Ok(h)
-    }
-
-    pub async fn expect_events_without_timeout(
-        &self,
-        expected: &[&str],
-    ) -> Result<CiphernodeHistory> {
-        let h = self
-            .take_history_with_timeouts(0, expected.len(), None, None)
-            .await
-            .map_err(|e| anyhow::anyhow!("FAILURE: {expected:?} : {e}"))?;
-
-        println!(">> {:?} == {:?}", h.event_types(), expected.to_vec());
-        h.expect(expected.to_vec());
-        Ok(h)
-    }
-
-    pub async fn expect_events_with_timeouts(
-        &self,
-        expected: &[&str],
-        total_to: Duration,   // total
-        per_evt_to: Duration, // per event
-    ) -> Result<CiphernodeHistory> {
-        let start = Instant::now();
-        let h = self
-            .take_history_with_timeouts(0, expected.len(), Some(total_to), Some(per_evt_to))
-            .await
-            .map_err(|e| anyhow::anyhow!("FAILURE: {expected:?} : {e}"))?;
-        println!(">> {:?} == {:?}", h.event_types(), expected.to_vec());
-
-        info!(
-            "expectation take took {:?} for {:?} total_timeout={:?} per_evt_timeout={:?}",
-            start.elapsed(),
-            expected,
-            total_to,
-            per_evt_to
-        );
-        h.expect(expected.to_vec());
-        Ok(h)
-    }
-
-    pub async fn take_history_with_timeout(
-        &self,
-        index: usize,
-        count: usize,
-        total_to: Duration,
-    ) -> Result<CiphernodeHistory> {
-        self.take_history_with_timeouts(
-            index,
-            count,
-            Some(total_to),
-            Some(Duration::from_millis(1000)),
-        )
-        .await
     }
 
     pub async fn take_history_with_timeouts(
@@ -312,7 +244,7 @@ impl CiphernodeSystem {
 
     /// Collect events until one whose [`InterfoldEvent::event_type`] equals `last_event_type`
     /// (inclusive). Use when the pubkey flow ends with `PublicKeyAggregated` but a fixed
-    /// `take_history` count can stop too early while gossip duplicates inflate the multiset.
+    /// `take_history_with_timeouts` count can stop too early while gossip duplicates inflate the multiset.
     pub async fn take_history_until_last_event(
         &self,
         index: usize,
@@ -396,14 +328,6 @@ impl Deref for CiphernodeSystem {
 pub struct CiphernodeHistory(Vec<InterfoldEvent>);
 
 impl CiphernodeHistory {
-    pub fn filter_by_event_type(&self, event_type: String) -> Vec<InterfoldEvent> {
-        self.0
-            .iter()
-            .filter(|e| e.event_type() == event_type)
-            .cloned()
-            .collect()
-    }
-
     pub fn event_types(&self) -> Vec<String> {
         self.0.iter().map(|e| e.event_type()).collect()
     }

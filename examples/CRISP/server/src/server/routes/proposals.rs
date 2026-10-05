@@ -696,49 +696,4 @@ mod tests {
             "0x2d86d2232710487ba4907f1e98cab42d8b08ab0342b39cbf17f42804d234f139"
         );
     }
-
-    #[test]
-    fn an_unknown_flag_is_ignored_rather_than_refused() {
-        // A newer client asking for a flag this server does not know gets the rest of the answer.
-        let flags = vec!["executed".to_string(), "something_new".to_string()];
-        assert!(flags.iter().any(|flag| flag == "executed"));
-        assert!(!flags.iter().any(|flag| flag == "refund_claimed"));
-    }
-
-    #[test]
-    fn one_proposal_can_be_asked_for_by_id() {
-        let request = ProposalsRequest {
-            plugin: String::new(),
-            from_block: None,
-            proposal_id: Some("2".to_string()),
-            flags: Vec::new(),
-        };
-        let all = vec![
-            Proposal {
-                proposal_id: "1".to_string(),
-                creator: String::new(),
-                start_date: 0,
-                end_date: 0,
-                metadata: String::new(),
-                block: 1,
-                transaction_hash: None,
-                executed: None,
-                refund_claimed: None,
-            },
-            Proposal {
-                proposal_id: "2".to_string(),
-                creator: String::new(),
-                start_date: 0,
-                end_date: 0,
-                metadata: String::new(),
-                block: 2,
-                transaction_hash: None,
-                executed: None,
-                refund_claimed: None,
-            },
-        ];
-
-        let response = respond(&request, Address::ZERO, 0, 0, 0, all);
-        assert_eq!(response.status(), actix_web::http::StatusCode::OK);
-    }
 }

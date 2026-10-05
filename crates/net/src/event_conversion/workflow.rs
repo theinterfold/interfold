@@ -11,7 +11,7 @@ use e3_events::{
 };
 use e3_utils::ArcBytes;
 use serde::{Deserialize, Serialize};
-use tracing::{debug, info};
+use tracing::debug;
 
 use super::wire::{decode, MAX_DHT_DOCUMENT_BYTES};
 
@@ -103,8 +103,10 @@ impl EventConversionService {
             return Ok(None);
         }
         let target_party_id = msg.target_party_id;
-        info!(
-            "Publishing ThresholdShare from party {} for target party {} (E3 {})",
+        // Recovery converts every historical share too, so this is not a publication yet. The
+        // document publisher logs the publications that start.
+        debug!(
+            "Converted ThresholdShare from party {} for target party {} (E3 {})",
             msg.share.party_id, target_party_id, msg.e3_id
         );
         let e3_id = msg.e3_id.clone();
@@ -164,13 +166,7 @@ impl EventConversionService {
                 );
                 IncomingDocument::ThresholdShare(ThresholdShareCreated {
                     external: true,
-                    e3_id: evt.e3_id,
-                    share: evt.share,
-                    target_party_id: evt.target_party_id,
-                    signed_c2a_proof: evt.signed_c2a_proof,
-                    signed_c2b_proof: evt.signed_c2b_proof,
-                    signed_c3a_proofs: evt.signed_c3a_proofs,
-                    signed_c3b_proofs: evt.signed_c3b_proofs,
+                    ..evt
                 })
             }
             ReceivableDocument::EncryptionKeyCreated(evt) => {

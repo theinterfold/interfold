@@ -15,14 +15,14 @@ use e3_data::Persistable;
 use e3_events::DkgFoldAttestationContext;
 use e3_events::{
     prelude::*, AggregationInputsReady, AggregationPhase, AggregatorChanged, BusHandle,
-    CommitmentRosterSelected, ComputeRequest, ComputeRequestError, ComputeResponse,
-    ComputeResponseKind, CorrelationId, DKGRecursiveAggregationComplete, Die,
-    DkgAggregationRequest, E3Failed, E3Stage, E3id, EventContext, FailureReason, InterfoldEvent,
-    InterfoldEventData, KeyshareCreated, NodesFoldStepRequest, OrderedSet,
-    PkAggregationProofPending, PkAggregationProofRequest, PkAggregationProofSigned, Proof,
-    ProofType, PublicKeyAggregated, Sequenced, ShareVerificationComplete,
-    ShareVerificationDispatched, SignedProofFailed, SignedProofPayload, TypedEvent,
-    VerificationKind, ZkRequest, ZkResponse,
+    CommitmentRosterSelected, CommitteeMemberExcluded, CommitteeMemberExpelled, ComputeRequest,
+    ComputeRequestError, ComputeResponse, ComputeResponseKind, CorrelationId,
+    DKGRecursiveAggregationComplete, Die, DkgAggregationRequest, E3Failed, E3Stage, E3id,
+    EventContext, FailureReason, InterfoldEvent, InterfoldEventData, KeyshareCreated,
+    NodesFoldStepRequest, OrderedSet, PkAggregationProofPending, PkAggregationProofRequest,
+    PkAggregationProofSigned, Proof, ProofType, PublicKeyAggregated, Sequenced,
+    ShareVerificationComplete, ShareVerificationDispatched, SignedProofFailed, SignedProofPayload,
+    TypedEvent, VerificationKind, ZkRequest, ZkResponse,
 };
 use e3_events::{trap, EType};
 use e3_fhe::{Fhe, GetAggregatePublicKey};
@@ -52,6 +52,8 @@ pub struct PublicKeyAggregator {
     dkg_fold_attestation_context: Option<DkgFoldAttestationContext>,
     is_aggregator: bool,
     effects_enabled: bool,
+    /// Canonical publication is independent of this node's local DKG phase.
+    key_published: bool,
     /// C1 verification can finish during restart before replayed keyshares restore VerifyingC1.
     early_c1_verification: Option<(BTreeSet<u64>, TypedEvent<ShareVerificationComplete>)>,
     /// DKG recursive aggregation events received before entering GeneratingC5Proof.
@@ -67,6 +69,7 @@ pub struct PublicKeyAggregatorParams {
     pub dkg_fold_attestation_context: Option<DkgFoldAttestationContext>,
     pub recovery: Persistable<PublicKeyAggregatorRecoveryState>,
     pub initial_is_aggregator: bool,
+    pub initial_stage: E3Stage,
     pub effects_enabled: bool,
 }
 
@@ -78,7 +81,7 @@ impl PublicKeyAggregator {
         params: PublicKeyAggregatorParams,
         state: Persistable<PublicKeyAggregatorState>,
     ) -> Self {
-        PublicKeyAggregator {
+        let mut actor = PublicKeyAggregator {
             fhe: params.fhe,
             bus: params.bus,
             e3_id: params.e3_id,
@@ -89,9 +92,19 @@ impl PublicKeyAggregator {
             dkg_fold_attestation_context: params.dkg_fold_attestation_context,
             is_aggregator: params.initial_is_aggregator,
             effects_enabled: params.effects_enabled,
+            key_published: false,
             early_c1_verification: None,
             early_dkg_proofs: Vec::new(),
-        }
+        };
+        actor.observe_stage(&params.initial_stage);
+        actor
+    }
+
+    fn observe_stage(&mut self, stage: &E3Stage) {
+        self.key_published |= matches!(
+            stage,
+            E3Stage::KeyPublished | E3Stage::CiphertextReady | E3Stage::Complete
+        );
     }
 
     fn aggregation_inputs_ready(&self) -> bool {

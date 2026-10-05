@@ -54,7 +54,8 @@ impl AsBytesSerde for ArcBytes {
         &self.0
     }
     fn try_from_bytes(bytes: Vec<u8>) -> Result<Self, String> {
-        Ok(ArcBytes(Arc::new(bytes)))
+        // Shared bytes retain no spare capacity after their source vector is dropped.
+        Ok(ArcBytes(Arc::new(bytes.into_boxed_slice().into_vec())))
     }
 }
 
@@ -67,5 +68,21 @@ impl PartialOrd for ArcBytes {
 impl Ord for ArcBytes {
     fn cmp(&self, other: &Self) -> Ordering {
         self.0.as_slice().cmp(other.0.as_slice())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shared_bytes_release_spare_capacity() {
+        let mut bytes = vec![0x5a; 1024 * 1024];
+        bytes.truncate(1);
+        let shared = ArcBytes::try_from_bytes(bytes).unwrap();
+
+        assert_eq!(shared.as_bytes(), [0x5a]);
+        assert_eq!(shared.0.capacity(), shared.size());
+        assert_eq!(shared.clone().0.capacity(), shared.size());
     }
 }

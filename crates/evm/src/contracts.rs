@@ -507,5 +507,17 @@ sol! {
             uint256 oldValue,
             uint256 newValue
         );
+
+        event EligibilityConfigurationVersionUpdated(uint256 indexed version);
+
+        event BondingAssetConfigUpdated(
+            address indexed ticketToken,
+            address indexed ciphernodeBondToken,
+            uint256 ticketPrice,
+            uint256 requiredCiphernodeBond,
+            uint8 expectedTicketDecimals,
+            uint8 expectedCiphernodeBondDecimals,
+            uint64 indexed configurationVersion
+        );
     }
 }

@@ -43,7 +43,8 @@ async fn node_role_preflight_stamps_a_new_directory_and_refuses_the_other_role(
 async fn node_role_preflight_treats_an_unmarked_directory_as_a_full_node() -> anyhow::Result<()> {
     let system = EventSystem::new().with_fresh_bus();
     let repositories = Repositories::from(&system.store()?);
-    // A release without the role marker left a schema marker and a chain cursor, but no events.
+    // A directory from before this startup holds a schema marker and a chain cursor, but no role
+    // marker and no events.
     repositories
         .schema_version()
         .write_sync(&SCHEMA_VERSION)

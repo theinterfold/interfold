@@ -3,7 +3,7 @@
 //! Actix routing for local replay, remote sync requests, and readiness signals.
 
 use super::*;
-use e3_events::E3Stage;
+use e3_events::{E3Stage, HistoricalNetSyncFailed};
 
 impl Actor for NetSyncManager {
     type Context = actix::Context<Self>;
@@ -27,14 +27,15 @@ impl Handler<InterfoldEvent> for NetSyncManager {
                 // Capture the snapshot-cursor map so we can bound the post-restart re-broadcast of
                 // our own forwardable artifacts to the in-flight window (H3/H11).
                 self.rebroadcast_since = Some(data.since.clone().into_iter().collect());
+                self.finish_local_replay();
                 self.maybe_rebroadcast_own_artifacts(ctx);
                 ctx.notify(TypedEvent::new(data, ec));
             }
-            InterfoldEventData::DkgCoordination(data) => {
-                self.remember_dkg_coordination(original, &data);
+            InterfoldEventData::DkgCoordination(_) => {
+                self.remember_dkg_coordination(original);
             }
-            InterfoldEventData::DecryptionshareCreated(data) => {
-                self.remember_decryption_share(original, &data);
+            InterfoldEventData::DecryptionshareCreated(_) => {
+                self.remember_decryption_share(original);
             }
             InterfoldEventData::E3StageChanged(data) => {
                 if matches!(
@@ -47,9 +48,17 @@ impl Handler<InterfoldEvent> for NetSyncManager {
                     self.forget_dkg_coordination(&data.e3_id);
                 }
                 if data.new_stage.is_terminal() {
-                    self.forget_e3_announcements(&data.e3_id);
+                    // Only a stage change from the chain ends an E3 for good, as for documents.
+                    if original.source() == EventSource::Evm {
+                        self.mark_e3_ended(&data.e3_id);
+                    } else {
+                        self.forget_e3_announcements(&data.e3_id);
+                    }
                 }
             }
+            // `E3Failed` and `E3RequestComplete` can come from this node alone while the E3
+            // continues on chain. They stop the current re-sends, but a later message of the E3 is
+            // still re-sent.
             InterfoldEventData::E3Failed(data) => {
                 self.forget_e3_announcements(&data.e3_id);
             }
@@ -72,6 +81,7 @@ impl Handler<TypedEvent<HistoricalNetSyncStart>> for NetSyncManager {
         info!("HISTORICAL_NET_SYNC_START");
         let bus = self.bus.with_ec(msg.get_ctx());
         let event_context = msg.get_ctx().clone();
+        let failure = msg.failure.clone();
         let address = ctx.address();
         let fetch = handle_sync_request_event(
             self.tx.clone(),
@@ -82,10 +92,13 @@ impl Handler<TypedEvent<HistoricalNetSyncStart>> for NetSyncManager {
             self.network.clone(),
         );
         if !self.peer_history_optional {
-            return trap_fut(EType::Net, &bus, fetch);
+            return Box::pin(async move {
+                if let Err(error) = fetch.await {
+                    report_required_history_failure(&bus, failure, error);
+                }
+            });
         }
-        // Without history, startup would wait for its deadline. A node that uses no E3 history
-        // continues with none when no peer can serve it.
+        // A node that uses no E3 history continues with none when no peer can serve it.
         Box::pin(async move {
             let Err(error) = fetch.await else {
                 return;
@@ -101,6 +114,25 @@ impl Handler<TypedEvent<HistoricalNetSyncStart>> for NetSyncManager {
                 bus.err(EType::Net, anyhow::anyhow!("{error}"));
             }
         })
+    }
+}
+
+/// Startup cannot continue without the required history, so the failure goes back to the startup
+/// coordinator, which stops at once instead of at its deadline. The bus reports the failure only
+/// when no coordinator receives it.
+fn report_required_history_failure(
+    bus: &BusHandle,
+    failure: Option<Recipient<HistoricalNetSyncFailed>>,
+    error: anyhow::Error,
+) {
+    let reason = format!("{error:#}");
+    let delivered = failure.is_some_and(|recipient| {
+        recipient
+            .try_send(HistoricalNetSyncFailed { reason })
+            .is_ok()
+    });
+    if !delivered {
+        bus.err(EType::Net, error);
     }
 }
 

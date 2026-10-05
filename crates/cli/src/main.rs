@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use anyhow::Result;
+use clap::error::{ContextKind, ContextValue};
 use clap::Parser;
 use cli::{Cli, RemoteCli};
 use e3_console::Console;
@@ -70,7 +71,25 @@ pub async fn main() -> Result<()> {
     info!("COMPILATION ID: '{}'", helpers::compile_id::generate_id());
     let handle = Console::stdout();
     let out = handle.writer();
-    let cli = Cli::parse();
+    let cli = Cli::try_parse().unwrap_or_else(|mut error| {
+        let alternative = match error.get(ContextKind::InvalidArg) {
+            Some(ContextValue::String(arg)) => match arg.as_str() {
+                "--password" | "-p" => Some("--password-stdin"),
+                "--private-key" | "-k" => Some("--private-key-stdin"),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(alternative) = alternative {
+            error = clap::Error::raw(
+                error.kind(),
+                format!(
+                    "Secret command-line arguments are not supported. Use {alternative} or the interactive prompt."
+                ),
+            );
+        }
+        error.exit()
+    });
 
     let config_result = cli.load_config();
     let maybe_server = connect_daemon(config_result.as_ref().ok()).await;

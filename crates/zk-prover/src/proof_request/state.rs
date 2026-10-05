@@ -180,4 +180,5 @@ pub(crate) struct PendingShareDecryptionProof {
 #[derive(Clone, Debug)]
 pub(crate) struct PendingAggregationProof {
     pub(crate) ec: EventContext<Sequenced>,
+    pub(crate) request: e3_events::DecryptedSharesAggregationProofRequest,
 }

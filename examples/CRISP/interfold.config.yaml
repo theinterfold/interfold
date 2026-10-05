@@ -5,6 +5,7 @@ chains:
     enabled: true
     rpc_url: ws://localhost:8545
     ingestion_confirmations: 0
+    rpc_poll_interval_ms: 250
     data_availability:
       mode: mock_http
       rpc_url: http://127.0.0.1:4000/availability
@@ -35,11 +36,9 @@ chains:
       mode: avail
       rpc_url: "https://avail-rpc.publicnode.com/"
     contracts:
-      # CRISPProgram is not yet deployed on mainnet (packages/crisp-contracts/deployed_contracts.json
-      # has no mainnet entry). Fill in after `pnpm deploy:contracts --network mainnet`.
       e3_program:
-        address: "0x0000000000000000000000000000000000000000"
-        deploy_block: 0
+        address: "0x53FCdb21E73A461CfE6c64B19855204384B91BA3"
+        deploy_block: 25998868
       interfold:
         address: "0x28cF63B459e6218C69EA97ea7D90541cf648c715"
         deploy_block: 25786382

@@ -14,7 +14,29 @@ discover, or synchronize with each other. P2P encoding remains separate. Increas
 `GOSSIP_WIRE_MAJOR` or `SYNC_WIRE_MAJOR` when the corresponding wire format becomes incompatible
 within the same protocol version.
 
+The v0.19 DKG message layout requires storage schema 8, threshold-keyshare recovery schema 8, gossip
+wire major 5, and sync wire major 4. Both `ThresholdShareCreated` and `DecryptionKeyShared` include
+a dealer signature. Their event-log records, recovery inputs, and DHT payloads are incompatible with
+the unsigned layout. Protocol version 6 and node generation 2 remain the release cutover values.
+This change requires drain-and-resync; it has no layout migration.
+
 ## Compatible rolling release
+
+The release workflow packages the circuits before it compiles the binaries and ciphernode image.
+`download-circuits` exposes the uploaded archive's SHA-256 as a build input. `e3-zk-prover` embeds
+that pin for its crate version. Binary and image builds compare the pin in `interfold noir status`
+with the archive digest before publication. See `agent/invariants/04_BUILD_CONFIG.md` for the build
+dependency and Docker argument rules.
+
+Circuit installation checks every pair in `crates/zk-prover/supported-configurations.json` before it
+replaces the installed circuits and version record. Local and CI callers can explicitly request a
+nonempty subset. `noir setup --circuits-archive` accepts repeated `--circuits-configuration` options
+for this purpose. An archive cannot select its own required configuration set.
+
+If circuit replacement or the version update fails, the installer attempts rollback and returns the
+original installation error. It logs each failed rollback rename with its source and target paths.
+If the previous circuits cannot be restored, it retains the staging directory and logs its path for
+recovery.
 
 ```text
 build backward-compatible release
@@ -164,9 +186,13 @@ halts as an upgrade with no migration, newer state halts as a downgrade. A raise
 makes every populated data directory unloadable until the operator clears it. The older-schema halt
 names `interfold node reset-data`. The newer-schema halt names the newer release and the backup
 taken before the upgrade, because the reset guard of an older binary cannot read a newer store
-reliably. When the event logs decode with this binary, `interfold node validate` reports the same
-schema failure and skips the checks that read snapshots (`crates/entrypoint/src/validate.rs`). An
-event log that does not decode shows as unreadable, with no schema line.
+reliably. `inspect_persisted_schema_version` reads the marker through the raw key/value store before
+`EventSystem` opens logs or timestamp indexes. It checks unmarked log segments for data without
+decoding records. `interfold node validate` uses the same check before it reads or repairs logs
+(`crates/entrypoint/src/validate.rs`). An unsupported schema produces the schema failure even when
+its event bytes cannot decode. Validation skips all event and snapshot checks in that case. Each
+node that upgrades to v0.19.0 clears its state and syncs again from the chain history. The reset
+must use the v0.19.0 binary: `reset-data` in v0.18.0 and earlier has no key-share check.
 
 The operator key and the libp2p keypair live in the same key/value store as that state, under
 `//eth_private_key` and `//libp2p/keypair`. Deleting the data directory destroys the identity that
@@ -204,8 +230,13 @@ list, and it lists each such E3 with its stage, because the chain cannot restore
 `Failed` while the E3 can continue on chain. The check reads only whether a record exists and does
 not decode it, so it also protects a store that an older schema wrote. Both reads fail on a storage
 error, which the ordinary read path reports as an absent record, and a key that does not parse fails
-the check. `--allow-active-e3s` overrides the refusals
-(`crates/entrypoint/src/nodes/state_guard.rs`).
+the check. It also reads the slash writer state of each chain (`//evm_writers/slashing/`) and
+refuses while that state holds a slash report that the node has not submitted, also for an E3 that
+is `Complete`: completion does not settle a slash report, and the chain cannot restore its evidence.
+That state is decoded, and a record that does not decode fails the check, as does a record under any
+other key below that prefix. Both checks run before the command refuses, so one refusal lists the
+E3s and the slash reports. `nodes purge` runs the same check. `--allow-active-e3s` overrides the
+refusals (`crates/entrypoint/src/nodes/state_guard.rs`).
 
 The event log is not one file. `EventSystem::persisted` passes `config.log_file()` through
 `enumerate_path`, which inserts a per-aggregate index before the extension, so the durable logs are
@@ -241,10 +272,17 @@ bootstrap node, or the reverse, on the same data directory.
 append-only operational log written by `LogCollector`, never read back, and a reset leaves it in
 place.
 
-A schema raise is an upgrade-window action. `assertUpgradeWindow` already requires paused requests,
-zero active E3s, and zero unreleased committees, so no in-flight round loses state to this. The
+A schema raise needs an upgrade window. When a release also raises a required counter,
+`assertUpgradeWindow` requires paused requests, zero active E3s, and zero unreleased committees. A
+release that raises the schema but no required counter has no such on-chain check. Each operator
+resets a node only when the node serves no active E3. For each E3 that the refusal lists, the
+operator also waits until the block time passes its report deadline,
+`accusationSubmissionDeadline(e3Id)` on the `SlashingManager`. That value is
+`getE3LifecycleDeadline(e3Id)` plus one day. `SlashingEvidenceLib` rejects accusation evidence after
+it, for complete and failed E3s alike, and only a running node submits its slash reports. The
 command is not a general repair tool: a node in a live committee that resets loses its keyshare and
-fails that E3. The stage-map check refuses that case unless the operator overrides it.
+fails that E3. The stage-map check refuses that case unless the operator overrides it, and the
+slash-writer check refuses while the node holds a slash report that it has not submitted.
 
 ## Failure and rollback
 

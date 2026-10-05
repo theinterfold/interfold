@@ -53,7 +53,7 @@ fn execute(
     initial_witness: WitnessMap<FieldElement>,
 ) -> Result<WitnessStack<FieldElement>, ZkError> {
     let program = get_program(bytecode)?;
-    let blackbox_solver = Bn254BlackBoxSolver::default();
+    let blackbox_solver = Bn254BlackBoxSolver;
     let mut foreign_call_executor = DefaultForeignCallBuilder::default().build();
 
     execute_program(

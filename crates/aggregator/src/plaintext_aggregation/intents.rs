@@ -6,6 +6,54 @@ use super::*;
 use e3_zk_helpers::circuits::threshold::decrypted_shares_aggregation::MAX_MSG_NON_ZERO_COEFFS;
 use tracing::warn;
 
+/// Match C7's ordered commitments, one-based party IDs, and message to the selected C6 batch.
+pub(crate) fn c7_proofs_match_batch(
+    proofs: &[Proof],
+    c6: &[(u64, Vec<Proof>)],
+    plaintext: &[ArcBytes],
+    slots: usize,
+) -> bool {
+    use alloy::primitives::U256;
+    if proofs.len() != plaintext.len() || c6.len() < slots || slots == 0 {
+        return false;
+    }
+    let layout = CircuitName::ThresholdShareDecryption.output_layout();
+    proofs
+        .iter()
+        .zip(plaintext)
+        .enumerate()
+        .all(|(index, (proof, message))| {
+            if proof.circuit != CircuitName::DecryptedSharesAggregation
+                || proof.public_signals.len() != (2 * slots + MAX_MSG_NON_ZERO_COEFFS) * 32
+            {
+                return false;
+            }
+            let fields: Vec<_> = proof.public_signals.chunks_exact(32).collect();
+            for (slot, (party, shares)) in c6.iter().take(slots).enumerate() {
+                let Some(commitment) = shares
+                    .get(index)
+                    .and_then(|share| layout.extract_field(&share.public_signals, "d_commitment"))
+                else {
+                    return false;
+                };
+                if fields[slot] != commitment
+                    || fields[slots + slot]
+                        != (U256::from(*party) + U256::from(1)).to_be_bytes::<32>()
+                {
+                    return false;
+                }
+            }
+            let Ok(mut message) = e3_bfv_client::decode_bytes_to_vec_u64(message) else {
+                return false;
+            };
+            message.resize(MAX_MSG_NON_ZERO_COEFFS, 0);
+            fields[2 * slots..]
+                .iter()
+                .zip(message)
+                .all(|(field, value)| *field == U256::from(value).to_be_bytes::<32>())
+        })
+}
+
 /// Pad/truncate each decrypted plaintext limb to the fixed `MAX_MSG_NON_ZERO_COEFFS * 8`.
 pub(crate) fn format_decrypted_plaintext(plaintext: &[ArcBytes]) -> Vec<ArcBytes> {
     let len = MAX_MSG_NON_ZERO_COEFFS * 8;

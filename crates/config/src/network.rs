@@ -288,6 +288,8 @@ mod tests {
             finalization_ms: None,
             chain_id,
             ingestion_confirmations: None,
+            rpc_poll_interval_ms: None,
+            rpc_log_range_blocks: None,
             data_availability: None,
         }
     }

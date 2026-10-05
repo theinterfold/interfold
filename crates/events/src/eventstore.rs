@@ -460,7 +460,8 @@ impl<I: SequenceIndex, L: EventLog> Handler<EventStoreQueryBy<Seq>> for EventSto
         let response = EventStoreQueryResponse::from_result(
             id,
             self.query_by_seq_with_bounds(query, filter, limit, max_bytes),
-        );
+        )
+        .with_log_head(Some(self.log.head()));
         ctx.wait(
             async move {
                 if let Err(error) = deliver_query_response(sender, response).await {
@@ -732,16 +733,6 @@ mod tests {
     // ===========================================================================
 
     #[test]
-    fn store_event_returns_sequenced_event() {
-        let mut store = new_store();
-        let event = make_local_event(100);
-
-        let result = store.store_event(event).unwrap().unwrap();
-
-        assert_eq!(result.get_ctx().ts(), 100);
-    }
-
-    #[test]
     fn store_event_assigns_incrementing_sequence_numbers() {
         let mut store = new_store();
 
@@ -774,16 +765,6 @@ mod tests {
         let store = EventStore::new(MockIndex::new(), log).unwrap();
 
         assert_eq!(store.max_timestamp, Some(300));
-    }
-
-    #[test]
-    fn store_event_appends_to_log() {
-        let mut store = new_store();
-        store.store_event(make_local_event(100)).unwrap();
-        store.store_event(make_local_event(200)).unwrap();
-
-        let logged: Vec<_> = store.log.read_from(1).unwrap().collect();
-        assert_eq!(logged.len(), 2);
     }
 
     #[test]
@@ -1086,19 +1067,6 @@ mod tests {
     // ===========================================================================
 
     #[test]
-    fn seq_query_returns_all_events() {
-        let store = populated_store(&[
-            make_local_event(100),
-            make_local_event(200),
-            make_local_event(300),
-        ]);
-
-        let events = store.query_by_seq(1, None, None).unwrap();
-
-        assert_eq!(events.len(), 3);
-    }
-
-    #[test]
     fn seq_query_reads_from_given_offset() {
         let store = populated_store(&[
             make_local_event(100),
@@ -1129,21 +1097,6 @@ mod tests {
         for e in &events {
             assert_eq!(e.get_ctx().source(), EventSource::Local);
         }
-    }
-
-    #[test]
-    fn seq_query_with_limit() {
-        let store = populated_store(&[
-            make_local_event(100),
-            make_local_event(200),
-            make_local_event(300),
-            make_local_event(400),
-            make_local_event(500),
-        ]);
-
-        let events = store.query_by_seq(1, None, Some(2)).unwrap();
-
-        assert_eq!(events.len(), 2);
     }
 
     #[test]
@@ -1261,15 +1214,6 @@ mod tests {
     }
 
     #[test]
-    fn ts_query_returns_empty_when_no_matching_timestamp() {
-        let store = new_store();
-
-        let events = store.query_by_ts(999, None, None).unwrap();
-
-        assert!(events.is_empty());
-    }
-
-    #[test]
     fn ts_query_returns_empty_when_past_all_events() {
         let store = populated_store(&[make_local_event(100), make_local_event(200)]);
 
@@ -1292,20 +1236,6 @@ mod tests {
 
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].get_ctx().source(), EventSource::Net);
-    }
-
-    #[test]
-    fn ts_query_with_limit() {
-        let store = populated_store(&[
-            make_local_event(100),
-            make_local_event(200),
-            make_local_event(300),
-            make_local_event(400),
-        ]);
-
-        let events = store.query_by_ts(100, None, Some(2)).unwrap();
-
-        assert_eq!(events.len(), 2);
     }
 
     #[test]

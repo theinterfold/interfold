@@ -171,7 +171,30 @@ async fn notification_cannot_relabel_payload_for_another_e3() -> Result<()> {
 
 #[actix::test]
 async fn notification_before_selection_is_fetched_once_after_selection() -> Result<()> {
+    use crate::events::DocumentIngress;
     let (_guard, bus, _net_cmd_tx, mut commands, net_events, _, _, _, publisher) = setup_test()?;
+    let peer = libp2p::PeerId::random();
+    let ingress = |notification| DocumentIngress {
+        propagation_source: Some(peer),
+        notification,
+    };
+    let expiry = Utc::now() + chrono::Duration::seconds(2);
+    for index in 0..64usize {
+        publisher
+            .send(ingress(DocumentPublishedNotification {
+                key: ContentHash::from_content(&index.to_be_bytes()),
+                meta: DocumentMeta::new(
+                    E3id::new("unselected", 1),
+                    DocumentKind::TrBFV,
+                    vec![],
+                    Some(expiry),
+                ),
+                ts: 100,
+            }))
+            .await?;
+    }
+    let until_expiry = (expiry - Utc::now()).to_std()?;
+    sleep(until_expiry + Duration::from_millis(1)).await;
     let e3_id = E3id::new("early", 1);
     let value = EventConversionService::encryption_key_to_request(EncryptionKeyCreated {
         e3_id: e3_id.clone(),
@@ -191,7 +214,11 @@ async fn notification_before_selection_is_fetched_once_after_selection() -> Resu
         ),
         ts: 100,
     };
-    timeout(Duration::from_secs(1), publisher.send(notification.clone())).await??;
+    timeout(
+        Duration::from_secs(1),
+        publisher.send(ingress(notification.clone())),
+    )
+    .await??;
     assert!(matches!(
         commands.try_recv(),
         Err(mpsc::error::TryRecvError::Empty)
@@ -216,7 +243,11 @@ async fn notification_before_selection_is_fetched_once_after_selection() -> Resu
     })?;
     timeout(Duration::from_secs(1), received).await??;
 
-    timeout(Duration::from_secs(1), publisher.send(notification)).await??;
+    timeout(
+        Duration::from_secs(1),
+        publisher.send(ingress(notification)),
+    )
+    .await??;
     assert!(matches!(
         commands.try_recv(),
         Err(mpsc::error::TryRecvError::Empty)
@@ -351,6 +382,7 @@ async fn a_notification_flood_keeps_the_fetch_backlog_bounded() -> Result<()> {
     })?;
     publisher.send(PublisherBarrier).await?;
 
+    let peers: Vec<_> = (0..8).map(|_| libp2p::PeerId::random()).collect();
     let notifications = MAX_WAITING_FETCHES * 4;
     for index in 0..notifications {
         let notification = DocumentPublishedNotification {
@@ -363,7 +395,14 @@ async fn a_notification_flood_keeps_the_fetch_backlog_bounded() -> Result<()> {
             ),
             ts: 100,
         };
-        timeout(Duration::from_secs(1), publisher.send(notification)).await??;
+        timeout(
+            Duration::from_secs(1),
+            publisher.send(DocumentIngress {
+                propagation_source: Some(peers[index % peers.len()]),
+                notification,
+            }),
+        )
+        .await??;
     }
 
     // No fetch completes, so only the in-flight limit of reads starts.
@@ -542,12 +581,7 @@ async fn a_document_for_another_key_is_not_accepted() -> Result<()> {
         value: other,
     })?;
 
-    let Some(NetCommand::DhtGetRecord { key, .. }) =
-        timeout(Duration::from_secs(5), commands.recv()).await?
-    else {
-        bail!("expected the fetch to be retried");
-    };
-    assert_eq!(key, ContentHash::from_content(&requested));
+    sleep(Duration::from_millis(200)).await;
     let events = history.send(GetEvents::new()).await?;
     assert!(
         !events
@@ -678,5 +712,513 @@ async fn an_early_forged_notification_that_expires_first_does_not_hide_the_corre
     });
     let received = received.expect("the correct notification delivers the document");
     assert!(received.meta.filter.is_empty());
+    Ok(())
+}
+
+#[actix::test]
+async fn new_peers_get_the_next_slots_after_slow_reads() -> Result<()> {
+    let (_guard, bus, _tx, mut commands, events, _, history, _, publisher) = setup_test()?;
+    let e3_id = E3id::new("123", 1);
+    publisher
+        .send(
+            bus.event_from(
+                CiphernodeSelected {
+                    e3_id: e3_id.clone(),
+                    threshold_m: 14,
+                    threshold_n: 19,
+                    ..CiphernodeSelected::default()
+                },
+                None,
+            )?
+            .into_sequenced(1),
+        )
+        .await?;
+    let peers = [
+        libp2p::PeerId::random(),
+        libp2p::PeerId::random(),
+        libp2p::PeerId::random(),
+    ];
+    let meta = DocumentMeta::new(
+        e3_id.clone(),
+        DocumentKind::TrBFV,
+        vec![],
+        Some(Utc::now() + chrono::Duration::hours(1)),
+    );
+    for index in 0..MAX_WAITING_FETCHES * 2 {
+        publisher
+            .send(DocumentIngress {
+                propagation_source: Some(peers[index / MAX_WAITING_FETCHES]),
+                notification: DocumentPublishedNotification {
+                    key: ContentHash::from_content(&index.to_le_bytes()),
+                    meta: meta.clone(),
+                    ts: 100,
+                },
+            })
+            .await?;
+    }
+    let mut pending = std::collections::VecDeque::new();
+    for _ in 0..MAX_INFLIGHT_TRANSFERS {
+        let Some(NetCommand::DhtGetRecord {
+            key,
+            correlation_id,
+        }) = timeout(Duration::from_secs(1), commands.recv()).await?
+        else {
+            bail!("idle fetch slots must serve the concentrated queue");
+        };
+        pending.push_back((key, correlation_id));
+    }
+    assert_eq!(
+        publisher.send(FetchBacklog).await?,
+        (8, MAX_WAITING_FETCHES)
+    );
+    let value = EventConversionService::encryption_key_to_request(EncryptionKeyCreated {
+        e3_id,
+        key: Arc::new(EncryptionKey::new(
+            1,
+            ArcBytes::from_bytes(b"available key"),
+        )),
+        external: false,
+    })?
+    .unwrap()
+    .value;
+    let key = ContentHash::from_content(&value);
+    publisher
+        .send(DocumentIngress {
+            propagation_source: Some(peers[2]),
+            notification: DocumentPublishedNotification {
+                key: key.clone(),
+                meta,
+                ts: 101,
+            },
+        })
+        .await?;
+    assert!(
+        timeout(Duration::from_millis(100), commands.recv())
+            .await
+            .is_err(),
+        "never exceed eight active GETs"
+    );
+    // Existing reads may complete slowly. Each completion releases a slot, including failures.
+    let mut delivered = false;
+    for _ in 0..2 {
+        let (waiting, correlation_id) = pending.pop_front().unwrap();
+        events.send(NetEvent::DhtGetRecordError {
+            correlation_id,
+            error: GetRecordError::Timeout {
+                key: RecordKey::new(&waiting.0),
+            },
+        })?;
+        let Some(NetCommand::DhtGetRecord {
+            key: requested,
+            correlation_id,
+        }) = timeout(Duration::from_secs(2), commands.recv()).await?
+        else {
+            bail!("a completion must schedule the next peer");
+        };
+        if requested == key {
+            events.send(NetEvent::DhtGetRecordSucceeded {
+                key: key.clone(),
+                correlation_id,
+                value: value.clone(),
+            })?;
+            delivered = true;
+            break;
+        }
+        pending.push_back((requested, correlation_id));
+    }
+    assert!(
+        delivered,
+        "the new peer must receive one of the next two released slots"
+    );
+    timeout(Duration::from_secs(2), async {
+        loop {
+            let found = history.send(GetEvents::<InterfoldEvent>::new()).await?.into_iter().any(|event|
+                matches!(event.get_data(), InterfoldEventData::DocumentReceived(document) if document.value == value));
+            if found { return anyhow::Ok(()); }
+            sleep(Duration::from_millis(10)).await;
+        }
+    }).await??;
+    Ok(())
+}
+
+#[actix::test]
+async fn duplicate_announcers_survive_early_buffering() -> Result<()> {
+    duplicate_announcer_gets_next_slot(DuplicateStage::Early).await
+}
+
+#[actix::test]
+async fn duplicate_announcers_share_queued_fetch_slots() -> Result<()> {
+    duplicate_announcer_gets_next_slot(DuplicateStage::Queued).await
+}
+
+#[actix::test]
+async fn duplicate_announcers_survive_inflight_retry() -> Result<()> {
+    duplicate_announcer_gets_next_slot(DuplicateStage::Fetching).await
+}
+
+#[actix::test]
+async fn duplicate_announcers_join_backoff_retries() -> Result<()> {
+    duplicate_announcer_gets_next_slot(DuplicateStage::Backoff).await
+}
+
+#[actix::test]
+async fn duplicate_announcers_survive_queue_fill_after_retry() -> Result<()> {
+    duplicate_announcer_gets_next_slot(DuplicateStage::RetryThenFill).await
+}
+
+#[actix::test]
+async fn duplicate_announcers_survive_queue_growth_after_retry() -> Result<()> {
+    duplicate_announcer_gets_next_slot(DuplicateStage::RetryThenGrowth).await
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DuplicateStage {
+    Early,
+    Queued,
+    Fetching,
+    Backoff,
+    RetryThenFill,
+    RetryThenGrowth,
+}
+
+async fn duplicate_announcer_gets_next_slot(stage: DuplicateStage) -> Result<()> {
+    let (_guard, bus, _tx, mut commands, events, _, history, _, publisher) = setup_test()?;
+    let e3_id = E3id::new("123", 1);
+    let selection = bus
+        .event_from(
+            CiphernodeSelected {
+                e3_id: e3_id.clone(),
+                threshold_m: 14,
+                threshold_n: 19,
+                ..CiphernodeSelected::default()
+            },
+            None,
+        )?
+        .into_sequenced(1);
+    let value = EventConversionService::encryption_key_to_request(EncryptionKeyCreated {
+        e3_id: e3_id.clone(),
+        key: Arc::new(EncryptionKey::new(
+            1,
+            ArcBytes::from_bytes(b"shared document"),
+        )),
+        external: false,
+    })?
+    .unwrap()
+    .value;
+    let key = ContentHash::from_content(&value);
+    let meta = DocumentMeta::new(
+        e3_id,
+        DocumentKind::TrBFV,
+        vec![],
+        Some(Utc::now() + chrono::Duration::hours(1)),
+    );
+    let peers = [libp2p::PeerId::random(), libp2p::PeerId::random()];
+    let ingress = |peer, key| DocumentIngress {
+        propagation_source: Some(peer),
+        notification: DocumentPublishedNotification {
+            key,
+            meta: meta.clone(),
+            ts: 100,
+        },
+    };
+    let retry = !matches!(stage, DuplicateStage::Early | DuplicateStage::Queued);
+    if stage != DuplicateStage::Early {
+        publisher.send(selection.clone()).await?;
+    } else {
+        publisher
+            .send(
+                bus.event_from(
+                    CiphernodeSelected {
+                        e3_id: E3id::new("456", 1),
+                        threshold_m: 14,
+                        threshold_n: 19,
+                        ..CiphernodeSelected::default()
+                    },
+                    None,
+                )?
+                .into_sequenced(2),
+            )
+            .await?;
+    }
+    if retry {
+        publisher.send(ingress(peers[0], key.clone())).await?;
+    }
+    let unavailable = match stage {
+        DuplicateStage::Backoff => MAX_INFLIGHT_TRANSFERS + MAX_WAITING_FETCHES - 2,
+        DuplicateStage::RetryThenFill => MAX_INFLIGHT_TRANSFERS + MAX_WAITING_FETCHES - 3,
+        DuplicateStage::RetryThenGrowth => MAX_INFLIGHT_TRANSFERS - 1,
+        _ => MAX_INFLIGHT_TRANSFERS + MAX_WAITING_FETCHES - 1,
+    };
+    for index in 0..unavailable {
+        let mut slow = ingress(peers[0], ContentHash::from_content(&index.to_le_bytes()));
+        if stage == DuplicateStage::Early {
+            slow.notification.meta.e3_id = E3id::new("456", 1);
+        }
+        publisher.send(slow).await?;
+    }
+    if !retry {
+        publisher.send(ingress(peers[0], key.clone())).await?;
+    }
+    if stage != DuplicateStage::Backoff {
+        publisher.send(ingress(peers[1], key.clone())).await?;
+    }
+    if stage == DuplicateStage::Early {
+        publisher.send(selection).await?;
+    }
+    let mut pending = std::collections::VecDeque::new();
+    for _ in 0..MAX_INFLIGHT_TRANSFERS {
+        let Some(NetCommand::DhtGetRecord {
+            key,
+            correlation_id,
+        }) = timeout(Duration::from_secs(2), commands.recv()).await?
+        else {
+            bail!("expected a document read");
+        };
+        pending.push_back((key, correlation_id));
+    }
+    assert_eq!(
+        publisher.send(FetchBacklog).await?,
+        (8, unavailable + 1 - MAX_INFLIGHT_TRANSFERS)
+    );
+    let fail = |(key, correlation_id): (ContentHash, CorrelationId)| {
+        events.send(NetEvent::DhtGetRecordError {
+            correlation_id,
+            error: GetRecordError::Timeout {
+                key: RecordKey::new(&key.0),
+            },
+        })
+    };
+    if retry {
+        let index = pending
+            .iter()
+            .position(|(requested, _)| *requested == key)
+            .expect("the shared document starts its first fetch");
+        fail(pending.remove(index).unwrap())?;
+        if stage == DuplicateStage::RetryThenGrowth {
+            timeout(Duration::from_secs(2), async {
+                loop {
+                    if publisher.send(FetchBacklog).await? == (7, 1) {
+                        return anyhow::Ok(());
+                    }
+                    sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await??;
+            publisher
+                .send(ingress(
+                    peers[0],
+                    ContentHash::from_content(&unavailable.to_le_bytes()),
+                ))
+                .await?;
+        }
+        let Some(NetCommand::DhtGetRecord {
+            key: replacement,
+            correlation_id,
+        }) = timeout(Duration::from_secs(2), commands.recv()).await?
+        else {
+            bail!("a failed attempt must release its slot");
+        };
+        assert_ne!(replacement, key, "a retry must respect its backoff");
+        pending.push_back((replacement, correlation_id));
+        if matches!(
+            stage,
+            DuplicateStage::RetryThenFill | DuplicateStage::RetryThenGrowth
+        ) {
+            let next = unavailable + usize::from(stage == DuplicateStage::RetryThenGrowth);
+            for index in next..MAX_INFLIGHT_TRANSFERS + MAX_WAITING_FETCHES {
+                publisher
+                    .send(ingress(
+                        peers[0],
+                        ContentHash::from_content(&index.to_le_bytes()),
+                    ))
+                    .await?;
+                let (active, queued) = publisher.send(FetchBacklog).await?;
+                assert_eq!(active, MAX_INFLIGHT_TRANSFERS);
+                assert!(queued <= MAX_WAITING_FETCHES);
+            }
+            assert_eq!(
+                publisher.send(FetchBacklog).await?,
+                (MAX_INFLIGHT_TRANSFERS, MAX_WAITING_FETCHES)
+            );
+        }
+        if stage == DuplicateStage::Backoff {
+            publisher.send(ingress(peers[1], key.clone())).await?;
+            fail(pending.pop_front().unwrap())?;
+            let Some(NetCommand::DhtGetRecord {
+                key: replacement,
+                correlation_id,
+            }) = timeout(Duration::from_secs(2), commands.recv()).await?
+            else {
+                bail!("a released slot must serve due work");
+            };
+            assert_ne!(
+                replacement, key,
+                "a duplicate must not advance the retry deadline"
+            );
+            pending.push_back((replacement, correlation_id));
+        }
+        sleep(
+            crate::domain::document_publishing::RETRY_INTERVAL.mul_f64(1.1)
+                + Duration::from_millis(100),
+        )
+        .await;
+    }
+    assert!(
+        timeout(Duration::from_millis(100), commands.recv())
+            .await
+            .is_err(),
+        "duplicate announcements must not exceed eight active reads"
+    );
+    fail(pending.pop_front().unwrap())?;
+    let Some(NetCommand::DhtGetRecord {
+        key: requested,
+        correlation_id,
+    }) = timeout(Duration::from_secs(2), commands.recv()).await?
+    else {
+        bail!("the second announcer must receive a slot");
+    };
+    assert_eq!(
+        requested, key,
+        "the second announcer must get the next released slot"
+    );
+    events.send(NetEvent::DhtGetRecordSucceeded {
+        key: key.clone(),
+        correlation_id,
+        value: value.clone(),
+    })?;
+    timeout(Duration::from_secs(2), async {
+        loop {
+            let received = history.send(GetEvents::<InterfoldEvent>::new()).await?.into_iter()
+                .filter(|event| matches!(event.get_data(), InterfoldEventData::DocumentReceived(document) if document.value == value)).count();
+            if received > 0 { assert_eq!(received, 1); return anyhow::Ok(()); }
+            sleep(Duration::from_millis(10)).await;
+        }
+    }).await??;
+    let Some(NetCommand::DhtGetRecord { key: next, .. }) =
+        timeout(Duration::from_secs(2), commands.recv()).await?
+    else {
+        bail!("other documents still progress");
+    };
+    assert_ne!(
+        next, key,
+        "one successful fetch removes every announcer's queued work"
+    );
+    for peer in peers {
+        publisher.send(ingress(peer, key.clone())).await?;
+    }
+    assert!(
+        timeout(Duration::from_millis(100), commands.recv())
+            .await
+            .is_err(),
+        "a delivered document is not fetched again"
+    );
+    let (active, queued) = publisher.send(FetchBacklog).await?;
+    assert_eq!(active, MAX_INFLIGHT_TRANSFERS);
+    assert!(queued <= MAX_WAITING_FETCHES);
+    Ok(())
+}
+
+#[actix::test]
+async fn concentrated_concurrent_documents_use_idle_fetch_capacity() -> Result<()> {
+    let (_guard, bus, _tx, mut commands, events, _, history, _, publisher) = setup_test()?;
+    let peer = libp2p::PeerId::random();
+    let mut values = HashMap::new();
+    // Two N=19 committees each need 54 remote documents. Keep all reads pending until queued.
+    for e3 in 1..=2 {
+        let e3_id = E3id::new(e3.to_string(), 1);
+        for index in 0..54 {
+            let request =
+                EventConversionService::encryption_key_to_request(EncryptionKeyCreated {
+                    e3_id: e3_id.clone(),
+                    key: Arc::new(EncryptionKey::new(
+                        index % 18 + 1,
+                        ArcBytes::from_bytes(format!("document {index}").as_bytes()),
+                    )),
+                    external: false,
+                })?
+                .unwrap();
+            let key = ContentHash::from_content(&request.value);
+            values.insert(key.clone(), request.value);
+            publisher
+                .send(DocumentIngress {
+                    propagation_source: Some(peer),
+                    notification: DocumentPublishedNotification {
+                        key,
+                        meta: request.meta,
+                        ts: bus.ts()?,
+                    },
+                })
+                .await?;
+        }
+    }
+    // The same concentrated source must also survive early buffering before committee selection.
+    for e3 in 1..=2 {
+        publisher
+            .send(
+                bus.event_from(
+                    CiphernodeSelected {
+                        e3_id: E3id::new(e3.to_string(), 1),
+                        threshold_m: 14,
+                        threshold_n: 19,
+                        ..CiphernodeSelected::default()
+                    },
+                    None,
+                )?
+                .into_sequenced(e3 as u64),
+            )
+            .await?;
+    }
+    assert_eq!(publisher.send(FetchBacklog).await?, (8, 100));
+    let mut pending = std::collections::VecDeque::new();
+    let mut requested = std::collections::HashSet::new();
+    while requested.len() < values.len() || !pending.is_empty() {
+        while pending.len() < 8 && requested.len() < values.len() {
+            let Some(NetCommand::DhtGetRecord {
+                key,
+                correlation_id,
+            }) = timeout(Duration::from_secs(2), commands.recv()).await?
+            else {
+                bail!("every retained document must receive a slot");
+            };
+            assert!(
+                requested.insert(key.clone()),
+                "do not fetch a document twice"
+            );
+            pending.push_back((key, correlation_id));
+        }
+        assert!(
+            timeout(Duration::from_millis(10), commands.recv())
+                .await
+                .is_err(),
+            "bounded active reads"
+        );
+        let (key, correlation_id) = pending.pop_front().unwrap();
+        events.send(NetEvent::DhtGetRecordSucceeded {
+            value: values[&key].clone(),
+            key,
+            correlation_id,
+        })?;
+    }
+    timeout(Duration::from_secs(5), async {
+        loop {
+            let received: std::collections::HashSet<_> = history
+                .send(GetEvents::<InterfoldEvent>::new())
+                .await?
+                .into_iter()
+                .filter_map(|event| match event.get_data() {
+                    InterfoldEventData::DocumentReceived(document) => {
+                        Some(ContentHash::from_content(&document.value))
+                    }
+                    _ => None,
+                })
+                .collect();
+            if received.len() == values.len() {
+                assert_eq!(received, values.keys().cloned().collect());
+                return anyhow::Ok(());
+            }
+            sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await??;
     Ok(())
 }

@@ -31,7 +31,9 @@ mod transitions;
 #[path = "validation.rs"]
 mod validation;
 
-pub(crate) use intents::{build_decryption_aggregation_jobs, format_decrypted_plaintext};
+pub(crate) use intents::{
+    build_decryption_aggregation_jobs, c7_proofs_match_batch, format_decrypted_plaintext,
+};
 pub use state::{
     Collecting, Complete, Computing, GeneratingC7Proof, QueuedDecryptionShare,
     ThresholdPlaintextAggregatorRecoveryState, ThresholdPlaintextAggregatorState, VerifyingC6,

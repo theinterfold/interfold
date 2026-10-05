@@ -16,17 +16,46 @@ use actix::prelude::*;
 use anyhow::{anyhow, ensure, Result};
 use e3_data::{AutoPersist, Persistable, Repository};
 use e3_events::{
-    prelude::*, trap, BondOwnerSetAt, CiphernodeAdded, CiphernodeRemoved, Committee,
-    CommitteeFinalized, CommitteeMemberExcluded, CommitteeMemberExpelled, CommitteeRequested,
-    ConfigurationUpdatedAt, E3Failed, E3RequestComplete, E3Requested, E3Stage, E3StageChanged,
-    EType, EffectsEnabled, EventContext, EventType, InterfoldEvent, OperatorActivationChangedAt,
-    PlaintextOutputPublished, Seed, Sequenced, TicketBalanceUpdatedAt, TicketGenerated, TypedEvent,
+    prelude::*, trap, BondOwnerSetAt, BondingAssetConfigUpdatedAt, CiphernodeAdded,
+    CiphernodeRemoved, Committee, CommitteeFinalized, CommitteeMemberExcluded,
+    CommitteeMemberExpelled, CommitteeRequested, ConfigurationUpdatedAt, E3Failed,
+    E3RequestComplete, E3Requested, E3Stage, E3StageChanged, EType, EffectsEnabled,
+    EligibilityConfigurationVersionUpdatedAt, EventContext, EventType, InterfoldEvent,
+    OperatorActivationChangedAt, PlaintextOutputPublished, Seed, Sequenced, TicketBalanceUpdatedAt,
+    TicketGenerated, TypedEvent,
 };
 use e3_events::{BusHandle, E3id, InterfoldEventData};
 use e3_utils::{NotifySync, MAILBOX_LIMIT};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use tracing::{info, instrument, warn};
+
+/// Events that build sortition state. The actor subscribes to them when it attaches, so that
+/// EventStore replay reaches it before effects start. Every event that `NodeRegistry` reads
+/// belongs here. `E3Requested` does not: the actor subscribes to it only at `EffectsEnabled`, so
+/// that replayed requests do not generate tickets.
+pub(crate) const STATE_EVENTS: &[EventType] = &[
+    EventType::CiphernodeAdded,
+    EventType::CiphernodeRemoved,
+    EventType::BondOwnerSetAt,
+    EventType::AdmissionUpdated,
+    EventType::EvmLogObserved,
+    EventType::TicketBalanceUpdatedAt,
+    EventType::TicketGenerated,
+    EventType::OperatorActivationChangedAt,
+    EventType::ConfigurationUpdatedAt,
+    EventType::EligibilityConfigurationVersionUpdatedAt,
+    EventType::BondingAssetConfigUpdatedAt,
+    EventType::CommitteeRequested,
+    EventType::PlaintextOutputPublished,
+    EventType::CommitteeFinalized,
+    EventType::CommitteeMemberExpelled,
+    EventType::CommitteeMemberExcluded,
+    EventType::E3Failed,
+    EventType::E3StageChanged,
+    EventType::E3RequestComplete,
+    EventType::EffectsEnabled,
+];
 
 /// Sortition actor that manages the sortition algorithm and the node state.
 pub struct Sortition {
@@ -251,29 +280,7 @@ impl Sortition {
         .start();
 
         // Subscribe to state-building events immediately (needed during EventStore replay)
-        bus.subscribe_all(
-            &[
-                EventType::CiphernodeAdded,
-                EventType::CiphernodeRemoved,
-                EventType::BondOwnerSetAt,
-                EventType::AdmissionUpdated,
-                EventType::EvmLogObserved,
-                EventType::TicketBalanceUpdatedAt,
-                EventType::TicketGenerated,
-                EventType::OperatorActivationChangedAt,
-                EventType::ConfigurationUpdatedAt,
-                EventType::CommitteeRequested,
-                EventType::PlaintextOutputPublished,
-                EventType::CommitteeFinalized,
-                EventType::CommitteeMemberExpelled,
-                EventType::CommitteeMemberExcluded,
-                EventType::E3Failed,
-                EventType::E3StageChanged,
-                EventType::E3RequestComplete,
-                EventType::EffectsEnabled,
-            ],
-            addr.clone().into(),
-        );
+        bus.subscribe_all(STATE_EVENTS, addr.clone().into());
 
         // Gate E3Requested behind EffectsEnabled — sortition should not trigger
         // ticket generation during historical event replay.
@@ -478,3 +485,23 @@ impl Sortition {
 
 #[path = "handlers/mod.rs"]
 mod handlers;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Tests that send events to the actor directly pass without a subscription, while the running
+    /// node would never apply the event.
+    #[test]
+    fn eligibility_and_price_events_are_subscribed() {
+        for event in [
+            EventType::TicketBalanceUpdatedAt,
+            EventType::OperatorActivationChangedAt,
+            EventType::ConfigurationUpdatedAt,
+            EventType::EligibilityConfigurationVersionUpdatedAt,
+            EventType::BondingAssetConfigUpdatedAt,
+        ] {
+            assert!(STATE_EVENTS.contains(&event), "{event:?} is not subscribed");
+        }
+    }
+}

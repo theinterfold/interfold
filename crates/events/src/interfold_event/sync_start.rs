@@ -12,6 +12,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fmt::{self, Display};
+use std::hash::{Hash, Hasher};
 
 use super::InterfoldEvent;
 use super::Unsequenced;
@@ -59,16 +60,61 @@ impl Display for HistoricalEvmSyncStart {
 }
 
 /// Dispatched by the Sync actor when initial data is read and the sync process needs to be started
-#[derive(Message, Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Message, Debug, Clone, Serialize, Deserialize)]
 #[rtype(result = "()")]
 pub struct HistoricalNetSyncStart {
     pub since: BTreeMap<AggregateId, u128>,
+
+    #[serde(skip)]
+    /// Receives the failure of a required history fetch, so startup can stop before its deadline.
+    /// Must be Option for serde. The event is local to this process, so the field is never
+    /// shared.
+    pub failure: Option<Recipient<HistoricalNetSyncFailed>>,
 }
 
 impl HistoricalNetSyncStart {
     pub fn new(since: BTreeMap<AggregateId, u128>) -> Self {
-        Self { since }
+        Self {
+            since,
+            failure: None,
+        }
     }
+
+    pub fn with_failure_recipient(
+        mut self,
+        failure: impl Into<Recipient<HistoricalNetSyncFailed>>,
+    ) -> Self {
+        self.failure = Some(failure.into());
+        self
+    }
+}
+
+// The failure recipient is local to this process and is not stored, so the event ID and payload
+// equality depend only on `since`. A stored copy then equals its redelivered original, which the
+// EventStore duplicate rule requires. Both impls name every field, so a new field does not compile
+// until it is placed in or out of the identity here.
+impl Hash for HistoricalNetSyncStart {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        let Self { since, failure: _ } = self;
+        since.hash(state);
+    }
+}
+
+impl PartialEq for HistoricalNetSyncStart {
+    fn eq(&self, other: &Self) -> bool {
+        let Self { since, failure: _ } = self;
+        *since == other.since
+    }
+}
+
+impl Eq for HistoricalNetSyncStart {}
+
+/// Sent to the `HistoricalNetSyncStart` failure recipient when no peer served the history that
+/// startup requires.
+#[derive(Message, Debug, Clone)]
+#[rtype(result = "()")]
+pub struct HistoricalNetSyncFailed {
+    pub reason: String,
 }
 
 impl Display for HistoricalNetSyncStart {

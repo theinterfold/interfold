@@ -15,7 +15,9 @@ use tracing::{debug, error};
 
 use crate::{ZkBackend, ZkProver};
 
-use super::proof_verification::{ZkVerificationRequest, ZkVerificationResponse};
+use super::proof_verification::{
+    ZkVerificationOutcome, ZkVerificationRequest, ZkVerificationResponse,
+};
 
 /// IO actor that handles ZK proof generation and verification.
 pub struct ZkActor {
@@ -58,8 +60,7 @@ impl Handler<TypedEvent<ZkVerificationRequest>> for ZkActor {
                 Ok(true) => {
                     debug!("Proof verification successful");
                     ZkVerificationResponse {
-                        verified: true,
-                        error: None,
+                        outcome: ZkVerificationOutcome::Valid,
                         e3_id: msg.e3_id,
                         key: msg.key,
                     }
@@ -67,17 +68,15 @@ impl Handler<TypedEvent<ZkVerificationRequest>> for ZkActor {
                 Ok(false) => {
                     error!("Proof verification failed");
                     ZkVerificationResponse {
-                        verified: false,
-                        error: Some("Verification returned false".to_string()),
+                        outcome: ZkVerificationOutcome::Invalid,
                         e3_id: msg.e3_id,
                         key: msg.key,
                     }
                 }
                 Err(e) => {
-                    error!("Proof verification error: {}", e);
+                    debug!("Proof verification error: {}", e);
                     ZkVerificationResponse {
-                        verified: false,
-                        error: Some(e.to_string()),
+                        outcome: ZkVerificationOutcome::InfrastructureError(e.to_string()),
                         e3_id: msg.e3_id,
                         key: msg.key,
                     }

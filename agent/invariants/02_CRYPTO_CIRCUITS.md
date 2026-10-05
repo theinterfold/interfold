@@ -72,10 +72,30 @@ every section.
 - A circuit release archive that supports current deployments must include every
   `insecure-512/{minimum,micro,small}` and `secure-8192/{minimum,micro,small}` pair. Each pair has a
   build stamp with the exact preset, committee, and source hash. `checksums.json` and `SHA256SUMS`
-  must cover the archive contents, and a node must reject an archive without them. Nodes select the
-  artifact directory from the E3's on-chain parameter set and committee size. **Gap:**
-  `download_circuits` passes `require_checksums=false`, so a node installs an archive without
-  `checksums.json` after a warning (`crates/zk-prover/src/backend/download.rs`).
+  must cover the archive artifacts. Nodes select the artifact directory from the E3's on-chain
+  parameter set and committee size. `download_circuits` checks the archive SHA-256 against
+  `ZkConfig::circuits_checksums[required_circuits_version]` before extraction. Missing pins fail
+  closed. Both download and local archive installation require a nonempty SHA-256 `checksums.json`,
+  verify each entry, and reject uncovered artifact files before replacement. Download and local
+  archive installation require every pair in `crates/zk-prover/supported-configurations.json` by
+  default. Release tooling uses the same matrix. A local or CI caller can request a nonempty subset
+  through `download_circuits_for_configurations` or `install_circuits_archive_for_configurations`.
+  The CLI accepts repeated `--circuits-configuration` options only with `--circuits-archive`.
+  Required pairs never depend on archive contents. Each required or included pair must contain every
+  path in `crates/zk-prover/required-artifacts.json`, with a verified manifest entry. The release
+  tooling's `requiredArtifactMarkers` uses that same inventory. Root manifests, `SOURCE_HASH`, and
+  build stamps are metadata, not required prover artifacts. Validation failure preserves the
+  installed circuits and `version.json`. Installation errors trigger best-effort rollback and remain
+  the returned error even if rollback fails. Each rollback failure logs its source and target paths.
+  If restoration of the previous circuits fails, the installer retains the staging directory and
+  logs its path for recovery. — `crates/zk-prover/src/backend/download.rs`
+- Archive pins ship with the binary; neither the archive nor its download endpoint supplies the
+  expected digest at runtime. The 0.18.0 pin comes from the published GitHub asset digest. Local
+  archive installation trusts the operator's file and does not require a release pin. Release
+  packaging supplies `E3_CIRCUITS_ARCHIVE_SHA256` before binary and ciphernode image compilation.
+  `build.rs` validates the digest, and `ZkConfig::default` binds it to the crate version. Other pins
+  remain in `versions.json`. The workflow retains the same archive bytes for publication.
+  `SOURCE_HASH` identifies circuit sources, not archive bytes, and cannot replace this check.
 - Artifact identity must cover every source that compiles into an artifact. `computeSourceHash`
   (`scripts/build-circuits.ts`) includes shared Noir logic, the library entry point and dependency
   manifest, and shared configuration constants. It normalizes the active preset selector because
@@ -126,6 +146,16 @@ every section.
 - DKG dealer identity binds the public proof statement, not randomized proof bytes. Replacing a
   same-E3 proof plan must invalidate every prior correlation ID before the replacement can accept
   responses. — `flow-trace/04`
+- A DKG dealer slot accepts only a message authenticated by that finalized committee member.
+  Threshold-share signatures bind the E3 (including chain ID), dealer, recipient, share bytes, and
+  complete C2/C3 bundle. C4 signatures bind the E3, dealer, node address, and complete proof bundle.
+  Individual proof signatures remain the evidence for proof failures. An unrecoverable signature or
+  a mismatched signer cannot name the claimed dealer in an accusation. —
+  `crates/events/src/interfold_event/{threshold_share_created,decryption_key_shared}.rs`;
+  `crates/keyshare/src/threshold_keyshare/effects/coordinate_collectors.rs`; `flow-trace/04`
+- A local C2/C3 result counts only for the share batch that its dispatch carried. A result of an
+  earlier batch must not count a dealer that only a later, grown batch holds as verified. —
+  `crates/keyshare/src/threshold_keyshare/effects/verify_threshold_shares.rs`; `flow-trace/04`
 - DKG aggregation receives **exactly H** canonical honest NodeFold proofs (unique in-range party
   IDs) and **exactly N** ordered committee addresses; every supported committee size has `H < N` —
   never assert `H == N`. A mixed Some/None NodeFold set is a local test-configuration mismatch.
@@ -362,8 +392,24 @@ every section.
 - **Decryption-proof replay prevention (C-03):** every secret-bearing C6 proof commits to the domain
   `(chainId, Interfold address, e3Id, committeeHash, ciphertextOutputHash, committeePublicKey)`;
   folding requires one common domain; the wrapper rejects any domain differing from the contract's
-  recomputed value and checks per-party SK/ESM commitments against registry-stored DKG anchors. —
-  `flow-trace/04`; INDEX concern #34
+  recomputed value and checks per-party SK/ESM commitments against registry-stored DKG anchors.
+  Keyshare and plaintext aggregation use the chain commitment, ordered finalized committee, and DKG
+  anchor party IDs. A `PublicKeyAggregated` must match these facts and open the key commitment.
+  Keyshare retains the first matching key. Before hydration and replay, confirmed event history
+  rebuilds authority and commitment-checked key bytes. Retained C6 intents are repaired before
+  deduplication; logged compute requests must pass canonical admission before release. No registry
+  storage RPC supplies this authority. Plaintext admission checks each C6 domain before reserving a
+  party slot. Hydration checks signed shares and retained C6 inputs in every phase, including
+  `Complete`. Invalid work is rebuilt from signed history before verification or publication
+  resumes. State written before v0.19 is not repaired because the release requires a store reset to
+  schema 8. The EVM writer checks final-proof domain limbs against confirmed key authority and
+  ciphertext hashes before intent deduplication. Missing authority defers admission; a mismatch
+  discards the intent and permits a corrected result. C7 intent deduplication binds to the exact
+  request. Live and retained C7 results must match the selected C6 commitments, ordered party IDs,
+  and plaintext. A replacement batch invalidates earlier worker correlations and regenerates
+  matching proofs. — `crates/aggregator/src/plaintext_aggregation/effects/recovery.rs`;
+  `crates/request/src/canonical_key.rs`; `crates/evm/src/canonical_key.rs`; `flow-trace/04`; INDEX
+  concern #34
 - **Ctx-witness binding (C-04, commit `cd7cbceea`):** the off-chain SAFE ciphertext commitment is
   stored at ciphertext publication, propagated as a final-proof public input, and compared on-chain
   (no BFV decoding/Poseidon2 in Solidity); C3/C6 commitments are checked against their ciphertext
@@ -521,7 +567,8 @@ every section.
   candidate cannot block a valid candidate from another member. — INDEX concerns #33, Z-31
 - **No proof-disabled bypass (C-02):** both final verifier calls are mandatory in production;
   `skip_proof_aggregation` works only under the `test-only-skip-proof-aggregation` Cargo feature;
-  production verifiers reject placeholder C5/C7 proofs. — INDEX concern #32
+  mock placeholders carry the final roster or canonical decryption domain fields, but production
+  verifiers reject their C5/C7 proof bytes. — INDEX concern #32
 - Circuit soundness fixes to preserve: `ModU64::div_mod` verifies
   `result*divisor == dividend (mod modulus)` (IF-001); C7 compares **every** decoded coefficient,
   including zeros, to the claimed message (IF-002).

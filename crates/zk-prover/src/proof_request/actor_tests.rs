@@ -383,3 +383,168 @@ async fn c4_dispatch_before_the_seq_layout_is_held_until_threshold_share_pending
     assert_eq!(seqs, vec![4, 5]);
     Ok(())
 }
+
+#[actix::test]
+async fn replayed_c6_intent_is_repaired_before_deduplication() -> Result<()> {
+    use alloy::primitives::Address;
+    use e3_bfv_client::{client::generate_public_key, compute_pk_commitment};
+    use e3_ciphernode_builder::EventSystem;
+    use e3_data::RepositoriesFactory;
+    use e3_events::{
+        AggregateConfig, AggregateId, EventConstructorWithTimestamp, EvmEventConfig,
+        EvmEventConfigChain, HistoricalEvmEventsReceived, HistoricalNetSyncEventsReceived,
+        NetReady, RequestRouterCheckpoint, ShareDecryptionProofPending,
+        ThresholdShareDecryptionProofRequest,
+    };
+    use e3_fhe_params::{BfvParamSet, BfvPreset};
+    use e3_request::canonical_key::{CanonicalPublicKey, CanonicalPublicKeys};
+    use e3_sync::SyncRepositoryFactory;
+    use std::time::Duration;
+    let id = E3id::new("83", 1);
+    let params = BfvParamSet::from(BfvPreset::InsecureThreshold512);
+    let pk = generate_public_key(
+        params.degree,
+        params.plaintext_modulus,
+        params.moduli.to_vec(),
+    )?;
+    let key = CanonicalPublicKey {
+        pk_commitment: compute_pk_commitment(
+            pk.clone(),
+            params.degree,
+            params.plaintext_modulus,
+            params.moduli.to_vec(),
+        )?,
+        committee: vec![
+            Address::repeat_byte(1),
+            Address::repeat_byte(2),
+            Address::repeat_byte(3),
+        ],
+        honest_committee: vec![Address::repeat_byte(1), Address::repeat_byte(3)],
+        params_preset: BfvPreset::InsecureThreshold512,
+        committee_size: CiphernodesCommitteeSize::Minimum,
+        interfold_address: Address::repeat_byte(9),
+        sk_agg_commits: vec![],
+        esm_agg_commits: vec![],
+    };
+    let keys = CanonicalPublicKeys::default();
+    keys.insert(id.clone(), key.clone())?;
+    keys.remember_key(&id, ArcBytes::from_bytes(&pk))?;
+    let pending = ShareDecryptionProofPending {
+        e3_id: id.clone(),
+        party_id: 0,
+        node: Address::repeat_byte(1).to_string(),
+        decryption_share: vec![ArcBytes::from_bytes(&[4])],
+        proof_request: ThresholdShareDecryptionProofRequest {
+            ciphertext_bytes: vec![ArcBytes::from_bytes(&[5])],
+            aggregated_pk_bytes: ArcBytes::from_bytes(&pk),
+            sk_poly_sum: e3_crypto::SensitiveBytes::from_encrypted(&[2]),
+            es_poly_sum: vec![e3_crypto::SensitiveBytes::from_encrypted(&[3])],
+            d_share_bytes: vec![ArcBytes::from_bytes(&[4])],
+            decryption_domain: key.domain(Address::ZERO),
+            params_preset: key.params_preset,
+            committee_size: key.committee_size,
+        },
+    };
+    let aggregate = AggregateId::new(1);
+    let stored = EventSystem::new()
+        .with_fresh_bus()
+        .with_aggregate_config(AggregateConfig::new(HashMap::from([(
+            aggregate,
+            Duration::ZERO,
+        )])));
+    let old_bus = stored.handle()?.enable("retained-c6");
+    old_bus.publish_without_context(pending.clone())?;
+    old_bus.flush_event_pipeline().await?;
+    let aggregate_config = AggregateConfig::new(HashMap::from([(aggregate, Duration::ZERO)]));
+    let resumed = EventSystem::new()
+        .with_fresh_bus()
+        .with_aggregate_config(aggregate_config.clone());
+    let bus = resumed.handle()?.enable("resumed-c6");
+    let history = bus.history();
+    let _actor = ProofRequestActor::setup_with_recovery(
+        &bus,
+        PrivateKeySigner::random(),
+        false,
+        HashMap::new(),
+        keys.clone(),
+    );
+    let repositories = resumed.store()?.repositories();
+    repositories
+        .schema_version()
+        .write_sync(&e3_sync::SCHEMA_VERSION)
+        .await?;
+    repositories
+        .request_router_checkpoint()
+        .write_sync(&RequestRouterCheckpoint::default())
+        .await?;
+    let evm_config = EvmEventConfig::from_config(std::collections::BTreeMap::from([(
+        1,
+        EvmEventConfigChain::new(0),
+    )]));
+    let evm_started = bus.wait_for(EventType::HistoricalEvmSyncStart);
+    let net_started = bus.wait_for(EventType::HistoricalNetSyncStart);
+    let history_sources = async {
+        let event = evm_started.await?;
+        let InterfoldEventData::HistoricalEvmSyncStart(start) = event.get_data() else {
+            anyhow::bail!("expected EVM history request");
+        };
+        start
+            .sender
+            .as_ref()
+            .unwrap()
+            .send(HistoricalEvmEventsReceived::new(vec![], 1))
+            .await?;
+        net_started.await?;
+        bus.publish_without_context(HistoricalNetSyncEventsReceived::new(vec![]))?;
+        anyhow::Ok(())
+    };
+    let net_ready = async {
+        Ok(InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            NetReady::new().into(),
+            None,
+            1,
+            None,
+            e3_events::EventSource::Local,
+        )
+        .into_sequenced(1))
+    };
+    let reader = stored.eventstore_reader()?.seq();
+    actix::clock::timeout(Duration::from_secs(5), async {
+        tokio::try_join!(
+            e3_sync::sync_with_net_ready(
+                &bus,
+                &evm_config,
+                &repositories,
+                &aggregate_config,
+                &reader,
+                net_ready,
+            ),
+            history_sources,
+        )
+    })
+    .await??;
+    let mut corrected = pending.clone();
+    keys.repair_request(&id, &mut corrected.proof_request)?;
+    bus.publish_without_context(corrected.clone())?;
+    bus.flush_event_pipeline().await?;
+    let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+    let requests: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event.get_data() {
+            InterfoldEventData::ComputeRequest(data) => match &data.request {
+                e3_events::ComputeRequestKind::Zk(ZkRequest::ThresholdShareDecryption(request)) => {
+                    Some(request)
+                }
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        requests.len(),
+        1,
+        "canonical replay and recovery must share one proof job"
+    );
+    assert_eq!(requests[0], &corrected.proof_request);
+    Ok(())
+}

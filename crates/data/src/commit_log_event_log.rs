@@ -67,6 +67,30 @@ pub struct CommitLogEventLog {
 }
 
 impl CommitLogEventLog {
+    /// Check for log data without opening, repairing, or decoding any records.
+    pub fn has_records(path: &Path) -> Result<bool> {
+        let entries = match fs::read_dir(path) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(error.into()),
+        };
+        for entry in entries {
+            let entry = entry?;
+            if entry.path().extension().is_some_and(|ext| ext == "log") {
+                // An empty segment contains only the magic bytes. Anything else needs a schema.
+                if entry.metadata()?.len() != COMMITLOG_SEGMENT_MAGIC.len() as u64 {
+                    return Ok(true);
+                }
+                let mut magic = [0; COMMITLOG_SEGMENT_MAGIC.len()];
+                File::open(entry.path())?.read_exact(&mut magic)?;
+                if magic != COMMITLOG_SEGMENT_MAGIC {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
+    }
+
     pub fn new(path: &Path) -> Result<Self> {
         Self::open(path, EventLogOpenMode::RecoverTail)
     }
@@ -970,6 +994,7 @@ mod tests {
             (
                 "DecryptionKeyShared",
                 DecryptionKeyShared {
+                    signature: Default::default(),
                     e3_id: e3_id.clone(),
                     party_id: 0,
                     node: node.clone(),
@@ -1569,5 +1594,39 @@ mod tests {
         // Read from offset beyond what exists
         let events: Vec<_> = log.read_from(100).unwrap().collect();
         assert!(events.is_empty());
+    }
+
+    /// The failure recipient of `HistoricalNetSyncStart` is local to the process and is not
+    /// written to the log. Redelivering the original event must still be an idempotent duplicate
+    /// of the stored copy, not a timestamp collision that stops the EventStore.
+    #[actix::test]
+    async fn redelivered_event_with_a_local_recipient_is_a_duplicate_of_the_stored_copy() {
+        use crate::SledSequenceIndex;
+        use actix::{Actor, Context, Handler};
+        use e3_events::{AggregateId, EventStore, HistoricalNetSyncFailed, HistoricalNetSyncStart};
+        use std::collections::BTreeMap;
+
+        struct FailureSink;
+        impl Actor for FailureSink {
+            type Context = Context<Self>;
+        }
+        impl Handler<HistoricalNetSyncFailed> for FailureSink {
+            type Result = ();
+            fn handle(&mut self, _: HistoricalNetSyncFailed, _: &mut Self::Context) {}
+        }
+
+        let index_dir = tempdir().unwrap();
+        let log_dir = tempdir().unwrap();
+        let index =
+            SledSequenceIndex::new(&index_dir.path().to_path_buf(), "sequence_index.0").unwrap();
+        let log = CommitLogEventLog::new(log_dir.path()).unwrap();
+        let mut store = EventStore::new(index, log).unwrap();
+        let event = event_from(InterfoldEventData::HistoricalNetSyncStart(
+            HistoricalNetSyncStart::new(BTreeMap::from([(AggregateId::new(0), 10)]))
+                .with_failure_recipient(FailureSink.start()),
+        ));
+
+        assert!(store.store_event(event.clone()).unwrap().is_some());
+        assert!(store.store_event(event).unwrap().is_none());
     }
 }

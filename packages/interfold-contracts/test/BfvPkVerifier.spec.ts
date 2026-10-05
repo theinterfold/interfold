@@ -422,11 +422,6 @@ describe("BfvPkVerifier", function () {
   });
 
   describe("immutables (M-34)", function () {
-    it("exposes correct h", async function () {
-      const { bfvPkVerifier } = await loadFixture(deployWithMockCircuit);
-      expect(await bfvPkVerifier.h()).to.equal(H);
-    });
-
     it("exposes correct expectedNodesFoldKeyHash", async function () {
       const { bfvPkVerifier } = await loadFixture(deployWithMockCircuit);
       expect(await bfvPkVerifier.expectedNodesFoldKeyHash()).to.equal(

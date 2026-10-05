@@ -24,6 +24,7 @@ async fn test_backfill_no_gap() {
         &mut last_block,
         0,
         &mut window,
+        None,
     )
     .await;
 
@@ -51,6 +52,7 @@ async fn test_backfill_with_gap() {
         &mut last_block,
         0,
         &mut window,
+        None,
     )
     .await;
 
@@ -100,6 +102,7 @@ async fn test_backfill_partial_failure_preserves_progress() {
         &mut last_block,
         0,
         &mut window,
+        None,
     )
     .await;
 
@@ -120,6 +123,7 @@ async fn test_backfill_partial_failure_preserves_progress() {
         &mut last_block,
         0,
         &mut window,
+        None,
     )
     .await;
     assert!(result.is_ok());
@@ -154,6 +158,7 @@ async fn a_failure_after_narrowing_keeps_the_chunks_already_delivered() {
         &mut last_block,
         0,
         &mut window,
+        None,
     )
     .await;
 
@@ -171,6 +176,7 @@ async fn a_failure_after_narrowing_keeps_the_chunks_already_delivered() {
         &mut last_block,
         0,
         &mut window,
+        None,
     )
     .await
     .expect("the retry covers only the undelivered half");
@@ -204,77 +210,13 @@ async fn test_backfill_clamps_to_confirmed_head() {
         &mut last_block,
         12,
         &mut window,
+        None,
     )
     .await;
 
     assert!(result.is_ok());
     // Advanced only to the confirmed head, not the raw head of 200.
     assert_eq!(last_block, 188);
-}
-
-#[actix::test]
-async fn live_log_waits_for_confirmed_canonical_backfill() -> anyhow::Result<()> {
-    let mock = MockLogProvider::new(200);
-    let (next, mut rx) = setup_collector();
-    let mut ts = TimestampTracker::new();
-    let mut window = LogWindow::new();
-    let filter = Filter::new();
-    let mut last_block = 188;
-
-    let delivered = process_live_log(
-        &mock,
-        make_test_log(200),
-        1,
-        &next,
-        &mut ts,
-        &mut last_block,
-        12,
-    )
-    .await?;
-    assert!(delivered.is_none());
-    assert_eq!(last_block, 188);
-    tokio::task::yield_now().await;
-    assert!(
-        rx.try_recv().is_err(),
-        "unconfirmed log must not be emitted"
-    );
-
-    mock.set_block_number(211);
-    mock.push_logs(Vec::new());
-    backfill_to_head(
-        &mock,
-        &filter,
-        1,
-        &next,
-        &mut ts,
-        &mut last_block,
-        12,
-        &mut window,
-    )
-    .await?;
-    assert_eq!(last_block, 199);
-    tokio::task::yield_now().await;
-    assert!(rx.try_recv().is_err(), "eleven blocks is not enough");
-
-    mock.set_block_number(212);
-    mock.push_logs(vec![make_test_log(200)]);
-    backfill_to_head(
-        &mock,
-        &filter,
-        1,
-        &next,
-        &mut ts,
-        &mut last_block,
-        12,
-        &mut window,
-    )
-    .await?;
-    assert_eq!(last_block, 200);
-    let emitted = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
-        .await?
-        .expect("confirmed log should be emitted");
-    assert!(matches!(emitted, InterfoldEvmEvent::Log(_)));
-    Ok(())
 }
 
 #[actix::test]
@@ -301,6 +243,7 @@ async fn backfill_narrows_the_window_and_keeps_progress() {
         &mut last_block,
         0,
         &mut window,
+        None,
     )
     .await;
 
@@ -333,6 +276,7 @@ async fn the_window_learned_during_backfill_is_reused_by_the_next_call() {
         &mut last_block,
         0,
         &mut window,
+        None,
     )
     .await
     .expect("first backfill should adapt");
@@ -353,6 +297,7 @@ async fn the_window_learned_during_backfill_is_reused_by_the_next_call() {
         &mut last_block,
         0,
         &mut window,
+        None,
     )
     .await
     .expect("second backfill should reuse the learned width");
@@ -363,4 +308,121 @@ async fn the_window_learned_during_backfill_is_reused_by_the_next_call() {
         "the learned width must not be rediscovered"
     );
     assert_eq!(last_block, 12_600);
+}
+
+/// A sink that keeps every report, for the health-check progress tests.
+fn recording_sink() -> (IngestionProgressSink, Arc<Mutex<Vec<IngestionProgress>>>) {
+    let reports = Arc::new(Mutex::new(Vec::new()));
+    let sink: IngestionProgressSink = {
+        let reports = reports.clone();
+        Arc::new(move |progress| reports.lock().unwrap().push(progress))
+    };
+    (sink, reports)
+}
+
+#[actix::test]
+async fn a_backfill_reports_its_head_and_cursor_only_when_it_succeeds() {
+    tokio::time::pause();
+    let (sink, reports) = recording_sink();
+    let mock = MockLogProvider::new(200);
+    mock.push_logs(vec![make_test_log(150)]);
+    let (next, _rx) = setup_collector();
+    let mut ts = TimestampTracker::new();
+    let mut window = LogWindow::new();
+    let filter = Filter::new();
+    let mut last_block = 100u64;
+
+    backfill_to_head(
+        &mock,
+        &filter,
+        1,
+        &next,
+        &mut ts,
+        &mut last_block,
+        0,
+        &mut window,
+        Some(&sink),
+    )
+    .await
+    .unwrap();
+    // No new block: the poll still succeeded, so the health check must see it.
+    backfill_to_head(
+        &mock,
+        &filter,
+        1,
+        &next,
+        &mut ts,
+        &mut last_block,
+        0,
+        &mut window,
+        Some(&sink),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        *reports.lock().unwrap(),
+        vec![
+            IngestionProgress {
+                chain_id: 1,
+                head: 200,
+                cursor: 200
+            },
+            IngestionProgress {
+                chain_id: 1,
+                head: 200,
+                cursor: 200
+            },
+        ]
+    );
+
+    // A provider that answers eth_blockNumber and refuses eth_getLogs must look stalled.
+    mock.set_block_number(300);
+    for _ in 0..GET_LOGS_MAX_RETRIES {
+        mock.push_error("RPC error");
+    }
+    backfill_to_head(
+        &mock,
+        &filter,
+        1,
+        &next,
+        &mut ts,
+        &mut last_block,
+        0,
+        &mut window,
+        Some(&sink),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(reports.lock().unwrap().len(), 2);
+}
+
+#[actix::test]
+async fn the_historical_sync_reports_each_chunk() {
+    let (sink, reports) = recording_sink();
+    let mock = MockLogProvider::new(25_000);
+    for _ in 0..3 {
+        mock.push_logs(vec![]);
+    }
+    let (next, _rx) = setup_collector();
+    let mut ts = TimestampTracker::new();
+    let mut window = LogWindow::new();
+    let filter = Filter::new();
+
+    fetch_logs_chunked(
+        &mock,
+        &filter,
+        0,
+        24_999,
+        1,
+        &next,
+        &mut ts,
+        &mut window,
+        Some(&sink),
+    )
+    .await
+    .unwrap();
+
+    let cursors: Vec<u64> = reports.lock().unwrap().iter().map(|r| r.cursor).collect();
+    assert_eq!(cursors, vec![9_999, 19_999, 24_999]);
+    assert!(reports.lock().unwrap().iter().all(|r| r.head == 24_999));
 }

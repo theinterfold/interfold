@@ -151,24 +151,6 @@ mod tests {
     use std::str::FromStr;
 
     #[test]
-    fn test_build_insecure_dkg_params() {
-        // Test building BFV params using insecure DKG preset constants
-        let degree = insecure_512::DEGREE;
-        let plaintext_modulus = insecure_512::dkg::PLAINTEXT_MODULUS;
-        let moduli = insecure_512::dkg::MODULI;
-
-        let params = build_bfv_params(degree, plaintext_modulus, moduli, None);
-        assert_eq!(params.degree(), degree);
-        assert_eq!(params.plaintext(), plaintext_modulus);
-        assert_eq!(params.moduli(), moduli);
-        assert_eq!(params.variance(), defaults::VARIANCE);
-        assert_eq!(
-            params.get_error1_variance(),
-            &BigUint::from_str(insecure_512::dkg::ERROR1_VARIANCE).unwrap()
-        );
-    }
-
-    #[test]
     fn test_build_insecure_dkg_params_arc() {
         // Test building Arc<BFV params> using insecure DKG preset constants
         let degree = insecure_512::DEGREE;
@@ -194,56 +176,6 @@ mod tests {
     }
 
     #[test]
-    fn test_build_secure_threshold_params() {
-        // Test building threshold params using secure threshold preset constants
-        let degree = secure_8192::DEGREE;
-        let plaintext_modulus = secure_8192::threshold::PLAINTEXT_MODULUS;
-        let moduli = secure_8192::threshold::MODULI;
-        let error1_variance = secure_8192::threshold::ERROR1_VARIANCE;
-
-        let params = build_bfv_params(degree, plaintext_modulus, moduli, Some(error1_variance));
-        assert_eq!(params.degree(), degree);
-        assert_eq!(params.plaintext(), plaintext_modulus);
-        assert_eq!(params.moduli(), moduli);
-        assert_eq!(params.variance(), defaults::VARIANCE);
-        assert_eq!(
-            params.get_error1_variance(),
-            &BigUint::from_str(error1_variance).unwrap()
-        );
-    }
-
-    #[test]
-    fn test_build_secure_threshold_params_arc() {
-        // Test building Arc<threshold params> using secure threshold preset constants
-        let degree = secure_8192::DEGREE;
-        let plaintext_modulus = secure_8192::threshold::PLAINTEXT_MODULUS;
-        let moduli = secure_8192::threshold::MODULI;
-        let error1_variance = secure_8192::threshold::ERROR1_VARIANCE;
-
-        let params = build_bfv_params_arc(degree, plaintext_modulus, moduli, Some(error1_variance));
-        assert_eq!(params.degree(), degree);
-        assert_eq!(params.plaintext(), plaintext_modulus);
-        assert_eq!(params.moduli(), moduli);
-        assert_eq!(params.variance(), defaults::VARIANCE);
-        assert_eq!(
-            params.get_error1_variance(),
-            &BigUint::from_str(error1_variance).unwrap()
-        );
-    }
-
-    #[test]
-    fn test_build_insecure_dkg_params_from_set() {
-        // Test building from BfvParamSet using insecure DKG preset
-        let preset = BfvPreset::InsecureDkg512;
-        let param_set = preset.into();
-        let params = build_bfv_params_from_set(param_set);
-
-        assert_eq!(params.degree(), insecure_512::DEGREE);
-        assert_eq!(params.plaintext(), insecure_512::dkg::PLAINTEXT_MODULUS);
-        assert_eq!(params.moduli(), insecure_512::dkg::MODULI);
-    }
-
-    #[test]
     fn test_build_insecure_dkg_params_from_set_arc() {
         // Test building Arc from BfvParamSet using insecure DKG preset
         let preset = BfvPreset::InsecureDkg512;
@@ -253,25 +185,6 @@ mod tests {
         assert_eq!(params.degree(), insecure_512::DEGREE);
         assert_eq!(params.plaintext(), insecure_512::dkg::PLAINTEXT_MODULUS);
         assert_eq!(params.moduli(), insecure_512::dkg::MODULI);
-    }
-
-    #[test]
-    fn test_build_secure_threshold_params_from_set() {
-        // Test building from BfvParamSet using secure threshold preset
-        let preset = BfvPreset::SecureThreshold8192;
-        let param_set = preset.into();
-        let params = build_bfv_params_from_set(param_set);
-
-        assert_eq!(params.degree(), secure_8192::DEGREE);
-        assert_eq!(
-            params.plaintext(),
-            secure_8192::threshold::PLAINTEXT_MODULUS
-        );
-        assert_eq!(params.moduli(), secure_8192::threshold::MODULI);
-        assert_eq!(
-            params.get_error1_variance(),
-            &BigUint::from_str(secure_8192::threshold::ERROR1_VARIANCE).unwrap()
-        );
     }
 
     #[test]

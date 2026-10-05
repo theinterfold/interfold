@@ -175,11 +175,14 @@ The keys below matter most on an operator node. The
 | `rpc_auth`                       | No auth  | `Basic` or `Bearer` credentials. See [RPC authentication](/reference/configuration#rpc-authentication).   |
 | `data_availability`              | Required | `mode: avail` and an HTTP `rpc_url`. See [Data availability](/reference/configuration#data-availability). |
 | `ingestion_confirmations`        | `1`      | Confirmations before the node applies a log.                                                              |
+| `rpc_poll_interval_ms`           | `7000`   | Milliseconds between the polls of an HTTP provider for a receipt or a new block.                          |
+| `rpc_log_range_blocks`           | `10000`  | Widest block range of one `eth_getLogs` request. See [RPC endpoints](/operate/rpc-endpoints).             |
 | `enabled`                        | `true`   | `false` makes the node ignore the entry.                                                                  |
 
-The default of one confirmation also applies when `rpc_url` uses `localhost` or `127.0.0.1`, because
-that URL can be a proxy to a live chain. Set `ingestion_confirmations: 0` only on a single-process
-development chain such as Anvil. Do not set it to zero on mainnet or Sepolia.
+The defaults of one confirmation and a 7-second poll interval also apply when `rpc_url` uses
+`localhost` or `127.0.0.1`, because that URL can be a proxy to a live chain. Set
+`ingestion_confirmations: 0` and `rpc_poll_interval_ms: 250` only on a single-process development
+chain such as Anvil. Do not set them on mainnet or Sepolia.
 
 The `autonetkey` key has no effect in this release. The node derives its libp2p key from the wallet
 key.
@@ -253,9 +256,11 @@ there, so backups of `/data` must be encrypted and access-controlled.
 After it stores the credentials, the package deletes the uploaded file. A restart uses the stored
 state and does not need a new upload. An upload with a different password stops startup.
 
-The package health check confirms that the process runs, the files exist, and the QUIC listener is
-bound. It does not prove that the node is synced or registered. Read the logs and the
-[on-chain status](/operate/registration) to confirm that.
+The package health check confirms that the process runs, the files exist, the QUIC listener is
+bound, and chain ingestion moves: the node writes a heartbeat file per chain after every successful
+read of the chain head, and the check fails when the heartbeat is older than 120 seconds or neither
+the head nor the cursor moved for 10 minutes. It does not prove that the node is registered. Read
+the logs and the [on-chain status](/operate/registration) to confirm that.
 
   </Tabs.Tab>
   <Tabs.Tab unmount={false}>
@@ -325,7 +330,8 @@ first sync. The node runs in the foreground until it gets `SIGINT` or `SIGTERM`.
 </Steps>
 
 For scripts, `password set --password-stdin` and `wallet set --private-key-stdin` read one line from
-standard input. Do not put secrets in command arguments.
+standard input. Without these flags, the commands use hidden prompts. They reject secrets in command
+arguments.
 
 <Callout type='info'>
   On Sepolia, `interfold ciphernode setup --network sepolia` does the file, password, and key steps
@@ -586,6 +592,9 @@ interfold node validate --repair
 The repair indexes complete uncommitted frames again, cuts a torn tail, or rebuilds the sortition
 projection from intact events. It never removes an indexed event.
 
+Validation checks the storage schema before it reads or repairs event logs. An unsupported schema
+reports the recovery instruction and skips all event and snapshot checks.
+
 ### Start the node
 
 Start the node only when the validation passes.
@@ -660,25 +669,68 @@ The key/value store holds the key shares of the node, and the chain cannot resto
 
 <Callout type='warning'>
   Do not remove or recreate the old container before you copy its state. `docker rm`, `docker
-  compose down`, and `docker compose up` with a new image all remove the old container. Never do
-  this migration with `interfold node reset-data` or `interfold nodes purge`. These commands delete
-  the state that you must keep.
+  compose down`, and `docker compose up` with a new image all remove the old container. The copy
+  puts the key file and the stored keys on the volume. Run `interfold node reset-data` only after
+  the copy, and only with the new image. Never use `interfold nodes purge` for this migration.
 </Callout>
 
-Do this procedure one time for each node. Do it only when the new image accepts the stored schema. A
-node that serves an active E3 on v0.17.0 must stay on v0.17.0. See
-[Upgrade a node that serves an active E3](/operate/upgrades#upgrade-a-node-that-serves-an-active-e3).
+Do this procedure one time for each node, when the node serves no active E3. An earlier image uses
+storage schema 7 or earlier, and v0.19.0 uses schema 8. The procedure therefore resets the state
+after the copy. The reset keeps the operator key and the libp2p keypair. See
+[Reset node state](/operate/upgrades#reset-node-state).
 
 The commands use the container name `ciphernode` and the volume name `ciphernode-data`. For Docker
-Compose, use the names that `docker ps -a` and `docker volume ls` show.
+Compose, use the names that `docker ps -a` and `docker volume ls` show. Each one-off container runs
+the new image through its entrypoint, with the same volume and configuration file:
 
-1. Stop the old container. Do not remove it.
+```bash
+new_image() {
+  docker run --rm \
+    -v ciphernode-data:/home/ciphernode/.local/share/interfold \
+    -v "$PWD/config.yaml":/home/ciphernode/.config/interfold/config.yaml:ro \
+    "$CIPHERNODE_IMAGE" \
+    "$@" --config /home/ciphernode/.config/interfold/config.yaml
+}
+```
+
+1. Set the image of the new release, and pull it. The helper and the later steps use this variable.
 
    ```bash
-   docker stop --time 65 ciphernode
+   export CIPHERNODE_IMAGE='ghcr.io/theinterfold/ciphernode:0.19.0'
+   docker pull "$CIPHERNODE_IMAGE"
    ```
 
-2. Make sure that the volume has no `data` or `config` directory. If the output shows either name,
+2. Find out how the old container starts, and whether a stop removes it:
+
+   ```bash
+   docker inspect -f '{{json .Config.Entrypoint}} {{.HostConfig.AutoRemove}}' ciphernode
+   ```
+
+   Continue only if the output is `["interfold"] false`, or one path that ends with `/interfold`
+   followed by `false`. For all other output, do not stop the container, and contact the protocol
+   team:
+   - `["ciphernode-entrypoint.sh"]` is the entrypoint of the earlier image. At each start, it sets
+     the password again, and `interfold password set` refuses a key file that exists. Such a
+     container cannot start again after a stop.
+   - `true` means that the container started with `--rm`. A stop removes the container and the state
+     inside it.
+
+3. Make sure that no E3 is active on the network. The output must be `0`. Get the Interfold address
+   from [Contracts and addresses](/reference/contracts).
+
+   ```bash
+   cast call <Interfold> "activeE3Count()(uint256)" --rpc-url <RPC_URL>
+   ```
+
+4. Record the operator address and the peer ID from the old container, while it runs. If a command
+   fails or prints no value, stop and contact the protocol team.
+
+   ```bash
+   docker exec ciphernode interfold wallet get --config /home/ciphernode/.config/interfold/config.yaml
+   docker exec ciphernode interfold net get-peer-id --config /home/ciphernode/.config/interfold/config.yaml
+   ```
+
+5. Make sure that the volume has no `data` or `config` directory. If the output shows either name,
    stop and contact the protocol team.
 
    ```bash
@@ -689,7 +741,13 @@ Compose, use the names that `docker ps -a` and `docker volume ls` show.
      -A /home/ciphernode/.local/share/interfold
    ```
 
-3. Copy the `data` and `config` directories from the old container to the volume. `docker cp` sends
+6. Stop the old container. Do not remove it.
+
+   ```bash
+   docker stop --time 65 ciphernode
+   ```
+
+7. Copy the `data` and `config` directories from the old container to the volume. `docker cp` sends
    each directory as a tar stream, so the key file does not go to the host disk.
 
    ```bash
@@ -703,7 +761,7 @@ Compose, use the names that `docker ps -a` and `docker volume ls` show.
    done
    ```
 
-4. Make sure that the copy is complete. The output must show `key`, `db`, and `log.0`. If a name is
+8. Make sure that the copy is complete. The output must show `key`, `db`, and `log.0`. If a name is
    missing, stop and contact the protocol team.
 
    ```bash
@@ -715,30 +773,84 @@ Compose, use the names that `docker ps -a` and `docker volume ls` show.
      /home/ciphernode/.local/share/interfold/data/_default
    ```
 
-5. Run the command in [Validate the state](#validate-the-state) with the new image. Continue only if
-   the report shows `on-disk schema version 7 matches this binary` and ends with
-   `VALIDATION PASSED — state is intact and consistent.` If validation fails, or if it shows
-   `empty store will be initialized`, do not start the new image. Keep the old container and the
-   volume, and contact the protocol team.
-
-6. Start the new image. For `docker run`, rename the old container first, then use the command in
-   [Start the container](#start-the-container):
+9. Reset the state:
 
    ```bash
-   docker rename ciphernode ciphernode-old
+   new_image node reset-data --yes
    ```
 
-   For Docker Compose, set the new image and run `docker compose up -d`. This command replaces the
-   old container.
+   The output must end with this line. If it says `No identity was present`, stop and contact the
+   protocol team.
 
-7. Make sure that the log shows `Ciphernode release is accepted`, and that this command shows the
-   operator address:
+   ```text
+   The operator key and libp2p identity were preserved. Verify with: interfold wallet get --name _default
+   ```
+
+   If the command refuses, use the cases in
+   [If the command refuses](/operate/upgrades#if-the-command-refuses). Add `--allow-active-e3s` only
+   in the last case. In each other case, start the old container again:
 
    ```bash
-   docker exec ciphernode ciphernode-entrypoint.sh wallet get --config /home/ciphernode/.config/interfold/config.yaml
+   started=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+   docker start ciphernode
    ```
 
-8. For `docker run`, remove the old container only after step 7 succeeds.
+   Use `docker start` also for Docker Compose. `docker compose up` removes the old container, which
+   holds the state that the node uses. If the container does not start, stop and contact the
+   protocol team, and keep the copy on the volume.
+
+   The log from before the stop also holds the release lines, so read only the log since the start.
+   When it shows `Ciphernode release is accepted` or `Acknowledging ciphernode release`, remove the
+   copy from the volume. Then do what the case tells you.
+
+   ```bash
+   docker logs --since "$started" ciphernode
+   ```
+
+   ```bash
+   docker run --rm \
+     -v ciphernode-data:/home/ciphernode/.local/share/interfold \
+     --entrypoint rm \
+     "$CIPHERNODE_IMAGE" \
+     -rf /home/ciphernode/.local/share/interfold/data /home/ciphernode/.local/share/interfold/config
+   ```
+
+10. Run these commands. The address and the peer ID must be equal to the values from step 4. If they
+    differ, or a command fails, stop and contact the protocol team.
+
+    ```bash
+    new_image wallet get
+    new_image net get-peer-id
+    ```
+
+11. Validate the state. Continue only if the report shows `empty store will be initialized` and ends
+    with `VALIDATION PASSED — state is intact and consistent.` Otherwise, do not start the new
+    image. Keep the old container and the volume, and contact the protocol team.
+
+    ```bash
+    new_image node validate
+    ```
+
+12. Start the new image. For `docker run`, rename the old container first, then use the command in
+    [Start the container](#start-the-container):
+
+    ```bash
+    docker rename ciphernode ciphernode-old
+    ```
+
+    For Docker Compose, make sure that `CIPHERNODE_IMAGE` names the new image. Remove the
+    `entrypoint:` line from the service: step 2 required the old container to start `interfold`
+    directly, but the new image must start through its own entrypoint, which uses the volume. Then
+    run `docker compose up -d`. This command replaces the old container.
+
+13. Make sure that the log shows `Ciphernode release is accepted`, and that this command shows the
+    operator address from step 4:
+
+    ```bash
+    docker exec ciphernode ciphernode-entrypoint.sh wallet get --config /home/ciphernode/.config/interfold/config.yaml
+    ```
+
+14. For `docker run`, remove the old container only after step 13 succeeds.
 
 ## Networking
 
@@ -771,7 +883,8 @@ A bootstrap node is a peer that other nodes dial first to find each other. Start
 network like a full node, but it does not serve on committees, generate proofs, sign votes, or send
 transactions. It therefore does not need the memory of the prover, and its address needs no ETH.
 When it starts, it fetches the history of open E3s from its peers like a full node. If no peer can
-serve that history, it starts without it, so it can start when no other node is running.
+serve that history, it starts without it, so it can start when no other node is running. Its request
+router expects no protocol recipients and keeps no deferred protocol backlog.
 
 It needs the same setup as a full node: a configuration with the network profile and the chains, a
 password, and a wallet key. The wallet key sets the node address and the libp2p peer ID, so use a
@@ -784,6 +897,43 @@ or bootstrap) in its data directory. A node does not start on a data directory t
 other role used. Releases without bootstrap mode do not check the role, so do not start an older
 release on the data directory of a bootstrap node. To change the role of a node, stop the node and
 run `interfold node reset-data`, which keeps the wallet key.
+
+### Deferred protocol events
+
+A full node can receive an E3 event before the actor that consumes it starts. The request router
+keeps these events in order for recipients declared by the installed extensions. Each E3 has a limit
+of 4,096 deferred entries and 1 GiB of accounted bytes. The router has a shared limit of 16,384
+entries and 3 GiB. Each recipient copy counts toward both limits, including shared payload bytes.
+
+Each entry reserves its encoded bytes, nested inline storage, and 64 bytes per allocation candidate.
+The reservations cover strings, byte buffers, collections, their elements, and shared payload
+fields. Large contiguous buffers add constant allocation overhead. They have no extra charge per
+payload byte. Shared bytes retain no spare capacity, and deferred copies compact collections inside
+shared keys and threshold shares. Each entry also reserves twice its inline event size for queue
+capacity.
+
+These limits cover four concurrent E3s with the largest supported committee (N=19, H=14) and the
+secure 8192-degree preset. The slashing recipients start at committee finalization. Keyshare and
+public-key recipients start at local selection. Only the plaintext recipient retains the complete
+local DKG history until ciphertext output arrives.
+
+The late-recipient allowance is 1,536 records and 640 MiB per E3. It includes the C1–C3 witnesses,
+the complete request payloads retained by computation failures, C4 inputs, peer shares, and document
+envelopes. Four such histories use 2.5 GiB, leaving 512 MiB of margin below the shared byte limit.
+
+The 3 GiB ceiling includes allocation reservations, but it does not measure exact resident memory.
+In an 8 GiB memory budget, allow another 1.5 GiB for fragmentation, freed storage, and an in-flight
+event. The remaining 3.5 GiB covers other actors, the process baseline, and the system. The router
+memory regression checks this allowance with contiguous and separately allocated small payloads.
+These are buffer allowances, not total node memory requirements or limits on incoming-event
+decoding. Proof workers need a separate allowance. See [Requirements](/operate/requirements) for
+node sizing.
+
+If a limit is exceeded, the router logs `Deferred delivery failed` at ERROR and clears the affected
+recipient's deferred queue. It retains the failure record until E3 teardown or restart and stops
+adding events to that queue. Other E3s and live delivery continue. The affected E3 can fail at its
+existing deadline. Deferred queues remain in memory only, so a restart does not restore their
+pre-checkpoint events.
 
 ## Command reference
 

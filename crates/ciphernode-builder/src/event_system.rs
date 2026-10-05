@@ -292,6 +292,13 @@ impl EventSystem {
                         let addrs = b
                             .eventstores
                             .get_or_try_init(|| -> Result<_> {
+                                e3_sync::inspect_persisted_schema_version(
+                                    &b.sled_path,
+                                    indexes
+                                        .iter()
+                                        .map(|&index| enumerate_path(&b.log_path, index)),
+                                )?
+                                .ensure_compatible()?;
                                 let mut eventstore_map = HashMap::new();
                                 for &index in &indexes {
                                     // Enumerate the log path for each eventstore

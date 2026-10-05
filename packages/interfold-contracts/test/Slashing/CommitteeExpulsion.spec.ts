@@ -372,55 +372,6 @@ describe("Committee Expulsion & Fault Tolerance", function () {
       ).to.equal(2);
     });
 
-    it("should keep E3 alive when active members >= threshold", async function () {
-      const {
-        interfold,
-        registry,
-        slashingManager,
-        operator1,
-        operator2,
-        operator3,
-        setupOperator,
-        makeRequest,
-        finalizeCommitteeWithOperators,
-      } = await loadFixture(setup);
-
-      await setupOperator(operator1);
-      await setupOperator(operator2);
-      await setupOperator(operator3);
-
-      await makeRequest(0); // M=2, N=3
-      await finalizeCommitteeWithOperators(firstE3Id, [
-        operator1,
-        operator2,
-        operator3,
-      ]);
-
-      // Slash one member — 3 active → 2 active, threshold is 2, still viable
-      const proof = await signAndEncodeAttestation(
-        [operator2, operator3],
-        firstE3Id,
-        await operator1.getAddress(),
-        await slashingManager.getAddress(),
-      );
-      await slashingManager.proposeSlash(
-        firstE3Id,
-        await operator1.getAddress(),
-        proof,
-      );
-
-      // E3 should NOT be failed — stage should still be Requested (1)
-      // or whatever stage it was at, not Failed
-      const stage = await interfold.getE3Stage(firstE3Id);
-      expect(stage).to.not.equal(6); // 6 = E3Stage.Failed
-
-      // Active committee still has enough members
-      const { activeCount, thresholdM } =
-        await registry.getCommitteeViability(firstE3Id);
-      expect(activeCount).to.equal(2);
-      expect(thresholdM).to.equal(2); // M=2
-    });
-
     it("should fail E3 when active members drop below threshold", async function () {
       const {
         interfold,

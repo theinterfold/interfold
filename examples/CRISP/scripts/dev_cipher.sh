@@ -17,11 +17,11 @@ PRIVATE_KEY_CN3="0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b00
 PRIVATE_KEY_CN4="0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a"
 PRIVATE_KEY_CN5="0x8b3a350cf5c34c9194ca85829a2df0ec3153be0318b5e2d3348e872092edffba"
 
-interfold wallet set --name cn1 --private-key "$PRIVATE_KEY_CN1"
-interfold wallet set --name cn2 --private-key "$PRIVATE_KEY_CN2"
-interfold wallet set --name cn3 --private-key "$PRIVATE_KEY_CN3"
-interfold wallet set --name cn4 --private-key "$PRIVATE_KEY_CN4"
-interfold wallet set --name cn5 --private-key "$PRIVATE_KEY_CN5"
+printf '%s\n' "$PRIVATE_KEY_CN1" | interfold wallet set --name cn1 --private-key-stdin
+printf '%s\n' "$PRIVATE_KEY_CN2" | interfold wallet set --name cn2 --private-key-stdin
+printf '%s\n' "$PRIVATE_KEY_CN3" | interfold wallet set --name cn3 --private-key-stdin
+printf '%s\n' "$PRIVATE_KEY_CN4" | interfold wallet set --name cn4 --private-key-stdin
+printf '%s\n' "$PRIVATE_KEY_CN5" | interfold wallet set --name cn5 --private-key-stdin
 
 load_crisp_dev_config
 

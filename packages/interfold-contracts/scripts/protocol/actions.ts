@@ -23,7 +23,12 @@ import {
 } from "./safe";
 import { buildSafeTransactions } from "./transactions";
 import type { ProtocolDeployment, SafeTransaction } from "./types";
-import { address, loadConfig, requireContract } from "./values";
+import {
+  address,
+  assertMockDeploymentAllowed,
+  loadConfig,
+  requireContract,
+} from "./values";
 
 const DIRECT_GOVERNANCE_CHAIN_IDS = new Set([31337, 11155111]);
 
@@ -110,6 +115,7 @@ async function assertPreconditions(
   ethers: any,
   config: ReturnType<typeof loadConfig>,
 ) {
+  assertMockDeploymentAllowed(config);
   const randomness = requireRandomnessConfig(config);
   const contracts = [
     requireContract(ethers.provider, config.fold, "fold"),

@@ -43,13 +43,35 @@ every section.
   owner's history by a checkpoint per block. — `BondingRegistry.sol`; `BondedCheckpoints.sol`;
   `flow-trace/02`
 - **The numerator comes from the votes source; the denominator is always the token.**
-  `BondedVotes.getPastVotes` sums whatever `votesSource` attributes to the account and that
-  account's bonded FOLD, while `getPastTotalSupply` passes the **token's** supply through unchanged.
-  `votesSource` is either the token itself (wallet-held FOLD votes, the original behaviour) or an
-  escrow adapter (only locked FOLD votes, so holders must lock to participate while operators keep
-  weight by bonding). Reading the denominator off the escrow instead would omit the bonded half and
-  let participation exceed 100%. Summed voting power must never exceed total supply. —
-  `BondedVotes.sol`; `flow-trace/02`
+  `BondedVotes.getPastVotes` sums whatever `votesSource` attributes to the account and the bonded
+  weight that the account holds or represents, while `getPastTotalSupply` passes the **token's**
+  supply through unchanged. `votesSource` is either the token itself (wallet-held FOLD votes, the
+  original behaviour) or an escrow adapter (only locked FOLD votes, so holders must lock to
+  participate while operators keep weight by bonding). Reading the denominator off the escrow
+  instead would omit the bonded half and let participation exceed 100%. Summed voting power must
+  never exceed total supply. — `BondedVotes.sol`; `flow-trace/02`
+- **Bonded delegation moves weight; it never copies it.** An owner's bonded weight is its bonded
+  FOLD, plus its vesting-locked FOLD under an escrow source. At every timepoint it counts at the
+  owner or at exactly one delegate. Two functions write the links, each at the token's clock in one
+  call, so the owner-to-delegate link and the delegate's slot never disagree: `acceptBonded` sets
+  both, and `_unlink` clears both. `acceptBonded` does not clear an earlier delegate. It relies on
+  the rule that an owner with a pending request has no delegate: `delegateBonded` unlinks the
+  current delegate before it records a request. Any new way to record a request must unlink first,
+  or the owner's weight counts at two delegates. A change never moves weight for a timepoint that
+  has settled, and `getPastVotes` rejects an unsettled timepoint for the same reason. The weight
+  moves only when the delegate calls `acceptBonded` for an owner that asked it with
+  `delegateBonded`. A request alone moves nothing, so nobody can push weight onto an account or take
+  its place. A delegate represents at most `MAX_BONDED_OWNERS` (three) owners, one per slot: bonded
+  weight is read again from its sources on every call, and each represented owner costs a full read,
+  so the cap bounds the cost of every vote. Only the owner or its current delegate can end a
+  delegation; `dropBonded(owner)` checks the caller, because without that check any account could
+  give an owner's weight back and end its delegation. Escrowed FOLD keeps the escrow's delegation
+  and wallet FOLD the token's; moving either one here too would count it twice. Every change emits
+  `BondedDelegateChanged`, not the IVotes `DelegateChanged`, whose readers expect `delegates()` to
+  agree. The CRISP census finds bonded delegates only through that event: without it, a token-census
+  round silently drops the delegated weight. Delegations live in the adapter, so a replacement
+  adapter starts with none. — `BondedVotes.sol`;
+  `examples/CRISP/server/src/server/token_holders/etherscan.rs`; `flow-trace/02`
 - **Escrowed and bonded FOLD cannot overlap; vesting-locked and bonded do, and must be netted.**
   Escrowing custodies the token in the escrow and bonding custodies it in the registry, so no token
   can be in both. Both were transferred rather than burned, so both are still inside the token's
@@ -170,13 +192,13 @@ every section.
   statuses in O(1). New committee requests wait for a check of every registration captured at that
   change, including inactive results. Duplicates and later registrations cannot settle another
   member's check. Deregistration settles the departing member. Rust uses source block seconds from
-  `ConfigurationUpdatedAt` and `OperatorActivationChangedAt`, never the merged event clock, and must
-  invalidate its activity view on every version bump. **Gap:** of these parameters only
-  `ciphernodeBondActiveBps` and `minTicketBalance` emit `ConfigurationUpdated`. Asset-configuration
-  and node-release changes bump the version through `BondingAssetConfigUpdated` and
-  `EligibilityConfigurationVersionUpdated`, which Rust does not consume
-  (`crates/evm/src/bonding_registry/events.rs`, `crates/sortition/src/sortition/node_registry.rs`).
-  — `BondingRegistry.sol`; INDEX concern #24
+  the `...At` events (configuration, eligibility version, bonding asset, activation), never the
+  merged event clock, and must invalidate its activity view on every version bump. Every bump emits
+  `EligibilityConfigurationVersionUpdated` (`BondingEligibilityLib.invalidateConfiguration`),
+  including asset-configuration and node-release changes, and Rust invalidates on it.
+  `BondingAssetConfigUpdated` sets the local ticket price. — `BondingRegistry.sol`;
+  `crates/evm/src/bonding_registry/events.rs`; `crates/sortition/src/sortition/node_registry.rs`;
+  INDEX concern #24
 - **Mandatory release policy changes are paused, drained, and monotonic:** governance may raise the
   required protocol version or node generation only while requests are paused, `activeE3Count == 0`,
   and `unreleasedCommitteeCount == 0`. The change invalidates every cached operator status in O(1).
@@ -309,10 +331,13 @@ every section.
   its own rounds after the requester paid. `MockE3Program` is the stateless bootstrap option. It has
   no administrative controls and applies no application rules. Its deterministic test receipt is not
   production data availability, so keep requests paused until a production program is registered and
-  wired; no contract enforces this. The request-time BFV ciphertext verifier and decryption verifier
+  wired; no contract enforces this. The protocol deploy scripts create `MockE3Program` and
+  `DeployableMockCiphertextVerifier` only on Sepolia and local chains
+  (`assertMockDeploymentAllowed`). The request-time BFV ciphertext verifier and decryption verifier
   remain mandatory. Its mutable failure controls live only in `MockE3ProgramHarness`. A protocol
   upgrade that makes the program interface incompatible must retire every incompatible bootstrap
-  program before requests resume. — `Interfold.sol`; `MockE3Program.sol`; `flow-trace/03`
+  program before requests resume. — `Interfold.sol`; `MockE3Program.sol`;
+  `scripts/protocol/values.ts`; `flow-trace/03`
 - **Data availability binds per program and per round:** Interfold holds no protocol-level
   data-availability verifier; it delegates to `IE3ProgramDataAvailability(e3Program)`. A production
   program must freeze each round's data-availability binding; CRISP holds its verifier as an
@@ -454,7 +479,12 @@ every section.
   `flow-trace/04`, `05`; INDEX concerns Z-32, ZEN2-04, ZEN2-26
 - Accusation quorum: `agree_count >= H`; the implementation derives `H` from the committee enum
   because the legacy E3 field `threshold_m` carries circuit threshold `T`. Voters must be active
-  committee members, and all votes must agree. Lane A is **attestation-based** (ECDSA per voter),
+  committee members, and all votes must agree. Local accusations reject the accuser's own address or
+  finalized party ID. Received accusations reject equal signed accuser and accused addresses.
+  `accused_party_id` is not in the accusation digest and cannot decide received self-accusation
+  admission. Forwarded payloads are admitted only for C3a/C3b; other proof types require local
+  evidence without a forwarded payload. These checks precede evidence caching, vote creation, and
+  pending-window changes in `AccusationVoting`. Lane A is **attestation-based** (ECDSA per voter),
   not on-chain ZK re-verification. Vote digest / EIP-712 type hashes must match the Solidity
   constants exactly (Rust ↔ Solidity). — `flow-trace/05`; `SlashingManager.sol`
 - Staggered slash submission: agreeing voters rank by ascending address. Ranks 0–2 submit, and rank

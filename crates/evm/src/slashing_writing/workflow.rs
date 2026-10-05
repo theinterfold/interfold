@@ -136,6 +136,22 @@ impl SlashSubmissionGate {
         Ok((key, SlashSubmissionDecision::Submit))
     }
 
+    /// Persist an intent with `record`, then admit it, so that the intent survives a crash before
+    /// its submission. A completed intent skips both steps: it is settled, and recording it again
+    /// would leave a durable entry that no acknowledgment removes.
+    pub(crate) fn record_and_admit(
+        &mut self,
+        event: AccusationQuorumReached,
+        record: impl FnOnce(&AccusationQuorumReached) -> Result<()>,
+    ) -> Result<(SlashIntentKey, SlashSubmissionDecision)> {
+        let key = SlashIntentKey::from_quorum(&event)?;
+        if self.completed.contains(&key) {
+            return Ok((key, SlashSubmissionDecision::IgnoreDuplicate));
+        }
+        record(&event)?;
+        self.admit(event)
+    }
+
     pub(crate) fn enable_effects(&mut self) -> Vec<(SlashIntentKey, AccusationQuorumReached)> {
         self.effects_enabled = true;
         let deferred = std::mem::take(&mut self.deferred);

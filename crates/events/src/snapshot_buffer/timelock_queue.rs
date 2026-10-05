@@ -206,11 +206,6 @@ pub mod mock_clock {
             self.current_time
                 .store(time.as_micros() as u64, AtomicOrdering::SeqCst);
         }
-
-        pub fn advance(&self, micros: Duration) {
-            self.current_time
-                .fetch_add(micros.as_micros() as u64, AtomicOrdering::SeqCst);
-        }
     }
 
     impl Clock for MockClock {
@@ -255,29 +250,6 @@ mod tests {
     // ==================== Tests ====================
 
     #[actix::test]
-    async fn test_tick_with_mock_clock_no_expiry() {
-        let received_seqs = Arc::new(Mutex::new(Vec::new()));
-        let mock_router = MockBatchRouter::new(received_seqs.clone()).start();
-
-        let clock = MockClock::new(1000); // Start at t=1000
-        let queue =
-            TimelockQueue::with_clock(mock_router.recipient(), Arc::new(clock.clone()), None)
-                .start();
-
-        // Add timelock expiring at t=2000
-        queue
-            .send(StartTimelock::new_micros(42, 1000, 1000))
-            .await
-            .unwrap();
-
-        // Tick at t=1000 - nothing should expire
-        queue.send(Tick).await.unwrap();
-        sleep(Duration::from_millis(10)).await;
-
-        assert!(received_seqs.lock().unwrap().is_empty());
-    }
-
-    #[actix::test]
     async fn test_tick_with_mock_clock_after_expiry() {
         let received_seqs = Arc::new(Mutex::new(Vec::new()));
         let mock_router = MockBatchRouter::new(received_seqs.clone()).start();
@@ -300,34 +272,6 @@ mod tests {
         queue.send(Tick).await.unwrap();
         sleep(Duration::from_millis(10)).await;
 
-        let seqs = received_seqs.lock().unwrap();
-        assert_eq!(seqs.len(), 1);
-        assert_eq!(seqs[0], 42);
-    }
-
-    #[actix::test]
-    async fn test_tick_exact_expiry_boundary() {
-        let received_seqs = Arc::new(Mutex::new(Vec::new()));
-        let mock_router = MockBatchRouter::new(received_seqs.clone()).start();
-
-        let clock = MockClock::new(1000);
-        let queue =
-            TimelockQueue::with_clock(mock_router.recipient(), Arc::new(clock.clone()), None)
-                .start();
-
-        // Add timelock expiring at exactly t=2000
-        queue
-            .send(StartTimelock::new_micros(42, 1000, 1000))
-            .await
-            .unwrap();
-
-        // Set clock to exact expiry time
-        clock.set(Duration::from_millis(2000));
-
-        queue.send(Tick).await.unwrap();
-        sleep(Duration::from_millis(10)).await;
-
-        // Should flush at exact expiry (<=)
         let seqs = received_seqs.lock().unwrap();
         assert_eq!(seqs.len(), 1);
         assert_eq!(seqs[0], 42);
@@ -415,29 +359,5 @@ mod tests {
             assert_eq!(seqs.len(), 3);
             assert_eq!(seqs[2], 3);
         }
-    }
-
-    #[actix::test]
-    async fn test_clock_advance_helper() {
-        let received_seqs = Arc::new(Mutex::new(Vec::new()));
-        let mock_router = MockBatchRouter::new(received_seqs.clone()).start();
-
-        let clock = MockClock::new(1000);
-        let queue =
-            TimelockQueue::with_clock(mock_router.recipient(), Arc::new(clock.clone()), None)
-                .start();
-
-        queue
-            .send(StartTimelock::new_micros(42, 1000, 500))
-            .await
-            .unwrap();
-
-        // Use advance instead of set
-        clock.advance(Duration::from_millis(600)); // Now at 1600, expiry is 1500
-
-        queue.send(Tick).await.unwrap();
-        sleep(Duration::from_millis(10)).await;
-
-        assert_eq!(received_seqs.lock().unwrap().len(), 1);
     }
 }

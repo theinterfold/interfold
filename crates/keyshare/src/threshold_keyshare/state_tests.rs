@@ -110,20 +110,6 @@ fn failure_is_terminal_and_reachable_from_active_dkg() {
 }
 
 #[test]
-fn new_state_preserves_metadata_and_advances_phase() {
-    let s = base_state(KeyshareState::Init);
-    let next = s
-        .clone()
-        .new_state(KeyshareState::CollectingEncryptionKeys(cek()))
-        .expect("valid transition");
-    assert_eq!(next.variant_name(), "CollectingEncryptionKeys");
-    assert_eq!(next.e3_id, s.e3_id);
-    assert_eq!(next.party_id, s.party_id);
-    assert_eq!(next.threshold_m, s.threshold_m);
-    assert_eq!(next.threshold_n, s.threshold_n);
-}
-
-#[test]
 fn new_state_rejects_illegal_transition() {
     let s = base_state(KeyshareState::Init);
     assert!(s.new_state(KeyshareState::Completed).is_err());

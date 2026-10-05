@@ -12,6 +12,7 @@ circuits:
   - 'scripts/build-circuits.ts'
   - 'scripts/generate-verifiers*.ts'
   - 'scripts/circuit-constants.ts'
+  - 'crates/zk-prover/supported-configurations.json'
   - '!**/*.md'
   - '!**/*.mdx'
 
