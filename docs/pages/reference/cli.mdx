@@ -360,7 +360,8 @@ The purge has limits:
   configured path passes the check.
 - It finds stores only directly inside each node folder in `.interfold/data`.
 
-The detached supervisor does not receive the `--otel` flag.
+The detached supervisor does not receive the `--otel` flag. Set `otel` in the configuration file, or
+`E3_OTEL`, for the nodes that it runs.
 
 <Callout type='warning'>
   `interfold nodes purge` deletes the key files, the stored wallet keys, and the event history of

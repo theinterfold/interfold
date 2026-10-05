@@ -41,7 +41,7 @@ The loader combines four sources. A later source overrides an earlier one:
 1. The built-in defaults on this page
 2. The YAML file, after environment variable substitution
 3. Environment variables that start with `E3_`
-4. The `--otel` flag
+4. The `--otel` flag, when you give it
 
 After it combines the sources, the loader selects one node profile with `--name` and checks it. The
 loader ignores unknown keys at the top level and in a chain entry. An unknown key in a node profile
@@ -113,16 +113,16 @@ Run `interfold config get key_file`, `db_file`, `log_file`, or `work_dir` to see
 
 ## Top-level keys
 
-| Key          | Type             | Default                              | Meaning                                                                                                                              |
-| ------------ | ---------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `node`       | Node profile     | All profile defaults                 | The `_default` profile. Commands use it when `--name` is absent.                                                                     |
-| `nodes`      | Map of profiles  | Empty                                | Named profiles. Select one with `--name <name>`. `interfold nodes up` runs all of them. The name `_default` is reserved.             |
-| `chains`     | List of chains   | Empty                                | The EVM chains that the node reads and writes. See [chain keys](#chain-keys).                                                        |
-| `config_dir` | Path             | `.interfold/config` next to the file | Base folder for key files.                                                                                                           |
-| `data_dir`   | Path             | `.interfold/data` next to the file   | Base folder for the key/value store and the event log.                                                                               |
-| `custom_bb`  | Path             | None                                 | Barretenberg binary to use instead of the downloaded one. The node does not verify its checksum. The version must match the release. |
-| `program`    | Program settings | None                                 | Settings for `interfold program`. See [program settings](#program-settings).                                                         |
-| `otel`       | String           | None                                 | The loader replaces this key with the `--otel` flag, also when the flag is absent. Use `--otel` to set the endpoint.                 |
+| Key          | Type             | Default                              | Meaning                                                                                                                                   |
+| ------------ | ---------------- | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `node`       | Node profile     | All profile defaults                 | The `_default` profile. Commands use it when `--name` is absent.                                                                          |
+| `nodes`      | Map of profiles  | Empty                                | Named profiles. Select one with `--name <name>`. `interfold nodes up` runs all of them. The name `_default` is reserved.                  |
+| `chains`     | List of chains   | Empty                                | The EVM chains that the node reads and writes. See [chain keys](#chain-keys).                                                             |
+| `config_dir` | Path             | `.interfold/config` next to the file | Base folder for key files.                                                                                                                |
+| `data_dir`   | Path             | `.interfold/data` next to the file   | Base folder for the key/value store and the event log.                                                                                    |
+| `custom_bb`  | Path             | None                                 | Barretenberg binary to use instead of the downloaded one. The node does not verify its checksum. The version must match the release.      |
+| `program`    | Program settings | None                                 | Settings for `interfold program`. See [program settings](#program-settings).                                                              |
+| `otel`       | String           | None                                 | OpenTelemetry collector gRPC endpoint, for example `http://localhost:4317`. `E3_OTEL` overrides it, and the `--otel` flag overrides both. |
 
 ## Node profile keys
 

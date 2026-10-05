@@ -81,7 +81,7 @@ pub enum NodeCommands {
         id: String,
     },
 
-    /// Stop the individual node in the nodes set
+    /// Stop and start the individual node in the nodes set
     Restart {
         /// The id of the node
         #[arg(index = 1)]
