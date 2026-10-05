@@ -531,6 +531,20 @@ design citation alone does not establish current runtime behavior.
 
 ### Proof binding / domain separation (audit-fix invariants — do not regress)
 
+- **Packed commitments open to one value:** `pack` in `math/helpers.nr` builds a carrier as a
+  base-`radix` number and asserts every digit fits its slot
+  (`digit.assert_max_bit_size::<((BIT + 3) / 4) * 4 + 4>()`, where `radix = 2^(nibble_bits + 4)`).
+  That assertion *is* the injectivity condition: without it a prover can overflow one digit into the
+  next slot and produce a second opening of the same commitment. Any circuit that opens a commitment
+  from a private witness and skips that witness's range check depends on it — today
+  `lbfv_pk_generation_limb` for `expected_sk_commitment` and `expected_eek_commitment`. Removing or
+  weakening the assertion, or committing through a path that bypasses `pack`, makes those openings
+  unsound. — `core/threshold/lbfv_pk_generation.nr`
+- **Injectivity is not canonicality:** an injective commitment pins which value was opened, not
+  which representative. A value checked only modulo `q` (for example an aggregate constrained by
+  `assert_zero_mod`) still needs its own canonical-interval check, because `v + q*k` satisfies the
+  modular check and the packing slot is far wider than `q`. This is why `pk0` keeps `centered` in
+  C1 and in the l-BFV limb even though packing is injective. — `flow-trace/04`
 - **PK domain binding (C-08):** `BfvPkVerifier.verify` checks
   `committeeHash = keccak256(abi.encodePacked(topNodes))` (as 128-bit limbs) against the proof's
   public inputs, binding the proof to the specific committee. — `flow-trace/04`

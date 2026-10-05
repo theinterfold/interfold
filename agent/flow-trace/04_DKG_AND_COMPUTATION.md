@@ -15,13 +15,18 @@ by the hot operator key and verified against the operator address snapshotted in
 The bond owner never signs DKG, key-publication, computation, or decryption messages.
 
 C1 (`core/threshold/pk_generation.nr`) proves the key-generation relation in `Z[X]/(X^N+1)` with a
-single short quotient, reduced in-circuit from the `r1` witness. The cyclotomic quotient `r2` is
+single short quotient `r`, taken from the generator already reduced. The cyclotomic quotient `r2` is
 gone from both the circuit and the entry-point witness. Every constant the path needs comes from the
-configuration, so it covers every parameter set without per-preset code. The public outputs and the commitment formats are unchanged, so C2a, C2b, and C5 see the
-same values. The new checking transcript requires new verification keys, dependent recursive
-artifacts, and matching on-chain verifiers before deployment. The path also adds canonical-interval
-checks on `pk0` and `e_sm`; without them a party can open one public key under several distinct
-`commit(pk_trbfv)` values.
+configuration, so it covers every parameter set without per-preset code. The public outputs and the
+commitment formats are unchanged, so C2a, C2b, and C5 see the same values. The new checking
+transcript requires new verification keys, dependent recursive artifacts, and matching on-chain
+verifiers before deployment. The path also adds canonical-interval checks on `pk0` and `e_sm`;
+without them a party can open one public key under several distinct `commit(pk_trbfv)` values.
+
+The smudging-noise commitment packs at `PK_GENERATION_E_SM_MODULI_BIT`, the width of one residue
+centered modulo its own `q_l`, not at the lifted `PK_GENERATION_BIT_E_SM` over the whole CRT basis.
+C2b packs the same way, so the two roots still match. Comparing one residue against the lifted bound
+is not a meaningful relation and C1 no longer does it; proving the lifted bound is separate work.
 
 ---
 
@@ -511,9 +516,20 @@ ShareVerificationActor receives ShareVerificationDispatched(kind=ShareProofs)
 │   │   │                                      the commitment stored at ciphertext publication. Keccak(raw output) remains separate.
 │   │   │
 │   │   ├─ NOTE: Production C1 still proves one summation-only public-key share per party. The
-│   │   │   `lbfv_pk_generation_limb` circuit proves one CRT limb of one fixed public-key row. The
+│   │   │   `lbfv_pk_generation_limb` circuit proves one CRT limb of one fixed public-key row. It
+│   │   │   consumes `expected_sk_commitment` and `expected_eek_commitment` and proves it opens to
+│   │   │   them, so the secret key and the row error are bounded once by `lbfv_party_secrets`
+│   │   │   rather than once per limb. That transfer is sound only because `pack` asserts each digit
+│   │   │   fits its radix slot, which makes a packed commitment open to exactly one value. `pk0`
+│   │   │   keeps its own canonical-interval check: it is not bounded upstream, and the bound is
+│   │   │   what the relation needs, since adding `q` to a coefficient and 1 to the matching `r`
+│   │   │   leaves the checked residual identical. The quotient arrives already reduced. The
 │   │   │   `lbfv_pk_generation` terminal verifies all `L` limb proofs in canonical order. It
-│   │   │   reconstructs the unchanged whole-row PK commitment and exposes the PK leaf VK hash.
+│   │   │   reconstructs the unchanged whole-row PK commitment and exposes the PK leaf VK hash. The
+│   │   │   limb's public statement is unchanged in length and position, so the terminal still reads
+│   │   │   the secret-key and error commitments at the same indices; they are inputs now, not
+│   │   │   outputs. `lbfv_party_secrets` (`CircuitName::LbfvPartySecrets = 41`) publishes those
+│   │   │   commitments plus the smudging-noise root, and is not yet wired into any protocol path.
 │   │   │   The `lbfv_pk_aggregation` circuit
 │   │   │   aggregates exactly `H` generation-bound rows against the selected fixed CRS row. Both
 │   │   │   aggregation circuits bind the proof session, aggregator party, accepted-party-set hash,

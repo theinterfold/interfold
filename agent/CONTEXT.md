@@ -134,9 +134,15 @@ opentelemetry/tracing.
   (`CircuitName::LbfvPkGenerationLimb = 40`), `lbfv_pk_aggregation`
   (`CircuitName::LbfvPkAggregation = 30`), `rlk_generation` (`CircuitName::RlkGeneration = 27`),
   `rlk_generation_limb` (`CircuitName::RlkGenerationLimb = 31`), and `rlk_aggregation`
-  (`CircuitName::RlkAggregation = 28`). The `lbfv_pk_generation_limb` and `rlk_generation_limb`
+  (`CircuitName::RlkAggregation = 28`), and `lbfv_party_secrets`
+  (`CircuitName::LbfvPartySecrets = 41`). The `lbfv_pk_generation_limb` and `rlk_generation_limb`
   circuits each prove one CRT limb. Their terminal circuits recursively finalize all limbs for one
-  row. These circuits have helper and prover boundaries. Runtime handlers use stable operation IDs
+  row. `lbfv_party_secrets` bounds one party's secret key, its smudging noise, and each gadget
+  row's key-generation error, and publishes their commitments; it is built and provable but no
+  protocol path produces or consumes its proof yet, and C1 still fills that role. The public-key
+  limb consumes `expected_sk_commitment` and `expected_eek_commitment` rather than bounding those
+  values itself, so the range checks happen once per party and once per row instead of once per
+  limb. These circuits have helper and prover boundaries. Runtime handlers use stable operation IDs
   for deterministic row-proof retries. Generation verification accepts C1 followed by complete
   five-row public-key and RLK families; aggregation accepts the two row families without C1. For
   secure-16384, the per-E3 keyshare actor durably produces and publishes its local bundle. Each
