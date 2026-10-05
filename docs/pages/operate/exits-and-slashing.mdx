@@ -347,7 +347,9 @@ cannot register (`CiphernodeBanned`).
 
 - [ ] No slash proposal against the operator is open.
 - [ ] The deregistration transaction succeeded (`CiphernodeDeregistrationRequested`).
-- [ ] The node ran until each E3 of its final committees completed or failed.
+- [ ] The node ran until each E3 of its final committees completed or failed, and until the report
+      deadline of each such E3 passed (its lifecycle deadline plus one day), so that it sent its
+      slash reports.
 - [ ] The exit delay ended (`Exit pending: false`).
 - [ ] Each terminal committee of the operator is released.
 - [ ] The claim succeeded and `Pending exits` shows `tickets=0, bond=0`.

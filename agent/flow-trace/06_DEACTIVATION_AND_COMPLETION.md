@@ -396,7 +396,10 @@ limit. Replay therefore continues until the EventStore returns an empty page, no
 short page.
 
 `interfold node validate` checks the raw storage schema before it reads or repairs event logs. It
-detects a recoverable uncommitted event-log tail without changing it. With the node stopped,
+opens no store where the data directory has none, also at an empty store folder: it reports a node
+that has not started, or event logs without a store. A snapshot cursor, projection or node state
+that it cannot read is a failed check in the report, not an error that ends it. It detects a
+recoverable uncommitted event-log tail without changing it. With the node stopped,
 `interfold node validate --repair` applies the same boundary-checked tail recovery as startup and
 refuses to remove indexed records. The repair also compares both registered-node projections with
 the intact EventStore prefix. It can reconcile derived membership and reconstruct missing member

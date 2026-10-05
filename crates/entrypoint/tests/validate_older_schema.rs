@@ -160,6 +160,53 @@ async fn validate_reports_a_store_from_an_older_schema() -> Result<()> {
     Ok(())
 }
 
+/// Validation opens no store where the data directory has none: opening one creates it. A data
+/// directory with neither a store nor events belongs to a node that has not started; one with
+/// events but no store is broken. An empty folder at the store path, as a mount point, holds no
+/// store either, and stays empty.
+#[actix::test]
+async fn validate_creates_no_store() -> Result<()> {
+    for (with_events, empty_folder) in [(false, false), (true, false), (false, true)] {
+        let root = tempfile::tempdir()?;
+        let config = node_config(root.path())?;
+        if empty_folder {
+            std::fs::create_dir_all(config.db_file())?;
+        }
+        if with_events {
+            let path = e3_utils::enumerate_path(&config.log_file(), 0);
+            let mut log = CommitLog::new(LogOptions::new(&path))?;
+            log.append_msg(b"an event")?;
+            log.flush()?;
+        }
+        let report = validate_node(&config, false).await?;
+        let check = report
+            .checks
+            .iter()
+            .find(|check| check.name == "store")
+            .expect("the report must say that there is no store");
+        assert_eq!(
+            check.severity,
+            if with_events {
+                Severity::Fail
+            } else {
+                Severity::Warn
+            },
+            "{}",
+            report.render()
+        );
+        if empty_folder {
+            assert_eq!(
+                std::fs::read_dir(config.db_file())?.count(),
+                0,
+                "validation wrote into the empty store folder"
+            );
+        } else {
+            assert!(!config.db_file().exists(), "validation created a store");
+        }
+    }
+    Ok(())
+}
+
 #[actix::test]
 async fn event_reader_rejects_older_schema_before_log_recovery() -> Result<()> {
     for fixture in SCHEMA_SEVEN_EVENTS {
