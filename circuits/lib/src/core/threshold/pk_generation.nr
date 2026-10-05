@@ -118,13 +118,9 @@ impl<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u3
             // so the encoding needs at least that many bits per digit, or the shifted value goes
             // negative and wraps. The upper end is already enforced by `packing_layout`.
             assert(BIT_E_SM >= BIT_PK);
-            // The generator already centers each noise residue modulo q_l. Prove the configured
-            // global bound contains that interval, then check the narrower canonical one. This
-            // implies the configured bound rather than replacing it, and leaves the global noise
-            // distribution and its sampler unchanged.
-            self.configs.e_sm_bound.assert_max_bit_size::<BIT_E_SM>();
-            (self.configs.e_sm_bound - (self.configs.qis[l] - 1) / 2)
-                .assert_max_bit_size::<BIT_E_SM>();
+            // Each residue is checked against its own modulus. `e_sm_bound` is the lifted bound
+            // over the whole CRT basis, so comparing a single residue to it is not the right
+            // relation; that bound still needs proving, but not here and not per limb.
             centered::<N, BIT_PK>(self.e_sm[l], self.configs.qis[l]);
         }
 

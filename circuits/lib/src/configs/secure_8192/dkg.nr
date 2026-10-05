@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 pub use crate::configs::secure_8192::threshold::{
-    L as L_THRESHOLD, PK_GENERATION_BIT_E_SM as SHARE_COMPUTATION_E_SM_BIT_SECRET,
+    L as L_THRESHOLD, PK_GENERATION_E_SM_MODULI_BIT as SHARE_COMPUTATION_E_SM_BIT_SECRET,
     QIS as QIS_THRESHOLD, THRESHOLD_SHARE_DECRYPTION_BIT_SK as SHARE_DECRYPTION_BIT_AGG,
 };
 use crate::core::dkg::share_computation::Configs as ShareComputationConfigs;

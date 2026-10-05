@@ -54,7 +54,8 @@ const LICENSE: &str = "// SPDX-License-Identifier: LGPL-3.0-only
 
 /// Default coefficient count per C2 chunk. Mirrors
 /// `crates/zk-prover/src/circuits/aggregation/c2_chunk_config.rs`.
-const DEFAULT_C2_CHUNK_SIZE: u32 = 512;
+// Shared with the witness path so a chunked-root commitment is chunked identically.
+const DEFAULT_C2_CHUNK_SIZE: u32 = e3_zk_helpers::DEFAULT_C2_CHUNK_SIZE as u32;
 /// Default chunk count per C2 batch. Mirrors the same source.
 const DEFAULT_C2_CHUNKS_PER_BATCH: u32 = 4;
 
@@ -351,6 +352,10 @@ pub global PARAMS_SMUDGING_B_ENC: Field = {};
 pub global PK_GENERATION_BIT_SK: u32 = {};
 pub global PK_GENERATION_BIT_R: u32 = {};
 pub global PK_GENERATION_BIT_PK: u32 = {};
+// Bit width of one smudging-noise residue: it is centered modulo its own q_l, so it is as wide as
+// the modulus. This is separate from `PK_GENERATION_BIT_E_SM`, which is the lifted bound over the
+// whole CRT basis and is far wider; packing one residue at that width wastes most of every carrier.
+pub global PK_GENERATION_E_SM_MODULI_BIT: u32 = {};
 
 pub global PK_GENERATION_EEK_BOUND: Field = {};
 pub global PK_GENERATION_SK_BOUND: Field = {};
@@ -367,6 +372,7 @@ pub global PK_GENERATION_CONFIGS: PkGenerationConfigs<N, L> = PkGenerationConfig
             pkgen.bits.eek_bit,
             pkgen.bits.sk_bit,
             pkgen.bits.r_bit,
+            pkgen.bits.pk_bit,
             pkgen.bits.pk_bit,
             pkgen.bounds.eek_bound,
             pkgen.bounds.sk_bound,
@@ -443,20 +449,20 @@ pub global RLK_GENERATION_R2_D2_BOUNDS: [Field; L] = [{}];",
 pub global RLK_GENERATION_BIT_SK: u32 = PK_GENERATION_BIT_SK;
 pub global RLK_GENERATION_BIT_E0: u32 = PK_GENERATION_BIT_EEK;
 pub global RLK_GENERATION_BIT_E2: u32 = PK_GENERATION_BIT_EEK;
-pub global RLK_GENERATION_BIT_R1_D0: u32 = PK_GENERATION_BIT_R1;
-pub global RLK_GENERATION_BIT_R2_D0: u32 = PK_GENERATION_BIT_R2;
-pub global RLK_GENERATION_BIT_R1_D2: u32 = PK_GENERATION_BIT_R1;
-pub global RLK_GENERATION_BIT_R2_D2: u32 = PK_GENERATION_BIT_R2;
+pub global RLK_GENERATION_BIT_R1_D0: u32 = PK_GENERATION_BIT_R;
+pub global RLK_GENERATION_BIT_R2_D0: u32 = PK_GENERATION_BIT_PK;
+pub global RLK_GENERATION_BIT_R1_D2: u32 = PK_GENERATION_BIT_R;
+pub global RLK_GENERATION_BIT_R2_D2: u32 = PK_GENERATION_BIT_PK;
 pub global RLK_GENERATION_BIT_D: u32 = PK_GENERATION_BIT_PK;
 
 pub global RLK_GENERATION_R_BOUND: Field = PK_GENERATION_SK_BOUND;
 pub global RLK_GENERATION_SK_BOUND: Field = PK_GENERATION_SK_BOUND;
 pub global RLK_GENERATION_E0_BOUND: Field = PK_GENERATION_EEK_BOUND;
 pub global RLK_GENERATION_E2_BOUND: Field = PK_GENERATION_EEK_BOUND;
-pub global RLK_GENERATION_R1_D0_BOUNDS: [Field; L] = PK_GENERATION_R1_BOUNDS;
-pub global RLK_GENERATION_R2_D0_BOUNDS: [Field; L] = PK_GENERATION_R2_BOUNDS;
-pub global RLK_GENERATION_R1_D2_BOUNDS: [Field; L] = PK_GENERATION_R1_BOUNDS;
-pub global RLK_GENERATION_R2_D2_BOUNDS: [Field; L] = PK_GENERATION_R2_BOUNDS;"
+pub global RLK_GENERATION_R1_D0_BOUNDS: [Field; L] = PK_GENERATION_R_BOUNDS;
+pub global RLK_GENERATION_R2_D0_BOUNDS: [Field; L] = PK_GENERATION_R_BOUNDS;
+pub global RLK_GENERATION_R1_D2_BOUNDS: [Field; L] = PK_GENERATION_R_BOUNDS;
+pub global RLK_GENERATION_R2_D2_BOUNDS: [Field; L] = PK_GENERATION_R_BOUNDS;"
             .to_string()
     };
     let rlk_section = section(
@@ -702,7 +708,7 @@ fn render_dkg(preset: BfvPreset) -> Result<String> {
     let header = format!(
         "{LICENSE}
 pub use crate::configs::{slug}::threshold::{{
-    L as L_THRESHOLD, PK_GENERATION_BIT_E_SM as SHARE_COMPUTATION_E_SM_BIT_SECRET,
+    L as L_THRESHOLD, PK_GENERATION_E_SM_MODULI_BIT as SHARE_COMPUTATION_E_SM_BIT_SECRET,
     QIS as QIS_THRESHOLD, THRESHOLD_SHARE_DECRYPTION_BIT_SK as SHARE_DECRYPTION_BIT_AGG,
 }};
 use crate::core::dkg::share_computation::Configs as ShareComputationConfigs;

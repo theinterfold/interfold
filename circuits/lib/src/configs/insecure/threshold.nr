@@ -1075,6 +1075,10 @@ pub global PK_GENERATION_BIT_EEK: u32 = 5;
 pub global PK_GENERATION_BIT_SK: u32 = 1;
 pub global PK_GENERATION_BIT_R: u32 = 9;
 pub global PK_GENERATION_BIT_PK: u32 = 35;
+// Bit width of one smudging-noise residue: it is centered modulo its own q_l, so it is as wide as
+// the modulus. This is separate from `PK_GENERATION_BIT_E_SM`, which is the lifted bound over the
+// whole CRT basis and is far wider; packing one residue at that width wastes most of every carrier.
+pub global PK_GENERATION_E_SM_MODULI_BIT: u32 = 35;
 
 pub global PK_GENERATION_EEK_BOUND: Field = 20;
 pub global PK_GENERATION_SK_BOUND: Field = 1;
@@ -1108,20 +1112,20 @@ pub global RLK_GENERATION_BIT_R: u32 = PK_GENERATION_BIT_SK;
 pub global RLK_GENERATION_BIT_SK: u32 = PK_GENERATION_BIT_SK;
 pub global RLK_GENERATION_BIT_E0: u32 = PK_GENERATION_BIT_EEK;
 pub global RLK_GENERATION_BIT_E2: u32 = PK_GENERATION_BIT_EEK;
-pub global RLK_GENERATION_BIT_R1_D0: u32 = PK_GENERATION_BIT_R1;
-pub global RLK_GENERATION_BIT_R2_D0: u32 = PK_GENERATION_BIT_R2;
-pub global RLK_GENERATION_BIT_R1_D2: u32 = PK_GENERATION_BIT_R1;
-pub global RLK_GENERATION_BIT_R2_D2: u32 = PK_GENERATION_BIT_R2;
+pub global RLK_GENERATION_BIT_R1_D0: u32 = PK_GENERATION_BIT_R;
+pub global RLK_GENERATION_BIT_R2_D0: u32 = PK_GENERATION_BIT_PK;
+pub global RLK_GENERATION_BIT_R1_D2: u32 = PK_GENERATION_BIT_R;
+pub global RLK_GENERATION_BIT_R2_D2: u32 = PK_GENERATION_BIT_PK;
 pub global RLK_GENERATION_BIT_D: u32 = PK_GENERATION_BIT_PK;
 
 pub global RLK_GENERATION_R_BOUND: Field = PK_GENERATION_SK_BOUND;
 pub global RLK_GENERATION_SK_BOUND: Field = PK_GENERATION_SK_BOUND;
 pub global RLK_GENERATION_E0_BOUND: Field = PK_GENERATION_EEK_BOUND;
 pub global RLK_GENERATION_E2_BOUND: Field = PK_GENERATION_EEK_BOUND;
-pub global RLK_GENERATION_R1_D0_BOUNDS: [Field; L] = PK_GENERATION_R1_BOUNDS;
-pub global RLK_GENERATION_R2_D0_BOUNDS: [Field; L] = PK_GENERATION_R2_BOUNDS;
-pub global RLK_GENERATION_R1_D2_BOUNDS: [Field; L] = PK_GENERATION_R1_BOUNDS;
-pub global RLK_GENERATION_R2_D2_BOUNDS: [Field; L] = PK_GENERATION_R2_BOUNDS;
+pub global RLK_GENERATION_R1_D0_BOUNDS: [Field; L] = PK_GENERATION_R_BOUNDS;
+pub global RLK_GENERATION_R2_D0_BOUNDS: [Field; L] = PK_GENERATION_R_BOUNDS;
+pub global RLK_GENERATION_R1_D2_BOUNDS: [Field; L] = PK_GENERATION_R_BOUNDS;
+pub global RLK_GENERATION_R2_D2_BOUNDS: [Field; L] = PK_GENERATION_R_BOUNDS;
 
 pub global RLK_GENERATION_CONFIGS: RlkGenerationConfigs<N, L> = RlkGenerationConfigs::new(
     QIS,

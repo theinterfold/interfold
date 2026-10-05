@@ -1019,7 +1019,7 @@ mod tests {
         assert!(bounds
             .r1_d0_bounds
             .iter()
-            .zip(pk_bounds.r1_bounds.iter())
+            .zip(pk_bounds.r_bounds.iter())
             .all(|(rlk, pk)| rlk > pk));
         assert_eq!(bounds.r1_d0_bounds, bounds.r1_d2_bounds);
         assert_eq!(bounds.r2_d0_bounds, bounds.r2_d2_bounds);
