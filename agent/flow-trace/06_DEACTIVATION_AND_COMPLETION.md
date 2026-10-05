@@ -284,12 +284,13 @@ On restart:
 │        slashing work: the router forwards a Failed `E3StageChanged` to the context when
 │        it is built, before replay, or at EffectsEnabled for a context that replay admits,
 │        also to a recipient that the context creates later. The keyshare and the public-key
-│        and plaintext aggregators stop at it. A selection of the E3, recovered, replayed or
-│        live, starts no protocol actor; the compute gate and ZK recovery start with the
-│        Failed stage for it, so its C0 inputs do not resume and the gate still admits
-│        accusation re-verification; and the data-availability coordinator drops its restored
-│        work. The Failed event has the E3's aggregate and the router's cursor of it, like a
-│        recovered selection
+│        and plaintext aggregators stop at it, also a plaintext aggregation that still waits
+│        for the key's chain authority. A selection of the E3, recovered, replayed or live,
+│        starts no protocol actor; the compute gate and ZK recovery start with the Failed
+│        stage for it, so the C0 verifier admits none of its inputs, recovered, replayed or
+│        live, and the gate still admits accusation re-verification; and the
+│        data-availability coordinator drops its restored work. The Failed event has the
+│        E3's aggregate and the router's cursor of it, like a recovered selection
 │        An E3 absent at chain head, a chain missing from the config, an RPC error after two
 │        retries, or 60 s for one read of 16 contexts fails startup. The contexts of a
 │        disabled chain resume unchecked

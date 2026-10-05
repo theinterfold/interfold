@@ -284,3 +284,83 @@ async fn c0_retries_back_off_and_stop_at_completion() {
     actor.send(recovery::VerificationBarrier).await.unwrap();
     assert!(rx.try_recv().is_err(), "completed E3 retried verification");
 }
+
+impl Handler<recovery::VerificationBarrier> for VerificationRecorder {
+    type Result = ();
+
+    fn handle(&mut self, _: recovery::VerificationBarrier, _: &mut Self::Context) {}
+}
+
+/// The replay after a restart can bring back the C0 input of an E3 that failed before startup,
+/// and a peer can still send one later. Neither is verified; an active E3's input is.
+#[actix::test]
+async fn c0_inputs_of_an_e3_whose_dkg_ended_before_startup_are_not_verified() {
+    use e3_data::RepositoriesFactory;
+    let preset = BfvPreset::InsecureThreshold512;
+    let signer = PrivateKeySigner::random();
+    let (failed, active) = (E3id::new("7", 31_337), E3id::new("8", 31_337));
+    let committee = Committee::new(vec![signer.address().to_string()]);
+    let meta = E3Meta {
+        threshold_m: 1,
+        threshold_n: 3,
+        seed: Seed([0; 32]),
+        params_preset: preset,
+        params: ArcBytes::default(),
+        error_size: ArcBytes::default(),
+    };
+    let aggregate = e3_events::AggregateId::new(1);
+    let system = e3_ciphernode_builder::EventSystem::new()
+        .with_fresh_bus()
+        .with_aggregate_config(e3_events::AggregateConfig::new(HashMap::from([(
+            aggregate,
+            Duration::ZERO,
+        )])));
+    let mut recovery = crate::ZkActorRecovery::new(
+        HashMap::from([
+            (failed.clone(), committee.clone()),
+            (active.clone(), committee),
+        ]),
+        HashMap::from([(failed.clone(), meta.clone()), (active.clone(), meta)]),
+        HashMap::new(),
+    );
+    recovery
+        .hydrate(
+            &system.store().unwrap().repositories(),
+            &HashMap::from([(failed.clone(), e3_events::E3Stage::Failed)]),
+            &system.eventstore_reader().unwrap().seq(),
+            &[aggregate],
+        )
+        .await
+        .unwrap();
+    let bus = test_bus();
+    let (observed_tx, mut observed_rx) = mpsc::unbounded_channel();
+    let verifier = VerificationRecorder {
+        sender: observed_tx,
+    }
+    .start();
+    let actor = recovery.setup_proof_verification(&bus, verifier.clone().recipient());
+    bus.event_bus().send(EventBusBarrier).await.unwrap();
+
+    // The replayed suffix holds an input of each E3, and effects begin after it.
+    for e3_id in [&failed, &active] {
+        bus.publish_without_context(EncryptionKeyReceived {
+            e3_id: e3_id.clone(),
+            key: signed_c0_key(&signer, 0, e3_id, preset),
+        })
+        .unwrap();
+    }
+    bus.publish_without_context(EffectsEnabled::new()).unwrap();
+    bus.publish_without_context(EncryptionKeyReceived {
+        e3_id: failed.clone(),
+        key: signed_c0_key(&signer, 0, &failed, preset),
+    })
+    .unwrap();
+    bus.flush_event_pipeline().await.unwrap();
+    actor.send(recovery::VerificationBarrier).await.unwrap();
+    verifier.send(recovery::VerificationBarrier).await.unwrap();
+
+    let verified: Vec<_> = std::iter::from_fn(|| observed_rx.try_recv().ok())
+        .map(|observed| observed.e3_id)
+        .collect();
+    assert_eq!(verified, [active]);
+}

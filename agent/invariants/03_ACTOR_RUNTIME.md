@@ -147,16 +147,17 @@ the code does not meet yet.
   accusation or slashing work, but its other work ends: the router forwards a Failed
   `E3StageChanged` to the context when the router is built, before replay, or at `EffectsEnabled`
   for a context that replay admits, so its keyshare and its public-key and plaintext aggregators
-  stop, and a recipient that the context creates later gets it first; a selection of the E3,
-  recovered, replayed or live, starts no protocol actor; the compute gate and ZK recovery start with
-  the Failed stage for it, so its C0 inputs do not resume and the gate still admits accusation
-  re-verification; and the data-availability coordinator drops its restored work. The Failed event
-  has the E3's aggregate and the router's cursor of it, so the actors' cleanup writes are not stale.
-  A disabled chain covers the contexts of its configured `chain_id`; a context of a chain that the
-  configuration does not have fails startup. **Gap:** a context whose local lifecycle stage is
-  Failed completes at `EffectsEnabled` even when its failure reason needs accusation work, because
-  the lifecycle does not keep the reason. This is follow-up work. Document publication recovery does
-  not read the lifecycle. — `crates/ciphernode-builder/src/finalized_lifecycle.rs`;
+  stop, also a plaintext aggregation that still waits for the key's chain authority, and a recipient
+  that the context creates later gets it first; a selection of the E3, recovered, replayed or live,
+  starts no protocol actor; the compute gate and ZK recovery start with the Failed stage for it, so
+  the C0 verifier admits none of its inputs, recovered, replayed or live, and the gate still admits
+  accusation re-verification; and the data-availability coordinator drops its restored work. The
+  Failed event has the E3's aggregate and the router's cursor of it, so the actors' cleanup writes
+  are not stale. A disabled chain covers the contexts of its configured `chain_id`; a context of a
+  chain that the configuration does not have fails startup. **Gap:** a context whose local lifecycle
+  stage is Failed completes at `EffectsEnabled` even when its failure reason needs accusation work,
+  because the lifecycle does not keep the reason. This is follow-up work. Document publication
+  recovery does not read the lifecycle. — `crates/ciphernode-builder/src/finalized_lifecycle.rs`;
   `crates/evm/src/finalized_lifecycle.rs`; INDEX concern #48
 - EventStore replay preserves durable sequence inside each aggregate. It uses HLC order only to
   choose between the next events of different aggregates. A late event can have an older remote HLC
@@ -289,7 +290,8 @@ the code does not meet yet.
   other sequence gaps. An empty filtered page is not end-of-log until the physical cursor passes the
   log head. Recovery advances one physical record at a time across empty pages, including pages
   limited by decoded bytes. Later C0 inputs remain recoverable. It applies the live admission checks
-  and excludes E3s past DKG. Recovered and replayed C0 inputs dispatch only after `EffectsEnabled`;
+  and excludes E3s past DKG, and the verifier refuses a replayed or later input of an E3 whose DKG
+  ended before startup. Recovered and replayed C0 inputs dispatch only after `EffectsEnabled`;
   document deduplication cannot erase unresolved verification work. Local failures retry with a
   delay that doubles from 5 to 60 seconds. `E3RequestComplete` cancels the retries. —
   `crates/zk-prover/src/proof_verification/recovery.rs`; `flow-trace/06`

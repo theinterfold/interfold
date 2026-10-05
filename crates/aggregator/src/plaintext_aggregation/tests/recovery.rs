@@ -556,20 +556,28 @@ fn recovery_share(id: &E3id, key: &CanonicalPublicKey, party: u64, seq: u64) -> 
 #[actix::test]
 async fn restart_recovers_ciphertext_deferred_until_key_authority() -> Result<()> {
     for authority_before_hydration in [false, true] {
-        deferred_plaintext_restart(false, authority_before_hydration, false).await?;
+        deferred_plaintext_restart(false, authority_before_hydration, false, false).await?;
     }
     Ok(())
 }
 
 #[actix::test]
 async fn startup_keeps_plaintext_snapshot_dormant_until_chain_authority() -> Result<()> {
-    deferred_plaintext_restart(true, false, false).await
+    deferred_plaintext_restart(true, false, false, false).await
+}
+
+/// A restored plaintext aggregation that waits for chain authority does not resume when its E3
+/// failed: the Failed stage change that startup sends before effects ends it.
+#[actix::test]
+async fn a_deferred_plaintext_snapshot_of_a_failed_e3_does_not_resume() -> Result<()> {
+    deferred_plaintext_restart(true, false, false, true).await
 }
 
 async fn deferred_plaintext_restart(
     existing_snapshot: bool,
     authority_before_hydration: bool,
     sustained_traffic: bool,
+    failed_before_effects: bool,
 ) -> Result<()> {
     let (bus, _, _, _, _, _, history) =
         get_common_setup(Some(BfvPreset::InsecureThreshold512.into()))?;
@@ -730,6 +738,52 @@ async fn deferred_plaintext_restart(
             "startup replaced the dormant snapshot"
         );
     }
+    if failed_before_effects {
+        // Startup tells a restored recipient of a failed E3 about the failure before effects.
+        let failed = e3_events::E3StageChanged {
+            e3_id: id.clone(),
+            previous_stage: E3Stage::CiphertextReady,
+            new_stage: E3Stage::Failed,
+        };
+        recipient.send(event(failed, EventSource::Local, 6)).await?;
+        let _ = recipient
+            .send(event(
+                e3_events::EffectsEnabled::new(),
+                EventSource::Local,
+                7,
+            ))
+            .await;
+        projection.send(authority.clone()).await?;
+        extension.on_event(&mut ctx, &authority);
+        let _ = recipient.send(authority).await;
+        for _ in 0..200 {
+            if !recipient.connected() {
+                break;
+            }
+            actix::clock::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(
+            !recipient.connected(),
+            "the deferred aggregation of a failed E3 kept running"
+        );
+        let stored = plaintext_repositories(&store, &id)
+            .trbfv_plaintext(&id)
+            .read()
+            .await?
+            .unwrap();
+        assert!(
+            matches!(stored, ThresholdPlaintextAggregatorState::Collecting(_)),
+            "the aggregation of a failed E3 resumed"
+        );
+        let recorded = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+        assert!(!recorded.iter().any(|event| matches!(
+            event.get_data(),
+            InterfoldEventData::ShareVerificationDispatched(_)
+                | InterfoldEventData::ComputeRequest(_)
+                | InterfoldEventData::PlaintextAggregated(_)
+        )));
+        return Ok(());
+    }
     replay_suffix(&bus, &store, &reader, 5, &recipient, &history).await?;
     let reads_before_authority = reads.load(std::sync::atomic::Ordering::SeqCst);
     if !authority_before_hydration {
@@ -779,7 +833,7 @@ async fn deferred_plaintext_restart(
 
 #[actix::test]
 async fn deferred_plaintext_reloads_sustained_traffic_from_history() -> Result<()> {
-    deferred_plaintext_restart(true, false, true).await
+    deferred_plaintext_restart(true, false, true, false).await
 }
 
 struct CountingHistoryReader {

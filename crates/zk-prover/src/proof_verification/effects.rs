@@ -25,6 +25,14 @@ impl ProofVerificationActor {
         ctx: &mut Context<Self>,
     ) {
         let (msg, ec) = msg.into_components();
+        if self.dkg_ended.contains(&msg.e3_id) {
+            debug!(
+                e3_id = %msg.e3_id,
+                party_id = msg.key.party_id,
+                "The E3's DKG ended before startup — not verifying its C0 input"
+            );
+            return;
+        }
         let pending_key = (msg.e3_id.clone(), msg.key.party_id);
         if self.pending.contains_key(&pending_key) {
             warn!(

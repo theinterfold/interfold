@@ -817,6 +817,12 @@ impl Handler<InterfoldEvent> for DeferredPlaintextAggregator {
         } else if matches!(
             event.get_data(),
             InterfoldEventData::E3RequestComplete(_) | InterfoldEventData::Shutdown(_)
+        ) || matches!(
+            event.get_data(),
+            // An ended E3's aggregation does not resume, also when its context stays for
+            // accusation work.
+            InterfoldEventData::E3StageChanged(stage)
+                if stage.e3_id == self.e3_id && stage.new_stage.is_terminal()
         ) {
             ctx.stop();
         } else {

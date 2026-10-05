@@ -19,7 +19,8 @@ use std::collections::{HashMap, HashSet};
 
 use crate::actors::node_proof_aggregator::recovery::NodeProofRecovery;
 use crate::actors::{
-    NodeProofAggregator, ProofRequestActor, ProofVerificationActor, ShareVerificationActor, ZkActor,
+    NodeProofAggregator, ProofRequestActor, ProofVerificationActor, ShareVerificationActor,
+    ZkActor, ZkVerificationRequest,
 };
 use crate::ZkBackend;
 
@@ -34,6 +35,9 @@ pub struct ZkActorRecovery {
     dkg_fold_attestation_contexts: HashMap<E3id, DkgFoldAttestationContext>,
     node_proofs: NodeProofRecovery,
     pending_c0: Vec<TypedEvent<EncryptionKeyReceived>>,
+    /// E3s whose DKG ended before startup, also when they failed. The replay can bring back their
+    /// C0 inputs, and the verifier does not admit them.
+    dkg_ended: HashSet<E3id>,
     canonical_keys: e3_request::canonical_key::CanonicalPublicKeys,
 }
 
@@ -49,6 +53,7 @@ impl ZkActorRecovery {
             dkg_fold_attestation_contexts,
             node_proofs: NodeProofRecovery::default(),
             pending_c0: Vec::new(),
+            dkg_ended: HashSet::new(),
             canonical_keys: Default::default(),
         }
     }
@@ -68,14 +73,15 @@ impl ZkActorRecovery {
         eventstore: &Recipient<EventStoreQueryBy<SeqAgg>>,
         aggregates: &[AggregateId],
     ) -> Result<()> {
+        self.dkg_ended = lifecycle_stages
+            .iter()
+            .filter(|(_, stage)| crate::domain::proof_verification::dkg_has_ended(stage))
+            .map(|(e3_id, _)| e3_id.clone())
+            .collect();
         let active_e3_ids: HashSet<E3id> = self
             .finalized_committees
             .keys()
-            .filter(|e3_id| {
-                !lifecycle_stages
-                    .get(*e3_id)
-                    .is_some_and(crate::domain::proof_verification::dkg_has_ended)
-            })
+            .filter(|e3_id| !self.dkg_ended.contains(*e3_id))
             .cloned()
             .collect();
         self.node_proofs = NodeProofRecovery::load(repositories, &active_e3_ids).await?;
@@ -91,6 +97,23 @@ impl ZkActorRecovery {
         .await?;
         Ok(())
     }
+
+    /// Start the C0 verifier with the recovered committees, presets and inputs. It does not admit
+    /// the inputs of an E3 whose DKG ended before startup.
+    pub(crate) fn setup_proof_verification(
+        &mut self,
+        bus: &BusHandle,
+        verifier: Recipient<TypedEvent<ZkVerificationRequest>>,
+    ) -> Addr<ProofVerificationActor> {
+        ProofVerificationActor::setup_with_recovery(
+            bus,
+            verifier,
+            self.finalized_committees.clone(),
+            std::mem::take(&mut self.e3_metadata),
+            std::mem::take(&mut self.pending_c0),
+            std::mem::take(&mut self.dkg_ended),
+        )
+    }
 }
 
 /// Setup all ZK-related actors.
@@ -103,20 +126,19 @@ pub fn setup_zk_actors(
     backend: &ZkBackend,
     signer: PrivateKeySigner,
     dkg_fold_attestation_contexts_by_chain: HashMap<u64, Option<DkgFoldAttestationContext>>,
-    recovery: ZkActorRecovery,
+    mut recovery: ZkActorRecovery,
     proof_aggregation_enabled: bool,
     repositories: Repositories,
 ) -> ZkActors {
+    let zk_actor = ZkActor::new(backend).start();
+    let proof_verification = recovery.setup_proof_verification(bus, zk_actor.clone().recipient());
     let ZkActorRecovery {
         finalized_committees,
-        e3_metadata,
         dkg_fold_attestation_contexts,
         node_proofs,
-        pending_c0,
         canonical_keys,
+        ..
     } = recovery;
-    let zk_actor = ZkActor::new(backend).start();
-    let verifier = zk_actor.clone().recipient();
 
     let proof_request = ProofRequestActor::setup_with_recovery(
         bus,
@@ -124,13 +146,6 @@ pub fn setup_zk_actors(
         proof_aggregation_enabled,
         node_proofs.proofs.clone(),
         canonical_keys,
-    );
-    let proof_verification = ProofVerificationActor::setup_with_recovery(
-        bus,
-        verifier,
-        finalized_committees.clone(),
-        e3_metadata,
-        pending_c0,
     );
     let share_verification = ShareVerificationActor::setup(bus, finalized_committees);
     let node_proof_aggregator = NodeProofAggregator::setup(

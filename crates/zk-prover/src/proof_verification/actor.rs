@@ -8,7 +8,7 @@
 //! ZK proof to `ZkActor`, and emits [`SignedProofFailed`] for a completed invalid check.
 //! Local verifier errors retain the input for retry.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -25,7 +25,7 @@ use e3_fhe_params::BfvPreset;
 use e3_request::E3Meta;
 use e3_utils::NotifySync;
 use e3_zk_helpers::CiphernodesCommitteeSize;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::domain::proof_verification::{dkg_has_ended, validate_received_key};
 
@@ -77,6 +77,8 @@ pub struct ProofVerificationActor {
     /// BFV key it advertises; recovering any valid ECDSA address is not sufficient.
     committees: HashMap<E3id, Vec<Address>>,
     recovered: Vec<TypedEvent<EncryptionKeyReceived>>,
+    /// E3s whose DKG ended before startup. The replay can bring back their C0 inputs.
+    dkg_ended: HashSet<E3id>,
     effects_enabled: bool,
 }
 
@@ -94,6 +96,7 @@ impl ProofVerificationActor {
             presets: HashMap::new(),
             committees: HashMap::new(),
             recovered: Vec::new(),
+            dkg_ended: HashSet::new(),
             effects_enabled: false,
         };
         for (e3_id, meta) in persisted_e3_metadata {
@@ -122,6 +125,7 @@ impl ProofVerificationActor {
             persisted_committees,
             persisted_e3_metadata,
             Vec::new(),
+            HashSet::new(),
         )
     }
 
@@ -131,9 +135,11 @@ impl ProofVerificationActor {
         persisted_committees: HashMap<E3id, Committee>,
         persisted_e3_metadata: HashMap<E3id, E3Meta>,
         recovered: Vec<TypedEvent<EncryptionKeyReceived>>,
+        dkg_ended: HashSet<E3id>,
     ) -> Addr<Self> {
         let mut actor = Self::new(bus, verifier, persisted_committees, persisted_e3_metadata);
         actor.recovered = recovered;
+        actor.dkg_ended = dkg_ended;
         let addr = actor.start();
         bus.subscribe(EventType::CiphernodeSelected, addr.clone().into());
         bus.subscribe(EventType::CommitteeFinalized, addr.clone().into());
