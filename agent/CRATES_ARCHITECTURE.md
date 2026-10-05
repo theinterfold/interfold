@@ -616,11 +616,13 @@ requested timestamp, every page of its history goes to that peer, and the node k
 copy per event ID, with the earliest timestamp. Each event's ID must be the hash of its payload, so
 a peer cannot hide another peer's copy of a different event under the same ID; the ID does not fix
 the whole payload, so two copies with one ID and different payloads fail the fetch. A failed peer is
-replaced by another one. A peer that a later peer can replace gets one attempt per page and the time
-left less 60 s for each source that the node would then still lack (at least 30 s), so slow or
-silent peers cannot use up the five-minute fetch deadline before the node reaches a healthy one; a
-peer that no later peer can replace gets three attempts and all the time left. Listing the admitted
-peers and the waits between recovery rounds count against the deadline too.
+replaced by another one. When the listed peers do not supply two sources, the aggregate's fetch
+fails and a recovery round asks again; one connected peer serves alone. A peer that a later peer can
+replace gets one attempt per page and the time left less 60 s for each source that the node would
+then still lack (at least 30 s), so slow or silent peers cannot use up the five-minute fetch
+deadline before the node reaches a healthy one; a peer that no later peer can replace gets three
+attempts and all the time left. Listing the admitted peers and the waits between recovery rounds
+count against the deadline too.
 
 Each reply carries `observed_from`, a hint of the time from which the responder stores history live.
 The responder sets it once the gossip that it held during its own startup is durable: its startup
@@ -629,12 +631,12 @@ after the marker, when the event pipeline has stored what it handed over. Input 
 at the buffer or the translator, skips gossip that never reaches storage, and revokes the hint for
 the rest of the process. A reply carries the value from when the node admitted the request, before
 its storage read, and none when the value changed by the reply. A requester fails a source whose
-value changes between pages, as after a reset. While no successful source's hint covers the whole
-range, the node asks up to four peers, and then logs that the history may be incomplete. The hint
-does not make a reply complete: gossip that the responder received but has not stored yet, in its
-translator or event pipeline, is missing from a read. So the node relies on the union of two
-sources, and a wrong hint only means that it asks no more peers than two. One connected peer serves
-alone.
+value changes between pages, as after a reset. While no source's hint covers the whole range, the
+node asks further peers, up to four in all, and then logs that the history may be incomplete. Such a
+peer gets one attempt per page and at most 30 s and half the time left, and when it fails, the node
+keeps its sources. The hint does not make a reply complete: gossip that the responder received but
+has not stored yet, in its translator or event pipeline, is missing from a read. So the node relies
+on the union of two sources, and a wrong hint only means that it asks no more peers than two.
 
 The document publisher fetches documents in spawned tasks, so a slow DHT read does not hold its
 ingress loop. At most 8 fetches run and 512 documents wait. Four concurrent N=19 E3s need

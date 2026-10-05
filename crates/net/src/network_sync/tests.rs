@@ -538,8 +538,10 @@ struct FakeHistoryPeer {
     peer: PeerId,
     events: Vec<InterfoldEvent<Unsequenced>>,
     observed_from: Option<u128>,
-    fails: bool,
-    silent: bool,
+    /// Requests that the peer answers with an error before it serves.
+    fails: usize,
+    /// Requests that the peer leaves unanswered before it answers.
+    silent: usize,
     slow: Option<(Duration, usize)>,
 }
 
@@ -575,6 +577,7 @@ fn spawn_fake_history_network(
     let requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let seen = requests.clone();
     let mut answered: HashMap<PeerId, usize> = HashMap::new();
+    let mut asked: HashMap<PeerId, usize> = HashMap::new();
     tokio::spawn(async move {
         while let Some(command) = commands.recv().await {
             match command {
@@ -590,7 +593,10 @@ fn spawn_fake_history_network(
                     };
                     seen.lock().unwrap().push(target);
                     let peer = peers.iter().find(|peer| peer.peer == target).unwrap();
-                    if peer.silent {
+                    let asked = asked.entry(target).or_default();
+                    *asked += 1;
+                    let asked = *asked;
+                    if asked <= peer.silent {
                         continue;
                     }
                     if let Some((delay, answers)) = peer.slow {
@@ -602,7 +608,7 @@ fn spawn_fake_history_network(
                         tokio::time::sleep(delay).await;
                     }
                     let fetch = FetchEventsSince::try_from(request.payload).unwrap();
-                    let payload = if peer.fails {
+                    let payload = if asked <= peer.fails {
                         ProtocolResponse::Error("unavailable".to_string())
                     } else {
                         let mut history: Vec<_> = peer
@@ -704,16 +710,16 @@ async fn history_from_two_peers_is_merged_and_each_peer_is_paged_alone() {
             peer: b,
             events: vec![received("e1", 11), received("e2", 20), received("e4", 41)],
             observed_from: Some(0),
-            fails: false,
-            silent: false,
+            fails: 0,
+            silent: 0,
             slow: None,
         },
         FakeHistoryPeer {
             peer: a,
             events: vec![received("e1", 10), received("e3", 30), received("e4", 40)],
             observed_from: Some(0),
-            fails: false,
-            silent: false,
+            fails: 0,
+            silent: 0,
             slow: None,
         },
     ];
@@ -742,8 +748,8 @@ async fn startup_history_asks_two_admitted_peers() {
         peer: PeerId::random(),
         events: vec![received(e3, 10)],
         observed_from: Some(0),
-        fails: false,
-        silent: false,
+        fails: 0,
+        silent: 0,
         slow: None,
     };
 
@@ -755,14 +761,31 @@ async fn startup_history_asks_two_admitted_peers() {
 }
 
 #[actix::test]
+async fn a_single_admitted_peer_serves_alone() {
+    let only = FakeHistoryPeer {
+        peer: PeerId::random(),
+        events: vec![received("e1", 10)],
+        observed_from: None,
+        fails: 0,
+        silent: 0,
+        slow: None,
+    };
+
+    let (fetched, requests) = fetch_from_fake_peers(vec![only], 0, false).await;
+
+    assert_eq!(fetched_e3s(&fetched), vec![("e1".to_string(), 10)]);
+    assert_eq!(requests.len(), 1);
+}
+
+#[actix::test]
 async fn history_is_sought_from_a_peer_that_observed_the_range_live() {
     let since = 40;
     let late = |peer| FakeHistoryPeer {
         peer,
         events: vec![received("e6", 60)],
         observed_from: Some(55),
-        fails: false,
-        silent: false,
+        fails: 0,
+        silent: 0,
         slow: None,
     };
     let peers = vec![
@@ -772,8 +795,8 @@ async fn history_is_sought_from_a_peer_that_observed_the_range_live() {
             peer: PeerId::random(),
             events: vec![received("e5", 45), received("e6", 61)],
             observed_from: Some(30),
-            fails: false,
-            silent: false,
+            fails: 0,
+            silent: 0,
             slow: None,
         },
     ];
@@ -793,8 +816,8 @@ async fn a_failing_history_peer_is_replaced() {
         peer,
         events: vec![received(e3, 10)],
         observed_from: Some(0),
-        fails: false,
-        silent: false,
+        fails: 0,
+        silent: 0,
         slow: None,
     };
     let peers = vec![
@@ -802,8 +825,8 @@ async fn a_failing_history_peer_is_replaced() {
             peer: failing,
             events: vec![],
             observed_from: Some(0),
-            fails: true,
-            silent: false,
+            fails: usize::MAX,
+            silent: 0,
             slow: None,
         },
         serving(PeerId::random(), "e1"),
@@ -847,16 +870,24 @@ async fn a_peer_that_mislabels_an_event_cannot_hide_another_peers_copy() {
             peer: PeerId::random(),
             events: vec![mislabeled],
             observed_from: Some(0),
-            fails: false,
-            silent: false,
+            fails: 0,
+            silent: 0,
             slow: None,
         },
         FakeHistoryPeer {
             peer: PeerId::random(),
             events: vec![received("e1", 10)],
             observed_from: Some(0),
-            fails: false,
-            silent: false,
+            fails: 0,
+            silent: 0,
+            slow: None,
+        },
+        FakeHistoryPeer {
+            peer: PeerId::random(),
+            events: vec![received("e1", 12)],
+            observed_from: Some(0),
+            fails: 0,
+            silent: 0,
             slow: None,
         },
     ];
@@ -867,34 +898,38 @@ async fn a_peer_that_mislabels_an_event_cannot_hide_another_peers_copy() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn silent_history_peers_leave_time_for_a_healthy_one() {
-    let silent = |peer| FakeHistoryPeer {
+async fn silent_history_peers_leave_time_for_healthy_ones() {
+    let silent = |peer, requests| FakeHistoryPeer {
         peer,
-        events: vec![],
+        events: vec![received("e0", 5)],
         observed_from: Some(0),
-        fails: false,
-        silent: true,
+        fails: 0,
+        silent: requests,
         slow: None,
     };
     let (first, second, third) = (PeerId::random(), PeerId::random(), PeerId::random());
     let healthy = PeerId::random();
     let peers = vec![
-        silent(first),
-        silent(second),
-        silent(third),
+        silent(first, usize::MAX),
+        silent(second, usize::MAX),
+        // It answers its third request.
+        silent(third, 2),
         FakeHistoryPeer {
             peer: healthy,
             events: vec![received("e1", 10)],
             observed_from: Some(0),
-            fails: false,
-            silent: false,
+            fails: 0,
+            silent: 0,
             slow: None,
         },
     ];
 
     let (fetched, requests) = fetch_from_fake_peers(peers, 0, true).await;
 
-    assert_eq!(fetched_e3s(&fetched), vec![("e1".to_string(), 10)]);
+    assert_eq!(
+        fetched_e3s(&fetched),
+        vec![("e0".to_string(), 5), ("e1".to_string(), 10)]
+    );
     // Two later peers can replace each of the first two, so each gets one attempt. The third
     // has only one replacement left for the two sources, so it gets every retry.
     assert_eq!(requests, vec![first, second, third, third, third, healthy]);
@@ -906,8 +941,8 @@ async fn a_silent_peer_gets_one_attempt_while_a_later_peer_can_supply_the_missin
         peer,
         events: vec![],
         observed_from: Some(0),
-        fails: false,
-        silent: true,
+        fails: 0,
+        silent: usize::MAX,
         slow: None,
     };
     let serving = |peer, e3: &'static str| FakeHistoryPeer {
@@ -915,8 +950,8 @@ async fn a_silent_peer_gets_one_attempt_while_a_later_peer_can_supply_the_missin
         events: vec![received(e3, 10)],
         // It does not vouch for the range, so the node asks every peer.
         observed_from: None,
-        fails: false,
-        silent: false,
+        fails: 0,
+        silent: 0,
         slow: None,
     };
     let (first, second, third, fourth) = (
@@ -949,16 +984,16 @@ async fn a_slow_source_that_falls_silent_leaves_time_for_healthy_ones() {
         peer: PeerId::random(),
         events: (0..20).map(|index| received("slow", 100 + index)).collect(),
         observed_from: Some(0),
-        fails: false,
-        silent: false,
+        fails: 0,
+        silent: 0,
         slow: Some((Duration::from_secs(29), 10)),
     };
     let healthy = |e3: &'static str| FakeHistoryPeer {
         peer: PeerId::random(),
         events: vec![received(e3, 10)],
         observed_from: Some(0),
-        fails: false,
-        silent: false,
+        fails: 0,
+        silent: 0,
         slow: None,
     };
     let started = tokio::time::Instant::now();
@@ -977,6 +1012,115 @@ async fn a_slow_source_that_falls_silent_leaves_time_for_healthy_ones() {
     e3s.sort();
     assert_eq!(e3s, vec!["e1".to_string(), "e2".to_string()]);
     assert!(started.elapsed() < Duration::from_secs(5 * 60));
+}
+
+/// Once the node has its two sources, a further peer that it asks only because no source observed
+/// the range live gets a bounded share of the time. One that serves its pages slowly neither uses
+/// up the deadline nor costs the node its sources, and the next peer is still asked.
+#[tokio::test(start_paused = true)]
+async fn a_slow_further_peer_keeps_the_sources_and_leaves_time_for_the_next() {
+    let unvouched = |e3: &'static str| FakeHistoryPeer {
+        peer: PeerId::random(),
+        events: vec![received(e3, 10)],
+        observed_from: None,
+        fails: 0,
+        silent: 0,
+        slow: None,
+    };
+    let slow = FakeHistoryPeer {
+        peer: PeerId::random(),
+        events: (0..40).map(|index| received("slow", 100 + index)).collect(),
+        observed_from: Some(0),
+        fails: 0,
+        silent: 0,
+        slow: Some((Duration::from_secs(20), 20)),
+    };
+    let vouching = FakeHistoryPeer {
+        peer: PeerId::random(),
+        events: vec![received("e4", 40)],
+        observed_from: Some(0),
+        fails: 0,
+        silent: 0,
+        slow: None,
+    };
+    let peers = vec![unvouched("e1"), unvouched("e2"), slow, vouching];
+    let order: Vec<PeerId> = peers.iter().map(|peer| peer.peer).collect();
+    let (commands_tx, commands_rx) = mpsc::channel::<NetCommand>(64);
+    let events = NetEventChannel::new(64);
+    let _keep_open = events.subscribe();
+    spawn_fake_history_network(peers, commands_rx, events.clone());
+    let mut budget = SyncFetchBudget::production();
+    let started = tokio::time::Instant::now();
+
+    let fetched = fetch_history_from_peers(
+        &commands_tx,
+        &NetEventSubscriber::from(&events),
+        order,
+        AggregateId::new(1),
+        0,
+        &mut budget,
+        &NetworkPolicy::local_unrestricted(),
+    )
+    .await
+    .unwrap();
+
+    let mut e3s: Vec<_> = fetched_e3s(&fetched)
+        .into_iter()
+        .map(|(e3, _)| e3)
+        .collect();
+    e3s.sort();
+    assert_eq!(e3s, vec!["e1", "e2", "e4"]);
+    assert!(started.elapsed() <= Duration::from_secs(60));
+    assert!(!budget.is_exhausted());
+}
+
+/// With two admitted peers, one that serves an empty history is not enough: when the other fails
+/// for a moment, the fetch fails, and recovery asks both peers again.
+#[actix::test]
+async fn a_second_source_that_fails_once_is_asked_again_in_recovery() {
+    tokio::time::pause();
+    let reset = FakeHistoryPeer {
+        peer: PeerId::random(),
+        events: vec![],
+        observed_from: None,
+        fails: 0,
+        silent: 0,
+        slow: None,
+    };
+    let holder = FakeHistoryPeer {
+        peer: PeerId::random(),
+        events: vec![received("e1", 10)],
+        observed_from: Some(0),
+        fails: 1,
+        silent: 0,
+        slow: None,
+    };
+    let (net_tx, net_rx) = mpsc::channel::<NetCommand>(64);
+    let event_tx = NetEventChannel::new(64);
+    let _event_rx = event_tx.subscribe();
+    spawn_fake_history_network(vec![reset, holder], net_rx, event_tx.clone());
+    let (response_tx, response_rx) =
+        e3_utils::actix::channel::oneshot::<TypedEvent<SyncRequestSucceeded>>();
+    let start = HistoricalNetSyncStart::new(std::iter::once((AggregateId::new(1), 0)).collect());
+    let context: e3_events::EventContext<Unsequenced> =
+        InterfoldEventData::HistoricalNetSyncStart(start.clone()).into();
+
+    handle_sync_request_event(
+        net_tx,
+        NetEventSubscriber::from(&event_tx),
+        TypedEvent::new(start, context.sequence(1)),
+        response_tx,
+        false,
+        NetworkPolicy::local_unrestricted(),
+    )
+    .await
+    .unwrap();
+
+    let (succeeded, _) = response_rx.await.unwrap().into_components();
+    assert_eq!(
+        fetched_e3s(&succeeded.response.events),
+        vec![("e1".to_string(), 10)]
+    );
 }
 
 /// Listing the admitted peers counts against the fetch deadline too. With no answer, the fetch of

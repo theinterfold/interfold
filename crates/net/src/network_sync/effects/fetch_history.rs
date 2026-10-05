@@ -19,17 +19,22 @@ const MAX_HISTORY_PEERS: usize = 4;
 const SOURCE_RESERVE: Duration = Duration::from_secs(60);
 /// Least fetch time that a source that another peer can replace gets.
 const MIN_SOURCE_TIME: Duration = Duration::from_secs(30);
+/// Most fetch time of a peer that the node asks, once it has its sources, only because none of
+/// them observed the range live. Such a peer also gets at most half of the time left.
+const PROBE_TIME: Duration = Duration::from_secs(30);
 
 /// Fetch one aggregate's history from several admitted peers and merge it by event ID.
 ///
 /// A peer can lack part of the range, for example after a restart or a reset, and still answer
-/// `Done`. So the node asks two peers, each from `since` and with every page pinned to that peer,
-/// and keeps the union. It asks up to four peers while none of the successful ones observed the
-/// whole range live (its `observed_from` is at or before `since`); that time is a hint, and the two
-/// sources are what the node relies on. A peer that fails is replaced by another one. A peer that a
-/// later peer can replace gets one attempt per page, and the fetch time less a reserve for the
-/// sources that would replace it, so slow or silent peers cannot use up the deadline before the
-/// node reaches a healthy one. One connected peer serves alone.
+/// `Done`. So the node needs two sources, each asked from `since` with every page pinned to that
+/// peer, and keeps the union. A peer that fails is replaced by another one, and the fetch fails
+/// when the listed peers do not supply two sources, so that recovery asks again; one connected
+/// peer serves alone. A peer that a later peer can replace gets one attempt per page, and the fetch
+/// time less a reserve for the sources that would replace it, so slow or silent peers cannot use up
+/// the deadline before the node reaches a healthy one. While none of the sources observed the
+/// whole range live (its `observed_from` is at or before `since`), the node asks further peers, up
+/// to four in all. That time is a hint, so such a peer gets one attempt per page and a bounded share
+/// of the time, and the node keeps its sources when it fails.
 pub(in crate::actors::net_sync_manager) async fn fetch_historical_events_for_aggregate(
     net_cmds: &mpsc::Sender<NetCommand>,
     net_events: &NetEventSubscriber,
@@ -69,16 +74,29 @@ pub(in crate::actors::net_sync_manager) async fn fetch_history_from_peers(
     let mut vouched = false;
     let mut last_error = None;
     let candidates = peers.len().min(MAX_HISTORY_PEERS);
+    let required = HISTORY_SOURCES.min(candidates);
     for (index, peer) in peers.into_iter().take(MAX_HISTORY_PEERS).enumerate() {
-        if sources >= HISTORY_SOURCES && vouched {
+        let later = candidates - index - 1;
+        // Once the node has its sources, a further peer is asked only for the live-history hint.
+        let probe = sources >= required;
+        if (probe && vouched) || sources + later + 1 < required {
             break;
         }
-        let later = candidates - index - 1;
+        let (attempts, source_time) = if probe {
+            let Ok(remaining) = budget.remaining() else {
+                break;
+            };
+            (1, Some(PROBE_TIME.min(remaining / 2)))
+        } else {
+            (
+                attempts_per_page(later, sources),
+                source_time(later, sources, budget.remaining()?),
+            )
+        };
         let requester = DirectRequester::builder(net_cmds.clone(), net_events.clone())
-            .max_retries(attempts_per_page(later, sources))
+            .max_retries(attempts)
             .retry_timeout(SYNC_FETCH_RETRY_TIMEOUT)
             .build();
-        let source_time = source_time(later, sources, budget.remaining()?);
         let history = match fetch_all_batched_events_with_budget::<InterfoldEvent<Unsequenced>>(
             requester,
             PeerTarget::Specific(peer),
@@ -94,6 +112,13 @@ pub(in crate::actors::net_sync_manager) async fn fetch_history_from_peers(
                 .map(|events| (events, history.observed_from))
         }) {
             Ok(history) => history,
+            Err(error) if probe => {
+                warn!(%peer, %aggregate_id, "History fetch from a further peer failed: {error:#}");
+                if budget.is_exhausted() {
+                    break;
+                }
+                continue;
+            }
             Err(error) => {
                 if budget.is_exhausted() {
                     return Err(error);
@@ -110,10 +135,12 @@ pub(in crate::actors::net_sync_manager) async fn fetch_history_from_peers(
             merge_by_event_id(&mut merged, event)?;
         }
     }
-    if sources == 0 {
-        return Err(
-            last_error.unwrap_or_else(|| anyhow::anyhow!("No admitted peer served the history"))
-        );
+    if sources < required {
+        let error =
+            last_error.unwrap_or_else(|| anyhow::anyhow!("No admitted peer served the history"));
+        return Err(error.context(format!(
+            "{sources} of the {required} history sources that the node needs served it"
+        )));
     }
     if !vouched {
         warn!(
