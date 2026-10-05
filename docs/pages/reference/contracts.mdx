@@ -29,9 +29,9 @@ The manifest has two sections for each network:
 | `contracts` | Contracts that a node configuration uses. The keys are the same as the keys under `contracts` in `interfold.config.yaml`.          |
 | `reference` | Other deployed contracts that operators, the dashboard, and the docs need. The node configuration has no keys for these contracts. |
 
-Each network entry also has a `chain_id` and a `mocks` flag. The flag is `true` when the network has
-a mock E3 program or a mock verifier. Both networks set `mocks: true` in this release. Mainnet sets
-it because the deployment record lists `MockE3Program`, although that program is not enabled. See
+Each network entry also has a `chain_id` and a `mocks` flag. The flag is `true` when the network
+uses a mock E3 program or a mock verifier, which accepts proofs without verification. Sepolia sets
+`mocks: true`, and mainnet sets `mocks: false`. See
 [Verifiers in use on mainnet](#verifiers-in-use-on-mainnet).
 
 To compare your node configuration with the published manifest, run this command:
@@ -74,24 +74,25 @@ when an address or a chain ID does not match. For the flags and the finding labe
 
 ### Mainnet reference contracts
 
-| Contract                     | Address                                      | Deploy block | Manifest key           | Explorer                                                                             |
-| ---------------------------- | -------------------------------------------- | ------------ | ---------------------- | ------------------------------------------------------------------------------------ |
-| InterfoldTicketToken (tFOLD) | `0xC0B5b49a3949eC4B520eF21BaCFE16e3695F3B5D` | 25786372     | `InterfoldTicketToken` | [Etherscan](https://etherscan.io/address/0xC0B5b49a3949eC4B520eF21BaCFE16e3695F3B5D) |
-| E3RefundManager              | `0x1940eF168f4E0B3dA24BEca539856684793B0F6e` | 25786384     | `E3RefundManager`      | [Etherscan](https://etherscan.io/address/0x1940eF168f4E0B3dA24BEca539856684793B0F6e) |
-| MockE3Program                | `0x4976E5E47852eFCe6851d35B95A1A2E19456F3D7` | 25786371     | `MockE3Program`        | [Etherscan](https://etherscan.io/address/0x4976E5E47852eFCe6851d35B95A1A2E19456F3D7) |
+| Contract                     | Address                                      | Deploy block | Manifest key                  | Explorer                                                                             |
+| ---------------------------- | -------------------------------------------- | ------------ | ----------------------------- | ------------------------------------------------------------------------------------ |
+| InterfoldTicketToken (tFOLD) | `0xC0B5b49a3949eC4B520eF21BaCFE16e3695F3B5D` | 25786372     | `InterfoldTicketToken`        | [Etherscan](https://etherscan.io/address/0xC0B5b49a3949eC4B520eF21BaCFE16e3695F3B5D) |
+| E3RefundManager              | `0x1940eF168f4E0B3dA24BEca539856684793B0F6e` | 25786384     | `E3RefundManager`             | [Etherscan](https://etherscan.io/address/0x1940eF168f4E0B3dA24BEca539856684793B0F6e) |
+| BfvDecryptionVerifierRouter  | `0xA66CAb7AE230698b2a9ee1E0E967BaD4651FeEa7` | 25998927     | `BfvDecryptionVerifierRouter` | [Etherscan](https://etherscan.io/address/0xA66CAb7AE230698b2a9ee1E0E967BaD4651FeEa7) |
+| BfvPkVerifierRouter          | `0x7CD10057c25674bd5666A9deEE3193f1b29563d1` | 25998926     | `BfvPkVerifierRouter`         | [Etherscan](https://etherscan.io/address/0x7CD10057c25674bd5666A9deEE3193f1b29563d1) |
+| Risc0BfvCiphertextVerifier   | `0x80D217d3b2e16fF2ecc178cC75655C773895c549` | 25998859     | `Risc0BfvCiphertextVerifier`  | [Etherscan](https://etherscan.io/address/0x80D217d3b2e16fF2ecc178cC75655C773895c549) |
 
 ### Also used on mainnet
 
-The manifest does not publish these three mainnet contracts, so `interfold config check` does not
+The manifest does not publish these two mainnet contracts, so `interfold config check` does not
 compare them. The addresses come from the mainnet deployment records in
 `packages/interfold-contracts/deploy/protocol/`. Each deploy block is the first block that has
 contract code at the address.
 
-| Contract                         | Address                                      | Deploy block | Source                                                     | Explorer                                                                             |
-| -------------------------------- | -------------------------------------------- | ------------ | ---------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| InterfoldToken (FOLD)            | `0xE172e9B6cfBeeB5593bDcE3f077356FDb33af904` | 25473449     | `fold` in `mainnet-protocol.config.json`                   | [Etherscan](https://etherscan.io/address/0xE172e9B6cfBeeB5593bDcE3f077356FDb33af904) |
-| sUSDS (ticket collateral)        | `0xa3931d71877C0E7a3148CB7Eb4463524FEc27fbD` | 20677434     | `ticketUnderlyingToken` in `mainnet-protocol.config.json`  | [Etherscan](https://etherscan.io/address/0xa3931d71877C0E7a3148CB7Eb4463524FEc27fbD) |
-| DeployableMockCiphertextVerifier | `0xB568e5aD762F7a75F1EC65A985ec4038F6409297` | 25786403     | `ciphertextVerifier` in `mainnet-protocol.deployment.json` | [Etherscan](https://etherscan.io/address/0xB568e5aD762F7a75F1EC65A985ec4038F6409297) |
+| Contract                  | Address                                      | Deploy block | Source                                                    | Explorer                                                                             |
+| ------------------------- | -------------------------------------------- | ------------ | --------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| InterfoldToken (FOLD)     | `0xE172e9B6cfBeeB5593bDcE3f077356FDb33af904` | 25473449     | `fold` in `mainnet-protocol.config.json`                  | [Etherscan](https://etherscan.io/address/0xE172e9B6cfBeeB5593bDcE3f077356FDb33af904) |
+| sUSDS (ticket collateral) | `0xa3931d71877C0E7a3148CB7Eb4463524FEc27fbD` | 20677434     | `ticketUnderlyingToken` in `mainnet-protocol.config.json` | [Etherscan](https://etherscan.io/address/0xa3931d71877C0E7a3148CB7Eb4463524FEc27fbD) |
 
 sUSDS is a third-party token. The Interfold does not deploy it. To confirm the token addresses
 on-chain, call `getCiphernodeBondToken()` on the `BondingRegistry` for FOLD. For the ticket
@@ -106,28 +107,28 @@ shows the values for the BFV scheme (`keccak256("fhe.rs:BFV")`) at block 26,057,
 | Verifier   | Contract                      | Address                                      | Set at block | Read with                         |
 | ---------- | ----------------------------- | -------------------------------------------- | ------------ | --------------------------------- |
 | Ciphertext | `Risc0BfvCiphertextVerifier`  | `0x80D217d3b2e16fF2ecc178cC75655C773895c549` | 26004622     | `getCiphertextVerifier(schemeId)` |
-| Decryption | `BfvDecryptionVerifierRouter` | `0xA66CAb7AE230698b2a9ee1E0E967BaD4651FeEa7` | Not recorded | `getDecryptionVerifier(schemeId)` |
-| Public key | `BfvPkVerifierRouter`         | `0x7CD10057c25674bd5666A9deEE3193f1b29563d1` | Not recorded | `getPkVerifier(schemeId)`         |
+| Decryption | `BfvDecryptionVerifierRouter` | `0xA66CAb7AE230698b2a9ee1E0E967BaD4651FeEa7` | 26004622     | `getDecryptionVerifier(schemeId)` |
+| Public key | `BfvPkVerifierRouter`         | `0x7CD10057c25674bd5666A9deEE3193f1b29563d1` | 26004622     | `getPkVerifier(schemeId)`         |
 
 - The ciphertext verifier checks a RISC Zero Groth16 proof for the guest image ID
   `0x9d3e21fd7cc08e629cb467e5ca6bfc8e1a645b483bfd91b6b1648ced259110fc`. Read it with `imageId()`.
 - Each router has three routes (`routeCount()`, `routeAt(index)`). All routes point to
   `BfvDecryptionVerifier` or `BfvPkVerifier` contracts.
-- The deployment record `mainnet-protocol.deployment.json` does not include these values. It lists
-  the verifiers of the first deployment.
+- `mainnet-protocol.deployment.json` records these verifiers. Its `bfvVerifierRoutes` field lists
+  the three routes, with the `BfvDecryptionVerifier` and the `BfvPkVerifier` of each route.
 
 <Callout type='info'>
   The first mainnet deployment set `DeployableMockCiphertextVerifier` as the ciphertext verifier at
   block 25,788,974 (19 August 2026). That contract accepts every proof. The contract owner replaced
   it with a `Risc0BfvCiphertextVerifier` at block 25,813,839 (22 August 2026), and again at block
   26,004,622 (18 September 2026). The first mainnet E3 was requested at block 26,012,772, so no
-  mainnet E3 used the mock verifier. The first E3 program, `MockE3Program`, is registered but not
-  enabled (`e3Programs` returns `false`). `CRISPProgram` is enabled.
+  mainnet E3 used the mock verifier. At block 26,004,622, the contract owner also unregistered the
+  first E3 program, `MockE3Program`, and registered `CRISPProgram`.
 </Callout>
 
-The manifest still marks mainnet with `mocks: true`, because the deployment record lists
-`MockE3Program`. For this reason, `interfold config check` prints the mock-deployment note for
-mainnet, although the verifiers in use are not mocks.
+The `manifest.json` asset of release v0.18.0 still marks mainnet with `mocks: true`. With that
+asset, `interfold config check` prints the mock-deployment note for mainnet, although the verifiers
+in use are not mocks.
 
 ## Sepolia
 
