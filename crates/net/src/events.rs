@@ -680,6 +680,30 @@ pub fn estimate_hashmap_size<K, V>(map: &HashMap<K, V>) -> usize {
     capacity * (entry_size + 1) + size_of::<HashMap<K, V>>()
 }
 
+/// Send `payload` through the transport frame of a direct reply, and return the bytes that the
+/// reader decodes. Fails when the frame exceeds the 10 MiB response limit.
+#[cfg(test)]
+pub(crate) async fn through_reply_frame(payload: Vec<u8>) -> anyhow::Result<Vec<u8>> {
+    use futures::io::Cursor;
+    use libp2p::request_response::{cbor::codec::Codec, Codec as _};
+
+    let protocol = libp2p::StreamProtocol::new("/interfold/test-sync");
+    let mut codec = Codec::<Vec<u8>, ProtocolResponse>::default();
+    let mut frame = Cursor::new(Vec::new());
+    codec
+        .write_response(&protocol, &mut frame, ProtocolResponse::Ok(payload))
+        .await?;
+    anyhow::ensure!(
+        frame.get_ref().len() <= crate::domain::wire::MAX_DIRECT_MESSAGE_BYTES,
+        "the reply frame exceeds the response limit"
+    );
+    let mut reader = Cursor::new(frame.into_inner());
+    match codec.read_response(&protocol, &mut reader).await? {
+        ProtocolResponse::Ok(bytes) => Ok(bytes),
+        _ => anyhow::bail!("the reply decoded to another response"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use e3_events::{
@@ -699,28 +723,13 @@ mod tests {
     /// fits one transport frame and decodes to the same bytes.
     #[tokio::test]
     async fn a_largest_sync_reply_fits_one_transport_frame() {
-        use futures::io::Cursor;
-        use libp2p::request_response::{cbor::codec::Codec, Codec as _};
-        use libp2p::StreamProtocol;
-
         let payload: Vec<u8> = (0..crate::domain::wire::MAX_SYNC_ENVELOPE_BYTES)
             .map(|index| 24 + (index % 232) as u8)
             .collect();
-        let protocol = StreamProtocol::new("/interfold/test-sync");
-        let mut codec = Codec::<Vec<u8>, ProtocolResponse>::default();
-        let mut frame = Cursor::new(Vec::new());
-        codec
-            .write_response(&protocol, &mut frame, ProtocolResponse::Ok(payload.clone()))
+        let decoded = super::through_reply_frame(payload.clone())
             .await
-            .expect("encode the reply");
-        assert!(frame.get_ref().len() <= 10 * 1024 * 1024);
-
-        let mut reader = Cursor::new(frame.into_inner());
-        let decoded = codec
-            .read_response(&protocol, &mut reader)
-            .await
-            .expect("decode the reply");
-        assert!(matches!(decoded, ProtocolResponse::Ok(bytes) if bytes == payload));
+            .expect("the reply fits one frame");
+        assert!(decoded == payload);
     }
     use crate::{
         net_interface_handle::{NetEventChannel, NetEventSubscriber},

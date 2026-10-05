@@ -269,3 +269,58 @@ fn build_sync_batch_keeps_replies_under_the_message_limit() {
     let encoded: Vec<u8> = batch.try_into().expect("reply fits the message limit");
     assert!(encoded.len() <= crate::domain::wire::MAX_DIRECT_MESSAGE_BYTES);
 }
+
+/// A forwardable event whose unsequenced encoding takes `size` bytes.
+fn keyshare_of_size(size: usize) -> InterfoldEvent {
+    let with_key = |len: usize| {
+        InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            KeyshareCreated {
+                pubkey: ArcBytes::from_bytes(&vec![7; len]),
+                e3_id: E3id::new("1", 1),
+                node: "node-1".to_string(),
+                party_id: 1,
+                signed_pk_generation_proof: None,
+            }
+            .into(),
+            None,
+            10,
+            None,
+            EventSource::Net,
+        )
+    };
+    let base = bincode::serialized_size(&with_key(0)).unwrap() as usize;
+    let event = with_key(size - base);
+    assert_eq!(bincode::serialized_size(&event).unwrap() as usize, size);
+    event.into_sequenced(1)
+}
+
+/// The largest event that a reply can carry is served, through batch construction and the
+/// transport frame of the reply. One byte more fails the request.
+#[tokio::test]
+async fn an_event_as_large_as_a_reply_allows_is_served_through_the_transport_frame() {
+    let budget = sync_reply_event_budget();
+    assert!(budget > crate::domain::wire::MAX_SYNC_ENVELOPE_BYTES - 1024);
+    let fetch = FetchEventsSince::new(AggregateId::new(1), 0, 10);
+    let progress = HistoryProgress {
+        last_scanned_ts: Some(10),
+        exhausted: true,
+    };
+
+    let SyncBatchOutcome::Batch(batch) =
+        build_sync_batch(vec![keyshare_of_size(budget)], progress, &fetch)
+    else {
+        panic!("the largest event that fits a reply is served");
+    };
+    let bytes: Vec<u8> = batch.try_into().unwrap();
+    assert!(bytes.len() <= crate::domain::wire::MAX_SYNC_ENVELOPE_BYTES);
+    let decoded = crate::events::through_reply_frame(bytes)
+        .await
+        .expect("the reply fits one transport frame");
+    let batch = EventBatch::<InterfoldEvent<Unsequenced>>::try_from(decoded).unwrap();
+    assert_eq!(batch.events.len(), 1);
+
+    assert!(matches!(
+        build_sync_batch(vec![keyshare_of_size(budget + 1)], progress, &fetch),
+        SyncBatchOutcome::Failed(_)
+    ));
+}

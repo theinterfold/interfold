@@ -110,10 +110,27 @@ pub enum SyncBatchOutcome {
     Batch(EventBatch<InterfoldEvent<Unsequenced>>),
 }
 
-/// Encoded bytes of the events in one sync response. The rest of the 10 MiB direct-message limit
-/// holds the batch and envelope fields, and the CBOR byte-string header of the transport frame.
-pub(crate) const MAX_SYNC_RESPONSE_EVENT_BYTES: usize =
-    crate::domain::wire::MAX_DIRECT_MESSAGE_BYTES - 4 * 1024;
+/// Encoded bytes of the events in one sync response: the envelope limit, which leaves room for the
+/// transport frame header, less the encoded size of a reply without events whose fields take their
+/// largest size. The events of a reply encode one after the other, so a reply of events up to this
+/// budget encodes within the envelope limit.
+pub(crate) fn sync_reply_event_budget() -> usize {
+    static BUDGET: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| {
+        let empty = EventBatch::<InterfoldEvent<Unsequenced>> {
+            events: Vec::new(),
+            next: BatchCursor::Next(u128::MAX),
+            aggregate_id: e3_events::AggregateId::new(0),
+        };
+        let encoded = crate::domain::wire::encode_sync(
+            crate::domain::wire::SyncMessageKind::EventBatch,
+            &empty,
+        )
+        .expect("a reply without events encodes")
+        .len();
+        crate::domain::wire::MAX_SYNC_ENVELOPE_BYTES - encoded
+    });
+    *BUDGET
+}
 
 /// Build a sync response batch from one timestamp-ordered storage page.
 ///
@@ -150,7 +167,7 @@ pub fn build_sync_batch(
                 .ok()
                 .and_then(|size| usize::try_from(size).ok())
                 .unwrap_or(usize::MAX);
-            if event_bytes.saturating_add(size) > MAX_SYNC_RESPONSE_EVENT_BYTES {
+            if event_bytes.saturating_add(size) > sync_reply_event_budget() {
                 if events.is_empty() {
                     return SyncBatchOutcome::Failed(format!(
                         "historical event at timestamp {} exceeds the sync message limit",

@@ -165,6 +165,21 @@ async fn served_history(
     net_rx: &mut mpsc::Receiver<NetCommand>,
     limit: usize,
 ) -> Vec<u128> {
+    served_pages(manager, net_tx, net_rx, limit)
+        .await
+        .into_iter()
+        .flat_map(|(timestamps, _)| timestamps)
+        .collect()
+}
+
+/// Page through this node's history the way a peer does and return each page's timestamps and
+/// cursor.
+async fn served_pages(
+    manager: &Addr<NetSyncManager>,
+    net_tx: &mpsc::Sender<NetCommand>,
+    net_rx: &mut mpsc::Receiver<NetCommand>,
+    limit: usize,
+) -> Vec<(Vec<u128>, BatchCursor)> {
     let mut since = 0;
     let mut served = Vec::new();
     for id in 0..64 {
@@ -188,7 +203,8 @@ async fn served_history(
             panic!("expected a history page");
         };
         let batch = EventBatch::<InterfoldEvent<Unsequenced>>::try_from(bytes).unwrap();
-        served.extend(batch.events.iter().map(|event| event.ts()));
+        let timestamps = batch.events.iter().map(|event| event.ts()).collect();
+        served.push((timestamps, batch.next.clone()));
         match batch.next {
             BatchCursor::Next(next) => since = next,
             BatchCursor::Done => return served,
@@ -284,13 +300,9 @@ async fn history_pages_continue_past_pages_of_quarantined_records() {
         }
         event
     };
-    for event in [
-        misrouted(10),
-        misrouted(11),
-        misrouted(12),
-        misrouted(13),
-        keyshare_at(20),
-    ] {
+    // A request for one event scans four records, so these fill three storage pages.
+    let records = (10..22).map(misrouted).chain([keyshare_at(30)]);
+    for event in records {
         store
             .send(e3_events::StoreEventRequested::new(
                 event,
@@ -312,10 +324,23 @@ async fn history_pages_continue_past_pages_of_quarantined_records() {
     )
     .start();
 
-    assert_eq!(
-        served_history(&manager, &net_tx, &mut net_rx, 2).await,
-        vec![20]
+    let pages = served_pages(&manager, &net_tx, &mut net_rx, 1).await;
+    let (last, empty) = pages.split_last().unwrap();
+    assert!(
+        matches!(last, (timestamps, BatchCursor::Done) if *timestamps == vec![30]),
+        "{pages:?}"
     );
+    // Each page of quarantined records is an empty reply whose cursor moves past it.
+    assert!(empty.len() >= 3, "{pages:?}");
+    let mut cursor = 0;
+    for (timestamps, next) in empty {
+        assert!(timestamps.is_empty(), "{pages:?}");
+        let BatchCursor::Next(next) = next else {
+            panic!("an empty page ended the history: {pages:?}");
+        };
+        assert!(*next > cursor, "{pages:?}");
+        cursor = *next;
+    }
 }
 
 #[test]
