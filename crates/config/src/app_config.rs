@@ -900,6 +900,8 @@ chains:
     #[test]
     fn otel_comes_from_the_flag_the_environment_or_the_file() {
         Jail::expect_with(|jail| {
+            // An `E3_OTEL` of the shell that runs the test must not decide the first case.
+            jail.clear_env();
             let home = format!("{}", jail.directory().to_string_lossy());
             jail.set_env("HOME", &home);
             jail.set_env("XDG_CONFIG_HOME", format!("{home}/.config"));
