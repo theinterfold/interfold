@@ -316,6 +316,15 @@ impl HlcMethods for Hlc {
         })
     }
 
+    fn latest_admissible(&self) -> Result<HlcTimestamp, HlcError> {
+        let now = self.now_physical()?;
+        Ok(HlcTimestamp::new(
+            now.saturating_add(self.max_drift),
+            u32::MAX,
+            u32::MAX,
+        ))
+    }
+
     fn receive(&self, remote: &HlcTimestamp) -> Result<HlcTimestamp, HlcError> {
         let now = self.now_physical()?;
 
@@ -374,6 +383,9 @@ pub trait HlcMethods {
     type Error: From<HlcError>;
     fn tick(&self) -> Result<HlcTimestamp, Self::Error>;
     fn receive(&self, remote: &HlcTimestamp) -> Result<HlcTimestamp, Self::Error>;
+    /// The latest timestamp that `receive` accepts now: a later remote time exceeds the drift
+    /// allowance.
+    fn latest_admissible(&self) -> Result<HlcTimestamp, Self::Error>;
 }
 
 #[cfg(test)]

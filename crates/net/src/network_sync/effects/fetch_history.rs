@@ -222,7 +222,12 @@ async fn fetch_validated_history(
         source_time,
     )
     .await?;
-    let events = validate_historical_events(history.aggregate_id, fetched.events, network)?;
+    let events = validate_historical_events(
+        history.aggregate_id,
+        fetched.events,
+        network,
+        budget.latest_ts(),
+    )?;
     Ok((events, fetched.observed_from))
 }
 
@@ -306,8 +311,18 @@ pub(in crate::actors::net_sync_manager) fn validate_historical_events(
     aggregate_id: AggregateId,
     events: Vec<InterfoldEvent<Unsequenced>>,
     network: &NetworkPolicy,
+    latest_ts: u128,
 ) -> Result<Vec<InterfoldEvent<Unsequenced>>> {
     for event in &events {
+        // The node publishes the history at its latest event time, and refuses a time beyond its
+        // clock-drift allowance. One such event would cost the node the whole history.
+        if event.ts() > latest_ts {
+            bail!(
+                "historical sync peer returned event {} stamped beyond this node's clock-drift \
+                 allowance",
+                event.id()
+            );
+        }
         // The peer supplies the context ID. The merge keeps one event per ID, so a mislabeled
         // event could hide another peer's copy of a different event.
         let payload_id = EventId::hash(event.get_data());
@@ -358,6 +373,7 @@ pub(in crate::actors::net_sync_manager) async fn handle_sync_request_event(
     address: impl Into<Recipient<TypedEvent<SyncRequestSucceeded>>>,
     wait_for_event: bool,
     network: NetworkPolicy,
+    latest_ts: u128,
 ) -> Result<()> {
     info!("Sync request event received");
     let (event, ctx) = event.into_components();
@@ -419,7 +435,7 @@ pub(in crate::actors::net_sync_manager) async fn handle_sync_request_event(
 
     let mut histories: Vec<AggregateHistory> = Vec::new();
     let mut failed_aggregates: Vec<AggregateId> = Vec::new();
-    let mut budget = SyncFetchBudget::production();
+    let mut budget = SyncFetchBudget::production().with_latest_ts(latest_ts);
 
     for (aggregate_id, since) in &sync_cursor {
         info!(

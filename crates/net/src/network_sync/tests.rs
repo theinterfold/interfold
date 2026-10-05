@@ -1147,6 +1147,7 @@ async fn a_second_source_that_fails_once_is_asked_again_in_recovery() {
         response_tx,
         false,
         NetworkPolicy::local_unrestricted(),
+        u128::MAX,
     )
     .await
     .unwrap();
@@ -1201,6 +1202,7 @@ async fn hint_probes_cannot_take_the_budget_of_a_later_aggregate() {
         response_tx,
         false,
         NetworkPolicy::local_unrestricted(),
+        u128::MAX,
     )
     .await
     .unwrap();
@@ -1244,6 +1246,7 @@ async fn unanswered_peer_lists_end_at_the_fetch_deadline() {
         response_tx,
         false,
         NetworkPolicy::local_unrestricted(),
+        u128::MAX,
     )
     .await
     .unwrap_err();
@@ -1258,6 +1261,7 @@ fn historical_sync_rejects_non_forwardable_remote_events() {
         AggregateId::new(0),
         vec![remote_unsequenced(local_non_forwardable_event())],
         &NetworkPolicy::local_unrestricted(),
+        u128::MAX,
     )
     .unwrap_err();
 
@@ -1274,6 +1278,7 @@ fn historical_sync_rejects_events_from_another_aggregate() {
         AggregateId::new(999),
         vec![event],
         &NetworkPolicy::local_unrestricted(),
+        u128::MAX,
     )
     .unwrap_err();
 
@@ -1314,6 +1319,7 @@ async fn local_only_cursor_completes_without_a_peer_request() {
         response_tx,
         true,
         NetworkPolicy::local_unrestricted(),
+        u128::MAX,
     )
     .await
     .unwrap();
@@ -2158,6 +2164,143 @@ fn start_history_fetch_without_peers(
         received.await
     };
     (received, failed)
+}
+
+/// A further peer that serves an event stamped beyond the clock-drift allowance adds nothing:
+/// the node publishes the history of its sources at a time it accepts, and startup gets it.
+#[actix::test]
+async fn a_peer_event_beyond_the_clock_drift_allowance_does_not_cost_the_history() {
+    use e3_events::hlc::HlcTimestamp;
+    let now_micros = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_micros() as u64;
+    let future = HlcTimestamp::new(now_micros + 3_600_000_000, 0, 9).to_u128();
+    let peer = |events| FakeHistoryPeer {
+        peer: PeerId::random(),
+        events,
+        // No source vouches, so the node asks the third peer too, whatever the order.
+        observed_from: None,
+        fails: 0,
+        silent: 0,
+        slow: None,
+    };
+    let peers = vec![
+        peer(vec![received("e1", 10)]),
+        peer(vec![received("e2", 20)]),
+        peer(vec![received("e3", future)]),
+    ];
+    let system = EventSystem::new().with_fresh_bus();
+    let bus = system.handle().unwrap().enable("test");
+    let (tx, rx) = mpsc::channel::<NetCommand>(100);
+    let evt_tx = NetEventChannel::new(100);
+    let _evt_rx = evt_tx.subscribe();
+    spawn_fake_history_network(peers, rx, evt_tx.clone());
+    NetSyncManager::setup(
+        &bus,
+        &tx,
+        &NetEventSubscriber::from(&evt_tx),
+        NoopEventStore.start().recipient(),
+        "my-topic",
+        NetworkPolicy::local_unrestricted(),
+        false,
+        LiveHistory::default(),
+    );
+    let (failure, mut failed) = e3_utils::actix::channel::oneshot::<HistoricalNetSyncFailed>();
+    let received = bus.wait_for(EventType::HistoricalNetSyncEventsReceived);
+    bus.publish_without_context(
+        HistoricalNetSyncStart::new(BTreeMap::from([(AggregateId::new(1), 0)]))
+            .with_failure_recipient(failure),
+    )
+    .unwrap();
+    // The fetch waits for a connection.
+    let connections = {
+        let evt_tx = evt_tx.clone();
+        tokio::spawn(async move {
+            loop {
+                let _ = evt_tx.send(NetEvent::ConnectionEstablished {
+                    connection_id: libp2p::swarm::ConnectionId::new_unchecked(1),
+                });
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+    };
+
+    let received = tokio::time::timeout(Duration::from_secs(60), received)
+        .await
+        .expect("startup must get the history of its sources")
+        .unwrap();
+    connections.abort();
+
+    let InterfoldEventData::HistoricalNetSyncEventsReceived(history) = received.into_data() else {
+        panic!("expected the historical net events");
+    };
+    let mut e3s: Vec<_> = fetched_e3s(&history.events)
+        .into_iter()
+        .map(|(e3, _)| e3)
+        .collect();
+    e3s.sort();
+    assert_eq!(e3s, vec!["e1", "e2"]);
+    assert!(failed.try_recv().is_err());
+}
+
+/// A history that the node fetched but cannot publish fails startup at once, through the
+/// startup coordinator, instead of leaving it to wait until its deadline.
+#[actix::test]
+async fn a_history_that_cannot_be_published_fails_startup() {
+    use e3_events::hlc::HlcTimestamp;
+    let system = EventSystem::new().with_fresh_bus();
+    let bus = system.handle().unwrap().enable("test");
+    let (tx, _rx) = mpsc::channel::<NetCommand>(100);
+    let evt_tx = NetEventChannel::new(100);
+    let _evt_rx = evt_tx.subscribe();
+    let manager = NetSyncManager::setup(
+        &bus,
+        &tx,
+        &NetEventSubscriber::from(&evt_tx),
+        NoopEventStore.start().recipient(),
+        "my-topic",
+        NetworkPolicy::local_unrestricted(),
+        false,
+        LiveHistory::default(),
+    );
+    let (failure, failed) = e3_utils::actix::channel::oneshot::<HistoricalNetSyncFailed>();
+    bus.publish_without_context(
+        HistoricalNetSyncStart::new(BTreeMap::from([(AggregateId::new(1), 0)]))
+            .with_failure_recipient(failure),
+    )
+    .unwrap();
+    bus.flush_event_pipeline().await.unwrap();
+
+    // A response time that the clock refuses makes the publication fail.
+    let refused = HlcTimestamp::new(u64::MAX, 0, 9).to_u128();
+    let start = HistoricalNetSyncStart::new(BTreeMap::new());
+    let context: e3_events::EventContext<Unsequenced> =
+        InterfoldEventData::HistoricalNetSyncStart(start).into();
+    manager
+        .send(TypedEvent::new(
+            SyncRequestSucceeded {
+                response: SyncResponseValue {
+                    events: vec![],
+                    ts: refused,
+                },
+            },
+            context.sequence(1),
+        ))
+        .await
+        .unwrap();
+
+    let failed = tokio::time::timeout(Duration::from_secs(5), failed)
+        .await
+        .expect("startup must learn that the history could not be published")
+        .expect("the failure must reach startup");
+    assert!(
+        failed
+            .reason
+            .contains("failed to publish the fetched peer history"),
+        "{}",
+        failed.reason
+    );
 }
 
 #[actix::test]

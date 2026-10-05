@@ -39,6 +39,9 @@ pub(crate) struct SyncFetchBudget {
     max_bytes: usize,
     max_duration: Duration,
     exhausted: bool,
+    /// The latest event time that the fetch accepts: a later one would exceed this node's
+    /// clock-drift allowance when the history is published.
+    latest_ts: u128,
 }
 
 impl SyncFetchBudget {
@@ -61,7 +64,18 @@ impl SyncFetchBudget {
             max_bytes,
             max_duration: MAX_SYNC_FETCH_DURATION,
             exhausted: false,
+            latest_ts: u128::MAX,
         }
+    }
+
+    /// Refuse events stamped after `latest_ts`.
+    pub(crate) fn with_latest_ts(mut self, latest_ts: u128) -> Self {
+        self.latest_ts = latest_ts;
+        self
+    }
+
+    pub(crate) fn latest_ts(&self) -> u128 {
+        self.latest_ts
     }
 
     pub(crate) fn is_exhausted(&self) -> bool {

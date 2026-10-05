@@ -10,8 +10,8 @@ use anyhow::{bail, Context, Result};
 use e3_events::{
     prelude::*, trap, AggregateId, BusHandle, CorrelationId, DkgCoordinationKind, E3id, EType,
     EventSource, EventStoreFilter, EventStoreQueryBy, EventStoreQueryResponse, EventType,
-    HistoricalNetSyncEventsReceived, HistoricalNetSyncStart, InterfoldEvent, InterfoldEventData,
-    NetReady, Sequenced, TsAgg, TypedEvent, Unsequenced,
+    HistoricalNetSyncEventsReceived, HistoricalNetSyncFailed, HistoricalNetSyncStart,
+    InterfoldEvent, InterfoldEventData, NetReady, Sequenced, TsAgg, TypedEvent, Unsequenced,
 };
 use e3_utils::MAILBOX_LIMIT;
 use libp2p::PeerId;
@@ -147,6 +147,10 @@ pub struct NetSyncManager {
     /// Start without peer history when no peer can serve it, instead of failing the fetch. A
     /// bootstrap node sets this because it uses no E3 history.
     peer_history_optional: bool,
+    /// The startup coordinator's recipient for a failed history fetch, from
+    /// `HistoricalNetSyncStart`. A history that the node fetched but cannot publish fails startup
+    /// through it too.
+    history_failure: Option<Recipient<HistoricalNetSyncFailed>>,
     /// Local messages that are gossiped again until their phase ends: the latest signed Ready and
     /// Roster messages, and this node's decryption shares. They go directly to libp2p with a new
     /// delivery ID because EventBus stable-ID dedup suppresses identical re-publications.
@@ -226,6 +230,7 @@ impl NetSyncManager {
             net_ready: false,
             rebroadcast_started: false,
             peer_history_optional: false,
+            history_failure: None,
             announcements: HashMap::new(),
             ended_e3s: VecDeque::new(),
             replay_finished: false,

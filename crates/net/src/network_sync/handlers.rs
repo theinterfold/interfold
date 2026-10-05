@@ -3,7 +3,7 @@
 //! Actix routing for local replay, remote sync requests, and readiness signals.
 
 use super::*;
-use e3_events::{E3Stage, HistoricalNetSyncFailed};
+use e3_events::E3Stage;
 
 impl Actor for NetSyncManager {
     type Context = actix::Context<Self>;
@@ -82,7 +82,17 @@ impl Handler<TypedEvent<HistoricalNetSyncStart>> for NetSyncManager {
         let bus = self.bus.with_ec(msg.get_ctx());
         let event_context = msg.get_ctx().clone();
         let failure = msg.failure.clone();
+        self.history_failure = failure.clone();
         let address = ctx.address();
+        // Peers' events must stay within the clock-drift allowance at which the node publishes
+        // the history. The bound at the start of the fetch is the strictest.
+        let latest_ts = match self.bus.latest_admissible_ts() {
+            Ok(latest_ts) => latest_ts,
+            Err(error) => {
+                report_required_history_failure(&bus, failure, error);
+                return Box::pin(async {});
+            }
+        };
         let fetch = handle_sync_request_event(
             self.tx.clone(),
             self.rx.clone(),
@@ -90,6 +100,7 @@ impl Handler<TypedEvent<HistoricalNetSyncStart>> for NetSyncManager {
             address.clone(),
             !self.readiness_all_peers_dialed(),
             self.network.clone(),
+            latest_ts,
         );
         if !self.peer_history_optional {
             return Box::pin(async move {
@@ -152,22 +163,27 @@ impl Handler<TypedEvent<SyncRequestSucceeded>> for NetSyncManager {
         msg: TypedEvent<SyncRequestSucceeded>,
         _: &mut Self::Context,
     ) -> Self::Result {
-        trap(EType::Net, &self.bus.with_ec(msg.get_ctx()), || {
-            info!("SYNC REQUEST SUCCEEDED");
-            let (msg, ctx) = msg.into_components();
-            let response = msg.response;
-            self.bus.publish_from_remote_as_response(
-                HistoricalNetSyncEventsReceived {
-                    events: response.events.to_vec(),
-                },
-                response.ts,
-                ctx,
-                None,
-                EventSource::Net,
-            )?;
-
-            Ok(())
-        });
+        info!("SYNC REQUEST SUCCEEDED");
+        let bus = self.bus.with_ec(msg.get_ctx());
+        let (msg, ctx) = msg.into_components();
+        let response = msg.response;
+        if let Err(error) = self.bus.publish_from_remote_as_response(
+            HistoricalNetSyncEventsReceived {
+                events: response.events.to_vec(),
+            },
+            response.ts,
+            ctx,
+            None,
+            EventSource::Net,
+        ) {
+            // Startup waits for this history; without it, it would wait until its deadline.
+            let error = error.context("failed to publish the fetched peer history");
+            if self.peer_history_optional {
+                bus.err(EType::Net, error);
+            } else {
+                report_required_history_failure(&bus, self.history_failure.take(), error);
+            }
+        }
     }
 }
 

@@ -636,10 +636,12 @@ node asks further peers, up to four in all, and then logs that the history may b
 asks them only after every aggregate has its sources, with what the fetch budget has left, so these
 optional reads cannot leave a required one without budget. Such a peer gets one attempt per page and
 at most 30 s and half the time left. When it fails, or serves a different payload under an event ID
-that the sources served, it adds nothing and the sources stand. The hint does not make a reply
-complete: gossip that the responder received but has not stored yet, in its translator or event
-pipeline, is missing from a read. So the node relies on the union of two sources, and a wrong hint
-only means that it asks no more peers than two.
+that the sources served, it adds nothing and the sources stand. The node publishes the history at
+its latest event time, so it refuses a peer's history with an event stamped beyond its clock-drift
+allowance; a history that it still cannot publish fails startup through the startup coordinator. The
+hint does not make a reply complete: gossip that the responder received but has not stored yet, in
+its translator or event pipeline, is missing from a read. So the node relies on the union of two
+sources, and a wrong hint only means that it asks no more peers than two.
 
 The document publisher fetches documents in spawned tasks, so a slow DHT read does not hold its
 ingress loop. At most 8 fetches run and 512 documents wait. Four concurrent N=19 E3s need
