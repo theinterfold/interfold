@@ -218,6 +218,9 @@ pub struct ThresholdKeyshareState {
     /// authorization, so resume-after-crash must only re-publish when this is set;
     /// otherwise it could emit a keyshare that never passed C4 filtering.
     pub keyshare_published: bool,
+    /// Set when this node starts its decryption-key calculation from the accepted DKG roster.
+    /// From then on that roster is fixed, also after a restart that loses the calculation.
+    pub dkg_roster_fixed: bool,
 }
 
 impl ThresholdKeyshareState {
@@ -246,6 +249,7 @@ impl ThresholdKeyshareState {
             dkg_deadline_unix_secs: None,
             dkg_window_secs: None,
             keyshare_published: false,
+            dkg_roster_fixed: false,
         }
     }
 

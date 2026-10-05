@@ -140,9 +140,10 @@ every section.
   A receiver keeps one authenticated roster per proposer. It accepts a roster only from a proposer
   whose party ID is at most the active party ID from `AggregatorChanged`, and only when its local
   Ready state supports that roster. Before C4 starts, a roster from a lower party ID replaces an
-  accepted roster from a higher one; after C4 starts, the accepted roster is fixed. Accepting a
-  roster ends only the DKG-roster failover phase. Public-key aggregation receives a new
-  readiness-gated failover budget. —
+  accepted roster from a higher one, and an accepted roster with an expelled member is dropped;
+  after C4 starts, the accepted roster is fixed, also after a restart that loses the decryption-key
+  calculation. Accepting a roster ends only the DKG-roster failover phase. Public-key aggregation
+  receives a new readiness-gated failover budget. —
   `crates/keyshare/src/threshold_keyshare/effects/coordinate_roster.rs`; `flow-trace/04`; INDEX
   concerns #42 and #52
 - DKG dealer identity binds the public proof statement, not randomized proof bytes. Replacing a

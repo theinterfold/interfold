@@ -271,8 +271,7 @@ impl ThresholdKeyshare {
                     if existing.dealers == message.dealers {
                         return Ok(());
                     }
-                    let c4_started = self.pending.share_decryption_data.is_some()
-                        || !matches!(state.state, KeyshareState::AggregatingDecryptionKey(_));
+                    let c4_started = self.dkg_roster_is_fixed(&state);
                     if c4_started || message.party_id >= existing.party_id {
                         warn!(
                             e3_id = %message.e3_id,
@@ -343,6 +342,14 @@ impl ThresholdKeyshare {
         );
     }
 
+    /// Whether this node started C4 from its accepted roster, which fixes the roster. The
+    /// persisted flag keeps this across a restart that loses the running calculation.
+    fn dkg_roster_is_fixed(&self, state: &ThresholdKeyshareState) -> bool {
+        state.dkg_roster_fixed
+            || self.pending.share_decryption_data.is_some()
+            || !matches!(state.state, KeyshareState::AggregatingDecryptionKey(_))
+    }
+
     fn maybe_accept_pending_roster(&mut self, ec: EventContext<Sequenced>) -> Result<bool> {
         let Some(active_party_id) = self.active_aggregator_party_id else {
             return Ok(false);
@@ -350,11 +357,7 @@ impl ThresholdKeyshare {
         let recovery = self.recovery.try_get()?;
         let expelled = self.state.try_get()?.expelled_parties;
         let accepted_proposer = recovery.dkg_roster.as_ref().map(|roster| roster.party_id);
-        let c4_started = self.pending.share_decryption_data.is_some()
-            || !matches!(
-                self.state.try_get()?.state,
-                KeyshareState::AggregatingDecryptionKey(_)
-            );
+        let c4_started = self.dkg_roster_is_fixed(&self.state.try_get()?);
         if accepted_proposer.is_some() && c4_started {
             return Ok(false);
         }
@@ -377,13 +380,24 @@ impl ThresholdKeyshare {
     }
 
     /// Apply the held Ready updates that the current expulsions make extensions, drop the ones that
-    /// can no longer become one, and drop pending rosters with an expelled member. Run after an
-    /// expulsion, after a direct Ready update, and when effects resume after a restart.
+    /// can no longer become one, and drop pending rosters with an expelled member. An accepted
+    /// roster with an expelled member is dropped too while it is not fixed. Run in the DKG phases
+    /// after an expulsion, after a direct Ready update, and when effects resume after a restart.
     pub(in crate::actors::threshold_keyshare) fn apply_held_ready_updates(
         &mut self,
         ec: EventContext<Sequenced>,
     ) -> Result<()> {
         let state = self.state.try_get()?;
+        // A later phase has no roster to settle; a saved failure must be redriven unhindered.
+        if !matches!(
+            state.state,
+            KeyshareState::Init
+                | KeyshareState::CollectingEncryptionKeys(_)
+                | KeyshareState::GeneratingThresholdShare(_)
+                | KeyshareState::AggregatingDecryptionKey(_)
+        ) {
+            return Ok(());
+        }
         let recovery = self.recovery.try_get()?;
         let expelled = &state.expelled_parties;
         let mut applied = Vec::new();
@@ -411,7 +425,14 @@ impl ThresholdKeyshare {
             .filter(|(_, roster)| !roster_members_are_live(roster, expelled))
             .map(|(proposer, _)| *proposer)
             .collect();
-        if applied.is_empty() && settled.is_empty() && stale_rosters.is_empty() {
+        // An accepted roster binds this node only once its C4 starts. Before that, as at
+        // acceptance, a roster with an expelled member cannot finish.
+        let drop_accepted = recovery
+            .dkg_roster
+            .as_ref()
+            .is_some_and(|roster| !roster_members_are_live(roster, expelled))
+            && !self.dkg_roster_is_fixed(&state);
+        if applied.is_empty() && settled.is_empty() && stale_rosters.is_empty() && !drop_accepted {
             return Ok(());
         }
         self.recovery.try_mutate(&ec, |mut recovery| {
@@ -430,9 +451,22 @@ impl ThresholdKeyshare {
             for proposer in &stale_rosters {
                 recovery.pending_rosters.remove(proposer);
             }
+            if drop_accepted {
+                recovery.dkg_roster = None;
+            }
             recovery.last_ec = Some(ec.clone());
             Ok(recovery)
         })?;
+        if drop_accepted {
+            warn!(
+                e3_id = %state.e3_id,
+                "Dropping the accepted DKG roster: a member was expelled before C4 started"
+            );
+            self.state.try_mutate(&ec, |mut state| {
+                state.honest_parties = None;
+                Ok(state)
+            })?;
+        }
         for (reporter, _) in applied {
             info!(
                 e3_id = %state.e3_id,

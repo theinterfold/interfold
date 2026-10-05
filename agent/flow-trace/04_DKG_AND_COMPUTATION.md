@@ -643,13 +643,16 @@ a dealer but lacks a dealer of the held report, at most one per committee member
 in its saved recovery state: the reporter can have seen expulsions that the receiver has not seen
 yet, and the network resends the same events, which EventBus deduplication drops. After each
 expulsion, and when effects resume after a restart, the receiver applies the held updates that the
-expulsions now explain, one after another, and drops the ones that can no longer apply. A roster
+expulsions now explain, one after another, and drops the ones that can no longer apply. It settles
+held updates only in the DKG phases, so a saved failure is redriven first. A roster
 that held Ready reports contradict stays held in the same way. Acceptance checks the roster's support
 again and that neither its proposer nor a selected dealer is expelled; a held roster with an
 expelled member is dropped. A later roster from the same proposer replaces a held roster that the
 local Ready state does not support. Before C4
-starts, a roster from a lower party ID replaces a roster from a higher party ID. After C4 starts,
-the roster is fixed. A promoted aggregator re-proposes the accepted dealer list instead of deriving
+starts, a roster from a lower party ID replaces a roster from a higher party ID, and an accepted
+roster with an expelled member is dropped, as at acceptance. C4 starts when the node sends its
+decryption-key calculation; it saves that fact with the selected parties, so after a restart that
+loses the calculation the roster stays fixed. A promoted aggregator re-proposes the accepted dealer list instead of deriving
 a different list from its local delivery order.
 
 Once a node can derive a valid roster, or receives a supported roster that it cannot yet derive

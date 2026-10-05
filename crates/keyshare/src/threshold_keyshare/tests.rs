@@ -1557,11 +1557,11 @@ fn ready_message(party_id: u64, dealer_ids: &[u64], e3_id: &E3id) -> DkgCoordina
     }
 }
 
-/// A keyshare for party 0 in `AggregatingDecryptionKey(current)`, in a committee of the three
+/// A keyshare for party 0 in `AggregatingDecryptionKey(current)`, in a committee of the
 /// `signers`. It signs as party 0. `setup` edits the recovery state.
 async fn committee_actor(
     e3_id: &E3id,
-    signers: &[alloy::signers::local::PrivateKeySigner; 3],
+    signers: &[alloy::signers::local::PrivateKeySigner],
     current: AggregatingDecryptionKey,
     cipher: Arc<Cipher>,
     setup: impl FnOnce(&mut ThresholdKeyshareRecoveryState),
@@ -1574,7 +1574,7 @@ async fn committee_actor(
             CiphernodeSelected {
                 e3_id: e3_id.clone(),
                 threshold_m: 1,
-                threshold_n: 3,
+                threshold_n: signers.len(),
                 party_id: 0,
                 committee: signers
                     .iter()
@@ -2744,6 +2744,249 @@ async fn effects_apply_a_held_ready_update_that_a_saved_expulsion_explains() -> 
     })
     .await?;
     assert_eq!(recovery.ready_by_party.get(&1), Some(&ready_update));
+    Ok(())
+}
+
+/// The node started C4 from the roster of proposer 1 and restarted before the calculation
+/// returned. A roster of proposer 0 that arrives later must not replace the fixed roster.
+#[actix::test]
+async fn a_restart_keeps_the_roster_that_its_c4_started_from() -> Result<()> {
+    let e3_id = E3id::new("54", 1);
+    let signers = three_signers();
+    let sign = |party_id: u64, kind, dealer_ids: &[u64]| {
+        DkgCoordination::sign(
+            e3_id.clone(),
+            Address::ZERO,
+            party_id,
+            kind,
+            dealers(dealer_ids),
+            &signers[party_id as usize],
+        )
+    };
+    let own_ready = sign(0, DkgCoordinationKind::Ready, &[0, 1, 2])?;
+    let accepted = sign(1, DkgCoordinationKind::Roster, &[1, 2])?;
+    let outranking = sign(0, DkgCoordinationKind::Roster, &[0, 1])?;
+    let cipher = Arc::new(Cipher::from_password("test-password").await?);
+    let mut committee = committee_actor(
+        &e3_id,
+        &signers,
+        aggregating_decryption_key_for_roster_test(),
+        cipher,
+        |recovery| {
+            recovery.dkg_ready = Some(own_ready.clone());
+            recovery.ready_by_party.insert(0, own_ready.clone());
+            for party_id in [1, 2] {
+                recovery
+                    .ready_by_party
+                    .insert(party_id, ready_message(party_id, &[0, 1, 2], &e3_id));
+            }
+            recovery.dkg_roster = Some(accepted.clone());
+            recovery.active_aggregator_party_id = Some(1);
+        },
+    )
+    .await?;
+    committee
+        .actor
+        .state
+        .try_mutate_without_context(|mut state| {
+            state.dkg_roster_fixed = true;
+            Ok(state)
+        })?;
+
+    committee
+        .actor
+        .record_dkg_coordination(outranking.clone(), test_ec(2))?;
+
+    let recovery = committee.actor.recovery.try_get()?;
+    assert_eq!(recovery.dkg_roster, Some(accepted));
+    assert!(!recovery.pending_rosters.contains_key(&0));
+    Ok(())
+}
+
+/// An accepted roster binds the node only once its C4 starts. After a restart, a restored roster
+/// with an expelled member is dropped if C4 had not started, and kept if it had.
+#[actix::test]
+async fn a_restored_roster_with_an_expelled_member_binds_only_after_c4_started() -> Result<()> {
+    for fixed in [false, true] {
+        let e3_id = E3id::new("55", 1);
+        let signers = three_signers();
+        let own_ready = DkgCoordination::sign(
+            e3_id.clone(),
+            Address::ZERO,
+            0,
+            DkgCoordinationKind::Ready,
+            dealers(&[0, 1]),
+            &signers[0],
+        )?;
+        let roster = DkgCoordination::sign(
+            e3_id.clone(),
+            Address::ZERO,
+            1,
+            DkgCoordinationKind::Roster,
+            dealers(&[0, 1]),
+            &signers[1],
+        )?;
+        let cipher = Arc::new(Cipher::from_password("test-password").await?);
+        let mut committee = committee_actor(
+            &e3_id,
+            &signers,
+            aggregating_decryption_key_for_roster_test(),
+            cipher,
+            |recovery| {
+                recovery.dkg_ready = Some(own_ready.clone());
+                recovery.ready_by_party.insert(0, own_ready.clone());
+                recovery.dkg_roster = Some(roster.clone());
+            },
+        )
+        .await?;
+        // Dealer 1 was expelled after the acceptance was saved.
+        committee
+            .actor
+            .state
+            .try_mutate_without_context(|mut state| {
+                state.expelled_parties.insert(1);
+                state.honest_parties = Some(BTreeSet::from([0]));
+                state.dkg_roster_fixed = fixed;
+                Ok(state)
+            })?;
+        let actor = committee.actor.start();
+
+        actor
+            .send(keyshare_event(EffectsEnabled::new(), 3, EventSource::Local))
+            .await?;
+
+        if fixed {
+            actix::clock::sleep(std::time::Duration::from_millis(200)).await;
+            let recovery = committee.recovery_repo.read().await?.unwrap_or_default();
+            assert_eq!(recovery.dkg_roster, Some(roster));
+        } else {
+            wait_for_record(&committee.recovery_repo, |recovery| {
+                recovery.dkg_roster.is_none()
+            })
+            .await?;
+        }
+    }
+    Ok(())
+}
+
+/// A saved terminal failure is redriven at `EffectsEnabled` even when a held Ready update could
+/// be settled and the recovery store refuses every write.
+#[actix::test]
+async fn a_saved_failure_is_redriven_before_any_ready_settlement() -> Result<()> {
+    let e3_id = E3id::new("56", 1);
+    let (bus, history) = test_bus();
+    let (state, _) = test_state(
+        &e3_id,
+        KeyshareState::Failed {
+            failed_at_stage: E3Stage::CommitteeFinalized,
+            reason: FailureReason::DKGTimeout,
+        },
+    );
+    let mut state = state.try_get()?;
+    state.expelled_parties.insert(1);
+    let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bus,
+        cipher: Arc::new(Cipher::from_password("test-password").await?),
+        state: unwritable(state).await,
+        share_enc_preset: BfvPreset::InsecureDkg512,
+        interfold_address: Address::ZERO,
+        signer: alloy::signers::local::PrivateKeySigner::random(),
+        effects_enabled: false,
+        recovery: unwritable(ThresholdKeyshareRecoveryState {
+            ciphernode_selected: Some(TypedEvent::new(selection(&e3_id), test_ec(0))),
+            // The reporter is expelled, so settlement would drop its held update.
+            held_ready_updates: std::collections::BTreeMap::from([(
+                1,
+                vec![ready_message(1, &[0, 1], &e3_id)],
+            )]),
+            ..Default::default()
+        })
+        .await,
+        recovery_payloads: test_recovery_payloads(),
+        dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
+    })
+    .start();
+
+    actor
+        .send(keyshare_event(EffectsEnabled::new(), 1, EventSource::Local))
+        .await?;
+
+    let event = next_event(&history).await?;
+    assert!(matches!(
+        event.into_data(),
+        InterfoldEventData::E3Failed(data) if data.e3_id == e3_id
+    ));
+    Ok(())
+}
+
+/// A reporter sends a Ready update after each of two expulsions. Both updates reach this node
+/// through its intake before either expulsion, and the saved state reloads in between. Each
+/// order of the expulsions settles on the latest list without a resend.
+#[actix::test]
+async fn two_held_ready_updates_settle_through_intake_in_both_expulsion_orders() -> Result<()> {
+    for expulsions in [[2, 3], [3, 2]] {
+        let e3_id = E3id::new("57", 1);
+        let signers: [alloy::signers::local::PrivateKeySigner; 4] =
+            std::array::from_fn(|_| alloy::signers::local::PrivateKeySigner::random());
+        let sign = |dealer_ids: &[u64]| {
+            DkgCoordination::sign(
+                e3_id.clone(),
+                Address::ZERO,
+                1,
+                DkgCoordinationKind::Ready,
+                dealers(dealer_ids),
+                &signers[1],
+            )
+        };
+        let first = sign(&[1, 2])?;
+        // After dealer 2 is expelled, then after dealer 3 is expelled.
+        let second = sign(&[1, 3])?;
+        let third = sign(&[0, 1])?;
+        let cipher = Arc::new(Cipher::from_password("test-password").await?);
+        let mut committee = committee_actor(
+            &e3_id,
+            &signers,
+            aggregating_decryption_key_for_roster_test(),
+            cipher.clone(),
+            |recovery| {
+                recovery.ready_by_party.insert(1, first.clone());
+            },
+        )
+        .await?;
+        committee
+            .actor
+            .record_dkg_coordination(second.clone(), test_ec(2))?;
+        committee
+            .actor
+            .record_dkg_coordination(third.clone(), test_ec(3))?;
+
+        // Reload the saved recovery state, as after a restart.
+        let saved = wait_for_record(&committee.recovery_repo, |recovery| {
+            recovery.held_ready_updates.get(&1).map(Vec::len) == Some(2)
+        })
+        .await?;
+        let mut reloaded = committee_actor(
+            &e3_id,
+            &signers,
+            aggregating_decryption_key_for_roster_test(),
+            cipher,
+            |recovery| *recovery = saved.clone(),
+        )
+        .await?;
+        for (seq, party_id) in (4u64..).zip(expulsions) {
+            reloaded
+                .actor
+                .handle_committee_member_expelled(expulsion_of(&e3_id, party_id), test_ec(seq))?;
+        }
+
+        let recovery = reloaded.actor.recovery.try_get()?;
+        assert_eq!(
+            recovery.ready_by_party.get(&1),
+            Some(&third),
+            "expulsions {expulsions:?}"
+        );
+        assert!(recovery.held_ready_updates.is_empty());
+    }
     Ok(())
 }
 

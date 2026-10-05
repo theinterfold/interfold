@@ -84,6 +84,7 @@ impl ThresholdKeyshare {
                 );
                 self.state.try_mutate(&ec, |mut s| {
                     s.honest_parties = Some(honest_party_ids.clone());
+                    s.dkg_roster_fixed = true;
                     Ok(s)
                 })?;
                 self.pending.share_decryption_data = Some((sk_request, esm_requests));

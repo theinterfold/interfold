@@ -618,6 +618,8 @@ async fn restarted_micro_batch_survives_its_original_deadline() -> Result<()> {
                 InterfoldEventData::ComputeRequest(request)
                     if matches!(request.request, ComputeRequestKind::TrBFV(TrBFVRequest::CalculateDecryptionKey(_)))
             )).await?;
+            // Starting the calculation fixes the roster, also for a later restart.
+            wait_for_record(&h.state, |state| state.dkg_roster_fixed).await?;
             let InterfoldEventData::ComputeRequest(request) = calculation.into_data() else {
                 unreachable!()
             };
