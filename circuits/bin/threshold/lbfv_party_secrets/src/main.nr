@@ -7,7 +7,7 @@
 use lib::configs::default::dkg::{SHARE_COMPUTATION_CHUNK_SIZE, SHARE_COMPUTATION_N_CHUNKS};
 use lib::configs::default::N_PARTIES;
 use lib::configs::default::threshold::{
-    L, N, PK_GENERATION_BIT_E_SM, PK_GENERATION_BIT_PK, PK_GENERATION_BIT_SK,
+    GADGET_DIM, L, N, PK_GENERATION_BIT_EEK, PK_GENERATION_E_SM_MODULI_BIT, PK_GENERATION_BIT_PK, PK_GENERATION_BIT_SK,
     PK_GENERATION_CONFIGS,
 };
 use lib::core::threshold::lbfv_party_secrets::LbfvPartySecrets;
@@ -24,13 +24,14 @@ fn main(
     party_id: pub u32,
     sk: Polynomial<N>,
     e_sm: [Polynomial<N>; L],
-) -> pub (Field, Field) {
+    eek: [Polynomial<N>; GADGET_DIM],
+) -> pub (Field, Field, [Field; GADGET_DIM]) {
     validate_party_statement::<N_PARTIES>(
         LbfvProofSession { session_id_hi, session_id_lo },
         party_id,
     );
 
-    let circuit: LbfvPartySecrets<N, L, PK_GENERATION_BIT_SK, PK_GENERATION_BIT_E_SM, PK_GENERATION_BIT_PK, SHARE_COMPUTATION_N_CHUNKS, SHARE_COMPUTATION_CHUNK_SIZE> =
-        LbfvPartySecrets::new(PK_GENERATION_CONFIGS, sk, e_sm);
+    let circuit: LbfvPartySecrets<N, L, GADGET_DIM, PK_GENERATION_BIT_EEK, PK_GENERATION_BIT_SK, PK_GENERATION_E_SM_MODULI_BIT, PK_GENERATION_BIT_PK, SHARE_COMPUTATION_N_CHUNKS, SHARE_COMPUTATION_CHUNK_SIZE> =
+        LbfvPartySecrets::new(PK_GENERATION_CONFIGS, sk, e_sm, eek);
     circuit.execute()
 }

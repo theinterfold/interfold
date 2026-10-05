@@ -25,6 +25,9 @@ use e3_fhe_params::{build_pair_for_preset, BfvPreset};
 use e3_polynomial::{CrtPolynomial, Polynomial};
 use num_bigint::BigInt;
 
+/// Gadget rows at secure-16384, the only preset with an l-BFV path. Matches `GADGET_DIM`.
+pub const LBFV_GADGET_ROWS: usize = 5;
+
 /// Per-party l-BFV secrets circuit.
 #[derive(Debug)]
 pub struct LbfvPartySecretsCircuit;
@@ -50,6 +53,9 @@ pub struct LbfvPartySecretsCircuitData {
     pub sk: CrtPolynomial,
     /// Smudging noise, one limb per CRT modulus.
     pub e_sm: CrtPolynomial,
+    /// One key-generation error per gadget row, in row order. Bounded and committed here so the
+    /// limb proofs can open to the commitments instead of repeating the check per limb.
+    pub eek: Vec<Polynomial>,
 }
 
 /// Computed values for one l-BFV party-secrets proof.
@@ -69,6 +75,7 @@ pub struct LbfvPartySecretsInputs {
     /// Every limb carries the same ternary values; `compute` checks that before selecting one.
     pub sk: Polynomial,
     pub e_sm: CrtPolynomial,
+    pub eek: Vec<Polynomial>,
 }
 
 impl LbfvPartySecretsInputs {
@@ -79,6 +86,7 @@ impl LbfvPartySecretsInputs {
             "party_id": self.party_id,
             "sk": polynomial_to_toml_json(&self.sk),
             "e_sm": crt_polynomial_to_toml_json(&self.e_sm),
+            "eek": self.eek.iter().map(polynomial_to_toml_json).collect::<Vec<_>>(),
         }))
     }
 }
@@ -137,6 +145,21 @@ impl Computation for LbfvPartySecretsInputs {
             )));
         }
 
+        if data.eek.len() != LBFV_GADGET_ROWS {
+            return Err(CircuitsErrors::Other(format!(
+                "l-BFV party-secrets expects {LBFV_GADGET_ROWS} row errors; got {}",
+                data.eek.len()
+            )));
+        }
+        for (row, eek) in data.eek.iter().enumerate() {
+            if eek.coefficients().len() != n {
+                return Err(CircuitsErrors::Other(format!(
+                    "l-BFV party-secrets error for row {row} has {} coefficients; expected {n}",
+                    eek.coefficients().len()
+                )));
+            }
+        }
+
         let session = lbfv_proof_session(data.proof_domain)?;
         Ok(LbfvPartySecretsInputs {
             session_id_hi: session.session_id_hi,
@@ -144,6 +167,7 @@ impl Computation for LbfvPartySecretsInputs {
             party_id: data.party_id,
             sk,
             e_sm: CrtPolynomial::new(e_sm_limbs),
+            eek: data.eek.clone(),
         })
     }
 
@@ -195,12 +219,24 @@ impl LbfvPartySecretsCircuitData {
         committee: CiphernodesCommittee,
     ) -> Result<Self, CircuitsErrors> {
         let sample = super::PkGenerationCircuitData::generate_sample(preset, committee.clone())?;
+        // One error per gadget row, taken from the same row generator the limbs use, so a sampled
+        // party and its sampled rows agree on every commitment.
+        let mut eek = Vec::with_capacity(LBFV_GADGET_ROWS);
+        for row in 0..LBFV_GADGET_ROWS as u32 {
+            let row_sample = super::LbfvPkGenerationCircuitData::generate_sample_for_row(
+                preset,
+                committee.clone(),
+                row,
+            )?;
+            eek.push(row_sample.eek);
+        }
         Ok(Self {
             committee,
             proof_domain: crate::threshold::lbfv_proof_domain::sample_lbfv_proof_domain(),
             party_id: 0,
             sk: sample.sk,
             e_sm: sample.e_sm,
+            eek,
         })
     }
 }

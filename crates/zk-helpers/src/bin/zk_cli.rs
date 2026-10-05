@@ -50,8 +50,8 @@ use e3_zk_helpers::threshold::pk_aggregation::PkAggregationCircuit;
 use e3_zk_helpers::threshold::pk_aggregation::PkAggregationCircuitData;
 use e3_zk_helpers::threshold::pk_generation::{
     LbfvPartySecretsCircuit, LbfvPartySecretsCircuitData, LbfvPkGenerationCircuit,
-    LbfvPkGenerationLimbCircuit, LbfvPkGenerationLimbCircuitData,
-    PkGenerationCircuit, PkGenerationCircuitData,
+    LbfvPkGenerationLimbCircuit, LbfvPkGenerationLimbCircuitData, PkGenerationCircuit,
+    PkGenerationCircuitData,
 };
 use e3_zk_helpers::threshold::rlk_aggregation::{RlkAggregationCircuit, RlkAggregationCircuitData};
 use e3_zk_helpers::threshold::rlk_generation::{

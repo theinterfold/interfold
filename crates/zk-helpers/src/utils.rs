@@ -406,3 +406,14 @@ mod tests {
         );
     }
 }
+
+/// C2 chunk size the config generator compiles into `SHARE_COMPUTATION_CHUNK_SIZE`.
+///
+/// Any Rust that reproduces a chunked-root commitment must chunk the same way the circuit does, so
+/// this lives beside the generator that emits it rather than being restated per call site.
+pub const DEFAULT_C2_CHUNK_SIZE: usize = 512;
+
+/// Chunk size for a polynomial degree, matching the generator and `C2ChunkLayout::compiled`.
+pub fn c2_chunk_size(degree: usize) -> usize {
+    DEFAULT_C2_CHUNK_SIZE.min(degree)
+}

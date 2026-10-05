@@ -6,14 +6,17 @@
 
 //! Conversion of l-BFV public-key rows into Noir witnesses.
 
+use crate::circuits::commitments::{
+    compute_lbfv_pk_limb_eek_commitment, compute_sc_sk_secret_root_commitment,
+};
 use crate::math::{
-    cyclotomic_polynomial, decompose_residue, fhe_poly_to_crt_centered_checked,
-    fhe_secret_key_to_crt_centered, validate_fhe_poly_context,
+    cyclotomic_polynomial, fhe_poly_to_crt_centered_checked, fhe_secret_key_to_crt_centered,
+    validate_fhe_poly_context,
 };
 use crate::threshold::lbfv_proof_domain::{
     lbfv_proof_session, sample_lbfv_proof_domain, validate_lbfv_generation_party_id,
 };
-use crate::utils::{validate_crt_shape, verify_crt_shapes};
+use crate::utils::{c2_chunk_size, validate_crt_shape, verify_crt_shapes};
 use crate::{
     crt_polynomial_to_toml_json, polynomial_to_toml_json, Artifacts, CiphernodesCommittee, Circuit,
     CircuitCodegen, CircuitComputation, CircuitsErrors, CodegenToml, Computation,
@@ -94,7 +97,7 @@ pub struct LbfvPkGenerationInputs {
     pub row_index: u32,
     pub eek: Polynomial,
     pub sk: Polynomial,
-    pub r1is: CrtPolynomial,
+    pub ris: CrtPolynomial,
     pub pk0is: CrtPolynomial,
 }
 
@@ -106,9 +109,14 @@ pub struct LbfvPkGenerationLimbInputs {
     pub party_id: u32,
     pub row_index: u32,
     pub limb_index: u32,
+    /// Published by `lbfv_party_secrets`, which is where the key's range check lives. The limb
+    /// proves it opens to this rather than bounding the key again.
+    pub expected_sk_commitment: BigInt,
+    /// This row's error commitment, likewise published by `lbfv_party_secrets`.
+    pub expected_eek_commitment: BigInt,
     pub eek: Polynomial,
     pub sk: Polynomial,
-    pub r1: Polynomial,
+    pub r: Polynomial,
     pub pk0: Polynomial,
 }
 
@@ -155,9 +163,11 @@ impl Computation for LbfvPkGenerationLimbInputs {
             "party_id": self.party_id,
             "row_index": self.row_index,
             "limb_index": self.limb_index,
+            "expected_sk_commitment": self.expected_sk_commitment.to_string(),
+            "expected_eek_commitment": self.expected_eek_commitment.to_string(),
             "eek": polynomial_to_toml_json(&self.eek),
             "sk": polynomial_to_toml_json(&self.sk),
-            "r1": polynomial_to_toml_json(&self.r1),
+            "r": polynomial_to_toml_json(&self.r),
             "pk0": polynomial_to_toml_json(&self.pk0),
         }))
     }
@@ -183,7 +193,7 @@ impl Computation for LbfvPkGenerationInputs {
             "row_index": self.row_index,
             "eek": polynomial_to_toml_json(&self.eek),
             "sk": polynomial_to_toml_json(&self.sk),
-            "r1is": crt_polynomial_to_toml_json(&self.r1is),
+            "ris": crt_polynomial_to_toml_json(&self.ris),
             "pk0is": crt_polynomial_to_toml_json(&self.pk0is),
         }))
     }
@@ -217,7 +227,7 @@ fn compute_inputs(
     }
 
     let cyclotomic = cyclotomic_polynomial(n as u64);
-    let mut r1is = Vec::with_capacity(l);
+    let mut ris = Vec::with_capacity(l);
     for (index, modulus) in params.moduli().iter().enumerate() {
         let modulus = BigInt::from(*modulus);
         let expected = data.a.limb(index).neg().mul(&data.sk).add(&data.eek);
@@ -231,16 +241,30 @@ fn compute_inputs(
                 "l-BFV public-key residue mismatch at CRT limb {index}"
             )));
         }
-        // The limb circuit reduces modulo X^N + 1 in-circuit via `fold_negacyclic`, so only the
-        // modulus-switching quotient is a witness. The cyclotomic quotient is discarded.
-        let (r1, _r2) = decompose_residue(
-            data.pk0_share.limb(index),
-            &expected,
-            &modulus,
-            &cyclotomic,
-            n as u64,
-        );
-        r1is.push(r1);
+        // The limb checks its equation in Z[X]/(X^N+1), so reduce first and read the quotient off
+        // the reduced difference, the way C1 does. Reducing the degree-2N-2 residue instead would
+        // route through a cyclotomic quotient the circuit no longer takes.
+        let reduced = expected
+            .reduce_by_cyclotomic(&cyclotomic)
+            .map_err(|error| CircuitsErrors::Other(error.to_string()))?;
+        // Exact division: `div` rejects a coefficient q does not divide, which is what proves pk0
+        // is the centered residue of the unreduced value modulo q.
+        let (r, remainder) = data
+            .pk0_share
+            .limb(index)
+            .sub(&reduced)
+            .div(&Polynomial::new(vec![modulus.clone()]))
+            .map_err(|error| CircuitsErrors::Other(error.to_string()))?;
+        if !remainder
+            .coefficients()
+            .iter()
+            .all(|c| c == &BigInt::from(0))
+        {
+            return Err(CircuitsErrors::Other(format!(
+                "l-BFV public-key quotient is not exact at CRT limb {index}"
+            )));
+        }
+        ris.push(r);
     }
 
     Ok(LbfvPkGenerationInputs {
@@ -250,7 +274,7 @@ fn compute_inputs(
         row_index: data.row_index,
         eek: data.eek.clone(),
         sk: data.sk.clone(),
-        r1is: CrtPolynomial::new(r1is),
+        ris: CrtPolynomial::new(ris),
         pk0is: data.pk0_share.clone(),
     })
 }
@@ -265,8 +289,20 @@ pub fn derive_lbfv_pk_generation_limb_inputs(
     let adapter = LbfvPkGenerationAdapter::new(preset)?;
     let inputs = compute_inputs(&params, &adapter, row)?;
     let limb_count = params.moduli().len();
-    validate_crt_shape(&inputs.r1is, limb_count, 2 * params.degree() - 1).map_err(|error| {
-        CircuitsErrors::Other(format!("invalid l-BFV public-key r1 shape: {error}"))
+    // Must match `compute_sc_sk_secret_root_from_polynomial` in the circuit, including the reversed
+    // chunk orientation, or the limb's commitment assertion fails at proving time.
+    let bounds = super::Bounds::compute(preset, &row.committee)?;
+    let bits = super::Bits::compute(preset, &bounds)?;
+    let expected_sk_commitment = compute_sc_sk_secret_root_commitment(
+        &inputs.sk,
+        bits.sk_bit,
+        c2_chunk_size(params.degree()),
+    );
+    // Same row tag and bit width the circuit uses, or the limb's assertion fails at proving time.
+    let expected_eek_commitment =
+        compute_lbfv_pk_limb_eek_commitment(inputs.row_index, &inputs.eek, bits.eek_bit);
+    validate_crt_shape(&inputs.ris, limb_count, params.degree()).map_err(|error| {
+        CircuitsErrors::Other(format!("invalid l-BFV public-key quotient shape: {error}"))
     })?;
 
     Ok((0..limb_count)
@@ -276,9 +312,11 @@ pub fn derive_lbfv_pk_generation_limb_inputs(
             party_id: inputs.party_id,
             row_index: inputs.row_index,
             limb_index: limb_index as u32,
+            expected_sk_commitment: expected_sk_commitment.clone(),
+            expected_eek_commitment: expected_eek_commitment.clone(),
             eek: inputs.eek.clone(),
             sk: inputs.sk.clone(),
-            r1: inputs.r1is.limb(limb_index).clone(),
+            r: inputs.ris.limb(limb_index).clone(),
             pk0: inputs.pk0is.limb(limb_index).clone(),
         })
         .collect())
@@ -606,15 +644,23 @@ mod tests {
                 expected.center(&BigInt::from(*qi));
                 assert_eq!(&expected, data.pk0_share.limb(index));
 
+                // Recompute the quotient the way the generator does: reduce first, then divide
+                // the difference by q. It must come out exact and match limb for limb.
                 let expected_hat = data.a.limb(index).neg().mul(&data.sk).add(&data.eek);
-                let (expected_r1, _expected_r2) = decompose_residue(
-                    data.pk0_share.limb(index),
-                    &expected_hat,
-                    &BigInt::from(*qi),
-                    &adapter.cyclotomic,
-                    params.degree() as u64,
-                );
-                assert_eq!(&expected_r1, inputs.r1is.limb(index));
+                let reduced = expected_hat
+                    .reduce_by_cyclotomic(&adapter.cyclotomic)
+                    .unwrap();
+                let (expected_r, remainder) = data
+                    .pk0_share
+                    .limb(index)
+                    .sub(&reduced)
+                    .div(&Polynomial::new(vec![BigInt::from(*qi)]))
+                    .unwrap();
+                assert!(remainder
+                    .coefficients()
+                    .iter()
+                    .all(|c| c == &BigInt::from(0)));
+                assert_eq!(&expected_r, inputs.ris.limb(index));
             }
         }
 
@@ -709,12 +755,14 @@ mod tests {
 
         let inputs = compute_inputs(&params, &adapter, &data)?;
 
-        assert!(inputs.r1is.limbs.iter().all(Polynomial::is_zero));
+        assert!(inputs.ris.limbs.iter().all(Polynomial::is_zero));
+        // The circuit takes the quotient already reduced modulo X^N + 1, so each limb holds
+        // exactly N coefficients. A shape regression is otherwise silent until proving.
         assert!(inputs
-            .r1is
+            .ris
             .limbs
             .iter()
-            .all(|polynomial| polynomial.degree() == 2 * (degree - 1)));
+            .all(|polynomial| polynomial.coefficients().len() == degree));
         Ok(())
     }
 }

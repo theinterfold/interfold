@@ -725,12 +725,15 @@ mod tests {
 
         assert_eq!(proof.extract_input("row_index").unwrap()[31], 2);
         assert_eq!(proof.extract_input("limb_index").unwrap()[31], 4);
+        // The secret-key and error commitments are inputs: the limb opens to what
+        // `lbfv_party_secrets` published rather than establishing its own. Byte positions are
+        // unchanged, so the row terminal still reads them at the same indices.
         assert_eq!(
-            &*proof.extract_output("sk_commitment").unwrap(),
+            &*proof.extract_input("expected_sk_commitment").unwrap(),
             &[0x11; 32]
         );
         assert_eq!(
-            &*proof.extract_output("eek_commitment").unwrap(),
+            &*proof.extract_input("expected_eek_commitment").unwrap(),
             &[0x22; 32]
         );
         assert_eq!(

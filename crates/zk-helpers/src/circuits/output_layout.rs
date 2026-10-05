@@ -128,19 +128,17 @@ pub const PK_GENERATION_OUTPUTS: &[OutputField] =
     &[f("sk_commitment"), f("pk_commitment"), f("e_sm_commitment")];
 
 /// One party's l-BFV secrets: the secret key and its smudging noise.
-pub const LBFV_PARTY_SECRETS_OUTPUTS: &[OutputField] =
-    &[f("sk_commitment"), f("e_sm_commitment")];
+pub const LBFV_PARTY_SECRETS_OUTPUTS: &[OutputField] = &[f("sk_commitment"), f("e_sm_commitment")];
 
 /// l-BFV public-key generation for one gadget row.
 pub const LBFV_PK_GENERATION_OUTPUTS: &[OutputField] =
     &[f("sk_commitment"), f("pk_commitment"), f("limb_vk_hash")];
 
 /// l-BFV public-key generation for one row and one CRT limb.
-pub const LBFV_PK_GENERATION_LIMB_OUTPUTS: &[OutputField] = &[
-    f("sk_commitment"),
-    f("eek_commitment"),
-    f("pk_limb_commitment"),
-];
+///
+/// The secret-key commitment is an input here, not an output: the limb opens to the commitment
+/// `lbfv_party_secrets` published rather than establishing one of its own.
+pub const LBFV_PK_GENERATION_LIMB_OUTPUTS: &[OutputField] = &[f("pk_limb_commitment")];
 
 /// Threshold l-BFV public-key aggregation for one gadget row.
 pub const LBFV_PK_AGGREGATION_OUTPUTS: &[OutputField] = &[f("pk_agg_commitment")];
@@ -213,11 +211,8 @@ pub const LBFV_PK_GENERATION_INPUTS: &[OutputField] = &[
 ];
 
 /// Public generation domain and party identity for a party-secrets proof.
-pub const LBFV_PARTY_SECRETS_INPUTS: &[OutputField] = &[
-    f("session_id_hi"),
-    f("session_id_lo"),
-    f("party_id"),
-];
+pub const LBFV_PARTY_SECRETS_INPUTS: &[OutputField] =
+    &[f("session_id_hi"), f("session_id_lo"), f("party_id")];
 
 /// Public generation domain, row, and CRT-limb identity for a public-key leaf proof.
 pub const LBFV_PK_GENERATION_LIMB_INPUTS: &[OutputField] = &[
@@ -226,6 +221,8 @@ pub const LBFV_PK_GENERATION_LIMB_INPUTS: &[OutputField] = &[
     f("party_id"),
     f("row_index"),
     f("limb_index"),
+    f("expected_sk_commitment"),
+    f("expected_eek_commitment"),
 ];
 
 /// Public domain, accepted party-set hash, and row for public-key aggregation.
