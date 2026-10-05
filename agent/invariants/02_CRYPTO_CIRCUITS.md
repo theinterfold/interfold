@@ -486,11 +486,6 @@ every section.
   `CRISPProgram` does not limit the slots of a round. When `t` or more ballots in one round set the
   same bit, `decodeTally` reads the residue and the count is wrong with every proof valid. That
   takes 100 ballots at insecure-512 and a million at secure-8192. — `flow-trace/04`
-- **The relay caps of the shared relay key are enforced on chain.** `publishInput` counts the inputs
-  that `inputAvailabilitySigner` sends, per slot and per round, and reverts with `RelayLimitReached`
-  past the caps set at deployment (`setRelayLimits` adjusts them) before the proof check. Every
-  server instance signs with that one key, so no local ledger can bound the account. —
-  `flow-trace/08`
 - **CRISP constrains every coefficient of the ballot plaintext, at the real BFV degree.** The
   witness generator reverses the message over the full degree, so the payload starts at
   `D - MAX_MSG_NON_ZERO_COEFFS + (MAX_MSG_NON_ZERO_COEFFS mod num_options)` with the options back to

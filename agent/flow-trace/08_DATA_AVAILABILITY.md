@@ -385,28 +385,29 @@ are durable (`reserve_relay`), and the worker prunes the records of a round afte
 cutoff.
 
 These limits belong to one server instance. Every instance must sign with the same key, because that
-key is also `inputAvailabilitySigner`, so a local ledger cannot bound the account as a whole.
-`CRISPProgram` does: `publishInput` counts the inputs that `inputAvailabilitySigner` sends, per slot
-and per round, and reverts with `RelayLimitReached` past the caps set at deployment (`RelayLimits`,
-from the same two variables in `deploy/crisp.ts`; mainnet requires the round cap) and adjusted with
-`setRelayLimits`. The check runs before the proof check, so a relay past its cap pays for a cheap
-revert only. A relay dry run that reverts with `RelayLimitReached`
-(`SimulateError::RelayLimitReached`) moves the job to the wallet path at once, with no grace period,
-and a relayed transaction that reverted takes the same path at its next attempt.
+key is also `inputAvailabilitySigner`, and each instance counts only the relays in its own ledger.
+Several relaying instances can therefore each send up to the limits for the same slot and round, and
+only the balance floor bounds the key as a whole. `CRISPProgram` does not count relays. An operator
+that needs one limit for the key lets one instance relay, sets the limits to zero on the others, and
+moves the relay to another instance only when no round is open. Each ledger records its start at the
+first start of its instance, also with the relay off, so an instance that starts to relay mid-round
+holds none of that round's earlier relays. A ballot that a non-relaying instance receives takes the
+wallet path, and only the instance that staged a ballot holds its job, so all client requests go to
+the relaying instance (the client uses one base URL, `VITE_INTERFOLD_API`).
 
 The local ledger records its start (`RELAY_LEDGER_EPOCH_KEY`) the first time it opens, and keeps
 that marker across restarts and pruning. A round whose input window opened before that start can
-hold relays that the ledger never recorded: from a server version without the ledger, a database
-that was lost, or another instance. `reserve_relay` sends such a round to the wallet path until it
-closes, and does the same when the round's window start is not indexed yet. The start is the
-`input_window[0]` value that the indexer stores for the E3.
+hold relays that the ledger never recorded, from a server version without the ledger or from a
+database that was lost. `reserve_relay` sends such a round to the wallet path until it closes, and
+does the same when the round's window start is not indexed yet. The start is the `input_window[0]`
+value that the indexer stores for the E3.
 
 Every relay send first checks `relay_may_send`. Turning the relay off (the flag, or a limit of zero)
 stops every send, including jobs chosen for the relay earlier and relayed transactions that a
 reorganization removed. So does a server key balance below `RELAY_MIN_BALANCE_ETH`, which keeps
 funds for `finalizeInput`, and so does a balance that cannot be read. Those jobs take the wallet
 path. A zero floor reads no balance, so it stops no send. A send that the relay key cannot pay for
-also moves its job to the wallet path, with the same signed payload (`relay_signed_commitment`,
+also moves its job to the wallet path, with the same signed payload (`relay_input_commitment`,
 `is_insufficient_funds`). A node also refuses a send when the worst-case costs of the pending
 transactions of the key exceed its balance, and that refusal clears when they are mined. So a
 refusal while other transactions of the key are pending keeps the relay for a grace period of five

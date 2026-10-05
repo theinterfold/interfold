@@ -258,10 +258,14 @@ environment (`server/src/config.rs`).
 | `ETHERSCAN_API_KEY`                                                                                                 | Empty                                                   | Token holder lookup on non-local chains                                                                                                                                          |
 | `INDEX_START_BLOCK`, `INDEX_CHUNK_SIZE`, `INDEX_CONTRACTS`, `INDEX_LOG_CONTRACTS`                                   | Not set                                                 | Indexer backfill and the contracts that the read-only `/chain/*` routes serve. An empty `INDEX_CONTRACTS` denies all `/chain/*` reads.                                           |
 
-The relay limits in the table apply to one server instance, and they are a first filter.
-`CRISPProgram` also enforces relay limits for the server key, and those limits apply to all server
-instances that use the key. The deployment sets the contract limits, and the contract owner can
-change them. When a server limit or a contract limit is reached, the voter's wallet sends the input.
+The relay limits in the table apply to one server instance. All server instances use the same server
+key, but each instance counts only its own relays. Thus, when more than one instance relays, a slot
+or a round can receive the limit from each instance. To keep one limit for the server key, let one
+instance relay and set `RELAY_MAX_INPUTS_PER_SLOT` to `0` on all other instances. Move the relay to
+another instance only when no round is open. A ballot that a non-relaying instance receives uses the
+voter's wallet. Also, only the instance that receives a ballot holds its job. Thus, send all client
+requests to the relaying instance, for example with `VITE_INTERFOLD_API`. When a limit is reached,
+the voter's wallet sends the input.
 
 The server records its relays in `database/server` in its working directory, and its limits count
 only these records. The server also records the time when this relay record starts. It writes that

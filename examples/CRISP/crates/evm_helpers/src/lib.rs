@@ -33,10 +33,6 @@ sol! {
     #[derive(Debug)]
     #[sol(rpc)]
     contract CRISPProgram {
-        /// The relay key sent `publishInput` after the contract's relay limit for the slot or the
-        /// round was used up.
-        error RelayLimitReached(uint256 e3Id, address slot);
-
         function setMerkleRoot(uint256 e3_id, uint256 _root) external;
         function getSlotIndex(uint256 e3_id, address slot_address) external view returns (int256);
         function publishInput(uint256 e3_id, bytes data) external;
@@ -145,16 +141,12 @@ const CENSUS_MODE_ONCHAIN: u8 = 2;
 
 /// Why a `publishInput` dry run failed.
 ///
-/// The kinds blame different parties, and the relay maps them to different answers: a revert is
-/// the caller's input and final, a provider failure judged nothing and is retryable, and a relay
-/// limit refuses only the relay key, so the voter's wallet can still send the same input.
+/// The two kinds blame different parties, and the relay maps them to different HTTP answers: a
+/// revert is the caller's input and final, a provider failure judged nothing and is retryable.
 #[derive(Debug)]
 pub enum SimulateError {
     /// The node evaluated the call and the contract refused the input.
     Reverted(String),
-    /// The contract refused a `publishInput` from the relay key with `RelayLimitReached`: its
-    /// relay limit for the slot or the round is used up. The input itself can still be valid.
-    RelayLimitReached,
     /// The node could not evaluate the call — transport, timeout, or RPC failure. Says nothing
     /// about whether the input is valid.
     Provider(String),
@@ -164,41 +156,12 @@ impl std::fmt::Display for SimulateError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Reverted(message) => write!(f, "contract simulation reverted: {message}"),
-            Self::RelayLimitReached => {
-                write!(
-                    f,
-                    "the contract relay limit for this slot or round is used up"
-                )
-            }
             Self::Provider(message) => write!(f, "contract simulation unavailable: {message}"),
         }
     }
 }
 
 impl std::error::Error for SimulateError {}
-
-/// Classify the error of a dry-run call.
-///
-/// An error answer with `RelayLimitReached` revert data is that limit. Other revert data, or a
-/// revert-shaped message where a node strips the data, means the contract refused the input.
-/// Anything else (rate limits, method errors, transport failures) is the provider's problem.
-fn simulation_error(error: alloy::contract::Error) -> SimulateError {
-    let alloy::contract::Error::TransportError(RpcError::ErrorResp(payload)) = error else {
-        return SimulateError::Provider(error.to_string());
-    };
-    if payload
-        .as_decoded_error::<CRISPProgram::RelayLimitReached>()
-        .is_some()
-    {
-        return SimulateError::RelayLimitReached;
-    }
-    let message = payload.to_string();
-    if payload.as_revert_data().is_some() || message.to_lowercase().contains("revert") {
-        SimulateError::Reverted(message)
-    } else {
-        SimulateError::Provider(message)
-    }
-}
 
 /// Whether a failed send shows that the sender cannot pay for the transaction.
 ///
@@ -317,22 +280,31 @@ impl CRISPContract<CRISPWriteProvider> {
     ///
     /// The relay signs and pays for whatever it is handed, so an input that would revert — a bad
     /// proof, a stale parent, a closed window — must be refused before it costs a transaction.
-    /// The failure kinds are kept apart because they blame different parties: a revert is the
+    /// The two failure kinds are kept apart because they blame different parties: a revert is the
     /// caller's input, a provider failure is the relay's node, and a caller must not be told
-    /// their vote is invalid because an RPC timed out. `RelayLimitReached` is the contract's
-    /// account-wide relay limit, which refuses the relay key and not the input.
+    /// their vote is invalid because an RPC timed out.
     pub async fn simulate_publish_input(
         &self,
         e3_id: U256,
         data: Bytes,
     ) -> Result<(), SimulateError> {
         let contract = CRISPProgram::new(self.contract_address, self.provider.as_ref());
-        contract
-            .publishInput(e3_id, data)
-            .call()
-            .await
-            .map(|_| ())
-            .map_err(simulation_error)
+
+        match contract.publishInput(e3_id, data).call().await {
+            Ok(_) => Ok(()),
+            Err(alloy::contract::Error::TransportError(RpcError::ErrorResp(payload))) => {
+                // The node evaluated the call and answered with an error. Revert data — or a
+                // revert-shaped message where a node strips the data — means the contract refused
+                // the input. Anything else (rate limits, method errors) is the provider's problem.
+                let message = payload.to_string();
+                if payload.as_revert_data().is_some() || message.to_lowercase().contains("revert") {
+                    Err(SimulateError::Reverted(message))
+                } else {
+                    Err(SimulateError::Provider(message))
+                }
+            }
+            Err(e) => Err(SimulateError::Provider(e.to_string())),
+        }
     }
 
     /// Dry-run `finalizeInput` before the relay pays for the transaction.
@@ -346,7 +318,7 @@ impl CRISPContract<CRISPWriteProvider> {
         availability_proof: Bytes,
     ) -> Result<(), SimulateError> {
         let contract = CRISPProgram::new(self.contract_address, self.provider.as_ref());
-        contract
+        match contract
             .finalizeInput(
                 e3_id,
                 slot_address,
@@ -357,8 +329,18 @@ impl CRISPContract<CRISPWriteProvider> {
             )
             .call()
             .await
-            .map(|_| ())
-            .map_err(simulation_error)
+        {
+            Ok(_) => Ok(()),
+            Err(alloy::contract::Error::TransportError(RpcError::ErrorResp(payload))) => {
+                let message = payload.to_string();
+                if payload.as_revert_data().is_some() || message.to_lowercase().contains("revert") {
+                    Err(SimulateError::Reverted(message))
+                } else {
+                    Err(SimulateError::Provider(message))
+                }
+            }
+            Err(error) => Err(SimulateError::Provider(error.to_string())),
+        }
     }
 
     /// Check a ballot before its ciphertext is published to the DA layer.
@@ -372,7 +354,7 @@ impl CRISPContract<CRISPWriteProvider> {
         parent_index_plus_one: u64,
     ) -> Result<(), SimulateError> {
         let contract = CRISPProgram::new(self.contract_address, self.provider.as_ref());
-        contract
+        match contract
             .validateInputProof(
                 e3_id,
                 noir_proof,
@@ -383,8 +365,18 @@ impl CRISPContract<CRISPWriteProvider> {
             )
             .call()
             .await
-            .map(|_| ())
-            .map_err(simulation_error)
+        {
+            Ok(_) => Ok(()),
+            Err(alloy::contract::Error::TransportError(RpcError::ErrorResp(payload))) => {
+                let message = payload.to_string();
+                if payload.as_revert_data().is_some() || message.to_lowercase().contains("revert") {
+                    Err(SimulateError::Reverted(message))
+                } else {
+                    Err(SimulateError::Provider(message))
+                }
+            }
+            Err(error) => Err(SimulateError::Provider(error.to_string())),
+        }
     }
 
     /// Check whether an availability relay already submitted this exact input.

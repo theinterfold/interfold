@@ -74,17 +74,6 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     PUBLISHED
   }
 
-  /// @notice Account-wide caps on inputs that the relay key sends.
-  /// @dev Every CRISP server instance sends relayed commitments from `inputAvailabilitySigner`, so
-  /// a cap counted here holds across all of them. The ledger of one instance cannot see the sends
-  /// of another instance.
-  struct RelayLimits {
-    /// @notice Relayed inputs that one slot may receive in one round. Zero stops relaying.
-    uint32 maxInputsPerSlot;
-    /// @notice Relayed inputs that one round may receive across all slots. Zero stops relaying.
-    uint32 maxInputsPerRound;
-  }
-
   /// @notice Struct to store all data related to a voting round
   struct RoundData {
     uint256 merkleRoot;
@@ -139,10 +128,6 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     /// @notice Divides raw token voting power into the units the ballot is encoded in. Only used
     /// by `CensusMode.ONCHAIN`. Never zero for such a round.
     uint256 votingPowerDivisor;
-    /// @notice Inputs that the relay key committed in this round, across all slots.
-    uint32 relayedInputCount;
-    /// @notice Inputs that the relay key committed in this round, per slot.
-    mapping(address slot => uint32 count) relayedInputs;
   }
 
   // Constants
@@ -183,10 +168,6 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
   /// @dev The later VectorX receipt remains the authority for data availability. This signature
   /// only prevents a caller from committing a hash while withholding the bytes from the service.
   address public immutable inputAvailabilitySigner;
-  /// @notice Relayed inputs that one slot may receive in one round. Zero stops relaying.
-  uint32 public relayMaxInputsPerSlot;
-  /// @notice Relayed inputs that one round may receive across all slots. Zero stops relaying.
-  uint32 public relayMaxInputsPerRound;
 
   /// @notice Maximum lifetime of an input availability promise.
   /// @dev The service starts this period after it validates and stores the complete ciphertext.
@@ -274,15 +255,9 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
   error InvalidDataAvailabilityVerifier();
   error DataAvailabilityHashMismatch(bytes32 expected, bytes32 actual);
   error ZeroEncryptedVoteHash();
-  /// @notice The relay key used all of its inputs for this slot or this round.
-  /// @dev The wallet of the voter can still send the same input.
-  error RelayLimitReached(uint256 e3Id, address slot);
 
   // Events
   event InterfoldBound(address indexed interfold);
-
-  /// @notice The caps on inputs that the relay key sends changed.
-  event RelayLimitsSet(uint32 maxInputsPerSlot, uint32 maxInputsPerRound);
 
   /// @notice A valid ballot proof was accepted before its ciphertext DA receipt was ready.
   event InputCommitted(
@@ -315,7 +290,6 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
   /// @param _risc0Verifier The RISC Zero verifier address
   /// @param _honkVerifier The honk verifier address
   /// @param _imageId The image ID for the guest program
-  /// @param _relayLimits The caps on inputs that `_inputAvailabilitySigner` sends
   constructor(
     address _initialOwner,
     IRiscZeroVerifier _risc0Verifier,
@@ -324,8 +298,7 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     IDataAvailabilityVerifier _dataAvailabilityVerifier,
     uint256 _availabilityFinalizationWindow,
     address _inputAvailabilitySigner,
-    bytes32 _imageId,
-    RelayLimits memory _relayLimits
+    bytes32 _imageId
   ) Ownable(_initialOwner) EIP712("CRISP", "1") {
     if (address(_risc0Verifier) == address(0)) revert Risc0VerifierAddressZero();
     if (address(_honkVerifier) == address(0)) revert InvalidHonkVerifier();
@@ -340,7 +313,6 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     if (_inputAvailabilitySigner == address(0)) revert InputAvailabilitySignerAddressZero();
     inputAvailabilitySigner = _inputAvailabilitySigner;
     imageId = _imageId;
-    _setRelayLimits(_relayLimits.maxInputsPerSlot, _relayLimits.maxInputsPerRound);
   }
 
   /// @notice Bind this program to its permanent Interfold controller.
@@ -399,21 +371,6 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
   function setRisc0Verifier(IRiscZeroVerifier _risc0Verifier) external onlyOwner {
     if (address(_risc0Verifier) == address(0)) revert Risc0VerifierAddressZero();
     risc0Verifier = _risc0Verifier;
-  }
-
-  /// @notice Set the caps on inputs that the relay key sends.
-  /// @dev Applies to rounds in flight from the next input. Zero in either field stops relaying,
-  /// and the wallets of voters can still send their inputs.
-  /// @param maxInputsPerSlot Relayed inputs that one slot may receive in one round.
-  /// @param maxInputsPerRound Relayed inputs that one round may receive across all slots.
-  function setRelayLimits(uint32 maxInputsPerSlot, uint32 maxInputsPerRound) external onlyOwner {
-    _setRelayLimits(maxInputsPerSlot, maxInputsPerRound);
-  }
-
-  function _setRelayLimits(uint32 maxInputsPerSlot, uint32 maxInputsPerRound) internal {
-    relayMaxInputsPerSlot = maxInputsPerSlot;
-    relayMaxInputsPerRound = maxInputsPerRound;
-    emit RelayLimitsSet(maxInputsPerSlot, maxInputsPerRound);
   }
 
   /// @notice Get the params hash for an E3 program
@@ -487,21 +444,6 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
   /// @return The census mode recorded at validation.
   function censusModeOf(uint256 e3Id) external view returns (CensusMode) {
     return e3Data[e3Id].censusMode;
-  }
-
-  /// @notice The inputs that the relay key committed to one slot of a round.
-  /// @param e3Id The E3 to look up.
-  /// @param slot The slot address.
-  /// @return The number of relayed inputs for the slot.
-  function relayedInputsOf(uint256 e3Id, address slot) external view returns (uint256) {
-    return e3Data[e3Id].relayedInputs[slot];
-  }
-
-  /// @notice The inputs that the relay key committed in a round, across all slots.
-  /// @param e3Id The E3 to look up.
-  /// @return The number of relayed inputs for the round.
-  function relayedInputCountOf(uint256 e3Id) external view returns (uint256) {
-    return e3Data[e3Id].relayedInputCount;
   }
 
   /// @inheritdoc IE3Program
@@ -715,9 +657,6 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     if (block.timestamp >= availabilityAttestationExpiresAt) {
       revert InputAvailabilityAttestationExpired(availabilityAttestationExpiresAt);
     }
-    // Counted before the proof check, so a relay past its cap reverts before it pays for proof
-    // verification. A later revert in this call undoes the count.
-    if (msg.sender == inputAvailabilitySigner) _countRelayedInput(e3Id, slotAddress);
     _verifyInputProof(e3Id, e3, noirProof, slotAddress, encryptedVoteCommitment, encryptedVoteHash, parentIndexPlusOne);
 
     bytes32 id = inputId(e3Id, encryptedVoteHash, encryptedVoteCommitment, slotAddress, parentIndexPlusOne);
@@ -905,19 +844,6 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     if (commitment == bytes32(0)) revert UnknownParentInput(parentIndexPlusOne - 1);
 
     return commitment;
-  }
-
-  /// @notice Count one input that the relay key sends, within the relay caps.
-  /// @param e3Id The round.
-  /// @param slotAddress The slot the input is written to.
-  function _countRelayedInput(uint256 e3Id, address slotAddress) internal {
-    RoundData storage round = e3Data[e3Id];
-    uint32 slotCount = round.relayedInputs[slotAddress];
-    if (slotCount >= relayMaxInputsPerSlot || round.relayedInputCount >= relayMaxInputsPerRound) {
-      revert RelayLimitReached(e3Id, slotAddress);
-    }
-    round.relayedInputs[slotAddress] = slotCount + 1;
-    round.relayedInputCount++;
   }
 
   /// @notice Resolve the eligibility public input and the verifier for a round.

@@ -302,11 +302,11 @@ fn wall_clock_seconds() -> u64 {
 /// Return the time from which the relay ledger in `tree` holds every relay of this service, and
 /// record `now` as that time when the tree holds none.
 ///
-/// The ledger cannot hold the relays of a round whose input window opened before this time: an
-/// older server version, a lost database, or another instance can have sent them. So
-/// `reserve_relay` does not relay for such a round. Only the first start records the time, so a
-/// restart keeps it. An unreadable time stops the start, because a new one would admit the
-/// rounds that opened before it.
+/// The ledger cannot hold the relays of a round whose input window opened before this time, such
+/// as the relays of an older server version or the records of a lost database. So `reserve_relay`
+/// does not relay for such a round. Only the first start records the time, so a restart keeps it.
+/// An unreadable time stops the start, because a new one would admit the rounds that opened
+/// before it.
 fn open_relay_ledger(tree: &Tree, now: u64) -> anyhow::Result<u64> {
     if let Some(stored) = tree.get(RELAY_LEDGER_EPOCH_KEY)? {
         let epoch = <[u8; 8]>::try_from(stored.as_ref())
@@ -1782,8 +1782,8 @@ impl AvailabilityService {
                     JobKind::Input { .. } => {
                         // The voter asked to send from its own wallet, the relay is off, the
                         // relay key is below its balance floor or its balance cannot be read, a
-                        // local relay limit is reached, or the round opened before the relay
-                        // ledger started: the voter's wallet sends the commitment.
+                        // relay limit is reached, or the round opened before the relay ledger
+                        // started: the voter's wallet sends the commitment.
                         job.state = self.wallet_commitment(&job).await?;
                     }
                     JobKind::Output { .. } => {
@@ -2247,14 +2247,10 @@ impl AvailabilityService {
 
     /// Decide whether this service relays the commitment of an input job, and record a relay.
     ///
-    /// These limits are a first filter for this instance. The contract enforces the limits of the
-    /// relay key across all instances, and its refusal moves a job to the wallet path
-    /// (`relay_signed_commitment`).
-    ///
     /// While the relay may send, a relay decision holds for the life of the job: a failed send
     /// that the worker retries, and a relayed transaction that a reorganization removes, keep the
     /// place of the job. A send that the relay key cannot pay for is different. That job moves to
-    /// the wallet path (`relay_signed_commitment`), and its record stays and counts against the
+    /// the wallet path (`relay_input_commitment`), and its record stays and counts against the
     /// limits. `relays` honors the voter's request to send from its own wallet before it calls
     /// this function. Apart from that request, the decision reads only the round, the slot, and
     /// the earlier relays, so votes, updates, and masks with the same request get the same answer.
@@ -2388,53 +2384,23 @@ impl AvailabilityService {
     }
 
     /// Relay one input commitment and return the provisional state that records it.
-    async fn relay_input_commitment(
-        &self,
-        job: &AvailabilityJob,
-        now: u64,
-    ) -> anyhow::Result<JobState> {
-        let (ethereum_payload, attestation_expires_at) = self.commitment_payload(job).await?;
-        self.relay_signed_commitment(job, ethereum_payload, attestation_expires_at, now)
-            .await
-    }
-
-    /// Send a signed commitment payload through the relay, or give it to the voter's wallet when
-    /// the relay cannot send it. Return the provisional state that records the choice.
-    ///
-    /// If the contract refuses the relay key with `RelayLimitReached`, the job takes the wallet
-    /// path at once. The contract counts the relays of every instance that holds the key, and a
-    /// retry fails until the round closes. A relayed transaction that reverts gets the same
-    /// answer from the dry run of the next attempt.
     ///
     /// If the relay key cannot pay for the transaction, the job takes the wallet path with the same
     /// signed payload, and the voter's wallet sends the commitment before the cutoff. A retry with
     /// the same key would fail until the cutoff and lose the vote. A refusal while other
     /// transactions of the key are pending can clear when they are mined, so the job keeps the
     /// relay for a grace period first (`relay_funding_grace_ended`).
-    async fn relay_signed_commitment(
+    async fn relay_input_commitment(
         &self,
         job: &AvailabilityJob,
-        ethereum_payload: Vec<u8>,
-        attestation_expires_at: u64,
         now: u64,
     ) -> anyhow::Result<JobState> {
+        let (ethereum_payload, attestation_expires_at) = self.commitment_payload(job).await?;
         let relayed_transaction_hash = match self
             .submit_input_commitment_payload(job, ethereum_payload.clone())
             .await
         {
             Ok(receipt) => Some(receipt.transaction_hash.to_string()),
-            Err(error)
-                if matches!(
-                    error.downcast_ref::<SimulateError>(),
-                    Some(SimulateError::RelayLimitReached)
-                ) =>
-            {
-                warn!(
-                    job_id = job.id.as_str(),
-                    "The contract relay limit is used up; the voter's wallet sends the commitment"
-                );
-                None
-            }
             Err(error) => {
                 let Some(unfunded) = error.downcast_ref::<RelayUnfunded>() else {
                     return Err(error);
@@ -2490,10 +2456,9 @@ impl AvailabilityService {
         now.saturating_sub(started) >= RELAY_FUNDING_GRACE_SECONDS
     }
 
-    /// Send `publishInput` for a relayed input after a dry run. A dry run that the contract
-    /// refuses with `RelayLimitReached` comes back as `SimulateError::RelayLimitReached`. A
-    /// refusal for lack of funds comes back as `RelayUnfunded`, which records whether other
-    /// transactions of the relay key were pending.
+    /// Send `publishInput` for a relayed input after a dry run. A refusal for lack of funds comes
+    /// back as `RelayUnfunded`, which records whether other transactions of the relay key were
+    /// pending.
     async fn submit_input_commitment_payload(
         &self,
         job: &AvailabilityJob,
@@ -2514,7 +2479,7 @@ impl AvailabilityService {
         contract
             .simulate_publish_input(e3_id, payload.clone())
             .await
-            .map_err(anyhow::Error::new)?;
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         let error = match contract.publish_input(e3_id, payload).await {
             Ok(receipt) => return Ok(receipt),
             Err(error) => error,
@@ -3874,88 +3839,6 @@ mod tests {
                 Address::repeat_byte(0x88)
             ))
             .unwrap());
-    }
-
-    /// Runtime code that reverts every call with `data`.
-    fn reverting_code(data: &[u8]) -> Bytes {
-        let size = u8::try_from(data.len()).unwrap();
-        // CODECOPY(0, 12, size); REVERT(0, size). The data starts after these 12 bytes.
-        let mut code = vec![
-            0x60, size, 0x60, 12, 0x60, 0x00, 0x39, 0x60, size, 0x60, 0x00, 0xfd,
-        ];
-        code.extend_from_slice(data);
-        Bytes::from(code)
-    }
-
-    /// A service that uses the key of `anvil` and a CRISPProgram address whose code reverts
-    /// every call with `error`.
-    async fn service_against_reverting_program(
-        anvil: &alloy::node_bindings::AnvilInstance,
-        error: impl alloy::sol_types::SolError,
-    ) -> AvailabilityService {
-        use alloy::providers::ext::AnvilApi;
-
-        let program = Address::repeat_byte(0x42);
-        ProviderBuilder::new()
-            .connect(&anvil.endpoint())
-            .await
-            .unwrap()
-            .anvil_set_code(program, reverting_code(&error.abi_encode()))
-            .await
-            .unwrap();
-        let mut service = test_service(1024);
-        service.http_rpc_url = anvil.endpoint();
-        service.private_key = format!("0x{}", hex::encode(anvil.keys()[0].to_bytes()));
-        service.e3_program_address = program.to_string();
-        service
-    }
-
-    /// The contract refuses the relay key with `RelayLimitReached` when the limits of the key
-    /// are used up across all instances. The job then takes the wallet path at once, with the
-    /// signed payload, instead of retrying a relay that fails until the round closes. Any other
-    /// refusal of the dry run stays an error.
-    #[tokio::test]
-    async fn a_contract_relay_limit_moves_the_job_to_the_wallet_path() {
-        use evm_helpers::CRISPProgram;
-
-        let anvil = alloy::node_bindings::Anvil::new().try_spawn().unwrap();
-        let job = round_input_job("relay-limited", "7", Address::repeat_byte(0x77));
-
-        let service = service_against_reverting_program(
-            &anvil,
-            CRISPProgram::RelayLimitReached {
-                e3Id: U256::from(7),
-                slot: Address::repeat_byte(0x77),
-            },
-        )
-        .await;
-        let state = service
-            .relay_signed_commitment(&job, vec![0x33], 600, 100)
-            .await
-            .unwrap();
-        assert!(
-            matches!(
-                &state,
-                JobState::AwaitingCommitment {
-                    ethereum_payload,
-                    attestation_expires_at: 600,
-                    relayed_transaction_hash: None,
-                } if ethereum_payload == &[0x33]
-            ),
-            "expected the wallet path with the signed payload, got {state:?}"
-        );
-
-        let service = service_against_reverting_program(
-            &anvil,
-            alloy::sol_types::Revert {
-                reason: "the proof does not verify".to_owned(),
-            },
-        )
-        .await;
-        assert!(service
-            .relay_signed_commitment(&job, vec![0x33], 600, 100)
-            .await
-            .is_err());
     }
 
     /// A mask needs no signature from the slot owner, so an uncommitted job for a slot must not
