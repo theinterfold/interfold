@@ -20,6 +20,13 @@ impl Handler<InterfoldEvent> for ThresholdPlaintextAggregator {
                 ctx.notify(TypedEvent::new(data, ec))
             }
             InterfoldEventData::E3RequestComplete(_) => self.notify_sync(ctx, Die),
+            // The aggregation of an ended E3 does not resume, also when the context stays for
+            // accusation work.
+            InterfoldEventData::E3StageChanged(data)
+                if data.e3_id == self.e3_id && data.new_stage.is_terminal() =>
+            {
+                self.notify_sync(ctx, Die)
+            }
             InterfoldEventData::ComputeResponse(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }

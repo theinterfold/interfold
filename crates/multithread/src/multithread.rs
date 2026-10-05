@@ -318,6 +318,89 @@ mod task_group_tests {
         );
     }
 
+    /// Through the worker and a real task pool: a failure cancels the E3's protocol work, its
+    /// accusation work still runs, and the end of the request cancels that too. Without a prover,
+    /// a ZK request that runs ends with an error result at once; a cancelled one ends with none.
+    #[actix::test]
+    async fn a_failure_cancels_protocol_work_and_leaves_accusation_work_until_the_request_ends(
+    ) -> anyhow::Result<()> {
+        use e3_events::{
+            CorrelationId, E3Failed, E3RequestComplete, Event, EventConstructorWithTimestamp,
+            EventSource, FailureReason, GetEvents, Unsequenced,
+        };
+        use rand::SeedableRng;
+
+        let (bus, history) = crate::effect_gate::tests::test_bus();
+        let rng: SharedRng = Arc::new(Mutex::new(rand_chacha::ChaCha20Rng::seed_from_u64(7)));
+        let cipher = Arc::new(Cipher::from_password("test-password").await?);
+        let worker = Multithread::new(
+            bus,
+            rng,
+            cipher,
+            TaskPool::new(1, 8),
+            "node".to_string(),
+            None,
+        )
+        .start();
+        let e3_id = E3id::new("7", 1);
+        let proofs = VerifyShareProofsRequest {
+            party_proofs: vec![],
+            params_preset: e3_fhe_params::BfvPreset::default(),
+            committee_size: e3_zk_helpers::CiphernodesCommitteeSize::Micro,
+        };
+        let request = |kind| ComputeRequest::zk(kind, CorrelationId::new(), e3_id.clone());
+        let event = |data: InterfoldEventData, seq: u64| {
+            InterfoldEvent::<Unsequenced>::new_with_timestamp(
+                data,
+                None,
+                seq.into(),
+                None,
+                EventSource::Local,
+            )
+            .into_sequenced(seq)
+        };
+        let results = || async {
+            let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+            Ok::<_, anyhow::Error>(
+                events
+                    .iter()
+                    .filter_map(|event| match event.get_data() {
+                        InterfoldEventData::ComputeRequestError(error) => {
+                            Some(error.request().correlation_id)
+                        }
+                        InterfoldEventData::ComputeResponse(response) => {
+                            Some(response.correlation_id)
+                        }
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        };
+
+        let failed = E3Failed {
+            e3_id: e3_id.clone(),
+            failed_at_stage: E3Stage::CommitteeFinalized,
+            reason: FailureReason::DKGInvalidShares,
+        };
+        worker.send(event(failed.into(), 1)).await?;
+        let accusation = request(ZkRequest::ReverifyAccusedProof(proofs.clone()));
+        let protocol = request(ZkRequest::VerifyShareProofs(proofs.clone()));
+        worker.send(event(accusation.clone().into(), 2)).await?;
+        worker.send(event(protocol.into(), 3)).await?;
+        actix::clock::sleep(Duration::from_millis(200)).await;
+        assert_eq!(results().await?, vec![accusation.correlation_id]);
+
+        let complete = E3RequestComplete {
+            e3_id: e3_id.clone(),
+        };
+        worker.send(event(complete.into(), 4)).await?;
+        let late = request(ZkRequest::ReverifyAccusedProof(proofs));
+        worker.send(event(late.into(), 5)).await?;
+        actix::clock::sleep(Duration::from_millis(200)).await;
+        assert_eq!(results().await?, vec![accusation.correlation_id]);
+        Ok(())
+    }
+
     #[test]
     fn shared_pool_groups_are_isolated_by_node() {
         let e3_id = E3id::new("round", 1);

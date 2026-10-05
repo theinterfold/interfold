@@ -1243,7 +1243,9 @@ impl CiphernodeBuilder {
         Box::pin(
             zk_recovery.hydrate(
                 &repositories,
-                lifecycle_stages,
+                // A failed E3 kept for accusation work is Failed here, so its C0 inputs do not
+                // resume.
+                &effect_stages,
                 &event_system.eventstore_reader()?.seq(),
                 &event_system
                     .aggregate_config()

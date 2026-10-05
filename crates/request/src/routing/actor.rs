@@ -116,6 +116,8 @@ pub struct E3Router {
     /// At `EffectsEnabled` their restored contexts learn of the failure before effects resume, and
     /// their recovered selections start no protocol actor.
     fail_on_restart: HashMap<E3id, E3Stage>,
+    /// Kept failures whose contexts already learned of the failure.
+    failures_delivered: HashSet<E3id>,
 }
 
 pub struct E3RouterParams {
@@ -162,6 +164,7 @@ impl E3Router {
             teardown_grace: params.teardown_grace,
             complete_on_restart: params.complete_on_restart,
             fail_on_restart: params.fail_on_restart,
+            failures_delivered: HashSet::new(),
         }
     }
 }

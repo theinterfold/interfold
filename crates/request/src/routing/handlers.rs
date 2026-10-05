@@ -66,15 +66,20 @@ impl E3Router {
     }
 
     /// A restored context of an E3 that failed on chain with accusation or slashing work keeps that
-    /// work. Its protocol actors learn of the failure before `EffectsEnabled`, as from the chain, so
-    /// their DKG or decryption work does not resume. A recipient that the context creates later
-    /// gets the failure first. The event has the E3's aggregate and the router's cursor of it, like
-    /// a recovered selection, so the actors' cleanup writes are not older than their state.
-    fn end_protocol_work_of_failed_contexts(&mut self) -> Result<()> {
+    /// work. Its protocol actors learn of the failure, as from the chain, so their DKG or
+    /// decryption work does not resume: a context that the router restores learns of it when the
+    /// router is built, before replay, and a context that replay admits learns of it at
+    /// `EffectsEnabled`, before effects resume. A recipient that the context creates later gets the
+    /// failure first. The event has the E3's aggregate and the router's cursor of it, like a
+    /// recovered selection, so the actors' cleanup writes are not older than their state.
+    pub(crate) fn end_protocol_work_of_failed_contexts(&mut self) -> Result<()> {
         for (e3_id, previous_stage) in &self.fail_on_restart {
             let Some(context) = self.contexts.get(e3_id) else {
                 continue;
             };
+            if !self.failures_delivered.insert(e3_id.clone()) {
+                continue;
+            }
             info!(%e3_id, "Ending the protocol work of a restored context of a failed E3");
             let event = self.bus.event_from(
                 E3StageChanged {
@@ -175,11 +180,17 @@ impl Handler<InterfoldEvent> for E3Router {
                         })
                     });
 
-                    for extension in self.extensions.iter() {
-                        extension.on_event(context, &msg);
+                    // A selection of a failed E3 kept for accusation or slashing work starts no
+                    // protocol actor, also when replay or the chain delivers it.
+                    let kept_failure_selection =
+                        matches!(msg.get_data(), InterfoldEventData::CiphernodeSelected(_))
+                            && self.fail_on_restart.contains_key(&e3_id);
+                    if !kept_failure_selection {
+                        for extension in self.extensions.iter() {
+                            extension.on_event(context, &msg);
+                        }
+                        context.forward_message(&msg, &mut self.buffer);
                     }
-
-                    context.forward_message(&msg, &mut self.buffer);
                     if post_forward != PostForward::Teardown {
                         context
                             .repository

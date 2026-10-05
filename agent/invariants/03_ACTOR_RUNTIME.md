@@ -145,9 +145,11 @@ the code does not meet yet.
   restored key assembly and ciphertext retrieval of such an E3 before `EffectsEnabled`, and ignores
   later facts for it. Any other E3 that failed at the finalized block keeps its context for
   accusation or slashing work, but its other work ends: the router forwards a Failed
-  `E3StageChanged` to the context before `EffectsEnabled`, so its keyshare stops, and a recipient
-  that the context creates later gets it first; a recovered selection of the E3 starts no protocol
-  actor; the compute gate starts with the Failed stage for it, which still admits accusation
+  `E3StageChanged` to the context when the router is built, before replay, or at `EffectsEnabled`
+  for a context that replay admits, so its keyshare and its public-key and plaintext aggregators
+  stop, and a recipient that the context creates later gets it first; a selection of the E3,
+  recovered, replayed or live, starts no protocol actor; the compute gate and ZK recovery start with
+  the Failed stage for it, so its C0 inputs do not resume and the gate still admits accusation
   re-verification; and the data-availability coordinator drops its restored work. The Failed event
   has the E3's aggregate and the router's cursor of it, so the actors' cleanup writes are not stale.
   A disabled chain covers the contexts of its configured `chain_id`; a context of a chain that the

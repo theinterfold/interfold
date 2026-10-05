@@ -514,3 +514,43 @@ async fn mock_publication_carries_registry_roster() -> Result<()> {
 
 mod attestations;
 mod failures;
+
+/// A failed E3's aggregation does not resume after a restart: the stage change that ends it comes
+/// before `EffectsEnabled`, and the actor stops.
+#[actix::test]
+async fn a_failure_before_effects_resume_stops_public_key_aggregation() -> Result<()> {
+    let (aggregator, history, e3_id) =
+        build_public_key_aggregator(generating_c5_state(CorrelationId::new())).await?;
+    let aggregator = aggregator.start();
+    let event = |data: InterfoldEventData, seq: u64| {
+        InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            data,
+            None,
+            seq.into(),
+            None,
+            e3_events::EventSource::Local,
+        )
+        .into_sequenced(seq)
+    };
+    let failed = e3_events::E3StageChanged {
+        e3_id: e3_id.clone(),
+        previous_stage: E3Stage::CommitteeFinalized,
+        new_stage: E3Stage::Failed,
+    };
+    aggregator.send(event(failed.into(), 1)).await?;
+    let _ = aggregator
+        .send(event(EffectsEnabled::new().into(), 2))
+        .await;
+    actix::clock::sleep(std::time::Duration::from_millis(100)).await;
+
+    assert!(!aggregator.connected());
+    let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+    assert!(events.iter().all(|event| !matches!(
+        event.get_data(),
+        InterfoldEventData::AggregationInputsReady(_)
+            | InterfoldEventData::PkAggregationProofPending(_)
+            | InterfoldEventData::ComputeRequest(_)
+            | InterfoldEventData::PublicKeyAggregated(_)
+    )));
+    Ok(())
+}

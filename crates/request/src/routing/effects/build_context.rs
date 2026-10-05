@@ -109,10 +109,12 @@ impl E3RouterBuilder {
             fail_on_restart: self.fail_on_restart,
         };
 
-        let router = match snapshot {
+        let mut router = match snapshot {
             Some(snapshot) => E3Router::from_snapshot(params, snapshot).await?,
             None => E3Router::from_params(params),
         };
+        // Before replay can drive a restored context's protocol actors, as with a logged selection.
+        router.end_protocol_work_of_failed_contexts()?;
         for selection in &router.recovered_selections {
             ensure!(
                 router.completed.contains(&selection.e3_id)

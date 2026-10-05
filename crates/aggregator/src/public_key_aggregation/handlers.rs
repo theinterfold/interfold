@@ -58,6 +58,13 @@ impl Handler<InterfoldEvent> for PublicKeyAggregator {
             InterfoldEventData::CommitteePublished(data) if data.e3_id == self.e3_id => {
                 self.observe_stage(&E3Stage::KeyPublished);
             }
+            // The aggregation of an ended E3 does not resume, also when the context stays for
+            // accusation work.
+            InterfoldEventData::E3StageChanged(data)
+                if data.e3_id == self.e3_id && data.new_stage.is_terminal() =>
+            {
+                self.notify_sync(ctx, Die)
+            }
             InterfoldEventData::E3StageChanged(data) if data.e3_id == self.e3_id => {
                 self.observe_stage(&data.new_stage);
             }

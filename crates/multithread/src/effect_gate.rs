@@ -432,7 +432,7 @@ impl Handler<InterfoldEvent> for ComputeEffectGate {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use actix::{Addr, Message, ResponseFuture};
     use e3_events::{
@@ -497,7 +497,7 @@ mod tests {
         }
     }
 
-    fn test_bus() -> (BusHandle, Addr<HistoryCollector<InterfoldEvent>>) {
+    pub(crate) fn test_bus() -> (BusHandle, Addr<HistoryCollector<InterfoldEvent>>) {
         let event_bus =
             EventBus::<InterfoldEvent>::new(EventBusConfig { deduplicate: true }).start();
         let store = TestEventStore::default().start();

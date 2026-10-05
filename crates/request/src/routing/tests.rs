@@ -615,6 +615,95 @@ async fn a_failed_context_starts_no_protocol_actor_and_a_later_one_learns_of_the
     Ok(())
 }
 
+/// Restores a protocol actor from its snapshot, as a keyshare with saved state.
+struct RestoredActorExtension {
+    seen: Seen,
+}
+
+#[async_trait]
+impl E3Extension for RestoredActorExtension {
+    fn on_event(&self, _: &mut E3Context, _: &InterfoldEvent) {}
+
+    async fn hydrate(&self, ctx: &mut E3Context, snapshot: &E3ContextSnapshot) -> Result<()> {
+        start_probe(ctx, "restored_actor", &snapshot.e3_id, &self.seen);
+        Ok(())
+    }
+}
+
+#[actix::test]
+async fn a_restored_actor_of_a_failed_e3_learns_of_the_failure_before_replay() -> Result<()> {
+    let (active, failed) = (E3id::new("29", 31337), E3id::new("30", 31337));
+    let aggregate_id = AggregateId::from_chain_id(Some(31337));
+    let seen = Seen::default();
+    let store = DataStore::from_in_mem(&InMemStore::new(false).start());
+    let repositories = store.repositories();
+    for e3_id in [&active, &failed] {
+        repositories
+            .router()
+            .repositories()
+            .context(e3_id)
+            .write_sync(&E3ContextSnapshot {
+                e3_id: e3_id.clone(),
+                recipients: Vec::new(),
+                dependencies: Vec::new(),
+            })
+            .await?;
+    }
+    let recovery_store = repositories.request_router_checkpoint();
+    recovery_store
+        .write_sync(&RequestRouterCheckpoint {
+            contexts: vec![active.clone(), failed.clone()],
+            completed: HashSet::new(),
+            replay_cursors: HashMap::from([(aggregate_id, 12)]),
+        })
+        .await?;
+    let bus = test_bus();
+    let router = E3RouterBuilder {
+        bus: bus.clone(),
+        extensions: vec![Box::new(RestoredActorExtension { seen: seen.clone() })],
+        recovered_selections: Vec::new(),
+        recovery_store,
+        store: repositories.router(),
+        teardown_grace: Duration::ZERO,
+        complete_on_restart: HashSet::new(),
+        fail_on_restart: HashMap::from([(failed.clone(), E3Stage::CommitteeFinalized)]),
+    }
+    .build()
+    .await?;
+    // Replay delivers logged events, such as the selections, before effects resume.
+    let selection = |e3_id: &E3id| CiphernodeSelected {
+        e3_id: e3_id.clone(),
+        ..Default::default()
+    };
+    let committee = CommitteeFinalized {
+        e3_id: failed.clone(),
+        committee: vec![],
+        scores: vec![],
+        chain_id: 31337,
+    };
+    send_in_order(
+        &router,
+        vec![
+            (committee.into(), 13),
+            (selection(&failed).into(), 14),
+            (selection(&active).into(), 15),
+            (EffectsEnabled::new().into(), 16),
+        ],
+    )
+    .await?;
+    bus.flush_event_pipeline().await?;
+    actix::clock::sleep(Duration::from_millis(100)).await;
+
+    // The failed E3's actor learns of the failure before any replayed event, and never gets the
+    // selection.
+    assert_eq!(
+        seen_by(&seen, &failed),
+        vec!["failed", "committee", "effects"]
+    );
+    assert_eq!(seen_by(&seen, &active), vec!["selected", "effects"]);
+    Ok(())
+}
+
 #[actix::test]
 async fn request_time_attestation_contexts_survive_router_snapshots() -> Result<()> {
     let old_e3 = E3id::new("41", 1);
