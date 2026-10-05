@@ -165,22 +165,17 @@ impl<let N: u32, let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let BIT_CT: u32, 
 
     /// Flattens all witness data into a single array for Fiat-Shamir challenge generation.
     ///
-    /// This function serializes all polynomial coefficients (both public inputs and
-    /// secret witnesses) into a 1D array in a deterministic order. The flattened data
-    /// is used to generate the Fiat-Shamir challenge via the SAFE sponge API.
+    /// This function serializes all polynomial data (both public inputs and secret
+    /// witnesses) into a 1D array in a deterministic order. The flattened data is
+    /// used to generate the Fiat-Shamir challenge via the SAFE sponge API.
     ///
     /// The order of serialization is:
     /// 1. Commitment to aggregated secret shares `sk` (expected_sk_commitment)
     /// 2. Commitment to aggregated noise shares `e_sm` (expected_e_sm_commitment)
-    /// 3. Ciphertext components `c_0` for each CRT basis (serialized coefficients)
-    /// 4. Ciphertext components `c_1` for each CRT basis (serialized coefficients)
-    /// 5. Quotient polynomials `r_1` for each CRT basis (serialized coefficients)
-    /// 6. Quotient polynomials `r_2` for each CRT basis (serialized coefficients)
-    /// 7. Full decryption share polynomials `d` for each CRT basis (all N coefficients per limb)
-    ///
-    /// Note: Aggregated secret shares `sk` and noise shares `e_sm` are represented by their
-    /// commitments rather than serialized coefficients. This saves constraints while
-    /// still binding them to the transcript.
+    /// 3. Ciphertext commitment `ct_commitment` (bound in transcript shape; the ct limbs
+    ///    themselves are checked against it by verify_ct_commitment)
+    /// 4. Reduced quotient polynomials `r` for each CRT basis (plain packing)
+    /// 5. Full decryption share polynomials `d` for each CRT basis (checked packing)
     ///
     /// # Returns
     /// A vector containing commitments and polynomial coefficients in flattened form,
@@ -189,9 +184,12 @@ impl<let N: u32, let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let BIT_CT: u32, 
         // Use commitments instead of full polynomials (saves constraints)
         let mut inputs = [self.expected_sk_commitment, self.expected_e_sm_commitment].as_vector();
 
-        // Flatten ciphertext components (witness)
-        inputs = flatten::<_, _, BIT_CT>(inputs, self.ct0);
-        inputs = flatten::<_, _, BIT_CT>(inputs, self.ct1);
+        // The ciphertext enters through its commitment, as sk and e_sm do above.
+        // verify_ct_commitment opens ct_commitment to ct0/ct1 with checked packing, so it has
+        // one opening and fixes the ciphertext before gamma is drawn. Absorbing the limbs as
+        // well would bind them a second time at the cost of 2*N*L packed carriers. This must
+        // stay the struct's own ct_commitment, the value verify_ct_commitment checks.
+        inputs = inputs.push_back(self.ct_commitment);
 
         // Flatten the reduced quotient polynomials. The unreduced form absorbed `r1` at degree
         // 2N-1 and `r2` on top of it; the reduced one absorbs neither.
@@ -228,7 +226,8 @@ impl<let N: u32, let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let BIT_CT: u32, 
             self.d_native_trunc,
         );
 
-        // Step 5: Generate Fiat-Shamir challenge from the transcript
+        // Step 5: Generate Fiat-Shamir challenge from the transcript. The ciphertext is in it
+        // through ct_commitment, which step 3 has already opened to ct0/ct1.
         let gamma = self.generate_challenge();
 
         // Step 6: Verify the reduced decryption-share identity for each CRT basis.
@@ -272,7 +271,8 @@ impl<let N: u32, let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let BIT_CT: u32, 
     /// Generates Fiat-Shamir challenge value using the SAFE cryptographic sponge.
     ///
     /// This function implements the Fiat-Shamir transform for the decryption share circuit:
-    /// 1. Flattens all witness data (commitments for sk/e_sm, ciphertexts c_0/c_1, quotients r_1/r_2, full d) into a single array
+    /// 1. Flattens the public commitments to sk and e_sm, the ciphertext commitment ct_commitment,
+    ///    the reduced quotient r, and the full decryption share d into a single array
     /// 2. Absorbs the flattened data into the SAFE sponge
     /// 3. Squeezes a single challenge value
     ///
@@ -379,6 +379,111 @@ fn forged_d_with_same_transcript_is_rejected() {
     // Rejected here: the shifted coefficients no longer fit their digit slots.
     assert(c.generate_challenge() == gamma);
     let _ = c.execute();
+}
+
+/// The FS challenge changes when `ct_commitment` changes.
+///
+/// `payload` absorbs `self.ct_commitment` into the transcript before squeezing
+/// `gamma`. This test perturbs only that field and asserts `gamma` moves, so a
+/// future change that stops absorbing the commitment (or feeds it a value not
+/// bound to the witness via `verify_ct_commitment`) fails here at the next
+/// `nargo test` instead of silently changing the transcript shape.
+#[test]
+fn challenge_depends_on_the_ct_commitment() {
+    let z = Polynomial::new([0; 8]);
+    let anchor = compute_aggregated_shares_commitment_checked::<8, 1, 35>([z]);
+    let mut d = z;
+    d.coefficients[7] = 1;
+
+    let ct_commitment: Field = compute_ciphertext_commitment_checked::<8, 1, 35>([z], [z]);
+    let c: ShareDecryption<8, 1, 1, 35, 35, 35, 43, 35, 36> = ShareDecryption::new(
+        Configs::new([68719403009], [1]),
+        anchor,
+        anchor,
+        ct_commitment,
+        [z],
+        [z],
+        [z],
+        [z],
+        [z],
+        [d],
+        [Polynomial::new([1])],
+    );
+    let gamma = c.generate_challenge();
+
+    // Same witness, one different field: only ct_commitment changes (+1), so the
+    // payloads differ in exactly the absorbed field. If the sponge had not
+    // absorbed it, gamma would not have moved and this assert would fail.
+    let c_alt: ShareDecryption<8, 1, 1, 35, 35, 35, 43, 35, 36> = ShareDecryption::new(
+        Configs::new([68719403009], [1]),
+        anchor,
+        anchor,
+        ct_commitment + 1,
+        [z],
+        [z],
+        [z],
+        [z],
+        [z],
+        [d],
+        [Polynomial::new([1])],
+    );
+    assert(gamma != c_alt.generate_challenge());
+}
+
+/// With the ciphertext limbs out of the transcript, `ct_commitment` is the only thing fixing them
+/// before `gamma`, so its opening must be unique.
+///
+/// The all-zero witness is honest: `d = ct0 + ct1 * sk + e_sm = 0`. `carry_into_ct0` moves one unit
+/// from slot 0 into slot 1 of the first carrier, which leaves the plain packing, and so an unchecked
+/// commitment, unchanged. The first two tests pin both facts, so the third fails for the right
+/// reason: `verify_ct_commitment` opens with the checked packing, whose digit asserts reject it.
+fn zero_witness() -> ShareDecryption<8, 1, 1, 35, 35, 35, 43, 35, 36> {
+    let z = Polynomial::new([0; 8]);
+    let anchor = compute_aggregated_shares_commitment_checked::<8, 1, 35>([z]);
+    let ct = compute_ciphertext_commitment_checked::<8, 1, 35>([z], [z]);
+    ShareDecryption::new(
+        Configs::new([68719403009], [1]),
+        anchor,
+        anchor,
+        ct,
+        [z],
+        [z],
+        [z],
+        [z],
+        [z],
+        [z],
+        [Polynomial::new([0])],
+    )
+}
+
+fn carry_into_ct0(
+    mut c: ShareDecryption<8, 1, 1, 35, 35, 35, 43, 35, 36>,
+) -> ShareDecryption<8, 1, 1, 35, 35, 35, 43, 35, 36> {
+    let radix: Field = 1099511627776;
+    c.ct0[0].coefficients[0] += 1;
+    c.ct0[0].coefficients[1] -= radix;
+    c
+}
+
+#[test]
+fn zero_witness_is_accepted() {
+    let _ = zero_witness().execute();
+}
+
+#[test]
+fn carried_ciphertext_keeps_the_unchecked_commitment() {
+    let c = carry_into_ct0(zero_witness());
+    assert(
+        crate::math::commitments::compute_ciphertext_commitment::<8, 1, 35>(c.ct0, c.ct1)
+            == c.ct_commitment,
+    );
+}
+
+#[test(should_fail)]
+fn ciphertext_second_opening_is_rejected() {
+    // Only the opening: the carried limbs would also break the decryption identity, which must
+    // not be what rejects them here.
+    carry_into_ct0(zero_witness()).verify_ct_commitment();
 }
 
 /// The reduced identity accepts an honest witness.

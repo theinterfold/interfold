@@ -292,6 +292,12 @@ every section.
   calls for them (as `feat/secure-circuit-optimizations` does, because its base predates IF-011)
   would cost about 786k and make the reduction a net loss. Ask what already bounds a witness before
   bounding it again. — `flow-trace/04`
+- **A witness opened from a checked commitment enters the transcript through that commitment.** C6
+  absorbs `sk`, `e_sm` and the ciphertext as their commitments, not their coefficients: each is
+  opened with checked packing, so the commitment has one opening and fixes the witness before
+  `gamma`. Absorbing the coefficients as well pays twice for the same binding (415k gates for C6's
+  ciphertext). The condition is the checked opening, not the commitment: a commitment opened with
+  plain packing has second openings and does not bind. — `flow-trace/04`
 - **An optimisation branch that predates a fix will silently undo it; diff against the fix, not the
   optimisation.** `feat/secure-circuit-optimizations` forked before IF-005, so its C1 replaces
   `e_sm_lifted` / `e_sm_quotients` with a per-residue `centered()` check. Per-residue bounds do not

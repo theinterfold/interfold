@@ -238,7 +238,7 @@ reformulations rather than weakenings — the soundness arguments are in the com
 | C7      | 108,461   | 112,591   | **26,808**    | -75.3%  |
 | C4      | 1,746,030 | 1,954,926 | **1,098,865** | -37.1%  |
 | C1      | 2,223,114 | 2,287,310 | **1,634,682** | -26.5%  |
-| C6      | 2,977,228 | 3,499,468 | **2,601,164** | -12.6%  |
+| C6      | 2,977,228 | 3,499,468 | **2,186,053** | -26.6%  |
 | C5      | 754,560   | 1,172,357 | **1,123,205** | +48.9%  |
 
 **The shared mechanism.** `negacyclic_kernel(u, x)[j]` is `(X^(N-1-j) * u mod X^N + 1)(x)`, so
@@ -320,14 +320,23 @@ own either: it is determined by the identity, which is the Schwartz-Zippel case 
 already name it as. Its IF-013 digit asserts stay, because injectivity is still what keeps `gamma`
 independent of it.
 
+**C6's transcript takes the ciphertext through its commitment.** The challenge absorbed `ct0` and
+`ct1` as `2 * N * L` packed carriers although `verify_ct_commitment` already opens the public
+`ct_commitment` to them with checked packing. That opening is unique, so the commitment alone fixes
+the ciphertext before `gamma`, exactly as the `sk` and `e_sm` commitments already did. Absorbing
+`ct_commitment` instead measured 2,601,164 -> 2,186,053, **-415,111** (-16.0%), at every committee
+size. It is only sound while the ciphertext opening stays checked: with plain packing an inter-slot
+carry gives a second opening and the IF-013 attack returns through `ct0` instead of `d`.
+`ciphertext_second_opening_is_rejected` pins that. Proposed in #2144.
+
 **C3's message scaling, the largest win on the branch.** `k1` is the message scaled by
 `SCALE = Q mod t` and centred modulo `t`. Writing that reduction as a carry,
 `k1 = SCALE * m - t * z`, makes it affine, so with `k0 * t = BETA * q - 1` and
 `k0 * SCALE = ALPHA * q - SMALL_D` the whole `k0 * k1` term folds into the quotient:
 `ct0 = pk0 * u + e0 - SMALL_D * m + z + q * Q0` with `Q0 = r + ALPHA * m - BETA * z`. Measured
-2,744,690 -> 2,125,396, **-619,294**, and -38.8% against main. C3 runs about 1,512 times per DKG at
-`small` -- one proof per (recipient, modulus) per chain, both chains, every node -- so this is
-roughly -936M gates per DKG, far more than every other circuit on this branch combined.
+2,744,690 -> 2,125,396, **-619,294**, and -38.8% against main. C3 runs 2,052 times per DKG at
+`small` -- one proof per (recipient, modulus) per chain, both chains, every member -- so this is
+roughly -1.27B gates per DKG, far more than every other circuit on this branch combined.
 
 **Most of it is transcript, not arithmetic.** The direct path pushes all `N` coefficients of `k1`
 into the sponge _unpacked_, one absorption each; the scaled form never builds `k1`. `ct0_r` at 55
