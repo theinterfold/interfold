@@ -35,7 +35,8 @@ graph TD
 
 ## What it computes
 
-CRISP uses BFV fully homomorphic encryption to tally votes without revealing individual inputs:
+CRISP uses BFV fully homomorphic encryption to tally votes. The Secure Process adds ciphertexts and
+does not decrypt any input. A threshold committee decrypts only the combined result:
 
 1. The server collects BFV-encrypted vote ciphertexts from participants.
 2. The program homomorphically adds all ciphertexts together to produce an encrypted tally.

@@ -51,6 +51,9 @@ const AVAILABLE_INPUT_REFERENCE_SCHEMA_VERSION: u32 = 1;
 // How long a relay record outlives the commitment cutoff of its round. The margin covers a local
 // clock that runs ahead of the chain.
 const RELAY_RECORD_RETENTION_SECONDS: u64 = 3_600;
+/// The key of the relay ledger start time in the relayed-inputs tree. Every relay record key
+/// starts with a decimal E3 identifier, so no round or slot prefix matches this key.
+const RELAY_LEDGER_EPOCH_KEY: &[u8] = b"ledger-epoch";
 
 /// How long a relayed job keeps the relay after a node refuses its send for lack of funds while
 /// other transactions of the relay key are pending. Such a refusal normally clears within a few
@@ -287,6 +290,32 @@ fn holds_at_least(tree: &Tree, prefix: &str, limit: u32) -> sled::Result<bool> {
         .take(limit)
         .try_fold(0_usize, |held, key| key.map(|_| held + 1))?;
     Ok(held == limit)
+}
+
+/// The current wall-clock time in Unix seconds.
+fn wall_clock_seconds() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs())
+}
+
+/// Return the time from which the relay ledger in `tree` holds every relay of this service, and
+/// record `now` as that time when the tree holds none.
+///
+/// The ledger cannot hold the relays of a round whose input window opened before this time, such
+/// as the relays of an older server version or the records of a lost database. So `reserve_relay`
+/// does not relay for such a round. Only the first start records the time, so a restart keeps it.
+/// An unreadable time stops the start, because a new one would admit the rounds that opened
+/// before it.
+fn open_relay_ledger(tree: &Tree, now: u64) -> anyhow::Result<u64> {
+    if let Some(stored) = tree.get(RELAY_LEDGER_EPOCH_KEY)? {
+        let epoch = <[u8; 8]>::try_from(stored.as_ref())
+            .map_err(|_| anyhow::anyhow!("the relay ledger start time is unreadable"))?;
+        return Ok(u64::from_be_bytes(epoch));
+    }
+    tree.insert(RELAY_LEDGER_EPOCH_KEY, &now.to_be_bytes()[..])?;
+    tree.flush()?;
+    Ok(now)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -648,7 +677,14 @@ pub struct AvailabilityService {
     job_slots: Arc<Semaphore>,
     /// One record for each input whose commitment this service chose to relay, keyed by round,
     /// slot, and job. The relay limits count these records, so the limits hold across a restart.
+    /// The tree also holds the ledger start time, at `RELAY_LEDGER_EPOCH_KEY`.
     relayed_inputs: Tree,
+    /// The time from which `relayed_inputs` holds every relay of this service
+    /// (`open_relay_ledger`).
+    relay_ledger_epoch: u64,
+    /// The round records of the indexer (the default tree). `reserve_relay` reads the input
+    /// window of a round from them.
+    round_records: Tree,
     /// Serializes relay decisions, so concurrent job steps cannot pass one limit together.
     relay_decisions: Arc<StorageMutex<()>>,
     /// The chain time of the first funds refusal of each relayed job in its grace period
@@ -709,6 +745,7 @@ impl AvailabilityService {
             }
             other => anyhow::bail!("unsupported DATA_AVAILABILITY_MODE '{other}'"),
         };
+        let relayed_inputs = db.open_tree("data-availability-relayed-inputs")?;
         let service = Self {
             jobs: db.open_tree("data-availability-jobs")?,
             objects: db.open_tree("data-availability-objects")?,
@@ -717,7 +754,9 @@ impl AvailabilityService {
             in_progress: Arc::new(StorageMutex::new(HashSet::new())),
             storage: Arc::new(StorageMutex::new(())),
             job_slots: Arc::new(Semaphore::new(MAX_CONCURRENT_JOB_STEPS)),
-            relayed_inputs: db.open_tree("data-availability-relayed-inputs")?,
+            relay_ledger_epoch: open_relay_ledger(&relayed_inputs, wall_clock_seconds())?,
+            relayed_inputs,
+            round_records: (**db).clone(),
             relay_decisions: Arc::new(StorageMutex::new(())),
             relay_funding_refusals: Arc::new(StorageMutex::new(HashMap::new())),
             relay: RelayPolicy::new(
@@ -1522,10 +1561,7 @@ impl AvailabilityService {
 
     pub async fn run(self: Arc<Self>) -> anyhow::Result<()> {
         loop {
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |elapsed| elapsed.as_secs());
-            if let Err(error) = self.prune_relay_records(now) {
+            if let Err(error) = self.prune_relay_records(wall_clock_seconds()) {
                 warn!(%error, "Could not prune relay records; will retry");
             }
             let ids = self.pending_ids()?;
@@ -1745,8 +1781,9 @@ impl AvailabilityService {
                     }
                     JobKind::Input { .. } => {
                         // The voter asked to send from its own wallet, the relay is off, the
-                        // relay key is below its balance floor or its balance cannot be read, or
-                        // a relay limit is reached: the voter's wallet sends the commitment.
+                        // relay key is below its balance floor or its balance cannot be read, a
+                        // relay limit is reached, or the round opened before the relay ledger
+                        // started: the voter's wallet sends the commitment.
                         job.state = self.wallet_commitment(&job).await?;
                     }
                     JobKind::Output { .. } => {
@@ -2215,10 +2252,13 @@ impl AvailabilityService {
     /// place of the job. A send that the relay key cannot pay for is different. That job moves to
     /// the wallet path (`relay_input_commitment`), and its record stays and counts against the
     /// limits. `relays` honors the voter's request to send from its own wallet before it calls
-    /// this function. Apart from that request, the decision reads only the slot and the earlier
-    /// relays, so votes, updates, and masks with the same request get the same answer. The record
-    /// is durable before the relay transaction is sent, and it holds the commitment cutoff of the
-    /// round, after which `prune_relay_records` removes it.
+    /// this function. Apart from that request, the decision reads only the round, the slot, and
+    /// the earlier relays, so votes, updates, and masks with the same request get the same answer.
+    /// The record is durable before the relay transaction is sent, and it holds the commitment
+    /// cutoff of the round, after which `prune_relay_records` removes it.
+    ///
+    /// A round whose input window opened before the ledger started (`open_relay_ledger`) is not
+    /// relayed, because the limits cannot count the relays that the ledger does not hold.
     ///
     /// Turning the relay off (`MAINNET_RELAY=false` on mainnet, or a limit of zero), or a key below
     /// its balance floor, stops every relay send (`relay_may_send`). A job that has no relayed
@@ -2244,6 +2284,9 @@ impl AvailabilityService {
         let round = format!("{e3_id}/");
         let slot = format!("{round}{}/", hex::encode(envelope.slotAddress));
         let key = format!("{slot}{}", job.id);
+        // Read before the lock: the input window of a round never changes, and the read decodes
+        // the complete round record.
+        let ledger_holds_round = self.ledger_holds_round(e3_id);
 
         let _decisions = self
             .relay_decisions
@@ -2251,6 +2294,13 @@ impl AvailabilityService {
             .map_err(|_| anyhow::anyhow!("relay decision lock is poisoned"))?;
         if self.relayed_inputs.contains_key(&key)? {
             return Ok(true);
+        }
+        if !ledger_holds_round {
+            info!(
+                e3_id = e3_id.as_str(),
+                "The round opened before the relay ledger started; voters' wallets send its commitments"
+            );
+            return Ok(false);
         }
         if holds_at_least(&self.relayed_inputs, &slot, self.relay.max_per_slot)? {
             info!(
@@ -2275,10 +2325,39 @@ impl AvailabilityService {
         Ok(true)
     }
 
+    /// Whether the relay ledger holds every relay of a round: the input window of the round
+    /// opened after the ledger started. A round whose window start this service cannot read
+    /// counts as opened before.
+    fn ledger_holds_round(&self, e3_id: &str) -> bool {
+        match self.input_window_start(e3_id) {
+            Ok(Some(start)) => start > self.relay_ledger_epoch,
+            Ok(None) => false,
+            Err(error) => {
+                warn!(%error, e3_id, "Could not read the input window of a round");
+                false
+            }
+        }
+    }
+
+    /// The start of the input window of a round, from the round record that the indexer stores
+    /// when the committee key is published (`E3Repository`). `None` when there is no record yet.
+    fn input_window_start(&self, e3_id: &str) -> anyhow::Result<Option<u64>> {
+        /// The one field of the indexer's round record that this service reads.
+        #[derive(Deserialize)]
+        struct IndexedRound {
+            input_window: [u64; 2],
+        }
+        let Some(record) = self.round_records.get(format!("_e3:{e3_id}"))? else {
+            return Ok(None);
+        };
+        let round: IndexedRound = serde_json::from_slice(&record)?;
+        Ok(Some(round.input_window[0]))
+    }
+
     /// Remove the relay records of rounds whose commitment cutoff passed before `now`, with a
     /// margin, and return how many went. No relay decision can use them after the cutoff: intake
     /// refuses new proofs, and a `Created` job fails at the cutoff check before it reaches one.
-    /// A record without a readable cutoff stays.
+    /// A record without a readable cutoff stays, and so does the ledger start time.
     fn prune_relay_records(&self, now: u64) -> anyhow::Result<usize> {
         let _decisions = self
             .relay_decisions
@@ -2287,6 +2366,9 @@ impl AvailabilityService {
         let mut removed = 0;
         for entry in &self.relayed_inputs {
             let (key, value) = entry?;
+            if key.as_ref() == RELAY_LEDGER_EPOCH_KEY {
+                continue;
+            }
             let Ok(cutoff) = <[u8; 8]>::try_from(value.as_ref()) else {
                 continue;
             };
@@ -2904,6 +2986,17 @@ mod tests {
     /// A service over `db`. A second service over the same `db` shares only the durable state of
     /// the first, as after a restart.
     fn test_service_on(db: &Db, max_pending_bytes: u64, relay: RelayPolicy) -> AvailabilityService {
+        test_service_started_at(db, max_pending_bytes, relay, wall_clock_seconds())
+    }
+
+    /// A service over `db` that starts at the wall-clock time `now`.
+    fn test_service_started_at(
+        db: &Db,
+        max_pending_bytes: u64,
+        relay: RelayPolicy,
+        now: u64,
+    ) -> AvailabilityService {
+        let relayed_inputs = db.open_tree("relayed-inputs").unwrap();
         AvailabilityService {
             jobs: db.open_tree("jobs").unwrap(),
             objects: db.open_tree("objects").unwrap(),
@@ -2912,7 +3005,9 @@ mod tests {
             in_progress: Arc::new(StorageMutex::new(HashSet::new())),
             storage: Arc::new(StorageMutex::new(())),
             job_slots: Arc::new(Semaphore::new(1)),
-            relayed_inputs: db.open_tree("relayed-inputs").unwrap(),
+            relay_ledger_epoch: open_relay_ledger(&relayed_inputs, now).unwrap(),
+            relayed_inputs,
+            round_records: (**db).clone(),
             relay_decisions: Arc::new(StorageMutex::new(())),
             relay_funding_refusals: Arc::new(StorageMutex::new(HashMap::new())),
             relay,
@@ -2928,6 +3023,53 @@ mod tests {
 
     fn temporary_db() -> Db {
         sled::Config::new().temporary(true).open().unwrap()
+    }
+
+    /// Store the round record of `e3_id` the way the indexer does when the committee key is
+    /// published, with an input window that opens at `input_window_start`.
+    async fn index_round(db: &Db, e3_id: &str, input_window_start: u64) {
+        use crate::server::database::SledDB;
+        use e3_evm_helpers::contracts::CommitteeSize;
+        use e3_sdk::indexer::{models::E3, E3Repository, SharedStore};
+
+        let store = SharedStore::new(Arc::new(tokio::sync::RwLock::new(
+            SledDB::from_db(db.clone()).unwrap(),
+        )));
+        let round = E3 {
+            chain_id: 31_337,
+            ciphertext_inputs: Vec::new(),
+            ciphertext_output: Vec::new(),
+            ciphertext_output_reference: None,
+            ciphertext_commitment: Vec::new(),
+            committee_public_key: vec![0x01],
+            committee_public_key_hash: vec![0x02; 32],
+            e3_params: Vec::new(),
+            custom_params: Vec::new(),
+            interfold_address: Address::repeat_byte(0x01).to_string(),
+            encryption_scheme_id: vec![0x03; 32],
+            crypto_config_id: vec![0x04; 32],
+            id: e3_id.to_owned(),
+            plaintext_output: Vec::new(),
+            request_block: 0,
+            seed: [0x05; 32],
+            input_window: [input_window_start, input_window_start + 3_600],
+            committee_size: CommitteeSize::Minimum,
+            requester: Address::repeat_byte(0x02).to_string(),
+        };
+        assert!(E3Repository::new(store, e3_id)
+            .set_e3_if_absent(round)
+            .await
+            .unwrap());
+    }
+
+    /// How many relay records the ledger of `service` holds.
+    fn relay_record_count(service: &AvailabilityService) -> usize {
+        service
+            .relayed_inputs
+            .iter()
+            .keys()
+            .filter(|key| key.as_ref().unwrap().as_ref() != RELAY_LEDGER_EPOCH_KEY)
+            .count()
     }
 
     // ZEN2-24 follow-up, relay path. The relayed commitment is provisional: a receipt does not
@@ -3402,10 +3544,11 @@ mod tests {
     /// A slot gets a bounded number of relayed commitments in one round. Past the limit the
     /// voter's wallet sends the commitment, so masks from any account can use up the relay
     /// allowance of a slot but cannot stop its owner from voting.
-    #[test]
-    fn a_slot_is_relayed_up_to_its_limit_and_then_uses_the_wallet() {
+    #[tokio::test]
+    async fn a_slot_is_relayed_up_to_its_limit_and_then_uses_the_wallet() {
         let db = temporary_db();
         let service = test_service_on(&db, 1024, RelayPolicy::new(31_337, false, 3, None, None));
+        index_round(&db, "1", service.relay_ledger_epoch + 1).await;
         let slot = Address::repeat_byte(0x77);
         let jobs: Vec<_> = (0..4)
             .map(|n| round_input_job(&format!("slot-input-{n}"), "1", slot))
@@ -3433,13 +3576,12 @@ mod tests {
     }
 
     /// A round gets a bounded number of relayed commitments across all of its slots.
-    #[test]
-    fn a_round_is_relayed_up_to_its_limit_and_then_uses_the_wallet() {
-        let service = test_service_on(
-            &temporary_db(),
-            1024,
-            RelayPolicy::new(31_337, false, 3, Some(2), None),
-        );
+    #[tokio::test]
+    async fn a_round_is_relayed_up_to_its_limit_and_then_uses_the_wallet() {
+        let db = temporary_db();
+        let service = test_service_on(&db, 1024, RelayPolicy::new(31_337, false, 3, Some(2), None));
+        index_round(&db, "1", service.relay_ledger_epoch + 1).await;
+        index_round(&db, "12", service.relay_ledger_epoch + 1).await;
         let relays = |id: &str, e3_id: &str, slot: u8| {
             service
                 .reserve_relay(&round_input_job(id, e3_id, Address::repeat_byte(slot)))
@@ -3455,10 +3597,13 @@ mod tests {
     }
 
     /// A relay record goes once no relay decision can use it: after the commitment cutoff of its
-    /// round, plus the retention margin.
-    #[test]
-    fn relay_records_are_pruned_after_the_commitment_cutoff() {
-        let service = test_service(1024);
+    /// round, plus the retention margin. The ledger start time stays.
+    #[tokio::test]
+    async fn relay_records_are_pruned_after_the_commitment_cutoff() {
+        let db = temporary_db();
+        let service = test_service_on(&db, 1024, RelayPolicy::new(31_337, false, 3, None, None));
+        index_round(&db, "1", service.relay_ledger_epoch + 1).await;
+        index_round(&db, "2", service.relay_ledger_epoch + 1).await;
         // `input_job` sets a commitment cutoff of 900.
         let closed = round_input_job("closed-round-input", "1", Address::repeat_byte(0x77));
         let mut open = round_input_job("open-round-input", "2", Address::repeat_byte(0x77));
@@ -3478,21 +3623,36 @@ mod tests {
         assert_eq!(service.prune_relay_records(past_margin + 1).unwrap(), 1);
         assert!(service.relayed_inputs.scan_prefix("1/").next().is_none());
         assert!(service.relayed_inputs.scan_prefix("2/").next().is_some());
+
+        // Long after the ledger started, pruning removes every record and keeps the start time,
+        // so a restart does not move it.
+        let later = service.relay_ledger_epoch + RELAY_RECORD_RETENTION_SECONDS + 1;
+        assert_eq!(service.prune_relay_records(later).unwrap(), 1);
+        assert_eq!(
+            open_relay_ledger(&service.relayed_inputs, later).unwrap(),
+            service.relay_ledger_epoch
+        );
     }
 
     /// Mainnet relays only when the operator turns the relay on. Other chains relay without it.
-    #[test]
-    fn mainnet_relays_only_when_enabled() {
-        let job = round_input_job("mainnet-input", "1", Address::repeat_byte(0x77));
-        let relays = |policy: RelayPolicy| {
-            test_service_on(&temporary_db(), 1024, policy)
-                .reserve_relay(&job)
+    #[tokio::test]
+    async fn mainnet_relays_only_when_enabled() {
+        async fn relays(policy: RelayPolicy) -> bool {
+            let db = temporary_db();
+            let service = test_service_on(&db, 1024, policy);
+            index_round(&db, "1", service.relay_ledger_epoch + 1).await;
+            service
+                .reserve_relay(&round_input_job(
+                    "mainnet-input",
+                    "1",
+                    Address::repeat_byte(0x77),
+                ))
                 .unwrap()
-        };
+        }
 
-        assert!(!relays(RelayPolicy::new(1, false, 3, Some(100), None)));
-        assert!(relays(RelayPolicy::new(1, true, 3, Some(100), None)));
-        assert!(relays(RelayPolicy::new(11_155_111, false, 3, None, None)));
+        assert!(!relays(RelayPolicy::new(1, false, 3, Some(100), None)).await);
+        assert!(relays(RelayPolicy::new(1, true, 3, Some(100), None)).await);
+        assert!(relays(RelayPolicy::new(11_155_111, false, 3, None, None)).await);
     }
 
     /// A balance that cannot be read counts as too low. The job takes the wallet path instead of
@@ -3504,24 +3664,28 @@ mod tests {
         let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let rpc = format!("http://{}", closed.local_addr().unwrap());
         drop(closed);
-        let service = |floor: u64| {
+        /// A service with the balance floor `floor`, for a round that opens after its relay ledger
+        /// started, so that only the balance decides.
+        async fn service(rpc: &str, floor: u64) -> AvailabilityService {
+            let db = temporary_db();
             let mut service = test_service_on(
-                &temporary_db(),
+                &db,
                 1024,
                 RelayPolicy::new(11_155_111, false, 3, None, Some(U256::from(floor))),
             );
-            service.http_rpc_url = rpc.clone();
+            index_round(&db, "1", service.relay_ledger_epoch + 1).await;
+            service.http_rpc_url = rpc.to_owned();
             service.private_key =
                 "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_owned();
             service
-        };
+        }
         let job = round_input_job("unreadable-balance", "1", Address::repeat_byte(0x77));
 
-        let floored = service(1);
+        let floored = service(&rpc, 1).await;
         assert!(!floored.relays(&job).await.unwrap());
-        assert!(floored.relayed_inputs.is_empty());
+        assert_eq!(relay_record_count(&floored), 0);
 
-        assert!(service(0).relays(&job).await.unwrap());
+        assert!(service(&rpc, 0).await.relays(&job).await.unwrap());
     }
 
     /// A node refuses a `publishInput` that the relay key cannot pay for. The refusal records
@@ -3606,11 +3770,9 @@ mod tests {
     /// on and no relay limit is reached. The job uses none of the relay allowance.
     #[tokio::test]
     async fn a_voter_that_asks_for_its_wallet_is_not_relayed() {
-        let service = test_service_on(
-            &temporary_db(),
-            1024,
-            RelayPolicy::new(31_337, false, 3, None, None),
-        );
+        let db = temporary_db();
+        let service = test_service_on(&db, 1024, RelayPolicy::new(31_337, false, 3, None, None));
+        index_round(&db, "1", service.relay_ledger_epoch + 1).await;
         let mut job = round_input_job("wallet-choice", "1", Address::repeat_byte(0x77));
         let set_choice = |job: &mut AvailabilityJob, choice: bool| {
             let JobKind::Input {
@@ -3624,12 +3786,59 @@ mod tests {
 
         set_choice(&mut job, true);
         assert!(!service.relays(&job).await.unwrap());
-        assert!(service.relayed_inputs.is_empty());
+        assert_eq!(relay_record_count(&service), 0);
 
         // The same job without the request is relayed, so the check above is the voter's choice.
         set_choice(&mut job, false);
         assert!(service.relays(&job).await.unwrap());
-        assert_eq!(service.relayed_inputs.len(), 1);
+        assert_eq!(relay_record_count(&service), 1);
+    }
+
+    /// A round whose input window opened before the relay ledger started can have relays that
+    /// the ledger does not hold, here one sent by a server version without the ledger. The
+    /// service does not relay for that round, also after a restart, so it cannot pass the limits
+    /// with relays it cannot count. A round that opens after the ledger started is relayed.
+    #[tokio::test]
+    async fn a_round_open_before_the_relay_ledger_started_is_not_relayed() {
+        let db = temporary_db();
+        let slot = Address::repeat_byte(0x77);
+        let policy = RelayPolicy::new(31_337, false, 1, None, None);
+        let started = wall_clock_seconds();
+        // The database of a server version without the ledger: round 1 is open, and it holds a
+        // relayed job of the slot, but no relay record and no ledger start time.
+        index_round(&db, "1", started - 600).await;
+        let mut legacy = round_input_job("legacy-relayed", "1", slot);
+        legacy.state = JobState::AwaitingCommitment {
+            ethereum_payload: vec![0x33],
+            attestation_expires_at: 600,
+            relayed_transaction_hash: Some("0xrelayed".to_owned()),
+        };
+        db.open_tree("jobs")
+            .unwrap()
+            .insert(legacy.id.as_bytes(), serde_json::to_vec(&legacy).unwrap())
+            .unwrap();
+
+        let service = test_service_started_at(&db, 1024, policy, started);
+        assert_eq!(service.relay_ledger_epoch, started);
+        index_round(&db, "2", started + 60).await;
+        let vote = round_input_job("vote", "1", slot);
+        assert!(!service.reserve_relay(&vote).unwrap());
+        assert!(service
+            .reserve_relay(&round_input_job("later-round-vote", "2", slot))
+            .unwrap());
+
+        // A restart after round 2 opened keeps the ledger start time, so round 2 stays relayed
+        // and round 1 stays on the wallet path.
+        let restarted = test_service_started_at(&db, 1024, policy, started + 3_600);
+        assert_eq!(restarted.relay_ledger_epoch, started);
+        assert!(!restarted.reserve_relay(&vote).unwrap());
+        assert!(restarted
+            .reserve_relay(&round_input_job(
+                "later-round-other-slot",
+                "2",
+                Address::repeat_byte(0x88)
+            ))
+            .unwrap());
     }
 
     /// A mask needs no signature from the slot owner, so an uncommitted job for a slot must not
@@ -4259,7 +4468,9 @@ mod tests {
     /// relayed input after that cutoff, as in an Avail round.
     #[tokio::test]
     async fn a_local_relay_record_is_pruned_after_the_commitment_cutoff() {
-        let (service, mock, _anvil) = chain_service(&temporary_db()).await;
+        let db = temporary_db();
+        let (service, mock, _anvil) = chain_service(&db).await;
+        index_round(&db, "1", service.relay_ledger_epoch + 1).await;
         let cutoff = service.chain_timestamp().await.unwrap() + 3_600;
         set_input(&mock, false, false, cutoff).await;
         let (object, commitment) = encrypted_ballot(&insecure_test_params(), &[1]);
@@ -4356,7 +4567,9 @@ mod tests {
             ("after the finalization", finalizing, true, true, 0),
         ];
         for (point, state, committed, published, owed) in cases {
-            let (service, mock, _anvil) = chain_service(&temporary_db()).await;
+            let db = temporary_db();
+            let (service, mock, _anvil) = chain_service(&db).await;
+            index_round(&db, "1", service.relay_ledger_epoch + 1).await;
             set_input(&mock, committed, published, u64::MAX).await;
             store_job_in_state(&service, &job, object, state);
             let restarted = AvailabilityService {

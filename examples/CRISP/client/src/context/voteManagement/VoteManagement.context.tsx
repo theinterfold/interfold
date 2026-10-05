@@ -8,7 +8,7 @@ import { createGenericContext } from '@/utils/create-generic-context'
 import { VoteManagementContextType, VoteManagementProviderProps } from '@/context/voteManagement'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAccount, useChainId } from 'wagmi'
-import { VoteStateLite, VotingRound } from '@/model/vote.model'
+import { SubmissionRoute, VoteStateLite, VotingRound } from '@/model/vote.model'
 import { useInterfoldServer } from '@/hooks/interfold/useInterfoldServer'
 import { convertPollData, convertTimestampToDate } from '@/utils/methods'
 import { Poll, PollResult } from '@/model/poll.model'
@@ -47,6 +47,7 @@ const VoteManagementProvider = ({ children }: VoteManagementProviderProps) => {
   const [pollOptions, setPollOptions] = useState<Poll[]>([])
   const [pastPolls, setPastPolls] = useState<PollResult[]>([])
   const [txUrl, setTxUrl] = useState<string | undefined>(undefined)
+  const [txRoute, setTxRoute] = useState<SubmissionRoute | undefined>(undefined)
   const [pollResult, setPollResult] = useState<PollResult | null>(null)
   const [currentRoundId, setCurrentRoundId] = useState<string | null>(null)
   const [pendingCurrentRoundId, setPendingCurrentRoundId] = useState<string | null>(null)
@@ -365,6 +366,7 @@ const VoteManagementProvider = ({ children }: VoteManagementProviderProps) => {
         roundState,
         pastPolls,
         txUrl,
+        txRoute,
         pollResult,
         currentRoundId,
         displayedRoundIsFallback,
@@ -372,6 +374,7 @@ const VoteManagementProvider = ({ children }: VoteManagementProviderProps) => {
         setPollResult,
         getWebResultByRound,
         setTxUrl,
+        setTxRoute,
         getWebResult,
         setPastPolls,
         getPastPolls,

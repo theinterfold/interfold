@@ -156,7 +156,6 @@ contract.
 | E3RefundManager              | `0x1940eF168f4E0B3dA24BEca539856684793B0F6e` | 25786384     |
 | InterfoldTicketToken (tFOLD) | `0xC0B5b49a3949eC4B520eF21BaCFE16e3695F3B5D` | 25786372     |
 | USDS (fee token)             | `0xdC035D45d973E3EC169d2276DDab16f1e407384F` | 20663730     |
-| MockE3Program                | `0x4976E5E47852eFCe6851d35B95A1A2E19456F3D7` | 25786371     |
 
 On mainnet, operators bond FOLD (`InterfoldToken`), and sUSDS shares back the tickets. The
 deployment manifest does not publish these two token addresses.
@@ -164,10 +163,9 @@ deployment manifest does not publish these two token addresses.
 `BondingRegistry`, as shown in
 [Registration & Bonding](/operate/registration#read-the-token-addresses).
 
-The first mainnet deployment registered `MockE3Program` and a mock ciphertext verifier. The contract
-owner later disabled `MockE3Program` and replaced the mock verifier with a RISC Zero verifier. The
-manifest still marks mainnet with `mocks: true`, so `interfold config check` prints a
-mock-deployment note for mainnet.
+The first mainnet deployment registered `MockE3Program` and set a mock ciphertext verifier. The
+contract owner later unregistered `MockE3Program` and replaced the mock verifier with a RISC Zero
+verifier. The manifest marks mainnet with `mocks: false`.
 [Contracts & Addresses](/reference/contracts#verifiers-in-use-on-mainnet) shows the verifiers in
 use.
 
@@ -218,8 +216,8 @@ The Sepolia deployment uses mock verifiers and a mock compute provider:
 
 `interfold config check` compares your configuration with the manifest of the latest release. For
 each network that the manifest marks with `mocks: true`, it prints a note that proofs are accepted
-without verification. The current manifest marks both networks. For mainnet, the note does not match
-the verifiers in use. See
+without verification. The manifest marks Sepolia. The manifest of release v0.18.0 also marks
+mainnet, although the mainnet verifiers are not mocks. See
 [Verifiers in use on mainnet](/reference/contracts#verifiers-in-use-on-mainnet).
 
 ## Set up a ciphernode

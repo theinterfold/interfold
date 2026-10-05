@@ -34,23 +34,39 @@ pub enum DatabaseError {
 /// Keys under this prefix hold ballot ciphertexts. A ciphertext is large and never changes.
 pub const CIPHERTEXT_KEY_PREFIX: &str = "_e3:crisp_ciphertext:";
 
+/// Keys under this prefix hold the input generation of a round, which changes with each indexed
+/// input. The prefix does not start with `CRISP_KEY_PREFIX`, so `round_ids` does not list it.
+pub const INPUT_GENERATION_KEY_PREFIX: &str = "_e3:crisp_inputs:";
+
 /// The server database.
 ///
 /// When one key of a sled page changes, sled writes the complete page again after ten changes. A
 /// large page goes to a file of its own, and sled keeps old copies until it cleans the log. The
-/// indexer cursor changes with each block and the ballot ciphertexts are large, so each has a tree
-/// of its own: a cursor update never writes a ballot again.
+/// indexer cursor changes with each block, the input generation of a round with each input, and
+/// the ballot ciphertexts are large, so each has a tree of its own: a cursor or generation update
+/// never writes a ballot or a round record again.
 #[derive(Clone)]
 pub struct SledDB {
     pub db: Db,
     ciphertexts: Tree,
     cursor: Tree,
+    input_generations: Tree,
     path: PathBuf,
 }
 
 impl SledDB {
     pub fn new(path: &str) -> Result<Self, DatabaseError> {
-        let db = sled::open(path)?;
+        Self::open(sled::open(path)?, PathBuf::from(path))
+    }
+
+    /// The database over a sled handle that the caller opened, such as a temporary one, with the
+    /// trees that `new` opens.
+    #[cfg(test)]
+    pub fn from_db(db: Db) -> Result<Self, DatabaseError> {
+        Self::open(db, PathBuf::new())
+    }
+
+    fn open(db: Db, path: PathBuf) -> Result<Self, DatabaseError> {
         let cursor = db.open_tree("indexer-cursor")?;
         // Copy a cursor from the default tree once. The old key stays: after a rollback, an older
         // release resumes from it instead of from the chain head, where it would skip events.
@@ -62,8 +78,9 @@ impl SledDB {
         Ok(Self {
             ciphertexts: db.open_tree("crisp-ciphertexts")?,
             cursor,
+            input_generations: db.open_tree("crisp-input-generations")?,
             db,
-            path: PathBuf::from(path),
+            path,
         })
     }
 
@@ -72,6 +89,8 @@ impl SledDB {
             &self.cursor
         } else if key.starts_with(CIPHERTEXT_KEY_PREFIX) {
             &self.ciphertexts
+        } else if key.starts_with(INPUT_GENERATION_KEY_PREFIX) {
+            &self.input_generations
         } else {
             &self.db
         }

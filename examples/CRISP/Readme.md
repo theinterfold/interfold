@@ -1,12 +1,17 @@
 # CRISP - Coercion-Resistant Impartial Selection Protocol
 
-CRISP (Coercion-Resistant Impartial Selection Protocol) is a secure protocol for digital
-decision-making, leveraging fully homomorphic encryption (FHE) and distributed threshold
-cryptography (DTC) to enable verifiable secret ballots. Built with Interfold, CRISP safeguards
-democratic systems and decision-making applications against coercion, manipulation, and other
-vulnerabilities. To learn more about CRISP, you can read our
-[blog post](https://blog.theinterfold.com/crisp-private-voting-secret-ballot-fhe-zkp-mpc/) or visit
-the [documentation](https://docs.theinterfold.com/CRISP/introduction).
+CRISP (Coercion-Resistant Impartial Selection Protocol) is a secret-ballot voting protocol built
+with the Interfold. It uses fully homomorphic encryption (FHE) and distributed threshold
+cryptography (DTC). Each voter encrypts a ballot in the browser. The Secure Process adds the
+encrypted ballots, and a threshold committee of ciphernodes decrypts only the combined result, which
+is public. On-chain contracts verify the proofs of the tally and of its decryption.
+
+Vote masking makes receipts weaker, which makes coercion and vote buying more difficult. These
+protections depend on the conditions in
+[Privacy limits](https://docs.theinterfold.com/CRISP/introduction#privacy-limits). To learn more
+about CRISP, read our
+[blog post](https://blog.theinterfold.com/crisp-private-voting-secret-ballot-fhe-zkp-mpc/) or the
+[documentation](https://docs.theinterfold.com/CRISP/introduction).
 
 ## Project Structure
 

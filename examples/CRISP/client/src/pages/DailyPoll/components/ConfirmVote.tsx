@@ -8,12 +8,13 @@ import React, { useEffect } from 'react'
 import CardContent from '@/components/Cards/CardContent'
 import { useVoteManagementContext } from '@/context/voteManagement'
 
-const ConfirmVote: React.FC<{ confirmationUrl: string }> = ({ confirmationUrl }) => {
-  const { setTxUrl } = useVoteManagementContext()
+const ConfirmVote: React.FC<{ confirmationUrl?: string }> = ({ confirmationUrl }) => {
+  const { setTxUrl, txRoute, setTxRoute } = useVoteManagementContext()
 
   useEffect(() => {
     return () => {
       setTxUrl(undefined)
+      setTxRoute(undefined)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -23,22 +24,28 @@ const ConfirmVote: React.FC<{ confirmationUrl: string }> = ({ confirmationUrl })
       <div className='col' style={{ gap: 10 }}>
         <p className='mono muted'>WHAT JUST HAPPENED?</p>
         <p className='lede' style={{ maxWidth: 'none' }}>
-          Your vote was encrypted and{' '}
-          <a href={confirmationUrl} target='_blank' rel='noreferrer' className='linkish'>
-            posted onchain
-          </a>{' '}
-          by a relayer. When the poll is over, the results will be tallied using Fully Homomorphic Encryption (FHE) and the results
-          decrypted using threshold cryptography, without revealing your identity or choice.
+          Your browser encrypted your ballot and sent it to the CRISP server, which sees the request.{' '}
+          {txRoute === 'wallet' && <>Your wallet sent the on-chain transaction, so the transaction also shows your address. </>}
+          {txRoute === 'relay' && <>The CRISP server sent the on-chain transaction. </>}
+          {txRoute === undefined && <>The ballot is on-chain. </>}
+          When the poll closes, the committee tallies the ballots with Fully Homomorphic Encryption (FHE). It uses threshold cryptography to
+          decrypt only the combined result.
         </p>
+        {confirmationUrl && (
+          <p>
+            <a href={confirmationUrl} target='_blank' rel='noreferrer' className='linkish'>
+              View the transaction
+            </a>
+          </p>
+        )}
       </div>
       <div className='col' style={{ gap: 10 }}>
         <p className='mono muted'>WHAT DOES THIS MEAN?</p>
         <p className='lede' style={{ maxWidth: 'none' }}>
-          Your participation has directly contributed to a transparent and fair decision-making process, showcasing the power of
-          privacy-preserving technology in governance and beyond. The use of CRISP in this vote represents a significant step towards
-          secure, anonymous, and tamper-proof digital elections and polls. This innovation ensures that every vote counts equally while
-          safeguarding against the risks of fraud and collusion, enhancing the reliability and trustworthiness of digital decision-making
-          platforms.
+          No single committee member can decrypt your ballot. The combined result is public, and in a small or one-sided poll it can show
+          how individual participants voted. Privacy also depends on the committee threshold: enough committee members who collude can
+          decrypt ballots. Masks make a vote, an update, and a mask look the same on-chain, which makes a receipt of your vote less reliable
+          when these conditions hold.
         </p>
       </div>
     </CardContent>

@@ -2443,6 +2443,7 @@ dependencies = [
  "e3-evm-helpers",
  "e3-fhe-params",
  "e3-sdk",
+ "e3-user-program",
  "env_logger",
  "evm-helpers",
  "eyre",

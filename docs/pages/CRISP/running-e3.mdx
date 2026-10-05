@@ -266,6 +266,13 @@ that hold a binary number, with the most significant coefficient first. Homomorp
 the coefficients of all ballots, so each segment decodes to the total for its option. With 2
 options, each option has 50 coefficients.
 
+The committee decrypts each coefficient modulo the plaintext modulus `t` of the parameter set: 100
+for `insecure-512` and 1,000,000 for `secure-8192`. Each ballot sets a coefficient to 0 or 1, so a
+coefficient counts the ballots that set that bit. The total is exact only while fewer than `t`
+ballots in the round set the same bit. `CRISPProgram` does not enforce this limit, and a round past
+it decodes a total that is too low, with every proof valid. Each eligible address has one slot, so
+use `insecure-512` only for rounds with fewer than 100 eligible addresses.
+
 Three decoders give the same result (`packages/crisp-contracts/tests/tally.decoding.test.ts`):
 
 | Where    | Function                                                                      | Returns                    |

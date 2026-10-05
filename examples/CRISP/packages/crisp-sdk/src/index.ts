@@ -30,10 +30,11 @@ export {
   verifyProof,
   generateBFVKeys,
   encryptVote,
-  encodeSolidityProof,
   validateVote,
   destroyBBApi,
 } from './vote'
+export { encodeSolidityProof, decodeInputIdentity } from './envelope'
+export { getSubmissionStage } from './submission'
 export { CrispSDK, SERVER_RPC } from './sdk'
 
 export type {
@@ -43,6 +44,13 @@ export type {
   IndexedLog,
   LogQuery,
   OnChainRoundData,
+  InputIdentity,
+  InputSelectionStatus,
+  InputExclusionReason,
+  InputSelectionResponse,
+  SubmissionStage,
+  SubmissionStageInputs,
+  SubmissionStatus,
   RoundDetails,
   TokenDetails,
   Vote,

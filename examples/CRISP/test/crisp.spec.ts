@@ -264,6 +264,8 @@ async function castVoteWithSignature(page: Page, metamask: MetaMask) {
       log(`clicking first vote card (attempt ${attempt})...`)
       await page.locator("[data-test-id='poll-button-0']").click()
 
+      // Every voter sees the privacy qualification before submitting a ballot.
+      await expect(page.locator("[data-test-id='privacy-notice']")).toBeVisible()
       const castBtn = page.locator('button:has-text("Cast")')
       await expect(castBtn).toBeEnabled({ timeout: 30_000 })
 

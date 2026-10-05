@@ -13,7 +13,7 @@ const Footer: React.FC = () => {
     <div className='crisp-editorial' data-palette='interfold' data-mode='light' data-density='comfortable'>
       <footer className='footer'>
         <span>© 2026 — Crisp Protocol</span>
-        <span className='muted'>Secret-ballot voting with FHE + threshold MPC</span>
+        <span className='muted'>Encrypted-ballot voting with FHE + threshold MPC</span>
         <div className='links' style={{ alignItems: 'center' }}>
           <a href='https://github.com/theinterfold/interfold' target='_blank' rel='noopener noreferrer' aria-label='GitHub'>
             <GithubLogo size={18} />

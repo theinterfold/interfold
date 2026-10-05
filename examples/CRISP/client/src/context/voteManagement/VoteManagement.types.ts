@@ -6,7 +6,7 @@
 
 import type React from 'react'
 import { ReactNode } from 'react'
-import { BroadcastVoteRequest, BroadcastVoteResponse, VotingRound, VoteStateLite } from '@/model/vote.model'
+import { BroadcastVoteRequest, BroadcastVoteResponse, SubmissionRoute, VotingRound, VoteStateLite } from '@/model/vote.model'
 import { Poll, PollRequestResult, PollResult } from '@/model/poll.model'
 
 export type VoteManagementContextType = {
@@ -18,6 +18,8 @@ export type VoteManagementContextType = {
   roundState: VoteStateLite | null
   pastPolls: PollResult[]
   txUrl: string | undefined
+  /// Who sent the commitment that `txUrl` shows, when this client knows it.
+  txRoute: SubmissionRoute | undefined
   pollResult: PollResult | null
   currentRoundId: string | null
   displayedRoundIsFallback: boolean
@@ -25,6 +27,7 @@ export type VoteManagementContextType = {
   setPollResult: React.Dispatch<React.SetStateAction<PollResult | null>>
   getWebResultByRound: (round_id: string) => Promise<PollRequestResult | undefined>
   setTxUrl: React.Dispatch<React.SetStateAction<string | undefined>>
+  setTxRoute: React.Dispatch<React.SetStateAction<SubmissionRoute | undefined>>
   setPollOptions: React.Dispatch<React.SetStateAction<Poll[]>>
   initialLoad: () => Promise<void>
   getPastPolls: () => Promise<void>
