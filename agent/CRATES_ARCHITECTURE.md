@@ -615,7 +615,11 @@ part of the range after a restart or a reset and still answer `Done`. Each peer 
 requested timestamp, every page of its history goes to that peer, and the node keeps the union, one
 copy per event ID, with the earliest timestamp. Each event's ID must be the hash of its payload, so
 a peer cannot hide another peer's copy of a different event under the same ID; the ID does not fix
-the whole payload, so two copies with one ID and different payloads fail the fetch. A failed peer is
+the whole payload, so two copies with one ID and different payloads fail the fetch. The event store
+holds one event at a timestamp and stops the node at a second one, so the node first reads the IDs
+of its own stored events after the cursor. It refuses a peer that serves an event from before the
+requested time, two events at one timestamp, or an event at the timestamp of a different stored
+event; two sources that put different events at one timestamp fail the fetch. A failed peer is
 replaced by another one. When the listed peers do not supply two sources, the aggregate's fetch
 fails and a recovery round asks again; one connected peer serves alone. A peer that a later peer can
 replace gets one attempt per page and the time left less 60 s for each source that the node would
@@ -635,13 +639,14 @@ value changes between pages, as after a reset. While no source's hint covers the
 node asks further peers, up to four in all, and then logs that the history may be incomplete. It
 asks them only after every aggregate has its sources, with what the fetch budget has left, so these
 optional reads cannot leave a required one without budget. Such a peer gets one attempt per page and
-at most 30 s and half the time left. When it fails, or serves a different payload under an event ID
-that the sources served, it adds nothing and the sources stand. The node publishes the history at
-its latest event time, so it refuses a peer's history with an event stamped beyond its clock-drift
-allowance; a history that it still cannot publish fails startup through the startup coordinator. The
-hint does not make a reply complete: gossip that the responder received but has not stored yet, in
-its translator or event pipeline, is missing from a read. So the node relies on the union of two
-sources, and a wrong hint only means that it asks no more peers than two.
+at most 30 s and half the time left. When it fails, serves a different payload under an event ID
+that the sources served, or puts a different event at the timestamp of a source's event, it adds
+nothing and the sources stand. The node publishes the history at its latest event time, so it
+refuses a peer's history with an event stamped beyond its clock-drift allowance; a history that it
+still cannot publish fails startup through the startup coordinator. The hint does not make a reply
+complete: gossip that the responder received but has not stored yet, in its translator or event
+pipeline, is missing from a read. So the node relies on the union of two sources, and a wrong hint
+only means that it asks no more peers than two.
 
 The document publisher fetches documents in spawned tasks, so a slow DHT read does not hold its
 ingress loop. At most 8 fetches run and 512 documents wait. Four concurrent N=19 E3s need
@@ -1210,9 +1215,11 @@ operation. A destructive reset removes the local event log—the node's source o
 reconstruct only observations still available from configured EVM ranges and peers. One historical
 network startup attempt, including all aggregates and retries, is capped at 512 pages, 50,000
 events, 128 MiB, and five minutes, with no operator override in the current implementation.
-Exceeding a budget or discovering unavailable history is therefore a startup blocker, not a signal
-to silently skip data. Unsupported schema state likewise requires a compatible binary, a verified
-backup, or an explicit reset; no automatic migration is implemented.
+Exceeding a budget while the node collects the required sources, or discovering unavailable history,
+is therefore a startup blocker, not a signal to silently skip data. Once every aggregate has its
+sources, the node asks further peers only for the live-history hint; when the budget runs out there,
+it stops asking and starts with the sources. Unsupported schema state likewise requires a compatible
+binary, a verified backup, or an explicit reset; no automatic migration is implemented.
 
 The multi-process SWARM supervisor has a separate child-process lifecycle:
 

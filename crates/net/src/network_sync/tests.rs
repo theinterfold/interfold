@@ -662,6 +662,55 @@ fn spawn_fake_history_network(
     requests
 }
 
+/// An event store that holds `0`, in timestamp order, and answers each timestamp-ordered read with
+/// its events at or after the read's time, up to the read's limit.
+struct StoredHistory(Vec<InterfoldEvent<Unsequenced>>);
+impl Actor for StoredHistory {
+    type Context = ActixContext<Self>;
+}
+impl Handler<EventStoreQueryBy<TsAgg>> for StoredHistory {
+    type Result = ();
+    fn handle(&mut self, msg: EventStoreQueryBy<TsAgg>, _: &mut Self::Context) {
+        let matching: Vec<InterfoldEvent> = self
+            .0
+            .iter()
+            .filter(|event| {
+                msg.query()
+                    .get(&event.aggregate_id())
+                    .is_some_and(|since| event.ts() >= *since)
+            })
+            .enumerate()
+            .map(|(seq, event)| event.clone().into_sequenced(seq as u64 + 1))
+            .collect();
+        let limit = msg.limit().map_or(usize::MAX, |limit| limit as usize);
+        let exhausted = matching.len() <= limit;
+        let events: Vec<InterfoldEvent> = matching.into_iter().take(limit).collect();
+        let last_scanned_ts = events.last().map(|event| event.ts());
+        let id = msg.id();
+        let _ = msg.sender().try_send(
+            EventStoreQueryResponse::from_result(id, Ok(events)).with_history(Some(
+                e3_events::HistoryProgress {
+                    last_scanned_ts,
+                    exhausted,
+                },
+            )),
+        );
+    }
+}
+
+/// The bounds of a node that stores `stored` and accepts any event time.
+fn stored_history(stored: Vec<InterfoldEvent<Unsequenced>>) -> HistoryBounds {
+    HistoryBounds {
+        latest_ts: u128::MAX,
+        eventstore: StoredHistory(stored).start().recipient(),
+    }
+}
+
+/// The bounds of a node that stores no history and accepts any event time.
+fn no_stored_history() -> HistoryBounds {
+    stored_history(Vec::new())
+}
+
 /// Fetch from a fake network. `order` asks the peers in that order; `None` lets the node list
 /// and shuffle them as in production.
 async fn fetch_from_fake_peers(
@@ -682,8 +731,7 @@ async fn fetch_from_fake_peers(
             &commands_tx,
             &subscriber,
             order,
-            AggregateId::new(1),
-            since,
+            AggregateHistory::new(AggregateId::new(1), since, HashMap::new()),
             &mut budget,
             &policy,
         )
@@ -692,8 +740,7 @@ async fn fetch_from_fake_peers(
         fetch_historical_events_for_aggregate(
             &commands_tx,
             &subscriber,
-            AggregateId::new(1),
-            since,
+            AggregateHistory::new(AggregateId::new(1), since, HashMap::new()),
             &mut budget,
             &policy,
         )
@@ -768,16 +815,17 @@ async fn history_from_two_peers_is_merged_and_each_peer_is_paged_alone() {
 
 #[actix::test]
 async fn startup_history_asks_two_admitted_peers() {
-    let peer = |e3: &'static str| FakeHistoryPeer {
+    let peer = |e3: &'static str, ts| FakeHistoryPeer {
         peer: PeerId::random(),
-        events: vec![received(e3, 10)],
+        events: vec![received(e3, ts)],
         observed_from: Some(0),
         fails: 0,
         silent: 0,
         slow: None,
     };
 
-    let (fetched, requests) = fetch_from_fake_peers(vec![peer("e1"), peer("e2")], 0, false).await;
+    let (fetched, requests) =
+        fetch_from_fake_peers(vec![peer("e1", 10), peer("e2", 11)], 0, false).await;
 
     assert_eq!(fetched.len(), 2);
     assert_eq!(requests.len(), 2);
@@ -836,9 +884,9 @@ async fn history_is_sought_from_a_peer_that_observed_the_range_live() {
 #[actix::test]
 async fn a_failing_history_peer_is_replaced() {
     let failing = PeerId::random();
-    let serving = |peer, e3: &'static str| FakeHistoryPeer {
+    let serving = |peer, e3: &'static str, ts| FakeHistoryPeer {
         peer,
-        events: vec![received(e3, 10)],
+        events: vec![received(e3, ts)],
         observed_from: Some(0),
         fails: 0,
         silent: 0,
@@ -853,8 +901,8 @@ async fn a_failing_history_peer_is_replaced() {
             silent: 0,
             slow: None,
         },
-        serving(PeerId::random(), "e1"),
-        serving(PeerId::random(), "e2"),
+        serving(PeerId::random(), "e1", 10),
+        serving(PeerId::random(), "e2", 11),
     ];
 
     let (fetched, _) = fetch_from_fake_peers(peers, 0, true).await;
@@ -969,9 +1017,9 @@ async fn a_silent_peer_gets_one_attempt_while_a_later_peer_can_supply_the_missin
         silent: usize::MAX,
         slow: None,
     };
-    let serving = |peer, e3: &'static str| FakeHistoryPeer {
+    let serving = |peer, e3: &'static str, ts| FakeHistoryPeer {
         peer,
-        events: vec![received(e3, 10)],
+        events: vec![received(e3, ts)],
         // It does not vouch for the range, so the node asks every peer.
         observed_from: None,
         fails: 0,
@@ -985,10 +1033,10 @@ async fn a_silent_peer_gets_one_attempt_while_a_later_peer_can_supply_the_missin
         PeerId::random(),
     );
     let peers = vec![
-        serving(first, "e1"),
+        serving(first, "e1", 10),
         silent(second),
         silent(third),
-        serving(fourth, "e2"),
+        serving(fourth, "e2", 11),
     ];
 
     let (fetched, requests) = fetch_from_fake_peers(peers, 0, true).await;
@@ -1012,9 +1060,9 @@ async fn a_slow_source_that_falls_silent_leaves_time_for_healthy_ones() {
         silent: 0,
         slow: Some((Duration::from_secs(29), 10)),
     };
-    let healthy = |e3: &'static str| FakeHistoryPeer {
+    let healthy = |e3: &'static str, ts| FakeHistoryPeer {
         peer: PeerId::random(),
-        events: vec![received(e3, 10)],
+        events: vec![received(e3, ts)],
         observed_from: Some(0),
         fails: 0,
         silent: 0,
@@ -1023,7 +1071,12 @@ async fn a_slow_source_that_falls_silent_leaves_time_for_healthy_ones() {
     let started = tokio::time::Instant::now();
 
     let (fetched, _) = fetch_from_fake_peers(
-        vec![slow, healthy("e1"), healthy("e2"), healthy("e3")],
+        vec![
+            slow,
+            healthy("e1", 10),
+            healthy("e2", 11),
+            healthy("e3", 12),
+        ],
         0,
         true,
     )
@@ -1043,9 +1096,9 @@ async fn a_slow_source_that_falls_silent_leaves_time_for_healthy_ones() {
 /// up the deadline nor costs the node its sources, and the next peer is still asked.
 #[tokio::test(start_paused = true)]
 async fn a_slow_further_peer_keeps_the_sources_and_leaves_time_for_the_next() {
-    let unvouched = |e3: &'static str| FakeHistoryPeer {
+    let unvouched = |e3: &'static str, ts| FakeHistoryPeer {
         peer: PeerId::random(),
-        events: vec![received(e3, 10)],
+        events: vec![received(e3, ts)],
         observed_from: None,
         fails: 0,
         silent: 0,
@@ -1067,7 +1120,7 @@ async fn a_slow_further_peer_keeps_the_sources_and_leaves_time_for_the_next() {
         silent: 0,
         slow: None,
     };
-    let peers = vec![unvouched("e1"), unvouched("e2"), slow, vouching];
+    let peers = vec![unvouched("e1", 10), unvouched("e2", 11), slow, vouching];
     let order: Vec<PeerId> = peers.iter().map(|peer| peer.peer).collect();
     let (commands_tx, commands_rx) = mpsc::channel::<NetCommand>(64);
     let events = NetEventChannel::new(64);
@@ -1082,8 +1135,7 @@ async fn a_slow_further_peer_keeps_the_sources_and_leaves_time_for_the_next() {
         &commands_tx,
         &subscriber,
         order,
-        AggregateId::new(1),
-        0,
+        AggregateHistory::new(AggregateId::new(1), 0, HashMap::new()),
         &mut budget,
         &policy,
     )
@@ -1147,7 +1199,7 @@ async fn a_second_source_that_fails_once_is_asked_again_in_recovery() {
         response_tx,
         false,
         NetworkPolicy::local_unrestricted(),
-        u128::MAX,
+        no_stored_history(),
     )
     .await
     .unwrap();
@@ -1173,7 +1225,11 @@ async fn hint_probes_cannot_take_the_budget_of_a_later_aggregate() {
             peer: PeerId::random(),
             events: (0..260)
                 .map(|ts| received(&format!("a{ts}"), 100 + ts))
-                .chain(std::iter::once(received_on(2, &format!("b{index}"), 5)))
+                .chain(std::iter::once(received_on(
+                    2,
+                    &format!("b{index}"),
+                    5 + index,
+                )))
                 .collect(),
             observed_from: None,
             fails: 0,
@@ -1202,7 +1258,7 @@ async fn hint_probes_cannot_take_the_budget_of_a_later_aggregate() {
         response_tx,
         false,
         NetworkPolicy::local_unrestricted(),
-        u128::MAX,
+        no_stored_history(),
     )
     .await
     .unwrap();
@@ -1246,7 +1302,7 @@ async fn unanswered_peer_lists_end_at_the_fetch_deadline() {
         response_tx,
         false,
         NetworkPolicy::local_unrestricted(),
-        u128::MAX,
+        no_stored_history(),
     )
     .await
     .unwrap_err();
@@ -1258,7 +1314,7 @@ async fn unanswered_peer_lists_end_at_the_fetch_deadline() {
 #[test]
 fn historical_sync_rejects_non_forwardable_remote_events() {
     let error = validate_historical_events(
-        AggregateId::new(0),
+        &AggregateHistory::new(AggregateId::new(0), 0, HashMap::new()),
         vec![remote_unsequenced(local_non_forwardable_event())],
         &NetworkPolicy::local_unrestricted(),
         u128::MAX,
@@ -1275,7 +1331,7 @@ fn historical_sync_rejects_events_from_another_aggregate() {
     let event = remote_unsequenced(local_forwardable_event("1234"));
 
     let error = validate_historical_events(
-        AggregateId::new(999),
+        &AggregateHistory::new(AggregateId::new(999), 0, HashMap::new()),
         vec![event],
         &NetworkPolicy::local_unrestricted(),
         u128::MAX,
@@ -1283,6 +1339,176 @@ fn historical_sync_rejects_events_from_another_aggregate() {
     .unwrap_err();
 
     assert!(error.to_string().contains("while fetching 999"));
+}
+
+/// A peer serves its history from the requested time, one event at each timestamp, and no event at
+/// the timestamp of another event that the node stores. Its own copy of a stored event, and
+/// several copies of one event, pass.
+#[test]
+fn a_peer_history_must_keep_to_the_range_and_to_free_timestamps() {
+    let stored = received("stored", 30);
+    let history = AggregateHistory::new(
+        AggregateId::new(1),
+        10,
+        HashMap::from([(stored.ts(), stored.id())]),
+    );
+    let policy = NetworkPolicy::local_unrestricted();
+    let check = |events| {
+        validate_historical_events(&history, events, &policy, u128::MAX)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    };
+
+    let early = check(vec![received("e1", 5)]).unwrap_err();
+    assert!(early.contains("before the requested range"), "{early}");
+    let shared = check(vec![received("e1", 40), received("e2", 40)]).unwrap_err();
+    assert!(shared.contains("at the same timestamp"), "{shared}");
+    let taken = check(vec![received("e1", 30)]).unwrap_err();
+    assert!(taken.contains("stored event"), "{taken}");
+    check(vec![stored.clone(), received("e1", 40), received("e1", 41)]).unwrap();
+}
+
+/// The node reads the IDs of its stored events in pages, up to the last one.
+#[actix::test]
+async fn the_node_reads_every_page_of_its_stored_history() {
+    let stored: Vec<_> = (0..2_500)
+        .map(|ts| received(&format!("s{ts}"), 100 + ts))
+        .collect();
+    let eventstore = StoredHistory(stored.clone()).start().recipient();
+
+    let ids = stored_event_ids(&eventstore, AggregateId::new(1), 1_000)
+        .await
+        .unwrap();
+
+    assert_eq!(ids.len(), 1_600);
+    assert_eq!(ids.get(&2_599), Some(&stored[2_499].id()));
+    assert!(!ids.contains_key(&999));
+}
+
+/// A source that puts another event at the timestamp of an event that the node stores is refused,
+/// and a later peer replaces it.
+#[actix::test]
+async fn a_source_that_takes_a_stored_timestamp_is_replaced() {
+    let stored = received("stored", 30);
+    let peer = |events| FakeHistoryPeer {
+        peer: PeerId::random(),
+        events,
+        observed_from: Some(0),
+        fails: 0,
+        silent: 0,
+        slow: None,
+    };
+    let peers = vec![
+        peer(vec![received("e9", 30)]),
+        peer(vec![received("e1", 40)]),
+        peer(vec![received("e1", 41), received("e2", 50)]),
+    ];
+    let order: Vec<PeerId> = peers.iter().map(|peer| peer.peer).collect();
+    let (commands_tx, commands_rx) = mpsc::channel::<NetCommand>(64);
+    let events = NetEventChannel::new(64);
+    let _keep_open = events.subscribe();
+    spawn_fake_history_network(peers, commands_rx, events.clone());
+    let mut budget = SyncFetchBudget::production();
+
+    let history = fetch_history_from_peers(
+        &commands_tx,
+        &NetEventSubscriber::from(&events),
+        order,
+        AggregateHistory::new(
+            AggregateId::new(1),
+            0,
+            HashMap::from([(stored.ts(), stored.id())]),
+        ),
+        &mut budget,
+        &NetworkPolicy::local_unrestricted(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        fetched_e3s(&history.into_events()),
+        vec![("e1".to_string(), 40), ("e2".to_string(), 50)]
+    );
+}
+
+/// The fetched history reaches the node's event store, which holds one event at a timestamp and
+/// stops the node at a second one. Further peers that put another event at the timestamp of a
+/// source's event or of a stored event add nothing, so the store takes the whole history.
+#[actix::test]
+async fn further_peers_cannot_make_the_stored_history_collide() {
+    let aggregate = AggregateId::new(1);
+    let system = EventSystem::new()
+        .with_fresh_bus()
+        .with_aggregate_config(AggregateConfig::new(HashMap::from([(
+            aggregate,
+            Duration::ZERO,
+        )])));
+    let bus = system.handle().unwrap().enable("test");
+    let failure = system.failure_receiver();
+    let stored = received("stored", 30);
+    bus.naked_dispatch_async(stored.clone()).await.unwrap();
+    bus.flush_event_pipeline().await.unwrap();
+    let eventstore = system.eventstore_reader().unwrap().ts();
+    let stored_ids = stored_event_ids(&eventstore, aggregate, 0).await.unwrap();
+    assert_eq!(stored_ids, HashMap::from([(stored.ts(), stored.id())]));
+
+    let peer = |events, observed_from| FakeHistoryPeer {
+        peer: PeerId::random(),
+        events,
+        observed_from,
+        fails: 0,
+        silent: 0,
+        slow: None,
+    };
+    let peers = vec![
+        peer(vec![received("e1", 40), received("e2", 50)], None),
+        peer(vec![received("e1", 41), received("e2", 51)], None),
+        // Another event at the source's timestamp of e2.
+        peer(vec![received("e3", 50)], Some(0)),
+        // Another event at the stored event's timestamp.
+        peer(vec![received("e4", 30)], Some(0)),
+    ];
+    let order: Vec<PeerId> = peers.iter().map(|peer| peer.peer).collect();
+    let (commands_tx, commands_rx) = mpsc::channel::<NetCommand>(64);
+    let events = NetEventChannel::new(64);
+    let _keep_open = events.subscribe();
+    let requests = spawn_fake_history_network(peers, commands_rx, events.clone());
+    let subscriber = NetEventSubscriber::from(&events);
+    let mut budget = SyncFetchBudget::production();
+    let policy = NetworkPolicy::local_unrestricted();
+    let mut history = fetch_history_from_peers(
+        &commands_tx,
+        &subscriber,
+        order.clone(),
+        AggregateHistory::new(aggregate, 0, stored_ids),
+        &mut budget,
+        &policy,
+    )
+    .await
+    .unwrap();
+    ask_further_peers(
+        &mut history,
+        &commands_tx,
+        &subscriber,
+        &mut budget,
+        &policy,
+    )
+    .await;
+    let fetched = history.into_events();
+    assert_eq!(
+        fetched_e3s(&fetched),
+        vec![("e1".to_string(), 40), ("e2".to_string(), 50)]
+    );
+    // Both further peers were asked.
+    assert!(requests.lock().unwrap().contains(&order[3]));
+
+    for event in fetched {
+        bus.naked_dispatch_async(event).await.unwrap();
+    }
+    bus.flush_event_pipeline().await.unwrap();
+    assert_eq!(*failure.borrow(), None);
+    let stored_after = stored_event_ids(&eventstore, aggregate, 0).await.unwrap();
+    assert_eq!(stored_after.len(), 3);
 }
 
 #[test]
@@ -1319,7 +1545,7 @@ async fn local_only_cursor_completes_without_a_peer_request() {
         response_tx,
         true,
         NetworkPolicy::local_unrestricted(),
-        u128::MAX,
+        no_stored_history(),
     )
     .await
     .unwrap();
@@ -2200,7 +2426,7 @@ async fn a_peer_event_beyond_the_clock_drift_allowance_does_not_cost_the_history
         &bus,
         &tx,
         &NetEventSubscriber::from(&evt_tx),
-        NoopEventStore.start().recipient(),
+        StoredHistory(Vec::new()).start().recipient(),
         "my-topic",
         NetworkPolicy::local_unrestricted(),
         false,

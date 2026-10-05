@@ -7,7 +7,7 @@ use crate::direct_requester::WithoutPeer;
 use crate::events::call_and_await_response;
 use crate::net_interface_handle::NetEventSubscriber;
 use anyhow::ensure;
-use e3_events::EventId;
+use e3_events::{EventId, HistoryProgress};
 use libp2p::PeerId;
 use rand::seq::SliceRandom;
 use std::time::Duration;
@@ -23,13 +23,30 @@ const MIN_SOURCE_TIME: Duration = Duration::from_secs(30);
 /// Most fetch time of a peer that the node asks, once it has its sources, only because none of
 /// them observed the range live. Such a peer also gets at most half of the time left.
 const PROBE_TIME: Duration = Duration::from_secs(30);
+/// Most events of one page of the node's own stored history that it reads for the timestamp check.
+const STORED_PAGE_EVENTS: u64 = 1_000;
+/// Most bytes of one such page.
+const STORED_PAGE_BYTES: u64 = 8 * 1024 * 1024;
+/// Deadline for the node's event store to answer one such page.
+const STORED_PAGE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// What a peer's history must fit at this node.
+pub(in crate::actors::net_sync_manager) struct HistoryBounds {
+    /// The latest event time that the node accepts: the time at which it publishes the history,
+    /// plus its clock-drift allowance.
+    pub(in crate::actors::net_sync_manager) latest_ts: u128,
+    /// The node's event store. A peer's event must not take the timestamp of a stored event.
+    pub(in crate::actors::net_sync_manager) eventstore: Recipient<EventStoreQueryBy<TsAgg>>,
+}
 
 /// One aggregate's history from its sources, and the admitted peers that the node can still ask
 /// for the live-history hint.
 pub(in crate::actors::net_sync_manager) struct AggregateHistory {
     aggregate_id: AggregateId,
     since: u128,
-    merged: HashMap<EventId, InterfoldEvent<Unsequenced>>,
+    /// The IDs of the node's own stored events at or after `since`, by timestamp.
+    stored: HashMap<u128, EventId>,
+    merged: MergedEvents,
     /// Whether a peer that served the history observed the whole range live: its `observed_from`
     /// is at or before `since`.
     vouched: bool,
@@ -38,6 +55,27 @@ pub(in crate::actors::net_sync_manager) struct AggregateHistory {
 }
 
 impl AggregateHistory {
+    /// An empty history of `aggregate_id` after `since`, at a node that stores `stored` there.
+    pub(in crate::actors::net_sync_manager) fn new(
+        aggregate_id: AggregateId,
+        since: u128,
+        stored: HashMap<u128, EventId>,
+    ) -> Self {
+        Self {
+            aggregate_id,
+            since,
+            stored,
+            merged: MergedEvents::default(),
+            vouched: false,
+            further: Vec::new(),
+        }
+    }
+
+    /// How many events the history holds.
+    pub(in crate::actors::net_sync_manager) fn len(&self) -> usize {
+        self.merged.by_id.len()
+    }
+
     /// The merged events in timestamp order. A history that no peer observed live may be
     /// incomplete, which is logged.
     pub(in crate::actors::net_sync_manager) fn into_events(
@@ -50,9 +88,49 @@ impl AggregateHistory {
                 "No peer observed the requested history range live; it may be incomplete"
             );
         }
-        let mut events: Vec<_> = self.merged.into_values().collect();
+        let mut events: Vec<_> = self.merged.by_id.into_values().collect();
         events.sort_by_key(|event| event.ts());
         events
+    }
+}
+
+/// Merged history events: one copy of each event ID, and at most one event at each timestamp.
+#[derive(Clone, Default)]
+struct MergedEvents {
+    by_id: HashMap<EventId, InterfoldEvent<Unsequenced>>,
+    by_ts: HashMap<u128, EventId>,
+}
+
+impl MergedEvents {
+    /// Keep one copy of each event. Peers stamp the same event with their own reception time, so
+    /// the earliest timestamp wins, which makes the choice independent of the order of the peers.
+    /// The event ID does not fix the whole payload, so two copies with one ID must carry one
+    /// payload. The event store holds one event at a timestamp and refuses a second one in a way
+    /// that stops the node, so two events must not share a timestamp either. Otherwise the merge
+    /// fails rather than drop one of them.
+    fn merge(&mut self, event: InterfoldEvent<Unsequenced>) -> Result<()> {
+        let id = event.id();
+        let ts = event.ts();
+        if let Some(kept) = self.by_id.get(&id) {
+            ensure!(
+                kept.get_data() == event.get_data(),
+                "history peers served different payloads under event ID {id}"
+            );
+            if ts >= kept.ts() {
+                return Ok(());
+            }
+        }
+        if let Some(other) = self.by_ts.get(&ts) {
+            ensure!(
+                *other == id,
+                "history peers served events {other} and {id} at the same timestamp"
+            );
+        }
+        if let Some(replaced) = self.by_id.insert(id, event) {
+            self.by_ts.remove(&replaced.ts());
+        }
+        self.by_ts.insert(ts, id);
+        Ok(())
     }
 }
 
@@ -69,44 +147,28 @@ impl AggregateHistory {
 pub(in crate::actors::net_sync_manager) async fn fetch_historical_events_for_aggregate(
     net_cmds: &mpsc::Sender<NetCommand>,
     net_events: &NetEventSubscriber,
-    aggregate_id: AggregateId,
-    since: u128,
+    history: AggregateHistory,
     budget: &mut SyncFetchBudget,
     network: &NetworkPolicy,
 ) -> Result<AggregateHistory> {
     let mut peers = budget.within(admitted_peers(net_cmds, net_events)).await?;
     ensure!(!peers.is_empty(), "No connected peers available");
     peers.shuffle(&mut rand::rng());
-    fetch_history_from_peers(
-        net_cmds,
-        net_events,
-        peers,
-        aggregate_id,
-        since,
-        budget,
-        network,
-    )
-    .await
+    fetch_history_from_peers(net_cmds, net_events, peers, history, budget, network).await
 }
 
-/// Fetch one aggregate's history from its sources among `peers`, in their order, as
-/// [`fetch_historical_events_for_aggregate`] describes.
+/// Fetch one aggregate's history from its sources among `peers`, in their order, into the empty
+/// `history`, as [`fetch_historical_events_for_aggregate`] describes.
 pub(in crate::actors::net_sync_manager) async fn fetch_history_from_peers(
     net_cmds: &mpsc::Sender<NetCommand>,
     net_events: &NetEventSubscriber,
     peers: Vec<PeerId>,
-    aggregate_id: AggregateId,
-    since: u128,
+    mut history: AggregateHistory,
     budget: &mut SyncFetchBudget,
     network: &NetworkPolicy,
 ) -> Result<AggregateHistory> {
-    let mut history = AggregateHistory {
-        aggregate_id,
-        since,
-        merged: HashMap::new(),
-        vouched: false,
-        further: Vec::new(),
-    };
+    let aggregate_id = history.aggregate_id;
+    let since = history.since;
     let mut sources = 0usize;
     let mut last_error = None;
     let candidates = peers.len().min(MAX_HISTORY_PEERS);
@@ -128,7 +190,7 @@ pub(in crate::actors::net_sync_manager) async fn fetch_history_from_peers(
                 sources += 1;
                 history.vouched |= observed_from.is_some_and(|observed| observed <= since);
                 for event in events {
-                    merge_by_event_id(&mut history.merged, event)?;
+                    history.merged.merge(event)?;
                 }
                 if sources == required {
                     break;
@@ -157,9 +219,10 @@ pub(in crate::actors::net_sync_manager) async fn fetch_history_from_peers(
 /// Ask further peers for an aggregate whose sources did not observe its range live, until one
 /// did, as long as the budget lasts. The node does this only after every aggregate has its
 /// sources, so these optional reads cannot leave a required one without budget. Each peer gets
-/// one attempt per page and at most 30 s and half of the time left. A peer that fails, or that
-/// serves a different payload under an event ID that the sources served, adds nothing: the
-/// sources stand, and the history keeps its incompleteness warning.
+/// one attempt per page and at most 30 s and half of the time left. A peer that fails, that
+/// serves a different payload under an event ID that the sources served, or that puts another
+/// event at the timestamp of a source's event, adds nothing: the sources stand, and the history
+/// keeps its incompleteness warning.
 pub(in crate::actors::net_sync_manager) async fn ask_further_peers(
     history: &mut AggregateHistory,
     net_cmds: &mpsc::Sender<NetCommand>,
@@ -190,10 +253,7 @@ pub(in crate::actors::net_sync_manager) async fn ask_further_peers(
             }
         };
         let mut merged = history.merged.clone();
-        if let Err(error) = events
-            .into_iter()
-            .try_for_each(|event| merge_by_event_id(&mut merged, event))
-        {
+        if let Err(error) = events.into_iter().try_for_each(|event| merged.merge(event)) {
             warn!(%peer, %aggregate_id, "History from a further peer is not used: {error:#}");
             continue;
         }
@@ -222,12 +282,7 @@ async fn fetch_validated_history(
         source_time,
     )
     .await?;
-    let events = validate_historical_events(
-        history.aggregate_id,
-        fetched.events,
-        network,
-        budget.latest_ts(),
-    )?;
+    let events = validate_historical_events(history, fetched.events, network, budget.latest_ts())?;
     Ok((events, fetched.observed_from))
 }
 
@@ -258,32 +313,6 @@ fn source_time(later: usize, sources: usize, remaining: Duration) -> Option<Dura
     })
 }
 
-/// Keep one copy of each event. Peers stamp the same event with their own reception time, so the
-/// earliest timestamp wins, which makes the choice independent of the order of the peers. The event
-/// ID does not fix the whole payload, so two copies with one ID must carry one payload; otherwise
-/// the fetch fails rather than drop one of them.
-fn merge_by_event_id(
-    merged: &mut HashMap<EventId, InterfoldEvent<Unsequenced>>,
-    event: InterfoldEvent<Unsequenced>,
-) -> Result<()> {
-    match merged.entry(event.id()) {
-        std::collections::hash_map::Entry::Vacant(entry) => {
-            entry.insert(event);
-        }
-        std::collections::hash_map::Entry::Occupied(mut entry) => {
-            ensure!(
-                entry.get().get_data() == event.get_data(),
-                "history peers served different payloads under event ID {}",
-                event.id()
-            );
-            if event.ts() < entry.get().ts() {
-                entry.insert(event);
-            }
-        }
-    }
-    Ok(())
-}
-
 /// The connected peers that passed network admission.
 async fn admitted_peers(
     net_cmds: &mpsc::Sender<NetCommand>,
@@ -307,13 +336,43 @@ async fn admitted_peers(
 /// Deadline for the swarm to list its admitted peers.
 const ADMITTED_PEERS_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Check one peer's history of `history`'s aggregate. Besides each event's own checks, the peer
+/// must serve its events at or after the requested time, at most one event at each timestamp, and
+/// no event at the timestamp of another event that the node stores: the event store holds one
+/// event at a timestamp, and a second one would stop the node.
 pub(in crate::actors::net_sync_manager) fn validate_historical_events(
-    aggregate_id: AggregateId,
+    history: &AggregateHistory,
     events: Vec<InterfoldEvent<Unsequenced>>,
     network: &NetworkPolicy,
     latest_ts: u128,
 ) -> Result<Vec<InterfoldEvent<Unsequenced>>> {
+    let aggregate_id = history.aggregate_id;
+    let mut timestamps: HashMap<u128, EventId> = HashMap::new();
     for event in &events {
+        if event.ts() < history.since {
+            bail!(
+                "historical sync peer returned event {} from before the requested range",
+                event.id()
+            );
+        }
+        let other = timestamps.entry(event.ts()).or_insert_with(|| event.id());
+        if *other != event.id() {
+            bail!(
+                "historical sync peer returned events {} and {} at the same timestamp",
+                other,
+                event.id()
+            );
+        }
+        if let Some(stored) = history.stored.get(&event.ts()) {
+            if *stored != event.id() {
+                bail!(
+                    "historical sync peer returned event {} at the timestamp of this node's stored \
+                     event {}",
+                    event.id(),
+                    stored
+                );
+            }
+        }
         // The node publishes the history at its latest event time, and refuses a time beyond its
         // clock-drift allowance. One such event would cost the node the whole history.
         if event.ts() > latest_ts {
@@ -366,6 +425,53 @@ pub(in crate::actors::net_sync_manager) fn eligible_sync_cursor(
         .collect()
 }
 
+/// The IDs of the node's own stored events of `aggregate_id` at or after `since`, by timestamp, read
+/// in pages.
+pub(in crate::actors::net_sync_manager) async fn stored_event_ids(
+    eventstore: &Recipient<EventStoreQueryBy<TsAgg>>,
+    aggregate_id: AggregateId,
+    since: u128,
+) -> Result<HashMap<u128, EventId>> {
+    let mut stored = HashMap::new();
+    let mut from = since;
+    loop {
+        let (recipient, response) = e3_utils::actix::channel::oneshot::<EventStoreQueryResponse>();
+        eventstore
+            .try_send(
+                EventStoreQueryBy::<TsAgg>::new(
+                    CorrelationId::new(),
+                    HashMap::from([(aggregate_id, from)]),
+                    recipient,
+                )
+                .with_limit(STORED_PAGE_EVENTS)
+                .with_max_bytes(STORED_PAGE_BYTES)
+                .in_timestamp_order(),
+            )
+            .context("the event store did not take the read of this node's stored history")?;
+        let response = tokio::time::timeout(STORED_PAGE_TIMEOUT, response)
+            .await
+            .context("the event store did not answer the read of this node's stored history")?
+            .context("the event store dropped the read of this node's stored history")?;
+        let progress = response.history();
+        for event in response.into_events()? {
+            stored.insert(event.ts(), event.id());
+        }
+        match progress {
+            Some(HistoryProgress {
+                exhausted: true, ..
+            }) => return Ok(stored),
+            Some(HistoryProgress {
+                last_scanned_ts: Some(last),
+                ..
+            }) if last < u128::MAX => from = last + 1,
+            _ => bail!(
+                "the event store read this node's stored history of aggregate {aggregate_id} \
+                 without progress"
+            ),
+        }
+    }
+}
+
 pub(in crate::actors::net_sync_manager) async fn handle_sync_request_event(
     net_cmds: mpsc::Sender<NetCommand>,
     net_events: NetEventSubscriber,
@@ -373,7 +479,7 @@ pub(in crate::actors::net_sync_manager) async fn handle_sync_request_event(
     address: impl Into<Recipient<TypedEvent<SyncRequestSucceeded>>>,
     wait_for_event: bool,
     network: NetworkPolicy,
-    latest_ts: u128,
+    bounds: HistoryBounds,
 ) -> Result<()> {
     info!("Sync request event received");
     let (event, ctx) = event.into_components();
@@ -435,7 +541,22 @@ pub(in crate::actors::net_sync_manager) async fn handle_sync_request_event(
 
     let mut histories: Vec<AggregateHistory> = Vec::new();
     let mut failed_aggregates: Vec<AggregateId> = Vec::new();
-    let mut budget = SyncFetchBudget::production().with_latest_ts(latest_ts);
+    let mut budget = SyncFetchBudget::production().with_latest_ts(bounds.latest_ts);
+    // A peer's event must not take the timestamp of an event that the node stores after the cursor.
+    let mut stored = HashMap::new();
+    for (aggregate_id, since) in &sync_cursor {
+        stored.insert(
+            *aggregate_id,
+            stored_event_ids(&bounds.eventstore, *aggregate_id, *since).await?,
+        );
+    }
+    let empty_history = |aggregate_id: AggregateId, since: u128| {
+        AggregateHistory::new(
+            aggregate_id,
+            since,
+            stored.get(&aggregate_id).cloned().unwrap_or_default(),
+        )
+    };
 
     for (aggregate_id, since) in &sync_cursor {
         info!(
@@ -445,8 +566,7 @@ pub(in crate::actors::net_sync_manager) async fn handle_sync_request_event(
         match fetch_historical_events_for_aggregate(
             &net_cmds,
             &net_events,
-            *aggregate_id,
-            *since,
+            empty_history(*aggregate_id, *since),
             &mut budget,
             &network,
         )
@@ -455,7 +575,7 @@ pub(in crate::actors::net_sync_manager) async fn handle_sync_request_event(
             Ok(history) => {
                 info!(
                     "Received {} events for aggregate_id={}",
-                    history.merged.len(),
+                    history.len(),
                     aggregate_id
                 );
                 histories.push(history);
@@ -527,8 +647,7 @@ pub(in crate::actors::net_sync_manager) async fn handle_sync_request_event(
                 match fetch_historical_events_for_aggregate(
                     &net_cmds,
                     &net_events,
-                    aggregate_id,
-                    since,
+                    empty_history(aggregate_id, since),
                     &mut budget,
                     &network,
                 )
@@ -538,7 +657,7 @@ pub(in crate::actors::net_sync_manager) async fn handle_sync_request_event(
                         info!(
                             attempt = recovery_attempt,
                             "Retry succeeded: {} events for aggregate_id={}",
-                            history.merged.len(),
+                            history.len(),
                             aggregate_id
                         );
                         histories.push(history);
@@ -641,13 +760,32 @@ mod merge_tests {
 
     #[test]
     fn copies_of_one_event_merge_to_the_earliest_and_different_payloads_fail() {
-        let mut merged = HashMap::new();
-        merge_by_event_id(&mut merged, keyshare(&[1], 20)).unwrap();
-        merge_by_event_id(&mut merged, keyshare(&[1], 10)).unwrap();
-        assert_eq!(merged.len(), 1);
-        assert_eq!(merged.values().next().unwrap().ts(), 10);
+        let mut merged = MergedEvents::default();
+        merged.merge(keyshare(&[1], 20)).unwrap();
+        merged.merge(keyshare(&[1], 10)).unwrap();
+        assert_eq!(merged.by_id.len(), 1);
+        assert_eq!(merged.by_id.values().next().unwrap().ts(), 10);
+        assert_eq!(
+            merged.by_ts.len(),
+            1,
+            "the later copy's timestamp is free again"
+        );
 
         let conflicting = under_the_id_of(&[2], &keyshare(&[1], 30));
-        assert!(merge_by_event_id(&mut merged, conflicting).is_err());
+        assert!(merged.merge(conflicting).is_err());
+    }
+
+    /// The event store holds one event at a timestamp, so two events must not share one. The
+    /// timestamp of a copy that an earlier copy replaced is free again.
+    #[test]
+    fn different_events_at_one_timestamp_fail() {
+        let mut merged = MergedEvents::default();
+        merged.merge(keyshare(&[1], 10)).unwrap();
+        assert!(merged.merge(keyshare(&[2], 10)).is_err());
+
+        merged.merge(keyshare(&[3], 20)).unwrap();
+        merged.merge(keyshare(&[3], 15)).unwrap();
+        merged.merge(keyshare(&[4], 20)).unwrap();
+        assert_eq!(merged.by_id.len(), 3);
     }
 }

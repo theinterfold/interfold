@@ -100,7 +100,10 @@ impl Handler<TypedEvent<HistoricalNetSyncStart>> for NetSyncManager {
             address.clone(),
             !self.readiness_all_peers_dialed(),
             self.network.clone(),
-            latest_ts,
+            HistoryBounds {
+                latest_ts,
+                eventstore: self.eventstore.clone(),
+            },
         );
         if !self.peer_history_optional {
             return Box::pin(async move {
