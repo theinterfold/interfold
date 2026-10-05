@@ -4,6 +4,7 @@
 
 use super::*;
 
+mod admission;
 #[path = "incoming_accusations.rs"]
 mod incoming;
 #[path = "initiate_accusation.rs"]

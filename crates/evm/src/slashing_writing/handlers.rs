@@ -127,157 +127,81 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<SubmitSlashIntent>
             let my_addr = self.provider.provider().default_signer_address();
             let address = ctx.address();
             async move {
-                let SubmitSlashIntent { key, event: msg } = msg;
-                let retry_event = msg.clone();
-                let rank = submission_rank(msg.votes_for.iter().map(|v| v.voter), my_addr);
-
-                let policy =
-                    read_slash_policy(provider.clone(), contract_address, msg.proof_type).await;
-
-                match policy {
-                    Ok(policy)
-                        if classify_slash_policy(policy.enabled, policy.requiresProof)
-                            == SlashPolicyState::Disabled =>
-                    {
-                        info!(
-                            e3_id = %msg.e3_id,
-                            accused = %msg.accused,
-                            proof_type = %msg.proof_type,
-                            reason = %slash_reason(msg.proof_type),
-                            "Slash policy is disabled; excluding the faulted member from local E3 work"
-                        );
-                        if let Err(error) = bus.publish_without_context(CommitteeMemberExcluded {
-                            e3_id: msg.e3_id.clone(),
-                            node: msg.accused,
-                            proof_type: msg.proof_type,
-                            party_id: None,
-                        }) {
-                            bus.err(EType::Evm, error);
-                            let _ = address
-                                .send(SlashSubmissionFinished {
-                                    key,
-                                    terminal: false,
-                                    acknowledge_recovery: false,
-                                    retry_event: Some(retry_event),
-                                })
-                                .await;
-                            return;
+                let SubmitSlashIntent { key, event } = msg;
+                // The workflow decides; this loop only runs the effect of each step.
+                let (submission, mut step) = SlashSubmission::new(event, my_addr);
+                let end = loop {
+                    step = match step {
+                        SubmissionStep::ReadPolicy => {
+                            let policy = read_slash_policy(
+                                provider.clone(),
+                                contract_address,
+                                submission.event().proof_type,
+                            )
+                            .await
+                            .map(|policy| {
+                                classify_slash_policy(policy.enabled, policy.requiresProof)
+                            })
+                            .map_err(|error| {
+                                warn!(%error, "Could not read slash policy before submission");
+                                error.to_string()
+                            });
+                            submission.policy_read(policy)
                         }
-                        let _ = address
-                            .send(SlashSubmissionFinished {
-                                key,
-                                terminal: true,
-                                acknowledge_recovery: false,
-                                retry_event: None,
-                            })
-                            .await;
-                        return;
-                    }
-                    Ok(policy)
-                        if classify_slash_policy(policy.enabled, policy.requiresProof)
-                            == SlashPolicyState::InvalidForAttestations =>
-                    {
-                        bus.err(
-                            EType::Evm,
-                            anyhow::anyhow!(
-                                "Slash policy for proof type {} is enabled but does not accept committee attestations",
-                                msg.proof_type
-                            ),
-                        );
-                        let _ = address
-                            .send(SlashSubmissionFinished {
-                                key,
-                                terminal: true,
-                                acknowledge_recovery: true,
-                                retry_event: None,
-                            })
-                            .await;
-                        return;
-                    }
-                    Err(error) => {
-                        // A failed read must not invent an exclusion. Eligible submitters retain the
-                        // previous transaction path so a temporary RPC read failure cannot suppress
-                        // an enabled slash.
-                        warn!(%error, "Could not read slash policy before submission");
-                    }
-                    Ok(_) => {}
-                }
-
-                if !should_submit_slash(true, &msg.outcome, rank) {
-                    let _ = address
-                        .send(SlashSubmissionFinished {
-                            key,
-                            terminal: true,
-                            acknowledge_recovery: true,
-                            retry_event: None,
-                        })
-                        .await;
-                    return;
-                }
-
-                if encode_attestation_evidence(&msg).is_none() {
-                    bus.err(
-                        EType::Evm,
-                        anyhow::anyhow!(
-                            "Refusing malformed slash intent for E3 {}: votes or evidence are empty",
-                            msg.e3_id
-                        ),
-                    );
-                    let _ = address
-                        .send(SlashSubmissionFinished {
-                            key,
-                            terminal: true,
-                            acknowledge_recovery: true,
-                            retry_event: None,
-                        })
-                        .await;
-                    return;
-                }
-
-                let rank = rank.expect("submission decision requires a voter rank");
-
-                // Fallback submitters wait before attempting, giving the primary
-                // submitter time to land the transaction on-chain.
-                if rank > 0 {
-                    let delay = submission_delay(rank);
-                    info!(
-                        "Fallback submitter (rank {rank}): waiting {delay:?} before submission attempt"
-                    );
-                    tokio::time::sleep(delay).await;
-                }
-
-                let result = submit_slash_proposal(provider, contract_address, msg).await;
-                let terminal = match result {
-                    Ok(receipt) => {
-                        info!(tx=%receipt.transaction_hash, "Submitted attestation-based slash proposal on-chain");
-                        true
-                    }
-                    Err(err) => {
-                        let decoded = format_evm_error(&err);
-                        let benign = decoded.contains("OperatorNotInCommittee")
-                            || decoded.contains("VoterNotInCommittee")
-                            || decoded.contains("DuplicateEvidence");
-                        if benign {
-                            // Fallback submitters expect DuplicateEvidence reverts
-                            // when the primary submitter has already landed the tx.
-                            // Operator/VoterNotInCommittee indicate a stale off-chain accusation
-                            // (e.g. cross-E3 race) — not a node-local fault.
-                            warn!("Slash submission skipped (rank {rank}): {decoded}");
-                        } else {
-                            bus.err(
-                                EType::Evm,
-                                anyhow::anyhow!("Error submitting slash proposal: {decoded}"),
+                        SubmissionStep::Exclude(exclusion) => {
+                            info!(
+                                e3_id = %exclusion.e3_id,
+                                accused = %exclusion.node,
+                                proof_type = %exclusion.proof_type,
+                                reason = %slash_reason(exclusion.proof_type),
+                                "Slash policy is disabled; excluding the faulted member from local E3 work"
                             );
+                            let published = bus
+                                .publish_without_context(exclusion)
+                                .map(|_| ())
+                                .map_err(|error| format!("{error:#}"));
+                            submission.exclusion_published(published)
                         }
-                        slash_submission_error_is_terminal(&decoded)
-                    }
+                        SubmissionStep::Wait { rank, delay } => {
+                            info!(
+                                "Fallback submitter (rank {rank}): waiting {delay:?} before submission attempt"
+                            );
+                            tokio::time::sleep(delay).await;
+                            SubmissionStep::Submit { rank }
+                        }
+                        SubmissionStep::Submit { rank } => {
+                            let result = submit_slash_proposal(
+                                provider.clone(),
+                                contract_address,
+                                submission.event().clone(),
+                            )
+                            .await;
+                            if let Ok(receipt) = &result {
+                                info!(tx=%receipt.transaction_hash, "Submitted attestation-based slash proposal on-chain");
+                            }
+                            submission.submitted(
+                                rank,
+                                result.map(|_| ()).map_err(|error| format_evm_error(&error)),
+                            )
+                        }
+                        SubmissionStep::End { end, report } => {
+                            match report {
+                                Some(SubmissionReport::Error(error)) => {
+                                    bus.err(EType::Evm, anyhow::anyhow!(error))
+                                }
+                                Some(SubmissionReport::Skipped(message)) => warn!("{message}"),
+                                None => {}
+                            }
+                            break end;
+                        }
+                    };
                 };
                 if let Err(error) = address
                     .send(SlashSubmissionFinished {
                         key,
-                        terminal,
-                        acknowledge_recovery: terminal,
-                        retry_event: (!terminal).then_some(retry_event),
+                        terminal: end.terminal,
+                        acknowledge_recovery: end.acknowledge_recovery,
+                        retry_event: end.retry.then(|| submission.event().clone()),
                     })
                     .await
                 {

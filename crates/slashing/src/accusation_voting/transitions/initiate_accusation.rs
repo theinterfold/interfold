@@ -27,28 +27,14 @@ impl AccusationVoting {
         event: ProofVerificationFailed,
         ec: &EventContext<Sequenced>,
     ) -> Vec<VoteAction> {
-        if event.e3_id != self.e3_id {
-            return Vec::new();
-        }
-
+        let event = match self.admit_local_failure(event) {
+            Ok(event) => event.into_inner(),
+            Err(rejection) => {
+                rejection.log();
+                return Vec::new();
+            }
+        };
         let accused_address = event.accused_address;
-        let expected = usize::try_from(event.accused_party_id)
-            .ok()
-            .and_then(|party| self.finalized_committee.get(party));
-        if !self.committee.contains(&accused_address)
-            || expected != Some(&accused_address)
-            || event.signed_payload.payload.e3_id != self.e3_id
-            || event.signed_payload.payload.proof_type != event.proof_type
-            || event.signed_payload.recover_address().ok() != Some(accused_address)
-            || Self::compute_payload_hash(&event.signed_payload) != event.data_hash
-        {
-            warn!("Ignoring proof failure without the claimed committee member's signature");
-            return Vec::new();
-        }
-
-        if self.is_self_accusation(self.my_address, accused_address, event.accused_party_id) {
-            return Vec::new();
-        }
 
         // Cache the failed verification result.
         let evidence = Bytes::from(
@@ -91,21 +77,13 @@ impl AccusationVoting {
         data: CommitmentConsistencyViolation,
         ec: &EventContext<Sequenced>,
     ) -> Vec<VoteAction> {
-        if data.e3_id != self.e3_id {
-            return Vec::new();
-        }
-
-        if !self.committee.contains(&data.accused_address) {
-            warn!(
-                "Ignoring commitment violation for {} — not on E3 {} committee",
-                data.accused_address, self.e3_id
-            );
-            return Vec::new();
-        }
-
-        if self.is_self_accusation(self.my_address, data.accused_address, data.accused_party_id) {
-            return Vec::new();
-        }
+        let data = match self.admit_violation(data) {
+            Ok(data) => data.into_inner(),
+            Err(rejection) => {
+                rejection.log();
+                return Vec::new();
+            }
+        };
 
         self.received_data.insert(
             (data.accused_address, data.proof_type),
