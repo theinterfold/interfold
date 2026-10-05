@@ -1217,6 +1217,22 @@ fn test_recovery_with_repo() -> (
     )
 }
 
+/// A recovery record in `store`, next to the keyshare state, as in production storage.
+fn test_recovery_in(
+    store: &Addr<InMemStore>,
+) -> (
+    Persistable<ThresholdKeyshareRecoveryState>,
+    Repository<ThresholdKeyshareRecoveryState>,
+) {
+    let repo = Repository::<ThresholdKeyshareRecoveryState>::new(
+        DataStore::from_in_mem(store).scope("recovery"),
+    );
+    (
+        repo.send(Some(ThresholdKeyshareRecoveryState::default())),
+        repo,
+    )
+}
+
 fn test_recovery_payloads() -> ThresholdKeyshareRecoveryPayloads {
     let store = InMemStore::new(false).start();
     ThresholdKeyshareRecoveryPayloads::new(DataStore::from_in_mem(&store))
@@ -1583,7 +1599,7 @@ async fn committee_actor(
         e3_id,
         KeyshareState::AggregatingDecryptionKey(current),
     );
-    let (mut recovery, recovery_repo) = test_recovery_with_repo();
+    let (mut recovery, recovery_repo) = test_recovery_in(&state_store);
     recovery.try_mutate_without_context(|mut recovery| {
         recovery.ciphernode_selected = Some(TypedEvent::new(
             CiphernodeSelected {
@@ -2968,21 +2984,32 @@ async fn a_logged_key_calculation_fixes_the_roster_again() -> Result<()> {
     Ok(())
 }
 
-/// The dispatch write of the fixed-roster flag is refused as stale when the saved snapshot cursor
-/// of the E3's aggregate is ahead of the dispatch context, and memory keeps the flag. The logged
-/// calculation request saves the state again at its own position, so the saved state that a
-/// restart loads has the flag.
+/// The writes that start C4 are refused as stale when the saved snapshot cursor of the E3's
+/// aggregate is ahead of their context, and memory keeps the accepted roster and the flag. The
+/// logged calculation request saves both again at its own position, so a restart loads the flag
+/// with the roster that C4 used.
 #[actix::test]
 async fn a_logged_key_calculation_saves_the_flag_that_a_stale_dispatch_write_lost() -> Result<()> {
     let e3_id = E3id::new("60", 1);
     let signers = three_signers();
     let cipher = Arc::new(Cipher::from_password("test-password").await?);
+    let sign = |party_id: u64, dealer_ids: &[u64]| {
+        DkgCoordination::sign(
+            e3_id.clone(),
+            Address::ZERO,
+            party_id,
+            DkgCoordinationKind::Roster,
+            dealers(dealer_ids),
+            &signers[party_id as usize],
+        )
+    };
+    let (earlier, used) = (sign(1, &[1, 2])?, sign(0, &[0, 1])?);
     let mut committee = committee_actor(
         &e3_id,
         &signers,
         aggregating_decryption_key_for_roster_test(),
         cipher,
-        |_| {},
+        |recovery| recovery.dkg_roster = Some(earlier.clone()),
     )
     .await?;
     let calculation = ComputeRequest::trbfv(
@@ -3005,9 +3032,18 @@ async fn a_logged_key_calculation_saves_the_flag_that_a_stale_dispatch_write_los
             100u64.to_le_bytes().to_vec(),
         ))
         .await?;
+    // Settlement at a stale position accepts another roster and starts C4 from it: the store
+    // refuses both writes, and memory keeps them.
     let stale = keyshare_event(calculation, 5, EventSource::Local)
         .get_ctx()
         .clone();
+    committee
+        .actor
+        .recovery
+        .try_mutate(&stale, |mut recovery| {
+            recovery.dkg_roster = Some(used.clone());
+            Ok(recovery)
+        })?;
     committee.actor.state.try_mutate(&stale, |mut state| {
         state.dkg_roster_fixed = true;
         Ok(state)
@@ -3027,10 +3063,24 @@ async fn a_logged_key_calculation_saves_the_flag_that_a_stale_dispatch_write_los
         "the store refuses the stale dispatch write"
     );
 
+    let saved_roster = || async {
+        Ok::<_, anyhow::Error>(
+            committee
+                .recovery_repo
+                .read()
+                .await?
+                .expect("saved recovery state")
+                .dkg_roster,
+        )
+    };
+    assert_eq!(saved_roster().await?, Some(earlier.clone()));
+
     let actor = committee.actor.start();
     actor.send(logged).await?;
     actix::clock::sleep(std::time::Duration::from_millis(100)).await;
+    // A restart loads the flag with the roster that C4 used.
     assert!(saved().await?);
+    assert_eq!(saved_roster().await?, Some(used));
     Ok(())
 }
 

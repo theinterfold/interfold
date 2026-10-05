@@ -119,6 +119,9 @@ impl ThresholdKeyshare {
         {
             return Ok(());
         }
+        // The roster that the calculation used is in memory, and its own write can have been
+        // refused as stale too. Save it with the flag, at the same position.
+        self.recovery.try_mutate(ec, Ok)?;
         self.state.try_mutate(ec, |mut state| {
             state.dkg_roster_fixed = true;
             Ok(state)
