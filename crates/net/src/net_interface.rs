@@ -593,9 +593,7 @@ impl Libp2pNetInterface {
                     );
                 }
                 _ = dht_put_deadline_tick.tick() => {
-                    let kademlia = &self.swarm.behaviour().kademlia;
-                    let (queries, steps) =
-                        dht_puts.expire(Instant::now(), |query| kademlia.query(query).is_some());
+                    let (queries, steps) = dht_puts.expire(Instant::now());
                     end_dht_put_queries(&mut self.swarm.behaviour_mut().kademlia, queries);
                     for step in steps {
                         if let Err(e) = apply_dht_put_step(&mut self.swarm, &event_tx, &mut dht_puts, step) {
@@ -2001,8 +1999,7 @@ fn handle_put_record(
     deadline: Instant,
 ) -> Result<()> {
     debug!("DHT PUT RECORD");
-    let now = Instant::now();
-    if now >= deadline {
+    if Instant::now() >= deadline {
         // The caller stops waiting before an upload could finish.
         let step = dht_puts.expired_before_start(correlation_id, key);
         return apply_dht_put_step(swarm, event_tx, dht_puts, step);
@@ -2037,7 +2034,7 @@ fn handle_put_record(
     });
     match result {
         Ok(qid) => {
-            dht_puts.start(correlation_id, key, qid, now, deadline);
+            dht_puts.start(correlation_id, key, qid, deadline);
             debug!("PUT RECORD OK qid={:?} cid={}", qid, correlation_id);
         }
         Err(error) => {
@@ -2613,8 +2610,8 @@ mod tests {
         );
         let now = std::time::Instant::now();
         let deadline = now + Duration::from_secs(240);
-        dht_puts.start(cancelled_id, document.clone(), cancelled, now, deadline);
-        dht_puts.start(failed_id, other.clone(), failed, now, deadline);
+        dht_puts.start(cancelled_id, document.clone(), cancelled, deadline);
+        dht_puts.start(failed_id, other.clone(), failed, deadline);
         let event_tx = super::NetEventSender::new(8, 8);
         let mut events = event_tx.subscribe();
         let quorum_failed = |key: &super::ContentHash| {
