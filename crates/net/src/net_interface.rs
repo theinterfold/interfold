@@ -1955,6 +1955,9 @@ fn admit_replica(
             .put(refreshed)
             .map_err(|_| "store refused the refresh");
     }
+    // The store does not hold the key, so a ledger entry for it is stale: Kademlia removed the
+    // expired record during a lookup. The new replica gets its own owner and place.
+    replicas.remove(record.key.as_ref());
     let bytes = record.value.len();
     let free = |store: &MemoryStore| max_records.saturating_sub(store.records().count());
     let mut victims = replicas.room_for(source, bytes, free(store));
@@ -2770,6 +2773,53 @@ mod tests {
         .unwrap();
         assert_eq!(store.get(&own.key).unwrap().publisher, Some(local));
         assert!(!replicas.contains(own.key.as_ref()));
+    }
+
+    /// Kademlia removes an expired record during a lookup without telling the ledger. A peer that
+    /// then stores the key again owns the new replica.
+    #[test]
+    fn a_replica_stored_again_after_kademlia_removed_it_gets_a_new_owner_and_place() {
+        let mut store = small_store(10);
+        let mut replicas = ledger(5, 10, 1024);
+        let (local, first, second) = (PeerId::random(), PeerId::random(), PeerId::random());
+        let now = Instant::now();
+        let expires = now + Duration::from_secs(3600);
+        let again = document(b"stored again", expires);
+        super::admit_replica(
+            &mut store,
+            &mut replicas,
+            10,
+            local,
+            first,
+            again.clone(),
+            now,
+        )
+        .unwrap();
+        super::admit_replica(
+            &mut store,
+            &mut replicas,
+            10,
+            local,
+            first,
+            document(b"other", expires),
+            now,
+        )
+        .unwrap();
+        // As Kademlia does with an expired record during a lookup.
+        store.remove(&again.key);
+
+        super::admit_replica(
+            &mut store,
+            &mut replicas,
+            10,
+            local,
+            second,
+            again.clone(),
+            now,
+        )
+        .unwrap();
+        assert_eq!(replicas.owned_by(&first), 1);
+        assert_eq!(replicas.owned_by(&second), 1);
     }
 
     /// One dealer's documents for four concurrent E3s fit its share of the replicas.
