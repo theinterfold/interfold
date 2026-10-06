@@ -202,6 +202,88 @@ async fn store_outside_the_project() -> Result<()> {
     Ok(())
 }
 
+/// The node ran with another data folder than the purge's configuration gives, and a stale copy of
+/// its store, which holds the operator key and no active share, is at the configured path. `start`
+/// recorded the store that it used next to the key file, so the purge checks that store, and holds
+/// its lock.
+async fn store_recorded_at_start() -> Result<()> {
+    let project = tempfile::tempdir()?;
+    let elsewhere = tempfile::tempdir()?;
+    let targets = PurgeTargets::in_dir(project.path());
+    let configured = project_node(project.path(), "cn1")?;
+    let used = node_with(
+        project.path(),
+        &elsewhere.path().join("data"),
+        &project.path().join(".interfold/config"),
+        "cn1",
+        "",
+    )?;
+    write_state(&configured, E3Stage::Complete).await?;
+    write_state(&used, E3Stage::KeyPublished).await?;
+    e3_entrypoint::store_record::write(&used.key_file(), &used.db_file())?;
+    let nodes = vec![configured];
+
+    assert_refused(&targets, &nodes, false, &["node `cn1`", "KeyPublished"]).await;
+    let running = ProcessFence::acquire(&used.db_file(), "cn1")?;
+    assert_refused(
+        &targets,
+        &nodes,
+        true,
+        &["Node `cn1` is running", "holds its lock"],
+    )
+    .await;
+    drop(running);
+    assert!(untouched(&[&used]));
+
+    // With the override, the purge deletes the project and keeps the store outside it.
+    execute(&targets, &nodes, true).await?;
+    assert!(purged(project.path()));
+    assert!(used.db_file().exists());
+    Ok(())
+}
+
+/// A key file that no configured node uses is checked through its record. The node of a removed
+/// profile ran with its store elsewhere, which holds an active share, and left a completed stale
+/// store in its node folder: the purge checks the recorded store, also holds its lock, and not the
+/// stale one. A flat key file without a record stays a refusal.
+async fn unconfigured_key_file_with_a_record() -> Result<()> {
+    let project = tempfile::tempdir()?;
+    let elsewhere = tempfile::tempdir()?;
+    let targets = PurgeTargets::in_dir(project.path());
+    let stale = project_node(project.path(), "removed")?;
+    let used = node_with(
+        project.path(),
+        &elsewhere.path().join("data"),
+        &project.path().join(".interfold/config"),
+        "removed",
+        "",
+    )?;
+    write_state(&stale, E3Stage::Complete).await?;
+    write_state(&used, E3Stage::KeyPublished).await?;
+    e3_entrypoint::store_record::write(&used.key_file(), &used.db_file())?;
+
+    assert_refused(&targets, &[], false, &["removed", "KeyPublished"]).await;
+    let running = ProcessFence::acquire(&used.db_file(), "removed")?;
+    assert_refused(&targets, &[], true, &["is running", "holds its lock"]).await;
+    drop(running);
+
+    // A record that the purge cannot read is a refusal, not an error that ends the purge.
+    let record = e3_entrypoint::store_record::record_path(&used.key_file());
+    let saved = std::fs::read(&record)?;
+    std::fs::write(&record, b"not a store path\n")?;
+    assert_refused(&targets, &[], false, &["cannot read the store record"]).await;
+    std::fs::write(&record, saved)?;
+
+    let flat = project.path().join(".interfold/config/flat.key");
+    std::fs::write(&flat, b"operator key")?;
+    assert_refused(&targets, &[], false, &["no configured node uses"]).await;
+    std::fs::remove_file(&flat)?;
+    execute(&targets, &[], true).await?;
+    assert!(purged(project.path()));
+    assert!(used.db_file().exists());
+    Ok(())
+}
+
 /// The store outside the project is a symbolic link, as when an operator moves the store to
 /// another disk. `start` locks the folder of the link, not the folder of the store.
 async fn store_behind_a_link() -> Result<()> {
@@ -963,6 +1045,8 @@ async fn target_is_a_link() -> Result<()> {
 async fn purge_refuses_to_delete_a_running_node_or_an_active_key_share() -> Result<()> {
     default_layout().await?;
     store_outside_the_project().await?;
+    store_recorded_at_start().await?;
+    unconfigured_key_file_with_a_record().await?;
     store_behind_a_link().await?;
     key_file_through_a_link().await?;
     two_stores_in_one_folder().await?;

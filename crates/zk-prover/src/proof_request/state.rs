@@ -174,6 +174,8 @@ pub(crate) struct PendingShareDecryptionProof {
     pub(crate) node: String,
     pub(crate) decryption_share: Vec<ArcBytes>,
     pub(crate) ec: EventContext<Sequenced>,
+    /// The `redelivery` of the latest request seen for this proof.
+    pub(crate) redelivery: u64,
 }
 
 /// Pending C7 (DecryptedSharesAggregation) proof generation state.

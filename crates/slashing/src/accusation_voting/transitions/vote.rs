@@ -22,27 +22,13 @@ impl AccusationVoting {
         ec: &EventContext<Sequenced>,
         actions: &mut Vec<VoteAction>,
     ) {
-        // Ignore votes for other E3s
-        if vote.e3_id != self.e3_id {
-            return;
-        }
-
-        // Verify voter is in committee
-        if !self.committee.contains(&vote.voter) {
-            warn!("Ignoring vote from non-committee member {}", vote.voter);
-            return;
-        }
-
-        // Ignore our own votes (already recorded)
-        if vote.voter == self.my_address {
-            return;
-        }
-
-        // Verify voter's ECDSA signature
-        if !self.verify_vote_signature(&vote) {
-            warn!("Invalid signature on vote from {} — ignoring", vote.voter);
-            return;
-        }
+        let vote = match self.admit_vote(vote) {
+            Ok(vote) => vote.into_inner(),
+            Err(rejection) => {
+                rejection.log();
+                return;
+            }
+        };
 
         let vote_accusation_id = vote.accusation_id;
 

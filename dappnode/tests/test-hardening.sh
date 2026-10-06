@@ -388,6 +388,15 @@ run_healthcheck() {
 run_healthcheck || fail "a node without a heartbeat yet was considered unhealthy"
 
 write_heartbeat 500 499 999990 999900
+if run_healthcheck; then
+    fail "a heartbeat without the ingestion expectation was considered healthy"
+fi
+
+# The node writes its expectation before it starts any reader.
+printf 'chains=1\nstarted_at=999500\n' > "$health_dir/data/ingestion/expected"
+run_healthcheck || fail "a fresh ingestion heartbeat was rejected"
+
+write_heartbeat 500 499 999990 999900
 run_healthcheck || fail "a fresh ingestion heartbeat was rejected"
 
 write_heartbeat 500 499 999800 999800
@@ -407,5 +416,33 @@ fi
 
 rm "$health_dir/data/ingestion/chain-1.heartbeat"
 run_healthcheck || fail "a removed heartbeat was not treated as a starting node"
+
+# Startup grace: at startup the node records how many chain readers it starts, and when. Within the
+# grace (INGESTION_START_GRACE_SECS, 900) a missing heartbeat is a starting node; after it, every
+# enabled chain needs one.
+write_expected() {
+    printf 'chains=%s\nstarted_at=%s\n' "$1" "$2" > "$health_dir/data/ingestion/expected"
+}
+write_expected 1 999500
+run_healthcheck || fail "a node within its startup grace without a heartbeat was considered unhealthy"
+
+write_expected 1 990000
+if run_healthcheck; then
+    fail "a reader that never reached its first read was considered healthy after the startup grace"
+fi
+
+write_heartbeat 500 499 999990 999900
+run_healthcheck || fail "a heartbeat for every enabled chain was rejected after the startup grace"
+
+write_expected 2 990000
+if run_healthcheck; then
+    fail "a second enabled chain without a heartbeat was considered healthy after the startup grace"
+fi
+
+printf 'chains=x\nstarted_at=990000\n' > "$health_dir/data/ingestion/expected"
+if run_healthcheck; then
+    fail "a malformed ingestion expectation was considered healthy"
+fi
+rm "$health_dir/data/ingestion/expected" "$health_dir/data/ingestion/chain-1.heartbeat"
 
 printf 'PASS: DAppNode credential and health hardening regressions\n'

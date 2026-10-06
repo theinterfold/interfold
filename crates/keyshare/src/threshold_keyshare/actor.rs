@@ -9,7 +9,7 @@ use alloy::primitives::Address;
 use alloy::signers::local::PrivateKeySigner;
 use anyhow::{anyhow, bail, Context, Result};
 use e3_crypto::{Cipher, SensitiveBytes};
-use e3_data::Persistable;
+use e3_data::{DurableIntent, Persistable};
 use e3_events::{
     prelude::*, trap, AggregationInputsReady, AggregationPhase, AggregatorChanged, BusHandle,
     CiphernodeSelected, CiphertextOutputPublished, CommitmentRosterSelected,
@@ -74,11 +74,14 @@ use crate::domain::{
 #[path = "recovery_state.rs"]
 mod recovery_state;
 pub use recovery_state::{
-    RecoveryPayloadRef, ThresholdKeyshareRecoveryState, THRESHOLD_KEYSHARE_RECOVERY_SCHEMA_VERSION,
+    BfvKeyIntent, RecoveryPayloadRef, ThresholdKeyshareRecoveryState,
+    THRESHOLD_KEYSHARE_RECOVERY_SCHEMA_VERSION,
 };
 #[path = "recovery_payloads.rs"]
 mod recovery_payloads;
 pub use recovery_payloads::ThresholdKeyshareRecoveryPayloads;
+#[path = "validation.rs"]
+mod validation;
 
 #[derive(Message, Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[rtype(result = "()")]
@@ -134,6 +137,8 @@ pub struct ThresholdKeyshareParams {
     pub interfold_address: Address,
     pub recovery: Persistable<ThresholdKeyshareRecoveryState>,
     pub recovery_payloads: ThresholdKeyshareRecoveryPayloads,
+    /// Where this node's BFV encryption keypair is recorded.
+    pub bfv_key: DurableIntent<BfvKeyIntent>,
     pub dkg_timing_reader: DkgTimingReader,
     pub signer: PrivateKeySigner,
     pub effects_enabled: bool,
@@ -166,10 +171,35 @@ struct PendingKeyshareWork {
     own_dkg_shares: Option<(SensitiveBytes, Vec<SensitiveBytes>)>,
     /// C4 completed before the signed C1 artifact became available.
     keyshare_publish: bool,
-    /// Decryption work issued in this process. The worker owns local retries.
-    decryption_share_requested: bool,
-    decryption_proof_requested: bool,
+    /// This node's BFV keypair whose record failed. The selection records the same keypair again.
+    bfv_key: Option<BfvKeyIntent>,
+    /// Decryption work issued in this process. The worker owns local retries; the actor redelivers
+    /// a request whose result did not arrive.
+    decryption_share_request: Option<IssuedDecryptionWork>,
+    decryption_proof_request: Option<IssuedDecryptionWork>,
 }
+
+/// One outstanding decryption request of this process and its redelivery count.
+#[derive(Clone)]
+pub(crate) struct IssuedDecryptionWork {
+    /// Cause of the first request; each redelivery uses it too.
+    pub(crate) ec: EventContext<Sequenced>,
+    pub(crate) last_sent: std::time::Instant,
+    pub(crate) redeliveries: u32,
+}
+
+/// EventBus fan-out logs a subscriber that misses its acceptance timeout and does not retry, so a
+/// decryption request or result can be lost. The actor sends the request again after this delay,
+/// at most `MAX_DECRYPTION_REDELIVERIES` times per phase. The compute gate and ProofRequestActor
+/// deduplicate the work, so a copy costs one event.
+pub(crate) const DECRYPTION_REDELIVERY_DELAY: std::time::Duration =
+    std::time::Duration::from_secs(5 * 60);
+pub(crate) const MAX_DECRYPTION_REDELIVERIES: u32 = 6;
+
+/// Check the outstanding decryption work at `now` and redeliver what is overdue.
+#[derive(Message)]
+#[rtype(result = "()")]
+pub(crate) struct RedeliverDecryptionWork(pub(crate) std::time::Instant);
 
 pub struct ThresholdKeyshare {
     canonical_keys: crate::canonical_key::CanonicalPublicKeys,
@@ -181,6 +211,9 @@ pub struct ThresholdKeyshare {
     state: Persistable<ThresholdKeyshareState>,
     recovery: Persistable<ThresholdKeyshareRecoveryState>,
     recovery_payloads: ThresholdKeyshareRecoveryPayloads,
+    bfv_keys: DurableIntent<BfvKeyIntent>,
+    /// This node's BFV keypair for the E3, read when the actor starts and set when it records it.
+    bfv_key: Option<BfvKeyIntent>,
     share_enc_preset: BfvPreset,
     interfold_address: Address,
     dkg_timing_reader: DkgTimingReader,
@@ -245,6 +278,8 @@ impl ThresholdKeyshare {
             state: params.state,
             recovery: params.recovery,
             recovery_payloads: params.recovery_payloads,
+            bfv_keys: params.bfv_key,
+            bfv_key: None,
             share_enc_preset: params.share_enc_preset,
             interfold_address: params.interfold_address,
             dkg_timing_reader: params.dkg_timing_reader,
@@ -330,6 +365,22 @@ impl Actor for ThresholdKeyshare {
     type Context = actix::Context<Self>;
     fn started(&mut self, ctx: &mut Self::Context) {
         ctx.set_mailbox_capacity(MAILBOX_LIMIT);
+        // Read this node's BFV keypair before any input, also for a keyshare that a replayed event
+        // created: the mailbox holds every input until the read completes.
+        let keys = self.bfv_keys.clone();
+        ctx.wait(async move { keys.restore().await }.into_actor(self).map(
+            |restored, actor, ctx| match restored {
+                Ok(key) => actor.bfv_key = key,
+                Err(error) => {
+                    error!(%error, "Could not restore the keyshare's recorded BFV key");
+                    actor.bus.err(EType::KeyGeneration, error);
+                    ctx.stop();
+                }
+            },
+        ));
+        ctx.run_interval(DECRYPTION_REDELIVERY_DELAY / 5, |_, ctx| {
+            ctx.notify(RedeliverDecryptionWork(std::time::Instant::now()));
+        });
     }
 
     fn stopped(&mut self, _: &mut Self::Context) {

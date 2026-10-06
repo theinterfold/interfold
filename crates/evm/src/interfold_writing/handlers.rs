@@ -115,7 +115,6 @@ impl<P: Provider + WalletProvider + Clone + 'static> InterfoldSolWriter<P> {
         self.terminal_e3s.insert(e3_id.clone());
         self.deferred_plaintexts.remove(e3_id);
         self.publication.finish(e3_id, true);
-        self.active_aggregators.remove(e3_id);
     }
 
     fn try_start_failure_watch(&self, e3_id: &E3id, ctx: &mut actix::Context<Self>) {
@@ -326,11 +325,8 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<AggregatorChanged>
     type Result = ();
 
     fn handle(&mut self, msg: AggregatorChanged, ctx: &mut Self::Context) -> Self::Result {
-        let e3_id = msg.e3_id;
-        self.active_aggregators
-            .insert(e3_id.clone(), msg.is_aggregator);
         if msg.is_aggregator {
-            self.try_start_plaintext(&e3_id, ctx);
+            self.try_start_plaintext(&msg.e3_id, ctx);
         }
     }
 }
@@ -341,7 +337,6 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<E3RequestComplete>
     type Result = ();
 
     fn handle(&mut self, msg: E3RequestComplete, ctx: &mut Self::Context) -> Self::Result {
-        self.active_aggregators.remove(&msg.e3_id);
         // Local work can stop before the contract reaches a terminal stage.
         // Keep the chain deadline watch until E3StageChanged confirms settlement.
         self.try_start_failure_watch(&msg.e3_id, ctx);
@@ -879,7 +874,6 @@ mod tests {
                 HashMap::new(),
                 HashMap::new(),
                 HashMap::new(),
-                HashMap::new(),
                 HashSet::new(),
                 HashSet::new(),
                 keys.clone(),
@@ -967,7 +961,6 @@ mod tests {
             &bus,
             provider,
             Address::ZERO,
-            HashMap::new(),
             HashMap::new(),
             HashMap::new(),
             HashMap::new(),

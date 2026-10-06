@@ -237,8 +237,35 @@ struct E3State {
     chain_failure: Option<Value>,
     canonical_stage: Option<E3Stage>,
     failed_phase: Option<E3Phase>,
+    /// When the E3 failed. Its slash reports are due until one day after its lifecycle deadline,
+    /// which the projection does not know, so it counts one day from the failure.
+    failed_at_us: Option<u64>,
     first_seen_us: u64,
     last_seen_us: u64,
+}
+
+/// How long after its failure an E3 still needs this node for its slash reports.
+const REPORT_WINDOW_US: u64 = 24 * 60 * 60 * 1_000_000;
+
+impl E3State {
+    /// Whether the E3 still needs this node at `now_us`: the node is in it, and the E3 runs, or
+    /// failed less than a day ago, so its slash reports can still be due.
+    fn needs(&self, local_address: &str, now_us: u64) -> bool {
+        let member = if self.committee.is_empty() {
+            self.tickets
+                .iter()
+                .any(|ticket| normalize_address(&ticket.node) == local_address)
+        } else {
+            self.committee
+                .iter()
+                .any(|node| normalize_address(node) == local_address)
+        };
+        let reports_due = self.status == "failed"
+            && self
+                .failed_at_us
+                .is_some_and(|failed| now_us < failed.saturating_add(REPORT_WINDOW_US));
+        member && (self.status == "active" || self.status == "degraded" || reports_due)
+    }
 }
 
 #[derive(Default)]
@@ -281,6 +308,16 @@ impl TelemetryProjection {
     }
 
     pub fn overview(&self) -> ProtocolOverview {
+        let now_us = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since| {
+                u64::try_from(since.as_micros()).unwrap_or(u64::MAX)
+            });
+        self.overview_at(now_us)
+    }
+
+    /// The overview at `now_us`, in microseconds since the Unix epoch.
+    pub fn overview_at(&self, now_us: u64) -> ProtocolOverview {
         let summaries = self.summaries();
         ProtocolOverview {
             chains: self
@@ -310,9 +347,12 @@ impl TelemetryProjection {
                 })
                 .collect(),
             e3_total: summaries.len(),
-            e3_active: summaries
-                .iter()
-                .filter(|summary| summary.status == "active")
+            // E3s that still need this node, also a failed E3 whose slash reports can still be
+            // due: a node that stops then cannot send them.
+            e3_active: self
+                .e3s
+                .values()
+                .filter(|state| state.needs(&self.local_address, now_us))
                 .count(),
             e3_completed: summaries
                 .iter()
@@ -454,7 +494,18 @@ impl TelemetryProjection {
             }
             InterfoldEventData::E3Failed(event) => {
                 let chain_failure = view.source == "evm";
-                state.status = if chain_failure { "failed" } else { "degraded" }.to_owned();
+                // A local failure that the log records after the chain ended the E3 keeps the
+                // chain's terminal status.
+                let ended_on_chain = state
+                    .canonical_stage
+                    .as_ref()
+                    .is_some_and(E3Stage::is_terminal);
+                if chain_failure || !ended_on_chain {
+                    state.status = if chain_failure { "failed" } else { "degraded" }.to_owned();
+                }
+                if chain_failure {
+                    state.failed_at_us.get_or_insert(view.timestamp_us);
+                }
                 state.failed_phase = view.phase;
                 let failure = json!({
                     "failed_at_stage": event.failed_at_stage,
@@ -468,7 +519,15 @@ impl TelemetryProjection {
                 state.failure = Some(failure);
             }
             InterfoldEventData::CommitteeFormationFailed(event) => {
-                state.status = "failed".to_owned();
+                // After the chain ended the E3, its terminal status stays.
+                if !state
+                    .canonical_stage
+                    .as_ref()
+                    .is_some_and(E3Stage::is_terminal)
+                {
+                    state.status = "failed".to_owned();
+                    state.failed_at_us.get_or_insert(view.timestamp_us);
+                }
                 state.failed_phase = Some(E3Phase::Committee);
                 state.failure = Some(json!({
                     "reason": "CommitteeFormationFailed",
@@ -483,6 +542,7 @@ impl TelemetryProjection {
                     E3Stage::Failed => {
                         let failed_phase = stage_phase(&event.previous_stage);
                         state.status = "failed".to_owned();
+                        state.failed_at_us.get_or_insert(view.timestamp_us);
                         state.failed_phase = Some(failed_phase);
                         state.current_phase = Some(failed_phase);
                         state.chain_failure.get_or_insert_with(|| {
@@ -1234,7 +1294,7 @@ mod tests {
     fn reward_claim_matching_rejects_aggregate_overflow() {
         let account = "0x15d34aaf54267db7d7c367839aaf71a00a2c6a65";
         let token = "0xe7f1725e7734ce288f8367e1bb143e90bb3f0512";
-        let mut rewards = vec![
+        let mut rewards = [
             RewardView {
                 account: account.into(),
                 token: Some(token.into()),
@@ -1252,6 +1312,78 @@ mod tests {
         mark_claimed_rewards(rewards.iter_mut(), account, token, "1");
 
         assert!(rewards.iter().all(|reward| !reward.claimed));
+    }
+
+    /// The active count is the E3s that still need this node: the ones that it is in while they
+    /// run, and the failed ones for a day after the failure, while their slash reports can still
+    /// be due. Other nodes' E3s and completed ones do not count.
+    #[test]
+    fn the_active_count_is_the_e3s_that_still_need_this_node() {
+        use alloy::primitives::Address;
+        use e3_events::{CommitteeFinalized, E3id};
+        let local = Address::repeat_byte(1);
+        let other = Address::repeat_byte(2);
+        let mut projection = TelemetryProjection::new(local.to_string());
+        let mut seq = 0;
+        let mut apply = |projection: &mut TelemetryProjection, data: InterfoldEventData| {
+            seq += 1;
+            projection.apply(replay_event(data, seq, 10 * seq as u128));
+        };
+        let committee = |e3: &str, members: Vec<Address>| CommitteeFinalized {
+            e3_id: E3id::new(e3, 31337),
+            committee: members.iter().map(ToString::to_string).collect(),
+            scores: Vec::new(),
+            chain_id: 31337,
+        };
+        let stage = |e3: &str, new_stage| E3StageChanged {
+            e3_id: E3id::new(e3, 31337),
+            previous_stage: E3Stage::CommitteeFinalized,
+            new_stage,
+        };
+
+        // Running: one with this node, one without.
+        apply(&mut projection, committee("1", vec![local, other]).into());
+        apply(&mut projection, committee("2", vec![other]).into());
+        let now = projection.events.last().unwrap().timestamp_us;
+        assert_eq!(projection.overview_at(now).e3_active, 1);
+
+        // Ended: a completed E3 does not count; a failed one counts for a day after the failure.
+        apply(&mut projection, stage("1", E3Stage::Complete).into());
+        apply(&mut projection, committee("3", vec![local, other]).into());
+        apply(&mut projection, stage("3", E3Stage::Failed).into());
+        let failed = projection.events.last().unwrap().timestamp_us;
+        assert_eq!(projection.overview_at(failed).e3_active, 1);
+        assert_eq!(
+            projection
+                .overview_at(failed + REPORT_WINDOW_US - 1)
+                .e3_active,
+            1
+        );
+        assert_eq!(
+            projection.overview_at(failed + REPORT_WINDOW_US).e3_active,
+            0
+        );
+
+        // A local failure that the log records after the chain's failure keeps the E3 failed, so
+        // it still stops counting a day after the chain's failure.
+        let local = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            E3Failed {
+                e3_id: E3id::new("3", 31337),
+                failed_at_stage: E3Stage::CommitteeFinalized,
+                reason: FailureReason::DKGTimeout,
+            }
+            .into(),
+            None,
+            (failed + 10) as u128,
+            Some(1_000),
+            EventSource::Local,
+        )
+        .into_sequenced(1_000);
+        projection.apply(local);
+        assert_eq!(
+            projection.overview_at(failed + REPORT_WINDOW_US).e3_active,
+            0
+        );
     }
 
     fn replay_event(data: InterfoldEventData, seq: u64, timestamp: u128) -> InterfoldEvent {

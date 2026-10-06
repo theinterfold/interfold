@@ -41,14 +41,18 @@ CiphernodeSelected event arrives at ThresholdKeyshare
 │   │       `replay_encryption_keys` sends every recorded key to the new
 │   │       EncryptionKeyCollector, as restart recovery does
 │   │
-│   ├─ 2. Generate fresh BFV keypair:
+│   ├─ 2. Reuse the recorded BFV keypair, or generate a fresh one:
 │   │     (secret_key, public_key) = BFV::keygen(share_encryption_preset)
 │   │     → This is the node's SHARE ENCRYPTION key
 │   │     → Used to encrypt Shamir shares sent to this node
+│   │     → Peers encrypt to the key that this node published, so a start that
+│   │       lost the keyshare's snapshot reuses the keypair that it recorded
 │   │
-│   ├─ 3. Encrypt BFV secret key at rest:
-│   │     encrypted_sk = Cipher.encrypt(secret_key)
-│   │     → Stored locally, password-protected
+│   ├─ 3. Record the keypair durably (`BfvKeyIntent` with `DurableIntent`), the
+│   │     secret key encrypted with the node's Cipher, before anything uses it.
+│   │     The actor handles no other message until the record is on disk. It goes
+│   │     when the E3 ends
+│   │     File: crates/keyshare/src/threshold_keyshare/effects/initialize_dkg.rs
 │   │
 │   ├─ 4. State transition: Init → CollectingEncryptionKeys
 │   │
@@ -56,6 +60,9 @@ CiphernodeSelected event arrives at ThresholdKeyshare
 │   │     e3_id, party_id, bfv_public_key
 │   │   }
 │   │   → ZK proof actor picks this up
+│   │   → Only once effects run: in replay, resume publishes it. When the log
+│   │     holds another key of this node, the node lost the secret of the key that
+│   │     its peers hold, and publishes no second key (it abstains)
 │   │
 │   └─ Collector schedules use the frozen per-E3 window and absolute deadline:
 │         ├─ EncryptionKeyCollector: hard cutoff at 10% of the window
@@ -605,17 +612,20 @@ ShareVerificationActor receives ShareVerificationDispatched(kind=ShareProofs)
 │          different batches, such as a batch and its later growth, are both delivered.
 │
 └─ ThresholdKeyshare receives ShareVerificationComplete:
-    ├─ Until a C2/C3 result is recorded, applies each one to the first batch. After that,
-    │  it applies a result only if its dispatch is one that this node sent for the current
-    │  batch. The recovery state keeps those dispatch IDs, so replay applies such a result
-    │  where it applied before a restart. When the logged dispatch reaches the node and
-    │  holds every live dealer of the current batch and no other, the node saves the ID
-    │  again at the dispatch's own position, also when it already holds it. A batch that
+    ├─ Drops a C2/C3 result after the C2/C3 phase ended: the decryption-key calculation
+    │  retires the batch and its dispatch IDs, and a failed DKG or a published key also ends
+    │  the phase. A collector result that arrives after that cannot restore the batch.
+    ├─ Otherwise applies a result only while the batch exists and only if its dispatch is
+    │  one that this node sent for that batch; this includes the first result. The recovery
+    │  state keeps those dispatch IDs, so replay applies such a result where it applied
+    │  before a restart. When the logged dispatch reaches the node and holds every live
+    │  dealer of the current batch and no other, the node saves the ID again at the
+    │  dispatch's own position, also when it already holds it. A batch that
     │  EffectsEnabled sends again has no logged cause, and its first save uses the last
     │  saved context, which the store can refuse as stale: a later snapshot cut then keeps
     │  the ID, and replay from an earlier cut restores it from the log. It keeps any other
-    │  result and applies it when it sends a dispatch with that ID, as when a restart
-    │  sends the saved batch again. A result of an earlier batch therefore cannot count a
+    │  result, at most 64, and applies it when it sends a dispatch with that ID, as when a
+    │  restart sends the saved batch again. A result of an earlier batch therefore cannot count a
     │  dealer that only a grown batch holds as verified
     ├─ Excludes failed C2/C3 proofs and C3 proofs that target a different
     │  recipient key
@@ -625,8 +635,9 @@ ShareVerificationActor receives ShareVerificationDispatched(kind=ShareProofs)
     ├─ Re-verifies each late-share batch that, without its expelled dealers, holds every
     │  dealer of the saved batch that is not expelled, plus at least one more. An expelled
     │  dealer in the new batch is not growth. It publishes a new signed Ready list only
-    │  when the list keeps every dealer of the earlier one, so a Ready list never drops a
-    │  dealer, even an expelled one
+    │  when the list keeps every dealer of the earlier one that is not expelled and adds at
+    │  least one dealer that is not expelled, so a Ready list drops only expelled dealers
+    │  File: crates/keyshare/src/threshold_keyshare/effects/coordinate_roster.rs (ready_update)
     ├─ If fewer than H pass locally, stays outside C4 without failing the E3
     └─ Waits for one H-dealer roster before Step 7
 
@@ -635,9 +646,29 @@ dealer contributions. `AggregatorChanged` carries the active party ID, and thres
 persists that ID. A receiver keeps one authenticated roster per proposer. It can accept a roster
 from the active proposer or an earlier proposer whose failover budget has already elapsed locally.
 The proposer must have published a matching Ready list, the receiver's own Ready list must contain
-the roster, and every Ready list already held for a selected dealer must support it. Before C4
-starts, a roster from a lower party ID replaces a roster from a higher party ID. After C4 starts,
-the roster is fixed. A promoted aggregator re-proposes the accepted dealer list instead of deriving
+the roster, and every Ready list already held for a selected dealer must support it.
+
+A receiver applies a peer's Ready update with the same rule. It holds each refused update that adds
+a dealer but lacks a dealer of the held report, at most one per committee member for each reporter,
+in its saved recovery state: the reporter can have seen expulsions that the receiver has not seen
+yet, and the network resends the same events, which EventBus deduplication drops. After each
+expulsion, and when effects resume after a restart, the receiver applies the held updates that the
+expulsions now explain, one after another, and drops the ones that can no longer apply. It settles
+held updates only in the DKG phases, so a saved failure is redriven first. A roster
+that held Ready reports contradict stays held in the same way. Acceptance checks the roster's support
+again and that neither its proposer nor a selected dealer is expelled; a held roster with an
+expelled member is dropped. A later roster from the same proposer replaces a held roster that the
+local Ready state does not support. Before C4
+starts, a roster from a lower party ID replaces a roster from a higher party ID. An accepted
+roster is never dropped, so the commitment checker keeps its selection; until C4 starts, an
+expelled dealer is not an honest party, also when a restart restores the roster, and a fixed
+roster is restored with every dealer. C4 starts when the node sends its decryption-key
+calculation. It saves that fact with the selected parties. The logged calculation request saves
+the state again at its own position, also when the store refused the dispatch write as stale and
+memory already holds the fact, and replay delivers that request again, so a restart that loses the
+calculation keeps the roster fixed. A held
+roster with an expelled member gives way to a later roster of the same proposer. A promoted
+aggregator re-proposes the accepted dealer list instead of deriving
 a different list from its local delivery order.
 
 Once a node can derive a valid roster, or receives a supported roster that it cannot yet derive
@@ -846,7 +877,11 @@ phase.
 │   │
 │   ├─ Only the active aggregator starts C1 verification and later proof/compute effects
 │   │   → A promoted standby resumes from its persisted phase; it does not need a RAM buffer
-│   │   → A demoted node ignores late worker results and cannot publish a stale aggregate
+│   │   → A demoted node that dispatched C1 verification finishes that work and publishes its
+│   │     key; the first valid committee publication on chain wins. Once a key is on chain,
+│   │     the demoted node stops, and any node ignores a late C1 result: it neither fails the
+│   │     E3 nor accuses a dealer. A node that did not start the work ignores worker results
+│   │     File: crates/aggregator/src/public_key_aggregation/actor.rs (started_as_aggregator)
 │   ├─ C1 verification runs over the exact H selected submitters; failures stop DKG
 │   │
 │   ├─ Honest-set selection (compile-time H from `committee::active`, may be < N):
@@ -918,9 +953,9 @@ phase.
 └─ CiphernodeRegistrySolWriter receives PublicKeyAggregated:
   ├─ Accepts publication intents only from locally produced events; peer copies only distribute
   │  protocol state
-  ├─ During live operation, requires active_aggregators[e3_id] == true when admitting the intent
-  ├─ During startup replay, can retain one durable local intent while the persisted role is restored
-  ├─ Starts a retained submission only while active_aggregators[e3_id] == true
+  ├─ Has no role gate: a local intent exists only when this node computed the key as the active
+  │  aggregator, and a later failover demotion does not stop its submission
+  ├─ During startup replay, retains one durable local intent
   ├─ Defers and coalesces retained intents until EffectsEnabled
   ├─ Uses the registry from DkgFoldAttestationContextEstablished, including after a rotation
   ├─ Reads chain state to determine whether the proof-backed commitment is unset
@@ -942,6 +977,9 @@ phase.
      → RPC request-size rejection and permanent contract or payload errors are terminal for the
        running writer. They produce one final error instead of an unbounded 30-second retry loop
      → A restart replays the intent, so an unfinished publication still reaches the chain.
+       The public-key aggregator also sends its saved publication again when effects resume,
+       whatever its role now, since replay can start after the publication event; the writer
+       skips a commitment that is already on chain and finishes the chunks.
        E3RequestComplete that arrives before EffectsEnabled comes from that same replay and
        drops the intent: a completed request published its candidate in an earlier run, and
        repeating it only spends gas
@@ -1241,7 +1279,8 @@ committee size from this authority. It retains intents while authority is unavai
 it releases compute work or reuses a response.
 
 File: `crates/request/src/canonical_key.rs`, `crates/evm/src/canonical_key.rs`,
-`crates/keyshare/src/threshold_keyshare/effects/route_events.rs`, `crates/aggregator/src/ext.rs`,
+`crates/keyshare/src/threshold_keyshare/effects/recovery.rs` (key admission),
+`crates/keyshare/src/threshold_keyshare/validation.rs`, `crates/aggregator/src/ext.rs`,
 `crates/zk-prover/src/proof_request/effects/decryption_share_proofs.rs`,
 `crates/multithread/src/effect_gate.rs`.
 
@@ -1283,6 +1322,20 @@ InterfoldSolReader decodes CiphertextOutputPublished event
       │   → Hydration clears these process-local markers; `EffectsEnabled` resumes retained work.
       │   → A local worker or task-pool failure retries the same request and correlation ID.
       │   → The node does not report a local failure as invalid decryption shares.
+      │   → EventBus fan-out can lose a request or its result. When a phase's result has not
+      │     arrived 5 minutes after its last request, the keyshare sends the request again, at
+      │     most 6 times per phase: a share calculation under a new correlation ID, and a C6
+      │     intent with a fresh random `redelivery` value. Only the first intent has zero, and a
+      │     restart cannot repeat a value that replay brings back. A terminal event stops
+      │     redelivery at once, also while its cleanup retries.
+      │   → `ComputeEffectGate` runs one compute per request payload and answers every
+      │     correlation ID. A request under a new ID whose result has not reached the gate 10
+      │     minutes after it went to the worker goes to the worker again.
+      │   → `ProofRequestActor` asks for the proof again for each new nonzero `redelivery`, also
+      │     after the proof completed, and ignores copies. `DecryptionShareProofSigned` carries
+      │     the `redelivery` it answers, so EventBus deduplication passes a second completion.
+      │     After an E3 ends, its C6 intents are ignored.
+      │     File: crates/keyshare/src/threshold_keyshare/effects/create_decryption_share.rs
     │
     ├─ REQUEST C6 PROOF:
     │   Publish ShareDecryptionProofPending {

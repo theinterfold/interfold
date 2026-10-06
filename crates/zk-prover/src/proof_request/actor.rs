@@ -31,6 +31,34 @@ use crate::workflow::proof_request::{
     PendingProofRequest, PendingShareDecryptionProof, PendingThresholdProofs, ThresholdProofKind,
 };
 
+/// Bound on remembered terminal E3s. A late request follows its E3's end closely.
+const MAX_FINISHED_E3S: usize = 1_024;
+
+/// Terminal E3s, oldest first, at most [`MAX_FINISHED_E3S`].
+#[derive(Default)]
+pub(crate) struct FinishedE3s {
+    order: std::collections::VecDeque<E3id>,
+    set: std::collections::HashSet<E3id>,
+}
+
+impl FinishedE3s {
+    pub(crate) fn insert(&mut self, e3_id: E3id) {
+        if !self.set.insert(e3_id.clone()) {
+            return;
+        }
+        self.order.push_back(e3_id);
+        if self.order.len() > MAX_FINISHED_E3S {
+            if let Some(oldest) = self.order.pop_front() {
+                self.set.remove(&oldest);
+            }
+        }
+    }
+
+    pub(crate) fn contains(&self, e3_id: &E3id) -> bool {
+        self.set.contains(e3_id)
+    }
+}
+
 /// Core actor that handles encryption key proof requests.
 ///
 /// Proofs are always wrapped in a [`SignedProofPayload`] before being published,
@@ -40,6 +68,9 @@ pub struct ProofRequestActor {
     bus: BusHandle,
     canonical_keys: e3_request::canonical_key::CanonicalPublicKeys,
     held_share_decryption: HashMap<E3id, TypedEvent<ShareDecryptionProofPending>>,
+    /// E3s whose terminal event arrived, newest last, at most [`MAX_FINISHED_E3S`]. A C6 request
+    /// that arrives later is ignored.
+    finished_e3s: FinishedE3s,
     signer: PrivateKeySigner,
     proof_aggregation_enabled: bool,
     pending: HashMap<CorrelationId, PendingProofRequest>,
@@ -79,6 +110,7 @@ impl ProofRequestActor {
             bus: bus.clone(),
             canonical_keys: Default::default(),
             held_share_decryption: HashMap::new(),
+            finished_e3s: FinishedE3s::default(),
             signer,
             proof_aggregation_enabled,
             pending: HashMap::new(),

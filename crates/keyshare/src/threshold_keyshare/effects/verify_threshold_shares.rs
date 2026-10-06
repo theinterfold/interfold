@@ -5,6 +5,10 @@
 use super::*;
 use e3_events::CircuitName;
 
+/// Bound on C2/C3 results that wait for their share batch. A node sends at most one dispatch per
+/// batch, and a batch grows at most once per dealer.
+const MAX_PARKED_SHARE_VERDICTS: usize = 64;
+
 impl ThresholdKeyshare {
     /// Verify the collected C2/C3 proofs before decryption-key aggregation.
     pub fn handle_all_threshold_shares_collected(
@@ -198,35 +202,55 @@ impl ThresholdKeyshare {
         }
     }
 
-    /// Whether a delivered verification result belongs to the current batch. Until a C2/C3
-    /// result is recorded, only the first batch exists, so its results apply. After that, a C2/C3
-    /// result applies only if its dispatch is one that this node sent for the current batch. The
-    /// recovery state keeps those dispatch IDs, so after a restart replay applies such a result
-    /// where it applied before. After a restart, a batch can be sent again with another payload
-    /// when an expulsion came between, so a result of the earlier batch can arrive after the batch
-    /// grew. It would count the dealers that only the grown batch holds as verified. Such a result
-    /// is kept, and it applies if this actor later sends a dispatch with its ID.
+    /// Whether a delivered verification result belongs to the current batch. A C2/C3 result
+    /// applies only while the batch exists and only if its dispatch is one that this node sent for
+    /// that batch. The recovery state keeps those dispatch IDs, so after a restart replay applies
+    /// such a result where it applied before.
+    ///
+    /// A result after the C2/C3 phase ended (decryption-key calculation done, the DKG failed, or
+    /// the key is on chain) changes nothing and is dropped. Any other result is kept and applies
+    /// when this actor sends a dispatch with its ID. After a restart the batch can be missing until
+    /// a collector rebuilds it, and a batch can be sent again with another payload when an
+    /// expulsion came between. A result of an earlier batch would count the dealers that only the
+    /// grown batch holds as verified.
     pub(in crate::actors::threshold_keyshare) fn share_verification_applies(
         &mut self,
         msg: &TypedEvent<ShareVerificationComplete>,
     ) -> Result<bool> {
-        if msg.kind != VerificationKind::ShareProofs
-            || self.recovery.try_get()?.verified_dealer_ids.is_none()
+        if msg.kind != VerificationKind::ShareProofs {
+            return Ok(true);
+        }
+        let state = self.state.try_get()?;
+        if self.canonical_key_published || !state.state.share_collection_is_open() {
+            info!(
+                e3_id = %msg.e3_id,
+                state = state.variant_name(),
+                "Dropping a C2/C3 result after the C2/C3 phase ended"
+            );
+            return Ok(false);
+        }
+        let dispatch_id = msg.get_ctx().causation_id();
+        let recovery = self.recovery.try_get()?;
+        if recovery.collected_threshold_share_ids.is_some()
+            && recovery.share_dispatch_ids.contains(&dispatch_id)
         {
             return Ok(true);
         }
-        let dispatch_id = msg.get_ctx().causation_id();
-        if self
-            .recovery
-            .try_get()?
-            .share_dispatch_ids
-            .contains(&dispatch_id)
+        if self.pending.parked_share_verdicts.len() >= MAX_PARKED_SHARE_VERDICTS
+            && !self
+                .pending
+                .parked_share_verdicts
+                .contains_key(&dispatch_id)
         {
-            return Ok(true);
+            warn!(
+                e3_id = %msg.e3_id,
+                "Dropping a C2/C3 result: too many results wait for their share batch"
+            );
+            return Ok(false);
         }
         info!(
             e3_id = %msg.e3_id,
-            "Keeping a C2/C3 result that does not belong to the current share batch"
+            "Keeping a C2/C3 result until this node sends its dispatch for the current share batch"
         );
         self.pending
             .parked_share_verdicts

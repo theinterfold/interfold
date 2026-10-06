@@ -127,6 +127,16 @@ impl Handler<TypedEvent<ComputeResponse>> for ThresholdKeyshare {
     }
 }
 
+impl Handler<RedeliverDecryptionWork> for ThresholdKeyshare {
+    type Result = ();
+
+    fn handle(&mut self, msg: RedeliverDecryptionWork, _: &mut Self::Context) -> Self::Result {
+        if let Err(error) = self.redeliver_decryption_work(msg.0) {
+            error!(%error, "Could not redeliver decryption work");
+        }
+    }
+}
+
 impl Handler<TypedEvent<ComputeRequestError>> for ThresholdKeyshare {
     type Result = ();
 
@@ -186,7 +196,7 @@ impl Handler<TypedEvent<CiphernodeSelected>> for ThresholdKeyshare {
             trap(
                 EType::KeyGeneration,
                 &self.bus.with_ec(msg.get_ctx()),
-                || self.handle_ciphernode_selected(msg, ctx.address()),
+                || self.handle_ciphernode_selected(msg, ctx),
             );
             return Box::pin(async {}.into_actor(self));
         }
@@ -207,7 +217,7 @@ impl Handler<TypedEvent<CiphernodeSelected>> for ThresholdKeyshare {
                         state.dkg_window_secs = Some(window);
                         Ok(state)
                     })?;
-                    actor.handle_ciphernode_selected(msg.clone(), ctx.address())
+                    actor.handle_ciphernode_selected(msg.clone(), ctx)
                 });
                 if let Err(error) = result {
                     actor.bus.err(EType::KeyGeneration, error);
@@ -410,15 +420,30 @@ impl Handler<TypedEvent<E3RequestComplete>> for ThresholdKeyshare {
         event: TypedEvent<E3RequestComplete>,
         ctx: &mut Self::Context,
     ) -> Self::Result {
+        // No decryption work is redelivered after the end, also while the cleanup below retries.
+        self.pending.decryption_share_request = None;
+        self.pending.decryption_proof_request = None;
         if let Err(error) = self.clear_large_recovery_payloads(event.get_ctx()) {
             error!(%error, "Could not clear terminal DKG recovery payloads");
             ctx.notify_later(event, std::time::Duration::from_secs(1));
             return;
         }
-        self.encryption_key_collector = None;
-        self.decryption_key_shared_collector = None;
-        self.pending = PendingKeyshareWork::default();
-        self.notify_sync(ctx, Die);
+        // The BFV keypair lives until the E3 ends. The actor stops only once its removal is on disk.
+        let keys = self.bfv_keys.clone();
+        ctx.wait(async move { keys.settle().await }.into_actor(self).map(
+            move |settled, actor, ctx| {
+                if let Err(error) = settled {
+                    error!(%error, "Could not remove the BFV key of an ended E3");
+                    ctx.notify_later(event, std::time::Duration::from_secs(1));
+                    return;
+                }
+                actor.bfv_key = None;
+                actor.encryption_key_collector = None;
+                actor.decryption_key_shared_collector = None;
+                actor.pending = PendingKeyshareWork::default();
+                actor.notify_sync(ctx, Die);
+            },
+        ));
     }
 }
 

@@ -28,4 +28,8 @@ pub struct ShareDecryptionProofPending {
     pub decryption_share: Vec<ArcBytes>,
     /// C6 proof generation request.
     pub proof_request: ThresholdShareDecryptionProofRequest,
+    /// Zero for the first request, and a fresh random value for each redelivery, also after a
+    /// restart. EventBus deduplication passes each redelivery, and ProofRequestActor tells it from
+    /// a copy of a request that it already has.
+    pub redelivery: u64,
 }

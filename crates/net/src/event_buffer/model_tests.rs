@@ -180,3 +180,49 @@ async fn a_responder_that_resets_between_pages_fails_as_a_source() {
         .to_string()
         .contains("changed its live-history time from Some(5) to None"));
 }
+
+/// A responder that ends its own startup during the fetch keeps its log: its pages still form one
+/// history, and the source keeps the time of its first page, so it vouches for nothing.
+#[tokio::test]
+async fn a_responder_that_ends_its_startup_between_pages_stays_a_source() {
+    let (net_cmds_tx, net_cmds_rx) = mpsc::channel::<NetCommand>(16);
+    let net_events_tx = NetEventChannel::new(16);
+    let _net_events_rx = net_events_tx.subscribe();
+    let net_events = NetEventSubscriber::from(&net_events_tx);
+
+    let requester = DirectRequester::builder(net_cmds_tx, net_events).build();
+    let starting = EventBatch {
+        events: vec![b"a".to_vec()],
+        next: BatchCursor::Next(200),
+        aggregate_id: AggregateId::new(1),
+        observed_from: None,
+    };
+    let started = EventBatch {
+        events: vec![b"b".to_vec()],
+        next: BatchCursor::Done,
+        aggregate_id: AggregateId::new(1),
+        observed_from: Some(7),
+    };
+    let handle = DirectRequesterTester::new(net_cmds_rx, net_events_tx)
+        .expect_request(FetchEventsSince::new(AggregateId::new(1), 0, 1))
+        .respond_with(starting)
+        .expect_request(FetchEventsSince::new(AggregateId::new(1), 200, 1))
+        .respond_with(started)
+        .spawn();
+
+    let fetched = fetch_all_batched_events_with_budget::<Vec<u8>>(
+        requester,
+        PeerTarget::Random,
+        AggregateId::new(1),
+        0,
+        1,
+        &mut SyncFetchBudget::production(),
+        None,
+    )
+    .await
+    .unwrap();
+
+    handle.await.unwrap();
+    assert_eq!(fetched.events, vec![b"a".to_vec(), b"b".to_vec()]);
+    assert_eq!(fetched.observed_from, None);
+}

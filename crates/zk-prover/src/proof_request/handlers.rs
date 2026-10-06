@@ -23,6 +23,7 @@ impl Handler<InterfoldEvent> for ProofRequestActor {
             _ => None,
         };
         if let Some(id) = finished {
+            self.finished_e3s.insert(id.clone());
             self.held_share_decryption.remove(id);
             self.pending_share_decryption.remove(id);
             self.share_decryption_correlation

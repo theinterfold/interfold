@@ -5,7 +5,7 @@
 use super::effects::*;
 use super::*;
 use e3_events::EventSource;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 const PUBLICATION_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(30);
 
@@ -22,18 +22,15 @@ fn update_request_registry(
     true
 }
 
+/// Forget the registry of a completed request. A publication that is still pending keeps it: its
+/// terminal outcome removes the registry.
 fn mark_request_complete(
-    active_aggregators: &mut HashMap<E3id, bool>,
-    completed_requests: &mut HashSet<E3id>,
     request_registries: &mut HashMap<E3id, Address>,
-    e3_id: E3id,
+    e3_id: &E3id,
     publication_pending: bool,
 ) {
-    if publication_pending {
-        completed_requests.insert(e3_id);
-    } else {
-        active_aggregators.remove(&e3_id);
-        request_registries.remove(&e3_id);
+    if !publication_pending {
+        request_registries.remove(e3_id);
     }
 }
 
@@ -57,19 +54,12 @@ fn settle_publication_for_completed_request(
     publication.contains(e3_id)
 }
 
-fn finish_completed_publication(
-    active_aggregators: &mut HashMap<E3id, bool>,
-    completed_requests: &mut HashSet<E3id>,
-    e3_id: &E3id,
-) {
-    if completed_requests.remove(e3_id) {
-        active_aggregators.remove(e3_id);
-    }
-}
-
 impl<P: Provider + WalletProvider + Clone + 'static> CiphernodeRegistrySolWriter<P> {
+    /// Start this node's own key publication. The router admits only local results, and a local
+    /// result exists only when this node computed the key as the active aggregator. A failover that
+    /// demotes the node later does not stop the publication: the chain accepts the first valid one.
     fn try_start_public_key(&mut self, e3_id: &E3id, ctx: &mut actix::Context<Self>) {
-        if !self.is_active_aggregator_for(e3_id) || !self.request_registries.contains_key(e3_id) {
+        if !self.request_registries.contains_key(e3_id) {
             return;
         }
 
@@ -126,7 +116,6 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<InterfoldEvent>
         let source = msg.source();
         match msg.into_data() {
             InterfoldEventData::EffectsEnabled(data) => self.notify_sync(ctx, data),
-            InterfoldEventData::AggregatorChanged(data) => self.notify_sync(ctx, data),
             InterfoldEventData::DkgFoldAttestationContextEstablished(data) => {
                 if self.provider.chain_id() == data.e3_id.chain_id() {
                     ctx.notify(data);
@@ -172,21 +161,6 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<EffectsEnabled>
     }
 }
 
-impl<P: Provider + WalletProvider + Clone + 'static> Handler<AggregatorChanged>
-    for CiphernodeRegistrySolWriter<P>
-{
-    type Result = ();
-
-    fn handle(&mut self, msg: AggregatorChanged, ctx: &mut Self::Context) -> Self::Result {
-        let e3_id = msg.e3_id;
-        self.active_aggregators
-            .insert(e3_id.clone(), msg.is_aggregator);
-        if msg.is_aggregator {
-            self.try_start_public_key(&e3_id, ctx);
-        }
-    }
-}
-
 impl<P: Provider + WalletProvider + Clone + 'static> Handler<DkgFoldAttestationContextEstablished>
     for CiphernodeRegistrySolWriter<P>
 {
@@ -224,12 +198,11 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<E3RequestComplete>
         self.ticket_submissions.finish(&msg.e3_id, true);
         self.committee_finalizations.finish(&msg.e3_id, true);
         mark_request_complete(
-            &mut self.active_aggregators,
-            &mut self.completed_requests,
             &mut self.request_registries,
-            msg.e3_id,
+            &msg.e3_id,
             publication_pending,
         );
+        self.completed_e3s.insert(msg.e3_id);
     }
 }
 
@@ -385,16 +358,23 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<SubmitCommitteeFina
 #[cfg(test)]
 mod tests {
     use super::{
-        finish_completed_publication, mark_request_complete,
-        settle_publication_for_completed_request, update_request_registry, ReplaySubmissionGate,
+        mark_request_complete, settle_publication_for_completed_request, update_request_registry,
+        CiphernodeRegistrySolWriter, EthProvider, ReplaySubmissionGate,
     };
-    use alloy::primitives::Address;
+    use actix::Actor;
+    use alloy::{
+        network::EthereumWallet, primitives::Address, providers::ProviderBuilder,
+        signers::local::PrivateKeySigner, transports::mock::Asserter,
+    };
+    use e3_events::prelude::*;
     use e3_events::{
-        DkgFoldAttestationContext, DkgFoldAttestationContextEstablished, E3id, OrderedSet,
-        PublicKeyAggregated, DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
+        DkgFoldAttestationContext, DkgFoldAttestationContextEstablished, E3id, EffectsEnabled,
+        EventSource, InterfoldEvent, OrderedSet, PublicKeyAggregated, TakeEvents, Unsequenced,
+        DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
     };
+    use e3_test_helpers::get_common_setup;
     use e3_utils::ArcBytes;
-    use std::collections::{HashMap, HashSet};
+    use std::collections::HashMap;
 
     #[test]
     fn valid_context_records_the_request_time_registry() {
@@ -475,31 +455,130 @@ mod tests {
     }
 
     #[test]
-    fn completion_retains_retryable_publication_state_until_terminal_outcome() {
+    fn completion_keeps_the_registry_of_a_pending_publication() {
         let e3_id = E3id::new("9", 1);
         let registry = Address::repeat_byte(0x55);
-        let mut active = HashMap::from([(e3_id.clone(), true)]);
-        let mut completed = HashSet::new();
         let mut registries = HashMap::from([(e3_id.clone(), registry)]);
 
-        mark_request_complete(
-            &mut active,
-            &mut completed,
-            &mut registries,
-            e3_id.clone(),
-            true,
-        );
-
-        assert_eq!(active.get(&e3_id), Some(&true));
+        mark_request_complete(&mut registries, &e3_id, true);
         assert_eq!(registries.get(&e3_id), Some(&registry));
-        assert!(completed.contains(&e3_id));
 
-        finish_completed_publication(&mut active, &mut completed, &e3_id);
-        registries.remove(&e3_id);
-
-        assert!(!active.contains_key(&e3_id));
-        assert!(!completed.contains(&e3_id));
+        mark_request_complete(&mut registries, &e3_id, false);
         assert!(!registries.contains_key(&e3_id));
+    }
+
+    fn local_event(data: impl Into<e3_events::InterfoldEventData>, seq: u64) -> InterfoldEvent {
+        InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            data.into(),
+            None,
+            seq as u128,
+            None,
+            EventSource::Local,
+        )
+        .into_sequenced(seq)
+    }
+
+    /// Number of key results that the writer keeps for publication.
+    #[derive(actix::Message)]
+    #[rtype(result = "usize")]
+    struct RetainedPublications;
+
+    impl<P: alloy::providers::Provider + alloy::providers::WalletProvider + Clone + 'static>
+        actix::Handler<RetainedPublications> for CiphernodeRegistrySolWriter<P>
+    {
+        type Result = usize;
+
+        fn handle(&mut self, _: RetainedPublications, _: &mut Self::Context) -> usize {
+            self.publication.pending_keys().len()
+        }
+    }
+
+    async fn mocked_writer(
+        bus: &e3_events::BusHandle,
+        e3_id: &E3id,
+    ) -> anyhow::Result<
+        actix::Addr<
+            CiphernodeRegistrySolWriter<
+                impl alloy::providers::Provider + alloy::providers::WalletProvider + Clone + 'static,
+            >,
+        >,
+    > {
+        let asserter = Asserter::new();
+        asserter.push_success(&"0x1");
+        let provider = EthProvider::new(
+            ProviderBuilder::new()
+                .wallet(EthereumWallet::from(PrivateKeySigner::random()))
+                .connect_mocked_client(asserter),
+        )
+        .await?;
+        Ok(CiphernodeRegistrySolWriter::new_with_recovery(
+            bus,
+            provider,
+            Address::repeat_byte(0x44),
+            HashMap::from([(e3_id.clone(), Address::repeat_byte(0x33))]),
+            HashMap::new(),
+        )?
+        .start())
+    }
+
+    #[actix::test]
+    async fn a_key_result_after_its_request_completed_is_not_kept() -> anyhow::Result<()> {
+        let (bus, _rng, _seed, _params, _crp, _errors, _history) = get_common_setup(None)?;
+        let e3_id = E3id::new("13", 1);
+        let writer = mocked_writer(&bus, &e3_id).await?;
+        writer.send(local_event(EffectsEnabled::new(), 1)).await?;
+
+        // The request completes; a demoted aggregator finishes its key afterwards.
+        writer
+            .send(local_event(
+                e3_events::E3RequestComplete {
+                    e3_id: e3_id.clone(),
+                },
+                2,
+            ))
+            .await?;
+        writer
+            .send(local_event(publication_intent(&e3_id), 3))
+            .await?;
+
+        assert_eq!(writer.send(RetainedPublications).await?, 0);
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn submits_its_own_key_without_being_the_active_aggregator() -> anyhow::Result<()> {
+        let (bus, _rng, _seed, _params, _crp, errors, _history) = get_common_setup(None)?;
+        let asserter = Asserter::new();
+        asserter.push_success(&"0x1");
+        let provider = EthProvider::new(
+            ProviderBuilder::new()
+                .wallet(EthereumWallet::from(PrivateKeySigner::random()))
+                .connect_mocked_client(asserter),
+        )
+        .await?;
+        let e3_id = E3id::new("12", 1);
+        let writer = CiphernodeRegistrySolWriter::new_with_recovery(
+            &bus,
+            provider,
+            Address::repeat_byte(0x44),
+            HashMap::from([(e3_id.clone(), Address::repeat_byte(0x33))]),
+            HashMap::new(),
+        )?
+        .start();
+
+        // No AggregatorChanged arrives: a failover demoted this node after it computed the key.
+        writer.send(local_event(EffectsEnabled::new(), 1)).await?;
+        writer
+            .send(local_event(publication_intent(&e3_id), 2))
+            .await?;
+
+        // The submission starts with the chain preflight, which the empty mock transport fails.
+        let failure = errors.send(TakeEvents::<InterfoldEvent>::new(1)).await?;
+        assert!(
+            !failure.timed_out,
+            "the writer did not submit this node's own key"
+        );
+        Ok(())
     }
 }
 
@@ -510,8 +589,8 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<PublicKeyAggregated
 
     fn handle(&mut self, msg: PublicKeyAggregated, ctx: &mut Self::Context) -> Self::Result {
         let e3_id = msg.e3_id.clone();
-        if self.effects_enabled && !self.is_active_aggregator_for(&e3_id) {
-            info!(e3_id = %e3_id, "Ignoring public-key result while this node is not the active aggregator");
+        if self.completed_e3s.contains(&e3_id) {
+            info!(e3_id = %e3_id, "Ignoring a public-key result for a completed request");
             return;
         }
         self.publication.record(e3_id.clone(), msg);
@@ -530,7 +609,7 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<SubmitPublicKey>
 
     fn handle(&mut self, command: SubmitPublicKey, _ctx: &mut Self::Context) -> Self::Result {
         let msg = command.0;
-        if !self.is_active_aggregator_for(&msg.e3_id) || !self.publication.contains(&msg.e3_id) {
+        if !self.publication.contains(&msg.e3_id) {
             self.publication.finish(&msg.e3_id, false);
             return Box::pin(async {}.into_actor(self));
         }
@@ -630,11 +709,6 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<SubmitPublicKey>
                 actor.publication.finish(&e3_id, terminal);
                 if terminal {
                     actor.request_registries.remove(&e3_id);
-                    finish_completed_publication(
-                        &mut actor.active_aggregators,
-                        &mut actor.completed_requests,
-                        &e3_id,
-                    );
                 } else {
                     ctx.run_later(PUBLICATION_RETRY_DELAY, move |actor, ctx| {
                         actor.try_start_public_key(&e3_id, ctx);

@@ -544,9 +544,11 @@ impl UnscopedAppConfig {
     }
 }
 
-/// Value struct for passing configuration from the cli to the configuration
+/// Value struct for passing configuration from the cli to the configuration. A flag that was not
+/// given is not serialized, so the value from the file or from `E3_*` stays.
 #[derive(Default, Serialize, Deserialize, Clone, Debug)]
 struct CliOverrides {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub otel: Option<String>,
     pub found_config_file: Option<PathBuf>,
     pub using_custom_config: bool,
@@ -889,6 +891,38 @@ chains:
             chain = config.chains().first().unwrap();
             assert_eq!(chain.rpc_auth, RpcAuth::Bearer("testToken".to_string()));
 
+            Ok(())
+        });
+    }
+
+    /// `otel` comes from the `--otel` flag, else from `E3_OTEL`, else from the configuration file.
+    /// A flag that was not given leaves the others.
+    #[test]
+    fn otel_comes_from_the_flag_the_environment_or_the_file() {
+        Jail::expect_with(|jail| {
+            // An `E3_OTEL` of the shell that runs the test must not decide the first case.
+            jail.clear_env();
+            let home = format!("{}", jail.directory().to_string_lossy());
+            jail.set_env("HOME", &home);
+            jail.set_env("XDG_CONFIG_HOME", format!("{home}/.config"));
+            jail.create_file("interfold.config.yaml", "otel: \"http://from-yaml:4317\"\n")?;
+            let otel = |flag: Option<&str>| {
+                load_config(
+                    "_default",
+                    Some("interfold.config.yaml".to_string()),
+                    flag.map(str::to_string),
+                )
+                .map(|config| config.otel())
+                .map_err(|error| error.to_string())
+            };
+
+            assert_eq!(otel(None)?.as_deref(), Some("http://from-yaml:4317"));
+            jail.set_env("E3_OTEL", "http://from-env:4317");
+            assert_eq!(otel(None)?.as_deref(), Some("http://from-env:4317"));
+            assert_eq!(
+                otel(Some("http://from-flag:4317"))?.as_deref(),
+                Some("http://from-flag:4317")
+            );
             Ok(())
         });
     }
