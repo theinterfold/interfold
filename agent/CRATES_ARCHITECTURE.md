@@ -638,8 +638,10 @@ buffer releases that gossip at `SyncEnded` and then a marker, and the translator
 after the marker, when the event pipeline has stored what it handed over. Input lag after startup,
 at the buffer or the translator, skips gossip that never reaches storage, and revokes the hint for
 the rest of the process. A reply carries the value from when the node admitted the request, before
-its storage read, and none when the value changed by the reply. A requester fails a source whose
-value changes between pages, as after a reset. While no source's hint covers the whole range, the
+its storage read, and none when the value changed by the reply. A requester fails a source that
+loses the value that it had between pages, as after a reset. A source whose first page had none
+keeps none for the whole fetch, also when the responder ends its startup during the fetch, so it
+vouches for nothing. While no source's hint covers the whole range, the
 node asks further peers, up to four in all, and then logs that the history may be incomplete. It
 asks them only after every aggregate has its sources, with what the fetch budget has left, so these
 optional reads cannot leave a required one without budget. Such a peer gets one attempt per page and
