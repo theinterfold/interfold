@@ -104,8 +104,8 @@
           "deploy_block": 11855912
         },
         "Risc0BfvCiphertextVerifier": {
-          "address": "0xBBcE489cf767904Ca808944806110d8c8A9332Da",
-          "deploy_block": 11855803
+          "address": "0x46efa79e2F2cdB3C5734D989169256de21653F11",
+          "deploy_block": 11856595
         }
       }
     }
