@@ -127,12 +127,9 @@ async fn peer_keys_that_arrive_before_selection_count_toward_collection() -> Res
     actor
         .send(keyshare_event(selection(&e3_id), 3, EventSource::Evm))
         .await?;
-    wait_for_keyshare_state(&repo, |state| {
-        matches!(state, KeyshareState::CollectingEncryptionKeys(_))
-    })
-    .await?;
+    let own_key = wait_for_own_key(&e3_id, &repo).await?;
     actor
-        .send(keyshare_event(peer_key(&e3_id, 0), 4, EventSource::Local))
+        .send(keyshare_event(own_key, 4, EventSource::Local))
         .await?;
 
     // The collector holds all three keys, so the DKG continues before the 10% cutoff.
@@ -391,11 +388,8 @@ async fn a_restart_after_the_key_cutoff_continues_with_h_recorded_keys() -> Resu
         &[],
     )
     .await?;
-    for party_id in [0, 1] {
-        actor.record_encryption_key(&TypedEvent::new(
-            peer_key(&e3_id, party_id),
-            test_ec(party_id + 1),
-        ))?;
+    for (seq, key) in [(1, own_key(&e3_id)), (2, peer_key(&e3_id, 1))] {
+        actor.record_encryption_key(&TypedEvent::new(key, test_ec(seq)))?;
     }
     let actor = actor.start();
     actor
@@ -572,16 +566,17 @@ async fn a_key_collector_created_after_an_expulsion_does_not_wait_for_that_party
     // The encryption-key cutoff (10% of 7,200 s) is 720 s after selection.
     let (actor, repo) = start_actor_before_selection(&e3_id, 7_200).await?;
     actor
-        .send(keyshare_event(peer_key(&e3_id, 0), 1, EventSource::Local))
+        .send(keyshare_event(peer_key(&e3_id, 2), 1, EventSource::Net))
         .await?;
     actor
-        .send(keyshare_event(peer_key(&e3_id, 2), 2, EventSource::Net))
+        .send(keyshare_event(expulsion_of(&e3_id, 1), 2, EventSource::Evm))
         .await?;
     actor
-        .send(keyshare_event(expulsion_of(&e3_id, 1), 3, EventSource::Evm))
+        .send(keyshare_event(selection(&e3_id), 3, EventSource::Evm))
         .await?;
+    let own_key = wait_for_own_key(&e3_id, &repo).await?;
     actor
-        .send(keyshare_event(selection(&e3_id), 4, EventSource::Evm))
+        .send(keyshare_event(own_key, 4, EventSource::Local))
         .await?;
 
     // The new collector knows that party 1 is expelled, so keys 0 and 2 complete the collection
@@ -651,11 +646,8 @@ async fn a_restarted_key_collector_does_not_wait_for_an_expelled_party() -> Resu
         &[1],
     )
     .await?;
-    for party_id in [0, 2] {
-        actor.record_encryption_key(&TypedEvent::new(
-            peer_key(&e3_id, party_id),
-            test_ec(party_id + 1),
-        ))?;
+    for (seq, key) in [(1, own_key(&e3_id)), (3, peer_key(&e3_id, 2))] {
+        actor.record_encryption_key(&TypedEvent::new(key, test_ec(seq)))?;
     }
     let actor = actor.start();
     actor
@@ -739,9 +731,7 @@ async fn an_expulsion_that_leaves_fewer_than_h_keys_fails_the_dkg() -> Result<()
     let actor = actor.start();
 
     // The collector completed with H = 2 keys before party 1's expulsion reached it.
-    let keys = [0, 1]
-        .map(|party_id| peer_key(&e3_id, party_id).key)
-        .to_vec();
+    let keys = vec![own_key(&e3_id).key, peer_key(&e3_id, 1).key];
     actor
         .send(TypedEvent::new(
             AllEncryptionKeysCollected { keys },
@@ -1322,6 +1312,37 @@ fn selection(e3_id: &E3id) -> CiphernodeSelected {
     }
 }
 
+/// This node's (party 0's) key: the public key that `collecting_encryption_keys_state` collects
+/// with. A key of party 0 with another public key means that this node lost its key's secret.
+fn own_key(e3_id: &E3id) -> EncryptionKeyCreated {
+    own_key_with(e3_id, ArcBytes::from_bytes(&[2]))
+}
+
+/// This node's (party 0's) key with the public key `pk_bfv`.
+fn own_key_with(e3_id: &E3id, pk_bfv: ArcBytes) -> EncryptionKeyCreated {
+    EncryptionKeyCreated {
+        e3_id: e3_id.clone(),
+        key: Arc::new(EncryptionKey::new(0, pk_bfv)),
+        external: false,
+    }
+}
+
+/// Wait until a freshly selected node collects encryption keys, and return its key, with the public
+/// key that it generated.
+async fn wait_for_own_key(
+    e3_id: &E3id,
+    repo: &Repository<ThresholdKeyshareState>,
+) -> Result<EncryptionKeyCreated> {
+    let KeyshareState::CollectingEncryptionKeys(data) = wait_for_keyshare_state(repo, |state| {
+        matches!(state, KeyshareState::CollectingEncryptionKeys(_))
+    })
+    .await?
+    else {
+        unreachable!("the wait returns only a matching state");
+    };
+    Ok(own_key_with(e3_id, data.pk_bfv))
+}
+
 fn peer_key(e3_id: &E3id, party_id: u64) -> EncryptionKeyCreated {
     EncryptionKeyCreated {
         e3_id: e3_id.clone(),
@@ -1502,6 +1523,55 @@ fn test_ec(seq: u64) -> EventContext<Sequenced> {
     .clone()
 }
 
+/// A key collection with another key of this node than the one whose secret it holds starts no
+/// share generation: the node lost the secret of the key that its peers encrypt to.
+#[actix::test]
+async fn a_collection_with_another_key_of_this_node_starts_no_share_generation() -> Result<()> {
+    for (own, generates) in [(9_u8, false), (2_u8, true)] {
+        let e3_id = E3id::new("72", 1);
+        let (bus, _history) = test_bus();
+        let (mut state, _) = test_state(&e3_id, collecting_encryption_keys_state(&e3_id));
+        state.try_mutate_without_context(|mut state| {
+            let now = crate::domain::timeout_policy::now_unix_secs();
+            state.dkg_deadline_unix_secs = Some(now + 7_200);
+            state.dkg_window_secs = Some(3_600);
+            state.params = insecure_threshold_params();
+            Ok(state)
+        })?;
+        let mut actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+            bfv_key: test_bfv_key(),
+            bus,
+            cipher: Arc::new(Cipher::from_password("test-password").await?),
+            state,
+            share_enc_preset: BfvPreset::InsecureDkg512,
+            interfold_address: Address::ZERO,
+            signer: dealer_signer(0),
+            effects_enabled: true,
+            recovery: test_recovery(),
+            recovery_payloads: test_recovery_payloads(),
+            dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
+        });
+        let key = |party_id: u64, pk: u8| {
+            Arc::new(EncryptionKey::new(party_id, ArcBytes::from_bytes(&[pk])))
+        };
+        let _ = actor.handle_all_encryption_keys_collected(TypedEvent::new(
+            AllEncryptionKeysCollected {
+                keys: vec![key(0, own), key(1, 11), key(2, 12)],
+            },
+            test_ec(1),
+        ));
+        assert_eq!(
+            !matches!(
+                actor.state.get().map(|state| state.state),
+                Some(KeyshareState::CollectingEncryptionKeys(_))
+            ),
+            generates,
+            "own key {own}"
+        );
+    }
+    Ok(())
+}
+
 fn collecting_encryption_keys_state(e3_id: &E3id) -> KeyshareState {
     KeyshareState::CollectingEncryptionKeys(CollectingEncryptionKeysData {
         sk_bfv: SensitiveBytes::from_encrypted(&[1]),
@@ -1610,9 +1680,7 @@ async fn recovered_encryption_keys_reuse_the_replayed_key_output() -> Result<()>
     actor.handle_gen_pk_share_and_sk_sss_response(gen_pk_response(&cipher, &e3_id, 2)?)?;
     actor.handle_all_encryption_keys_collected(TypedEvent::new(
         AllEncryptionKeysCollected {
-            keys: [0, 1]
-                .map(|party_id| peer_key(&e3_id, party_id).key)
-                .to_vec(),
+            keys: vec![own_key(&e3_id).key, peer_key(&e3_id, 1).key],
         },
         test_ec(1),
     ))?;

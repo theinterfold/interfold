@@ -172,6 +172,23 @@ impl ThresholdKeyshare {
         let state = self.state.try_get()?;
         let current: CollectingEncryptionKeysData = state.clone().try_into()?;
 
+        // The collected key of this node must be the one whose secret it holds. Another one means
+        // that the node lost the secret of the key that its peers encrypt to: it starts no share
+        // generation and takes no further part in this E3's DKG, which treats it as absent.
+        if msg
+            .keys
+            .iter()
+            .any(|key| key.party_id == state.party_id && key.pk_bfv != current.pk_bfv)
+        {
+            error!(
+                e3_id = %state.e3_id,
+                party_id = state.party_id,
+                "The collected encryption key of this node is not the one whose secret it holds. \
+                 This node takes no further part in this E3's DKG."
+            );
+            return self.stop_threshold_share_collector();
+        }
+
         // Filter out any keys from parties expelled after collection started
         let filtered_keys: Vec<_> = if state.expelled_parties.is_empty() {
             msg.keys
