@@ -25,13 +25,8 @@ describe('proof API forwarding', () => {
     publicKey = await sdk.generatePublicKey()
     expectedKeyInputs = (await sdk.encryptNumberAndGenInputs(1n, publicKey)).circuitInputs
     const params = await sdk.getThresholdBfvParamsSet()
-    const fieldModulus = 21888242871839275222246405745257275088548364400416034343698204186575808495617n
     const qModT = params.moduli.reduce((product, modulus) => product * modulus, 1n) % params.plaintextModulus
-    encodeCoefficient = (value) => {
-      const residue = (qModT * value) % params.plaintextModulus
-      const centered = residue > params.plaintextModulus / 2n ? residue - params.plaintextModulus : residue
-      return (centered + fieldModulus) % fieldModulus
-    }
+    encodeCoefficient = (value) => (qModT * value) % params.plaintextModulus
   })
 
   beforeEach(() => {
