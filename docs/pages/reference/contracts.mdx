@@ -190,8 +190,7 @@ them. The addresses and deploy blocks come from two deployment records. The Inte
 
 The fee token is `MockUSDC`, a test USDC with 6 decimals. Anyone can call its `mint` function. It is
 also the ticket collateral. To confirm it on-chain, call `feeToken()` on the `Interfold` contract.
-For the ticket collateral, call `underlying()` on the `InterfoldTicketToken`. The deployer and the
-owner of every Interfold contract on Sepolia is `0x8837e47c4Bb520ADE83AAB761C3B60679443af1B`.
+For the ticket collateral, call `underlying()` on the `InterfoldTicketToken`.
 
 To get Sepolia USDC and FOLD, run `interfold faucet --chain sepolia`. You can also call `faucet()`
 on the `Faucet` contract, or call `mint` on `MockUSDC`. The `Faucet` sends 1000 FOLD and 1000 USDC

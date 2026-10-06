@@ -100,7 +100,6 @@ const ALLOWED: Record<string, string> = {
   '0x40d544fd954e98a25c221e24af24f915bd820210': 'SelfRegistry (CRISP), sepolia',
   '0x46cd950499b312e53cb73a1d1e12d3541966f823': 'ChainlinkVrfRandomnessProvider, sepolia',
   '0x85e5176a8d387be3b53506ddcbbc8aa9c2156e9f': 'BondedVotes, sepolia',
-  '0x8837e47c4bb520ade83aab761c3b60679443af1b': 'Sepolia deployer and owner account, not a contract',
 
   // TODO: record this in deployed_contracts.json so the manifest can publish
   // it. Until then no check can tell a correct value here from a stale one.
