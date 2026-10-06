@@ -537,15 +537,15 @@
         "defaultThreshold": 1
       }
     },
-    "RiscZeroGroth16Verifier": {
-      "address": "0x09B1727BcFd2D9EdAe16bB2838fe5bF2f48cd360",
-      "blockNumber": 11855802
+    "MockVotingToken": {
+      "address": "0xF68Af5A211B7fD2b169ADdc30751120e469E8794",
+      "blockNumber": 11856610
     },
     "Risc0BfvCiphertextVerifier": {
-      "address": "0xBBcE489cf767904Ca808944806110d8c8A9332Da",
-      "blockNumber": 11855803,
+      "address": "0x46efa79e2F2cdB3C5734D989169256de21653F11",
+      "blockNumber": 11856595,
       "constructorArgs": {
-        "verifier": "0x09B1727BcFd2D9EdAe16bB2838fe5bF2f48cd360",
+        "verifier": "0x254Cef2769D589E36208e9bD2da031A568fa49cD",
         "imageId": "0xa38bb986e6c064ba05001b83fd40dccbaceec63aa397d4220ac25ad4d2c84338"
       }
     },
@@ -554,38 +554,38 @@
       "blockNumber": 11855804
     },
     "HonkVerifier": {
-      "address": "0xA238860b28D703F31D98DEaFd24f7c542e8c96aF",
-      "blockNumber": 11855807
+      "address": "0x7956B729a4b0Cea5D949b3a0d32AfC45b2f96048",
+      "blockNumber": 11856600
     },
     "OnchainHonkVerifier": {
-      "address": "0x22f9218b683109C7CaFEE30d7Bf3D1D63906f941",
-      "blockNumber": 11855811
+      "address": "0xE3cadC6719373BB9Bea2a4Cc1e99E6550FFCb990",
+      "blockNumber": 11856603
     },
     "AvailVectorXDataAvailabilityVerifier": {
-      "address": "0x2Dff6C2f010336Fb2f553aAF20525579F9617cEA",
-      "blockNumber": 11855812,
+      "address": "0x1512D8C6e1987999772ca0AfCC9cdC044Ee465eD",
+      "blockNumber": 11856604,
       "constructorArgs": {
         "bridge": "0x967F7DdC4ec508462231849AE81eeaa68Ad01389",
         "vectorx": "0xe542db219a7e2b29c7aeaeace242c9a2cd528f96"
       }
     },
     "CRISPProgram": {
-      "address": "0xc6b6f740C85878D046A50f203A3Aa379150bF8C7",
-      "blockNumber": 11855813,
+      "address": "0x1ED67a0D7F0B041559EeDC1350c575D119bEF89c",
+      "blockNumber": 11856606,
       "constructorArgs": {
         "initialOwner": "0x8837e47c4Bb520ADE83AAB761C3B60679443af1B",
-        "verifierAddress": "0x09B1727BcFd2D9EdAe16bB2838fe5bF2f48cd360",
-        "honkVerifierAddress": "0xA238860b28D703F31D98DEaFd24f7c542e8c96aF",
-        "onchainHonkVerifierAddress": "0x22f9218b683109C7CaFEE30d7Bf3D1D63906f941",
-        "dataAvailabilityVerifierAddress": "0x2Dff6C2f010336Fb2f553aAF20525579F9617cEA",
+        "verifierAddress": "0x254Cef2769D589E36208e9bD2da031A568fa49cD",
+        "honkVerifierAddress": "0x7956B729a4b0Cea5D949b3a0d32AfC45b2f96048",
+        "onchainHonkVerifierAddress": "0xE3cadC6719373BB9Bea2a4Cc1e99E6550FFCb990",
+        "dataAvailabilityVerifierAddress": "0x1512D8C6e1987999772ca0AfCC9cdC044Ee465eD",
         "availabilityFinalizationWindow": 10800,
         "inputAvailabilitySigner": "0x8837e47c4Bb520ADE83AAB761C3B60679443af1B",
         "imageId": "0xa38bb986e6c064ba05001b83fd40dccbaceec63aa397d4220ac25ad4d2c84338"
       }
     },
     "SelfRegistry": {
-      "address": "0x44f8CbC2eA686e60e59e571F61322CFc7aB4b3c7",
-      "blockNumber": 11855814
+      "address": "0x40d544Fd954E98a25c221E24Af24F915BD820210",
+      "blockNumber": 11856611
     },
     "Faucet": {
       "address": "0xA7f0A637Af62fA4E0b46E397D1b85E9b4807f019",
@@ -594,6 +594,10 @@
         "fold": "0x278d7c3bC100505bfC38163e23Fe2524E3993e83",
         "feeToken": "0xE2e534F7Cb95777eD870CDCaCb80B1E9E2aD555B"
       }
+    },
+    "MockRISC0Verifier": {
+      "address": "0x254Cef2769D589E36208e9bD2da031A568fa49cD",
+      "blockNumber": 11856523
     }
   }
 }

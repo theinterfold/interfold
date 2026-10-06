@@ -85,19 +85,21 @@ const ALLOWED: Record<string, string> = {
 
   // An E3 program belongs to its application, not to the protocol. See the
   // comment on `CONTRACT_KEYS` in packages/interfold-contracts/scripts/genManifest.ts.
-  '0xc6b6f740c85878d046a50f203a3aa379150bf8c7': 'CRISPProgram, sepolia',
+  '0x1ed67a0d7f0b041559eedc1350c575d119bef89c': 'CRISPProgram, sepolia',
   '0x53fcdb21e73a461cfe6c64b19855204384b91ba3': 'CRISPProgram, mainnet',
 
   // Sepolia contracts that the docs list but the manifest does not publish (it publishes only
   // the CONTRACT_KEYS set). Source: packages/interfold-contracts/deploy/protocol/sepolia-protocol.deployment.json
   // and examples/CRISP/packages/crisp-contracts/deployed_contracts.json.
-  '0x09b1727bcfd2d9edae16bb2838fe5bf2f48cd360': 'RiscZeroGroth16Verifier, sepolia',
-  '0x2dff6c2f010336fb2f553aaf20525579f9617cea': 'AvailVectorXDataAvailabilityVerifier (CRISP), sepolia',
+  '0x254cef2769d589e36208e9bd2da031a568fa49cd': 'MockRISC0Verifier, sepolia (wrapped by the ciphertext verifier and used by CRISP)',
+  '0x1512d8c6e1987999772ca0afcc9cdc044ee465ed': 'AvailVectorXDataAvailabilityVerifier (CRISP), sepolia',
+  '0x7956b729a4b0cea5d949b3a0d32afc45b2f96048': 'HonkVerifier (CRISP), sepolia',
+  '0xe3cadc6719373bb9bea2a4cc1e99e6550ffcb990': 'OnchainHonkVerifier (CRISP), sepolia',
+  '0xf68af5a211b7fd2b169addc30751120e469e8794': 'MockVotingToken (CRISP), sepolia',
   '0x3d95cfa8018db4b5474bfe536702b5dc05ee1444': 'BondedCheckpoints, sepolia',
-  '0x44f8cbc2ea686e60e59e571f61322cfc7ab4b3c7': 'SelfRegistry (CRISP), sepolia',
+  '0x40d544fd954e98a25c221e24af24f915bd820210': 'SelfRegistry (CRISP), sepolia',
   '0x46cd950499b312e53cb73a1d1e12d3541966f823': 'ChainlinkVrfRandomnessProvider, sepolia',
   '0x85e5176a8d387be3b53506ddcbbc8aa9c2156e9f': 'BondedVotes, sepolia',
-  '0x8837e47c4bb520ade83aab761c3b60679443af1b': 'Sepolia deployer and owner account, not a contract',
 
   // TODO: record this in deployed_contracts.json so the manifest can publish
   // it. Until then no check can tell a correct value here from a stale one.
@@ -106,7 +108,6 @@ const ALLOWED: Record<string, string> = {
   // Not an address: the first 20 bytes of the 32-byte RISC Zero guest image ID that the mainnet
   // Risc0BfvCiphertextVerifier checks. The address pattern matches the start of the hash.
   '0x9d3e21fd7cc08e629cb467e5ca6bfc8e1a645b48': 'prefix of the mainnet ciphertext guest image ID (a hash, not an address)',
-  '0xa38bb986e6c064ba05001b83fd40dccbaceec63a': 'prefix of the sepolia ciphertext guest image ID (a hash, not an address)',
 
   // Deterministic Anvil accounts used by the local CRISP stack.
   '0x70997970c51812dc3a010c7d01b50e0d17dc79c8': 'Anvil account 1',

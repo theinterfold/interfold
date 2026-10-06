@@ -19,9 +19,10 @@ program contract. At the end, your program is on Sepolia, the owner of the Inter
 register it, and your server and client use the testnet.
 
 <Callout type='warning'>
-  Do not submit real private data on Sepolia. The `insecure-512` preset is not secure. The verifiers
-  of the Sepolia deployment check the proofs. The only test contracts are `MockUSDC` and the
-  `Faucet`. The manifest marks Sepolia with `mocks: false`.
+  Do not submit real private data on Sepolia. The `insecure-512` preset is not secure. The public
+  key, decryption, and DKG verifiers of the Sepolia deployment check the proofs. The ciphertext
+  verifier wraps `MockRISC0Verifier`, which accepts every seal. The other test contracts are
+  `MockUSDC` and the `Faucet`. The manifest marks Sepolia with `mocks: false`.
 </Callout>
 
 <Callout type='warning'>
@@ -33,8 +34,9 @@ register it, and your server and client use the testnet.
 
 ## Sepolia protocol contracts
 
-These addresses come from `deployments/manifest.json` (chain ID 11155111). The
-[Contract Addresses](/reference/contracts) page has the full list for each network.
+These addresses come from `deployments/manifest.json` (chain ID 11155111), except
+`MockRISC0Verifier` and `CRISPProgram`. The [Contract Addresses](/reference/contracts) page has the
+full list for each network.
 
 | Contract                       | Address                                      | Deploy block | Role                                                        |
 | ------------------------------ | -------------------------------------------- | ------------ | ----------------------------------------------------------- |
@@ -50,8 +52,9 @@ These addresses come from `deployments/manifest.json` (chain ID 11155111). The
 | `BondedVotes`                  | `0x85E5176A8d387BE3B53506DDCbBC8aa9c2156E9F` | 11855958     | Voting power of bonded FOLD                                 |
 | `BfvPkVerifierRouter`          | `0x3Cd2472722cad8D17AEd31869b4353eCd10a0425` | 11855912     | Verifies the committee public key proofs                    |
 | `BfvDecryptionVerifierRouter`  | `0xe52e7d820f3A1c56f952B8D7Ba2FA4100c6999D2` | 11855913     | Verifies the decryption proofs                              |
-| `Risc0BfvCiphertextVerifier`   | `0xBBcE489cf767904Ca808944806110d8c8A9332Da` | 11855803     | Verifies the compute proof of each output ciphertext        |
-| `CRISPProgram`                 | `0xc6b6f740C85878D046A50f203A3Aa379150bF8C7` | 11855813     | The CRISP E3 program                                        |
+| `Risc0BfvCiphertextVerifier`   | `0x46efa79e2F2cdB3C5734D989169256de21653F11` | 11856595     | Checks the compute proof of each output ciphertext          |
+| `MockRISC0Verifier`            | `0x254Cef2769D589E36208e9bD2da031A568fa49cD` | 11856523     | Accepts every seal. The ciphertext verifier wraps it        |
+| `CRISPProgram`                 | `0x1ED67a0D7F0B041559EeDC1350c575D119bEF89c` | 11856606     | The CRISP E3 program                                        |
 | `Faucet`                       | `0xA7f0A637Af62fA4E0b46E397D1b85E9b4807f019` | 11856142     | Test faucet. It sends 1000 FOLD and 1000 USDC               |
 
 `MockUSDC` is a test token. Anyone can call its `mint` function. The deployment uses the same token
@@ -62,12 +65,12 @@ as the ticket collateral.
 Locally, `pnpm dev:all` deploys its own Interfold contracts, and the deployer owns them. On Sepolia,
 the Interfold team owns the protocol contracts. This changes four steps of the local flow.
 
-| Step                         | Local (`pnpm dev:all`)                                             | Sepolia                                                                                               |
-| ---------------------------- | ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
-| Program registration         | `deployTemplate` calls `registerE3Program`.                        | `registerE3Program` is `onlyOwner`. The owner of the Interfold contract must call it.                 |
-| Protocol ciphertext verifier | `deployTemplate` calls `setCiphertextVerifier` with your image ID. | `setCiphertextVerifier` is `onlyOwner`. One verifier with a pinned image ID serves every BFV program. |
-| Data availability            | The coordination server stores the output (`mode: mock_http`).     | Ciphernodes read the output from Avail (`mode: avail`).                                               |
-| Ciphernodes                  | Five local nodes from `scripts/dev_ciphernodes.sh`.                | The nodes of registered operators. Sortition needs enough of them for the committee size.             |
+| Step                         | Local (`pnpm dev:all`)                                             | Sepolia                                                                                             |
+| ---------------------------- | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------- |
+| Program registration         | `deployTemplate` calls `registerE3Program`.                        | `registerE3Program` is `onlyOwner`. The owner of the Interfold contract must call it.               |
+| Protocol ciphertext verifier | `deployTemplate` calls `setCiphertextVerifier` with your image ID. | `setCiphertextVerifier` is `onlyOwner`. One verifier accepts dev-mode proofs for every BFV program. |
+| Data availability            | The coordination server stores the output (`mode: mock_http`).     | Ciphernodes read the output from Avail (`mode: avail`).                                             |
+| Ciphernodes                  | Five local nodes from `scripts/dev_ciphernodes.sh`.                | The nodes of registered operators. Sortition needs enough of them for the committee size.           |
 
 The first two rows mean that you cannot run `deployTemplate` on Sepolia unchanged. The owner-only
 calls revert for any other signer. The last two rows decide if an E3 of your program can complete.
@@ -201,8 +204,9 @@ async function main() {
   }
 
   // MockRISC0Verifier accepts every seal, so it weakens only the check in MyProgram.verify. It does
-  // not change the protocol check. On Sepolia, Risc0BfvCiphertextVerifier still rejects a proof that
-  // does not come from the pinned guest. Use a real RISC Zero verifier for real proofs.
+  // not change the protocol check. On Sepolia, Risc0BfvCiphertextVerifier wraps a mock verifier too,
+  // so it accepts dev-mode proofs. The mainnet verifier does not. Use a real RISC Zero verifier for
+  // real proofs.
   const verifier = await ethers.deployContract('MockRISC0Verifier')
   await verifier.waitForDeployment()
   const imageId = await ethers.deployContract('ImageID')
@@ -272,9 +276,9 @@ with `E3ProgramNotAllowed`.
 ### Check the protocol ciphertext verifier
 
 Every output proof must pass the ciphertext verifier that the owner set for BFV. On Sepolia, this is
-`Risc0BfvCiphertextVerifier` at `0xBBcE489cf767904Ca808944806110d8c8A9332Da`. It uses the real RISC
-Zero Groth16 verifier `RiscZeroGroth16Verifier` at `0x09B1727BcFd2D9EdAe16bB2838fe5bF2f48cd360`. It
-pins one guest image ID. Read the verifier address:
+`Risc0BfvCiphertextVerifier` at `0x46efa79e2F2cdB3C5734D989169256de21653F11`. It wraps
+`MockRISC0Verifier` at `0x254Cef2769D589E36208e9bD2da031A568fa49cD`. The mock verifier accepts every
+seal. Read the verifier address:
 
 ```bash
 cast call $INTERFOLD_ADDRESS "getCiphertextVerifier(bytes32)(address)" $(cast keccak "fhe.rs:BFV") --rpc-url $RPC_URL
@@ -287,11 +291,13 @@ cast call <verifier address> "imageId()(bytes32)" --rpc-url $RPC_URL
 cast call <verifier address> "risc0Verifier()(address)" --rpc-url $RPC_URL
 ```
 
-The image ID is `0xa38bb986e6c064ba05001b83fd40dccbaceec63aa397d4220ac25ad4d2c84338`. It is the
-`PROGRAM_ID` in `crates/support/contracts/ImageID.sol`. A program on Sepolia must produce its
-compute proofs from this guest. A proof from another guest makes `publishCiphertextOutput` revert
-with `InvalidOutput`. The program server in dev mode (`program.dev: true`) makes mock proofs, and
-the real verifier rejects them.
+The verifier records an image ID, but the mock verifier does not check the seal against it. A proof
+from any guest passes the protocol check on Sepolia. The program server in dev mode
+(`program.dev: true`) makes dev-mode proofs, and the protocol verifier accepts them. Your program
+must still pass `MyProgram.verify`.
+
+Do not rely on this behavior on mainnet. The mainnet ciphertext verifier checks the seal against a
+pinned guest image ID.
 
 A mock RISC Zero verifier in your program affects only `MyProgram.verify`. It does not affect the
 protocol verifier. The Interfold contract copies the current verifier into each E3 at request time,
@@ -421,9 +427,10 @@ await sdk.onInterfoldEvent(InterfoldEventType.PLAINTEXT_OUTPUT_PUBLISHED, (event
 | `packages/interfold-contracts` | `pnpm run deploy --network <name>`                                                     | Deploys the protocol contracts (`scripts/run.ts`, `deployInterfold`). This is for the protocol owner.                          |
 | `packages/crisp-contracts`     | `pnpm deploy:contracts --network sepolia`                                              | Deploys CRISP and its verifiers, and wires them only when the signer owns the Interfold contract.                              |
 
-The current Sepolia deployment has two test contracts: `MockUSDC` and the `Faucet`. Its verifiers
-are real. `deployInterfold` can still deploy mock contracts on chain ID 11155111. On other chains it
-refuses mocks unless `ALLOW_MOCKS_ON_PRODUCTION=true` is set.
+The current Sepolia deployment has these test contracts: `MockUSDC`, the `Faucet`, and
+`MockRISC0Verifier`, which the ciphertext verifier wraps. The public key, decryption, and DKG
+verifiers are real. `deployInterfold` can still deploy mock contracts on chain ID 11155111. On other
+chains it refuses mocks unless `ALLOW_MOCKS_ON_PRODUCTION=true` is set.
 
 ## Troubleshooting
 
@@ -435,7 +442,7 @@ refuses mocks unless `ALLOW_MOCKS_ON_PRODUCTION=true` is set.
 | `FeeExceedsMaximum` on request               | The fee changed after the quote.                                        | Get a new quote and request again.                                                    |
 | `InvalidInputDeadlineStart` on request       | `inputWindow[0]` is earlier than the block time.                        | Compute the window with `calculateInputWindow(publicClient, duration)`.               |
 | No committee key                             | Sortition did not select a full committee, or the DKG did not finish.   | Read the stage with `getE3Stage`. If it is `Failed`, request a new E3.                |
-| `InvalidOutput` on output publication        | The protocol verifier or `MyProgram.verify` rejected the compute proof. | Make sure that the proof comes from the pinned guest and passes `MyProgram.verify`.   |
+| `InvalidOutput` on output publication        | The protocol verifier or `MyProgram.verify` rejected the compute proof. | On Sepolia, dev-mode proofs pass the protocol verifier. Check `MyProgram.verify`.     |
 | `RequestsPaused` on request                  | Sepolia requests are paused.                                            | Wait until the owner unpauses requests. `requestsPaused()` returns `false` then.      |
 | The E3 does not finish after the output      | The committee cannot read the output from Avail.                        | Replace the local data-availability check, and publish the output to Avail.           |
 

@@ -86,13 +86,13 @@ const NETWORKS: Record<string, NetworkProfile> = {
     explorer: 'https://sepolia.etherscan.io',
     interfold: '0xc5DD9418A0aBF15678F974D2348B4be4D3832B54',
     ciphernodeRegistry: '0xfa0fCE6afd9b59E2Ac69DC53A128ee5835346B5e',
-    crispProgram: '0xc6b6f740C85878D046A50f203A3Aa379150bF8C7',
+    crispProgram: '0x1ED67a0D7F0B041559EeDC1350c575D119bEF89c',
     bondingRegistry: '0x55Cf62396e1CAE6Fcc380CfE0b4C48103C4a3711',
     // Test Faucet. It sends 1000 FOLD and 1000 MockUSDC.
     faucet: '0xA7f0A637Af62fA4E0b46E397D1b85E9b4807f019',
-    // Earliest of the Interfold/CiphernodeRegistry/CRISPProgram deploy blocks
-    // (CRISPProgram) — a later value silently drops early program events.
-    deployBlock: '11855813',
+    // Earliest of the Interfold (11855915), CiphernodeRegistry (11855915) and CRISPProgram
+    // (11856606) deploy blocks. A later value silently drops early registry events.
+    deployBlock: '11855915',
     // MockUSDC (0xE2e534F7…555B), the fee token and ticket collateral. Anyone can mint it.
     feeSymbol: 'USDC',
     feeDecimals: 6,

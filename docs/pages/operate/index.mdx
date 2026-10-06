@@ -199,15 +199,17 @@ use.
 | Faucet                                     | `0xA7f0A637Af62fA4E0b46E397D1b85E9b4807f019` | 11856142     |
 
 `MockUSDC` is a test USDC with 6 decimals. Anyone can mint it. The `Faucet` sends 1000 FOLD and 1000
-USDC. The only test contracts in the Sepolia deployment are `MockUSDC` and the `Faucet`.
+USDC. The Sepolia deployment has one more test component: the ciphertext verifier wraps
+`MockRISC0Verifier`, which accepts every RISC Zero seal.
 
-The Sepolia deployment verifies proofs with real verifiers:
+The public key and decryption proofs use real verifiers. The ciphertext verifier does not check the
+seal of a compute proof:
 
 | Contract                    | Address                                      | Deploy block |
 | --------------------------- | -------------------------------------------- | ------------ |
 | BfvPkVerifierRouter         | `0x3Cd2472722cad8D17AEd31869b4353eCd10a0425` | 11855912     |
 | BfvDecryptionVerifierRouter | `0xe52e7d820f3A1c56f952B8D7Ba2FA4100c6999D2` | 11855913     |
-| Risc0BfvCiphertextVerifier  | `0xBBcE489cf767904Ca808944806110d8c8A9332Da` | 11855803     |
+| Risc0BfvCiphertextVerifier  | `0x46efa79e2F2cdB3C5734D989169256de21653F11` | 11856595     |
 
   </Tabs.Tab>
 </Tabs>

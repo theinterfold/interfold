@@ -53,6 +53,17 @@ export const deployCRISPContracts = async (): Promise<CRISPDeploymentResult> => 
   if (chain === 'mainnet' && useMocks) {
     throw new Error('USE_MOCKS cannot be enabled for a mainnet CRISP deployment')
   }
+  // USE_MOCKS selects the mock data-availability verifier unless MOCK_DATA_AVAILABILITY=false keeps
+  // Avail. Ciphernodes read every input of a chain through one data-availability source.
+  const rawMockDataAvailability = process.env.MOCK_DATA_AVAILABILITY?.trim().toLowerCase()
+  if (rawMockDataAvailability && rawMockDataAvailability !== 'true' && rawMockDataAvailability !== 'false') {
+    throw new Error("MOCK_DATA_AVAILABILITY must be 'true', 'false', or unset")
+  }
+  const useMockDataAvailability =
+    chain === 'localhost' || (rawMockDataAvailability ? rawMockDataAvailability === 'true' : useMocks)
+  if (chain === 'mainnet' && useMockDataAvailability) {
+    throw new Error('MOCK_DATA_AVAILABILITY cannot be enabled for a mainnet CRISP deployment')
+  }
   const rawDeferProtocolWiring = process.env.DEFER_PROTOCOL_WIRING?.trim().toLowerCase()
   if (rawDeferProtocolWiring && rawDeferProtocolWiring !== 'true' && rawDeferProtocolWiring !== 'false') {
     throw new Error("DEFER_PROTOCOL_WIRING must be 'true', 'false', or unset")
@@ -67,7 +78,7 @@ export const deployCRISPContracts = async (): Promise<CRISPDeploymentResult> => 
   const configuredAvailabilitySigner = process.env.INPUT_AVAILABILITY_SIGNER
   const inputAvailabilitySigner = configuredAvailabilitySigner
     ? ethers.getAddress(configuredAvailabilitySigner)
-    : useMocks || chain === 'localhost'
+    : useMockDataAvailability
       ? ownerAddress
       : (() => {
           throw new Error('INPUT_AVAILABILITY_SIGNER is required for an Avail-backed CRISP deployment')
@@ -163,7 +174,6 @@ export const deployCRISPContracts = async (): Promise<CRISPDeploymentResult> => 
     chain,
   )
 
-  const useMockDataAvailability = useMocks || chain === 'localhost'
   const dataAvailabilityContract = useMockDataAvailability ? 'MockCrispDataAvailabilityVerifier' : 'AvailVectorXDataAvailabilityVerifier'
   let dataAvailabilityVerifier
   if (useMockDataAvailability) {
