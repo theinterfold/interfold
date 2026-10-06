@@ -42,6 +42,24 @@ pub(super) struct NodeFacts {
     pub(super) key_file: PathBuf,
     /// An event log of the node exists and is in a target.
     pub(super) event_log_in_target: bool,
+    /// The store that the record next to the key file names.
+    pub(super) recorded: Recorded,
+}
+
+/// The store that a key file's record names (`store_record`): the store that the node used at
+/// its last start.
+#[derive(Debug)]
+pub(super) enum Recorded {
+    /// The key file has no record, as for a node that has not started with this release.
+    Nothing,
+    /// The record names `db_file`. `store` is the store when it exists.
+    Store {
+        db_file: PathBuf,
+        store: Option<Location>,
+        lock: Location,
+    },
+    /// The record exists, and the purge cannot read it.
+    Unreadable(PathBuf),
 }
 
 /// A path as the purge uses it, and two forms of it to compare locations.
@@ -100,8 +118,15 @@ pub(super) struct Link {
 
 /// An entry of the configuration folder. A folder holds a node's key file.
 pub(super) enum ConfigEntry {
-    Folder { name: String, location: Location },
-    File { name: String, location: Location },
+    Folder {
+        name: String,
+        location: Location,
+    },
+    File {
+        name: String,
+        location: Location,
+        recorded: Recorded,
+    },
 }
 
 pub(super) async fn gather(targets: &PurgeTargets, nodes: &[AppConfig]) -> Result<Facts> {
@@ -141,8 +166,31 @@ async fn node_facts_of(targets: &PurgeTargets, node: &AppConfig) -> Result<NodeF
         lock_folder_in_data: resolve(&lock_folder)?.starts_with(&targets.data),
         in_scope,
         key_file_in_target,
+        recorded: recorded(&key_file).await?,
         key_file,
         event_log_in_target,
+        db_file,
+    })
+}
+
+/// The store that the record of `key_file` names.
+async fn recorded(key_file: &Path) -> Result<Recorded> {
+    let db_file = match crate::store_record::read(key_file) {
+        Ok(Some(db_file)) => db_file,
+        Ok(None) => return Ok(Recorded::Nothing),
+        Err(_) => {
+            return Ok(Recorded::Unreadable(crate::store_record::record_path(
+                key_file,
+            )))
+        }
+    };
+    Ok(Recorded::Store {
+        store: if fs::try_exists(&db_file).await? {
+            Some(Location::of(db_file.clone())?)
+        } else {
+            None
+        },
+        lock: Location::of(lock_path_for(&db_file))?,
         db_file,
     })
 }
@@ -244,8 +292,12 @@ async fn config_entries(config: &Path) -> Result<Vec<ConfigEntry>> {
         let location = Location::of(path.clone())?;
         if path.is_dir() {
             found.push(ConfigEntry::Folder { name, location });
-        } else if path.is_file() {
-            found.push(ConfigEntry::File { name, location });
+        } else if path.is_file() && !is_store_record(&path) {
+            found.push(ConfigEntry::File {
+                name,
+                recorded: recorded(&path).await?,
+                location,
+            });
         }
     }
     Ok(found)
@@ -266,6 +318,11 @@ fn link(path: &Path, node: &str) -> Result<Link> {
 }
 
 /// A sled store is a folder with a `conf` file and a `db` file.
+/// A store record, or the temporary file of one that a start writes.
+fn is_store_record(path: &Path) -> bool {
+    crate::store_record::is_record(path) || crate::store_record::is_record(&path.with_extension(""))
+}
+
 fn is_sled_store(folder: &Path) -> bool {
     folder.join("conf").is_file() && folder.join("db").is_file()
 }

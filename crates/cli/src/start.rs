@@ -16,7 +16,7 @@ use e3_daemon_server::start_daemon_server;
 use e3_events::NODE_SHUTDOWN_DEADLINE;
 use e3_utils::{colorize, Color};
 use tokio::signal::unix::{signal, SignalKind};
-use tracing::{error, info, instrument};
+use tracing::{error, info, instrument, warn};
 
 #[instrument(skip_all)]
 pub async fn execute(mut config: AppConfig, peers: Vec<String>, bootstrap: bool) -> Result<()> {
@@ -31,6 +31,14 @@ pub async fn execute(mut config: AppConfig, peers: Vec<String>, bootstrap: bool)
     // instance fails fast instead of racing on the shared data directory.
     // Held for the lifetime of this function (the running process); released on exit.
     let _fence = e3_entrypoint::fence::ProcessFence::acquire(&config.db_file(), &config.name())?;
+    // A purge reads this record to check the store that this node uses (`store_record`).
+    if let Err(error) = e3_entrypoint::store_record::write(&config.key_file(), &config.db_file()) {
+        warn!(
+            %error,
+            "Could not record the node's store next to its key file; a purge checks the store at \
+             the configured path only"
+        );
+    }
 
     launch_socket_server(config.ctrl_port());
 

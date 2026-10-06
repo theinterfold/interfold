@@ -54,8 +54,8 @@ pub enum NodeCommands {
         /// Override the refusal for an active key share and for a node that the command cannot
         /// check. The node permanently loses its key share. Check first that each listed E3 is
         /// complete or failed on chain, and that one day has passed after its lifecycle deadline.
-        /// The command cannot see a node that runs with another E3_DATA_DIR, data_dir, or working
-        /// directory. Check that no such node runs.
+        /// The command checks the store that each node recorded at its last start; for a node that
+        /// has not started with this release, it checks the store at the configured path.
         #[arg(long)]
         allow_active_e3s: bool,
     },
