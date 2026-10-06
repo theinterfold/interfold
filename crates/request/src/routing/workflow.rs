@@ -17,6 +17,8 @@ pub enum PostForward {
     PublishComplete,
     /// Tear down the context for this request and mark it as completed.
     Teardown,
+    /// Publish `E3RequestComplete` after the router's teardown grace: accusations may still run.
+    ScheduleTeardown,
     /// No completion action is required.
     None,
 }
@@ -71,6 +73,20 @@ impl RequestRouter {
             InterfoldEventData::Shutdown(_) | InterfoldEventData::EffectsEnabled(_)
         ) {
             return RoutingDecision::Broadcast;
+        }
+
+        if let InterfoldEventData::EvmLogObserved(log) = msg.get_data() {
+            if has_context
+                && msg.source() == EventSource::Evm
+                && log.contract == "CiphernodeRegistry"
+                && log.event_name == "CommitteeProofPublished"
+                && !log.e3_id.as_ref().is_some_and(|id| completed.contains(id))
+            {
+                return RoutingDecision::Process {
+                    e3_id: log.e3_id.clone().expect("admitted E3 observation"),
+                    post_forward: PostForward::None,
+                };
+            }
         }
 
         // Durable observational EVM facts are consumed directly by projections
@@ -137,11 +153,12 @@ impl RequestRouter {
                 PostForward::PublishComplete
             }
             // Timeout failures have no accusation/slashing lifecycle, so the context can be
-            // torn down immediately. Misbehaviour failures (DKGInvalidShares, etc.) still need
-            // the accusation/slashing lifecycle to complete before teardown.
+            // torn down immediately. Misbehaviour failures (DKGInvalidShares, etc.) keep the
+            // context for the accusation/slashing lifecycle, then tear it down after a grace.
             InterfoldEventData::E3Failed(data) if data.reason.ends_without_slashing() => {
                 PostForward::PublishComplete
             }
+            InterfoldEventData::E3Failed(_) => PostForward::ScheduleTeardown,
             InterfoldEventData::E3RequestComplete(_) => PostForward::Teardown,
             _ => PostForward::None,
         };

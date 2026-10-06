@@ -23,8 +23,8 @@ pub global C4AB_FOLD_PUBLIC_LEN: u32 = 3 + (2 * C4_PUBLIC_LEN);
 /// Must match `node_fold::NODE_FOLD_PUBLIC_LEN`.
 pub global NODE_FOLD_PUBLIC_LEN: u32 = 11 + N_PARTIES + (2 * (N_PARTIES + H) * L_THRESHOLD);
 
-/// Same shape as `nodes_fold`: 4 pub parameters + `H` full `node_fold` public rows (flattened).
-pub global NODES_FOLD_PUBLIC_LEN: u32 = 4 + (H * NODE_FOLD_PUBLIC_LEN);
+/// Five public parameters and `H` complete `node_fold` public rows.
+pub global NODES_FOLD_PUBLIC_LEN: u32 = 5 + (H * NODE_FOLD_PUBLIC_LEN);
 
 fn main(
     inner_vk: UltraHonkVerificationKey,
@@ -34,7 +34,8 @@ fn main(
     acc_proof: UltraHonkProof,
     acc_public_inputs: [Field; NODES_FOLD_PUBLIC_LEN],
     inner_key_hash: pub Field,
-    acc_key_hash: pub Field,
+    fold_key_hash: pub Field,
+    kernel_key_hash: pub Field,
     is_first_step: pub bool,
     slot_index: pub u32,
 ) -> pub [[Field; NODE_FOLD_PUBLIC_LEN]; H] {
@@ -48,7 +49,7 @@ fn main(
     );
 
     // Signature parity with `nodes_fold`: see `c3_fold_kernel`.
-    let _ = (acc_vk, acc_proof, acc_key_hash, acc_public_inputs);
+    let _ = (acc_vk, acc_proof, fold_key_hash, kernel_key_hash, acc_public_inputs);
 
     assert(is_first_step);
 

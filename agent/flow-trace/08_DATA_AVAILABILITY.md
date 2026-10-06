@@ -60,9 +60,9 @@ finalizeInput(tuple, VectorX proof)
         +--> emits InputPublished with Avail coordinates
 ```
 
-The voter does not stay online for VectorX. On Ethereum mainnet, the voter pays only for the compact
-`publishInput` transaction. The server owns the durable Avail and `finalizeInput` job. Sepolia and
-local development can relay the compact transaction for the voter.
+The voter does not stay online for VectorX. The server owns the durable Avail and `finalizeInput`
+job. The server can also relay the compact `publishInput` transaction (see
+[Relay limits](#relay-limits)); otherwise the voter's wallet sends it.
 
 The leaf is reserved in the first transaction so a revote or mask can name it as its parent while
 VectorX is still finalizing. The server that signed the input already has the exact bytes and
@@ -118,6 +118,17 @@ bounds the validations that run at the same time, and each one runs on a blockin
 The check runs at intake only. The publication worker does not repeat it. An input that is already
 committed keeps its data and its recovery jobs, because its pending status still needs DA
 finalization even when the Secure Process will exclude it from ballot selection.
+
+Intake skips this check, the proof check, and the commitment cutoff for an input that the chain head
+shows as committed (`stage_input`). The committed input ID binds the content hash, so bytes with
+that hash are the committed bytes, and the contract refuses the new-input checks for such an input.
+A server that lost its job database therefore recovers a committed input when a client stages the
+same ballot again, also after the cutoff. In Avail mode, intake refuses a committed input after the
+compute deadline. `finalizeInput` then refuses its receipt, so the job could only fail, and a repeat
+of a statement with a failed job takes a new funding reservation. If the commitment leaves the chain
+before it is final, the job signs a new attestation, and the relay or the voter's wallet sends the
+commitment again before the cutoff (`commitment_step`, `relays`). The first attestation for the
+input followed these checks, so the new attestation covers checked bytes.
 
 ## Deadline simulation
 
@@ -231,13 +242,13 @@ transaction:
 - An input leaves `AwaitingCommitment` only when a finalized block contains its commitment.
   `Committed` stops attestation renewal and starts the paid Avail publication, so an orphaned
   commitment would strand the input for the rest of its commitment window. This holds on both
-  submission paths. Where the service relays the commitment itself (every non-mainnet chain), the
-  receipt does not promote the job: the job stays in `AwaitingCommitment` with the relayed
-  transaction hash, the attestation renews on the same schedule as a wallet-submitted one, and a
-  relayed transaction that is absent from finalized state and from the chain head is relayed again
-  (`commitment_step`). The status endpoint reports a relayed provisional job as
-  `pending_availability`, not `ready_for_commitment`, so a client does not sign a second commitment
-  with its wallet.
+  submission paths. Where the service relays the commitment itself, the receipt does not promote the
+  job: the job stays in `AwaitingCommitment` with the relayed transaction hash, and a relayed
+  transaction that is absent from finalized state and from the chain head is relayed again with a
+  fresh attestation, also after the old one expired, while the relay may send, or takes the wallet
+  path when it may not (`commitment_step`, `relay_may_send`). The status endpoint reports a relayed
+  provisional job as `pending_availability`, not `ready_for_commitment`, so a client does not sign a
+  second commitment with its wallet.
 - A publication transaction moves to `AwaitingFinality`, not directly to success. That state keeps
   the Ethereum payload, the Avail coordinates, the compute proof or staged envelope, and the local
   object. When finalized state contains the publication, the job retires. When the publication is
@@ -251,12 +262,15 @@ The status endpoint takes the same per-job ownership as the worker. Both paths l
 for an Ethereum answer, and then save, so a status refresh that started before the worker made
 progress could otherwise write its older copy over that progress and discard saved Avail
 coordinates. A status request that finds the job busy returns the persisted view and writes nothing.
+The status endpoint answers a `Created` job from storage without the claim. Only the worker's
+`Created` step reconciles that state with Ethereum, and a client poll must not make it skip the job.
 
-The service does not release an expired promise based on its local clock or an unfinalized chain
-head. It waits for an Ethereum finalized block at or after `expiresAt`, then checks the historical
-`isInputCommitted` state at that block. A commitment mined before expiry therefore survives even
-when the service observes it later. If the finalized state contains no commitment, the service
-releases the ciphertext and lets the voter stage the original proof again for a fresh promise.
+The service does not release an expired wallet-submitted promise based on its local clock or an
+unfinalized chain head. It waits for an Ethereum finalized block at or after `expiresAt`, then
+checks the historical `isInputCommitted` state at that block. A commitment mined before expiry
+therefore survives even when the service observes it later. If the finalized state contains no
+commitment, the service releases the ciphertext and lets the voter stage the original proof again
+for a fresh promise.
 
 The old four-hour CRISP duration was unsafe. In the worst case, the input commitment cutoff arrived
 before the committee key existed. With a nonzero Avail window, `CRISPProgram.validate` now rejects a
@@ -272,9 +286,13 @@ run in the request transaction, before the requester pays the fee.
   will not replay.
 - Every staged object and job state is in the server's persistent Sled database before the server
   signs an input. The object has one content-addressed copy; job metadata does not duplicate it.
-- The browser keeps the exact encoded ballot with its durable job pointer. If the server loses its
-  job database, the browser re-stages the same commitment instead of creating a second ciphertext
-  and leaving the first on-chain commitment unresolved.
+- The browser keeps each exact encoded ballot, one record per ballot, from before its broadcast
+  until an action finds its availability final or its job failed. Each action also drops the final
+  ballots of other rounds. If the server loses its job database, or a broadcast gets no answer
+  within two minutes, the browser stages the same ballot again instead of creating a second
+  ciphertext and leaving the first on-chain commitment unresolved. A saved ballot that only waits
+  for availability does not stop a new vote or mask. The server runs each job step in its own task,
+  so a request that its client closes does not cancel a paid step that the request started.
 - The server checks the one-megabyte object limit before it accepts an input commitment or creates
   an output job. An oversized object cannot reserve a leaf that Avail will always reject.
 - The job worker retries every 30 seconds and runs at most four job steps at once. The outer
@@ -308,6 +326,10 @@ run in the request transaction, before the requester pays the fee.
 - If a timeout interrupts an Avail submission after broadcast but before its receipt is saved, a
   retry can pay for a duplicate publication. The content hash remains the same, so this affects cost
   but not correctness.
+- A `Committed` input job does not start its paid Avail publication while the chain head holds a
+  publication of the input from another transaction, for example from the job of a lost database.
+  That publication retires the job when it is final. If it leaves the chain head first, the job
+  publishes the input itself.
 - A candidate VectorX proof keeps the Avail coordinates that produced it. The bridge answer is
   checked for the expected content hash, not for a valid Merkle path, so a syntactically valid
   answer can carry a proof that Ethereum refuses. When a publication attempt fails, the job returns
@@ -351,13 +373,85 @@ rules:
   restarted under the same identifier does take a reservation, because it creates a fresh funding
   obligation.
 
+## Relay limits
+
+The server relays the `publishInput` commitment within two limits, `RELAY_MAX_INPUTS_PER_SLOT`
+(default 3) and `RELAY_MAX_INPUTS_PER_ROUND` (default: none). On Ethereum mainnet it relays only
+when `MAINNET_RELAY` is set, and that setting requires a round limit and a `RELAY_MIN_BALANCE_ETH`
+above zero. Other chains that are not local also need an explicit `RELAY_MIN_BALANCE_ETH`, where `0`
+relays without a floor (`Config::validate_relay`). These chain rules read `CHAIN_ID`, so startup
+stops when `HTTP_RPC_URL` serves a different chain (`Config::validate_rpc_chain`). The relay counts
+are durable (`reserve_relay`), and the worker prunes the records of a round after its commitment
+cutoff.
+
+These limits belong to one server instance. Every instance must sign with the same key, because that
+key is also `inputAvailabilitySigner`, and each instance counts only the relays in its own ledger.
+Several relaying instances can therefore each send up to the limits for the same slot and round, and
+only the balance floor bounds the key as a whole. `CRISPProgram` does not count relays. An operator
+that needs one limit for the key lets one instance relay, sets the limits to zero on the others, and
+moves the relay to another instance only when no round is open. Each ledger records its start at the
+first start of its instance, also with the relay off, so an instance that starts to relay mid-round
+holds none of that round's earlier relays. A ballot that a non-relaying instance receives takes the
+wallet path, and only the instance that staged a ballot holds its job, so all client requests go to
+the relaying instance (the client uses one base URL, `VITE_INTERFOLD_API`).
+
+The local ledger records its start (`RELAY_LEDGER_EPOCH_KEY`) the first time it opens, and keeps
+that marker across restarts and pruning. A round whose input window opened before that start can
+hold relays that the ledger never recorded, from a server version without the ledger or from a
+database that was lost. `reserve_relay` sends such a round to the wallet path until it closes, and
+does the same when the round's window start is not indexed yet. The start is the `input_window[0]`
+value that the indexer stores for the E3.
+
+Every relay send first checks `relay_may_send`. Turning the relay off (the flag, or a limit of zero)
+stops every send, including jobs chosen for the relay earlier and relayed transactions that a
+reorganization removed. So does a server key balance below `RELAY_MIN_BALANCE_ETH`, which keeps
+funds for `finalizeInput`, and so does a balance that cannot be read. Those jobs take the wallet
+path. A zero floor reads no balance, so it stops no send. A send that the relay key cannot pay for
+also moves its job to the wallet path, with the same signed payload (`relay_input_commitment`,
+`is_insufficient_funds`). A node also refuses a send when the worst-case costs of the pending
+transactions of the key exceed its balance, and that refusal clears when they are mined. So a
+refusal while other transactions of the key are pending keeps the relay for a grace period of five
+minutes (`RELAY_FUNDING_GRACE_SECONDS`). The grace period also ends when the commitment cutoff is
+less than five minutes away, so the wallet path always comes before the cutoff, also behind a stuck
+transaction.
+
+A `POST /voting/broadcast` request with `send_from_wallet: true` takes the wallet path (`relays`,
+`JobKind::sends_from_wallet`). The server writes no relay record for it, reads no relay balance, and
+uses no relay allowance. The choice is stored on the job and is not part of the job ID, so a repeat
+of the statement keeps the choice of its existing job.
+
+Every transaction from the server key takes its nonce from one sequence in the process
+(`e3_evm_helpers::nonce::send_with_next_nonce`). This includes `publishInput`, `finalizeInput`,
+`setMerkleRoot`, and the Interfold helper transactions. A send takes the lowest nonce, at or above
+the pending count of the chain, that no reservation holds, and it reserves that nonce before the
+broadcast. Concurrent sends in the server process therefore take different nonces, also while an RPC
+node lags. A send fills its transaction before it reserves a nonce, so a failure before the
+broadcast reserves nothing. A signature that the local wallet refuses, and a broadcast that the node
+refuses, give the nonce back. After any other broadcast error the node can hold the transaction, so
+its reservation stays. The reservation of the lowest nonce that the chain does not count expires
+after two minutes, so a nonce that the network dropped is used again. A transaction from another
+process can still take a used nonce.
+
+Past a limit, the server still signs the input and the voter's wallet sends the commitment. A
+refusal would reopen ZEN2-25, because a mask needs no signature from the slot owner. Anyone can use
+up the relays of a slot with masks. The owner's later inputs then show the owner's address, and the
+owner must confirm the wallet transaction before the commitment cutoff, on the page or on a later
+visit. Otherwise the input is lost.
+
+A `Created` job whose commitment is already at the chain head moves to `AwaitingCommitment` and
+waits for finality there. A relay step that was interrupted after its send leaves such a job, and so
+does a client that stages a committed input again. The job records the commitment as relayed: it is
+not sent again while the chain head holds it, and it takes the recommit path of a relayed commitment
+(`commitment_step`) if it leaves the chain head.
+
 ## Remaining trust and operations
 
 VectorX provides the final correctness and availability proof. The server signature is an earlier
 liveness promise: it proves that the configured service received and durably stored the exact
-ciphertext before Ethereum reserves the leaf. The service signs only after the bytes reproduce the
-commitment their ballot proof binds, so an honest signer no longer funds publication of a ciphertext
-that the Secure Process must exclude.
+ciphertext before Ethereum reserves the leaf. The service signs the first attestation for an input
+only after the bytes reproduce the commitment their ballot proof binds. A later attestation or
+publication for an input that Ethereum already committed relies on that check (`stage_input`), so an
+honest signer does not fund publication of a ciphertext that the Secure Process must exclude.
 
 If the availability signer is compromised, it can sign a hash without retaining the bytes. The
 resulting pending input can stop the round until the compute timeout. It cannot make Ethereum accept

@@ -19,36 +19,6 @@ use tracing::info;
 /// Backends can store their own shapes (e.g., a `HashSet<String>` of addresses
 /// for Score)
 pub trait SortitionList<T> {
-    /// Return `true` if `address` appears in the size-`size` committee under `seed`.
-    ///
-    /// Implementations should return `Ok(false)` if the backend has no nodes
-    /// or if `size == 0`.
-    fn contains(
-        &self,
-        e3_id: E3id,
-        seed: Seed,
-        size: usize,
-        address: T,
-        chain_id: u64,
-        node_state: &NodeStateStore,
-        snapshot: SortitionSnapshot,
-    ) -> anyhow::Result<bool>;
-
-    /// Return an index if `address` appears in the committee under `seed`.
-    ///
-    /// Implementations should return `Ok(None)` if the backend has no nodes
-    /// or if `size == 0`.
-    fn get_index(
-        &self,
-        e3_id: E3id,
-        seed: Seed,
-        size: usize,
-        address: String,
-        chain_id: u64,
-        node_state: &NodeStateStore,
-        snapshot: SortitionSnapshot,
-    ) -> Result<Option<(u64, Option<u64>)>>;
-
     /// Add a node to the backend. Backends should be idempotent on duplicates.
     fn add(&mut self, address: T);
 
@@ -169,97 +139,6 @@ impl ScoreBackend {
 }
 
 impl SortitionList<String> for ScoreBackend {
-    /// Compute score-based winners (`ScoreSortition`) and check if `address` is included.
-    ///
-    /// Returns `Ok(false)` if there are no nodes or `size == 0`.
-    fn contains(
-        &self,
-        e3_id: E3id,
-        seed: Seed,
-        size: usize,
-        address: String,
-        chain_id: u64,
-        node_state: &NodeStateStore,
-        snapshot: SortitionSnapshot,
-    ) -> anyhow::Result<bool> {
-        if size == 0 {
-            return Ok(false);
-        }
-
-        let want: Address = address.parse()?;
-        let nodes = self.build_nodes_from_state(chain_id, node_state, snapshot);
-        if nodes.is_empty() {
-            return Ok(false);
-        }
-
-        let winners = ScoreSortition::new(size).get_committee(e3_id.clone(), seed, &nodes)?;
-
-        let selected_nodes: Vec<String> = winners
-            .iter()
-            .map(|w| format!("{}(ticket:{})", w.address, w.ticket_id))
-            .collect();
-        info!(
-            e3_id = %e3_id,
-            chain_id = chain_id,
-            committee_size = size,
-            selected_count = winners.len(),
-            nodes = ?selected_nodes,
-            "Sortition completed - selected nodes"
-        );
-
-        Ok(winners.iter().any(|w| w.address == want))
-    }
-
-    /// Compute score-based winners (`ScoreSortition`) and check if `address` is included.
-    ///
-    /// Returns `Ok(None)` if there are no nodes or `size == 0`.
-    fn get_index(
-        &self,
-        e3_id: E3id,
-        seed: Seed,
-        size: usize,
-        address: String,
-        chain_id: u64,
-        node_state: &NodeStateStore,
-        snapshot: SortitionSnapshot,
-    ) -> anyhow::Result<Option<(u64, Option<u64>)>> {
-        if size == 0 {
-            return Ok(None);
-        }
-
-        let want: alloy::primitives::Address = address.parse()?;
-        let nodes: Vec<RegisteredNode> =
-            self.build_nodes_from_state(chain_id, node_state, snapshot);
-
-        if nodes.is_empty() {
-            return Ok(None);
-        }
-
-        let winners = ScoreSortition::new(size).get_committee(e3_id.clone(), seed, &nodes)?;
-
-        let selected_nodes: Vec<String> = winners
-            .iter()
-            .map(|w| format!("{}(ticket:{})", w.address, w.ticket_id))
-            .collect();
-        info!(
-            e3_id = %e3_id,
-            chain_id = chain_id,
-            committee_size = size,
-            selected_count = winners.len(),
-            nodes = ?selected_nodes,
-            "Sortition completed - selected nodes"
-        );
-
-        let maybe = winners
-            .iter()
-            .enumerate()
-            .find_map(|(i, w)| (w.address == want).then_some((i as u64, Some(w.ticket_id))));
-        if maybe.is_some() && !Self::has_local_capacity(node_state, &e3_id, want, snapshot) {
-            return Ok(None);
-        }
-        Ok(maybe)
-    }
-
     /// Add a node, creating an empty ticket set when first seen.
     fn add(&mut self, address: String) {
         match address.parse::<Address>() {
@@ -606,88 +485,6 @@ mod tests {
     }
 
     #[test]
-    fn selected_node_remains_a_member_when_local_capacity_is_exhausted() {
-        let local = Address::from([0x11; 20]);
-        let mut backend = ScoreBackend::default();
-        backend.add(local.to_string());
-
-        let mut state = NodeStateStore::default();
-        state.nodes.insert(
-            local.to_string(),
-            NodeState {
-                ticket_balance: U256::from(30),
-                active_jobs: 3,
-                ticket_balance_log_index: 0,
-                active_log_index: 0,
-                active: true,
-                ticket_balance_history: vec![StateCheckpoint {
-                    timepoint: 1,
-                    value: U256::from(30),
-                }],
-                active_history: vec![StateCheckpoint {
-                    timepoint: 1,
-                    value: true,
-                }],
-            },
-        );
-        let snapshot = SortitionSnapshot {
-            request_block: 2,
-            ticket_price: U256::from(10),
-        };
-        let e3_id = E3id::new("1", 1);
-        let seed = Seed::from(U256::from(1));
-
-        assert!(backend
-            .contains(
-                e3_id.clone(),
-                seed,
-                1,
-                local.to_string(),
-                1,
-                &state,
-                snapshot,
-            )
-            .unwrap());
-        assert_eq!(
-            backend
-                .get_index(
-                    e3_id.clone(),
-                    seed,
-                    1,
-                    local.to_string(),
-                    1,
-                    &state,
-                    snapshot,
-                )
-                .unwrap(),
-            None
-        );
-
-        state.nodes.get_mut(&local.to_string()).unwrap().active_jobs = 2;
-        assert!(backend
-            .get_index(
-                e3_id.clone(),
-                seed,
-                1,
-                local.to_string(),
-                1,
-                &state,
-                snapshot,
-            )
-            .unwrap()
-            .is_some());
-
-        state.nodes.get_mut(&local.to_string()).unwrap().active_jobs = 3;
-        state
-            .e3_committees
-            .insert(committee_key(&e3_id), vec![local.to_string()]);
-        assert!(backend
-            .get_index(e3_id, seed, 1, local.to_string(), 1, &state, snapshot,)
-            .unwrap()
-            .is_some());
-    }
-
-    #[test]
     fn uses_the_request_boundary_instead_of_same_timestamp_state() {
         let address = Address::from([0x33; 20]);
         let mut backend = ScoreBackend::default();
@@ -891,40 +688,6 @@ impl SortitionBackend {
 }
 
 impl SortitionList<String> for SortitionBackend {
-    fn contains(
-        &self,
-        e3_id: E3id,
-        seed: Seed,
-        size: usize,
-        address: String,
-        chain_id: u64,
-        node_state: &NodeStateStore,
-        snapshot: SortitionSnapshot,
-    ) -> anyhow::Result<bool> {
-        match self {
-            SortitionBackend::Score(b) => {
-                b.contains(e3_id, seed, size, address, chain_id, node_state, snapshot)
-            }
-        }
-    }
-
-    fn get_index(
-        &self,
-        e3_id: E3id,
-        seed: Seed,
-        size: usize,
-        address: String,
-        chain_id: u64,
-        node_state: &NodeStateStore,
-        snapshot: SortitionSnapshot,
-    ) -> anyhow::Result<Option<(u64, Option<u64>)>> {
-        match self {
-            SortitionBackend::Score(b) => {
-                b.get_index(e3_id, seed, size, address, chain_id, node_state, snapshot)
-            }
-        }
-    }
-
     fn add(&mut self, address: String) {
         match self {
             SortitionBackend::Score(backend) => backend.add(address),

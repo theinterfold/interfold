@@ -44,15 +44,3 @@ impl AsBytesSerde for EventId {
         ))
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_debug_format() {
-        let event_id = EventId::hash("test");
-        println!("{:?}", event_id);
-        // This will now print: EventId("0x124abccd...")
-    }
-}

@@ -50,7 +50,7 @@ share_computation_e_sm (CIRCUIT 2b)
 -------------------------------------
 ************************************/
 
-pub global SHARE_COMPUTATION_E_SM_BIT_SECRET: u32 = 38;
+pub global SHARE_COMPUTATION_E_SM_BIT_SECRET: u32 = 35;
 
 pub global SHARE_COMPUTATION_E_SM_CONFIGS: ShareComputationConfigs<L_THRESHOLD> =
     ShareComputationConfigs::new(QIS_THRESHOLD);
@@ -68,22 +68,37 @@ pub global SHARE_ENCRYPTION_BIT_U: u32 = 1;
 pub global SHARE_ENCRYPTION_BIT_E0: u32 = 3;
 pub global SHARE_ENCRYPTION_BIT_E1: u32 = 3;
 pub global SHARE_ENCRYPTION_BIT_MSG: u32 = 36;
-pub global SHARE_ENCRYPTION_BIT_R1: u32 = 36;
-pub global SHARE_ENCRYPTION_BIT_R2: u32 = 50;
-pub global SHARE_ENCRYPTION_BIT_P1: u32 = 9;
-pub global SHARE_ENCRYPTION_BIT_P2: u32 = 50;
+pub global SHARE_ENCRYPTION_CT0_BIT_R: u32 = 36;
+pub global SHARE_ENCRYPTION_CT1_BIT_R: u32 = 9;
 
 pub global SHARE_ENCRYPTION_K0IS: [Field; L] = [1284838520228573];
 pub global SHARE_ENCRYPTION_PK_BOUNDS: [Field; L] = [1125899906777088];
 pub global SHARE_ENCRYPTION_E0_BOUND: Field = 6;
 pub global SHARE_ENCRYPTION_E1_BOUND: Field = 6;
 pub global SHARE_ENCRYPTION_U_BOUND: Field = 1;
-pub global SHARE_ENCRYPTION_R1_LOW_BOUNDS: [Field; L] = [39210118110];
-pub global SHARE_ENCRYPTION_R1_UP_BOUNDS: [Field; L] = [256];
-pub global SHARE_ENCRYPTION_R2_BOUNDS: [Field; L] = [1125899906777088];
-pub global SHARE_ENCRYPTION_P1_BOUNDS: [Field; L] = [256];
-pub global SHARE_ENCRYPTION_P2_BOUNDS: [Field; L] = [1125899906777088];
-pub global SHARE_ENCRYPTION_MSG_BOUND: Field = 68719403008;
+pub global SHARE_ENCRYPTION_CT0_R_BOUNDS: [Field; L] = [39210118110];
+pub global SHARE_ENCRYPTION_CT1_R_BOUNDS: [Field; L] = [256];
+pub global SHARE_ENCRYPTION_MSG_BOUND: Field = 68719403009;
+
+// Scaled-quotient form of the `k0 * k1` term. `SCALED_QUOTIENT` is false for parameter sets that
+// cannot use it (notably L = 1, where `DELTA < q`); the circuit then keeps the direct `k1` path and
+// the constants below go unused.
+pub global SHARE_ENCRYPTION_SCALED_QUOTIENT: bool = false;
+pub global SHARE_ENCRYPTION_SCALE_K: Field = 0;
+pub global SHARE_ENCRYPTION_DELTA: Field = 0;
+pub global SHARE_ENCRYPTION_SMALL_D: [Field; L] = [0];
+pub global SHARE_ENCRYPTION_ALPHA: [Field; L] = [0];
+pub global SHARE_ENCRYPTION_BETA: [Field; L] = [0];
+pub global SHARE_ENCRYPTION_BIT_Z: u32 = 0;
+pub global SHARE_ENCRYPTION_T_POW_BIT: u32 = 0;
+pub global SHARE_ENCRYPTION_T_GAP: Field = 0;
+pub global SHARE_ENCRYPTION_T_GAP_BIT: u32 = 0;
+pub global SHARE_ENCRYPTION_BIT_Q0: u32 = 0;
+pub global SHARE_ENCRYPTION_Q0_OFFSET: Field = 0;
+pub global SHARE_ENCRYPTION_BIT_Q0_DIFF: u32 = 0;
+pub global SHARE_ENCRYPTION_Q0_DIFF_OFFSET: Field = 0;
+pub global SHARE_ENCRYPTION_BIT_Q1: u32 = 0;
+pub global SHARE_ENCRYPTION_Q1_OFFSET: Field = 0;
 
 pub global SHARE_ENCRYPTION_CONFIGS: ShareEncryptionConfigs<L> = ShareEncryptionConfigs::new(
     PLAINTEXT_MODULUS,
@@ -94,12 +109,16 @@ pub global SHARE_ENCRYPTION_CONFIGS: ShareEncryptionConfigs<L> = ShareEncryption
     SHARE_ENCRYPTION_E0_BOUND,
     SHARE_ENCRYPTION_E1_BOUND,
     SHARE_ENCRYPTION_U_BOUND,
-    SHARE_ENCRYPTION_R1_LOW_BOUNDS,
-    SHARE_ENCRYPTION_R1_UP_BOUNDS,
-    SHARE_ENCRYPTION_R2_BOUNDS,
-    SHARE_ENCRYPTION_P1_BOUNDS,
-    SHARE_ENCRYPTION_P2_BOUNDS,
+    SHARE_ENCRYPTION_CT0_R_BOUNDS,
+    SHARE_ENCRYPTION_CT1_R_BOUNDS,
     SHARE_ENCRYPTION_MSG_BOUND,
+    SHARE_ENCRYPTION_SCALED_QUOTIENT,
+    SHARE_ENCRYPTION_SMALL_D,
+    SHARE_ENCRYPTION_ALPHA,
+    SHARE_ENCRYPTION_BETA,
+    SHARE_ENCRYPTION_Q0_OFFSET,
+    SHARE_ENCRYPTION_Q0_DIFF_OFFSET,
+    SHARE_ENCRYPTION_Q1_OFFSET,
 );
 
 /************************************

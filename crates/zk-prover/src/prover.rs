@@ -10,9 +10,12 @@ use e3_events::{CircuitName, CircuitVariant, Proof};
 use e3_fhe_params::BfvPreset;
 use e3_utils::utility_types::ArcBytes;
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
-use std::process::Command as StdCommand;
+use std::process::{Command as StdCommand, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::thread;
+use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 
 /// Unique bb job directories — shared [`ZkBackend::work_dir`] must not reuse the same paths
@@ -56,8 +59,78 @@ fn bounded_process_output(output: &[u8]) -> String {
     )
 }
 
+/// The end of a process output file, for a process that was killed: its last lines say what it
+/// was doing when the cap hit. Only the last `PROCESS_OUTPUT_LIMIT` bytes are read, so a process
+/// that filled its output until the cap does not cost that much memory here.
+fn read_process_output_tail(path: &Path) -> io::Result<String> {
+    let mut file = fs::File::open(path)?;
+    let len = file.metadata()?.len();
+    bounded_tail(&mut file, len)
+}
+
+/// The last `PROCESS_OUTPUT_LIMIT` bytes of `output`, whose length was `len` when it was measured.
+///
+/// `take` bounds the read itself: a descendant of a killed wrapper can still append to the file,
+/// and bytes written after the length was measured must not grow the buffer.
+fn bounded_tail<R: io::Read + io::Seek>(output: &mut R, len: u64) -> io::Result<String> {
+    use std::io::{Read, SeekFrom};
+
+    let skipped = len.saturating_sub(PROCESS_OUTPUT_LIMIT as u64);
+    output.seek(SeekFrom::Start(skipped))?;
+    let mut tail = Vec::with_capacity(PROCESS_OUTPUT_LIMIT);
+    output
+        .take(len.saturating_sub(skipped).min(PROCESS_OUTPUT_LIMIT as u64))
+        .read_to_end(&mut tail)?;
+
+    let value = String::from_utf8_lossy(&tail);
+    if skipped == 0 {
+        return Ok(value.into_owned());
+    }
+    // A cut inside a multi-byte character leaves a replacement character at the start.
+    let value = value.trim_start_matches(char::REPLACEMENT_CHARACTER);
+    Ok(format!("... truncated {skipped} byte(s)\n{value}"))
+}
+
 fn verifier_reported_invalid_proof(stderr: &str, stdout: &str) -> bool {
     stderr.contains("Proof verification failed") || stdout.contains("Proof verification failed")
+}
+
+/// Runs bb and kills it at `timeout`. Output goes to files in `job_dir` so a full pipe
+/// cannot stall bb, and `JobDirGuard` removes them. The timeout error carries the elapsed time
+/// and the end of bb's stderr, because the job directory is gone once the caller returns.
+fn run_bb(bb: &Path, args: &[&str], job_dir: &Path, timeout: Duration) -> io::Result<Output> {
+    let stdout_path = job_dir.join("bb.stdout");
+    let stderr_path = job_dir.join("bb.stderr");
+    let mut child = StdCommand::new(bb)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(fs::File::create(&stdout_path)?)
+        .stderr(fs::File::create(&stderr_path)?)
+        .spawn()?;
+    let started = Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if started.elapsed() >= timeout {
+            let _ = child.kill();
+            child.wait()?;
+            let stderr = read_process_output_tail(&stderr_path).unwrap_or_default();
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!(
+                    "bb did not finish within {timeout:?} and was killed after {:?}; last stderr: {stderr}",
+                    started.elapsed(),
+                ),
+            ));
+        }
+        thread::sleep(Duration::from_millis(100));
+    };
+    Ok(Output {
+        status,
+        stdout: fs::read(stdout_path)?,
+        stderr: fs::read(stderr_path)?,
+    })
 }
 
 fn next_bb_work_subdir(prefix: &str) -> String {
@@ -71,6 +144,8 @@ pub struct ZkProver {
     circuits_dir: PathBuf,
     work_dir: PathBuf,
     slow_low_memory: bool,
+    /// Wall-clock cap of one bb run, from the backend.
+    bb_timeout: Duration,
 }
 
 impl ZkProver {
@@ -80,6 +155,7 @@ impl ZkProver {
             circuits_dir: backend.circuits_dir.clone(),
             work_dir: backend.work_dir.clone(),
             slow_low_memory: false,
+            bb_timeout: backend.bb_timeout,
         }
     }
 
@@ -251,7 +327,7 @@ impl ZkProver {
             args.push("--slow_low_memory");
         }
 
-        let output = StdCommand::new(&self.bb_binary).args(&args).output()?;
+        let output = run_bb(&self.bb_binary, &args, &job_dir, self.bb_timeout)?;
 
         if !output.status.success() {
             let stderr = bounded_process_output(&output.stderr);
@@ -410,7 +486,7 @@ impl ZkProver {
             verifier_target,
         ];
 
-        let output = StdCommand::new(&self.bb_binary).args(&args).output()?;
+        let output = run_bb(&self.bb_binary, &args, &job_dir, self.bb_timeout)?;
 
         if !output.status.success() {
             let stderr = bounded_process_output(&output.stderr);
@@ -445,6 +521,7 @@ impl ZkProver {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backend::DEFAULT_BB_TIMEOUT;
     use crate::test_utils::get_tempdir;
     use e3_config::BBPath;
 
@@ -534,5 +611,183 @@ mod tests {
             "failed to write temporary file",
             ""
         ));
+    }
+
+    #[test]
+    fn a_hung_bb_is_killed_at_the_wall_clock_cap() {
+        let temp = get_tempdir().unwrap();
+        let started = Instant::now();
+
+        // bb reports its progress on stderr. The job directory is removed after the kill, so the
+        // error must carry what bb was doing and how long it ran.
+        let result = run_bb(
+            Path::new("/bin/sh"),
+            &["-c", "echo 'proving step 3' >&2; sleep 30"],
+            temp.path(),
+            Duration::from_millis(300),
+        );
+
+        let error = result.unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        let message = error.to_string();
+        assert!(message.contains("proving step 3"), "{message}");
+        assert!(message.contains("was killed after"), "{message}");
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn the_prover_takes_the_cap_from_the_backend() {
+        let temp = get_tempdir().unwrap();
+        let circuits_dir = temp.path().join("circuits");
+        let backend = ZkBackend::new(
+            BBPath::Default(temp.path().join("bb")),
+            circuits_dir,
+            temp.path().join("work"),
+        );
+        assert_eq!(ZkProver::new(&backend).bb_timeout, DEFAULT_BB_TIMEOUT);
+
+        let backend = backend.with_bb_timeout(Duration::from_secs(90));
+        assert_eq!(ZkProver::new(&backend).bb_timeout, Duration::from_secs(90));
+    }
+
+    #[test]
+    fn the_output_tail_keeps_the_last_lines_of_the_file() {
+        let temp = get_tempdir().unwrap();
+        let path = temp.path().join("bb.stderr");
+
+        fs::write(
+            &path,
+            format!("{}END", "x".repeat(PROCESS_OUTPUT_LIMIT + 10)),
+        )
+        .unwrap();
+        let tail = read_process_output_tail(&path).unwrap();
+        assert!(tail.starts_with("... truncated 13 byte(s)\n"), "{tail}");
+        assert!(tail.ends_with("END"));
+        assert!(tail.len() <= PROCESS_OUTPUT_LIMIT + 40, "{}", tail.len());
+
+        fs::write(&path, "short").unwrap();
+        assert_eq!(read_process_output_tail(&path).unwrap(), "short");
+    }
+
+    #[test]
+    fn output_appended_after_the_length_was_measured_is_not_read() {
+        // A descendant of the killed wrapper keeps writing: the file holds 100 bytes more than the
+        // measured length. The read must stop at the limit instead of following the file to its end.
+        let measured = (PROCESS_OUTPUT_LIMIT + 50) as u64;
+        let content = format!(
+            "{}{}",
+            "x".repeat(PROCESS_OUTPUT_LIMIT + 50),
+            "APPENDED".repeat(13)
+        );
+        let mut output = io::Cursor::new(content.into_bytes());
+
+        let tail = bounded_tail(&mut output, measured).unwrap();
+
+        assert!(tail.starts_with("... truncated 50 byte(s)\n"), "{tail}");
+        assert!(
+            !tail.contains("APPENDED"),
+            "the read followed the file past the limit"
+        );
+        assert_eq!(
+            tail.len(),
+            "... truncated 50 byte(s)\n".len() + PROCESS_OUTPUT_LIMIT
+        );
+    }
+
+    #[test]
+    fn a_short_output_tail_stops_at_the_measured_length() {
+        let temp = get_tempdir().unwrap();
+        let path = temp.path().join("bb.stderr");
+        fs::write(&path, "shortAPPENDED").unwrap();
+        let mut output = fs::File::open(&path).unwrap();
+
+        assert_eq!(bounded_tail(&mut output, 5).unwrap(), "short");
+    }
+
+    #[test]
+    fn a_configured_cap_stops_a_hung_proof() {
+        // The cap must reach bb through the prover's own prove path, not only through run_bb.
+        let temp = get_tempdir().unwrap();
+        let bb = temp.path().join("bb");
+        fs::write(&bb, "#!/bin/sh\necho 'still proving' >&2\nsleep 30\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&bb, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let circuits_dir = temp.path().join("circuits");
+        let backend = ZkBackend::new(BBPath::Default(bb), circuits_dir, temp.path().join("work"))
+            .with_bb_timeout(Duration::from_millis(300));
+        let prover = ZkProver::new(&backend);
+        // generate_proof selects the circuit's variant itself; place the files under both.
+        let circuit = CircuitName::PkBfv;
+        for variant in [CircuitVariant::Default, CircuitVariant::Recursive] {
+            let circuit_dir = prover
+                .circuits_dir(variant, "insecure-512")
+                .join(circuit.dir_path());
+            fs::create_dir_all(&circuit_dir).unwrap();
+            fs::write(
+                circuit_dir.join(format!("{}.json", circuit.as_str())),
+                b"{}",
+            )
+            .unwrap();
+            fs::write(circuit_dir.join(format!("{}.vk", circuit.as_str())), b"vk").unwrap();
+        }
+
+        let started = Instant::now();
+        let error = prover
+            .generate_proof(CircuitName::PkBfv, b"witness", "e3-1", "insecure-512")
+            .unwrap_err();
+
+        let message = format!("{error}");
+        assert!(message.contains("was killed after"), "{message}");
+        assert!(message.contains("still proving"), "{message}");
+        assert!(started.elapsed() < Duration::from_secs(5));
+
+        // Verification runs bb through its own call and must honour the same cap.
+        let proof = Proof::new(
+            CircuitName::PkBfv,
+            ArcBytes::from_bytes(b"proof"),
+            ArcBytes::from_bytes(b"public"),
+        );
+        let started = Instant::now();
+        let error = prover
+            .verify_proof(&proof, "e3-1", 1, "insecure-512")
+            .unwrap_err();
+        let message = format!("{error}");
+        assert!(message.contains("was killed after"), "{message}");
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn a_finishing_bb_returns_its_output() {
+        let temp = get_tempdir().unwrap();
+
+        let output = run_bb(
+            Path::new("/bin/echo"),
+            &["proof-ok"],
+            temp.path(),
+            DEFAULT_BB_TIMEOUT,
+        )
+        .unwrap();
+
+        assert!(output.status.success());
+        assert_eq!(output.stdout, b"proof-ok\n");
+    }
+
+    #[test]
+    fn an_enormous_cap_allows_bb_to_finish() {
+        let temp = get_tempdir().unwrap();
+
+        let output = run_bb(
+            Path::new("/bin/sh"),
+            &["-c", "sleep 0.1; echo proof-ok"],
+            temp.path(),
+            Duration::from_secs(u64::MAX),
+        )
+        .unwrap();
+
+        assert!(output.status.success());
+        assert_eq!(output.stdout, b"proof-ok\n");
     }
 }

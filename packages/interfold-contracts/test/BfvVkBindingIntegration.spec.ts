@@ -366,10 +366,10 @@ describe("BfvVkBindingIntegration", function () {
         return;
       }
 
-      await networkHelpers.setBlockGasLimit(HONK_VERIFY_GAS_LIMIT);
-
+      // `loadFixture` reverts chain state, so raise the block gas limit after it.
       const { bfvPk, bfvDec, mockCiphernodeRegistry } =
-        await deployHonkAndBfv();
+        await loadFixture(deployHonkAndBfv);
+      await networkHelpers.setBlockGasLimit(HONK_VERIFY_GAS_LIMIT);
       const [testSigner] = await ethers.getSigners();
       const testE3Id = 1n;
       const testRoot = BigInt(ethers.id("test-root"));
@@ -433,6 +433,60 @@ describe("BfvVkBindingIntegration", function () {
         ),
       ).to.equal(true);
 
+      const immediateNodesHash = readVkRecursiveHash(
+        path.join(
+          repoRoot,
+          "circuits/bin/recursive_aggregation/nodes_fold/target/nodes_fold.vk_recursive_hash",
+        ),
+      );
+      const immediateC6Hash = readVkRecursiveHash(
+        path.join(
+          repoRoot,
+          "circuits/bin/recursive_aggregation/c6_fold/target/c6_fold.vk_recursive_hash",
+        ),
+      );
+      expect(immediateNodesHash).not.to.equal(expectedNodesFoldKeyHash);
+      expect(immediateC6Hash).not.to.equal(expectedC6FoldKeyHash);
+      const immediatePkWrapper = await (
+        await ethers.getContractFactory("BfvPkVerifier")
+      ).deploy(
+        await bfvPk.circuitVerifier(),
+        immediateNodesHash,
+        expectedC5KeyHash,
+        BFV_DKG_H,
+      );
+      await immediatePkWrapper.waitForDeployment();
+      const immediateDecWrapper = await (
+        await ethers.getContractFactory("BfvDecryptionVerifier")
+      ).deploy(
+        await bfvDec.circuitVerifier(),
+        await mockCiphernodeRegistry.getAddress(),
+        immediateC6Hash,
+        expectedC7KeyHash,
+        BFV_THRESHOLD_T,
+      );
+      await immediateDecWrapper.waitForDeployment();
+      await expect(
+        immediatePkWrapper.verify.staticCall(
+          testE3Id,
+          testRoot,
+          [testSigner.address],
+          pkCommitment,
+          dkgCommitteeHash,
+          dkgEncoded,
+        ),
+      ).to.be.revertedWithCustomError(immediatePkWrapper, "VkHashMismatch");
+      await expect(
+        immediateDecWrapper.verify.staticCall(
+          testE3Id,
+          decDomain,
+          plaintextHash,
+          decCommitteeHash,
+          decCiphertextCommitment,
+          decEncoded,
+        ),
+      ).to.be.revertedWithCustomError(immediateDecWrapper, "VkHashMismatch");
+
       await expect(
         bfvDec.verify.staticCall(
           testE3Id,
@@ -444,88 +498,6 @@ describe("BfvVkBindingIntegration", function () {
           verifyOverrides,
         ),
       ).to.be.revertedWithCustomError(bfvDec, "DomainBindingMismatch");
-    },
-  );
-
-  (runFoldedProofIntegration ? it : it.skip)(
-    "rejects verify when expectedNodesFoldKeyHash is wrong by one byte",
-    async function () {
-      this.timeout(120_000);
-
-      const folded = loadFoldedArtifacts();
-      if (folded === null) {
-        this.skip();
-      }
-      const [testSigner] = await ethers.getSigners();
-
-      const dkgPublicInputs = hexToBytes32Array(
-        folded.dkg_aggregator.public_inputs_hex,
-      );
-      const expectedC5KeyHash = readVkRecursiveHash(
-        getBfvPkSubCircuitVkHashPaths().c5,
-      );
-
-      const libFactory = await ethers.getContractFactory(
-        "contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol:ZKTranscriptLib",
-      );
-      const zkTranscriptLib = await libFactory.deploy();
-      await zkTranscriptLib.waitForDeployment();
-      const relationsLibFactory = await ethers.getContractFactory(
-        "contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol:RelationsLib",
-      );
-      const relationsLib = await relationsLibFactory.deploy();
-      await relationsLib.waitForDeployment();
-
-      const dkgAgg = await (
-        await ethers.getContractFactory(
-          "contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol:DkgAggregatorVerifier",
-          {
-            libraries: {
-              "project/contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol:ZKTranscriptLib":
-                await zkTranscriptLib.getAddress(),
-              "project/contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol:RelationsLib":
-                await relationsLib.getAddress(),
-            },
-          },
-        )
-      ).deploy();
-      await dkgAgg.waitForDeployment();
-
-      const nodesFoldBuf = Buffer.from(dkgPublicInputs[0].slice(2), "hex");
-      nodesFoldBuf[0] ^= 0xff;
-      const wrongNodesFold = `0x${nodesFoldBuf.toString("hex")}`;
-
-      const bfvPk = await (
-        await ethers.getContractFactory("BfvPkVerifier")
-      ).deploy(
-        await dkgAgg.getAddress(),
-        wrongNodesFold,
-        expectedC5KeyHash,
-        BFV_DKG_H,
-      );
-      await bfvPk.waitForDeployment();
-
-      const abiCoder = ethers.AbiCoder.defaultAbiCoder();
-      const dkgEncoded = abiCoder.encode(
-        ["bytes", "bytes32[]"],
-        [folded.dkg_aggregator.proof_hex, dkgPublicInputs],
-      );
-      const pkCommitment = dkgPublicInputs[dkgPublicInputs.length - 1];
-      const dkgCommitteeHash = committeeHashFromLimbs(
-        dkgPublicInputs[DKG_COMMITTEE_HASH_IDX.hi],
-        dkgPublicInputs[DKG_COMMITTEE_HASH_IDX.lo],
-      );
-
-      await expect(
-        bfvPk.verify.staticCall(
-          1n,
-          BigInt(ethers.id("test-root")),
-          [testSigner.address],
-          pkCommitment,
-          dkgCommitteeHash,
-          dkgEncoded,
-        ),
-      ).to.be.revertedWithCustomError(bfvPk, "VkHashMismatch");
     },
   );
 });

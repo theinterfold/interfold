@@ -85,3 +85,87 @@ fn committee_size_unchanged_after_slash() {
         CiphernodesCommitteeSize::Micro
     );
 }
+
+#[test]
+fn local_proof_failure_requires_the_claimed_dealers_signature() {
+    let me = signer(1);
+    let dealer = signer(2);
+    let other = signer(3);
+    for forgery in [
+        "zero address",
+        "unrecoverable",
+        "wrong signer",
+        "wrong slot",
+        "wrong E3",
+        "wrong type",
+        "wrong hash",
+    ] {
+        let mut voting = voting_with(
+            &me,
+            vec![other.address(), dealer.address(), me.address()],
+            1,
+            2,
+        );
+        let payload = e3_events::ProofPayload {
+            e3_id: voting.e3_id.clone(),
+            proof_type: ProofType::C3aSkShareEncryption,
+            proof: e3_events::Proof::new(
+                e3_events::CircuitName::ShareEncryption,
+                ArcBytes::from_bytes(&[1]),
+                ArcBytes::from_bytes(&[2]),
+            ),
+        };
+        let signed = SignedProofPayload::sign(payload, &dealer).unwrap();
+        let evidence = (
+            Bytes::copy_from_slice(&signed.payload.proof.data),
+            Bytes::copy_from_slice(&signed.payload.proof.public_signals),
+        )
+            .abi_encode();
+        let genuine = ProofVerificationFailed {
+            e3_id: voting.e3_id.clone(),
+            accused_party_id: 1,
+            accused_address: dealer.address(),
+            proof_type: ProofType::C3aSkShareEncryption,
+            data_hash: keccak256(evidence).into(),
+            signed_payload: signed,
+        };
+        let mut forged = genuine.clone();
+        match forgery {
+            "zero address" => {
+                forged.accused_address = Address::ZERO;
+                forged.signed_payload.signature = ArcBytes::from_bytes(&[0; 65]);
+            }
+            "unrecoverable" => forged.signed_payload.signature = ArcBytes::from_bytes(&[0; 65]),
+            "wrong signer" => {
+                forged.signed_payload =
+                    SignedProofPayload::sign(forged.signed_payload.payload, &other).unwrap()
+            }
+            "wrong slot" => forged.accused_party_id = 2,
+            "wrong E3" => {
+                forged.signed_payload.payload.e3_id = E3id::new("43", CHAIN_ID);
+                forged.signed_payload =
+                    SignedProofPayload::sign(forged.signed_payload.payload, &dealer).unwrap();
+            }
+            "wrong type" => forged.proof_type = ProofType::C3bESmShareEncryption,
+            "wrong hash" => forged.data_hash = [9; 32],
+            _ => unreachable!(),
+        }
+        assert!(
+            voting.on_local_proof_failure(forged, &ctx()).is_empty(),
+            "{forgery} caused an accusation"
+        );
+        assert!(voting.received_data.is_empty());
+        voting.on_slash_executed(SlashExecuted {
+            e3_id: voting.e3_id.clone(),
+            proposal_id: 1,
+            operator: other.address(),
+            reason: [0; 32],
+            ticket_amount: 0,
+            ciphernode_bond_amount: 0,
+        });
+        let actions = voting.on_local_proof_failure(genuine, &ctx());
+        assert!(actions.iter().any(|action| matches!(action,
+            VoteAction::PublishAccusation { accusation, .. } if accusation.accused == dealer.address()
+                && accusation.accused_party_id == 1)), "authenticated proof failure was not attributed");
+    }
+}

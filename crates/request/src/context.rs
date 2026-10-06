@@ -15,18 +15,15 @@ use e3_events::{E3id, InterfoldEvent};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc};
 
-/// Initialize the HashMap with a list of expected Recipients. In order to know whether or not we
-/// should buffer we need to iterate over this list and determine which recipients are missing based
-/// on the recipient value is why we set it here to have keys with empty values.
-fn init_recipients() -> HashMap<String, Option<Recipient<InterfoldEvent>>> {
-    HashMap::from([
-        ("keyshare".to_owned(), None),
-        ("threshold_keyshare".to_owned(), None),
-        ("plaintext".to_owned(), None),
-        ("publickey".to_owned(), None),
-        ("accusation_manager".to_owned(), None),
-        ("commitment_consistency_checker".to_owned(), None),
-    ])
+/// Only installed recipient extensions need deferred delivery.
+fn init_recipients(
+    extensions: &[Box<dyn E3Extension>],
+) -> HashMap<String, Option<Recipient<InterfoldEvent>>> {
+    extensions
+        .iter()
+        .filter_map(|extension| extension.expected_recipient())
+        .map(|key| (key.to_owned(), None))
+        .collect()
 }
 
 /// Context that is set to each event hook. Hooks can use this context to gather dependencies if
@@ -66,7 +63,7 @@ impl E3Context {
         Self {
             e3_id: params.e3_id,
             repository: params.repository,
-            recipients: init_recipients(),
+            recipients: init_recipients(&params.extensions),
             dependencies: HetrogenousMap::new(),
         }
     }
@@ -171,7 +168,7 @@ impl FromSnapshotWithParams for E3Context {
         let mut ctx = Self {
             e3_id: params.e3_id,
             repository: params.repository,
-            recipients: init_recipients(),
+            recipients: init_recipients(&params.extensions),
             dependencies: HetrogenousMap::new(),
         };
 
@@ -245,8 +242,8 @@ mod tests {
         let recorded = Arc::new(Mutex::new(Vec::new()));
         let recorder = Recorder(recorded).start();
         let mut buffer = EventBuffer::default();
-        buffer.add(&e3_id, "keyshare", event(&e3_id, "older", 1));
-        context.set_event_recipient("keyshare", Some(recorder.clone().recipient()));
+        buffer.add(&e3_id, "threshold_keyshare", event(&e3_id, "older", 1));
+        context.set_event_recipient("threshold_keyshare", Some(recorder.clone().recipient()));
 
         context.forward_message(&event(&e3_id, "current", 2), &mut buffer);
 
@@ -263,10 +260,10 @@ mod tests {
             extensions: Arc::new(Vec::new()),
         });
         let recorder = Recorder(Arc::new(Mutex::new(Vec::new()))).start();
-        context.set_event_recipient("keyshare", Some(recorder.recipient()));
+        context.set_event_recipient("threshold_keyshare", Some(recorder.recipient()));
 
         let snapshot = context.snapshot().unwrap();
 
-        assert_eq!(snapshot.recipients, ["keyshare"]);
+        assert_eq!(snapshot.recipients, ["threshold_keyshare"]);
     }
 }

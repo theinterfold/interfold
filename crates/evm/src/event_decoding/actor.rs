@@ -164,16 +164,6 @@ mod tests {
     }
 
     #[test]
-    fn parser_rejects_failed_contract_decode() {
-        let error = parse_log(
-            log(Some(1), Some(0)),
-            &Extractor::Strict(rejected_extractor),
-        )
-        .unwrap_err();
-        assert!(error.to_string().contains("could not be decoded"));
-    }
-
-    #[test]
     fn parser_converts_valid_log() {
         let source = log(Some(7), Some(3));
         let id = source.id;

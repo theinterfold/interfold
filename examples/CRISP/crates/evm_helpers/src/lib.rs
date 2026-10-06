@@ -12,13 +12,14 @@ use alloy::{
             BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller,
             WalletFiller,
         },
-        Identity, ProviderBuilder, RootProvider,
+        Identity, ProviderBuilder, RootProvider, WalletProvider,
     },
     rpc::types::TransactionReceipt,
     signers::local::PrivateKeySigner,
     sol,
     transports::RpcError,
 };
+use e3_evm_helpers::nonce::send_with_next_nonce;
 use eyre::Result;
 use std::sync::Arc;
 
@@ -162,6 +163,25 @@ impl std::fmt::Display for SimulateError {
 
 impl std::error::Error for SimulateError {}
 
+/// Whether a failed send shows that the sender cannot pay for the transaction.
+///
+/// The node gives this answer only as text. Geth-family nodes and Anvil write "insufficient funds
+/// for gas * price + value", and Besu writes "Upfront cost exceeds account balance". The
+/// comparison ignores case, spaces, and underscores. An answer with revert data is a refusal by the
+/// contract, so it does not count.
+pub fn is_insufficient_funds(error: &eyre::Report) -> bool {
+    let Some(alloy::contract::Error::TransportError(RpcError::ErrorResp(payload))) =
+        error.downcast_ref::<alloy::contract::Error>()
+    else {
+        return false;
+    };
+    if payload.as_revert_data().is_some() {
+        return false;
+    }
+    let message = payload.message.to_lowercase().replace([' ', '_'], "");
+    message.contains("insufficientfunds") || message.contains("upfrontcostexceedsaccountbalance")
+}
+
 /// Type alias for read-only provider (no wallet)
 pub type CRISPReadProvider = FillProvider<
     JoinFill<
@@ -235,12 +255,13 @@ impl CRISPContract<CRISPWriteProvider> {
         merkle_root: U256,
     ) -> Result<TransactionReceipt> {
         let contract = CRISPProgram::new(self.contract_address, self.provider.as_ref());
-        let receipt = contract
-            .setMerkleRoot(e3_id, merkle_root)
-            .send()
-            .await?
-            .get_receipt()
-            .await?;
+        let receipt = send_with_next_nonce(
+            contract.setMerkleRoot(e3_id, merkle_root),
+            self.provider.default_signer_address(),
+        )
+        .await?
+        .get_receipt()
+        .await?;
 
         eyre::ensure!(receipt.status(), "setMerkleRoot transaction reverted");
 
@@ -531,12 +552,13 @@ impl CRISPContract<CRISPWriteProvider> {
     // publish an input to the CRISPProgram contract
     pub async fn publish_input(&self, e3_id: U256, data: Bytes) -> Result<TransactionReceipt> {
         let contract = CRISPProgram::new(self.contract_address, self.provider.as_ref());
-        let receipt = contract
-            .publishInput(e3_id, data)
-            .send()
-            .await?
-            .get_receipt()
-            .await?;
+        let receipt = send_with_next_nonce(
+            contract.publishInput(e3_id, data),
+            self.provider.default_signer_address(),
+        )
+        .await?
+        .get_receipt()
+        .await?;
 
         eyre::ensure!(receipt.status(), "publishInput transaction reverted");
 
@@ -554,19 +576,20 @@ impl CRISPContract<CRISPWriteProvider> {
         availability_proof: Bytes,
     ) -> Result<TransactionReceipt> {
         let contract = CRISPProgram::new(self.contract_address, self.provider.as_ref());
-        let receipt = contract
-            .finalizeInput(
+        let receipt = send_with_next_nonce(
+            contract.finalizeInput(
                 e3_id,
                 slot_address,
                 encrypted_vote_commitment,
                 encrypted_vote_hash,
                 alloy::primitives::Uint::<40, 1>::from(parent_index_plus_one),
                 availability_proof,
-            )
-            .send()
-            .await?
-            .get_receipt()
-            .await?;
+            ),
+            self.provider.default_signer_address(),
+        )
+        .await?
+        .get_receipt()
+        .await?;
 
         eyre::ensure!(receipt.status(), "finalizeInput transaction reverted");
 

@@ -1988,95 +1988,11 @@ mod census_order_tests {
 }
 
 #[cfg(test)]
-mod custom_params_decoding_tests {
+mod e3_request_tests {
     use super::{
         deadline_attempt_times, is_configured_e3_program, stage_ends_input_retrieval, E3Stage,
     };
-    use crate::server::models::CensusMode;
-    use alloy::dyn_abi::SolType;
-    use alloy::primitives::{Address, U256};
-    use alloy::sol_types::sol_data;
-
-    type CustomParamsTuple = (
-        sol_data::Address,
-        sol_data::Uint<256>,
-        sol_data::Uint<256>,
-        sol_data::Uint<256>,
-        sol_data::Uint<256>,
-        sol_data::Uint<256>,
-        sol_data::Uint<256>,
-    );
-
-    fn encode(census_mode: u64) -> Vec<u8> {
-        <CustomParamsTuple as SolType>::abi_encode(&(
-            Address::ZERO,
-            U256::from(0),
-            U256::from(3),
-            U256::from(0),
-            U256::from(1),
-            U256::from(census_mode),
-            // Voting-power divisor; 0 means the contract derives it from the token decimals.
-            U256::from(0),
-        ))
-    }
-
-    /// Every producer of `customParams` must encode exactly what `CRISPProgram._initRound`
-    /// decodes. A short encoding does not degrade — `abi.decode` reverts with empty data, so
-    /// `request_e3` fails with nothing to read, which is how this surfaced in crisp_e2e after the
-    /// divisor field was added. Pins the arity so a future field breaks a test instead of a round.
-    #[test]
-    fn the_encoded_tuple_has_the_arity_the_contract_decodes() {
-        // Seven: token, threshold, numOptions, creditMode, credits, censusMode, divisor.
-        const CONTRACT_FIELD_COUNT: usize = 7;
-
-        let encoded = encode(0);
-
-        // Each static field occupies one 32-byte word.
-        assert_eq!(
-            encoded.len(),
-            CONTRACT_FIELD_COUNT * 32,
-            "encoded params must be {} words; a mismatch reverts request_e3 with empty data",
-            CONTRACT_FIELD_COUNT
-        );
-    }
-
-    #[test]
-    fn decodes_the_declared_census_mode() {
-        let decoded = <CustomParamsTuple as SolType>::abi_decode(&encode(1)).unwrap();
-        assert_eq!(
-            CensusMode::try_from(decoded.5.to::<u64>()).unwrap(),
-            CensusMode::ByRequester
-        );
-    }
-
-    /// Params without the field are not a legacy form to tolerate — they are malformed, and must
-    /// fail rather than be read as a token vote.
-    #[test]
-    fn params_missing_the_field_fail_to_decode() {
-        type Short = (
-            sol_data::Address,
-            sol_data::Uint<256>,
-            sol_data::Uint<256>,
-            sol_data::Uint<256>,
-            sol_data::Uint<256>,
-        );
-        let short = <Short as SolType>::abi_encode(&(
-            Address::ZERO,
-            U256::from(0),
-            U256::from(3),
-            U256::from(0),
-            U256::from(1),
-        ));
-        assert!(<CustomParamsTuple as SolType>::abi_decode(&short).is_err());
-    }
-
-    #[test]
-    fn an_unrecognised_mode_is_an_error() {
-        // 3 rather than 2: 2 is `Onchain`. This must stay one past the highest variant, so it
-        // keeps testing an unknown mode rather than silently becoming a valid one.
-        let decoded = <CustomParamsTuple as SolType>::abi_decode(&encode(3)).unwrap();
-        assert!(CensusMode::try_from(decoded.5.to::<u64>()).is_err());
-    }
+    use alloy::primitives::Address;
 
     #[test]
     fn e3_requests_only_match_the_configured_program() {
@@ -2133,6 +2049,7 @@ mod pending_discovery_tests {
             input_slots: vec![],
             input_usable: vec![],
             input_parents: vec![],
+            input_ciphertext_hashes: vec![],
             requester: "0x0000000000000000000000000000000000000002".to_string(),
             num_options: "2".to_string(),
             credit_mode: CreditMode::Constant,

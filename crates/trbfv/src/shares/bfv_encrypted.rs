@@ -10,8 +10,7 @@ use e3_utils::utility_types::ArcBytes;
 use fhe::bfv::{BfvParameters, Ciphertext, Encoding, Plaintext, PublicKey, SecretKey};
 use fhe_math::rq::{Ntt, Poly};
 use fhe_traits::{
-    DeserializeParametrized, FheDecoder, FheDecrypter, FheEncoder, FheEncrypter,
-    Serialize as FheSerialize,
+    DeserializeParametrized, FheDecoder, FheDecrypter, FheEncoder, Serialize as FheSerialize,
 };
 use ndarray::Array2;
 use rand::{CryptoRng, RngCore};
@@ -61,48 +60,10 @@ fn debug_vec_arcbytes(v: &[ArcBytes], f: &mut std::fmt::Formatter) -> std::fmt::
 }
 
 impl BfvEncryptedShare {
-    /// Encrypt a Shamir share for a specific recipient.
-    ///
-    /// # Arguments
-    /// * `share` - The Shamir share to encrypt (contains data for all moduli)
-    /// * `recipient_pk` - The recipient's BFV public key
-    /// * `params` - BFV parameters for share encryption
-    /// * `rng` - Random number generator
-    ///
-    /// # Returns
-    /// An encrypted share that can only be decrypted by the recipient
-    pub fn encrypt<R: RngCore + CryptoRng>(
-        share: &ShamirShare,
-        recipient_pk: &PublicKey,
-        params: &Arc<BfvParameters>,
-        rng: &mut R,
-    ) -> Result<Self> {
-        let data: &Array2<u64> = share.deref(); // Array2<u64> with rows = moduli, cols = coefficients
-        let num_moduli = data.nrows();
-
-        let mut ciphertexts = Vec::with_capacity(num_moduli);
-
-        for m in 0..num_moduli {
-            let row = data.row(m);
-            let share_vec: Vec<u64> = row.to_vec();
-
-            let pt = Plaintext::try_encode(&share_vec, Encoding::poly(), params)
-                .context("Failed to encode share as plaintext")?;
-
-            let ct = recipient_pk
-                .try_encrypt(&pt, rng)
-                .context("Failed to encrypt share")?;
-
-            ciphertexts.push(ArcBytes::from_bytes(&ct.to_bytes()));
-        }
-
-        Ok(Self { ciphertexts })
-    }
-
     /// Encrypt a Shamir share and return encryption randomness for ZK proofs.
     ///
-    /// Same as `encrypt` but uses `try_encrypt_with_intermediates` to capture the
-    /// encryption randomness (u, e0, e1) needed for C3a/C3b share encryption proofs.
+    /// Encrypts each modulus row with `try_encrypt_with_intermediates` and captures the
+    /// encryption randomness (u, e0, e1) that C3a/C3b share encryption proofs need.
     pub fn encrypt_extended<R: RngCore + CryptoRng>(
         share: &ShamirShare,
         recipient_pk: &PublicKey,
@@ -204,56 +165,14 @@ pub struct BfvEncryptedShares {
 }
 
 impl BfvEncryptedShares {
-    /// Encrypt shares for all recipients (no skipping).
-    pub fn encrypt_all<R: RngCore + CryptoRng>(
-        secret: &SharedSecret,
-        recipient_pks: &[PublicKey],
-        params: &Arc<BfvParameters>,
-        rng: &mut R,
-    ) -> Result<Self> {
-        let num_parties = recipient_pks.len();
-        let mut shares = Vec::with_capacity(num_parties);
-
-        for (party_id, recipient_pk) in recipient_pks.iter().enumerate() {
-            let share = secret
-                .extract_party_share(party_id)
-                .context(format!("Failed to extract share for party {}", party_id))?;
-
-            let encrypted = BfvEncryptedShare::encrypt(&share, recipient_pk, params, rng)?;
-
-            shares.push(Some(encrypted));
-        }
-
-        Ok(Self { shares })
-    }
-
-    /// Encrypt shares for all recipients and capture per-row randomness (u, e0, e1) for C3 proofs.
-    ///
-    /// `skip_idx == Some(idx)` leaves that slot as `None` with an empty witness vec — a DKG
-    /// party never encrypts its own share (bound via C2, consumed locally by C4).
-    pub fn encrypt_all_extended<R: RngCore + CryptoRng>(
-        secret: &SharedSecret,
-        recipient_pks: &[PublicKey],
-        params: &Arc<BfvParameters>,
-        rng: &mut R,
-        skip_idx: Option<usize>,
-    ) -> Result<(Self, Vec<Vec<BfvEncryptionWitness>>)> {
-        let recipient_share_indices: Vec<_> = (0..recipient_pks.len()).collect();
-        Self::encrypt_all_extended_for_share_indices(
-            secret,
-            recipient_pks,
-            &recipient_share_indices,
-            params,
-            rng,
-            skip_idx,
-        )
-    }
-
     /// Encrypt shares for all recipient slots while selecting Shamir rows by real party index.
     ///
     /// `recipient_share_indices[slot]` is the row in `secret` encrypted for `recipient_pks[slot]`.
     /// This supports sparse recipient vectors after expulsions while keeping the encrypted-share
     /// vector compact and positional.
+    ///
+    /// `skip_idx == Some(slot)` leaves that slot as `None` with an empty witness vec. A DKG
+    /// party never encrypts its own share (bound via C2, consumed locally by C4).
     pub fn encrypt_all_extended_for_share_indices<R: RngCore + CryptoRng>(
         secret: &SharedSecret,
         recipient_pks: &[PublicKey],
@@ -334,37 +253,6 @@ impl BfvEncryptedShares {
 mod tests {
     use super::*;
     use e3_fhe_params::{BfvParamSet, BfvPreset};
-
-    #[test]
-    fn test_encrypt_decrypt_share() {
-        let params = BfvParamSet::from(BfvPreset::InsecureDkg512).build_arc();
-        let mut rng = rand::rng();
-
-        // Generate key pair
-        let sk = SecretKey::random(&params, &mut rng);
-        let pk = PublicKey::new(&sk, &mut rng);
-
-        // Create a test share (1 modulus row, 512 coefficients)
-        let degree = params.degree();
-        let test_data: Vec<u64> = (0..degree as u64).collect();
-        let mut data = Array2::zeros((1, degree));
-        for (i, val) in test_data.iter().enumerate() {
-            data[[0, i]] = *val;
-        }
-        let share = ShamirShare::new(data.clone());
-
-        // Encrypt
-        let encrypted = BfvEncryptedShare::encrypt(&share, &pk, &params, &mut rng)
-            .expect("Encryption should succeed");
-
-        // Decrypt
-        let decrypted = encrypted
-            .decrypt(&sk, &params, degree)
-            .expect("Decryption should succeed");
-
-        // Verify
-        assert_eq!(share.deref(), decrypted.deref());
-    }
 
     #[test]
     fn test_secret_key_serialization() {

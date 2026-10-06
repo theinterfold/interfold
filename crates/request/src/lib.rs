@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 mod actors;
+pub mod canonical_key;
 mod context;
 mod domain;
 mod hetrogenous_map;

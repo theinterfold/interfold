@@ -66,6 +66,10 @@ pub(crate) struct AccusationVoting {
     pub(super) signer: PrivateKeySigner,
     pub(super) slashing_manager: Address,
     pub(super) committee: Vec<Address>,
+    /// Finalized party IDs stay fixed when slashing removes active members.
+    pub(super) committee_party_ids: HashMap<Address, u64>,
+    /// Immutable party slots, also after the live voting roster shrinks.
+    pub(super) finalized_committee: Vec<Address>,
     pub(super) circuit_threshold_t: usize,
     pub(super) vote_quorum_h: usize,
     pub(super) committee_n: usize,
@@ -73,6 +77,8 @@ pub(crate) struct AccusationVoting {
     pub(super) accused_proofs: HashSet<(Address, ProofType)>,
     pub(super) received_data: HashMap<(Address, ProofType), ReceivedProofData>,
     pub(super) buffered_votes: HashMap<[u8; 32], Vec<AccusationVote>>,
+    /// Accusers whose later vote window this node adopted; each moves a window at most once.
+    pub(super) window_movers: HashSet<([u8; 32], Address)>,
     pub(super) pending_reverifications: HashMap<CorrelationId, PendingReVerification>,
     pub(super) vote_timeout: Duration,
     pub(super) vote_validity_secs: u64,

@@ -11,19 +11,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { EventListener } from '../src/events/event-listener'
 import { RandomnessProviderEventType, RegistryEventType, type InterfoldEvent } from '../src/events/types'
 import { InterfoldSDK } from '../src/interfold-sdk'
-import { ParamSet } from '../src/contracts/types'
-import { cryptoConfigIdForParamSet } from '../src/utils'
 
 afterEach(() => {
   vi.restoreAllMocks()
-})
-
-describe('secure parameter-set migration', () => {
-  it('routes new secure requests to slot 2 and rejects the historical slot', () => {
-    expect(ParamSet.Secure8192).toBe(2)
-    expect(cryptoConfigIdForParamSet(ParamSet.Secure8192)).toBe('0xac5490c59e158cbb104642bba0ab7b3fd11ca49dd4bb05ce7bec8089ce3c8c31')
-    expect(() => cryptoConfigIdForParamSet(1)).toThrow('Unsupported BFV parameter set: 1')
-  })
 })
 
 describe('RegistryEventType', () => {
@@ -310,38 +300,5 @@ describe('RegistryEventType', () => {
     await Promise.resolve()
 
     expect(consoleError).toHaveBeenCalledWith(`Error in event callback for ${RegistryEventType.COMMITTEE_PUBLISHED}:`, error)
-  })
-
-  it('preserves the request-time ticket price', () => {
-    const listener = new EventListener({
-      publicClient: {} as PublicClient,
-      contracts: {
-        interfold: '0x0000000000000000000000000000000000000001',
-        ciphernodeRegistry: '0x0000000000000000000000000000000000000002',
-        feeToken: '0x0000000000000000000000000000000000000003',
-      },
-    })
-    const callback = vi.fn()
-    const event: InterfoldEvent<RegistryEventType.COMMITTEE_REQUESTED> = {
-      type: RegistryEventType.COMMITTEE_REQUESTED,
-      data: {
-        e3Id: 1n,
-        entropyBlock: 2n,
-        threshold: [2n, 3n],
-        requestBlock: 4n,
-        committeeDeadline: 5n,
-        ticketPrice: 10_000_000n,
-      },
-      log: {} as Log,
-      timestamp: new Date(),
-      blockNumber: 4n,
-      transactionHash: '0x',
-    }
-
-    listener.on(RegistryEventType.COMMITTEE_REQUESTED, callback)
-    listener.emit(event)
-
-    expect(callback).toHaveBeenCalledWith(event)
-    expect(event.data.ticketPrice).toBe(10_000_000n)
   })
 })

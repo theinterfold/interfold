@@ -163,6 +163,9 @@ export const CONTRACTS = {
 // refuses to send a transaction unless the wallet is on this chain.
 export const CHAIN = NET.chain
 
+// True on a test network. Test-only UI (the faucet) also requires it.
+export const IS_TESTNET = CHAIN.testnet === true
+
 // Human-readable network name for UI copy.
 export const NETWORK_NAME = NET.name
 

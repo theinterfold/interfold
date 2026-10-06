@@ -15,6 +15,7 @@ export const CRISP_SERVER_ELIGIBLE_ADDRESSES_ENDPOINT = 'state/eligible-addresse
 export const CRISP_SERVER_VOTING_BROADCAST_ENDPOINT = 'voting/broadcast'
 export const CRISP_SERVER_VOTING_AVAILABILITY_ENDPOINT = 'voting/availability'
 export const CRISP_SERVER_VOTING_STATUS_ENDPOINT = 'voting/status'
+export const CRISP_SERVER_VOTING_SELECTION_ENDPOINT = 'voting/selection'
 export const CRISP_SERVER_ROUNDS_CURRENT_ENDPOINT = 'rounds/current'
 export const CRISP_SERVER_ROUNDS_PUBLIC_KEY_ENDPOINT = 'rounds/public-key'
 export const CRISP_SERVER_ROUNDS_CIPHERTEXT_ENDPOINT = 'rounds/ciphertext'

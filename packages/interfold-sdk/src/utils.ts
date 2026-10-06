@@ -85,10 +85,10 @@ export const DEFAULT_E3_CONFIG = {
 
 export function cryptoConfigIdForParamSet(paramSet: number): Hash {
   if (paramSet === 0) {
-    return '0x19921c8c12f93c3013be57d0859f4ddcdb4464ac856a0c62be1ad617fbbd2e7d'
+    return '0x119c9bde7d7a31aaeef3e696ea29f8590c611d431921b6981434bd2c0fb5f7d1'
   }
   if (paramSet === 2) {
-    return '0xac5490c59e158cbb104642bba0ab7b3fd11ca49dd4bb05ce7bec8089ce3c8c31'
+    return '0x5ebb3432396f21cd97fca47e006b9dd38c021bf2902d3e555cf74cb91b28e44e'
   }
   throw new SDKError(`Unsupported BFV parameter set: ${paramSet}`, 'UNSUPPORTED_CRYPTO_CONFIG')
 }

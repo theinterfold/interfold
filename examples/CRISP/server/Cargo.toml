@@ -43,6 +43,8 @@ lean-imt = "=0.1.2"
 
 # Local dependencies
 e3-compute-provider.workspace = true
+# The Secure Process's slot selection rule, which the slot head and the selection status use.
+e3-user-program.workspace = true
 e3-sdk = { workspace = true, default-features = false, features=["full"] }
 e3-fhe-params = { workspace = true, features = ["abi-encoding"] }
 e3-bfv-client = { workspace = true }
@@ -83,3 +85,6 @@ anyhow.workspace = true
 # Configuration
 config = "=0.14.0"
 dotenvy = "=0.15.7"
+
+[dev-dependencies]
+alloy = { version = "=1.0.41", features = ["node-bindings"] }

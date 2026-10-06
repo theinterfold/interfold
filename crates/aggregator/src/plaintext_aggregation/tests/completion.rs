@@ -43,27 +43,45 @@ async fn missing_c6_inner_proofs_emit_e3_failed() -> Result<()> {
 }
 
 #[actix::test]
-async fn test_skip_reuses_c7_as_mock_verifier_placeholder() -> Result<()> {
-    let (mut aggregator, _history, _e3_id) =
+async fn mock_plaintext_publication_carries_the_canonical_domain() -> Result<()> {
+    let (mut aggregator, history, e3_id) =
         build_plaintext_aggregator(generating_c7_state(), false).await?;
-    let c7_proof = dummy_proof(CircuitName::PkAggregation);
+    let c7_proof = dummy_proof(CircuitName::DecryptedSharesAggregation);
     aggregator.pending.c7_proofs_pending = Some(vec![c7_proof.clone()]);
-    let ec = test_ctx(E3Failed {
-        e3_id: aggregator.e3_id.clone(),
-        failed_at_stage: E3Stage::None,
-        reason: FailureReason::None,
-    });
+    let ciphertexts = test_ciphertexts();
+    let (_, signed) = share_with_matching_commitment(&e3_id, 0, &ciphertexts[..1]);
+    aggregator.pending.honest_c6_proofs_for_agg = Some(vec![(
+        0,
+        signed
+            .into_iter()
+            .map(|proof| proof.payload.proof)
+            .collect(),
+    )]);
+    let ec = test_ctx(EffectsEnabled::new());
+    aggregator.pending.last_ec = Some(ec.clone());
 
-    aggregator.dispatch_decryption_aggregation(&ec)?;
-    assert!(aggregator
-        .pending
-        .decryption_aggregator_proofs
-        .as_ref()
-        .is_some_and(|proofs| proofs == &[c7_proof]));
-    assert!(aggregator
-        .pending
-        .decryption_aggregation_correlation
-        .is_none());
-
+    aggregator.maybe_start_decryption_aggregation(&ec)?;
+    aggregator.try_publish_complete()?;
+    let event = next_event(&history).await?;
+    let InterfoldEventData::PlaintextAggregated(result) = event.get_data() else {
+        panic!("expected plaintext publication");
+    };
+    let proof = &result.decryption_aggregator_proofs[0];
+    assert_eq!(proof.circuit, CircuitName::DecryptionAggregator);
+    assert_eq!(proof.data, c7_proof.data);
+    let domain = e3_committee_hash::decryption_domain_limbs(
+        e3_id.chain_id(),
+        e3_id.try_into()?,
+        test_decryption_domain(),
+        alloy::primitives::keccak256(&ciphertexts[0][..]),
+    );
+    assert_eq!(
+        &proof.public_signals[128..160],
+        &alloy::primitives::U256::from(domain.hi).to_be_bytes::<32>()
+    );
+    assert_eq!(
+        &proof.public_signals[160..192],
+        &alloy::primitives::U256::from(domain.lo).to_be_bytes::<32>()
+    );
     Ok(())
 }

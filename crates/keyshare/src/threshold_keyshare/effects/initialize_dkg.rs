@@ -22,10 +22,9 @@ impl ThresholdKeyshare {
             return Ok(());
         }
 
-        let deadline = state
-            .dkg_deadline_unix_secs
-            .ok_or_else(|| anyhow!("canonical DKG deadline is unavailable"))?;
-        if deadline <= crate::domain::timeout_policy::now_unix_secs() {
+        // One clock reading decides the DKG start and the timing of both collectors.
+        let now = crate::domain::timeout_policy::now_unix_secs();
+        if past_dkg_deadline(state.dkg_deadline_unix_secs, now)? {
             warn!(
                 e3_id = %state.e3_id,
                 "Ignoring late DKG startup after the canonical deadline"
@@ -38,6 +37,7 @@ impl ThresholdKeyshare {
             DkgTimeoutPhase::EncryptionKeyCollection,
             state.dkg_deadline_unix_secs,
             state.dkg_window_secs,
+            now,
         ) {
             warn!(
                 e3_id = %state.e3_id,
@@ -47,8 +47,10 @@ impl ThresholdKeyshare {
             return Ok(());
         }
 
-        self.ensure_encryption_key_collector(address.clone())?;
-        self.ensure_collector(address.clone())?;
+        // `handle_encryption_key_created` only records a peer key that arrives in `Init`.
+        let collector = self.ensure_encryption_key_collector(address.clone(), &ec, now)?;
+        self.replay_encryption_keys(&collector)?;
+        self.ensure_collector(address.clone(), &ec, now)?;
 
         let BfvKeypairMaterial {
             sk_bfv: sk_bfv_encrypted,
@@ -104,6 +106,30 @@ impl ThresholdKeyshare {
                 .filter(|k| !state.expelled_parties.contains(&k.party_id))
                 .collect()
         };
+
+        // Share generation needs H keys, including this node's key. An expulsion can leave fewer:
+        // it can reach this actor after the collector completes, or empty the collector's wait list.
+        let minimum_keys = state.committee_h()?;
+        let has_own_key = filtered_keys
+            .iter()
+            .any(|key| key.party_id == state.party_id);
+        if filtered_keys.len() < minimum_keys || !has_own_key {
+            let missing_parties = (0..state.threshold_n)
+                .filter(|party_id| {
+                    !state.expelled_parties.contains(party_id)
+                        && !filtered_keys.iter().any(|key| key.party_id == *party_id)
+                })
+                .collect();
+            return self.fail_encryption_key_collection(EncryptionKeyCollectionFailed {
+                e3_id: state.e3_id.clone(),
+                reason: format!(
+                    "{} usable encryption keys; share generation needs {} including this node's key",
+                    filtered_keys.len(),
+                    minimum_keys
+                ),
+                missing_parties,
+            });
+        }
 
         self.state.try_mutate(&ec, |s| {
             s.new_state(KeyshareState::GeneratingThresholdShare(

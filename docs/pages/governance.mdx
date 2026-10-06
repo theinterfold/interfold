@@ -17,12 +17,12 @@ and which parameters apply.
 
 Interfold governance is the decision-making system for the Interfold DAO. The DAO is built on
 [Aragon OSx](https://aragon.org/osx). Governance uses FOLD voting power, and it is centered on
-receipt-free secret-ballot voting through [CRISP](/CRISP/introduction).
+encrypted secret-ballot voting through [CRISP](/CRISP/introduction).
 
 ## Governance at a glance
 
 The standard Interfold governance proposal is an IPP (Interfold Protocol Proposal). An IPP uses
-CRISP for receipt-free secret-ballot voting.
+CRISP for encrypted secret-ballot voting.
 
 A FIPP (Fallback Interfold Protocol Proposal) gives a transparent voting path if CRISP cannot be
 used. FIPPs are strictly a fallback mechanism, not an alternative default voting mode.
@@ -113,6 +113,21 @@ penalties.
 Eligible vesting FOLD counts automatically toward governance voting power. It does not require
 delegation.
 
+### Delegating bonded and vesting FOLD
+
+Bonded and vesting FOLD count for the bond owner or the vesting holder without delegation. An
+account that cannot vote itself, such as a Safe, can give this voting power to one other address:
+
+1. From the owner account, call `delegateBonded(delegate)` on the `BondedVotes` contract.
+2. From the delegate account, call `acceptBonded(owner)`. The voting power moves at this step.
+
+A delegate can represent up to three owners at a time. The owner can take the voting power back at
+any time with `delegateBonded` and the zero address. The delegate can give it back with
+`dropBonded(owner)`. Only the current delegate of that owner can call it. If the owner asks a
+different delegate, the current delegation stops immediately, and the voting power stays with the
+owner until the new delegate accepts. A change does not affect a vote that already took its
+snapshot. Locked FOLD keeps its own delegation, which you set in the governance interface.
+
 ### How the contracts add the three sources
 
 The `BondedVotes` contract computes the voting power of an account. It reads all three sources at
@@ -121,13 +136,16 @@ the same timepoint and adds them:
 - **Locked FOLD:** the voting power that the voting escrow gives the account. This part follows
   delegation.
 - **Bonded FOLD:** the bonded total of the account as a bond owner, from the `BondedCheckpoints`
-  contract.
+  contract. While a delegation is in force, the bonded and vesting FOLD of the owner count for its
+  delegate instead.
 - **Vesting FOLD:** FOLD that is still under a lock policy in the FOLD contract. The contract
   subtracts the part that the bond already covers, and caps the result at the wallet balance.
 
 <Callout type='info'>
-  Bonded voting power belongs to the bond owner of a ciphernode, not to the operator key. The
-  `BondedVotes` contract does not let an account delegate bonded voting power.
+  Bonded voting power belongs to the bond owner of a ciphernode, not to the operator key. The bond
+  owner can give it to a delegate that accepts it, as [Delegating bonded and vesting
+  FOLD](#delegating-bonded-and-vesting-fold) shows. It does not follow the delegation of locked
+  FOLD.
 </Callout>
 
 ## Voting weight and eligibility
@@ -165,8 +183,8 @@ The underlying FOLD voting-power rules are the same for both proposal types.
 | Full name              | Interfold Protocol Proposal                         | Fallback Interfold Protocol Proposal                                            |
 | Role                   | The standard proposal type                          | The transparent fallback proposal type                                          |
 | When it is used        | By default                                          | Strictly when CRISP is unavailable, or an issue prevents the IPP voting process |
-| Voting                 | Receipt-free secret ballot through CRISP            | Transparent on-chain voting                                                     |
-| Individual votes       | Never revealed                                      | Visible on-chain                                                                |
+| Voting                 | Encrypted secret ballot through CRISP               | Transparent on-chain voting                                                     |
+| Individual votes       | Encrypted; only the public result is decrypted      | Visible on-chain                                                                |
 | Tally                  | Computed under encryption, then threshold-decrypted | Visible on-chain                                                                |
 | Voting-power model     | Committed FOLD, 1 FOLD = 1 vote                     | The same as IPP                                                                 |
 | Lifecycle after voting | Foundation approval, then execution                 | The same as IPP                                                                 |
@@ -176,12 +194,13 @@ The underlying FOLD voting-power rules are the same for both proposal types.
 An IPP is the standard Interfold governance proposal.
 
 IPPs use [CRISP (Coercion-Resistant Impartial Selection Protocol)](/CRISP/introduction), the
-reference implementation of the Interfold for receipt-free secret-ballot voting. CRISP applies the
-confidential coordination model of the Interfold to governance. Private ballots contribute to a
-shared result, and individual votes are not exposed.
+reference implementation of the Interfold for encrypted secret-ballot voting. CRISP applies the
+confidential coordination model of the Interfold to governance. Encrypted ballots contribute to a
+shared result, and the committee decrypts only that combined result.
 
-Ballots are encrypted client-side and tallied under encryption within an Encrypted Execution
-Environment (E3). Individual votes are never revealed.
+Each ballot is encrypted in the browser of the voter and tallied under encryption within an
+Encrypted Execution Environment (E3). No single ciphernode can decrypt a ballot. The combined result
+is public. These protections depend on the conditions in [Privacy limits](#privacy-limits).
 
 A CRISP voting round proceeds broadly as follows:
 
@@ -191,12 +210,25 @@ A CRISP voting round proceeds broadly as follows:
 4. Eligible participants submit encrypted ballots.
 5. The tally is computed over encrypted votes.
 6. The final tally is threshold-decrypted.
-7. The outcome can be verified without exposing individual ballots.
+7. Anyone can verify the outcome. The verification does not decrypt individual ballots.
 
 No single ciphernode controls output decryption.
 
-CRISP therefore separates ballot visibility from outcome verifiability. Individual choices remain
-confidential, and the resulting decision remains verifiable.
+CRISP therefore separates ballot visibility from outcome verifiability. Individual ballots stay
+encrypted, and the resulting decision stays verifiable, under the conditions that follow.
+
+#### Privacy limits
+
+The privacy of a CRISP ballot depends on these conditions:
+
+- **Committee threshold.** Decryption needs a threshold of committee key shares (T + 1). If T + 1 or
+  more committee members collude, they can decrypt individual ballots.
+- **Public result.** The committee decrypts only the combined result, and that result is public. In
+  some polls, for example small or one-sided polls, the result can show how individual participants
+  voted.
+- **Sender.** The CRISP server receives every ballot, so it sees each request. A ballot that the
+  wallet of the voter sends also shows the voter address on-chain. When the CRISP server relays a
+  ballot, the chain shows the relay address.
 
 #### Changing a vote
 
@@ -205,15 +237,17 @@ when voting closes is included in the final tally.
 
 #### Vote masking and receipt-freeness
 
-IPPs also support vote masking. Vote masking is a mechanism that makes observable ballot activity
-unreliable as evidence of how someone voted.
+IPPs also support vote masking. Vote masking makes observable ballot activity weaker evidence of how
+someone voted.
 
-A mask creates a valid encrypted update without changing the underlying vote. Genuine vote updates
-and masks are computationally indistinguishable. For this reason, an outside observer cannot
-reliably determine whether visible activity reflects the true or final choice of a voter.
+A mask creates a valid encrypted update without changing the underlying vote. On-chain, a vote, a
+vote update, and a mask look the same. For this reason, visible activity alone does not show an
+outside observer the true or final choice of a voter.
 
-This helps CRISP provide receipt-freeness. Voters cannot produce reliable proof of how they voted,
-even if their on-chain activity is observed.
+Vote masking makes receipts weaker: on-chain activity is not reliable proof of how a voter voted.
+This protection holds only under the conditions in [Privacy limits](#privacy-limits). It does not
+hold, for example, when T + 1 committee members collude, or when the public result shows how a
+participant voted.
 
 This
 [technical blog post](https://blog.theinterfold.com/vote-masking-receipt-freeness-secret-ballots/)
@@ -240,7 +274,7 @@ Interfold governance currently uses a multi-stage process:
 Governance participants with at least 12K FOLD of active voting power can create proposals through
 the [Interfold governance interface](https://governance.theinterfold.com/).
 
-The standard proposal type is an IPP, which uses CRISP for receipt-free secret-ballot voting. FIPPs
+The standard proposal type is an IPP, which uses CRISP for encrypted secret-ballot voting. FIPPs
 exist only as a fallback when CRISP cannot be used.
 
 ### Community vote
@@ -248,7 +282,7 @@ exist only as a fallback when CRISP cannot be used.
 After a proposal is created, eligible FOLD voting power determines whether it passes its voting
 stage.
 
-IPPs use receipt-free secret-ballot voting through CRISP. FIPPs use transparent voting only when the
+IPPs use encrypted secret-ballot voting through CRISP. FIPPs use transparent voting only when the
 fallback mechanism is required.
 
 ### Foundation approval
@@ -320,7 +354,7 @@ This table is the reference for the live Interfold DAO configuration.
 | Lock withdrawal cooldown                  | 30 days                                                   |
 | Voting power after withdrawal starts      | Stops immediately                                         |
 | Standard proposal type                    | IPP                                                       |
-| Standard voting                           | Receipt-free secret ballot through CRISP                  |
+| Standard voting                           | Encrypted secret ballot through CRISP                     |
 | Fallback proposal type                    | FIPP                                                      |
 | Fallback voting                           | Transparent on-chain voting                               |
 | Foundation approval                       | Board review and approval required before implementation  |

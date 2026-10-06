@@ -4,18 +4,33 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-import { useState, useCallback, useRef } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { useSignTypedData, usePublicClient, useChainId, useWalletClient } from 'wagmi'
-import type { Address } from 'viem'
-import { encodeSolidityProof, finishBallotProof, finishMaskProof, prepareBallot } from '@crisp-e3/sdk'
-import type { PrepareBallotInputs } from '@crisp-e3/sdk'
+import type { Address, Hex } from 'viem'
+import {
+  decodeInputIdentity,
+  encodeSolidityProof,
+  finishBallotProof,
+  finishMaskProof,
+  getInputSelection,
+  getSubmissionStage,
+  prepareBallot,
+} from '@crisp-e3/sdk'
+import type { InputExclusionReason, InputIdentity, InputSelectionResponse, PrepareBallotInputs, SubmissionStage } from '@crisp-e3/sdk'
 import { ensureCircuits } from '@/utils/circuits'
 
 import { useVoteManagementContext } from '@/context/voteManagement'
 import { useNotificationAlertContext } from '@/context/NotificationAlert/NotificationAlert.context.tsx'
 import { Poll } from '@/model/poll.model'
-import { BroadcastVoteRequest, BroadcastVoteResponse, CensusMode, Vote, VoteStateLite, VotingRound } from '@/model/vote.model'
+import {
+  BroadcastVoteRequest,
+  BroadcastVoteResponse,
+  CensusMode,
+  SubmissionRoute,
+  Vote,
+  VoteStateLite,
+  VotingRound,
+} from '@/model/vote.model'
 import { useInterfoldServer } from '../interfold/useInterfoldServer'
 import { getRandomVoterToMask } from '@/utils/voters'
 import { handleGenericError } from '@/utils/handle-generic-error'
@@ -28,13 +43,47 @@ import { txExplorerUrl } from '@/utils/methods'
 const INTERFOLD_API = import.meta.env.VITE_INTERFOLD_API
 
 interface PendingAvailabilityJob {
-  jobId: string
+  jobId?: string
   isMask: boolean
   encodedProof?: string
+  /// The identity of the input, which the submission check matches. Stored beside the bytes,
+  /// because the storage-quota fallback below drops the bytes.
+  input?: InputIdentity
 }
 
+/// Each ballot of an account in a round has its own record under this prefix. A record stays until
+/// an action finds its availability final or its job failed, because a server that lost its job
+/// database needs the same bytes again. The prefix alone is the single record of an older client.
 const availabilityJobKey = (chainId: number, roundId: string, address: string): string => {
   return `crisp-availability-${chainId}-${roundId}-${address.toLowerCase()}`
+}
+
+const savedJobKeys = (prefix: string): string[] => {
+  try {
+    return Object.keys(localStorage).filter((key) => key.startsWith(prefix))
+  } catch {
+    return []
+  }
+}
+
+const parseInputIdentity = (value: unknown): InputIdentity | undefined => {
+  if (typeof value !== 'object' || value === null) return undefined
+  const { slotAddress, encryptedVoteCommitment, encryptedVoteHash, parentIndexPlusOne } = value as Record<string, unknown>
+  if (
+    typeof slotAddress !== 'string' ||
+    typeof encryptedVoteCommitment !== 'string' ||
+    typeof encryptedVoteHash !== 'string' ||
+    typeof parentIndexPlusOne !== 'number' ||
+    !Number.isInteger(parentIndexPlusOne)
+  ) {
+    return undefined
+  }
+  return {
+    slotAddress: slotAddress as Hex,
+    encryptedVoteCommitment: encryptedVoteCommitment as Hex,
+    encryptedVoteHash: encryptedVoteHash as Hex,
+    parentIndexPlusOne,
+  }
 }
 
 const readAvailabilityJob = (key: string): PendingAvailabilityJob | undefined => {
@@ -42,12 +91,15 @@ const readAvailabilityJob = (key: string): PendingAvailabilityJob | undefined =>
     const stored = localStorage.getItem(key)
     if (!stored) return undefined
     const parsed: unknown = JSON.parse(stored)
-    if (typeof parsed !== 'object' || parsed === null || !('jobId' in parsed) || typeof parsed.jobId !== 'string') return undefined
-    return {
-      jobId: parsed.jobId,
+    if (typeof parsed !== 'object' || parsed === null) return undefined
+    const job = {
+      jobId: 'jobId' in parsed && typeof parsed.jobId === 'string' ? parsed.jobId : undefined,
       isMask: 'isMask' in parsed && parsed.isMask === true,
       encodedProof: 'encodedProof' in parsed && typeof parsed.encodedProof === 'string' ? parsed.encodedProof : undefined,
+      input: 'input' in parsed ? parseInputIdentity(parsed.input) : undefined,
     }
+    // A ballot saved before its broadcast answered has no job ID yet.
+    return job.jobId || job.encodedProof ? job : undefined
   } catch {
     return undefined
   }
@@ -60,7 +112,7 @@ const writeAvailabilityJob = (key: string, job: PendingAvailabilityJob): void =>
     // Large secure ballots can exceed a browser's storage quota. Preserve the small server job
     // pointer when possible, even though a server-database loss would then need operator recovery.
     try {
-      localStorage.setItem(key, JSON.stringify({ jobId: job.jobId, isMask: job.isMask }))
+      if (job.jobId) localStorage.setItem(key, JSON.stringify({ jobId: job.jobId, isMask: job.isMask, input: job.input }))
     } catch {
       // The durable server job remains valid. A browser with disabled storage cannot resume it
       // automatically after a reload.
@@ -68,13 +120,121 @@ const writeAvailabilityJob = (key: string, job: PendingAvailabilityJob): void =>
   }
 }
 
-const clearAvailabilityJob = (key: string): void => {
+const removeStored = (key: string): void => {
   try {
     localStorage.removeItem(key)
   } catch {
     // The item is already harmless after the server job reaches a terminal state.
   }
 }
+
+/// The identity of a saved ballot, also for one that an older client saved without it.
+const inputOf = (job: PendingAvailabilityJob | undefined): InputIdentity | undefined =>
+  job?.input ?? (job?.encodedProof ? decodeInputIdentity(job.encodedProof as Hex) : undefined)
+
+const sameInput = (a: InputIdentity, b: InputIdentity): boolean =>
+  a.slotAddress.toLowerCase() === b.slotAddress.toLowerCase() &&
+  a.encryptedVoteCommitment.toLowerCase() === b.encryptedVoteCommitment.toLowerCase() &&
+  a.encryptedVoteHash.toLowerCase() === b.encryptedVoteHash.toLowerCase() &&
+  a.parentIndexPlusOne === b.parentIndexPlusOne
+
+/// The account's last input of one kind in a round, from job creation until it counts or fails.
+/// A committed input takes effect only when the Secure Process selects it for the slot and its
+/// ciphertext is published. The submission checks follow this record, not the saved ballots
+/// above, which an action drops once their availability is final. An excluded input keeps its
+/// record, so later visits still show the exclusion, until the next input of the same kind
+/// replaces it. A vote and a mask get one record each, so a mask does not replace the status of
+/// the vote. `selectedAt` is the time, in milliseconds, when the server first reported the input
+/// as selected while its job was committed. `selectionSettled` records a later `selected` answer
+/// that came at least `SELECTION_SETTLE_MS` after it. From then on the checks ask only for the
+/// availability job.
+interface SubmittedInput {
+  jobId: string
+  input: InputIdentity
+  route?: SubmissionRoute
+  txHash?: string
+  selectedAt?: number
+  selectionSettled?: true
+}
+
+const submittedInputKey = (isMask: boolean, chainId: number, roundId: string, address: string): string => {
+  return `crisp-${isMask ? 'mask' : 'ballot'}-${chainId}-${roundId}-${address.toLowerCase()}`
+}
+
+const readSubmittedInput = (key: string): SubmittedInput | undefined => {
+  try {
+    const stored = localStorage.getItem(key)
+    if (!stored) return undefined
+    const parsed: unknown = JSON.parse(stored)
+    if (typeof parsed !== 'object' || parsed === null || !('jobId' in parsed) || typeof parsed.jobId !== 'string') return undefined
+    const input = 'input' in parsed ? parseInputIdentity(parsed.input) : undefined
+    if (!input) return undefined
+    return {
+      jobId: parsed.jobId,
+      input,
+      route: 'route' in parsed && (parsed.route === 'wallet' || parsed.route === 'relay') ? parsed.route : undefined,
+      txHash: 'txHash' in parsed && typeof parsed.txHash === 'string' ? parsed.txHash : undefined,
+      selectedAt:
+        'selectedAt' in parsed && typeof parsed.selectedAt === 'number' && Number.isFinite(parsed.selectedAt)
+          ? parsed.selectedAt
+          : undefined,
+      selectionSettled: 'selectionSettled' in parsed && parsed.selectionSettled === true ? true : undefined,
+    }
+  } catch {
+    return undefined
+  }
+}
+
+const writeSubmittedInput = (key: string, record: SubmittedInput): void => {
+  try {
+    localStorage.setItem(key, JSON.stringify(record))
+  } catch {
+    // Without storage, the submission check has no record to follow and shows no stage.
+  }
+}
+
+/// How often, and for how long, the client waits for the server to decide who sends a queued
+/// commitment. The server worker can take minutes to reach a job when many jobs are pending.
+const COMMITMENT_DECISION_POLL_MS = 10_000
+const COMMITMENT_DECISION_WAIT_MS = 600_000
+
+/// Wait until a `pending_commitment` job has a sender: the relay, or this wallet, which must then
+/// send the commitment before its availability promise expires. Returns the first other view,
+/// `null` when the server no longer has the job, or `undefined` when the wait ends or
+/// `isCancelled` returns true.
+const waitForCommitmentDecision = async (
+  jobId: string,
+  getVoteAvailability: (jobId: string) => Promise<BroadcastVoteResponse | null | undefined>,
+  isCancelled: () => boolean,
+): Promise<BroadcastVoteResponse | null | undefined> => {
+  const deadline = Date.now() + COMMITMENT_DECISION_WAIT_MS
+  while (!isCancelled()) {
+    const view = await getVoteAvailability(jobId)
+    if (view === null || (view && view.status !== 'pending_commitment')) return view
+    if (Date.now() >= deadline) return undefined
+    await new Promise((resolve) => setTimeout(resolve, COMMITMENT_DECISION_POLL_MS))
+  }
+  return undefined
+}
+
+/// How often, and for how long, one visit checks a submitted input. Selection usually settles
+/// soon after the commitment, but publication to the availability layer can take hours. The checks
+/// slow down to one a minute and stop after the wait; the next visit starts them again.
+const SUBMISSION_CHECK_MIN_MS = 10_000
+const SUBMISSION_CHECK_MAX_MS = 60_000
+const SUBMISSION_CHECK_WAIT_MS = 3 * 60 * 60_000
+
+/// How long after the first `selected` answer the checks wait for another `selected` answer before
+/// they stop asking. The server indexes from the chain head, so a reorganization can still give the
+/// slot to another input until the block is final, which takes about 13 minutes on Ethereum.
+const SELECTION_SETTLE_MS = 30 * 60_000
+
+/// The selection answer of an input whose selection settled. The stage reads it from the record
+/// instead of asking again.
+const SELECTED: InputSelectionResponse = { status: 'selected', index: null, head_index: null, reason: null }
+
+/// Bounds the slot-head read, which runs before the proof. A stuck read must not hold the action.
+const SLOT_HEAD_TIMEOUT_MS = 30_000
 
 /// The end of the slot's chain of usable entries, with the tree index the new input will name as
 /// its parent. Not simply the newest entry published: one whose bytes do not reproduce its
@@ -85,6 +245,7 @@ const getSlotHead = async (e3Id: string, address: string): Promise<{ ciphertext:
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ round_id: e3Id, address }),
+    signal: AbortSignal.timeout(SLOT_HEAD_TIMEOUT_MS),
   })
 
   if (response.status === 404) return undefined
@@ -112,6 +273,147 @@ export type VotingStep = 'idle' | 'signing' | 'encrypting' | 'generating_proof' 
 
 /** Whose slot a mask is written to: a randomly drawn eligible slot, or the caller's own. */
 export type MaskTarget = 'random' | 'self'
+
+/** The stage of the account's last vote or last mask in the round, as the voting page shows it. */
+export interface SubmissionCheckStatus {
+  stage: SubmissionStage
+  /** True only for an excluded input before the commitment deadline. */
+  retryOffered: boolean
+  /** Why the Secure Process did not select the input; set only for `excluded`. */
+  reason: InputExclusionReason | null
+  /** False once the checks stop: at a final stage, or when the wait ends first. */
+  checking: boolean
+  /** The explorer link of the commitment transaction, when this client knows it. */
+  txUrl: string | undefined
+  /** Who sent the commitment, when this client knows it. */
+  route: SubmissionRoute | undefined
+}
+
+/// Follow one submitted input until its stage is final: counted, excluded, or failed. A vote and a
+/// mask get the same checks with the same timing, so the server cannot tell a vote from a mask by
+/// the requests that follow a commitment. Each visit that finds a record starts the checks again,
+/// so they resume after a reload. They pause while `paused` is true, because a new action can
+/// replace the record, and they start again when `restart` changes, because an action that ends
+/// can have written the record without a render that shows it paused. They stop on unmount.
+const useSubmissionCheck = (
+  recordKey: string | undefined,
+  roundId: string | undefined,
+  commitmentDeadline: number | undefined,
+  paused: boolean,
+  restart: number,
+  getVoteAvailability: (jobId: string) => Promise<BroadcastVoteResponse | null | undefined>,
+  onCounted: (roundId: string) => void,
+): SubmissionCheckStatus | null => {
+  const [status, setStatus] = useState<(SubmissionCheckStatus & { key: string }) | null>(null)
+  // The context hands out new function identities on each render. Read them through a ref, so that
+  // a render does not restart the checks.
+  const callbacks = useRef({ getVoteAvailability, onCounted })
+  useEffect(() => {
+    callbacks.current = { getVoteAvailability, onCounted }
+  })
+
+  useEffect(() => {
+    if (!recordKey || roundId === undefined || commitmentDeadline === undefined || paused) return
+    const key = recordKey
+    const round = roundId
+    const deadline = commitmentDeadline
+    let cancelled = false
+    let timer: number | undefined
+    let delay = SUBMISSION_CHECK_MIN_MS
+    const stopAt = Date.now() + SUBMISSION_CHECK_WAIT_MS
+
+    function scheduleOrStop() {
+      if (Date.now() < stopAt) {
+        timer = window.setTimeout(() => void check(), delay)
+        delay = Math.min(delay * 2, SUBMISSION_CHECK_MAX_MS)
+      } else {
+        setStatus((current) => (current?.key === key ? { ...current, checking: false } : current))
+      }
+    }
+
+    async function check() {
+      const record = readSubmittedInput(key)
+      if (!record) return
+      // A hidden tab waits for its next turn instead of asking the server.
+      if (document.hidden) {
+        scheduleOrStop()
+        return
+      }
+
+      // `undefined` is a failed read, so try again later. `null` is a job that the server no
+      // longer holds: its status is unknown, and the selection answer still applies.
+      const view = await callbacks.current.getVoteAvailability(record.jobId)
+      if (cancelled) return
+      if (view === undefined) {
+        scheduleOrStop()
+        return
+      }
+      const availability = view?.status ?? null
+
+      // An uncommitted or failed job has no entry in the input tree yet.
+      const committed =
+        availability !== 'failed_broadcast' && availability !== 'pending_commitment' && availability !== 'ready_for_commitment'
+      // A settled selection stands, so only the availability job is asked.
+      const settled = committed && record.selectionSettled === true
+      let selection: InputSelectionResponse | null = settled ? SELECTED : null
+      if (committed && !settled) {
+        try {
+          selection = (await getInputSelection(INTERFOLD_API, BigInt(round), record.input)) ?? null
+        } catch (error) {
+          handleGenericError('getInputSelection', error instanceof Error ? error : new Error(String(error)))
+          if (!cancelled) scheduleOrStop()
+          return
+        }
+        if (cancelled) return
+      }
+      // Keep the time of the first `selected` answer while the input stays selected and committed.
+      // The selection settles on a `selected` answer that comes the settle time after it.
+      const now = Date.now()
+      const selectedAt = settled || selection?.status === 'selected' ? (record.selectedAt ?? now) : undefined
+      const selectionSettled = selectedAt !== undefined && (settled || now - selectedAt >= SELECTION_SETTLE_MS) ? true : undefined
+      if (selectedAt !== record.selectedAt || selectionSettled !== record.selectionSettled) {
+        // Read again, so that a newer input that replaced the record keeps its own state.
+        const current = readSubmittedInput(key)
+        if (current && sameInput(current.input, record.input)) writeSubmittedInput(key, { ...current, selectedAt, selectionSettled })
+      }
+
+      const { stage, retryOffered } = getSubmissionStage({
+        availability,
+        selection,
+        now: Math.floor(Date.now() / 1000),
+        commitmentDeadline: deadline,
+      })
+      const final = stage === 'counted' || stage === 'excluded' || stage === 'failed'
+      setStatus({
+        key,
+        stage,
+        retryOffered,
+        reason: selection?.reason ?? null,
+        checking: !final,
+        txUrl: record.txHash ? txExplorerUrl(record.txHash) : undefined,
+        route: record.route,
+      })
+
+      if (stage === 'counted') {
+        removeStored(key)
+        callbacks.current.onCounted(round)
+      } else if (stage === 'failed') {
+        // The server gave up on the job, so the input has no commitment to follow.
+        removeStored(key)
+      } else if (!final) {
+        scheduleOrStop()
+      }
+    }
+
+    void check()
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [recordKey, roundId, commitmentDeadline, paused, restart])
+
+  return status?.key === recordKey ? status : null
+}
 
 const extractCleanErrorMessage = (errorMessage: string | undefined): string => {
   if (!errorMessage) return 'Failed to broadcast the vote. Please try again.'
@@ -154,7 +456,6 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
     roundState: contextRoundState,
     votingRound: contextVotingRound,
     broadcastVote,
-    setTxUrl,
     markVotedInRound,
     hasVotedInCurrentRound,
     getVoteAvailability,
@@ -169,13 +470,52 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
   const chainId = useChainId()
   const { getEligibleVoters, getMerkleLeaves } = useInterfoldServer()
   const { showToast } = useNotificationAlertContext()
-  const navigate = useNavigate()
   const [isVoting, setIsVoting] = useState<boolean>(false)
   const [isMasking, setIsMasking] = useState<boolean>(false)
   const [votingStep, setVotingStep] = useState<VotingStep>('idle')
   const [lastActiveStep, setLastActiveStep] = useState<VotingStep | null>(null)
   const [stepMessage, setStepMessage] = useState<string>('')
   const submissionInProgress = useRef(false)
+  // Counts the actions that ended. Each one starts the submission checks again.
+  const [endedActions, setEndedActions] = useState(0)
+  // A vote action outlives the page that started it. It checks this flag before each wallet
+  // prompt and before it saves a new ballot, so that an abandoned action does neither from another
+  // page, and its queued-commitment wait cannot run beside the wait that a remounted page starts
+  // for the same job.
+  const unmounted = useRef(false)
+  useEffect(() => {
+    unmounted.current = false
+    return () => {
+      unmounted.current = true
+    }
+  }, [])
+
+  // The vote check and the mask check run the same requests on the same schedule. Only the local
+  // effect of a counted input differs: a counted vote marks the round as voted.
+  const roundId = roundState?.id
+  const commitmentDeadline = roundState?.end_time
+  const submitting = isVoting || isMasking
+  const ballotStatus = useSubmissionCheck(
+    user && roundState ? submittedInputKey(false, chainId, roundState.id, user.address) : undefined,
+    roundId,
+    commitmentDeadline,
+    submitting,
+    endedActions,
+    getVoteAvailability,
+    (round) => {
+      markVotedInRound(round)
+      showToast({ type: 'success', message: 'Your vote is counted.' })
+    },
+  )
+  const maskStatus = useSubmissionCheck(
+    user && roundState ? submittedInputKey(true, chainId, roundState.id, user.address) : undefined,
+    roundId,
+    commitmentDeadline,
+    submitting,
+    endedActions,
+    getVoteAvailability,
+    () => showToast({ type: 'success', message: 'Your mask is in the slot.' }),
+  )
 
   /**
    * Encrypt the ballot, have the voter sign the digest that binds it, then prove it.
@@ -251,6 +591,7 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
           return encodeSolidityProof(await finishMaskProof(prepared, digest))
         }
 
+        if (unmounted.current) throw new Error('The page closed before the signature prompt')
         setVotingStep('signing')
         setLastActiveStep('signing')
         setStepMessage('Please sign the ballot in your wallet...')
@@ -414,26 +755,67 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
         return
       }
 
-      // One account has one durable resume pointer per round. Do not let concurrent actions
-      // replace that pointer before the first request records its job ID.
+      // Run one action at a time. Each action first settles the ballots that this account saved in
+      // this round.
       if (submissionInProgress.current) return
       submissionInProgress.current = true
 
-      const pendingJobKey = availabilityJobKey(chainId, roundState.id, user.address)
+      const savedJobPrefix = availabilityJobKey(chainId, roundState.id, user.address)
+      const voteRecordKey = submittedInputKey(false, chainId, roundState.id, user.address)
+      const maskRecordKey = submittedInputKey(true, chainId, roundState.id, user.address)
 
-      const finishCommitment = async (response: BroadcastVoteResponse, operationIsMask: boolean): Promise<boolean> => {
+      // The submission checks follow the last input of each kind, vote or mask, in the record of
+      // that kind. Both kinds get a record, so the server sees the same checks after a vote and
+      // after a mask. A job for the newest input of its kind replaces the record. A later job for
+      // the input that the record follows, after the server lost the first, replaces only the job
+      // ID. A job for an older input leaves the record.
+      const followJob = (job: PendingAvailabilityJob, jobId: string, newest: boolean) => {
+        const input = inputOf(job)
+        if (!input) return
+        const recordKey = job.isMask ? maskRecordKey : voteRecordKey
+        const record = readSubmittedInput(recordKey)
+        if (newest) writeSubmittedInput(recordKey, { jobId, input })
+        else if (record && sameInput(record.input, input)) writeSubmittedInput(recordKey, { ...record, jobId })
+      }
+
+      // `afterRestage` marks the answer to a ballot that this action staged again. A second loss
+      // in the same action is left to the next one, and the answer does not tell this page who
+      // sent the commitment, because Ethereum can already hold the input.
+      const finishCommitment = async (
+        response: BroadcastVoteResponse,
+        operationIsMask: boolean,
+        key: string,
+        input: InputIdentity | undefined,
+        afterRestage = false,
+      ): Promise<void> => {
+        if (response.status === 'success' || response.status === 'failed_broadcast') removeStored(key)
         if (response.status === 'failed_broadcast') {
           throw new Error(extractCleanErrorMessage(response.message ?? undefined))
         }
 
         if (response.status === 'pending_commitment') {
           setVotingStep('confirming')
-          setStepMessage('Your proof is queued for commitment. You can safely leave and check again later.')
+          setStepMessage('Your proof is queued. Waiting for the server to send the commitment or to ask your wallet to send it...')
+          const decided = response.job_id
+            ? await waitForCommitmentDecision(response.job_id, getVoteAvailability, () => unmounted.current)
+            : undefined
+          // The page closed during the wait. Keep the ballot so that the next action resumes it.
+          if (unmounted.current) return
+          if (decided === null) {
+            // The server lost the job while this page waited. Stage the stored bytes again once;
+            // a second loss in the same action is left to the next one.
+            const stored = readAvailabilityJob(key)
+            if (!afterRestage && stored) return finishCommitment(await restage(key, stored), operationIsMask, key, input, true)
+            throw new Error('The server lost the pending proof. Repeat the action to submit it again.')
+          }
+          if (decided) return finishCommitment(decided, operationIsMask, key, input, afterRestage)
+
+          setStepMessage('Your proof is still queued. Come back later and repeat the action to finish it.')
           showToast({
             type: 'success',
-            message: 'Vote proof queued. The relay will keep retrying it.',
+            message: 'Proof queued. Repeat the action later: your wallet may need to send the commitment.',
           })
-          return false
+          return
         }
 
         let txHash: string | undefined = response.tx_hash ?? undefined
@@ -455,70 +837,80 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
             crispProgram,
             e3Id,
             response.encoded_proof as `0x${string}`,
+            () => unmounted.current,
           )
         }
 
+        // A closed page shows no result. The next action reports the job.
+        if (unmounted.current) return
         setVotingStep('complete')
-        const finalized = response.status === 'success'
-        setStepMessage(
-          finalized
-            ? `${operationIsMask ? 'Masking' : 'Vote'} finalized successfully!`
-            : `${operationIsMask ? 'Masking' : 'Vote'} committed. Availability will finalize in the background.`,
-        )
-
+        const route: SubmissionRoute | undefined =
+          response.status === 'ready_for_commitment' ? 'wallet' : afterRestage ? undefined : 'relay'
         const url = txHash ? txExplorerUrl(txHash) : undefined
-        setTxUrl(url)
 
-        if (!operationIsMask) markVotedInRound(roundState.id)
-
+        // A committed input takes effect only when the Secure Process selects it for the slot and
+        // its ciphertext is published. The submission checks follow a vote and a mask the same way
+        // from here, on this page, and a vote marks the round as voted only when it counts.
+        // A restaged answer keeps the route and the transaction that the record already knows.
+        const recordKey = operationIsMask ? maskRecordKey : voteRecordKey
+        const record = readSubmittedInput(recordKey)
+        if (record && input && sameInput(record.input, input)) {
+          writeSubmittedInput(recordKey, route ? { ...record, route, txHash } : { ...record, txHash: record.txHash ?? txHash })
+        }
+        setStepMessage(operationIsMask ? 'Mask committed. It is not in the slot yet.' : 'Vote committed. It is not counted yet.')
         showToast({
           type: 'success',
-          message: finalized
-            ? operationIsMask
-              ? 'Slot masked successfully'
-              : 'Vote finalized successfully!'
-            : operationIsMask
-              ? 'Mask committed. You can safely leave this page.'
-              : 'Vote committed. You can safely leave this page.',
+          message: operationIsMask
+            ? 'Mask committed. It takes effect only after it is selected for the slot and its data is published. This page shows its status.'
+            : 'Vote committed. It counts only after it is selected for your slot and its data is published. This page shows its status.',
           linkUrl: url,
         })
-        navigate(`/result/${roundState.id}/confirmation`)
-        return true
+      }
+
+      // The server lost the job of a saved ballot. Stage the same bytes again: a fresh ciphertext
+      // could leave the earlier on-chain commitment unresolved and stop the complete round.
+      const restage = async (key: string, pendingJob: PendingAvailabilityJob): Promise<BroadcastVoteResponse> => {
+        if (!pendingJob.encodedProof) {
+          throw new Error('The server lost this legacy vote job. An operator must recover it before another vote is submitted.')
+        }
+        const restaged = await broadcastVote({ round_id: roundState.id, encoded_proof: pendingJob.encodedProof }, (jobId) => {
+          writeAvailabilityJob(key, { ...pendingJob, jobId })
+          // A ballot saved without a job ID is the newest input of its kind: a new action resumes
+          // it before it makes another. A ballot whose job the server lost can be older.
+          followJob(pendingJob, jobId, !pendingJob.jobId)
+        })
+        if (!restaged) throw new Error('Could not restore the pending data-availability job.')
+        return restaged
       }
 
       try {
-        const pendingJob = readAvailabilityJob(pendingJobKey)
-        if (pendingJob) {
+        // A final ballot of another round is no longer needed. Drop it here, because only an
+        // action in its own round would find it otherwise.
+        for (const key of savedJobKeys('crisp-availability-')) {
+          const jobId = key.startsWith(savedJobPrefix) ? undefined : readAvailabilityJob(key)?.jobId
+          const status = jobId ? (await getVoteAvailability(jobId))?.status : undefined
+          if (status === 'success' || status === 'failed_broadcast') removeStored(key)
+        }
+        for (const key of savedJobKeys(savedJobPrefix)) {
+          const pendingJob = readAvailabilityJob(key)
+          if (!pendingJob) continue
+          const saved = pendingJob.jobId ? await getVoteAvailability(pendingJob.jobId) : null
+          if (saved === undefined) throw new Error('Could not read the pending data-availability job.')
+          const resumed = saved ?? (await restage(key, pendingJob))
+          if (resumed.status === 'success') removeStored(key)
+          // A ballot that only waits for its availability does not stop a new action. A ballot
+          // without a job ID belongs to an action that never learned its result, so it resumes.
+          if (pendingJob.jobId && (resumed.status === 'success' || resumed.status === 'pending_availability')) continue
+          // A saved ballot that is not committed yet is the newest input of its kind, because a new
+          // action resumes it before it makes another. A ballot that a client saved without a
+          // submission record, such as the single ballot of an older client, gets one here.
+          if (saved !== null && pendingJob.jobId && saved.status !== 'failed_broadcast') followJob(pendingJob, pendingJob.jobId, true)
           setIsMasking(pendingJob.isMask)
           setIsVoting(!pendingJob.isMask)
           setVotingStep('broadcasting')
           setLastActiveStep('broadcasting')
-          setStepMessage('Checking the durable vote job...')
-
-          const resumed = await getVoteAvailability(pendingJob.jobId)
-          if (resumed === null) {
-            // The server lost its job database. Re-stage the same bytes: a fresh ciphertext could
-            // leave an earlier on-chain commitment unresolved and stop the complete round.
-            if (!pendingJob.encodedProof) {
-              throw new Error('The server lost this legacy vote job. An operator must recover it before another vote is submitted.')
-            }
-            const restaged = await broadcastVote({ round_id: roundState.id, encoded_proof: pendingJob.encodedProof }, (jobId) =>
-              writeAvailabilityJob(pendingJobKey, { ...pendingJob, jobId }),
-            )
-            if (!restaged) throw new Error('Could not restore the pending data-availability job.')
-            if (restaged.status === 'failed_broadcast') clearAvailabilityJob(pendingJobKey)
-            if (await finishCommitment(restaged, pendingJob.isMask)) {
-              clearAvailabilityJob(pendingJobKey)
-            }
-            return
-          } else {
-            if (!resumed) throw new Error('Could not read the pending data-availability job.')
-            if (resumed.status === 'failed_broadcast') clearAvailabilityJob(pendingJobKey)
-            if (await finishCommitment(resumed, pendingJob.isMask)) {
-              clearAvailabilityJob(pendingJobKey)
-            }
-            return
-          }
+          await finishCommitment(resumed, pendingJob.isMask, key, inputOf(pendingJob), saved === null)
+          return
         }
 
         if (!isAMask && !pollSelected) {
@@ -585,10 +977,8 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
         // small delay for UX
         await new Promise((resolve) => setTimeout(resolve, 500))
 
-        // Step 4: Broadcasting — through the relay where it runs, straight from the wallet where
-        // it does not (mainnet, or a deployment that forces the direct path). The relay's uniform
-        // sender is what hides *who* submitted an input; a direct transaction gives that up, so
-        // the relay stays the default wherever it exists.
+        // Step 4: Broadcasting. The server either relays the commitment or answers
+        // `ready_for_commitment`, and `finishCommitment` then sends it from the wallet.
         setVotingStep('broadcasting')
         setLastActiveStep('broadcasting')
 
@@ -596,20 +986,27 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
           round_id: roundState.id,
           encoded_proof: encodedProof,
         }
+        if (unmounted.current) return
+        // Save the ballot before it leaves this page. After a broadcast without an answer, the next
+        // action sends this ballot again instead of a second one.
+        const key = `${savedJobPrefix}-${Math.random().toString(36).slice(2)}`
+        const ballot: PendingAvailabilityJob = { isMask: isAMask, encodedProof, input: decodeInputIdentity(encodedProof as Hex) }
+        writeAvailabilityJob(key, ballot)
         const broadcastVoteResponse = await broadcastVote(voteRequest, (jobId) => {
-          writeAvailabilityJob(pendingJobKey, { jobId, isMask: isAMask, encodedProof })
+          writeAvailabilityJob(key, { ...ballot, jobId })
+          followJob(ballot, jobId, true)
         })
 
         if (!broadcastVoteResponse) {
-          throw new Error('Received no response after publishing vote data.')
+          throw new Error('The server did not accept or refuse the ballot. Repeat the action to send it again.')
         }
-        if (broadcastVoteResponse.status === 'failed_broadcast') clearAvailabilityJob(pendingJobKey)
-        if (await finishCommitment(broadcastVoteResponse, isAMask)) {
-          clearAvailabilityJob(pendingJobKey)
-        }
+        await finishCommitment(broadcastVoteResponse, isAMask, key, ballot.input)
       } catch (error) {
-        setVotingStep('error')
         console.error('Vote processing failed:', error)
+        // A page that closed during the action shows no toast on the page that is open now. A kept
+        // ballot lets the next action resume the job and report its state.
+        if (unmounted.current) return
+        setVotingStep('error')
         showToast({
           type: 'danger',
           message: `Vote failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -619,6 +1016,7 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
         submissionInProgress.current = false
         setIsVoting(false)
         setIsMasking(false)
+        setEndedActions((count) => count + 1)
       }
     },
     [
@@ -627,11 +1025,8 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
       publicClient,
       walletClient,
       broadcastVote,
-      setTxUrl,
       showToast,
-      navigate,
       handleProofGeneration,
-      markVotedInRound,
       handleMask,
       handleVote,
       getMerkleLeaves,
@@ -649,5 +1044,7 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
     stepMessage,
     resetVotingState,
     hasVotedInCurrentRound,
+    ballotStatus,
+    maskStatus,
   }
 }

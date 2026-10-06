@@ -74,6 +74,12 @@ does not verify, it broadcasts an accusation, and the committee votes. When enou
 the voters submit the slash. The voter with the lowest address submits at once. The next two voters
 wait 30 s and 60 s as fallbacks.
 
+Nodes ignore local failures against their own address or finalized party ID. For received
+accusations, nodes compare the signed accuser and accused addresses to reject self-accusations. The
+accusation digest does not include `accused_party_id`, so that field does not decide this check.
+Only C3a and C3b accusations can carry a forwarded proof for verification. Other proof types require
+local evidence and no forwarded payload before the node votes.
+
 For Lane A, the slash reason is `keccak256(abi.encodePacked(uint256(proofType)))`. The proof types
 are the DKG and decryption proofs C0 to C7. If governance disabled the policy for a proof type, the
 nodes exclude the member from that E3 only, and no penalty applies. When the agreeing voters saw
@@ -197,8 +203,8 @@ A claim reverts in these conditions:
 A deregistered operator stays a member of each committee that was already final. The collateral
 stays in the queue until each of these E3s completes or fails and its committee is released. After
 the E3 is terminal and its accusation window ends, any account can call `releaseCommittee(e3Id)` on
-`CiphernodeRegistry`. The `CommitteeObligationUpdated` events of `BondingRegistry` show the E3s of
-the operator.
+`CiphernodeRegistry`. `interfold ciphernode status` lists these committees under `Committees`. It
+reads them from the `CommitteeObligationUpdated` events of `BondingRegistry`.
 
 ## Leave the network
 
@@ -255,6 +261,9 @@ The operator key can also send it from the node configuration, as an emergency s
 
 Keep the ciphernode running until each E3 of its final committees completes or fails.
 
+Run `interfold ciphernode status --operator 0xOPERATOR`. The `Committees` lines show the stage of
+each E3.
+
 A stopped node can make these E3s fail, and its queued collateral stays slashable.
 
 ### Wait for the exit delay
@@ -267,6 +276,9 @@ Run `interfold ciphernode status --operator 0xOPERATOR`.
 
 If a claim reverts with `OperatorInActiveCommittee`, call `releaseCommittee(e3Id)` on
 `CiphernodeRegistry` for each terminal E3 of the operator.
+
+In the `Committees` lines of `interfold ciphernode status`, a terminal E3 has the stage `Complete`
+or `Failed`.
 
 ### Claim the collateral
 

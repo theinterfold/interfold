@@ -1,5 +1,9 @@
 #!/usr/bin/env sh
 
+# git passes the pushed refs on stdin. Read them before a check can consume them. A manual run from
+# a terminal has none.
+[ -t 0 ] || pushed_refs="$(cat)"
+
 pnpm lint
 pnpm check:pnpm
 pnpm check:license
@@ -7,4 +11,16 @@ pnpm check:committee
 pnpm check:docs
 pnpm check:addresses
 pnpm check:invariants
-pnpm check:verifiers
+
+# check:verifiers deletes the aggregation circuits' nargo target directories and recompiles both
+# aggregator circuits. Run it only when a pushed branch changes a path in
+# .github/filters/circuits.yml. CI reads the same file to start its verifier check. The check reads
+# the checked-out tree, so the helper stops the push (exit 2) of a branch that differs from HEAD in
+# those paths. husky runs this hook with `sh -e`, so `||` keeps the helper's exit status.
+status=0
+printf '%s\n' "${pushed_refs:-}" | scripts/pushed-paths-match.sh .github/filters/circuits.yml || status=$?
+case "$status" in
+  0) pnpm check:verifiers ;;
+  1) ;;
+  *) exit "$status" ;;
+esac

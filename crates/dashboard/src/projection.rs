@@ -9,7 +9,7 @@
 use alloy::primitives::U256;
 use e3_events::{
     hlc::HlcTimestamp, E3Stage, Event, EventContextAccessors, EventContextSeq, EventSource,
-    InterfoldEvent, InterfoldEventData,
+    InterfoldEvent, InterfoldEventData, RewardsDistributed,
 };
 use serde::Serialize;
 use serde_json::{json, Map, Value};
@@ -212,9 +212,11 @@ struct ChainState {
     rewards: Vec<ChainReward>,
 }
 
+/// The credit that paid the local operator's committee seat in one E3.
 struct ChainReward {
     e3_id: String,
-    view: RewardView,
+    /// Position in the `rewards` of that E3, which also records the claim.
+    credit: usize,
 }
 
 #[derive(Default)]
@@ -297,7 +299,13 @@ impl TelemetryProjection {
                     rewards_credited: state
                         .rewards
                         .iter()
-                        .map(|reward| reward.view.clone())
+                        .filter_map(|reward| {
+                            self.e3s
+                                .get(&reward.e3_id)?
+                                .rewards
+                                .get(reward.credit)
+                                .cloned()
+                        })
                         .collect(),
                 })
                 .collect(),
@@ -384,38 +392,19 @@ impl TelemetryProjection {
                     .or_default()
                     .exit_unlock_at = Some(event.unlock_at);
             }
-            InterfoldEventData::RewardCredited(event)
-                if normalize_address(&event.account) == self.local_address =>
-            {
-                self.chains
-                    .entry(event.e3_id.chain_id())
-                    .or_default()
-                    .rewards
-                    .push(ChainReward {
-                        e3_id: event.e3_id.to_string(),
-                        view: RewardView {
-                            account: event.account.clone(),
-                            token: Some(event.token.clone()),
-                            amount: event.amount.clone(),
-                            claimed: false,
-                        },
-                    });
-            }
-            InterfoldEventData::RewardClaimed(event)
-                if normalize_address(&event.account) == self.local_address =>
-            {
-                let state = self.chains.entry(event.e3_id.chain_id()).or_default();
+            InterfoldEventData::RewardsDistributed(event) => {
                 let e3_id = event.e3_id.to_string();
-                mark_claimed_rewards(
-                    state
+                let credit = self
+                    .e3s
+                    .get(&e3_id)
+                    .and_then(|state| seat_credit(&state.rewards, event, &self.local_address));
+                if let Some(credit) = credit {
+                    self.chains
+                        .entry(event.e3_id.chain_id())
+                        .or_default()
                         .rewards
-                        .iter_mut()
-                        .filter(|reward| reward.e3_id == e3_id)
-                        .map(|reward| &mut reward.view),
-                    &event.account,
-                    &event.token,
-                    &event.amount,
-                );
+                        .push(ChainReward { e3_id, credit });
+                }
             }
             _ => {}
         }
@@ -878,6 +867,31 @@ fn normalize_address(value: &str) -> String {
     value.to_ascii_lowercase()
 }
 
+/// Return the position in `credits` of the credit that paid `operator`'s committee seat.
+///
+/// A credit names the recipient that committee finalization froze, not the operator, and members
+/// can share a recipient. Settlement credits each non-zero allocation in `RewardsDistributed`
+/// order and then emits `RewardsDistributed`, so the n-th credit pays the n-th non-zero
+/// allocation.
+fn seat_credit(
+    credits: &[RewardView],
+    distribution: &RewardsDistributed,
+    operator: &str,
+) -> Option<usize> {
+    let paid = || {
+        distribution
+            .nodes
+            .iter()
+            .zip(&distribution.amounts)
+            .filter(|(_, amount)| amount.parse::<U256>().is_ok_and(|amount| !amount.is_zero()))
+            .map(|(node, _)| node)
+    };
+    if paid().count() != credits.len() {
+        return None;
+    }
+    paid().position(|node| normalize_address(node) == operator)
+}
+
 fn mark_claimed_rewards<'a>(
     rewards: impl IntoIterator<Item = &'a mut RewardView>,
     account: &str,
@@ -926,7 +940,7 @@ mod tests {
     use super::*;
     use e3_events::{
         E3Failed, E3RequestComplete, E3StageChanged, EventConstructorWithTimestamp, FailureReason,
-        RewardClaimed, RewardCredited, RewardsDistributed, Unsequenced,
+        RewardClaimed, RewardCredited, Unsequenced,
     };
 
     #[test]
@@ -1140,69 +1154,80 @@ mod tests {
         assert_eq!(trace.reward_allocations.len(), 2);
         assert_eq!(trace.reward_allocations[0].operator, operator_one);
         assert_eq!(trace.reward_allocations[1].operator, operator_two);
-
-        let overview = live.overview();
-        let chain = overview
-            .chains
-            .iter()
-            .find(|chain| chain.chain_id == 31337)
-            .unwrap();
-        assert_eq!(chain.rewards_credited.len(), 2);
-        assert!(chain.rewards_credited.iter().all(|reward| reward.claimed));
     }
 
     #[test]
-    fn chain_reward_claims_are_scoped_to_one_e3() {
+    fn operator_rewards_follow_committee_seats() {
         let claimed_e3 = e3_events::E3id::new("9", 31337);
         let pending_e3 = e3_events::E3id::new("10", 31337);
-        let account = "0x15d34aaf54267db7d7c367839aaf71a00a2c6a65";
+        let operator = "0x1111111111111111111111111111111111111111";
+        let peer = "0x2222222222222222222222222222222222222222";
+        // Bond owner of both operators when their committees finalized.
+        let owner = "0x15d34aaf54267db7d7c367839aaf71a00a2c6a65";
         let token = "0xe7f1725e7734ce288f8367e1bb143e90bb3f0512";
+        let bond_owner = |bond_owner: &str| -> InterfoldEventData {
+            e3_events::BondOwnerSet {
+                operator: operator.into(),
+                bond_owner: bond_owner.into(),
+                chain_id: 31337,
+            }
+            .into()
+        };
+        let credit = |e3_id: &e3_events::E3id, amount: &str| -> InterfoldEventData {
+            RewardCredited {
+                e3_id: e3_id.clone(),
+                account: owner.into(),
+                token: token.into(),
+                amount: amount.into(),
+            }
+            .into()
+        };
+        let distribution =
+            |e3_id: &e3_events::E3id, nodes: [&str; 2], amounts: [&str; 2]| -> InterfoldEventData {
+                RewardsDistributed {
+                    e3_id: e3_id.clone(),
+                    nodes: nodes.map(String::from).into(),
+                    amounts: amounts.map(String::from).into(),
+                }
+                .into()
+            };
         let events = [
-            RewardCredited {
-                e3_id: claimed_e3.clone(),
-                account: account.into(),
-                token: token.into(),
-                amount: "20".into(),
-            }
-            .into(),
-            RewardCredited {
-                e3_id: pending_e3,
-                account: account.into(),
-                token: token.into(),
-                amount: "22".into(),
-            }
-            .into(),
+            bond_owner(owner),
+            credit(&claimed_e3, "20"),
+            credit(&claimed_e3, "22"),
+            distribution(&claimed_e3, [operator, peer], ["20", "22"]),
+            // The zero allocation of `peer` gets no credit.
+            credit(&pending_e3, "21"),
+            distribution(&pending_e3, [peer, operator], ["0", "21"]),
+            // Committee finalization froze the recipient, so a later transfer keeps these credits.
+            bond_owner("0x3333333333333333333333333333333333333333"),
             RewardClaimed {
                 e3_id: claimed_e3,
-                account: account.into(),
+                account: owner.into(),
                 token: token.into(),
-                amount: "20".into(),
+                amount: "42".into(),
             }
             .into(),
         ];
 
-        let mut projection = TelemetryProjection::new(account);
+        let mut projection = TelemetryProjection::new(operator);
         for (index, event) in events.into_iter().enumerate() {
             projection.apply(replay_event(event, index as u64 + 1, index as u128 + 1));
         }
 
         let overview = projection.overview();
-        let rewards = &overview.chains[0].rewards_credited;
-        assert_eq!(rewards.len(), 2);
-        assert!(
-            rewards
-                .iter()
-                .find(|reward| reward.amount == "20")
-                .unwrap()
-                .claimed
-        );
-        assert!(
-            !rewards
-                .iter()
-                .find(|reward| reward.amount == "22")
-                .unwrap()
-                .claimed
-        );
+        let rewards: Vec<_> = overview.chains[0]
+            .rewards_credited
+            .iter()
+            .map(|reward| {
+                (
+                    reward.account.as_str(),
+                    reward.amount.as_str(),
+                    reward.claimed,
+                )
+            })
+            .collect();
+        assert_eq!(rewards, [(owner, "20", true), (owner, "21", false)]);
     }
 
     #[test]

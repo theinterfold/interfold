@@ -198,6 +198,7 @@ chains:
     enabled: true
     rpc_url: ws://localhost:8545
     ingestion_confirmations: 0
+    rpc_poll_interval_ms: 250
     data_availability:
       mode: mock_http
       rpc_url: http://127.0.0.1:4000/availability
@@ -236,25 +237,42 @@ For all node configuration keys, see [Configuration](/reference/configuration).
 The CRISP server and the CLI read `server/.env`. Each value can also come from the process
 environment (`server/src/config.rs`).
 
-| Variable                                                                                                            | Local value or default                                  | Purpose                                                                                                                                                       |
-| ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PRIVATE_KEY`                                                                                                       | First Anvil account                                     | Server key. The CLI uses it to request rounds. The server uses it to relay inputs, post census roots, and sign availability promises.                         |
-| `INTERFOLD_SERVER_URL`                                                                                              | `http://127.0.0.1:4000`                                 | URL of this server. Remote cron targets must use HTTPS.                                                                                                       |
-| `HTTP_RPC_URL`, `WS_RPC_URL`, `CHAIN_ID`                                                                            | `http://127.0.0.1:8545`, `ws://127.0.0.1:8545`, `31337` | Chain access                                                                                                                                                  |
-| `PROGRAM_SERVER_URL`                                                                                                | `http://127.0.0.1:13151`                                | Program server that runs the computation                                                                                                                      |
-| `INTERFOLD_ADDRESS`, `E3_PROGRAM_ADDRESS`, `CIPHERNODE_REGISTRY_ADDRESS`, `FEE_TOKEN_ADDRESS`, `CRISP_VOTING_TOKEN` | Written by the deployment                               | Contract addresses                                                                                                                                            |
-| `E3_DURATION`                                                                                                       | `300` in the example file                               | Length of the input window in seconds. On Avail networks, it includes the finalization tail.                                                                  |
-| `VOTING_START_BUFFER_SECONDS`                                                                                       | `20` in the example file. Default `120`.                | Time for the request transaction to be mined before the input window starts                                                                                   |
-| `E3_PARAM_SET`                                                                                                      | `0`                                                     | `0` is `insecure-512`, `2` is `secure-8192`. Ethereum mainnet requires `2`.                                                                                   |
-| `E3_COMMITTEE_SIZE`                                                                                                 | `0`                                                     | `0` is `minimum` (N = 3, T = 1), `1` is `micro` (N = 9, T = 4), `2` is `small` (N = 19, T = 9)                                                                |
-| `E3_COMPUTE_PROVIDER_NAME`, `E3_COMPUTE_PROVIDER_PARALLEL`, `E3_COMPUTE_PROVIDER_BATCH_SIZE`                        | `RISC0`, `false`, `4`                                   | Compute provider parameters sent with the request. The batch size must be a power of 2.                                                                       |
-| `DATA_AVAILABILITY_MODE`                                                                                            | `mock`                                                  | `mock` or `avail`. Without a value, the mode is `mock` for chain IDs 31337 and 1337 and `avail` for other chains. `mock` is allowed only on those two chains. |
-| `AVAIL_RPC_URL`, `AVAIL_BRIDGE_API_URL`, `AVAIL_APP_ID`, `AVAIL_SEED`                                               | Empty                                                   | Avail access and the funded Avail account that pays for `submit_data`                                                                                         |
-| `AVAIL_PROOF_LEAD_SECONDS`                                                                                          | `10800`                                                 | Minimum time before the input deadline when an Avail publication starts. In Avail mode, it must equal `CRISPProgram.availabilityFinalizationWindow()`.        |
-| `DATA_AVAILABILITY_MAX_PENDING_BYTES`                                                                               | `1073741824` (1 GiB)                                    | Limit for bytes held by unfinished availability jobs                                                                                                          |
-| `CRON_API_KEY`                                                                                                      | Empty                                                   | Secret for `POST /rounds/request` and the cron client. When it is empty, the endpoint is disabled.                                                            |
-| `ETHERSCAN_API_KEY`                                                                                                 | Empty                                                   | Token holder lookup on non-local chains                                                                                                                       |
-| `INDEX_START_BLOCK`, `INDEX_CHUNK_SIZE`, `INDEX_CONTRACTS`, `INDEX_LOG_CONTRACTS`                                   | Not set                                                 | Indexer backfill and the contracts that the read-only `/chain/*` routes serve. An empty `INDEX_CONTRACTS` denies all `/chain/*` reads.                        |
+| Variable                                                                                                            | Local value or default                                  | Purpose                                                                                                                                                                          |
+| ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PRIVATE_KEY`                                                                                                       | First Anvil account                                     | Server key. The CLI uses it to request rounds. The server uses it to relay inputs, post census roots, and sign availability promises.                                            |
+| `INTERFOLD_SERVER_URL`                                                                                              | `http://127.0.0.1:4000`                                 | URL of this server. Remote cron targets must use HTTPS.                                                                                                                          |
+| `HTTP_RPC_URL`, `WS_RPC_URL`, `CHAIN_ID`                                                                            | `http://127.0.0.1:8545`, `ws://127.0.0.1:8545`, `31337` | Chain access. At startup, the server stops if `CHAIN_ID` is not the chain of `HTTP_RPC_URL`.                                                                                     |
+| `PROGRAM_SERVER_URL`                                                                                                | `http://127.0.0.1:13151`                                | Program server that runs the computation                                                                                                                                         |
+| `INTERFOLD_ADDRESS`, `E3_PROGRAM_ADDRESS`, `CIPHERNODE_REGISTRY_ADDRESS`, `FEE_TOKEN_ADDRESS`, `CRISP_VOTING_TOKEN` | Written by the deployment                               | Contract addresses                                                                                                                                                               |
+| `E3_DURATION`                                                                                                       | `300` in the example file                               | Length of the input window in seconds. On Avail networks, it includes the finalization tail.                                                                                     |
+| `VOTING_START_BUFFER_SECONDS`                                                                                       | `20` in the example file. Default `120`.                | Time for the request transaction to be mined before the input window starts                                                                                                      |
+| `E3_PARAM_SET`                                                                                                      | `0`                                                     | `0` is `insecure-512`, `2` is `secure-8192`. Ethereum mainnet requires `2`.                                                                                                      |
+| `E3_COMMITTEE_SIZE`                                                                                                 | `0`                                                     | `0` is `minimum` (N = 3, T = 1), `1` is `micro` (N = 9, T = 4), `2` is `small` (N = 19, T = 9)                                                                                   |
+| `E3_COMPUTE_PROVIDER_NAME`, `E3_COMPUTE_PROVIDER_PARALLEL`, `E3_COMPUTE_PROVIDER_BATCH_SIZE`                        | `RISC0`, `false`, `4`                                   | Compute provider parameters sent with the request. The batch size must be a power of 2.                                                                                          |
+| `DATA_AVAILABILITY_MODE`                                                                                            | `mock`                                                  | `mock` or `avail`. Without a value, the mode is `mock` for chain IDs 31337 and 1337 and `avail` for other chains. `mock` is allowed only on those two chains.                    |
+| `AVAIL_RPC_URL`, `AVAIL_BRIDGE_API_URL`, `AVAIL_APP_ID`, `AVAIL_SEED`                                               | Empty                                                   | Avail access and the funded Avail account that pays for `submit_data`                                                                                                            |
+| `AVAIL_PROOF_LEAD_SECONDS`                                                                                          | `10800`                                                 | Minimum time before the input deadline when an Avail publication starts. In Avail mode, it must equal `CRISPProgram.availabilityFinalizationWindow()`.                           |
+| `DATA_AVAILABILITY_MAX_PENDING_BYTES`                                                                               | `1073741824` (1 GiB)                                    | Limit for bytes held by unfinished availability jobs                                                                                                                             |
+| `CRON_API_KEY`                                                                                                      | Empty                                                   | Secret for `POST /rounds/request` and the cron client. When it is empty, the endpoint is disabled.                                                                               |
+| `MAINNET_RELAY`, `RELAY_MAX_INPUTS_PER_SLOT`, `RELAY_MAX_INPUTS_PER_ROUND`                                          | `false`, `3`, not set                                   | Input relay within per-slot and per-round limits. Mainnet relays only when `MAINNET_RELAY` is `true`, which also needs `RELAY_MAX_INPUTS_PER_ROUND` and `RELAY_MIN_BALANCE_ETH`. |
+| `RELAY_MIN_BALANCE_ETH`                                                                                             | Not set                                                 | Stop relaying below this ETH amount, which keeps funds for `finalizeInput`. Required outside mainnet and local chains (`0` for no floor). Mainnet relay needs more than `0`.     |
+| `ETHERSCAN_API_KEY`                                                                                                 | Empty                                                   | Token holder lookup on non-local chains                                                                                                                                          |
+| `INDEX_START_BLOCK`, `INDEX_CHUNK_SIZE`, `INDEX_CONTRACTS`, `INDEX_LOG_CONTRACTS`                                   | Not set                                                 | Indexer backfill and the contracts that the read-only `/chain/*` routes serve. An empty `INDEX_CONTRACTS` denies all `/chain/*` reads.                                           |
+
+The relay limits in the table apply to one server instance. All server instances use the same server
+key, but each instance counts only its own relays. Thus, when more than one instance relays, a slot
+or a round can receive the limit from each instance. To keep one limit for the server key, let one
+instance relay and set `RELAY_MAX_INPUTS_PER_SLOT` to `0` on all other instances. Move the relay to
+another instance only when no round is open. A ballot that a non-relaying instance receives uses the
+voter's wallet. Also, only the instance that receives a ballot holds its job. Thus, send all client
+requests to the relaying instance, for example with `VITE_INTERFOLD_API`. When a limit is reached,
+the voter's wallet sends the input.
+
+The server records its relays in `database/server` in its working directory, and its limits count
+only these records. The server also records the time when this relay record starts. It writes that
+time when it starts on a database without that time, for example a new database. A round that is
+already open at that time uses the voter's wallet for all of its inputs, because the server cannot
+count the relays that occurred before. Keep this directory when you replace or move the server.
 
 <Callout type='warning'>
   The local `PRIVATE_KEY` is a public Anvil test key. Never use it on a live network. Funds sent to
@@ -265,16 +283,15 @@ environment (`server/src/config.rs`).
 
 Vite reads `client/.env` when the client starts or builds.
 
-| Variable                        | Local value               | Purpose                                                                                   |
-| ------------------------------- | ------------------------- | ----------------------------------------------------------------------------------------- |
-| `VITE_INTERFOLD_API`            | `http://127.0.0.1:4000`   | CRISP server URL                                                                          |
-| `VITE_CHAIN_ID`                 | `31337`                   | Chain that the client asks the wallet to use                                              |
-| `VITE_RPC_URL`                  | `http://127.0.0.1:8545`   | Chain RPC                                                                                 |
-| `VITE_WALLETCONNECT_PROJECT_ID` | Empty                     | WalletConnect. Without it, only injected wallets work.                                    |
-| `VITE_CRISP_TOKEN`              | Written by the deployment | Voting eligibility token (`MockVotingToken` locally)                                      |
-| `VITE_E3_REQUESTERS`            | First two Anvil accounts  | Comma-separated requester addresses. The client shows rounds from these requesters.       |
-| `VITE_ENABLE_TEST_TOKEN_MINT`   | `true`                    | Shows the `+ Mint test tokens` button on test networks. It is always off on mainnet.      |
-| `VITE_DIRECT_VOTE`              | `false`                   | `true` sends inputs from the voter wallet instead of the relay. Mainnet always does this. |
+| Variable                        | Local value               | Purpose                                                                              |
+| ------------------------------- | ------------------------- | ------------------------------------------------------------------------------------ |
+| `VITE_INTERFOLD_API`            | `http://127.0.0.1:4000`   | CRISP server URL                                                                     |
+| `VITE_CHAIN_ID`                 | `31337`                   | Chain that the client asks the wallet to use                                         |
+| `VITE_RPC_URL`                  | `http://127.0.0.1:8545`   | Chain RPC                                                                            |
+| `VITE_WALLETCONNECT_PROJECT_ID` | Empty                     | WalletConnect. Without it, only injected wallets work.                               |
+| `VITE_CRISP_TOKEN`              | Written by the deployment | Voting eligibility token (`MockVotingToken` locally)                                 |
+| `VITE_E3_REQUESTERS`            | First two Anvil accounts  | Comma-separated requester addresses. The client shows rounds from these requesters.  |
+| `VITE_ENABLE_TEST_TOKEN_MINT`   | `true`                    | Shows the `+ Mint test tokens` button on test networks. It is always off on mainnet. |
 
 ### Real proofs with Boundless
 
@@ -370,15 +387,15 @@ These scripts are defined in `examples/CRISP/package.json`.
 
 ## Run the tests
 
-| Command                                                                                                                                                                       | What it tests                                                                                                |
-| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `pnpm test:e2e` (also `pnpm test`)                                                                                                                                            | The full stack in a browser. See [End-to-end test](#end-to-end-test).                                        |
-| `pnpm test:contracts`                                                                                                                                                         | All CRISP contract tests (Hardhat and Mocha)                                                                 |
-| `pnpm test:contracts:unit`                                                                                                                                                    | Census modes, journal, input availability, input leaf, Interfold binding, `SelfRegistry`, and tally decoding |
-| `pnpm test:contracts:input-tree`, `pnpm test:contracts:input-tree:forged-input`, `pnpm test:contracts:input-tree:poisoned-parent`, `pnpm test:contracts:input-tree:canonical` | The end-to-end input tree test, in full or in parts                                                          |
-| `pnpm test:contracts:ballots:program`, `pnpm test:contracts:ballots:census`                                                                                                   | Ballots against `CRISPProgram`, and ballots in an on-chain census round                                      |
-| `pnpm test:circuits`                                                                                                                                                          | `nargo test` in `circuits/lib`                                                                               |
-| `pnpm test:sdk`, `pnpm test:sdk:core-and-ballot-proofs`, `pnpm test:sdk:mask-proofs`                                                                                          | SDK tests with Vitest. Each script first stages the `insecure-512` preset.                                   |
+| Command                                                                                                                        | What it tests                                                                                                |
+| ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
+| `pnpm test:e2e` (also `pnpm test`)                                                                                             | The full stack in a browser. See [End-to-end test](#end-to-end-test).                                        |
+| `pnpm test:contracts`                                                                                                          | All CRISP contract tests (Hardhat and Mocha)                                                                 |
+| `pnpm test:contracts:unit`                                                                                                     | Census modes, journal, input availability, input leaf, Interfold binding, `SelfRegistry`, and tally decoding |
+| `pnpm test:contracts:input-tree`, `pnpm test:contracts:input-tree:poisoned-parent`, `pnpm test:contracts:input-tree:canonical` | The end-to-end input tree test, in full or in parts                                                          |
+| `pnpm test:contracts:ballots:program`, `pnpm test:contracts:ballots:census`                                                    | Ballots against `CRISPProgram`, and ballots in an on-chain census round                                      |
+| `pnpm test:circuits`                                                                                                           | `nargo test` in `circuits/lib`                                                                               |
+| `pnpm test:sdk`                                                                                                                | SDK tests with Vitest. The script first stages the `insecure-512` preset.                                    |
 
 ### End-to-end test
 
@@ -395,6 +412,64 @@ Set `CRISP_E2E_DURATION_SECS` to change the input window of the test (default `3
 `--ui` (`pnpm test:e2e --ui`) to run the Synpress wallet setup without `--headless`. On Linux, the
 script runs Playwright with `xvfb-run`. Run `pnpm report` to open the Playwright report.
 
+## Compact the server database
+
+The CRISP server keeps its database in `database/server` below its working directory. In the
+`crisp-server` image, the working directory is `/`, so the database is `/database/server`. sled
+keeps old copies of changed pages on disk until it cleans its log. To recover that space, copy the
+database while the server is stopped. The copy leaves out the old copies. It can still be up to
+about three times the size of the current data, because sled writes pages again while it builds the
+copy.
+
+1. Stop the CRISP server.
+2. In the server's working directory, run the `server` binary with `compact-database`. A source
+   build puts the binary in `target/release` or `target/debug` below `examples/CRISP`:
+
+   ```bash
+   server compact-database database/server database/server-compact
+   ```
+
+   With the image, give the same arguments to the image and mount the volume that holds `/database`:
+
+   ```bash
+   docker run --rm -v <volume>:/database <crisp-server image> compact-database /database/server /database/server-compact
+   ```
+
+3. Move `database/server` to a backup location.
+4. Rename `database/server-compact` to `database/server`.
+5. Start the CRISP server.
+6. When the server works correctly, run `sync` on the host.
+7. Delete the backup.
+
+The command builds the copy in the target path with `.partial` added, for example
+`database/server-compact.partial`. It gives the copy the target name only when the copy is complete,
+matches the database, and is on the disk. The command stops without a copy when the target directory
+or the `.partial` directory exists, when the directory that holds the target does not exist, or when
+the source directory holds no database. It also stops when the server holds the database, when the
+copy does not match the database, or when the disk is full. After a failed command, delete the
+`.partial` directory before you run the command again.
+
+The operating system can keep the moves of steps 3 and 4 in memory for some time before it writes
+them to the disk. The server reads from that memory, so a working server does not show that the disk
+holds the copy. `sync` makes the operating system write that data to the disk.
+
+### Upgrade from a release that keeps ballots in the round record
+
+At its first start, the server moves the ballots out of the round records. An older release cannot
+read the moved ballots. Before you upgrade:
+
+1. Stop the server and copy `database/server`.
+2. If the disk has little free space, compact the database. The first start writes each moved ballot
+   again before it removes the old copy. The command also works on the database of an older release.
+
+To go back to the older release, restore the copy, but only before the new release accepts a ballot.
+The copy does not hold the availability jobs of later ballots, so their inputs would stay committed
+but unpublished. After the new release accepts ballots, fix forward. In `avail` mode, you can also
+go back when none of the availability jobs of the new release is pending: the older release reads
+the published ballots again from Avail. In `mock` mode, the server can read a ballot only from its
+database. The restored copy does not hold the ballots that the new release accepted, so those
+ballots are lost.
+
 ## Common setup errors
 
 | Symptom                                                                                                    | Cause                                                                     | Fix                                                                                            |
@@ -404,6 +479,8 @@ script runs Playwright with `xvfb-run`. Run `pnpm report` to open the Playwright
 | `Invalid CRISP_BFV_PRESET` or `Invalid CRISP_SKIP_PROOF_AGGREGATION`                                       | A value in `crisp.dev.env` is not allowed.                                | Use `insecure-512` or `secure-8192`, and `true` or `false`.                                    |
 | The server stops at startup with `DATA_AVAILABILITY_MODE=mock is allowed only on local development chains` | `CHAIN_ID` is not 31337 or 1337 and the mode is `mock`.                   | Set `DATA_AVAILABILITY_MODE=avail` and the Avail settings.                                     |
 | The server stops at startup with `Ethereum mainnet requires E3_PARAM_SET=2 (secure-8192)`                  | `CHAIN_ID=1` with `E3_PARAM_SET=0`.                                       | Set `E3_PARAM_SET=2`.                                                                          |
+| The server stops at startup with `CHAIN_ID (…) does not match the chain of HTTP_RPC_URL (…)`               | `HTTP_RPC_URL` serves a different chain.                                  | Use an RPC for the chain in `CHAIN_ID`, or correct `CHAIN_ID`.                                 |
+| The server stops at startup with `RELAY_MIN_BALANCE_ETH is required outside local chains…`                 | `RELAY_MIN_BALANCE_ETH` is empty outside mainnet and local chains.        | Set the balance that `finalizeInput` needs, or `0` to relay without a floor.                   |
 
 ## Next steps
 

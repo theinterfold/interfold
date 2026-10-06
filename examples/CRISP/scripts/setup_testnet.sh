@@ -42,11 +42,11 @@ if [ -z "$PRIVATE_KEY_ADMIN" ]; then
   exit 1
 fi
 
-interfold wallet set --name cn1 --private-key "$PRIVATE_KEY_CN1"
-interfold wallet set --name cn2 --private-key "$PRIVATE_KEY_CN2"
-interfold wallet set --name cn3 --private-key "$PRIVATE_KEY_CN3"
-interfold wallet set --name cn4 --private-key "$PRIVATE_KEY_CN4"
-interfold wallet set --name cn5 --private-key "$PRIVATE_KEY_CN5"
+printf '%s\n' "$PRIVATE_KEY_CN1" | interfold wallet set --name cn1 --private-key-stdin
+printf '%s\n' "$PRIVATE_KEY_CN2" | interfold wallet set --name cn2 --private-key-stdin
+printf '%s\n' "$PRIVATE_KEY_CN3" | interfold wallet set --name cn3 --private-key-stdin
+printf '%s\n' "$PRIVATE_KEY_CN4" | interfold wallet set --name cn4 --private-key-stdin
+printf '%s\n' "$PRIVATE_KEY_CN5" | interfold wallet set --name cn5 --private-key-stdin
 
 # using & instead of -d so that wait works below
 interfold nodes up -v &

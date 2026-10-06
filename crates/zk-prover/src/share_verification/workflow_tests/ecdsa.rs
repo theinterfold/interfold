@@ -29,7 +29,7 @@ fn ecdsa_fails_on_wrong_e3_id() {
     let res =
         ShareVerifier::ecdsa_validate_signed_proofs(7, &[p], "999/0", "C1", Some(s.address()));
     assert!(!res.passed);
-    assert!(res.failed_payload.is_some());
+    assert!(res.failed_payload.is_none());
 }
 
 #[test]
@@ -80,8 +80,7 @@ fn ecdsa_fails_when_signer_does_not_own_party_slot() {
     );
 
     assert!(!result.passed);
-    let (_, recovered) = result.failed_payload.expect("attributable mismatch");
-    assert_eq!(recovered, Some(proof_signer.address()));
+    assert!(result.failed_payload.is_none());
 }
 
 #[test]

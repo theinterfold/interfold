@@ -440,7 +440,7 @@ fn request_bfv_params(
 
     if let Some(preset) = BfvPreset::from_on_chain_param_set(param_set) {
         let params = encode_bfv_params(&BfvParamSet::from(preset).build_arc());
-        if request_config_id == config_id(&params, b"interfold-bfv-v2") {
+        if request_config_id == config_id(&params, b"interfold-bfv-v4") {
             return Ok(params);
         }
     }
@@ -482,14 +482,23 @@ async fn store_committee_public_key<S: DataStore, R: ProviderType>(
     let e3 = contract.get_e3(event.e3Id).await?;
     let request_crypto_config_id = contract.get_e3_crypto_config_id(event.e3Id).await?;
     let e3_params = match request_bfv_params(e3.paramSet, request_crypto_config_id, None) {
-        Ok(params) => params,
         Err(_) if e3.paramSet == 0 || e3.paramSet == 1 => {
             let historical_params = contract.get_param_set_registry(e3.paramSet).await?;
             request_bfv_params(
                 e3.paramSet,
                 request_crypto_config_id,
                 Some(historical_params.as_ref()),
-            )?
+            )
+        }
+        result => result,
+    };
+    let e3_params = match e3_params {
+        Ok(params) => params,
+        Err(error) if ignore_invalid_candidate => {
+            warn!(
+                "Ignoring committee key for unsupported request-time configuration of E3 {e3_id}: {error}"
+            );
+            return Ok(false);
         }
         Err(error) => return Err(error),
     };
@@ -1231,7 +1240,7 @@ mod public_key_chunk_tests {
             (
                 keccak256(b"fhe.rs:BFV"),
                 keccak256(&params),
-                keccak256(b"interfold-bfv-v2"),
+                keccak256(b"interfold-bfv-v4"),
             )
                 .abi_encode(),
         );
@@ -1294,7 +1303,7 @@ mod public_key_chunk_tests {
             (
                 keccak256(b"fhe.rs:BFV"),
                 keccak256(&params),
-                keccak256(b"interfold-bfv-v2"),
+                keccak256(b"interfold-bfv-v4"),
             )
                 .abi_encode(),
         );

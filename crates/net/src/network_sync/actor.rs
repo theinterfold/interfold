@@ -8,16 +8,16 @@ use crate::net_interface_handle::NetEventSubscriber;
 use actix::{Actor, Addr, AsyncContext, Handler, Message, Recipient, ResponseFuture};
 use anyhow::{bail, Context, Result};
 use e3_events::{
-    prelude::*, trap, trap_fut, AggregateId, BusHandle, CorrelationId, DkgCoordinationKind, E3id,
-    EType, EventSource, EventStoreFilter, EventStoreQueryBy, EventStoreQueryResponse, EventType,
-    HistoricalNetSyncEventsReceived, HistoricalNetSyncStart, InterfoldEvent, InterfoldEventData,
-    NetReady, Sequenced, TsAgg, TypedEvent, Unsequenced,
+    prelude::*, trap, AggregateId, BusHandle, CorrelationId, DkgCoordinationKind, E3id, EType,
+    EventSource, EventStoreFilter, EventStoreQueryBy, EventStoreQueryResponse, EventType,
+    HistoricalNetSyncEventsReceived, HistoricalNetSyncFailed, HistoricalNetSyncStart,
+    InterfoldEvent, InterfoldEventData, NetReady, Sequenced, TsAgg, TypedEvent, Unsequenced,
 };
 use e3_utils::MAILBOX_LIMIT;
 use libp2p::PeerId;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet, VecDeque},
     convert::TryInto,
     time::{Duration, Instant},
 };
@@ -40,14 +40,15 @@ use crate::{
         await_event, GossipData, IncomingRequest, NetCommand, NetEvent, PeerTarget,
         ProtocolResponse,
     },
-    NetworkPolicy,
+    LiveHistory, NetworkPolicy,
 };
 
 /// Maximum time to wait for a `ConnectionEstablished` event after all dials
 /// failed before publishing `NetReady` anyway.
 const NET_READY_CONNECT_TIMEOUT: Duration = Duration::from_secs(60);
 
-/// Direct-request retry settings for a single historical sync fetch attempt.
+/// Attempts for each history page from a peer that no later peer can replace, and the delay
+/// before the first retry. A replaceable peer gets one attempt.
 const SYNC_FETCH_MAX_RETRIES: u32 = 3;
 const SYNC_FETCH_RETRY_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -113,6 +114,9 @@ pub struct SyncRequestSucceeded {
 struct PendingSyncRequest {
     peer: PeerId,
     responder: DirectResponder,
+    /// The live-history time when the request was admitted, before its storage read. The reply
+    /// vouches only for what that read can see.
+    observed_from: Option<u128>,
 }
 
 pub struct NetSyncManager {
@@ -143,10 +147,23 @@ pub struct NetSyncManager {
     /// Start without peer history when no peer can serve it, instead of failing the fetch. A
     /// bootstrap node sets this because it uses no E3 history.
     peer_history_optional: bool,
+    /// The startup coordinator's recipient for a failed history fetch, from
+    /// `HistoricalNetSyncStart`. A history that the node fetched but cannot publish fails startup
+    /// through it too.
+    history_failure: Option<Recipient<HistoricalNetSyncFailed>>,
     /// Local messages that are gossiped again until their phase ends: the latest signed Ready and
     /// Roster messages, and this node's decryption shares. They go directly to libp2p with a new
     /// delivery ID because EventBus stable-ID dedup suppresses identical re-publications.
     announcements: HashMap<AnnouncementKey, Reannouncement>,
+    /// E3s whose terminal stage came from the chain, also in replayed history, newest last. The
+    /// node does not re-send their messages, also when the restart re-broadcast returns them.
+    ended_e3s: VecDeque<E3id>,
+    /// Set when local replay has finished, at `HistoricalNetSyncStart`. Re-sends wait for it, so
+    /// that a replayed message is not sent before the replay reaches the end of its E3.
+    replay_finished: bool,
+    /// Time from which this node stores the network's history live. History replies carry it, so
+    /// a requester knows which range a reply vouches for.
+    live_history: LiveHistory,
 }
 
 /// Identifies one message that the node keeps re-sending.
@@ -157,6 +174,22 @@ enum AnnouncementKey {
 }
 
 impl AnnouncementKey {
+    /// The key of an event that the node re-sends until its phase ends, or `None` for an event
+    /// that it does not re-send.
+    fn for_event(data: &InterfoldEventData) -> Option<Self> {
+        match data {
+            InterfoldEventData::DkgCoordination(message) => Some(Self::Dkg(
+                message.e3_id.clone(),
+                message.party_id,
+                message.kind,
+            )),
+            InterfoldEventData::DecryptionshareCreated(share) => {
+                Some(Self::DecryptionShare(share.e3_id.clone(), share.party_id))
+            }
+            _ => None,
+        }
+    }
+
     fn e3_id(&self) -> &E3id {
         match self {
             Self::Dkg(e3_id, ..) | Self::DecryptionShare(e3_id, _) => e3_id,
@@ -197,8 +230,18 @@ impl NetSyncManager {
             net_ready: false,
             rebroadcast_started: false,
             peer_history_optional: false,
+            history_failure: None,
             announcements: HashMap::new(),
+            ended_e3s: VecDeque::new(),
+            replay_finished: false,
+            live_history: LiveHistory::default(),
         }
+    }
+
+    /// Serve history with the live-history time that the translator begins.
+    pub(crate) fn with_live_history(mut self, live_history: LiveHistory) -> Self {
+        self.live_history = live_history;
+        self
     }
 }
 
@@ -207,11 +250,14 @@ mod effects;
 #[path = "handlers.rs"]
 mod handlers;
 
-use effects::historical_sync::handle_sync_request_event;
+use effects::historical_sync::{handle_sync_request_event, HistoryBounds};
 use handlers::{AllPeersDialed, PeerConnected};
 
 #[cfg(test)]
-use effects::historical_sync::{eligible_sync_cursor, validate_historical_events};
+use effects::historical_sync::{
+    ask_further_peers, eligible_sync_cursor, fetch_historical_events_for_aggregate,
+    fetch_history_from_peers, stored_event_ids, validate_historical_events, AggregateHistory,
+};
 
 #[cfg(test)]
 #[path = "tests.rs"]

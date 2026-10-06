@@ -49,7 +49,7 @@ import type { BondingRegistry } from "../../types/contracts/registry/BondingRegi
 import type { CiphernodeRegistryOwnable } from "../../types/contracts/registry/CiphernodeRegistryOwnable";
 import type { NodeReleaseRegistry } from "../../types/contracts/registry/NodeReleaseRegistry";
 import type { SlashingManager } from "../../types/contracts/slashing/SlashingManager";
-import type { MockCiphernodeRegistry } from "../../types/contracts/test/MockCiphernodeRegistry.sol/MockCiphernodeRegistry";
+import type { MockCiphernodeRegistry } from "../../types/contracts/test/MockCiphernodeRegistry";
 import type { MockCiphertextVerifier } from "../../types/contracts/test/MockCiphertextVerifier";
 import type { MockComputeProvider } from "../../types/contracts/test/MockComputeProvider";
 import type { MockDecryptionVerifier } from "../../types/contracts/test/MockDecryptionVerifier";
@@ -662,4 +662,14 @@ export async function deployInterfoldSystem(
     slashedFundsTreasury,
     request,
   };
+}
+
+/**
+ * {@link deployInterfoldSystem} with no onboarded operators. Setters that need
+ * a drained operator generation, such as `setInterfold` and
+ * `setCiphernodeRegistry`, start from it. `loadFixture` keys its snapshots by
+ * function, so specs load this one function instead of a local copy.
+ */
+export async function deployInterfoldSystemWithoutOperators(): Promise<InterfoldSystem> {
+  return deployInterfoldSystem({ setupOperators: 0 });
 }

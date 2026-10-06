@@ -7,7 +7,7 @@
 use eyre::{Context, Result};
 
 /// JS Number has 53-bit integer precision. Values outside [-2^53+1, 2^53-1] lose precision when parsed.
-/// e0_quotients from user_data_encryption_ct0 for example can have values larger than 2^53 - 1.
+/// The centered residues in `ct0is` from user_data_encryption_ct0, for example, can exceed 2^53 - 1.
 const JS_SAFE_INT_MAX: i64 = 9007199254740991; // 2^53 - 1
 
 /// Recursively converts JSON numbers that would lose precision in JS to strings.

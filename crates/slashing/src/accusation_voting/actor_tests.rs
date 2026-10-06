@@ -16,6 +16,7 @@ const DEFAULT_ACCUSATION_DEADLINE_SKEW_SECS: u64 = 30;
 
 /// Independent re-derivation of the EIP-712 vote digest, mirroring exactly
 /// what `SlashingManager._verifyVotes` computes on chain.
+#[allow(clippy::too_many_arguments)]
 fn reference_vote_digest(
     chain_id: u64,
     verifying_contract: Address,

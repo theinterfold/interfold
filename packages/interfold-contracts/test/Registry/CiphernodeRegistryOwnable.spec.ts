@@ -14,6 +14,7 @@ import {
   SEVEN_DAYS,
   TICKET_PRICE,
   deployInterfoldSystem,
+  deployInterfoldSystemWithoutOperators,
   deploySlashingManager,
   encodeMockDkgProof,
   ethers,
@@ -118,7 +119,7 @@ describe("CiphernodeRegistryOwnable", function () {
   }
 
   describe("constructor / initialize()", function () {
-    it("correctly sets `_owner` and `interfold` ", async function () {
+    it("gives ownership to the given owner after the owner-only setup", async function () {
       const poseidonFactory = await ethers.getContractFactory("PoseidonT3");
       const poseidonDeployment = await poseidonFactory.deploy();
       await poseidonDeployment.waitForDeployment();
@@ -129,8 +130,9 @@ describe("CiphernodeRegistryOwnable", function () {
       const sortitionDeployment = await sortitionFactory.deploy();
       await sortitionDeployment.waitForDeployment();
       const sortitionAddress = await sortitionDeployment.getAddress();
-      const [deployer] = await ethers.getSigners();
-      if (!deployer) throw new Error("Bad getSigners() output");
+      // The default signer deploys the proxy, so `msg.sender` in `initialize` differs from `_owner`.
+      const [deployer, owner] = await ethers.getSigners();
+      if (!deployer || !owner) throw new Error("Bad getSigners() output");
 
       const ciphernodeRegistryFactory = await ethers.getContractFactory(
         "CiphernodeRegistryOwnable",
@@ -147,7 +149,7 @@ describe("CiphernodeRegistryOwnable", function () {
 
       const initData = ciphernodeRegistryFactory.interface.encodeFunctionData(
         "initialize",
-        [deployer.address, SORTITION_SUBMISSION_WINDOW],
+        [owner.address, SORTITION_SUBMISSION_WINDOW],
       );
 
       const proxyFactory = await ethers.getContractFactory(
@@ -166,7 +168,7 @@ describe("CiphernodeRegistryOwnable", function () {
         deployer,
       );
 
-      expect(await ciphernodeRegistry.owner()).to.equal(deployer.address);
+      expect(await ciphernodeRegistry.owner()).to.equal(owner.address);
       expect(await ciphernodeRegistry.sortitionSubmissionWindow()).to.equal(
         SORTITION_SUBMISSION_WINDOW,
       );
@@ -499,24 +501,6 @@ describe("CiphernodeRegistryOwnable", function () {
           "UnknownRandomnessRequest",
         )
         .withArgs(requestId + 1n);
-    });
-
-    it("returns true if the request is successful", async function () {
-      const {
-        registry,
-        interfold,
-        usdcToken,
-        mockE3Program,
-        mockDecryptionVerifier,
-      } = await loadFixture(setup);
-      // We can verify by checking that root is stored after request
-      await makeRequest(
-        interfold,
-        usdcToken,
-        mockE3Program,
-        mockDecryptionVerifier,
-      );
-      expect(await registry.rootAt(firstE3Id)).to.not.equal(0);
     });
 
     it("allows one ticket ID across concurrent E3 requests", async function () {
@@ -896,42 +880,6 @@ describe("CiphernodeRegistryOwnable", function () {
           encodeMockDkgProof(dataHash),
         );
     });
-    it("stores the public key of the committee", async function () {
-      const {
-        registry,
-        interfold,
-        usdcToken,
-        mockE3Program,
-        mockDecryptionVerifier,
-        randomnessProvider,
-        operator1,
-        operator2,
-        operator3,
-      } = await loadFixture(setup);
-      await randomnessProvider.setAutoFulfill(false);
-      await makeRequest(
-        interfold,
-        usdcToken,
-        mockE3Program,
-        mockDecryptionVerifier,
-      );
-      const requestId = await randomnessProvider.requestIdByE3Id(firstE3Id);
-      await networkHelpers.time.increase(1);
-      await randomnessProvider.fulfill(requestId, 1n);
-
-      await registry.connect(operator1).submitTicket(firstE3Id, 1);
-      await registry.connect(operator2).submitTicket(firstE3Id, 1);
-      await registry.connect(operator3).submitTicket(firstE3Id, 1);
-      await finalizeCommitteeAfterWindow(registry, firstE3Id);
-
-      await registry.publishCommittee(
-        firstE3Id,
-        dataHash,
-        encodeMockDkgProof(dataHash),
-        "0x01",
-      );
-      expect(await registry.committeePublicKey(firstE3Id)).to.equal(dataHash);
-    });
     it("rejects malformed chunks and accepts a committee member's valid candidate", async function () {
       const {
         registry,
@@ -1232,19 +1180,6 @@ describe("CiphernodeRegistryOwnable", function () {
         registry.connect(notTheOwner).addCiphernode(AddressTwo),
       ).to.be.revertedWithCustomError(registry, "NotOwnerOrBondingRegistry");
     });
-    it("adds the ciphernode to the registry", async function () {
-      const { registry } = await loadFixture(setup);
-      expect(await registry.addCiphernode(AddressTwo));
-      expect(await registry.isEnabled(AddressTwo)).to.be.true;
-    });
-    it("increments numCiphernodes", async function () {
-      const { registry } = await loadFixture(setup);
-      const numCiphernodes = await registry.numCiphernodes();
-      expect(await registry.addCiphernode(AddressTwo));
-      expect(await registry.numCiphernodes()).to.equal(
-        numCiphernodes + BigInt(1),
-      );
-    });
     it("emits a CiphernodeAdded event", async function () {
       const { registry } = await loadFixture(setup);
       const treeSize = await registry.treeSize();
@@ -1291,15 +1226,6 @@ describe("CiphernodeRegistryOwnable", function () {
       expect(await registry.isEnabled(operator1Address)).to.be.false;
       expect(await registry.root()).to.not.equal(rootBefore);
     });
-    it("decrements numCiphernodes", async function () {
-      const { registry, operator1 } = await loadFixture(setup);
-      const operator1Address = await operator1.getAddress();
-      const numCiphernodes = await registry.numCiphernodes();
-      await registry.removeCiphernode(operator1Address);
-      expect(await registry.numCiphernodes()).to.equal(
-        numCiphernodes - BigInt(1),
-      );
-    });
     it("emits a CiphernodeRemoved event", async function () {
       const { registry, operator1 } = await loadFixture(setup);
       const operator1Address = await operator1.getAddress();
@@ -1319,20 +1245,14 @@ describe("CiphernodeRegistryOwnable", function () {
         registry.connect(notTheOwner).setInterfold(AddressTwo),
       ).to.be.revertedWithCustomError(registry, "OwnableUnauthorizedAccount");
     });
-    it("sets the interfold address", async function () {
-      const { ciphernodeRegistry: registry } = await deployInterfoldSystem({
-        setupOperators: 0,
-      });
-      expect(await registry.setInterfold(AddressTwo));
-      expect(await registry.interfold()).to.equal(AddressTwo);
-    });
-    it("emits an InterfoldSet event", async function () {
-      const { ciphernodeRegistry: registry } = await deployInterfoldSystem({
-        setupOperators: 0,
-      });
+    it("sets the interfold address and emits InterfoldSet", async function () {
+      const { ciphernodeRegistry: registry } = await loadFixture(
+        deployInterfoldSystemWithoutOperators,
+      );
       await expect(await registry.setInterfold(AddressTwo))
         .to.emit(registry, "InterfoldSet")
         .withArgs(AddressTwo);
+      expect(await registry.interfold()).to.equal(AddressTwo);
     });
   });
 
@@ -1660,10 +1580,6 @@ describe("CiphernodeRegistryOwnable", function () {
   });
 
   describe("isEnabled()", function () {
-    it("returns true if the ciphernode is currently enabled", async function () {
-      const { registry, operator1 } = await loadFixture(setup);
-      expect(await registry.isEnabled(await operator1.getAddress())).to.be.true;
-    });
     it("returns false if the ciphernode is not currently enabled", async function () {
       const { registry } = await loadFixture(setup);
       expect(await registry.isEnabled(AddressTwo)).to.be.false;

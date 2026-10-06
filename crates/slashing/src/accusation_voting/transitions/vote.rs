@@ -62,10 +62,19 @@ impl AccusationVoting {
             return;
         };
 
-        // Reject votes whose signed window disagrees with the accusation.
-        if vote.issued_at != pending.accusation.issued_at
-            || vote.deadline != pending.accusation.deadline
-        {
+        // Reject votes whose signed window disagrees with the accusation. A later window
+        // is buffered: this node adopts it when that peer's accusation arrives.
+        let held_window = (pending.accusation.issued_at, pending.accusation.deadline);
+        if (vote.issued_at, vote.deadline) != held_window {
+            if vote.issued_at > pending.accusation.issued_at
+                && vote.deadline > pending.accusation.deadline
+                && vote.voter != pending.accusation.accused
+            {
+                let buf = self.buffered_votes.entry(vote_accusation_id).or_default();
+                buf.retain(|v| v.voter != vote.voter);
+                buf.push(vote);
+                return;
+            }
             warn!(
                 "Ignoring vote from {} — issued_at {} (expected {}) or deadline {} (expected {}) does not match the accusation",
                 vote.voter,

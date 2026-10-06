@@ -19,6 +19,7 @@ use tracing::{debug, info};
 type RequestKey = (E3id, ComputeRequestKind);
 
 #[derive(Clone)]
+#[allow(clippy::large_enum_variant)]
 enum ComputeOutcome {
     Response(ComputeResponse),
     Error(ComputeRequestError),
@@ -50,6 +51,7 @@ pub(crate) struct ComputeEffectGate {
     request_keys_by_correlation: HashMap<CorrelationId, RequestKey>,
     replayed_responses: HashMap<RequestKey, ComputeOutcome>,
     stages: HashMap<E3id, E3Stage>,
+    canonical_keys: e3_request::canonical_key::CanonicalPublicKeys,
 }
 
 impl ComputeEffectGate {
@@ -63,6 +65,7 @@ impl ComputeEffectGate {
             request_keys_by_correlation: HashMap::new(),
             replayed_responses: HashMap::new(),
             stages: initial_stages,
+            canonical_keys: Default::default(),
         }
     }
 
@@ -133,8 +136,18 @@ impl ComputeEffectGate {
         Self::request_is_obsolete_at_stage(self.stages.get(e3_id), kind)
     }
 
+    /// Accusation work of a failed E3 runs until the request completes, so that a node can still
+    /// vote on an accusation whose proof it has not verified.
+    fn is_accusation_request(kind: &ComputeRequestKind) -> bool {
+        matches!(
+            kind,
+            ComputeRequestKind::Zk(ZkRequest::ReverifyAccusedProof(_))
+        )
+    }
+
     fn request_is_obsolete_at_stage(stage: Option<&E3Stage>, kind: &ComputeRequestKind) -> bool {
         match stage {
+            Some(E3Stage::Failed) if Self::is_accusation_request(kind) => false,
             Some(E3Stage::Complete | E3Stage::Failed) => true,
             Some(stage) if Self::stage_rank(stage) >= Self::stage_rank(&E3Stage::KeyPublished) => {
                 Self::is_dkg_request(kind)
@@ -144,10 +157,14 @@ impl ComputeEffectGate {
     }
 
     fn record_stage(&mut self, e3_id: E3id, new_stage: E3Stage) {
+        // A complete request is final, also after a failure: its accusation work ended too.
         let should_advance = self
             .stages
             .get(&e3_id)
-            .map(|current| Self::stage_rank(&new_stage) > Self::stage_rank(current))
+            .map(|current| {
+                *current != E3Stage::Complete
+                    && Self::stage_rank(&new_stage) > Self::stage_rank(current)
+            })
             .unwrap_or(true);
         if should_advance {
             self.stages.insert(e3_id.clone(), new_stage);
@@ -180,6 +197,14 @@ impl ComputeEffectGate {
             let InterfoldEventData::ComputeRequest(request) = event.get_data() else {
                 return false;
             };
+            if let ComputeRequestKind::Zk(ZkRequest::ThresholdShareDecryption(proof)) =
+                &request.request
+            {
+                if !self.canonical_keys.accepts_request(&request.e3_id, proof) {
+                    debug!(e3_id = %request.e3_id, "Discarding C6 compute work without canonical public inputs");
+                    return false;
+                }
+            }
             let correlation_id = request.correlation_id;
             self.request_keys_by_correlation
                 .insert(correlation_id, key.clone());
@@ -300,10 +325,11 @@ impl ComputeEffectGate {
         bus: &BusHandle,
         target: Recipient<InterfoldEvent>,
         initial_stages: HashMap<E3id, E3Stage>,
+        canonical_keys: e3_request::canonical_key::CanonicalPublicKeys,
     ) {
-        let gate = Self::new(target, initial_stages)
-            .with_bus(bus.clone())
-            .start();
+        let mut gate = Self::new(target, initial_stages).with_bus(bus.clone());
+        gate.canonical_keys = canonical_keys;
+        let gate = gate.start();
         bus.subscribe_all(
             &[
                 EventType::ComputeRequest,
@@ -349,15 +375,17 @@ impl ComputeEffectGate {
         info!(count, "released replay-safe compute effects");
     }
 
+    /// Clear the keys of the work of `e3_id` that its stage makes obsolete. A failure keeps the
+    /// accusation work; a complete request keeps nothing.
     fn cancel(&mut self, e3_id: &E3id) {
-        self.pending
-            .retain(|(pending_id, _), _| pending_id != e3_id);
-        self.forwarded
-            .retain(|(forwarded_id, _), _| forwarded_id != e3_id);
-        self.replayed_responses
-            .retain(|(response_id, _), _| response_id != e3_id);
-        self.request_keys_by_correlation
-            .retain(|_, (request_id, _)| request_id != e3_id);
+        let stage = self.stages.get(e3_id).cloned();
+        let ends = |(request_id, kind): &RequestKey| {
+            request_id == e3_id && Self::request_is_obsolete_at_stage(stage.as_ref(), kind)
+        };
+        self.pending.retain(|key, _| !ends(key));
+        self.forwarded.retain(|key, _| !ends(key));
+        self.replayed_responses.retain(|key, _| !ends(key));
+        self.request_keys_by_correlation.retain(|_, key| !ends(key));
     }
 }
 
@@ -383,7 +411,9 @@ impl Handler<InterfoldEvent> for ComputeEffectGate {
             }
             InterfoldEventData::EffectsEnabled(_) => self.enable(),
             InterfoldEventData::E3RequestComplete(complete) => {
-                self.record_stage(complete.e3_id.clone(), E3Stage::Complete);
+                // The request ends after a failure too, so Complete replaces Failed here.
+                self.stages
+                    .insert(complete.e3_id.clone(), E3Stage::Complete);
                 self.cancel(&complete.e3_id);
             }
             InterfoldEventData::E3Failed(failed) => {
@@ -402,7 +432,7 @@ impl Handler<InterfoldEvent> for ComputeEffectGate {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use actix::{Addr, Message, ResponseFuture};
     use e3_events::{
@@ -467,7 +497,7 @@ mod tests {
         }
     }
 
-    fn test_bus() -> (BusHandle, Addr<HistoryCollector<InterfoldEvent>>) {
+    pub(crate) fn test_bus() -> (BusHandle, Addr<HistoryCollector<InterfoldEvent>>) {
         let event_bus =
             EventBus::<InterfoldEvent>::new(EventBusConfig { deduplicate: true }).start();
         let store = TestEventStore::default().start();
@@ -580,6 +610,53 @@ mod tests {
             EventSource::Local,
         )
         .into_sequenced(1)
+    }
+
+    /// An accusation's re-verification of the forwarded C3a proof of `party`.
+    fn accusation_compute(
+        correlation_id: CorrelationId,
+        timestamp: u128,
+        party: u64,
+    ) -> InterfoldEvent {
+        let InterfoldEventData::ComputeRequest(mut request) = share_verification_compute(
+            correlation_id,
+            timestamp,
+            ProofType::C3aSkShareEncryption,
+            CircuitName::ShareEncryption,
+        )
+        .into_data() else {
+            unreachable!();
+        };
+        let ComputeRequestKind::Zk(ZkRequest::VerifyShareProofs(mut proofs)) = request.request
+        else {
+            unreachable!();
+        };
+        proofs.party_proofs[0].sender_party_id = party;
+        request.request = ComputeRequestKind::Zk(ZkRequest::ReverifyAccusedProof(proofs));
+        InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            request.into(),
+            None,
+            timestamp,
+            None,
+            EventSource::Local,
+        )
+        .into_sequenced(1)
+    }
+
+    fn failed() -> InterfoldEvent {
+        InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            e3_events::E3Failed {
+                e3_id: E3id::new("4", 1),
+                failed_at_stage: E3Stage::CommitteeFinalized,
+                reason: e3_events::FailureReason::DKGInvalidShares,
+            }
+            .into(),
+            None,
+            35,
+            None,
+            EventSource::Evm,
+        )
+        .into_sequenced(3)
     }
 
     fn effects_enabled() -> InterfoldEvent {
@@ -786,6 +863,52 @@ mod tests {
     }
 
     #[actix::test]
+    async fn a_failed_e3_keeps_its_accusation_work_until_the_request_completes() {
+        let recorder = Recorder::default().start();
+        let stages = HashMap::from([(E3id::new("4", 1), E3Stage::Failed)]);
+        let gate = ComputeEffectGate::new(recorder.clone().recipient(), stages).start();
+        let dkg = CorrelationId::new();
+        let accusation = CorrelationId::new();
+
+        gate.send(effects_enabled()).await.unwrap();
+        gate.send(share_verification_compute(
+            dkg,
+            40,
+            ProofType::C3aSkShareEncryption,
+            CircuitName::ShareEncryption,
+        ))
+        .await
+        .unwrap();
+        gate.send(accusation_compute(accusation, 41, 0))
+            .await
+            .unwrap();
+        assert_eq!(recorder.send(Received).await.unwrap(), vec![accusation]);
+
+        // Another accused proof after the request completed.
+        gate.send(completed()).await.unwrap();
+        gate.send(accusation_compute(CorrelationId::new(), 42, 1))
+            .await
+            .unwrap();
+        assert_eq!(recorder.send(Received).await.unwrap(), vec![accusation]);
+    }
+
+    #[actix::test]
+    async fn a_failure_keeps_queued_accusation_work_and_drops_the_rest() {
+        let recorder = Recorder::default().start();
+        let gate = ComputeEffectGate::new(recorder.clone().recipient(), HashMap::new()).start();
+        let accusation = CorrelationId::new();
+
+        gate.send(compute(CorrelationId::new(), 10)).await.unwrap();
+        gate.send(accusation_compute(accusation, 11, 0))
+            .await
+            .unwrap();
+        gate.send(failed()).await.unwrap();
+        gate.send(effects_enabled()).await.unwrap();
+
+        assert_eq!(recorder.send(Received).await.unwrap(), vec![accusation]);
+    }
+
+    #[actix::test]
     async fn key_published_snapshot_discards_obsolete_dkg_work() {
         let recorder = Recorder::default().start();
         let stages = HashMap::from([(E3id::new("4", 1), E3Stage::KeyPublished)]);
@@ -825,5 +948,71 @@ mod tests {
         gate.send(effects_enabled()).await.unwrap();
 
         assert_eq!(recorder.send(Received).await.unwrap(), vec![correlation_id]);
+    }
+    #[actix::test]
+    async fn replayed_c6_compute_requires_canonical_public_inputs() -> anyhow::Result<()> {
+        use alloy::primitives::Address;
+        use e3_fhe_params::BfvParamSet;
+        use e3_request::canonical_key::{CanonicalPublicKey, CanonicalPublicKeys};
+        let id = E3id::new("84", 1);
+        let params = BfvParamSet::from(BfvPreset::InsecureThreshold512);
+        let bytes = e3_bfv_client::client::generate_public_key(
+            params.degree,
+            params.plaintext_modulus,
+            params.moduli.to_vec(),
+        )?;
+        let key = CanonicalPublicKey {
+            pk_commitment: e3_bfv_client::compute_pk_commitment(
+                bytes.clone(),
+                params.degree,
+                params.plaintext_modulus,
+                params.moduli.to_vec(),
+            )?,
+            committee: vec![
+                Address::repeat_byte(1),
+                Address::repeat_byte(2),
+                Address::repeat_byte(3),
+            ],
+            honest_committee: vec![Address::repeat_byte(1), Address::repeat_byte(3)],
+            params_preset: BfvPreset::InsecureThreshold512,
+            committee_size: CiphernodesCommitteeSize::Minimum,
+            interfold_address: Address::repeat_byte(9),
+            sk_agg_commits: vec![],
+            esm_agg_commits: vec![],
+        };
+        let keys = CanonicalPublicKeys::default();
+        keys.insert(id.clone(), key.clone())?;
+        let mut request = e3_events::ThresholdShareDecryptionProofRequest {
+            ciphertext_bytes: vec![ArcBytes::from_bytes(&[5])],
+            aggregated_pk_bytes: ArcBytes::from_bytes(&bytes),
+            sk_poly_sum: e3_crypto::SensitiveBytes::from_encrypted(&[2]),
+            es_poly_sum: vec![e3_crypto::SensitiveBytes::from_encrypted(&[3])],
+            d_share_bytes: vec![ArcBytes::from_bytes(&[4])],
+            decryption_domain: key.domain(Address::ZERO),
+            params_preset: key.params_preset,
+            committee_size: key.committee_size,
+        };
+        let target = Recorder::default().start();
+        let mut gate = ComputeEffectGate::new(target.clone().recipient(), HashMap::new());
+        gate.canonical_keys = keys;
+        let gate = gate.start();
+        gate.send(outcome_event(ComputeRequest::zk(
+            ZkRequest::ThresholdShareDecryption(request.clone()),
+            CorrelationId::new(),
+            id.clone(),
+        )))
+        .await?;
+        request.decryption_domain = key.domain(key.interfold_address);
+        let accepted = CorrelationId::new();
+        gate.send(outcome_event(ComputeRequest::zk(
+            ZkRequest::ThresholdShareDecryption(request),
+            accepted,
+            id,
+        )))
+        .await?;
+        assert!(target.send(Received).await?.is_empty());
+        gate.send(outcome_event(EffectsEnabled::new())).await?;
+        assert_eq!(target.send(Received).await?, vec![accepted]);
+        Ok(())
     }
 }

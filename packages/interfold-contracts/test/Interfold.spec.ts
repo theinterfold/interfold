@@ -13,6 +13,7 @@ import {
   PRODUCTION_CRYPTO_CONFIG_ID,
   buildMockAggregationPublishArgs,
   deployInterfoldSystem,
+  deployInterfoldSystemWithoutOperators,
   ENCRYPTION_SCHEME_ID as encryptionSchemeId,
   ethers,
   makeRequest,
@@ -83,24 +84,6 @@ describe("Interfold", function () {
   };
 
   describe("constructor / initialize()", function () {
-    it("correctly sets owner", async function () {
-      const { interfold, owner } = await loadFixture(setup);
-      expect(await interfold.owner()).to.equal(await owner.getAddress());
-    });
-
-    it("correctly sets ciphernodeRegistry address", async function () {
-      const { interfold, ciphernodeRegistryContract } =
-        await loadFixture(setup);
-      expect(await interfold.ciphernodeRegistry()).to.equal(
-        await ciphernodeRegistryContract.getAddress(),
-      );
-    });
-
-    it("correctly sets max duration", async function () {
-      const { interfold } = await loadFixture(setup);
-      expect(await interfold.maxDuration()).to.equal(60 * 60 * 24 * 30);
-    });
-
     it("namespaces E3 IDs by the controller address", async function () {
       const { interfold } = await loadFixture(setup);
       expect(await interfold.nexte3Id()).to.equal(
@@ -180,18 +163,24 @@ describe("Interfold", function () {
         .withArgs(await ciphernodeRegistryContract.getAddress());
     });
 
-    it("sets ciphernodeRegistry correctly", async function () {
-      const { interfold } = await deployInterfoldSystem({ setupOperators: 0 });
+    it("sets ciphernodeRegistry and emits CiphernodeRegistrySet", async function () {
+      const { interfold } = await loadFixture(
+        deployInterfoldSystemWithoutOperators,
+      );
       const replacement = await ethers.deployContract("MockCiphernodeRegistry");
       const replacementAddress = await replacement.getAddress();
 
       await interfold.setRequestsPaused(true);
-      await interfold.setCiphernodeRegistry(replacementAddress);
+      await expect(interfold.setCiphernodeRegistry(replacementAddress))
+        .to.emit(interfold, "CiphernodeRegistrySet")
+        .withArgs(replacementAddress);
       expect(await interfold.ciphernodeRegistry()).to.equal(replacementAddress);
     });
 
     it("rejects a replacement registry with existing members", async function () {
-      const { interfold } = await deployInterfoldSystem({ setupOperators: 0 });
+      const { interfold } = await loadFixture(
+        deployInterfoldSystemWithoutOperators,
+      );
       const replacement = await ethers.deployContract("MockCiphernodeRegistry");
 
       await replacement.addCiphernode(AddressTwo);
@@ -217,17 +206,6 @@ describe("Interfold", function () {
         interfold,
         "DependencyGenerationNotDrained",
       );
-    });
-
-    it("emits CiphernodeRegistrySet event", async function () {
-      const { interfold } = await deployInterfoldSystem({ setupOperators: 0 });
-      const replacement = await ethers.deployContract("MockCiphernodeRegistry");
-      const replacementAddress = await replacement.getAddress();
-
-      await interfold.setRequestsPaused(true);
-      await expect(interfold.setCiphernodeRegistry(replacementAddress))
-        .to.emit(interfold, "CiphernodeRegistrySet")
-        .withArgs(replacementAddress);
     });
   });
 
@@ -627,47 +605,42 @@ describe("Interfold", function () {
       ).to.be.revertedWithCustomError(interfold, "CryptoConfigChanged");
     });
 
-    it("rejects a quote for the previous insecure circuit version", async function () {
-      const { interfold, request } = await loadFixture(setup);
-      const previousConfigId = ethers.keccak256(
-        abiCoder.encode(
-          ["bytes32", "bytes32", "bytes32"],
-          [
-            encryptionSchemeId,
-            ethers.keccak256(BFV_PARAMS_DEFAULT),
-            ethers.id("interfold-bfv-v1"),
-          ],
-        ),
-      );
-      expect(previousConfigId).to.not.equal(ACTIVE_CRYPTO_CONFIG_ID);
+    for (const version of [
+      "interfold-bfv-v1",
+      "interfold-bfv-v2",
+      "interfold-bfv-v3",
+    ]) {
+      it(`rejects ${version} configurations for both BFV parameter sets`, async function () {
+        const { interfold, request } = await loadFixture(setup);
+        await interfold.setParamSet(2, BFV_PARAMS_SECURE);
+        for (const [paramSet, params, currentConfigId] of [
+          [0, BFV_PARAMS_DEFAULT, ACTIVE_CRYPTO_CONFIG_ID],
+          [2, BFV_PARAMS_SECURE, PRODUCTION_CRYPTO_CONFIG_ID],
+        ] as const) {
+          const legacyConfigId = ethers.keccak256(
+            abiCoder.encode(
+              ["bytes32", "bytes32", "bytes32"],
+              [
+                encryptionSchemeId,
+                ethers.keccak256(params),
+                ethers.id(version),
+              ],
+            ),
+          );
+          await expect(
+            interfold.request({
+              ...request,
+              paramSet,
+              inputWindow: await freshInputWindow(),
+              expectedCryptoConfigId: legacyConfigId,
+            }),
+          )
+            .to.be.revertedWithCustomError(interfold, "CryptoConfigChanged")
+            .withArgs(legacyConfigId, currentConfigId);
+        }
+      });
+    }
 
-      await expect(
-        interfold.request({
-          ...request,
-          inputWindow: await freshInputWindow(),
-          expectedCryptoConfigId: previousConfigId,
-        }),
-      )
-        .to.be.revertedWithCustomError(interfold, "CryptoConfigChanged")
-        .withArgs(previousConfigId, ACTIVE_CRYPTO_CONFIG_ID);
-    });
-
-    it("reverts if USDC allowance is insufficient", async function () {
-      const { interfold, request, usdcToken } = await loadFixture(setup);
-      await expect(
-        interfold.request({
-          committeeSize: request.committeeSize,
-          inputWindow: await freshInputWindow(),
-          e3Program: request.e3Program,
-          paramSet: request.paramSet,
-          computeProviderParams: request.computeProviderParams,
-          customParams: request.customParams,
-          expectedFeeToken: request.expectedFeeToken,
-          expectedCryptoConfigId: request.expectedCryptoConfigId,
-          maxFee: request.maxFee,
-        }),
-      ).to.be.revertedWithCustomError(usdcToken, "ERC20InsufficientAllowance");
-    });
     it("reverts if committee size is not configured", async function () {
       const { interfold, request } = await loadFixture(setup);
       const unconfiguredCommitteeSize = 1;

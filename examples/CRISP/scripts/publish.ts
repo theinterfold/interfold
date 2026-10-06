@@ -334,8 +334,10 @@ class CRISPPublisher {
     console.log('\n📤 Publishing packages to npm...')
 
     // Dependency order. `@crisp-e3/sdk` depends on `@crisp-e3/zk-inputs`, and pnpm rewrites that
-    // workspace dependency to a concrete version at pack time, so the version it names has to be on
-    // the registry already — updateClientLockFile() installs from the registry right after this.
+    // workspace dependency to a concrete version at pack time. npm does not check at publish time
+    // that the named version exists, so every package publishes first and the registry wait runs
+    // once for all of them. npm then processes the uploads in parallel instead of one after the
+    // other. updateClientLockFile() installs from the registry right after this.
     const packagesToPublish = [
       { path: 'packages/crisp-zk-inputs', name: '@crisp-e3/zk-inputs' },
       { path: 'packages/crisp-sdk', name: '@crisp-e3/sdk' },
@@ -344,6 +346,8 @@ class CRISPPublisher {
 
     const tag = this.options.tag || CHANNELS[this.channel].tag
     console.log(`   Channel: ${this.channel} (${CHANNELS[this.channel].presets.join(', ')}), npm tag: ${tag}`)
+
+    const published: string[] = []
 
     for (const pkg of packagesToPublish) {
       try {
@@ -372,11 +376,15 @@ class CRISPPublisher {
         })
 
         console.log(`   ✓ ${pkg.name}@${this.newVersion} published successfully`)
-        await this.waitForRegistry(pkg.name)
+        published.push(pkg.name)
       } catch (error) {
         console.error(`   ❌ Failed to publish ${pkg.name}`)
         throw error
       }
+    }
+
+    for (const name of published) {
+      await this.waitForRegistry(name)
     }
   }
 
@@ -543,8 +551,11 @@ class CRISPPublisher {
 
   /**
    * Wait for a freshly published version to be visible on the npm registry.
+   *
+   * npm processes a publish asynchronously. Until it finishes, the version and its tarball return
+   * 404, which can last about an hour.
    */
-  private async waitForRegistry(packageName: string, timeoutMs = 10 * 60 * 1000, pollIntervalMs = 5000): Promise<void> {
+  private async waitForRegistry(packageName: string, timeoutMs = 2 * 60 * 60 * 1000, pollIntervalMs = 5000): Promise<void> {
     const startedAt = Date.now()
     let attempt = 0
 

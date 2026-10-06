@@ -146,7 +146,7 @@ setup_nodes() {
     # 1. Import wallet keys
     for i in "${!NODE_IDS[@]}"; do
         info "Importing wallet for ${NODE_IDS[$i]}..."
-        interfold wallet set --name "${NODE_IDS[$i]}" --private-key "${NODE_KEYS[$i]}"
+        printf '%s\n' "${NODE_KEYS[$i]}" | interfold wallet set --name "${NODE_IDS[$i]}" --private-key-stdin
     done
 
     # 2. Generate ZK keys (noir setup)

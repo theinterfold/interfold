@@ -32,15 +32,15 @@
   "bondingOwnershipLib": "0x1a7902B2fBC7910504df56a174c4DfC0016693DD",
   "bondedCheckpoints": "0xDbCaeec5B040A134314FfD43aA2ca0D16006f963",
   "initialE3Program": "0x4976E5E47852eFCe6851d35B95A1A2E19456F3D7",
-  "decryptionVerifier": "0xf143b969ea481Ccf251194D15F82007C67AABc53",
-  "pkVerifier": "0xBA1854fDA7A5c127606572e43Dc7B37b7A15bdFf",
+  "decryptionVerifier": "0xA66CAb7AE230698b2a9ee1E0E967BaD4651FeEa7",
+  "pkVerifier": "0x7CD10057c25674bd5666A9deEE3193f1b29563d1",
   "dkgFoldAttestationVerifier": "0xE5657c0756B772B600D6c73eDbF046f32129c770",
-  "dkgAggregatorVerifier": "0x9e58443eB40A1B08D07f89D36bf69909d401a542",
-  "decryptionAggregatorVerifier": "0x53Fc34b412E16A1aE05A86934b821F82ca2a10da",
-  "verifierZkTranscriptLib": "0x20D5c71255c8ff867db88612aA08349038c7A7b3",
-  "dkgVerifierRelationsLib": "0x64c63784b6Bb1F18EE76e15e1932e23B70326325",
-  "decryptionVerifierRelationsLib": "0xdB84ECE3c757E6CAd840931D1487bD9389676617",
-  "ciphertextVerifier": "0xB568e5aD762F7a75F1EC65A985ec4038F6409297",
+  "dkgAggregatorVerifier": "0xaC784625D32Ce7840D3f0EBD7E5832ea34C188C0",
+  "decryptionAggregatorVerifier": "0xEB4D0d5FfbDD508d6FF352255DCFc7b13FA28EC0",
+  "verifierZkTranscriptLib": "0xeBDA0345B64897e0690B3001142Cf5a3Be419237",
+  "dkgVerifierRelationsLib": "0x825b106D6AF1C8beB10081B7724DFc1D8F0ffDa3",
+  "decryptionVerifierRelationsLib": "0xBced41FA38458E21d5C9e251CA83B0c91B5E9f4B",
+  "ciphertextVerifier": "0x80D217d3b2e16fF2ecc178cC75655C773895c549",
   "safeTransactions": "/home/dev/repo/packages/interfold-contracts/deploy/protocol/mainnet-protocol.safe-transactions.json",
   "governanceSafeBuilder": "/home/dev/repo/packages/interfold-contracts/deploy/protocol/mainnet-protocol.governance.safe-builder.json",
   "bondedVotes": "0x028deEA644258c78b1B5B2eacF469F5D781Fb43E",
@@ -56,5 +56,48 @@
     "minimumSubscriptionBalance": "1000000000000000000",
     "requestTimeout": "3600"
   },
-  "randomnessProviderOwnershipAcceptanceRequired": false
+  "randomnessProviderOwnershipAcceptanceRequired": false,
+  "crispProgram": "0x53FCdb21E73A461CfE6c64B19855204384B91BA3",
+  "dataAvailabilityVerifier": "0xC038C7ba5717bDa886115e5d954085bce069069E",
+  "bfvVerifierRoutes": [
+    {
+      "preset": "secure-8192",
+      "committee": "small",
+      "paramSet": 1,
+      "committeeSize": 2,
+      "decryptionVerifier": "0xf6ed505997d2F572717f5E946b70efd65D55c986",
+      "pkVerifier": "0x55F7379898512dEdCc994109a590e7d6a6eB50D8",
+      "dkgAggregatorVerifier": "0xaC784625D32Ce7840D3f0EBD7E5832ea34C188C0",
+      "decryptionAggregatorVerifier": "0xEB4D0d5FfbDD508d6FF352255DCFc7b13FA28EC0",
+      "verifierZkTranscriptLib": "0xeBDA0345B64897e0690B3001142Cf5a3Be419237",
+      "dkgVerifierRelationsLib": "0x825b106D6AF1C8beB10081B7724DFc1D8F0ffDa3",
+      "decryptionVerifierRelationsLib": "0xBced41FA38458E21d5C9e251CA83B0c91B5E9f4B"
+    },
+    {
+      "preset": "secure-8192",
+      "committee": "micro",
+      "paramSet": 1,
+      "committeeSize": 1,
+      "decryptionVerifier": "0x86ba053b37a844FcD2dd52aBC69fc4D69D965Ad8",
+      "pkVerifier": "0x67DDfB579EB5dC7df9B3f7Cfd942f325a792Afc3",
+      "dkgAggregatorVerifier": "0x00a586aB1E533e2544daAF4BB7388e176320572F",
+      "decryptionAggregatorVerifier": "0xbeF207838845b227394Eb46579372FEE5E2a95fd",
+      "verifierZkTranscriptLib": "0xe158740B555b43f1899184D0AEa69fe9db25061A",
+      "dkgVerifierRelationsLib": "0xCbe737Da2Df4EE38FCaDB866B881bCf9B68ab275",
+      "decryptionVerifierRelationsLib": "0x954f858F374842e7E66deC3863D6C3410Ac905F4"
+    },
+    {
+      "preset": "secure-8192",
+      "committee": "minimum",
+      "paramSet": 1,
+      "committeeSize": 0,
+      "decryptionVerifier": "0x0Be6f92594ee8776C7c658eFA1ec6Ca12F5D9701",
+      "pkVerifier": "0x3C1C772B1D800ff4E6F8d0c02E1e6D07293c0059",
+      "dkgAggregatorVerifier": "0x1Eba833dd9CBC32c925B4a54DBC7682Ac276f302",
+      "decryptionAggregatorVerifier": "0xBFAE594dc43f4b910F478ec00D285B8daC66855F",
+      "verifierZkTranscriptLib": "0x7c010Fe72A0a45412EfCF189C9D42BAE7621B252",
+      "dkgVerifierRelationsLib": "0x107E5eE93159237B84d43A8eb4fa9D1eFE370B53",
+      "decryptionVerifierRelationsLib": "0x402cEC701503B2bCF8f3641fdC601F636c5681dc"
+    }
+  ]
 }

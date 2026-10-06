@@ -201,9 +201,9 @@ pub struct ThresholdKeyshareState {
     pub threshold_m: u64,
     pub threshold_n: u64,
     pub params: ArcBytes,
-    /// Aggregated public key bytes, captured from PublicKeyAggregated event for C6 proof.
+    /// Aggregated public key bytes validated against the chain commitment for C6 proof.
     pub aggregated_pk: Option<ArcBytes>,
-    /// Public E3 context captured with the aggregated key and bound into every
+    /// Public E3 context derived from chain facts and bound into every
     /// C6 proof so the final decryption proof cannot be replayed elsewhere.
     pub decryption_domain: Option<DecryptionDomainContext>,
     pub expelled_parties: HashSet<u64>,

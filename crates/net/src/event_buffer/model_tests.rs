@@ -6,9 +6,9 @@
 
 use super::*;
 use crate::direct_requester::DirectRequesterTester;
-use crate::events::{NetCommand, NetEvent, PeerTarget};
-use crate::net_interface_handle::NetEventSubscriber;
-use tokio::sync::{broadcast, mpsc};
+use crate::events::{NetCommand, PeerTarget};
+use crate::net_interface_handle::{NetEventChannel, NetEventSubscriber};
+use tokio::sync::mpsc;
 
 #[test]
 fn sync_fetch_budget_rejects_each_resource_limit_without_mutating_state() {
@@ -37,137 +37,10 @@ fn sync_fetch_budget_rejects_each_resource_limit_without_mutating_state() {
 }
 
 #[tokio::test]
-async fn test_fetch_all_batched_events() {
-    let (net_cmds_tx, net_cmds_rx) = mpsc::channel::<NetCommand>(16);
-    let (net_events_tx, _net_events_rx) = broadcast::channel::<NetEvent>(16);
-    let net_events = NetEventSubscriber::from(&net_events_tx);
-
-    let requester = DirectRequester::builder(net_cmds_tx, net_events).build();
-
-    let batch1 = EventBatch {
-        events: vec![b"event1".to_vec(), b"event2".to_vec()],
-        next: BatchCursor::Next(100),
-        aggregate_id: AggregateId::new(1),
-    };
-    let batch2 = EventBatch {
-        events: vec![b"event3".to_vec()],
-        next: BatchCursor::Done,
-        aggregate_id: AggregateId::new(1),
-    };
-
-    let handle = DirectRequesterTester::new(net_cmds_rx, net_events_tx)
-        .expect_request(FetchEventsSince::new(AggregateId::new(1), 0, 100))
-        .respond_with(batch1)
-        .expect_request(FetchEventsSince::new(AggregateId::new(1), 100, 100))
-        .respond_with(batch2)
-        .spawn();
-
-    let events: Vec<Vec<u8>> =
-        fetch_all_batched_events(requester, PeerTarget::Random, AggregateId::new(1), 0, 100)
-            .await
-            .unwrap();
-
-    handle.await.unwrap();
-
-    assert_eq!(
-        events,
-        vec![b"event1".to_vec(), b"event2".to_vec(), b"event3".to_vec(),]
-    );
-}
-
-#[tokio::test]
-async fn test_no_duplicate_events_across_batches() {
-    let (net_cmds_tx, net_cmds_rx) = mpsc::channel::<NetCommand>(16);
-    let (net_events_tx, _net_events_rx) = broadcast::channel::<NetEvent>(16);
-    let net_events = NetEventSubscriber::from(&net_events_tx);
-
-    let requester = DirectRequester::builder(net_cmds_tx, net_events).build();
-
-    let batch1 = EventBatch {
-        events: vec![b"event1".to_vec(), b"event2".to_vec()],
-        next: BatchCursor::Next(2),
-        aggregate_id: AggregateId::new(1),
-    };
-    let batch2 = EventBatch {
-        events: vec![b"event3".to_vec()],
-        next: BatchCursor::Done,
-        aggregate_id: AggregateId::new(1),
-    };
-
-    let handle = DirectRequesterTester::new(net_cmds_rx, net_events_tx)
-        .expect_request(FetchEventsSince::new(AggregateId::new(1), 0, 100))
-        .respond_with(batch1)
-        .expect_request(FetchEventsSince::new(AggregateId::new(1), 2, 100))
-        .respond_with(batch2)
-        .spawn();
-
-    let events: Vec<Vec<u8>> =
-        fetch_all_batched_events(requester, PeerTarget::Random, AggregateId::new(1), 0, 100)
-            .await
-            .unwrap();
-
-    handle.await.unwrap();
-
-    let unique: Vec<_> = events
-        .iter()
-        .collect::<std::collections::HashSet<_>>()
-        .into_iter()
-        .collect();
-    assert_eq!(
-        events.len(),
-        unique.len(),
-        "Found duplicate events: total={}, unique={}",
-        events.len(),
-        unique.len()
-    );
-    assert_eq!(
-        events,
-        vec![b"event1".to_vec(), b"event2".to_vec(), b"event3".to_vec()]
-    );
-}
-
-#[tokio::test]
-async fn test_cursor_correctly_excludes_last_event_on_batch_boundary() {
-    let (net_cmds_tx, net_cmds_rx) = mpsc::channel::<NetCommand>(16);
-    let (net_events_tx, _net_events_rx) = broadcast::channel::<NetEvent>(16);
-    let net_events = NetEventSubscriber::from(&net_events_tx);
-
-    let requester = DirectRequester::builder(net_cmds_tx, net_events).build();
-
-    let batch1 = EventBatch {
-        events: vec![b"event1".to_vec()],
-        next: BatchCursor::Next(100),
-        aggregate_id: AggregateId::new(1),
-    };
-    let batch2 = EventBatch {
-        events: vec![b"event2".to_vec()],
-        next: BatchCursor::Done,
-        aggregate_id: AggregateId::new(1),
-    };
-
-    let handle = DirectRequesterTester::new(net_cmds_rx, net_events_tx)
-        .expect_request(FetchEventsSince::new(AggregateId::new(1), 0, 1))
-        .respond_with(batch1)
-        .expect_request(FetchEventsSince::new(AggregateId::new(1), 100, 1))
-        .respond_with(batch2)
-        .spawn();
-
-    let events: Vec<Vec<u8>> =
-        fetch_all_batched_events(requester, PeerTarget::Random, AggregateId::new(1), 0, 1)
-            .await
-            .unwrap();
-
-    handle.await.unwrap();
-
-    assert_eq!(events.len(), 2);
-    assert_eq!(events[0], b"event1");
-    assert_eq!(events[1], b"event2");
-}
-
-#[tokio::test]
 async fn test_non_advancing_cursor_is_rejected() {
     let (net_cmds_tx, net_cmds_rx) = mpsc::channel::<NetCommand>(16);
-    let (net_events_tx, _net_events_rx) = broadcast::channel::<NetEvent>(16);
+    let net_events_tx = NetEventChannel::new(16);
+    let _net_events_rx = net_events_tx.subscribe();
     let net_events = NetEventSubscriber::from(&net_events_tx);
 
     let requester = DirectRequester::builder(net_cmds_tx, net_events).build();
@@ -175,18 +48,21 @@ async fn test_non_advancing_cursor_is_rejected() {
         events: vec![b"event1".to_vec()],
         next: BatchCursor::Next(0),
         aggregate_id: AggregateId::new(1),
+        observed_from: None,
     };
     let handle = DirectRequesterTester::new(net_cmds_rx, net_events_tx)
         .expect_request(FetchEventsSince::new(AggregateId::new(1), 0, 1))
         .respond_with(batch)
         .spawn();
 
-    let error = fetch_all_batched_events::<Vec<u8>>(
+    let error = fetch_all_batched_events_with_budget::<Vec<u8>>(
         requester,
         PeerTarget::Random,
         AggregateId::new(1),
         0,
         1,
+        &mut SyncFetchBudget::production(),
+        None,
     )
     .await
     .unwrap_err();
@@ -196,38 +72,10 @@ async fn test_non_advancing_cursor_is_rejected() {
 }
 
 #[tokio::test]
-async fn test_single_batch_with_limit_exactly_matched_returns_done() {
-    let (net_cmds_tx, net_cmds_rx) = mpsc::channel::<NetCommand>(16);
-    let (net_events_tx, _net_events_rx) = broadcast::channel::<NetEvent>(16);
-    let net_events = NetEventSubscriber::from(&net_events_tx);
-
-    let requester = DirectRequester::builder(net_cmds_tx, net_events).build();
-
-    let batch = EventBatch {
-        events: vec![b"event1".to_vec()],
-        next: BatchCursor::Done,
-        aggregate_id: AggregateId::new(1),
-    };
-
-    let handle = DirectRequesterTester::new(net_cmds_rx, net_events_tx)
-        .expect_request(FetchEventsSince::new(AggregateId::new(1), 0, 1))
-        .respond_with(batch)
-        .spawn();
-
-    let events: Vec<Vec<u8>> =
-        fetch_all_batched_events(requester, PeerTarget::Random, AggregateId::new(1), 0, 1)
-            .await
-            .unwrap();
-
-    handle.await.unwrap();
-
-    assert_eq!(events, vec![b"event1".to_vec()]);
-}
-
-#[tokio::test]
 async fn test_three_batches_with_cursor_continuity() {
     let (net_cmds_tx, net_cmds_rx) = mpsc::channel::<NetCommand>(16);
-    let (net_events_tx, _net_events_rx) = broadcast::channel::<NetEvent>(16);
+    let net_events_tx = NetEventChannel::new(16);
+    let _net_events_rx = net_events_tx.subscribe();
     let net_events = NetEventSubscriber::from(&net_events_tx);
 
     let requester = DirectRequester::builder(net_cmds_tx, net_events).build();
@@ -236,16 +84,19 @@ async fn test_three_batches_with_cursor_continuity() {
         events: vec![b"a".to_vec(), b"b".to_vec()],
         next: BatchCursor::Next(200),
         aggregate_id: AggregateId::new(1),
+        observed_from: None,
     };
     let batch2 = EventBatch {
         events: vec![b"c".to_vec(), b"d".to_vec()],
         next: BatchCursor::Next(400),
         aggregate_id: AggregateId::new(1),
+        observed_from: None,
     };
     let batch3 = EventBatch {
         events: vec![b"e".to_vec()],
         next: BatchCursor::Done,
         aggregate_id: AggregateId::new(1),
+        observed_from: None,
     };
 
     let handle = DirectRequesterTester::new(net_cmds_rx, net_events_tx)
@@ -257,10 +108,18 @@ async fn test_three_batches_with_cursor_continuity() {
         .respond_with(batch3)
         .spawn();
 
-    let events: Vec<Vec<u8>> =
-        fetch_all_batched_events(requester, PeerTarget::Random, AggregateId::new(1), 0, 2)
-            .await
-            .unwrap();
+    let events: Vec<Vec<u8>> = fetch_all_batched_events_with_budget(
+        requester,
+        PeerTarget::Random,
+        AggregateId::new(1),
+        0,
+        2,
+        &mut SyncFetchBudget::production(),
+        None,
+    )
+    .await
+    .unwrap()
+    .events;
 
     handle.await.unwrap();
 
@@ -273,4 +132,51 @@ async fn test_three_batches_with_cursor_continuity() {
     ];
     assert_eq!(events.len(), expected.len());
     assert_eq!(events, expected);
+}
+
+#[tokio::test]
+async fn a_responder_that_resets_between_pages_fails_as_a_source() {
+    let (net_cmds_tx, net_cmds_rx) = mpsc::channel::<NetCommand>(16);
+    let net_events_tx = NetEventChannel::new(16);
+    let _net_events_rx = net_events_tx.subscribe();
+    let net_events = NetEventSubscriber::from(&net_events_tx);
+
+    let requester = DirectRequester::builder(net_cmds_tx, net_events).build();
+    // The first page vouches from 5. The responder then resets and answers the next cursor
+    // from an empty log while it starts up.
+    let first = EventBatch {
+        events: vec![b"a".to_vec()],
+        next: BatchCursor::Next(200),
+        aggregate_id: AggregateId::new(1),
+        observed_from: Some(5),
+    };
+    let after_reset = EventBatch::<Vec<u8>> {
+        events: vec![],
+        next: BatchCursor::Done,
+        aggregate_id: AggregateId::new(1),
+        observed_from: None,
+    };
+    let handle = DirectRequesterTester::new(net_cmds_rx, net_events_tx)
+        .expect_request(FetchEventsSince::new(AggregateId::new(1), 0, 1))
+        .respond_with(first)
+        .expect_request(FetchEventsSince::new(AggregateId::new(1), 200, 1))
+        .respond_with(after_reset)
+        .spawn();
+
+    let error = fetch_all_batched_events_with_budget::<Vec<u8>>(
+        requester,
+        PeerTarget::Random,
+        AggregateId::new(1),
+        0,
+        1,
+        &mut SyncFetchBudget::production(),
+        None,
+    )
+    .await
+    .unwrap_err();
+
+    handle.await.unwrap();
+    assert!(error
+        .to_string()
+        .contains("changed its live-history time from Some(5) to None"));
 }

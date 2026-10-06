@@ -67,7 +67,7 @@ Run from repo root via pnpm scripts — not raw cargo/nargo/hardhat.
 | Test one layer              | `pnpm evm:test` · `pnpm rust:test` · `pnpm sdk:test` · `pnpm noir:test`                                                                            |
 | SDK proof verification      | `pnpm sdk:test:proofs` (prepare circuits, generate one proof, verify bindings and reject tampering)                                                |
 | Prepared SDK proof tests    | `pnpm sdk:test:proofs:prepared` (reuse the current SDK build or prepared circuit set)                                                              |
-| Rust proof integration      | `pnpm rust:test:proofs` (prepared insecure-512/minimum circuits and `bb`)                                                                          |
+| Rust proof integration      | `pnpm rust:test:proofs` (prepared insecure-512/minimum circuits, `nargo`, and `bb`)                                                                |
 | Rust slashing integration   | `pnpm rust:test:slashing` (compiled contract artifacts and `anvil`)                                                                                |
 | Integration tests           | `pnpm test:integration [name]` (`--no-prebuild` to skip binary build)                                                                              |
 | Test runner regressions     | `pnpm test:harnesses`                                                                                                                              |
@@ -89,10 +89,37 @@ bytes.
 
 Before `pnpm rust:test:proofs` or `pnpm test`, run
 `pnpm build:circuits --preset insecure-512 --committee minimum --skip-if-built`. This prepares one
-consistent set of inner and recursive circuits. Before `pnpm rust:test:slashing`, run
+consistent set of inner and recursive circuits. The recursive VK-substitution tests also require
+pinned `nargo` on PATH to compile substitute circuits. Before `pnpm rust:test:slashing`, run
 `pnpm evm:build`. The named Rust integration suites fail if a required tool or artifact is missing.
 Ordinary Rust test runs report these integration tests as ignored. CI explicitly selects them. The
 full test command reuses the prepared circuits for SDK proof verification.
+
+## Build configuration: preset and committee
+
+Two independent settings select what `pnpm build:circuits` compiles into `circuits/bin/`:
+
+- **Preset** (`--preset insecure-512` [default] | `secure-8192`): the BFV parameter set.
+- **Committee** (`--committee minimum` [default] | `micro` | `small`): `(N, T, H)` for the
+  secret-sharing committee. Mirrors `e3_zk_helpers::CiphernodesCommitteeSize`.
+
+`scripts/build-circuits.ts` writes the selection. Never hand-edit the values that it writes:
+
+| File                                                                | What the build script writes                                          |
+| ------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `circuits/lib/src/configs/committee/active.nr`                      | Committed production committee for the Noir circuits                  |
+| `packages/interfold-contracts/scripts/utils.ts`                     | `BFV_DKG_H`, `BFV_THRESHOLD_T`, and the BFV parameter-hash constants  |
+| `packages/interfold-contracts/contracts/lib/ActiveCryptoConfig.sol` | The whole file                                                        |
+| `circuits/bin/.active-preset.json`                                  | Local cache stamp only. It can name a different pair than `active.nr` |
+
+`scripts/check-committee.sh` (`pnpm check:committee`, pre-push and the Agent Harness CI workflow)
+compares the BFV tuples, committee values, and configuration IDs across TypeScript, Rust, Noir, and
+Solidity. The file list is at the top of the script. It regenerates and compares the parity matrices
+only when `target/release/generate_parity_matrices` is executable and `nargo` is on PATH. A
+different `.active-preset.json` only prints a note. Always switch with
+`pnpm build:circuits --committee <name>`. Supported `(preset, committee)` pairs live in
+`scripts/circuit-constants.ts`. See `scripts/README.md#circuit-builder` and
+`circuits/benchmarks/README.md` for the full recipe.
 
 ## Chain-Specific BFV Config
 
@@ -112,6 +139,25 @@ scheme mapping and dispatch proofs to the concrete verifier for each generated p
 different pair than the target chain uses, provided `dist/circuits/` contains every required pair
 for that chain.
 
+## Contract addresses
+
+`packages/interfold-contracts/deployed_contracts.json` records the contracts that each network uses
+now. `pnpm gen:manifest` derives `deployments/manifest.json` from this file, and that manifest is
+the single source of truth for every published address. It is attached to each release, and
+`interfold config check` fetches it to tell an operator that a redeploy happened.
+
+The deploy scripts write `deployed_contracts.json`. When governance replaces or retires a recorded
+contract, change its record by hand. A mock record that stays after its replacement makes the
+manifest mark the network with `mocks: true`.
+
+After a redeploy, update every consumer in the same PR: the operator docs, the dashboard, the
+DAppNode package, and the CRISP example. `pnpm check:addresses` (pre-push) enforces this. It fails
+when a consumer keeps an address that the manifest no longer publishes, and when a new file quotes a
+live address without a classification in `scripts/check-addresses.ts`.
+
+A release must carry the current manifest. A tag cut before a redeploy ships dead addresses to every
+node that fetches the asset, and the node then syncs an address that emits no events.
+
 ## Conventions
 
 - **Commits and PR titles:** Conventional Commits, optional lower-case scope, `!` for breaking. No
@@ -123,6 +169,11 @@ for that chain.
   commits; breaking PRs merge only alongside a breaking release; docs changes get the
   `documentation` label.
 - **Branches:** `main` = latest (feature-flagged); `v*.*.*` tags; `stable` = latest stable.
+- **Release channels:** a stable tag publishes to `latest`, a pre-release tag (`vX.Y.Z-<pre>`, by
+  convention `-dev.N`) to `dev` (`releaseChannel` in `scripts/release/version.mjs`): npm dist-tag
+  and `ciphernode` / `e3-support` image alias. A stable release also moves the `dev` image aliases,
+  and `interfoldup install --version dev` (or `update`) installs the most recently published GitHub
+  release, stable or pre-release. The npm tag `dev` changes only with a pre-release.
 - **Pre-push hook (husky):** `pnpm lint`, `check:pnpm`, `check:license`, `check:committee`,
   `check:docs` (harness-doc drift gate — a watched file is exempt automatically when neither its
   changed lines nor the declarations that enclose them name an identifier the `agent/` docs mention,
@@ -131,8 +182,11 @@ for that chain.
   (contract addresses in the docs, dashboard, DAppNode package, and CRISP example must match
   `deployments/manifest.json`), `check:invariants` (`do_send` ratchet with its baseline in
   `scripts/invariant-baselines.env`, skip-proof feature containment, runtime proof-skip guard,
-  Docker workspace coverage, Compose shutdown grace), `check:verifiers`. CI does not run
-  `check:addresses`, `check:pnpm`, or the root `eslint`, so these checks run only in this hook.
+  Docker workspace coverage, Compose shutdown grace), and `check:verifiers` when a pushed branch
+  changes a path in `.github/filters/circuits.yml`, the file that CI also reads to start the check.
+  The check reads the checked-out tree, so the hook stops the push of a branch that differs from
+  HEAD in a path of that file. CI does not run `check:addresses`, `check:pnpm`, or the root
+  `eslint`, so these checks run only in this hook.
 - **Docs MCP server:** `.mcp.json`, `.codex/config.toml`, and `opencode.json` expose
   `@interfold/mcp` (`interfold-docs`) to their respective agents. The launch configs run the
   TypeScript source through the workspace toolchain; `pnpm mcp:build` builds the publishable

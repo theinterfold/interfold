@@ -193,6 +193,7 @@ with `sudo`.
 | --------------------------------------- | --------------------------------------------------------------------------------------------------- |
 | `interfoldup install`                   | Installs the latest release of `interfold`.                                                         |
 | `interfoldup install --version v0.18.0` | Installs the release with that tag. A tag without the `v` prefix, for example `0.18.0`, also works. |
+| `interfoldup install --version dev`     | Installs the most recently published release, stable or pre-release (the `dev` channel).            |
 | `interfoldup update`                    | Moves to the latest release. If `interfold` is not installed, this command installs it.             |
 | `interfoldup update --version v0.18.0`  | Moves to the release with that tag, forward or backward.                                            |
 | `interfoldup uninstall`                 | Removes the `interfold` binary.                                                                     |
@@ -200,6 +201,9 @@ with `sudo`.
 `interfoldup update` reads the installed version from `interfold --version`. When the installed
 version and the target release are the same, it prints `interfold is already at <version>` and makes
 no change.
+
+An older `interfoldup` does not accept `dev`. To get an `interfoldup` that accepts it, give the tag
+of a dev release to the install script, for example `--version v0.19.0-dev.1`.
 
 ### Pin the installer version
 

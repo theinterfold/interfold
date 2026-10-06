@@ -4,8 +4,13 @@
 
 use super::effects::advance_request_router_cursor;
 use super::*;
+use actix::AsyncContext;
 use anyhow::Context as _;
-use e3_events::{EventContext, InterfoldEventData, RequestRouterCheckpoint, Sequenced, SyncEffect};
+use e3_events::{
+    E3Stage, E3StageChanged, EventContext, InterfoldEventData, RequestRouterCheckpoint, Sequenced,
+    SyncEffect,
+};
+use tracing::info;
 
 impl E3Router {
     fn checkpoint_with_context(&mut self, context: &EventContext<Sequenced>) -> Result<()> {
@@ -28,7 +33,12 @@ impl E3Router {
 
     fn reconcile_recovered_selections(&mut self) -> Result<()> {
         for selection in std::mem::take(&mut self.recovered_selections) {
-            if self.completed.contains(&selection.e3_id) {
+            // A failed E3 that keeps its context for accusation or slashing work starts no
+            // protocol actor. Its accusation actor comes from the finalized committee, not from the
+            // selection.
+            if self.completed.contains(&selection.e3_id)
+                || self.fail_on_restart.contains_key(&selection.e3_id)
+            {
                 continue;
             }
 
@@ -54,6 +64,40 @@ impl E3Router {
         }
         Ok(())
     }
+
+    /// A restored context of an E3 that failed on chain with accusation or slashing work keeps that
+    /// work. Its protocol actors learn of the failure, as from the chain, so their DKG or
+    /// decryption work does not resume: a context that the router restores learns of it when the
+    /// router is built, before replay, and a context that replay admits learns of it at
+    /// `EffectsEnabled`, before effects resume. A recipient that the context creates later gets the
+    /// failure first. The event has the E3's aggregate and the router's cursor of it, like a
+    /// recovered selection, so the actors' cleanup writes are not older than their state.
+    pub(crate) fn end_protocol_work_of_failed_contexts(&mut self) -> Result<()> {
+        for (e3_id, previous_stage) in &self.fail_on_restart {
+            let Some(context) = self.contexts.get(e3_id) else {
+                continue;
+            };
+            if !self.failures_delivered.insert(e3_id.clone()) {
+                continue;
+            }
+            info!(%e3_id, "Ending the protocol work of a restored context of a failed E3");
+            let event = self.bus.event_from(
+                E3StageChanged {
+                    e3_id: e3_id.clone(),
+                    previous_stage: previous_stage.clone(),
+                    new_stage: E3Stage::Failed,
+                },
+                None,
+            )?;
+            let sequence = self
+                .replay_cursors
+                .get(&event.aggregate_id())
+                .copied()
+                .unwrap_or_default();
+            context.forward_message(&event.into_sequenced(sequence), &mut self.buffer);
+        }
+        Ok(())
+    }
 }
 
 impl Actor for E3Router {
@@ -67,7 +111,7 @@ impl Actor for E3Router {
 impl Handler<InterfoldEvent> for E3Router {
     type Result = ();
 
-    fn handle(&mut self, msg: InterfoldEvent, _: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: InterfoldEvent, ctx: &mut Self::Context) -> Self::Result {
         trap(EType::Event, &self.bus.with_ec(msg.get_ctx()), || {
             if matches!(msg.get_data(), InterfoldEventData::SyncEffect(SyncEffect)) {
                 let event_context = msg.get_ctx().clone();
@@ -83,8 +127,26 @@ impl Handler<InterfoldEvent> for E3Router {
                     .is_some_and(|e3_id| self.contexts.contains_key(&e3_id)),
             ) {
                 RoutingDecision::Broadcast => {
-                    for context in self.contexts.values() {
-                        context.forward_message_now(&msg)
+                    // A restored context of a finished E3 gets no `EffectsEnabled`, so it does not
+                    // resume its work. It completes instead.
+                    let finished =
+                        if matches!(msg.get_data(), InterfoldEventData::EffectsEnabled(_)) {
+                            self.end_protocol_work_of_failed_contexts()?;
+                            std::mem::take(&mut self.complete_on_restart)
+                        } else {
+                            HashSet::new()
+                        };
+                    for (e3_id, context) in &self.contexts {
+                        if !finished.contains(e3_id) {
+                            context.forward_message_now(&msg)
+                        }
+                    }
+                    for e3_id in finished {
+                        if self.contexts.contains_key(&e3_id) {
+                            info!(%e3_id, "Completing a restored context of a finished E3");
+                            self.bus
+                                .publish(E3RequestComplete { e3_id }, msg.get_ctx().clone())?;
+                        }
                     }
                     Ok(())
                 }
@@ -118,26 +180,42 @@ impl Handler<InterfoldEvent> for E3Router {
                         })
                     });
 
-                    for extension in self.extensions.iter() {
-                        extension.on_event(context, &msg);
+                    // A selection of a failed E3 kept for accusation or slashing work starts no
+                    // protocol actor, also when replay or the chain delivers it.
+                    let kept_failure_selection =
+                        matches!(msg.get_data(), InterfoldEventData::CiphernodeSelected(_))
+                            && self.fail_on_restart.contains_key(&e3_id);
+                    if !kept_failure_selection {
+                        for extension in self.extensions.iter() {
+                            extension.on_event(context, &msg);
+                        }
+                        context.forward_message(&msg, &mut self.buffer);
                     }
-
-                    context.forward_message(&msg, &mut self.buffer);
                     if post_forward != PostForward::Teardown {
                         context
                             .repository
                             .write_with_context(&context.snapshot()?, &event_context)?;
                     }
 
-                    let (_, ctx) = msg.into_components();
+                    let (_, ec) = msg.into_components();
                     match post_forward {
                         PostForward::PublishComplete => {
                             self.bus.publish(
                                 E3RequestComplete {
                                     e3_id: e3_id.clone(),
                                 },
-                                ctx,
+                                ec,
                             )?;
+                        }
+                        PostForward::ScheduleTeardown => {
+                            // Skip when the E3 completed another way during the grace.
+                            ctx.run_later(self.teardown_grace, move |act, _| {
+                                if act.contexts.contains_key(&e3_id) {
+                                    trap(EType::Event, &act.bus.with_ec(&ec), || {
+                                        act.bus.publish(E3RequestComplete { e3_id }, ec)
+                                    });
+                                }
+                            });
                         }
                         PostForward::Teardown => {
                             self.contexts.remove(&e3_id);

@@ -487,6 +487,7 @@ pub async fn fetch_randomness_providers<P: Provider + Clone>(
     provider: &P,
     registry_address: Address,
     from_block: u64,
+    max_log_window: u64,
 ) -> Result<Vec<Address>> {
     let chain_id = provider.get_chain_id().await?;
     let base_filter = Filter::new()
@@ -494,7 +495,15 @@ pub async fn fetch_randomness_providers<P: Provider + Clone>(
         .event_signature(ICiphernodeRegistry::RandomnessProviderSet::SIGNATURE_HASH);
     let head = provider.get_block_number().await?;
 
-    let logs = fetch_logs_adapting(provider, &base_filter, from_block, head, chain_id).await?;
+    let logs = fetch_logs_adapting(
+        provider,
+        &base_filter,
+        from_block,
+        head,
+        chain_id,
+        max_log_window,
+    )
+    .await?;
 
     let mut providers = Vec::new();
     let mut seen = HashSet::new();

@@ -4,6 +4,53 @@
 
 use super::*;
 use alloy::sol_types::SolError;
+use e3_events::{AggregateId, CorrelationId, EventSource, EventStoreQueryResponse};
+use std::ops::RangeInclusive;
+
+/// Read one bounded page of deferred local intents from their durable history range.
+pub(super) async fn read_plaintext_intents(
+    store: &Recipient<EventStoreQueryBy<SeqAgg>>,
+    e3_id: &E3id,
+    range: RangeInclusive<u64>,
+) -> Result<(Vec<PlaintextAggregated>, u64)> {
+    let aggregate = AggregateId::from_chain_id(Some(e3_id.chain_id()));
+    let mut cursor = *range.start();
+    let (recipient, response) = e3_utils::actix::channel::oneshot::<EventStoreQueryResponse>();
+    store
+        .send(
+            EventStoreQueryBy::<SeqAgg>::new(
+                CorrelationId::new(),
+                HashMap::from([(aggregate, cursor)]),
+                recipient,
+            )
+            .with_limit(1024)
+            .with_max_bytes(16 * 1024 * 1024),
+        )
+        .await?;
+    let mut intents = Vec::new();
+    for event in response.await?.into_events()? {
+        if event.seq() > *range.end() {
+            break;
+        }
+        anyhow::ensure!(
+            event.aggregate_id() == aggregate && event.seq() == cursor,
+            "plaintext publication recovery event-store sequence gap"
+        );
+        cursor += 1;
+        if event.source() == EventSource::Local {
+            if let InterfoldEventData::PlaintextAggregated(intent) = event.into_data() {
+                if intent.e3_id == *e3_id {
+                    intents.push(intent);
+                }
+            }
+        }
+    }
+    anyhow::ensure!(
+        cursor > *range.start(),
+        "deferred plaintext history is missing"
+    );
+    Ok((intents, cursor))
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::actors::interfold_sol_writer) enum MarkFailureOutcome {
@@ -198,7 +245,7 @@ pub(in crate::actors::interfold_sol_writer) async fn publish_plaintext_output<
 ) -> Result<TransactionReceipt> {
     let e3_id: U256 = e3_id.try_into()?;
 
-    // Skip mode creates a non-empty mock-only C7 placeholder before this boundary.
+    // Admission has checked the final proof's canonical decryption domain.
     let proof = encode_zk_proof(decryption_aggregator_proof.ok_or_else(|| {
         anyhow::anyhow!("mandatory decryption aggregator proof payload missing")
     })?)?;

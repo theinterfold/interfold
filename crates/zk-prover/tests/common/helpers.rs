@@ -180,6 +180,15 @@ pub async fn setup_recursive_aggregation_fold_circuit(backend: &ZkBackend, circu
         .unwrap();
     }
 
+    if matches!(circuit, CircuitName::NodesFold | CircuitName::C6Fold) {
+        fs::copy(
+            target_dir.join(format!("{pkg}.vk_tree_hash")),
+            default_dir.join(format!("{pkg}.vk_tree_hash")),
+        )
+        .await
+        .expect("recursive VK-tree anchor; run pnpm build:circuits");
+    }
+
     if vk_evm_path.exists() {
         let evm_dir = preset_dir.join("evm").join(circuit.group()).join(pkg);
         fs::create_dir_all(&evm_dir).await.unwrap();

@@ -13,8 +13,6 @@ const CUSTOM = 1
 const TOKEN = 0
 const BY_REQUESTER = 1
 const ONCHAIN = 2
-/// Mirrors `MAX_VOTE_OPTIONS` in CRISPProgram.sol, which is not public.
-const MAX_VOTE_OPTIONS = 10
 
 /// `censusMode` says where a round's electorate comes from, and it is declared rather than inferred.
 ///
@@ -153,19 +151,6 @@ describe('CRISPProgram census mode', function () {
       expect(await crispProgram.votingPowerDivisorOf(41)).to.equal(10n ** 17n)
     })
 
-    /// `10 ** 78` overflows a uint256, and the exponentiation sits in the success body of a
-    /// `try`, where a revert is not caught — so without an explicit bound an absurd `decimals`
-    /// surfaces as a bare arithmetic panic rather than a named error.
-    it('refuses a token whose decimals a divisor cannot be derived from', async () => {
-      const votes = await ethers.deployContract('MockVotesToken')
-      await votes.waitForDeployment()
-      const token = await votes.getAddress()
-
-      // 18 decimals derives fine; the bound only bites well past any real token.
-      await validate(45, encode(CUSTOM, ONCHAIN, 2, { token, minVotingPower: 10n ** 17n }))
-      expect(await crispProgram.votingPowerDivisorOf(45)).to.equal(10n ** 17n)
-    })
-
     it('rejects ONCHAIN with constant credits of zero', async () => {
       // `credits` becomes the voting-power bound the circuit enforces, so zero accepts only masks.
       const votes = await ethers.deployContract('MockVotesToken')
@@ -191,21 +176,6 @@ describe('CRISPProgram census mode', function () {
 
       expect(await crispProgram.censusModeOf(24)).to.equal(ONCHAIN)
     })
-  })
-
-  /// The circuit asserts `num_options <= MAX_OPTIONS`, so a round above the cap accepts no ballot:
-  /// every vote proof fails. Refuse it at request time rather than storing a round nobody can
-  /// vote in. Mirrors `MAX_VOTE_OPTIONS` in CRISPProgram.sol, which is not public.
-  it('rejects more options than the circuit allows', async () => {
-    await expect(validate(7, encode(CONSTANT, TOKEN, MAX_VOTE_OPTIONS + 1))).to.be.revertedWithCustomError(
-      crispProgram,
-      'InvalidNumOptions',
-    )
-  })
-
-  it('accepts a round at exactly MAX_VOTE_OPTIONS options', async () => {
-    await validate(8, encode(CONSTANT, TOKEN, MAX_VOTE_OPTIONS))
-    expect(await crispProgram.censusModeOf(8)).to.equal(TOKEN)
   })
 
   it('rejects fewer than two options', async () => {

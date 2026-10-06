@@ -28,7 +28,8 @@ impl std::fmt::Display for DocumentMetadataMismatch {
 
 impl std::error::Error for DocumentMetadataMismatch {}
 
-/// Replicate a document to the DHT, then announce it over gossip.
+/// Publish a document once: store it in this node's own DHT store, announce it over gossip, then
+/// upload it to the DHT.
 pub async fn handle_publish_document_requested(
     tx: mpsc::Sender<NetCommand>,
     rx: NetEventSubscriber,
@@ -36,8 +37,65 @@ pub async fn handle_publish_document_requested(
     topic: impl Into<String>,
     bus: BusHandle,
 ) -> Result<()> {
-    replicate_document(tx.clone(), rx.clone(), &event).await?;
+    announce_stored_document(tx.clone(), rx.clone(), event.clone(), topic, bus).await?;
+    replicate_document(tx, rx, &event).await
+}
+
+/// Make a document fetchable from this node's own DHT store, then gossip its notification.
+///
+/// The notification goes out only after the local store holds the document, so a peer that
+/// fetches on the notification can find it here, even when no upload to other peers has
+/// succeeded.
+pub(super) async fn announce_stored_document(
+    tx: mpsc::Sender<NetCommand>,
+    rx: NetEventSubscriber,
+    event: PublishDocumentRequested,
+    topic: impl Into<String>,
+    bus: BusHandle,
+) -> Result<()> {
+    store_document_locally(tx.clone(), rx.clone(), &event.meta, &event.value).await?;
     announce_document(tx, rx, event, topic, bus).await
+}
+
+/// The DHT key of a document and the time its record expires. An expired document has no
+/// record: it must not be stored or uploaded.
+fn dht_record_of(
+    meta: &DocumentMeta,
+    value: &ArcBytes,
+) -> Result<(ContentHash, Option<std::time::Instant>)> {
+    let expires = datetime_to_instant_from_now(meta.expires_at)
+        .context("refusing to store an expired DHT document")?;
+    Ok((ContentHash::from_content(value), Some(expires)))
+}
+
+/// Store a document in this node's own DHT store, without uploading it to other peers.
+pub(super) async fn store_document_locally(
+    net_cmds: mpsc::Sender<NetCommand>,
+    net_events: NetEventSubscriber,
+    meta: &DocumentMeta,
+    value: &ArcBytes,
+) -> Result<()> {
+    let (key, expires) = dht_record_of(meta, value)?;
+    let value = value.clone();
+    call_and_await_response(
+        net_cmds,
+        net_events,
+        NetCommand::DhtStoreLocal {
+            correlation_id: CorrelationId::new(),
+            expires,
+            value,
+            key,
+        },
+        |event| match event {
+            NetEvent::DhtStoreLocalSucceeded { .. } => Some(Ok(())),
+            NetEvent::DhtStoreLocalError { error, .. } => {
+                Some(Err(anyhow::anyhow!("DHT local store failed: {error:?}")))
+            }
+            _ => None,
+        },
+        DHT_STORE_LOCAL_TIMEOUT,
+    )
+    .await
 }
 
 /// Store the full document on the DHT peers closest to its content hash.
@@ -46,13 +104,8 @@ pub(super) async fn replicate_document(
     rx: NetEventSubscriber,
     event: &PublishDocumentRequested,
 ) -> Result<()> {
+    let (key, expires) = dht_record_of(&event.meta, &event.value)?;
     let value = event.value.clone();
-    let key = ContentHash::from_content(&value);
-    let expires = Some(
-        datetime_to_instant_from_now(event.meta.expires_at)
-            .context("refusing to publish an expired DHT document")?,
-    );
-
     retry_with_backoff(
         || {
             put_record(tx.clone(), rx.clone(), expires, value.clone(), key.clone())
@@ -64,7 +117,7 @@ pub(super) async fn replicate_document(
     .await
 }
 
-/// Gossip a small notification that names an already replicated document.
+/// Gossip a small notification that names a document this node already stores.
 pub(super) async fn announce_document(
     tx: mpsc::Sender<NetCommand>,
     rx: NetEventSubscriber,
@@ -104,12 +157,8 @@ pub async fn handle_document_published_notification(
         relevant.len()
     );
 
-    let value = retry_with_backoff(
-        || get_record(net_cmds.clone(), net_events.clone(), key.clone()).map_err(to_retry),
-        4,
-        1000,
-    )
-    .await?;
+    // Release the slot after one attempt. The publisher queues retries behind other peers.
+    let value = get_record(net_cmds, net_events, key).await?;
 
     // When no candidate matches, the mismatch is final for these notifications, so the caller does
     // not fetch the document again for them. It checks later notifications against these bytes.

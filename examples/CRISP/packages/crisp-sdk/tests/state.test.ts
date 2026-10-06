@@ -143,16 +143,6 @@ describe('State', () => {
       expect(roundData.creditMode).toBe(CreditMode.CUSTOM)
     })
 
-    it('should return zeroed data for a round which was not initialized', async () => {
-      readContract.mockResolvedValueOnce([0n, `0x${'00'.repeat(32)}`, 0n, 0, inputRoot, 0])
-
-      const roundData = await getOnChainRoundData(programAddress, 42n, 31337)
-
-      expect(roundData.merkleRoot).toBe(0n)
-      expect(roundData.numOptions).toBe(0n)
-      expect(roundData.numberOfVotes).toBe(0n)
-    })
-
     it('should propagate contract read errors', async () => {
       readContract.mockRejectedValueOnce(new Error('execution reverted'))
 

@@ -24,7 +24,7 @@ use e3_data_availability::{
 };
 use e3_evm_helpers::contracts::{E3Stage, InterfoldContractFactory, InterfoldRead, InterfoldWrite};
 use e3_fhe_params::{build_bfv_params_from_set_arc, encode_bfv_params, BfvParamSet, BfvPreset};
-use evm_helpers::{CRISPContract, InputPublished, SimulateError};
+use evm_helpers::{is_insufficient_funds, CRISPContract, InputPublished, SimulateError};
 use fhe::bfv::BfvParameters;
 use serde::{Deserialize, Serialize};
 use sled::{transaction::Transactional, Db, Tree};
@@ -34,7 +34,7 @@ use std::{
     time::Duration,
 };
 use tokio::{sync::Semaphore, task::JoinSet};
-use tracing::warn;
+use tracing::{info, warn};
 
 const JOB_POLL_INTERVAL: Duration = Duration::from_secs(30);
 // An Avail submission can use 20 seconds to connect, 30 seconds to submit, 300 seconds to
@@ -48,6 +48,18 @@ const MAX_CONCURRENT_JOB_STEPS: usize = 4;
 const MAX_CONCURRENT_CIPHERTEXT_VALIDATIONS: usize = 2;
 const AVAILABILITY_JOB_SCHEMA_VERSION: u32 = 1;
 const AVAILABLE_INPUT_REFERENCE_SCHEMA_VERSION: u32 = 1;
+// How long a relay record outlives the commitment cutoff of its round. The margin covers a local
+// clock that runs ahead of the chain.
+const RELAY_RECORD_RETENTION_SECONDS: u64 = 3_600;
+/// The key of the relay ledger start time in the relayed-inputs tree. Every relay record key
+/// starts with a decimal E3 identifier, so no round or slot prefix matches this key.
+const RELAY_LEDGER_EPOCH_KEY: &[u8] = b"ledger-epoch";
+
+/// How long a relayed job keeps the relay after a node refuses its send for lack of funds while
+/// other transactions of the relay key are pending. Such a refusal normally clears within a few
+/// blocks. A longer one, for example behind a stuck transaction, moves the job to the wallet path.
+/// Clients wait ten minutes for the choice of sender, so the grace period ends inside that wait.
+const RELAY_FUNDING_GRACE_SECONDS: u64 = 300;
 
 /// Bounds the intake ciphertext validations that can run at the same time.
 ///
@@ -70,6 +82,17 @@ struct InputRejected(&'static str);
 
 fn reject_input(message: &'static str) -> anyhow::Error {
     anyhow::Error::new(InputRejected(message))
+}
+
+/// A node refused a `publishInput` of the relay because the relay key cannot pay for it.
+#[derive(Debug, thiserror::Error)]
+#[error("the relay key cannot pay for the input commitment: {message}")]
+struct RelayUnfunded {
+    message: String,
+    /// Other transactions of the relay key were pending. A node also refuses a transaction when
+    /// the worst-case costs of all pending transactions of the key exceed its balance, and that
+    /// refusal can clear when they are mined.
+    other_transactions_pending: bool,
 }
 
 fn duration_u64(value: U256, name: &str) -> anyhow::Result<u64> {
@@ -112,7 +135,7 @@ fn crypto_config_id_for_params(params: &BfvParameters) -> B256 {
         (
             keccak256(b"fhe.rs:BFV"),
             keccak256(encode_bfv_params(params)),
-            keccak256(b"interfold-bfv-v2"),
+            keccak256(b"interfold-bfv-v4"),
         )
             .abi_encode(),
     )
@@ -230,8 +253,8 @@ enum CommitmentStep {
 /// Decides the next step for a job in `AwaitingCommitment` from two Ethereum reads.
 ///
 /// ZEN2-24 follow-up, relay path. A receipt is a head observation, so a relayed commitment is
-/// kept provisional until it is final. Only the relay resubmits an orphaned commitment: a
-/// wallet-submitted one belongs to the voter, and the expiry handler renews its attestation.
+/// kept provisional until it is final. Only the relay resubmits an orphaned commitment, also after
+/// its attestation expired: a wallet-submitted one belongs to the voter.
 fn commitment_step(
     relayed_transaction_hash: Option<&str>,
     is_final: bool,
@@ -258,6 +281,43 @@ fn encode_input_commitment_envelope(envelope: &InputCommitmentEnvelope) -> Vec<u
     envelope.abi_encode_params()
 }
 
+/// Whether `tree` holds at least `limit` keys that start with `prefix`. Reads at most `limit` keys.
+fn holds_at_least(tree: &Tree, prefix: &str, limit: u32) -> sled::Result<bool> {
+    let limit = limit as usize;
+    let held = tree
+        .scan_prefix(prefix)
+        .keys()
+        .take(limit)
+        .try_fold(0_usize, |held, key| key.map(|_| held + 1))?;
+    Ok(held == limit)
+}
+
+/// The current wall-clock time in Unix seconds.
+fn wall_clock_seconds() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs())
+}
+
+/// Return the time from which the relay ledger in `tree` holds every relay of this service, and
+/// record `now` as that time when the tree holds none.
+///
+/// The ledger cannot hold the relays of a round whose input window opened before this time, such
+/// as the relays of an older server version or the records of a lost database. So `reserve_relay`
+/// does not relay for such a round. Only the first start records the time, so a restart keeps it.
+/// An unreadable time stops the start, because a new one would admit the rounds that opened
+/// before it.
+fn open_relay_ledger(tree: &Tree, now: u64) -> anyhow::Result<u64> {
+    if let Some(stored) = tree.get(RELAY_LEDGER_EPOCH_KEY)? {
+        let epoch = <[u8; 8]>::try_from(stored.as_ref())
+            .map_err(|_| anyhow::anyhow!("the relay ledger start time is unreadable"))?;
+        return Ok(u64::from_be_bytes(epoch));
+    }
+    tree.insert(RELAY_LEDGER_EPOCH_KEY, &now.to_be_bytes()[..])?;
+    tree.flush()?;
+    Ok(now)
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum JobKind {
@@ -266,6 +326,10 @@ enum JobKind {
         staged_envelope: Vec<u8>,
         deadline: u64,
         commitment_deadline: u64,
+        /// The voter asked that its own wallet send the commitment. The job then never takes the
+        /// relay path. Records without this field load as `false`.
+        #[serde(default)]
+        send_from_wallet: bool,
     },
     Output {
         e3_id: String,
@@ -285,6 +349,17 @@ impl JobKind {
             Self::Input { deadline, .. } | Self::Output { deadline, .. } => *deadline,
         }
     }
+
+    /// Whether the voter asked that its own wallet send the commitment of this input.
+    fn sends_from_wallet(&self) -> bool {
+        matches!(
+            self,
+            Self::Input {
+                send_from_wallet: true,
+                ..
+            }
+        )
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -301,10 +376,9 @@ enum JobState {
         /// receipt used to move the job straight to `Committed`. A receipt is a head
         /// observation: the transaction can be reorganized out and never re-included, and
         /// `Committed` has no way back, so the input would wait on a finality that never comes.
-        /// Keep the job provisional instead. The finality gate below is the only exit, the
-        /// attestation renews on expiry exactly as a wallet-submitted job's does, and an
-        /// orphaned relay is resubmitted. `None` for a wallet-submitted job and for a record
-        /// written before this field existed.
+        /// Keep the job provisional instead. The finality gate below is the only exit, and an
+        /// orphaned relay is resubmitted with a fresh attestation. `None` for a wallet-submitted
+        /// job and for a record written before this field existed.
         #[serde(default)]
         relayed_transaction_hash: Option<String>,
     },
@@ -458,6 +532,17 @@ impl AvailableInputReference {
     }
 }
 
+/// A stored transaction hash as a client may show it, or `None` for a placeholder. The service
+/// stores `already-committed`, `wallet-committed`, or `already-finalized` where it did not send
+/// the transaction and does not know its hash, and a client must not link those as transactions.
+fn reported_transaction(hash: &str) -> Option<String> {
+    (!matches!(
+        hash,
+        "already-committed" | "wallet-committed" | "already-finalized"
+    ))
+    .then(|| hash.to_owned())
+}
+
 impl From<&AvailabilityJob> for AvailabilityJobView {
     fn from(job: &AvailabilityJob) -> Self {
         let (status, tx_hash, encoded_proof, message) = match &job.state {
@@ -470,7 +555,7 @@ impl From<&AvailabilityJob> for AvailabilityJobView {
                 ..
             } => (
                 "pending_availability",
-                Some(transaction_hash.clone()),
+                reported_transaction(transaction_hash),
                 Some(format!("0x{}", hex::encode(ethereum_payload))),
                 None,
             ),
@@ -487,7 +572,7 @@ impl From<&AvailabilityJob> for AvailabilityJobView {
             JobState::Created => ("pending_commitment", None, None, None),
             JobState::Committed { transaction_hash } => (
                 "pending_availability",
-                Some(transaction_hash.clone()),
+                reported_transaction(transaction_hash),
                 None,
                 None,
             ),
@@ -500,7 +585,9 @@ impl From<&AvailabilityJob> for AvailabilityJobView {
                 ..
             } => (
                 "pending_availability",
-                commitment_transaction_hash.clone(),
+                commitment_transaction_hash
+                    .as_deref()
+                    .and_then(reported_transaction),
                 None,
                 None,
             ),
@@ -516,7 +603,7 @@ impl From<&AvailabilityJob> for AvailabilityJobView {
             ),
             JobState::Submitted { transaction_hash } => (
                 "success",
-                (transaction_hash != "already-finalized").then(|| transaction_hash.clone()),
+                reported_transaction(transaction_hash),
                 None,
                 None,
             ),
@@ -540,6 +627,44 @@ enum Backend {
     },
 }
 
+/// Limits on the input commitments that this service sends and pays for.
+///
+/// The limits never refuse an input. Past a limit, this service still stores and signs the input,
+/// and the voter's wallet sends the commitment. A mask needs no signature from the slot owner, and
+/// `publishInput` needs this service's signature, so a refusal would let any account stop a slot
+/// owner from voting.
+#[derive(Clone, Copy)]
+struct RelayPolicy {
+    /// False when nothing may be relayed: on Ethereum mainnet without `MAINNET_RELAY`, or with a
+    /// limit of zero. This also stops jobs that were chosen for the relay earlier.
+    enabled: bool,
+    /// Relayed commitments for one slot in one round.
+    max_per_slot: u32,
+    /// Relayed commitments in one round, across all slots. `None` sets no round limit.
+    max_per_round: Option<u32>,
+    /// The server key balance, in wei, below which the service stops relaying.
+    min_balance: Option<U256>,
+}
+
+impl RelayPolicy {
+    fn new(
+        chain_id: u64,
+        mainnet_relay: bool,
+        max_per_slot: u32,
+        max_per_round: Option<u32>,
+        min_balance: Option<U256>,
+    ) -> Self {
+        Self {
+            enabled: (chain_id != 1 || mainnet_relay)
+                && max_per_slot > 0
+                && max_per_round != Some(0),
+            max_per_slot,
+            max_per_round,
+            min_balance,
+        }
+    }
+}
+
 /// Owns persistent publication state and resumes incomplete jobs after restart.
 #[derive(Clone)]
 pub struct AvailabilityService {
@@ -550,7 +675,22 @@ pub struct AvailabilityService {
     in_progress: Arc<StorageMutex<HashSet<String>>>,
     storage: Arc<StorageMutex<()>>,
     job_slots: Arc<Semaphore>,
-    chain_id: u64,
+    /// One record for each input whose commitment this service chose to relay, keyed by round,
+    /// slot, and job. The relay limits count these records, so the limits hold across a restart.
+    /// The tree also holds the ledger start time, at `RELAY_LEDGER_EPOCH_KEY`.
+    relayed_inputs: Tree,
+    /// The time from which `relayed_inputs` holds every relay of this service
+    /// (`open_relay_ledger`).
+    relay_ledger_epoch: u64,
+    /// The round records of the indexer (the default tree). `reserve_relay` reads the input
+    /// window of a round from them.
+    round_records: Tree,
+    /// Serializes relay decisions, so concurrent job steps cannot pass one limit together.
+    relay_decisions: Arc<StorageMutex<()>>,
+    /// The chain time of the first funds refusal of each relayed job in its grace period
+    /// (`relay_funding_grace_ended`). A restart clears it, which only starts the grace again.
+    relay_funding_refusals: Arc<StorageMutex<HashMap<String, u64>>>,
+    relay: RelayPolicy,
     http_rpc_url: String,
     private_key: String,
     interfold_address: String,
@@ -605,6 +745,7 @@ impl AvailabilityService {
             }
             other => anyhow::bail!("unsupported DATA_AVAILABILITY_MODE '{other}'"),
         };
+        let relayed_inputs = db.open_tree("data-availability-relayed-inputs")?;
         let service = Self {
             jobs: db.open_tree("data-availability-jobs")?,
             objects: db.open_tree("data-availability-objects")?,
@@ -613,7 +754,18 @@ impl AvailabilityService {
             in_progress: Arc::new(StorageMutex::new(HashSet::new())),
             storage: Arc::new(StorageMutex::new(())),
             job_slots: Arc::new(Semaphore::new(MAX_CONCURRENT_JOB_STEPS)),
-            chain_id: config.chain_id,
+            relay_ledger_epoch: open_relay_ledger(&relayed_inputs, wall_clock_seconds())?,
+            relayed_inputs,
+            round_records: (**db).clone(),
+            relay_decisions: Arc::new(StorageMutex::new(())),
+            relay_funding_refusals: Arc::new(StorageMutex::new(HashMap::new())),
+            relay: RelayPolicy::new(
+                config.chain_id,
+                config.mainnet_relay,
+                config.relay_max_inputs_per_slot,
+                config.relay_max_inputs_per_round,
+                config.relay_min_balance()?,
+            ),
             http_rpc_url: config.http_rpc_url.clone(),
             private_key: config.private_key.clone(),
             interfold_address: config.interfold_address.clone(),
@@ -799,10 +951,16 @@ impl AvailabilityService {
     /// admission — would let a cancelled request (the client closes the connection during the
     /// await) release quota for work that stays retrievable and can still spend relay funds.
     /// Admitted work must remain counted until its reservation expires on its own.
+    ///
+    /// `send_from_wallet` records the voter's request that its own wallet send the commitment.
+    /// It is not part of the job identity: a statement that already has a job keeps the choice
+    /// that the job was created with. Only a failed job, which is staged again under the same
+    /// identifier, takes the choice of the new request.
     pub async fn stage_input(
         &self,
         e3_id: &str,
         encoded_envelope: Vec<u8>,
+        send_from_wallet: bool,
         reservation: Option<GlobalReservation<'_>>,
     ) -> anyhow::Result<StagedInput> {
         // The numeric parser accepts leading zeros, so two different strings can name the same E3.
@@ -821,7 +979,6 @@ impl AvailabilityService {
             }
         }
 
-        // Reject invalid Noir proofs before the service pays an Avail submission fee.
         let contract = CRISPContract::new(
             &self.http_rpc_url,
             &self.private_key,
@@ -829,29 +986,51 @@ impl AvailabilityService {
         )
         .await
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        contract
-            .validate_input_proof(
-                e3_id_to_u256(e3_id).map_err(|_| reject_input("The E3 identifier is invalid"))?,
-                envelope.noirProof.clone(),
-                envelope.slotAddress,
-                envelope.encryptedVoteCommitment,
+        let e3_id_value =
+            e3_id_to_u256(e3_id).map_err(|_| reject_input("The E3 identifier is invalid"))?;
+        // An input that Ethereum already committed needs its publication, for example after this
+        // service lost its database. Its input ID binds the content hash that `input_identity`
+        // checked, so these are the committed bytes. The contract refuses the new-input checks for
+        // a committed input, and `verify` refuses the round until the input is published.
+        let committed = contract
+            .is_input_committed(
+                e3_id_value,
                 envelope.encryptedVoteHash,
+                envelope.encryptedVoteCommitment,
+                envelope.slotAddress,
                 envelope.parentIndexPlusOne.to::<u64>(),
             )
-            .await?;
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        if !committed {
+            // Reject invalid Noir proofs before the service pays an Avail submission fee.
+            contract
+                .validate_input_proof(
+                    e3_id_value,
+                    envelope.noirProof.clone(),
+                    envelope.slotAddress,
+                    envelope.encryptedVoteCommitment,
+                    envelope.encryptedVoteHash,
+                    envelope.parentIndexPlusOne.to::<u64>(),
+                )
+                .await?;
 
-        // The proof binds the commitment, not the bytes. Check the bytes against that commitment
-        // before this service attests to them or spends funds on their publication.
-        self.validate_input_ciphertext(e3_id, &object, envelope.encryptedVoteCommitment)
-            .await?;
+            // The proof binds the commitment, not the bytes. Check the bytes against that
+            // commitment before this service attests to them or spends funds on their publication.
+            self.validate_input_ciphertext(e3_id, &object, envelope.encryptedVoteCommitment)
+                .await?;
+        }
 
-        let (deadline, commitment_deadline) = if matches!(&*self.backend, Backend::Avail { .. }) {
+        // Mock mode stores the real cutoff too: the relay record of the input keeps it for pruning.
+        let commitment_deadline = contract
+            .input_commitment_deadline(e3_id_value)
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        let deadline = if matches!(&*self.backend, Backend::Avail { .. }) {
             let interfold =
                 InterfoldContractFactory::create_read(&self.http_rpc_url, &self.interfold_address)
                     .await
                     .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-            let e3_id_value =
-                e3_id_to_u256(e3_id).map_err(|_| reject_input("The E3 identifier is invalid"))?;
             let e3 = interfold
                 .get_e3(e3_id_value)
                 .await
@@ -867,20 +1046,22 @@ impl AvailabilityService {
                 .computeDeadline
                 .try_into()
                 .map_err(|_| anyhow::anyhow!("compute deadline does not fit in u64"))?;
-            let commitment_deadline = contract
-                .input_commitment_deadline(e3_id_value)
-                .await
-                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-            if commitment_deadline <= now {
+            if !committed && commitment_deadline <= now {
                 return Err(reject_input("The vote commitment deadline has passed"));
+            }
+            // `finalizeInput` refuses a receipt after the compute deadline, so a committed input
+            // cannot be recovered after it. Its job could only fail, and a failed job does not
+            // answer a repeat of its statement, so each repeat would hold a funding reservation.
+            if committed && now > deadline {
+                return Err(reject_input("The vote finalization deadline has passed"));
             }
             anyhow::ensure!(
                 input_deadline.saturating_sub(commitment_deadline) >= self.proof_lead_seconds,
                 "the CRISP finalization tail is shorter than AVAIL_PROOF_LEAD_SECONDS"
             );
-            (deadline, commitment_deadline)
+            deadline
         } else {
-            (no_deadline(), no_deadline())
+            no_deadline()
         };
 
         // The object has its own content-addressed record. Do not duplicate it inside the job or
@@ -896,6 +1077,7 @@ impl AvailabilityService {
                 staged_envelope,
                 deadline,
                 commitment_deadline,
+                send_from_wallet,
             },
             state: JobState::Created,
         };
@@ -1047,9 +1229,13 @@ impl AvailabilityService {
         let Some(job) = self.load(id)? else {
             return Ok(None);
         };
+        // Answer a `Created` job from storage without the job claim. The refresh never advances
+        // this state: the worker's `Created` step reconciles it with Ethereum, including a
+        // commitment that an interrupted step already sent. A client polls this endpoint for the
+        // relay decision, and a claim held by a poll makes the worker skip the job for a whole pass.
         if matches!(
             &job.state,
-            JobState::Submitted { .. } | JobState::Failed { .. }
+            JobState::Created | JobState::Submitted { .. } | JobState::Failed { .. }
         ) {
             return Ok(Some((&job).into()));
         }
@@ -1375,6 +1561,9 @@ impl AvailabilityService {
 
     pub async fn run(self: Arc<Self>) -> anyhow::Result<()> {
         loop {
+            if let Err(error) = self.prune_relay_records(wall_clock_seconds()) {
+                warn!(%error, "Could not prune relay records; will retry");
+            }
             let ids = self.pending_ids()?;
             let mut tasks = JoinSet::new();
             for id in ids {
@@ -1421,7 +1610,17 @@ impl AvailabilityService {
         })
     }
 
+    /// Run one step of a job in its own task. A caller that stops waiting, such as a request whose
+    /// client closed the connection, then cannot cancel a paid step partway through.
     async fn process(&self, id: &str) {
+        let service = self.clone();
+        let id = id.to_owned();
+        if let Err(error) = tokio::spawn(async move { service.process_step(&id).await }).await {
+            warn!(%error, "Data-availability job step panicked; the worker retries the job");
+        }
+    }
+
+    async fn process_step(&self, id: &str) {
         let Ok(_permit) = Arc::clone(&self.job_slots).acquire_owned().await else {
             warn!(job_id = id, "Data-availability worker is shutting down");
             return;
@@ -1489,8 +1688,11 @@ impl AvailabilityService {
             ..
         } = &job.kind
         {
+            // Only a wallet commitment fails when its attestation expires. The relay sends a lost
+            // commitment again with a fresh attestation until the cutoff (`commitment_step`).
             if let JobState::AwaitingCommitment {
                 attestation_expires_at,
+                relayed_transaction_hash: None,
                 ..
             } = &job.state
             {
@@ -1559,20 +1761,30 @@ impl AvailabilityService {
                             transaction_hash: "already-committed".to_owned(),
                         };
                     }
-                    JobKind::Input { .. } if self.chain_id == 1 => {
+                    JobKind::Input { .. } if self.input_is_committed(&job).await? => {
+                        // A relay step that was interrupted after its send left this commitment
+                        // at the chain head. Wait for finality as a relayed job does, instead of
+                        // signing and sending the same commitment again.
                         let (ethereum_payload, attestation_expires_at) =
                             self.commitment_payload(&job).await?;
                         job.state = JobState::AwaitingCommitment {
                             ethereum_payload,
                             attestation_expires_at,
-                            relayed_transaction_hash: None,
+                            relayed_transaction_hash: Some("already-committed".to_owned()),
                         };
                     }
-                    JobKind::Input { .. } => {
+                    JobKind::Input { .. } if self.relays(&job).await? => {
                         // A receipt is a head observation, not finality. Stay provisional and
                         // let the `AwaitingCommitment` arm promote the job on finalized state,
                         // the same as a wallet-submitted commitment.
-                        job.state = self.relay_input_commitment(&job).await?;
+                        job.state = self.relay_input_commitment(&job, now).await?;
+                    }
+                    JobKind::Input { .. } => {
+                        // The voter asked to send from its own wallet, the relay is off, the
+                        // relay key is below its balance floor or its balance cannot be read, a
+                        // relay limit is reached, or the round opened before the relay ledger
+                        // started: the voter's wallet sends the commitment.
+                        job.state = self.wallet_commitment(&job).await?;
                     }
                     JobKind::Output { .. } => {
                         job.state = self.start_availability(&job, None).await?;
@@ -1595,7 +1807,16 @@ impl AvailabilityService {
                         self.save(&job)?;
                     }
                     CommitmentStep::Recommit => {
-                        job.state = self.relay_input_commitment(&job).await?;
+                        // A reorganization removed the relayed transaction. Send it again only
+                        // while the relay may spend and the voter did not ask to send from its
+                        // own wallet. Otherwise the voter's wallet must send it, so that turning
+                        // the relay off stops every relay send.
+                        job.state = if !job.kind.sends_from_wallet() && self.relay_may_send().await
+                        {
+                            self.relay_input_commitment(&job, now).await?
+                        } else {
+                            self.wallet_commitment(&job).await?
+                        };
                         self.save(&job)?;
                     }
                     CommitmentStep::Wait => {}
@@ -1605,6 +1826,12 @@ impl AvailabilityService {
                 if matches!(&job.kind, JobKind::Input { .. })
                     && !self.input_commitment_is_final(&job).await?
                 {
+                    return Ok(());
+                }
+                // Another transaction can have published the input, for example from the job of
+                // a database that this service lost. That publication retires this job when it is
+                // final, so wait while the chain head holds it: the Avail publication is paid.
+                if self.ethereum_publication_exists(&job).await? {
                     return Ok(());
                 }
                 job.state = self
@@ -1955,22 +2182,283 @@ impl AvailabilityService {
         ))
     }
 
-    /// Relay one input commitment and return the provisional state that records it.
+    /// Decide whether this service relays the commitment of a `Created` input job.
     ///
-    /// The attestation expiry is the one the relayed payload was signed with, so the expiry
-    /// handler renews this job on the same schedule as a wallet-submitted one.
-    async fn relay_input_commitment(&self, job: &AvailabilityJob) -> anyhow::Result<JobState> {
+    /// The service never relays a job whose voter asked to send from its own wallet. This check
+    /// comes first, so such a job reads no relay balance and writes no relay record.
+    async fn relays(&self, job: &AvailabilityJob) -> anyhow::Result<bool> {
+        if job.kind.sends_from_wallet() {
+            return Ok(false);
+        }
+        Ok(self.relay_may_send().await && self.reserve_relay(job)?)
+    }
+
+    /// Whether the relay may send a commitment now: the relay is on, and the server key holds at
+    /// least `RELAY_MIN_BALANCE_ETH`. A balance that cannot be read counts as too low, so a failed
+    /// read neither spends nor stops the job: the job takes the wallet path.
+    async fn relay_may_send(&self) -> bool {
+        if !self.relay.enabled {
+            return false;
+        }
+        match self.relay_has_funds().await {
+            Ok(funded) => funded,
+            Err(error) => {
+                warn!(%error, "Could not read the relay balance; voters' wallets send new commitments");
+                false
+            }
+        }
+    }
+
+    /// Whether the server key holds at least `RELAY_MIN_BALANCE_ETH`. The same key pays for
+    /// `finalizeInput`, so the floor keeps relays from spending the funds that finalization needs.
+    /// Every balance meets a zero floor, so a zero floor reads no balance.
+    async fn relay_has_funds(&self) -> anyhow::Result<bool> {
+        let Some(floor) = self.relay.min_balance.filter(|floor| !floor.is_zero()) else {
+            return Ok(true);
+        };
+        let signer: PrivateKeySigner = self
+            .private_key
+            .parse()
+            .map_err(|error| anyhow::anyhow!("invalid relay signer key: {error}"))?;
+        // Bound the read like the other raw provider reads, so a stalled RPC cannot hold a job
+        // slot until the step timeout.
+        let balance = tokio::time::timeout(Duration::from_secs(15), async {
+            let provider = ProviderBuilder::new().connect(&self.http_rpc_url).await?;
+            provider.get_balance(signer.address()).await
+        })
+        .await
+        .map_err(|_| anyhow::anyhow!("timed out while reading the relay balance"))??;
+        if balance < floor {
+            warn!("The relay key is below RELAY_MIN_BALANCE_ETH; voters' wallets send new commitments");
+            return Ok(false);
+        }
+        Ok(true)
+    }
+
+    /// Sign a fresh commitment payload for the voter's wallet to send.
+    async fn wallet_commitment(&self, job: &AvailabilityJob) -> anyhow::Result<JobState> {
         let (ethereum_payload, attestation_expires_at) = self.commitment_payload(job).await?;
-        let receipt = self
-            .submit_input_commitment_payload(job, ethereum_payload.clone())
-            .await?;
         Ok(JobState::AwaitingCommitment {
             ethereum_payload,
             attestation_expires_at,
-            relayed_transaction_hash: Some(receipt.transaction_hash.to_string()),
+            relayed_transaction_hash: None,
         })
     }
 
+    /// Decide whether this service relays the commitment of an input job, and record a relay.
+    ///
+    /// While the relay may send, a relay decision holds for the life of the job: a failed send
+    /// that the worker retries, and a relayed transaction that a reorganization removes, keep the
+    /// place of the job. A send that the relay key cannot pay for is different. That job moves to
+    /// the wallet path (`relay_input_commitment`), and its record stays and counts against the
+    /// limits. `relays` honors the voter's request to send from its own wallet before it calls
+    /// this function. Apart from that request, the decision reads only the round, the slot, and
+    /// the earlier relays, so votes, updates, and masks with the same request get the same answer.
+    /// The record is durable before the relay transaction is sent, and it holds the commitment
+    /// cutoff of the round, after which `prune_relay_records` removes it.
+    ///
+    /// A round whose input window opened before the ledger started (`open_relay_ledger`) is not
+    /// relayed, because the limits cannot count the relays that the ledger does not hold.
+    ///
+    /// Turning the relay off (`MAINNET_RELAY=false` on mainnet, or a limit of zero), or a key below
+    /// its balance floor, stops every relay send (`relay_may_send`). A job that has no relayed
+    /// transaction yet, and a relayed job whose transaction a reorganization removed, both move to
+    /// the wallet path. If an earlier send did land, the contract refuses the wallet's second
+    /// commitment of the same statement.
+    fn reserve_relay(&self, job: &AvailabilityJob) -> anyhow::Result<bool> {
+        if !self.relay.enabled {
+            return Ok(false);
+        }
+        let JobKind::Input {
+            e3_id,
+            staged_envelope,
+            commitment_deadline,
+            ..
+        } = &job.kind
+        else {
+            anyhow::bail!("aggregate ciphertext jobs have no input commitment to relay");
+        };
+        let envelope = decode_input_envelope(staged_envelope)?;
+        // The E3 identifier is canonical decimal, so the separator makes each round prefix match
+        // only its own round: round 1 does not count the records of round 12.
+        let round = format!("{e3_id}/");
+        let slot = format!("{round}{}/", hex::encode(envelope.slotAddress));
+        let key = format!("{slot}{}", job.id);
+        // Read before the lock: the input window of a round never changes, and the read decodes
+        // the complete round record.
+        let ledger_holds_round = self.ledger_holds_round(e3_id);
+
+        let _decisions = self
+            .relay_decisions
+            .lock()
+            .map_err(|_| anyhow::anyhow!("relay decision lock is poisoned"))?;
+        if self.relayed_inputs.contains_key(&key)? {
+            return Ok(true);
+        }
+        if !ledger_holds_round {
+            info!(
+                e3_id = e3_id.as_str(),
+                "The round opened before the relay ledger started; voters' wallets send its commitments"
+            );
+            return Ok(false);
+        }
+        if holds_at_least(&self.relayed_inputs, &slot, self.relay.max_per_slot)? {
+            info!(
+                job_id = job.id.as_str(),
+                "The slot reached its relay limit for this round; the voter's wallet sends the commitment"
+            );
+            return Ok(false);
+        }
+        if let Some(max_per_round) = self.relay.max_per_round {
+            if holds_at_least(&self.relayed_inputs, &round, max_per_round)? {
+                warn!(
+                    job_id = job.id.as_str(),
+                    e3_id = e3_id.as_str(),
+                    "The round reached its relay limit; voters' wallets send new commitments"
+                );
+                return Ok(false);
+            }
+        }
+        self.relayed_inputs
+            .insert(key.as_bytes(), &commitment_deadline.to_be_bytes()[..])?;
+        self.relayed_inputs.flush()?;
+        Ok(true)
+    }
+
+    /// Whether the relay ledger holds every relay of a round: the input window of the round
+    /// opened after the ledger started. A round whose window start this service cannot read
+    /// counts as opened before.
+    fn ledger_holds_round(&self, e3_id: &str) -> bool {
+        match self.input_window_start(e3_id) {
+            Ok(Some(start)) => start > self.relay_ledger_epoch,
+            Ok(None) => false,
+            Err(error) => {
+                warn!(%error, e3_id, "Could not read the input window of a round");
+                false
+            }
+        }
+    }
+
+    /// The start of the input window of a round, from the round record that the indexer stores
+    /// when the committee key is published (`E3Repository`). `None` when there is no record yet.
+    fn input_window_start(&self, e3_id: &str) -> anyhow::Result<Option<u64>> {
+        /// The one field of the indexer's round record that this service reads.
+        #[derive(Deserialize)]
+        struct IndexedRound {
+            input_window: [u64; 2],
+        }
+        let Some(record) = self.round_records.get(format!("_e3:{e3_id}"))? else {
+            return Ok(None);
+        };
+        let round: IndexedRound = serde_json::from_slice(&record)?;
+        Ok(Some(round.input_window[0]))
+    }
+
+    /// Remove the relay records of rounds whose commitment cutoff passed before `now`, with a
+    /// margin, and return how many went. No relay decision can use them after the cutoff: intake
+    /// refuses new proofs, and a `Created` job fails at the cutoff check before it reaches one.
+    /// A record without a readable cutoff stays, and so does the ledger start time.
+    fn prune_relay_records(&self, now: u64) -> anyhow::Result<usize> {
+        let _decisions = self
+            .relay_decisions
+            .lock()
+            .map_err(|_| anyhow::anyhow!("relay decision lock is poisoned"))?;
+        let mut removed = 0;
+        for entry in &self.relayed_inputs {
+            let (key, value) = entry?;
+            if key.as_ref() == RELAY_LEDGER_EPOCH_KEY {
+                continue;
+            }
+            let Ok(cutoff) = <[u8; 8]>::try_from(value.as_ref()) else {
+                continue;
+            };
+            if u64::from_be_bytes(cutoff).saturating_add(RELAY_RECORD_RETENTION_SECONDS) < now {
+                self.relayed_inputs.remove(key)?;
+                removed += 1;
+            }
+        }
+        if removed > 0 {
+            self.relayed_inputs.flush()?;
+        }
+        Ok(removed)
+    }
+
+    /// Relay one input commitment and return the provisional state that records it.
+    ///
+    /// If the relay key cannot pay for the transaction, the job takes the wallet path with the same
+    /// signed payload, and the voter's wallet sends the commitment before the cutoff. A retry with
+    /// the same key would fail until the cutoff and lose the vote. A refusal while other
+    /// transactions of the key are pending can clear when they are mined, so the job keeps the
+    /// relay for a grace period first (`relay_funding_grace_ended`).
+    async fn relay_input_commitment(
+        &self,
+        job: &AvailabilityJob,
+        now: u64,
+    ) -> anyhow::Result<JobState> {
+        let (ethereum_payload, attestation_expires_at) = self.commitment_payload(job).await?;
+        let relayed_transaction_hash = match self
+            .submit_input_commitment_payload(job, ethereum_payload.clone())
+            .await
+        {
+            Ok(receipt) => Some(receipt.transaction_hash.to_string()),
+            Err(error) => {
+                let Some(unfunded) = error.downcast_ref::<RelayUnfunded>() else {
+                    return Err(error);
+                };
+                if unfunded.other_transactions_pending && !self.relay_funding_grace_ended(job, now)
+                {
+                    return Err(error);
+                }
+                warn!(
+                    job_id = job.id.as_str(),
+                    %error,
+                    "The relay key cannot pay; the voter's wallet sends the commitment"
+                );
+                None
+            }
+        };
+        self.relay_funding_refusals
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(&job.id);
+        Ok(JobState::AwaitingCommitment {
+            ethereum_payload,
+            attestation_expires_at,
+            relayed_transaction_hash,
+        })
+    }
+
+    /// Whether a relayed job has waited long enough for a funds refusal to clear, while other
+    /// transactions of the relay key are pending.
+    ///
+    /// The first refusal of the job starts its grace period. The period ends after
+    /// `RELAY_FUNDING_GRACE_SECONDS`, and also as soon as the commitment cutoff is closer than
+    /// that, so that the voter's wallet can still send the commitment. A refusal that is older than
+    /// two grace periods belongs to a job that was not processed since then, and it starts again.
+    fn relay_funding_grace_ended(&self, job: &AvailabilityJob, now: u64) -> bool {
+        let JobKind::Input {
+            commitment_deadline,
+            ..
+        } = &job.kind
+        else {
+            return true;
+        };
+        if now.saturating_add(RELAY_FUNDING_GRACE_SECONDS) >= *commitment_deadline {
+            return true;
+        }
+        let mut refusals = self
+            .relay_funding_refusals
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        refusals
+            .retain(|_, started| now.saturating_sub(*started) < 2 * RELAY_FUNDING_GRACE_SECONDS);
+        let started = *refusals.entry(job.id.clone()).or_insert(now);
+        now.saturating_sub(started) >= RELAY_FUNDING_GRACE_SECONDS
+    }
+
+    /// Send `publishInput` for a relayed input after a dry run. A refusal for lack of funds comes
+    /// back as `RelayUnfunded`, which records whether other transactions of the relay key were
+    /// pending.
     async fn submit_input_commitment_payload(
         &self,
         job: &AvailabilityJob,
@@ -1992,10 +2480,35 @@ impl AvailabilityService {
             .simulate_publish_input(e3_id, payload.clone())
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        contract
-            .publish_input(e3_id, payload)
-            .await
-            .map_err(|error| anyhow::anyhow!(error.to_string()))
+        let error = match contract.publish_input(e3_id, payload).await {
+            Ok(receipt) => return Ok(receipt),
+            Err(error) => error,
+        };
+        if is_insufficient_funds(&error) {
+            return Err(anyhow::Error::new(RelayUnfunded {
+                message: error.to_string(),
+                other_transactions_pending: self.relay_key_has_pending_transactions().await?,
+            }));
+        }
+        Err(anyhow::anyhow!(error.to_string()))
+    }
+
+    /// Whether the relay key has transactions that the chain has not mined: its pending
+    /// transaction count is higher than its mined one.
+    async fn relay_key_has_pending_transactions(&self) -> anyhow::Result<bool> {
+        let signer: PrivateKeySigner = self
+            .private_key
+            .parse()
+            .map_err(|error| anyhow::anyhow!("invalid relay signer key: {error}"))?;
+        let address = signer.address();
+        tokio::time::timeout(Duration::from_secs(15), async {
+            let provider = ProviderBuilder::new().connect(&self.http_rpc_url).await?;
+            let pending = provider.get_transaction_count(address).pending().await?;
+            let mined = provider.get_transaction_count(address).latest().await?;
+            anyhow::Ok(pending > mined)
+        })
+        .await
+        .map_err(|_| anyhow::anyhow!("timed out while reading the relay key nonces"))?
     }
 
     async fn finalize_input(
@@ -2463,7 +2976,27 @@ mod tests {
     use alloy::primitives::Address;
 
     fn test_service(max_pending_bytes: u64) -> AvailabilityService {
-        let db = sled::Config::new().temporary(true).open().unwrap();
+        test_service_on(
+            &temporary_db(),
+            max_pending_bytes,
+            RelayPolicy::new(31_337, false, 3, None, None),
+        )
+    }
+
+    /// A service over `db`. A second service over the same `db` shares only the durable state of
+    /// the first, as after a restart.
+    fn test_service_on(db: &Db, max_pending_bytes: u64, relay: RelayPolicy) -> AvailabilityService {
+        test_service_started_at(db, max_pending_bytes, relay, wall_clock_seconds())
+    }
+
+    /// A service over `db` that starts at the wall-clock time `now`.
+    fn test_service_started_at(
+        db: &Db,
+        max_pending_bytes: u64,
+        relay: RelayPolicy,
+        now: u64,
+    ) -> AvailabilityService {
+        let relayed_inputs = db.open_tree("relayed-inputs").unwrap();
         AvailabilityService {
             jobs: db.open_tree("jobs").unwrap(),
             objects: db.open_tree("objects").unwrap(),
@@ -2472,7 +3005,12 @@ mod tests {
             in_progress: Arc::new(StorageMutex::new(HashSet::new())),
             storage: Arc::new(StorageMutex::new(())),
             job_slots: Arc::new(Semaphore::new(1)),
-            chain_id: 31_337,
+            relay_ledger_epoch: open_relay_ledger(&relayed_inputs, now).unwrap(),
+            relayed_inputs,
+            round_records: (**db).clone(),
+            relay_decisions: Arc::new(StorageMutex::new(())),
+            relay_funding_refusals: Arc::new(StorageMutex::new(HashMap::new())),
+            relay,
             http_rpc_url: String::new(),
             private_key: String::new(),
             interfold_address: String::new(),
@@ -2481,6 +3019,57 @@ mod tests {
             proof_lead_seconds: 0,
             max_pending_bytes,
         }
+    }
+
+    fn temporary_db() -> Db {
+        sled::Config::new().temporary(true).open().unwrap()
+    }
+
+    /// Store the round record of `e3_id` the way the indexer does when the committee key is
+    /// published, with an input window that opens at `input_window_start`.
+    async fn index_round(db: &Db, e3_id: &str, input_window_start: u64) {
+        use crate::server::database::SledDB;
+        use e3_evm_helpers::contracts::CommitteeSize;
+        use e3_sdk::indexer::{models::E3, E3Repository, SharedStore};
+
+        let store = SharedStore::new(Arc::new(tokio::sync::RwLock::new(
+            SledDB::from_db(db.clone()).unwrap(),
+        )));
+        let round = E3 {
+            chain_id: 31_337,
+            ciphertext_inputs: Vec::new(),
+            ciphertext_output: Vec::new(),
+            ciphertext_output_reference: None,
+            ciphertext_commitment: Vec::new(),
+            committee_public_key: vec![0x01],
+            committee_public_key_hash: vec![0x02; 32],
+            e3_params: Vec::new(),
+            custom_params: Vec::new(),
+            interfold_address: Address::repeat_byte(0x01).to_string(),
+            encryption_scheme_id: vec![0x03; 32],
+            crypto_config_id: vec![0x04; 32],
+            id: e3_id.to_owned(),
+            plaintext_output: Vec::new(),
+            request_block: 0,
+            seed: [0x05; 32],
+            input_window: [input_window_start, input_window_start + 3_600],
+            committee_size: CommitteeSize::Minimum,
+            requester: Address::repeat_byte(0x02).to_string(),
+        };
+        assert!(E3Repository::new(store, e3_id)
+            .set_e3_if_absent(round)
+            .await
+            .unwrap());
+    }
+
+    /// How many relay records the ledger of `service` holds.
+    fn relay_record_count(service: &AvailabilityService) -> usize {
+        service
+            .relayed_inputs
+            .iter()
+            .keys()
+            .filter(|key| key.as_ref().unwrap().as_ref() != RELAY_LEDGER_EPOCH_KEY)
+            .count()
     }
 
     // ZEN2-24 follow-up, relay path. The relayed commitment is provisional: a receipt does not
@@ -2507,8 +3096,8 @@ mod tests {
 
     #[test]
     fn a_wallet_commitment_is_never_resubmitted_by_the_relay() {
-        // The voter's transaction is absent from the head: the voter owns it and the expiry
-        // handler renews the attestation, so the relay does not send one of its own.
+        // The voter's transaction is absent from the head: the voter owns it, so the relay does
+        // not send one of its own.
         assert_eq!(commitment_step(None, false, false), CommitmentStep::Wait);
         assert_eq!(commitment_step(None, false, true), CommitmentStep::Wait);
         assert_eq!(
@@ -2539,6 +3128,25 @@ mod tests {
         let view = AvailabilityJobView::from(&job);
         assert_eq!(view.status, "ready_for_commitment");
         assert_eq!(view.tx_hash, None);
+    }
+
+    /// A placeholder is not a transaction hash, so a client must never get one as a link.
+    #[test]
+    fn placeholder_hashes_are_not_reported_as_transactions() {
+        let mut job = input_job("landed", Address::repeat_byte(0x77), 0x11, b"object");
+        job.state = JobState::AwaitingCommitment {
+            ethereum_payload: vec![0x33],
+            attestation_expires_at: 600,
+            relayed_transaction_hash: Some("already-committed".to_owned()),
+        };
+        let view = AvailabilityJobView::from(&job);
+        assert_eq!(view.status, "pending_availability");
+        assert_eq!(view.tx_hash, None);
+
+        job.state = JobState::Committed {
+            transaction_hash: "wallet-committed".to_owned(),
+        };
+        assert_eq!(AvailabilityJobView::from(&job).tx_hash, None);
     }
 
     #[test]
@@ -2691,6 +3299,7 @@ mod tests {
                 staged_envelope: vec![0x22],
                 deadline: 1_000,
                 commitment_deadline: 900,
+                send_from_wallet: false,
             },
             state: JobState::AwaitingCommitment {
                 ethereum_payload: vec![0x33],
@@ -2702,6 +3311,10 @@ mod tests {
         let state = encoded["state"].as_object_mut().unwrap();
         state.remove("attestation_expires_at");
         state.remove("relayed_transaction_hash");
+        encoded["kind"]
+            .as_object_mut()
+            .unwrap()
+            .remove("send_from_wallet");
 
         let decoded =
             AvailabilityService::decode_job(&serde_json::to_vec(&encoded).unwrap()).unwrap();
@@ -2716,6 +3329,8 @@ mod tests {
         assert_eq!(attestation_expires_at, 0);
         // A record written before the relay became provisional is a wallet-path record.
         assert_eq!(relayed_transaction_hash, None);
+        // A record without the sender choice leaves the relay decision to the service.
+        assert!(!decoded.kind.sends_from_wallet());
     }
 
     #[test]
@@ -2854,6 +3469,7 @@ mod tests {
                 staged_envelope: vec![0x11],
                 deadline: 1_000,
                 commitment_deadline: 900,
+                send_from_wallet: false,
             },
             state: JobState::Created,
         };
@@ -2871,6 +3487,7 @@ mod tests {
                 staged_envelope: vec![0x22],
                 deadline: 1_000,
                 commitment_deadline: 900,
+                send_from_wallet: false,
             },
             state: JobState::Created,
             ..job
@@ -2908,9 +3525,320 @@ mod tests {
                 ),
                 deadline: 1_000,
                 commitment_deadline: 900,
+                send_from_wallet: false,
             },
             state: JobState::Created,
         }
+    }
+
+    /// An input job for `slot` in the round `e3_id`.
+    fn round_input_job(id: &str, e3_id: &str, slot: Address) -> AvailabilityJob {
+        let mut job = input_job(id, slot, 0x11, id.as_bytes());
+        let JobKind::Input { e3_id: round, .. } = &mut job.kind else {
+            unreachable!("input_job builds an input job");
+        };
+        *round = e3_id.to_owned();
+        job
+    }
+
+    /// A slot gets a bounded number of relayed commitments in one round. Past the limit the
+    /// voter's wallet sends the commitment, so masks from any account can use up the relay
+    /// allowance of a slot but cannot stop its owner from voting.
+    #[tokio::test]
+    async fn a_slot_is_relayed_up_to_its_limit_and_then_uses_the_wallet() {
+        let db = temporary_db();
+        let service = test_service_on(&db, 1024, RelayPolicy::new(31_337, false, 3, None, None));
+        index_round(&db, "1", service.relay_ledger_epoch + 1).await;
+        let slot = Address::repeat_byte(0x77);
+        let jobs: Vec<_> = (0..4)
+            .map(|n| round_input_job(&format!("slot-input-{n}"), "1", slot))
+            .collect();
+
+        for job in &jobs[..3] {
+            assert!(service.reserve_relay(job).unwrap());
+        }
+        assert!(!service.reserve_relay(&jobs[3]).unwrap());
+
+        // A relayed job keeps its place, so the worker can send a failed relay again.
+        assert!(service.reserve_relay(&jobs[0]).unwrap());
+        // Another slot has its own limit.
+        let other_slot = round_input_job("other-slot-input", "1", Address::repeat_byte(0x88));
+        assert!(service.reserve_relay(&other_slot).unwrap());
+
+        // The records are durable: after a restart the slot is still at its limit.
+        let restarted = test_service_on(&db, 1024, RelayPolicy::new(31_337, false, 3, None, None));
+        assert!(!restarted.reserve_relay(&jobs[3]).unwrap());
+        assert!(restarted.reserve_relay(&jobs[1]).unwrap());
+
+        // A limit of zero turns the relay off, also for a job that was chosen for it earlier.
+        let off = test_service_on(&db, 1024, RelayPolicy::new(31_337, false, 0, None, None));
+        assert!(!off.reserve_relay(&jobs[0]).unwrap());
+    }
+
+    /// A round gets a bounded number of relayed commitments across all of its slots.
+    #[tokio::test]
+    async fn a_round_is_relayed_up_to_its_limit_and_then_uses_the_wallet() {
+        let db = temporary_db();
+        let service = test_service_on(&db, 1024, RelayPolicy::new(31_337, false, 3, Some(2), None));
+        index_round(&db, "1", service.relay_ledger_epoch + 1).await;
+        index_round(&db, "12", service.relay_ledger_epoch + 1).await;
+        let relays = |id: &str, e3_id: &str, slot: u8| {
+            service
+                .reserve_relay(&round_input_job(id, e3_id, Address::repeat_byte(slot)))
+                .unwrap()
+        };
+
+        assert!(relays("a", "12", 0x01));
+        assert!(relays("b", "12", 0x02));
+        assert!(!relays("c", "12", 0x03));
+
+        // Round 1 has its own count, although its identifier is a prefix of round 12.
+        assert!(relays("d", "1", 0x01));
+    }
+
+    /// A relay record goes once no relay decision can use it: after the commitment cutoff of its
+    /// round, plus the retention margin. The ledger start time stays.
+    #[tokio::test]
+    async fn relay_records_are_pruned_after_the_commitment_cutoff() {
+        let db = temporary_db();
+        let service = test_service_on(&db, 1024, RelayPolicy::new(31_337, false, 3, None, None));
+        index_round(&db, "1", service.relay_ledger_epoch + 1).await;
+        index_round(&db, "2", service.relay_ledger_epoch + 1).await;
+        // `input_job` sets a commitment cutoff of 900.
+        let closed = round_input_job("closed-round-input", "1", Address::repeat_byte(0x77));
+        let mut open = round_input_job("open-round-input", "2", Address::repeat_byte(0x77));
+        let JobKind::Input {
+            commitment_deadline,
+            ..
+        } = &mut open.kind
+        else {
+            unreachable!("round_input_job builds an input job");
+        };
+        *commitment_deadline = 1_000_000;
+        assert!(service.reserve_relay(&closed).unwrap());
+        assert!(service.reserve_relay(&open).unwrap());
+
+        let past_margin = 900 + RELAY_RECORD_RETENTION_SECONDS;
+        assert_eq!(service.prune_relay_records(past_margin).unwrap(), 0);
+        assert_eq!(service.prune_relay_records(past_margin + 1).unwrap(), 1);
+        assert!(service.relayed_inputs.scan_prefix("1/").next().is_none());
+        assert!(service.relayed_inputs.scan_prefix("2/").next().is_some());
+
+        // Long after the ledger started, pruning removes every record and keeps the start time,
+        // so a restart does not move it.
+        let later = service.relay_ledger_epoch + RELAY_RECORD_RETENTION_SECONDS + 1;
+        assert_eq!(service.prune_relay_records(later).unwrap(), 1);
+        assert_eq!(
+            open_relay_ledger(&service.relayed_inputs, later).unwrap(),
+            service.relay_ledger_epoch
+        );
+    }
+
+    /// Mainnet relays only when the operator turns the relay on. Other chains relay without it.
+    #[tokio::test]
+    async fn mainnet_relays_only_when_enabled() {
+        async fn relays(policy: RelayPolicy) -> bool {
+            let db = temporary_db();
+            let service = test_service_on(&db, 1024, policy);
+            index_round(&db, "1", service.relay_ledger_epoch + 1).await;
+            service
+                .reserve_relay(&round_input_job(
+                    "mainnet-input",
+                    "1",
+                    Address::repeat_byte(0x77),
+                ))
+                .unwrap()
+        }
+
+        assert!(!relays(RelayPolicy::new(1, false, 3, Some(100), None)).await);
+        assert!(relays(RelayPolicy::new(1, true, 3, Some(100), None)).await);
+        assert!(relays(RelayPolicy::new(11_155_111, false, 3, None, None)).await);
+    }
+
+    /// A balance that cannot be read counts as too low. The job takes the wallet path instead of
+    /// stopping, and it uses none of the relay allowance. A zero floor reads no balance, so the
+    /// same failure does not stop a relay without a floor.
+    #[tokio::test]
+    async fn an_unreadable_relay_balance_takes_the_wallet_path_unless_the_floor_is_zero() {
+        // A port with no listener, so the balance read fails at once.
+        let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let rpc = format!("http://{}", closed.local_addr().unwrap());
+        drop(closed);
+        /// A service with the balance floor `floor`, for a round that opens after its relay ledger
+        /// started, so that only the balance decides.
+        async fn service(rpc: &str, floor: u64) -> AvailabilityService {
+            let db = temporary_db();
+            let mut service = test_service_on(
+                &db,
+                1024,
+                RelayPolicy::new(11_155_111, false, 3, None, Some(U256::from(floor))),
+            );
+            index_round(&db, "1", service.relay_ledger_epoch + 1).await;
+            service.http_rpc_url = rpc.to_owned();
+            service.private_key =
+                "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_owned();
+            service
+        }
+        let job = round_input_job("unreadable-balance", "1", Address::repeat_byte(0x77));
+
+        let floored = service(&rpc, 1).await;
+        assert!(!floored.relays(&job).await.unwrap());
+        assert_eq!(relay_record_count(&floored), 0);
+
+        assert!(service(&rpc, 0).await.relays(&job).await.unwrap());
+    }
+
+    /// A node refuses a `publishInput` that the relay key cannot pay for. The refusal records
+    /// whether other transactions of the key were pending, because only such a refusal can clear
+    /// by itself and keeps the relay for a grace period.
+    #[tokio::test]
+    async fn a_funds_refusal_records_whether_other_transactions_are_pending() {
+        use alloy::providers::ext::AnvilApi;
+
+        // This node mines no blocks, so a sent transaction stays pending.
+        let anvil = alloy::node_bindings::Anvil::new()
+            .arg("--no-mining")
+            .try_spawn()
+            .unwrap();
+        let mut service = test_service(1024);
+        service.http_rpc_url = anvil.endpoint();
+        // A call to an address without code succeeds, so the test needs no deployed contract.
+        service.e3_program_address = Address::repeat_byte(0x42).to_string();
+        let job = round_input_job("unfunded-relay", "1", Address::repeat_byte(0x77));
+
+        // A key that never held funds and has nothing pending.
+        service.private_key =
+            "0x1111111111111111111111111111111111111111111111111111111111111111".to_owned();
+        let error = service
+            .submit_input_commitment_payload(&job, vec![1])
+            .await
+            .unwrap_err();
+        let unfunded = error
+            .downcast_ref::<RelayUnfunded>()
+            .unwrap_or_else(|| panic!("not a funds refusal: {error:#}"));
+        assert!(!unfunded.other_transactions_pending);
+
+        // A key that sends one transaction, which stays pending, and then loses its funds.
+        let key = anvil.keys()[1].to_bytes();
+        let signer = PrivateKeySigner::from_slice(&key).unwrap();
+        let address = signer.address();
+        let provider = ProviderBuilder::new()
+            .wallet(signer)
+            .connect(&anvil.endpoint())
+            .await
+            .unwrap();
+        let _pending_transaction = provider
+            .send_transaction(
+                alloy::rpc::types::TransactionRequest::default()
+                    .to(Address::repeat_byte(0x43))
+                    .value(U256::from(1)),
+            )
+            .await
+            .unwrap();
+        provider
+            .anvil_set_balance(address, U256::from(1))
+            .await
+            .unwrap();
+        service.private_key = format!("0x{}", hex::encode(key));
+        let error = service
+            .submit_input_commitment_payload(&job, vec![1])
+            .await
+            .unwrap_err();
+        let unfunded = error
+            .downcast_ref::<RelayUnfunded>()
+            .unwrap_or_else(|| panic!("not a funds refusal: {error:#}"));
+        assert!(unfunded.other_transactions_pending);
+    }
+
+    /// A funds refusal while other transactions of the relay key are pending keeps the relay only
+    /// for a grace period, and the wallet path always comes before the commitment cutoff.
+    #[test]
+    fn a_funds_refusal_keeps_the_relay_only_for_a_grace_period() {
+        let service = test_service(1024);
+        // `input_job` sets a commitment cutoff of 900.
+        let job = round_input_job("refused-relay", "1", Address::repeat_byte(0x77));
+        assert!(!service.relay_funding_grace_ended(&job, 100));
+        assert!(!service.relay_funding_grace_ended(&job, 100 + RELAY_FUNDING_GRACE_SECONDS - 1));
+        assert!(service.relay_funding_grace_ended(&job, 100 + RELAY_FUNDING_GRACE_SECONDS));
+
+        // Close to the cutoff, the first refusal already moves the job to the wallet path.
+        let late = round_input_job("late-refused-relay", "1", Address::repeat_byte(0x78));
+        assert!(service.relay_funding_grace_ended(&late, 900 - RELAY_FUNDING_GRACE_SECONDS));
+    }
+
+    /// A voter that asks to send from its own wallet gets the wallet path, also when the relay is
+    /// on and no relay limit is reached. The job uses none of the relay allowance.
+    #[tokio::test]
+    async fn a_voter_that_asks_for_its_wallet_is_not_relayed() {
+        let db = temporary_db();
+        let service = test_service_on(&db, 1024, RelayPolicy::new(31_337, false, 3, None, None));
+        index_round(&db, "1", service.relay_ledger_epoch + 1).await;
+        let mut job = round_input_job("wallet-choice", "1", Address::repeat_byte(0x77));
+        let set_choice = |job: &mut AvailabilityJob, choice: bool| {
+            let JobKind::Input {
+                send_from_wallet, ..
+            } = &mut job.kind
+            else {
+                unreachable!("round_input_job builds an input job");
+            };
+            *send_from_wallet = choice;
+        };
+
+        set_choice(&mut job, true);
+        assert!(!service.relays(&job).await.unwrap());
+        assert_eq!(relay_record_count(&service), 0);
+
+        // The same job without the request is relayed, so the check above is the voter's choice.
+        set_choice(&mut job, false);
+        assert!(service.relays(&job).await.unwrap());
+        assert_eq!(relay_record_count(&service), 1);
+    }
+
+    /// A round whose input window opened before the relay ledger started can have relays that
+    /// the ledger does not hold, here one sent by a server version without the ledger. The
+    /// service does not relay for that round, also after a restart, so it cannot pass the limits
+    /// with relays it cannot count. A round that opens after the ledger started is relayed.
+    #[tokio::test]
+    async fn a_round_open_before_the_relay_ledger_started_is_not_relayed() {
+        let db = temporary_db();
+        let slot = Address::repeat_byte(0x77);
+        let policy = RelayPolicy::new(31_337, false, 1, None, None);
+        let started = wall_clock_seconds();
+        // The database of a server version without the ledger: round 1 is open, and it holds a
+        // relayed job of the slot, but no relay record and no ledger start time.
+        index_round(&db, "1", started - 600).await;
+        let mut legacy = round_input_job("legacy-relayed", "1", slot);
+        legacy.state = JobState::AwaitingCommitment {
+            ethereum_payload: vec![0x33],
+            attestation_expires_at: 600,
+            relayed_transaction_hash: Some("0xrelayed".to_owned()),
+        };
+        db.open_tree("jobs")
+            .unwrap()
+            .insert(legacy.id.as_bytes(), serde_json::to_vec(&legacy).unwrap())
+            .unwrap();
+
+        let service = test_service_started_at(&db, 1024, policy, started);
+        assert_eq!(service.relay_ledger_epoch, started);
+        index_round(&db, "2", started + 60).await;
+        let vote = round_input_job("vote", "1", slot);
+        assert!(!service.reserve_relay(&vote).unwrap());
+        assert!(service
+            .reserve_relay(&round_input_job("later-round-vote", "2", slot))
+            .unwrap());
+
+        // A restart after round 2 opened keeps the ledger start time, so round 2 stays relayed
+        // and round 1 stays on the wallet path.
+        let restarted = test_service_started_at(&db, 1024, policy, started + 3_600);
+        assert_eq!(restarted.relay_ledger_epoch, started);
+        assert!(!restarted.reserve_relay(&vote).unwrap());
+        assert!(restarted
+            .reserve_relay(&round_input_job(
+                "later-round-other-slot",
+                "2",
+                Address::repeat_byte(0x88)
+            ))
+            .unwrap());
     }
 
     /// A mask needs no signature from the slot owner, so an uncommitted job for a slot must not
@@ -3248,7 +4176,7 @@ mod tests {
         let (insecure, insecure_config_id) = bfv_parameters_for_param_set(0).unwrap();
         assert_eq!(
             insecure_config_id,
-            "0x19921c8c12f93c3013be57d0859f4ddcdb4464ac856a0c62be1ad617fbbd2e7d"
+            "0x119c9bde7d7a31aaeef3e696ea29f8590c611d431921b6981434bd2c0fb5f7d1"
                 .parse::<B256>()
                 .unwrap(),
             "insecure-512 must reproduce ActiveCryptoConfig.INSECURE_CONFIG_ID"
@@ -3257,7 +4185,7 @@ mod tests {
         let (_, secure_config_id) = bfv_parameters_for_param_set(2).unwrap();
         assert_eq!(
             secure_config_id,
-            "0xac5490c59e158cbb104642bba0ab7b3fd11ca49dd4bb05ce7bec8089ce3c8c31"
+            "0x5ebb3432396f21cd97fca47e006b9dd38c021bf2902d3e555cf74cb91b28e44e"
                 .parse::<B256>()
                 .unwrap(),
             "secure-8192 must reproduce ActiveCryptoConfig.SECURE_CONFIG_ID"
@@ -3329,6 +4257,343 @@ mod tests {
         moved.state = state;
         service.save(&moved).unwrap();
         moved
+    }
+
+    sol! {
+        /// `tests/fixtures/mock_crisp_availability.sol`, built with solc 0.8.30 and
+        /// `solc --optimize --bin mock_crisp_availability.sol` in that directory.
+        #[sol(rpc, bytecode = "60c0604052336080526001600160401b03600255348015601d575f5ffd5b50604051610a1d380380610a1d833981016040819052603a916041565b60a0526057565b5f602082840312156050575f5ffd5b5051919050565b60805160a05161099e61007f5f395f81816101d1015261036501525f61013b015261099e5ff3fe608060405234801561000f575f5ffd5b5060043610610132575f3560e01c8063912d7b55116100b4578063d016b08d11610079578063d016b08d14610341578063d1245f6214610354578063e5d6ab8f14610387578063efa4f94d1461039f578063f02631ae146103a8578063f7111336146103ca575f5ffd5b8063912d7b55146102a457806392312386146102b75780639b6b9664146102ea578063b604ecfe146102f6578063ca6b137c1461032e575f5ffd5b806362c6aabf116100fa57806362c6aabf1461023f578063795e008b1461026057806383be451a146102755780638d4d2b0c1461028a5780638fa990e31461029b575f5ffd5b8063118b9871146101365780631900f4831461017a578063203487ce146101cc578063406ed35c146101f357806356e0932f14610213575b5f5ffd5b61015d7f000000000000000000000000000000000000000000000000000000000000000081565b6040516001600160a01b0390911681526020015b60405180910390f35b6101be610188366004610527565b6040805167ffffffffffffffff831660208201525f91016040516020818303038152906040528051906020012090509392505050565b604051908152602001610171565b6101be7f000000000000000000000000000000000000000000000000000000000000000081565b610206610201366004610569565b6103d3565b60405161017191906105d6565b61022f61022136600461072a565b5f5460ff1695945050505050565b6040519015158152602001610171565b61022f61024d36600461072a565b50505f54610100900460ff169392505050565b6101be61026e366004610569565b5060015490565b6102886102833660046107bb565b6103e0565b005b5f5461022f90610100900460ff1681565b6101be60015481565b6102886102b2366004610569565b600255565b6102cf6102c5366004610569565b506002545f918290565b60408051938452602084019290925290820152606001610171565b5f5461022f9060ff1681565b610288610304366004610846565b5f805461ffff191693151561ff001916939093176101009215159290920291909117909155600155565b61022f61033c366004610880565b61040a565b61028861034f3660046108fc565b610467565b6101be610362366004610569565b507f000000000000000000000000000000000000000000000000000000000000000090565b6101be61039536600461072a565b5f95945050505050565b6101be60025481565b6103b161025881565b60405167ffffffffffffffff9091168152602001610171565b6101be60035481565b6103db61048b565b919050565b5f805461ff00191661010017815560038054916103fc83610944565b919050555050505050505050565b5f805460ff16156104595760405162461bcd60e51b8152602060048201526015602482015274125b9c1d5d105b1c9958591e541d589b1a5cda1959605a1b604482015260640160405180910390fd5b506001979650505050505050565b5f805460ff19166001178155600380549161048183610944565b9190505550505050565b604051806101e001604052805f81526020015f60ff1681526020015f81526020016104b4610509565b81525f602082018190526040820181905260608083018290526080830181905260a0830182905260c0830182905260e08301829052610100830182905261012083015261014082018190526101609091015290565b60405180604001604052806002906020820280368337509192915050565b5f5f5f60608486031215610539575f5ffd5b8335925060208401359150604084013567ffffffffffffffff8116811461055e575f5ffd5b809150509250925092565b5f60208284031215610579575f5ffd5b5035919050565b805f5b60028110156105a2578151845260209384019390910190600101610583565b50505050565b5f81518084528060208401602086015e5f602082860101526020601f19601f83011685010191505092915050565b60208152815160208201525f60208301516105f6604084018260ff169052565b506040830151606083015260608301516106136080840182610580565b50608083015160c083015260a08301516001600160a01b03811660e08401525060c083015160ff81166101008401525060e083015161020061012084015261065f6102208401826105a8565b905061010084015161067d6101408501826001600160a01b03169052565b506101208401516001600160a01b038116610160850152506101408401516101808401526101608401516101a0840152610180840151601f19848303016101c08501526106ca82826105a8565b9150506101a08401516106e96101e08501826001600160a01b03169052565b506101c08401516102008401528091505092915050565b80356001600160a01b03811681146103db575f5ffd5b803564ffffffffff811681146103db575f5ffd5b5f5f5f5f5f60a0868803121561073e575f5ffd5b85359450602086013593506040860135925061075c60608701610700565b915061076a60808701610716565b90509295509295909350565b5f5f83601f840112610786575f5ffd5b50813567ffffffffffffffff81111561079d575f5ffd5b6020830191508360208285010111156107b4575f5ffd5b9250929050565b5f5f5f5f5f5f5f60c0888a0312156107d1575f5ffd5b873596506107e160208901610700565b955060408801359450606088013593506107fd60808901610716565b925060a088013567ffffffffffffffff811115610818575f5ffd5b6108248a828b01610776565b989b979a50959850939692959293505050565b803580151581146103db575f5ffd5b5f5f5f60608486031215610858575f5ffd5b61086184610837565b925061086f60208501610837565b929592945050506040919091013590565b5f5f5f5f5f5f5f60c0888a031215610896575f5ffd5b87359650602088013567ffffffffffffffff8111156108b3575f5ffd5b6108bf8a828b01610776565b90975095506108d2905060408901610700565b935060608801359250608088013591506108ee60a08901610716565b905092959891949750929550565b5f5f5f6040848603121561090e575f5ffd5b83359250602084013567ffffffffffffffff81111561092b575f5ffd5b61093786828701610776565b9497909650939450505050565b5f6001820161096157634e487b7160e01b5f52601160045260245ffd5b506001019056fea2646970667358221220464980b5df8b58d9b34237308d1e4526d586d921fcb141ccb40ec7184be9c2da64736f6c634300081e0033")]
+        contract MockCrispAvailability {
+            constructor(bytes32 configId);
+            function set(bool isCommitted, bool isPublished, uint256 deadline) external;
+            function setComputeDeadline(uint256 deadline) external;
+            function committed() external view returns (bool);
+            function sends() external view returns (uint256);
+        }
+    }
+
+    /// A node with the `Interfold` and `CRISPProgram` state of one input, and a service over `db`
+    /// that sends from a funded key. Each chain gets a new key: the process keeps one nonce sequence
+    /// for each account.
+    async fn chain_service(
+        db: &Db,
+    ) -> (
+        AvailabilityService,
+        MockCrispAvailability::MockCrispAvailabilityInstance<impl Provider>,
+        alloy::node_bindings::AnvilInstance,
+    ) {
+        use alloy::providers::ext::AnvilApi;
+
+        // One slot for each epoch puts the finalized block two blocks behind the head.
+        let anvil = alloy::node_bindings::Anvil::new()
+            .args(["--slots-in-an-epoch", "1"])
+            .try_spawn()
+            .unwrap();
+        let signer = PrivateKeySigner::random();
+        let provider = ProviderBuilder::new()
+            .wallet(signer.clone())
+            .connect(&anvil.endpoint())
+            .await
+            .unwrap();
+        provider
+            .anvil_set_balance(signer.address(), U256::from(10).pow(U256::from(18)))
+            .await
+            .unwrap();
+        let (_, config_id) = bfv_parameters_for_param_set(0).unwrap();
+        let mock = MockCrispAvailability::deploy(provider, config_id)
+            .await
+            .unwrap();
+        let mut service =
+            test_service_on(db, 1 << 20, RelayPolicy::new(31_337, false, 3, None, None));
+        service.http_rpc_url = anvil.endpoint();
+        service.private_key = format!("0x{}", hex::encode(signer.to_bytes()));
+        service.interfold_address = mock.address().to_string();
+        service.e3_program_address = mock.address().to_string();
+        (service, mock, anvil)
+    }
+
+    /// Set the state of the input and its commitment cutoff, and finalize them.
+    async fn set_input(
+        mock: &MockCrispAvailability::MockCrispAvailabilityInstance<impl Provider>,
+        committed: bool,
+        published: bool,
+        cutoff: u64,
+    ) {
+        use alloy::providers::ext::AnvilApi;
+
+        mock.set(committed, published, U256::from(cutoff))
+            .send()
+            .await
+            .unwrap()
+            .watch()
+            .await
+            .unwrap();
+        mock.provider().anvil_mine(Some(2), None).await.unwrap();
+    }
+
+    /// An Avail backend that submits to `rpc`. Nothing answers at its bridge and reader endpoints.
+    fn avail_backend(rpc: &str) -> Arc<Backend> {
+        Arc::new(Backend::Avail {
+            publisher: Arc::new(
+                AvailPublisher::new(rpc, 1, "//Alice", "http://127.0.0.1:1", 1).unwrap(),
+            ),
+            reader: Arc::new(AvailReader::new("http://127.0.0.1:1").unwrap()),
+        })
+    }
+
+    /// A browser stages a committed input again after the service lost its database, and after the
+    /// commitment cutoff. The contract refuses the new-input checks for a committed input, so the
+    /// service must recover the input from its chain state. Otherwise `verify` refuses the round
+    /// until the compute deadline.
+    #[tokio::test]
+    async fn a_committed_input_is_recovered_after_the_database_is_lost() {
+        let (mut service, mock, _anvil) = chain_service(&temporary_db()).await;
+        // The test ends before the service calls Avail.
+        service.backend = avail_backend("http://127.0.0.1:1");
+        set_input(&mock, true, false, 0).await;
+        let object = b"committed-ciphertext";
+        let envelope = staged_envelope_with_object(
+            Address::repeat_byte(0x77),
+            B256::repeat_byte(0x11),
+            object,
+        );
+
+        let staged = service
+            .stage_input("1", envelope, false, None)
+            .await
+            .unwrap();
+
+        // The worker found the finalized commitment, and publishes the input next.
+        let job = service.load_required(&staged.view.job_id).unwrap();
+        assert!(matches!(job.state, JobState::Committed { .. }), "{job:?}");
+    }
+
+    /// `finalizeInput` refuses a receipt after the compute deadline, so a committed input cannot be
+    /// recovered after it. Intake refuses such an input and returns the funding reservation: its
+    /// job could only fail, and a failed job does not answer a repeat of its statement.
+    #[tokio::test]
+    async fn a_committed_input_is_refused_after_the_compute_deadline() {
+        let (mut service, mock, _anvil) = chain_service(&temporary_db()).await;
+        service.backend = avail_backend("http://127.0.0.1:1");
+        mock.setComputeDeadline(U256::from(1))
+            .send()
+            .await
+            .unwrap()
+            .watch()
+            .await
+            .unwrap();
+        set_input(&mock, true, false, 0).await;
+        let limiter = crate::server::rate_limit::RateLimiter::with_limits(8, 1);
+        let envelope = staged_envelope_with_object(
+            Address::repeat_byte(0x77),
+            B256::repeat_byte(0x11),
+            b"late-ciphertext",
+        );
+
+        let error = service
+            .stage_input(
+                "1",
+                envelope,
+                false,
+                Some(limiter.try_reserve_global().unwrap()),
+            )
+            .await
+            .err()
+            .expect("intake admitted an input that can no longer be finalized");
+
+        assert!(input_rejection_message(&error).is_some(), "{error:#}");
+        assert!(limiter.try_reserve_global().is_ok());
+    }
+
+    /// Another transaction can publish an input that this service still has to publish, for
+    /// example the job of a database that the service lost. While that publication is at the chain
+    /// head and not final, the worker waits for it and does not pay for a second Avail
+    /// publication.
+    #[tokio::test]
+    async fn a_publication_at_the_chain_head_is_not_paid_for_again() {
+        use alloy::providers::ext::AnvilApi;
+
+        let (mut service, mock, _anvil) = chain_service(&temporary_db()).await;
+        // Takes the connection of an Avail submission and never answers it.
+        let avail = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        avail.set_nonblocking(true).unwrap();
+        service.backend = avail_backend(&format!("http://{}", avail.local_addr().unwrap()));
+        set_input(&mock, true, false, u64::MAX).await;
+        // Finalized state holds the commitment, and only the chain head holds the publication.
+        mock.set(true, true, U256::from(u64::MAX))
+            .send()
+            .await
+            .unwrap()
+            .watch()
+            .await
+            .unwrap();
+        let object = b"published-ciphertext";
+        let mut job = input_job("published-input", Address::repeat_byte(0x77), 0x11, object);
+        let JobKind::Input {
+            deadline,
+            commitment_deadline,
+            ..
+        } = &mut job.kind
+        else {
+            unreachable!("input_job builds an input job");
+        };
+        *deadline = no_deadline();
+        *commitment_deadline = no_deadline();
+        let job = store_job_in_state(
+            &service,
+            &job,
+            object,
+            JobState::Committed {
+                transaction_hash: "already-committed".to_owned(),
+            },
+        );
+
+        service.process(&job.id).await;
+
+        assert_eq!(
+            avail.accept().err().map(|error| error.kind()),
+            Some(std::io::ErrorKind::WouldBlock),
+            "the worker submitted a published input to Avail"
+        );
+        let state = service.load_required(&job.id).unwrap().state;
+        assert!(matches!(state, JobState::Committed { .. }), "{state:?}");
+
+        mock.provider().anvil_mine(Some(2), None).await.unwrap();
+        service.process(&job.id).await;
+
+        let state = service.load_required(&job.id).unwrap().state;
+        assert!(matches!(state, JobState::Submitted { .. }), "{state:?}");
+    }
+
+    /// A local round stores its real commitment cutoff, so the worker prunes the relay record of a
+    /// relayed input after that cutoff, as in an Avail round.
+    #[tokio::test]
+    async fn a_local_relay_record_is_pruned_after_the_commitment_cutoff() {
+        let db = temporary_db();
+        let (service, mock, _anvil) = chain_service(&db).await;
+        index_round(&db, "1", service.relay_ledger_epoch + 1).await;
+        let cutoff = service.chain_timestamp().await.unwrap() + 3_600;
+        set_input(&mock, false, false, cutoff).await;
+        let (object, commitment) = encrypted_ballot(&insecure_test_params(), &[1]);
+        let envelope = staged_envelope_with_object(Address::repeat_byte(0x77), commitment, &object);
+
+        service
+            .stage_input("1", envelope, false, None)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            service
+                .prune_relay_records(cutoff + RELAY_RECORD_RETENTION_SECONDS + 1)
+                .unwrap(),
+            1
+        );
+    }
+
+    /// A reorganization removes a relayed commitment after its attestation expired, while the
+    /// commitment window is still open. The relay sends the input again with a fresh attestation,
+    /// so the expired attestation must not fail the job.
+    #[tokio::test]
+    async fn an_orphaned_relayed_commitment_is_sent_again_after_its_attestation_expired() {
+        let (service, mock, _anvil) = chain_service(&temporary_db()).await;
+        set_input(&mock, false, false, u64::MAX).await;
+        let object = b"orphaned-ciphertext";
+        let mut job = input_job("orphaned-relay", Address::repeat_byte(0x77), 0x11, object);
+        let JobKind::Input {
+            commitment_deadline,
+            ..
+        } = &mut job.kind
+        else {
+            unreachable!("input_job builds an input job");
+        };
+        *commitment_deadline = no_deadline();
+        let job = store_job_in_state(
+            &service,
+            &job,
+            object,
+            JobState::AwaitingCommitment {
+                ethereum_payload: vec![1],
+                attestation_expires_at: 1,
+                relayed_transaction_hash: Some("0xorphaned".to_owned()),
+            },
+        );
+
+        service.process(&job.id).await;
+
+        let state = service.load_required(&job.id).unwrap().state;
+        let JobState::AwaitingCommitment {
+            attestation_expires_at,
+            relayed_transaction_hash: Some(hash),
+            ..
+        } = &state
+        else {
+            panic!("the relay did not send the orphaned commitment again: {state:?}");
+        };
+        assert_ne!(hash, "0xorphaned");
+        assert!(*attestation_expires_at > 1);
+        assert!(mock.committed().call().await.unwrap());
+    }
+
+    /// A restart between an Ethereum send and the save of its result must not pay for that send
+    /// again. Each case stops the worker at one point, and a restarted service over the same
+    /// database drives the job to the end: it ends in the same state, and Ethereum takes each paid
+    /// transaction once.
+    #[tokio::test]
+    async fn a_restart_around_an_ethereum_send_pays_for_it_once() {
+        let object = b"restarted-ciphertext";
+        let mut job = input_job("restarted-input", Address::repeat_byte(0x77), 0x11, object);
+        let JobKind::Input {
+            commitment_deadline,
+            ..
+        } = &mut job.kind
+        else {
+            unreachable!("input_job builds an input job");
+        };
+        *commitment_deadline = no_deadline();
+        let relayed = JobState::AwaitingCommitment {
+            ethereum_payload: vec![1],
+            attestation_expires_at: u64::MAX,
+            relayed_transaction_hash: Some("0xrelayed".to_owned()),
+        };
+        let finalizing = JobState::Ready {
+            ethereum_payload: object.to_vec(),
+            commitment_transaction_hash: None,
+            publication: None,
+        };
+        // Where the worker stopped, what Ethereum holds, and the paid sends that are still owed.
+        let cases = [
+            ("before the relay send", JobState::Created, false, false, 2),
+            ("after the relay send", JobState::Created, true, false, 1),
+            ("after the relay result was saved", relayed, true, false, 1),
+            ("after the finalization", finalizing, true, true, 0),
+        ];
+        for (point, state, committed, published, owed) in cases {
+            let db = temporary_db();
+            let (service, mock, _anvil) = chain_service(&db).await;
+            index_round(&db, "1", service.relay_ledger_epoch + 1).await;
+            set_input(&mock, committed, published, u64::MAX).await;
+            store_job_in_state(&service, &job, object, state);
+            let restarted = AvailabilityService {
+                in_progress: Arc::new(StorageMutex::new(HashSet::new())),
+                relay_funding_refusals: Arc::new(StorageMutex::new(HashMap::new())),
+                ..service
+            };
+
+            for _ in 0..6 {
+                restarted.process(&job.id).await;
+            }
+
+            let state = restarted.load_required(&job.id).unwrap().state;
+            assert!(
+                matches!(state, JobState::Submitted { .. }),
+                "{point}: {state:?}"
+            );
+            assert_eq!(
+                mock.sends().call().await.unwrap(),
+                U256::from(owed),
+                "{point}"
+            );
+        }
     }
 
     fn output_job(id: &str, state: JobState, object: &[u8]) -> AvailabilityJob {
@@ -3697,6 +4962,36 @@ mod tests {
         );
     }
 
+    /// A client polls the status of a `Created` job for the relay decision. The read must not call
+    /// Ethereum under the job claim: a claim held by a poll makes the worker skip the job for a
+    /// whole pass, and a `Created` job has nothing on Ethereum to reconcile.
+    #[tokio::test]
+    async fn a_status_read_of_a_created_job_leaves_it_to_the_worker() {
+        // An RPC endpoint that accepts connections and never answers.
+        let rpc = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut service = test_service(1024);
+        service.http_rpc_url = format!("http://{}", rpc.local_addr().unwrap());
+        service.private_key =
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_owned();
+        service.e3_program_address = format!("{}", Address::repeat_byte(0x55));
+        let object = b"queued-ciphertext";
+        let job = input_job("queued-input", Address::repeat_byte(0x77), 0x11, object);
+        service.store_new_job_with_object(&job, object).unwrap();
+
+        let view = service
+            .refreshed_view(&job.id)
+            .await
+            .unwrap()
+            .expect("the job exists");
+        assert_eq!(view.status, "pending_commitment");
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), rpc.accept())
+                .await
+                .is_err(),
+            "a status read of a created job must not call Ethereum"
+        );
+    }
+
     /// ZEN2-23: a repeat of an existing statement must not consume funding quota.
     ///
     /// `existing_input_job` answers a replay without creating work, so the route can serve it
@@ -3725,6 +5020,7 @@ mod tests {
                 staged_envelope: staged_envelope_for_slot(slot, B256::repeat_byte(0x11), object),
                 deadline: no_deadline(),
                 commitment_deadline: no_deadline(),
+                send_from_wallet: false,
             },
             state: JobState::Created,
         };
@@ -3776,6 +5072,7 @@ mod tests {
                 staged_envelope: staged_envelope_for_slot(slot, B256::repeat_byte(0x11), object),
                 deadline: no_deadline(),
                 commitment_deadline: no_deadline(),
+                send_from_wallet: false,
             },
             state: JobState::Created,
         };

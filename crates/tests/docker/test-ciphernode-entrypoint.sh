@@ -33,6 +33,7 @@ for ((i = 0; i < ${#args[@]}; i++)); do
         --name=*) name="${args[$i]#--name=}" ;;
     esac
 done
+printf '%s\n' "$*" >> "${CALLS_FILE:-/dev/null}"
 legacy="$CONFIG_DIR/.interfold"
 config_dir="${E3_CONFIG_DIR:-$legacy/config}"
 data_dir="${E3_DATA_DIR:-$legacy/data}"
@@ -86,6 +87,7 @@ run_case() {
         ${CASE_E3_CONFIG_DIR:+E3_CONFIG_DIR="$CASE_E3_CONFIG_DIR"} \
         ${CASE_E3_DATA_DIR:+E3_DATA_DIR="$CASE_E3_DATA_DIR"} \
         RESULT_FILE="$dir/result" \
+        CALLS_FILE="$dir/calls" \
         MOCK_KEY_FILE="${MOCK_KEY_FILE:-}" \
         MOCK_DB_FILE="${MOCK_DB_FILE:-}" \
         bash "$dir/entrypoint.sh" "$@" > "$dir/output" 2>&1
@@ -157,6 +159,93 @@ mkdir -p "$case_dir/config/.interfold/config/cn1" "$case_dir/config/.interfold/d
 run_case "$case_dir" start --name cn1 --config "$case_dir/config/config.yaml"
 expect_location "$case_dir" own
 grep -q "start --name cn1" "$case_dir/result" || fail "named-node: the command was not passed through"
+
+# A start with arguments gets the password and wallet setup, so a fresh `start --bootstrap` with
+# mounted secrets works when the automatic credentials are off. Without `--config` the start gets
+# the container's config file, the one the setup used.
+case_dir="$TEST_ROOT/argument-start"
+run_case "$case_dir" start --bootstrap
+expect_location "$case_dir" volume
+grep -q "Setting password" "$case_dir/output" || fail "argument-start: the password was not set"
+grep -q "Setting wallet key" "$case_dir/output" || fail "argument-start: the wallet key was not set"
+grep -q "start --bootstrap --config=$case_dir/config/config.yaml" "$case_dir/result" \
+    || fail "argument-start: the command was not passed through with the container's config file"
+grep -q "password set --config=$case_dir/config/config.yaml" "$case_dir/calls" \
+    || fail "argument-start: the setup did not use the container's config file"
+[ ! -e "$case_dir/secrets/secrets.json" ] || fail "argument-start: the secrets file was kept"
+[ -e "$case_dir/data/config/_default/key" ] || fail "argument-start: the default profile has no key"
+
+# The setup provisions the profile that the start names, not `_default`, and a global option in
+# front of the command still selects the setup.
+case_dir="$TEST_ROOT/argument-start-named"
+run_case "$case_dir" --name=cn1 -v start --config "$case_dir/config/config.yaml"
+expect_location "$case_dir" volume
+grep -q "Setting password" "$case_dir/output" || fail "argument-start-named: the password was not set"
+[ -e "$case_dir/data/config/cn1/key" ] || fail "argument-start-named: the named profile has no key"
+[ ! -e "$case_dir/data/config/_default/key" ] || fail "argument-start-named: the default profile was provisioned"
+grep -q -- "--name=cn1 -v start --config $case_dir/config/config.yaml" "$case_dir/result" \
+    || fail "argument-start-named: the command was changed"
+
+# The named profile's wallet is provisioned too, not `_default`'s.
+[ -e "$case_dir/data/data/cn1/db" ] || fail "argument-start-named: the named profile has no wallet"
+[ ! -e "$case_dir/data/data/_default/db" ] || fail "argument-start-named: the default wallet was provisioned"
+
+# A help request never provisions anything, also inside a cluster of short options.
+case_dir="$TEST_ROOT/start-help"
+run_case "$case_dir" start --help
+if grep -q "Setting password" "$case_dir/output"; then
+    fail "start-help: a help request set the password"
+fi
+[ -e "$case_dir/secrets/secrets.json" ] || fail "start-help: the secrets file was consumed"
+case_dir="$TEST_ROOT/start-help-cluster"
+run_case "$case_dir" start -vh
+if grep -q "Setting password" "$case_dir/output"; then
+    fail "start-help-cluster: a clustered help request set the password"
+fi
+[ -e "$case_dir/secrets/secrets.json" ] || fail "start-help-cluster: the secrets file was consumed"
+
+# An explicit config file in any of clap's short forms is used for the setup and is not appended
+# a second time.
+for form in attached equals cluster; do
+    case_dir="$TEST_ROOT/explicit-config-$form"
+    mkdir -p "$case_dir/config"
+    : > "$case_dir/config/custom.yaml"
+    case "$form" in
+        attached) run_case "$case_dir" start "-c$case_dir/config/custom.yaml" ;;
+        equals) run_case "$case_dir" start "-c=$case_dir/config/custom.yaml" ;;
+        cluster) run_case "$case_dir" -vc "$case_dir/config/custom.yaml" start ;;
+    esac
+    expect_location "$case_dir" volume
+    grep -q "Setting password" "$case_dir/output" || fail "explicit-config-$form: the password was not set"
+    if grep -q -- "--config" "$case_dir/result"; then
+        fail "explicit-config-$form: a second config option was appended: $(cat "$case_dir/result")"
+    fi
+    grep -q "custom.yaml" "$case_dir/result" || fail "explicit-config-$form: the explicit config was lost"
+    grep -q "password set --config=$case_dir/config/custom.yaml" "$case_dir/calls" \
+        || fail "explicit-config-$form: the setup did not use the explicit config file"
+done
+
+# A config file whose name starts with a hyphen stays a value, and the default config goes before a
+# `--` terminator.
+case_dir="$TEST_ROOT/hyphen-config"
+mkdir -p "$case_dir/config"
+: > "$case_dir/config/-custom.yaml"
+( cd "$case_dir/config" && run_case "$case_dir" start -c=-custom.yaml )
+grep -q "password set --config=-custom.yaml" "$case_dir/calls" \
+    || fail "hyphen-config: the setup lost the hyphen-leading config file: $(cat "$case_dir/calls")"
+case_dir="$TEST_ROOT/terminator"
+run_case "$case_dir" start --
+grep -q "start --config=$case_dir/config/config.yaml --$" "$case_dir/result" \
+    || fail "terminator: the config was not placed before --: $(cat "$case_dir/result")"
+
+# Other commands still run without the setup.
+case_dir="$TEST_ROOT/other-command"
+run_case "$case_dir" node validate --config "$case_dir/config/config.yaml"
+grep -q "node validate" "$case_dir/result" || fail "other-command: the command was not passed through"
+if grep -q "Setting password" "$case_dir/output"; then
+    fail "other-command: a command other than start set the password"
+fi
+[ -e "$case_dir/secrets/secrets.json" ] || fail "other-command: the secrets file was consumed"
 
 case_dir="$TEST_ROOT/named-node-equals"
 mkdir -p "$case_dir/data/data/cn2/db"

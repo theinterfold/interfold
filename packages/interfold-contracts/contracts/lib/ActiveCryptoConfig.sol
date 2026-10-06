@@ -12,16 +12,16 @@ import { IInterfold } from "../interfaces/IInterfold.sol";
 // support insecure and secure BFV with every committee size.
 library ActiveCryptoConfig {
     bytes32 internal constant ENCRYPTION_SCHEME_ID = keccak256("fhe.rs:BFV");
-    bytes32 internal constant CIRCUIT_VERSION = keccak256("interfold-bfv-v2");
+    bytes32 internal constant CIRCUIT_VERSION = keccak256("interfold-bfv-v4");
 
     bytes32 internal constant INSECURE_CONFIG_ID =
-        0x19921c8c12f93c3013be57d0859f4ddcdb4464ac856a0c62be1ad617fbbd2e7d;
+        0x119c9bde7d7a31aaeef3e696ea29f8590c611d431921b6981434bd2c0fb5f7d1;
     uint8 internal constant INSECURE_PARAM_SET = 0;
     bytes32 internal constant INSECURE_PARAM_SET_HASH =
         0x18c6d8650486b997d48aa2d285fae878fb267b268332d056a3e8527d50e87b4f;
 
     bytes32 internal constant SECURE_CONFIG_ID =
-        0xac5490c59e158cbb104642bba0ab7b3fd11ca49dd4bb05ce7bec8089ce3c8c31;
+        0x5ebb3432396f21cd97fca47e006b9dd38c021bf2902d3e555cf74cb91b28e44e;
     uint8 internal constant SECURE_PARAM_SET = 2;
     bytes32 internal constant SECURE_PARAM_SET_HASH =
         0x80775a19b6126a12943f9c1c53f92299f0c92ece819b625026ab1406bbbe0721;

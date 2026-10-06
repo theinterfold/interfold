@@ -359,7 +359,7 @@ pnpm dev
 The client requests E3s with `paramSet: 0`, and the SDK uses `INSECURE_THRESHOLD_512` by default
 (`VITE_THRESHOLD_BFV_PARAMS_PRESET_NAME`). Keep the two values in agreement. Sepolia accepts the
 param sets 0 (`insecure-512`) and 2 (`secure-8192`) when registered. Do not submit private data with
-the insecure preset. Version-5 mainnet requests use index 2; index 1 remains for older E3s. The SDK
+the insecure preset. Version-7 mainnet requests use index 2; index 1 remains for older E3s. The SDK
 does not include secure-8192 proof circuits. Compile matching circuits for secure proofs; see
 [SDK encryption proofs](/build/sdk#encryption-proofs).
 

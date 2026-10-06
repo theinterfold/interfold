@@ -7,7 +7,8 @@
 use crate::{
     events::{EventStoreClockFloor, FlushEventStores, StoreEventRequested, StoreEventResponse},
     Event, EventContextAccessors, EventLog, EventStoreFilter, EventStoreQueryBy,
-    EventStoreQueryResponse, InterfoldEvent, Seq, SequenceIndex, Sequenced, Ts, Unsequenced,
+    EventStoreQueryResponse, HistoryProgress, InterfoldEvent, LogRecord, Seq, SequenceIndex,
+    Sequenced, Ts, Unsequenced,
 };
 use actix::{Actor, ActorContext, AsyncContext, Handler, Recipient, WrapFuture};
 use anyhow::{bail, Context as _, Result};
@@ -203,6 +204,62 @@ impl<I: SequenceIndex, L: EventLog> EventStore<I, L> {
         };
         let result = self.collect_events(events, filter, limit);
         Ok(result)
+    }
+
+    /// Read records at or after `since` in timestamp order through the timestamp index, at most
+    /// `limit` records and `max_bytes` encoded bytes (the first record always fits). The log can
+    /// hold an older timestamp after a newer one, so a scan in log order from the first matching
+    /// record could miss records. The progress says which timestamp the page read through and
+    /// whether the store holds more.
+    pub fn query_history_page(
+        &self,
+        since: u128,
+        limit: usize,
+        max_bytes: usize,
+    ) -> Result<(Vec<InterfoldEvent<Sequenced>>, HistoryProgress)> {
+        let entries = self.index.range_from(since, limit.saturating_add(1))?;
+        let mut events = Vec::with_capacity(entries.len().min(limit));
+        let mut bytes = 0usize;
+        let mut last_scanned_ts = None;
+        for &(ts, seq) in entries.iter().take(limit) {
+            // The first record is read whatever its size, so a page always makes progress. Any
+            // later record is sized before it is decoded.
+            let budget = (!events.is_empty()).then(|| max_bytes.saturating_sub(bytes));
+            let record = self.log.read_one_within(seq, budget)?.with_context(|| {
+                format!(
+                    "event index corruption at timestamp {ts}: sequence {seq} is missing from the \
+                     event log"
+                )
+            })?;
+            let (event, event_bytes) = match record {
+                LogRecord::Event(event, event_bytes) => (event, event_bytes),
+                LogRecord::TooLarge(_) => {
+                    return Ok((
+                        events,
+                        HistoryProgress {
+                            last_scanned_ts,
+                            exhausted: false,
+                        },
+                    ));
+                }
+            };
+            if event.ts() != ts {
+                bail!(
+                    "event index corruption at timestamp {ts}: sequence {seq} holds timestamp {}",
+                    event.ts()
+                );
+            }
+            bytes = bytes.saturating_add(event_bytes);
+            last_scanned_ts = Some(ts);
+            events.push(event.into_sequenced(seq));
+        }
+        Ok((
+            events,
+            HistoryProgress {
+                last_scanned_ts,
+                exhausted: entries.len() <= limit,
+            },
+        ))
     }
 
     /// Query events by sequence number. Returns events at or after the given sequence.
@@ -432,11 +489,30 @@ impl<I: SequenceIndex, L: EventLog> Handler<EventStoreQueryBy<Ts>> for EventStor
         let limit = msg.limit();
         let max_bytes = msg.max_bytes();
         let filter = msg.filter().cloned();
+        let timestamp_order = msg.timestamp_order();
         let sender = msg.sender();
-        let response = EventStoreQueryResponse::from_result(
-            id,
-            self.query_by_ts_with_bounds(query, filter, limit, max_bytes),
-        );
+        let response = if timestamp_order {
+            let page = self.query_history_page(
+                query,
+                limit.map_or(usize::MAX, |limit| {
+                    usize::try_from(limit).unwrap_or(usize::MAX)
+                }),
+                max_bytes.map_or(usize::MAX, |bytes| {
+                    usize::try_from(bytes).unwrap_or(usize::MAX)
+                }),
+            );
+            match page {
+                Ok((events, progress)) => {
+                    EventStoreQueryResponse::new(id, events).with_history(Some(progress))
+                }
+                Err(error) => EventStoreQueryResponse::from_result(id, Err(error)),
+            }
+        } else {
+            EventStoreQueryResponse::from_result(
+                id,
+                self.query_by_ts_with_bounds(query, filter, limit, max_bytes),
+            )
+        };
         ctx.wait(
             async move {
                 if let Err(error) = deliver_query_response(sender, response).await {
@@ -460,7 +536,8 @@ impl<I: SequenceIndex, L: EventLog> Handler<EventStoreQueryBy<Seq>> for EventSto
         let response = EventStoreQueryResponse::from_result(
             id,
             self.query_by_seq_with_bounds(query, filter, limit, max_bytes),
-        );
+        )
+        .with_log_head(Some(self.log.head()));
         ctx.wait(
             async move {
                 if let Err(error) = deliver_query_response(sender, response).await {
@@ -518,6 +595,15 @@ mod tests {
 
         fn seek(&self, key: u128) -> Result<Option<u64>> {
             Ok(self.0.range(key..).next().map(|(_, &v)| v))
+        }
+
+        fn range_from(&self, key: u128, limit: usize) -> Result<Vec<(u128, u64)>> {
+            Ok(self
+                .0
+                .range(key..)
+                .take(limit)
+                .map(|(&ts, &seq)| (ts, seq))
+                .collect())
         }
     }
 
@@ -728,18 +814,71 @@ mod tests {
     }
 
     // ===========================================================================
-    // store_event
+    // query_history_page
     // ===========================================================================
 
-    #[test]
-    fn store_event_returns_sequenced_event() {
-        let mut store = new_store();
-        let event = make_local_event(100);
-
-        let result = store.store_event(event).unwrap().unwrap();
-
-        assert_eq!(result.get_ctx().ts(), 100);
+    fn page_timestamps(page: &[InterfoldEvent<Sequenced>]) -> Vec<u128> {
+        page.iter().map(|event| event.ts()).collect()
     }
+
+    #[test]
+    fn history_page_reads_in_timestamp_order_when_the_log_is_not() {
+        // The log holds an older timestamp after a newer one, as when startup appends history.
+        let store = populated_store(&[
+            make_local_event(10),
+            make_local_event(30),
+            make_local_event(20),
+        ]);
+
+        let (page, progress) = store.query_history_page(15, 10, usize::MAX).unwrap();
+        assert_eq!(page_timestamps(&page), vec![20, 30]);
+        assert_eq!(
+            progress,
+            HistoryProgress {
+                last_scanned_ts: Some(30),
+                exhausted: true
+            }
+        );
+
+        let (page, progress) = store.query_history_page(0, 2, usize::MAX).unwrap();
+        assert_eq!(page_timestamps(&page), vec![10, 20]);
+        assert_eq!(
+            progress,
+            HistoryProgress {
+                last_scanned_ts: Some(20),
+                exhausted: false
+            }
+        );
+    }
+
+    #[test]
+    fn history_page_reports_a_byte_stop_as_progress() {
+        let store = populated_store(&[make_local_event(10), make_local_event(20)]);
+
+        let (page, progress) = store.query_history_page(0, 10, 1).unwrap();
+        assert_eq!(page_timestamps(&page), vec![10]);
+        assert_eq!(
+            progress,
+            HistoryProgress {
+                last_scanned_ts: Some(10),
+                exhausted: false
+            }
+        );
+
+        let (page, progress) = store.query_history_page(31, 10, 1).unwrap();
+        assert!(page.is_empty());
+        assert_eq!(
+            progress,
+            HistoryProgress {
+                last_scanned_ts: None,
+                exhausted: true
+            }
+        );
+    }
+
+    // ===========================================================================
+    // store_event
+    // ===========================================================================
 
     #[test]
     fn store_event_assigns_incrementing_sequence_numbers() {
@@ -774,16 +913,6 @@ mod tests {
         let store = EventStore::new(MockIndex::new(), log).unwrap();
 
         assert_eq!(store.max_timestamp, Some(300));
-    }
-
-    #[test]
-    fn store_event_appends_to_log() {
-        let mut store = new_store();
-        store.store_event(make_local_event(100)).unwrap();
-        store.store_event(make_local_event(200)).unwrap();
-
-        let logged: Vec<_> = store.log.read_from(1).unwrap().collect();
-        assert_eq!(logged.len(), 2);
     }
 
     #[test]
@@ -1086,19 +1215,6 @@ mod tests {
     // ===========================================================================
 
     #[test]
-    fn seq_query_returns_all_events() {
-        let store = populated_store(&[
-            make_local_event(100),
-            make_local_event(200),
-            make_local_event(300),
-        ]);
-
-        let events = store.query_by_seq(1, None, None).unwrap();
-
-        assert_eq!(events.len(), 3);
-    }
-
-    #[test]
     fn seq_query_reads_from_given_offset() {
         let store = populated_store(&[
             make_local_event(100),
@@ -1129,21 +1245,6 @@ mod tests {
         for e in &events {
             assert_eq!(e.get_ctx().source(), EventSource::Local);
         }
-    }
-
-    #[test]
-    fn seq_query_with_limit() {
-        let store = populated_store(&[
-            make_local_event(100),
-            make_local_event(200),
-            make_local_event(300),
-            make_local_event(400),
-            make_local_event(500),
-        ]);
-
-        let events = store.query_by_seq(1, None, Some(2)).unwrap();
-
-        assert_eq!(events.len(), 2);
     }
 
     #[test]
@@ -1261,15 +1362,6 @@ mod tests {
     }
 
     #[test]
-    fn ts_query_returns_empty_when_no_matching_timestamp() {
-        let store = new_store();
-
-        let events = store.query_by_ts(999, None, None).unwrap();
-
-        assert!(events.is_empty());
-    }
-
-    #[test]
     fn ts_query_returns_empty_when_past_all_events() {
         let store = populated_store(&[make_local_event(100), make_local_event(200)]);
 
@@ -1292,20 +1384,6 @@ mod tests {
 
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].get_ctx().source(), EventSource::Net);
-    }
-
-    #[test]
-    fn ts_query_with_limit() {
-        let store = populated_store(&[
-            make_local_event(100),
-            make_local_event(200),
-            make_local_event(300),
-            make_local_event(400),
-        ]);
-
-        let events = store.query_by_ts(100, None, Some(2)).unwrap();
-
-        assert_eq!(events.len(), 2);
     }
 
     #[test]

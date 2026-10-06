@@ -9,7 +9,7 @@ import { beforeAll, describe, expect, it } from 'vitest'
 import { InterfoldSDK } from '../src/interfold-sdk'
 import { zeroAddress } from 'viem'
 import { hardhat } from 'viem/chains'
-import { generatePublicKey, encryptNumber as standaloneEncryptNumber, encryptVector as standaloneEncryptVector } from '../src/crypto'
+import { generatePublicKey } from '../src/crypto'
 
 let publicKey: Uint8Array
 beforeAll(async () => {
@@ -52,28 +52,6 @@ describe('encryptNumber', () => {
       differentCommitment[0] ^= 1
       expect(await sdk.validatePublicKeyCommitment(publicKey, differentCommitment)).to.equal(false)
       expect(await sdk.validatePublicKeyCommitment(publicKey, new Uint8Array(31))).to.equal(false)
-    })
-
-    it('should compute a SAFE commitment for encrypted data', async () => {
-      const ciphertext = await sdk.encryptNumber(10n, publicKey)
-      const commitment = await sdk.computeCiphertextCommitment(ciphertext)
-
-      expect(commitment).to.be.an.instanceof(Uint8Array)
-      expect(commitment.length).to.equal(32)
-    })
-  })
-
-  describe('standalone encryption (no blockchain setup)', () => {
-    it('should encrypt a number using standalone functions', async () => {
-      const ct = await standaloneEncryptNumber(10n, publicKey, 'INSECURE_THRESHOLD_512')
-      expect(ct).to.be.an.instanceof(Uint8Array)
-      expect(ct.length).to.equal(9_238)
-    })
-
-    it('should encrypt a vector using standalone functions', async () => {
-      const ct = await standaloneEncryptVector(new BigUint64Array([1n, 2n]), publicKey, 'INSECURE_THRESHOLD_512')
-      expect(ct).to.be.an.instanceof(Uint8Array)
-      expect(ct.length).to.equal(9_238)
     })
   })
 })

@@ -45,6 +45,10 @@ pub enum ZkRequest {
     DkgAggregation(DkgAggregationRequest),
     /// Phase-7 decryption aggregator (C6Fold + C7 + DecryptionAggregator).
     DecryptionAggregation(DecryptionAggregationRequest),
+    /// Re-verify a C3a/C3b proof that an accusation forwards. It is accusation work, so it still
+    /// runs after the E3 fails, until the request completes. Its response is
+    /// `ZkResponse::VerifyShareProofs`.
+    ReverifyAccusedProof(VerifyShareProofsRequest),
 }
 
 /// Inputs for a single ciphertext index inside [`ZkRequest::DecryptionAggregation`].

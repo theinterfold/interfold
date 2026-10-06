@@ -2,6 +2,8 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { assertSdkMinimumCircuits } from '../src/circuits/assert-minimum-circuits'
+import { ParamSet } from '../src/contracts/types'
+import { cryptoConfigIdForParamSet } from '../src/utils'
 
 const { readFileSync } = vi.hoisted(() => ({ readFileSync: vi.fn() }))
 vi.mock('node:fs', async () => {
@@ -14,6 +16,13 @@ vi.mock('node:fs', async () => {
 })
 
 describe('SDK circuit selection', () => {
+  it('uses v4 configuration IDs and routes secure requests to slot 2', () => {
+    expect(ParamSet.Secure8192).toBe(2)
+    expect(cryptoConfigIdForParamSet(ParamSet.Insecure512)).toBe('0x119c9bde7d7a31aaeef3e696ea29f8590c611d431921b6981434bd2c0fb5f7d1')
+    expect(cryptoConfigIdForParamSet(ParamSet.Secure8192)).toBe('0x5ebb3432396f21cd97fca47e006b9dd38c021bf2902d3e555cf74cb91b28e44e')
+    expect(() => cryptoConfigIdForParamSet(1)).toThrow('Unsupported BFV parameter set: 1')
+  })
+
   beforeEach(() => {
     readFileSync.mockReset()
   })

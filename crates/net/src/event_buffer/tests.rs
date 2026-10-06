@@ -4,21 +4,22 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::net_interface_handle::NetEventSubscriber;
+use crate::net_interface_handle::{NetEventChannel, NetEventSubscriber};
 use std::{sync::Arc, time::Duration};
 
 use super::*;
 use crate::{
     direct_responder::{ChannelType, DirectResponder},
     events::{
-        GossipData, IncomingRequest, NetEvent, OutgoingRequestFailed, OutgoingRequestSucceeded,
-        PeerRejectionKind, ProtocolResponse,
+        call_and_await_response, GossipData, IncomingRequest, NetCommand, NetEvent,
+        OutgoingRequestFailed, OutgoingRequestSucceeded, PeerRejectionKind, ProtocolResponse,
     },
     net_interface::EVENT_CHANNEL_SIZE,
-    NetEventSender,
+    ContentHash, NetEventSender,
 };
 use e3_ciphernode_builder::EventSystem;
 use e3_events::{CorrelationId, EventPublisher, SyncEnded};
+use e3_utils::ArcBytes;
 use libp2p::{
     gossipsub::TopicHash,
     swarm::{ConnectionId, DialError},
@@ -92,12 +93,65 @@ fn sync_and_connection_control_events() -> Vec<NetEvent> {
     ]
 }
 
+/// After `SyncEnded` the buffer reads its input through a bounded broadcast receiver, which a burst
+/// of events can overrun. A caller that reads the buffer output still gets its command result,
+/// because it registers for the result at the input channel.
+#[actix::test]
+async fn command_result_reaches_a_caller_of_the_output_when_the_input_lags() -> Result<()> {
+    let system = EventSystem::new().with_fresh_bus();
+    let bus = system.handle()?.enable("test");
+    let input_tx = NetEventChannel::new(1);
+    let input = NetEventSubscriber::from(&input_tx);
+    let (output, handle) = NetEventBuffer::setup_with_limits(
+        &bus,
+        &input,
+        DEFAULT_MAX_BUFFERED_NET_EVENTS,
+        DEFAULT_MAX_BUFFERED_NET_BYTES,
+    );
+    let _output_rx = output.subscribe();
+    bus.publish_without_context(SyncEnded::new())?;
+    timeout(DELIVERY_TIMEOUT, handle.wait_until_running()).await??;
+
+    let value = ArcBytes::from_bytes(b"document");
+    let key = ContentHash::from_content(&value);
+    let (command_tx, mut commands) = mpsc::channel(1);
+    let call = tokio::spawn(call_and_await_response(
+        command_tx,
+        output,
+        NetCommand::DhtGetRecord {
+            correlation_id: CorrelationId::new(),
+            key: key.clone(),
+        },
+        |event| match event {
+            NetEvent::DhtGetRecordSucceeded { value, .. } => Some(Ok(value.clone())),
+            _ => None,
+        },
+        DELIVERY_TIMEOUT,
+    ));
+    let command = timeout(DELIVERY_TIMEOUT, commands.recv())
+        .await?
+        .context("the call sent no command")?;
+    let correlation_id = command.correlation_id().context("the command has no id")?;
+
+    // The second event replaces the result in the one-slot input before the buffer reads it.
+    input_tx.send(NetEvent::DhtGetRecordSucceeded {
+        key,
+        correlation_id,
+        value: value.clone(),
+    })?;
+    input_tx.send(NetEvent::GossipData(GossipData::GossipBytes(vec![1])))?;
+
+    assert_eq!(timeout(DELIVERY_TIMEOUT * 2, call).await???, value);
+    Ok(())
+}
+
 #[actix::test]
 async fn test_buffers_until_sync_ended() -> Result<()> {
     // Setup
     let system = EventSystem::new().with_fresh_bus();
     let bus = system.handle()?.enable("test");
-    let (input_tx, _input_rx) = broadcast::channel(16);
+    let input_tx = NetEventChannel::new(16);
+    let _input_rx = input_tx.subscribe();
     let input = NetEventSubscriber::from(&input_tx);
     let (output, handle) = NetEventBuffer::setup_with_limits(
         &bus,
@@ -144,6 +198,9 @@ async fn test_buffers_until_sync_ended() -> Result<()> {
     assert!(
         matches!(received2, NetEvent::GossipData(GossipData::GossipBytes(ref bytes)) if bytes == &vec![4, 5, 6])
     );
+    // A marker ends the held events, before every live one.
+    let released = timeout(DELIVERY_TIMEOUT, output_rx.recv()).await??;
+    assert!(matches!(released, NetEvent::StartupBufferReleased));
 
     // Send new event after sync - should forward immediately
     let event3 = NetEvent::GossipData(GossipData::GossipBytes(vec![7, 8, 9]));
@@ -165,7 +222,8 @@ async fn test_buffers_until_sync_ended() -> Result<()> {
 async fn startup_buffer_overflow_fails_readiness_without_dropping_oldest() -> Result<()> {
     let system = EventSystem::new().with_fresh_bus();
     let bus = system.handle()?.enable("test-overflow");
-    let (input_tx, _input_rx) = broadcast::channel(16);
+    let input_tx = NetEventChannel::new(16);
+    let _input_rx = input_tx.subscribe();
     let input = NetEventSubscriber::from(&input_tx);
     let (_output_rx, handle) =
         NetEventBuffer::setup_with_limits(&bus, &input, 1, DEFAULT_MAX_BUFFERED_NET_BYTES);
@@ -190,7 +248,8 @@ async fn startup_buffer_overflow_fails_readiness_without_dropping_oldest() -> Re
 async fn startup_buffer_enforces_estimated_payload_bytes() -> Result<()> {
     let system = EventSystem::new().with_fresh_bus();
     let bus = system.handle()?.enable("test-byte-overflow");
-    let (input_tx, _input_rx) = broadcast::channel(16);
+    let input_tx = NetEventChannel::new(16);
+    let _input_rx = input_tx.subscribe();
     let input = NetEventSubscriber::from(&input_tx);
     let event = NetEvent::GossipData(GossipData::GossipBytes(vec![0; 32]));
     let estimated_bytes = event.buffered_size_bytes();
@@ -243,7 +302,146 @@ async fn sync_control_burst_does_not_lag_or_consume_the_application_buffer() -> 
     ));
     assert!(matches!(
         output_rx.try_recv(),
+        Ok(NetEvent::StartupBufferReleased)
+    ));
+    assert!(matches!(
+        output_rx.try_recv(),
         Err(broadcast::error::TryRecvError::Empty)
     ));
+    Ok(())
+}
+
+#[actix::test]
+async fn startup_drain_stores_every_accepted_protocol_event() -> Result<()> {
+    use crate::{
+        domain::wire::encode_gossip, gossip_ingress::GossipIngress, NetEventTranslator,
+        NetworkPolicy,
+    };
+    use e3_events::{AggregateConfig, AggregateId, EventFactory, GetEvents, KeyshareCreated};
+    use sha2::{Digest, Sha256};
+    let system = EventSystem::new()
+        .with_fresh_bus()
+        .with_aggregate_config(AggregateConfig::new(std::collections::HashMap::from([(
+            AggregateId::new(1),
+            Duration::ZERO,
+        )])));
+    let bus = system.handle()?.enable("test");
+    let history = bus.history();
+    let input_tx = NetEventChannel::new(1024);
+    let input = NetEventSubscriber::from(&input_tx);
+    let (output, handle) = NetEventBuffer::setup_with_limits(
+        &bus,
+        &input,
+        DEFAULT_MAX_BUFFERED_NET_EVENTS,
+        DEFAULT_MAX_BUFFERED_NET_BYTES,
+    );
+    let (commands, _command_rx) = mpsc::channel(8);
+    let policy = NetworkPolicy::local_unrestricted();
+    let _translator = NetEventTranslator::setup(
+        &bus,
+        &commands,
+        &output,
+        "topic",
+        policy.clone(),
+        crate::LiveHistory::default(),
+    );
+    let peer = PeerId::random();
+    let mut ingress = GossipIngress::new();
+    let start = Instant::now();
+    let wall = chrono::Utc::now();
+    let mut expected = std::collections::HashSet::new();
+    for index in 0..400 {
+        let event = bus.event_from(
+            KeyshareCreated {
+                e3_id: e3_events::E3id::new((index / 19).to_string(), 1),
+                party_id: index % 19,
+                node: "dealer".into(),
+                pubkey: ArcBytes::from_bytes(b"key"),
+                signed_pk_generation_proof: None,
+            },
+            None,
+        )?;
+        expected.insert(event.event_id());
+        let bytes = encode_gossip(&GossipData::GossipBytes(event.to_bytes()?), &policy, None)?;
+        let id = libp2p::gossipsub::MessageId::from(Sha256::digest(&bytes).to_vec());
+        let data = ingress
+            .validate(
+                peer,
+                &id,
+                &bytes,
+                &policy,
+                start + Duration::from_millis(index * 200),
+                wall,
+            )?
+            .expect("ingress accepts five events per second");
+        input_tx.send(NetEvent::GossipIngress {
+            propagation_source: peer,
+            data,
+        })?;
+    }
+    timeout(DELIVERY_TIMEOUT, async {
+        while handle.actor.send(BufferedEventCount).await? != expected.len() {
+            tokio::task::yield_now().await;
+        }
+        anyhow::Ok(())
+    })
+    .await??;
+    assert!(history
+        .send(GetEvents::<InterfoldEvent>::new())
+        .await?
+        .is_empty());
+    bus.publish_without_context(SyncEnded::new())?;
+    timeout(DELIVERY_TIMEOUT, handle.wait_until_running()).await??;
+    timeout(DELIVERY_TIMEOUT, async {
+        loop {
+            let stored = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+            let actual: std::collections::HashSet<_> = stored
+                .iter()
+                .filter(|event| matches!(event.get_data(), InterfoldEventData::KeyshareCreated(_)))
+                .map(|event| event.event_id())
+                .collect();
+            if actual.len() == expected.len() {
+                assert_eq!(actual, expected);
+                return anyhow::Ok(());
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await??;
+    Ok(())
+}
+
+/// Input that lags after startup skips gossip that never reaches storage, so the node no longer
+/// says that it observed the network live.
+#[actix::test]
+async fn input_lag_after_startup_revokes_live_history() -> Result<()> {
+    let system = EventSystem::new().with_fresh_bus();
+    let bus = system.handle()?.enable("live-history-lag");
+    let input_tx = NetEventChannel::new(2);
+    let _input_rx = input_tx.subscribe();
+    let input = NetEventSubscriber::from(&input_tx);
+    let live_history = crate::LiveHistory::default();
+    let (output, handle) = NetEventBuffer::setup_with_live_history(
+        &bus,
+        &input,
+        DEFAULT_MAX_BUFFERED_NET_EVENTS,
+        DEFAULT_MAX_BUFFERED_NET_BYTES,
+        live_history.clone(),
+    );
+    let _output_rx = output.subscribe();
+    bus.publish_without_context(SyncEnded::new())?;
+    timeout(DELIVERY_TIMEOUT, handle.wait_until_running()).await??;
+    live_history.begin(5);
+
+    for byte in 0..10u8 {
+        input_tx.send(NetEvent::GossipData(GossipData::GossipBytes(vec![byte])))?;
+    }
+    timeout(DELIVERY_TIMEOUT, async {
+        while live_history.since().is_some() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .context("input lag did not revoke live history")?;
     Ok(())
 }

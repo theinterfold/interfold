@@ -14,6 +14,7 @@ import {
   getAllRoundResults,
   getCurrentRound,
   getEligibleAddresses,
+  getInputSelection,
   getRoundCiphertext,
   getRoundPublicKey,
   getRoundResult,
@@ -36,6 +37,8 @@ import type {
   BroadcastVoteResponse,
   CurrentRoundResponse,
   E3StateLiteResponse,
+  InputIdentity,
+  InputSelectionResponse,
   JsonResponse,
   NewRoundRequest,
   OnChainRoundData,
@@ -193,6 +196,16 @@ export class CrispSDK {
    */
   async getVoteStatus(e3Id: bigint, address: string): Promise<VoteStatusResponse> {
     return getVoteStatus(this.serverUrl, e3Id, address)
+  }
+
+  /**
+   * Ask the server whether the Secure Process selects a submitted input for its slot.
+   * @param e3Id - The e3Id of the round
+   * @param identity - The input identity, from `decodeInputIdentity`
+   * @returns The selection state of the input, or undefined if the server does not know the round
+   */
+  async getInputSelection(e3Id: bigint, identity: InputIdentity): Promise<InputSelectionResponse | undefined> {
+    return getInputSelection(this.serverUrl, e3Id, identity)
   }
 
   /**

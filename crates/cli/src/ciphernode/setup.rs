@@ -13,7 +13,6 @@ use e3_console::{log, Console};
 use e3_utils::{colorize, Color};
 use std::path::PathBuf;
 use tracing::instrument;
-use zeroize::Zeroizing;
 
 use crate::helpers::read_secret_line;
 use crate::password_set::ask_for_password;
@@ -24,11 +23,11 @@ pub async fn execute(
     out: Console,
     network: String,
     rpc_url: Option<String>,
-    mut password: Option<Zeroizing<String>>,
     password_stdin: bool,
-    mut private_key: Option<Zeroizing<String>>,
     private_key_stdin: bool,
 ) -> Result<()> {
+    let mut password = None;
+    let mut private_key = None;
     if password_stdin || private_key_stdin {
         let mut stdin = std::io::stdin().lock();
         if password_stdin {

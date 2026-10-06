@@ -186,14 +186,6 @@ mod tests {
     }
 
     #[test]
-    fn test_debug() {
-        let mut set = OrderedSet::new();
-        set.insert(1);
-        set.insert(2);
-        assert_eq!(format!("{:?}", set), "{1, 2}");
-    }
-
-    #[test]
     fn test_into_iter() {
         let mut set = OrderedSet::new();
         set.insert(3);

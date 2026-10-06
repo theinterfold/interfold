@@ -72,6 +72,16 @@ pub struct Bits {
     pub noise_bit: u32,
     /// Native \([0, q_l)\) width for hashing decryption-share coefficients (C6/C7 `d_commitment`).
     pub d_native_bit: u32,
+    /// Width of a single CRT residue, `max_l bits(q_l - 1)`. Every value the interpolation and the
+    /// Garner step read is a residue in `[0, q_l)`.
+    pub q_bit: u32,
+    /// Quotient width for the in-circuit `x mod q_l` reductions. The widest input is the Lagrange
+    /// interpolation sum, below `H * q_l^2`, so the quotient stays under `H * q_l`.
+    pub k_bit: u32,
+    /// Width of the rounded plaintext, `bits(t)`. The decode returns a value in `[0, t]`.
+    pub t_bit: u32,
+    /// Width of `Q`, the product of the moduli, for the rounded-decode remainder interval.
+    pub q_total_bit: u32,
 }
 
 /// Circuit config: moduli count, plaintext modulus, q_inverse_mod_t, bits, bounds, and message polynomial length.
@@ -103,10 +113,6 @@ pub struct Inputs {
     pub party_ids: Vec<BigInt>,
     /// Message polynomial (public witness)
     pub message: Polynomial,
-    /// u_global polynomial (CRT reconstruction, secret witness)
-    pub u_global: Polynomial,
-    /// CRT quotient polynomials per modulus (secret witnesses)
-    pub crt_quotients: CrtPolynomial,
 }
 
 impl Computation for Bounds {
@@ -139,13 +145,26 @@ impl Computation for Bits {
             .context_at_level(0)
             .map_err(|e| CircuitsErrors::Other(format!("context_at_level: {:?}", e)))?;
         let mut d_native_bit = 0u32;
+        let mut modulus_product = BigInt::from(1u32);
         for qi in ctx.moduli_operators() {
             let q = BigInt::from(**qi);
-            d_native_bit = d_native_bit.max(calculate_bit_width(q - 1));
+            d_native_bit = d_native_bit.max(calculate_bit_width(q.clone() - 1));
+            modulus_product *= q;
         }
+        // A residue fits `bits(q_l - 1)`; `d_native_bit` is already that maximum.
+        let q_bit = d_native_bit;
+        // Reduction quotients: the widest reduced input is the interpolation sum, under `H * q^2`,
+        // so its quotient is under `H * q`. Six spare bits cover any committee up to 64 parties.
+        let k_bit = q_bit + 6;
+        let t_bit = calculate_bit_width(BigInt::from(threshold_params.plaintext()));
+        let q_total_bit = calculate_bit_width(modulus_product.clone());
         Ok(Bits {
             noise_bit,
             d_native_bit,
+            q_bit,
+            k_bit,
+            t_bit,
+            q_total_bit,
         })
     }
 }
@@ -261,35 +280,10 @@ impl Computation for Inputs {
             u_per_modulus.push(u_modulus_coeffs);
         }
 
-        // u_global per coefficient via CRT reconstruction
-        let mut u_global_vec: Vec<BigInt> = Vec::with_capacity(degree);
-        for coeff_idx in 0..degree {
-            let rests: Vec<u64> = u_per_modulus.iter().map(|row| row[coeff_idx]).collect();
-            let u_global_coeff = utils::crt_reconstruct(&rests, moduli)?;
-            u_global_vec.push(BigInt::from(u_global_coeff));
-        }
-
-        // CRT quotients: r^{(m)} = (u_global - u^{(m)}) / q_m
-        let mut crt_quotients_limbs: Vec<Polynomial> = Vec::with_capacity(num_moduli);
-        for (m, u_modulus) in u_per_modulus.iter().enumerate().take(num_moduli) {
-            let q_m = moduli[m];
-            let q_m_bigint = BigInt::from(q_m);
-            let mut r_m_coeffs = Vec::with_capacity(degree);
-            for (coeff_idx, u_global_val) in u_global_vec.iter().enumerate().take(degree) {
-                let u_m = BigInt::from(u_modulus[coeff_idx]);
-                let diff = u_global_val - &u_m;
-                let remainder = &diff % &q_m_bigint;
-                if !remainder.is_zero() {
-                    return Err(CircuitsErrors::Other(format!(
-                        "CRT quotient not exact at m={} coeff={}",
-                        m, coeff_idx
-                    )));
-                }
-                r_m_coeffs.push(&diff / &q_m_bigint);
-            }
-            crt_quotients_limbs.push(Polynomial::new(r_m_coeffs));
-        }
-        let mut crt_quotients = CrtPolynomial::new(crt_quotients_limbs);
+        // `u_global` and the CRT quotients are no longer witnesses: the circuit reconstructs `u`
+        // from the residues by Garner, so there is nothing for a prover to supply or for the circuit
+        // to bound. `u_per_modulus` above is kept only to validate the interpolation here.
+        let _ = &u_per_modulus;
 
         // Truncate to max_msg_non_zero_coeffs (index 0 = constant term, ascending order)
         decryption_shares = decryption_shares
@@ -297,20 +291,12 @@ impl Computation for Inputs {
             .map(|crt| truncate_crt_to_max_coeffs(crt, max_msg_non_zero_coeffs))
             .collect();
         let message_trunc = truncate_to_max_coeffs(&message, max_msg_non_zero_coeffs);
-        let u_global_trunc = truncate_to_max_coeffs(&u_global_vec, max_msg_non_zero_coeffs);
-        crt_quotients = truncate_crt_to_max_coeffs(crt_quotients, max_msg_non_zero_coeffs);
 
         let zkp_modulus = get_zkp_modulus();
 
         let party_ids: Vec<BigInt> = party_ids.iter().map(|c| reduce(c, &zkp_modulus)).collect();
         let message = Polynomial::new(
             message_trunc
-                .iter()
-                .map(|c| reduce(c, &zkp_modulus))
-                .collect(),
-        );
-        let u_global = Polynomial::new(
-            u_global_trunc
                 .iter()
                 .map(|c| reduce(c, &zkp_modulus))
                 .collect(),
@@ -332,8 +318,6 @@ impl Computation for Inputs {
             decryption_shares,
             party_ids,
             message,
-            u_global,
-            crt_quotients,
         })
     }
 
@@ -349,8 +333,6 @@ impl Computation for Inputs {
             .collect();
         let party_ids_json = bigint_1d_to_json_values(&self.party_ids);
         let message_json = polynomial_to_toml_json(&self.message);
-        let u_global_json = polynomial_to_toml_json(&self.u_global);
-        let crt_quotients_json = crt_polynomial_to_toml_json(&self.crt_quotients);
         let expected_d_commitments_json = bigint_1d_to_json_values(&self.expected_d_commitments);
 
         let json = serde_json::json!({
@@ -358,8 +340,6 @@ impl Computation for Inputs {
             "decryption_shares": decryption_shares_json,
             "party_ids": party_ids_json,
             "message": message_json,
-            "u_global": u_global_json,
-            "crt_quotients": crt_quotients_json,
         });
 
         Ok(json)
@@ -415,16 +395,15 @@ mod tests {
             out.inputs.message.coefficients().len(),
             configs.max_msg_non_zero_coeffs
         );
-        assert_eq!(
-            out.inputs.u_global.coefficients().len(),
-            configs.max_msg_non_zero_coeffs
-        );
-        assert_eq!(out.inputs.crt_quotients.limbs.len(), configs.l);
-        assert_eq!(
-            out.inputs.crt_quotients.limb(0).coefficients().len(),
-            configs.max_msg_non_zero_coeffs
-        );
+        assert_eq!(out.inputs.decryption_shares.len(), committee.threshold + 1);
+        assert_eq!(out.inputs.decryption_shares[0].limbs.len(), configs.l);
         assert!(out.bits.noise_bit > 0);
         assert!(out.bits.d_native_bit > 0);
+        // The reduced path derives `u` by Garner, so these bound the reductions and the decode
+        // instead of a CRT quotient witness.
+        assert!(out.bits.q_bit > 0);
+        assert!(out.bits.k_bit > out.bits.q_bit);
+        assert!(out.bits.t_bit > 0);
+        assert!(out.bits.q_total_bit >= out.bits.q_bit);
     }
 }

@@ -66,6 +66,7 @@ COPY crates/hamt/Cargo.toml ./hamt/Cargo.toml
 COPY crates/indexer/Cargo.toml ./indexer/Cargo.toml
 COPY crates/init/Cargo.toml ./init/Cargo.toml
 COPY crates/keyshare/Cargo.toml ./keyshare/Cargo.toml
+COPY crates/layout-lock/Cargo.toml ./layout-lock/Cargo.toml
 COPY crates/logger/Cargo.toml ./logger/Cargo.toml
 COPY crates/multithread/Cargo.toml ./multithread/Cargo.toml
 COPY crates/net/Cargo.toml ./net/Cargo.toml
@@ -119,7 +120,12 @@ RUN cargo build --locked --release
 COPY ./crates .
 
 RUN find . -name "*.rs" -exec touch {} +
+ARG E3_CIRCUITS_ARCHIVE_SHA256
 RUN cargo build --locked --release -p e3-cli
+RUN if [ -n "$E3_CIRCUITS_ARCHIVE_SHA256" ]; then \
+      /build/target/release/interfold noir status > /tmp/noir-status.txt && \
+      grep -Fx "  Archive SHA-256: $E3_CIRCUITS_ARCHIVE_SHA256" /tmp/noir-status.txt; \
+    fi
 
 # Runtime stage
 FROM debian:stable-slim

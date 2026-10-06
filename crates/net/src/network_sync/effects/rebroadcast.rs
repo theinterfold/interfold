@@ -4,28 +4,17 @@
 
 use super::*;
 use crate::backoff::backoff_delay;
-use e3_events::{DecryptionshareCreated, DkgCoordination, E3id};
+use crate::domain::closed_e3s::record_closed_e3;
+use e3_events::E3id;
 
 impl NetSyncManager {
+    /// Keep re-sending this node's latest DKG Ready or Roster message until key publication or the
+    /// end of the E3.
     pub(in crate::actors::net_sync_manager) fn remember_dkg_coordination(
         &mut self,
         event: InterfoldEvent,
-        message: &DkgCoordination,
     ) {
-        if event.source() != EventSource::Local {
-            return;
-        }
-        if let Err(error) = self.network.validate_event(&event) {
-            warn!(%error, "Ignoring a local DKG coordination event for another network");
-            return;
-        }
-        self.schedule_reannouncement(
-            AnnouncementKey::Dkg(message.e3_id.clone(), message.party_id, message.kind),
-            event,
-            DKG_REANNOUNCE_BASE,
-            DKG_REANNOUNCE_CAP,
-            Instant::now(),
-        );
+        self.remember(event, DKG_REANNOUNCE_BASE, DKG_REANNOUNCE_CAP);
     }
 
     /// Keep re-sending this node's decryption share until the E3 ends. The aggregator ignores
@@ -33,22 +22,36 @@ impl NetSyncManager {
     pub(in crate::actors::net_sync_manager) fn remember_decryption_share(
         &mut self,
         event: InterfoldEvent,
-        share: &DecryptionshareCreated,
     ) {
+        self.remember(event, SHARE_REANNOUNCE_BASE, SHARE_REANNOUNCE_CAP);
+    }
+
+    fn remember(&mut self, event: InterfoldEvent, base: Duration, cap: Duration) {
         if event.source() != EventSource::Local {
             return;
         }
         if let Err(error) = self.network.validate_event(&event) {
-            warn!(%error, "Ignoring a local decryption share for another network");
+            warn!(%error, "Ignoring a local message for another network");
             return;
         }
-        self.schedule_reannouncement(
-            AnnouncementKey::DecryptionShare(share.e3_id.clone(), share.party_id),
-            event,
-            SHARE_REANNOUNCE_BASE,
-            SHARE_REANNOUNCE_CAP,
-            Instant::now(),
-        );
+        let Some(key) = AnnouncementKey::for_event(event.get_data()) else {
+            return;
+        };
+        if self.has_ended(&key) {
+            debug!(e3_id = %key.e3_id(), "Not re-sending a message of an ended E3");
+            return;
+        }
+        self.schedule_reannouncement(key, event, base, cap, Instant::now());
+    }
+
+    /// Whether the phase of `key` is over because its E3 ended.
+    fn has_ended(&self, key: &AnnouncementKey) -> bool {
+        self.ended_e3s.contains(key.e3_id())
+    }
+
+    /// Local replay has finished, so re-sends may start.
+    pub(in crate::actors::net_sync_manager) fn finish_local_replay(&mut self) {
+        self.replay_finished = true;
     }
 
     fn schedule_reannouncement(
@@ -88,12 +91,19 @@ impl NetSyncManager {
         self.announcements.retain(|key, _| key.e3_id() != e3_id);
     }
 
+    /// Stop re-sending the messages of an E3 whose terminal stage came from the chain, and do not
+    /// re-send them again.
+    pub(in crate::actors::net_sync_manager) fn mark_e3_ended(&mut self, e3_id: &E3id) {
+        record_closed_e3(&mut self.ended_e3s, e3_id);
+        self.forget_e3_announcements(e3_id);
+    }
+
     /// Re-send every message whose next send time has passed, with a new delivery ID, and back
     /// off its schedule. Messages past their lifetime are dropped.
     pub(in crate::actors::net_sync_manager) fn reannounce_due(&mut self, now: Instant) {
         self.announcements
             .retain(|_, announcement| announcement.expires > now);
-        if !self.net_ready {
+        if !self.net_ready || !self.replay_finished {
             return;
         }
         let topic = self.topic.clone();
@@ -172,7 +182,10 @@ impl NetSyncManager {
         }
     }
 
-    /// Re-gossip the node's own forwardable artifacts returned by the re-broadcast query.
+    /// Re-gossip the node's own forwardable artifacts returned by the re-broadcast query, once.
+    /// The query starts at the same snapshot event as local replay, which has already scheduled
+    /// the re-sends of these messages in log order: a share before its E3's chain end was
+    /// scheduled and then forgotten, and a share after it was not scheduled.
     pub(in crate::actors::net_sync_manager) fn handle_rebroadcast_response(
         &mut self,
         events: Vec<InterfoldEvent>,
@@ -189,9 +202,10 @@ impl NetSyncManager {
                 warn!(%error, "Skipping own artifact that does not match the active network");
                 continue;
             }
-            if let InterfoldEventData::DecryptionshareCreated(share) = event.get_data() {
-                let share = share.clone();
-                self.remember_decryption_share(event.clone(), &share);
+            if AnnouncementKey::for_event(event.get_data()).is_some_and(|key| self.has_ended(&key))
+            {
+                debug!("Skipping own artifact of an ended E3");
+                continue;
             }
             let data: GossipData = match event.try_into() {
                 Ok(data) => data,

@@ -123,6 +123,12 @@ impl PathsEngine {
         clean(self.get_data_dir().join(&self.name).join(DEFAULT_DB_NAME))
     }
 
+    /// The directory that holds this node's runtime state files, such as the ingestion heartbeat.
+    /// The database and the event log live here too unless the configuration moves them.
+    pub fn node_data_dir(&self) -> PathBuf {
+        clean(self.get_data_dir().join(&self.name))
+    }
+
     pub fn log_file(&self) -> PathBuf {
         if let Some(log_file) = self.log_file_override.clone() {
             if log_file.is_absolute() {

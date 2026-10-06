@@ -45,11 +45,10 @@ impl ThresholdPlaintextAggregator {
             return Ok(());
         }
 
-        let state: GeneratingC7Proof = self
-            .state
-            .get()
-            .ok_or(anyhow!("Could not get state"))?
-            .try_into()?;
+        let Some(ThresholdPlaintextAggregatorState::GeneratingC7Proof(state)) = self.state.get()
+        else {
+            return Ok(());
+        };
 
         // Extract raw proofs from signed payloads for PlaintextAggregated
         let proofs: Vec<_> = msg
@@ -58,13 +57,23 @@ impl ThresholdPlaintextAggregator {
             .map(|sp| sp.payload.proof.clone())
             .collect();
 
-        if proofs.len() != state.plaintext.len() {
-            warn!(
-                "C7 proof count mismatch: got {} proofs for {} ciphertext indices",
-                proofs.len(),
-                state.plaintext.len()
+        if !c7_proofs_match_batch(
+            &proofs,
+            self.pending
+                .honest_c6_proofs_for_agg
+                .as_deref()
+                .unwrap_or_default(),
+            &state.plaintext,
+            state.threshold_m as usize + 1,
+        ) {
+            warn!("Ignoring C7 proofs for a different decryption batch");
+            return self.dispatch_c7_proof_request(
+                state.shares,
+                state.plaintext,
+                state.threshold_m,
+                state.threshold_n,
+                ec,
             );
-            return self.fail_decryption_round(ec);
         }
 
         info!("C7 proof signed — awaiting DecryptionAggregation...");
@@ -93,10 +102,41 @@ impl ThresholdPlaintextAggregator {
         }
         if !self.proof_aggregation_enabled {
             if self.pending.decryption_aggregator_proofs.is_none() {
-                // Reuse the already-generated C7 proofs as non-empty test placeholders. Mock
-                // decryption verifiers accept them; production verifiers reject them because
-                // they are not DecryptionAggregator proofs.
-                self.pending.decryption_aggregator_proofs = self.pending.c7_proofs_pending.clone();
+                // Mock publication keeps the verified C6 domain. The C7 proof bytes remain
+                // invalid for a production decryption aggregator verifier.
+                let c6 = self
+                    .pending
+                    .honest_c6_proofs_for_agg
+                    .as_ref()
+                    .and_then(|proofs| proofs.first())
+                    .ok_or_else(|| anyhow!("Missing C6 proofs for mock publication"))?;
+                let layout = e3_events::CircuitName::ThresholdShareDecryption.input_layout();
+                let proofs = self
+                    .pending
+                    .c7_proofs_pending
+                    .as_ref()
+                    .unwrap()
+                    .iter()
+                    .enumerate()
+                    .map(|(index, proof)| {
+                        let c6 =
+                            c6.1.get(index)
+                                .ok_or_else(|| anyhow!("Missing C6 output"))?;
+                        let mut inputs = vec![0u8; 6 * 32];
+                        for (field, name) in [(4, "domain_hi"), (5, "domain_lo")] {
+                            let value = layout
+                                .extract_field(&c6.public_signals, name)
+                                .ok_or_else(|| anyhow!("Missing C6 domain field"))?;
+                            inputs[field * 32..(field + 1) * 32].copy_from_slice(value);
+                        }
+                        Ok(Proof::new(
+                            e3_events::CircuitName::DecryptionAggregator,
+                            proof.data.clone(),
+                            ArcBytes::from_bytes(&inputs),
+                        ))
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                self.pending.decryption_aggregator_proofs = Some(proofs);
                 let proofs = self.pending.decryption_aggregator_proofs.clone();
                 self.recovery.try_mutate(ec, |mut recovery| {
                     recovery.decryption_aggregator_proofs = proofs;
@@ -131,8 +171,7 @@ impl ThresholdPlaintextAggregator {
             return Ok(());
         }
         if !self.proof_aggregation_enabled {
-            self.pending.decryption_aggregator_proofs = self.pending.c7_proofs_pending.clone();
-            return Ok(());
+            return self.maybe_start_decryption_aggregation(ec);
         }
         let Some(honest_c6) = self.pending.honest_c6_proofs_for_agg.as_ref() else {
             warn!(

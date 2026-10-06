@@ -69,10 +69,38 @@ pub(crate) fn now_unix_secs() -> u64 {
         .as_secs()
 }
 
+/// Whether a live input for `phase` comes too late at `now_unix_secs`: at or after the phase
+/// cutoff. A keyshare that collects inputs has read its DKG timing, so missing timing is an error.
+pub(crate) fn past_phase_cutoff(
+    phase: DkgTimeoutPhase,
+    dkg_deadline_unix_secs: Option<u64>,
+    dkg_window_secs: Option<u64>,
+    now_unix_secs: u64,
+) -> anyhow::Result<bool> {
+    let deadline = dkg_deadline_unix_secs
+        .ok_or_else(|| anyhow::anyhow!("canonical DKG deadline is unavailable"))?;
+    let window =
+        dkg_window_secs.ok_or_else(|| anyhow::anyhow!("frozen DKG window is unavailable"))?;
+    Ok(now_unix_secs >= phase_cutoff_unix_secs(deadline, window, phase))
+}
+
+/// Whether the canonical DKG deadline has passed at `now_unix_secs`.
+pub(crate) fn past_dkg_deadline(
+    dkg_deadline_unix_secs: Option<u64>,
+    now_unix_secs: u64,
+) -> anyhow::Result<bool> {
+    let deadline = dkg_deadline_unix_secs
+        .ok_or_else(|| anyhow::anyhow!("canonical DKG deadline is unavailable"))?;
+    Ok(now_unix_secs >= deadline)
+}
+
+/// Resolve the cutoff delay of `phase` at `now_unix_secs`. Pass the clock reading that admitted
+/// the input, so that admission and the collector timing agree at the cutoff.
 pub(crate) fn resolve_timeout(
     phase: DkgTimeoutPhase,
     dkg_deadline_unix_secs: Option<u64>,
     dkg_window_secs: Option<u64>,
+    now_unix_secs: u64,
 ) -> anyhow::Result<DerivedTimeout> {
     let collector_override = parse_env_secs(phase.override_env());
     let deadline = dkg_deadline_unix_secs
@@ -80,12 +108,64 @@ pub(crate) fn resolve_timeout(
     let window =
         dkg_window_secs.ok_or_else(|| anyhow::anyhow!("frozen DKG window is unavailable"))?;
 
-    resolve_timeout_from_inputs(phase, collector_override, deadline, window, now_unix_secs())
+    resolve_timeout_from_inputs(phase, collector_override, deadline, window, now_unix_secs)
 }
 
+/// Resolve the cutoff delay for an encryption-key collector that restart recovery creates.
+///
+/// Returns `None` when the cutoff has passed at `now_unix_secs` but the canonical deadline has not.
+/// That collector applies the cutoff to the recorded keys. The caller reads the clock.
+pub(crate) fn resolve_encryption_key_timeout(
+    dkg_deadline_unix_secs: Option<u64>,
+    dkg_window_secs: Option<u64>,
+    now_unix_secs: u64,
+) -> anyhow::Result<Option<DerivedTimeout>> {
+    let collector_override =
+        parse_env_secs(DkgTimeoutPhase::EncryptionKeyCollection.override_env());
+    let deadline = dkg_deadline_unix_secs
+        .ok_or_else(|| anyhow::anyhow!("canonical DKG deadline is unavailable"))?;
+    let window =
+        dkg_window_secs.ok_or_else(|| anyhow::anyhow!("frozen DKG window is unavailable"))?;
+
+    resolve_encryption_key_timeout_from_inputs(collector_override, deadline, window, now_unix_secs)
+}
+
+pub(crate) fn resolve_encryption_key_timeout_from_inputs(
+    collector_override_secs: Option<u64>,
+    dkg_deadline_unix_secs: u64,
+    dkg_window_secs: u64,
+    now_unix_secs: u64,
+) -> anyhow::Result<Option<DerivedTimeout>> {
+    anyhow::ensure!(
+        dkg_deadline_unix_secs > 0 && dkg_window_secs > 0,
+        "canonical DKG timing is invalid"
+    );
+    anyhow::ensure!(
+        now_unix_secs < dkg_deadline_unix_secs,
+        "canonical DKG deadline {} has passed at {}",
+        dkg_deadline_unix_secs,
+        now_unix_secs
+    );
+    let phase = DkgTimeoutPhase::EncryptionKeyCollection;
+    if now_unix_secs >= phase_cutoff_unix_secs(dkg_deadline_unix_secs, dkg_window_secs, phase) {
+        return Ok(None);
+    }
+    resolve_timeout_from_inputs(
+        phase,
+        collector_override_secs,
+        dkg_deadline_unix_secs,
+        dkg_window_secs,
+        now_unix_secs,
+    )
+    .map(Some)
+}
+
+/// Resolve the threshold-share schedule at `now_unix_secs`. Pass the clock reading that admitted
+/// the input, so that admission and the collector timing agree at the deadline.
 pub(crate) fn resolve_threshold_share_schedule(
     dkg_deadline_unix_secs: Option<u64>,
     dkg_window_secs: Option<u64>,
+    now_unix_secs: u64,
 ) -> anyhow::Result<ThresholdShareSchedule> {
     let collector_override =
         parse_env_secs(DkgTimeoutPhase::ThresholdShareCollection.override_env());
@@ -98,7 +178,7 @@ pub(crate) fn resolve_threshold_share_schedule(
         collector_override,
         deadline,
         window,
-        now_unix_secs(),
+        now_unix_secs,
     )
 }
 
@@ -226,17 +306,21 @@ mod tests {
     }
 
     #[test]
-    fn threshold_share_timeout_uses_cumulative_cutoff() {
-        let timeout = resolve_timeout_from_inputs(
-            DkgTimeoutPhase::ThresholdShareCollection,
-            None,
-            8_200,
-            7200,
-            2_000,
-        )
-        .unwrap();
+    fn encryption_key_timeout_is_absent_after_the_cutoff() {
+        let timeout =
+            resolve_encryption_key_timeout_from_inputs(None, 8_200, 7_200, 1_600).unwrap();
+        assert_eq!(
+            timeout.map(|timeout| timeout.duration),
+            Some(Duration::from_secs(120))
+        );
 
-        assert_eq!(timeout.duration, Duration::from_secs(4_400));
+        let overdue =
+            resolve_encryption_key_timeout_from_inputs(None, 8_200, 7_200, 1_720).unwrap();
+        assert!(overdue.is_none());
+
+        let error =
+            resolve_encryption_key_timeout_from_inputs(None, 8_200, 7_200, 8_200).unwrap_err();
+        assert!(error.to_string().contains("canonical DKG deadline"));
     }
 
     #[test]

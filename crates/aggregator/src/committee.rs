@@ -6,21 +6,8 @@
 
 use alloy::primitives::Address;
 use anyhow::{anyhow, Result};
-use e3_events::OrderedSet;
 use std::collections::HashMap;
 use std::str::FromStr;
-
-/// Parse committee node strings from an [`OrderedSet`] (address-sorted iteration).
-///
-/// Prefer [`committee_addresses_in_party_order`] for ZK / on-chain committee-hash binding.
-pub fn committee_addresses_from_nodes(nodes: &OrderedSet<String>) -> Result<Vec<Address>> {
-    nodes
-        .iter()
-        .map(|s| {
-            Address::from_str(s).map_err(|e| anyhow!("invalid committee node address {s}: {e}"))
-        })
-        .collect()
-}
 
 /// Build committee addresses in ascending `party_id` order (runtime address-sorted committee).
 ///
@@ -67,11 +54,8 @@ mod tests {
         let party_ids = vec![0, 1, 2];
 
         let party_order = committee_addresses_in_party_order(&party_ids, &party_nodes).unwrap();
-        let mut nodes = OrderedSet::new();
-        for node in party_nodes.values() {
-            nodes.insert(node.clone());
-        }
-        let address_order = committee_addresses_from_nodes(&nodes).unwrap();
+        let mut address_order = party_order.clone();
+        address_order.sort();
 
         assert_ne!(party_order, address_order);
         assert_eq!(

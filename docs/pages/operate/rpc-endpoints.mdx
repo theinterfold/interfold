@@ -17,13 +17,13 @@ the end, you know whether an endpoint is usable before you start a node with it.
 
 ## What the node needs
 
-| Requirement         | Value                                     | Reason                                                                              |
-| ------------------- | ----------------------------------------- | ----------------------------------------------------------------------------------- |
-| Log history         | From the lowest configured `deploy_block` | The first sync reads every contract event from that block.                          |
-| `eth_getLogs` range | 10,000 blocks, or a smaller cap           | The node starts at 10,000 blocks and halves the range when the provider refuses it. |
-| WebSocket           | A `ws://` or `wss://` URL                 | After the sync, live logs arrive through an `eth_subscribe` subscription.           |
-| Rate limits         | Short bursts are acceptable               | The node retries HTTP 429 and 503 responses (see below).                            |
-| Historical state    | Not needed                                | The node replays history from logs. It does not read contract state at old blocks.  |
+| Requirement         | Value                                     | Reason                                                                                                       |
+| ------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Log history         | From the lowest configured `deploy_block` | The first sync reads every contract event from that block.                                                   |
+| `eth_getLogs` range | 10,000 blocks, or a smaller cap           | The node starts at 10,000 blocks (`rpc_log_range_blocks`) and halves the range when the provider refuses it. |
+| WebSocket           | A `ws://` or `wss://` URL                 | After the sync, an `eth_subscribe` subscription announces new logs.                                          |
+| Rate limits         | Short bursts are acceptable               | The node retries HTTP 429 and 503 responses (see below).                                                     |
+| Historical state    | Not needed                                | The node replays history from logs. It does not read contract state at old blocks.                           |
 
 An endpoint can keep old logs and not keep old state, or the opposite. A test of historical state
 (`eth_getCode` or `eth_call` at an old block) therefore tells you nothing about log history.
@@ -44,14 +44,24 @@ member of the pool can return that block or its logs.
     },
     { label: 'Fetch logs', icon: 'network', sub: 'eth_getLogs in ranges of 10,000 blocks.' },
     { label: 'Narrow', icon: 'wrench', sub: 'Halve the range when the provider refuses it.' },
-    { label: 'Subscribe', icon: 'flow', sub: 'eth_subscribe delivers the live logs.' },
+    {
+      label: 'Subscribe',
+      icon: 'flow',
+      sub: 'eth_subscribe announces new logs. The node reads them with eth_getLogs.',
+    },
   ]}
 />
 
 The node reads logs from the start block to the chain head. Each `eth_getLogs` request covers 10,000
-blocks. When the provider refuses a range, the node halves the range and sends the request again.
-The smallest range is one block, and one range can shrink 16 times at most. The node keeps the
-narrower width for the rest of the sync.
+blocks, or the chain's `rpc_log_range_blocks`. When the provider refuses a range, the node halves
+the range and sends the request again. The smallest range is one block. The node keeps the narrower
+width for the rest of the sync.
+
+The node recognizes a refusal that names a block range or a result-size limit, for example the
+messages in the table under [Measured endpoints](#measured-endpoints). A provider that refuses a
+range with other words makes the node retry and fail instead of narrowing. Set
+`rpc_log_range_blocks` to the provider's documented cap for such a provider. The same key raises the
+range for a provider that permits more than 10,000 blocks, which makes the first sync faster.
 
 A narrow range makes the first sync slower. A history of 5,000,000 blocks takes 500 requests at
 10,000 blocks, and 500,000 requests at 10 blocks. When the range is 128 blocks or less, the node

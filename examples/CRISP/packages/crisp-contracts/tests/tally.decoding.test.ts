@@ -71,22 +71,6 @@ describe('Tally decoding (SDK vs CRISPProgram)', function () {
     })
   })
 
-  describe('SDK self-consistency', function () {
-    it('should round-trip a two-option vote through the packed byte form', function () {
-      const vote = [10000000000, 30000000000]
-      const decoded = decodeTally(packCoefficients(encodeVote(vote)), 2)
-
-      expect(decoded).to.deep.equal(vote.map(BigInt))
-    })
-
-    it('should round-trip a three-option vote', function () {
-      const vote = [5, 7, 9]
-      const decoded = decodeTally(packCoefficients(encodeVote(vote)), 3)
-
-      expect(decoded).to.deep.equal(vote.map(BigInt))
-    })
-  })
-
   describe('contract agreement', function () {
     it('should decode a single encoded ballot the same way the SDK does', async function () {
       const vote = [10000000000, 30000000000]
@@ -134,7 +118,8 @@ describe('Tally decoding (SDK vs CRISPProgram)', function () {
 
   describe('option count bounds', function () {
     // The Noir circuit asserts num_options <= MAX_OPTIONS (10). A round above that could
-    // never accept a ballot, so the contract and the SDK must reject it at the same point.
+    // never accept a ballot, so the contract rejects it at the SDK's MAX_VOTE_OPTIONS.
+    // crisp-sdk tests/vote.test.ts covers the SDK's rejection at the same bound.
     it('should reject a round with more options than the circuit allows', async function () {
       await expect(mockInterfold.requestWithOptions(await crispProgram.getAddress(), MAX_VOTE_OPTIONS + 1)).to.be.revertedWithCustomError(
         crispProgram,
@@ -149,12 +134,6 @@ describe('Tally decoding (SDK vs CRISPProgram)', function () {
 
       const [, , numOptions] = await crispProgram.getRoundData(e3Id)
       expect(numOptions).to.equal(BigInt(MAX_VOTE_OPTIONS))
-    })
-
-    it('should reject decoding more options than the circuit allows off chain', function () {
-      const coefficients = new Array(MAX_MSG_NON_ZERO_COEFFS).fill(0)
-
-      expect(() => decodeTally(coefficients, MAX_VOTE_OPTIONS + 1)).to.throw('exceeds MAX_VOTE_OPTIONS')
     })
   })
 })

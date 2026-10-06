@@ -9,58 +9,18 @@ import { execFileSync, execSync } from 'child_process'
 import { createHash } from 'crypto'
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'fs'
 import { join, relative, resolve } from 'path'
-import { SUPPORTED_PRESET_COMMITTEE_PAIRS } from './circuit-constants'
+import type { CircuitCommittee, CircuitPreset } from './circuit-constants'
+import requiredArtifacts from '../crates/zk-prover/required-artifacts.json'
+import supportedConfigurations from '../crates/zk-prover/supported-configurations.json'
 
 const BRANCH = 'circuit-artifacts'
 const ROOT = resolve(__dirname, '..')
 const DIST = join(ROOT, 'dist', 'circuits')
 const METADATA_FILES = new Set(['.git', 'SOURCE_HASH', 'SHA256SUMS', 'checksums.json'])
-export const RELEASE_REQUIRED_PAIRS = SUPPORTED_PRESET_COMMITTEE_PAIRS.map(({ preset, committee }) => [preset, committee] as const)
-
-const REQUIRED_BASE_CIRCUITS = [
-  'dkg/e_sm_share_computation/e_sm_share_computation',
-  'dkg/pk/pk',
-  'dkg/share_decryption/share_decryption',
-  'dkg/share_encryption/share_encryption',
-  'dkg/sk_share_computation/sk_share_computation',
-  'threshold/decrypted_shares_aggregation/decrypted_shares_aggregation',
-  'threshold/pk_aggregation/pk_aggregation',
-  'threshold/pk_generation/pk_generation',
-  'threshold/share_decryption/share_decryption',
-  'threshold/user_data_encryption/user_data_encryption',
-  'threshold/user_data_encryption_ct0/user_data_encryption_ct0',
-  'threshold/user_data_encryption_ct1/user_data_encryption_ct1',
-] as const
-
-const REQUIRED_AGGREGATION_CIRCUITS = [
-  'recursive_aggregation/c2ab_fold/c2ab_fold',
-  'recursive_aggregation/c3_fold/c3_fold',
-  'recursive_aggregation/c3_fold_kernel/c3_fold_kernel',
-  'recursive_aggregation/c3ab_fold/c3ab_fold',
-  'recursive_aggregation/c4ab_fold/c4ab_fold',
-  'recursive_aggregation/c6_fold/c6_fold',
-  'recursive_aggregation/c6_fold_kernel/c6_fold_kernel',
-  'recursive_aggregation/decryption_aggregator/decryption_aggregator',
-  'recursive_aggregation/dkg_aggregator/dkg_aggregator',
-  'recursive_aggregation/node_fold/node_fold',
-  'recursive_aggregation/nodes_fold/nodes_fold',
-  'recursive_aggregation/nodes_fold_kernel/nodes_fold_kernel',
-] as const
-
-const REQUIRED_EVM_AGGREGATION_CIRCUITS = [
-  'recursive_aggregation/decryption_aggregator/decryption_aggregator',
-  'recursive_aggregation/dkg_aggregator/dkg_aggregator',
-] as const
-
-const REQUIRED_VARIANT_CIRCUITS = [
-  ...REQUIRED_BASE_CIRCUITS.map((circuit) => join('default', circuit)),
-  ...REQUIRED_AGGREGATION_CIRCUITS.map((circuit) => join('default', circuit)),
-  ...REQUIRED_BASE_CIRCUITS.map((circuit) => join('evm', circuit)),
-  ...REQUIRED_EVM_AGGREGATION_CIRCUITS.map((circuit) => join('evm', circuit)),
-  ...REQUIRED_BASE_CIRCUITS.map((circuit) => join('recursive', circuit)),
-] as const
-
-const REQUIRED_ARTIFACT_EXTENSIONS = ['.json', '.vk', '.vk_hash'] as const
+// The release matrix is the file that the Rust installer requires, so both read the same pairs.
+export const RELEASE_REQUIRED_PAIRS = supportedConfigurations.map(
+  ([preset, committee]) => [preset as CircuitPreset, committee as CircuitCommittee] as const,
+)
 
 const run = (cmd: string, cwd = ROOT) => execSync(cmd, { encoding: 'utf-8', cwd, stdio: 'pipe' }).trim()
 const runV = (cmd: string, cwd = ROOT) => execSync(cmd, { cwd, stdio: 'inherit' })
@@ -123,9 +83,7 @@ function stampFiles(dir: string): string[] {
 }
 
 export function requiredArtifactMarkers(preset: string, committee: string): string[] {
-  return REQUIRED_VARIANT_CIRCUITS.flatMap((circuit) =>
-    REQUIRED_ARTIFACT_EXTENSIONS.map((extension) => join(preset, committee, `${circuit}${extension}`)),
-  )
+  return requiredArtifacts.map((artifact) => join(preset, committee, artifact))
 }
 
 type BuildStamp = {
@@ -391,8 +349,9 @@ if (require.main === module) {
   else if (cmd === 'pull') pull()
   else if (cmd === 'verify-release') verifyRelease()
   else if (cmd === 'restamp') restamp()
+  else if (cmd === 'checksums') refreshChecksums(resolve(argValue('--dir') ?? DIST))
   else
     console.log(
-      'Usage: circuit-artifacts.ts [push [--replace]|pull|verify-release [--source-hash <hash>]|restamp --expect-source-hash <hash>]',
+      'Usage: circuit-artifacts.ts [push [--replace]|pull|verify-release [--source-hash <hash>]|checksums [--dir <path>]|restamp --expect-source-hash <hash>]',
     )
 }

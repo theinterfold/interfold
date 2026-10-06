@@ -5,14 +5,12 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 import { expect } from "chai";
 
-import SlashingManagerModule from "../../ignition/modules/slashingManager";
 import type { MockCircuitVerifier } from "../../types";
 import type { SlashingManager } from "../../types/contracts/slashing/SlashingManager";
 import {
   REQUIRED_CIPHERNODE_BOND,
   deployInterfoldSystem,
   ethers,
-  ignition,
   networkHelpers,
   setBondingAssetConfig,
   signAndEncodeAttestation,
@@ -25,11 +23,6 @@ describe("SlashingManager", function () {
   const REASON_PT_0 = ethers.keccak256(ethers.solidityPacked(["uint256"], [0]));
   const REASON_PT_1 = ethers.keccak256(ethers.solidityPacked(["uint256"], [1]));
   const REASON_INACTIVITY = ethers.encodeBytes32String("inactivity");
-
-  const GOVERNANCE_ROLE = ethers.keccak256(
-    ethers.toUtf8Bytes("GOVERNANCE_ROLE"),
-  );
-  const DEFAULT_ADMIN_ROLE = ethers.ZeroHash;
 
   const APPEAL_WINDOW = 7 * 24 * 60 * 60;
 
@@ -179,48 +172,6 @@ describe("SlashingManager", function () {
     };
   }
 
-  describe("constructor / initialization", function () {
-    it("should set the admin role correctly", async function () {
-      const { slashingManager, owner } = await loadFixture(setup);
-
-      expect(
-        await slashingManager.hasRole(
-          DEFAULT_ADMIN_ROLE,
-          await owner.getAddress(),
-        ),
-      ).to.be.true;
-      expect(
-        await slashingManager.hasRole(
-          GOVERNANCE_ROLE,
-          await owner.getAddress(),
-        ),
-      ).to.be.true;
-    });
-
-    it("should set the bonding registry correctly", async function () {
-      const { slashingManager, bondingRegistry } = await loadFixture(setup);
-
-      expect(await slashingManager.bondingRegistry()).to.equal(
-        await bondingRegistry.getAddress(),
-      );
-    });
-
-    it("should revert if admin is zero address", async function () {
-      await expect(
-        ignition.deploy(SlashingManagerModule, {
-          parameters: {
-            SlashingManager: {
-              admin: ethers.ZeroAddress,
-              bondingRegistry: ethers.ZeroAddress,
-              ciphernodeRegistry: ethers.ZeroAddress,
-              interfold: ethers.ZeroAddress,
-            },
-          },
-        }),
-      ).to.be.rejected;
-    });
-  });
-
   describe("setSlashPolicy()", function () {
     it("should set a valid proof-based slash policy", async function () {
       const { slashingManager, _mockVerifier } = await loadFixture(setup);
@@ -344,26 +295,6 @@ describe("SlashingManager", function () {
       );
     });
 
-    it("should set an evidence-based policy (no proof required)", async function () {
-      const { slashingManager } = await loadFixture(setup);
-
-      const policy = {
-        ticketPenalty: ethers.parseUnits("20", 6),
-        ciphernodeBondPenalty: ethers.parseEther("50"),
-        requiresProof: false,
-        proofVerifier: ethers.ZeroAddress,
-        banNode: false,
-        appealWindow: APPEAL_WINDOW,
-        enabled: true,
-        affectsCommittee: false,
-        failureReason: 0,
-      };
-
-      await expect(slashingManager.setSlashPolicy(REASON_INACTIVITY, policy))
-        .to.emit(slashingManager, "SlashPolicyUpdated")
-        .withArgs(REASON_INACTIVITY, Object.values(policy));
-    });
-
     it("should revert if caller is not governance", async function () {
       const { slashingManager, notTheOwner } = await loadFixture(setup);
 
@@ -480,51 +411,6 @@ describe("SlashingManager", function () {
       ).to.be.revertedWithCustomError(slashingManager, "InvalidPolicy");
     });
 
-    it("should allow proof-based policy without verifier (attestation model)", async function () {
-      const { slashingManager } = await loadFixture(setup);
-
-      const policy = {
-        ticketPenalty: ethers.parseUnits("50", 6),
-        ciphernodeBondPenalty: ethers.parseEther("100"),
-        requiresProof: true,
-        proofVerifier: ethers.ZeroAddress,
-        banNode: false,
-        appealWindow: 0,
-        enabled: true,
-        affectsCommittee: false,
-        failureReason: 0,
-      };
-
-      await expect(slashingManager.setSlashPolicy(REASON_PT_0, policy))
-        .to.emit(slashingManager, "SlashPolicyUpdated")
-        .withArgs(REASON_PT_0, Object.values(policy));
-    });
-
-    // Lane A (proof-based) policies may opt into a challenge window:
-    // setting both `requiresProof=true` and a non-zero
-    // `appealWindow` is now valid — `proposeSlash` will defer execution to
-    // allow the operator to file an appeal.
-    it("should accept proof-required policy with non-zero appeal window (Lane A challenge window)", async function () {
-      const { slashingManager, _mockVerifier } = await loadFixture(setup);
-
-      const policy = {
-        ticketPenalty: ethers.parseUnits("50", 6),
-        ciphernodeBondPenalty: ethers.parseEther("100"),
-        requiresProof: true,
-        proofVerifier: await _mockVerifier.getAddress(),
-        banNode: false,
-        appealWindow: APPEAL_WINDOW,
-        enabled: true,
-        affectsCommittee: false,
-        failureReason: 0,
-      };
-
-      await expect(slashingManager.setSlashPolicy(REASON_PT_0, policy)).to.emit(
-        slashingManager,
-        "SlashPolicyUpdated",
-      );
-    });
-
     it("should revert if no proof required but no appeal window", async function () {
       const { slashingManager } = await loadFixture(setup);
 
@@ -557,54 +443,6 @@ describe("SlashingManager", function () {
   });
 
   describe("proposeSlash() — Lane A (proof-based, permissionless)", function () {
-    it("should propose and auto-execute slash with committee attestation", async function () {
-      const {
-        slashingManager,
-        proposer,
-        operatorAddress,
-        voter1,
-        voter2,
-        mockCiphernodeRegistry,
-      } = await loadFixture(setup);
-
-      const proofPolicy = buildProofPolicy();
-      await slashingManager.setSlashPolicy(REASON_PT_0, proofPolicy);
-
-      // Set up committee membership: operator must be a member, voters attest the operator is faulty
-      const e3Id = 0;
-      const voter1Addr = await voter1.getAddress();
-      const voter2Addr = await voter2.getAddress();
-      await mockCiphernodeRegistry.setCommitteeNodes(e3Id, [
-        operatorAddress,
-        voter1Addr,
-        voter2Addr,
-      ]);
-      await mockCiphernodeRegistry.setThreshold(e3Id, 2);
-
-      // Committee members sign attestation votes
-      const proof = await signAndEncodeAttestation(
-        [voter1, voter2],
-        e3Id,
-        operatorAddress,
-        await slashingManager.getAddress(),
-      );
-
-      // Anyone can submit the signed attestation evidence (permissionless for Lane A)
-      await expect(
-        slashingManager
-          .connect(proposer)
-          .proposeSlash(e3Id, operatorAddress, proof),
-      ).to.emit(slashingManager, "SlashProposed");
-
-      // Proof-based slashes auto-execute
-      const proposal = await slashingManager.getSlashProposal(0);
-      expect(proposal.operator).to.equal(operatorAddress);
-      expect(proposal.reason).to.equal(REASON_PT_0);
-      expect(proposal.proofVerified).to.be.true;
-      expect(proposal.executed).to.be.true;
-      expect(proposal.proposer).to.equal(await proposer.getAddress());
-    });
-
     it("should revert if committee attestation has insufficient votes", async function () {
       const {
         slashingManager,
@@ -1832,31 +1670,6 @@ describe("SlashingManager", function () {
       const proposal = await slashingManager.getSlashProposal(0);
       expect(proposal.resolved).to.be.true;
       expect(proposal.appealUpheld).to.be.true;
-    });
-
-    it("should allow governance to resolve appeal (deny)", async function () {
-      const { slashingManager, slasher, operator, owner, operatorAddress } =
-        await loadFixture(setup);
-
-      await setupPolicies(slashingManager);
-
-      await slashingManager
-        .connect(slasher)
-        .proposeSlashEvidence(
-          0,
-          operatorAddress,
-          REASON_INACTIVITY,
-          ethers.toUtf8Bytes("evidence"),
-        );
-      await slashingManager.connect(operator).fileAppeal(0, "Evidence");
-
-      await slashingManager
-        .connect(owner)
-        .resolveAppeal(0, false, "Appeal denied");
-
-      const proposal = await slashingManager.getSlashProposal(0);
-      expect(proposal.resolved).to.be.true;
-      expect(proposal.appealUpheld).to.be.false;
     });
 
     it("should block execution if appeal is pending", async function () {

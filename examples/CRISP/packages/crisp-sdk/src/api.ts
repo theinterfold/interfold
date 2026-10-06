@@ -17,6 +17,7 @@ import {
   CRISP_SERVER_VOTING_BROADCAST_ENDPOINT,
   CRISP_SERVER_VOTING_AVAILABILITY_ENDPOINT,
   CRISP_SERVER_VOTING_STATUS_ENDPOINT,
+  CRISP_SERVER_VOTING_SELECTION_ENDPOINT,
   CRISP_SERVER_CHAIN_HEAD_ENDPOINT,
   CRISP_SERVER_CHAIN_READ_ENDPOINT,
   CRISP_SERVER_CHAIN_LOGS_ENDPOINT,
@@ -34,6 +35,8 @@ import type {
   BroadcastVoteResponse,
   CurrentRoundResponse,
   E3StateLiteResponse,
+  InputIdentity,
+  InputSelectionResponse,
   JsonResponse,
   NewRoundRequest,
   TokenHolder,
@@ -241,6 +244,47 @@ export const getVoteAvailability = async (serverUrl: string, jobId: string): Pro
  */
 export const getVoteStatus = async (serverUrl: string, e3Id: bigint, address: string): Promise<VoteStatusResponse> =>
   postJson<VoteStatusResponse>(serverUrl, CRISP_SERVER_VOTING_STATUS_ENDPOINT, { round_id: e3Id.toString(), address })
+
+/**
+ * Ask the CRISP server whether the Secure Process selects a submitted input for its slot.
+ *
+ * A committed input does not always count: an earlier entry that names the same parent takes the
+ * slot first. The identifiers travel in the request body.
+ * Returns undefined when the server has no record of the round (404).
+ * @param serverUrl - The base URL of the CRISP server
+ * @param e3Id - The e3Id of the round
+ * @param identity - The input identity, from `decodeInputIdentity`
+ * @returns The selection state of the input, or undefined if the server does not know the round
+ */
+export const getInputSelection = async (
+  serverUrl: string,
+  e3Id: bigint,
+  identity: InputIdentity,
+): Promise<InputSelectionResponse | undefined> => {
+  const response = await fetch(`${serverUrl}/${CRISP_SERVER_VOTING_SELECTION_ENDPOINT}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      round_id: e3Id.toString(),
+      slot_address: identity.slotAddress,
+      encrypted_vote_commitment: identity.encryptedVoteCommitment,
+      encrypted_vote_hash: identity.encryptedVoteHash,
+      parent_index_plus_one: identity.parentIndexPlusOne,
+    }),
+  })
+
+  if (response.status === 404) {
+    return undefined
+  }
+
+  if (!response.ok) {
+    throw new Error(`Failed to read input selection (${response.status}): ${await response.text()}`)
+  }
+
+  return (await response.json()) as InputSelectionResponse
+}
 
 /**
  * Get the result for a given round.

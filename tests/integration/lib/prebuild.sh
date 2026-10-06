@@ -70,6 +70,11 @@ jq -n \
 cp "$(command -v bb)" "${INTEGRATION_NOIR}/bin/bb"
 chmod +x "${INTEGRATION_NOIR}/bin/bb"
 
+# The upgrade reset scenario keeps this output for the candidate. The stamp lets it refuse a noir
+# folder that a released binary's setup replaced.
+source "$SCRIPT_DIR/utils.sh"
+noir_digest "$INTEGRATION_NOIR" >"${INTEGRATION_DIR}/.interfold/prebuild-noir.sha256"
+
 echo "Staged source-aligned integration circuits under ${INTEGRATION_NOIR}/circuits"
 echo "Pinned noir version.json (bb=${REQUIRED_BB}, circuits=${REQUIRED_CIRCUITS})"
 echo ""

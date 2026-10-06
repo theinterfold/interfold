@@ -7,13 +7,18 @@
 mod actors;
 mod backoff;
 mod cid;
+mod command_responses;
 mod dialer;
 pub mod direct_requester;
 pub mod direct_responder;
 mod domain;
 mod event_subscription;
 pub mod events;
+mod gossip_ingress;
+mod gossip_subscription_health;
+mod ingress_limits;
 mod keypair;
+mod live_history;
 mod net_interface;
 mod net_interface_handle;
 mod network;
@@ -40,6 +45,7 @@ pub use actors::*;
 pub use cid::ContentHash;
 pub use domain::{ConnectedPeer, NetworkSnapshot, NetworkStatus};
 pub use keypair::*;
+pub use live_history::LiveHistory;
 pub use net_interface::*;
 pub use net_interface_handle::*;
 pub use network::*;
@@ -130,7 +136,7 @@ pub fn setup_net_with_limits(
 
 /// Set up bounded networking and restore active DHT interests without publishing new protocol
 /// events during process startup. With `peer_history_optional`, startup continues without peer
-/// history when no peer can serve it.
+/// history when no peer can serve it. Without it, startup stops with the fetch error.
 #[allow(clippy::too_many_arguments)]
 pub fn setup_net_with_limits_and_interests(
     network: &NetworkPolicy,
@@ -147,6 +153,9 @@ pub fn setup_net_with_limits_and_interests(
         bail!("network startup buffer limits must both be greater than zero");
     }
     let topic = network.protocols().gossip_topic();
+    // The translator begins it once the gossip held during startup is durable; history replies
+    // vouch for it.
+    let live_history = LiveHistory::default();
     // NOTE: Pass the unbuffered rx to SyncManager as it must operate before live events are
     // processed
     let _net_sync = NetSyncManager::setup(
@@ -157,15 +166,17 @@ pub fn setup_net_with_limits_and_interests(
         topic,
         network.clone(),
         peer_history_optional,
+        live_history.clone(),
     );
 
     // Buffer application events until SyncEnded. The producer keeps control events on the raw
     // channel that the sync manager consumes.
-    let (rx, buffer_handle) = NetEventBuffer::setup_with_limits(
+    let (rx, buffer_handle) = NetEventBuffer::setup_with_live_history(
         &bus,
         &interface.application_events(),
         max_buffered_events,
         max_buffered_bytes,
+        live_history.clone(),
     );
     let tx = interface.tx();
     let network = network.clone();
@@ -185,7 +196,14 @@ pub fn setup_net_with_limits_and_interests(
         let topic = topic.to_owned();
         let tx = tx.clone();
         move |_| {
-            NetEventTranslator::setup(&bus, &tx, &rx, &topic, network.clone());
+            NetEventTranslator::setup(
+                &bus,
+                &tx,
+                &rx,
+                &topic,
+                network.clone(),
+                live_history.clone(),
+            );
             EventConverter::setup(&bus);
             Ok(())
         }

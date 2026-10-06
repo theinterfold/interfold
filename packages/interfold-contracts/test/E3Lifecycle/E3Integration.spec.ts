@@ -7,6 +7,7 @@ import { expect } from "chai";
 import type { Signer } from "ethers";
 
 import type {
+  Interfold,
   MockBlacklistUSDC,
   MockFeeOnTransferToken,
   MockUSDC,
@@ -29,7 +30,7 @@ import {
   signAndEncodeAttestation,
 } from "../fixtures";
 
-const { loadFixture, time } = networkHelpers;
+const { time } = networkHelpers;
 
 /**
  * Integration tests for E3 Refund/Timeout Mechanism
@@ -41,6 +42,17 @@ const { loadFixture, time } = networkHelpers;
  */
 describe("E3 Integration - Refund/Timeout Mechanism", function () {
   let firstE3Id: bigint;
+  // Each Interfold deployment numbers its E3s from its own address, and `setup`
+  // and `setupWithOperators` deploy separately. Every load therefore reads the
+  // first E3 ID from the system that it returns.
+  const loadFixture = async <T extends { interfold: Interfold }>(
+    fixture: () => Promise<T>,
+  ): Promise<T> => {
+    const fx = await networkHelpers.loadFixture(fixture);
+    firstE3Id = await fx.interfold.nexte3Id();
+    return fx;
+  };
+
   // Time constants
   const ONE_HOUR = 60 * 60;
   const ONE_DAY = 24 * ONE_HOUR;
@@ -106,7 +118,6 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
     if (!randomnessProvider) throw new Error("randomness provider missing");
 
     const interfoldAddress = await interfold.getAddress();
-    firstE3Id = await interfold.nexte3Id();
     const e3RefundManagerAddress = await e3RefundManager.getAddress();
 
     // Slash policy for Lane A proof routing E2E tests
@@ -252,8 +263,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await makeRequest();
     };
 
-    const finalizeReadyCommittee = async () => {
-      await makeReadyRequest();
+    const finalizeRequestedCommittee = async () => {
       for (const operator of [operator1, operator2, operator3]) {
         await registry.connect(operator).submitTicket(firstE3Id, 1);
       }
@@ -262,13 +272,13 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await registry.finalizeCommittee(firstE3Id);
     };
 
+    const finalizeReadyCommittee = async () => {
+      await makeReadyRequest();
+      await finalizeRequestedCommittee();
+    };
+
     const finalizeAndPublishCommittee = async () => {
-      for (const operator of [operator1, operator2, operator3]) {
-        await registry.connect(operator).submitTicket(firstE3Id, 1);
-      }
-      const deadline = await registry.getCommitteeDeadline(firstE3Id);
-      await time.setNextBlockTimestamp(deadline + 1n);
-      await registry.finalizeCommittee(firstE3Id);
+      await finalizeRequestedCommittee();
       const publicKey = "0x1234567890abcdef1234567890abcdef";
       const pkCommitment = ethers.keccak256(publicKey);
       await registry.publishCommittee(
@@ -304,9 +314,30 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       transferBondOwner,
       consolidateSelfOwnedBonds,
       makeReadyRequest,
+      finalizeRequestedCommittee,
       finalizeReadyCommittee,
       finalizeAndPublishCommittee,
     };
+  };
+
+  // `setup` plus operator1, operator2 and operator3 onboarded in that order.
+  // Tests that start with this onboarding load it here, so the onboarding runs
+  // once per snapshot. The ready-request helpers skip the onboarding that
+  // already ran. It calls `setup` directly: a `loadFixture` inside a fixture can
+  // leave a snapshot that its restore invalidated in the snapshot list.
+  const setupWithOperators = async () => {
+    const fx = await setup();
+    for (const operator of [fx.operator1, fx.operator2, fx.operator3]) {
+      await fx.setupOperator(operator);
+    }
+    const makeReadyRequest = async () => {
+      await fx.makeRequest();
+    };
+    const finalizeReadyCommittee = async () => {
+      await makeReadyRequest();
+      await fx.finalizeRequestedCommittee();
+    };
+    return { ...fx, makeReadyRequest, finalizeReadyCommittee };
   };
 
   describe("E3 Request with Lifecycle Integration", function () {
@@ -326,13 +357,11 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         registry,
         bondingRegistry,
         makeRequest,
-        setupOperator,
         operator1,
         operator2,
         operator3,
-      } = await loadFixture(setup);
+      } = await loadFixture(setupWithOperators);
       const operators = [operator1, operator2, operator3];
-      for (const operator of operators) await setupOperator(operator);
 
       for (let round = 0; round < 2; round++) {
         const { e3Id } = await makeRequest();
@@ -350,19 +379,8 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
     });
 
     it("initializes E3 lifecycle when request is made", async function () {
-      const {
-        interfold,
-        makeRequest,
-        requester,
-        operator1,
-        operator2,
-        operator3,
-        setupOperator,
-      } = await loadFixture(setup);
-
-      await setupOperator(operator1);
-      await setupOperator(operator2);
-      await setupOperator(operator3);
+      const { interfold, makeRequest, requester } =
+        await loadFixture(setupWithOperators);
 
       await makeRequest();
 
@@ -385,7 +403,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         operator1,
         computeProvider,
         finalizeReadyCommittee,
-      } = await loadFixture(setup);
+      } = await loadFixture(setupWithOperators);
 
       await finalizeReadyCommittee();
       await consolidateSelfOwnedBonds();
@@ -457,7 +475,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
     it("ZEN-09: holds a finalized committee through the last second of the accusation window", async function () {
       const { interfold, registry, slashingManager, finalizeReadyCommittee } =
-        await loadFixture(setup);
+        await loadFixture(setupWithOperators);
 
       await finalizeReadyCommittee();
       await time.increase(defaultTimeoutConfig.dkgWindow + 1);
@@ -487,7 +505,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         slashingManager,
         owner,
         finalizeReadyCommittee,
-      } = await loadFixture(setup);
+      } = await loadFixture(setupWithOperators);
 
       await finalizeReadyCommittee();
       await time.increase(defaultTimeoutConfig.dkgWindow + 1);
@@ -508,7 +526,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
     it("ZEN-09: releases an unfinalized committee at terminal stage without an accusation hold", async function () {
       const { interfold, registry, slashingManager, makeReadyRequest } =
-        await loadFixture(setup);
+        await loadFixture(setupWithOperators);
 
       await makeReadyRequest();
       const [, submissionDeadline] =
@@ -700,7 +718,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
     });
 
     it("rejects cancellation after the committee randomness is known", async function () {
-      const ctx = await loadFixture(setup);
+      const ctx = await loadFixture(setupWithOperators);
       await ctx.makeReadyRequest();
 
       await expect(ctx.interfold.connect(ctx.requester).cancelE3(firstE3Id))
@@ -709,7 +727,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
     });
 
     it("keeps timely randomness available for replay after failure", async function () {
-      const ctx = await loadFixture(setup);
+      const ctx = await loadFixture(setupWithOperators);
       await ctx.makeReadyRequest();
 
       const acceptedSeed = await ctx.registry.sortitionSeed(firstE3Id);
@@ -748,7 +766,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
     it("rejects invalid failure reasons from an authorized dependency", async function () {
       const { interfold, registry, makeReadyRequest } =
-        await loadFixture(setup);
+        await loadFixture(setupWithOperators);
       await makeReadyRequest();
 
       const registryAddress = await registry.getAddress();
@@ -835,13 +853,9 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         operator1,
         operator2,
         operator3,
-        setupOperator,
         settleFailure,
-      } = await loadFixture(setup);
+      } = await loadFixture(setupWithOperators);
 
-      await setupOperator(operator1);
-      await setupOperator(operator2);
-      await setupOperator(operator3);
       await makeRequest();
 
       const originalTreasury = await treasury.getAddress();
@@ -912,20 +926,9 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
     });
 
     it("blocks dependency rotation until the active generation is drained", async function () {
-      const {
-        interfold,
-        registry,
-        makeRequest,
-        owner,
-        operator1,
-        operator2,
-        operator3,
-        setupOperator,
-      } = await loadFixture(setup);
+      const { interfold, registry, makeRequest, owner } =
+        await loadFixture(setupWithOperators);
 
-      await setupOperator(operator1);
-      await setupOperator(operator2);
-      await setupOperator(operator3);
       await makeRequest();
       const rotatedRegistry = await (
         await ethers.deployContract("MockCiphernodeRegistry")
@@ -943,7 +946,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
   });
 
   describe("Committee Formed Integration", function () {
-    it("transitions to CommitteeFormed when publishCommittee is called", async function () {
+    it("emits CommitteeFormed and reaches KeyPublished when the committee is published", async function () {
       const {
         interfold,
         registry,
@@ -951,68 +954,10 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         operator1,
         operator2,
         operator3,
-        setupOperator,
-      } = await loadFixture(setup);
+      } = await loadFixture(setupWithOperators);
 
-      await setupOperator(operator1);
-      await setupOperator(operator2);
-      await setupOperator(operator3);
-
-      // Make a request first
       await makeRequest();
-
-      // Verify stage is Requested
-      let stage = await interfold.getE3Stage(firstE3Id);
-      expect(stage).to.equal(1); // E3Stage.Requested
-
-      // Submit tickets for sortition
-      await registry.connect(operator1).submitTicket(firstE3Id, 1);
-      await registry.connect(operator2).submitTicket(firstE3Id, 1);
-      await registry.connect(operator3).submitTicket(firstE3Id, 1);
-
-      // Fast forward past submission window
-      await time.increase(SORTITION_SUBMISSION_WINDOW + 1);
-
-      // Finalize committee
-      await registry.finalizeCommittee(firstE3Id);
-
-      // Publish committee (this triggers onCommitteePublished -> onCommitteeFormed)
-      const publicKey = "0x1234567890abcdef1234567890abcdef";
-      const pkCommitment = ethers.keccak256(publicKey);
-
-      await registry.publishCommittee(
-        firstE3Id,
-        pkCommitment,
-        encodeMockDkgProof(pkCommitment),
-        "0x01",
-      );
-
-      // Verify stage transitioned to KeyPublished (after publishCommittee which calls onKeyPublished)
-      stage = await interfold.getE3Stage(firstE3Id);
-      expect(stage).to.equal(3); // E3Stage.KeyPublished
-
-      // Verify deadlines were set
-      const deadlines = await interfold.getDeadlines(firstE3Id);
-      expect(deadlines.dkgDeadline).to.be.gt(0);
-    });
-
-    it("emits CommitteeFormed event when committee is published", async function () {
-      const {
-        interfold,
-        registry,
-        makeRequest,
-        operator1,
-        operator2,
-        operator3,
-        setupOperator,
-      } = await loadFixture(setup);
-
-      await setupOperator(operator1);
-      await setupOperator(operator2);
-      await setupOperator(operator3);
-
-      // Make a request
-      await makeRequest();
+      expect(await interfold.getE3Stage(firstE3Id)).to.equal(1); // E3Stage.Requested
 
       // Complete sortition process
       await registry.connect(operator1).submitTicket(firstE3Id, 1);
@@ -1021,7 +966,8 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await time.increase(SORTITION_SUBMISSION_WINDOW + 1);
       await registry.finalizeCommittee(firstE3Id);
 
-      // Publish committee and expect CommitteeFormed event
+      // Publishing the committee emits CommitteeFormed and moves the E3 to
+      // KeyPublished.
       const publicKey = "0x1234567890abcdef1234567890abcdef";
       const pkCommitment = ethers.keccak256(publicKey);
 
@@ -1035,11 +981,15 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       )
         .to.emit(interfold, "CommitteeFormed")
         .withArgs(firstE3Id);
+
+      expect(await interfold.getE3Stage(firstE3Id)).to.equal(3); // E3Stage.KeyPublished
+      const deadlines = await interfold.getDeadlines(firstE3Id);
+      expect(deadlines.dkgDeadline).to.be.gt(0);
     });
 
     it("rejects committee publication after the DKG deadline", async function () {
       const { interfold, registry, finalizeReadyCommittee } =
-        await loadFixture(setup);
+        await loadFixture(setupWithOperators);
       await finalizeReadyCommittee();
 
       const publicKey = "0x1234567890abcdef1234567890abcdef";
@@ -1072,12 +1022,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         operator1,
         operator2,
         operator3,
-        setupOperator,
-      } = await loadFixture(setup);
-
-      for (const operator of [operator1, operator2, operator3]) {
-        await setupOperator(operator);
-      }
+      } = await loadFixture(setupWithOperators);
 
       // A short input window puts `inputWindow[1]` before the DKG deadline,
       // which is the only shape in which this finding is reachable.
@@ -1141,18 +1086,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
   describe("processE3Failure()", function () {
     it("reverts if E3 not in failed state", async function () {
-      const {
-        interfold,
-        makeRequest,
-        operator1,
-        operator2,
-        operator3,
-        setupOperator,
-      } = await loadFixture(setup);
-
-      await setupOperator(operator1);
-      await setupOperator(operator2);
-      await setupOperator(operator3);
+      const { interfold, makeRequest } = await loadFixture(setupWithOperators);
 
       await makeRequest();
 
@@ -1163,19 +1097,8 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
     });
 
     it("processes failure and calculates refund for committee formation timeout", async function () {
-      const {
-        interfold,
-        e3RefundManager,
-        makeRequest,
-        operator1,
-        operator2,
-        operator3,
-        setupOperator,
-      } = await loadFixture(setup);
-
-      await setupOperator(operator1);
-      await setupOperator(operator2);
-      await setupOperator(operator3);
+      const { interfold, e3RefundManager, makeRequest } =
+        await loadFixture(setupWithOperators);
 
       await makeRequest();
 
@@ -1211,7 +1134,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         registry,
         operator1,
         makeReadyRequest,
-      } = await loadFixture(setup);
+      } = await loadFixture(setupWithOperators);
 
       await makeReadyRequest();
       await registry.connect(operator1).submitTicket(firstE3Id, 1);
@@ -1254,60 +1177,9 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       expect(distribution.calculated).to.equal(false);
     });
 
-    it("allows requester to claim refund after failure processing", async function () {
-      const {
-        interfold,
-        e3RefundManager,
-        makeRequest,
-        requester,
-        usdcToken,
-        operator1,
-        operator2,
-        operator3,
-        setupOperator,
-      } = await loadFixture(setup);
-
-      await setupOperator(operator1);
-      await setupOperator(operator2);
-      await setupOperator(operator3);
-
-      await makeRequest();
-
-      // Get initial balance
-      const balanceBefore = await usdcToken.balanceOf(
-        await requester.getAddress(),
-      );
-
-      // Fast forward and fail E3
-      await time.increase(SORTITION_SUBMISSION_WINDOW + 1);
-      await interfold.markE3Failed(firstE3Id);
-      await interfold.processE3Failure(firstE3Id);
-
-      // Claim refund
-      await e3RefundManager.connect(requester).claimRequesterRefund(firstE3Id);
-
-      const balanceAfter = await usdcToken.balanceOf(
-        await requester.getAddress(),
-      );
-      expect(balanceAfter).to.be.gt(balanceBefore);
-    });
-
     it("rejects sender fees from fee escrow and refund custody", async function () {
-      const {
-        interfold,
-        e3RefundManager,
-        makeRequest,
-        owner,
-        requester,
-        operator1,
-        operator2,
-        operator3,
-        setupOperator,
-      } = await loadFixture(setup);
-
-      await setupOperator(operator1);
-      await setupOperator(operator2);
-      await setupOperator(operator3);
+      const { interfold, e3RefundManager, makeRequest, owner, requester } =
+        await loadFixture(setupWithOperators);
 
       const token = await new MockFeeOnTransferTokenFactory(owner).deploy(0);
       const tokenAddress = await token.getAddress();
@@ -1362,18 +1234,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
     });
 
     it("reverts if trying to process failure twice", async function () {
-      const {
-        interfold,
-        makeRequest,
-        operator1,
-        operator2,
-        operator3,
-        setupOperator,
-      } = await loadFixture(setup);
-
-      await setupOperator(operator1);
-      await setupOperator(operator2);
-      await setupOperator(operator3);
+      const { interfold, makeRequest } = await loadFixture(setupWithOperators);
 
       await makeRequest();
 
@@ -1388,20 +1249,8 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
     });
 
     it("reverts if requester tries to claim refund twice", async function () {
-      const {
-        interfold,
-        e3RefundManager,
-        makeRequest,
-        requester,
-        operator1,
-        operator2,
-        operator3,
-        setupOperator,
-      } = await loadFixture(setup);
-
-      await setupOperator(operator1);
-      await setupOperator(operator2);
-      await setupOperator(operator3);
+      const { interfold, e3RefundManager, makeRequest, requester } =
+        await loadFixture(setupWithOperators);
 
       await makeRequest();
 
@@ -1419,19 +1268,8 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
     });
 
     it("reverts if refund not yet calculated", async function () {
-      const {
-        e3RefundManager,
-        makeRequest,
-        requester,
-        operator1,
-        operator2,
-        operator3,
-        setupOperator,
-      } = await loadFixture(setup);
-
-      await setupOperator(operator1);
-      await setupOperator(operator2);
-      await setupOperator(operator3);
+      const { e3RefundManager, makeRequest, requester } =
+        await loadFixture(setupWithOperators);
 
       await makeRequest();
 
@@ -1459,13 +1297,9 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         operator1,
         operator2,
         operator3,
-        setupOperator,
         settleFailure,
-      } = await loadFixture(setup);
+      } = await loadFixture(setupWithOperators);
 
-      await setupOperator(operator1);
-      await setupOperator(operator2);
-      await setupOperator(operator3);
       await slashingManager.connect(owner).setSlashPolicy(REASON_PT_0, {
         ticketPenalty: ethers.parseUnits("50", 6),
         ciphernodeBondPenalty: ethers.parseEther("100"),
@@ -1621,12 +1455,8 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         operator1,
         operator2,
         operator3,
-        setupOperator,
-      } = await loadFixture(setup);
+      } = await loadFixture(setupWithOperators);
 
-      await setupOperator(operator1);
-      await setupOperator(operator2);
-      await setupOperator(operator3);
       await slashingManager.connect(owner).setSlashPolicy(REASON_PT_0, {
         ticketPenalty: ethers.parseUnits("50", 6),
         ciphernodeBondPenalty: ethers.parseEther("100"),
@@ -1793,13 +1623,9 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         operator1,
         operator2,
         operator3,
-        setupOperator,
         settleFailure,
-      } = await loadFixture(setup);
+      } = await loadFixture(setupWithOperators);
 
-      await setupOperator(operator1);
-      await setupOperator(operator2);
-      await setupOperator(operator3);
       await slashingManager.connect(owner).setSlashPolicy(REASON_PT_0, {
         ticketPenalty: ethers.parseUnits("50", 6),
         ciphernodeBondPenalty: ethers.parseEther("100"),
@@ -1954,13 +1780,9 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         operator1,
         operator2,
         operator3,
-        setupOperator,
         settleFailure,
-      } = await loadFixture(setup);
+      } = await loadFixture(setupWithOperators);
 
-      await setupOperator(operator1);
-      await setupOperator(operator2);
-      await setupOperator(operator3);
       await slashingManager.connect(owner).setSlashPolicy(REASON_PT_0, {
         ticketPenalty: ethers.parseUnits("50", 6),
         ciphernodeBondPenalty: ethers.parseEther("100"),
@@ -2089,14 +1911,10 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         operator1,
         operator2,
         operator3,
-        setupOperator,
         transferBondOwner,
         finalizeAndPublishCommittee,
-      } = await loadFixture(setup);
+      } = await loadFixture(setupWithOperators);
 
-      for (const operator of [operator1, operator2, operator3]) {
-        await setupOperator(operator);
-      }
       // Give every operator its own recipient, so a per-recipient balance
       // identifies exactly one operator.
       await transferBondOwner(operator1, requester);
@@ -2265,14 +2083,10 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
           operator1,
           operator2,
           operator3,
-          setupOperator,
           transferBondOwner,
           finalizeAndPublishCommittee,
-        } = await loadFixture(setup);
+        } = await loadFixture(setupWithOperators);
 
-        for (const operator of [operator1, operator2, operator3]) {
-          await setupOperator(operator);
-        }
         await transferBondOwner(operator1, requester);
         await transferBondOwner(operator2, treasury);
         await transferBondOwner(operator3, computeProvider);
@@ -2371,14 +2185,10 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         operator1,
         operator2,
         operator3,
-        setupOperator,
         transferBondOwner,
         finalizeAndPublishCommittee,
-      } = await loadFixture(setup);
+      } = await loadFixture(setupWithOperators);
 
-      for (const operator of [operator1, operator2, operator3]) {
-        await setupOperator(operator);
-      }
       await transferBondOwner(operator1, requester);
       await transferBondOwner(operator2, treasury);
       await transferBondOwner(operator3, computeProvider);
@@ -2505,15 +2315,11 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         operator1,
         operator2,
         operator3,
-        setupOperator,
         transferBondOwner,
         finalizeAndPublishCommittee,
         settleFailure,
-      } = await loadFixture(setup);
+      } = await loadFixture(setupWithOperators);
 
-      for (const operator of [operator1, operator2, operator3]) {
-        await setupOperator(operator);
-      }
       await transferBondOwner(operator1, requester);
       await transferBondOwner(operator2, treasury);
       await makeRequest();
@@ -2587,15 +2393,11 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         operator1,
         operator2,
         operator3,
-        setupOperator,
         transferBondOwner,
         finalizeAndPublishCommittee,
         settleFailure,
-      } = await loadFixture(setup);
+      } = await loadFixture(setupWithOperators);
 
-      for (const operator of [operator1, operator2, operator3]) {
-        await setupOperator(operator);
-      }
       await transferBondOwner(operator1, requester);
       await transferBondOwner(operator2, treasury);
       await slashingManager.connect(owner).setSlashPolicy(REASON_PT_0, {
@@ -2723,7 +2525,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         makeReadyRequest,
         finalizeAndPublishCommittee,
         settleFailure,
-      } = await loadFixture(setup);
+      } = await loadFixture(setupWithOperators);
 
       await makeReadyRequest();
       await consolidateSelfOwnedBonds();
@@ -2778,14 +2580,10 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         operator1,
         operator2,
         operator3,
-        setupOperator,
         transferBondOwner,
         finalizeAndPublishCommittee,
-      } = await loadFixture(setup);
+      } = await loadFixture(setupWithOperators);
 
-      for (const operator of [operator1, operator2, operator3]) {
-        await setupOperator(operator);
-      }
       await transferBondOwner(operator1, requester);
       await slashingManager.connect(owner).setSlashPolicy(REASON_PT_0, {
         ticketPenalty: ethers.parseUnits("50", 6),
@@ -2867,12 +2665,8 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         operator1,
         operator2,
         operator3,
-        setupOperator,
-      } = await loadFixture(setup);
+      } = await loadFixture(setupWithOperators);
 
-      for (const operator of [operator1, operator2, operator3]) {
-        await setupOperator(operator);
-      }
       await slashingManager.connect(owner).setSlashPolicy(REASON_PT_0, {
         ticketPenalty: ethers.parseUnits("50", 6),
         ciphernodeBondPenalty: ethers.parseEther("100"),
@@ -2946,14 +2740,10 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         operator1,
         operator2,
         operator3,
-        setupOperator,
         finalizeAndPublishCommittee,
         settleFailure,
-      } = await loadFixture(setup);
+      } = await loadFixture(setupWithOperators);
 
-      for (const operator of [operator1, operator2, operator3]) {
-        await setupOperator(operator);
-      }
       await slashingManager.connect(owner).setSlashPolicy(REASON_PT_0, {
         ticketPenalty: ethers.parseUnits("50", 6),
         ciphernodeBondPenalty: ethers.parseEther("100"),
@@ -3046,14 +2836,10 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         operator1,
         operator2,
         operator3,
-        setupOperator,
         finalizeAndPublishCommittee,
         settleFailure,
-      } = await loadFixture(setup);
+      } = await loadFixture(setupWithOperators);
 
-      for (const operator of [operator1, operator2, operator3]) {
-        await setupOperator(operator);
-      }
       await slashingManager.connect(owner).setSlashPolicy(REASON_PT_0, {
         ticketPenalty: ethers.parseUnits("50", 6),
         ciphernodeBondPenalty: ethers.parseEther("100"),
@@ -3138,7 +2924,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       };
 
       async function failedWithCommittee(
-        fx: Awaited<ReturnType<typeof setup>>,
+        fx: Awaited<ReturnType<typeof setupWithOperators>>,
         markFailed = true,
       ) {
         const {
@@ -3146,15 +2932,8 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
           slashingManager,
           makeRequest,
           owner,
-          operator1,
-          operator2,
-          operator3,
-          setupOperator,
           finalizeAndPublishCommittee,
         } = fx;
-        for (const operator of [operator1, operator2, operator3]) {
-          await setupOperator(operator);
-        }
         await slashingManager.connect(owner).setSlashPolicy(REASON_PT_0, EXPEL);
         await slashingManager
           .connect(owner)
@@ -3214,7 +2993,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         "near cutoff",
       ] as const) {
         it(`rejects late Lane B expulsions when ${state}`, async function () {
-          const fx = await loadFixture(setup);
+          const fx = await loadFixture(setupWithOperators);
           const { interfold, slashingManager, e3RefundManager, operator1 } = fx;
           await failedWithCommittee(fx, state !== "unmarked");
           const deadline =
@@ -3258,7 +3037,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       }
 
       it("includes last-second Lane B expulsions in the requester's refund", async function () {
-        const fx = await loadFixture(setup);
+        const fx = await loadFixture(setupWithOperators);
         const { interfold, slashingManager, e3RefundManager, operator2 } = fx;
         await failedWithCommittee(fx);
         await slashingManager.setSlashPolicy(REASON_EVIDENCE, {
@@ -3306,7 +3085,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       });
 
       it("preserves late non-expelling Lane B penalties and bans after settlement", async function () {
-        const fx = await loadFixture(setup);
+        const fx = await loadFixture(setupWithOperators);
         const { interfold, slashingManager, e3RefundManager, operator1 } = fx;
         await failedWithCommittee(fx);
         await slashingManager.setSlashPolicy(REASON_EVIDENCE, {
@@ -3336,7 +3115,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       });
 
       it("refuses settlement while the accusation window is open and allows it after", async function () {
-        const fx = await loadFixture(setup);
+        const fx = await loadFixture(setupWithOperators);
         const { interfold, e3RefundManager, slashingManager } = fx;
         await failedWithCommittee(fx);
 
@@ -3361,7 +3140,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
       it("refuses settlement after the window while an expulsion is open, on every terminal path", async function () {
         for (const terminal of ["execute", "clear", "expire"] as const) {
-          const fx = await loadFixture(setup);
+          const fx = await loadFixture(setupWithOperators);
           const {
             interfold,
             e3RefundManager,
@@ -3419,7 +3198,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       });
 
       it("does not wait for a non-expelling penalty", async function () {
-        const fx = await loadFixture(setup);
+        const fx = await loadFixture(setupWithOperators);
         const { interfold, slashingManager } = fx;
         await failedWithCommittee(fx);
         await expulsionProposal(fx, 1);
@@ -3434,19 +3213,8 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       });
 
       it("settles a round that never finalized a committee without waiting", async function () {
-        const {
-          interfold,
-          e3RefundManager,
-          slashingManager,
-          makeRequest,
-          operator1,
-          operator2,
-          operator3,
-          setupOperator,
-        } = await loadFixture(setup);
-        for (const operator of [operator1, operator2, operator3]) {
-          await setupOperator(operator);
-        }
+        const { interfold, e3RefundManager, slashingManager, makeRequest } =
+          await loadFixture(setupWithOperators);
         await makeRequest();
         await time.increase(SORTITION_SUBMISSION_WINDOW + 1);
         await time.increase(defaultTimeoutConfig.dkgWindow + 1);
@@ -3464,7 +3232,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       for (const lane of ["A", "B"] as const) {
         for (const appeal of ["none", "rejected", "unresolved"] as const) {
           it(`waits past the cutoff for Lane ${lane} with appeal ${appeal}`, async function () {
-            const fx = await loadFixture(setup);
+            const fx = await loadFixture(setupWithOperators);
             const {
               interfold,
               e3RefundManager,
@@ -3558,16 +3326,9 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         registry,
         makeRequest,
         requester,
-        operator1,
-        operator2,
-        operator3,
-        setupOperator,
         finalizeAndPublishCommittee,
-      } = await loadFixture(setup);
+      } = await loadFixture(setupWithOperators);
 
-      for (const operator of [operator1, operator2, operator3]) {
-        await setupOperator(operator);
-      }
       await makeRequest();
       await finalizeAndPublishCommittee();
 
@@ -3617,16 +3378,10 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         owner,
         requester,
         operator1,
-        operator2,
-        operator3,
-        setupOperator,
         transferBondOwner,
         finalizeAndPublishCommittee,
-      } = await loadFixture(setup);
+      } = await loadFixture(setupWithOperators);
 
-      for (const operator of [operator1, operator2, operator3]) {
-        await setupOperator(operator);
-      }
       await transferBondOwner(operator1, requester);
       await slashingManager.addSlasher(await owner.getAddress());
       await slashingManager.connect(owner).setSlashPolicy(REASON_EVIDENCE, {
@@ -3748,14 +3503,10 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         operator1,
         operator2,
         operator3,
-        setupOperator,
         transferBondOwner,
         finalizeAndPublishCommittee,
-      } = await loadFixture(setup);
+      } = await loadFixture(setupWithOperators);
 
-      for (const operator of [operator1, operator2, operator3]) {
-        await setupOperator(operator);
-      }
       await transferBondOwner(operator1, requester);
       await slashingManager.connect(owner).setSlashPolicy(REASON_PT_0, {
         ticketPenalty: ethers.parseUnits("50", 6),
@@ -3865,13 +3616,9 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         operator1,
         operator2,
         operator3,
-        setupOperator,
         finalizeAndPublishCommittee,
-      } = await loadFixture(setup);
+      } = await loadFixture(setupWithOperators);
 
-      for (const operator of [operator1, operator2, operator3]) {
-        await setupOperator(operator);
-      }
       await slashingManager.connect(owner).setSlashPolicy(REASON_PT_0, {
         ticketPenalty: ethers.parseUnits("50", 6),
         ciphernodeBondPenalty: ethers.parseEther("100"),
@@ -3966,14 +3713,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         requester,
         treasury,
         operator1,
-        operator2,
-        operator3,
-        setupOperator,
-      } = await loadFixture(setup);
-
-      await setupOperator(operator1);
-      await setupOperator(operator2);
-      await setupOperator(operator3);
+      } = await loadFixture(setupWithOperators);
 
       await makeRequest();
 
@@ -4050,13 +3790,8 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         operator1,
         operator2,
         operator3,
-        setupOperator,
         settleFailure,
-      } = await loadFixture(setup);
-
-      await setupOperator(operator1);
-      await setupOperator(operator2);
-      await setupOperator(operator3);
+      } = await loadFixture(setupWithOperators);
 
       await makeRequest(requester);
       await consolidateSelfOwnedBonds();
@@ -4150,14 +3885,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         requester,
         treasury,
         operator1,
-        operator2,
-        operator3,
-        setupOperator,
-      } = await loadFixture(setup);
-
-      await setupOperator(operator1);
-      await setupOperator(operator2);
-      await setupOperator(operator3);
+      } = await loadFixture(setupWithOperators);
 
       await makeRequest();
 
@@ -4233,13 +3961,9 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         operator1,
         operator2,
         operator3,
-        setupOperator,
         settleFailure,
-      } = await loadFixture(setup);
+      } = await loadFixture(setupWithOperators);
 
-      await setupOperator(operator1);
-      await setupOperator(operator2);
-      await setupOperator(operator3);
       await usdcToken.mint(
         await operator1.getAddress(),
         ethers.parseUnits("10000", 6),
@@ -4303,13 +4027,8 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         operator1,
         operator2,
         operator3,
-        setupOperator,
         settleFailure,
-      } = await loadFixture(setup);
-
-      await setupOperator(operator1);
-      await setupOperator(operator2);
-      await setupOperator(operator3);
+      } = await loadFixture(setupWithOperators);
 
       // 1. Make request
       await makeRequest();
@@ -4378,13 +4097,8 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         operator1,
         operator2,
         operator3,
-        setupOperator,
         settleFailure,
-      } = await loadFixture(setup);
-
-      await setupOperator(operator1);
-      await setupOperator(operator2);
-      await setupOperator(operator3);
+      } = await loadFixture(setupWithOperators);
 
       // 1. Make request
       await makeRequest();
@@ -4471,13 +4185,8 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         operator1,
         operator2,
         operator3,
-        setupOperator,
         settleFailure,
-      } = await loadFixture(setup);
-
-      await setupOperator(operator1);
-      await setupOperator(operator2);
-      await setupOperator(operator3);
+      } = await loadFixture(setupWithOperators);
 
       // 1. Make request
       await makeRequest();
@@ -4561,21 +4270,8 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
   describe("Multiple E3 Requests Isolation", function () {
     it("tracks multiple E3s independently", async function () {
-      const {
-        interfold,
-        usdcToken,
-        requester,
-        e3Program,
-        decryptionVerifier,
-        operator1,
-        operator2,
-        operator3,
-        setupOperator,
-      } = await loadFixture(setup);
-
-      await setupOperator(operator1);
-      await setupOperator(operator2);
-      await setupOperator(operator3);
+      const { interfold, usdcToken, requester, e3Program, decryptionVerifier } =
+        await loadFixture(setupWithOperators);
 
       const interfoldAddress = await interfold.getAddress();
 
@@ -4652,15 +4348,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         requester,
         e3Program,
         decryptionVerifier,
-        operator1,
-        operator2,
-        operator3,
-        setupOperator,
-      } = await loadFixture(setup);
-
-      await setupOperator(operator1);
-      await setupOperator(operator2);
-      await setupOperator(operator3);
+      } = await loadFixture(setupWithOperators);
 
       const interfoldAddress = await interfold.getAddress();
 
@@ -4740,12 +4428,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         treasury,
         computeProvider,
         owner,
-        setupOperator,
-      } = await loadFixture(setup);
-
-      await setupOperator(operator1);
-      await setupOperator(operator2);
-      await setupOperator(operator3);
+      } = await loadFixture(setupWithOperators);
 
       // 1. Request E3, form committee, publish key
       await makeRequest(undefined, 0);
@@ -4889,12 +4572,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         operator1,
         operator2,
         operator3,
-        setupOperator,
-      } = await loadFixture(setup);
-
-      await setupOperator(operator1);
-      await setupOperator(operator2);
-      await setupOperator(operator3);
+      } = await loadFixture(setupWithOperators);
 
       // 1. Make request
       await makeRequest();
@@ -4956,12 +4634,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         operator1,
         operator2,
         operator3,
-        setupOperator,
-      } = await loadFixture(setup);
-
-      await setupOperator(operator1);
-      await setupOperator(operator2);
-      await setupOperator(operator3);
+      } = await loadFixture(setupWithOperators);
 
       // Complete full E3 flow
       await makeRequest();

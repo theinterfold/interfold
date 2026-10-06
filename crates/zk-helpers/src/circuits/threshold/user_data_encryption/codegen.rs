@@ -47,11 +47,8 @@ pub fn generate_configs(_: BfvPreset, configs: &Configs) -> CodegenConfigs {
     let qis_str = join_display(&configs.moduli, ", ");
     let k0is_str = join_display(&configs.k0is, ", ");
     let pk_bounds_str = join_display(&configs.bounds.pk_bounds, ", ");
-    let r1_low_bounds_str = join_display(&configs.bounds.r1_low_bounds, ", ");
-    let r1_up_bounds_str = join_display(&configs.bounds.r1_up_bounds, ", ");
-    let r2_bounds_str = join_display(&configs.bounds.r2_bounds, ", ");
-    let p1_bounds_str = join_display(&configs.bounds.p1_bounds, ", ");
-    let p2_bounds_str = join_display(&configs.bounds.p2_bounds, ", ");
+    let ct0_r_bounds_str = join_display(&configs.bounds.ct0_r_bounds, ", ");
+    let ct1_r_bounds_str = join_display(&configs.bounds.ct1_r_bounds, ", ");
 
     format!(
         r#"use crate::core::threshold::user_data_encryption_ct0::Configs as UserDataEncryptionCt0Configs;
@@ -74,10 +71,8 @@ pub global {}_BIT_U: u32 = {};
 pub global {}_BIT_E0: u32 = {};
 pub global {}_BIT_E1: u32 = {};
 pub global {}_BIT_K: u32 = {};
-pub global {}_BIT_R1: u32 = {};
-pub global {}_BIT_R2: u32 = {};
-pub global {}_BIT_P1: u32 = {};
-pub global {}_BIT_P2: u32 = {};
+pub global {}_CT0_BIT_R: u32 = {};
+pub global {}_CT1_BIT_R: u32 = {};
 
 pub global {}_K0IS: [Field; L] = [{}];
 pub global {}_PK_BOUNDS: [Field; L] = [{}];
@@ -86,11 +81,8 @@ pub global {}_E1_BOUND: Field = {};
 pub global {}_U_BOUND: Field = {};
 pub global {}_K1_LOW_BOUND: Field = {};
 pub global {}_K1_UP_BOUND: Field = {};
-pub global {}_R1_LOW_BOUNDS: [Field; L] = [{}];
-pub global {}_R1_UP_BOUNDS: [Field; L] = [{}];
-pub global {}_R2_BOUNDS: [Field; L] = [{}];
-pub global {}_P1_BOUNDS: [Field; L] = [{}];
-pub global {}_P2_BOUNDS: [Field; L] = [{}];
+pub global {}_CT0_R_BOUNDS: [Field; L] = [{}];
+pub global {}_CT1_R_BOUNDS: [Field; L] = [{}];
 
 /************************************
 -------------------------------------
@@ -103,9 +95,7 @@ pub global {}_CT0_CONFIGS: UserDataEncryptionCt0Configs<N, L> = UserDataEncrypti
     {}_K0IS,
     {}_E0_BOUND,
     {}_U_BOUND,
-    {}_R1_LOW_BOUNDS,
-    {}_R1_UP_BOUNDS,
-    {}_R2_BOUNDS,
+    {}_CT0_R_BOUNDS,
     {}_K1_LOW_BOUND,
     {}_K1_UP_BOUND,
 );
@@ -120,8 +110,7 @@ pub global {}_CT1_CONFIGS: UserDataEncryptionCt1Configs<N, L> = UserDataEncrypti
     QIS,
     {}_E1_BOUND,
     {}_U_BOUND,
-    {}_P1_BOUNDS,
-    {}_P2_BOUNDS,
+    {}_CT1_R_BOUNDS,
 );
 "#,
         configs.n, // N
@@ -140,13 +129,9 @@ pub global {}_CT1_CONFIGS: UserDataEncryptionCt1Configs<N, L> = UserDataEncrypti
         prefix,
         configs.bits.k_bit, // BIT_K
         prefix,
-        configs.bits.r1_bit, // BIT_R1
+        configs.bits.ct0_r_bit, // CT0_BIT_R
         prefix,
-        configs.bits.r2_bit, // BIT_R2
-        prefix,
-        configs.bits.p1_bit, // BIT_P1
-        prefix,
-        configs.bits.p2_bit, // BIT_P2
+        configs.bits.ct1_r_bit, // CT1_BIT_R
         prefix,
         k0is_str, // K0IS array
         prefix,
@@ -162,18 +147,9 @@ pub global {}_CT1_CONFIGS: UserDataEncryptionCt1Configs<N, L> = UserDataEncrypti
         prefix,
         configs.bounds.k1_up_bound, // K1_UP_BOUND
         prefix,
-        r1_low_bounds_str, // R1_LOW_BOUNDS array
+        ct0_r_bounds_str, // CT0_R_BOUNDS array
         prefix,
-        r1_up_bounds_str, // R1_UP_BOUNDS array
-        prefix,
-        r2_bounds_str, // R2_BOUNDS array
-        prefix,
-        p1_bounds_str, // P1_BOUNDS array
-        prefix,
-        p2_bounds_str, // P2_BOUNDS array
-        prefix,
-        prefix,
-        prefix,
+        ct1_r_bounds_str, // CT1_R_BOUNDS array
         prefix,
         prefix,
         prefix,

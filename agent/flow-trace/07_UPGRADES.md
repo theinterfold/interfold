@@ -14,21 +14,26 @@ discover, or synchronize with each other. P2P encoding remains separate. Increas
 `GOSSIP_WIRE_MAJOR` or `SYNC_WIRE_MAJOR` when the corresponding wire format becomes incompatible
 within the same protocol version.
 
-The fhe.rs v0.4.1 upgrade raises `protocol_version` from 4 to 5. Its smudging bound and BFV
-validation rules change the DKG and proof inputs. Its non-centered plaintext scale also changes the
-CRISP ballot check and its circuit artifacts. Drain active E3s and install matching circuit
-artifacts and verifier routes before requests resume. The circuit ID domain changes from
-`interfold-bfv-v1` to `interfold-bfv-v2` for both parameter sets. Old clients must update their
-expected configuration IDs before they submit new requests. The RISC Zero guest in `crates/support`
-uses a separate, content-addressed Interfold revision. Rebuild its image and provenance record
-before changing that guest revision or its fhe.rs pin.
+The v0.19 DKG message layout requires storage schema 8, threshold-keyshare recovery schema 8, gossip
+wire major 5, and sync wire major 4. Both `ThresholdShareCreated` and `DecryptionKeyShared` include
+a dealer signature. Their event-log records, recovery inputs, and DHT payloads are incompatible with
+the unsigned layout. Protocol version 7 and node generation 2 remain the release cutover values.
+This change requires drain-and-resync; it has no layout migration.
+
+The fhe.rs v0.4.1 upgrade sets `protocol_version` to 7. Its smudging bound and BFV validation rules
+change the DKG and proof inputs. Its non-centered plaintext scale also changes the CRISP ballot check
+and its circuit artifacts. Drain active E3s and install matching circuit artifacts and verifier
+routes before requests resume. Both parameter sets use the circuit ID domain `interfold-bfv-v4`. Old
+clients must update their expected configuration IDs before they submit new requests. The RISC Zero
+guest in `crates/support` uses a separate, content-addressed Interfold revision. Rebuild its image
+and provenance record before changing that guest revision or its fhe.rs pin.
 
 The mainnet `paramSetRegistry(1)` contains the previous secure parameters and cannot be changed.
-Version 5 uses parameter-set index 2 for the new secure tuple. Keep index 1 intact for old E3
+Version 7 uses parameter-set index 2 for the new secure tuple. Keep index 1 intact for old E3
 records. While requests are paused and all E3s have drained, register index 2 in the same governance
-batch that installs the version-5 implementation and verifier routes. Validate the registered bytes
-against the new secure tuple before requests resume. Version-5 ciphernodes and request clients
-reject index 1. The indexer reads current index-0 and index-2 public keys with local v2 parameters.
+batch that installs the version-7 implementation and verifier routes. Validate the registered bytes
+against the new secure tuple before requests resume. Version-7 ciphernodes and request clients
+reject index 1. The indexer reads current index-0 and index-2 public keys with local v4 parameters.
 For historical index-0 and index-1 public-key events, it reads the append-only registry bytes and
 checks their v1 configuration ID against the request before it validates the key.
 
@@ -36,6 +41,22 @@ The non-centered plaintext scale also changes the C3 share-encryption and user-d
 witnesses and their quotient bounds. Rebuild those proofs with the matching circuits.
 
 ## Compatible rolling release
+
+The release workflow packages the circuits before it compiles the binaries and ciphernode image.
+`download-circuits` exposes the uploaded archive's SHA-256 as a build input. `e3-zk-prover` embeds
+that pin for its crate version. Binary and image builds compare the pin in `interfold noir status`
+with the archive digest before publication. See `agent/invariants/04_BUILD_CONFIG.md` for the build
+dependency and Docker argument rules.
+
+Circuit installation checks every pair in `crates/zk-prover/supported-configurations.json` before it
+replaces the installed circuits and version record. Local and CI callers can explicitly request a
+nonempty subset. `noir setup --circuits-archive` accepts repeated `--circuits-configuration` options
+for this purpose. An archive cannot select its own required configuration set.
+
+If circuit replacement or the version update fails, the installer attempts rollback and returns the
+original installation error. It logs each failed rollback rename with its source and target paths.
+If the previous circuits cannot be restored, it retains the staging directory and logs its path for
+recovery.
 
 ```text
 build backward-compatible release
@@ -50,13 +71,13 @@ Use `pnpm --dir packages/interfold-contracts upgrade:node-release --action prepa
 the release needs no governance transaction. Do not change either compatibility counter in this
 path. A compatible contract-only change also needs no node policy change.
 
-A release that changes the off-chain ticket ranking is compatible on chain but not in a mixed
-fleet. Example: the VRF `CommitteeRequested.seed` byte order
+A release that changes the off-chain ticket ranking is compatible on chain but not in a mixed fleet.
+Example: the VRF `CommitteeRequested.seed` byte order
 (`crates/evm/src/randomness_provider/events.rs`, `Seed::from`). Old and new nodes shortlist
-different submitters, so fewer than N distinct owners can submit and
-`CiphernodeRegistryOwnable` fails the E3 with `InsufficientCommitteeMembers`. The registry scores
-each submitted ticket itself, so no honest node is slashed. Pause new E3 requests for such a rollout
-and resume after the operators have upgraded.
+different submitters, so fewer than N distinct owners can submit and `CiphernodeRegistryOwnable`
+fails the E3 with `InsufficientCommitteeMembers`. The registry scores each submitted ticket itself,
+so no honest node is slashed. Pause new E3 requests for such a rollout and resume after the
+operators have upgraded.
 
 ## Mandatory node-only release
 
@@ -107,6 +128,18 @@ On a testnet, a fresh protocol, CRISP, and DAO stack is an acceptable alternativ
 upgrade. It must still pass the same route and verification-key validation before it accepts an E3.
 The old and new stacks must use separate addresses so clients cannot silently combine them.
 
+The BFV circuits use `interfold-bfv-v4` with compiled `protocol_version = 7` and
+`node_generation = 2`. The configuration ID binds this circuit version even when BFV parameters stay
+unchanged. The builder generates both precomputed IDs. Runtime readers, CRISP intake, request
+tooling, and the SDK use the same IDs and reject v1, v2, and v3 requests. The indexer also accepts
+v1 keys of historical index-0 and index-1 E3s, as the version model describes. It skips keys for
+other unsupported configuration IDs without storing them. This lets its catch-up cursor advance
+across drained unsupported rounds to recover supported rounds. Recursive folds carry
+fixed leaf, fold, and genesis VK hashes. Final aggregator public input zero binds the complete
+recursive VK tree. These proof formats require a governance cutover, not a mixed rolling release.
+Rebuild all six artifact pairs and replace the immutable BFV verifier wrappers and routers before
+requests resume.
+
 The initial VRF upgrade follows this combined path because it introduces the controller and changes
 both `Interfold` and `BondingRegistry`.
 
@@ -124,7 +157,7 @@ snapshot the operator counts and registry root
   -> preserve the registered operators and revoke the drained old manager
   -> deploy a replacement VRF consumer against the existing funded subscription
   -> add the new consumer and switch the registry without replacing the subscription
-  -> register the version-5 secure BFV parameter set at index 2 and all committee thresholds
+  -> register the version-7 secure BFV parameter set at index 2 and all committee thresholds
   -> install the secure minimum, micro, and small verifier routes
   -> install the PK, decryption, and ciphertext verifiers
   -> register and bind the CRISP program
@@ -171,12 +204,38 @@ program because it does not schedule the separate voting start required by that 
 `SCHEMA_VERSION` (`crates/sync/src/sync/schema_version.rs`) is the durable format marker. The
 preflight admits only an exact match and refuses to guess in either direction: older on-disk state
 halts as an upgrade with no migration, newer state halts as a downgrade. A raised schema therefore
-makes every populated data directory unloadable until the operator clears it.
+makes every populated data directory unloadable until the operator clears it. The older-schema halt
+names `interfold node reset-data`. The newer-schema halt names the newer release and the backup
+taken before the upgrade, because the reset guard of an older binary cannot read a newer store
+reliably. `inspect_persisted_schema_version` reads the marker through the raw key/value store before
+`EventSystem` opens logs or timestamp indexes. It checks unmarked log segments for data without
+decoding records. `interfold node validate` uses the same check before it reads or repairs logs
+(`crates/entrypoint/src/validate.rs`). An unsupported schema produces the schema failure even when
+its event bytes cannot decode. Validation skips all event and snapshot checks in that case. Each
+node that upgrades to v0.19.0 clears its state and syncs again from the chain history. The reset
+must use the v0.19.0 binary: `reset-data` in v0.18.0 and earlier has no key-share check.
 
 The operator key and the libp2p keypair live in the same key/value store as that state, under
 `//eth_private_key` and `//libp2p/keypair`. Deleting the data directory destroys the identity that
 holds the bond, and `nodes purge` additionally removes the configuration directory holding the
-cipher key file. Neither is a safe reset.
+cipher key file. Neither is a safe reset. `nodes purge` and `purge-all` require `--yes`. Before they
+delete anything, they check each node whose store, event log, or key file they would delete
+(`crates/entrypoint/src/nodes/purge/`). They take the same `ProcessFence` as `start`. They open the
+node's store, and sled refuses a store that another process has open. They run the key-share check
+that `reset-data` uses (`crates/entrypoint/src/nodes/state_guard.rs`). They also refuse for a node
+that they cannot check. Its store can be missing at the configured path, or that store can hold no
+operator key. They report every refusal at once, because `--allow-active-e3s` overrides the
+key-share and cannot-check refusals together. No flag overrides a refusal for a node that the purge
+sees running. The commands also delete the identity. Before the first deletion, the purge writes a
+`purge-in-progress` marker into each node folder that it empties. A later purge treats only a folder
+with that marker as its own leftover and finishes the deletion. An empty folder without the marker,
+such as the mount point of a volume that is not mounted, still needs its store. Another file or a
+link with the marker's name stops the purge before it deletes anything.
+
+The purge has limits. It finds stores with its own configuration and environment, so it cannot see a
+node that runs with another `E3_DATA_DIR`, `data_dir`, or working directory. It cannot tell whether
+an operator key is the node's own, so a stale copy of a store at the configured path passes. It
+finds stores only directly inside node folders.
 
 `interfold node reset-data` is the supported path. It takes the same `ProcessFence` as `start`, so
 it refuses while a node runs, copies both secrets out as ciphertext without the password, backs them
@@ -192,8 +251,13 @@ list, and it lists each such E3 with its stage, because the chain cannot restore
 `Failed` while the E3 can continue on chain. The check reads only whether a record exists and does
 not decode it, so it also protects a store that an older schema wrote. Both reads fail on a storage
 error, which the ordinary read path reports as an absent record, and a key that does not parse fails
-the check. `--allow-active-e3s` overrides the refusals
-(`crates/entrypoint/src/nodes/reset_data.rs`).
+the check. It also reads the slash writer state of each chain (`//evm_writers/slashing/`) and
+refuses while that state holds a slash report that the node has not submitted, also for an E3 that
+is `Complete`: completion does not settle a slash report, and the chain cannot restore its evidence.
+That state is decoded, and a record that does not decode fails the check, as does a record under any
+other key below that prefix. Both checks run before the command refuses, so one refusal lists the
+E3s and the slash reports. `nodes purge` runs the same check. `--allow-active-e3s` overrides the
+refusals (`crates/entrypoint/src/nodes/state_guard.rs`).
 
 The event log is not one file. `EventSystem::persisted` passes `config.log_file()` through
 `enumerate_path`, which inserts a per-aggregate index before the extension, so the durable logs are
@@ -229,10 +293,17 @@ bootstrap node, or the reverse, on the same data directory.
 append-only operational log written by `LogCollector`, never read back, and a reset leaves it in
 place.
 
-A schema raise is an upgrade-window action. `assertUpgradeWindow` already requires paused requests,
-zero active E3s, and zero unreleased committees, so no in-flight round loses state to this. The
+A schema raise needs an upgrade window. When a release also raises a required counter,
+`assertUpgradeWindow` requires paused requests, zero active E3s, and zero unreleased committees. A
+release that raises the schema but no required counter has no such on-chain check. Each operator
+resets a node only when the node serves no active E3. For each E3 that the refusal lists, the
+operator also waits until the block time passes its report deadline,
+`accusationSubmissionDeadline(e3Id)` on the `SlashingManager`. That value is
+`getE3LifecycleDeadline(e3Id)` plus one day. `SlashingEvidenceLib` rejects accusation evidence after
+it, for complete and failed E3s alike, and only a running node submits its slash reports. The
 command is not a general repair tool: a node in a live committee that resets loses its keyshare and
-fails that E3. The stage-map check refuses that case unless the operator overrides it.
+fails that E3. The stage-map check refuses that case unless the operator overrides it, and the
+slash-writer check refuses while the node holds a slash report that it has not submitted.
 
 ## Failure and rollback
 

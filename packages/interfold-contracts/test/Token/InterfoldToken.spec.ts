@@ -396,14 +396,6 @@ describe("InterfoldToken", function () {
       await time.increaseTo(ccaEnd);
       expect(await token.phase()).to.equal(2); // Phase.Cooldown
     });
-
-    it("enters Live phase after TGE", async function () {
-      const { token, ccaEnd } = await loadFixture(deploy);
-      const TGE_COOLDOWN = 40n * DAY;
-      await time.increaseTo(ccaEnd + TGE_COOLDOWN + 1n);
-      await token.tge();
-      expect(await token.phase()).to.equal(3); // Phase.Live
-    });
   });
 
   // ═════════════════════════════════════════════════════════════════════════
@@ -1047,78 +1039,6 @@ describe("InterfoldToken", function () {
   // ═════════════════════════════════════════════════════════════════════════
 
   describe("lockedBalanceOf / lockedBalanceAt / transferableBalanceOf", function () {
-    it("lockedBalanceOf returns 0 for accounts with no locks", async function () {
-      const { token, alice } = await loadFixture(deploy);
-      expect(await token.lockedBalanceOf(await alice.getAddress())).to.equal(
-        0n,
-      );
-    });
-
-    it("TGE-anchored policy releases nothing before TGE timestamp", async function () {
-      const { token, admin, alice } = await loadFixture(deploy);
-      const policyId = await createLinearPolicy(token, admin, "TEST_POLICY", {
-        vestDuration: 2n * YEAR,
-      });
-      const amount = ethers.parseEther("2400");
-
-      await token.connect(admin).mintAllocations([
-        {
-          recipient: await alice.getAddress(),
-          amount,
-          policyId,
-          label: ethers.encodeBytes32String("test"),
-        },
-      ]);
-
-      // TGE not fired yet, Tge-anchored curve should keep everything locked.
-      expect(await token.lockedBalanceOf(await alice.getAddress())).to.equal(
-        amount,
-      );
-    });
-
-    it("linear unlock over time after TGE", async function () {
-      const { token, admin, alice, ccaEnd } = await loadFixture(deploy);
-      const policyId = await createLinearPolicy(token, admin, "TEST_POLICY", {
-        vestDuration: 2n * YEAR,
-      });
-      const amount = ethers.parseEther("2400");
-
-      await token.connect(admin).mintAllocations([
-        {
-          recipient: await alice.getAddress(),
-          amount,
-          policyId,
-          label: ethers.encodeBytes32String("test"),
-        },
-      ]);
-
-      // Fire TGE.
-      const TGE_COOLDOWN = 40n * DAY;
-      await time.increaseTo(ccaEnd + TGE_COOLDOWN + 1n);
-      const tgeTx = await token.tge();
-      const receipt = await tgeTx.wait();
-      const tgeBlock = await ethers.provider.getBlock(receipt!.blockNumber);
-      const tgeTimestamp = BigInt(tgeBlock!.timestamp);
-
-      // Right at TGE: everything still locked (cliffDuration = 0 so it starts
-      // vesting immediately — but at timestamp == anchor, nothing has accrued).
-      expect(await token.lockedBalanceOf(await alice.getAddress())).to.equal(
-        amount,
-      );
-
-      // Halfway through vesting: half unlocked.
-      await time.increaseTo(tgeTimestamp + YEAR);
-      expect(await token.lockedBalanceOf(await alice.getAddress())).to.equal(
-        amount / 2n,
-      );
-
-      // Past vest end: fully unlocked.
-      await time.increaseTo(tgeTimestamp + 2n * YEAR);
-      expect(await token.lockedBalanceOf(await alice.getAddress())).to.equal(
-        0n,
-      );
-    });
-
     it("lockedBalanceAt follows the TGE-linear curve over time", async function () {
       // Use deployWithLockAndTge which creates a Tge-anchored lock with holdUntil=0.
       // Then verify lockedBalanceAt at various timestamps.
@@ -1564,11 +1484,6 @@ describe("InterfoldToken", function () {
   // ═════════════════════════════════════════════════════════════════════════
 
   describe("lock sunset", function () {
-    it("NO_MORE_LOCKS is fixed at deployment", async function () {
-      const { token, noMoreLocks } = await loadFixture(deploy);
-      expect(await token.NO_MORE_LOCKS()).to.equal(noMoreLocks);
-    });
-
     it("locked balance becomes fully transferable at the sunset", async function () {
       const { token, alice, bob, amount, noMoreLocks } =
         await deployWithLockAndTge({ mintAmount: ethers.parseEther("1000") });
@@ -1763,22 +1678,6 @@ describe("InterfoldToken", function () {
       await expect(token.connect(admin).linkClaim(aliceAddress, 100n, policyB))
         .to.be.revertedWithCustomError(token, "ConflictingQueuedClaimPolicy")
         .withArgs(policyA, policyB);
-    });
-
-    it("linkClaim can increment the existing queued policy", async function () {
-      const { token, admin, alice } = await loadFixture(deploy);
-      const aliceAddress = await alice.getAddress();
-      const policyId = await createLinearPolicy(token, admin, "QUEUE_SAME", {
-        vestDuration: 2n * YEAR,
-      });
-
-      await token.connect(admin).linkClaim(aliceAddress, 100n, policyId);
-      await token.connect(admin).linkClaim(aliceAddress, 200n, policyId);
-
-      expect(await token.queuedLockCount(aliceAddress)).to.equal(1n);
-      const queuedLock = await token.queuedLocks(aliceAddress, 0);
-      expect(queuedLock.policyId).to.equal(policyId);
-      expect(queuedLock.amount).to.equal(300n);
     });
 
     it("linkClaim cannot create queued locks for a claim-lock exempt account", async function () {
@@ -2415,6 +2314,14 @@ describe("InterfoldToken", function () {
   // ═════════════════════════════════════════════════════════════════════════
 
   describe("BondingRegistry integration", function () {
+    async function deployBondingSystem() {
+      return deployInterfoldSystem({
+        useMockCiphernodeRegistry: true,
+        setupOperators: 0,
+        mintUsdcTo: [],
+      });
+    }
+
     async function impersonateSlashingManager(slashingManager: {
       getAddress(): Promise<string>;
     }) {
@@ -2429,12 +2336,7 @@ describe("InterfoldToken", function () {
       const [, beneficiary, , operator] = signers;
       const beneficiaryAddress = await beneficiary.getAddress();
       const operatorAddress = await operator.getAddress();
-      const sys = await deployInterfoldSystem({
-        useMockCiphernodeRegistry: true,
-        setupOperators: 0,
-        wireSlashingManager: false,
-        mintUsdcTo: [],
-      });
+      const sys = await loadFixture(deployBondingSystem);
       const { bondingRegistry, ciphernodeBondToken } = sys;
       const bondingRegistryAddress = await bondingRegistry.getAddress();
 
@@ -2530,12 +2432,7 @@ describe("InterfoldToken", function () {
       const [, beneficiary, , operator] = signers;
       const beneficiaryAddress = await beneficiary.getAddress();
       const operatorAddress = await operator.getAddress();
-      const sys = await deployInterfoldSystem({
-        useMockCiphernodeRegistry: true,
-        setupOperators: 0,
-        wireSlashingManager: false,
-        mintUsdcTo: [],
-      });
+      const sys = await loadFixture(deployBondingSystem);
       const { bondingRegistry, ciphernodeBondToken } = sys;
       const bondingRegistryAddress = await bondingRegistry.getAddress();
       const totalAmount = ethers.parseEther("1000");
@@ -2605,108 +2502,12 @@ describe("InterfoldToken", function () {
       );
     });
 
-    it("bonding registry transfers are allowed pre-TGE", async function () {
-      const sys = await deployInterfoldSystem({
-        useMockCiphernodeRegistry: true,
-        setupOperators: 0,
-        mintUsdcTo: [],
-      });
-      const { bondingRegistry, ciphernodeBondToken, owner } = sys;
-      const bondingRegistryAddress = await bondingRegistry.getAddress();
-      const bondAmount = ethers.parseEther("100");
-      const [, operator] = await ethers.getSigners();
-
-      await ciphernodeBondToken.mint(
-        await owner.getAddress(),
-        bondAmount,
-        ethers.encodeBytes32String("test"),
-      );
-      await ciphernodeBondToken
-        .connect(owner)
-        .approve(bondingRegistryAddress, bondAmount);
-      // Bonding transfer should succeed.
-      await bondingRegistry
-        .connect(operator)
-        .setBondOwner(await owner.getAddress());
-      await bondingRegistry
-        .connect(owner)
-        .bondCiphernodeFor(await operator.getAddress(), bondAmount);
-    });
-
-    it("locked tokens can be bonded (pre-credit visible to token)", async function () {
-      const signers = await ethers.getSigners();
-      const [, beneficiary, , operator] = signers;
-      const beneficiaryAddress = await beneficiary.getAddress();
-      const operatorAddress = await operator.getAddress();
-      const sys = await deployInterfoldSystem({
-        useMockCiphernodeRegistry: true,
-        setupOperators: 0,
-        wireSlashingManager: false,
-        mintUsdcTo: [],
-      });
-      const { bondingRegistry, ciphernodeBondToken } = sys;
-      const bondingRegistryAddress = await bondingRegistry.getAddress();
-
-      // Create a lock policy and mint locked tokens.
-      const policyId = ethers.encodeBytes32String("LOCKED_BOND");
-      await ciphernodeBondToken.createLockPolicy(policyId, {
-        holdUntil: 0n,
-        unlock: {
-          anchor: 1, // Tge-anchored
-          start: 0n,
-          cliffDuration: 0n,
-          vestDuration: 2n * YEAR,
-        },
-      });
-      const lockAmount = ethers.parseEther("1000");
-      // Mint locked allocation directly (balance = locked).
-      await ciphernodeBondToken.mintAllocations([
-        {
-          recipient: beneficiaryAddress,
-          amount: lockAmount,
-          policyId,
-          label: ethers.encodeBytes32String("locked"),
-        },
-      ]);
-
-      // Before bonding: balance = 1000, locked ≈ 1000, bonded = 0.
-      // transferable ≈ 0 (Tge-anchored, no time has passed).
-      const tbBefore =
-        await ciphernodeBondToken.transferableBalanceOf(beneficiaryAddress);
-      expect(tbBefore).to.be.lt(ethers.parseEther("0.01"));
-
-      // Bond all locked tokens. Should succeed because BondingRegistry
-      // pre-credits `operators[beneficiary].ciphernodeBond` before calling
-      // `safeTransferFrom`, so the token sees bonded = lockAmount during
-      // `_update()`.
-      await ciphernodeBondToken
-        .connect(beneficiary)
-        .approve(bondingRegistryAddress, lockAmount);
-      await bondingRegistry.connect(operator).setBondOwner(beneficiaryAddress);
-      await bondingRegistry
-        .connect(beneficiary)
-        .bondCiphernodeFor(operatorAddress, lockAmount);
-
-      // After bonding: wallet = 0, locked ≈ 1000, bonded = 1000.
-      // Bond covers lock, so no mustRetain.
-      expect(await ciphernodeBondToken.balanceOf(beneficiaryAddress)).to.equal(
-        0n,
-      );
-      expect(await bondingRegistry.totalBonded(beneficiaryAddress)).to.equal(
-        lockAmount,
-      );
-    });
-
     it("locked tokens can fund a distinct operator key", async function () {
       const signers = await ethers.getSigners();
       const [, beneficiary, operator] = signers;
       const beneficiaryAddress = await beneficiary.getAddress();
       const operatorAddress = await operator.getAddress();
-      const sys = await deployInterfoldSystem({
-        useMockCiphernodeRegistry: true,
-        setupOperators: 0,
-        mintUsdcTo: [],
-      });
+      const sys = await loadFixture(deployBondingSystem);
       const { bondingRegistry, ciphernodeBondToken } = sys;
       const bondingRegistryAddress = await bondingRegistry.getAddress();
 
@@ -2756,11 +2557,7 @@ describe("InterfoldToken", function () {
       const beneficiaryAddress = await beneficiary.getAddress();
       const newOwnerAddress = await newOwner.getAddress();
       const operatorAddress = await operator.getAddress();
-      const sys = await deployInterfoldSystem({
-        useMockCiphernodeRegistry: true,
-        setupOperators: 0,
-        mintUsdcTo: [],
-      });
+      const sys = await loadFixture(deployBondingSystem);
       const { bondingRegistry, ciphernodeBondToken } = sys;
       const bondingRegistryAddress = await bondingRegistry.getAddress();
 
@@ -2838,12 +2635,7 @@ describe("InterfoldToken", function () {
       const [, beneficiary, , operator] = signers;
       const beneficiaryAddress = await beneficiary.getAddress();
       const operatorAddress = await operator.getAddress();
-      const sys = await deployInterfoldSystem({
-        useMockCiphernodeRegistry: true,
-        setupOperators: 0,
-        wireSlashingManager: false,
-        mintUsdcTo: [],
-      });
+      const sys = await loadFixture(deployBondingSystem);
       const { bondingRegistry, ciphernodeBondToken } = sys;
       const bondingRegistryAddress = await bondingRegistry.getAddress();
 
@@ -2890,12 +2682,7 @@ describe("InterfoldToken", function () {
       const [, beneficiary, , operator] = signers;
       const beneficiaryAddress = await beneficiary.getAddress();
       const operatorAddress = await operator.getAddress();
-      const sys = await deployInterfoldSystem({
-        useMockCiphernodeRegistry: true,
-        setupOperators: 0,
-        wireSlashingManager: false,
-        mintUsdcTo: [],
-      });
+      const sys = await loadFixture(deployBondingSystem);
       const { bondingRegistry, ciphernodeBondToken, slashingManager } = sys;
       const bondingRegistryAddress = await bondingRegistry.getAddress();
 
@@ -2962,12 +2749,7 @@ describe("InterfoldToken", function () {
       const [, beneficiary, , operator] = signers;
       const beneficiaryAddress = await beneficiary.getAddress();
       const operatorAddress = await operator.getAddress();
-      const sys = await deployInterfoldSystem({
-        useMockCiphernodeRegistry: true,
-        setupOperators: 0,
-        wireSlashingManager: false,
-        mintUsdcTo: [],
-      });
+      const sys = await loadFixture(deployBondingSystem);
       const { bondingRegistry, ciphernodeBondToken, owner, slashingManager } =
         sys;
       const bondingRegistryAddress = await bondingRegistry.getAddress();

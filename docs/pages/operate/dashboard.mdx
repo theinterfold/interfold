@@ -104,8 +104,9 @@ status: Active, Registered, Not registered, or Exit queued. It also shows the av
 ticket balance, the ciphernode bond, and the node counts. The ticket balance and the ciphernode bond
 are raw token base units. Hover over a value to see the full number.
 
-The **Rewards** count on the card counts `RewardCredited` events whose account is the operator
-address. Rewards go to the bond owner, so the count stays at 0 when the bond owner is a separate
+The **Rewards** count on the card shows the number of E3 rewards that the operator earned as a
+committee member. The dashboard finds the reward of the operator in the `RewardsDistributed` and
+`RewardCredited` events of each E3. The count includes rewards that go to a separate bond owner
 wallet. See [Rewards](/operate/exits-and-slashing#rewards).
 
 The Events view gives each event a level:

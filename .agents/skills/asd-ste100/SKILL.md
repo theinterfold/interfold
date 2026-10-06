@@ -1,16 +1,18 @@
 ---
 name: asd-ste100
 description:
-  Write, rewrite, and review technical prose with ASD-STE100 Issue 9 principles. Use for code
-  comments, doc comments, documentation, requirements, procedures, safety text, help text, release
-  notes, PR prose, error messages, and other natural-language technical content. Do not use it to
-  rewrite protected code, identifiers, commands, quoted text, legal text, or exact interface
-  literals.
+  Write, rewrite, and review technical prose with ASD-STE100 Issue 9 principles. Use for
+  documentation, doc pages, READMEs, requirements, procedures, safety text, help text, release
+  notes, PR prose, user-facing error messages, and reviews of such text. Short code comments need
+  only the style rule in agent/RULES.md. Do not use it to rewrite protected code, identifiers,
+  commands, quoted text, legal text, or exact interface literals.
 ---
 
 # ASD-STE100 technical writing
 
-Apply this skill whenever you add, change, or review natural-language technical content.
+Apply this skill when you add, change, or review documentation or other longer natural-language
+technical content. For short code comments, the style rule in `agent/RULES.md` §Working rules is
+enough: current behavior and its reason, in short, active sentences.
 
 Preserve technical meaning before simplifying language. Do not change a fact, condition, sequence,
 requirement strength, limit, unit, identifier, or safety classification to satisfy a writing rule.

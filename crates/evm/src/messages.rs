@@ -129,6 +129,12 @@ impl EvmEvent {
                 }
                 .into()
             }
+            InterfoldEventData::EligibilityConfigurationVersionUpdated(update) => {
+                e3_events::EligibilityConfigurationVersionUpdatedAt { update, position }.into()
+            }
+            InterfoldEventData::BondingAssetConfigUpdated(config) => {
+                e3_events::BondingAssetConfigUpdatedAt { config, position }.into()
+            }
             data => data,
         };
         bus.event_from_remote_source(data, None, ts, Some(self.block), EventSource::Evm)

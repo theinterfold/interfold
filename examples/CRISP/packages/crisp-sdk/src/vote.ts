@@ -19,8 +19,6 @@ import foldCircuit from '../../../circuits/bin/fold/target/crisp_fold.json'
 import foldOnchainCircuit from '../../../circuits/bin/fold_onchain/target/crisp_onchain_fold.json'
 import userDataEncryptionCircuit from '../../../../../circuits/bin/threshold/target/user_data_encryption.json'
 import { requireCircuits } from './circuits'
-import { bytesToHex, encodeAbiParameters, parseAbiParameters, numberToHex, getAddress, keccak256 } from 'viem/utils'
-import { Hex } from 'viem'
 
 // Cached Barretenberg API instance — avoids re-initialising WASM + SRS on every proof.
 let _bbApi: Barretenberg | null = null
@@ -119,19 +117,15 @@ export const generateProof = async (circuitInputs: any, censusMode: CensusVarian
     ct0is: circuitInputs.ct0is,
     u: circuitInputs.u,
     e0: circuitInputs.e0,
-    e0is: circuitInputs.e0is,
-    e0_quotients: circuitInputs.e0_quotients,
     k1: circuitInputs.k1,
-    r1is: circuitInputs.r1is,
-    r2is: circuitInputs.r2is,
+    r: circuitInputs.r,
   })
   const { witness: userDataEncryptionCt1Witness } = await executeCircuit(circuits.userDataEncryptionCt1 as CompiledCircuit, {
     pk1is: circuitInputs.pk1is,
     ct1is: circuitInputs.ct1is,
     u: circuitInputs.u,
     e1: circuitInputs.e1,
-    p1is: circuitInputs.p1is,
-    p2is: circuitInputs.p2is,
+    r_ct1: circuitInputs.r_ct1,
   })
   // The two stacks share every input except how eligibility reaches the circuit: a census round
   // proves a Merkle path, an on-chain round takes the voting power the contract read.
@@ -363,33 +357,4 @@ export const verifyProof = async (proof: ProofData, censusMode: CensusVariant = 
   const foldBackend = new UltraHonkBackend(circuit.bytecode, api)
 
   return foldBackend.verifyProof(proof, { verifierTarget: 'evm' })
-}
-
-/**
- * Encode the proof data into a format that can be used by the CRISP program in Solidity
- * to validate the proof.
- * @param proof The proof data.
- * @returns The encoded proof data as a hex string.
- */
-export const encodeSolidityProof = ({ publicInputs, proof, encryptedVote, parentIndexPlusOne }: ProofData): Hex => {
-  // Indices follow the fold circuit public inputs:
-  //   0 prev_ct_commitment, 1 digest_hi, 2 digest_lo, 3 slot_address,
-  //   4 merkle_root | voting_power, 5 is_first_vote, 6 num_options,
-  //   7 final_ct_commitment, 8 committee public key
-  const slotAddress = getAddress(numberToHex(BigInt(publicInputs[3]), { size: 20 }))
-  const encryptedVoteCommitment = publicInputs[7] as `0x${string}`
-  const encryptedVoteBytes = bytesToHex(encryptedVote)
-  const encryptedVoteHash = keccak256(encryptedVoteBytes)
-
-  // The last field contains the ciphertext only while the availability service stages the job.
-  // The service removes it from the proof-commitment transaction, publishes it to Avail, and
-  // later supplies the VectorX proof to `finalizeInput`.
-  return encodeAbiParameters(parseAbiParameters('bytes, address, bytes32, bytes32, uint40, bytes'), [
-    bytesToHex(proof),
-    slotAddress,
-    encryptedVoteCommitment,
-    encryptedVoteHash,
-    parentIndexPlusOne,
-    encryptedVoteBytes,
-  ])
 }

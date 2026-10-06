@@ -12,7 +12,7 @@ import type {
   SafeTransaction,
   VrfSortitionUpgradePlan,
 } from "./types";
-import { deployedAddress } from "./values";
+import { deployedAddress, isMissingFunctionError } from "./values";
 
 export const vrfCoordinatorInterface = new ethersLib.Interface([
   "function addConsumer(uint256 subId,address consumer)",
@@ -43,28 +43,6 @@ async function readPendingRequestCount(
   )[0] as bigint;
 }
 
-function isUnavailablePendingRequestCount(error: unknown): boolean {
-  if (typeof error !== "object" || error === null) return false;
-  const rpcError = error as {
-    code?: string | number;
-    data?: unknown;
-    value?: unknown;
-  };
-  if (
-    rpcError.code === 3 &&
-    (rpcError.data === undefined || rpcError.data === "0x")
-  ) {
-    return true;
-  }
-  return (
-    (rpcError.data === "0x" &&
-      (rpcError.code === undefined ||
-        rpcError.code === "CALL_EXCEPTION" ||
-        rpcError.code === 3)) ||
-    (rpcError.code === "BAD_DATA" && rpcError.value === "0x")
-  );
-}
-
 /** Read the reservation count when the deployed provider exposes it. */
 export async function readOptionalPendingRequestCount(
   provider: ethersLib.Provider,
@@ -79,7 +57,7 @@ export async function readOptionalPendingRequestCount(
     try {
       return await readPendingRequestCount(provider, target);
     } catch (retryError) {
-      if (isUnavailablePendingRequestCount(retryError)) return undefined;
+      if (isMissingFunctionError(retryError)) return undefined;
       throw retryError;
     }
   }

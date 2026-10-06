@@ -37,6 +37,8 @@ serde = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
+e3-sync = { workspace = true }
 e3-test-helpers = { workspace = true }
 fhe-traits = { workspace = true }
 rand = { workspace = true }
+tracing-subscriber = { workspace = true }

@@ -34,46 +34,20 @@ mod tests {
     }
 
     #[test]
-    fn test_seq_cursor_done_when_under_limit() {
-        let events = vec![MockEvent(1), MockEvent(2)];
-        let cursor = compute_seq_cursor(&events, 10);
-        assert!(matches!(cursor, SeqCursor::Done));
-    }
+    fn the_cursor_is_done_below_the_limit_and_points_at_the_last_seq_at_it() {
+        let cases: [(&[u64], usize, SeqCursor); 3] = [
+            (&[], 10, SeqCursor::Done),
+            (&[1, 2], 10, SeqCursor::Done),
+            (&[100, 200, 300], 3, SeqCursor::Next(300)),
+        ];
 
-    #[test]
-    fn test_seq_cursor_next_when_at_limit() {
-        let events = vec![MockEvent(1), MockEvent(2)];
-        let cursor = compute_seq_cursor(&events, 2);
-        match cursor {
-            SeqCursor::Next(seq) => assert_eq!(seq, 2),
-            SeqCursor::Done => panic!("Expected Next, got Done"),
-        }
-    }
-
-    #[test]
-    fn test_seq_cursor_uses_last_event_seq() {
-        let events = vec![MockEvent(100), MockEvent(200), MockEvent(300)];
-        let cursor = compute_seq_cursor(&events, 3);
-        match cursor {
-            SeqCursor::Next(seq) => assert_eq!(seq, 300),
-            SeqCursor::Done => panic!("Expected Next, got Done"),
-        }
-    }
-
-    #[test]
-    fn test_seq_cursor_empty_returns_done() {
-        let events: Vec<MockEvent> = vec![];
-        let cursor = compute_seq_cursor(&events, 10);
-        assert!(matches!(cursor, SeqCursor::Done));
-    }
-
-    #[test]
-    fn test_seq_cursor_single_event_at_limit() {
-        let events = vec![MockEvent(42)];
-        let cursor = compute_seq_cursor(&events, 1);
-        match cursor {
-            SeqCursor::Next(seq) => assert_eq!(seq, 42),
-            SeqCursor::Done => panic!("Expected Next, got Done"),
+        for (seqs, limit, expected) in cases {
+            let events: Vec<MockEvent> = seqs.iter().copied().map(MockEvent).collect();
+            assert_eq!(
+                compute_seq_cursor(&events, limit),
+                expected,
+                "seqs={seqs:?} limit={limit}"
+            );
         }
     }
 }

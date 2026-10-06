@@ -27,11 +27,32 @@ use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use tracing::info;
 
 /// The lock-file name placed in the node's data directory.
-const LOCK_FILE_NAME: &str = "interfold.lock";
+pub(crate) const LOCK_FILE_NAME: &str = "interfold.lock";
+
+/// The error when another live process holds the fence.
+#[derive(Debug)]
+pub struct FenceHeld {
+    node_name: String,
+    lock_path: PathBuf,
+}
+
+impl std::fmt::Display for FenceHeld {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "another interfold instance is already running for node '{}' against this data \
+             directory (lock held at {:?}). Refusing to start a second instance, which would \
+             double-sign and corrupt state. Stop the other instance first.",
+            self.node_name, self.lock_path
+        )
+    }
+}
+
+impl std::error::Error for FenceHeld {}
 
 /// A held cross-host fence. While this value is alive the process holds an
 /// exclusive advisory lock on the node's data directory. Dropping it (on exit)
@@ -89,12 +110,11 @@ impl ProcessFence {
         match file.try_lock() {
             Ok(()) => {}
             Err(std::fs::TryLockError::WouldBlock) => {
-                bail!(
-                    "another interfold instance is already running for node '{node_name}' \
-                     against this data directory (lock held at {lock_path:?}). Refusing to \
-                     start a second instance, which would double-sign and corrupt state. \
-                     Stop the other instance first."
-                );
+                return Err(FenceHeld {
+                    node_name: node_name.to_string(),
+                    lock_path: lock_path.to_path_buf(),
+                }
+                .into());
             }
             Err(std::fs::TryLockError::Error(err)) => {
                 return Err(err)
@@ -123,7 +143,7 @@ impl ProcessFence {
 /// Compute the lock-file path for a given database path. The lock lives in the
 /// database directory's parent (the node data directory) so it covers all of
 /// the node's on-disk state, not just the sled DB.
-fn lock_path_for(db_path: &Path) -> PathBuf {
+pub(crate) fn lock_path_for(db_path: &Path) -> PathBuf {
     match db_path.parent() {
         Some(parent) if !parent.as_os_str().is_empty() => parent.join(LOCK_FILE_NAME),
         _ => db_path.with_extension("lock"),
@@ -150,7 +170,7 @@ mod tests {
         let err = ProcessFence::acquire(&db, "node1")
             .expect_err("second acquire must fail while first is held");
         assert!(
-            err.to_string().contains("already running"),
+            err.is::<FenceHeld>() && err.to_string().contains("already running"),
             "unexpected error: {err}"
         );
 

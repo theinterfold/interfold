@@ -33,7 +33,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::sync::{broadcast, mpsc};
-use tracing::{error, trace, warn};
+use tracing::trace;
 
 use libp2p::PeerId;
 
@@ -129,7 +129,13 @@ impl TryFrom<GossipData> for InterfoldEvent<Unsequenced> {
 #[derive(Derivative, Clone, serde::Serialize, serde::Deserialize)]
 #[derivative(Debug)]
 pub enum ProtocolResponse {
-    Ok(#[derivative(Debug(format_with = "e3_utils::formatters::hexf"))] Vec<u8>),
+    /// The transport encodes the bytes as one CBOR byte string, so a reply's frame is its bytes
+    /// plus a few header bytes. As a CBOR integer array, a byte above 23 would take two.
+    Ok(
+        #[derivative(Debug(format_with = "e3_utils::formatters::hexf"))]
+        #[serde(with = "serde_bytes")]
+        Vec<u8>,
+    ),
     BadRequest(String),
     Error(String),
 }
@@ -220,11 +226,26 @@ pub enum NetCommand {
         address: Multiaddr,
         peer_id: PeerId,
     },
+    /// Store a document in this node's own Kademlia store, without uploading it to other peers.
+    /// Peers that look its key up can then fetch it from this node.
+    DhtStoreLocal {
+        correlation_id: CorrelationId,
+        expires: Option<Instant>,
+        value: ArcBytes,
+        key: ContentHash,
+    },
     /// Command to PublishDocument to Kademlia
     DhtPutRecord {
         correlation_id: CorrelationId,
         expires: Option<Instant>,
         value: ArcBytes,
+        key: ContentHash,
+    },
+    /// End the Kademlia queries of a key's DHT puts that are in their upload phase. It has no
+    /// reply. This is not a full cancel: requests that a query already gave to the connection
+    /// handlers, queued or in progress, still go out, and a put that still looks up its closest
+    /// peers runs on and then uploads the record.
+    DhtCancelPut {
         key: ContentHash,
     },
     /// Fetch Document from Kademlia
@@ -241,6 +262,10 @@ pub enum NetCommand {
     /// Send a request to a peer and await response
     OutgoingRequest(OutgoingRequest),
     IncomingResponse(IncomingResponse),
+    /// List the connected peers that passed network admission (`NetEvent::AdmittedPeers`).
+    AdmittedPeers {
+        correlation_id: CorrelationId,
+    },
 }
 
 impl NetCommand {
@@ -284,6 +309,15 @@ impl NetCommand {
                 };
                 format!("GossipPublish {{ topic: {topic}, correlation_id: {correlation_id}, {kind} }}")
             }
+            N::DhtStoreLocal {
+                correlation_id,
+                key,
+                value,
+                ..
+            } => format!(
+                "DhtStoreLocal {{ correlation_id: {correlation_id}, key: {key:?}, value_bytes: {} }}",
+                value.size()
+            ),
             N::DhtPutRecord {
                 correlation_id,
                 key,
@@ -297,6 +331,7 @@ impl NetCommand {
                 correlation_id,
                 key,
             } => format!("DhtGetRecord {{ correlation_id: {correlation_id}, key: {key:?} }}"),
+            N::DhtCancelPut { key } => format!("DhtCancelPut {{ key: {key:?} }}"),
             N::DhtRemoveRecords { keys } => format!("DhtRemoveRecords {{ keys: {} }}", keys.len()),
             N::OutgoingRequest(OutgoingRequest { correlation_id, .. }) => {
                 format!("OutgoingRequest {{ correlation_id: {correlation_id} }}")
@@ -307,16 +342,21 @@ impl NetCommand {
             }
             N::Shutdown => "Shutdown".into(),
             N::IncomingResponse(_) => "IncomingResponse".into(),
+            N::AdmittedPeers { correlation_id } => {
+                format!("AdmittedPeers {{ correlation_id: {correlation_id} }}")
+            }
         }
     }
 
     pub fn correlation_id(&self) -> Option<CorrelationId> {
         use NetCommand as N;
         match self {
+            N::DhtStoreLocal { correlation_id, .. } => Some(*correlation_id),
             N::DhtPutRecord { correlation_id, .. } => Some(*correlation_id),
             N::DhtGetRecord { correlation_id, .. } => Some(*correlation_id),
             N::GossipPublish { correlation_id, .. } => Some(*correlation_id),
             N::OutgoingRequest(OutgoingRequest { correlation_id, .. }) => Some(*correlation_id),
+            N::AdmittedPeers { correlation_id } => Some(*correlation_id),
             _ => None,
         }
     }
@@ -328,6 +368,13 @@ impl NetCommand {
 pub enum NetEvent {
     /// Bytes have been broadcast over the network
     GossipData(GossipData),
+    /// A protocol event with transient propagation-peer attribution.
+    GossipIngress {
+        propagation_source: PeerId,
+        data: GossipData,
+    },
+    /// A document notification with local transport attribution.
+    DocumentIngress(Box<DocumentIngress>),
     /// There was an Error publishing bytes over the network
     GossipPublishError {
         correlation_id: CorrelationId,
@@ -373,6 +420,16 @@ pub enum NetEvent {
         key: ContentHash,
         correlation_id: CorrelationId,
     },
+    /// This node stored a document in its own Kademlia store.
+    DhtStoreLocalSucceeded {
+        key: ContentHash,
+        correlation_id: CorrelationId,
+    },
+    /// This node could not store a document in its own Kademlia store.
+    DhtStoreLocalError {
+        correlation_id: CorrelationId,
+        error: store::Error,
+    },
     /// There was an error receiving the document
     DhtGetRecordError {
         correlation_id: CorrelationId,
@@ -400,6 +457,14 @@ pub enum NetEvent {
         /// Total number of peers that were dialed.
         total: usize,
     },
+    /// Connected peers that passed network admission, in reply to `NetCommand::AdmittedPeers`.
+    AdmittedPeers {
+        correlation_id: CorrelationId,
+        peers: Vec<PeerId>,
+    },
+    /// The startup buffer sends this on its output after the last event that it held, so a
+    /// consumer knows that every later event is live. The network interface never sends it.
+    StartupBufferReleased,
 }
 
 #[derive(Clone, Debug)]
@@ -417,12 +482,17 @@ impl NetEvent {
         // Keep this match exhaustive. Each new event must select one delivery path.
         match self {
             Self::GossipData(_)
+            | Self::GossipIngress { .. }
+            | Self::DocumentIngress(_)
             | Self::GossipPublishError { .. }
             | Self::GossipPublished { .. }
             | Self::DhtGetRecordSucceeded { .. }
             | Self::DhtPutRecordSucceeded { .. }
             | Self::DhtGetRecordError { .. }
-            | Self::DhtPutRecordError { .. } => true,
+            | Self::DhtPutRecordError { .. }
+            | Self::DhtStoreLocalSucceeded { .. }
+            | Self::DhtStoreLocalError { .. }
+            | Self::StartupBufferReleased => true,
             Self::DialError { .. }
             | Self::ConnectionEstablished { .. }
             | Self::ConfiguredDialAdmitted { .. }
@@ -432,7 +502,8 @@ impl NetEvent {
             | Self::IncomingRequest(_)
             | Self::OutgoingRequestSucceeded(_)
             | Self::OutgoingRequestFailed(_)
-            | Self::AllPeersDialed { .. } => false,
+            | Self::AllPeersDialed { .. }
+            | Self::AdmittedPeers { .. } => false,
         }
     }
 
@@ -443,7 +514,9 @@ impl NetEvent {
     /// event-count limit.
     pub(crate) fn buffered_size_bytes(&self) -> usize {
         let dynamic = match self {
-            Self::GossipData(data) => serialized_size(data),
+            Self::GossipData(data) | Self::GossipIngress { data, .. } => serialized_size(data),
+            Self::DocumentIngress(ingress) => std::mem::size_of::<DocumentIngress>()
+                .saturating_add(serialized_size(&ingress.notification)),
             Self::GossipPublished { message_id, .. } => message_id.0.len(),
             Self::DhtGetRecordSucceeded { value, .. } => value.len(),
             Self::DhtGetRecordError { error, .. } => match error {
@@ -471,13 +544,19 @@ impl NetEvent {
             Self::OutgoingRequestFailed(response) => response.error.len(),
             Self::GossipPublishError { error, .. } => error.to_string().len(),
             Self::PeerRejected { reason, .. } => reason.len(),
+            Self::AdmittedPeers { peers, .. } => {
+                peers.len().saturating_mul(std::mem::size_of::<PeerId>())
+            }
             Self::DialError { .. }
             | Self::ConnectionEstablished { .. }
             | Self::ConfiguredDialAdmitted { .. }
             | Self::OutgoingConnectionError { .. }
             | Self::DhtPutRecordSucceeded { .. }
             | Self::DhtPutRecordError { .. }
-            | Self::AllPeersDialed { .. } => 0,
+            | Self::DhtStoreLocalSucceeded { .. }
+            | Self::DhtStoreLocalError { .. }
+            | Self::AllPeersDialed { .. }
+            | Self::StartupBufferReleased => 0,
         };
 
         std::mem::size_of::<Self>().saturating_add(dynamic)
@@ -492,8 +571,11 @@ impl NetEvent {
             N::DhtGetRecordSucceeded { correlation_id, .. } => Some(*correlation_id),
             N::DhtPutRecordError { correlation_id, .. } => Some(*correlation_id),
             N::DhtPutRecordSucceeded { correlation_id, .. } => Some(*correlation_id),
+            N::DhtStoreLocalSucceeded { correlation_id, .. } => Some(*correlation_id),
+            N::DhtStoreLocalError { correlation_id, .. } => Some(*correlation_id),
             N::OutgoingRequestSucceeded(msg) => Some(msg.correlation_id),
             N::OutgoingRequestFailed(msg) => Some(msg.correlation_id),
+            N::AdmittedPeers { correlation_id, .. } => Some(*correlation_id),
             _ => None,
         }
     }
@@ -504,6 +586,14 @@ fn serialized_size(value: &impl Serialize) -> usize {
         .ok()
         .and_then(|size| usize::try_from(size).ok())
         .unwrap_or(usize::MAX)
+}
+
+/// Transient ingress metadata. In-process notifications share one unattributed queue.
+#[derive(Message, Clone, Debug)]
+#[rtype(result = "()")]
+pub struct DocumentIngress {
+    pub propagation_source: Option<PeerId>,
+    pub notification: DocumentPublishedNotification,
 }
 
 /// Payload that is dispatched as a net -> net gossip event from Kademlia. This event signals that
@@ -531,7 +621,12 @@ impl DocumentPublishedNotification {
     }
 }
 
-/// Generic helper for the command-response pattern with correlation IDs
+/// Sends a command and waits for its result event.
+///
+/// The result arrives through a oneshot channel registered for the command's correlation id at the
+/// network interface's event channel, also when `net_events` reads the startup buffer. So neither
+/// broadcast lag nor the buffer can drop it. `matcher` converts the result event; it returns `None`
+/// for an event that is not a result of this command.
 pub async fn call_and_await_response<F, R>(
     net_cmds: mpsc::Sender<NetCommand>,
     net_events: NetEventSubscriber,
@@ -542,10 +637,6 @@ pub async fn call_and_await_response<F, R>(
 where
     F: Fn(&NetEvent) -> Option<Result<R>>,
 {
-    // Subscribe before sending the command so the response cannot be missed
-    let mut rx = net_events.subscribe();
-
-    // Extract correlation_id from command
     let Some(id) = command.correlation_id() else {
         return Err(anyhow::anyhow!(
             "Command must have a correlation_id but this does not: {}",
@@ -553,43 +644,27 @@ where
         ));
     };
 
-    // The command moves into the channel, so keep its description for the timeout error.
+    // The command moves into the channel, so keep its description for the errors below.
     let command_summary = command.summary();
 
-    // Send the command to Libp2pNetInterface
+    // Register before sending the command so the result cannot arrive first.
+    let response = net_events.expect_response(id)?;
+
     trace!(
         "call_and_await_response: sending command {} with timeout {:?}",
         command_summary,
         timeout
     );
-    net_cmds.send(command).await?;
-
-    let result = tokio::time::timeout(timeout, async {
-        loop {
-            match rx.recv().await {
-                Ok(event) => {
-                    // Only process events matching our correlation ID
-                    if event.correlation_id() == Some(id) {
-                        if let Some(result) = matcher(&event) {
-                            return result;
-                        } // None means unexpected event type, keep waiting
-                        trace!("matcher did not match event, skipping...");
-                    }
-                }
-                Err(broadcast::error::RecvError::Lagged(n)) => {
-                    warn!("broadcast receiver lagged by {n} messages");
-                    continue;
-                }
-                Err(e) => {
-                    error!("broadcast channel error: {:?}", e);
-                    return Err(e.into());
-                }
-            }
-        }
+    // One deadline covers the queue admission and the response, so a full command queue cannot
+    // hold the caller past its timeout. An expired send drops the command with it.
+    let event = tokio::time::timeout(timeout, async move {
+        net_cmds.send(command).await?;
+        response.recv().await
     })
     .await
-    .map_err(|_| anyhow::anyhow!("Timed out waiting for response from {command_summary}"))?;
-    result
+    .map_err(|_| anyhow::anyhow!("Timed out waiting for response from {command_summary}"))??;
+    matcher(&event)
+        .unwrap_or_else(|| Err(anyhow::anyhow!("Unexpected response to {command_summary}")))
 }
 
 pub async fn await_event<F, R>(
@@ -628,6 +703,30 @@ pub fn estimate_hashmap_size<K, V>(map: &HashMap<K, V>) -> usize {
     capacity * (entry_size + 1) + size_of::<HashMap<K, V>>()
 }
 
+/// Send `payload` through the transport frame of a direct reply, and return the bytes that the
+/// reader decodes. Fails when the frame exceeds the 10 MiB response limit.
+#[cfg(test)]
+pub(crate) async fn through_reply_frame(payload: Vec<u8>) -> anyhow::Result<Vec<u8>> {
+    use futures::io::Cursor;
+    use libp2p::request_response::{cbor::codec::Codec, Codec as _};
+
+    let protocol = libp2p::StreamProtocol::new("/interfold/test-sync");
+    let mut codec = Codec::<Vec<u8>, ProtocolResponse>::default();
+    let mut frame = Cursor::new(Vec::new());
+    codec
+        .write_response(&protocol, &mut frame, ProtocolResponse::Ok(payload))
+        .await?;
+    anyhow::ensure!(
+        frame.get_ref().len() <= crate::domain::wire::MAX_DIRECT_MESSAGE_BYTES,
+        "the reply frame exceeds the response limit"
+    );
+    let mut reader = Cursor::new(frame.into_inner());
+    match codec.read_response(&protocol, &mut reader).await? {
+        ProtocolResponse::Ok(bytes) => Ok(bytes),
+        _ => anyhow::bail!("the reply decoded to another response"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use e3_events::{
@@ -636,8 +735,129 @@ mod tests {
     };
     use e3_utils::ArcBytes;
 
-    use super::{GossipData, NetCommand, NetEvent, ProtocolResponse};
-    use crate::ContentHash;
+    use std::time::Duration;
+
+    use anyhow::Context;
+    use tokio::sync::mpsc;
+
+    use super::{call_and_await_response, GossipData, NetCommand, NetEvent, ProtocolResponse};
+
+    /// A reply of the largest sync envelope, with bytes that a CBOR integer array would double,
+    /// fits one transport frame and decodes to the same bytes.
+    #[tokio::test]
+    async fn a_largest_sync_reply_fits_one_transport_frame() {
+        let payload: Vec<u8> = (0..crate::domain::wire::MAX_SYNC_ENVELOPE_BYTES)
+            .map(|index| 24 + (index % 232) as u8)
+            .collect();
+        let decoded = super::through_reply_frame(payload.clone())
+            .await
+            .expect("the reply fits one frame");
+        assert!(decoded == payload);
+    }
+    use crate::{
+        net_interface_handle::{NetEventChannel, NetEventSubscriber},
+        ContentHash,
+    };
+
+    /// Starts a DHT get for `value` on the given event channel and returns the call and the
+    /// correlation id of its command.
+    async fn start_get(
+        events: &NetEventChannel,
+        value: &ArcBytes,
+        timeout: Duration,
+    ) -> anyhow::Result<(
+        tokio::task::JoinHandle<anyhow::Result<ArcBytes>>,
+        CorrelationId,
+    )> {
+        let (cmd_tx, mut cmd_rx) = mpsc::channel(1);
+        let call = tokio::spawn(call_and_await_response(
+            cmd_tx,
+            NetEventSubscriber::from(events),
+            NetCommand::DhtGetRecord {
+                correlation_id: CorrelationId::new(),
+                key: ContentHash::from_content(value),
+            },
+            |event| match event {
+                NetEvent::DhtGetRecordSucceeded { value, .. } => Some(Ok(value.clone())),
+                _ => None,
+            },
+            timeout,
+        ));
+        let command = cmd_rx.recv().await.context("the call sent no command")?;
+        let id = command.correlation_id().context("the command has no id")?;
+        Ok((call, id))
+    }
+
+    #[tokio::test]
+    async fn command_result_survives_broadcast_lag() -> anyhow::Result<()> {
+        let events = NetEventChannel::new(1);
+        let _observer = events.subscribe();
+        let value = ArcBytes::from_bytes(b"document");
+        let (call, correlation_id) = start_get(&events, &value, Duration::from_secs(2)).await?;
+
+        // The next event replaces the result in the one-slot broadcast before the caller runs.
+        events.send(NetEvent::DhtGetRecordSucceeded {
+            key: ContentHash::from_content(&value),
+            correlation_id,
+            value: value.clone(),
+        })?;
+        events.send(NetEvent::GossipData(GossipData::GossipBytes(vec![1])))?;
+
+        assert_eq!(call.await??, value);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn command_wait_ends_when_the_event_channel_closes() -> anyhow::Result<()> {
+        let events = NetEventChannel::new(1);
+        let value = ArcBytes::from_bytes(b"document");
+        let (call, _) = start_get(&events, &value, Duration::from_secs(60)).await?;
+
+        drop(events);
+
+        let error = tokio::time::timeout(Duration::from_secs(5), call)
+            .await
+            .context("the call waited for its timeout")??
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("closed"));
+        Ok(())
+    }
+
+    /// The deadline includes the wait for room in the command queue. A queue that is full and not
+    /// drained ends the call at its own timeout, drops its command and releases its correlation id.
+    #[tokio::test(start_paused = true)]
+    async fn command_deadline_includes_queue_wait() -> anyhow::Result<()> {
+        let events = NetEventChannel::new(1);
+        let (cmd_tx, mut cmd_rx) = mpsc::channel(1);
+        cmd_tx.send(NetCommand::Shutdown).await?;
+        let correlation_id = CorrelationId::new();
+        let call = call_and_await_response(
+            cmd_tx,
+            NetEventSubscriber::from(&events),
+            NetCommand::DhtGetRecord {
+                correlation_id,
+                key: ContentHash::from_content(b"document".as_ref()),
+            },
+            |event| match event {
+                NetEvent::DhtGetRecordSucceeded { value, .. } => Some(Ok(value.clone())),
+                _ => None,
+            },
+            Duration::from_secs(30),
+        );
+
+        let error = tokio::time::timeout(Duration::from_secs(31), call)
+            .await
+            .context("the call outlived its deadline")?
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("Timed out"));
+        assert!(matches!(cmd_rx.try_recv(), Ok(NetCommand::Shutdown)));
+        assert!(
+            cmd_rx.try_recv().is_err(),
+            "the expired command was not queued"
+        );
+        drop(NetEventSubscriber::from(&events).expect_response(correlation_id)?);
+        Ok(())
+    }
 
     #[test]
     fn command_summary_reports_sizes_without_payload_bytes() {

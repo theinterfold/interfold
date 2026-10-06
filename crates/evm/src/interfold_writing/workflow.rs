@@ -10,13 +10,38 @@
 //! invariants hold; rejecting a malformed result is safer than a partial
 //! on-chain write.
 
-use e3_events::{E3Stage, E3id, Proof};
+use alloy::primitives::{Address, U256};
+use e3_events::{CircuitName, E3Stage, E3id, PlaintextAggregated, Proof};
+use e3_request::canonical_key::CanonicalPublicKeys;
 use e3_utils::utility_types::ArcBytes;
 use std::collections::HashMap;
 use std::time::Duration;
 
-#[cfg(test)]
-use e3_events::CircuitName;
+/// Missing authority defers admission. A mismatched final domain discards the intent.
+pub(crate) fn plaintext_has_canonical_domain(
+    intent: &PlaintextAggregated,
+    keys: &CanonicalPublicKeys,
+    interfold_address: Address,
+) -> Option<bool> {
+    let key = keys.get(&intent.e3_id)?;
+    let domains = keys.decryption_domains(&intent.e3_id)?;
+    Some(
+        key.interfold_address == interfold_address
+            && domains.len() == intent.decryption_aggregator_proofs.len()
+            && intent
+                .decryption_aggregator_proofs
+                .iter()
+                .zip(domains)
+                .all(|(proof, domain)| {
+                    // BfvDecryptionVerifier binds fields 4 and 5 to the C6 decryption domain.
+                    proof.circuit == CircuitName::DecryptionAggregator
+                        && proof.public_signals.get(4 * 32..5 * 32)
+                            == Some(U256::from(domain.hi).to_be_bytes::<32>().as_slice())
+                        && proof.public_signals.get(5 * 32..6 * 32)
+                            == Some(U256::from(domain.lo).to_be_bytes::<32>().as_slice())
+                }),
+    )
+}
 
 /// Validate a decrypted result before it is written on-chain.
 ///

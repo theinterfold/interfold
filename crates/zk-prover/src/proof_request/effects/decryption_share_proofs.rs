@@ -10,8 +10,20 @@ impl ProofRequestActor {
         &mut self,
         msg: TypedEvent<ShareDecryptionProofPending>,
     ) {
-        let (msg, ec) = msg.into_components();
+        let (mut msg, ec) = msg.into_components();
         let e3_id = msg.e3_id.clone();
+
+        if self
+            .canonical_keys
+            .repair_request(&e3_id, &mut msg.proof_request)
+            .is_err()
+        {
+            self.held_share_decryption
+                .entry(e3_id)
+                .or_insert_with(|| TypedEvent::new(msg, ec));
+            return;
+        }
+        self.held_share_decryption.remove(&e3_id);
 
         if self.pending_share_decryption.contains_key(&e3_id) {
             warn!(

@@ -7,8 +7,10 @@
 use alloy::primitives::{Address, U256};
 use anyhow::{bail, Result};
 use e3_console::{log, Console};
+use e3_evm::CommitteeMembership;
 
 use crate::helpers::chain::send_and_confirm;
+use e3_evm::helpers::get_current_timestamp_from_provider;
 
 use super::context::{parse_address, ChainContext};
 use super::utils::format_amount;
@@ -105,8 +107,37 @@ pub(crate) async fn deregister(out: Console, ctx: &ChainContext, operator: Addre
     Ok(())
 }
 
+/// Recompute the activation state of a registered operator from its registration, release
+/// acknowledgement, bans, collateral and tickets. The contract recomputes it on its own when a
+/// bond or ticket balance changes; this call covers the other inputs, such as a changed requirement
+/// or a release acknowledged elsewhere. The admission cooldown is not an input: it affects
+/// eligibility, which `status` shows separately.
 pub(crate) async fn activate(out: Console, ctx: &ChainContext, operator: Address) -> Result<()> {
-    register(out, ctx, operator).await
+    let contract = ctx.bonding();
+    if !contract.isRegistered(operator).call().await? {
+        bail!(
+            "Operator {:#x} is not registered on {}. Run `interfold ciphernode register` first.",
+            operator,
+            ctx.chain_label()
+        );
+    }
+
+    let tx = send_and_confirm(
+        "refresh operator status",
+        contract.refreshOperatorStatus(operator),
+    )
+    .await?;
+    let is_active: bool = contract.isActive(operator).call().await?;
+
+    log!(
+        out,
+        "Refreshed operator {:#x} on {} (tx: {:#x}); active: {}",
+        operator,
+        ctx.chain_label(),
+        tx,
+        is_active
+    );
+    Ok(())
 }
 
 pub(crate) async fn deactivate(
@@ -149,6 +180,15 @@ pub(crate) async fn status(out: Console, ctx: &ChainContext, operator: Address) 
     let ticket_price: U256 = contract.ticketPrice().call().await?;
     let min_ticket_balance: U256 = contract.minTicketBalance().call().await?;
     let required_ciphernode_bond: U256 = contract.requiredCiphernodeBond().call().await?;
+    // `Active` is the stored flag. Eligibility also applies the admission cooldown and the
+    // admission policy at the latest block time, which decide whether sortition for a new
+    // committee can select the operator.
+    let timestamp = get_current_timestamp_from_provider(ctx.provider().clone()).await?;
+    let eligible: bool = contract
+        .eligibilityAt(operator, U256::from(timestamp))
+        .call()
+        .await?
+        .active;
 
     let ticket_token = ctx.ticket_token_address().await?;
     let ciphernode_bond_token = ctx.ciphernode_bond_token_address().await?;
@@ -167,6 +207,7 @@ pub(crate) async fn status(out: Console, ctx: &ChainContext, operator: Address) 
     }
     log!(out, "  Registered: {}", is_registered);
     log!(out, "  Active: {}", is_active);
+    log!(out, "  Eligible for new committees: {}", eligible);
     log!(out, "  Exit pending: {}", has_exit);
     log!(
         out,
@@ -192,5 +233,29 @@ pub(crate) async fn status(out: Console, ctx: &ChainContext, operator: Address) 
         format_amount(ticket_price, ticket_decimals),
         format_amount(required_ciphernode_bond, ciphernode_bond_decimals)
     );
+    // The committee scan reads the whole obligation history, so it has more ways to fail than the
+    // reads above. A failed command on the daemon returns no output, so a failure here keeps the
+    // lines above.
+    match ctx.operator_committees(operator).await {
+        Ok(committees) if committees.is_empty() => log!(out, "  Committees: none"),
+        Ok(committees) => {
+            log!(out, "  Committees: {}", committees.len());
+            for committee in committees {
+                let membership = match committee.membership {
+                    CommitteeMembership::Candidate => "candidate",
+                    CommitteeMembership::Member => "member",
+                    CommitteeMembership::Expelled => "expelled",
+                };
+                log!(
+                    out,
+                    "    E3 {}: {}, stage {:?}",
+                    committee.e3_id,
+                    membership,
+                    committee.e3_stage
+                );
+            }
+        }
+        Err(error) => log!(out, "  Committees: unavailable ({error:#})"),
+    }
     Ok(())
 }

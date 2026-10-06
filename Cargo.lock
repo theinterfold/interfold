@@ -405,6 +405,7 @@ dependencies = [
  "alloy-core",
  "alloy-eips",
  "alloy-genesis",
+ "alloy-json-rpc",
  "alloy-network",
  "alloy-node-bindings",
  "alloy-provider",
@@ -3678,6 +3679,7 @@ dependencies = [
  "e3-polynomial",
  "e3-request",
  "e3-sortition",
+ "e3-sync",
  "e3-test-helpers",
  "e3-trbfv",
  "e3-utils",
@@ -3691,6 +3693,7 @@ dependencies = [
  "rand 0.9.5",
  "serde",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -3714,6 +3717,7 @@ dependencies = [
  "actix",
  "alloy",
  "anyhow",
+ "async-trait",
  "bincode",
  "derivative",
  "e3-aggregator",
@@ -3787,6 +3791,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "tempfile",
  "tokio",
  "toml",
  "tracing",
@@ -3995,6 +4000,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "sled",
  "tempfile",
  "tokio",
  "tracing",
@@ -4060,7 +4066,9 @@ dependencies = [
  "e3-events",
  "e3-evm",
  "e3-fhe-params",
+ "e3-request",
  "e3-sortition",
+ "e3-sync",
  "e3-test-helpers",
  "e3-trbfv",
  "e3-utils",
@@ -4070,7 +4078,9 @@ dependencies = [
  "num-bigint 0.5.1",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
+ "tower 0.5.3",
  "tracing",
  "tracing-subscriber",
  "url",
@@ -4151,11 +4161,6 @@ dependencies = [
 [[package]]
 name = "e3-hamt"
 version = "0.18.0"
-dependencies = [
- "anyhow",
- "bincode",
- "serde",
-]
 
 [[package]]
 name = "e3-indexer"
@@ -4205,11 +4210,14 @@ dependencies = [
  "anyhow",
  "async-trait",
  "bincode",
+ "e3-bfv-client",
+ "e3-ciphernode-builder",
  "e3-committee-hash",
  "e3-config",
  "e3-crypto",
  "e3-data",
  "e3-events",
+ "e3-evm",
  "e3-fhe",
  "e3-fhe-params",
  "e3-multithread",
@@ -4217,6 +4225,7 @@ dependencies = [
  "e3-trbfv",
  "e3-utils",
  "e3-zk-helpers",
+ "e3-zk-prover",
  "fhe",
  "fhe-traits",
  "ndarray",
@@ -4226,6 +4235,17 @@ dependencies = [
  "serde",
  "tracing",
  "zeroize",
+]
+
+[[package]]
+name = "e3-layout-lock"
+version = "0.18.0"
+dependencies = [
+ "bincode",
+ "e3-utils",
+ "hex",
+ "serde",
+ "sha2 0.10.9",
 ]
 
 [[package]]
@@ -4258,6 +4278,7 @@ dependencies = [
  "e3-events",
  "e3-fhe-params",
  "e3-polynomial",
+ "e3-request",
  "e3-trbfv",
  "e3-utils",
  "e3-zk-helpers",
@@ -4268,6 +4289,7 @@ dependencies = [
  "ndarray",
  "num-bigint 0.5.1",
  "rand 0.9.5",
+ "rand_chacha 0.9.0",
  "rayon",
  "thiserror 1.0.69",
  "tokio",
@@ -4290,12 +4312,16 @@ dependencies = [
  "e3-crypto",
  "e3-data",
  "e3-events",
+ "e3-layout-lock",
+ "e3-request",
+ "e3-sync",
  "e3-utils",
  "futures",
  "hex",
  "libp2p",
  "rand 0.9.5",
  "serde",
+ "serde_bytes",
  "sha2 0.10.9",
  "tokio",
  "tracing",
@@ -4350,14 +4376,20 @@ name = "e3-request"
 version = "0.18.0"
 dependencies = [
  "actix",
+ "alloy",
  "anyhow",
  "async-trait",
  "bincode",
+ "e3-bfv-client",
+ "e3-committee-hash",
  "e3-config",
+ "e3-crypto",
  "e3-data",
  "e3-events",
  "e3-fhe-params",
+ "e3-trbfv",
  "e3-utils",
+ "e3-zk-helpers",
  "serde",
  "tracing",
 ]
@@ -4399,6 +4431,7 @@ dependencies = [
  "e3-data",
  "e3-events",
  "e3-fhe-params",
+ "e3-layout-lock",
  "e3-request",
  "e3-utils",
  "e3-zk-helpers",
@@ -4467,7 +4500,6 @@ name = "e3-test-helpers"
 version = "0.18.0"
 dependencies = [
  "actix",
- "alloy",
  "anyhow",
  "bincode",
  "clap",
@@ -4521,6 +4553,7 @@ dependencies = [
  "e3-fhe",
  "e3-fhe-params",
  "e3-keyshare",
+ "e3-layout-lock",
  "e3-logger",
  "e3-multithread",
  "e3-net",
@@ -4528,6 +4561,7 @@ dependencies = [
  "e3-request",
  "e3-sdk",
  "e3-sortition",
+ "e3-sync",
  "e3-test-helpers",
  "e3-trbfv",
  "e3-utils",
@@ -4536,9 +4570,11 @@ dependencies = [
  "fhe",
  "fhe-traits",
  "fhe-util",
+ "hex",
  "num-bigint 0.5.1",
  "rand 0.9.5",
  "rand_chacha 0.9.0",
+ "serde",
  "serde_json",
  "serial_test",
  "tempfile",
@@ -4666,6 +4702,8 @@ dependencies = [
  "bn254_blackbox_solver",
  "chrono",
  "directories 5.0.1",
+ "e3-bfv-client",
+ "e3-ciphernode-builder",
  "e3-committee-hash",
  "e3-config",
  "e3-crypto",
@@ -4673,9 +4711,13 @@ dependencies = [
  "e3-events",
  "e3-evm",
  "e3-fhe-params",
+ "e3-layout-lock",
+ "e3-net",
  "e3-polynomial",
  "e3-request",
  "e3-slashing",
+ "e3-sortition",
+ "e3-sync",
  "e3-test-helpers",
  "e3-trbfv",
  "e3-utils",

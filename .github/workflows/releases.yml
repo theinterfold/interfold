@@ -33,7 +33,7 @@ jobs:
     outputs:
       version: ${{ steps.release.outputs.version }}
       is_prerelease: ${{ steps.release.outputs.is_prerelease }}
-      npm_tag: ${{ steps.release.outputs.npm_tag }}
+      channel: ${{ steps.release.outputs.channel }}
       candidate_sha: ${{ steps.release.outputs.candidate_sha }}
     steps:
       - name: Checkout code
@@ -48,7 +48,7 @@ jobs:
   build-ciphernode-image-release:
     name: Build & Push ciphernode (release)
     runs-on: ubuntu-latest
-    needs: [validate-and-prepare, release-candidate-gate]
+    needs: [validate-and-prepare, release-candidate-gate, download-circuits]
     env:
       CIPHERNODE_IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/ciphernode
     steps:
@@ -69,6 +69,8 @@ jobs:
         with:
           context: .
           file: crates/Dockerfile
+          build-args: |
+            E3_CIRCUITS_ARCHIVE_SHA256=${{ needs.download-circuits.outputs.archive_sha256 }}
           push: true
           tags: |
             ${{ env.CIPHERNODE_IMAGE_NAME }}:${{ needs.validate-and-prepare.outputs.version }}
@@ -143,7 +145,9 @@ jobs:
   build-binaries:
     name: Build Binaries (${{ matrix.os_name }}-${{ matrix.arch }})
     runs-on: ${{ matrix.os }}
-    needs: validate-and-prepare
+    needs: [validate-and-prepare, download-circuits]
+    env:
+      E3_CIRCUITS_ARCHIVE_SHA256: ${{ needs.download-circuits.outputs.archive_sha256 }}
     strategy:
       matrix:
         include:
@@ -179,7 +183,14 @@ jobs:
         run: brew install solidity
 
       - name: Build interfold binary
-        run: cargo build --locked --release --target ${{ matrix.target }} --bin interfold
+        run: |
+          test -n "$E3_CIRCUITS_ARCHIVE_SHA256"
+          cargo build --locked --release --target ${{ matrix.target }} --bin interfold
+
+      - name: Check compiled circuit archive pin
+        run: |
+          target/${{ matrix.target }}/release/interfold noir status > "$RUNNER_TEMP/noir-status.txt"
+          grep -Fx "  Archive SHA-256: $E3_CIRCUITS_ARCHIVE_SHA256" "$RUNNER_TEMP/noir-status.txt"
 
       - name: Build interfoldup binary
         run: cargo build --locked --release --target ${{ matrix.target }} --bin interfoldup
@@ -238,22 +249,22 @@ jobs:
         run: pnpm prepare-publish
 
       - name: Publish @interfold/config
-        run: node scripts/release.mjs publish-npm packages/interfold-config ${{ needs.validate-and-prepare.outputs.npm_tag }}
+        run: node scripts/release.mjs publish-npm packages/interfold-config ${{ needs.validate-and-prepare.outputs.channel }}
 
       - name: Publish @interfold/contracts
-        run: node scripts/release.mjs publish-npm packages/interfold-contracts ${{ needs.validate-and-prepare.outputs.npm_tag }}
+        run: node scripts/release.mjs publish-npm packages/interfold-contracts ${{ needs.validate-and-prepare.outputs.channel }}
 
       - name: Publish @interfold/wasm
-        run: node scripts/release.mjs publish-npm crates/wasm ${{ needs.validate-and-prepare.outputs.npm_tag }}
+        run: node scripts/release.mjs publish-npm crates/wasm ${{ needs.validate-and-prepare.outputs.channel }}
 
       - name: Publish @interfold/sdk
-        run: node scripts/release.mjs publish-npm packages/interfold-sdk ${{ needs.validate-and-prepare.outputs.npm_tag }}
+        run: node scripts/release.mjs publish-npm packages/interfold-sdk ${{ needs.validate-and-prepare.outputs.channel }}
 
       - name: Publish @interfold/react
-        run: node scripts/release.mjs publish-npm packages/interfold-react ${{ needs.validate-and-prepare.outputs.npm_tag }}
+        run: node scripts/release.mjs publish-npm packages/interfold-react ${{ needs.validate-and-prepare.outputs.channel }}
 
       - name: Publish @interfold/mcp
-        run: node scripts/release.mjs publish-npm packages/interfold-mcp ${{ needs.validate-and-prepare.outputs.npm_tag }}
+        run: node scripts/release.mjs publish-npm packages/interfold-mcp ${{ needs.validate-and-prepare.outputs.channel }}
 
   download-circuits:
     name: Download Circuit Artifacts
@@ -261,6 +272,7 @@ jobs:
     needs: validate-and-prepare
     outputs:
       source_hash: ${{ steps.pull.outputs.source_hash }}
+      archive_sha256: ${{ steps.archive.outputs.sha256 }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -294,8 +306,13 @@ jobs:
         run: pnpm store:circuits verify-release --source-hash "${{ steps.pull.outputs.source_hash }}"
 
       - name: Create release archive
+        id: archive
         working-directory: dist
-        run: tar -czvf circuits-${{ needs.validate-and-prepare.outputs.version }}.tar.gz circuits/
+        env:
+          VERSION: ${{ needs.validate-and-prepare.outputs.version }}
+        run: |
+          tar -czvf "circuits-${VERSION}.tar.gz" circuits/
+          echo "sha256=$(sha256sum "circuits-${VERSION}.tar.gz" | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -374,28 +391,30 @@ jobs:
           CIRCUIT_SOURCE_HASH: ${{ needs.download-circuits.outputs.source_hash }}
         run: node scripts/release.mjs prepare-assets
 
-      - name: Set up Buildx for stable aliases
-        if: needs.validate-and-prepare.outputs.is_prerelease == 'false'
+      - name: Set up Buildx for channel aliases
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to GitHub Container Registry
-        if: needs.validate-and-prepare.outputs.is_prerelease == 'false'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Promote stable container aliases
-        if: needs.validate-and-prepare.outputs.is_prerelease == 'false'
+      # Every release moves the `dev` aliases, so `dev` is the most recently published release. A
+      # stable release also moves the `latest` aliases.
+      - name: Promote channel container aliases
+        env:
+          CHANNEL: ${{ needs.validate-and-prepare.outputs.channel }}
+          VERSION: ${{ needs.validate-and-prepare.outputs.version }}
         run: |
-          VERSION="${{ needs.validate-and-prepare.outputs.version }}"
-          docker buildx imagetools create \
-            --tag "${CIPHERNODE_IMAGE_NAME}:latest" \
-            "${CIPHERNODE_IMAGE_NAME}:${VERSION}"
-          docker buildx imagetools create \
-            --tag "${SUPPORT_IMAGE_NAME}:latest" \
-            "${SUPPORT_IMAGE_NAME}:${VERSION}"
+          for image in "${CIPHERNODE_IMAGE_NAME}" "${SUPPORT_IMAGE_NAME}"; do
+            aliases=(--tag "${image}:dev")
+            if [ "${CHANNEL}" = latest ]; then
+              aliases+=(--tag "${image}:latest")
+            fi
+            docker buildx imagetools create "${aliases[@]}" "${image}:${VERSION}"
+          done
 
       - name: Update stable tag (for stable releases only)
         if: needs.validate-and-prepare.outputs.is_prerelease == 'false'

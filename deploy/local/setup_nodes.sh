@@ -44,7 +44,7 @@ bash scripts/crisp_deploy.sh
 
 echo "[deploy+setup] Importing wallets..."
 for i in "${!NODE_IDS[@]}"; do
-    interfold wallet set --name "${NODE_IDS[$i]}" --private-key "${NODE_KEYS[$i]}"
+    printf '%s\n' "${NODE_KEYS[$i]}" | interfold wallet set --name "${NODE_IDS[$i]}" --private-key-stdin
 done
 
 echo "[deploy+setup] Running interfold noir setup..."

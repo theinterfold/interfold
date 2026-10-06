@@ -17,8 +17,8 @@ refuses to run with pending changes. A failed run keeps the worktree and prints 
 # Prepare, commit, and push a release branch
 pnpm bump:versions 1.0.0
 
-# Pre-release version
-pnpm bump:versions 1.0.0-beta.1
+# Pre-release version (dev channel)
+pnpm bump:versions 1.0.0-dev.1
 
 # Commit locally without pushing the branch
 pnpm bump:versions --no-push 1.0.0
@@ -54,8 +54,8 @@ pnpm bump:versions 1.2.3
 # Open a pull request after this command finishes.
 
 # Pre-release for testing
-pnpm bump:versions 1.2.3-beta.1
-# The later release workflow publishes this version with the npm 'next' tag.
+pnpm bump:versions 1.2.3-dev.1
+# The later release workflow publishes this version with the npm 'dev' tag and 'dev' images.
 
 # Prepare and commit locally first
 pnpm bump:versions --no-push 1.2.3
@@ -93,11 +93,21 @@ pnpm release:tag X.Y.Z
 The tag workflow then:
 
 - Confirms that the tag belongs to `origin/main`.
-- Requires the binaries and source-matched circuit archive.
-- Publishes versioned containers and npm packages.
+- Packages and hashes the source-matched circuit archive before binary and ciphernode image builds.
+- Passes `E3_CIRCUITS_ARCHIVE_SHA256` to those builds, including through the Docker build argument.
+  The ZK prover binds this pin to the crate version and retains the other `versions.json` pins.
+- Checks each binary's `interfold noir status` report against the archive digest before the
+  release-candidate gate passes. The ciphernode image build performs the same check before upload.
+- Publishes versioned containers and npm packages. Moves the `dev` container aliases, and for a
+  stable release also the `latest` aliases.
 - Creates the GitHub release only after every required publication succeeds.
 
 Rust workspace crates are not published because they use unreleased git dependencies.
+
+The support image compiles no CLI or ciphernode. DAppNode copies the checked ciphernode binary.
+Builds without `E3_CIRCUITS_ARCHIVE_SHA256` still work, but an unpinned circuit download fails. Do
+not repack the uploaded circuit archive after compilation: the compiled pin authenticates its exact
+bytes.
 
 The workflow calls the small commands in `release.mjs`. The implementation is split by purpose in
 `scripts/release/`. Run `pnpm test:release` to test tag ancestry, npm retries, assets, and gates.
@@ -253,6 +263,12 @@ the generator would produce.
 - `--dry-run` - Show what would be built
 - `--no-clean` - Don't clean output directory
 
+Only a complete build with verification keys writes the `nodes_fold.vk_tree_hash` and
+`c6_fold.vk_tree_hash` anchors. A build with `--group`, `--circuit`, or `--skip-vk`, or a build with
+a failed circuit, removes both anchors from the pair and from `circuits/bin/`. An old anchor can
+hash a key that no longer matches the compiled circuits. Run a complete build before you deploy the
+BFV verifiers or aggregate proofs.
+
 `sync-config` updates only `scripts/utils.ts` and `ActiveCryptoConfig.sol`. Use it when BFV
 parameter constants change and the prebuilt circuit artifacts already exist. It does not compile
 Noir circuits or regenerate verification keys.
@@ -299,6 +315,9 @@ not need a circuit rebuild.
 
 - **Push**: Merges local `dist/circuits/` into the `circuit-artifacts` branch, refreshes
   `SHA256SUMS` and `checksums.json`, then pushes to origin
+- **Checksums**: `pnpm store:circuits checksums --dir <path>` writes `SHA256SUMS` and
+  `checksums.json` for exactly the staged directory. CI runs this before packaging the
+  circuit-download fixture
 - **Pull**: Fetches `circuit-artifacts` and selects its newest first-parent commit with a matching
   `SOURCE_HASH`. It extracts that build to `dist/circuits/`. A build for another source tree at the
   branch tip does not replace this match. If no match exists, the command fails before it changes

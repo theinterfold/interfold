@@ -1,12 +1,17 @@
 # CRISP - Coercion-Resistant Impartial Selection Protocol
 
-CRISP (Coercion-Resistant Impartial Selection Protocol) is a secure protocol for digital
-decision-making, leveraging fully homomorphic encryption (FHE) and distributed threshold
-cryptography (DTC) to enable verifiable secret ballots. Built with Interfold, CRISP safeguards
-democratic systems and decision-making applications against coercion, manipulation, and other
-vulnerabilities. To learn more about CRISP, you can read our
-[blog post](https://blog.theinterfold.com/crisp-private-voting-secret-ballot-fhe-zkp-mpc/) or visit
-the [documentation](https://docs.theinterfold.com/CRISP/introduction).
+CRISP (Coercion-Resistant Impartial Selection Protocol) is a secret-ballot voting protocol built
+with the Interfold. It uses fully homomorphic encryption (FHE) and distributed threshold
+cryptography (DTC). Each voter encrypts a ballot in the browser. The Secure Process adds the
+encrypted ballots, and a threshold committee of ciphernodes decrypts only the combined result, which
+is public. On-chain contracts verify the proofs of the tally and of its decryption.
+
+Vote masking makes receipts weaker, which makes coercion and vote buying more difficult. These
+protections depend on the conditions in
+[Privacy limits](https://docs.theinterfold.com/CRISP/introduction#privacy-limits). To learn more
+about CRISP, read our
+[blog post](https://blog.theinterfold.com/crisp-private-voting-secret-ballot-fhe-zkp-mpc/) or the
+[documentation](https://docs.theinterfold.com/CRISP/introduction).
 
 ## Project Structure
 
@@ -261,16 +266,23 @@ as an explicit acknowledgement that CRISP is unusable until the DAO batch is exe
 Keep E3 requests paused throughout that interval.
 
 The server first validates the Noir proof and durably stores the exact encrypted bytes. It signs a
-compact proof commitment only after storage succeeds. On mainnet, the voter submits that commitment
-from their wallet and can then leave. The server publishes the ciphertext to Avail, waits for the
-official VectorX proof, and finalizes the input without the voter. The proof transaction reserves
-the input's tree index immediately, so masks and revotes can still extend it during the VectorX
-wait. CRISP refuses the aggregate computation while any input is not finalized.
+compact proof commitment only after storage succeeds. The server relays that commitment, or the
+voter submits it from their wallet, and the voter can then leave. Relaying is configurable in
+`server/.env.example`, and it is off on Ethereum mainnet by default. The server publishes the
+ciphertext to Avail, waits for the official VectorX proof, and finalizes the input without the
+voter. The proof transaction reserves the input's tree index immediately, so masks and revotes can
+still extend it during the VectorX wait. CRISP refuses the aggregate computation while any input is
+not finalized.
 
-The service accepts only one not-yet-committed input per round and voting slot. It also limits the
-total bytes held by unfinished jobs. These controls bound abandoned signed inputs without deleting
-data that Ethereum already accepted. After Avail and Ethereum accept an object, the service removes
-its staging copy because Avail is then the recovery source.
+The relay has per-slot and per-round limits, and anyone can use up the relayed inputs of a slot with
+masks. Past a limit, the voter's wallet sends the commitment, which shows the voter's address. The
+voter must confirm it before the commitment cutoff of the round: stay on the page, or come back and
+repeat the action. Otherwise the input is lost.
+
+Each distinct input gets its own job, so a pending mask cannot block a vote for the same slot. The
+service limits the total bytes held by unfinished jobs, which bounds abandoned signed inputs without
+deleting data that Ethereum already accepted. After Avail and Ethereum accept an object, the service
+removes its staging copy because Avail is then the recovery source.
 
 The aggregate ciphertext follows the Avail and VectorX path after its RISC Zero proof is ready.
 

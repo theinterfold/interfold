@@ -19,11 +19,16 @@ impl Handler<InterfoldEvent> for DocumentPublisher {
         let source = msg.source();
         let (msg, ec) = msg.into_components();
         match msg {
-            InterfoldEventData::EffectsEnabled(_) => {
-                self.effects_enabled = true;
-                for id in self.publications.keys().cloned() {
-                    ctx.notify(AnnounceDocument(id));
+            // Startup publishes chain history between `EffectsEnabled` and `SyncEnded`. A
+            // publication that starts earlier can announce or upload a document of an E3 whose
+            // closing stage is still in that history.
+            InterfoldEventData::SyncEnded(_) if !self.publishing_enabled => {
+                self.publishing_enabled = true;
+                let ids: Vec<_> = self.publications.keys().cloned().collect();
+                for id in &ids {
+                    self.start_publication(id, ctx);
                 }
+                self.restore_next_received_document(ctx);
             }
             InterfoldEventData::PublishDocumentRequested(data) => {
                 ctx.notify(TypedEvent::new(data, ec))
@@ -32,9 +37,20 @@ impl Handler<InterfoldEvent> for DocumentPublisher {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
             InterfoldEventData::DocumentReceived(data) => {
-                let id = (data.meta.e3_id, ContentHash::from_content(&data.value));
+                let id = (
+                    data.meta.e3_id.clone(),
+                    ContentHash::from_content(&data.value),
+                );
                 if self.received.len() < MAX_RECEIVED_DOCUMENTS || self.received.contains(&id) {
-                    self.received.insert(id);
+                    // Recovery reads only the receipts of the E3s in the committee snapshot, which
+                    // can predate a selection that replay restores. A receipt that replay delivers
+                    // before `SyncEnded` and that recovery did not read is restored too.
+                    if self.received.insert(id)
+                        && !self.publishing_enabled
+                        && !self.closed_e3s.contains(&data.meta.e3_id)
+                    {
+                        self.restorable.push(data, chrono::Utc::now());
+                    }
                 } else {
                     self.bus.err(
                         EType::DocumentPublishing,
@@ -52,7 +68,7 @@ impl Handler<InterfoldEvent> for DocumentPublisher {
                             | E3Stage::Failed
                     ) =>
             {
-                if let Err(error) = self.handle_canonical_dkg_end(&data.e3_id) {
+                if let Err(error) = self.handle_canonical_dkg_end(&data.e3_id, ctx) {
                     self.bus.err(EType::DocumentPublishing, error);
                 }
             }
@@ -72,6 +88,9 @@ impl Handler<TypedEvent<PublishDocumentRequested>> for DocumentPublisher {
             msg.meta.e3_id.clone(),
             ContentHash::from_content(&msg.value),
         );
+        // Publications wait for `SyncEnded`, and replay brings back requests that may have
+        // expired, so an expired publication must not take the outbox or this document's place.
+        self.remove_expired_publications(ctx);
         if self.closed_e3s.contains(&msg.meta.e3_id) || self.publications.contains_key(&id) {
             return;
         }
@@ -87,9 +106,10 @@ impl Handler<TypedEvent<PublishDocumentRequested>> for DocumentPublisher {
         }
         self.service.track_published_key(&id.0, &msg.value);
         self.publication_bytes += size;
-        self.publications.insert(id.clone(), msg.into_inner());
-        if self.effects_enabled {
-            ctx.notify(AnnounceDocument(id));
+        self.publications
+            .insert(id.clone(), Publication::new(msg.into_inner()));
+        if self.publishing_enabled {
+            self.start_publication(&id, ctx);
         }
     }
 }
@@ -112,82 +132,114 @@ impl Handler<AnnounceDocument> for DocumentPublisher {
     type Result = ();
 
     fn handle(&mut self, AnnounceDocument(id): AnnounceDocument, ctx: &mut Self::Context) {
-        let Some(event) = self.publications.get(&id).cloned() else {
+        let Some(event) = self.ready_publication(&id, ctx) else {
             return;
         };
-        if event.meta.expires_at <= chrono::Utc::now() {
-            self.remove_publication(&id);
+        let Some(publication) = self.publications.get_mut(&id) else {
             return;
-        }
-        if !self.effects_enabled || self.publishing.contains(&id) {
+        };
+        if publication.announcing.is_some() {
             return;
-        }
-        let replicate = self
-            .schedules
-            .entry(id.clone())
-            .or_default()
-            .needs_replication(Instant::now());
-        if replicate && self.replicating.len() >= MAX_INFLIGHT_REPLICATIONS {
-            ctx.notify_later(AnnounceDocument(id), REPLICATION_QUEUE_POLL);
-            return;
-        }
-        self.publishing.insert(id.clone());
-        if replicate {
-            self.replicating.insert(id.clone());
         }
         let (abort, registration) = AbortHandle::new_pair();
-        self.publish_aborts.insert(id.clone(), abort);
-        let tx = self.tx.clone();
-        let rx = self.rx.clone();
-        let bus = self.bus.clone();
-        let topic = self.topic.clone();
-        let operation = async move {
-            if replicate {
-                if let Err(error) = replicate_document(tx.clone(), rx.clone(), &event).await {
-                    return (false, Err(error));
-                }
-            }
-            (
-                replicate,
-                announce_document(tx, rx, event, topic, bus).await,
-            )
-        };
+        publication.announcing = Some(abort);
+        let announcement = announce_stored_document(
+            self.tx.clone(),
+            self.rx.clone(),
+            event,
+            self.topic.clone(),
+            self.bus.clone(),
+        );
         ctx.spawn(
-            Abortable::new(operation, registration)
+            Abortable::new(announcement, registration)
                 .into_actor(self)
                 .map(move |result, actor, ctx| {
-                    actor.publishing.remove(&id);
-                    actor.replicating.remove(&id);
-                    actor.publish_aborts.remove(&id);
-                    let Ok((replicated, outcome)) = result else {
+                    // An aborted announcement belongs to a publication that was removed.
+                    let Ok(outcome) = result else {
                         return;
                     };
-                    if actor
-                        .publications
-                        .get(&id)
-                        .is_some_and(|event| event.meta.expires_at <= chrono::Utc::now())
-                    {
-                        actor.remove_publication(&id);
-                        return;
-                    }
-                    let Some(schedule) = actor.schedules.get_mut(&id) else {
+                    let Some(publication) = actor.publications.get_mut(&id) else {
                         return;
                     };
-                    if replicated {
-                        schedule.record_replicated(Instant::now());
+                    publication.announcing = None;
+                    if publication.is_expired() {
+                        actor.remove_publication(&id, ctx);
+                        return;
                     }
                     let delay = match outcome {
-                        Ok(()) => schedule.record_announced(),
+                        Ok(()) => publication.schedule.record_announced(),
                         Err(error) => {
+                            let delay = publication.schedule.record_announcement_failed();
                             actor.bus.err(EType::IO, error);
-                            schedule.record_failed()
+                            delay
                         }
                     };
-                    if actor.publications.contains_key(&id) {
-                        ctx.notify_later(AnnounceDocument(id), delay);
-                    }
+                    actor.schedule_announcement(id, delay, ctx);
                 }),
         );
+    }
+}
+
+impl Handler<ReplicateDocument> for DocumentPublisher {
+    type Result = ();
+
+    fn handle(&mut self, ReplicateDocument(id): ReplicateDocument, ctx: &mut Self::Context) {
+        let Some(event) = self.ready_publication(&id, ctx) else {
+            return;
+        };
+        let uploads_in_flight = self
+            .publications
+            .values()
+            .filter(|publication| publication.replicating.is_some())
+            .count();
+        let Some(publication) = self.publications.get_mut(&id) else {
+            return;
+        };
+        if publication.replicating.is_some() {
+            return;
+        }
+        let now = Instant::now();
+        if !publication.schedule.needs_replication(now) {
+            let due_in = publication.schedule.replication_due_in(now);
+            self.schedule_replication(id, due_in, ctx);
+            return;
+        }
+        if uploads_in_flight >= MAX_INFLIGHT_REPLICATIONS {
+            self.schedule_replication(id, REPLICATION_QUEUE_POLL, ctx);
+            return;
+        }
+        let (abort, registration) = AbortHandle::new_pair();
+        publication.replicating = Some(abort);
+        let (tx, rx) = (self.tx.clone(), self.rx.clone());
+        let upload = async move { replicate_document(tx, rx, &event).await };
+        ctx.spawn(Abortable::new(upload, registration).into_actor(self).map(
+            move |result, actor, ctx| {
+                // An aborted upload belongs to a publication that was removed.
+                let Ok(outcome) = result else {
+                    return;
+                };
+                let Some(publication) = actor.publications.get_mut(&id) else {
+                    return;
+                };
+                publication.replicating = None;
+                if publication.is_expired() {
+                    actor.remove_publication(&id, ctx);
+                    return;
+                }
+                let delay = match outcome {
+                    Ok(()) => {
+                        info!(e3_id = %id.0, key = ?id.1, "Uploaded a document to the DHT");
+                        publication.schedule.record_replicated(Instant::now())
+                    }
+                    Err(error) => {
+                        let delay = publication.schedule.record_replication_failed();
+                        actor.bus.err(EType::IO, error);
+                        delay
+                    }
+                };
+                actor.schedule_replication(id, delay, ctx);
+            },
+        ));
     }
 }
 
@@ -196,13 +248,24 @@ impl Handler<AnnounceDocument> for DocumentPublisher {
 impl Handler<DocumentPublishedNotification> for DocumentPublisher {
     type Result = ();
     fn handle(&mut self, msg: DocumentPublishedNotification, ctx: &mut Self::Context) {
-        if !notification_is_well_formed(&msg) {
-            debug!("Ignored a malformed document notification");
-            return;
-        }
-        // An expired notification cannot lead to the document. This also drops the early
-        // notifications that expired while the node waited for selection.
-        if msg.meta.expires_at <= chrono::Utc::now() {
+        self.handle(
+            DocumentIngress {
+                propagation_source: None,
+                notification: msg,
+            },
+            ctx,
+        );
+    }
+}
+
+impl Handler<DocumentIngress> for DocumentPublisher {
+    type Result = ();
+    fn handle(&mut self, ingress: DocumentIngress, ctx: &mut Self::Context) {
+        let peer = ingress.propagation_source;
+        let msg = ingress.notification;
+        let now = chrono::Utc::now();
+        if !notification_is_valid(&msg, now) {
+            debug!("Ignored an invalid or expired document notification");
             return;
         }
         let id = (msg.meta.e3_id.clone(), msg.key.clone());
@@ -211,22 +274,46 @@ impl Handler<DocumentPublishedNotification> for DocumentPublisher {
         }
         let ids = self.service.interest_snapshot();
         if !ids.contains_key(&msg.meta.e3_id) {
-            // Keep one notification per document and party filter, with the latest expiry. Only
+            self.early_notifications
+                .retain(|item| item.notification.meta.expires_at > now);
+            // Keep one notification per peer, document and party filter, with the latest expiry. Only
             // the filter decides whether a notification can match the payload, so a forged copy
             // that arrives first must not hide a correct one with another filter or outlive it.
             if let Some(item) = self.early_notifications.iter_mut().find(|item| {
-                item.meta.e3_id == msg.meta.e3_id
-                    && item.key == msg.key
-                    && item.meta.filter == msg.meta.filter
+                item.notification.meta.e3_id == msg.meta.e3_id
+                    && item.notification.key == msg.key
+                    && item.notification.meta.filter == msg.meta.filter
+                    && item.propagation_source == peer
             }) {
-                if msg.meta.expires_at > item.meta.expires_at {
-                    *item = msg;
+                if msg.meta.expires_at > item.notification.meta.expires_at {
+                    item.notification = msg;
                 }
             } else {
-                if self.early_notifications.len() == MAX_BUFFERED_NOTIFICATIONS {
-                    self.early_notifications.pop_front();
+                if self.early_notifications.len() >= MAX_BUFFERED_NOTIFICATIONS {
+                    let mut counts = HashMap::new();
+                    for item in &self.early_notifications {
+                        *counts.entry(item.propagation_source).or_insert(0usize) += 1;
+                    }
+                    let owner = crate::ingress_limits::eviction_owner(
+                        peer,
+                        counts.into_iter(),
+                        MAX_BUFFERED_NOTIFICATIONS,
+                    );
+                    if owner == peer {
+                        return;
+                    }
+                    if let Some(index) = self
+                        .early_notifications
+                        .iter()
+                        .position(|item| item.propagation_source == owner)
+                    {
+                        self.early_notifications.remove(index);
+                    }
                 }
-                self.early_notifications.push_back(msg);
+                self.early_notifications.push_back(DocumentIngress {
+                    propagation_source: peer,
+                    notification: msg,
+                });
             }
             return;
         }
@@ -235,8 +322,8 @@ impl Handler<DocumentPublishedNotification> for DocumentPublisher {
         {
             return;
         }
-        if self.fetching.contains_key(&id) {
-            add_candidate(self.late_notifications.entry(id).or_default(), msg);
+        if let Some(fetching) = self.fetching.get_mut(&id) {
+            fetching.add(peer, msg);
             return;
         }
         if self.received.len() >= MAX_RECEIVED_DOCUMENTS {
@@ -246,7 +333,7 @@ impl Handler<DocumentPublishedNotification> for DocumentPublisher {
             );
             return;
         }
-        if !self.fetch_queue.push(id, msg, Instant::now()) {
+        if !self.fetch_queue.push(id, peer, msg, Instant::now()) {
             debug!("Dropped a document notification because the fetch queue is full");
             return;
         }
@@ -279,46 +366,48 @@ impl DocumentPublisher {
     fn start_due_fetches(&mut self, ctx: &mut actix::Context<Self>) {
         let now = Instant::now();
         while self.fetching.len() < MAX_INFLIGHT_TRANSFERS {
-            let Some((id, waiting)) = self.fetch_queue.pop_due(now) else {
+            let mut in_flight = HashMap::new();
+            for fetching in self.fetching.values() {
+                *in_flight.entry(fetching.peer).or_insert(0) += 1;
+            }
+            let Some((id, waiting)) = self.fetch_queue.pop_due(now, &in_flight) else {
                 break;
             };
             if self.closed_e3s.contains(&id.0) || self.received.contains(&id) {
                 continue;
             }
-            self.start_fetch(id, waiting.notifications, waiting.failures, ctx);
+            self.start_fetch(id, waiting, ctx);
         }
     }
 
     fn start_fetch(
         &mut self,
         id: DocumentId,
-        notifications: Vec<DocumentPublishedNotification>,
-        failures: u32,
+        waiting: WaitingFetch,
         ctx: &mut actix::Context<Self>,
     ) {
         let ids = self.service.interest_snapshot();
         let tx = self.tx.clone();
         let rx = self.rx.clone();
         let (abort, registration) = AbortHandle::new_pair();
-        self.fetching.insert(id.clone(), failures);
+        let notifications = waiting.notifications.clone();
+        self.fetching.insert(id.clone(), waiting);
         self.fetch_aborts.insert(id.clone(), abort);
         ctx.spawn(
             Abortable::new(
-                handle_document_published_notification(tx, rx, ids, notifications.clone()),
+                handle_document_published_notification(tx, rx, ids, notifications),
                 registration,
             )
             .into_actor(self)
             .map(move |result, actor, ctx| {
-                actor.fetching.remove(&id);
                 actor.fetch_aborts.remove(&id);
+                let Some(mut waiting) = actor.fetching.remove(&id) else {
+                    return;
+                };
                 let now = chrono::Utc::now();
-                let late: Vec<_> = actor
-                    .late_notifications
-                    .remove(&id)
-                    .unwrap_or_default()
-                    .into_iter()
-                    .filter(|notification| notification.meta.expires_at > now)
-                    .collect();
+                waiting
+                    .notifications
+                    .retain(|notification| notification.meta.expires_at > now);
                 match result {
                     Ok(Ok(Some((document, notification)))) => {
                         actor.accept_document(id, document, notification);
@@ -336,7 +425,7 @@ impl DocumentPublisher {
                             Some(value) => {
                                 let ids = actor.service.interest_snapshot();
                                 if let Ok(Some((document, notification))) =
-                                    bind_to_candidate(&ids, late, value)
+                                    bind_to_candidate(&ids, waiting.notifications, value)
                                 {
                                     actor.accept_document(id, document, notification);
                                 } else {
@@ -346,18 +435,8 @@ impl DocumentPublisher {
                                 }
                             }
                             None => {
-                                let mut candidates = notifications;
-                                for notification in late {
-                                    add_candidate(&mut candidates, notification);
-                                }
-                                candidates
-                                    .retain(|notification| notification.meta.expires_at > now);
-                                if !actor.fetch_queue.retry(
-                                    id,
-                                    candidates,
-                                    failures + 1,
-                                    Instant::now(),
-                                ) {
+                                waiting.failures = waiting.failures.saturating_add(1);
+                                if !actor.fetch_queue.retry(id, waiting, Instant::now()) {
                                     debug!(
                                         "Stopped fetching a document until it is announced again"
                                     );

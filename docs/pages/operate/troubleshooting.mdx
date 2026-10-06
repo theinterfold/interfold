@@ -137,40 +137,51 @@ When the ticket is already on-chain, the node logs
 
 ```text
 ERROR DHT put record failed: the quorum failed; needed 1 peers
-ERROR Operation failed after 4 attempts: DHT put record failed: PutRecordError(QuorumFailed { key: …, success: [], quorum: 1 })
+ERROR Operation failed after 2 attempts: DHT put record failed: PutRecordError(QuorumFailed { key: …, success: [], quorum: 1 })
 ```
 
-Before the second line, the node also logs `Attempt 1/4 failed, retrying in 1000ms: …` and two more
-attempts at the `WARN` level.
+Before the second line, the node also logs `Attempt 1/2 failed, retrying in 1000ms: …` at the `WARN`
+level.
 
 ### What the error means
 
-During a DKG, the node stores each DKG document that it makes in the Kademlia DHT. The documents are
-its threshold shares, its encryption key, and its decryption key share. The node stores each
-document with `Quorum::One`, so at least one remote peer must acknowledge it. The node gossips a
-notification to the committee only after the store succeeds.
+During a DKG, the node publishes each DKG document that it makes: its threshold shares, its
+encryption key, and its decryption key share. It stores the document in its own DHT store and
+gossips a notification to the committee. Separately, it uploads the document to the Kademlia peers
+closest to the document's key. The upload uses `Quorum::One`, so at least one remote peer must
+acknowledge it. These errors come from the upload; a failing upload does not hold back the
+notification.
 
-- **The retry sequence.** Each publication makes 4 attempts. The node waits 1 s, 2 s, and 4 s
-  between the attempts.
+An inbound DHT put cannot replace the node's own published record. For a stored replica, the node
+keeps the later expiry. A record without an expiry keeps its unlimited lifetime.
+
+- **The retry sequence.** Each upload makes 2 attempts, 1 s apart.
 - **`success: []`.** Remote peers receive records with record filtering on
   (`StoreInserts::FilterBoth`). With this setting, a remote peer sends a response even when its
   filter rejects the record. An empty `success` list therefore means that no peer acknowledged the
   request at all.
-- **`QuorumFailed`, not `Timeout`.** The Kademlia query timeout is 30 s. A `QuorumFailed` result
+- **`QuorumFailed`, not `Timeout`.** The Kademlia query timeout is 60 s. A `QuorumFailed` result
   before the timeout means that the query had no reachable peers to send the record to.
 
 The node therefore had no admitted and reachable Kademlia peers at that time.
 
 ### What happens next
 
-The node retries a failed publication 15 s after each failed round of 4 attempts. It continues until
-the document expires or the DKG ends. The DKG ends when the chain reports the E3 stage
-`KeyPublished`, `CiphertextReady`, `Complete`, or `Failed`.
+The node keeps announcing the document from its own store: again 30 s after the first notification,
+then with the wait doubling up to 5 minutes. It retries a failed upload 15 s later, also doubling
+the wait up to 5 minutes, and uploads each document again every 30 minutes. It continues until the
+document expires or the DKG ends. The DKG ends when the chain reports the E3 stage `KeyPublished`,
+`CiphertextReady`, `Complete`, or `Failed`. The node then ends a put that is uploading its record.
+Kademlia reports that end as a quorum failure, and the node logs it at the `DEBUG` level as
+`DHT put record cancelled`, not as this error. A put that still looks up its closest peers runs on,
+and requests already handed to a connection still go out, so such a put can still log this error.
 
-- If the connectivity comes back in time, a later round succeeds and the node recovers without
-  action.
-- If the connectivity does not come back in time, the committee does not receive the documents of
-  this node for that E3.
+- While the uploads fail, a peer whose DHT lookup reaches this node fetches the document from it. A
+  lookup asks the about 20 peers closest to the key, so in a larger network some peers can fetch the
+  document only after an upload succeeds.
+- If the connectivity comes back in time, an upload succeeds and the node recovers without action.
+- If the connectivity does not come back in time, the peers that cannot reach this node do not
+  receive its documents for that E3.
 
 ### Causes
 
@@ -199,7 +210,7 @@ The release must have the same `protocol_version` as the network. See
 
 ### Check if the errors repeat
 
-Look at the times of the `Operation failed after 4 attempts` lines.
+Look at the times of the `Operation failed after 2 attempts` lines.
 
 If the lines repeat for each round, the node is isolated. If they stopped, the problem was short.
 
@@ -254,15 +265,24 @@ errors.
 The node uses QUIC over UDP. The node admits a peer only after the Identify check passes. The check
 compares the network identity and the supported Kademlia and sync protocols.
 
-| Log line                                                                                      | Cause                                                                        | Action                                                                   |
-| --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| `Found 0 peers to dial`                                                                       | The configuration and the network profile give no peers.                     | Set `node.peers`, or check `node.network`.                               |
-| `Rejected an incompatible Interfold peer` with `peer network identity '…' does not match '…'` | A different protocol version or a different set of enabled deployments.      | Compare the release and the enabled chains with the peer.                |
-| `Rejected an incompatible Interfold peer` with `peer does not support …`                      | The peer runs an incompatible release.                                       | Compare the releases.                                                    |
-| `Evicting unreachable peer <peer> after 3 consecutive failures`                               | The peer does not answer at its address.                                     | Check the address and that the peer runs.                                |
-| `Rejected a configured peer whose pinned identity changed`                                    | The peer ID in the configured multiaddr is not the ID at that address.       | Update the `/p2p/<peer-id>` part of the multiaddr.                       |
-| `Some bootstrap peers are unavailable; background retries will continue`                      | A bootstrap peer did not answer.                                             | The node retries every 60 s. Check the address if the warning continues. |
-| `Replacing peer connections that did not establish the gossip subscription`                   | A peer connected but did not subscribe to the protocol gossip topic in 30 s. | The node reconnects. Compare the releases if the warning continues.      |
+Identify does not cache peer addresses. The node keeps admitted peer addresses in Kademlia and
+filters loopback addresses when it has a listener on a non-loopback interface. Each compatible
+Identify exchange refreshes these addresses, so a connected peer can advertise a new address for
+later reconnection. The node keeps unique filtered addresses within both limits: 8 addresses per
+peer and 2 KiB of encoded addresses, including peer IDs. Advertised live endpoints take slots first.
+The remaining slots fill in advertised order. Each update removes superseded Identify addresses.
+Live connection endpoints remain until they close. A withdrawn endpoint is removed after its last
+connection closes.
+
+| Log line                                                                                      | Cause                                                                        | Action                                                                                                                                                                                                            |
+| --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Found 0 peers to dial`                                                                       | The configuration and the network profile give no peers.                     | Set `node.peers`, or check `node.network`.                                                                                                                                                                        |
+| `Rejected an incompatible Interfold peer` with `peer network identity '…' does not match '…'` | A different protocol version or a different set of enabled deployments.      | Compare the release and the enabled chains with the peer.                                                                                                                                                         |
+| `Rejected an incompatible Interfold peer` with `peer does not support …`                      | The peer runs an incompatible release.                                       | Compare the releases.                                                                                                                                                                                             |
+| `Evicting unreachable peer <peer> after 3 consecutive failures`                               | The peer does not answer at its address.                                     | Check the address and that the peer runs.                                                                                                                                                                         |
+| `Rejected a configured peer whose pinned identity changed`                                    | The peer ID in the configured multiaddr is not the ID at that address.       | Update the `/p2p/<peer-id>` part of the multiaddr.                                                                                                                                                                |
+| `Some bootstrap peers are unavailable; background retries will continue`                      | A bootstrap peer did not answer.                                             | The node retries every 60 s. Check the address if the warning continues.                                                                                                                                          |
+| `Disconnected a peer that did not establish the gossip subscription`                          | A peer connected but did not subscribe to the protocol gossip topic in 30 s. | The node disconnects the peer and dials it again only after `redial_after_seconds`: 30 s, doubling up to 30 minutes, plus up to 10%. A subscription ends the wait. Compare the releases if the warning continues. |
 
 The dashboard API shows `configured_peers`, `connected_peers`, and `gossip_subscribed_peers`. A peer
 that is connected but not subscribed to the gossip topic cannot take part in committee work. For the
@@ -298,17 +318,19 @@ See [RPC endpoints](/operate/rpc-endpoints).
 
 ## Startup fails
 
-| Message                                                                                         | Cause                                                                                                                 | Action                                                                              |
-| ----------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| ``Configuration file not found. Run `interfold ciphernode setup` to create a configuration.``   | The CLI did not find `interfold.config.yaml`.                                                                         | Run the command from the node directory, or use `--config`.                         |
-| `another interfold instance is already running for node '<node>' against this data directory …` | A second process uses the same data directory.                                                                        | Stop the other process first.                                                       |
-| `ciphernode protocol version <x> does not match required version <y>`                           | The release is for a different protocol version.                                                                      | Install the release that the chain requires. See [Upgrades](/operate/upgrades).     |
-| `ciphernode generation <x> is below required generation <y>`                                    | Governance requires a newer node release.                                                                             | Install the new release.                                                            |
-| `On-disk schema version <v> is older than this binary's supported version …`                    | The release raised the storage schema.                                                                                | [Reset node state](/operate/upgrades#reset-node-state).                             |
-| `On-disk state has no schema marker …`                                                          | The event log exists without the matching key/value store.                                                            | Restore the stopped backup, or reset the state.                                     |
-| `chain '<name>' has Interfold enabled but no data_availability reader; …`                       | The chain entry has no `data_availability` block. A configuration from `interfold ciphernode setup` does not have it. | Add the block. See [Data availability](/reference/configuration#data-availability). |
-| `failed to read Interfold release dependencies`                                                 | The `Interfold` contract has no `nodeReleaseRegistry()`. On 25 September 2026, the Sepolia deployment is an example.  | Use a chain whose deployment includes the node release gate.                        |
-| `ciphernode startup did not complete within …`                                                  | The startup sync took longer than `node.startup_timeout_secs`.                                                        | Use a faster RPC endpoint, or increase `node.startup_timeout_secs` (default 1800).  |
+| Message                                                                                             | Cause                                                                                                                 | Action                                                                                                                                |
+| --------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| ``Configuration file not found. Run `interfold ciphernode setup` to create a configuration.``       | The CLI did not find `interfold.config.yaml`.                                                                         | Run the command from the node directory, or use `--config`.                                                                           |
+| `another interfold instance is already running for node '<node>' against this data directory …`     | A second process uses the same data directory.                                                                        | Stop the other process first.                                                                                                         |
+| `ciphernode protocol version <x> does not match required version <y>`                               | The release is for a different protocol version.                                                                      | Install the release that the chain requires. See [Upgrades](/operate/upgrades).                                                       |
+| `ciphernode generation <x> is below required generation <y>`                                        | Governance requires a newer node release.                                                                             | Install the new release.                                                                                                              |
+| `On-disk schema version <v> is older than this binary's supported version …`                        | The release raised the storage schema.                                                                                | [Reset node state](/operate/upgrades#reset-node-state).                                                                               |
+| `On-disk state has no schema marker …`                                                              | The event log exists without the matching key/value store.                                                            | Restore the stopped backup, or reset the state.                                                                                       |
+| `chain '<name>' has Interfold enabled but no data_availability reader; …`                           | The chain entry has no `data_availability` block. A configuration from `interfold ciphernode setup` does not have it. | Add the block. See [Data availability](/reference/configuration#data-availability).                                                   |
+| `failed to read Interfold release dependencies`                                                     | The `Interfold` contract has no `nodeReleaseRegistry()`. On 25 September 2026, the Sepolia deployment is an example.  | Use a chain whose deployment includes the node release gate.                                                                          |
+| `restored request contexts for E3s … belong to chain <id>, which the configuration does not have …` | The data folder has unfinished E3s of a chain that is not in the configuration, for example after a network change.   | Add the chain, or keep its entry with `enabled: false` and its `chain_id`. Or [reset node state](/operate/upgrades#reset-node-state). |
+| `restored E3 <id> is not in the Interfold contract …`                                               | The RPC endpoint is behind the chain, or the data folder is from another deployment.                                  | Check that the endpoint is synced and the `interfold` address is right. Reset node state only for another deployment.                 |
+| `ciphernode startup did not complete within …`                                                      | The startup sync took longer than `node.startup_timeout_secs`.                                                        | Use a faster RPC endpoint, or increase `node.startup_timeout_secs` (default 1800).                                                    |
 
 ## Out of memory
 

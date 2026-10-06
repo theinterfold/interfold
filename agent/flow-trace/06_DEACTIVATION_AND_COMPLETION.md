@@ -250,6 +250,9 @@ interfold start → running node
     └─ Flushes the optional operational JSON log collector
 
 On restart:
+├─ Raw storage schema admission:
+│   → reads the schema marker before opening event logs or timestamp indexes
+│   → rejects incompatible or unmarked state with the supported recovery instruction
 ├─ Event-log open:
 │   → validates physical frames against the commitlog index
 │   → truncates only a CRC/length-invalid suffix after the final indexed record
@@ -271,9 +274,32 @@ On restart:
 │   2. Backfill missing versioned recovery records from the EventStore
 │      → Sortition inputs, committee-finalizer inputs/tickets, and slash intents are reconstructed
 │      → Existing versioned records are not replaced
+│      → First, `reconcile_restored_contexts` projects the logged events after the router
+│        checkpoint onto a copy of it, so it has every context that replay restores. It reads
+│        each non-terminal restored context at the finalized block and writes Complete, or a
+│        Failed stage with no slashing work, to the lifecycle store. Recovery steps that read
+│        the lifecycle then treat that E3 as terminal. The data-availability coordinator drops
+│        its restored work for that E3 before EffectsEnabled; document publication recovery
+│        does not read the lifecycle. Any other failed E3 keeps its context for accusation or
+│        slashing work: the router forwards a Failed `E3StageChanged` to the context when
+│        it is built, before replay, or at EffectsEnabled for a context that replay admits,
+│        also to a recipient that the context creates later. The keyshare and the public-key
+│        and plaintext aggregators stop at it, also a plaintext aggregation that still waits
+│        for the key's chain authority. A selection of the E3, recovered, replayed or live,
+│        starts no protocol actor; the compute gate and ZK recovery start with the Failed
+│        stage for it, so the C0 verifier admits none of its inputs, recovered, replayed or
+│        live, and the gate still admits accusation re-verification; and the
+│        data-availability coordinator drops its restored work. The Failed event has the
+│        E3's aggregate and the router's cursor of it, like a recovered selection
+│        An E3 absent at chain head, a chain missing from the config, an RPC error after two
+│        retries, or 60 s for one read of 16 contexts fails startup. The contexts of a
+│        disabled chain resume unchecked
 │   3. Reconcile and hydrate persisted per-E3 state
 │      → Extensions must preserve hydrated recipients; replayed committee events
 │        must not replace a restored per-E3 actor with a fresh instance
+│      → ThresholdKeyshareExtension restores canonical key-publication awareness from the
+│        E3 lifecycle projection before starting the actor. Collector failures cannot overwrite
+│        published progress when PublicKeyAggregated is absent from the saved keyshare state
 │      → CiphernodeSelector and finalized-committee snapshots must agree; one missing side is
 │        restored, terminal E3s are pruned, and contradictory snapshots fail startup
 │      → ShareVerificationActor loads canonical party slots from the durable
@@ -282,6 +308,8 @@ On restart:
 │      → ProofVerificationActor loads the same slots, plus BFV preset/threshold
 │        metadata from durable CiphernodeSelector state. Snapshotted
 │        CiphernodeSelected events are likewise not guaranteed to replay.
+│        ZkActorRecovery::hydrate also reconstructs unresolved C0 inputs from the full event log.
+│        It excludes completed local checks and E3s past DKG. The verifier resumes after EffectsEnabled.
 │      → Recovered aggregator roles, selected party IDs, and DHT document interests are injected
 │        directly from snapshots. Startup does not append synthetic recovery events.
 │      → Replayed `AggregatorChanged` events restore the selector's last announced party. The
@@ -309,6 +337,9 @@ On restart:
 │      → ComputeEffectGate has already subscribed and buffers ComputeRequest
 │        effects, deduplicating semantic retries while replay is in progress
 │   8. Enable effects (writers may submit only after this point)
+│      → The router does not forward `EffectsEnabled` to a restored context whose lifecycle
+│        stage is terminal. It publishes `E3RequestComplete` for that context instead, so its
+│        work does not resume
 │      → Gate cancels work for terminal E3s and releases only the newest
 │        pending request for each in-flight semantic compute operation
 │      → Gate mirrors a completed response or error to regenerated correlation IDs
@@ -344,7 +375,16 @@ buffering window remains a fail-closed readiness error because those skipped eve
 reconciled safely. The network producer sends all events to the raw channel. It sends only gossip
 payloads and publish or DHT results to a separate application channel. `NetEventBuffer` subscribes
 to the application channel. Historical-sync and connection-control bursts remain on the raw channel
-and cannot lag or consume the application startup buffer.
+and cannot lag or consume the application startup buffer. A caller of a network command, such as the
+document publisher or the translator, registers for its result by correlation ID at the producer's
+channel, also when it reads the `NetEventBuffer` output. The producer gives the result to that
+caller before the broadcast, so lag cannot drop it and the buffer does not hold it until
+`SyncEnded`. The document publisher sends no such command before `SyncEnded`. The translator's
+publications do not wait for `SyncEnded`, and a gossip result only decides whether the translator
+publishes the event again. After the held events, the buffer sends a `StartupBufferReleased` marker,
+and its output channel has room for both. The translator hands every held event to storage before it
+handles the marker, then flushes the event pipeline and begins live history; only then do the node's
+history replies vouch for a range.
 
 EventStore replay uses a disk-backed external merge: per-aggregate pages are sorted into secure
 temporary runs, then compacted and merged with bounded file-descriptor fan-in. Replay waits for
@@ -355,15 +395,16 @@ durable at each replay step. A page can stop at its byte limit before it reaches
 limit. Replay therefore continues until the EventStore returns an empty page, not until it returns a
 short page.
 
-`interfold node validate` detects a recoverable uncommitted event-log tail without changing it. With
-the node stopped, `interfold node validate --repair` applies the same boundary-checked tail recovery
-as startup and refuses to remove indexed records. The repair also compares both registered-node
-projections with the intact EventStore prefix. It can reconcile derived membership and reconstruct
-missing member ticket and activation history. It does not delete the encrypted identity or matching
-member history. Tail recovery adds missing index entries for complete, CRC-valid records and
-truncates only an incomplete physical suffix. It also removes the exact two-byte, index-free segment
-shape left when a process stops during rollover. Runtime EventStore query failures return to the
-correlated caller. Committed corruption remains a startup or integrity failure.
+`interfold node validate` checks the raw storage schema before it reads or repairs event logs. It
+detects a recoverable uncommitted event-log tail without changing it. With the node stopped,
+`interfold node validate --repair` applies the same boundary-checked tail recovery as startup and
+refuses to remove indexed records. The repair also compares both registered-node projections with
+the intact EventStore prefix. It can reconcile derived membership and reconstruct missing member
+ticket and activation history. It does not delete the encrypted identity or matching member history.
+Tail recovery adds missing index entries for complete, CRC-valid records and truncates only an
+incomplete physical suffix. It also removes the exact two-byte, index-free segment shape left when a
+process stops during rollover. Runtime EventStore query failures return to the correlated caller.
+Committed corruption remains a startup or integrity failure.
 
 Large local events use content-addressed blob files beside the commit log. The log stores a small
 versioned reference only after the blob is synced. Open, replay, and tail recovery verify the blob
@@ -373,7 +414,7 @@ CLI then exit with a nonzero status instead of leaving a dead storage actor insi
 process. The EventStore syncs each appended log record before it indexes or broadcasts the event. It
 caches the active segment and index handles. Each append still syncs both files, while the directory
 is synced only for the first append and after segment rollover. The current storage schema marker is
-version 7. Older logs remain decodable, but their eligibility timestamps are not trusted. Operators
+version 8. Schema-7 DKG events omit bundle signatures and cannot use the current decoder. Operators
 must use the controlled reset and resync procedure outside active E3 work; see `07_UPGRADES.md`.
 
 For DAppNode installations, package v0.2.3 is the mandatory bridge from the shipped v0.1.8 state. It
@@ -408,17 +449,20 @@ flowchart TD
     SelectorRepo --> Hydrate
     RecoveryRepo --> Hydrate
 
-    PublicKeyRepo --> PTAHydrate
-    KeyshareRepo --> PTAHydrate
+    PublicKeyRepo --> PKHydrate
+    KeyshareRepo --> KeyHydrate
+    EventStore --> ChainKey["CanonicalKeyProjection<br/>rebuilds authority and key bytes before hydration"]
+    ChainKey --> KeyHydrate
+    ChainKey --> PTAHydrate
     PTAHydrate --> FullCommittee["committee_addresses = full party-order topNodes"]
-    PTAHydrate --> HonestCommittee["honest_committee_addresses = honest_parties mapped through topNodes"]
+    PTAHydrate --> HonestCommittee["honest_committee_addresses = registry DKG party IDs mapped through topNodes"]
     PlaintextRepo --> ExistingPlaintext{"Plaintext actor state exists?"}
     ExistingPlaintext -- yes --> StartExisting["Hydrate ThresholdPlaintextAggregator"]
-    ExistingPlaintext -- no --> WaitCiphertext["No plaintext actor yet; wait for ciphertext"]
+    ExistingPlaintext -- no --> WaitCiphertext["Recover deferred ciphertext from event history<br/>or wait for ciphertext"]
 
     Actors --> Replay["sync(): replay EventStore<br/>effects disabled"]
     EventStore --> Replay
-    Replay --> CommitteeReplay["CommitteePublished replay<br/>restores full committee"]
+    Replay --> CommitteeReplay["CommitteePublished replay<br/>supplies commitment-checked key bytes"]
 
     Replay --> Effects["EffectsEnabled"]
     Effects --> Gate["ComputeEffectGate releases replay-safe compute work"]
@@ -466,21 +510,73 @@ applies them only when `SyncEffect` arrives. This happens after `EffectsEnabled`
 canonical history. The derived value reaches the hydrated E3 extensions and recipients without
 entering the EventBus or EventStore as another logical selection event.
 
+`PublicKeyAggregatorExtension` reads the existing lifecycle projection during hydration. It seeds
+the actor's in-memory publication flag from `KeyPublished`, `CiphertextReady`, or `Complete`, even
+when a standby's saved DKG phase is still `VerifyingC1`. A later expulsion or exclusion cannot
+produce a DKG failure after that publication. This flag adds no persisted field.
+
 For crashes after key publication but before ciphertext publication, the recovered active aggregator
 may not have a `ThresholdPlaintextAggregator` actor yet. The plaintext extension starts with the
 recovered role in the live E3 context, then seeds the later `DecryptionshareCreatedBuffer` from it.
-Committee and honest-committee addresses are recovered from completed public-key aggregation state,
-in-flight public-key aggregation state, or the persisted `ThresholdKeyshareState.honest_parties` set
-during async context hydration. Replayed `CommitteePublished` can also restore the full committee
-address dependency, but cannot infer the H-sized honest subset when `N > H`; that subset must come
-from `PublicKeyAggregated`, `PublicKeyAggregatorState::GeneratingC5Proof`, or threshold-keyshare
-state. The synchronous `on_event` path must not read actor-backed repositories directly, because
-blocking the router while waiting for the store can freeze live gossip and make peers time out. If
-`CiphertextOutputPublished` arrives before those committee dependencies are ready, the extension
-records the ciphertext in the E3 context and retries plaintext actor creation when
-`PublicKeyAggregated` or `CommitteePublished` supplies the missing facts; the router's existing
-recipient buffer then drains any ciphertext/decryption-share events into the newly-created plaintext
-path.
+`CanonicalKeyProjection` scans the retained chain event log before actors hydrate or replay their
+suffix. It rebuilds the registry commitment, finalized committee, honest party IDs, and SK/ESM
+anchors from confirmed chain observations. Existing chunk assembly recovers commitment-checked key
+bytes, including publications before a snapshot cursor. This projection needs no historical storage
+RPC and uses the existing serialized layouts. If terminal history follows an older context snapshot,
+the projection keeps that context's rosters through hydration. Terminal delivery retires them;
+completed contexts without snapshots retain none.
+
+The plaintext extension restores its full and honest committee dependencies from this projection,
+including when it hydrates an existing plaintext actor. It reads retained ciphertext events before
+snapshot cursors to restore ciphertext deferred while key authority was unavailable. A missing
+plaintext actor recovers authenticated shares from the same full history before effects resume. No
+second ciphertext or share publication is required. If authority is missing, a dormant recipient
+retains the saved state, an event-log sequence range, and one current-boot `EffectsEnabled` signal.
+Confirmed authority resumes recovery through pages limited to 1024 events and 16 MiB. Payloads stay
+in durable history while authority is absent. Startup does not replace the saved snapshot.
+
+Events for an expected recipient that does not exist yet wait in the router's deferred queue. That
+queue has per-E3 and global item and byte limits (Part 3, Request-router deferred delivery).
+Overflow records a delivery failure for that recipient and clears its deferred events, and live
+routing continues. Hydration derives expected recipients from the installed extensions. Neither the
+deferred queue nor its failure record survives restart.
+
+Before an existing plaintext actor starts, hydration validates saved signed C6 shares and the C6
+inputs retained in later phases against the canonical domain. Invalid work clears verification
+outcomes, C7 proofs, and final proofs, including the `Complete` republication record. Signed history
+rebuilds collection with effects disabled. Corrected shares can occupy the released slots. Valid
+retained C6 work keeps its phase. Retained C7 proofs must match the selected C6 commitments, party
+IDs, and plaintext. A mismatch clears C7 and final proofs and resumes C7 generation, including from
+`Complete`. Replayed C7 intents deduplicate by request, and replacement work invalidates earlier
+worker correlations. Recovery pages the local event log and performs no chain RPC.
+
+Keyshare replaces invalid snapshot bytes with the recovered key and rebuilds the domain.
+`Decrypting`, `GeneratingDecryptionProof`, and `Completed` can resume retained decryption work when
+authority becomes available. C6 recovery keeps the exact secret, ciphertext, and decryption-share
+witnesses and persists repaired public inputs. It does not need another key publication after
+restart. Hydration clears the process-local decryption dispatch markers. `EffectsEnabled` resumes
+each phase once, and late authority or key bytes can start work that still waits for them. Repeated
+matching publications and chain observations do not add compute correlations or repeat C6 proof
+intents. The worker retries local failures with the same request.
+
+Replayed C6 intents pass canonical admission before proof-intent deduplication. Logged C6 compute
+requests also pass admission before dispatch or response reuse. Other E3s continue routing while one
+request waits for its key. Confirmed chain ingestion is the only source of authority; head-state RPC
+results and gossip cannot populate the projection. The projection also retains ciphertext hashes for
+the EVM writer. Final plaintext intents wait for this authority before deduplication. The writer
+discards and logs mismatched final domains, so a corrected local intent can proceed. Writer startup
+seeds terminal E3 IDs from the confirmed chain projection. Confirmed terminal stages clear deferred
+history ranges and pending plaintext publication work; later intents for those E3s are discarded.
+Local `E3RequestComplete` alone does not retire publication or deadline watches. For an active E3
+without authority, the writer retains one sequence range instead of proof payloads. When that E3's
+authority arrives, it reads the range with a 1024-event limit and a 16 MiB byte budget. One large
+event can exceed the byte budget so the cursor can advance. Each page advances the cursor, and
+observations for other E3s do not rescan the range.
+
+File: `crates/keyshare/src/threshold_keyshare/effects/recovery.rs`,
+`crates/request/src/canonical_key.rs`, `crates/evm/src/canonical_key.rs`,
+`crates/aggregator/src/ext.rs`, `crates/multithread/src/effect_gate.rs`,
+`crates/evm/src/interfold_writing/handlers.rs`, `crates/evm/src/interfold_writing/effects.rs`.
 
 `ShareVerificationActor` gates C1/C6 proof verification behind `CommitmentConsistencyCheckRequested`
 / `CommitmentConsistencyCheckComplete`. The per-E3 `CommitmentConsistencyChecker` is therefore
@@ -503,7 +599,21 @@ needs the request's BFV preset and threshold-derived committee size to choose ci
 recompute the advertised public-key commitment. Builder startup seeds those caches from the durable
 finalized-committee repository and `CiphernodeSelectorState.e3_cache` before replay. Live
 `CommitteeFinalized` / `CiphernodeSelected` events remain authoritative refreshes, while
-`E3RequestComplete` removes both caches.
+`E3RequestComplete` and canonical stages past DKG remove both caches and cancel pending checks.
+
+`ZkActorRecovery::hydrate` scans each aggregate from its first durable event in bounded pages.
+Sequence-query responses for one aggregate include the physical `EventLog::head` in the
+non-serialized `EventStoreQueryResponse`. If a filtered page is empty before that head, recovery
+reads one physical record at a time until a retained event arrives or the cursor passes the head. It
+does not advance by the requested page size, because the byte limit can shorten a page. If a page
+skips a sequence, recovery reads one record at each skipped sequence. An empty response confirms
+that the EventStore router quarantined that legacy record. The scan continues to later C0 inputs.
+Other sequence gaps, wrong aggregates, and out-of-order events fail startup. It retains the first
+authenticated C0 input per party until a local acceptance, local invalid result, or canonical
+completion clears it. Lifecycle snapshots also exclude E3s past DKG. This restores inputs before the
+snapshot cursor even when document recovery suppresses another fetch. The verifier waits for
+`EffectsEnabled` before dispatch. Local errors retry after 5 seconds, with the delay doubling to a
+60-second cap. Restart resets the attempt counter and delay.
 
 Threshold keyshare, public-key aggregation, and plaintext aggregation also store versioned recovery
 records with their protocol snapshots. These records retain collector inputs, pending proof jobs,

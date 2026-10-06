@@ -25,3 +25,4 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 bincode = { workspace = true }
+e3-layout-lock = { workspace = true }

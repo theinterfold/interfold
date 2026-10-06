@@ -31,6 +31,7 @@
     "check:committee": "./scripts/check-committee.sh",
     "check:docs": "./scripts/check-doc-sync.sh",
     "check:addresses": "tsx scripts/check-addresses.ts",
+    "check:bindings": "tsx scripts/check-cli-bindings.ts",
     "check:invariants": "./scripts/check-invariants.sh",
     "provenance:manifest": "tsx scripts/generate-provenance-manifest.ts",
     "check:verifiers": "tsx scripts/generate-verifiers.ts --circuits dkg_aggregator,decryption_aggregator --check",

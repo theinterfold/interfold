@@ -94,6 +94,18 @@ impl<let N: u32> Polynomial<N> {
     ///
     /// # Returns
     /// The value of the polynomial at point x: P(x).
+    /// Inner product of the coefficients with `k`, in the same index order.
+    ///
+    /// Paired with [`negacyclic_kernel`] this evaluates a product modulo `X^N + 1` without the
+    /// product itself entering the witness.
+    pub fn dot(self, k: [Field; N]) -> Field {
+        let mut out: Field = 0;
+        for j in 0..N {
+            out += self.coefficients[j] * k[j];
+        }
+        out
+    }
+
     pub fn eval(self, x: Field) -> Field {
         let mut result = self.coefficients[0];
 
@@ -233,6 +245,42 @@ fn test_polynomial_eval_zero() {
     let result = poly.eval(x);
 
     assert(result == 0);
+}
+
+/// Evaluation kernel for `u` modulo `X^N + 1`: `out[j]` is `(X^(N-1-j) * u mod X^N + 1)(x)`.
+///
+/// `a.dot(negacyclic_kernel(u, x))` then equals `(a * u mod X^N + 1)(x)` without the prover
+/// supplying the product, so no product witness has to be bound or range-checked.
+pub fn negacyclic_kernel<let N: u32>(u: Polynomial<N>, x: Field) -> [Field; N] {
+    assert(N > 0);
+    let phi = x.pow_32(N as Field) + 1;
+    let mut out = [0; N];
+    out[N - 1] = u.eval(x);
+    for j in 1..N {
+        out[N - 1 - j] = x * out[N - j] - phi * u.coefficients[j - 1];
+    }
+    out
+}
+
+#[test]
+fn test_negacyclic_kernel_matches_reduced_product() {
+    let a = Polynomial::new([4, 3, 2, 1]);
+    let u = Polynomial::new([-1, 0, 1, -1]);
+
+    // Schoolbook product, then reduced by hand with X^4 = -1.
+    let mut prod = [0; 7];
+    for i in 0..4 {
+        for j in 0..4 {
+            prod[i + j] += a.coefficients[i] * u.coefficients[j];
+        }
+    }
+    let reduced = Polynomial::new([prod[3], prod[4] - prod[0], prod[5] - prod[1], prod[6] - prod[2]]);
+
+    let points: [Field; 4] = [0, 1, 2, 17];
+    for j in 0..4 {
+        let x = points[j];
+        assert(a.dot(negacyclic_kernel(u, x)) == reduced.eval(x));
+    }
 }
 
 #[test]

@@ -121,7 +121,7 @@ impl ShareVerifier {
                 );
                 return EcdsaPartyResult {
                     passed: false,
-                    failed_payload: Some((signed.clone(), expected_addr)),
+                    failed_payload: None,
                 };
             }
 
@@ -136,7 +136,7 @@ impl ShareVerifier {
                         );
                         return EcdsaPartyResult {
                             passed: false,
-                            failed_payload: Some((signed.clone(), Some(addr))),
+                            failed_payload: None,
                         };
                     }
                     match &expected_addr {
@@ -147,7 +147,7 @@ impl ShareVerifier {
                             );
                             return EcdsaPartyResult {
                                 passed: false,
-                                failed_payload: Some((signed.clone(), Some(addr))),
+                                failed_payload: None,
                             };
                         }
                         None => expected_addr = Some(addr),
@@ -161,7 +161,7 @@ impl ShareVerifier {
                     );
                     return EcdsaPartyResult {
                         passed: false,
-                        failed_payload: Some((signed.clone(), expected_addr)),
+                        failed_payload: None,
                     };
                 }
             }
@@ -175,7 +175,7 @@ impl ShareVerifier {
                 );
                 return EcdsaPartyResult {
                     passed: false,
-                    failed_payload: Some((signed.clone(), expected_addr)),
+                    failed_payload: None,
                 };
             }
         }

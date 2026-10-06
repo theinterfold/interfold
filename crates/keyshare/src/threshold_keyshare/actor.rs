@@ -19,7 +19,7 @@ use e3_events::{
     DkgCoordination, DkgCoordinationKind, DkgDealer, DkgProofSigned,
     DkgShareDecryptionProofRequest, E3Failed, E3RequestComplete, E3Stage, E3id, EType,
     EncryptionKey, EncryptionKeyCollectionFailed, EncryptionKeyCreated, EncryptionKeyPending,
-    EventContext, FailureReason, InterfoldEvent, InterfoldEventData, KeyshareCreated,
+    EventContext, EventId, FailureReason, InterfoldEvent, InterfoldEventData, KeyshareCreated,
     PartyProofsToVerify, PartyShareDecryptionProofsToVerify, PkGenerationProofSigned, ProofType,
     Sequenced, ShareDecryptionProofPending, ShareVerificationComplete, ShareVerificationDispatched,
     SignedProofPayload, ThresholdShare, ThresholdShareCollectionFailed, ThresholdShareCreated,
@@ -46,27 +46,29 @@ use std::{
     pin::Pin,
     sync::Arc,
 };
-use tracing::{error, info, trace, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::actors::decryption_key_shared_collector::{
     AllDecryptionKeySharesCollected, DecryptionKeySharedCollectionFailed,
     DecryptionKeySharedCollector, ExpelPartyFromDecryptionKeySharedCollection,
 };
 use crate::actors::encryption_key_collector::{
-    AllEncryptionKeysCollected, EncryptionKeyCollector, ExpelPartyFromKeyCollection,
+    AllEncryptionKeysCollected, EncryptionKeyCollector, EncryptionKeysReplayed,
+    ExpelPartyFromKeyCollection,
 };
 use crate::actors::threshold_share_collector::{
     ExpelPartyFromShareCollection, ThresholdShareCollector,
 };
 use crate::domain::timeout_policy::{
-    resolve_threshold_share_schedule, resolve_timeout, DkgTimeoutPhase,
+    past_dkg_deadline, past_phase_cutoff, resolve_encryption_key_timeout,
+    resolve_threshold_share_schedule, resolve_timeout, DerivedTimeout, DkgTimeoutPhase,
 };
 use crate::domain::{
-    build_decryption_key_plan, build_shares_generated_plan, dealer_identity, generate_bfv_keypair,
-    select_ready_roster, AggregatingDecryptionKey, BfvKeypairMaterial,
-    CollectingEncryptionKeysData, Decrypting, DecryptionKeyPlan, GeneratingDecryptionProof,
-    GeneratingThresholdShareData, KeyshareState, ProofRequestData, ReadyForDecryption,
-    ReceivedShareProofs, ThresholdKeyshareState,
+    batch_grows, build_decryption_key_plan, build_shares_generated_plan, dealer_identity,
+    dispatch_verifies_batch, generate_bfv_keypair, select_ready_roster, AggregatingDecryptionKey,
+    BfvKeypairMaterial, CollectingEncryptionKeysData, Decrypting, DecryptionKeyPlan,
+    GeneratingDecryptionProof, GeneratingThresholdShareData, KeyshareState, ProofRequestData,
+    ReadyForDecryption, ReadySummaryGate, ReceivedShareProofs, ThresholdKeyshareState,
 };
 
 #[path = "recovery_state.rs"]
@@ -149,6 +151,10 @@ struct PendingKeyshareWork {
     gen_esi_response: Option<TypedEvent<ComputeResponse>>,
     /// Shares awaiting the C2/C3 verification result.
     shares: Vec<Arc<ThresholdShare>>,
+    /// C2/C3 results of dispatches that this process has not sent for the current batch, by
+    /// dispatch ID. A result applies when this actor sends a dispatch with its ID. There is at
+    /// most one entry for each distinct dispatch payload of the E3.
+    parked_share_verdicts: HashMap<EventId, TypedEvent<ShareVerificationComplete>>,
     /// C4 requests awaiting the threshold-decryption-key result.
     share_decryption_data: Option<(
         DkgShareDecryptionProofRequest,
@@ -160,9 +166,13 @@ struct PendingKeyshareWork {
     own_dkg_shares: Option<(SensitiveBytes, Vec<SensitiveBytes>)>,
     /// C4 completed before the signed C1 artifact became available.
     keyshare_publish: bool,
+    /// Decryption work issued in this process. The worker owns local retries.
+    decryption_share_requested: bool,
+    decryption_proof_requested: bool,
 }
 
 pub struct ThresholdKeyshare {
+    canonical_keys: crate::canonical_key::CanonicalPublicKeys,
     bus: BusHandle,
     cipher: Arc<Cipher>,
     decryption_key_collector: Option<Addr<ThresholdShareCollector>>,
@@ -178,8 +188,11 @@ pub struct ThresholdKeyshare {
     active_aggregator_party_id: Option<u64>,
     is_aggregator: bool,
     effects_enabled: bool,
+    // Derived from canonical events and the lifecycle projection at hydration.
+    canonical_key_published: bool,
     roster_inputs_ready: bool,
     roster_proposal_pending: bool,
+    ready_summary: ReadySummaryGate,
     selection_timing_pending: bool,
     pending: PendingKeyshareWork,
 }
@@ -223,6 +236,7 @@ impl ThresholdKeyshare {
                 .collect()
         });
         Self {
+            canonical_keys: Default::default(),
             bus: params.bus,
             cipher: params.cipher,
             decryption_key_collector: None,
@@ -238,8 +252,10 @@ impl ThresholdKeyshare {
             active_aggregator_party_id: recovered.active_aggregator_party_id,
             is_aggregator: recovered.is_aggregator,
             effects_enabled: params.effects_enabled,
+            canonical_key_published: false,
             roster_inputs_ready: false,
             roster_proposal_pending: false,
+            ready_summary: ReadySummaryGate::default(),
             selection_timing_pending: false,
             pending: PendingKeyshareWork {
                 shares: pending_shares,
@@ -249,6 +265,11 @@ impl ThresholdKeyshare {
                 ..Default::default()
             },
         }
+    }
+
+    pub fn with_canonical_keys(mut self, keys: crate::canonical_key::CanonicalPublicKeys) -> Self {
+        self.canonical_keys = keys;
+        self
     }
 
     fn store_signed_pk_generation_proof(
@@ -309,6 +330,12 @@ impl Actor for ThresholdKeyshare {
     type Context = actix::Context<Self>;
     fn started(&mut self, ctx: &mut Self::Context) {
         ctx.set_mailbox_capacity(MAILBOX_LIMIT);
+    }
+
+    fn stopped(&mut self, _: &mut Self::Context) {
+        if let Err(error) = self.stop_threshold_share_collector() {
+            error!(%error, "Could not stop threshold-share collection");
+        }
     }
 }
 

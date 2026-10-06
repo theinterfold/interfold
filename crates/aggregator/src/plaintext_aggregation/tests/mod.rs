@@ -175,7 +175,14 @@ fn start_sortition(bus: &BusHandle) -> Addr<Sortition> {
         node_state: test_persistable(HashMap::<u64, NodeStateStore>::new()),
         bond_owners: test_persistable(e3_sortition::BondOwnerState::default()),
         recovery: test_persistable(e3_sortition::SortitionRecoveryState::default()),
-        finalized_committees: test_persistable(HashMap::<E3id, Committee>::new()),
+        finalized_committees: test_persistable(HashMap::from([(
+            E3id::new("42", 1),
+            Committee::new(
+                (0..3)
+                    .map(|party| test_signer(party).address().to_string())
+                    .collect(),
+            ),
+        )])),
         ciphernode_selector: selector,
         address: "node-1".to_string(),
         submitted_e3s: Default::default(),
@@ -185,6 +192,18 @@ fn start_sortition(bus: &BusHandle) -> Addr<Sortition> {
 
 fn test_committee_address() -> Address {
     test_signer(0).address()
+}
+
+fn test_decryption_domain() -> e3_committee_hash::DecryptionDomainContext {
+    e3_committee_hash::DecryptionDomainContext {
+        interfold_address: Address::repeat_byte(9),
+        committee_hash: e3_committee_hash::hash_committee_addresses(
+            &(0..3)
+                .map(|party| test_signer(party).address())
+                .collect::<Vec<_>>(),
+        ),
+        committee_public_key: [7; 32].into(),
+    }
 }
 
 fn test_signer(party: u64) -> PrivateKeySigner {
@@ -247,6 +266,14 @@ fn share_with_matching_commitment(
             signals[64..96].copy_from_slice(
                 &e3_bfv_client::compute_ct_commitment_with_params(ciphertext, &params).unwrap(),
             );
+            let domain = e3_committee_hash::decryption_domain_limbs(
+                e3_id.chain_id(),
+                e3_id.clone().try_into().unwrap(),
+                test_decryption_domain(),
+                alloy::primitives::keccak256(&ciphertext[..]),
+            );
+            signals[112..128].copy_from_slice(&domain.hi.to_be_bytes());
+            signals[144..160].copy_from_slice(&domain.lo.to_be_bytes());
             let mut proof = dummy_signed_c6_proof(e3_id).payload;
             proof.proof.public_signals = ArcBytes::from_bytes(&signals);
             SignedProofPayload::sign(proof, &test_signer(party)).unwrap()
@@ -293,6 +320,7 @@ async fn build_plaintext_aggregator_with_role(
             effects_enabled: true,
             committee_addresses: (0..3).map(|party| test_signer(party).address()).collect(),
             honest_committee_addresses: (0..2).map(|party| test_signer(party).address()).collect(),
+            decryption_domain: test_decryption_domain(),
             recovery: test_persistable(ThresholdPlaintextAggregatorRecoveryState::default()),
         },
         test_persistable(initial_state),
@@ -326,6 +354,42 @@ async fn restart_redrives_threshold_decryption() -> Result<()> {
                     )
                 )
     ));
+    Ok(())
+}
+
+/// A failed E3's aggregation does not resume after a restart: the stage change that ends it comes
+/// before `EffectsEnabled`, and the actor stops.
+#[actix::test]
+async fn a_failure_before_effects_resume_stops_plaintext_aggregation() -> Result<()> {
+    let (aggregator, history, e3_id) = build_plaintext_aggregator(computing_state(), false).await?;
+    let aggregator = aggregator.start();
+    let event = |data: InterfoldEventData, seq: u64| {
+        InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            data,
+            None,
+            seq.into(),
+            None,
+            e3_events::EventSource::Local,
+        )
+        .into_sequenced(seq)
+    };
+    let failed = e3_events::E3StageChanged {
+        e3_id: e3_id.clone(),
+        previous_stage: E3Stage::CiphertextReady,
+        new_stage: E3Stage::Failed,
+    };
+    aggregator.send(event(failed.into(), 1)).await?;
+    let _ = aggregator
+        .send(event(EffectsEnabled::new().into(), 2))
+        .await;
+    actix::clock::sleep(std::time::Duration::from_millis(100)).await;
+
+    assert!(!aggregator.connected());
+    let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+    assert!(events.iter().all(|event| !matches!(
+        event.get_data(),
+        InterfoldEventData::ComputeRequest(_) | InterfoldEventData::PlaintextAggregated(_)
+    )));
     Ok(())
 }
 
@@ -443,5 +507,7 @@ async fn decryption_share_after_collection_closed_is_ignored() -> Result<()> {
 
 mod completion;
 mod failures;
+mod publication;
+mod recovery;
 mod share_admission;
 mod threshold;

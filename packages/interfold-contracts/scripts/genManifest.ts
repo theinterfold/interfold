@@ -84,13 +84,20 @@ const REFERENCE_KEYS = [
   "DecryptionAggregatorVerifier",
   "BfvDecryptionVerifier",
   "BfvPkVerifier",
+  "BfvDecryptionVerifierRouter",
+  "BfvPkVerifierRouter",
+  "Risc0BfvCiphertextVerifier",
 ];
 
 /**
- * Any of these present means the deployment is not proving anything, which is
- * what the `mocks` flag claims downstream. Deliberately excludes `MockUSDC`: a
- * mock fee token says nothing about whether proofs are checked, and including
- * it would make a real-verifier deployment report itself as unverified.
+ * A record under any of these names means the network accepts some proofs
+ * without verifying them, which is what the `mocks` flag claims downstream.
+ * The flag reads the records, not the chain, so a record must leave
+ * deployed_contracts.json when governance replaces that mock verifier or
+ * unregisters that mock program. Otherwise the manifest calls a verified
+ * network a mock deployment. Deliberately excludes `MockUSDC`: a mock fee
+ * token says nothing about whether proofs are checked, and including it would
+ * make a real-verifier deployment report itself as unverified.
  */
 const MOCK_NAMES = [
   "MockE3Program",

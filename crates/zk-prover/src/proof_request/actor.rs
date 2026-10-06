@@ -22,7 +22,7 @@ use e3_events::{
     ShareDecryptionProofPending, SignedProofPayload, ThresholdShareCreated, ThresholdSharePending,
     TypedEvent, ZkRequest, ZkResponse,
 };
-use e3_utils::NotifySync;
+use e3_utils::{ArcBytes, NotifySync};
 use tracing::{debug, error, info, trace, warn};
 
 use crate::workflow::proof_request::{
@@ -38,6 +38,8 @@ use crate::workflow::proof_request::{
 /// A signer is required — if signing fails, the proof is not published.
 pub struct ProofRequestActor {
     bus: BusHandle,
+    canonical_keys: e3_request::canonical_key::CanonicalPublicKeys,
+    held_share_decryption: HashMap<E3id, TypedEvent<ShareDecryptionProofPending>>,
     signer: PrivateKeySigner,
     proof_aggregation_enabled: bool,
     pending: HashMap<CorrelationId, PendingProofRequest>,
@@ -49,6 +51,8 @@ pub struct ProofRequestActor {
     node_agg_meta: HashMap<E3id, NodeAggregationMeta>,
     /// C4 pending proofs per E3
     pending_decryption: HashMap<E3id, PendingDecryptionProofs>,
+    /// C4 dispatch that arrived before `ThresholdSharePending` set the seq layout.
+    held_decryption_pending: HashMap<E3id, TypedEvent<DecryptionShareProofsPending>>,
     /// C6 proof staging: correlation -> e3_id
     share_decryption_correlation: HashMap<CorrelationId, E3id>,
     /// C6 pending proofs per E3
@@ -73,6 +77,8 @@ impl ProofRequestActor {
     pub fn new(bus: &BusHandle, signer: PrivateKeySigner, proof_aggregation_enabled: bool) -> Self {
         Self {
             bus: bus.clone(),
+            canonical_keys: Default::default(),
+            held_share_decryption: HashMap::new(),
             signer,
             proof_aggregation_enabled,
             pending: HashMap::new(),
@@ -80,6 +86,7 @@ impl ProofRequestActor {
             threshold_correlation: HashMap::new(),
             decryption_correlation: HashMap::new(),
             pending_decryption: HashMap::new(),
+            held_decryption_pending: HashMap::new(),
             node_agg_meta: HashMap::new(),
             share_decryption_correlation: HashMap::new(),
             pending_share_decryption: HashMap::new(),
@@ -105,7 +112,13 @@ impl ProofRequestActor {
         signer: PrivateKeySigner,
         proof_aggregation_enabled: bool,
     ) -> Addr<Self> {
-        Self::setup_with_recovery(bus, signer, proof_aggregation_enabled, HashMap::new())
+        Self::setup_with_recovery(
+            bus,
+            signer,
+            proof_aggregation_enabled,
+            HashMap::new(),
+            Default::default(),
+        )
     }
 
     pub(crate) fn setup_with_recovery(
@@ -113,10 +126,25 @@ impl ProofRequestActor {
         signer: PrivateKeySigner,
         proof_aggregation_enabled: bool,
         recovered_inner_proofs: HashMap<E3id, BTreeMap<usize, Proof>>,
+        canonical_keys: e3_request::canonical_key::CanonicalPublicKeys,
     ) -> Addr<Self> {
-        let addr = Self::new(bus, signer, proof_aggregation_enabled)
-            .with_recovered_inner_proofs(recovered_inner_proofs)
-            .start();
+        let mut actor = Self::new(bus, signer, proof_aggregation_enabled)
+            .with_recovered_inner_proofs(recovered_inner_proofs);
+        actor.canonical_keys = canonical_keys;
+        let addr = actor.start();
+        bus.subscribe_all(
+            &[
+                EventType::EvmLogObserved,
+                EventType::CommitteePublished,
+                EventType::CommitteePublicKeyChunkPublished,
+                EventType::PublicKeyAggregated,
+                EventType::EffectsEnabled,
+                EventType::E3RequestComplete,
+                EventType::E3Failed,
+                EventType::E3StageChanged,
+            ],
+            addr.clone().into(),
+        );
         bus.subscribe(EventType::EncryptionKeyPending, addr.clone().into());
         bus.subscribe(EventType::ComputeResponse, addr.clone().into());
         bus.subscribe(EventType::ComputeRequestError, addr.clone().into());

@@ -22,10 +22,13 @@ use lib::configs::default::{N_PARTIES, T};
 use lib::configs::secure::dkg::{
     L as DKG_L, L_THRESHOLD, N as DKG_N, PARITY_MATRIX, PLAINTEXT_MODULUS as DKG_PLAINTEXT_MODULUS,
     Q_MOD_T as DKG_Q_MOD_T, Q_MOD_T_CENTERED as DKG_Q_MOD_T_CENTERED, QIS as DKG_QIS, QIS_THRESHOLD,
+    SHARE_ENCRYPTION_ALPHA, SHARE_ENCRYPTION_BETA, SHARE_ENCRYPTION_BIT_Q0, SHARE_ENCRYPTION_BIT_Q1,
+    SHARE_ENCRYPTION_CT0_R_BOUNDS, SHARE_ENCRYPTION_CT1_R_BOUNDS, SHARE_ENCRYPTION_DELTA,
     SHARE_ENCRYPTION_E0_BOUND, SHARE_ENCRYPTION_E1_BOUND, SHARE_ENCRYPTION_K0IS,
-    SHARE_ENCRYPTION_MSG_BOUND, SHARE_ENCRYPTION_P1_BOUNDS, SHARE_ENCRYPTION_P2_BOUNDS,
-    SHARE_ENCRYPTION_PK_BOUNDS, SHARE_ENCRYPTION_R1_LOW_BOUNDS, SHARE_ENCRYPTION_R1_UP_BOUNDS,
-    SHARE_ENCRYPTION_R2_BOUNDS, SHARE_ENCRYPTION_U_BOUND,
+    SHARE_ENCRYPTION_MSG_BOUND, SHARE_ENCRYPTION_PK_BOUNDS, SHARE_ENCRYPTION_Q0_OFFSET,
+    SHARE_ENCRYPTION_Q1_OFFSET, SHARE_ENCRYPTION_SCALE_K, SHARE_ENCRYPTION_SCALED_QUOTIENT,
+    SHARE_ENCRYPTION_SMALL_D, SHARE_ENCRYPTION_T_GAP, SHARE_ENCRYPTION_T_GAP_BIT,
+    SHARE_ENCRYPTION_T_POW_BIT, SHARE_ENCRYPTION_U_BOUND,
 };
 
 use lib::configs::secure::threshold::{
@@ -38,15 +41,14 @@ use lib::configs::secure::threshold::{
     Q_MOD_T_CENTERED as THRESHOLD_Q_MOD_T_CENTERED, Q_INVERSE_MOD_T as THRESHOLD_Q_INVERSE_MOD_T,
     // pk_generation bounds
     PK_GENERATION_EEK_BOUND, PK_GENERATION_SK_BOUND, PK_GENERATION_E_SM_BOUND,
-    PK_GENERATION_R1_BOUNDS, PK_GENERATION_R2_BOUNDS, PK_GENERATION_B_ENC,
+    PK_GENERATION_R_BOUNDS, PK_GENERATION_B_ENC,
     // share_decryption bounds
-    THRESHOLD_SHARE_DECRYPTION_R1_BOUNDS, THRESHOLD_SHARE_DECRYPTION_R2_BOUNDS,
+    THRESHOLD_SHARE_DECRYPTION_R_BOUNDS,
     // user_data_encryption bounds
     USER_DATA_ENCRYPTION_K0IS, USER_DATA_ENCRYPTION_PK_BOUNDS, USER_DATA_ENCRYPTION_E0_BOUND,
     USER_DATA_ENCRYPTION_E1_BOUND, USER_DATA_ENCRYPTION_U_BOUND, USER_DATA_ENCRYPTION_K1_LOW_BOUND,
-    USER_DATA_ENCRYPTION_K1_UP_BOUND, USER_DATA_ENCRYPTION_R1_LOW_BOUNDS,
-    USER_DATA_ENCRYPTION_R1_UP_BOUNDS, USER_DATA_ENCRYPTION_R2_BOUNDS,
-    USER_DATA_ENCRYPTION_P1_BOUNDS, USER_DATA_ENCRYPTION_P2_BOUNDS,
+    USER_DATA_ENCRYPTION_K1_UP_BOUND, USER_DATA_ENCRYPTION_CT0_R_BOUNDS,
+    USER_DATA_ENCRYPTION_CT1_R_BOUNDS,
 };
 
 use lib::math::modulo::U128::ModU128;
@@ -207,8 +209,9 @@ fn verify_dkg_bounds() {
     // e1_bound = 20
     assert(SHARE_ENCRYPTION_E1_BOUND == 20, "SHARE_ENCRYPTION_E1_BOUND should be 20");
 
-    // msg_bound = t - 1
-    assert(SHARE_ENCRYPTION_MSG_BOUND as u128 == t - 1, "SHARE_ENCRYPTION_MSG_BOUND mismatch");
+    // msg_bound = t. `range_check_standard` takes an exclusive upper bound, so the message range
+    // `[0, t)` needs `t` here; `t - 1` rejected the legitimate coefficient `t - 1`.
+    assert(SHARE_ENCRYPTION_MSG_BOUND as u128 == t, "SHARE_ENCRYPTION_MSG_BOUND mismatch");
 
     for i in 0..DKG_L {
         let qi: u128 = DKG_QIS[i] as u128;
@@ -221,23 +224,14 @@ fn verify_dkg_bounds() {
             "SHARE_ENCRYPTION_PK_BOUNDS mismatch",
         );
 
-        // r2_bounds[i] = (q_i - 1) / 2
+        // ct1_r_bounds[i] = ((n * u_bound + 2) * qi_bound + e1_bound) / q_i
+        //
+        // `r` is the quotient of the mod-q reduction in `ct = pk * u + e + q * r` (mod X^N + 1).
+        // Folding does not change the bound, so this is the expression the unreduced `p1` used.
+        let expected_ct1_r: u128 = ((n * u_bound + 2) * qi_bound + e1_bound) / qi;
         assert(
-            SHARE_ENCRYPTION_R2_BOUNDS[i] as u128 == qi_bound,
-            "SHARE_ENCRYPTION_R2_BOUNDS mismatch",
-        );
-
-        // p2_bounds[i] = (q_i - 1) / 2
-        assert(
-            SHARE_ENCRYPTION_P2_BOUNDS[i] as u128 == qi_bound,
-            "SHARE_ENCRYPTION_P2_BOUNDS mismatch",
-        );
-
-        // p1_bounds[i] = ((n * u_bound + 2) * qi_bound + e1_bound) / q_i
-        let expected_p1: u128 = ((n * u_bound + 2) * qi_bound + e1_bound) / qi;
-        assert(
-            SHARE_ENCRYPTION_P1_BOUNDS[i] as u128 == expected_p1,
-            "SHARE_ENCRYPTION_P1_BOUNDS mismatch",
+            SHARE_ENCRYPTION_CT1_R_BOUNDS[i] as u128 == expected_ct1_r,
+            "SHARE_ENCRYPTION_CT1_R_BOUNDS mismatch",
         );
 
         // k0is[i] verification: k0i * t = -1 mod q_i
@@ -245,24 +239,126 @@ fn verify_dkg_bounds() {
         let product = m.mul_mod(SHARE_ENCRYPTION_K0IS[i], DKG_PLAINTEXT_MODULUS);
         let neg_one = DKG_QIS[i] - 1;
         assert(product == neg_one, "SHARE_ENCRYPTION_K0IS mismatch");
-
-        // e0_bound mod qi for r1 calculation
+        // ct0_r_bounds[i] = ((t - 1) * k0i + ((n * u + 2) * qi_bound + e0_i)) / q_i
+        //
+        // Same shape plus the `k0is * k1` term. `k1` lies in `[0, t - 1]`.
         let e0_bound_i: u128 = e0_bound % qi;
-
-        // The plaintext contribution to r1 is nonnegative, so its upper bound is zero.
-        let numerator: u128 = (n * u_bound + 2) * qi_bound + e0_bound_i;
-        let expected_r1_up: u128 = numerator / qi;
+        let expected_ct0_r: u128 =
+            ((t - 1) * k0i + ((n * u_bound + 2) * qi_bound + e0_bound_i)) / qi;
         assert(
-            SHARE_ENCRYPTION_R1_UP_BOUNDS[i] as u128 == expected_r1_up,
-            "SHARE_ENCRYPTION_R1_UP_BOUNDS mismatch",
+            SHARE_ENCRYPTION_CT0_R_BOUNDS[i] as u128 == expected_ct0_r,
+            "SHARE_ENCRYPTION_CT0_R_BOUNDS mismatch",
+        );
+    }
+
+    verify_scaled_quotient();
+}
+
+/// `2^BITS` as a `u128`. Noir's shift operator wants both operands the same width, and this file is
+/// `u128` throughout, so a comptime-unrolled product keeps the call sites readable.
+fn pow2_u128<let BITS: u32>() -> u128 {
+    let mut out: u128 = 1;
+    for _ in 0..BITS {
+        out = out * 2;
+    }
+    out
+}
+
+/// Re-derives C3's scaled-quotient constants from the moduli, `t` and `k0is`.
+///
+/// The substitution `k0 * k1 = q * (ALPHA * m - BETA * z) - SMALL_D * m + z` only holds over the
+/// integers if both numerators divide `q` exactly, so these are equalities rather than bounds. A
+/// generator that rounded instead of dividing would be caught here.
+///
+/// `BIT_Q0_DIFF` is deliberately not re-derived: it needs `gap * (msg - 1)` where `gap` is about
+/// 2^79, so the product is ~2^137 and overflows the `u128` arithmetic this file uses. The
+/// honest-witness completeness check covers that width instead.
+fn verify_scaled_quotient() {
+    if SHARE_ENCRYPTION_SCALED_QUOTIENT {
+        let t: u128 = DKG_PLAINTEXT_MODULUS as u128;
+        let scale: u128 = DKG_Q_MOD_T as u128;
+        let delta: u128 = SHARE_ENCRYPTION_DELTA as u128;
+        let k: u128 = SHARE_ENCRYPTION_SCALE_K as u128;
+        let n: u128 = DKG_N as u128;
+        let u_bound: u128 = SHARE_ENCRYPTION_U_BOUND as u128;
+        let msg: u128 = SHARE_ENCRYPTION_MSG_BOUND as u128;
+
+        // k must be a power of two, else SMALL_D is not small across limbs.
+        assert(k != 0, "SHARE_ENCRYPTION_SCALE_K must be non-zero when available");
+        assert((k & (k - 1)) == 0, "SHARE_ENCRYPTION_SCALE_K must be a power of two");
+
+        // DELTA * t + scale == prod(q)
+        let mut product: u128 = 1;
+        for i in 0..DKG_L {
+            product = product * (DKG_QIS[i] as u128);
+        }
+        assert(delta * t + scale == product, "SHARE_ENCRYPTION_DELTA mismatch");
+
+        // T = 2^T_POW_BIT + T_GAP, with the gap inside its own width.
+        let t_pow: u128 = pow2_u128::<SHARE_ENCRYPTION_T_POW_BIT>();
+        assert(t_pow + (SHARE_ENCRYPTION_T_GAP as u128) == t, "SHARE_ENCRYPTION_T_GAP mismatch");
+        assert(
+            (SHARE_ENCRYPTION_T_GAP as u128) < pow2_u128::<SHARE_ENCRYPTION_T_GAP_BIT>(),
+            "SHARE_ENCRYPTION_T_GAP_BIT too narrow",
         );
 
-        // The plaintext contribution reaches t - 1 at its lower bound.
-        let expected_r1_low: u128 = ((t - 1) * k0i + numerator) / qi;
-        assert(
-            SHARE_ENCRYPTION_R1_LOW_BOUNDS[i] as u128 == expected_r1_low,
-            "SHARE_ENCRYPTION_R1_LOW_BOUNDS mismatch",
-        );
+        let offset0: u128 = SHARE_ENCRYPTION_Q0_OFFSET as u128;
+        let offset1: u128 = SHARE_ENCRYPTION_Q1_OFFSET as u128;
+        // Both quotients share the negative excursion of the pk * u product.
+        assert(offset0 == n * u_bound / 2 + 1, "SHARE_ENCRYPTION_Q0_OFFSET mismatch");
+        assert(offset1 == n * u_bound / 2 + 1, "SHARE_ENCRYPTION_Q1_OFFSET mismatch");
+
+        for i in 0..DKG_L {
+            let qi: u128 = DKG_QIS[i] as u128;
+            let qi_bound: u128 = (qi - 1) / 2;
+            let k0: u128 = SHARE_ENCRYPTION_K0IS[i] as u128;
+            let sd: u128 = SHARE_ENCRYPTION_SMALL_D[i] as u128;
+
+            // SMALL_D = k * q - DELTA
+            assert(sd == k * qi - delta, "SHARE_ENCRYPTION_SMALL_D mismatch");
+            // k0 * t + 1 == BETA * q
+            assert(
+                k0 * t + 1 == (SHARE_ENCRYPTION_BETA[i] as u128) * qi,
+                "SHARE_ENCRYPTION_BETA mismatch",
+            );
+            // k0 * scale + SMALL_D == ALPHA * q
+            assert(
+                k0 * scale + sd == (SHARE_ENCRYPTION_ALPHA[i] as u128) * qi,
+                "SHARE_ENCRYPTION_ALPHA mismatch",
+            );
+
+            // The widths must bracket their bounds: wide enough to hold them, and not a bit wider.
+            let bound0: u128 = (
+                qi_bound
+                    + n * qi_bound * u_bound
+                    + (SHARE_ENCRYPTION_E0_BOUND as u128) % qi
+                    + sd * (msg - 1)
+                    + scale
+            )
+                / qi;
+            let shifted0: u128 = bound0 + offset0;
+            assert(
+                shifted0 < pow2_u128::<SHARE_ENCRYPTION_BIT_Q0>(),
+                "SHARE_ENCRYPTION_BIT_Q0 too narrow",
+            );
+            assert(
+                // `shifted0 >= 2^(BIT-1)`, written to avoid a `BIT - 1` generic argument.
+                shifted0 * 2 >= pow2_u128::<SHARE_ENCRYPTION_BIT_Q0>(),
+                "SHARE_ENCRYPTION_BIT_Q0 wider than needed",
+            );
+
+            let bound1: u128 =
+                (qi_bound + n * qi_bound * u_bound + (SHARE_ENCRYPTION_E1_BOUND as u128)) / qi;
+            let shifted1: u128 = bound1 + offset1;
+            assert(
+                shifted1 < pow2_u128::<SHARE_ENCRYPTION_BIT_Q1>(),
+                "SHARE_ENCRYPTION_BIT_Q1 too narrow",
+            );
+            assert(
+                shifted1 * 2 >= pow2_u128::<SHARE_ENCRYPTION_BIT_Q1>(),
+                "SHARE_ENCRYPTION_BIT_Q1 wider than needed",
+            );
+        }
     }
 }
 
@@ -343,20 +439,19 @@ fn verify_pk_generation_bounds() {
     // eek_bound = 20
     assert(PK_GENERATION_EEK_BOUND == 20, "PK_GENERATION_EEK_BOUND should be 20");
 
-    // r2_bounds and r1_bounds for each modulus
+    // r_bounds for each modulus. The identity is checked reduced modulo X^N + 1, so the
+    // cyclotomic quotient's term is identically zero and there is no r2 bound left to derive.
     for i in 0..THRESHOLD_L {
         let qi: u128 = THRESHOLD_QIS[i] as u128;
         let qi_bound: u128 = (qi - 1) / 2;
 
-        // r2_bounds[i] = (q_i - 1) / 2
-        assert(PK_GENERATION_R2_BOUNDS[i] as u128 == qi_bound, "PK_GENERATION_R2_BOUNDS mismatch");
-
-        // r1_bounds[i] = ((n + 2) * qi_bound + eek_bound) / q_i
-        let expected_r1: u128 = ((n + 2) * qi_bound + eek) / qi;
-        assert(
-            PK_GENERATION_R1_BOUNDS[i] as u128 == expected_r1,
-            "PK_GENERATION_R1_BOUNDS mismatch",
-        );
+        // r_bounds[i] = ((n * sk_bound + 2) * qi_bound + eek_bound) / q_i, from bounding the other
+        // terms of pk0 = -(a * sk mod X^N + 1) + eek + q * r: the negacyclic product of n terms with
+        // |a| <= qi_bound, the centered pk0 itself, and eek. sk_bound is 1 (asserted above), so this
+        // is the same expression the unreduced r1 bound used -- the reduced quotient is no wider.
+        let sk: u128 = PK_GENERATION_SK_BOUND as u128;
+        let expected_r: u128 = ((n * sk + 2) * qi_bound + eek) / qi;
+        assert(PK_GENERATION_R_BOUNDS[i] as u128 == expected_r, "PK_GENERATION_R_BOUNDS mismatch");
     }
 
     verify_e_sm_bound();
@@ -398,17 +493,17 @@ fn verify_share_decryption_bounds() {
         let qi: u128 = THRESHOLD_QIS[i] as u128;
         let qi_bound: u128 = (qi - 1) / 2;
 
-        // r2_bounds[i] = (q_i - 1) / 2
+        // The identity is checked reduced modulo X^N + 1, so the cyclotomic quotient's term is
+        // identically zero and there is no r2 bound left to derive.
+        //
+        // r_bounds[i] = (((q_i-1)/2)^2 * n + 4 * (q_i-1)/2) / q_i, from bounding the other terms of
+        // d = ct0 + (ct1 * sk mod X^N + 1) + e_sm + q * r: the negacyclic product of n terms with
+        // both operands centered, plus d, ct0 and e_sm. Same expression the unreduced r1 bound used,
+        // so the reduced quotient is no wider.
+        let expected_r: u128 = (qi_bound * qi_bound * n + 4 * qi_bound) / qi;
         assert(
-            THRESHOLD_SHARE_DECRYPTION_R2_BOUNDS[i] as u128 == qi_bound,
-            "SHARE_DECRYPTION_R2_BOUNDS mismatch",
-        );
-
-        // r1_bounds[i] = (((q_j-1)/2)^2 * n + 4 * (q_j-1)/2) / q_j
-        let expected_r1: u128 = (qi_bound * qi_bound * n + 4 * qi_bound) / qi;
-        assert(
-            THRESHOLD_SHARE_DECRYPTION_R1_BOUNDS[i] as u128 == expected_r1,
-            "SHARE_DECRYPTION_R1_BOUNDS mismatch",
+            THRESHOLD_SHARE_DECRYPTION_R_BOUNDS[i] as u128 == expected_r,
+            "SHARE_DECRYPTION_R_BOUNDS mismatch",
         );
     }
 }
@@ -463,45 +558,35 @@ fn verify_user_data_encryption_bounds() {
         );
 
         // r2_bounds[i] = (q_i - 1) / 2
+        // ct1_r_bounds[i] = ((n * u_bound + 2) * qi_bound + e1_bound) / q_i
+        //
+        // `r` is the quotient of the mod-q reduction in `ct = pk * u + e + q * r` (mod X^N + 1).
+        // Bounding `|pk * u| <= n * qi_bound`, `|ct| <= qi_bound` and `|e1| <= e1_bound`, then
+        // dividing by q_i, bounds it. ct1 has no `k0is * k1` term.
+        let expected_ct1_r: u128 = ((n * u_bound + 2) * qi_bound + e1_bound) / qi;
         assert(
-            USER_DATA_ENCRYPTION_R2_BOUNDS[i] as u128 == qi_bound,
-            "USER_DATA_ENCRYPTION_R2_BOUNDS mismatch",
+            USER_DATA_ENCRYPTION_CT1_R_BOUNDS[i] as u128 == expected_ct1_r,
+            "USER_DATA_ENCRYPTION_CT1_R_BOUNDS mismatch",
         );
-
-        // p2_bounds[i] = (q_i - 1) / 2
-        assert(
-            USER_DATA_ENCRYPTION_P2_BOUNDS[i] as u128 == qi_bound,
-            "USER_DATA_ENCRYPTION_P2_BOUNDS mismatch",
-        );
-
-        // p1_bounds[i] = ((n * u_bound + 2) * qi_bound + e1_bound) / q_i
-        let expected_p1: u128 = ((n * u_bound + 2) * qi_bound + e1_bound) / qi;
-        assert(
-            USER_DATA_ENCRYPTION_P1_BOUNDS[i] as u128 == expected_p1,
-            "USER_DATA_ENCRYPTION_P1_BOUNDS mismatch",
-        );
-
-        // k0is[i] verification: k0i * t = -1 mod q_i
         let m = ModU128::new(THRESHOLD_QIS[i]);
         let product = m.mul_mod(USER_DATA_ENCRYPTION_K0IS[i], THRESHOLD_PLAINTEXT_MODULUS);
         let neg_one = THRESHOLD_QIS[i] - 1;
         assert(product == neg_one, "USER_DATA_ENCRYPTION_K0IS mismatch");
 
-        // e0_bound mod qi for r1 calculation
-        // Use Field arithmetic since e0_bound is ~107 bits
-        let e0_bound_i: u128 = (USER_DATA_ENCRYPTION_E0_BOUND as u128) % qi;
-
-        let numerator: u128 = (n * u_bound + 2) * qi_bound + e0_bound_i;
-        let expected_r1_up: u128 = numerator / qi;
+        // ct0_r_bounds[i] = (k1_max * k0i + (n * u_bound + 2) * qi_bound + e0_bound) / q_i
+        //
+        // Same shape as ct1 plus the `k0is * k1` term. This takes the *lifted* `e0_bound`, not its
+        // residue at q_i: the reduced identity reads the lifted `e0` directly now that the CRT split
+        // and `e0is` are gone. `k1` lies in `[0, t - 1]`, so `k1_max` is `expected_k1_up`.
+        let expected_ct0_r: u128 = (
+            expected_k1_up * k0i
+                + (n * u_bound + 2) * qi_bound
+                + (USER_DATA_ENCRYPTION_E0_BOUND as u128)
+        )
+            / qi;
         assert(
-            USER_DATA_ENCRYPTION_R1_UP_BOUNDS[i] as u128 == expected_r1_up,
-            "USER_DATA_ENCRYPTION_R1_UP_BOUNDS mismatch",
-        );
-
-        let expected_r1_low: u128 = ((t - 1) * k0i + numerator) / qi;
-        assert(
-            USER_DATA_ENCRYPTION_R1_LOW_BOUNDS[i] as u128 == expected_r1_low,
-            "USER_DATA_ENCRYPTION_R1_LOW_BOUNDS mismatch",
+            USER_DATA_ENCRYPTION_CT0_R_BOUNDS[i] as u128 == expected_ct0_r,
+            "USER_DATA_ENCRYPTION_CT0_R_BOUNDS mismatch",
         );
     }
 }

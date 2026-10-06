@@ -50,7 +50,13 @@ tracing.workspace = true
 walkdir = "2.5"
 
 [dev-dependencies]
+e3-ciphernode-builder = { workspace = true }
+e3-net = { workspace = true }
+e3-sync = { workspace = true }
+e3-sortition = { workspace = true }
+e3-bfv-client.workspace = true
 e3-test-helpers = { workspace = true }
+e3-layout-lock = { workspace = true }
 e3-evm = { workspace = true }
 e3-crypto = { workspace = true }
 e3-trbfv = { workspace = true }
@@ -61,7 +67,7 @@ ndarray = { workspace = true }
 num-traits = { workspace = true }
 paste = "1"
 rand = { workspace = true }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "test-util"] }
 
 [features]
 default = []

@@ -13,6 +13,13 @@ mod tests;
 use crate::config::ZkConfig;
 use crate::error::ZkError;
 use std::path::PathBuf;
+use std::time::Duration;
+
+/// Wall-clock cap of one `bb` run. A running compute job cannot be cancelled, so a hung `bb` would
+/// hold its pool slot forever. The cap kills any run that exceeds it, hung or not, and the
+/// scheduler retries the job, slower, with `--slow_low_memory`. A secure proof can take hours on
+/// a slow host, so the default is far above the longest expected proof.
+pub const DEFAULT_BB_TIMEOUT: Duration = Duration::from_secs(12 * 60 * 60);
 
 #[derive(Debug, Clone)]
 pub enum SetupStatus {
@@ -36,6 +43,8 @@ pub struct ZkBackend {
     pub work_dir: PathBuf,
     pub config: ZkConfig,
     pub using_custom_bb: bool,
+    /// Wall-clock cap of one `bb` run (`bb_timeout_secs` in the node configuration).
+    pub bb_timeout: Duration,
 }
 
 impl ZkBackend {
@@ -63,7 +72,14 @@ impl ZkBackend {
             base_dir,
             config,
             using_custom_bb: bb_binary.is_custom(),
+            bb_timeout: DEFAULT_BB_TIMEOUT,
         }
+    }
+
+    /// Cap one `bb` run at `timeout` instead of [`DEFAULT_BB_TIMEOUT`].
+    pub fn with_bb_timeout(mut self, timeout: Duration) -> Self {
+        self.bb_timeout = timeout;
+        self
     }
 
     pub fn with_default_dir(node_name: &str) -> Result<Self, ZkError> {
@@ -81,35 +97,5 @@ impl ZkBackend {
         let work_dir = noir_dir.join("work").join(node_name);
 
         Ok(Self::new(bb_binary, circuits_dir, work_dir))
-    }
-
-    fn sanitize_e3_id(e3_id: &str) -> Result<&str, ZkError> {
-        // Sanitize e3_id to prevent path traversal
-        if e3_id.is_empty()
-            || e3_id.contains('\0')
-            || e3_id.contains("..")
-            || e3_id.contains('/')
-            || e3_id.contains('\\')
-        {
-            return Err(ZkError::IoError(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "e3_id contains invalid characters",
-            )));
-        }
-
-        Ok(e3_id)
-    }
-
-    pub fn work_dir_for(&self, e3_id: &str) -> Result<PathBuf, ZkError> {
-        let sanitized = Self::sanitize_e3_id(e3_id)?;
-        Ok(self.work_dir.join(sanitized))
-    }
-
-    pub async fn cleanup_work_dir(&self, e3_id: &str) -> Result<(), ZkError> {
-        let work_dir = self.work_dir_for(e3_id)?;
-        if work_dir.exists() {
-            tokio::fs::remove_dir_all(&work_dir).await?;
-        }
-        Ok(())
     }
 }

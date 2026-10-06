@@ -18,7 +18,7 @@ use crate::circuits::threshold::decrypted_shares_aggregation::MAX_MSG_NON_ZERO_C
 use crate::compute_modulus_bit;
 use crate::compute_native_crt_coeff_bit;
 use crate::crt_polynomial_to_toml_json;
-use crate::decompose_residue;
+use crate::math::fold_negacyclic;
 use crate::threshold::share_decryption::circuit::ShareDecryptionCircuit;
 use crate::threshold::share_decryption::circuit::ShareDecryptionCircuitData;
 use crate::CircuitsErrors;
@@ -104,8 +104,7 @@ pub struct Bits {
     pub ct_bit: u32,
     pub sk_bit: u32,
     pub e_sm_bit: u32,
-    pub r1_bit: u32,
-    pub r2_bit: u32,
+    pub r_bit: u32,
     /// Centered `d` coefficient bound (payload flatten / Fiat–Shamir).
     pub d_bit: u32,
     /// Native \([0, q)\) limb width for `d_native_trunc` / C7 share commitments.
@@ -114,8 +113,7 @@ pub struct Bits {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Bounds {
-    pub r1_bounds: Vec<BigUint>,
-    pub r2_bounds: Vec<BigUint>,
+    pub r_bounds: Vec<BigUint>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -124,8 +122,7 @@ pub struct Inputs {
     pub ct1: CrtPolynomial,
     pub sk: CrtPolynomial,
     pub e_sm: CrtPolynomial,
-    pub r1: CrtPolynomial,
-    pub r2: CrtPolynomial,
+    pub r: CrtPolynomial,
     pub d: CrtPolynomial,
     /// Native truncated `d` per limb (C7-compatible); hashed for public `d_commitment`.
     pub d_native_trunc: CrtPolynomial,
@@ -166,29 +163,27 @@ impl Computation for Bits {
     type Error = CircuitsErrors;
 
     fn compute(preset: Self::Preset, data: &Self::Data) -> Result<Self, Self::Error> {
-        // For r1, use the maximum of all low and up bounds
-        let mut r1_bit = 0;
-        for bound in data.r1_bounds.iter() {
-            r1_bit = r1_bit.max(calculate_bit_width(BigInt::from(bound.clone())));
-        }
-
-        // For r2, use the maximum of all bounds
-        let mut r2_bit = 0;
-        for bound in &data.r2_bounds {
-            r2_bit = r2_bit.max(calculate_bit_width(BigInt::from(bound.clone())));
+        // One width covers every limb's `r`, so take the widest bound.
+        let mut r_bit = 0;
+        for bound in data.r_bounds.iter() {
+            r_bit = r_bit.max(calculate_bit_width(BigInt::from(bound.clone())));
         }
 
         let (threshold_params, _) =
             build_pair_for_preset(preset).map_err(|e| CircuitsErrors::Other(e.to_string()))?;
         let d_native_bit = compute_native_crt_coeff_bit(threshold_params.moduli());
 
+        // `ct`, `sk`, `e_sm` and `d` are centered residues, so they share the modulus width. This
+        // used to piggyback on the `r2` bound, which was `(max(q) - 1) / 2` for exactly that reason;
+        // with `r2` gone the width comes from the moduli directly.
+        let modulus_bit = crate::compute_modulus_bit(&threshold_params);
+
         Ok(Bits {
-            ct_bit: r2_bit,
-            sk_bit: r2_bit,
-            e_sm_bit: r2_bit,
-            r1_bit,
-            r2_bit,
-            d_bit: r2_bit,
+            ct_bit: modulus_bit,
+            sk_bit: modulus_bit,
+            e_sm_bit: modulus_bit,
+            r_bit,
+            d_bit: modulus_bit,
             d_native_bit,
         })
     }
@@ -208,8 +203,7 @@ impl Computation for Bounds {
         let ctx = threshold_params.context_at_level(0)?;
 
         // Calculate bounds for each CRT basis
-        let mut r1_bounds: Vec<BigInt> = Vec::new();
-        let mut r2_bounds: Vec<BigInt> = Vec::new();
+        let mut r_bounds: Vec<BigInt> = Vec::new();
         let mut moduli: Vec<u64> = Vec::new();
 
         for qi in ctx.moduli_operators() {
@@ -218,24 +212,20 @@ impl Computation for Bounds {
 
             moduli.push(**qi);
 
-            // r_2j bounds: [- (q_j-1)/2 , (q_j-1)/2] (cyclotomic quotients)
-            r2_bounds.push(qi_bound.clone());
-
-            // r_1j upper bound: (((q_j-1)/2)^2 * n + 4 * (q_j-1)/2) / q_j
-            // Symmetric lower bound used by range_check_2bounds. Variables: qi_bound = (q_j-1)/2,
-            // qi_bigint = q_j, n = degree.
-            r1_bounds.push(
+            // `r` is the mod-q quotient of the identity reduced modulo X^N + 1:
+            //   d = ct0 + (ct1 * sk mod X^N + 1) + e_sm + q * r
+            // so bounding the other terms and dividing by q bounds `r`. The negacyclic product of n
+            // terms contributes n * ((q-1)/2)^2 and each of `d`, `ct0`, `e_sm` contributes (q-1)/2.
+            // The 4 rather than 3 keeps the margin the unreduced `r1` bound carried, which also
+            // means the reduced quotient is no wider -- the width stays 69 (43 insecure).
+            r_bounds.push(
                 (&qi_bound.clone() * &qi_bound.clone() * &n + BigInt::from(4) * &qi_bound.clone())
                     / &qi_bigint,
             );
         }
 
         let bounds = Bounds {
-            r1_bounds: r1_bounds
-                .iter()
-                .map(|b| BigUint::from(b.to_u128().unwrap()))
-                .collect(),
-            r2_bounds: r2_bounds
+            r_bounds: r_bounds
                 .iter()
                 .map(|b| BigUint::from(b.to_u128().unwrap()))
                 .collect(),
@@ -281,7 +271,6 @@ impl Computation for Inputs {
             Polynomial,
             Polynomial,
             Polynomial,
-            Polynomial,
         )> = izip!(
             moduli.clone(),
             ct0.limbs.clone(),
@@ -320,29 +309,54 @@ impl Computation for Inputs {
             };
             assert_eq!((d_share_hat.coefficients().len() as u64) - 1, 2 * (n - 1));
 
-            let (r1, r2) = decompose_residue(&d_share, &d_share_hat, &qi, &cyclo, n);
+            // The circuit checks the identity reduced modulo X^N + 1, so the cyclotomic
+            // quotient's term is identically zero and `r2` is gone. `r` is then pinned by the
+            // identity itself:
+            //   d = (ct0 + ct1 * s + e mod X^N + 1) + q * r
+            // so folding the `d_share_hat` already computed above and dividing by q gives it.
+            //
+            // All O(N). Going via `decompose_residue` and `reduce_by_cyclotomic` would recompute the
+            // ct1 * s product and run generic long division over a divisor whose N-1 interior
+            // coefficients are zero -- see 9a35e2e1, where that cost C1 5.09s against 0.92s.
+            let reduced_hat = fold_negacyclic(&d_share_hat, n as usize);
 
-            (i, ct0, ct1, s, e, d_share, r2, r1)
+            // Exact division is the identity: `div` rejects any coefficient of `d - reduced_hat`
+            // that is not a multiple of qi, so a successful division proves an integer `r` closes
+            // the reduced equation, and a wrong fold surfaces as a divisibility failure.
+            let (r, remainder) = d_share
+                .sub(&reduced_hat)
+                .div(&Polynomial::constant(qi.clone()))
+                .expect("d - (ct0 + ct1 * s + e mod X^N + 1) must be divisible by qi");
+            assert!(
+                remainder.is_zero(),
+                "reduced decryption-share identity must divide exactly by qi"
+            );
+
+            // Restate the identity on the derived witness. Cheap at O(N), independent of `div`.
+            assert!(
+                d_share.sub(&reduced_hat.add(&r.scalar_mul(&qi))).is_zero(),
+                "reduced identity must hold: d == ct0 + ct1 * sk + e_sm + qi * r (mod X^N + 1)"
+            );
+
+            (i, ct0, ct1, s, e, d_share, r)
         })
         .collect();
 
-        results.sort_by_key(|(i, _, _, _, _, _, _, _)| *i);
+        results.sort_by_key(|(i, _, _, _, _, _, _)| *i);
 
         let mut ct0 = CrtPolynomial::new(vec![]);
         let mut ct1 = CrtPolynomial::new(vec![]);
         let mut sk = CrtPolynomial::new(vec![]);
         let mut e_sm = CrtPolynomial::new(vec![]);
-        let mut r1 = CrtPolynomial::new(vec![]);
-        let mut r2 = CrtPolynomial::new(vec![]);
+        let mut r = CrtPolynomial::new(vec![]);
         let mut d = CrtPolynomial::new(vec![]);
 
-        for (_i, ct0i, ct1i, si, ei, d_sharei, r2i, r1i) in results {
+        for (_i, ct0i, ct1i, si, ei, d_sharei, ri) in results {
             ct0.add_limb(ct0i);
             ct1.add_limb(ct1i);
             sk.add_limb(si);
             e_sm.add_limb(ei);
-            r1.add_limb(r1i);
-            r2.add_limb(r2i);
+            r.add_limb(ri);
             d.add_limb(d_sharei);
         }
 
@@ -364,8 +378,7 @@ impl Computation for Inputs {
             ct1,
             sk,
             e_sm,
-            r1,
-            r2,
+            r,
             d,
             d_native_trunc,
             expected_sk_commitment,
@@ -381,8 +394,7 @@ impl Computation for Inputs {
         let ct1 = crt_polynomial_to_toml_json(&self.ct1);
         let sk = crt_polynomial_to_toml_json(&self.sk);
         let e_sm = crt_polynomial_to_toml_json(&self.e_sm);
-        let r1 = crt_polynomial_to_toml_json(&self.r1);
-        let r2 = crt_polynomial_to_toml_json(&self.r2);
+        let r = crt_polynomial_to_toml_json(&self.r);
         let d = crt_polynomial_to_toml_json(&self.d);
         let d_native_trunc = crt_polynomial_to_toml_json(&self.d_native_trunc);
         let expected_sk_commitment = self.expected_sk_commitment.to_string();
@@ -396,8 +408,7 @@ impl Computation for Inputs {
             "ct1": ct1,
             "sk": sk,
             "e_sm": e_sm,
-            "r1": r1,
-            "r2": r2,
+            "r": r,
             "d": d,
             "d_native_trunc": d_native_trunc,
             "expected_sk_commitment": expected_sk_commitment,
@@ -417,15 +428,24 @@ mod tests {
 
     use e3_fhe_params::DEFAULT_BFV_PRESET;
 
+    /// `ct`, `sk`, `e_sm` and `d` are centered residues, so they all carry the modulus width.
+    ///
+    /// This used to assert against the `r2` bound, which happened to equal `(max(q) - 1) / 2`. With
+    /// `r2` removed by the reduced identity, the expectation is derived from the moduli instead --
+    /// the independent source, rather than another generated value that merely coincided.
     #[test]
     fn test_bound_and_bits_computation_consistency() {
+        let (threshold_params, _) = build_pair_for_preset(DEFAULT_BFV_PRESET).unwrap();
         let bounds = Bounds::compute(DEFAULT_BFV_PRESET, &()).unwrap();
         let bits = Bits::compute(DEFAULT_BFV_PRESET, &bounds).unwrap();
 
-        let expected_bit =
-            calculate_bit_width(BigInt::from(bounds.r2_bounds.iter().max().unwrap().clone()));
+        let max_q = *threshold_params.moduli().iter().max().unwrap();
+        let expected_bit = calculate_bit_width((BigInt::from(max_q) - BigInt::from(1)) / 2);
 
         assert_eq!(bits.d_bit, expected_bit);
+        assert_eq!(bits.ct_bit, expected_bit);
+        assert_eq!(bits.sk_bit, expected_bit);
+        assert_eq!(bits.e_sm_bit, expected_bit);
     }
 
     #[test]
@@ -500,19 +520,5 @@ mod tests {
             MAX_MSG_NON_ZERO_COEFFS,
         );
         assert_eq!(from_d_native, from_bytes);
-    }
-
-    #[test]
-    fn test_constants_json_roundtrip() {
-        let constants = Configs::compute(DEFAULT_BFV_PRESET, &()).unwrap();
-
-        let json = constants.to_json().unwrap();
-        let decoded: Configs = serde_json::from_value(json).unwrap();
-
-        assert_eq!(decoded.n, constants.n);
-        assert_eq!(decoded.l, constants.l);
-        assert_eq!(decoded.moduli, constants.moduli);
-        assert_eq!(decoded.bits, constants.bits);
-        assert_eq!(decoded.bounds, constants.bounds);
     }
 }

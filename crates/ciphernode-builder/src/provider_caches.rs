@@ -94,8 +94,7 @@ impl<State> ProviderCache<State> {
             return Ok(cache.clone());
         }
 
-        let rpc_url = chain.rpc_url()?;
-        let provider_config = ProviderConfig::new(rpc_url, chain.rpc_auth.clone());
+        let provider_config = ProviderConfig::for_chain(chain)?;
         let read_provider = provider_config.create_readonly_provider().await?;
 
         self.read_provider_cache
@@ -130,8 +129,7 @@ impl ProviderCache<WriteEnabled> {
         }
 
         let signer = self.ensure_signer().await?;
-        let rpc_url = chain.rpc_url()?;
-        let provider_config = ProviderConfig::new(rpc_url, chain.rpc_auth.clone());
+        let provider_config = ProviderConfig::for_chain(chain)?;
         let write_provider = provider_config.create_signer_provider(&signer).await?;
 
         self.write_provider_cache

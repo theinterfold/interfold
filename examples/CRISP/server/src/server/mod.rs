@@ -4,6 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+mod access_log;
 mod app_data;
 mod data_availability;
 mod database;
@@ -20,13 +21,15 @@ pub mod token_holders;
 use std::sync::Arc;
 
 use actix_cors::Cors;
-use actix_web::{middleware::Logger, web, App, HttpServer};
+use actix_web::{web, App, HttpServer};
 use app_data::AppData;
 use data_availability::AvailabilityService;
+pub use database::compact_database;
 use database::SledDB;
 use e3_sdk::indexer::SharedStore;
 use eyre::OptionExt;
 use indexer::start_indexer;
+use repo::CrispE3Repository;
 use tokio::sync::RwLock;
 
 use crate::config::CONFIG;
@@ -36,9 +39,13 @@ use crate::logger::init_logger;
 pub async fn start() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     init_logger();
 
+    CONFIG.validate_rpc_chain().await?;
+
     let pathdb = std::env::current_dir()?.join("database/server");
     let pathdb = pathdb.to_str().ok_or_eyre("Path could not be determined")?;
     let sled_db = SledDB::new(pathdb)?;
+    let round_ids = sled_db.round_ids()?;
+    let disk = sled_db.clone();
     let availability = Arc::new(AvailabilityService::new(&sled_db.db, &CONFIG)?);
     availability.validate_onchain_configuration().await?;
     let availability_worker = Arc::clone(&availability);
@@ -48,6 +55,20 @@ pub async fn start() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         }
     });
     let db = SharedStore::new(Arc::new(RwLock::new(sled_db)));
+    // An older release kept every ballot inside its round record. Move them to keys of their own
+    // before the indexer and the routes read the rounds. A failure stops the start: a round with
+    // ballots left in its record cannot be read. No input changes yet, so a change that a stop cut
+    // short also counts as finished here, and the input cache can serve its round again.
+    for e3_id in round_ids {
+        let mut round = CrispE3Repository::new(db.clone(), &e3_id);
+        round
+            .move_inline_ciphertexts(|| Ok(disk.sync_to_disk()?))
+            .await
+            .map_err(|error| eyre::eyre!("[e3_id={e3_id}] Could not move the ballots: {error}"))?;
+        round.settle_input_generation().await.map_err(|error| {
+            eyre::eyre!("[e3_id={e3_id}] Could not settle the input generation: {error}")
+        })?;
+    }
 
     // New indexer
     // Parsed once here rather than per request: the same list bounds what the indexer watches and
@@ -117,7 +138,7 @@ pub async fn start() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
         App::new()
             .wrap(cors)
-            .wrap(Logger::new(r#"%a "%r" %s %b %T"#))
+            .wrap(access_log::access_logger())
             .app_data(web::Data::new(AppData::new(db_clone.clone())))
             .app_data(web::Data::from(availability_clone.clone()))
             .app_data(rate_limiter.clone())

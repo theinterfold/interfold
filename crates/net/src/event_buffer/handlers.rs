@@ -81,6 +81,9 @@ impl Handler<NetInputLagged> for NetEventBuffer {
                 skipped_events = msg.0,
                 "Network event buffer input lagged after startup; continuing from the oldest retained event"
             );
+            // Skipped gossip never reaches storage, so history replies stop saying that this node
+            // observed the network live.
+            self.live_history.revoke();
             return;
         }
         self.fail_closed(
@@ -127,6 +130,7 @@ mod tests {
             max_events: 8,
             max_bytes: 1_024,
             readiness: Some(readiness),
+            live_history: crate::LiveHistory::default(),
             last_drop_warn: None,
         }
         .start();

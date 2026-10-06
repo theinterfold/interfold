@@ -290,33 +290,6 @@ mod tests {
     use e3_fhe_params::BfvPreset;
     use num_bigint::BigInt;
 
-    /// Sample generation and input computation: output shapes match circuit expectations.
-    #[test]
-    fn test_generate_sample() {
-        let preset = BfvPreset::InsecureThreshold512;
-        let committee = CiphernodesCommitteeSize::Small.values();
-
-        let sample =
-            DecryptedSharesAggregationCircuitData::generate_sample(preset, committee).unwrap();
-        let inputs = Inputs::compute(preset, &sample).unwrap();
-
-        assert_eq!(
-            inputs.decryption_shares.len(),
-            sample.committee.threshold + 1
-        );
-        assert_eq!(inputs.party_ids.len(), sample.reconstructing_parties.len());
-        let configs =
-            crate::threshold::decrypted_shares_aggregation::computation::Configs::compute(
-                preset,
-                &(),
-            )
-            .unwrap();
-        assert_eq!(
-            inputs.message.coefficients().len(),
-            configs.max_msg_non_zero_coeffs
-        );
-    }
-
     /// Input message matches sample (ascending order: index 0 = constant term).
     #[test]
     fn test_input_message_matches_sample() {

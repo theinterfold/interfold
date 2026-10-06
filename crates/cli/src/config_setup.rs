@@ -35,14 +35,6 @@ pub fn validate_rpc_url(url: &str) -> Result<()> {
     Ok(())
 }
 
-#[allow(dead_code)]
-pub fn validate_eth_address(address: &str) -> Result<()> {
-    match Address::parse_checksummed(address, None) {
-        Ok(_) => Ok(()),
-        Err(e) => bail!("Invalid Ethereum address: {}", e),
-    }
-}
-
 /// Derive the node's Ethereum address from its private key. Mirrors the
 /// derivation in `e3_entrypoint::wallet::set` so the value written to the
 /// config matches the address stored in the keystore.
@@ -116,7 +108,7 @@ chains:
 
 #[cfg(test)]
 mod tests {
-    use super::{execute, validate_eth_address};
+    use super::execute;
     use alloy::primitives::Address;
     use anyhow::Result;
     use e3_config::SEPOLIA_BOOTSTRAP_PEER;
@@ -138,15 +130,6 @@ mod tests {
         assert_eq!(config.peers(), vec![SEPOLIA_BOOTSTRAP_PEER.to_string()]);
 
         let _ = fs::remove_dir_all(&dir);
-        Ok(())
-    }
-
-    #[test]
-    fn eth_address_validation() -> Result<()> {
-        assert!(validate_eth_address("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045").is_ok());
-        assert!(validate_eth_address("d8dA6BF26964aF9D7eEd9e03E53415D37aA96045").is_err());
-        assert!(validate_eth_address("0x1234567890abcdef").is_err());
-        assert!(validate_eth_address("0x0000000000000000000000000000000000000000").is_ok());
         Ok(())
     }
 }

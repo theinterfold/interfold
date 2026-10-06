@@ -99,7 +99,11 @@ impl ProofRequestActor {
         let (msg, ec) = msg.into_components();
         let e3_id = msg.e3_id.clone();
 
-        if self.pending_aggregation.contains_key(&e3_id) {
+        if self
+            .pending_aggregation
+            .get(&e3_id)
+            .is_some_and(|pending| pending.request == msg.proof_request)
+        {
             warn!(
                 "Duplicate AggregationProofPending for E3 {} — ignoring",
                 e3_id
@@ -107,8 +111,16 @@ impl ProofRequestActor {
             return;
         }
 
-        self.pending_aggregation
-            .insert(e3_id.clone(), PendingAggregationProof { ec: ec.clone() });
+        // A rebuilt collector can select a different share batch after replay.
+        // Responses for the replaced batch must not complete the current request.
+        self.aggregation_correlation.retain(|_, id| id != &e3_id);
+        self.pending_aggregation.insert(
+            e3_id.clone(),
+            PendingAggregationProof {
+                ec: ec.clone(),
+                request: msg.proof_request.clone(),
+            },
+        );
 
         let correlation_id = CorrelationId::new();
         self.aggregation_correlation

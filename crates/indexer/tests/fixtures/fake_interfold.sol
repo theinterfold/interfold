@@ -13,9 +13,15 @@ contract FakeInterfold {
   event CommitteePublished(uint256 indexed e3Id, address[] nodes, bytes publicKey, bytes32 pkCommitment, bytes proof);
 
   mapping(uint8 => bytes) public paramSetRegistry;
+  mapping(uint256 => bytes32) private cryptoConfigOverrides;
 
-  function e3CryptoConfigIds(uint256) external pure returns (bytes32) {
-    return 0x19921c8c12f93c3013be57d0859f4ddcdb4464ac856a0c62be1ad617fbbd2e7d;
+  function setCryptoConfigId(uint256 e3Id, bytes32 configId) external {
+    cryptoConfigOverrides[e3Id] = configId;
+  }
+
+  function e3CryptoConfigIds(uint256 e3Id) external view returns (bytes32) {
+    if (cryptoConfigOverrides[e3Id] != bytes32(0)) return cryptoConfigOverrides[e3Id];
+    return 0x119c9bde7d7a31aaeef3e696ea29f8590c611d431921b6981434bd2c0fb5f7d1;
   }
 
   // Emit InputPublished event with passed test data

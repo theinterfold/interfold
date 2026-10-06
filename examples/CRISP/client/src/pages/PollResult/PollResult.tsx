@@ -79,27 +79,25 @@ const PollResult: React.FC = () => {
               />
             </div>
 
-            {type === 'confirmation' && txUrl && <ConfirmVote confirmationUrl={txUrl} />}
+            {type === 'confirmation' && <ConfirmVote confirmationUrl={txUrl} />}
             {type !== 'confirmation' && (
               <CardContent>
                 <div className='col' style={{ gap: 10 }}>
-                  <p className='mono muted'>WHAT JUST HAPPENED?</p>
+                  <p className='mono muted'>HOW WAS THIS RESULT MADE?</p>
                   <p className='lede' style={{ maxWidth: 'none' }}>
-                    After casting your vote, CRISP securely processed your selection using a blend of Fully Homomorphic Encryption (FHE),
-                    threshold cryptography, and zero-knowledge proofs (ZKPs), without revealing your identity or choice. Your vote was
-                    encrypted and anonymously aggregated with others, ensuring the integrity of the voting process while strictly
-                    maintaining confidentiality. The protocol's advanced cryptographic techniques guarantee that your vote contributes to
-                    the final outcome without any risk of privacy breaches or undue influence.
+                    Each voter's browser encrypted their ballot, and a zero-knowledge proof (ZKP) showed that the ballot was valid. The
+                    committee tallied the ballots with Fully Homomorphic Encryption (FHE). It used threshold cryptography to decrypt only
+                    the combined result, and no single committee member can decrypt a ballot. The result above is public. In a small or
+                    one-sided poll, it can show how individual participants voted.
                   </p>
                 </div>
                 <div className='col' style={{ gap: 10 }}>
-                  <p className='mono muted'>WHAT DOES THIS MEAN?</p>
+                  <p className='mono muted'>WHAT ARE THE LIMITS?</p>
                   <p className='lede' style={{ maxWidth: 'none' }}>
-                    Your participation has directly contributed to a transparent and fair decision-making process, showcasing the power of
-                    privacy-preserving technology in governance and beyond. The use of CRISP in this vote represents a significant step
-                    towards secure, anonymous, and tamper-proof digital elections and polls. This innovation ensures that every vote counts
-                    equally while safeguarding against the risks of fraud and coercion, enhancing the reliability and trustworthiness of
-                    digital decision-making platforms.
+                    Privacy depends on the committee threshold: enough committee members who collude can decrypt ballots. The CRISP server
+                    receives every ballot, and a transaction that a voter's wallet sends also shows the voter's address on-chain. Masks make
+                    a vote, an update, and a mask look the same on-chain, which makes a receipt of a vote less reliable when these
+                    conditions hold.
                   </p>
                 </div>
               </CardContent>

@@ -9,3 +9,4 @@ events.txt
 *.validate.txt
 *.identity.before
 data-availability/
+*.reset.txt
