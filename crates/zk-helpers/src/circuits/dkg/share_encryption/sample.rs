@@ -126,7 +126,7 @@ impl ShareEncryptionCircuitData {
             mod_idx: 0,
             chunk_size: dkg_params.degree().min(512) as u32,
             committee,
-            prf_key: Vec::new(),
+            prf_key: e3_fhe_params::zero_prf_key(preset),
         })
     }
 }

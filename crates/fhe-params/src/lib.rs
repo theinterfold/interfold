@@ -38,5 +38,6 @@ pub use prf_key::{
     unpack_share_coefficient, PrfKeyPackError,
 };
 pub use smudging::{
-    calculate_smudging_bound, generate_smudging_error, sample_fresh_smudging_error,
+    calculate_smudging_bound, fresh_smudging_inputs, generate_smudging_error,
+    sample_fresh_smudging_error, FreshSmudgingInputs,
 };

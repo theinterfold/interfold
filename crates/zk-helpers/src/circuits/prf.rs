@@ -113,14 +113,17 @@ pub fn decryption_mask_low_degree(
     if party_idx >= outgoing_keys.len() {
         return Err("PRF party index is outside the key list".into());
     }
-    let degree = ct0.first().map(|poly| poly.coefficients().len()).unwrap_or(0);
+    if outgoing_keys.iter().chain(incoming_keys).any(Vec::is_empty) {
+        return Err("PRF key is empty".into());
+    }
     if outgoing_keys
         .iter()
         .chain(incoming_keys)
-        .all(|key| key.iter().all(|byte| *byte == 0))
+        .any(|key| key.iter().all(|byte| *byte == 0))
     {
-        return Ok(vec![vec![0u64; degree]; moduli.len()]);
+        return Err("PRF key is all zeros".into());
     }
+    let degree = ct0.first().map(|poly| poly.coefficients().len()).unwrap_or(0);
     let h = decryptors.len();
     let mut input = Vec::new();
     input.push(Field::from(h as u64));
@@ -146,14 +149,10 @@ pub fn decryption_mask_low_degree(
     Ok(mask)
 }
 
-/// Replace an empty key list with `count` zero keys. A present list must have that length.
-pub fn resolve_keys(
-    preset: BfvPreset,
-    keys: &[Vec<u8>],
-    count: usize,
-) -> Result<Vec<Vec<u8>>, String> {
+/// Require one non-empty key per party. An empty list or an empty key is rejected.
+pub fn resolve_keys(keys: &[Vec<u8>], count: usize) -> Result<Vec<Vec<u8>>, String> {
     if keys.is_empty() {
-        return Ok(zero_keys(preset, count));
+        return Err("PRF key list is empty".into());
     }
     if keys.len() != count {
         return Err(format!(
@@ -161,25 +160,18 @@ pub fn resolve_keys(
             keys.len()
         ));
     }
-    Ok(keys
-        .iter()
-        .map(|key| {
-            if key.is_empty() {
-                e3_fhe_params::zero_prf_key(preset)
-            } else {
-                key.clone()
-            }
-        })
-        .collect())
+    if keys.iter().any(Vec::is_empty) {
+        return Err("PRF key is empty".into());
+    }
+    Ok(keys.to_vec())
 }
 
-/// One resolved key. An empty slice becomes the zero key.
-pub fn resolve_key(preset: BfvPreset, key: &[u8]) -> Vec<u8> {
+/// Require one non-empty key.
+pub fn resolve_key(key: &[u8]) -> Result<Vec<u8>, String> {
     if key.is_empty() {
-        e3_fhe_params::zero_prf_key(preset)
-    } else {
-        key.to_vec()
+        return Err("PRF key is empty".into());
     }
+    Ok(key.to_vec())
 }
 
 /// Decimal commitment of one key under the 0-based recipient.
@@ -213,4 +205,56 @@ pub fn zero_keys(preset: BfvPreset, count: usize) -> Vec<Vec<u8>> {
     (0..count)
         .map(|_| e3_fhe_params::zero_prf_key(preset))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_key_list_is_rejected() {
+        let error = resolve_keys(&[], 3).unwrap_err();
+        assert!(error.contains("empty"));
+    }
+
+    #[test]
+    fn empty_key_is_rejected() {
+        let error = resolve_key(&[]).unwrap_err();
+        assert!(error.contains("empty"));
+        let error = resolve_keys(&[vec![1, 2, 3, 4], Vec::new()], 2).unwrap_err();
+        assert!(error.contains("empty"));
+    }
+
+    #[test]
+    fn empty_prf_key_does_not_return_a_zero_mask() {
+        let limb = Polynomial::from_u64_vector(vec![1, 2, 3, 4]);
+        let error = decryption_mask_low_degree(
+            0,
+            &[1, 2],
+            &[Vec::new(), Vec::new()],
+            &[vec![0, 0, 0, 0], vec![0, 0, 0, 0]],
+            &[limb.clone()],
+            &[limb],
+            &[97],
+        )
+        .unwrap_err();
+        assert!(error.contains("empty"));
+    }
+
+    #[test]
+    fn all_zero_prf_key_is_rejected() {
+        let limb = Polynomial::from_u64_vector(vec![1, 2, 3, 4]);
+        let zeros = vec![0u8; 4];
+        let error = decryption_mask_low_degree(
+            0,
+            &[1, 2],
+            &[zeros.clone(), vec![1, 0, 0, 0]],
+            &[zeros, vec![2, 0, 0, 0]],
+            &[limb.clone()],
+            &[limb],
+            &[97],
+        )
+        .unwrap_err();
+        assert!(error.contains("all zeros"));
+    }
 }

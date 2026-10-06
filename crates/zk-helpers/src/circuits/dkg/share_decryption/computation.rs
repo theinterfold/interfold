@@ -220,12 +220,9 @@ impl Computation for Inputs {
             acc.max(crate::calculate_bit_width(BigInt::from(*qi - 1)))
         });
         let key_modulus = e3_fhe_params::prf_key_modulus(preset);
-        let slot_keys = crate::circuits::prf::resolve_keys(
-            preset,
-            &data.prf_keys,
-            data.honest_ciphertexts.len(),
-        )
-        .map_err(CircuitsErrors::Other)?;
+        let slot_keys =
+            crate::circuits::prf::resolve_keys(&data.prf_keys, data.honest_ciphertexts.len())
+                .map_err(CircuitsErrors::Other)?;
 
         // Validate own-plaintext shape against L only when an own slot is present.
         let has_own_slot = data.honest_ciphertexts.iter().any(|s| s.is_none());

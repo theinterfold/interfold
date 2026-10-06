@@ -21,7 +21,8 @@
 // Schema 11 removes the smudging proofs from the node-fold request.
 // Schema 12 removes dealt-smudging fields from keyshare state, threshold shares, and decryption-key requests.
 // Schema 13 removes unused smudging proof lists from threshold-share events, keyshare state, decryption-key publication, and C4 verification requests. It also removes the empty smudging polynomial from the decryption-key response and the decryption-share request.
-pub const SCHEMA_VERSION: u32 = 13;
+// Schema 14 adds the decryption context digest to the decryption-share response and the threshold-open request.
+pub const SCHEMA_VERSION: u32 = 14;
 
 /// The action a node should take after reading the persisted schema version.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -73,8 +74,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn current_schema_is_v13() {
-        assert_eq!(SCHEMA_VERSION, 13);
+    fn current_schema_is_v14() {
+        assert_eq!(SCHEMA_VERSION, 14);
         assert!(matches!(
             decide_schema_version(Some(7), SCHEMA_VERSION, true),
             SchemaVersionDecision::Halt(_)

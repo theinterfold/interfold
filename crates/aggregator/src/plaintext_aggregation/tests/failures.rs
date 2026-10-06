@@ -18,6 +18,8 @@ async fn threshold_decryption_compute_error_preserves_pending_work() -> Result<(
             ciphertexts: vec![ArcBytes::from_bytes(&[8])],
             trbfv_config: TrBFVConfig::new(test_params(), 2, 1),
             d_share_polys: vec![(0, vec![ArcBytes::from_bytes(&[7])])],
+            decryptors: vec![1],
+            context_digest: [0u8; 32],
         }),
         correlation_id,
         e3_id.clone(),

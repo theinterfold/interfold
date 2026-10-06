@@ -212,11 +212,10 @@ pub fn prove_chunked_share_computation_with_chunk_size(
             );
             if data.dkg_input_type == DkgInputType::SecretKey {
                 let keys = e3_zk_helpers::circuits::prf::resolve_keys(
-                    preset,
                     &data.prf_keys,
                     data.n_parties as usize,
                 )
-                .map_err(|error| ZkError::InvalidInput(error))?;
+                .map_err(ZkError::InvalidInput)?;
                 chunk_json.insert(
                     "key_bits".into(),
                     Value::Array(

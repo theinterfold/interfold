@@ -10,6 +10,13 @@ use e3_bfv_client::decode_bytes_to_vec_u64;
 use e3_crypto::Cipher;
 use e3_fhe_params::create_deterministic_crp_from_default_seed;
 use e3_fhe_params::{zero_prf_key, DEFAULT_BFV_PRESET};
+
+fn pair_prf_key(sender: usize, recipient: usize) -> Vec<u8> {
+    let mut key = zero_prf_key(DEFAULT_BFV_PRESET);
+    key[0] = u8::try_from(sender).unwrap_or(255).saturating_add(1);
+    key[1] = u8::try_from(recipient).unwrap_or(255).saturating_add(1);
+    key
+}
 use e3_fhe_params::{encode_bfv_params, BfvParamSet};
 use e3_test_helpers::{create_shared_rng_from_u64, usecase_helpers};
 use e3_trbfv::{
@@ -83,13 +90,26 @@ async fn test_trbfv_isolation() -> Result<()> {
         .collect::<Vec<ArcBytes>>();
 
     let mut decryption_shares = HashMap::new();
-    // 0-based party ids 1, 4, and 2. Lagrange uses the 1-based ids.
+    // 0-based party ids 1, 4, and 2. This set is not the prefix 1..=T+1.
     let decryptors = vec![2u32, 5, 3];
-    let zero_keys = vec![zero_prf_key(DEFAULT_BFV_PRESET); threshold_n];
+    let mut sorted_decryptors = decryptors.clone();
+    sorted_decryptors.sort_unstable();
+    assert_ne!(sorted_decryptors, vec![1, 2, 3]);
+    let mut context_digest = None;
     for party_id in [1, 4, 2] {
         let sk_poly_sum = decryption_keys.get(&party_id).unwrap();
+        let outgoing_prf_keys = (0..threshold_n)
+            .map(|other| pair_prf_key(party_id, other))
+            .collect();
+        let incoming_prf_keys = (0..threshold_n)
+            .map(|other| pair_prf_key(other, party_id))
+            .collect();
         println!("calculate_decryption_share for party_id={}", party_id);
-        let CalculateDecryptionShareResponse { d_share_poly, .. } = calculate_decryption_share(
+        let CalculateDecryptionShareResponse {
+            d_share_poly,
+            context_digest: share_digest,
+            ..
+        } = calculate_decryption_share(
             &cipher,
             CalculateDecryptionShareRequest {
                 name: format!("party_id({})", party_id),
@@ -98,11 +118,15 @@ async fn test_trbfv_isolation() -> Result<()> {
                 ciphertexts: ciphertexts.clone(),
                 party_idx: party_id as u32,
                 decryptors: decryptors.clone(),
-                outgoing_prf_keys: zero_keys.clone(),
-                incoming_prf_keys: zero_keys.clone(),
+                outgoing_prf_keys,
+                incoming_prf_keys,
             },
         )?;
 
+        match context_digest {
+            None => context_digest = Some(share_digest),
+            Some(previous) => assert_eq!(previous, share_digest),
+        }
         // store the decryption shares in a hash map indexed by party_id
         decryption_shares.insert(party_id as u64, d_share_poly);
     }
@@ -116,6 +140,8 @@ async fn test_trbfv_isolation() -> Result<()> {
             ciphertexts,
             trbfv_config: trbfv_config.clone(),
             d_share_polys,
+            decryptors: sorted_decryptors,
+            context_digest: context_digest.expect("share context digest"),
         })?;
 
     let results = plaintext

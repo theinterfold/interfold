@@ -226,8 +226,9 @@ pub(crate) fn build_decryption_key_plan(
         let own_key = current
             .outgoing_prf_keys
             .get(party_id)
-            .map(|key| key.access_raw(cipher).unwrap_or_default())
-            .unwrap_or_else(|| e3_fhe_params::zero_prf_key(threshold_preset));
+            .context("outgoing PRF key for this party is missing")?
+            .access_raw(cipher)
+            .context("cannot decrypt the outgoing PRF key")?;
         if party_id < incoming_keys.len() {
             incoming_keys[party_id] = own_key.clone();
         }

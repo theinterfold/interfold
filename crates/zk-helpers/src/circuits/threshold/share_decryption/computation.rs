@@ -279,22 +279,21 @@ impl Computation for Inputs {
         .map_err(|e| CircuitsErrors::Other(format!("C6 CRT shape mismatch: {e}")))?;
 
         let outgoing_prf_keys = crate::circuits::prf::resolve_keys(
-            preset,
             &data.outgoing_prf_keys,
             data.committee.n,
         )
         .map_err(CircuitsErrors::Other)?;
-        let incoming_prf_keys = crate::circuits::prf::resolve_keys(
-            preset,
-            &data.incoming_prf_keys,
-            data.committee.n,
-        )
-        .map_err(CircuitsErrors::Other)?;
-        let decryptors = if data.decryptors.is_empty() {
-            (1..=(data.committee.threshold as u32 + 1)).collect::<Vec<_>>()
-        } else {
-            data.decryptors.clone()
-        };
+        let incoming_prf_keys =
+            crate::circuits::prf::resolve_keys(&data.incoming_prf_keys, data.committee.n)
+                .map_err(CircuitsErrors::Other)?;
+        let reconstruction = data.committee.threshold + 1;
+        if data.decryptors.len() != reconstruction {
+            return Err(CircuitsErrors::Other(format!(
+                "decryptor count {} must equal threshold + 1 ({reconstruction})",
+                data.decryptors.len()
+            )));
+        }
+        let decryptors = data.decryptors.clone();
         let moduli_u64: Vec<u64> = threshold_params.moduli().to_vec();
         let reverse_limbs = |poly: &CrtPolynomial| {
             poly.limbs
@@ -551,6 +550,9 @@ mod tests {
     }
 
     /// `d_commitment` matches C7: hash of native truncated `from_fhe` limbs, via `d_native_trunc`.
+    ///
+    /// The sample `d` must be the partial-decryption polynomial. `Inputs::compute` rejects
+    /// fhe.rs `ShareManager::decryption_share` in `decompose_residue`.
     #[test]
     fn test_d_commitment_matches_inputs_compute() {
         use crate::circuits::commitments::compute_threshold_decryption_share_commitment;

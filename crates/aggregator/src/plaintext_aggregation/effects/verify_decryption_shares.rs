@@ -313,6 +313,24 @@ impl ThresholdPlaintextAggregator {
         ec: EventContext<Sequenced>,
     ) -> Result<()> {
         let correlation_id = CorrelationId::new();
+        let reconstruction = state.threshold_m as usize + 1;
+        if state.shares.len() != reconstruction {
+            bail!(
+                "decryption share count {} must equal the decryptor set size {reconstruction}",
+                state.shares.len()
+            );
+        }
+        let mut decryptors = state
+            .shares
+            .iter()
+            .map(|(party_id, _)| u32::try_from(*party_id).map(|id| id.saturating_add(1)))
+            .collect::<Result<Vec<_>, _>>()
+            .context("party id does not fit a decryptor id")?;
+        decryptors.sort_unstable();
+        let context_digest = e3_trbfv::calculate_threshold_decryption::decryption_context_digest(
+            &decryptors,
+            &state.ciphertext_output,
+        );
         let request = ComputeRequest::trbfv(
             TrBFVRequest::CalculateThresholdDecryption(CalculateThresholdDecryptionRequest {
                 ciphertexts: state.ciphertext_output.clone(),
@@ -322,6 +340,8 @@ impl ThresholdPlaintextAggregator {
                     state.threshold_m,
                 ),
                 d_share_polys: state.shares.clone(),
+                decryptors,
+                context_digest,
             }),
             correlation_id,
             self.e3_id.clone(),

@@ -1429,6 +1429,7 @@ async fn a_replayed_decryption_share_response_does_not_fault_after_the_state_adv
                 TrBFVResponse::CalculateDecryptionShare(CalculateDecryptionShareResponse {
                     d_share_poly: vec![ArcBytes::from_bytes(&[3])],
                     e_fresh: vec![SensitiveBytes::from_encrypted(&[4])],
+                    context_digest: [0u8; 32],
                 }),
                 CorrelationId::new(),
                 e3_id,

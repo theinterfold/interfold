@@ -44,6 +44,25 @@ impl ModU64 {
         rem_u64 as Field
     }
 
+    /// Reduce a full BN254 field element modulo `m`.
+    ///
+    /// `reduce_mod` accepts only values below `2^64 * m`. A Poseidon squeeze is about
+    /// 254 bits, so this function splits the input into 60-bit limbs and folds them.
+    pub fn reduce_field(self, n: Field) -> Field {
+        let bits = n.to_le_bits::<254>();
+        let base = 2.pow_32(60);
+        let base_mod = self.reduce_mod(base);
+        let mut acc = self.reduce_mod(field_limb::<240, 14>(bits));
+        acc = self.mul_mod(acc, base_mod);
+        acc = self.reduce_mod(acc + field_limb::<180, 60>(bits));
+        acc = self.mul_mod(acc, base_mod);
+        acc = self.reduce_mod(acc + field_limb::<120, 60>(bits));
+        acc = self.mul_mod(acc, base_mod);
+        acc = self.reduce_mod(acc + field_limb::<60, 60>(bits));
+        acc = self.mul_mod(acc, base_mod);
+        self.reduce_mod(acc + field_limb::<0, 60>(bits))
+    }
+
     /// Asserts that n == 0 mod m without computing the remainder.
     ///
     /// Cheaper than reduce_mod + assert == 0: skips the remainder range check and bounds assert.
@@ -132,6 +151,18 @@ impl ModU64 {
     }
 }
 
+/// Read `LEN` little-endian bits starting at `START`.
+fn field_limb<let START: u32, let LEN: u32>(bits: [bool; 254]) -> Field {
+    let mut acc: Field = 0;
+    let mut place: Field = 1;
+    for i in 0..LEN {
+        let bit = bits[START + i] as Field;
+        acc = acc + bit * place;
+        place = place + place;
+    }
+    acc
+}
+
 // ------------------------------ TESTS ------------------------------
 
 #[test]
@@ -150,6 +181,28 @@ fn test_u64_reduce_mod_needs_reduction() {
 fn test_u64_reduce_mod_exact_multiple() {
     let m = ModU64::new(100);
     assert(m.reduce_mod(300) == 0);
+}
+
+#[test]
+fn test_u64_reduce_field_matches_small_value() {
+    let m = ModU64::new(100);
+    assert(m.reduce_field(42) == 42);
+    assert(m.reduce_field(250) == 50);
+}
+
+#[test]
+fn test_u64_reduce_field_wide_product() {
+    let m = ModU64::new(100);
+    let n = (2.pow_32(200)) * 100 + 7;
+    assert(m.reduce_field(n) == 7);
+}
+
+#[test]
+fn test_u64_reduce_field_second_limb() {
+    let m = ModU64::new(100);
+    // 2^60 ≡ 76 (mod 100), so 13 * 2^60 + 7 ≡ 95 (mod 100).
+    let n = (2.pow_32(60)) * 13 + 7;
+    assert(m.reduce_field(n) == 95);
 }
 
 #[test]

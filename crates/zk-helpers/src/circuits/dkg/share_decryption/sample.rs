@@ -164,6 +164,7 @@ impl ShareDecryptionCircuitData {
             }
         }
 
+        let prf_keys = crate::circuits::prf::zero_keys(preset, honest_ciphertexts.len());
         Ok(ShareDecryptionCircuitData {
             honest_ciphertexts,
             recipient_party_id: 0,
@@ -172,7 +173,7 @@ impl ShareDecryptionCircuitData {
             dkg_input_type,
             chunk_size: dkg_params.degree().min(512) as u32,
             committee,
-            prf_keys: Vec::new(),
+            prf_keys,
         })
     }
 }

@@ -204,45 +204,26 @@ impl<let N: u32, let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let BIT_CT: u32, 
         assert(computed == self.ct_commitment, "Ciphertext commitment mismatch");
     }
 
-    /// Flattens all witness data into a single array for Fiat-Shamir challenge generation.
+    /// Build the Fiat-Shamir absorb list. The challenge is squeezed from this list.
     ///
-    /// This function serializes all polynomial coefficients (both public inputs and
-    /// secret witnesses) into a 1D array in a deterministic order. The flattened data
-    /// is used to generate the Fiat-Shamir challenge via the SAFE sponge API.
-    ///
-    /// The order of serialization is:
-    /// 1. Commitment to aggregated secret shares `sk` (expected_sk_commitment)
-    /// 2. Commitment to aggregated noise shares `e_sm` (expected_e_sm_commitment)
-    /// 3. Ciphertext components `c_0` for each CRT basis (serialized coefficients)
-    /// 4. Ciphertext components `c_1` for each CRT basis (serialized coefficients)
-    /// 5. Quotient polynomials `r_1` for each CRT basis (serialized coefficients)
-    /// 6. Quotient polynomials `r_2` for each CRT basis (serialized coefficients)
-    /// 7. Full decryption share polynomials `d` for each CRT basis (all N coefficients per limb)
-    ///
-    /// Note: Aggregated secret shares `sk` and noise shares `e_sm` are represented by their
-    /// commitments rather than serialized coefficients. This saves constraints while
-    /// still binding them to the transcript.
-    ///
-    /// # Returns
-    /// A vector containing commitments and polynomial coefficients in flattened form,
-    /// ready for hashing to generate the Fiat-Shamir challenge.
+    /// The list binds `party_idx`, the decryptor ids, and every polynomial in the share
+    /// equation, including `e_fresh`. `sk` enters as `expected_sk_commitment`.
     fn payload(self) -> [Field] {
-        // Use commitments instead of full polynomials (saves constraints)
         let mut inputs = [
             self.expected_sk_commitment, self.ct_commitment, self.c0_commitment,
         ]
             .as_vector();
+        inputs = inputs.push_back(self.party_idx as Field);
+        for i in 0..H {
+            inputs = inputs.push_back(self.decryptors[i]);
+        }
 
-        // Flatten ciphertext components (witness)
         inputs = flatten::<_, _, BIT_CT>(inputs, self.ct0);
         inputs = flatten::<_, _, BIT_CT>(inputs, self.ct1);
-
-        // Flatten quotient polynomials (secret witnesses)
         inputs = flatten::<_, _, BIT_R1>(inputs, self.r1);
         inputs = flatten::<_, _, BIT_R2>(inputs, self.r2);
-
-        // Full `d` fixes the C7 prefix commitment (computed separately as the public output)
         inputs = flatten::<N, L, BIT_D>(inputs, self.d);
+        inputs = flatten::<N, L, BIT_E_SM>(inputs, self.e_fresh);
         for party in 0..N_PARTIES {
             inputs = inputs.push_back(self.outgoing_key_commitments[party]);
             inputs = inputs.push_back(self.incoming_key_commitments[party]);
@@ -342,7 +323,7 @@ impl<let N: u32, let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let BIT_CT: u32, 
     /// Generates Fiat-Shamir challenge value using the SAFE cryptographic sponge.
     ///
     /// This function implements the Fiat-Shamir transform for the decryption share circuit:
-    /// 1. Flattens all witness data (commitments for sk/e_sm, ciphertexts c_0/c_1, quotients r_1/r_2, full d) into a single array
+    /// 1. Flattens the transcript (`sk` commitment, ciphertext, quotients, `d`, `e_fresh`, party index, decryptor ids, and key commitments) into one array
     /// 2. Absorbs the flattened data into the SAFE sponge
     /// 3. Squeezes a single challenge value
     ///

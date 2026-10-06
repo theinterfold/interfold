@@ -14,7 +14,7 @@ Delegated bonding does not alter cryptographic identity. Every ECDSA proof signa
 by the hot operator key and verified against the operator address snapshotted into the committee.
 The bond owner never signs DKG, key-publication, computation, or decryption messages.
 
-DKG deals the secret key and one PRF key per recipient. It does not sample or share smudging noise, and it does not build C2b, C3b, or C4b. C1 publishes the secret-key commitment and the public-key commitment. At decryption, each party in the decryptor set computes its Lagrange coefficient from that public set. The partial share is that coefficient times `c1` times the secret share, plus fresh noise, plus the PRF mask. `c0` is not in the partial share. C7 adds `c0` to the sum of partial shares and decodes. C7 does not apply Lagrange again. The decryptor set is the lowest T+1 honest party ids. The C6 fold copies that set and each party's outgoing and incoming PRF-key commitments into the decryption proof. The registry stores the C2 PRF-key matrix from the DKG proof, and the decryption verifier checks the opened keys against it.
+DKG deals the secret key and one PRF key per recipient. It does not sample or share smudging noise, and it does not build C2b, C3b, or C4b. C1 publishes the secret-key commitment and the public-key commitment. At decryption, each party in the decryptor set computes its Lagrange coefficient from that public set. The partial share is that coefficient times `c1` times the secret share, plus fresh noise, plus the PRF mask. `c0` is not in the partial share. C7 adds `c0` to the sum of partial shares and decodes. C7 does not apply Lagrange again. The decryptor set is the lowest T+1 honest party ids. A missing PRF key, a key the node cannot decrypt, or an honest set with fewer than T+1 parties stops the decryption share. The node does not publish an unmasked share. C4 checks each opened PRF key against its public key commitment. The C6 fold copies that set and each party's outgoing and incoming PRF-key commitments into the decryption proof. The registry stores the C2 PRF-key matrix from the DKG proof, and the decryption verifier checks the opened keys against it.
 
 ---
 
@@ -1347,6 +1347,7 @@ InterfoldSolReader decodes CiphertextOutputPublished event
 │   │  │    - ciphertext (encrypted computation output)      │
 │   │  │    - sk_poly_sum (this node's secret key portion)   │
 │   │  │    - fresh noise sampled at decryption              │
+│   │  │      within the preset search bound             │
 │   │  │    - PRF mask from the C2 keys                      │
 │   │  │                                                     │
 │   │  │  Compute:                                           │
@@ -1371,14 +1372,14 @@ InterfoldSolReader decodes CiphertextOutputPublished event
     ├─ C6 PROOF GENERATION (ProofRequestActor):
     │   ├─ Dispatches ComputeRequest::zk(ZkRequest::ThresholdShareDecryption {...})
     │   │   → Circuit: ThresholdShareDecryption (C6)
-    │   │   → Proves decryption share was correctly computed from
-    │   │     sk_poly_sum, es_poly_sum, and ciphertext
+    │   │   → Proves p = λ·c1·sh + e_fresh + mask
+    │   │   → c0 is not in the partial share
     │   │   → Publicly commits to the E3 decryption-domain limbs:
     │   │     keccak256(abi.encode(
     │   │       chainId, Interfold address, e3Id, committeeHash,
     │   │       ciphertextOutputHash, committeePublicKey
     │   │     ))
-    │   │   → Fiat-Shamir transcript absorbs full `d` (all coefficients per CRT limb)
+    │   │   → Fiat-Shamir transcript absorbs full `d`, `e_fresh`, `party_idx`, and the decryptor ids
     │   ├─ ZkActor generates proof via bb binary
     │   ├─ Signs proof
     │   └─ Publishes signed C6 proof
@@ -1393,6 +1394,8 @@ InterfoldSolReader decodes CiphertextOutputPublished event
     │
     └─ State: Decrypting → Completed
 ```
+
+`Inputs::compute` checks that witness with `decompose_residue`. Each coefficient of `d` must equal the partial-decryption product reduced into `R_qi`. The failure text is `xi must equal xi_hat reduced into R_qi`. fhe.rs `ShareManager::decryption_share` does not build that polynomial. A C6 sample that stores it fails `test_d_commitment_matches_inputs_compute` inside `Inputs::compute`. The sample in `crates/zk-helpers/src/circuits/threshold/share_decryption/sample.rs` builds `d` with the same product, Lagrange scale, fresh noise, and PRF mask, and stores the power-basis residues low degree first.
 
 ---
 
@@ -1625,8 +1628,9 @@ InterfoldSolReader decodes CiphertextOutputPublished event
 │      │                            │                   │ computed from H canonical    │
 │      │                            │                   │ honest keyshares (not all N) │
 ├──────┼────────────────────────────┼───────────────────┼──────────────────────────────┤
-│ C6   │ Threshold Share Decryption │ Decryption        │ Decryption share correctly   │
-│      │ (T5)                       │                   │ derived from sk + ciphertext;│
+│ C6   │ Threshold Share Decryption │ Decryption        │ Partial share                │
+│      │ (T5)                       │                   │ p = λ·c1·sh + e_fresh + mask │
+│      │                            │                   │ c0 is not in the share;      │
 │      │                            │                   │ public output: commitment to │
 │      │                            │                   │ first MAX_MSG_NON_ZERO_COEFFS│
 │      │                            │                   │ coeffs of d per CRT limb     │

@@ -133,7 +133,7 @@ impl ShareComputationCircuitData {
             secret,
             secret_sss,
             parity_matrix,
-            prf_keys: Vec::new(),
+            prf_keys: crate::circuits::prf::zero_keys(preset, committee.n),
         })
     }
 }

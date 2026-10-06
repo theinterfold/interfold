@@ -49,6 +49,21 @@ impl ThresholdKeyshare {
             }
         }
 
+        // Reject a missing key or a short honest set before the phase changes.
+        let (party_idx, decryptors, outgoing_prf_keys, incoming_prf_keys) = {
+            let state = self.state.try_get()?;
+            let ready: ReadyForDecryption = state.clone().try_into()?;
+            (
+                party_index(state.party_id)?,
+                canonical_decryptors(
+                    state.honest_parties.as_ref(),
+                    reconstruction_count(state.threshold_m)?,
+                )?,
+                open_prf_keys(&self.cipher, &ready.outgoing_prf_keys)?,
+                open_prf_keys(&self.cipher, &ready.incoming_prf_keys)?,
+            )
+        };
+
         // Set state to decrypting, storing ciphertext for later C6 proof generation
         self.state.try_mutate(&ec, |s| {
             use KeyshareState as K;
@@ -79,21 +94,10 @@ impl ThresholdKeyshare {
                 ciphertexts: ciphertext_output,
                 sk_poly_sum: decrypting.sk_poly_sum,
                 trbfv_config,
-                party_idx: u32::try_from(state.party_id).unwrap_or(0),
-                decryptors: canonical_decryptors(
-                    state.honest_parties.as_ref(),
-                    usize::try_from(state.threshold_m).unwrap_or(0) + 1,
-                ),
-                outgoing_prf_keys: decrypting
-                    .outgoing_prf_keys
-                    .iter()
-                    .map(|key| key.access_raw(&self.cipher).unwrap_or_default())
-                    .collect(),
-                incoming_prf_keys: decrypting
-                    .incoming_prf_keys
-                    .iter()
-                    .map(|key| key.access_raw(&self.cipher).unwrap_or_default())
-                    .collect(),
+                party_idx,
+                decryptors,
+                outgoing_prf_keys,
+                incoming_prf_keys,
             }),
             CorrelationId::new(),
             e3_id.clone(),
@@ -120,21 +124,13 @@ impl ThresholdKeyshare {
                 ciphertexts: decrypting.ciphertext_output,
                 sk_poly_sum: decrypting.sk_poly_sum,
                 trbfv_config,
-                party_idx: u32::try_from(state.party_id).unwrap_or(0),
+                party_idx: party_index(state.party_id)?,
                 decryptors: canonical_decryptors(
                     state.honest_parties.as_ref(),
-                    usize::try_from(state.threshold_m).unwrap_or(0) + 1,
-                ),
-                outgoing_prf_keys: decrypting
-                    .outgoing_prf_keys
-                    .iter()
-                    .map(|key| key.access_raw(&self.cipher).unwrap_or_default())
-                    .collect(),
-                incoming_prf_keys: decrypting
-                    .incoming_prf_keys
-                    .iter()
-                    .map(|key| key.access_raw(&self.cipher).unwrap_or_default())
-                    .collect(),
+                    reconstruction_count(state.threshold_m)?,
+                )?,
+                outgoing_prf_keys: open_prf_keys(&self.cipher, &decrypting.outgoing_prf_keys)?,
+                incoming_prf_keys: open_prf_keys(&self.cipher, &decrypting.incoming_prf_keys)?,
             }),
             CorrelationId::new(),
             e3_id.clone(),
@@ -203,11 +199,11 @@ impl ThresholdKeyshare {
                 decryption_domain,
                 params_preset: threshold_preset,
                 committee_size,
-                party_idx: u32::try_from(state.party_id).unwrap_or(0),
+                party_idx: party_index(state.party_id)?,
                 decryptors: canonical_decryptors(
                     state.honest_parties.as_ref(),
-                    usize::try_from(state.threshold_m).unwrap_or(0) + 1,
-                ),
+                    reconstruction_count(state.threshold_m)?,
+                )?,
                 outgoing_prf_keys: decrypting.outgoing_prf_keys.clone(),
                 incoming_prf_keys: decrypting.incoming_prf_keys.clone(),
             },
@@ -254,16 +250,74 @@ impl ThresholdKeyshare {
     }
 }
 
+fn reconstruction_count(threshold_m: u64) -> Result<usize> {
+    usize::try_from(threshold_m)
+        .map(|threshold| threshold + 1)
+        .map_err(|_| anyhow!("threshold does not fit usize"))
+}
+
+fn party_index(party_id: u64) -> Result<u32> {
+    u32::try_from(party_id).map_err(|_| anyhow!("party id does not fit a 32-bit decryptor index"))
+}
+
+fn open_prf_keys(
+    cipher: &e3_crypto::Cipher,
+    keys: &[e3_crypto::SensitiveBytes],
+) -> Result<Vec<Vec<u8>>> {
+    keys.iter()
+        .map(|key| {
+            key.access_raw(cipher)
+                .map_err(|error| anyhow!("cannot decrypt a PRF key: {error}"))
+        })
+        .collect()
+}
+
 fn canonical_decryptors(
     honest: Option<&std::collections::BTreeSet<u64>>,
     reconstruction: usize,
-) -> Vec<u32> {
+) -> Result<Vec<u32>> {
     let Some(honest) = honest else {
-        return Vec::new();
+        bail!("honest party set is missing");
     };
+    if honest.len() < reconstruction {
+        bail!(
+            "honest party set has {} members and needs {reconstruction} decryptors",
+            honest.len()
+        );
+    }
     honest
         .iter()
         .take(reconstruction)
-        .map(|id| u32::try_from(*id).unwrap_or(0).saturating_add(1))
+        .map(|id| {
+            let id = u32::try_from(*id).map_err(|_| anyhow!("honest party id does not fit u32"))?;
+            id.checked_add(1)
+                .context("honest party id cannot become a 1-based decryptor id")
+        })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::canonical_decryptors;
+    use std::collections::BTreeSet;
+
+    #[test]
+    fn missing_honest_set_is_rejected() {
+        let error = canonical_decryptors(None, 2).unwrap_err();
+        assert!(error.to_string().contains("missing"));
+    }
+
+    #[test]
+    fn short_honest_set_is_rejected() {
+        let honest: BTreeSet<u64> = [0, 1].into_iter().collect();
+        let error = canonical_decryptors(Some(&honest), 3).unwrap_err();
+        assert!(error.to_string().contains("needs 3"));
+    }
+
+    #[test]
+    fn lowest_honest_ids_become_one_based_decryptors() {
+        let honest: BTreeSet<u64> = [4, 1, 0, 7].into_iter().collect();
+        let ids = canonical_decryptors(Some(&honest), 3).unwrap();
+        assert_eq!(ids, vec![1, 2, 5]);
+    }
 }

@@ -6,8 +6,14 @@
 
 //! Sample data generation for the threshold share decryption circuit.
 //!
-//! Produces a random BFV ciphertext, aggregated secret and smudging-error shares (s, e),
-//! and the corresponding decryption share (d_share) for use in codegen and tests.
+//! Produces a random BFV ciphertext, aggregated secret and fresh-noise shares (`s`, `e`),
+//! and the partial-decryption polynomial `d_share`.
+//!
+//! `d_share` is `λ·c1·sh + e_fresh + mask`. `c0` is not in that polynomial.
+//! fhe.rs `ShareManager::decryption_share` does not satisfy the quotient check in
+//! `Inputs::compute`. `decompose_residue` rejects it with
+//! `xi must equal xi_hat reduced into R_qi`. `test_d_commitment_matches_inputs_compute`
+//! fails when the sample stores that polynomial.
 
 use std::sync::Arc;
 
@@ -18,11 +24,11 @@ use e3_fhe_params::{
     build_pair_for_preset, create_deterministic_crp_from_default_seed, generate_smudging_error,
     BfvPreset,
 };
-use e3_polynomial::CrtPolynomial;
+use e3_polynomial::{center, reduce, CrtPolynomial, Polynomial};
 use fhe::{
     bfv::{Encoding, Plaintext, PublicKey},
     mbfv::{AggregateIter, PublicKeyShare},
-    trbfv::{SecretKeyShare, ShareManager, SmudgingShare},
+    trbfv::ShareManager,
 };
 use fhe_math::rq::Poly;
 use fhe_traits::{FheEncoder, FheEncrypter};
@@ -234,40 +240,134 @@ impl ShareDecryptionCircuitData {
                 .map(|row| row.iter().copied().map(num_bigint::BigInt::from).collect())
                 .collect(),
         );
-        let sk_aggregate = share_manager
-            .aggregate_secret_key_shares(vec![SecretKeyShare::from_transport(sk_sum_matrix)])
-            .map_err(|e| {
-                CircuitsErrors::Sample(format!("Failed to aggregate SK shares: {:?}", e))
-            })?;
-
-        let es_aggregate = share_manager
-            .aggregate_smudging_shares(vec![SmudgingShare::from_transport(es_sum_matrix)])
-            .map_err(|e| {
-                CircuitsErrors::Sample(format!("Failed to aggregate ES shares: {:?}", e))
-            })?;
-
-        // Compute the decryption share using TRBFV
-        let d_share_rns = share_manager
-            .decryption_share(Arc::new(ciphertext.clone()), &sk_aggregate, es_aggregate)
-            .map_err(|e| {
-                CircuitsErrors::Sample(format!("Failed to compute decryption share: {:?}", e))
-            })?;
-
+        let decryptors: Vec<u32> = (1..=(committee.threshold as u32 + 1)).collect();
+        let prf_keys = nonzero_prf_keys(preset, committee.n);
+        let ct0 = CrtPolynomial::from_fhe_polynomial(&ciphertext[0]);
+        let ct1 = CrtPolynomial::from_fhe_polynomial(&ciphertext[1]);
+        let d_share = part_dec_share(
+            &ct0,
+            &ct1,
+            &sk_crt,
+            &es_crt,
+            &prf_keys,
+            &decryptors,
+            threshold_params.moduli(),
+        )?;
         Ok(Self {
             ciphertext,
             public_key,
             s: sk_crt,
             e: es_crt,
-            d_share: CrtPolynomial::from_fhe_polynomial(&d_share_rns),
+            d_share,
             domain_hi: 1,
             domain_lo: 2,
             committee,
             party_idx: 0,
-            decryptors: Vec::new(),
-            outgoing_prf_keys: Vec::new(),
-            incoming_prf_keys: Vec::new(),
+            decryptors,
+            outgoing_prf_keys: prf_keys.clone(),
+            incoming_prf_keys: prf_keys,
         })
     }
+}
+
+fn nonzero_prf_keys(preset: BfvPreset, count: usize) -> Vec<Vec<u8>> {
+    (0..count)
+        .map(|index| {
+            let mut key = e3_fhe_params::zero_prf_key(preset);
+            key[0] = u8::try_from(index).unwrap_or(255).saturating_add(1);
+            key
+        })
+        .collect()
+}
+
+/// Build the C6 witness polynomial and store it low degree first.
+///
+/// `Inputs::compute` reverses and centers these residues, then checks them against
+/// `λ·c1·sh + e_fresh + mask`. This is the same order as
+/// `CrtPolynomial::from_fhe_polynomial`. Do not replace this polynomial with
+/// `ShareManager::decryption_share`.
+fn part_dec_share(
+    ct0: &CrtPolynomial,
+    ct1: &CrtPolynomial,
+    secret: &CrtPolynomial,
+    noise: &CrtPolynomial,
+    keys: &[Vec<u8>],
+    decryptors: &[u32],
+    moduli: &[u64],
+) -> Result<CrtPolynomial, CircuitsErrors> {
+    let reverse_limbs = |poly: &CrtPolynomial| {
+        poly.limbs
+            .iter()
+            .map(|limb| {
+                let mut reversed = limb.clone();
+                reversed.reverse();
+                reversed
+            })
+            .collect::<Vec<_>>()
+    };
+    let low_mask = crate::circuits::prf::decryption_mask_low_degree(
+        0,
+        decryptors,
+        keys,
+        keys,
+        &reverse_limbs(ct0),
+        &reverse_limbs(ct1),
+        moduli,
+    )
+    .map_err(CircuitsErrors::Sample)?;
+    let mask = crate::circuits::prf::circuit_order_mask(&low_mask);
+    let mut limbs = Vec::with_capacity(moduli.len());
+    for (limb, modulus) in moduli.iter().enumerate() {
+        let q = num_bigint::BigInt::from(*modulus);
+        let lambda = crate::circuits::threshold::decrypted_shares_aggregation::utils::lagrange_coeff_at_zero(
+            decryptors,
+            1,
+            *modulus,
+        )
+        .map_err(|error| CircuitsErrors::Sample(error.to_string()))?;
+        let mut c1 = ct1.limbs[limb].clone();
+        c1.reverse();
+        c1.center(&q);
+        let mut secret_limb = secret.limbs[limb].clone();
+        secret_limb.reverse();
+        secret_limb.center(&q);
+        let mut fresh = noise.limbs[limb].clone();
+        fresh.reverse();
+        fresh.center(&q);
+        let product = c1.mul(&secret_limb);
+        let scaled = Polynomial::new(
+            product
+                .coefficients()
+                .iter()
+                .map(|coeff| coeff * &lambda)
+                .collect(),
+        );
+        let hat = scaled.add(&fresh).add(&mask[limb]);
+        limbs.push(Polynomial::from_u64_vector(reduce_high_product(
+            hat.coefficients(),
+            &q,
+        )));
+    }
+    Ok(CrtPolynomial::new(limbs))
+}
+
+fn reduce_high_product(hat: &[num_bigint::BigInt], q: &num_bigint::BigInt) -> Vec<u64> {
+    let n = (hat.len() + 1) / 2;
+    let mut low = vec![0u64; n];
+    for j in 0..n {
+        let mut reduced = hat[n - 1 + j].clone();
+        if j > 0 {
+            reduced -= &hat[j - 1];
+        }
+        let centered = center(&reduce(&reduced, q), q);
+        let positive = if centered.sign() == num_bigint::Sign::Minus {
+            &centered + q
+        } else {
+            centered
+        };
+        low[n - 1 - j] = positive.to_u64_digits().1.first().copied().unwrap_or(0);
+    }
+    low
 }
 
 #[cfg(test)]

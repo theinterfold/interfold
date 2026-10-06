@@ -88,7 +88,7 @@ pub fn prf_evaluate<let N: u32, let L: u32>(
         let qmod = ModU64::new(qis[row] as u64);
         let mut coeffs: [Field; N] = [0; N];
         for col in 0..N {
-            coeffs[N - 1 - col] = qmod.reduce_mod(squeezed[(row * N) + col]);
+            coeffs[N - 1 - col] = qmod.reduce_field(squeezed[(row * N) + col]);
         }
         polys[row] = Polynomial::new(coeffs);
     }

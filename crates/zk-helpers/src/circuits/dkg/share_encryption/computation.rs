@@ -547,7 +547,7 @@ impl Computation for Inputs {
             acc.max(calculate_bit_width(BigInt::from(*qi - 1)))
         });
         let pk_commitment = compute_dkg_pk_commitment(&pk0is, &pk1is, pk_bit);
-        let prf_key = crate::circuits::prf::resolve_key(_preset, &data.prf_key);
+        let prf_key = crate::circuits::prf::resolve_key(&data.prf_key).map_err(CircuitsErrors::Other)?;
         let committed_message = if data.mod_idx == 0 {
             residues_for_key_commitment(&message, &prf_key, e3_fhe_params::prf_key_modulus(_preset))?
         } else {

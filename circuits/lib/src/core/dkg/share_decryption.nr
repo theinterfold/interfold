@@ -5,7 +5,8 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::math::commitments::{
-    compute_aggregated_shares_commitment, compute_sc_party_share_root_from_polynomial,
+    compute_aggregated_shares_commitment, compute_prf_key_commitment,
+    compute_sc_party_share_root_from_polynomial,
 };
 use crate::math::modulo::U64::ModU64;
 use crate::math::polynomial::Polynomial;
@@ -76,7 +77,14 @@ impl<let N: u32, let L: u32, let H: u32, let BIT_MSG: u32, let BIT_AGG: u32, let
                 residues[i] = residue;
             }
             shares[party_idx][0] = Polynomial::new(residues);
-            let _ = self.expected_key_commitments[party_idx];
+            assert(
+                compute_prf_key_commitment(
+                    self.recipient_party_idx as Field,
+                    self.key_bits[party_idx],
+                )
+                    == self.expected_key_commitments[party_idx],
+                "PRF key commitment mismatch",
+            );
         }
         shares
     }
