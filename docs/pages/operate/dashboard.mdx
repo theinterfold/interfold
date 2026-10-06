@@ -143,7 +143,8 @@ curl -s http://127.0.0.1:9092/api/snapshot | jq '.network'
 
 The API has five endpoints: `/api/snapshot`, `/api/e3`, `/api/events`, `/api/logs`, and
 `/api/updates`. [Dashboard API](/reference/dashboard-api) gives the parameters, the response fields,
-and the errors of each endpoint.
+and the errors of each endpoint. For OpenAPI tools, use the
+[OpenAPI description](/dashboard-openapi.yaml).
 
 Protocol events come from the durable EventStore of the node. Log entries come from a bounded
 in-memory store, and the node also writes them to `ciphernode.jsonl` in the node data directory. Log
