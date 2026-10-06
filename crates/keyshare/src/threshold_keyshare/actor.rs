@@ -171,6 +171,8 @@ struct PendingKeyshareWork {
     own_dkg_shares: Option<(SensitiveBytes, Vec<SensitiveBytes>)>,
     /// C4 completed before the signed C1 artifact became available.
     keyshare_publish: bool,
+    /// This node's BFV keypair whose record failed. The selection records the same keypair again.
+    bfv_key: Option<BfvKeyIntent>,
     /// Decryption work issued in this process. The worker owns local retries; the actor redelivers
     /// a request whose result did not arrive.
     decryption_share_request: Option<IssuedDecryptionWork>,

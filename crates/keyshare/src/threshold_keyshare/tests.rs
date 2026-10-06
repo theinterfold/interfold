@@ -1256,6 +1256,62 @@ fn dealer_signer(party_id: u64) -> alloy::signers::local::PrivateKeySigner {
     alloy::signers::local::PrivateKeySigner::from_bytes(&bytes.into()).unwrap()
 }
 
+/// Fails the first flush that reaches it, and passes the others to the store.
+struct FailFirstFlush {
+    store: Addr<InMemStore>,
+    failed: bool,
+}
+
+impl Actor for FailFirstFlush {
+    type Context = actix::Context<Self>;
+}
+
+impl Handler<e3_events::Flush> for FailFirstFlush {
+    type Result = actix::ResponseFuture<Result<()>>;
+
+    fn handle(&mut self, flush: e3_events::Flush, _: &mut Self::Context) -> Self::Result {
+        if !std::mem::replace(&mut self.failed, true) {
+            return Box::pin(async { Err(anyhow::anyhow!("the disk is full")) });
+        }
+        let store = self.store.clone();
+        Box::pin(async move { store.send(flush).await? })
+    }
+}
+
+/// The record of this node's new BFV keypair fails its flush. The selection runs again with the
+/// same keypair, which the store holds already and the next flush makes durable, and the node then
+/// collects with it and publishes it.
+#[actix::test]
+async fn a_failed_record_of_the_new_bfv_keypair_is_retried() -> Result<()> {
+    let e3_id = E3id::new("80", 1);
+    let (bus, history) = test_bus();
+    let store = InMemStore::new(false).start();
+    let cipher = Arc::new(Cipher::from_password("test-password").await?);
+    let mut keyshare = keyshare_in_init_over(&store, &e3_id, bus, cipher, true).await?;
+    let flushes = FailFirstFlush {
+        store: store.clone(),
+        failed: false,
+    }
+    .start();
+    keyshare.bfv_keys = DurableIntent::new(
+        DataStore::from_in_mem(&store)
+            .with_flush_recipient(flushes.recipient())
+            .scope("bfv_key"),
+    );
+    let actor = keyshare.start();
+    actor
+        .send(keyshare_event(selection(&e3_id), 1, EventSource::Local))
+        .await?;
+
+    let published = wait_for_pending_keys(&history, 1).await?;
+    let recorded = test_bfv_key_in(&store)
+        .restore()
+        .await?
+        .expect("the recorded keypair");
+    assert_eq!(published, vec![recorded.pk_bfv]);
+    Ok(())
+}
+
 fn selection(e3_id: &E3id) -> CiphernodeSelected {
     CiphernodeSelected {
         e3_id: e3_id.clone(),

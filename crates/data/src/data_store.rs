@@ -320,9 +320,8 @@ impl DataStore {
         self.flush.send(Flush).await?
     }
 
-    /// The same store with another flush recipient, to observe the flushes in tests.
-    #[cfg(test)]
-    pub(crate) fn with_flush_recipient(mut self, flush: Recipient<Flush>) -> Self {
+    /// The same store with another flush recipient, to observe or fail its flushes in tests.
+    pub fn with_flush_recipient(mut self, flush: Recipient<Flush>) -> Self {
         self.flush = flush;
         self
     }

@@ -4,6 +4,9 @@
 
 use super::*;
 
+/// The delay before a selection whose BFV keypair record failed records the keypair again.
+pub(crate) const BFV_KEY_RECORD_RETRY: std::time::Duration = std::time::Duration::from_secs(1);
+
 impl ThresholdKeyshare {
     /// Generate BFV keys for a selected ciphernode and publish `EncryptionKeyPending`.
     pub fn handle_ciphernode_selected(
@@ -58,22 +61,35 @@ impl ThresholdKeyshare {
         if let Some(key) = self.bfv_key.clone() {
             return self.collect_with_bfv_key(key, msg, ec);
         }
-        let BfvKeypairMaterial { sk_bfv, pk_bfv } =
-            generate_bfv_keypair(&self.share_enc_preset, &self.cipher)?;
-        let key = BfvKeyIntent { sk_bfv, pk_bfv };
+        // A keypair whose record failed is recorded again: the store can hold it without its
+        // flush, and refuses another keypair.
+        let key = match self.pending.bfv_key.take() {
+            Some(key) => key,
+            None => {
+                let BfvKeypairMaterial { sk_bfv, pk_bfv } =
+                    generate_bfv_keypair(&self.share_enc_preset, &self.cipher)?;
+                BfvKeyIntent { sk_bfv, pk_bfv }
+            }
+        };
         // The keypair is on disk before anything uses it, and the actor handles no other message
         // until then.
         let keys = self.bfv_keys.clone();
         let recorded = key.clone();
+        let retry = TypedEvent::new(msg.clone(), ec.clone());
         ctx.wait(
             async move { keys.record(&recorded).await }
                 .into_actor(self)
-                .map(move |result, actor, _| {
-                    let result = result.and_then(|()| {
-                        actor.bfv_key = Some(key.clone());
-                        actor.collect_with_bfv_key(key, msg, ec.clone())
-                    });
+                .map(move |result, actor, ctx| {
                     if let Err(error) = result {
+                        // The selection runs again with the same keypair until the encryption-key
+                        // cutoff refuses a fresh start.
+                        warn!(%error, "Could not record this node's BFV keypair; retrying");
+                        actor.pending.bfv_key = Some(key);
+                        ctx.notify_later(retry, BFV_KEY_RECORD_RETRY);
+                        return;
+                    }
+                    actor.bfv_key = Some(key.clone());
+                    if let Err(error) = actor.collect_with_bfv_key(key, msg, ec.clone()) {
                         actor.bus.with_ec(&ec).err(EType::KeyGeneration, error);
                     }
                 }),
