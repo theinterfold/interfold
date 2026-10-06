@@ -946,6 +946,9 @@ phase.
      → RPC request-size rejection and permanent contract or payload errors are terminal for the
        running writer. They produce one final error instead of an unbounded 30-second retry loop
      → A restart replays the intent, so an unfinished publication still reaches the chain.
+       The public-key aggregator also sends its saved publication again when effects resume,
+       whatever its role now, since replay can start after the publication event; the writer
+       skips a commitment that is already on chain and finishes the chunks.
        E3RequestComplete that arrives before EffectsEnabled comes from that same replay and
        drops the intent: a completed request published its candidate in an earlier run, and
        repeating it only spends gas

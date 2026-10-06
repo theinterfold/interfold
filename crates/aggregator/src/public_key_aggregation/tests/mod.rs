@@ -707,6 +707,117 @@ async fn standby_retains_dkg_fold_for_failover() -> Result<()> {
     Ok(())
 }
 
+/// A C5 state whose node proofs are all absent, so the C5 proof alone completes the key.
+fn c5_state_without_node_proofs() -> PublicKeyAggregatorState {
+    let mut state = generating_c5_state(CorrelationId::new());
+    if let PublicKeyAggregatorState::GeneratingC5Proof {
+        party_nodes,
+        honest_party_ids,
+        dkg_node_proofs,
+        c5_proof_pending,
+        last_ec,
+        dkg_aggregation_correlation,
+        ..
+    } = &mut state
+    {
+        *party_nodes = (0..3)
+            .map(|party| (party, format!("0x{:040x}", party + 1)))
+            .collect();
+        *honest_party_ids = BTreeSet::from([0, 2]);
+        *dkg_node_proofs = HashMap::from([(0, None), (2, None)]);
+        *dkg_aggregation_correlation = None;
+        *last_ec = Some(test_ctx(EffectsEnabled::new()));
+        *c5_proof_pending = None;
+    }
+    state
+}
+
+/// A failover demotes the aggregator while it proves C5. Its C5 proof still arrives, and the node
+/// publishes the key: the work that it started is not lost.
+#[actix::test]
+async fn a_demoted_aggregator_publishes_the_key_from_its_c5_proof() -> Result<()> {
+    let (mut aggregator, history, e3_id) =
+        build_public_key_aggregator(c5_state_without_node_proofs()).await?;
+    aggregator.mark_started_as_aggregator();
+    let actor = aggregator.start();
+    let demotion = AggregatorChanged {
+        e3_id: e3_id.clone(),
+        active_party_id: Some(1),
+        is_aggregator: false,
+    };
+    actor
+        .send(TypedEvent::new(demotion.clone(), test_ctx(demotion)))
+        .await?;
+
+    let mut signals = vec![0; 3 * 32];
+    signals[64..].copy_from_slice(&[7; 32]);
+    let signed = PkAggregationProofSigned {
+        e3_id: e3_id.clone(),
+        signed_proof: SignedProofPayload {
+            payload: ProofPayload {
+                e3_id: e3_id.clone(),
+                proof_type: ProofType::C5PkAggregation,
+                proof: Proof::new(
+                    CircuitName::PkAggregation,
+                    ArcBytes::from_bytes(&[1]),
+                    ArcBytes::from_bytes(&signals),
+                ),
+            },
+            signature: ArcBytes::from_bytes(&[0u8; 65]),
+        },
+    };
+    actor
+        .send(TypedEvent::new(signed.clone(), test_ctx(signed)))
+        .await?;
+
+    for _ in 0..100 {
+        let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+        if events
+            .iter()
+            .any(|event| matches!(event.get_data(), InterfoldEventData::PublicKeyAggregated(_)))
+        {
+            return Ok(());
+        }
+        actix::clock::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    panic!("the demoted aggregator did not publish the key");
+}
+
+/// A demoted aggregator that finished the key restarts while the registry writer still publishes
+/// the key, and the key is on chain: the node sends its saved publication again.
+#[actix::test]
+async fn a_demoted_aggregator_sends_its_saved_key_publication_again_after_a_restart() -> Result<()>
+{
+    let (mut aggregator, history, e3_id) = build_public_key_aggregator(complete_state()).await?;
+    let publication = PublicKeyAggregated {
+        e3_id: e3_id.clone(),
+        pubkey: ArcBytes::from_bytes(&[1, 2, 3]),
+        nodes: OrderedSet::new(),
+        committee_addresses: Vec::new(),
+        honest_committee_addresses: Vec::new(),
+        pk_commitment: [7; 32],
+        dkg_aggregator_proof: None,
+        dkg_attestation_bundle: None,
+    };
+    aggregator
+        .recovery
+        .try_mutate_without_context(|mut recovery| {
+            recovery.pending_publication = Some(publication.clone());
+            Ok(recovery)
+        })?;
+    aggregator.is_aggregator = false;
+    aggregator.observe_stage(&E3Stage::KeyPublished);
+
+    aggregator.resume_in_flight_work(test_ctx(EffectsEnabled::new()))?;
+
+    let event = next_event(&history).await?;
+    assert!(matches!(
+        event.get_data(),
+        InterfoldEventData::PublicKeyAggregated(sent) if sent.pk_commitment == [7; 32]
+    ));
+    Ok(())
+}
+
 #[actix::test]
 async fn mock_publication_carries_registry_roster() -> Result<()> {
     let mut state = generating_c5_state(CorrelationId::new());
