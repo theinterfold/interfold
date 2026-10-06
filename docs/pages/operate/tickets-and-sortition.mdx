@@ -39,15 +39,15 @@ non-transferable balance keeps each ticket attributable to one operator, so a sl
 The table shows the values at deployment. Governance can change each value, so always read the live
 values before you fund a position (see [Parameters](#parameters)).
 
-| Value                       | Mainnet                    | Sepolia                               |
-| --------------------------- | -------------------------- | ------------------------------------- |
-| Ticket collateral           | sUSDS shares (18 decimals) | Mock USDC, symbol `USDC` (6 decimals) |
-| `ticketPrice`               | 1,000 sUSDS shares         | 10 USDC                               |
-| `minTicketBalance`          | 1 ticket                   | 1 ticket                              |
-| `requiredCiphernodeBond`    | 32,000 FOLD                | 100 FOLD                              |
-| `exitDelay`                 | 2,592,000 s (30 days)      | 604,800 s (7 days)                    |
-| `sortitionSubmissionWindow` | 600 s                      | 60 s                                  |
-| `randomnessRequestTimeout`  | 3,600 s                    | 3,600 s (contract default)            |
+| Value                       | Mainnet                    | Sepolia                                |
+| --------------------------- | -------------------------- | -------------------------------------- |
+| Ticket collateral           | sUSDS shares (18 decimals) | `MockUSDC`, symbol `USDC` (6 decimals) |
+| `ticketPrice`               | 1,000 sUSDS shares         | 1 USDC                                 |
+| `minTicketBalance`          | 1 ticket                   | 1 ticket                               |
+| `requiredCiphernodeBond`    | 32,000 FOLD                | 100 FOLD                               |
+| `exitDelay`                 | 2,592,000 s (30 days)      | 2,592,000 s (30 days)                  |
+| `sortitionSubmissionWindow` | 600 s                      | 600 s                                  |
+| `randomnessRequestTimeout`  | 3,600 s                    | 3,600 s                                |
 
 On mainnet, a fixed `ticketPrice` is a fixed number of sUSDS shares. It is not a fixed USDS amount.
 

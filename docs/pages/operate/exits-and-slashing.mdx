@@ -180,7 +180,7 @@ appeal, or with a rejected appeal. The contract emits `SlashExecuted`. A ban als
 Collateral never leaves the registry at once. Each withdrawal goes to an exit queue for the
 `exitDelay` that is in effect at that time. Governance can set `exitDelay` from 1 day to 90 days. It
 must be longer than `sortitionSubmissionWindow` plus `randomnessRequestTimeout`. At deployment,
-`exitDelay` was 30 days on mainnet and 7 days on Sepolia.
+`exitDelay` was 30 days on mainnet and on Sepolia.
 
 | Action                  | What happens at once                                                           | What the queue receives |
 | ----------------------- | ------------------------------------------------------------------------------ | ----------------------- |

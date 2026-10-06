@@ -208,14 +208,19 @@ Local development uses `DATA_AVAILABILITY_MODE=mock`. The mock keeps the full in
 ciphertext in the CRISP server database and produces a deterministic local receipt. It does not
 model VectorX latency or Avail fees.
 
-Sepolia and Ethereum mainnet use Avail. Before starting the CRISP server:
+Sepolia and Ethereum mainnet use Avail. The Sepolia verifiers are real. CRISPProgram on Sepolia is
+`0xc6b6f740C85878D046A50f203A3Aa379150bF8C7`, and its Avail data availability verifier is
+`AvailVectorXDataAvailabilityVerifier` (`0x2Dff6C2f010336Fb2f553aAF20525579F9617cEA`). Before
+starting the CRISP server:
 
 1. Register an Avail App ID for CRISP.
 2. Fund a dedicated Avail account that can pay for every `submit_data` transaction.
 3. Keep the server database durable. It stores each pending publication until its VectorX proof is
    available and resumes the job after a restart.
 4. Deploy CRISP with `INPUT_AVAILABILITY_SIGNER` set to the Ethereum address derived from the
-   server's `PRIVATE_KEY`.
+   server's `PRIVATE_KEY`. On Sepolia, CRISPProgram uses the deployer address
+   (`0x8837e47c4Bb520ADE83AAB761C3B60679443af1B`) as the signer. The server `PRIVATE_KEY` must be
+   the key of that address.
 5. Schedule voting after the current on-chain committee setup budget. The server reads that bound
    from `CRISPProgram.earliestVotingStart()` and adds `VOTING_START_BUFFER_SECONDS` for transaction
    mining. `E3_DURATION` starts at that fixed voting time; it covers voting plus the VectorX

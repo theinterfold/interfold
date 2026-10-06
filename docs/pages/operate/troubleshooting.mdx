@@ -124,8 +124,8 @@ The message includes the decoded contract error.
 | `NodeNotEligible`          | The operator was not active, or had no tickets at the snapshot. | Check the status as in [Not selected for committees](#not-selected-for-committees).          |
 | `InvalidTicketNumber`      | The ticket number is not in the snapshot range.                 | Check that the node syncs from a correct RPC endpoint.                                       |
 
-At deployment, `sortitionSubmissionWindow` was 600 s on mainnet and 60 s on Sepolia. The operator
-wallet must have ETH for gas. A slow or rate-limited RPC endpoint delays the transaction. See
+At deployment, `sortitionSubmissionWindow` was 600 s on mainnet and on Sepolia. The operator wallet
+must have ETH for gas. A slow or rate-limited RPC endpoint delays the transaction. See
 [RPC endpoints](/operate/rpc-endpoints).
 
 When the ticket is already on-chain, the node logs

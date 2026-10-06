@@ -27,8 +27,8 @@ describe("Faucet", function () {
         await fold.getAddress(),
         await fee.getAddress(),
       );
-      const foldAmount = ethers.parseUnits("200", 18);
-      const feeAmount = ethers.parseUnits("200", feeDecimals);
+      const foldAmount = ethers.parseUnits("1000", 18);
+      const feeAmount = ethers.parseUnits("1000", feeDecimals);
       expect(await faucet.AMOUNT_FOLD()).to.equal(foldAmount);
       expect(await faucet.AMOUNT_FEE_TOKEN()).to.equal(feeAmount);
 

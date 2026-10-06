@@ -4,8 +4,9 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 // Network selection, public client + contract addresses.
-// Sepolia addresses sourced from packages/interfold-contracts/deployed_contracts.json,
-// mainnet addresses from deployments/manifest.json (networks.mainnet).
+// Sepolia addresses sourced from deployments/manifest.json (networks.sepolia) and
+// packages/interfold-contracts/deployed_contracts.json, mainnet addresses from
+// deployments/manifest.json (networks.mainnet).
 //
 // ABIs are imported from the canonical typechain factories in
 // @interfold/contracts so they cannot drift from the deployed contracts.
@@ -83,19 +84,20 @@ const NETWORKS: Record<string, NetworkProfile> = {
     name: 'Sepolia',
     rpc: 'https://ethereum-sepolia.publicnode.com',
     explorer: 'https://sepolia.etherscan.io',
-    interfold: '0x3E856E24c7a95d0e04d387f847DA6FA9f6F6c20C',
-    ciphernodeRegistry: '0x374F4542eC634d5437Dd65020781A9D9Df9c2AB8',
-    crispProgram: '0x8654F380760c46857188097Fa0AD0bf995603124',
-    bondingRegistry: '0x90250Dc48CBe109fFaA02AeAFbFBdbF12D7BD4d4',
-    faucet: '0x6e281411C055BEEbD74bDFcB9aB095aa98907F85',
+    interfold: '0xc5DD9418A0aBF15678F974D2348B4be4D3832B54',
+    ciphernodeRegistry: '0xfa0fCE6afd9b59E2Ac69DC53A128ee5835346B5e',
+    crispProgram: '0xc6b6f740C85878D046A50f203A3Aa379150bF8C7',
+    bondingRegistry: '0x55Cf62396e1CAE6Fcc380CfE0b4C48103C4a3711',
+    // Test Faucet. It sends 1000 FOLD and 1000 MockUSDC.
+    faucet: '0xA7f0A637Af62fA4E0b46E397D1b85E9b4807f019',
     // Earliest of the Interfold/CiphernodeRegistry/CRISPProgram deploy blocks
-    // (CiphernodeRegistry) — a later value silently drops early registry events.
-    deployBlock: '11508403',
-    // MockUSDC on the Sepolia deployment.
+    // (CRISPProgram) — a later value silently drops early program events.
+    deployBlock: '11855813',
+    // MockUSDC (0xE2e534F7…555B), the fee token and ticket collateral. Anyone can mint it.
     feeSymbol: 'USDC',
     feeDecimals: 6,
-    computeWindow: '86400',
-    decryptionWindow: '3600',
+    computeWindow: '604800',
+    decryptionWindow: '21600',
   },
   mainnet: {
     chain: mainnet,

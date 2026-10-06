@@ -86,11 +86,9 @@ chains:
   </Tabs.Tab>
   <Tabs.Tab unmount={false}>
 
-<Callout type='warning'>
-  On 25 September 2026, the Sepolia protocol contracts predate the node release gate.
-  `nodeReleaseRegistry()` on the Sepolia `Interfold` contract reverts. A 0.18.0 ciphernode reads
-  this value at startup, so it stops with `failed to read Interfold release dependencies`. Until the
-  Sepolia deployment is upgraded, a Sepolia node on this release does not start.
+<Callout type='info'>
+  E3 requests on Sepolia stay paused until operators that run the 0.19.0-test.1 release register.
+  Run that release on Sepolia. A node of an earlier release does not match the Sepolia deployment.
 </Callout>
 
 ```yaml filename="interfold.config.yaml"
@@ -107,23 +105,23 @@ chains:
       rpc_url: 'https://turing-rpc.avail.so/rpc'
     contracts:
       interfold:
-        address: '0x3E856E24c7a95d0e04d387f847DA6FA9f6F6c20C'
-        deploy_block: 11534993
+        address: '0xc5DD9418A0aBF15678F974D2348B4be4D3832B54'
+        deploy_block: 11855915
       ciphernode_registry:
-        address: '0x374F4542eC634d5437Dd65020781A9D9Df9c2AB8'
-        deploy_block: 11534965
+        address: '0xfa0fCE6afd9b59E2Ac69DC53A128ee5835346B5e'
+        deploy_block: 11855915
       bonding_registry:
-        address: '0x90250Dc48CBe109fFaA02AeAFbFBdbF12D7BD4d4'
-        deploy_block: 11534966
+        address: '0x55Cf62396e1CAE6Fcc380CfE0b4C48103C4a3711'
+        deploy_block: 11855915
       slashing_manager:
-        address: '0x489FB674B143E48eaCAaC999B3DF9EA6E95eA79f'
-        deploy_block: 11534963
+        address: '0xd467290E57fa84FAE42A737a83B42a6786175d79'
+        deploy_block: 11855915
       fee_token:
-        address: '0xC35B783cA97710be47Fc81D10dADc895EfcD865c'
-        deploy_block: 11534960
+        address: '0xE2e534F7Cb95777eD870CDCaCb80B1E9E2aD555B'
+        deploy_block: 11856062
       faucet:
-        address: '0x6e281411C055BEEbD74bDFcB9aB095aa98907F85'
-        deploy_block: 11534982
+        address: '0xA7f0A637Af62fA4E0b46E397D1b85E9b4807f019'
+        deploy_block: 11856142
 ```
 
   </Tabs.Tab>
@@ -489,17 +487,16 @@ The command downloads `manifest.json` from the latest GitHub release and compare
 Example output for a current Sepolia entry:
 
 ```text
-Deployment manifest: release v0.18.0
+Deployment manifest: release v0.19.0-test.1
 sepolia: up to date
-  note  sepolia is a mock deployment - proofs are accepted without being verified
 ```
 
 Example output for a stale entry:
 
 ```text
 sepolia:
-  STALE interfold: config has 0x38A8A686…, published is 0x3E856E24…
-  warn  ciphernode_registry: deploy_block 11508403, published is 11534965
+  STALE interfold: config has 0x38A8A686…, published is 0xc5DD9418…
+  warn  ciphernode_registry: deploy_block 11508403, published is 11855915
 ```
 
 | Line    | Meaning                                                            | Fails the check |

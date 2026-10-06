@@ -93,10 +93,10 @@ sync, reports success, and misses the events that registered it. The node then d
 tickets, and the log does not explain why.
 
 This failure is not stable over time. On 16 September 2026, `ethereum-sepolia-rpc.publicnode.com`
-returned 0 logs for the test range below. On 25 September 2026, the same endpoint returned all 67
-logs. Test each endpoint yourself, and test it again after a provider change. Do not rely on the
-product description of a provider. Free tiers of several well-known providers do not keep the full
-history.
+returned 0 logs for the test range of the previous Sepolia deployment. On 25 September 2026, the
+same endpoint returned all 67 logs. Test each endpoint yourself, and test it again after a provider
+change. Do not rely on the product description of a provider. Free tiers of several well-known
+providers do not keep the full history.
 
 Only a log query with a known expected result finds this failure. Do not use a historical state
 check in its place.
@@ -112,9 +112,9 @@ command needs `curl` and `jq`.
 ```bash
 RPC=https://your-endpoint.example
 # Sepolia CiphernodeRegistry, from deployments/manifest.json
-CIPHERNODE_REGISTRY_CONTRACT=0x374F4542eC634d5437Dd65020781A9D9Df9c2AB8
-FROM=$(printf '0x%x' 11534965)   # the registry deploy block
-TO=$(printf '0x%x' 11544964)     # FROM + 9,999: a range of 10,000 blocks
+CIPHERNODE_REGISTRY_CONTRACT=0xfa0fCE6afd9b59E2Ac69DC53A128ee5835346B5e
+FROM=$(printf '0x%x' 11855915)   # the registry deploy block
+TO=$(printf '0x%x' 11855964)     # FROM + 49: a range of 50 blocks
 
 # The result must be a log count, not an error and not an empty list.
 curl -s -X POST "$RPC" -H 'Content-Type: application/json' \
@@ -122,7 +122,7 @@ curl -s -X POST "$RPC" -H 'Content-Type: application/json' \
   | jq 'if .error then {error: .error} else {logs: (.result | length)} end'
 ```
 
-This range holds **67** logs. The range is in the past, so the count does not change.
+This range holds **6** logs. The range is in the past, so the count does not change.
 
   </Tabs.Tab>
   <Tabs.Tab unmount={false}>
@@ -155,12 +155,15 @@ Read the result this way:
 | An `error` that names a block range | The range cap is below 10,000 blocks. The node narrows its range, so the endpoint works but syncs slower. |
 | An `error` about a plan or a token  | The endpoint refuses the request. The node cannot use it.                                                 |
 
-To test a smaller cap, change `TO` to a smaller range from the same `FROM` block.
+To test a larger range, increase `TO`. The count then changes as the registry emits events, so
+compare the result with a second endpoint.
 
 ## Measured endpoints
 
-These results are for Sepolia on 25 September 2026, over the test range above. Provider behavior
-changes, so run the test yourself before you trust a row.
+These results are for the previous Sepolia deployment, on 25 September 2026. The range was 10,000
+blocks from the deploy block of its `CiphernodeRegistry`, and it held 67 logs. The current
+deployment is too new for a range of that size. Provider behavior changes, so run the test yourself
+before you trust a row.
 
 | Endpoint                              | `eth_getLogs` over the test range                                                 | `eth_getCode` at the deploy block     | Usable with the node                            |
 | ------------------------------------- | --------------------------------------------------------------------------------- | ------------------------------------- | ----------------------------------------------- |

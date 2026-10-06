@@ -434,8 +434,8 @@ bootstrap peer of the network profile when the config sets no peers.
 ## Operator on-chain lifecycle
 
 Most of these commands send transactions to the `BondingRegistry` contract of a configured chain.
-`status` only reads, and `faucet` calls the `Faucet` contract. For the procedures, see
-[Registration](/operate/registration) and [Manage tickets](/operate/manage-tickets).
+`status` only reads, and `faucet` calls a `Faucet` contract that the chain entry names. For the
+procedures, see [Registration](/operate/registration) and [Manage tickets](/operate/manage-tickets).
 
 ### Shared flags and values
 
@@ -597,15 +597,19 @@ other values.
 ### `interfold faucet`
 
 <Badge tone='testnet'>Testnet only</Badge> Requests test tokens from the `faucet` contract of a
-chain. The faucet sends 200 FOLD and 200 fee tokens to the configured wallet. It sends each token
-only when the wallet holds less than 200 of it.
+chain. The `Faucet` contract of the repository (`contracts/test/Faucet.sol`) sends 1000 FOLD and
+1000 fee tokens to the configured wallet. It sends each token only when the wallet holds less than
+1000 of it.
 
 ```bash
 interfold faucet [--chain <CHAIN>]
 ```
 
-The chain must have a `faucet` entry in `contracts`. Only Sepolia publishes a faucet. See
-[Contracts & Addresses](/reference/contracts).
+The chain must have a `faucet` entry in `contracts`. If the entry is missing, the command stops with
+the error `No faucet contract configured for chain '<CHAIN>'`. Sepolia publishes a faucet, so
+`interfold faucet --chain sepolia` sends 1000 FOLD and 1000 `MockUSDC`. Mainnet has no faucet. On
+Sepolia, one faucet call provides enough FOLD for the 100 FOLD operator bond. See
+[Contracts & Addresses](/reference/contracts#sepolia).
 
 ## Keys and secrets
 

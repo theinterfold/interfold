@@ -61,9 +61,9 @@ contracts below store the position and its state.
 | `InterfoldTicketToken` (tFOLD)                             | A non-transferable token that wraps the ticket collateral. The registry mints it to the operator key.                          |
 
 On both networks, operators bond FOLD (`InterfoldToken`). The ticket collateral is an ERC-20 token
-that `InterfoldTicketToken` wraps. Mainnet uses sUSDS shares, and Sepolia uses a mock stablecoin
-(`MockUSDC`). The fee token is separate: requesters pay E3 fees with it. Mainnet uses USDS as the
-fee token.
+that `InterfoldTicketToken` wraps. Mainnet uses sUSDS shares, and Sepolia uses `MockUSDC`. The fee
+token is separate: requesters pay E3 fees with it. Mainnet uses USDS as the fee token, and Sepolia
+uses `MockUSDC`.
 
 ## Operator lifecycle
 
@@ -178,46 +178,44 @@ use.
   </Tabs.Tab>
   <Tabs.Tab unmount={false}>
 
-<Callout type='warning'>
-  On 25 September 2026, the Sepolia protocol contracts predate the node release gate.
-  `nodeReleaseRegistry()` on the Sepolia `Interfold` contract reverts. A 0.18.0 ciphernode reads
-  this value at startup, so it stops with `failed to read Interfold release dependencies`.
+<Callout type='info'>
+  E3 requests on Sepolia stay paused (`requestsPaused()` returns `true` on the `Interfold` contract)
+  until operators that run the 0.19.0-test.1 release register. Operators can bond, register, and add
+  tickets while requests are paused.
 </Callout>
 
 | Contract                                   | Address                                      | Deploy block |
 | ------------------------------------------ | -------------------------------------------- | ------------ |
-| Interfold                                  | `0x3E856E24c7a95d0e04d387f847DA6FA9f6F6c20C` | 11534993     |
-| CiphernodeRegistry                         | `0x374F4542eC634d5437Dd65020781A9D9Df9c2AB8` | 11534965     |
-| BondingRegistry                            | `0x90250Dc48CBe109fFaA02AeAFbFBdbF12D7BD4d4` | 11534966     |
-| SlashingManager                            | `0x489FB674B143E48eaCAaC999B3DF9EA6E95eA79f` | 11534963     |
-| E3RefundManager                            | `0x79f9EA83Db0fbe3a2cEB765b18285915331A9dc2` | 11534995     |
-| InterfoldTicketToken (tFOLD)               | `0xfFFFc3BB04aEe950c0ed5DEe3214408f09fff488` | 11534961     |
-| InterfoldToken (FOLD)                      | `0x9752444A6a955D420402EaFf5f818afCddb9c340` | 11534976     |
-| MockUSDC (fee token and ticket collateral) | `0xC35B783cA97710be47Fc81D10dADc895EfcD865c` | 11534960     |
-| Faucet                                     | `0x6e281411C055BEEbD74bDFcB9aB095aa98907F85` | 11534982     |
+| Interfold                                  | `0xc5DD9418A0aBF15678F974D2348B4be4D3832B54` | 11855915     |
+| CiphernodeRegistry                         | `0xfa0fCE6afd9b59E2Ac69DC53A128ee5835346B5e` | 11855915     |
+| BondingRegistry                            | `0x55Cf62396e1CAE6Fcc380CfE0b4C48103C4a3711` | 11855915     |
+| SlashingManager                            | `0xd467290E57fa84FAE42A737a83B42a6786175d79` | 11855915     |
+| E3RefundManager                            | `0x083F6Ca7e5be9Efd8fE8ACE503abF2F2ff647Cb9` | 11855915     |
+| NodeReleaseRegistry                        | `0x772caB77BFc39690e13dA2995E926Fb090aD034B` | 11855915     |
+| BondedVotes                                | `0x85E5176A8d387BE3B53506DDCbBC8aa9c2156E9F` | 11855958     |
+| InterfoldTicketToken (tFOLD)               | `0x277514D155D61eb51839F33Bd43ad32F4e3F5770` | 11856063     |
+| InterfoldToken (FOLD)                      | `0x278d7c3bC100505bfC38163e23Fe2524E3993e83` | 11855821     |
+| MockUSDC (fee token and ticket collateral) | `0xE2e534F7Cb95777eD870CDCaCb80B1E9E2aD555B` | 11856062     |
+| Faucet                                     | `0xA7f0A637Af62fA4E0b46E397D1b85E9b4807f019` | 11856142     |
 
-The Sepolia deployment uses mock verifiers and a mock compute provider:
+`MockUSDC` is a test USDC with 6 decimals. Anyone can mint it. The `Faucet` sends 1000 FOLD and 1000
+USDC. The only test contracts in the Sepolia deployment are `MockUSDC` and the `Faucet`.
 
-| Contract               | Address                                      | Deploy block |
-| ---------------------- | -------------------------------------------- | ------------ |
-| MockE3Program          | `0x5874CD49929ffcf380C82cDE1e74188dEaff9791` | 11534990     |
-| MockComputeProvider    | `0x3c3434840a1EAA214E0c8abb34A0386e4E22B3A5` | 11534986     |
-| MockDecryptionVerifier | `0x12845e690fD56216C89428d91D5E931142b9779F` | 11534987     |
-| MockCiphertextVerifier | `0xc2905bDcD4449F143d46593AeAf5383A590D2e32` | 11534988     |
-| MockPkVerifier         | `0x22b5Fda887D1c84Df3d4D916452388F99a6A7b61` | 11534989     |
+The Sepolia deployment verifies proofs with real verifiers:
 
-<Callout type='warning'>
-  The Sepolia deployment does not verify proofs. Its mock verifiers accept any proof. Use Sepolia to
-  set up and operate a node, not to test that proofs are correct.
-</Callout>
+| Contract                    | Address                                      | Deploy block |
+| --------------------------- | -------------------------------------------- | ------------ |
+| BfvPkVerifierRouter         | `0x3Cd2472722cad8D17AEd31869b4353eCd10a0425` | 11855912     |
+| BfvDecryptionVerifierRouter | `0xe52e7d820f3A1c56f952B8D7Ba2FA4100c6999D2` | 11855913     |
+| Risc0BfvCiphertextVerifier  | `0xBBcE489cf767904Ca808944806110d8c8A9332Da` | 11855803     |
 
   </Tabs.Tab>
 </Tabs>
 
 `interfold config check` compares your configuration with the manifest of the latest release. For
 each network that the manifest marks with `mocks: true`, it prints a note that proofs are accepted
-without verification. The manifest marks Sepolia. The manifest of release v0.18.0 also marks
-mainnet, although the mainnet verifiers are not mocks. See
+without verification. The deployment manifest marks neither Sepolia nor mainnet with `mocks: true`.
+Only the manifest of release v0.18.0 marks both networks, so that release prints the note. See
 [Verifiers in use on mainnet](/reference/contracts#verifiers-in-use-on-mainnet).
 
 ## Set up a ciphernode

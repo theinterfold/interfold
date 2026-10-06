@@ -76,11 +76,11 @@ the ticket collateral for the `InterfoldTicketToken` contract, not for the `Bond
 amounts are in token base units.
 
 <Callout type='info'>
-  On Sepolia, `interfold faucet` sends test FOLD and the mock fee token to the configured signer.
-  Run it with the bond owner configuration. The configuration must include the `faucet` contract.
-  The faucet sends 200 of a token only when the signer holds less than 200 of that token. If the
-  faucet is empty, ask in the [Interfold technical chat](https://t.me/interfoldhq_technical).
-</Callout>
+  On Sepolia, the fee token and the ticket collateral are `MockUSDC`, a test USDC that anyone can
+  mint. Run `interfold faucet --chain sepolia` to get 1000 USDC and 1000 FOLD. You can also call
+  `faucet()` on the `Faucet` contract, or call `mint` on `MockUSDC`. One faucet call provides enough FOLD for the 100 FOLD Sepolia bond. FOLD transfers are restricted before the token generation event, so the Interfold team sends
+  the bond FOLD to operators. E3 requests on Sepolia stay paused until operators that
+  run the 0.19.0-test.1 release register.
 
 ### Read the token addresses
 
@@ -381,7 +381,9 @@ September 2026, mainnet returned `(true, false, 259200, 0, false, 0)`: a cooldow
 The values below are from the mainnet deployment configuration
 (`packages/interfold-contracts/deploy/protocol/mainnet-protocol.config.json`). On 25 September 2026,
 the on-chain values were the same. Governance can change them, so read them on-chain before you
-deposit. Sepolia uses different values and mock tokens.
+deposit. Sepolia uses the same values, except for `ticketPrice` and `requiredCiphernodeBond`. The
+Sepolia `ticketPrice` is 1 USDC (1,000,000 base units), and the Sepolia `requiredCiphernodeBond` is
+100 FOLD. The Sepolia ticket collateral is `MockUSDC`.
 
 | Parameter                   | Mainnet value                   | Meaning                                           |
 | --------------------------- | ------------------------------- | ------------------------------------------------- |
@@ -402,7 +404,8 @@ cast call "$BONDING" "minTicketBalance()(uint256)" --rpc-url "$RPC"
 cast call "$BONDING" "exitDelay()(uint64)" --rpc-url "$RPC"
 ```
 
-`requiredCiphernodeBond` and `ticketPrice` are in token base units (18 decimals on mainnet).
+`requiredCiphernodeBond` is in token base units (18 decimals). `ticketPrice` is in base units of the
+ticket collateral (18 decimals on mainnet, 6 decimals for USDC on Sepolia).
 
 ## Good practice
 

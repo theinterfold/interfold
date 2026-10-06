@@ -19,16 +19,16 @@ program contract. At the end, your program is on Sepolia, the owner of the Inter
 register it, and your server and client use the testnet.
 
 <Callout type='warning'>
-  Do not submit real private data on Sepolia. The `insecure-512` preset is not secure, and the
-  manifest marks the Sepolia deployment with `mocks: true`, which means that it records mock
-  verifier contracts.
+  Do not submit real private data on Sepolia. The `insecure-512` preset is not secure. The verifiers
+  of the Sepolia deployment check the proofs. The only test contracts are `MockUSDC` and the
+  `Faucet`. The manifest marks Sepolia with `mocks: false`.
 </Callout>
 
 <Callout type='warning'>
-  On 25 September 2026, the Sepolia protocol contracts predate the node release gate.
-  `nodeReleaseRegistry()` on the Sepolia `Interfold` contract reverts. A 0.18.0 ciphernode reads
-  this value at startup, so it stops with `failed to read Interfold release dependencies`.
-  Ciphernodes on this release cannot serve Sepolia E3s until the Sepolia deployment is upgraded.
+  E3 requests on Sepolia are paused. `requestsPaused()` on the `Interfold` contract returns `true`,
+  and `request` reverts with `RequestsPaused`. The owner of the Interfold contract unpauses requests
+  after operators that run the 0.19.0-test.1 release (`protocol_version` 7, `node_generation` 2)
+  register. Until then, you can deploy your program but you cannot run an E3.
 </Callout>
 
 ## Sepolia protocol contracts
@@ -36,30 +36,38 @@ register it, and your server and client use the testnet.
 These addresses come from `deployments/manifest.json` (chain ID 11155111). The
 [Contract Addresses](/reference/contracts) page has the full list for each network.
 
-| Contract                       | Address                                      | Deploy block | Role                                                       |
-| ------------------------------ | -------------------------------------------- | ------------ | ---------------------------------------------------------- |
-| `Interfold`                    | `0x3E856E24c7a95d0e04d387f847DA6FA9f6F6c20C` | 11534993     | Requests, stages, fees, and outputs of each E3             |
-| `CiphernodeRegistry`           | `0x374F4542eC634d5437Dd65020781A9D9Df9c2AB8` | 11534965     | `CiphernodeRegistryOwnable`: committees and committee keys |
-| `BondingRegistry`              | `0x90250Dc48CBe109fFaA02AeAFbFBdbF12D7BD4d4` | 11534966     | Operator bonds and tickets                                 |
-| `SlashingManager`              | `0x489FB674B143E48eaCAaC999B3DF9EA6E95eA79f` | 11534963     | Slashing of ciphernodes that break protocol rules          |
-| `MockUSDC` (fee token)         | `0xC35B783cA97710be47Fc81D10dADc895EfcD865c` | 11534960     | The token that pays E3 fees                                |
-| `Faucet`                       | `0x6e281411C055BEEbD74bDFcB9aB095aa98907F85` | 11534982     | Sends test FOLD and fee tokens                             |
-| `InterfoldToken` (FOLD)        | `0x9752444A6a955D420402EaFf5f818afCddb9c340` | 11534976     | Governance and utility token. Operators bond FOLD.         |
-| `InterfoldTicketToken` (tFOLD) | `0xfFFFc3BB04aEe950c0ed5DEe3214408f09fff488` | 11534961     | Non-transferable operator tickets for sortition            |
-| `E3RefundManager`              | `0x79f9EA83Db0fbe3a2cEB765b18285915331A9dc2` | 11534995     | Refunds for failed E3s                                     |
-| `MockE3Program`                | `0x5874CD49929ffcf380C82cDE1e74188dEaff9791` | 11534990     | A test E3 program                                          |
+| Contract                       | Address                                      | Deploy block | Role                                                        |
+| ------------------------------ | -------------------------------------------- | ------------ | ----------------------------------------------------------- |
+| `Interfold`                    | `0xc5DD9418A0aBF15678F974D2348B4be4D3832B54` | 11855915     | Requests, stages, fees, and outputs of each E3              |
+| `CiphernodeRegistry`           | `0xfa0fCE6afd9b59E2Ac69DC53A128ee5835346B5e` | 11855915     | `CiphernodeRegistryOwnable`: committees and committee keys  |
+| `BondingRegistry`              | `0x55Cf62396e1CAE6Fcc380CfE0b4C48103C4a3711` | 11855915     | Operator bonds and tickets                                  |
+| `SlashingManager`              | `0xd467290E57fa84FAE42A737a83B42a6786175d79` | 11855915     | Slashing of ciphernodes that break protocol rules           |
+| `MockUSDC` (fee token)         | `0xE2e534F7Cb95777eD870CDCaCb80B1E9E2aD555B` | 11856062     | Test USDC, 6 decimals. Anyone can mint it. It pays E3 fees. |
+| `InterfoldToken` (FOLD)        | `0x278d7c3bC100505bfC38163e23Fe2524E3993e83` | 11855821     | Governance and utility token. Operators bond FOLD.          |
+| `InterfoldTicketToken` (tFOLD) | `0x277514D155D61eb51839F33Bd43ad32F4e3F5770` | 11856063     | Non-transferable operator tickets for sortition             |
+| `E3RefundManager`              | `0x083F6Ca7e5be9Efd8fE8ACE503abF2F2ff647Cb9` | 11855915     | Refunds for failed E3s                                      |
+| `NodeReleaseRegistry`          | `0x772caB77BFc39690e13dA2995E926Fb090aD034B` | 11855915     | The ciphernode releases that can join new E3s               |
+| `BondedVotes`                  | `0x85E5176A8d387BE3B53506DDCbBC8aa9c2156E9F` | 11855958     | Voting power of bonded FOLD                                 |
+| `BfvPkVerifierRouter`          | `0x3Cd2472722cad8D17AEd31869b4353eCd10a0425` | 11855912     | Verifies the committee public key proofs                    |
+| `BfvDecryptionVerifierRouter`  | `0xe52e7d820f3A1c56f952B8D7Ba2FA4100c6999D2` | 11855913     | Verifies the decryption proofs                              |
+| `Risc0BfvCiphertextVerifier`   | `0xBBcE489cf767904Ca808944806110d8c8A9332Da` | 11855803     | Verifies the compute proof of each output ciphertext        |
+| `CRISPProgram`                 | `0xc6b6f740C85878D046A50f203A3Aa379150bF8C7` | 11855813     | The CRISP E3 program                                        |
+| `Faucet`                       | `0xA7f0A637Af62fA4E0b46E397D1b85E9b4807f019` | 11856142     | Test faucet. It sends 1000 FOLD and 1000 USDC               |
+
+`MockUSDC` is a test token. Anyone can call its `mint` function. The deployment uses the same token
+as the ticket collateral.
 
 ## What changes on Sepolia
 
 Locally, `pnpm dev:all` deploys its own Interfold contracts, and the deployer owns them. On Sepolia,
 the Interfold team owns the protocol contracts. This changes four steps of the local flow.
 
-| Step                         | Local (`pnpm dev:all`)                                             | Sepolia                                                                                          |
-| ---------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
-| Program registration         | `deployTemplate` calls `registerE3Program`.                        | `registerE3Program` is `onlyOwner`. The owner of the Interfold contract must call it.            |
-| Protocol ciphertext verifier | `deployTemplate` calls `setCiphertextVerifier` with your image ID. | `setCiphertextVerifier` is `onlyOwner`. One verifier serves every BFV program on the deployment. |
-| Data availability            | The coordination server stores the output (`mode: mock_http`).     | Ciphernodes read the output from Avail (`mode: avail`).                                          |
-| Ciphernodes                  | Five local nodes from `scripts/dev_ciphernodes.sh`.                | The nodes of registered operators. Sortition needs enough of them for the committee size.        |
+| Step                         | Local (`pnpm dev:all`)                                             | Sepolia                                                                                               |
+| ---------------------------- | ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
+| Program registration         | `deployTemplate` calls `registerE3Program`.                        | `registerE3Program` is `onlyOwner`. The owner of the Interfold contract must call it.                 |
+| Protocol ciphertext verifier | `deployTemplate` calls `setCiphertextVerifier` with your image ID. | `setCiphertextVerifier` is `onlyOwner`. One verifier with a pinned image ID serves every BFV program. |
+| Data availability            | The coordination server stores the output (`mode: mock_http`).     | Ciphernodes read the output from Avail (`mode: avail`).                                               |
+| Ciphernodes                  | Five local nodes from `scripts/dev_ciphernodes.sh`.                | The nodes of registered operators. Sortition needs enough of them for the committee size.             |
 
 The first two rows mean that you cannot run `deployTemplate` on Sepolia unchanged. The owner-only
 calls revert for any other signer. The last two rows decide if an E3 of your program can complete.
@@ -70,6 +78,7 @@ The procedure below covers each row.
 - A project from the default template. See
   [Build a Complete E3 Program](/build/tutorials/write-e3-program).
 - A deployer account with Sepolia ETH. Use any public Sepolia faucet.
+- A requester account with Sepolia USDC. See [Get Sepolia USDC](#get-sepolia-usdc).
 - A Sepolia RPC endpoint. Hardhat uses HTTPS. The server and the client can use HTTPS or WebSocket.
 - Foundry (`cast`) for the checks.
 
@@ -89,20 +98,23 @@ Set the same values in your shell for the `cast` commands, and add the Interfold
 
 ```bash
 source .env
-INTERFOLD_ADDRESS=0x3E856E24c7a95d0e04d387f847DA6FA9f6F6c20C
+INTERFOLD_ADDRESS=0xc5DD9418A0aBF15678F974D2348B4be4D3832B54
 ```
 
-### Get test tokens
+### Get Sepolia USDC
 
-E3 fees are paid in the fee token (`MockUSDC`). Call `faucet()` on the Faucet contract:
+E3 fees are paid in the fee token. On Sepolia, this is `MockUSDC` at
+`0xE2e534F7Cb95777eD870CDCaCb80B1E9E2aD555B`. It is a test USDC with 6 decimals, and anyone can mint
+it. To get 1000 USDC, run `interfold faucet --chain sepolia`. You can also call `faucet()` on the
+`Faucet` contract, or call `mint` on `MockUSDC`. Then check your balance:
 
 ```bash
-cast send 0x6e281411C055BEEbD74bDFcB9aB095aa98907F85 "faucet()" --rpc-url $RPC_URL --private-key $PRIVATE_KEY
+cast call 0xE2e534F7Cb95777eD870CDCaCb80B1E9E2aD555B "balanceOf(address)(uint256)" <your address> --rpc-url $RPC_URL
 ```
 
-The faucet sends 200 FOLD and 200 fee tokens (`contracts/test/Faucet.sol`). It sends each token only
-if your balance of that token is below 200. It reverts with `You have enough tokens` if you need
-neither. An operator with a configured node can run `interfold faucet` instead.
+The balance has 6 decimals. Requesters do not need FOLD. Only operators bond FOLD. The `Faucet` also
+sends 1000 FOLD. One faucet call provides enough FOLD for the 100 FOLD Sepolia bond. FOLD transfers
+are restricted before the token generation event, and the Interfold team mints FOLD to operators.
 
 ### Record the Interfold address for the deploy script
 
@@ -114,8 +126,8 @@ Hardhat network name (`readDeploymentArgs`). Add a `sepolia` object next to `loc
   "localhost": { "...": "..." },
   "sepolia": {
     "Interfold": {
-      "address": "0x3E856E24c7a95d0e04d387f847DA6FA9f6F6c20C",
-      "blockNumber": 11534993
+      "address": "0xc5DD9418A0aBF15678F974D2348B4be4D3832B54",
+      "blockNumber": 11855915
     }
   }
 }
@@ -134,17 +146,20 @@ chains:
     chain_id: 11155111
     contracts:
       interfold:
-        address: '0x3E856E24c7a95d0e04d387f847DA6FA9f6F6c20C'
-        deploy_block: 11534993
+        address: '0xc5DD9418A0aBF15678F974D2348B4be4D3832B54'
+        deploy_block: 11855915
       ciphernode_registry:
-        address: '0x374F4542eC634d5437Dd65020781A9D9Df9c2AB8'
-        deploy_block: 11534965
+        address: '0xfa0fCE6afd9b59E2Ac69DC53A128ee5835346B5e'
+        deploy_block: 11855915
       bonding_registry:
-        address: '0x90250Dc48CBe109fFaA02AeAFbFBdbF12D7BD4d4'
-        deploy_block: 11534966
+        address: '0x55Cf62396e1CAE6Fcc380CfE0b4C48103C4a3711'
+        deploy_block: 11855915
       fee_token:
-        address: '0xC35B783cA97710be47Fc81D10dADc895EfcD865c'
-        deploy_block: 11534960
+        address: '0xE2e534F7Cb95777eD870CDCaCb80B1E9E2aD555B'
+        deploy_block: 11856062
+      faucet:
+        address: '0xA7f0A637Af62fA4E0b46E397D1b85E9b4807f019'
+        deploy_block: 11856142
 ```
 
 ### Write a Sepolia deploy script
@@ -185,7 +200,9 @@ async function main() {
     )
   }
 
-  // MockRISC0Verifier accepts every seal. Use a real RISC Zero verifier for real proofs.
+  // MockRISC0Verifier accepts every seal, so it weakens only the check in MyProgram.verify. It does
+  // not change the protocol check. On Sepolia, Risc0BfvCiphertextVerifier still rejects a proof that
+  // does not come from the pinned guest. Use a real RISC Zero verifier for real proofs.
   const verifier = await ethers.deployContract('MockRISC0Verifier')
   await verifier.waitForDeployment()
   const imageId = await ethers.deployContract('ImageID')
@@ -254,23 +271,31 @@ with `E3ProgramNotAllowed`.
 
 ### Check the protocol ciphertext verifier
 
-Every output proof must pass the ciphertext verifier that the owner set for BFV. Read it:
+Every output proof must pass the ciphertext verifier that the owner set for BFV. On Sepolia, this is
+`Risc0BfvCiphertextVerifier` at `0xBBcE489cf767904Ca808944806110d8c8A9332Da`. It uses the real RISC
+Zero Groth16 verifier `RiscZeroGroth16Verifier` at `0x09B1727BcFd2D9EdAe16bB2838fe5bF2f48cd360`. It
+pins one guest image ID. Read the verifier address:
 
 ```bash
 cast call $INTERFOLD_ADDRESS "getCiphertextVerifier(bytes32)(address)" $(cast keccak "fhe.rs:BFV") --rpc-url $RPC_URL
 ```
 
-If the address is a `Risc0BfvCiphertextVerifier`, read its image ID and its RISC Zero verifier:
+Read the image ID and the RISC Zero verifier of that address:
 
 ```bash
 cast call <verifier address> "imageId()(bytes32)" --rpc-url $RPC_URL
 cast call <verifier address> "risc0Verifier()(address)" --rpc-url $RPC_URL
 ```
 
-Your output proofs must pass that RISC Zero verifier for that image ID. The program server in dev
-mode (`program.dev: true`) makes mock proofs, which only a mock RISC Zero verifier accepts. The
-Interfold contract copies the current verifier into each E3 at request time, so a later change
-applies only to new requests. See
+The image ID is `0xa38bb986e6c064ba05001b83fd40dccbaceec63aa397d4220ac25ad4d2c84338`. It is the
+`PROGRAM_ID` in `crates/support/contracts/ImageID.sol`. A program on Sepolia must produce its
+compute proofs from this guest. A proof from another guest makes `publishCiphertextOutput` revert
+with `InvalidOutput`. The program server in dev mode (`program.dev: true`) makes mock proofs, and
+the real verifier rejects them.
+
+A mock RISC Zero verifier in your program affects only `MyProgram.verify`. It does not affect the
+protocol verifier. The Interfold contract copies the current verifier into each E3 at request time,
+so a later change applies only to new requests. See
 [Verify the Compute Provider](/build/e3-program/verify-compute-provider).
 
 ### Replace the local data-availability check
@@ -396,8 +421,9 @@ await sdk.onInterfoldEvent(InterfoldEventType.PLAINTEXT_OUTPUT_PUBLISHED, (event
 | `packages/interfold-contracts` | `pnpm run deploy --network <name>`                                                     | Deploys the protocol contracts (`scripts/run.ts`, `deployInterfold`). This is for the protocol owner.                          |
 | `packages/crisp-contracts`     | `pnpm deploy:contracts --network sepolia`                                              | Deploys CRISP and its verifiers, and wires them only when the signer owns the Interfold contract.                              |
 
-`deployInterfold` accepts mock contracts on chain ID 11155111. On other chains it refuses mocks
-unless `ALLOW_MOCKS_ON_PRODUCTION=true` is set.
+The current Sepolia deployment has two test contracts: `MockUSDC` and the `Faucet`. Its verifiers
+are real. `deployInterfold` can still deploy mock contracts on chain ID 11155111. On other chains it
+refuses mocks unless `ALLOW_MOCKS_ON_PRODUCTION=true` is set.
 
 ## Troubleshooting
 
@@ -409,7 +435,8 @@ unless `ALLOW_MOCKS_ON_PRODUCTION=true` is set.
 | `FeeExceedsMaximum` on request               | The fee changed after the quote.                                        | Get a new quote and request again.                                                    |
 | `InvalidInputDeadlineStart` on request       | `inputWindow[0]` is earlier than the block time.                        | Compute the window with `calculateInputWindow(publicClient, duration)`.               |
 | No committee key                             | Sortition did not select a full committee, or the DKG did not finish.   | Read the stage with `getE3Stage`. If it is `Failed`, request a new E3.                |
-| `InvalidOutput` on output publication        | The protocol verifier or `MyProgram.verify` rejected the compute proof. | Check the protocol ciphertext verifier and your image ID (see the steps above).       |
+| `InvalidOutput` on output publication        | The protocol verifier or `MyProgram.verify` rejected the compute proof. | Make sure that the proof comes from the pinned guest and passes `MyProgram.verify`.   |
+| `RequestsPaused` on request                  | Sepolia requests are paused.                                            | Wait until the owner unpauses requests. `requestsPaused()` returns `false` then.      |
 | The E3 does not finish after the output      | The committee cannot read the output from Avail.                        | Replace the local data-availability check, and publish the output to Avail.           |
 
 ## Next steps

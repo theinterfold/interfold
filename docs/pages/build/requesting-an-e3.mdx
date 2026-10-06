@@ -102,17 +102,20 @@ The deployment configuration sets the fee token and the pricing. Governance can 
 with `setFeeAssetConfig` and `setRandomnessFlatFee`. Read the live values with `feeToken()`,
 `feeTokenDecimals()`, and `getPricingConfig()`.
 
-| Setting             | Ethereum mainnet            | Sepolia and local chains |
-| ------------------- | --------------------------- | ------------------------ |
-| Fee token           | USDS, 18 decimals           | `MockUSDC`, 6 decimals   |
-| `randomnessFlatFee` | 5 USDS                      | 1.00 MockUSDC            |
-| `marginBps`         | 1000 (10%)                  | 1000 (10%)               |
-| `protocolShareBps`  | 182 (1.82% of service fees) | 182                      |
-| `minCommitteeSize`  | 19                          | 0 (no minimum)           |
-| `minThreshold`      | 2                           | 0 (no minimum)           |
+| Setting             | Ethereum mainnet            | Sepolia                | Local chains           |
+| ------------------- | --------------------------- | ---------------------- | ---------------------- |
+| Fee token           | USDS, 18 decimals           | `MockUSDC`, 6 decimals | `MockUSDC`, 6 decimals |
+| `randomnessFlatFee` | 5 USDS                      | 1 USDC                 | 1.00 MockUSDC          |
+| `marginBps`         | 1000 (10%)                  | 1000 (10%)             | 1000 (10%)             |
+| `protocolShareBps`  | 182 (1.82% of service fees) | 182                    | 182                    |
+| `minCommitteeSize`  | 19                          | 3                      | 0 (no minimum)         |
+| `minThreshold`      | 2                           | 2                      | 0 (no minimum)         |
 
-The mainnet values come from `deploy/protocol/mainnet-protocol.config.json`. The Sepolia and local
-values come from `scripts/deployInterfold.ts`. For the contract addresses, see
+The mainnet values come from `deploy/protocol/mainnet-protocol.config.json`. The Sepolia values come
+from `deploy/protocol/sepolia-protocol.config.json`. The local values come from
+`scripts/deployInterfold.ts`. On Sepolia, `MockUSDC` is a test token that anyone can mint. To get
+Sepolia USDC, run `interfold faucet --chain sepolia`. You can also call `faucet()` on the `Faucet`
+contract, or call `mint` on `MockUSDC`. For the contract addresses, see
 [Contracts & Addresses](/reference/contracts).
 
 Each request freezes its fee token. Refunds and rewards for that E3 use the frozen token, also after
@@ -320,8 +323,8 @@ A parameter set must also be registered on the chain. `paramSetRegistry(paramSet
 bytes for an unregistered set. The local deploy script registers the set of the active circuit build
 (set 0 in the checked-in configuration). With mock verifiers, it configures thresholds for all three
 sizes. With `ENABLE_ZK_VERIFICATION=true`, it configures thresholds only for the committee of the
-active circuit build, because its verifiers check only that committee.
-Mainnet retains index 1 for older E3s; version-7 requests use index 2.
+active circuit build, because its verifiers check only that committee. Mainnet retains index 1 for
+older E3s; version-7 requests use index 2.
 
 Use these rules to choose:
 
