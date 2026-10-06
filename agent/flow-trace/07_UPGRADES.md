@@ -237,12 +237,11 @@ For a key file with a record, the purge holds the lock of the recorded store and
 for key shares and the operator key, also when the node ran with another `E3_DATA_DIR`, `data_dir`,
 or working directory; the store at the configured path is then checked for key shares only. A key
 file that no configured node uses, in a node's key folder or directly in the configuration folder,
-is checked through its record. Without a record, a key file directly in the configuration folder
-is a refusal, and a key folder needs a node folder of the same name with a store. The record names
-the store of the last start only. A key file without a record, as of a node that has not started
-with this release, is checked through the store at the configured path or in its node folder,
-which a stale copy of the store can pass. The purge finds stores only directly inside node
-folders.
+is checked through its record. Without a record, a key file directly in the configuration folder is
+a refusal, and a key folder needs a node folder of the same name with a store. The record names the
+store of the last start only. A key file without a record, as of a node that has not started with
+this release, is checked through the store at the configured path or in its node folder, which a
+stale copy of the store can pass. The purge finds stores only directly inside node folders.
 
 `interfold node reset-data` is the supported path. It takes the same `ProcessFence` as `start`, so
 it refuses while a node runs, copies both secrets out as ciphertext without the password, backs them

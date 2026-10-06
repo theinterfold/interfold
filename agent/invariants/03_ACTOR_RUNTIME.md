@@ -61,8 +61,8 @@ the code does not meet yet.
   next transition. Never mutate memory and rely on fire-and-forget persistence. **Gap:**
   `Persistable::try_mutate` enqueues its snapshot write and does not wait for it. Slash submissions
   have a durable intent record, and threshold-keyshare records its BFV encryption keypair with
-  `DurableIntent` (written and flushed outside the snapshot batches) before it publishes the key;
-  no general transactional outbox exists. — `ARCHITECTURE.md`; `crates/data/src/persistable.rs`;
+  `DurableIntent` (written and flushed outside the snapshot batches) before it publishes the key; no
+  general transactional outbox exists. — `ARCHITECTURE.md`; `crates/data/src/persistable.rs`;
   `crates/data/src/durable_intent.rs`
 - The append-only event log is the durable source of truth; snapshots and the timestamp index are
   derived optimizations. Replay-from-checkpoint and snapshot-hydration at the same logical point
@@ -270,10 +270,9 @@ the code does not meet yet.
   order. Startup fences `EffectsEnabled` → `SyncEffect` → canonical history → `SyncEnded` in that
   order. `ComputeEffectGate` buffers and deduplicates until `EffectsEnabled`. It sends a live
   response or error to every waiting correlation ID. It reuses a response seen during replay, but
-  not a replayed error, so the regenerated request runs again. A request under a new ID whose
-  result has not reached the gate 10 minutes after it went to the worker goes to the worker again,
-  because fan-out can drop that result. —
-  `crates/multithread/src/effect_gate.rs`; `CRATES_ARCHITECTURE.md`
+  not a replayed error, so the regenerated request runs again. A request under a new ID whose result
+  has not reached the gate 10 minutes after it went to the worker goes to the worker again, because
+  fan-out can drop that result. — `crates/multithread/src/effect_gate.rs`; `CRATES_ARCHITECTURE.md`
 - Keyshare coalesces decryption work per phase in each process. Admission of an already-retained
   canonical key is a no-op. Repeated chain observations and resume signals cannot add share
   correlations or repeat C6 proof intents. Hydration clears the dispatch markers, and the worker
@@ -319,12 +318,11 @@ the code does not meet yet.
   reader reports each successful head read to an `IngestionProgressSink`; `interfold start` writes
   one heartbeat file per chain under `<node data dir>/ingestion/`, and `dappnode/healthcheck.sh`
   fails when a heartbeat is older than 120 s or neither its head nor its cursor moved for 600 s.
-  `start` first records how many chain readers it starts, and when (`<node data dir>/ingestion/expected`);
-  after a 900 s startup grace the check requires a heartbeat from each, so a reader that never
-  reaches its first read fails it too. **Gap:** a heartbeat write that fails after the startup
-  probe is only logged. —
-  `crates/evm/src/chain_reader/progress.rs`; `dappnode/healthcheck.sh`; `flow-trace/03`;
-  `flow-trace/06`
+  `start` first records how many chain readers it starts, and when
+  (`<node data dir>/ingestion/expected`); after a 900 s startup grace the check requires a heartbeat
+  from each, so a reader that never reaches its first read fails it too. **Gap:** a heartbeat write
+  that fails after the startup probe is only logged. — `crates/evm/src/chain_reader/progress.rs`;
+  `dappnode/healthcheck.sh`; `flow-trace/03`; `flow-trace/06`
 - A network event cannot create a request context for an unknown E3. Only chain events or restored
   snapshots admit an E3; peer events can only contribute to an admitted one. —
   `crates/request/src/routing/workflow.rs`

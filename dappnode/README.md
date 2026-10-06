@@ -265,14 +265,14 @@ The check fails when a heartbeat is older than `INGESTION_MAX_AGE_SECS` (120) or
 nor its cursor moved for `INGESTION_STALL_MAX_SECS` (600), which catches a reader that stopped
 polling, an RPC endpoint that stopped following the chain, and a sync that stopped advancing. A node
 without a heartbeat is still starting: the node removes the files of an earlier run at startup, and
-it refuses to start when it cannot write them. At startup the node also writes `expected` in the same
-folder (`chains=<enabled chains>`, `started_at=<Unix seconds>`). Once `INGESTION_START_GRACE_SECS`
-(900) have passed since then, every enabled chain must have a heartbeat, so a reader that never
-reaches its first successful read, as against an RPC endpoint that never answers, fails the check
-instead of passing as a starting node. The node writes `expected` before it starts any reader, so a
-heartbeat without `expected` fails the check. The node refuses to start with two enabled entries of
-one chain, also in bootstrap mode, so each entry has its own heartbeat file. A write that fails later leaves the previous file
-in place, which then goes stale.
+it refuses to start when it cannot write them. At startup the node also writes `expected` in the
+same folder (`chains=<enabled chains>`, `started_at=<Unix seconds>`). Once
+`INGESTION_START_GRACE_SECS` (900) have passed since then, every enabled chain must have a
+heartbeat, so a reader that never reaches its first successful read, as against an RPC endpoint that
+never answers, fails the check instead of passing as a starting node. The node writes `expected`
+before it starts any reader, so a heartbeat without `expected` fails the check. The node refuses to
+start with two enabled entries of one chain, also in bootstrap mode, so each entry has its own
+heartbeat file. A write that fails later leaves the previous file in place, which then goes stale.
 
 This remains a liveness check, not proof of healthy RPC responses, honest peers, registration, or
 safe protocol participation. Operators must inspect logs and on-chain status before treating the

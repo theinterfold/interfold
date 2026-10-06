@@ -356,8 +356,8 @@ jobs:
     # The DAppNode job is skipped for a pre-release. The implicit success() check fails on that skip.
     # failure() still stops this job when any earlier job fails.
     if: >-
-      ${{ !cancelled() && !failure() && needs.build-binaries.result == 'success' &&
-      needs.download-circuits.result == 'success' && needs.publication-gate.result == 'success' }}
+      ${{ !cancelled() && !failure() && needs.build-binaries.result == 'success' && needs.download-circuits.result == 'success' &&
+      needs.publication-gate.result == 'success' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
