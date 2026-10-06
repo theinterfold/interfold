@@ -21,12 +21,13 @@ the unsigned layout. Protocol version 7 and node generation 2 remain the release
 This change requires drain-and-resync; it has no layout migration.
 
 The fhe.rs v0.4.1 upgrade sets `protocol_version` to 7. Its smudging bound and BFV validation rules
-change the DKG and proof inputs. Its non-centered plaintext scale also changes the CRISP ballot check
-and its circuit artifacts. Drain active E3s and install matching circuit artifacts and verifier
-routes before requests resume. Both parameter sets use the circuit ID domain `interfold-bfv-v4`. Old
-clients must update their expected configuration IDs before they submit new requests. The RISC Zero
-guest in `crates/support` uses a separate, content-addressed Interfold revision. Rebuild its image
-and provenance record before changing that guest revision or its fhe.rs pin.
+change the DKG and proof inputs. Its non-centered plaintext scale also changes the CRISP ballot
+check and its circuit artifacts. Drain active E3s and install matching circuit artifacts and
+verifier routes before requests resume. Both parameter sets use the circuit ID domain
+`interfold-bfv-v4`. Old clients must update their expected configuration IDs before they submit new
+requests. The RISC Zero guest in `crates/support` uses a separate, content-addressed Interfold
+revision. Rebuild its image and provenance record before changing that guest revision or its fhe.rs
+pin.
 
 The mainnet `paramSetRegistry(1)` contains the previous secure parameters and cannot be changed.
 Version 7 uses parameter-set index 2 for the new secure tuple. Keep index 1 intact for old E3
@@ -134,11 +135,10 @@ unchanged. The builder generates both precomputed IDs. Runtime readers, CRISP in
 tooling, and the SDK use the same IDs and reject v1, v2, and v3 requests. The indexer also accepts
 v1 keys of historical index-0 and index-1 E3s, as the version model describes. It skips keys for
 other unsupported configuration IDs without storing them. This lets its catch-up cursor advance
-across drained unsupported rounds to recover supported rounds. Recursive folds carry
-fixed leaf, fold, and genesis VK hashes. Final aggregator public input zero binds the complete
-recursive VK tree. These proof formats require a governance cutover, not a mixed rolling release.
-Rebuild all six artifact pairs and replace the immutable BFV verifier wrappers and routers before
-requests resume.
+across drained unsupported rounds to recover supported rounds. Recursive folds carry fixed leaf,
+fold, and genesis VK hashes. Final aggregator public input zero binds the complete recursive VK
+tree. These proof formats require a governance cutover, not a mixed rolling release. Rebuild all six
+artifact pairs and replace the immutable BFV verifier wrappers and routers before requests resume.
 
 The initial VRF upgrade follows this combined path because it introduces the controller and changes
 both `Interfold` and `BondingRegistry`.

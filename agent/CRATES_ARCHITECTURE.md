@@ -620,17 +620,17 @@ holds one event at a timestamp and stops the node at a second one, so the node f
 claims of the records in its store after the cursor on their timestamps (each record's ID and the
 SHA-256 digest of its payload's encoding, within the fetch deadline and at most 100,000 of them).
 The read includes the legacy records of another aggregate that queries otherwise quarantine: they
-hold their timestamps in the store too. It adds the claims of the historical EVM events that
-startup publishes with the peer history. It refuses a peer that serves an event from before the
-requested time, two events at one timestamp, or an event at a claimed timestamp whose ID or payload
-digest differs from the claim's; two sources that put different events at one timestamp fail the
-fetch. A failed peer is replaced by another one. When the listed
-peers do not supply two sources, the aggregate's fetch fails and a recovery round asks again; one
-connected peer serves alone. A peer that a later peer can replace gets one attempt per page and the
-time left less 60 s for each source that the node would then still lack (at least 30 s), so slow or
-silent peers cannot use up the five-minute fetch deadline before the node reaches a healthy one; a
-peer that no later peer can replace gets three attempts and all the time left. Listing the admitted
-peers and the waits between recovery rounds count against the deadline too.
+hold their timestamps in the store too. It adds the claims of the historical EVM events that startup
+publishes with the peer history. It refuses a peer that serves an event from before the requested
+time, two events at one timestamp, or an event at a claimed timestamp whose ID or payload digest
+differs from the claim's; two sources that put different events at one timestamp fail the fetch. A
+failed peer is replaced by another one. When the listed peers do not supply two sources, the
+aggregate's fetch fails and a recovery round asks again; one connected peer serves alone. A peer
+that a later peer can replace gets one attempt per page and the time left less 60 s for each source
+that the node would then still lack (at least 30 s), so slow or silent peers cannot use up the
+five-minute fetch deadline before the node reaches a healthy one; a peer that no later peer can
+replace gets three attempts and all the time left. Listing the admitted peers and the waits between
+recovery rounds count against the deadline too.
 
 Each reply carries `observed_from`, a hint of the time from which the responder stores history live.
 The responder sets it once the gossip that it held during its own startup is durable: its startup
@@ -650,10 +650,9 @@ refuses a peer's history with an event stamped beyond its clock-drift allowance.
 source against the allowance when that source's history is complete, because a peer ahead of the
 node within the allowance stores events while the node pages; the allowance has only grown when the
 node applies it again at publication. A history that it still cannot publish fails startup through
-the startup coordinator. The hint does not make a reply
-complete: gossip that the responder received but has not stored yet, in its translator or event
-pipeline, is missing from a read. So the node relies on the union of two sources, and a wrong hint
-only means that it asks no more peers than two.
+the startup coordinator. The hint does not make a reply complete: gossip that the responder received
+but has not stored yet, in its translator or event pipeline, is missing from a read. So the node
+relies on the union of two sources, and a wrong hint only means that it asks no more peers than two.
 
 The document publisher fetches documents in spawned tasks, so a slow DHT read does not hold its
 ingress loop. At most 8 fetches run and 512 documents wait. Four concurrent N=19 E3s need

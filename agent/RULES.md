@@ -173,8 +173,8 @@ Scale the review to the risk. Review the diff (`git diff`), not your memory of t
 Handle each finding with Change discipline rule 7. The review does not replace the gates, and the
 gates do not replace the review: most invariants have no mechanical check.
 
-When the change consolidates a scattered domain, report the same counts from the first audit.
-Report files, copies, and disagreements. A clean compile is not enough.
+When the change consolidates a scattered domain, report the same counts from the first audit. Report
+files, copies, and disagreements. A clean compile is not enough.
 
 ## Harness docs
 

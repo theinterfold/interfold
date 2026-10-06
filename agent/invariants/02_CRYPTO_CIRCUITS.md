@@ -285,19 +285,19 @@ every section.
   codebase, and keeps the hint in the generator where the rest of them live. A prover-supplied value
   needs a `should_fail` test in each direction, since nothing else stops it being wrong. —
   `flow-trace/04`
-- **A path gated off for one preset is the path CI exercises least, and usually the one that ships.**
-  C3's scaled quotient is generated-false on insecure-512, which is the default preset and the only
-  one `rust:test:proofs` and `local_e2e_tests` run. So the production path gets no end-to-end proof
-  coverage from them: it needs its own `nargo execute` against a real secure-8192 witness, plus a
-  unit test that enters the branch. Before C3 added one, every C3 test exercised the fallback. —
-  `flow-trace/04`
+- **A path gated off for one preset is the path CI exercises least, and usually the one that
+  ships.** C3's scaled quotient is generated-false on insecure-512, which is the default preset and
+  the only one `rust:test:proofs` and `local_e2e_tests` run. So the production path gets no
+  end-to-end proof coverage from them: it needs its own `nargo execute` against a real secure-8192
+  witness, plus a unit test that enters the branch. Before C3 added one, every C3 test exercised the
+  fallback. — `flow-trace/04`
 - **Grep `nargo execute` output for `bug:`, not just for failure.** Noir's "Brillig function call
-  isn't properly covered by a manual constraint" diagnostic prints even under
-  `--silence-warnings`, and a witness that solves says nothing about it. It is call-site sensitive:
-  `reduce_mod_bounded` draws it from one C6 context while C7 calls the same helper four times
-  cleanly, and widening the quotient bound made it worse, so the trigger is not understood. Treat it
-  as blocking on a soundness-critical circuit rather than reasoning past it -- C6's `d_native_trunc`
-  derivation was dropped for this, at a measured cost of 1,950 gates. — `flow-trace/04`
+  isn't properly covered by a manual constraint" diagnostic prints even under `--silence-warnings`,
+  and a witness that solves says nothing about it. It is call-site sensitive: `reduce_mod_bounded`
+  draws it from one C6 context while C7 calls the same helper four times cleanly, and widening the
+  quotient bound made it worse, so the trigger is not understood. Treat it as blocking on a
+  soundness-critical circuit rather than reasoning past it -- C6's `d_native_trunc` derivation was
+  dropped for this, at a measured cost of 1,950 gates. — `flow-trace/04`
 - **A bound already transferred by a checked opening must not be re-asserted when reducing an
   identity.** Reducing modulo `X^N + 1` means every coefficient the identity reads needs a real
   bound, but "real" includes one inherited through an injective opening -- it does not have to be
@@ -318,8 +318,8 @@ every section.
   bound a CRT-reconstructed integer -- each residue under `(q_l - 1) / 2` still permits `~Q/2` --
   which is IF-005 exactly. It reads as an optimisation because against _its own_ base it was a
   tightening. Before porting any part of that branch, check whether the code it replaces was
-  introduced by a finding on this branch: `git log -S` on the deleted identifier answers it. Only the
-  negacyclic reduction was taken for C1. — `flow-trace/04`
+  introduced by a finding on this branch: `git log -S` on the deleted identifier answers it. Only
+  the negacyclic reduction was taken for C1. — `flow-trace/04`
 - **Renaming a generated config global needs the declaration seeded by hand first.**
   `build-circuits.ts` splices `pub global NAME: ...;` into `configs/{secure,insecure}/*.nr` **by
   name**. It throws `Missing NAME` if the target does not already declare a generated global, and it
@@ -366,12 +366,12 @@ every section.
   committed coefficients. With the checked helper on the three commitments, the secure `crisp`
   circuit measured 2,520,034 gates, above the browser ceiling. The exemption holds only for that
   shape of relation, and only while every commitment in it has a bounded opening that something else
-  fixes: the ballot through the range checks of `user_data_encryption_ct0/ct1`, and the
-  parent and the published result because `chain_head_per_slot` takes an entry only when its bytes
-  reproduce its commitment and it extends the selected head. A check at one point over those
-  commitments, or a Secure Process that follows a parent by its stored commitment without its bytes,
-  needs injective openings: chained masks could then carry a coefficient past the radix and shift a
-  plaintext coefficient by a carry. — `flow-trace/04`
+  fixes: the ballot through the range checks of `user_data_encryption_ct0/ct1`, and the parent and
+  the published result because `chain_head_per_slot` takes an entry only when its bytes reproduce
+  its commitment and it extends the selected head. A check at one point over those commitments, or a
+  Secure Process that follows a parent by its stored commitment without its bytes, needs injective
+  openings: chained masks could then carry a coefficient past the radix and shift a plaintext
+  coefficient by a carry. — `flow-trace/04`
 - A bound that is not tight enough for the slot is no bound for this purpose. C2b's `as u64` cast
   limited coefficients to `2^64` while the slot was `radix = 2^64` with `base = 2^60`, so a digit
   could still overflow. — `flow-trace/04`
@@ -522,16 +522,17 @@ every section.
   a drop is visible only while a client checks, there is no retry after the commitment deadline, the
   answer depends on the server holding every indexed input, and the governance apps do not run the
   check. — `flow-trace/04`
+
 - **Every change to the inputs of a CRISP round is counted in the round's input generation.**
   `state/previous-ciphertext` and `POST /voting/selection` read the inputs through a cache in the
   server process (`indexed_inputs`). A read is cached only while the generation under
-  `_e3:crisp_inputs:{id}` has as many changes finished as started, and it is served only while
-  the generation stays the same. A write to `input_commitments`, `input_slots`, `input_parents`,
-  `input_usable`, `input_ciphertext_hashes` or `ciphertext_inputs` must go through
-  `modify_inputs`, which counts the change as started before the record write and as finished
-  after it. Another write leaves the cache with the old inputs: voters then build on a stale head,
-  and the Secure Process drops their inputs. `settle_input_generation` may make the counts equal
-  only at startup, before the indexer runs. — `flow-trace/04`
+  `_e3:crisp_inputs:{id}` has as many changes finished as started, and it is served only while the
+  generation stays the same. A write to `input_commitments`, `input_slots`, `input_parents`,
+  `input_usable`, `input_ciphertext_hashes` or `ciphertext_inputs` must go through `modify_inputs`,
+  which counts the change as started before the record write and as finished after it. Another write
+  leaves the cache with the old inputs: voters then build on a stale head, and the Secure Process
+  drops their inputs. `settle_input_generation` may make the counts equal only at startup, before
+  the indexer runs. — `flow-trace/04`
 
 - **CRISP's three ballot operations prove one relation and publish one shape.** Voting, updating,
   and masking all prove `published = addend + ballot`, with the addend selected by the private
@@ -566,12 +567,12 @@ every section.
   witness generator reverses the message over the full degree, so the payload starts at
   `D - MAX_MSG_NON_ZERO_COEFFS + (MAX_MSG_NON_ZERO_COEFFS mod num_options)` with the options back to
   front; `crisp_lib::utils::ballot_layout` derives that offset, both checkers use it, and no code
-  may hand-code it. Each coefficient inside an option segment encodes one bit as 0 or
-  `q_mod_t`, everything outside the ballot region must be zero, and a mask's plaintext must
-  be zero everywhere. Indexing as if the polynomial were the message width makes both checks read
-  only padding: every vote passes any balance bound, and a mask — which needs no signature and may
-  be written to any eligible slot — can carry an arbitrary payload into someone else's ballot. Tests
-  must build `k1` at the compiled degree, not at `MAX_MSG_NON_ZERO_COEFFS`. — `flow-trace/04`
+  may hand-code it. Each coefficient inside an option segment encodes one bit as 0 or `q_mod_t`,
+  everything outside the ballot region must be zero, and a mask's plaintext must be zero everywhere.
+  Indexing as if the polynomial were the message width makes both checks read only padding: every
+  vote passes any balance bound, and a mask — which needs no signature and may be written to any
+  eligible slot — can carry an arbitrary payload into someone else's ballot. Tests must build `k1`
+  at the compiled degree, not at `MAX_MSG_NON_ZERO_COEFFS`. — `flow-trace/04`
 - **The SAFE ciphertext commitment requires exactly two components.** It covers `c[0]` and `c[1]`
   only, matching the Noir circuit, so `bfv_ciphertext_to_greco` rejects any other component count. A
   padded ciphertext would otherwise share a commitment with its two-component prefix while threshold
