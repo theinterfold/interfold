@@ -178,13 +178,25 @@ pub async fn validate_node(config: &AppConfig, repair: bool) -> Result<Validatio
     // empty folder at the store path, such as a mount point, holds no store either.
     if !holds_sled_store(&config.db_file()) {
         let mut logs_with_events = Vec::new();
+        let mut unreadable = Vec::new();
         for agg in &aggregate_ids {
             let path = enumerate_path(&config.log_file(), agg.to_usize());
-            if CommitLogEventLog::has_records(&path)? {
-                logs_with_events.push(path.display().to_string());
+            match CommitLogEventLog::has_records(&path) {
+                Ok(true) => logs_with_events.push(path.display().to_string()),
+                Ok(false) => {}
+                Err(error) => unreadable.push(format!("{}: {error:#}", path.display())),
             }
         }
-        report.push(if logs_with_events.is_empty() {
+        report.push(if !unreadable.is_empty() {
+            CheckResult::fail(
+                "store",
+                format!(
+                    "no node store at {}, and the event log(s) cannot be read: {}",
+                    config.db_file().display(),
+                    unreadable.join("; ")
+                ),
+            )
+        } else if logs_with_events.is_empty() {
             CheckResult::warn(
                 "store",
                 format!(
