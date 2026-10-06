@@ -97,29 +97,27 @@ fn proof(seed: u8) -> Proof {
     )
 }
 
-fn pending(sk: usize, esm: usize) -> PendingThresholdProofs {
+fn pending(sk: usize) -> PendingThresholdProofs {
     PendingThresholdProofs::new(
         E3id::new("1", 1),
         full_share(),
         ec(),
         sk,
-        esm,
         vec![1, 2, 3],
     )
 }
 
 #[test]
 fn threshold_completes_only_when_all_proofs_present() {
-    let mut p = pending(1, 1);
+    let mut p = pending(1);
     assert!(!p.is_complete());
     assert_eq!(p.total_expected(), 2 + 1);
     assert_eq!(p.total_received(), 0);
 
     p.store_proof(&ThresholdProofKind::PkGeneration, proof(1));
     p.store_proof(&ThresholdProofKind::SkShareComputation, proof(2));
-    p.store_proof(&ThresholdProofKind::ESmShareComputation, proof(3));
     assert!(!p.is_complete());
-    assert_eq!(p.total_received(), 3);
+    assert_eq!(p.total_received(), 2);
 
     p.store_proof(
         &ThresholdProofKind::SkShareEncryption {
@@ -129,21 +127,12 @@ fn threshold_completes_only_when_all_proofs_present() {
         proof(4),
     );
     assert!(p.is_complete());
-    p.store_proof(
-        &ThresholdProofKind::ESmShareEncryption {
-            esi_index: 0,
-            recipient_party_id: 2,
-            row_index: 0,
-        },
-        proof(5),
-    );
-    assert!(p.is_complete());
-    assert_eq!(p.total_received(), 5);
+    assert_eq!(p.total_received(), 3);
 }
 
 #[test]
 fn store_proof_dedupes_by_key() {
-    let mut p = pending(2, 0);
+    let mut p = pending(2);
     let key = ThresholdProofKind::SkShareEncryption {
         recipient_party_id: 2,
         row_index: 0,
@@ -155,14 +144,12 @@ fn store_proof_dedupes_by_key() {
 }
 
 #[test]
-fn decryption_completes_when_sk_and_all_esm_present() {
+fn decryption_completes_when_the_secret_key_proof_is_present() {
     let mut d = PendingDecryptionProofs {
         party_id: 7,
         node: "n".into(),
         ec: ec(),
         sk_proof: None,
-        esm_proofs: HashMap::new(),
-        expected_esm_count: 2,
     };
     assert!(!d.is_complete());
     d.sk_proof = Some(proof(1));
@@ -170,24 +157,11 @@ fn decryption_completes_when_sk_and_all_esm_present() {
 }
 
 #[test]
-fn decryption_requires_contiguous_esm_indices() {
-    let d = PendingDecryptionProofs {
-        party_id: 7,
-        node: "n".into(),
-        ec: ec(),
-        sk_proof: Some(proof(1)),
-        esm_proofs: HashMap::new(),
-        expected_esm_count: 2,
-    };
-    assert!(d.is_complete());
-}
-
-#[test]
 fn node_agg_meta_seq_helpers() {
-    assert_eq!(total_expected_for(2, 1), 4 + 2);
+    assert_eq!(total_expected_for(2), 4 + 2);
     let meta = NodeAggregationMeta {
         party_id: 0,
-        total_expected: total_expected_for(2, 1),
+        total_expected: total_expected_for(2),
         pending_c0: None,
     };
     // c4_base_seq sits just after C0..C3 = total_expected - 1.
@@ -213,11 +187,7 @@ fn threshold_plan_assigns_canonical_seqs() {
 
 #[test]
 fn decryption_plan_assigns_offset_seqs() {
-    let plan = plan_decryption_dispatch(
-        dkg_share_decryption_req(),
-        vec![dkg_share_decryption_req(), dkg_share_decryption_req()],
-        7,
-    );
+    let plan = plan_decryption_dispatch(dkg_share_decryption_req(), 7);
     let seqs: Vec<usize> = plan.iter().map(|i| i.seq).collect();
     assert_eq!(seqs, vec![7]);
     assert!(matches!(plan[0].kind, DecryptionProofKind::SecretKey));

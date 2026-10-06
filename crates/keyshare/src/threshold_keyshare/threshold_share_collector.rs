@@ -163,7 +163,6 @@ impl Handler<TypedEvent<ThresholdShareCreated>> for ThresholdShareCollector {
         let proofs = ReceivedShareProofs {
             signed_c2a_proof: msg.signed_c2a_proof,
             signed_c3a_proofs: msg.signed_c3a_proofs,
-            signed_c3b_proofs: msg.signed_c3b_proofs,
         };
         let outcome = self.collection.receive(msg.share, proofs);
         if !matches!(&outcome, ShareCollectOutcome::Ignored) {

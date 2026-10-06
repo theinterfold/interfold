@@ -85,13 +85,6 @@ pub use recovery_payloads::ThresholdKeyshareRecoveryPayloads;
 #[rtype(result = "()")]
 pub struct GenPkShareAndSkSss(CiphernodeSelected);
 
-#[derive(Message, Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-#[rtype(result = "()")]
-pub struct GenEsiSss {
-    pub ciphernode_selected: CiphernodeSelected,
-    pub e_sm_raw: SensitiveBytes,
-}
-
 #[derive(Message)]
 #[rtype(result = "()")]
 pub struct AllThresholdSharesCollected {
@@ -115,7 +108,6 @@ impl AllThresholdSharesCollected {
                 proofs.get(pid).cloned().unwrap_or(ReceivedShareProofs {
                     signed_c2a_proof: None,
                     signed_c3a_proofs: Vec::new(),
-                    signed_c3b_proofs: Vec::new(),
                 })
             })
             .collect();
@@ -148,15 +140,10 @@ pub type DkgTimingReader = Arc<dyn Fn(E3id) -> DkgTimingFuture + Send + Sync>;
 struct PendingKeyshareWork {
     /// Replayed key-generation output waiting for encryption-key recovery.
     gen_pk_response: Option<TypedEvent<ComputeResponse>>,
-    /// Replayed ESI output waiting for key-generation recovery.
-    gen_esi_response: Option<TypedEvent<ComputeResponse>>,
     /// Shares awaiting the C2/C3 verification result.
     shares: Vec<Arc<ThresholdShare>>,
-    /// C4 requests awaiting the threshold-decryption-key result.
-    share_decryption_data: Option<(
-        DkgShareDecryptionProofRequest,
-        Vec<DkgShareDecryptionProofRequest>,
-    )>,
+    /// C4a request awaiting the threshold-decryption-key result.
+    share_decryption_data: Option<DkgShareDecryptionProofRequest>,
     /// Peer C4 artifacts awaiting verification.
     c4_verification_shares: Option<HashMap<u64, DecryptionKeyShared>>,
     /// Own plaintext DKG shares awaiting the aggregation transition.
@@ -222,7 +209,7 @@ impl ThresholdKeyshare {
         let share_decryption_data = recovered
             .decryption_share_proofs_pending
             .as_ref()
-            .map(|event| (event.sk_request.clone(), event.esm_requests.clone()));
+            .map(|event| event.sk_request.clone());
         let c4_verification_shares = (!recovered.decryption_key_shares.is_empty()).then(|| {
             recovered
                 .decryption_key_shares

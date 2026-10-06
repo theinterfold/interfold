@@ -282,11 +282,12 @@ every section.
   `skip_proof_aggregation` works only under the `test-only-skip-proof-aggregation` Cargo feature;
   production verifiers reject placeholder C5/C7 proofs. — INDEX concern #32
 - **Complete DKG recursive VK binding:** the DKG proof carries the canonical `NodeFold` VK hash and
-  a recursive VK manifest. The manifest binds the C0/C1, C2 chunk/batch/finalizer/C2AB, C3
-  leaf/fold/kernel/C3AB, C4 leaf/C4AB, and NodesFold kernel VK hashes. NodesFold and C3Fold bind
-  both the current accumulator VK and each prior accumulator's expected kernel or fold VK hash.
-  `BfvPkVerifier` checks these values against deployment-time anchors before it calls the Honk
-  verifier. — `dkg_aggregator`, `BfvPkVerifier`
+  a recursive VK manifest. The manifest binds the C0/C1, C2 chunk/batch/finalizer, C3
+  leaf/fold/kernel, C4 leaf, and NodesFold kernel VK hashes. Binding indices 3, 4, 5, 7, and 10
+  are unused. The prover writes zero there, and `BfvPkVerifier` accepts zero only at those indices.
+  NodesFold and C3Fold bind both the current accumulator VK and each prior accumulator's expected
+  kernel or fold VK hash. `BfvPkVerifier` checks the remaining values against deployment-time
+  anchors before it calls the Honk verifier. — `dkg_aggregator`, `BfvPkVerifier`
 - **Secure-16384 recursive families are versioned:** `node_fold_v2` verifies a legacy `NodeFold`
   proof, C1, and the terminal generation fold. It links the l-BFV SK commitment to C1 and preserves
   the legacy node statement as a prefix. `dkg_aggregator_v2` preserves the legacy DKG statement as a

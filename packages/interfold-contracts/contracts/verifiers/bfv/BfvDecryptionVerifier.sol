@@ -37,7 +37,7 @@ import { CommitteeHashLib } from "../../lib/CommitteeHashLib.sol";
  *      construction; this anchors the recursive aggregation trust and
  *      prevents a malicious aggregator from substituting a forged sub-VK.
  *
- *      The `party_ids`/`expected_sk`/`expected_esm` columns are cross-checked
+ *      The `party_ids`/`expected_sk` columns are cross-checked
  *      against `ciphernodeRegistry.getDkgAnchors(e3Id)` (`_verifyDkgAnchors`):
  *      the circuit only proves a decryption share is internally consistent
  *      with some self-declared commitment, so this binds that commitment to
@@ -68,7 +68,7 @@ contract BfvDecryptionVerifier is IDecryptionVerifier {
     uint256 internal constant DEC_RETURN_PREFIX_LEN = 1;
 
     /// @dev `decryption_aggregator` return columns after the leading key hash
-    ///      (party_ids, expected_sk, expected_esm).
+    ///      (party_ids, expected_sk, expected_c0).
     uint256 internal constant DEC_RETURN_COLUMN_COUNT = 3;
 
     /// @dev `publicInputs` index for `committee_hash_hi` (after sub-circuit key hashes).
@@ -97,15 +97,16 @@ contract BfvDecryptionVerifier is IDecryptionVerifier {
     /// @dev `publicInputs` start index of the `expected_sk[T+1]` column.
     uint256 internal immutable skColOffset;
 
-    /// @dev `publicInputs` start index of the `expected_esm[T+1]` column.
-    uint256 internal immutable esmColOffset;
+    /// @dev `publicInputs` start index of the ciphertext `c0` commitment column.
+    ///      The contract does not compare this column to a DKG anchor.
+    uint256 internal immutable c0ColOffset;
 
     /// @notice Underlying Honk verifier for the DecryptionAggregator circuit.
     ICircuitVerifier public immutable circuitVerifier;
 
     /// @notice Registry holding the per-E3 DKG anchors (`dkgPartyIds`,
-    ///         `dkgSkAggCommits`, `dkgEsmAggCommits`) that the proof's
-    ///         `party_ids`/`expected_sk`/`expected_esm` outputs must match.
+    ///         `dkgSkAggCommits`) that the proof's `party_ids` and
+    ///         `expected_sk` outputs must match.
     ICiphernodeRegistry public immutable ciphernodeRegistry;
 
     /// @notice keccak256 commitment to the C6-fold recursive VK; expected at
@@ -145,7 +146,7 @@ contract BfvDecryptionVerifier is IDecryptionVerifier {
 
         partyIdColOffset = 7 + DEC_RETURN_PREFIX_LEN;
         skColOffset = partyIdColOffset + (_threshold + 1);
-        esmColOffset = skColOffset + (_threshold + 1);
+        c0ColOffset = skColOffset + (_threshold + 1);
 
         circuitVerifier = ICircuitVerifier(_circuitVerifier);
         ciphernodeRegistry = ICiphernodeRegistry(_ciphernodeRegistry);
@@ -260,7 +261,7 @@ contract BfvDecryptionVerifier is IDecryptionVerifier {
         return keccak256(plaintext) == expected;
     }
 
-    /// @dev Binds the proof's `party_ids`/`expected_sk`/`expected_esm` outputs to the
+    /// @dev Binds the proof's `party_ids` and `expected_sk` outputs to the
     ///      registry's stored DKG anchors for this E3, closing the gap where the circuit
     ///      only proves internal self-consistency ("I know a share matching some claimed
     ///      commitment") without tying that commitment to the address-signed DKG output.
@@ -273,11 +274,8 @@ contract BfvDecryptionVerifier is IDecryptionVerifier {
         uint256 e3Id,
         bytes32[] memory publicInputs
     ) internal view {
-        (
-            uint256[] memory dkgPartyIds,
-            bytes32[] memory dkgSkAggCommits,
-            bytes32[] memory dkgEsmAggCommits
-        ) = ciphernodeRegistry.getDkgAnchors(e3Id);
+        (uint256[] memory dkgPartyIds, bytes32[] memory dkgSkAggCommits, ) =
+            ciphernodeRegistry.getDkgAnchors(e3Id);
         bytes32[] memory keys = ciphernodeRegistry.getDkgPrfKeyCommitments(
             e3Id
         );

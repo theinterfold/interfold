@@ -61,7 +61,7 @@ fn main(
     }
 
     let mut out_sk: [Field; T + 1] = [0; T + 1];
-    let mut out_esm: [Field; T + 1] = [0; T + 1];
+    let mut out_c0: [Field; T + 1] = [0; T + 1];
     let mut out_ct: [Field; T + 1] = [0; T + 1];
     let mut out_d: [Field; T + 1] = [0; T + 1];
     let mut out_outgoing: [Field; C6_KEY_SLOTS] = [0; C6_KEY_SLOTS];
@@ -72,7 +72,7 @@ fn main(
         if is_first_step {
             if idx == slot_index {
                 out_sk[i] = sk_new;
-                out_esm[i] = c0_new;
+                out_c0[i] = c0_new;
                 out_ct[i] = ct_new;
                 out_d[i] = d_new;
                 for k in 0..N_PARTIES {
@@ -81,23 +81,23 @@ fn main(
                 }
             } else {
                 out_sk[i] = 0;
-                out_esm[i] = 0;
+                out_c0[i] = 0;
                 out_ct[i] = 0;
                 out_d[i] = 0;
             }
         } else {
             let prior_sk = acc_public_inputs[C6_FOLD_PREFIX_LEN + i];
-            let prior_esm = acc_public_inputs[C6_FOLD_PREFIX_LEN + (T + 1) + i];
+            let prior_c0 = acc_public_inputs[C6_FOLD_PREFIX_LEN + (T + 1) + i];
             let prior_ct = acc_public_inputs[C6_FOLD_PREFIX_LEN + (2 * (T + 1)) + i];
             let prior_d = acc_public_inputs[C6_FOLD_PREFIX_LEN + (3 * (T + 1)) + i];
 
             if idx == slot_index {
                 assert(prior_sk == 0);
-                assert(prior_esm == 0);
+                assert(prior_c0 == 0);
                 assert(prior_ct == 0);
                 assert(prior_d == 0);
                 out_sk[i] = sk_new;
-                out_esm[i] = c0_new;
+                out_c0[i] = c0_new;
                 out_ct[i] = ct_new;
                 out_d[i] = d_new;
                 for k in 0..N_PARTIES {
@@ -106,7 +106,7 @@ fn main(
                 }
             } else {
                 out_sk[i] = prior_sk;
-                out_esm[i] = prior_esm;
+                out_c0[i] = prior_c0;
                 out_ct[i] = prior_ct;
                 out_d[i] = prior_d;
                 let prior_keys = C6_FOLD_PREFIX_LEN + (4 * (T + 1)) + (i * N_PARTIES);
@@ -134,7 +134,7 @@ fn main(
     assert(c6_public_inputs[5] + 1 == out_decryptors[slot_index]);
 
     (
-        domain_hi, domain_lo, out_sk, out_esm, out_ct, out_d, out_outgoing, out_incoming,
+        domain_hi, domain_lo, out_sk, out_c0, out_ct, out_d, out_outgoing, out_incoming,
         out_decryptors,
     )
 }

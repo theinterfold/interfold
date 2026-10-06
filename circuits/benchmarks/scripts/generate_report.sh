@@ -696,7 +696,7 @@ artifact_metrics "Π_DKG" "/threshold/pk_aggregation" "$(verify_gas_for_artifact
 artifact_metrics "Π_user" "user_data_encryption" "$(verify_gas_for_artifact Π_user)"
 artifact_metrics "Π_dec" "/threshold/decrypted_shares_aggregation" "$(verify_gas_for_artifact Π_dec)"
 
-p1=$(sum_phase_metrics "/dkg/pk /threshold/pk_generation /dkg/sk_share_computation_chunk /dkg/esm_share_computation_chunk /dkg/share_encryption /dkg/share_encryption /dkg/share_decryption /dkg/share_decryption /recursive_aggregation/c2ab_chunk_fold /recursive_aggregation/c3ab_fold /recursive_aggregation/c4ab_fold /recursive_aggregation/node_fold")
+p1=$(sum_phase_metrics "/dkg/pk /threshold/pk_generation /dkg/sk_share_computation_chunk /dkg/share_encryption /dkg/share_decryption /recursive_aggregation/node_fold")
 p2=$(sum_phase_metrics "/threshold/pk_aggregation")
 p3=$(sum_phase_metrics "/threshold/user_data_encryption_ct0 /threshold/user_data_encryption_ct1")
 p4n=$(sum_phase_metrics "/threshold/share_decryption")

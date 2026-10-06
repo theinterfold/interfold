@@ -50,11 +50,11 @@ const COMMITTEE_HASH_LO_IDX = 3;
 const DECRYPTION_DOMAIN_HI_IDX = 4;
 const DECRYPTION_DOMAIN_LO_IDX = 5;
 
-/** `party_ids`/`expected_sk`/`expected_esm` column start indices for `THRESHOLD`. */
+/** `party_ids`/`expected_sk`/`expected_c0` column start indices for `THRESHOLD`. */
 const {
   partyId: PARTY_ID_COL_OFFSET,
   sk: SK_COL_OFFSET,
-  esm: ESM_COL_OFFSET,
+  c0: C0_COL_OFFSET,
 } = bfvDecPartyColOffsets(THRESHOLD);
 
 /**
@@ -119,7 +119,7 @@ function buildPublicInputsWithMessage(
     arr[SK_COL_OFFSET + i] = skCommits[i];
   }
   for (let i = 0; i < esmCommits.length; i++) {
-    arr[ESM_COL_OFFSET + i] = esmCommits[i];
+    arr[C0_COL_OFFSET + i] = esmCommits[i];
   }
   arr[DECRYPTION_DOMAIN_HI_IDX] = committeeHashHi(decryptionDomain);
   arr[DECRYPTION_DOMAIN_LO_IDX] = committeeHashLo(decryptionDomain);
@@ -678,7 +678,7 @@ describe("BfvDecryptionVerifier", function () {
       );
     });
 
-    it("reverts DkgAnchorMismatch when a party's esm commitment doesn't match the stored DKG anchor", async function () {
+    it("accepts a ciphertext c0 column that differs from the stored DKG esm anchor", async function () {
       const { bfvDecryptionVerifier, mockCircuit } = await loadFixture(
         deployWithMockCircuit,
       );
@@ -711,10 +711,7 @@ describe("BfvDecryptionVerifier", function () {
           CIPHERTEXT_COMMITMENT,
           proof,
         ),
-      ).to.be.revertedWithCustomError(
-        bfvDecryptionVerifier,
-        "DkgAnchorMismatch",
-      );
+      ).not.to.be.reverted;
     });
 
     it("reverts DkgAnchorNotFound when a party_id is not present in the stored DKG anchors", async function () {

@@ -167,7 +167,6 @@ mod tests {
             party_id,
             node: String::new(),
             signed_sk_decryption_proof: proof(),
-            signed_e_sm_decryption_proofs: Vec::new(),
             external: false,
         }
     }

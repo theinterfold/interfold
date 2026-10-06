@@ -45,7 +45,7 @@ interface IDecryptionVerifier {
     /// @notice A `party_id` returned by the proof is not present in the
     ///         registry's stored DKG anchors for this E3.
     error DkgAnchorNotFound();
-    /// @notice The proof's `expected_sk`/`expected_esm` commitment for a
+    /// @notice The proof's secret-key or PRF-key commitment for a
     ///         party does not match the registry's stored DKG anchor.
     error DkgAnchorMismatch();
 

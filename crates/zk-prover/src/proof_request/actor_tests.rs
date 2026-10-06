@@ -231,7 +231,7 @@ async fn restart_dispatches_only_missing_threshold_proofs() -> Result<()> {
     let (bus, _rng, _seed, _params, _crp, _errors, history) = get_common_setup(None)?;
     let e3_id = E3id::new("partially-recovered-threshold", 1);
     let mut actor = ProofRequestActor::new(&bus, PrivateKeySigner::random(), true)
-        .with_recovered_inner_proofs(recovered_threshold_proofs(e3_id.clone(), 2));
+        .with_recovered_inner_proofs(recovered_threshold_proofs(e3_id.clone(), 1));
     let event = threshold_share_pending(e3_id.clone(), 0x11);
 
     actor.handle_threshold_share_pending(TypedEvent::new(event.clone(), test_ctx(event)));
@@ -243,7 +243,7 @@ async fn restart_dispatches_only_missing_threshold_proofs() -> Result<()> {
         .filter(|event| matches!(event.get_data(), InterfoldEventData::ComputeRequest(_)))
         .count();
     assert_eq!(requests, 1);
-    assert_eq!(actor.pending_threshold[&e3_id].total_received(), 2);
+    assert_eq!(actor.pending_threshold[&e3_id].total_received(), 1);
     assert_eq!(actor.threshold_correlation.len(), 1);
     Ok(())
 }
@@ -268,14 +268,14 @@ async fn replayed_threshold_work_invalidates_old_correlations() -> Result<()> {
         .keys()
         .copied()
         .collect::<Vec<_>>();
-    assert_eq!(first_correlations.len(), 3);
+    assert_eq!(first_correlations.len(), 2);
 
     actor.handle_threshold_share_pending(TypedEvent::new(
         threshold_share_pending(e3_id.clone(), 0x22),
         ec.clone(),
     ));
 
-    assert_eq!(actor.threshold_correlation.len(), 3);
+    assert_eq!(actor.threshold_correlation.len(), 2);
     assert!(first_correlations
         .iter()
         .all(|correlation| !actor.threshold_correlation.contains_key(correlation)));

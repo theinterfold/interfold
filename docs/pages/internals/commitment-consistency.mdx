@@ -88,25 +88,21 @@ derived from the E3's BFV preset:
 
 ### DKG Phase Links
 
-| Link          | Scope                    | What it checks                                                         |
-| ------------- | ------------------------ | ---------------------------------------------------------------------- |
-| **C1 → C2a**  | SameParty                | C1's `sk_commitment` matches C2a's `expected_secret_commitment`        |
-| **C1 → C2b**  | —                        | Not registered. No C2b proof is produced                                |
-| **C1 → C5**   | CrossParty               | C1's `pk_commitment` appears in C5's expected pk inputs                |
-| **C3a → C0**  | SourceMustExistInTargets | C3a's `expected_pk_commitment` must exist in some C0's `pk_commitment` |
-| **C3b → C0**  | —                        | Not registered. No C3b proof is produced                                |
-| **C3a → C2a** | SameParty                | C3a's residue commitment matches C2a's share commitment                |
-| **C3b → C2b** | —                        | Not registered. No C3b proof is produced                                |
-| **C2a → C4a** | SourceMustExistInTargets | C2a's L share commitments for recipient R match C4a's row for sender X |
-| **C2b → C4b** | —                        | Not registered. No C4b proof is produced                                |
+| Link                  | Scope                    | What it checks                                                                          |
+| --------------------- | ------------------------ | --------------------------------------------------------------------------------------- |
+| **C1 → C2a**          | SameParty                | C1's `sk_commitment` matches C2a's `expected_secret_commitment`                         |
+| **C1 → C5**           | CrossParty               | C1's `pk_commitment` appears in C5's expected public-key inputs                         |
+| **l-BFV PK → C1**     | SameParty                | Each l-BFV public-key row uses the secret key bound by C1's `sk_commitment`            |
+| **C3a → C0**          | SourceMustExistInTargets | C3a's `expected_pk_commitment` must exist in some C0 `pk_commitment`                    |
+| **C3a → C2a**         | SameParty                | C3a's `expected_message_commitment` matches the C2a share commitment for that recipient |
+| **C2a → C4a**         | SourceMustExistInTargets | C2a's L share commitments for recipient R match C4a's row for sender X                 |
 
 ### Threshold Decryption Links
 
-| Link         | Scope      | What it checks                                                             |
-| ------------ | ---------- | -------------------------------------------------------------------------- |
-| **C4a → C6** | SameParty  | C4a's aggregated `sk_commitment` matches C6's `expected_sk_commitment`     |
-| **C4b → C6** | —          | Not registered. No C4b proof is produced                                   |
-| **C6 → C7**  | CrossParty | C6's `d_commitment` matches C7's `expected_d_commitment`                   |
+| Link         | Scope      | What it checks                                                         |
+| ------------ | ---------- | ---------------------------------------------------------------------- |
+| **C4a → C6** | SameParty  | C4a's aggregated `commitment` matches C6's `expected_sk_commitment`    |
+| **C6 → C7**  | CrossParty | C6's `d_commitment` matches C7's `expected_d_commitment`               |
 
 ---
 
@@ -117,13 +113,15 @@ sender (who computed shares in C2) and the recipient/aggregator (who decrypted s
 
 ### Public Signal Layouts
 
-**C2 inner circuit** (row-major: party first, modulus second):
+**C2 terminal proof** (row-major: party first, modulus second):
 
 ```
-[expected_secret_commitment (32 B)]  ← skipped
+[child_vk_hash (32 B)]            ← skipped
+[secret_root_commitment (32 B)]   ← skipped
 [party_0_mod_0] [party_0_mod_1] ... [party_0_mod_{L-1}]
 [party_1_mod_0] ...
 [party_{N-1}_mod_{L-1}]
+[batch_vk_hash (32 B)]            ← skipped
 ```
 
 **C4 public signals** (the accepted H-dealer roster, L moduli):

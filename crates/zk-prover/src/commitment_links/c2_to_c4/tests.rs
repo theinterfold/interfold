@@ -183,19 +183,3 @@ fn short_or_empty_signals() {
     assert!(!link.check_consistency(&[make_field(1)], &[0u8; 16], 0, 0));
 }
 
-#[test]
-fn c2b_to_c4b_variant() {
-    let l = 2;
-    let link = C2bToC4bShareCommitmentLink {
-        l,
-        source_prefix_fields: 2,
-    };
-    let c2 = c2_signals(&[make_field(7), make_field(8)]);
-    let source_values = link.extract_source_values(&c2);
-
-    let c4 = c4_signals(&[vec![make_field(7), make_field(8)]], make_field(0));
-    assert!(link.check_consistency(&source_values, &c4, 0, 0));
-
-    let c4_wrong = c4_signals(&[vec![make_field(7), make_field(9)]], make_field(0));
-    assert!(!link.check_consistency(&source_values, &c4_wrong, 0, 0));
-}

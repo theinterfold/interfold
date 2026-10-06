@@ -81,12 +81,11 @@ impl<let L: u32> Configs<L> {
     }
 }
 
-/// DKG share encryption (C3a / C3b).
+/// DKG share encryption (C3a).
 ///
-/// **Role:** Prove BFV encryption of a share under the recipient DKG public key. Run twice per
-/// recipient (sk share and e_sm share).
+/// Prove BFV encryption of a secret-key share under the recipient DKG public key.
 ///
-/// **Consumes:** `expected_pk_commitment` (C0); `expected_message_commitment` (C2 sk or C2 e_sm).
+/// **Consumes:** `expected_pk_commitment` (C0); `expected_message_commitment` (C2a).
 ///
 /// **Produces:** Public `ct_commitment` (hash of ct0/ct1 limbs) for cross-phase binding; witness ct0/ct1 feed C4 off-transcript.
 pub struct ShareEncryption<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, let BIT_E0: u32, let BIT_E1: u32, let BIT_MSG: u32, let BIT_R1: u32, let BIT_R2: u32, let BIT_P1: u32, let BIT_P2: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32, let BIT_SHARE: u32, let KEY_BITS: u32> {
@@ -97,9 +96,8 @@ pub struct ShareEncryption<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: 
     /// Expected commitment to the DKG public key (from C0: pk).
     /// (public witness)
     expected_pk_commitment: Field,
-    /// Expected commitment to the share (message) being encrypted.
-    /// - C3a: commit(sk_share[party_idx][mod_idx]) produced by C2a
-    /// - C3b: commit(e_sm_share[party_idx][mod_idx]) produced by C2b
+    /// Expected commitment to the share being encrypted.
+    /// C3a checks commit(sk_share[party_idx][mod_idx]) produced by C2a.
     /// (public witness)
     expected_message_commitment: Field,
     /// Commitment of the PRF key packed into limb 0. Other limbs ignore this value.
@@ -196,8 +194,7 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
         );
     }
 
-    /// Verifies that the message (share) polynomial hashes to the expected commitment
-    /// produced in C2a (for C3a) or C2b (for C3b).
+    /// Verifies that the message polynomial hashes to the expected commitment produced in C2a.
     ///
     /// This is the binding check: the plaintext being encrypted must be exactly the share
     /// that was verified in C2. Any deviation, encrypting a different value, substituting

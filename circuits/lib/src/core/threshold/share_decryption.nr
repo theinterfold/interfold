@@ -9,7 +9,7 @@ use crate::math::commitments::{
     compute_partial_decryption_c0_commitment, compute_threshold_decryption_share_commitment,
     compute_threshold_share_decryption_challenge,
 };
-use crate::core::threshold::decrypted_shares_aggregation::lagrange_coeffs_for_set;
+use crate::math::modulo::U64::ModU64;
 use crate::math::prf::prf_decryption_mask;
 use crate::math::helpers::flatten;
 use crate::math::polynomial::Polynomial;
@@ -413,4 +413,52 @@ impl<let N: u32, let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let BIT_CT: u32, 
             "Decryption share computation failed",
         );
     }
+}
+
+/// Lagrange coefficients `L_i(0)` for a designated decryptor set.
+///
+/// `party_ids` are 1-based Shamir points. The result is one coefficient per
+/// party, reduced modulo each CRT prime. C6 multiplies only `c1 * sh` by `L_i(0)`.
+pub fn lagrange_coeffs_for_set<let SET: u32, let L: u32>(
+    qis: [Field; L],
+    party_ids: [Field; SET],
+) -> [[Field; SET]; L] {
+    let mut lagrange_coeffs = [[0 as Field; SET]; L];
+    let mut diffs = [[0 as Field; SET]; SET];
+    for i in 0..SET {
+        for j in (i + 1)..SET {
+            let diff = party_ids[j] - party_ids[i];
+            diffs[i][j] = diff;
+            diffs[j][i] = diff;
+        }
+    }
+
+    let threshold = SET - 1;
+    let numerator_sign_negative = (threshold % 2) == 1;
+
+    for basis_idx in 0..L {
+        let q_l = qis[basis_idx];
+        let m = ModU64::new(q_l as u64);
+        let mut product_x = 1 as Field;
+        for j in 0..SET {
+            product_x = m.mul_mod(product_x, party_ids[j]);
+        }
+        for party_idx in 0..SET {
+            let numerator_abs = m.div_mod(product_x, party_ids[party_idx]);
+            let mut denominator_abs = 1 as Field;
+            for j in 0..SET {
+                if j != party_idx {
+                    denominator_abs = m.mul_mod(denominator_abs, diffs[party_idx][j]);
+                }
+            }
+            let num_greater = threshold - party_idx;
+            let denom_sign_negative = (num_greater % 2) == 1;
+            let result_abs = m.div_mod(numerator_abs, denominator_abs);
+            let should_negate = numerator_sign_negative != denom_sign_negative;
+            let result = if should_negate { m.reduce_mod(q_l - result_abs) } else { result_abs };
+            lagrange_coeffs[basis_idx][party_idx] = result;
+        }
+    }
+
+    lagrange_coeffs
 }

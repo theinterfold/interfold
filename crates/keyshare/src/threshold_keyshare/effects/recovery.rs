@@ -146,7 +146,6 @@ impl ThresholdKeyshare {
                 ReceivedShareProofs {
                     signed_c2a_proof: event.signed_c2a_proof.clone(),
                     signed_c3a_proofs: event.signed_c3a_proofs.clone(),
-                    signed_c3b_proofs: event.signed_c3b_proofs.clone(),
                 },
             );
         }

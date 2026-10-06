@@ -10,23 +10,19 @@ use crate::math::commitments::{
 use crate::math::modulo::U64::ModU64;
 use crate::math::polynomial::Polynomial;
 
-/// DKG share decryption and aggregation (C4a / C4b).
+/// DKG share aggregation (C4a).
 ///
-/// **Role:** Verify decrypted shares against C2 commitments and publish a commitment to the sum
-/// over honest parties (run twice: sk path and e_sm path).
+/// Verify decrypted Shamir residues against the C2 commitments and publish a commitment to the sum
+/// over honest parties.
 ///
-/// **Consumes:** Per-party share commitments from C2 (sk or e_sm branch).
-///
-/// **Produces:**
-/// - C4a: `commit(agg_sk)` -> C6 (threshold share decryption).
-/// - C4b: `commit(agg_e_sm)` -> C6 (threshold share decryption).
+/// Consumes the per-party share commitments from C2a.
+/// Produces `commit(agg_sk)` for C6.
 ///
 /// `BIT_MSG` hashes per-share plaintexts (aligned with C2). `BIT_AGG` hashes the CRT aggregate
-/// (`compute_aggregated_shares_commitment`) and must match threshold C6 `BIT_SK` / `BIT_E_SM`.
+/// (`compute_aggregated_shares_commitment`) and must match threshold C6 `BIT_SK`.
 pub struct ShareDecryption<let N: u32, let L: u32, let H: u32, let BIT_MSG: u32, let BIT_AGG: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32, let KEY_BITS: u32> {
-    /// Expected commitments to the share polynomials, produced in C2a (for C4a) or C2b (for C4b)
-    /// via commit_to_party_shares. Organised as [party_idx][mod_idx], covering all H honest
-    /// parties and L CRT moduli.
+    /// Expected commitments to the share polynomials, produced in C2a.
+    /// Organised as [party_idx][mod_idx], covering all H honest parties and L CRT moduli.
     /// (public witnesses)
     expected_commitments: [[Field; L]; H],
 
@@ -85,7 +81,7 @@ impl<let N: u32, let L: u32, let H: u32, let BIT_MSG: u32, let BIT_AGG: u32, let
         shares
     }
 
-    /// Verifies that each decrypted share matches its expected commitment from C2a/C2b.
+    /// Verifies that each decrypted share matches its expected commitment from C2a.
     ///
     /// For each honest party and each CRT modulus, hashes the decrypted share polynomial
     /// and confirms it equals the commitment produced in C2 via commit_to_party_shares.
@@ -146,9 +142,7 @@ impl<let N: u32, let L: u32, let H: u32, let BIT_MSG: u32, let BIT_AGG: u32, let
 
     /// Executes the share decryption and aggregation circuit.
     ///
-    /// Returns a commitment to the aggregated shares:
-    /// - C4a: commit(agg_sk), consumed by C6 in P4
-    /// - C4b: commit(agg_e_sm), consumed by C6 in P4
+    /// Returns a commitment to the aggregated Shamir share. C6 consumes it.
     ///
     /// `moduli` must be the threshold CRT moduli `[q_0, ..., q_{L-1}]`.
     /// They are used to reduce, reverse, and center the aggregated polynomials so that

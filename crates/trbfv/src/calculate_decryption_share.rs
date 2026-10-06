@@ -7,7 +7,7 @@
 use std::hash::Hash;
 use std::ops::Deref;
 
-use crate::helpers::{try_poly_from_sensitive_bytes, try_polys_from_sensitive_bytes_vec};
+use crate::helpers::try_poly_from_sensitive_bytes;
 /// This module defines event payloads that will generate a decryption share for the given ciphertext for this node
 use crate::TrBFVConfig;
 use anyhow::*;
@@ -34,8 +34,6 @@ pub struct CalculateDecryptionShareRequest {
     pub ciphertexts: Vec<ArcBytes>,
     /// A single summed polynomial for this nodes secret key.
     pub sk_poly_sum: SensitiveBytes,
-    /// A vector of summed polynomials for this parties smudging noise
-    pub es_poly_sum: Vec<SensitiveBytes>,
     /// Zero-based party index. Empty key lists select the zero mask.
     pub party_idx: u32,
     /// Strictly increasing 1-based decryptor ids.
@@ -53,8 +51,6 @@ struct InnerRequest {
     pub ciphertexts: Vec<Ciphertext>,
     /// A single summed polynomial for this nodes secret key.
     pub sk_poly_sum: Poly<PowerBasis>,
-    /// A vector of summed polynomials for this parties smudging noise
-    pub es_poly_sum: Vec<Poly<PowerBasis>>,
 }
 
 impl TryFrom<(&Cipher, CalculateDecryptionShareRequest)> for InnerRequest {
@@ -75,15 +71,9 @@ impl TryFrom<(&Cipher, CalculateDecryptionShareRequest)> for InnerRequest {
 
         let sk_poly_sum =
             try_poly_from_sensitive_bytes(value.1.sk_poly_sum, trbfv_config.params(), value.0)?;
-        let es_poly_sum = try_polys_from_sensitive_bytes_vec(
-            value.1.es_poly_sum,
-            trbfv_config.params(),
-            value.0,
-        )?;
 
         Ok(InnerRequest {
             sk_poly_sum,
-            es_poly_sum,
             ciphertexts,
             trbfv_config,
         })
@@ -131,7 +121,6 @@ pub fn calculate_decryption_share(
     let incoming_prf_keys = req.incoming_prf_keys.clone();
     let req: InnerRequest = (cipher, req).try_into()?;
 
-    let _ = req.es_poly_sum.len();
     let params = req.trbfv_config.params();
     let sk = CrtPolynomial::from_fhe_polynomial(&req.sk_poly_sum);
     let mut e_fresh = Vec::with_capacity(req.ciphertexts.len());

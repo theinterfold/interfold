@@ -30,9 +30,9 @@ pub global DS_PK_GENERATION_LIMB_V1: [u8; 64] = [
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 ];
-// Domain separator - "PRF_KEY"
+// Domain separator - "PRF_KEY_FIELD"
 pub global DS_PRF_KEY: [u8; 64] = [
-    0x50, 0x52, 0x46, 0x5f, 0x4b, 0x45, 0x59, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x50, 0x52, 0x46, 0x5f, 0x4b, 0x45, 0x59, 0x5f, 0x46, 0x49, 0x45, 0x4c, 0x44, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -215,18 +215,28 @@ pub fn compute_commitment(inputs: [Field], domain_separator: [u8; 64]) -> Field 
     compute_safe(domain_separator, inputs, [0x80000000 | inputs.len(), 1])[0]
 }
 
-/// Commit one outgoing PRF key. `recipient_party_idx` is the 0-based recipient.
-/// Bit 0 is the least significant bit of the key.
+/// Reduce binary key bits to one field element.
+///
+/// Bit 0 is the least significant bit. The sum is modulo the circuit scalar field.
+pub fn prf_key_field<let KEY_BITS: u32>(bits: [Field; KEY_BITS]) -> Field {
+    let mut acc = 0;
+    let mut weight = 1;
+    for i in 0..KEY_BITS {
+        assert(bits[i] * (bits[i] - 1) == 0, "PRF key bit is not binary");
+        acc = acc + (bits[i] * weight);
+        weight = weight * 2;
+    }
+    acc
+}
+
+/// Commit one outgoing PRF key for one recipient.
+///
+/// `recipient_party_idx` is 0-based. The second field is `prf_key_field(bits)`.
 pub fn compute_prf_key_commitment<let KEY_BITS: u32>(
     recipient_party_idx: Field,
     bits: [Field; KEY_BITS],
 ) -> Field {
-    let mut payload = [recipient_party_idx].as_vector();
-    for i in 0..KEY_BITS {
-        assert(bits[i] * (bits[i] - 1) == 0, "PRF key bit is not binary");
-        payload = payload.push_back(bits[i]);
-    }
-    compute_commitment(payload, DS_PRF_KEY)
+    compute_commitment([recipient_party_idx, prf_key_field(bits)].as_vector(), DS_PRF_KEY)
 }
 
 pub fn compute_single_polynomial_commitment<let N: u32, let BIT: u32>(

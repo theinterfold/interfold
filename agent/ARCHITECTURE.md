@@ -183,7 +183,7 @@ Protocol-specific invariants must be named and tested. Important examples includ
   party if roster publication stalls;
 - the DKG aggregation circuit receives exactly `H` canonical honest NodeFold proofs and exactly `N`
   ordered committee addresses;
-- C2a/C2b are singleton proofs, while C3a/C3b follow the configured recipient/row multiplicities;
+- C2a is one proof per party. C3a follows the configured recipient and row counts;
 - TrBFV and Noir witness dimensions come from the active preset, never from incidental vector size.
 
 ## Workflow Layer

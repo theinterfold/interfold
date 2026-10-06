@@ -59,36 +59,6 @@ impl CommitmentLink for C3aToC2aShareEncryptionLink {
     }
 }
 
-/// C3b → C2b: E_SM share encryption `expected_message_commitment` vs E_SM share
-/// computation per-party share commitment outputs.
-pub struct C3bToC2bShareEncryptionLink;
-
-impl CommitmentLink for C3bToC2bShareEncryptionLink {
-    fn name(&self) -> &'static str {
-        "C3b->C2b expected_message_commitment"
-    }
-
-    fn source_proof_type(&self) -> ProofType {
-        ProofType::C3bESmShareEncryption
-    }
-
-    fn target_proof_type(&self) -> ProofType {
-        ProofType::C2bESmShareComputation
-    }
-
-    fn scope(&self) -> LinkScope {
-        LinkScope::SameParty
-    }
-
-    fn extract_source_values(&self, public_signals: &[u8]) -> Vec<FieldValue> {
-        extract_message_commitment(public_signals)
-    }
-
-    fn check_signals(&self, source_values: &[FieldValue], target_public_signals: &[u8]) -> bool {
-        commitment_in_c2_outputs(source_values, target_public_signals)
-    }
-}
-
 /// Extract `expected_message_commitment` from a C3 proof's public signals.
 ///
 /// C3 public signals layout (from `CircuitInputLayout::Fixed`):
@@ -237,12 +207,4 @@ mod tests {
         assert!(!link.check_signals(&[make_field(1)], &[0u8; 32]));
     }
 
-    #[test]
-    fn c3b_link_works_same_as_c3a() {
-        let link = C3bToC2bShareEncryptionLink;
-        let msg = make_field(7);
-        let c2 = c2_signals(&[make_field(1), msg]);
-        assert!(link.check_signals(&[msg], &c2));
-        assert!(!link.check_signals(&[make_field(8)], &c2));
-    }
 }

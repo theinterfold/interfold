@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! C1 (PkGeneration) → C2a/C2b (ShareComputation) secret commitment links.
+//! C1 (PkGeneration) → C2a (ShareComputation) secret commitment link.
 //!
 //! ## Circuit layouts
 //!
@@ -14,7 +14,7 @@
 //! - field 1: `pk_commitment`
 //! - field 2: `e_sm_commitment`
 //!
-//! **C2a/C2b** expose the recursive child VK hash at field 0 and the
+//! **C2a** exposes the recursive child VK hash at field 0 and the
 //! expected secret root commitment at field 1 (chunk-finalizer proof).
 //!
 //! ## Checks
@@ -22,10 +22,6 @@
 //! - **C1→C2a**: `C1.sk_commitment` must equal `C2a.expected_secret_commitment`.
 //!   Prevents a party from Shamir-splitting a different sk than the one committed
 //!   to in their C1 (TrBFV pk_generation) proof.
-//!
-//! - **C1→C2b**: `C1.e_sm_commitment` must equal `C2b.expected_secret_commitment`.
-//!   Prevents a party from Shamir-splitting a different e_sm than the one committed
-//!   to in their C1 proof.
 
 use super::{CommitmentLink, FieldValue, LinkScope};
 use e3_events::{CircuitName, ProofType};
@@ -54,44 +50,6 @@ impl CommitmentLink for C1ToC2aSkCommitmentLink {
     fn extract_source_values(&self, public_signals: &[u8]) -> Vec<FieldValue> {
         let layout = CircuitName::PkGeneration.output_layout();
         let Some(bytes) = layout.extract_field(public_signals, "sk_commitment") else {
-            return vec![];
-        };
-        let mut value = [0u8; FIELD_BYTE_LEN];
-        value.copy_from_slice(bytes);
-        vec![value]
-    }
-
-    fn check_signals(&self, source_values: &[FieldValue], target_public_signals: &[u8]) -> bool {
-        if source_values.is_empty() || target_public_signals.len() < 2 * FIELD_BYTE_LEN {
-            return false;
-        }
-        target_public_signals[FIELD_BYTE_LEN..2 * FIELD_BYTE_LEN] == source_values[0]
-    }
-}
-
-/// C1 → C2b: `e_sm_commitment` from PkGeneration must match C2b's `expected_secret_commitment`.
-pub struct C1ToC2bESmCommitmentLink;
-
-impl CommitmentLink for C1ToC2bESmCommitmentLink {
-    fn name(&self) -> &'static str {
-        "C1->C2b e_sm_commitment"
-    }
-
-    fn source_proof_type(&self) -> ProofType {
-        ProofType::C1PkGeneration
-    }
-
-    fn target_proof_type(&self) -> ProofType {
-        ProofType::C2bESmShareComputation
-    }
-
-    fn scope(&self) -> LinkScope {
-        LinkScope::SameParty
-    }
-
-    fn extract_source_values(&self, public_signals: &[u8]) -> Vec<FieldValue> {
-        let layout = CircuitName::PkGeneration.output_layout();
-        let Some(bytes) = layout.extract_field(public_signals, "e_sm_commitment") else {
             return vec![];
         };
         let mut value = [0u8; FIELD_BYTE_LEN];
@@ -184,40 +142,4 @@ mod tests {
         assert!(!link.check_signals(&[make_field(1)], &[0u8; 10]));
     }
 
-    // ── C1→C2b ──────────────────────────────────────────────────────────────
-
-    #[test]
-    fn extract_esm_commitment_from_c1() {
-        let link = C1ToC2bESmCommitmentLink;
-        let esm = make_field(7);
-        let values = link.extract_source_values(&c1_signals(make_field(1), make_field(2), esm));
-        assert_eq!(values.len(), 1);
-        assert_eq!(values[0], esm);
-    }
-
-    #[test]
-    fn c2b_consistency_passes_when_esm_matches() {
-        let link = C1ToC2bESmCommitmentLink;
-        let esm = make_field(77);
-        let c2 = c2_signals(esm, &[make_field(10), make_field(11)]);
-        assert!(link.check_signals(&[esm], &c2));
-    }
-
-    #[test]
-    fn c2b_consistency_fails_when_esm_differs() {
-        let link = C1ToC2bESmCommitmentLink;
-        let c2 = c2_signals(make_field(99), &[make_field(10)]);
-        assert!(!link.check_signals(&[make_field(77)], &c2));
-    }
-
-    #[test]
-    fn c2b_short_or_empty_signals() {
-        let link = C1ToC2bESmCommitmentLink;
-        // C1 too short to extract e_sm_commitment (need 96 bytes, providing 64)
-        assert!(link.extract_source_values(&[0u8; 64]).is_empty());
-        // Empty source values
-        assert!(!link.check_signals(&[], &c2_signals(make_field(1), &[])));
-        // C2 target too short
-        assert!(!link.check_signals(&[make_field(1)], &[0u8; 10]));
-    }
 }

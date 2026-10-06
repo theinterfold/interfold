@@ -294,19 +294,19 @@ export function bfvDecCommitteeHashIndices(): { hi: number; lo: number } {
 }
 
 /**
- * `publicInputs` start indices for the `party_ids`/`expected_sk`/`expected_esm`
+ * `publicInputs` start indices for the `party_ids`/`expected_sk`/`expected_c0`
  * columns (each `threshold + 1` wide), matching `BfvDecryptionVerifier`'s
- * `partyIdColOffset`/`skColOffset`/`esmColOffset`.
+ * `partyIdColOffset`/`skColOffset`/`c0ColOffset`.
  */
 export function bfvDecPartyColOffsets(threshold: number): {
   partyId: number;
   sk: number;
-  esm: number;
+  c0: number;
 } {
   const partyId = 8; // 7 domain/VK/committee/commitment inputs + DEC_RETURN_PREFIX_LEN
   const sk = partyId + (threshold + 1);
-  const esm = sk + (threshold + 1);
-  return { partyId, sk, esm };
+  const c0 = sk + (threshold + 1);
+  return { partyId, sk, c0 };
 }
 
 /** `publicInputs` indices for decryption-aggregator E3 domain limbs. */
@@ -491,9 +491,9 @@ export function getBfvPkVkBindingHashPaths(config?: ActiveBfvConfig) {
   ] as const;
 }
 
-/** Indices 7 and 10 are unused. The prover writes zero. */
+/** Indices 3, 4, 5, 7, and 10 are unused. The prover writes zero. */
 export const ZERO_VK_HASH = `0x${"0".repeat(64)}`;
-const UNUSED_DKG_VK_BINDING_INDICES = new Set([7, 10]);
+const UNUSED_DKG_VK_BINDING_INDICES = new Set([3, 4, 5, 7, 10]);
 
 export function readBfvPkVkBindingHashes(
   config?: ActiveBfvConfig,

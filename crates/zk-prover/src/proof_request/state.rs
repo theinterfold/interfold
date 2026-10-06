@@ -9,23 +9,16 @@ use super::*;
 pub(crate) enum ThresholdProofKind {
     PkGeneration,
     SkShareComputation,
-    ESmShareComputation,
     SkShareEncryption {
-        recipient_party_id: usize,
-        row_index: usize,
-    },
-    ESmShareEncryption {
-        esi_index: usize,
         recipient_party_id: usize,
         row_index: usize,
     },
 }
 
-/// Identifies which C4 (DkgShareDecryption) proof a response corresponds to.
+/// Identifies which C4 proof a response corresponds to.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum DecryptionProofKind {
     SecretKey,
-    SmudgingNoise { esi_idx: usize },
 }
 
 /// Per-E3 metadata for streaming DKG inner proof aggregation.
@@ -57,13 +50,9 @@ pub(crate) struct PendingThresholdProofs {
     pub(crate) ec: EventContext<Sequenced>,
     pub(crate) pk_generation_proof: Option<Proof>,
     pub(crate) sk_share_computation_proof: Option<Proof>,
-    pub(crate) e_sm_share_computation_proof: Option<Proof>,
     /// C3a proofs: keyed by (recipient_party_id, row_index)
     pub(crate) sk_share_encryption_proofs: HashMap<(usize, usize), Proof>,
     pub(crate) expected_sk_enc_count: usize,
-    /// C3b proofs: keyed by (esi_index, recipient_party_id, row_index)
-    pub(crate) e_sm_share_encryption_proofs: HashMap<(usize, usize, usize), Proof>,
-    pub(crate) expected_e_sm_enc_count: usize,
     /// Maps positional index to real party_id (from ThresholdSharePending).
     pub(crate) recipient_party_ids: Vec<u64>,
 }
@@ -74,7 +63,6 @@ impl PendingThresholdProofs {
         full_share: Arc<ThresholdShare>,
         ec: EventContext<Sequenced>,
         expected_sk_enc_count: usize,
-        expected_e_sm_enc_count: usize,
         recipient_party_ids: Vec<u64>,
     ) -> Self {
         Self {
@@ -83,11 +71,8 @@ impl PendingThresholdProofs {
             ec,
             pk_generation_proof: None,
             sk_share_computation_proof: None,
-            e_sm_share_computation_proof: None,
             sk_share_encryption_proofs: HashMap::new(),
             expected_sk_enc_count,
-            e_sm_share_encryption_proofs: HashMap::new(),
-            expected_e_sm_enc_count,
             recipient_party_ids,
         }
     }
@@ -102,23 +87,12 @@ impl PendingThresholdProofs {
         match kind {
             ThresholdProofKind::PkGeneration => self.pk_generation_proof = Some(proof),
             ThresholdProofKind::SkShareComputation => self.sk_share_computation_proof = Some(proof),
-            ThresholdProofKind::ESmShareComputation => {
-                self.e_sm_share_computation_proof = Some(proof)
-            }
             ThresholdProofKind::SkShareEncryption {
                 recipient_party_id,
                 row_index,
             } => {
                 self.sk_share_encryption_proofs
                     .insert((*recipient_party_id, *row_index), proof);
-            }
-            ThresholdProofKind::ESmShareEncryption {
-                esi_index,
-                recipient_party_id,
-                row_index,
-            } => {
-                self.e_sm_share_encryption_proofs
-                    .insert((*esi_index, *recipient_party_id, *row_index), proof);
             }
         }
     }
@@ -131,12 +105,11 @@ impl PendingThresholdProofs {
         let base = [
             self.pk_generation_proof.is_some(),
             self.sk_share_computation_proof.is_some(),
-            self.e_sm_share_computation_proof.is_some(),
         ]
         .iter()
         .filter(|&&v| v)
         .count();
-        base + self.sk_share_encryption_proofs.len() + self.e_sm_share_encryption_proofs.len()
+        base + self.sk_share_encryption_proofs.len()
     }
 }
 
@@ -147,8 +120,6 @@ pub(crate) struct PendingDecryptionProofs {
     pub(crate) node: String,
     pub(crate) ec: EventContext<Sequenced>,
     pub(crate) sk_proof: Option<Proof>,
-    pub(crate) esm_proofs: HashMap<usize, Proof>,
-    pub(crate) expected_esm_count: usize,
 }
 
 impl PendingDecryptionProofs {

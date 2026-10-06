@@ -342,18 +342,6 @@ pub fn prove_dkg_aggregation(
         &prover.circuits_dir(CircuitVariant::Recursive, artifacts_dir),
         CircuitName::PkGeneration,
     )?;
-    let c2ab_vk = vk::load_vk_artifacts(
-        &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
-        CircuitName::C2abChunkFold,
-    )?;
-    let c3ab_vk = vk::load_vk_artifacts(
-        &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
-        CircuitName::C3abFold,
-    )?;
-    let c4ab_vk = vk::load_vk_artifacts(
-        &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
-        CircuitName::C4abFold,
-    )?;
     let c2a_finalize_vk = vk::load_vk_artifacts(
         &prover.circuits_dir(CircuitVariant::Recursive, artifacts_dir),
         CircuitName::SkC2ChunkFinalize,
@@ -420,9 +408,9 @@ pub fn prove_dkg_aggregation(
             node_fold_vk.key_hash,
             c0_vk.key_hash,
             c1_vk.key_hash,
-            c2ab_vk.key_hash,
-            c3ab_vk.key_hash,
-            c4ab_vk.key_hash,
+            "0x0".to_string(),
+            "0x0".to_string(),
+            "0x0".to_string(),
             c2a_finalize_vk.key_hash,
             "0x0".to_string(),
             c2_batch_vk.key_hash,

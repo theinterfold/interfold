@@ -33,8 +33,8 @@ circuits/
 │   ├── config/                  # Pre-deployment preset consistency (`config` circuit)
 │   ├── dkg/                     # C0, C2 pipeline, C3, C4
 │   ├── threshold/               # C1, C5, user_data_encryption*, C6, C7
-│   └── recursive_aggregation/   # AB combiners (c2ab/c3ab/c4ab_fold), per-step
-│                                # folds (c3_fold[_kernel], c6_fold[_kernel]),
+│   └── recursive_aggregation/   # per-step folds (c3_fold[_kernel],
+│                                # c6_fold[_kernel]),
 │                                # per-node node_fold + cross-node nodes_fold
 │                                # [_kernel], dkg_aggregator, decryption_aggregator
 └── benchmarks/                  # Timing scripts and reports
@@ -42,7 +42,7 @@ circuits/
 
 Binary packages map to **C0–C7** and operational phases as on the [Cryptography](./cryptography)
 page (**Phases & Circuits** section). Large statements (especially **C2**) use **inner** proofs that
-are then combined inside `recursive_aggregation/` (AB combiners → per-step folds → `node_fold` per
+are then combined inside `recursive_aggregation/` (per-step folds → `node_fold` per
 party → `nodes_fold` across parties → `dkg_aggregator` / `decryption_aggregator`).
 
 ## Using `circuits/lib` from another Noir project

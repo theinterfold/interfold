@@ -277,16 +277,11 @@ BFV secret key. C4 then:
    sum
 3. **Normalizes**: reduces mod `q_ℓ`, reverses coefficient order, and centers to match C6's
    representation
-4. **Outputs**: `commit(sk_agg)` for C4a and `commit(e_sm_agg)` for C4b — these two commitments form
-   the final link between P1 and P4
+4. **Outputs**: `commit(sk_agg)`. C6 checks this commitment.
 
-After C4, each node holds:
-
-- Its **secret key share** (`agg_sk`) — a Shamir share of the threshold secret key
-- Its **smudging noise share** (`agg_e_sm`) — a Shamir share of the smudging noise
-
-These are the only long-lived secrets from the DKG. A node outside `S` can compute C4 only when it
-received every selected share, but the final DKG aggregate consumes exactly H fold rows in roster
+After C4, each selected node holds its secret key share (`agg_sk`), a Shamir share of the threshold
+secret key. This is the long-lived secret from the DKG. A node outside `S` can compute C4 only when
+it received every selected share. The final DKG aggregate consumes exactly H fold rows in roster
 order.
 
 ---
@@ -533,7 +528,7 @@ for the full contract.
 The decryption recursive proof (`BfvDecryptionVerifier`) follows the same shape: a recursive Honk
 proof aggregates **C6** from exactly **T+1** parties plus **C7**, carries a domain over the chain,
 deployment, E3, committee, ciphertext, and committee-key context, and surfaces the party IDs plus
-`ciphertextCommitment`, `expected_sk_commits[]`, and `expected_esm_commits[]` per party. The wrapper
+`ciphertextCommitment`, `expected_sk_commits[]`, and the ciphertext `c0` commitment column per party. The wrapper
 receives `e3Id` separately so it can compare those surfaced commitments against the anchors stored
 at `publishCommittee`; it also compares `ciphertextCommitment` with the SAFE commitment stored at
 ciphertext publication. If any anchor differs, the commitment differs, or the E3 domain differs, the

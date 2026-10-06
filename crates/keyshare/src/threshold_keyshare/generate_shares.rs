@@ -305,6 +305,7 @@ fn recipient_keys_for_c3(
 mod tests {
     use super::*;
     use e3_fhe_params::BfvParamSet;
+    use e3_trbfv::shares::ShamirShare;
     use fhe::bfv::SecretKey;
     use ndarray::Array2;
 
@@ -369,21 +370,39 @@ mod tests {
             .filter(|request| request.recipient_party_id == 1)
             .all(|request| request.recipient_pk_raw.as_ref() == pk_2.to_bytes()));
 
-        let decrypted_live = plan
-            .full_share
-            .sk_sss
-            .clone_share(0)
-            .expect("party 0 ciphertext")
-            .decrypt(&sk_0, &params, degree)?;
+        let decrypted_live = unpacked_prf_limb(
+            plan.full_share
+                .sk_sss
+                .clone_share(0)
+                .expect("party 0 ciphertext")
+                .decrypt(&sk_0, &params, degree)?,
+        )?;
         assert_eq!(decrypted_live, secret.extract_party_share(0)?);
-        let decrypted_placeholder = plan
-            .full_share
-            .sk_sss
-            .clone_share(1)
-            .expect("party 1 proof placeholder")
-            .decrypt(&sk_2, &params, degree)?;
+        let decrypted_placeholder = unpacked_prf_limb(
+            plan.full_share
+                .sk_sss
+                .clone_share(1)
+                .expect("party 1 proof placeholder")
+                .decrypt(&sk_2, &params, degree)?,
+        )?;
         assert_eq!(decrypted_placeholder, secret.extract_party_share(1)?);
         Ok(())
+    }
+
+    /// Remove the PRF key bits from the packed limb and return the Shamir residues.
+    fn unpacked_prf_limb(mut share: ShamirShare) -> Result<ShamirShare> {
+        let preset = BfvPreset::InsecureThreshold;
+        let q = e3_fhe_params::prf_key_modulus(preset);
+        let limb = BfvParamSet::from(preset)
+            .moduli
+            .iter()
+            .position(|modulus| *modulus == q)
+            .ok_or_else(|| anyhow!("PRF key modulus is not a threshold modulus"))?;
+        let packed: Vec<u64> = share.row(limb).iter().copied().collect();
+        let (residues, _) =
+            e3_fhe_params::unpack_prf_key(preset, &packed, q).map_err(|error| anyhow!(error))?;
+        share.replace_row(limb, &residues)?;
+        Ok(share)
     }
 
     #[test]

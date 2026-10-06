@@ -646,18 +646,6 @@ async fn setup_test_zk_backend(
                 .join("recursive_aggregation")
                 .join("sk_c2_chunk_finalize")
                 .join("target");
-            let c2ab_chunk_fold_target = circuits_build_root
-                .join("recursive_aggregation")
-                .join("c2ab_chunk_fold")
-                .join("target");
-            let c3ab_fold_target = circuits_build_root
-                .join("recursive_aggregation")
-                .join("c3ab_fold")
-                .join("target");
-            let c4ab_fold_target = circuits_build_root
-                .join("recursive_aggregation")
-                .join("c4ab_fold")
-                .join("target");
             let node_fold_target = circuits_build_root
                 .join("recursive_aggregation")
                 .join("node_fold")
@@ -914,30 +902,6 @@ async fn setup_test_zk_backend(
                 &sk_c2_chunk_finalize_target,
                 &dv.join("recursive_aggregation/sk_c2_chunk_finalize"),
                 "sk_c2_chunk_finalize",
-                ".vk_recursive",
-                ".vk_recursive_hash",
-            )
-            .await?;
-            copy_circuit(
-                &c2ab_chunk_fold_target,
-                &dv.join("recursive_aggregation/c2ab_chunk_fold"),
-                "c2ab_chunk_fold",
-                ".vk_recursive",
-                ".vk_recursive_hash",
-            )
-            .await?;
-            copy_circuit(
-                &c3ab_fold_target,
-                &dv.join("recursive_aggregation/c3ab_fold"),
-                "c3ab_fold",
-                ".vk_recursive",
-                ".vk_recursive_hash",
-            )
-            .await?;
-            copy_circuit(
-                &c4ab_fold_target,
-                &dv.join("recursive_aggregation/c4ab_fold"),
-                "c4ab_fold",
                 ".vk_recursive",
                 ".vk_recursive_hash",
             )

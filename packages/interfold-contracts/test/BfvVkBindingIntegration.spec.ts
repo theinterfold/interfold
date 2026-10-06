@@ -183,7 +183,10 @@ const hasCompiledV2VkArtifacts = (): boolean =>
     ...getBfvPkVkBindingHashPaths().filter(
       (p) =>
         !p.includes("esm_share_computation_chunk") &&
-        !p.includes("esm_c2_chunk_finalize"),
+        !p.includes("esm_c2_chunk_finalize") &&
+        !p.includes("c2ab_chunk_fold") &&
+        !p.includes("c3ab_fold") &&
+        !p.includes("c4ab_fold"),
     ),
     ...getBfvV2VkBindingHashPaths(),
   ].every((p) => fs.existsSync(p));
@@ -597,7 +600,7 @@ describe("BfvVkBindingIntegration", function () {
       const {
         partyId: partyIdOffset,
         sk: skOffset,
-        esm: esmOffset,
+        c0: c0Offset,
       } = bfvDecPartyColOffsets(BFV_THRESHOLD_T);
       const registryPartyIds: bigint[] = [];
       const skCommits: string[] = [];
@@ -605,7 +608,7 @@ describe("BfvVkBindingIntegration", function () {
       for (let i = 0; i < BFV_THRESHOLD_T + 1; i++) {
         registryPartyIds.push(BigInt(decPublicInputs[partyIdOffset + i]) - 1n);
         skCommits.push(decPublicInputs[skOffset + i]);
-        esmCommits.push(decPublicInputs[esmOffset + i]);
+        esmCommits.push(decPublicInputs[c0Offset + i]);
       }
       await mockCiphernodeRegistry.setDkgAnchors(
         testE3Id,

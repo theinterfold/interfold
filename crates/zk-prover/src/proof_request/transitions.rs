@@ -55,20 +55,14 @@ pub(crate) struct DecryptionDispatchItem {
     pub(crate) request: ZkRequest,
 }
 
-/// Build the ordered set of C4 proof requests (SecretKey then SmudgingNoise[i]).
-/// `c4_base_seq` is the streaming-aggregation `seq` of the C4a (SecretKey) proof;
-/// each C4b proof follows at `c4_base_seq + 1 + esi_idx`.
+/// Build the C4a proof request. `c4_base_seq` is its streaming-aggregation sequence.
 pub(crate) fn plan_decryption_dispatch(
     sk_request: DkgShareDecryptionProofRequest,
-    esm_requests: Vec<DkgShareDecryptionProofRequest>,
     c4_base_seq: usize,
 ) -> Vec<DecryptionDispatchItem> {
-    let mut items = Vec::with_capacity(1 + esm_requests.len());
-    items.push(DecryptionDispatchItem {
+    vec![DecryptionDispatchItem {
         kind: DecryptionProofKind::SecretKey,
         seq: c4_base_seq,
         request: ZkRequest::DkgShareDecryption(sk_request),
-    });
-    let _ = esm_requests;
-    items
+    }]
 }

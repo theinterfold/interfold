@@ -24,9 +24,7 @@ impl VerifiableParty for PartyShareDecryptionProofsToVerify {
         self.sender_party_id
     }
     fn signed_proofs(&self) -> Vec<SignedProofPayload> {
-        std::iter::once(self.signed_sk_decryption_proof.clone())
-            .chain(self.signed_e_sm_decryption_proofs.iter().cloned())
-            .collect()
+        std::iter::once(self.signed_sk_decryption_proof.clone()).collect()
     }
 }
 

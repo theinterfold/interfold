@@ -304,14 +304,14 @@ mod task_group_tests {
             )),
             zk_request.clone(),
         );
-        let keyshare_request = ComputeRequestKind::TrBFV(TrBFVRequest::GenEsiSss(
-            e3_trbfv::gen_esi_sss::GenEsiSssRequest {
+        let keyshare_request = ComputeRequestKind::TrBFV(TrBFVRequest::CalculateDecryptionKey(
+            e3_trbfv::calculate_decryption_key::CalculateDecryptionKeyRequest {
                 trbfv_config: e3_trbfv::TrBFVConfig::new(
                     e3_utils::ArcBytes::from_bytes(b"params"),
                     3,
                     1,
                 ),
-                e_sm_raw: e3_crypto::SensitiveBytes::from_encrypted(&[1]),
+                sk_sss_collected: Vec::new(),
             },
         ));
 
@@ -598,7 +598,6 @@ fn is_retryable_compute_error(error: &ComputeRequestError) -> bool {
         ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(_))
             | ComputeRequestErrorKind::TrBFV(
                 TrBFVError::GenPkShareAndSkSss(_)
-                    | TrBFVError::GenEsiSss(_)
                     | TrBFVError::CalculateDecryptionKey(_)
                     | TrBFVError::CalculateDecryptionShare(_)
             )
@@ -610,7 +609,6 @@ fn is_retryable_trbfv_request(request: &ComputeRequestKind) -> bool {
         request,
         ComputeRequestKind::TrBFV(
             TrBFVRequest::GenPkShareAndSkSss(_)
-                | TrBFVRequest::GenEsiSss(_)
                 | TrBFVRequest::CalculateDecryptionKey(_)
                 | TrBFVRequest::CalculateDecryptionShare(_)
         )
@@ -1242,8 +1240,14 @@ fn handle_threshold_share_decryption_proof(
 
     // 4. For each index, build circuit data and generate proof
     let num_indices = req.ciphertext_bytes.len();
-    if req.es_poly_sum.is_empty() {
-        return Err(make_zk_error(&request, "empty es_poly_sum".to_string()));
+    if req.e_fresh.len() < num_indices {
+        return Err(make_zk_error(
+            &request,
+            format!(
+                "e_fresh too short: {} < {num_indices}",
+                req.e_fresh.len()
+            ),
+        ));
     }
     if req.d_share_bytes.len() < num_indices {
         return Err(make_zk_error(
@@ -1283,17 +1287,14 @@ fn handle_threshold_share_decryption_proof(
                 make_zk_error(&request, format!("ciphertext[{}] deserialize: {:?}", i, e))
             })?;
 
-        // Decrypt es_poly_sum → Poly → CrtPolynomial (e)
-        // Currently there is a single smudging noise polynomial shared across all
-        // ciphertexts (see calculate_decryption_share.rs).
-        let es_idx = i % req.es_poly_sum.len();
-        let e_poly = try_poly_from_sensitive_bytes(
-            req.es_poly_sum[es_idx].clone(),
+        // Decrypt the fresh noise polynomial reused by the C6 witness.
+        let noise = try_poly_from_sensitive_bytes(
+            req.e_fresh[i].clone(),
             threshold_params.clone(),
             cipher,
         )
-        .map_err(|e| make_zk_error(&request, format!("es_poly_sum[{}] decrypt: {}", i, e)))?;
-        let e = CrtPolynomial::from_fhe_polynomial(&e_poly);
+        .map_err(|e| make_zk_error(&request, format!("e_fresh[{i}] decrypt: {e}")))?;
+        let e = CrtPolynomial::from_fhe_polynomial(&noise);
 
         // Deserialize d_share → Poly → CrtPolynomial
         let d_share_poly = try_poly_pb_from_bytes(&req.d_share_bytes[i], &threshold_params)
@@ -2682,21 +2683,7 @@ fn handle_verify_share_decryption_proofs(
     for party in req.party_proofs {
         let sender = party.sender_party_id;
 
-        // Guard: an empty ESM proof list would make verification vacuously true.
-        if party.signed_e_sm_decryption_proofs.is_empty() {
-            party_results.push(PartyVerificationResult {
-                sender_party_id: sender,
-                all_verified: false,
-                failed_signed_payload: None,
-                recovered_address: None,
-            });
-            continue;
-        }
-
-        let all_signed: Vec<&e3_events::SignedProofPayload> =
-            std::iter::once(&party.signed_sk_decryption_proof)
-                .chain(party.signed_e_sm_decryption_proofs.iter())
-                .collect();
+        let all_signed = std::iter::once(&party.signed_sk_decryption_proof);
         let mut party_result = PartyVerificationResult {
             sender_party_id: sender,
             all_verified: true,

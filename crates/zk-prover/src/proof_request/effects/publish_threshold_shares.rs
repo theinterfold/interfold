@@ -33,8 +33,6 @@ impl ProofRequestActor {
             return false;
         };
 
-        let _ = pending.e_sm_share_computation_proof;
-
         let Some(signed_c3a_map) = self.sign_and_group_proofs(
             e3_id,
             ProofType::C3aSkShareEncryption,
@@ -46,8 +44,6 @@ impl ProofRequestActor {
             error!("Failed to sign the local C3a proofs; pending work is preserved");
             return false;
         };
-
-        let _ = pending.e_sm_share_encryption_proofs;
 
         info!(
             "All proofs signed for E3 {} party {} (signer: {})",
@@ -117,7 +113,6 @@ impl ProofRequestActor {
                             external: false,
                             signed_c2a_proof: Some(signed_c2a.clone()),
                             signed_c3a_proofs: c3a_proofs,
-                            signed_c3b_proofs: Vec::new(),
                         },
                         ec.clone(),
                     ) {

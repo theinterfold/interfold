@@ -23,8 +23,6 @@ pub struct ReceivedShareProofs {
     pub signed_c2a_proof: Option<SignedProofPayload>,
     /// Signed C3a proofs (sk share encryption per modulus row).
     pub signed_c3a_proofs: Vec<SignedProofPayload>,
-    /// Signed C3b proofs (e_sm share encryption per modulus row).
-    pub signed_c3b_proofs: Vec<SignedProofPayload>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -197,7 +195,6 @@ mod tests {
         ReceivedShareProofs {
             signed_c2a_proof: None,
             signed_c3a_proofs: Vec::new(),
-            signed_c3b_proofs: Vec::new(),
         }
     }
 

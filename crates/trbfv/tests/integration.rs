@@ -9,7 +9,7 @@ use anyhow::Result;
 use e3_bfv_client::decode_bytes_to_vec_u64;
 use e3_crypto::Cipher;
 use e3_fhe_params::create_deterministic_crp_from_default_seed;
-use e3_fhe_params::DEFAULT_BFV_PRESET;
+use e3_fhe_params::{zero_prf_key, DEFAULT_BFV_PRESET};
 use e3_fhe_params::{encode_bfv_params, BfvParamSet};
 use e3_test_helpers::{create_shared_rng_from_u64, usecase_helpers};
 use e3_trbfv::{
@@ -83,9 +83,11 @@ async fn test_trbfv_isolation() -> Result<()> {
         .collect::<Vec<ArcBytes>>();
 
     let mut decryption_shares = HashMap::new();
-    // for party_id in 0..=threshold_m as usize {
+    // 0-based party ids 1, 4, and 2. Lagrange uses the 1-based ids.
+    let decryptors = vec![2u32, 5, 3];
+    let zero_keys = vec![zero_prf_key(DEFAULT_BFV_PRESET); threshold_n];
     for party_id in [1, 4, 2] {
-        let (es_poly_sum, sk_poly_sum) = decryption_keys.get(&party_id).unwrap();
+        let sk_poly_sum = decryption_keys.get(&party_id).unwrap();
         println!("calculate_decryption_share for party_id={}", party_id);
         let CalculateDecryptionShareResponse { d_share_poly, .. } = calculate_decryption_share(
             &cipher,
@@ -93,12 +95,11 @@ async fn test_trbfv_isolation() -> Result<()> {
                 name: format!("party_id({})", party_id),
                 sk_poly_sum: sk_poly_sum.clone(),
                 trbfv_config: trbfv_config.clone(),
-                es_poly_sum: es_poly_sum.clone(),
                 ciphertexts: ciphertexts.clone(),
-                party_idx: 0,
-                decryptors: vec![],
-                outgoing_prf_keys: vec![],
-                incoming_prf_keys: vec![],
+                party_idx: party_id as u32,
+                decryptors: decryptors.clone(),
+                outgoing_prf_keys: zero_keys.clone(),
+                incoming_prf_keys: zero_keys.clone(),
             },
         )?;
 

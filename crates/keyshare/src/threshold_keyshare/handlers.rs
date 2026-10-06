@@ -75,7 +75,6 @@ impl Handler<TypedEvent<ComputeRequestError>> for ThresholdKeyshare {
         let owned = matches!(
             error_kind,
             e3_trbfv::TrBFVError::GenPkShareAndSkSss(_)
-                | e3_trbfv::TrBFVError::GenEsiSss(_)
                 | e3_trbfv::TrBFVError::CalculateDecryptionKey(_)
                 | e3_trbfv::TrBFVError::CalculateDecryptionShare(_)
         );

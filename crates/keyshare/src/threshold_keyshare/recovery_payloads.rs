@@ -204,7 +204,6 @@ mod tests {
                 external: true,
                 signed_c2a_proof: None,
                 signed_c3a_proofs: Vec::new(),
-                signed_c3b_proofs: Vec::new(),
             },
             context(),
         )

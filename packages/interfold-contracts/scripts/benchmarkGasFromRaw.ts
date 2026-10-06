@@ -651,7 +651,7 @@ async function main() {
       BigInt(decPublicInputs[partyOffsets.partyId + i]) - 1n,
     );
     skCommits.push(decPublicInputs[partyOffsets.sk + i]);
-    esmCommits.push(decPublicInputs[partyOffsets.esm + i]);
+    esmCommits.push(decPublicInputs[partyOffsets.c0 + i]);
   }
   await registry.setDkgAnchors(
     benchmarkE3Id,

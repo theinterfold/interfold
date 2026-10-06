@@ -54,35 +54,6 @@ impl CommitmentLink for C3aToC0PkCommitmentLink {
     }
 }
 
-/// C3b → C0 pk_commitment consistency link.
-pub struct C3bToC0PkCommitmentLink;
-
-impl CommitmentLink for C3bToC0PkCommitmentLink {
-    fn name(&self) -> &'static str {
-        "C3b->C0 pk_commitment"
-    }
-
-    fn source_proof_type(&self) -> ProofType {
-        ProofType::C3bESmShareEncryption
-    }
-
-    fn target_proof_type(&self) -> ProofType {
-        ProofType::C0PkBfv
-    }
-
-    fn scope(&self) -> LinkScope {
-        LinkScope::SourceMustExistInTargets
-    }
-
-    fn extract_source_values(&self, public_signals: &[u8]) -> Vec<FieldValue> {
-        extract_expected_pk_commitment(public_signals)
-    }
-
-    fn check_signals(&self, source_values: &[FieldValue], target_public_signals: &[u8]) -> bool {
-        check_pk_exists_in_c0(source_values, target_public_signals)
-    }
-}
-
 /// Extract `expected_pk_commitment` from C3's public inputs (HEAD of signals).
 fn extract_expected_pk_commitment(public_signals: &[u8]) -> Vec<FieldValue> {
     let layout = CircuitName::ShareEncryption.input_layout();
@@ -154,23 +125,6 @@ mod tests {
         let link = C3aToC0PkCommitmentLink;
         let source_values = vec![make_field(42)];
         let target = c0_signals(make_field(99));
-        assert!(!link.check_signals(&source_values, &target));
-    }
-
-    #[test]
-    fn consistency_passes_c3b_variant() {
-        let link = C3bToC0PkCommitmentLink;
-        let pk = make_field(7);
-        let source_values = vec![pk];
-        let target = c0_signals(pk);
-        assert!(link.check_signals(&source_values, &target));
-    }
-
-    #[test]
-    fn consistency_fails_c3b_variant() {
-        let link = C3bToC0PkCommitmentLink;
-        let source_values = vec![make_field(7)];
-        let target = c0_signals(make_field(8));
         assert!(!link.check_signals(&source_values, &target));
     }
 

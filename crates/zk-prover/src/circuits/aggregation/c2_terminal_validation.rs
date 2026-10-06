@@ -234,34 +234,31 @@ mod tests {
     }
 
     #[test]
-    fn accepts_canonical_proof_for_both_c2_types() {
+    fn accepts_canonical_c2a_terminal_proof() {
         let anchors = C2TerminalAnchors {
             chunk_vk_hash: format!("0x{}", hex_field(&BigUint::from(11u8))),
             batch_vk_hash: format!("0x{}", hex_field(&BigUint::from(13u8))),
         };
-        for (proof_type, circuit) in [
-            (
-                ProofType::C2aSkShareComputation,
-                CircuitName::SkC2ChunkFinalize,
-            ),
-            (
-                ProofType::C2bESmShareComputation,
-                CircuitName::ESmC2ChunkFinalize,
-            ),
-        ] {
-            let proof = terminal_proof(
-                circuit,
-                &valid_signals(&BigUint::from(11u8), &BigUint::from(13u8)),
-            );
-            validate_c2_terminal_proof(
-                BfvPreset::InsecureDkg,
-                CiphernodesCommitteeSize::Minimum,
-                proof_type,
-                &proof,
-                &anchors,
-            )
-            .expect("canonical C2 terminal proof must pass");
-        }
+        let proof = terminal_proof(
+            CircuitName::SkC2ChunkFinalize,
+            &valid_signals(&BigUint::from(11u8), &BigUint::from(13u8)),
+        );
+        validate_c2_terminal_proof(
+            BfvPreset::InsecureDkg,
+            CiphernodesCommitteeSize::Minimum,
+            ProofType::C2aSkShareComputation,
+            &proof,
+            &anchors,
+        )
+        .expect("canonical C2a terminal proof must pass");
+        let rejected = validate_c2_terminal_proof(
+            BfvPreset::InsecureDkg,
+            CiphernodesCommitteeSize::Minimum,
+            ProofType::C2bESmShareComputation,
+            &proof,
+            &anchors,
+        );
+        assert!(rejected.is_err());
     }
 
     #[test]

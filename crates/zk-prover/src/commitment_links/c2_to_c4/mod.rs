@@ -4,8 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! C2a/C2b (ShareComputation) → C4a/C4b (ShareDecryption)
-//! share-commitment consistency links.
+//! C2a (ShareComputation) → C4a (ShareDecryption) share-commitment consistency.
 //!
 //! ## Purpose
 //!
@@ -89,52 +88,6 @@ impl CommitmentLink for C2aToC4aShareCommitmentLink {
 
     fn target_proof_type(&self) -> ProofType {
         ProofType::C4aSkShareDecryption
-    }
-
-    fn scope(&self) -> LinkScope {
-        LinkScope::SourceMustExistInTargets
-    }
-
-    fn extract_source_values(&self, public_signals: &[u8]) -> Vec<FieldValue> {
-        extract_share_commitments(public_signals, self.source_prefix_fields)
-    }
-
-    fn check_consistency(
-        &self,
-        source_values: &[FieldValue],
-        target_public_signals: &[u8],
-        src_party_id: u64,
-        tgt_party_id: u64,
-    ) -> bool {
-        check_exact_l_commitments(
-            source_values,
-            target_public_signals,
-            src_party_id,
-            tgt_party_id,
-            self.l,
-        )
-    }
-}
-
-/// C2b (ESmShareComputation) → C4b (ESmShareDecryption) commitment link.
-pub struct C2bToC4bShareCommitmentLink {
-    /// Number of threshold CRT moduli (L).
-    pub l: usize,
-    /// Number of non-commitment fields at the start of the C2 terminal proof.
-    pub source_prefix_fields: usize,
-}
-
-impl CommitmentLink for C2bToC4bShareCommitmentLink {
-    fn name(&self) -> &'static str {
-        "C2b->C4b share commitments"
-    }
-
-    fn source_proof_type(&self) -> ProofType {
-        ProofType::C2bESmShareComputation
-    }
-
-    fn target_proof_type(&self) -> ProofType {
-        ProofType::C4bESmShareDecryption
     }
 
     fn scope(&self) -> LinkScope {

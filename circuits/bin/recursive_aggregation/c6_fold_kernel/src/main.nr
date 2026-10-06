@@ -54,7 +54,7 @@ fn main(
     let incoming_start = outgoing_start + N_PARTIES;
 
     let mut out_sk: [Field; T + 1] = [0; T + 1];
-    let mut out_esm: [Field; T + 1] = [0; T + 1];
+    let mut out_c0: [Field; T + 1] = [0; T + 1];
     let mut out_ct: [Field; T + 1] = [0; T + 1];
     let mut out_d: [Field; T + 1] = [0; T + 1];
     let mut out_outgoing: [Field; C6_KEY_SLOTS] = [0; C6_KEY_SLOTS];
@@ -64,7 +64,7 @@ fn main(
         let idx = i as u32;
         if idx == slot_index {
             out_sk[i] = sk_new;
-            out_esm[i] = c0_new;
+            out_c0[i] = c0_new;
             out_ct[i] = ct_new;
             out_d[i] = d_new;
             for k in 0..N_PARTIES {
@@ -81,7 +81,7 @@ fn main(
     assert(c6_public_inputs[5] + 1 == out_decryptors[slot_index]);
 
     (
-        domain_hi, domain_lo, out_sk, out_esm, out_ct, out_d, out_outgoing, out_incoming,
+        domain_hi, domain_lo, out_sk, out_c0, out_ct, out_d, out_outgoing, out_incoming,
         out_decryptors,
     )
 }

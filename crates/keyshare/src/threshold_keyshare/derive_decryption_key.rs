@@ -41,7 +41,6 @@ pub(crate) enum DecryptionKeyPlan {
     Proceed {
         calc_request: CalculateDecryptionKeyRequest,
         sk_request: DkgShareDecryptionProofRequest,
-        esm_requests: Vec<DkgShareDecryptionProofRequest>,
         honest_party_ids: BTreeSet<u64>,
         incoming_prf_keys: Vec<e3_crypto::SensitiveBytes>,
     },
@@ -263,12 +262,9 @@ pub(crate) fn build_decryption_key_plan(
         prf_keys: slot_key_bytes,
     };
 
-    let esm_requests = Vec::new();
-
     Ok(DecryptionKeyPlan::Proceed {
         calc_request,
         sk_request,
-        esm_requests,
         honest_party_ids,
         incoming_prf_keys,
     })

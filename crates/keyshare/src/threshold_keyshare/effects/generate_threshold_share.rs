@@ -1,22 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
-//! ESI generation and encrypted threshold-share publication.
+//! Encrypted threshold-share publication.
 
 use super::*;
 
 impl ThresholdKeyshare {
-    /// The wire variant remains so bincode indices stay stable. DKG does not deal smudging shares.
-    pub fn handle_gen_esi_sss_requested(&self, _msg: TypedEvent<GenEsiSss>) -> Result<()> {
-        info!("Ignoring GenEsiSss request");
-        Ok(())
-    }
-
-    /// The wire variant remains so bincode indices stay stable. DKG does not deal smudging shares.
-    pub fn handle_gen_esi_sss_response(&mut self, _res: TypedEvent<ComputeResponse>) -> Result<()> {
-        info!("Ignoring GenEsiSss response");
-        Ok(())
-    }
-
     pub fn publish_generated_threshold_shares(
         &mut self,
         ec: EventContext<Sequenced>,
@@ -35,9 +23,7 @@ impl ThresholdKeyshare {
                     own_sk_share_raw: own_sk_share_raw.clone(),
                     signed_pk_generation_proof: None,
                     signed_sk_share_computation_proof: None,
-                    signed_e_sm_share_computation_proof: None,
                     signed_sk_share_encryption_proofs: Vec::new(),
-                    signed_e_sm_share_encryption_proofs: Vec::new(),
                     outgoing_prf_keys,
                 },
             ))

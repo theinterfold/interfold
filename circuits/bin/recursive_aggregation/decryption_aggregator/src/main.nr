@@ -22,17 +22,17 @@ use lib::math::commitments::compute_vk_hash;
 use lib::math::committee_hash::committee_hash_limbs;
 
 /// Must match `c6_fold::C6_FOLD_PUBLIC_LEN`: pub params, common domain limbs,
-/// and flattened `(out_sk, out_esm, out_ct, out_d)`.
+/// and flattened `(out_sk, out_c0, out_ct, out_d)`.
 pub global C6_KEY_SLOTS: u32 = (T + 1) * N_PARTIES;
 pub global C6_FOLD_PUBLIC_LEN: u32 = 6 + (5 * (T + 1)) + (2 * C6_KEY_SLOTS);
 
 pub global C6_FOLD_PREFIX_LEN: u32 = 6;
 
 /// Column offsets inside the `c6_fold` flattened tail (after `C6_FOLD_PREFIX_LEN`):
-/// `(out_sk, out_esm, out_ct, out_d)`, each `C6_FOLD_COL_WIDTH = T + 1` long.
+/// `(out_sk, out_c0, out_ct, out_d)`, each `C6_FOLD_COL_WIDTH = T + 1` long.
 pub global C6_FOLD_COL_WIDTH: u32 = T + 1;
 pub global C6_FOLD_SK_COL_OFFSET: u32 = 0;
-pub global C6_FOLD_ESM_COL_OFFSET: u32 = C6_FOLD_COL_WIDTH;
+pub global C6_FOLD_C0_COL_OFFSET: u32 = C6_FOLD_COL_WIDTH;
 pub global C6_FOLD_CT_COL_OFFSET: u32 = 2 * C6_FOLD_COL_WIDTH;
 pub global C6_FOLD_D_COL_OFFSET: u32 = 3 * C6_FOLD_COL_WIDTH;
 
@@ -56,11 +56,7 @@ fn assert_valid_party_id(id: Field) -> u32 {
 }
 
 /// Asserts `curr > prev`. Used to force the `T + 1` reconstructing `party_ids` to be
-/// strictly increasing, which (a) implies distinctness -- no party's share can occupy
-/// two reconstruction slots, which would let a single real share masquerade as T+1
-/// independent contributions and silently defeat the T+1 honest-party threshold -- and
-/// (b) matches the ordering `decrypted_shares_aggregation.nr`'s own Lagrange
-/// sign-computation already assumes but never enforced.
+/// strictly increasing. Distinct ids stop one share from filling two reconstruction slots.
 fn assert_strictly_increasing(prev: u32, curr: u32) {
     assert(curr > prev);
 }
@@ -101,7 +97,7 @@ fn main(
             c6_fold_public[C6_FOLD_PREFIX_LEN + C6_FOLD_CT_COL_OFFSET + i] == ciphertext_commitment,
         );
         assert(
-            c6_fold_public[C6_FOLD_PREFIX_LEN + C6_FOLD_ESM_COL_OFFSET + i] == c0_commitment,
+            c6_fold_public[C6_FOLD_PREFIX_LEN + C6_FOLD_C0_COL_OFFSET + i] == c0_commitment,
         );
     }
 
@@ -119,12 +115,12 @@ fn main(
 
     let mut party_ids: [Field; T + 1] = [0; T + 1];
     let mut expected_sk: [Field; T + 1] = [0; T + 1];
-    let mut expected_esm: [Field; T + 1] = [0; T + 1];
+    let mut expected_c0: [Field; T + 1] = [0; T + 1];
     let mut prev_party_id: u32 = 0;
     for i in 0..(T + 1) {
         party_ids[i] = c7_public[C7_PARTY_ID_OFFSET + i];
         expected_sk[i] = c6_fold_public[C6_FOLD_PREFIX_LEN + C6_FOLD_SK_COL_OFFSET + i];
-        expected_esm[i] = c6_fold_public[C6_FOLD_PREFIX_LEN + C6_FOLD_ESM_COL_OFFSET + i];
+        expected_c0[i] = c6_fold_public[C6_FOLD_PREFIX_LEN + C6_FOLD_C0_COL_OFFSET + i];
 
         // `committee_members` and `topNodes` are 0-indexed; a future per-party
         // signer/identity check must index them with `committee_members[party_ids[i] - 1]`,
@@ -155,7 +151,7 @@ fn main(
     }
 
     (
-        key_hash, party_ids, expected_sk, expected_esm, message, outgoing_keys, incoming_keys,
+        key_hash, party_ids, expected_sk, expected_c0, message, outgoing_keys, incoming_keys,
     )
 }
 

@@ -901,13 +901,24 @@ fn legacy_vk_binding(
     circuits
         .into_iter()
         .map(|circuit| {
+            if matches!(
+                circuit,
+                CircuitName::C2abChunkFold
+                    | CircuitName::C3abFold
+                    | CircuitName::C4abFold
+                    | CircuitName::ESmC2ChunkFinalize
+                    | CircuitName::ESmShareComputationChunk
+            ) {
+                return Ok(vk::VkArtifacts {
+                    verification_key: Vec::new(),
+                    key_hash: "0x0".to_string(),
+                });
+            }
             let variant = match circuit {
                 CircuitName::PkBfv
                 | CircuitName::PkGeneration
                 | CircuitName::SkC2ChunkFinalize
-                | CircuitName::ESmC2ChunkFinalize
                 | CircuitName::SkShareComputationChunk
-                | CircuitName::ESmShareComputationChunk
                 | CircuitName::ShareEncryption
                 | CircuitName::DkgShareDecryption => CircuitVariant::Recursive,
                 _ => CircuitVariant::Default,

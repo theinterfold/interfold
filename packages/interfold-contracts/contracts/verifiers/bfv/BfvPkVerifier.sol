@@ -106,8 +106,15 @@ contract BfvPkVerifier is IPkVerifier {
             _expectedSkC2ChunkKeyHash == bytes32(0)
         ) revert InvalidVerificationKeyHash();
         for (uint256 i = 0; i < _expectedVkBinding.length; i++) {
-            // Indices 7 and 10 are unused. The prover writes zero.
-            if (i != 7 && i != 10 && _expectedVkBinding[i] == bytes32(0)) {
+            // Indices 3, 4, 5, 7, and 10 are unused. The prover writes zero.
+            if (
+                i != 3 &&
+                i != 4 &&
+                i != 5 &&
+                i != 7 &&
+                i != 10 &&
+                _expectedVkBinding[i] == bytes32(0)
+            ) {
                 revert InvalidVerificationKeyHash();
             }
             expectedVkBinding[i] = _expectedVkBinding[i];

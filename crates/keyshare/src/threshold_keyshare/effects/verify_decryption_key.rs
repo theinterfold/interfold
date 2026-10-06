@@ -14,7 +14,6 @@ impl ThresholdKeyshare {
     ) -> Result<()> {
         let state = self.state.try_get()?;
         let e3_id = state.get_e3_id();
-        let ready: ReadyForDecryption = state.clone().try_into()?;
 
         info!(
             "All DecryptionKeyShared collected for E3 {} ({} shares)",
@@ -22,42 +21,13 @@ impl ThresholdKeyshare {
             collected_shares.len()
         );
 
-        // Validate ESM proof count — each party must provide exactly
-        // one C4b proof per smudging noise index.
-        let expected_esm = ready.es_poly_sum.len();
-        let mut c4_count_dishonest: HashSet<u64> = HashSet::new();
         let party_proofs: Vec<PartyShareDecryptionProofsToVerify> = collected_shares
             .iter()
-            .filter_map(|(&party_id, share)| {
-                if share.signed_e_sm_decryption_proofs.len() != expected_esm {
-                    warn!(
-                        "Party {} has wrong ESM proof count ({} vs expected {}) for E3 {} — treating as dishonest",
-                        party_id,
-                        share.signed_e_sm_decryption_proofs.len(),
-                        expected_esm,
-                        e3_id
-                    );
-                    c4_count_dishonest.insert(party_id);
-                    None
-                } else {
-                    Some(PartyShareDecryptionProofsToVerify {
-                        sender_party_id: party_id,
-                        signed_sk_decryption_proof: share.signed_sk_decryption_proof.clone(),
-                        signed_e_sm_decryption_proofs: share.signed_e_sm_decryption_proofs.clone(),
-                    })
-                }
+            .map(|(&party_id, share)| PartyShareDecryptionProofsToVerify {
+                sender_party_id: party_id,
+                signed_sk_decryption_proof: share.signed_sk_decryption_proof.clone(),
             })
             .collect();
-
-        // Evict pre-dishonest parties (wrong ESM count) from honest set
-        if !c4_count_dishonest.is_empty() {
-            self.state.try_mutate(&ec, |mut s| {
-                if let Some(ref mut honest) = s.honest_parties {
-                    honest.retain(|pid| !c4_count_dishonest.contains(pid));
-                }
-                Ok(s)
-            })?;
-        }
 
         if party_proofs.is_empty() {
             // Check threshold viability after removing pre-dishonest parties
@@ -89,13 +59,12 @@ impl ThresholdKeyshare {
             return self.publish_keyshare_created(ec);
         }
 
-        let pre_dishonest: BTreeSet<u64> = c4_count_dishonest.into_iter().collect();
+        let pre_dishonest = BTreeSet::new();
 
         info!(
-            "Dispatching C4 share verification for E3 {} ({} parties, {} pre-dishonest)",
+            "Dispatching C4 share verification for E3 {} ({} parties)",
             e3_id,
-            party_proofs.len(),
-            pre_dishonest.len()
+            party_proofs.len()
         );
 
         let committee_size = state.committee_size()?;

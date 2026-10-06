@@ -69,9 +69,8 @@ impl ProofRequestActor {
         }
 
         let sk_enc_count = msg.sk_share_encryption_requests.len();
-        let e_sm_enc_count = 0;
 
-        let total_expected = total_expected_for(sk_enc_count, e_sm_enc_count);
+        let total_expected = total_expected_for(sk_enc_count);
         let pending_c0 = self
             .node_agg_meta
             .get(&e3_id)
@@ -106,7 +105,6 @@ impl ProofRequestActor {
             msg.full_share.clone(),
             ec.clone(),
             sk_enc_count,
-            e_sm_enc_count,
             msg.recipient_party_ids,
         );
 

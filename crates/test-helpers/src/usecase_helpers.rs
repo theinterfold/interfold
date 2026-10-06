@@ -130,7 +130,7 @@ pub fn get_decryption_keys(
     cipher: &Cipher,
     trbfv_config: &TrBFVConfig,
     bfv_params: &Arc<BfvParameters>,
-) -> Result<HashMap<usize, (Vec<SensitiveBytes>, SensitiveBytes)>> {
+) -> Result<HashMap<usize, SensitiveBytes>> {
     let threshold_n = trbfv_config.num_parties() as usize;
     let degree = bfv_params.degree();
 
@@ -149,17 +149,14 @@ pub fn get_decryption_keys(
             })
             .collect::<Result<_>>()?;
 
-        let CalculateDecryptionKeyResponse {
-            es_poly_sum,
-            sk_poly_sum,
-        } = calculate_decryption_key(
+        let CalculateDecryptionKeyResponse { sk_poly_sum } = calculate_decryption_key(
             cipher,
             CalculateDecryptionKeyRequest {
                 trbfv_config: trbfv_config.clone(),
                 sk_sss_collected: sk_sss_collected.encrypt(cipher)?,
             },
         )?;
-        decryption_keys.insert(party_id, (es_poly_sum, sk_poly_sum));
+        decryption_keys.insert(party_id, sk_poly_sum);
     }
     Ok(decryption_keys)
 }

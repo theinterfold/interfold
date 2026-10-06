@@ -12,7 +12,6 @@ impl ProofRequestActor {
     ) {
         let (msg, ec) = msg.into_components();
         let e3_id = msg.e3_id.clone();
-        let esm_count = msg.esm_requests.len();
 
         if self.pending_decryption.contains_key(&e3_id) {
             warn!(
@@ -29,20 +28,17 @@ impl ProofRequestActor {
                 node: msg.node,
                 ec: ec.clone(),
                 sk_proof: None,
-                esm_proofs: HashMap::new(),
-                expected_esm_count: esm_count,
             },
         );
 
-        // C4a/C4b: dispatch share-decryption proof requests in canonical seq
-        // order. The pure domain planner owns seq assignment; the actor only
-        // allocates correlation ids, publishes, and rolls back on failure.
+        // Dispatch the C4a share-decryption proof. The planner owns the sequence
+        // number. This actor allocates the correlation id and publishes the request.
         let c4_base_seq = self
             .node_agg_meta
             .get(&e3_id)
             .map(NodeAggregationMeta::c4_base_seq)
             .unwrap_or(0);
-        for item in plan_decryption_dispatch(msg.sk_request, msg.esm_requests, c4_base_seq) {
+        for item in plan_decryption_dispatch(msg.sk_request, c4_base_seq) {
             let corr = CorrelationId::new();
             self.decryption_correlation
                 .insert(corr, (e3_id.clone(), item.kind, item.seq));
@@ -83,13 +79,6 @@ impl ProofRequestActor {
             DecryptionProofKind::SecretKey => {
                 info!("Received C4a SK decryption proof for E3 {}", e3_id);
                 pending.sk_proof = Some(proof);
-            }
-            DecryptionProofKind::SmudgingNoise { esi_idx } => {
-                info!(
-                    "Received C4b ESM decryption proof [{}] for E3 {}",
-                    esi_idx, e3_id
-                );
-                pending.esm_proofs.insert(esi_idx, proof);
             }
         }
 
@@ -140,8 +129,6 @@ impl ProofRequestActor {
             return false;
         };
 
-        let signed_esms = Vec::new();
-
         info!(
             "All C4 proofs signed for E3 {} party {} (signer: {})",
             e3_id,
@@ -155,7 +142,6 @@ impl ProofRequestActor {
                 party_id: pending.party_id,
                 node: pending.node,
                 signed_sk_decryption_proof: signed_sk,
-                signed_e_sm_decryption_proofs: signed_esms,
                 external: false,
             },
             pending.ec,

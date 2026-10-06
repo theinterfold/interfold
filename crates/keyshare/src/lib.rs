@@ -11,7 +11,7 @@ mod repo;
 
 pub use actors::{
     AllEncryptionKeysCollected, AllThresholdSharesCollected, DkgTimingReader,
-    EncryptionKeyCollector, ExpelPartyFromKeyCollection, GenEsiSss, GenPkShareAndSkSss,
+    EncryptionKeyCollector, ExpelPartyFromKeyCollection, GenPkShareAndSkSss,
     RecoveryPayloadRef, ThresholdKeyshare, ThresholdKeyshareParams,
     ThresholdKeyshareRecoveryPayloads, ThresholdKeyshareRecoveryState,
     THRESHOLD_KEYSHARE_RECOVERY_SCHEMA_VERSION,

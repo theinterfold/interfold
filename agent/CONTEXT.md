@@ -151,8 +151,8 @@ opentelemetry/tracing.
 
 ## Circuit map (IDs ↔ `CircuitName` in `crates/events`)
 
-- **DKG** (`circuits/bin/dkg/`): C0 `pk` (PkBfv) · C2a `sk_share_computation_chunk` · C2b
-  `esm_share_computation_chunk` · C3 `share_encryption` · C4 `share_decryption`
+- **DKG** (`circuits/bin/dkg/`): C0 `pk` (PkBfv) · C2a `sk_share_computation_chunk` · C3
+  `share_encryption` · C4 `share_decryption`
 - **Threshold** (`circuits/bin/threshold/`): C1 `pk_generation` · C5 `pk_aggregation` · P3
   `user_data_encryption_ct0/ct1` (+ wrapper) · C6 `share_decryption` · C7
   `decrypted_shares_aggregation` · secure-16384 l-BFV row proofs `lbfv_pk_generation`
@@ -185,7 +185,7 @@ opentelemetry/tracing.
   bytes for the terminal. The prior equation-wide RLK circuit did not complete compilation after
   more than 31 minutes.
 - **Recursive aggregation** (`circuits/bin/recursive_aggregation/`): fold kernels
-  (`c2ab_chunk_fold`, `c3_fold`, `c6_fold`, `node_fold`, `nodes_fold`, …) and the top-level
+  (`c3_fold`, `c6_fold`, `node_fold`, `nodes_fold`, …) and the top-level
   `dkg_aggregator` / `decryption_aggregator`, which produce the on-chain Honk verifiers. A separate
   secure-16384 family adds `lbfv_generation_fold`, `node_fold_v2`, `nodes_fold_v2`,
   `lbfv_aggregation_fold`, and `dkg_aggregator_v2`. The canonical committed root matches

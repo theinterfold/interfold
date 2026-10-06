@@ -300,7 +300,7 @@ what `PendingThresholdProofs` stores and what gets ECDSA-signed for gossip
 (`ProofType::C2aSkShareComputation`). The old generic
 `recursive_aggregation/wrapper/*` circuits and two-proof `recursive_aggregation/fold` were removed;
 aggregation is done by ad-hoc Noir bins under `circuits/bin/recursive_aggregation/` (e.g.
-`c2ab_chunk_fold`, `c3ab_fold`, `c6_fold`, `node_fold`, `nodes_fold`, `dkg_aggregator`,
+`c3_fold`, `c6_fold`, `node_fold`, `nodes_fold`, `dkg_aggregator`,
 `decryption_aggregator` — `nodes_fold` chains `H` `node_fold` proofs for `dkg_aggregator`;
 `decryption_aggregator` folds C6 via non-ZK `c6_fold` then checks C7 with ZK). The per-circuit
 `wrapper/` Noir step was removed; aggregator response structs no longer carry a `wrapped_proof`
@@ -314,7 +314,9 @@ polynomial degree for generated circuit configuration. The production multithrea
 preset default chunk size. Rust groups the chunk proofs into fixed recursive batches and verifies
 all batches in a type-bound terminal circuit. The terminal circuit reconstructs a root commitment
 for the secret and for each recipient share. The terminal also publishes one PRF-key commitment
-per recipient. The SK path commits the key packed into the largest threshold limb. `C2ChunkBatch` binds the ordered chunk
+per recipient. That commitment is the 0-based recipient and the key reduced modulo the circuit
+scalar. The key bits stay binary, and C3 still packs those bits into the largest threshold limb.
+`C2ChunkBatch` binds the ordered chunk
 indices and chunk commitments. C3 checks the encrypted limb-0 plaintext against the share
 commitment and the key commitment. C4 removes those bits before the aggregate commitment. C6
 evaluates the same keys in the decryption equation.
@@ -666,8 +668,7 @@ ThresholdKeyshare accepts an H-dealer roster after C2/C3 verification
 │
 ├─ 3. PUBLISH C4 PROOF REQUESTS:
 │     DecryptionShareProofsPending {
-│       sk_request:   DkgShareDecryptionProofRequest (C4a),
-│       esm_requests: empty,
+│       sk_request: DkgShareDecryptionProofRequest (C4a),
 │       sk_poly_sum, es_poly_sum  // es_poly_sum is empty
 │     }
 │     → ProofRequestActor picks this up
@@ -1091,7 +1092,7 @@ The decryption wrapper exposes
 `(chainId, Interfold address, e3Id, committeeHash, ciphertextOutputHash, committeePublicKey)`. The
 wrapper checks the domain limbs and SAFE ciphertext commitment in the final proof, then uses the
 separate `e3Id` to resolve the registry's stored DKG anchors and compares every surfaced party ID,
-secret-key commitment, and smudging-noise commitment. The party IDs are circuit-side 1-indexed
+secret-key commitment, and PRF-key commitments. The party IDs are circuit-side 1-indexed
 Shamir coordinates and are translated to the registry's 0-indexed committee slots for this
 comparison.
 
@@ -1345,7 +1346,7 @@ InterfoldSolReader decodes CiphertextOutputPublished event
 │   │  │  Inputs:                                            │
 │   │  │    - ciphertext (encrypted computation output)      │
 │   │  │    - sk_poly_sum (this node's secret key portion)   │
-│   │  │    - fresh smudging noise sampled at decryption     │
+│   │  │    - fresh noise sampled at decryption              │
 │   │  │    - PRF mask from the C2 keys                      │
 │   │  │                                                     │
 │   │  │  Compute:                                           │

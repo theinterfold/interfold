@@ -26,9 +26,7 @@ pub(crate) struct NodeDkgFoldMeta {
     pub(crate) party_id: u64,
     pub(crate) total_expected: usize,
     pub(crate) sk_enc_count: usize,
-    pub(crate) e_sm_enc_count: usize,
     pub(crate) sk_share_encryption_requests: Vec<ShareEncryptionProofRequest>,
-    pub(crate) e_sm_share_encryption_requests: Vec<ShareEncryptionProofRequest>,
     pub(crate) committee_n: usize,
     pub(crate) committee_h: usize,
     pub(crate) n_moduli: usize,
@@ -85,7 +83,6 @@ impl DkgProofCollectionState {
             .collect::<Result<_, _>>()?;
 
         let sk = meta.sk_enc_count;
-        let esm = meta.e_sm_enc_count;
         let buf = &self.buffer;
         let get = |seq: usize| {
             buf.get(&seq)
@@ -102,7 +99,6 @@ impl DkgProofCollectionState {
         }
         let c4a_seq = 3 + sk;
         let c4a_proof = get(c4a_seq);
-        let _ = esm;
 
         Ok(NodeDkgFoldRequest {
             c0_proof,
@@ -127,14 +123,12 @@ mod tests {
     use e3_events::CircuitName;
     use e3_utils::ArcBytes;
 
-    fn meta(sk: usize, esm: usize) -> NodeDkgFoldMeta {
+    fn meta(sk: usize) -> NodeDkgFoldMeta {
         NodeDkgFoldMeta {
             party_id: 7,
-            total_expected: total_expected_for(sk, esm),
+            total_expected: total_expected_for(sk),
             sk_enc_count: sk,
-            e_sm_enc_count: esm,
             sk_share_encryption_requests: Vec::new(),
-            e_sm_share_encryption_requests: Vec::new(),
             committee_n: 3,
             committee_h: 2,
             n_moduli: 2,
@@ -159,13 +153,13 @@ mod tests {
 
     #[test]
     fn total_expected_counts_fixed_plus_encryption_proofs() {
-        assert_eq!(total_expected_for(0, 0), 4);
-        assert_eq!(total_expected_for(2, 3), 6);
+        assert_eq!(total_expected_for(0), 4);
+        assert_eq!(total_expected_for(2), 6);
     }
 
     #[test]
     fn is_ready_only_when_all_seqs_present() {
-        let mut state = DkgProofCollectionState::new(meta(0, 0), BTreeMap::new(), ec());
+        let mut state = DkgProofCollectionState::new(meta(0), BTreeMap::new(), ec());
         assert!(!state.is_ready());
         for seq in 0..4 {
             state.buffer.insert(seq, dummy_proof(seq as u8));
@@ -178,7 +172,7 @@ mod tests {
 
     #[test]
     fn build_fold_request_places_proofs_in_canonical_slots() {
-        let mut state = DkgProofCollectionState::new(meta(1, 1), BTreeMap::new(), ec());
+        let mut state = DkgProofCollectionState::new(meta(1), BTreeMap::new(), ec());
         // total_expected = 4 + 1 = 5 -> seqs 0..5
         for seq in 0..5 {
             state.buffer.insert(seq, dummy_proof(seq as u8));

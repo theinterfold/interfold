@@ -56,33 +56,20 @@ impl TryFrom<(&Cipher, CalculateDecryptionKeyRequest)> for InnerRequest {
 pub struct CalculateDecryptionKeyResponse {
     /// A single summed polynomial for this nodes secret key.
     pub sk_poly_sum: SensitiveBytes,
-    /// A single summed polynomial for this partys smudging noise
-    pub es_poly_sum: Vec<SensitiveBytes>,
 }
 
 struct InnerResponse {
     pub sk_poly_sum: Poly<PowerBasis>,
-    pub es_poly_sum: Vec<Poly<PowerBasis>>,
 }
 
 impl TryFrom<(&Cipher, InnerResponse)> for CalculateDecryptionKeyResponse {
     type Error = anyhow::Error;
     fn try_from(value: (&Cipher, InnerResponse)) -> std::result::Result<Self, Self::Error> {
-        let InnerResponse {
-            sk_poly_sum,
-            es_poly_sum,
-        } = value.1;
+        let InnerResponse { sk_poly_sum } = value.1;
 
         let cipher = value.0;
 
         Ok(CalculateDecryptionKeyResponse {
-            es_poly_sum: SensitiveBytes::try_from_vec(
-                es_poly_sum
-                    .into_iter()
-                    .map(|s| s.to_bytes())
-                    .collect::<Vec<_>>(),
-                cipher,
-            )?,
             sk_poly_sum: SensitiveBytes::new(sk_poly_sum.to_bytes(), cipher)?,
         })
     }
@@ -112,18 +99,9 @@ pub fn calculate_decryption_key(
     info!("Calculating sk_poly_sum...");
     let sk_poly_sum = aggregate_secret_key_to_poly(&share_manager, &req.sk_sss_collected)?;
 
-    let es_poly_sum = Vec::new();
-
     info!("Returning successful result! Encrypting for transit...");
 
-    (
-        cipher,
-        InnerResponse {
-            sk_poly_sum,
-            es_poly_sum,
-        },
-    )
-        .try_into()
+    (cipher, InnerResponse { sk_poly_sum }).try_into()
 }
 
 /// Validate secret-key shares with fhe.rs, then materialize the legacy polynomial transport used

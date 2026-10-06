@@ -63,9 +63,7 @@ pub struct AggregatingDecryptionKey {
     pub(crate) own_sk_share_raw: SensitiveBytes,
     pub(crate) signed_pk_generation_proof: Option<SignedProofPayload>,
     pub(crate) signed_sk_share_computation_proof: Option<SignedProofPayload>,
-    pub(crate) signed_e_sm_share_computation_proof: Option<SignedProofPayload>,
     pub(crate) signed_sk_share_encryption_proofs: Vec<SignedProofPayload>,
-    pub(crate) signed_e_sm_share_encryption_proofs: Vec<SignedProofPayload>,
     /// Outgoing PRF keys, one per recipient, encrypted at rest.
     pub(crate) outgoing_prf_keys: Vec<SensitiveBytes>,
 }
@@ -74,12 +72,9 @@ pub struct AggregatingDecryptionKey {
 pub struct ReadyForDecryption {
     pub(crate) pk_share: ArcBytes,
     pub(crate) sk_poly_sum: SensitiveBytes,
-    pub(crate) es_poly_sum: Vec<SensitiveBytes>,
     pub(crate) signed_pk_generation_proof: Option<SignedProofPayload>,
     pub(crate) signed_sk_share_computation_proof: Option<SignedProofPayload>,
-    pub(crate) signed_e_sm_share_computation_proof: Option<SignedProofPayload>,
     pub(crate) signed_sk_share_encryption_proofs: Vec<SignedProofPayload>,
-    pub(crate) signed_e_sm_share_encryption_proofs: Vec<SignedProofPayload>,
     /// Outgoing PRF keys, one per recipient, encrypted at rest.
     pub(crate) outgoing_prf_keys: Vec<SensitiveBytes>,
     /// Incoming PRF keys indexed by sender. Empty selects the zero key.
@@ -90,14 +85,11 @@ pub struct ReadyForDecryption {
 pub struct Decrypting {
     pub(crate) pk_share: ArcBytes,
     pub(crate) sk_poly_sum: SensitiveBytes,
-    pub(crate) es_poly_sum: Vec<SensitiveBytes>,
     /// Ciphertext bytes from CiphertextOutputPublished, needed for C6 proof generation.
     pub(crate) ciphertext_output: Vec<ArcBytes>,
     pub(crate) signed_pk_generation_proof: Option<SignedProofPayload>,
     pub(crate) signed_sk_share_computation_proof: Option<SignedProofPayload>,
-    pub(crate) signed_e_sm_share_computation_proof: Option<SignedProofPayload>,
     pub(crate) signed_sk_share_encryption_proofs: Vec<SignedProofPayload>,
-    pub(crate) signed_e_sm_share_encryption_proofs: Vec<SignedProofPayload>,
     /// Outgoing PRF keys, one per recipient, encrypted at rest.
     pub(crate) outgoing_prf_keys: Vec<SensitiveBytes>,
     /// Incoming PRF keys indexed by sender. Empty selects the zero key.
@@ -110,9 +102,7 @@ pub struct GeneratingDecryptionProof {
     pub(crate) decryption_share: Vec<ArcBytes>,
     pub(crate) signed_pk_generation_proof: Option<SignedProofPayload>,
     pub(crate) signed_sk_share_computation_proof: Option<SignedProofPayload>,
-    pub(crate) signed_e_sm_share_computation_proof: Option<SignedProofPayload>,
     pub(crate) signed_sk_share_encryption_proofs: Vec<SignedProofPayload>,
-    pub(crate) signed_e_sm_share_encryption_proofs: Vec<SignedProofPayload>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]

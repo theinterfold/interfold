@@ -66,8 +66,7 @@ impl ThresholdKeyshare {
             }
 
             let has_any_proof = proofs.signed_c2a_proof.is_some()
-                || !proofs.signed_c3a_proofs.is_empty()
-                || !proofs.signed_c3b_proofs.is_empty();
+                || !proofs.signed_c3a_proofs.is_empty();
 
             if !has_any_proof {
                 no_proof_parties.insert(share.party_id);
@@ -92,11 +91,7 @@ impl ThresholdKeyshare {
                 continue;
             }
 
-            let recipient_key_matches = proofs
-                .signed_c3a_proofs
-                .iter()
-                .chain(&proofs.signed_c3b_proofs)
-                .all(|signed| {
+            let recipient_key_matches = proofs.signed_c3a_proofs.iter().all(|signed| {
                     c3_targets_public_key(&signed.payload.proof.public_signals, &own_pk_commitment)
                 });
             if !recipient_key_matches {
@@ -110,10 +105,9 @@ impl ThresholdKeyshare {
 
             // Complete proof set — collect for verification
             let mut signed_proofs = Vec::new();
-            // SAFETY: is_complete guarantees c2a and c2b are Some
+            // is_complete guarantees the C2a proof is present.
             signed_proofs.push(proofs.signed_c2a_proof.clone().unwrap());
             signed_proofs.extend(proofs.signed_c3a_proofs.iter().cloned());
-            signed_proofs.extend(proofs.signed_c3b_proofs.iter().cloned());
 
             party_proofs_to_verify.push(PartyProofsToVerify {
                 sender_party_id: share.party_id,

@@ -94,7 +94,15 @@ contract BfvPkVerifierV2 is IPkVerifier {
         ) revert InvalidVerificationKeyHash();
 
         for (uint256 i = 0; i < LEGACY_VK_BINDING_LEN; ++i) {
-            if (i != 7 && i != 10 && _expectedLegacyVkBinding[i] == bytes32(0)) {
+            // Indices 3, 4, 5, 7, and 10 are unused. The prover writes zero.
+            if (
+                i != 3 &&
+                i != 4 &&
+                i != 5 &&
+                i != 7 &&
+                i != 10 &&
+                _expectedLegacyVkBinding[i] == bytes32(0)
+            ) {
                 revert InvalidVerificationKeyHash();
             }
             expectedLegacyVkBinding[i] = _expectedLegacyVkBinding[i];

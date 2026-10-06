@@ -45,10 +45,8 @@ fn pending_small_work_plan() -> ThresholdSharePending {
         prf_keys: vec![],
     };
 
-    // Small has 18 external recipients and three secure-8192 modulus rows.
-    // Each recipient has C3a and C3b work, for 108 C3 requests plus C1/C2a/C2b.
-    // The payload bytes are synthetic; this test checks durable transport and dispatch,
-    // not BFV witness validity or proof generation.
+    // Small has 18 external recipients and three secure-8192 modulus rows: 54 C3a
+    // requests, plus C1 and C2a.
     let large_ciphertext = ArcBytes::from_bytes(&vec![0x5a; 1_130_000]);
     let encryption_request = |party_id, row_index, kind| ShareEncryptionProofRequest {
         share_row_raw: empty.clone(),
@@ -66,7 +64,6 @@ fn pending_small_work_plan() -> ThresholdSharePending {
         prf_key: empty.clone(),
     };
     let mut sk_requests = Vec::new();
-    let mut esm_requests = Vec::new();
     for party_id in 1..n {
         for row_index in 0..3 {
             sk_requests.push(encryption_request(
@@ -74,14 +71,9 @@ fn pending_small_work_plan() -> ThresholdSharePending {
                 row_index,
                 DkgInputType::SecretKey,
             ));
-            esm_requests.push(encryption_request(
-                party_id,
-                row_index,
-                DkgInputType::SmudgingNoise,
-            ));
         }
     }
-    assert_eq!(sk_requests.len() + esm_requests.len() + 3, 111);
+    assert_eq!(sk_requests.len() + 2, 56);
 
     ThresholdSharePending {
         e3_id: E3id::new("7", 1),
@@ -121,14 +113,14 @@ async fn dispatch_work_plan(event: InterfoldEvent<Unsequenced>) -> Result<Vec<Co
                     _ => None,
                 })
                 .collect();
-            if requests.len() >= 111 {
+            if requests.len() >= 56 {
                 break Ok::<_, anyhow::Error>(());
             }
             tokio::time::sleep(Duration::from_millis(25)).await;
         }
     })
     .await??;
-    ensure!(requests.len() == 111, "unexpected proof request count");
+    ensure!(requests.len() == 56, "unexpected proof request count");
     Ok(requests)
 }
 
@@ -143,7 +135,7 @@ async fn large_small_work_plan_survives_reopen_and_fresh_proof_dispatch() -> Res
         EventSource::Local,
     );
     let encoded_len = bincode::serialized_size(&event)?;
-    ensure!(encoded_len > 122_000_000, "work plan fixture is too small");
+    ensure!(encoded_len > 60_000_000, "work plan fixture is too small");
 
     let sequenced = event.clone().into_sequenced(1);
     let ec = sequenced.get_ctx().clone();

@@ -65,9 +65,9 @@ const DS_PK_GENERATION_LIMB_V1: [u8; 64] = [
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 ];
 
-/// String: "PRF_KEY"
+/// String: "PRF_KEY_FIELD"
 const DS_PRF_KEY: [u8; 64] = [
-    0x50, 0x52, 0x46, 0x5f, 0x4b, 0x45, 0x59, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x50, 0x52, 0x46, 0x5f, 0x4b, 0x45, 0x59, 0x5f, 0x46, 0x49, 0x45, 0x4c, 0x44, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -274,25 +274,22 @@ pub fn compute_commitments(
     compute_safe(domain_separator, payload, io_pattern)
 }
 
+/// Commit one outgoing PRF key. Matches Noir `compute_prf_key_commitment`.
+///
+/// `recipient_party_idx` is the 0-based recipient. The second field is the key
+/// reduced modulo the BN254 scalar. Bit 0 of the first byte is the least
+/// significant bit.
+pub fn compute_prf_key_commitment(recipient_party_idx: u32, bits: &[u8]) -> Field {
+    let payload = vec![
+        Field::from(recipient_party_idx as u64),
+        Field::from_le_bytes_mod_order(bits),
+    ];
+    compute_commitments(payload, DS_PRF_KEY, [0x8000_0000 | 2, 1])[0]
+}
+
 /// Combine verification-key hashes with the `VK_HASH` domain separator (SAFE sponge).
 ///
 /// Matches Noir `lib::math::commitments::compute_vk_hash`.
-/// Commit one outgoing PRF key. Matches Noir `compute_prf_key_commitment`.
-///
-/// `recipient_party_idx` is the 0-based recipient. Bit 0 is the least significant bit.
-pub fn compute_prf_key_commitment(recipient_party_idx: u32, bits: &[u8]) -> Field {
-    let mut payload = Vec::with_capacity(1 + (bits.len() * 8));
-    payload.push(Field::from(recipient_party_idx as u64));
-    for byte in bits {
-        for shift in 0..8 {
-            let bit = (byte >> shift) & 1;
-            payload.push(Field::from(bit as u64));
-        }
-    }
-    let input_size = payload.len() as u32;
-    compute_commitments(payload, DS_PRF_KEY, [0x8000_0000 | input_size, 1])[0]
-}
-
 pub fn compute_vk_hash(vk_hashes: Vec<Field>) -> Field {
     let input_size = vk_hashes.len() as u32;
     let io_pattern = [0x80000000 | input_size, 1];

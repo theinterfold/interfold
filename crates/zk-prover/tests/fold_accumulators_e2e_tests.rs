@@ -9,9 +9,9 @@
 //! compiled `c3_fold` / `c6_fold` JSON, and artifact staging under [`CircuitVariant::Default`]
 //! (`noir-recursive-no-zk` VKs — see `scripts/build-circuits.ts`).
 //!
-//! Loads compiled JSON for the node-fold **pipeline** ([`CircuitName::C2abChunkFold`] … [`CircuitName::NodeFold`])
-//! and stages those artifacts; it does **not** run a full correlated `node_fold` proof — use
-//! `node_fold_correlated_e2e_tests.rs` for that.
+//! Loads compiled JSON for the node-fold pipeline (`c3_fold`, `c3_fold_kernel`, `node_fold`)
+//! and stages those artifacts. A full correlated `node_fold` proof lives in
+//! `node_fold_correlated_e2e_tests.rs`.
 //!
 //! - [`recursive_aggregation_default_artifacts_staged`]: staged `c3_fold` paths (no `bb prove`).
 //! - [`recursive_aggregation_c6_fold_kernel_artifacts_staged`]: staged `c6_fold_kernel` paths.
@@ -58,11 +58,10 @@ fn recursive_aggregation_compiled_json_path(circuit: CircuitName) -> PathBuf {
         .join(format!("{}.json", circuit.as_str()))
 }
 
-/// `c2ab_chunk_fold` → `c3ab_fold` → `c4ab_fold` → inputs to `node_fold` (see `node_fold/src/main.nr`).
+/// Live node-fold inputs. `node_fold` verifies `c3_fold` and the C2a finalizer directly.
 const NODE_FOLD_PIPELINE: &[CircuitName] = &[
-    CircuitName::C2abChunkFold,
-    CircuitName::C3abFold,
-    CircuitName::C4abFold,
+    CircuitName::C3Fold,
+    CircuitName::C3FoldKernel,
     CircuitName::NodeFold,
 ];
 

@@ -16,15 +16,13 @@ use serde::{Deserialize, Serialize};
 
 /// ThresholdKeyshare → ProofRequestActor: generate and sign C4 proofs.
 ///
-/// Carries the proof generation inputs (sk_request, esm_requests) and node
-/// info so that ProofRequestActor can publish `DecryptionKeyShared` directly.
+/// Carries the C4a proof input and node info so that ProofRequestActor can
+/// publish `DecryptionKeyShared` directly.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct DecryptionShareProofsPending {
     pub e3_id: E3id,
     pub party_id: u64,
     pub node: String,
-    /// C4a proof request (SecretKey decryption).
+    /// C4a proof request (secret-key share decryption).
     pub sk_request: DkgShareDecryptionProofRequest,
-    /// C4b proof requests (SmudgingNoise decryption), one per ESI index.
-    pub esm_requests: Vec<DkgShareDecryptionProofRequest>,
 }

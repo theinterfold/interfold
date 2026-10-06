@@ -130,11 +130,8 @@ async fn run_node_fold_correlated_sparse_self_slot(preset: BfvPreset) {
     for c in [
         CircuitName::C2ChunkBatch,
         CircuitName::SkC2ChunkFinalize,
-        CircuitName::C2abChunkFold,
         CircuitName::C3Fold,
         CircuitName::C3FoldKernel,
-        CircuitName::C3abFold,
-        CircuitName::C4abFold,
         CircuitName::NodeFold,
     ] {
         setup_recursive_aggregation_fold_circuit_for_preset(&backend, c, preset, "minimum").await;
@@ -292,7 +289,7 @@ async fn run_node_fold_correlated_sparse_self_slot(preset: BfvPreset) {
     assert!(chunked_node
         .step_timings
         .iter()
-        .any(|step| step.step == CircuitName::C2abChunkFold.as_str()));
+        .any(|step| step.step == "c3_fold"));
     assert!(prover
         .verify_fold_proof(
             &chunked_node.proof,
@@ -325,11 +322,8 @@ async fn node_fold_correlated_secure_multi_chunk_proves_and_verifies() {
     let recursive_circuits = [
         CircuitName::C2ChunkBatch,
         CircuitName::SkC2ChunkFinalize,
-        CircuitName::C2abChunkFold,
         CircuitName::C3Fold,
         CircuitName::C3FoldKernel,
-        CircuitName::C3abFold,
-        CircuitName::C4abFold,
         CircuitName::NodeFold,
     ];
     if dkg_circuits

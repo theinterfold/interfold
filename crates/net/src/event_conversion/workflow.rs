@@ -192,7 +192,6 @@ impl EventConversionService {
                     target_party_id: evt.target_party_id,
                     signed_c2a_proof: evt.signed_c2a_proof,
                     signed_c3a_proofs: evt.signed_c3a_proofs,
-                    signed_c3b_proofs: evt.signed_c3b_proofs,
                 })
             }
             ReceivableDocument::EncryptionKeyCreated(evt) => {

@@ -59,8 +59,6 @@ pub struct ThresholdShareCreated {
     pub signed_c2a_proof: Option<SignedProofPayload>,
     /// Signed C3a proofs (sk share encryption per modulus row) for this recipient.
     pub signed_c3a_proofs: Vec<SignedProofPayload>,
-    /// Signed C3b proofs (e_sm share encryption per modulus row) for this recipient.
-    pub signed_c3b_proofs: Vec<SignedProofPayload>,
 }
 
 impl Display for ThresholdShareCreated {

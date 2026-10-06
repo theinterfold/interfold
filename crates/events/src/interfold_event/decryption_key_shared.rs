@@ -21,10 +21,8 @@ pub struct DecryptionKeyShared {
     pub party_id: u64,
     /// The sender's node address.
     pub node: String,
-    /// ECDSA-signed C4a proof (SecretKey decryption) for verification and fault attribution.
+    /// ECDSA-signed C4a proof for verification and fault attribution.
     pub signed_sk_decryption_proof: SignedProofPayload,
-    /// ECDSA-signed C4b proofs (SmudgingNoise decryption), one per smudging noise index.
-    pub signed_e_sm_decryption_proofs: Vec<SignedProofPayload>,
     /// Whether this was received from the network.
     pub external: bool,
 }

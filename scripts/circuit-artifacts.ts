@@ -50,11 +50,8 @@ const REQUIRED_BASE_CIRCUITS = [
 
 const REQUIRED_AGGREGATION_CIRCUITS = [
   'recursive_aggregation/c2_chunk_batch/c2_chunk_batch',
-  'recursive_aggregation/c2ab_chunk_fold/c2ab_chunk_fold',
   'recursive_aggregation/c3_fold/c3_fold',
   'recursive_aggregation/c3_fold_kernel/c3_fold_kernel',
-  'recursive_aggregation/c3ab_fold/c3ab_fold',
-  'recursive_aggregation/c4ab_fold/c4ab_fold',
   'recursive_aggregation/c6_fold/c6_fold',
   'recursive_aggregation/c6_fold_kernel/c6_fold_kernel',
   'recursive_aggregation/decryption_aggregator/decryption_aggregator',

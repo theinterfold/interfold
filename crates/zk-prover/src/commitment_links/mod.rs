@@ -16,7 +16,6 @@ pub mod c1_to_lbfv;
 pub mod c2_to_c3;
 pub mod c2_to_c4;
 pub mod c4a_to_c6;
-pub mod c4b_to_c6;
 pub mod c6_to_c7;
 pub mod lbfv_share_transport;
 
@@ -26,15 +25,12 @@ use e3_fhe_params::BfvPreset;
 
 /// Returns the default set of commitment links to register.
 ///
-/// C4→C6 links verify that C4's aggregated share commitment matches C6's
-/// `expected_sk_commitment` / `expected_e_sm_commitment`. The C4 circuit
-/// normalizes its aggregated polynomial (reverse + center per CRT modulus)
+/// C4→C6 verifies that C4's aggregated share commitment matches C6's
+/// `expected_sk_commitment`. The C4 circuit normalizes its aggregated polynomial
 /// before hashing, matching the representation C6's Rust witness computes.
 ///
-/// C3→C4 links are replaced by C2→C4: C2 directly outputs share commitments
-/// that C4 consumes as `expected_commitments`. Since C2→C3 already ensures
-/// C3 encrypts the correct share, C2→C4 closes the remaining gap (preventing
-/// a party from using different commitments in C4 than they computed in C2).
+/// C2→C4 checks that C2's share commitments are the `expected_commitments` C4
+/// consumes. C2→C3 already checks that C3 encrypts that share.
 pub fn default_links(preset: BfvPreset) -> Vec<Box<dyn CommitmentLink>> {
     let l = preset.metadata().num_moduli;
     vec![

@@ -431,7 +431,7 @@ ProofVerificationFailed OR CommitmentConsistencyViolation event arrives
 │   ├─ 2. Cache verification result:
 │   │     received_data[(accused, proof_type)] = { data_hash, passed: false }
 │   │
-│   ├─ 3. For C3a/C3b proofs: attach signed_payload for re-verification
+│   ├─ 3. For C3a proofs: attach signed_payload for re-verification
 │   │     → Other nodes need the original proof to independently verify
 │   │
 │   └─ 4. Delegate to initiate_accusation()
@@ -504,7 +504,7 @@ ProofFailureAccusation arrives via P2P from another committee member
 │     │   → Do not vote
 │     │
 │     └─ Case C: Unknown (haven't verified yet):
-│         ├─ For C3a/C3b: re-verify using signed_payload from accusation
+│         ├─ For C3a: re-verify using signed_payload from accusation
 │         │   → Dispatch to ZkActor for local re-verification
 │         │   → Vote after re-verification completes
 │         └─ For other proofs: do not vote without local evidence

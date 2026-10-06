@@ -10,7 +10,7 @@
 //! ciphertext coefficients are absorbed low degree first. Circuit polynomials
 //! store the highest degree first.
 
-use crate::math::commitments::compute_prf_key_commitment;
+use crate::math::commitments::{compute_prf_key_commitment, prf_key_field};
 use crate::math::modulo::U64::ModU64;
 use crate::math::polynomial::Polynomial;
 use crate::math::safe::SafeSponge;
@@ -32,18 +32,6 @@ pub global DS_PRF_EVAL: [u8; 64] = [
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 ];
-
-/// Map key bits to the BN254 scalar. Bit 0 is the least significant bit.
-pub fn prf_key_field<let KEY_BITS: u32>(bits: [Field; KEY_BITS]) -> Field {
-    let mut acc = 0;
-    let mut weight = 1;
-    for i in 0..KEY_BITS {
-        assert(bits[i] * (bits[i] - 1) == 0, "PRF key bit is not binary");
-        acc = acc + (bits[i] * weight);
-        weight = weight * 2;
-    }
-    acc
-}
 
 fn append_ciphertext_poly<let N: u32, let L: u32>(
     mut input: [Field],

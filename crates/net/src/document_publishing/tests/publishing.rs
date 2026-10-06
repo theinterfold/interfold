@@ -32,7 +32,6 @@ fn decryption_publication(e3_id: E3id) -> Result<PublishDocumentRequested> {
         party_id: 0,
         node: "test-node".to_string(),
         signed_sk_decryption_proof: proof,
-        signed_e_sm_decryption_proofs: vec![],
         external: false,
     })
     .to_bytes()?;

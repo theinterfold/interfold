@@ -45,7 +45,7 @@ pub enum ZkRequest {
     ThresholdShareDecryption(ThresholdShareDecryptionProofRequest),
     /// Generate proof for decrypted shares aggregation (C7).
     DecryptedSharesAggregation(DecryptedSharesAggregationProofRequest),
-    /// Per-node DKG recursive fold (C2abChunkFold → … → NodeFold).
+    /// Per-node DKG recursive fold (`c3_fold` and the C2a finalizer into `node_fold`).
     NodeDkgFold(NodeDkgFoldRequest),
     /// Single step of the streaming cross-node nodes_fold accumulation.
     NodesFoldStep(NodesFoldStepRequest),
@@ -915,8 +915,8 @@ pub struct ThresholdShareDecryptionProofRequest {
     pub aggregated_pk_bytes: ArcBytes,
     /// Aggregated secret key polynomial (encrypted at rest).
     pub sk_poly_sum: SensitiveBytes,
-    /// Aggregated smudging error polynomials (encrypted at rest), one per output index.
-    pub es_poly_sum: Vec<SensitiveBytes>,
+    /// Fresh noise polynomials used in the partial shares, one per output index.
+    pub e_fresh: Vec<SensitiveBytes>,
     /// Computed decryption share polynomials, one per output index.
     pub d_share_bytes: Vec<ArcBytes>,
     /// Stable E3 context cryptographically bound into every C6 proof.
@@ -1071,10 +1071,8 @@ pub struct VerifyShareDecryptionProofsRequest {
 pub struct PartyShareDecryptionProofsToVerify {
     /// The party that generated these proofs.
     pub sender_party_id: u64,
-    /// Signed C4a proof (SecretKey decryption).
+    /// Signed C4a proof.
     pub signed_sk_decryption_proof: SignedProofPayload,
-    /// Signed C4b proofs (SmudgingNoise decryption), one per smudging noise index.
-    pub signed_e_sm_decryption_proofs: Vec<SignedProofPayload>,
 }
 
 /// Batch verification results for C4 proofs.

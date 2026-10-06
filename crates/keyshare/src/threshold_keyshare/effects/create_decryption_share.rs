@@ -58,13 +58,10 @@ impl ThresholdKeyshare {
             let next = K::Decrypting(Decrypting {
                 pk_share: current.pk_share,
                 sk_poly_sum: current.sk_poly_sum,
-                es_poly_sum: current.es_poly_sum,
                 ciphertext_output: ciphertext_output.clone(),
                 signed_pk_generation_proof: current.signed_pk_generation_proof,
                 signed_sk_share_computation_proof: current.signed_sk_share_computation_proof,
-                signed_e_sm_share_computation_proof: current.signed_e_sm_share_computation_proof,
                 signed_sk_share_encryption_proofs: current.signed_sk_share_encryption_proofs,
-                signed_e_sm_share_encryption_proofs: current.signed_e_sm_share_encryption_proofs,
                 outgoing_prf_keys: current.outgoing_prf_keys,
                 incoming_prf_keys: current.incoming_prf_keys,
             });
@@ -81,7 +78,6 @@ impl ThresholdKeyshare {
                 name: format!("party_id({})", state.party_id),
                 ciphertexts: ciphertext_output,
                 sk_poly_sum: decrypting.sk_poly_sum,
-                es_poly_sum: decrypting.es_poly_sum,
                 trbfv_config,
                 party_idx: u32::try_from(state.party_id).unwrap_or(0),
                 decryptors: canonical_decryptors(
@@ -123,7 +119,6 @@ impl ThresholdKeyshare {
                 name: format!("party_id({})", state.party_id),
                 ciphertexts: decrypting.ciphertext_output,
                 sk_poly_sum: decrypting.sk_poly_sum,
-                es_poly_sum: decrypting.es_poly_sum,
                 trbfv_config,
                 party_idx: u32::try_from(state.party_id).unwrap_or(0),
                 decryptors: canonical_decryptors(
@@ -203,7 +198,7 @@ impl ThresholdKeyshare {
                 ciphertext_bytes: decrypting.ciphertext_output,
                 aggregated_pk_bytes,
                 sk_poly_sum: decrypting.sk_poly_sum,
-                es_poly_sum: msg.e_fresh,
+                e_fresh: msg.e_fresh,
                 d_share_bytes: d_share_poly.clone(),
                 decryption_domain,
                 params_preset: threshold_preset,
@@ -235,14 +230,8 @@ impl ThresholdKeyshare {
                 signed_sk_share_computation_proof: decrypting
                     .signed_sk_share_computation_proof
                     .clone(),
-                signed_e_sm_share_computation_proof: decrypting
-                    .signed_e_sm_share_computation_proof
-                    .clone(),
                 signed_sk_share_encryption_proofs: decrypting
                     .signed_sk_share_encryption_proofs
-                    .clone(),
-                signed_e_sm_share_encryption_proofs: decrypting
-                    .signed_e_sm_share_encryption_proofs
                     .clone(),
             }))
         })?;

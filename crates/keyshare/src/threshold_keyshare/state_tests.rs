@@ -162,9 +162,7 @@ fn adk() -> AggregatingDecryptionKey {
         own_sk_share_raw: sens(),
         signed_pk_generation_proof: None,
         signed_sk_share_computation_proof: None,
-        signed_e_sm_share_computation_proof: None,
         signed_sk_share_encryption_proofs: Vec::new(),
-        signed_e_sm_share_encryption_proofs: Vec::new(),
         outgoing_prf_keys: Vec::new(),
     }
 }
@@ -173,12 +171,9 @@ fn rfd() -> ReadyForDecryption {
     ReadyForDecryption {
         pk_share: arc(b"pk"),
         sk_poly_sum: sens(),
-        es_poly_sum: Vec::new(),
         signed_pk_generation_proof: None,
         signed_sk_share_computation_proof: None,
-        signed_e_sm_share_computation_proof: None,
         signed_sk_share_encryption_proofs: Vec::new(),
-        signed_e_sm_share_encryption_proofs: Vec::new(),
         outgoing_prf_keys: Vec::new(),
         incoming_prf_keys: Vec::new(),
     }
@@ -188,13 +183,10 @@ fn decrypting() -> Decrypting {
     Decrypting {
         pk_share: arc(b"pk"),
         sk_poly_sum: sens(),
-        es_poly_sum: Vec::new(),
         ciphertext_output: Vec::new(),
         signed_pk_generation_proof: None,
         signed_sk_share_computation_proof: None,
-        signed_e_sm_share_computation_proof: None,
         signed_sk_share_encryption_proofs: Vec::new(),
-        signed_e_sm_share_encryption_proofs: Vec::new(),
         outgoing_prf_keys: Vec::new(),
         incoming_prf_keys: Vec::new(),
     }
@@ -206,8 +198,6 @@ fn gdp() -> GeneratingDecryptionProof {
         decryption_share: Vec::new(),
         signed_pk_generation_proof: None,
         signed_sk_share_computation_proof: None,
-        signed_e_sm_share_computation_proof: None,
         signed_sk_share_encryption_proofs: Vec::new(),
-        signed_e_sm_share_encryption_proofs: Vec::new(),
     }
 }

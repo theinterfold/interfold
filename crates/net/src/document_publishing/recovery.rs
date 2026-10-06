@@ -288,7 +288,6 @@ mod tests {
                         },
                         signature: ArcBytes::from_bytes(&[3; 65]),
                     },
-                    signed_e_sm_decryption_proofs: vec![],
                     external: false,
                 })
                 .to_bytes()?,
