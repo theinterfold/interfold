@@ -1,0 +1,542 @@
+openapi: 3.1.0
+info:
+  title: Interfold ciphernode dashboard API
+  version: '1'
+  license:
+    name: LGPL-3.0-only
+    identifier: LGPL-3.0-only
+  description: |
+    Read-only JSON API of the local node dashboard (`crates/dashboard`). The dashboard web UI uses
+    the same endpoints.
+
+    The server starts only when the node config sets `dashboard_port`. It listens on `127.0.0.1`
+    only and has no authentication, because the API returns detailed protocol payloads. Do not
+    expose the port publicly. To monitor from a different host, use an SSH tunnel.
+
+    All endpoints use `GET`. Responses can be compressed.
+
+    An unknown path returns `index.html` with status 200. A monitor must not use the status code
+    alone to accept a response. Make sure that the body is JSON.
+
+    Large on-chain integers (bonds, balances, amounts, scores) are decimal strings.
+servers:
+  - url: http://127.0.0.1:{dashboard_port}
+    variables:
+      dashboard_port:
+        default: '8080'
+        description: The `dashboard_port` value from the node config.
+
+security: []
+
+paths:
+  /api/snapshot:
+    get:
+      operationId: getSnapshot
+      summary: Node, network, protocol, and operator overview
+      description: |
+        Reads new EventStore events into the projection, then returns the full overview.
+        The operator section comes from live chain RPC reads. The node caches it for 15 seconds.
+        A poll interval of 30 to 60 seconds is sufficient for monitoring.
+
+        Peer count shown as "Network reach" in the UI: `network.connected_peers | length`.
+      responses:
+        '200':
+          description: Overview.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DashboardSnapshot' }
+        '503':
+          $ref: '#/components/responses/EventStoreUnavailable'
+
+  /api/e3:
+    get:
+      operationId: getE3Trace
+      summary: Full trace of one E3
+      parameters:
+        - name: e3_id
+          in: query
+          required: true
+          description: E3 identifier, as in `E3Summary.e3_id`.
+          schema: { type: string }
+      responses:
+        '200':
+          description: E3 trace.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/E3Trace' }
+        '400':
+          description: The `e3_id` parameter is missing.
+          content:
+            text/plain:
+              schema: { type: string }
+        '404':
+          description: The node has no events for this E3.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: 'unknown E3 1:42' }
+        '503':
+          $ref: '#/components/responses/EventStoreUnavailable'
+
+  /api/events:
+    get:
+      operationId: getEvents
+      summary: Recent protocol events, newest first
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: Number of events. The server limits the value to 2000.
+          schema: { type: integer, minimum: 0, default: 500, maximum: 2000 }
+      responses:
+        '200':
+          description: Events.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [events]
+                properties:
+                  events:
+                    type: array
+                    items: { $ref: '#/components/schemas/EventView' }
+        '503':
+          $ref: '#/components/responses/EventStoreUnavailable'
+
+  /api/logs:
+    get:
+      operationId: getLogs
+      summary: Operational logs from the in-memory log buffer
+      description: |
+        The buffer keeps the 20000 most recent `tracing` entries.
+
+        Without `since`, the response contains the newest `limit` matching entries.
+        With `since`, the response contains matching entries with `seq >= since`, up to `limit`.
+        In both cases, entries are in order from oldest to newest.
+
+        To follow the log, send `next_cursor` as `since` in the next request.
+
+        This endpoint always returns 200. If the log collector is not initialized, the response
+        has no entries and all cursors are 0.
+      parameters:
+        - name: since
+          in: query
+          required: false
+          description: First sequence number to return.
+          schema: { type: integer, minimum: 0 }
+        - name: limit
+          in: query
+          required: false
+          description: Maximum number of entries. The server clamps the value to 1..2000.
+          schema: { type: integer, default: 500, minimum: 1, maximum: 2000 }
+        - name: level
+          in: query
+          required: false
+          description: |
+            Exact level match, case-insensitive. This is not a minimum level:
+            `warn` does not return `error` entries.
+          schema:
+            type: string
+            examples: [error, warn, info, debug, trace]
+        - name: target
+          in: query
+          required: false
+          description: Case-sensitive substring of the tracing target.
+          schema: { type: string }
+        - name: text
+          in: query
+          required: false
+          description: Case-insensitive substring of the message, the target, or the JSON of the fields.
+          schema: { type: string }
+      responses:
+        '200':
+          description: Log entries.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LogQueryResult' }
+
+  /api/updates:
+    get:
+      operationId: getUpdates
+      summary: Release check against GitHub
+      description: |
+        Compares the running version with the latest GitHub release. The node caches a successful
+        check for 1 hour and a failed check for 5 minutes. This endpoint always returns 200.
+        A failed check sets `error`.
+      responses:
+        '200':
+          description: Release status.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UpdateSnapshot' }
+
+components:
+  responses:
+    EventStoreUnavailable:
+      description: The EventStore query failed or did not answer in 5 seconds.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: 'EventStore dashboard query timed out' }
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
+
+    DashboardSnapshot:
+      type: object
+      required: [node, network, protocol, operator, e3s, recent_events]
+      properties:
+        node: { $ref: '#/components/schemas/DashboardRuntime' }
+        network: { $ref: '#/components/schemas/NetworkSnapshot' }
+        protocol: { $ref: '#/components/schemas/ProtocolOverview' }
+        operator: { $ref: '#/components/schemas/OperatorStatusSnapshot' }
+        e3s:
+          description: All E3s that this node observed, most recently active first.
+          type: array
+          items: { $ref: '#/components/schemas/E3Summary' }
+        recent_events:
+          description: The 40 newest protocol events, newest first.
+          type: array
+          items: { $ref: '#/components/schemas/EventView' }
+
+    DashboardRuntime:
+      type: object
+      required: [node_name, address, peer_id, quic_port, dashboard_port, version, chains]
+      properties:
+        node_name: { type: string }
+        address: { type: string, description: Operator address. }
+        peer_id: { type: string, description: libp2p peer ID. }
+        quic_port: { type: integer }
+        dashboard_port: { type: integer }
+        version: { type: string }
+        chains:
+          type: array
+          items:
+            type: object
+            required: [id, name]
+            properties:
+              id: { type: integer, description: Chain ID. }
+              name: { type: string }
+
+    NetworkSnapshot:
+      description: Live libp2p connection state. This state is not stored in the EventStore.
+      type: object
+      required: [configured_peers, connected_peers, gossip_subscribed_peers, listen_addresses]
+      properties:
+        configured_peers:
+          type: integer
+          description: Number of configured peers. The UI shows it as the denominator of "Network reach".
+        connected_peers:
+          type: array
+          items: { $ref: '#/components/schemas/ConnectedPeer' }
+        gossip_subscribed_peers: { type: integer }
+        listen_addresses:
+          type: array
+          items: { type: string, description: Multiaddr. }
+        last_error:
+          type: string
+          description: Last transport error. Not present when there is no error.
+
+    ConnectedPeer:
+      type: object
+      required: [peer_id, remote_address, direction, connections, connected_at_ms]
+      properties:
+        peer_id: { type: string }
+        remote_address: { type: string, description: Multiaddr. }
+        direction: { type: string, enum: [inbound, outbound] }
+        connections: { type: integer }
+        connected_at_ms: { type: integer, description: Unix time in milliseconds. }
+
+    ProtocolOverview:
+      description: Protocol state built from the EventStore events of this node.
+      type: object
+      required: [chains, e3_total, e3_active, e3_completed, e3_failed, e3_degraded, events_observed]
+      properties:
+        chains:
+          type: array
+          items: { $ref: '#/components/schemas/ChainOperatorView' }
+        e3_total: { type: integer }
+        e3_active:
+          type: integer
+          description: |
+            E3s that still need this node. The node is in the committee, or has a ticket before
+            the committee forms. The E3 has status `active` or `degraded`, or status `failed` for
+            24 hours after the failure, because slash reports can still be due.
+        e3_completed: { type: integer }
+        e3_failed: { type: integer }
+        e3_degraded: { type: integer }
+        events_observed: { type: integer }
+
+    ChainOperatorView:
+      type: object
+      required: [chain_id, registered_nodes, active_nodes, operator_registered, operator_active, rewards_credited]
+      properties:
+        chain_id: { type: integer }
+        registered_nodes: { type: integer }
+        active_nodes: { type: integer }
+        operator_registered: { type: boolean }
+        operator_active: { type: boolean }
+        ticket_balance: { type: string }
+        ciphernode_bond: { type: string }
+        bond_owner: { type: string }
+        exit_unlock_at: { type: integer }
+        rewards_credited:
+          type: array
+          items: { $ref: '#/components/schemas/RewardView' }
+
+    OperatorStatusSnapshot:
+      description: Live chain RPC reads for the operator address. Cached for 15 seconds.
+      type: object
+      required: [chains, updated_at_ms]
+      properties:
+        chains:
+          description: One item for each enabled chain whose read succeeded.
+          type: array
+          items: { $ref: '#/components/schemas/OperatorChainStatus' }
+        error:
+          type: string
+          description: |
+            Failed chain reads, joined with "; ". Example: "sepolia: RPC query timed out".
+            Not present when all reads succeed.
+        updated_at_ms: { type: integer, description: Unix time in milliseconds. 0 before the first read. }
+
+    OperatorChainStatus:
+      type: object
+      required:
+        - chain_id
+        - chain_name
+        - registered_nodes
+        - active_nodes
+        - operator_registered
+        - operator_active
+        - operator_eligible
+        - exit_in_progress
+        - ticket_balance
+        - available_tickets
+        - ciphernode_bond
+        - bond_owner
+      properties:
+        chain_id: { type: integer }
+        chain_name: { type: string }
+        registered_nodes: { type: string, description: Decimal string. }
+        active_nodes: { type: string, description: Decimal string. }
+        operator_registered: { type: boolean }
+        operator_active: { type: boolean }
+        operator_eligible:
+          type: [boolean, 'null']
+          description: |
+            Result of `BondingRegistry.eligibilityAt`. It includes the admission cooldown and the
+            admission policy. null when the read fails.
+        exit_in_progress: { type: boolean }
+        ticket_balance: { type: string }
+        available_tickets: { type: string }
+        ciphernode_bond: { type: string }
+        bond_owner: { type: string }
+
+    E3Phase:
+      type: string
+      enum: [request, committee, dkg_setup, dkg_shares, key_publication, computation, decryption, settlement]
+
+    E3Stage:
+      type: string
+      enum: [None, Requested, CommitteeFinalized, KeyPublished, CiphertextReady, Complete, Failed]
+
+    E3Summary:
+      type: object
+      required:
+        - e3_id
+        - chain_id
+        - status
+        - current_phase
+        - event_count
+        - error_count
+        - warning_count
+        - committee_size
+        - first_seen_us
+        - last_seen_us
+      properties:
+        e3_id: { type: string }
+        chain_id: { type: integer }
+        status:
+          type: string
+          enum: [active, complete, failed, degraded]
+          description: |
+            `failed`: the chain reports the E3 as failed.
+            `degraded`: this node reports a local failure for the E3.
+        canonical_stage: { $ref: '#/components/schemas/E3Stage' }
+        current_phase: { $ref: '#/components/schemas/E3Phase' }
+        event_count: { type: integer }
+        error_count: { type: integer }
+        warning_count: { type: integer }
+        committee_size: { type: integer }
+        first_seen_us: { type: integer, description: Unix time in microseconds. }
+        last_seen_us: { type: integer, description: Unix time in microseconds. }
+
+    E3Trace:
+      description: An `E3Summary` with the fields below added at the same level.
+      allOf:
+        - $ref: '#/components/schemas/E3Summary'
+        - type: object
+          required: [phases, committee, tickets, rewards, reward_allocations, events]
+          properties:
+            phases:
+              type: array
+              items: { $ref: '#/components/schemas/PhaseView' }
+            committee:
+              type: array
+              items: { $ref: '#/components/schemas/CommitteeMemberView' }
+            tickets:
+              type: array
+              items: { $ref: '#/components/schemas/TicketView' }
+            rewards:
+              type: array
+              items: { $ref: '#/components/schemas/RewardView' }
+            reward_allocations:
+              type: array
+              items:
+                type: object
+                required: [operator, amount]
+                properties:
+                  operator: { type: string }
+                  amount: { type: string }
+            failure: { type: object, description: Failure details. Not present if the E3 did not fail. }
+            local_failure: { type: object }
+            chain_failure: { type: object }
+            events:
+              type: array
+              items: { $ref: '#/components/schemas/EventView' }
+
+    PhaseView:
+      type: object
+      required: [id, label, state, event_count, sources, errors, warnings]
+      properties:
+        id: { $ref: '#/components/schemas/E3Phase' }
+        label: { type: string, description: 'Display name, for example "DKG · C0".' }
+        state: { type: string, enum: [pending, active, complete, failed, stalled] }
+        event_count: { type: integer }
+        sources:
+          type: object
+          required: [local, net, evm]
+          properties:
+            local: { type: integer }
+            net: { type: integer }
+            evm: { type: integer }
+        errors: { type: integer }
+        warnings: { type: integer }
+
+    CommitteeMemberView:
+      type: object
+      required: [address, party_id, expelled]
+      properties:
+        address: { type: string }
+        party_id: { type: integer }
+        score: { type: string }
+        expelled: { type: boolean }
+
+    TicketView:
+      type: object
+      required: [node, ticket_id, score]
+      properties:
+        node: { type: string }
+        ticket_id: { type: integer }
+        score: { type: string }
+
+    RewardView:
+      type: object
+      required: [account, amount, claimed]
+      properties:
+        account: { type: string }
+        token: { type: string }
+        amount: { type: string }
+        claimed: { type: boolean }
+
+    EventView:
+      type: object
+      required:
+        - seq
+        - aggregate_id
+        - timestamp_us
+        - logical_counter
+        - producer_fingerprint
+        - source
+        - producer
+        - event_type
+        - severity
+        - event_id
+        - causation_id
+        - origin_id
+        - payload
+      properties:
+        seq: { type: integer }
+        aggregate_id: { type: integer }
+        timestamp_us: { type: integer, description: Unix time in microseconds. }
+        logical_counter: { type: integer }
+        producer_fingerprint: { type: string }
+        block: { type: integer, description: Block number. Only present for chain events. }
+        source:
+          type: string
+          enum: [local, network, evm]
+          description: The `net` key in `PhaseView.sources` counts `network` events.
+        producer: { type: string }
+        event_type: { type: string }
+        e3_id: { type: string }
+        phase: { $ref: '#/components/schemas/E3Phase' }
+        severity: { type: string, enum: [debug, info, warn, error] }
+        event_id: { type: string }
+        causation_id: { type: string }
+        origin_id: { type: string }
+        payload: { description: Event data. The structure depends on `event_type`. }
+
+    LogQueryResult:
+      type: object
+      required: [entries, next_cursor, oldest_cursor, total_stored]
+      properties:
+        entries:
+          type: array
+          items: { $ref: '#/components/schemas/LogEntry' }
+        next_cursor: { type: integer, description: Send as `since` in the next request. }
+        oldest_cursor: { type: integer, description: Sequence number of the oldest entry in the buffer. }
+        total_stored: { type: integer }
+
+    LogEntry:
+      type: object
+      required: [seq, timestamp_ms, level, target, message, node]
+      properties:
+        seq: { type: integer }
+        timestamp_ms: { type: integer, description: Unix time in milliseconds. }
+        level: { type: string }
+        target: { type: string }
+        message: { type: string }
+        node: { type: string }
+        fields:
+          type: object
+          additionalProperties: true
+          description: Structured tracing fields. Not present when empty.
+
+    UpdateSnapshot:
+      type: object
+      required: [current_version, latest, update_available, releases_url, checked_at_ms]
+      properties:
+        current_version: { type: string }
+        latest:
+          oneOf:
+            - $ref: '#/components/schemas/ReleaseInfo'
+            - type: 'null'
+        update_available: { type: boolean }
+        releases_url: { type: string, format: uri }
+        checked_at_ms: { type: integer, description: Unix time in milliseconds. }
+        error: { type: string }
+
+    ReleaseInfo:
+      type: object
+      required: [tag, name, url, published_at, notes]
+      properties:
+        tag: { type: string }
+        name: { type: string }
+        url: { type: string, format: uri }
+        published_at: { type: [string, 'null'] }
+        notes: { type: string, description: Release notes in Markdown. }

@@ -13,8 +13,8 @@ import { LinkCard, LinkCards } from '@/components/ui'
 The Interfold has two dashboards. The local node dashboard runs inside your ciphernode process and
 shows what that node knows. The hosted dashboard is a public web app that reads the chain. This page
 is for operators who monitor a ciphernode. At the end, you can enable the local dashboard and open
-it safely from another computer. You can also read its JSON API, and you know when to use the hosted
-dashboard.
+it safely from another computer. You can also read its JSON API, send alerts from it, and you know
+when to use the hosted dashboard.
 
 | Dashboard        | Where it runs                                    | Data source                                                     | Use it to                                                                       |
 | ---------------- | ------------------------------------------------ | --------------------------------------------------------------- | ------------------------------------------------------------------------------- |
@@ -134,26 +134,92 @@ error.
 
 ### JSON API
 
-The dashboard reads five JSON endpoints. You can call them with `curl` on the host that runs the
-node:
+The dashboard gets its data from a JSON API on the same port. You can call the API with `curl` on
+the host that runs the node:
 
 ```bash
 curl -s http://127.0.0.1:9092/api/snapshot | jq '.network'
 ```
 
-| Endpoint                                           | Returns                                                                                                                                                                                                                                                                               |
-| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /api/snapshot`                                | `node` (name, address, peer ID, ports, version, chains), `network` (`configured_peers`, `connected_peers`, `gossip_subscribed_peers`, `listen_addresses`, `last_error`), `protocol` (E3 counts), `operator` (on-chain state for each chain), `e3s`, and the 40 newest `recent_events` |
-| `GET /api/e3?e3_id=<id>`                           | The trace of one E3. An unknown ID returns HTTP 404.                                                                                                                                                                                                                                  |
-| `GET /api/events?limit=<n>`                        | The newest protocol events. The default limit is 500 and the maximum is 2,000.                                                                                                                                                                                                        |
-| `GET /api/logs?since=&limit=&level=&target=&text=` | Operational log entries, with `next_cursor`, `oldest_cursor`, and `total_stored`. The default limit is 500 and the maximum is 2,000.                                                                                                                                                  |
-| `GET /api/updates`                                 | `current_version`, `latest` release, `update_available`, and `releases_url`. The node checks GitHub at most once an hour, or every 5 minutes after an error.                                                                                                                          |
-
-If the node cannot read its EventStore, an endpoint returns HTTP 503 with an `error` field.
+The API has five endpoints: `/api/snapshot`, `/api/e3`, `/api/events`, `/api/logs`, and
+`/api/updates`. [Dashboard API](/reference/dashboard-api) gives the parameters, the response fields,
+and the errors of each endpoint.
 
 Protocol events come from the durable EventStore of the node. Log entries come from a bounded
 in-memory store, and the node also writes them to `ciphernode.jsonl` in the node data directory. Log
 entries are diagnostics, not protocol records.
+
+### Monitor the node with the API
+
+A monitoring system can read the API and send an alert when a value is out of range. This procedure
+makes a check that sends an alert when the node has fewer than 10 connected peers. The check needs
+`curl` and `jq` on the host of the node.
+
+<Steps>
+
+### Write the check script
+
+Save this script as `check-interfold-peers.sh`. Set `PORT` to your `dashboard_port`, and set
+`MIN_PEERS` to your limit.
+
+```bash
+#!/usr/bin/env bash
+# Exit 0 when the peer count is good, 1 when it is low, 2 when the check fails.
+PORT=9092
+MIN_PEERS=10
+
+body=$(curl -sf --max-time 10 "http://127.0.0.1:${PORT}/api/snapshot") || {
+  echo "CRITICAL: dashboard API does not answer"
+  exit 2
+}
+peers=$(jq -e '.network.connected_peers | length' <<<"$body" 2>/dev/null) || {
+  echo "CRITICAL: response is not a dashboard snapshot"
+  exit 2
+}
+if [ "$peers" -lt "$MIN_PEERS" ]; then
+  echo "WARNING: ${peers} connected peers (minimum ${MIN_PEERS})"
+  exit 1
+fi
+echo "OK: ${peers} connected peers"
+```
+
+The exit codes follow the Nagios plugin convention: 0 is OK, 1 is a warning, and 2 is a critical
+failure. The script also fails when the node is stopped, and when the URL returns HTML instead of a
+snapshot.
+
+### Test the script
+
+Run `bash check-interfold-peers.sh` on the host of the node. The script shows the peer count, for
+example `OK: 21 connected peers`.
+
+### Connect the script to your monitoring system
+
+Use a monitoring agent that runs a command and reads its exit code. Without such an agent, use a
+cron entry that runs your alert command when the check fails:
+
+```text
+*/5 * * * * /usr/local/bin/check-interfold-peers.sh || /usr/local/bin/send-alert "interfold peers"
+```
+
+`/usr/local/bin/send-alert` is an example. Replace it with the command that sends your alert.
+
+</Steps>
+
+Poll `/api/snapshot` at an interval of 30 s or more. Each request reads the new EventStore events
+and can start chain RPC reads.
+
+You can make checks for other values with the same method:
+
+| Condition                      | Endpoint        | `jq` expression or field                                                     |
+| ------------------------------ | --------------- | ---------------------------------------------------------------------------- |
+| Few connected peers            | `/api/snapshot` | `.network.connected_peers \| length`                                         |
+| Few peers on the gossip topic  | `/api/snapshot` | `.network.gossip_subscribed_peers`                                           |
+| Network error                  | `/api/snapshot` | `.network.last_error` is present                                             |
+| Operator not active on a chain | `/api/snapshot` | `.operator.chains[] \| select(.operator_active \| not) \| .chain_name`       |
+| Chain RPC read failed          | `/api/snapshot` | `.operator.error` is present                                                 |
+| More failed or degraded E3s    | `/api/snapshot` | `.protocol.e3_failed` and `.protocol.e3_degraded` increase between two polls |
+| New error log entries          | `/api/logs`     | `?level=error&since=<next_cursor of the previous poll>` returns entries      |
+| New release                    | `/api/updates`  | `.update_available` is `true`                                                |
 
 ## Hosted dashboard
 
@@ -190,6 +256,9 @@ procedure.
 <LinkCards min={230}>
   <LinkCard title='Troubleshooting' href='/operate/troubleshooting' icon='wrench' tag='Fix'>
     Symptoms, log lines, and checks for a node that does not behave as expected.
+  </LinkCard>
+  <LinkCard title='Dashboard API' href='/reference/dashboard-api' icon='terminal' tag='Reference'>
+    Endpoints, parameters, and response fields of the JSON API.
   </LinkCard>
   <LinkCard title='Upgrades' href='/operate/upgrades' icon='upgrade' tag='Maintain'>
     Install a new release, and reset state when a release needs it.

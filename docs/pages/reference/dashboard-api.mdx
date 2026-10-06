@@ -1,0 +1,347 @@
+---
+title: 'Dashboard API'
+description:
+  'Endpoints, query parameters, response fields, and errors of the JSON API that the local
+  ciphernode dashboard serves on 127.0.0.1.'
+---
+
+import { Callout } from 'nextra/components'
+import { LinkCard, LinkCards } from '@/components/ui'
+
+# Dashboard API
+
+This page describes the JSON API of the local node dashboard. It is for operators who connect a
+monitoring system or a script to a ciphernode. It lists each endpoint, its query parameters, its
+response fields, and its errors. To enable the dashboard and open it in a browser, see
+[Node Dashboard](/operate/dashboard).
+
+The source of truth is `crates/dashboard/src`. An OpenAPI 3.1 description of the same API is in
+[`crates/dashboard/openapi.yaml`](https://github.com/theinterfold/interfold/blob/main/crates/dashboard/openapi.yaml).
+You can load this file into OpenAPI tools, for example to generate a client.
+
+## Base URL and access
+
+The node serves the API only when the configuration sets `dashboard_port`. The base URL is:
+
+```text
+http://127.0.0.1:<dashboard_port>
+```
+
+The server binds only to `127.0.0.1`. It has no authentication. All endpoints use `GET` and return
+JSON. The server can compress a response when the client asks for it.
+
+<Callout type='warning'>
+  The API returns detailed protocol payloads and node diagnostics. Run the monitoring client on the
+  host of the node, or connect through an SSH tunnel. Do not forward the port to a public interface.
+</Callout>
+
+A path that is not an endpoint returns the dashboard HTML page with HTTP 200. A monitoring check
+must parse the body as JSON. A check of the status code only does not find a wrong path.
+
+## Value formats
+
+- Large on-chain integers are decimal strings. These include bonds, balances, ticket counts, reward
+  amounts, and scores. Convert them before you compare them with a number.
+- A field name that ends in `_ms` is a Unix time in milliseconds. A field name that ends in `_us` is
+  a Unix time in microseconds.
+- The response does not include an optional field that has no value. For each field, the tables on
+  this page say if the field can be absent.
+
+## Endpoints
+
+| Endpoint            | Query parameters                            | Response                     | Errors        |
+| ------------------- | ------------------------------------------- | ---------------------------- | ------------- |
+| `GET /api/snapshot` | None                                        | [Snapshot](#snapshot)        | 503           |
+| `GET /api/e3`       | `e3_id` (required)                          | [E3 trace](#e3-trace)        | 400, 404, 503 |
+| `GET /api/events`   | `limit`                                     | `{ "events": [Event, ...] }` | 503           |
+| `GET /api/logs`     | `since`, `limit`, `level`, `target`, `text` | [Log query result](#logs)    | None          |
+| `GET /api/updates`  | None                                        | [Update status](#updates)    | None          |
+
+An error response has this body:
+
+```json
+{ "error": "EventStore dashboard query timed out" }
+```
+
+| Status | Endpoints                                 | Cause                                                                                          |
+| ------ | ----------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| 400    | `/api/e3`, `/api/events`, `/api/logs`     | A required parameter is missing, or a parameter is not a valid number. The body is plain text. |
+| 404    | `/api/e3`                                 | The node has no events for this E3. The `error` field is `unknown E3 <id>`.                    |
+| 503    | `/api/snapshot`, `/api/e3`, `/api/events` | The EventStore query failed, or it did not answer in 5 s.                                      |
+
+## Snapshot
+
+`GET /api/snapshot` returns the data of the **Overview** view.
+
+Before it answers, the endpoint reads the new EventStore events of the node. It also reads the
+operator state from the chain. The node keeps the chain result for 15 s, so a poll interval of 30 to
+60 s is sufficient for monitoring.
+
+```bash
+curl -s http://127.0.0.1:9092/api/snapshot | jq '.network.connected_peers | length'
+```
+
+| Field           | Type                        | Description                                                      |
+| --------------- | --------------------------- | ---------------------------------------------------------------- |
+| `node`          | [Node](#node)               | Identity, ports, version, and chains of the node                 |
+| `network`       | [Network](#network)         | Live libp2p connection state                                     |
+| `protocol`      | [Protocol](#protocol)       | E3 counts and chain state from the EventStore                    |
+| `operator`      | [Operator](#operator)       | Operator state from live chain reads                             |
+| `e3s`           | [E3 summary](#e3-summary)[] | Each E3 that the node saw. The most recently active E3 is first. |
+| `recent_events` | [Event](#event)[]           | The 40 newest protocol events. The newest event is first.        |
+
+### Node
+
+| Field            | Type    | Description                                                      |
+| ---------------- | ------- | ---------------------------------------------------------------- |
+| `node_name`      | string  | Name of the node                                                 |
+| `address`        | string  | Operator address                                                 |
+| `peer_id`        | string  | libp2p peer ID                                                   |
+| `quic_port`      | integer | QUIC port                                                        |
+| `dashboard_port` | integer | Dashboard port                                                   |
+| `version`        | string  | Version of the `interfold` binary                                |
+| `chains`         | array   | One `{ "id": <chain ID>, "name": <string> }` item for each chain |
+
+### Network
+
+This data is live connection state. The node does not keep it in the EventStore. The **Network
+reach** value on the Overview is the length of `connected_peers` over `configured_peers`.
+
+| Field                     | Type     | Description                                                 |
+| ------------------------- | -------- | ----------------------------------------------------------- |
+| `configured_peers`        | integer  | Number of configured peers                                  |
+| `connected_peers`         | array    | One item for each connected peer. See the next table.       |
+| `gossip_subscribed_peers` | integer  | Number of peers that subscribe to the protocol gossip topic |
+| `listen_addresses`        | string[] | Multiaddrs that the node listens on                         |
+| `last_error`              | string   | The latest transport error. Absent when there is no error.  |
+
+Each item in `connected_peers` has these fields:
+
+| Field             | Type    | Description                  |
+| ----------------- | ------- | ---------------------------- |
+| `peer_id`         | string  | libp2p peer ID               |
+| `remote_address`  | string  | Multiaddr of the peer        |
+| `direction`       | string  | `inbound` or `outbound`      |
+| `connections`     | integer | Number of open connections   |
+| `connected_at_ms` | integer | Time of the first connection |
+
+### Protocol
+
+The node calculates these values from its own EventStore events.
+
+| Field             | Type    | Description                                                  |
+| ----------------- | ------- | ------------------------------------------------------------ |
+| `chains`          | array   | Chain state for each chain. See the next table.              |
+| `e3_total`        | integer | Number of E3s that the node saw                              |
+| `e3_active`       | integer | E3s that still need this node. See the note below the table. |
+| `e3_completed`    | integer | E3s with status `complete`                                   |
+| `e3_failed`       | integer | E3s with status `failed`                                     |
+| `e3_degraded`     | integer | E3s with status `degraded`                                   |
+| `events_observed` | integer | Number of protocol events in the dashboard projection        |
+
+`e3_active` counts the E3s where this node is in the committee, or has a ticket before the committee
+forms. Of these E3s, it counts each E3 with status `active` or `degraded`. It also counts each E3
+with status `failed` for 24 hours after the failure, because slash reports for the E3 can still be
+due. The 24 hours is an estimate.
+
+Each item in `chains` has these fields:
+
+| Field                 | Type                | Description                                |
+| --------------------- | ------------------- | ------------------------------------------ |
+| `chain_id`            | integer             | Chain ID                                   |
+| `registered_nodes`    | integer             | Registered nodes, from events              |
+| `active_nodes`        | integer             | Active nodes, from events                  |
+| `operator_registered` | boolean             | The operator is registered                 |
+| `operator_active`     | boolean             | The operator is active                     |
+| `ticket_balance`      | string              | Ticket balance. Can be absent.             |
+| `ciphernode_bond`     | string              | Ciphernode bond. Can be absent.            |
+| `bond_owner`          | string              | Bond owner address. Can be absent.         |
+| `exit_unlock_at`      | integer             | Time when the exit unlocks. Can be absent. |
+| `rewards_credited`    | [Reward](#reward)[] | Rewards credited to the operator           |
+
+### Operator
+
+The node reads these values from the chain with RPC calls. It keeps the result for 15 s.
+
+| Field           | Type    | Description                                                                                                      |
+| --------------- | ------- | ---------------------------------------------------------------------------------------------------------------- |
+| `chains`        | array   | One item for each enabled chain with a successful read. See the next table.                                      |
+| `error`         | string  | The failed reads, separated by `; `. For example, `sepolia: RPC query timed out`. Absent when all reads succeed. |
+| `updated_at_ms` | integer | Time of the last read. The value is 0 before the first read.                                                     |
+
+Each item in `chains` has these fields:
+
+| Field                 | Type            | Description                                                                                                                             |
+| --------------------- | --------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `chain_id`            | integer         | Chain ID                                                                                                                                |
+| `chain_name`          | string          | Chain name from the configuration                                                                                                       |
+| `registered_nodes`    | string          | Registered nodes, as a decimal string                                                                                                   |
+| `active_nodes`        | string          | Active nodes, as a decimal string                                                                                                       |
+| `operator_registered` | boolean         | The operator is registered                                                                                                              |
+| `operator_active`     | boolean         | The operator is active                                                                                                                  |
+| `operator_eligible`   | boolean or null | The result of `BondingRegistry.eligibilityAt`. It includes the admission cooldown and the admission policy. `null` when the read fails. |
+| `exit_in_progress`    | boolean         | The operator has an exit in the queue                                                                                                   |
+| `ticket_balance`      | string          | Ticket balance                                                                                                                          |
+| `available_tickets`   | string          | Available tickets                                                                                                                       |
+| `ciphernode_bond`     | string          | Ciphernode bond                                                                                                                         |
+| `bond_owner`          | string          | Bond owner address                                                                                                                      |
+
+## E3 trace
+
+`GET /api/e3?e3_id=<id>` returns the trace of one E3. Use an `e3_id` value from the snapshot.
+
+The response has all the fields of an [E3 summary](#e3-summary), and these fields:
+
+| Field                | Type                | Description                                                         |
+| -------------------- | ------------------- | ------------------------------------------------------------------- |
+| `phases`             | array               | One item for each phase. See the next table.                        |
+| `committee`          | array               | `{ address, party_id, score?, expelled }` for each committee member |
+| `tickets`            | array               | `{ node, ticket_id, score }` for each sortition ticket              |
+| `rewards`            | [Reward](#reward)[] | Rewards of the E3                                                   |
+| `reward_allocations` | array               | `{ operator, amount }` for each allocation                          |
+| `failure`            | object              | Failure details. Absent when the E3 did not fail.                   |
+| `local_failure`      | object              | Failure that this node reported. Can be absent.                     |
+| `chain_failure`      | object              | Failure that the chain reported. Can be absent.                     |
+| `events`             | [Event](#event)[]   | The events of the E3                                                |
+
+Each item in `phases` has these fields:
+
+| Field         | Type    | Description                                                  |
+| ------------- | ------- | ------------------------------------------------------------ |
+| `id`          | string  | Phase. See [E3 summary](#e3-summary).                        |
+| `label`       | string  | Display name, for example `DKG · C0`                         |
+| `state`       | string  | `pending`, `active`, `complete`, `failed`, or `stalled`      |
+| `event_count` | integer | Number of events in the phase                                |
+| `sources`     | object  | `{ local, net, evm }`: the number of events from each source |
+| `errors`      | integer | Number of events with the `error` level                      |
+| `warnings`    | integer | Number of events with the `warn` level                       |
+
+A phase has the state `stalled` when this node reported a local failure in that phase.
+
+### E3 summary
+
+| Field             | Type    | Description                                                                                                                               |
+| ----------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `e3_id`           | string  | E3 ID                                                                                                                                     |
+| `chain_id`        | integer | Chain ID                                                                                                                                  |
+| `status`          | string  | `active`, `complete`, `failed`, or `degraded`                                                                                             |
+| `canonical_stage` | string  | Stage on the chain: `None`, `Requested`, `CommitteeFinalized`, `KeyPublished`, `CiphertextReady`, `Complete`, or `Failed`. Can be absent. |
+| `current_phase`   | string  | `request`, `committee`, `dkg_setup`, `dkg_shares`, `key_publication`, `computation`, `decryption`, or `settlement`                        |
+| `event_count`     | integer | Number of events                                                                                                                          |
+| `error_count`     | integer | Number of events with the `error` level                                                                                                   |
+| `warning_count`   | integer | Number of events with the `warn` level                                                                                                    |
+| `committee_size`  | integer | Number of committee members                                                                                                               |
+| `first_seen_us`   | integer | Time of the first event                                                                                                                   |
+| `last_seen_us`    | integer | Time of the latest event                                                                                                                  |
+
+The status is `failed` when the chain reports a failure. The status is `degraded` when this node
+reports a local failure and the chain does not.
+
+### Reward
+
+| Field     | Type    | Description                   |
+| --------- | ------- | ----------------------------- |
+| `account` | string  | Account that gets the reward  |
+| `token`   | string  | Token address. Can be absent. |
+| `amount`  | string  | Amount in token base units    |
+| `claimed` | boolean | The reward is claimed         |
+
+## Events
+
+`GET /api/events?limit=<n>` returns `{ "events": [...] }` with the newest protocol events. The
+newest event is first. The default `limit` is 500. The node uses 2,000 for a larger value.
+
+### Event
+
+| Field                  | Type    | Description                                                                                                                                    |
+| ---------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `seq`                  | integer | Sequence number in the EventStore aggregate                                                                                                    |
+| `aggregate_id`         | integer | EventStore aggregate                                                                                                                           |
+| `timestamp_us`         | integer | Event time                                                                                                                                     |
+| `logical_counter`      | integer | Logical counter of the hybrid logical clock                                                                                                    |
+| `producer_fingerprint` | string  | Node ID of the hybrid logical clock, in hexadecimal                                                                                            |
+| `block`                | integer | Block number. Chain events have it. Can be absent.                                                                                             |
+| `source`               | string  | `local`, `network`, or `evm`                                                                                                                   |
+| `producer`             | string  | Local events: the operator address. Chain events: the contract address, or `on-chain contract`. Network events: `node:<producer_fingerprint>`. |
+| `event_type`           | string  | Event name, for example `E3Requested`                                                                                                          |
+| `e3_id`                | string  | E3 ID. Can be absent.                                                                                                                          |
+| `phase`                | string  | E3 phase. Can be absent.                                                                                                                       |
+| `severity`             | string  | `debug`, `info`, `warn`, or `error`                                                                                                            |
+| `event_id`             | string  | Event ID                                                                                                                                       |
+| `causation_id`         | string  | ID of the event that caused this event                                                                                                         |
+| `origin_id`            | string  | ID of the root event that caused this event                                                                                                    |
+| `payload`              | any     | Event data. The structure depends on `event_type`.                                                                                             |
+
+The `net` key in the `sources` object of a phase counts the events with the source `network`.
+[Node Dashboard](/operate/dashboard#views) lists the events of each severity level.
+
+## Logs
+
+`GET /api/logs` returns operational log entries. The node keeps the 20,000 newest entries in memory.
+These entries are diagnostics, not protocol records.
+
+| Parameter | Default | Description                                                                                                                    |
+| --------- | ------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `since`   | None    | Return entries with `seq` equal to or larger than this value                                                                   |
+| `limit`   | 500     | Maximum number of entries. The node uses a value from 1 to 2,000.                                                              |
+| `level`   | None    | Exact level, for example `error`. The match ignores case. This is not a minimum level: `warn` does not return `error` entries. |
+| `target`  | None    | Text that the tracing target contains. The match is case-sensitive.                                                            |
+| `text`    | None    | Text that the message, the target, or the fields contain. The match ignores case.                                              |
+
+Without `since`, the response contains the newest matching entries. With `since`, the response
+contains the oldest matching entries from that point. In both cases, the entries are in order from
+oldest to newest. To read new entries in a loop, send the `next_cursor` value as `since` in the next
+request.
+
+| Field           | Type    | Description                                   |
+| --------------- | ------- | --------------------------------------------- |
+| `entries`       | array   | Log entries. See the next table.              |
+| `next_cursor`   | integer | The `since` value for the next request        |
+| `oldest_cursor` | integer | Sequence number of the oldest entry in memory |
+| `total_stored`  | integer | Number of entries in memory                   |
+
+| Field          | Type    | Description                                    |
+| -------------- | ------- | ---------------------------------------------- |
+| `seq`          | integer | Sequence number                                |
+| `timestamp_ms` | integer | Entry time                                     |
+| `level`        | string  | `ERROR`, `WARN`, `INFO`, `DEBUG`, or `TRACE`   |
+| `target`       | string  | Tracing target, for example a module path      |
+| `message`      | string  | Log message                                    |
+| `node`         | string  | Node name                                      |
+| `fields`       | object  | Structured fields. Absent when there are none. |
+
+When the log collector does not run, the endpoint returns no entries, and each cursor is 0.
+
+## Updates
+
+`GET /api/updates` compares the installed version with the latest stable GitHub release. The node
+keeps a successful result for 1 hour and a failed result for 5 minutes. The endpoint always returns
+HTTP 200. A failed check sets `error`.
+
+| Field              | Type           | Description                                                                          |
+| ------------------ | -------------- | ------------------------------------------------------------------------------------ |
+| `current_version`  | string         | Installed version                                                                    |
+| `latest`           | object or null | `{ tag, name, url, published_at, notes }`. `null` before the first successful check. |
+| `update_available` | boolean        | The latest release is newer than the installed version                               |
+| `releases_url`     | string         | URL of the GitHub releases page                                                      |
+| `checked_at_ms`    | integer        | Time of the last check                                                               |
+| `error`            | string         | Reason of the last failed check. Absent after a successful check.                    |
+
+## Next steps
+
+<LinkCards min={230}>
+  <LinkCard title='Node Dashboard' href='/operate/dashboard' icon='dashboard' tag='Monitor'>
+    Enable the dashboard, open it, and set up alerts from the API.
+  </LinkCard>
+  <LinkCard title='Troubleshooting' href='/operate/troubleshooting' icon='wrench' tag='Fix'>
+    Symptoms, log lines, and checks for a node that does not behave as expected.
+  </LinkCard>
+  <LinkCard
+    title='Configuration reference'
+    href='/reference/configuration'
+    icon='terminal'
+    tag='Reference'
+  >
+    Every node configuration key, including the dashboard port.
+  </LinkCard>
+</LinkCards>

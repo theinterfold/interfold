@@ -60,6 +60,7 @@ const STATIC_DOC_PAGES: DocPage[] = [
   { slug: 'operate/troubleshooting', title: 'Troubleshooting', url: '/operate/troubleshooting' },
   { slug: 'reference/cli', title: 'CLI Reference', url: '/reference/cli' },
   { slug: 'reference/configuration', title: 'Node Configuration', url: '/reference/configuration' },
+  { slug: 'reference/dashboard-api', title: 'Dashboard API', url: '/reference/dashboard-api' },
   { slug: 'reference/contracts', title: 'Contracts & Addresses', url: '/reference/contracts' },
   { slug: 'reference/glossary', title: 'Glossary', url: '/reference/glossary' },
   { slug: 'CRISP/introduction', title: 'CRISP Introduction', url: '/CRISP/introduction' },

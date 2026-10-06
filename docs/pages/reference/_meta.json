@@ -5,6 +5,9 @@
   "configuration": {
     "title": "Node Configuration"
   },
+  "dashboard-api": {
+    "title": "Dashboard API"
+  },
   "contracts": {
     "title": "Contracts & Addresses"
   },
