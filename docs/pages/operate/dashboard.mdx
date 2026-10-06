@@ -157,10 +157,10 @@ makes a check that sends an alert when the node has fewer than 10 connected peer
 
 <Steps>
 
-### Write the check script
+### Install the check script
 
-Save this script as `check-interfold-peers.sh`. Set `PORT` to your `dashboard_port`, and set
-`MIN_PEERS` to your limit.
+Save this script as `/usr/local/bin/check-interfold-peers.sh`. Set `PORT` to your `dashboard_port`,
+and set `MIN_PEERS` to your limit.
 
 ```bash
 #!/usr/bin/env bash
@@ -172,7 +172,7 @@ body=$(curl -sf --max-time 10 "http://127.0.0.1:${PORT}/api/snapshot") || {
   echo "CRITICAL: dashboard API does not answer"
   exit 2
 }
-peers=$(jq -e '.network.connected_peers | length' <<<"$body" 2>/dev/null) || {
+peers=$(jq -e '.network.connected_peers | if type == "array" then length else error("no peer list") end' <<<"$body" 2>/dev/null) || {
   echo "CRITICAL: response is not a dashboard snapshot"
   exit 2
 }
@@ -183,14 +183,20 @@ fi
 echo "OK: ${peers} connected peers"
 ```
 
+Make the script executable:
+
+```bash
+sudo chmod 755 /usr/local/bin/check-interfold-peers.sh
+```
+
 The exit codes follow the Nagios plugin convention: 0 is OK, 1 is a warning, and 2 is a critical
-failure. The script also fails when the node is stopped, and when the URL returns HTML instead of a
-snapshot.
+failure. The script also fails when the node is stopped, and when the response is not a snapshot,
+for example HTML or a JSON object without a peer list.
 
 ### Test the script
 
-Run `bash check-interfold-peers.sh` on the host of the node. The script shows the peer count, for
-example `OK: 21 connected peers`.
+Run `/usr/local/bin/check-interfold-peers.sh` on the host of the node. The script shows the peer
+count, for example `OK: 21 connected peers`.
 
 ### Connect the script to your monitoring system
 

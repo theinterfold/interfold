@@ -53,8 +53,8 @@ must parse the body as JSON. A check of the status code only does not find a wro
 | ------------------- | ------------------------------------------- | ---------------------------- | ------------- |
 | `GET /api/snapshot` | None                                        | [Snapshot](#snapshot)        | 503           |
 | `GET /api/e3`       | `e3_id` (required)                          | [E3 trace](#e3-trace)        | 400, 404, 503 |
-| `GET /api/events`   | `limit`                                     | `{ "events": [Event, ...] }` | 503           |
-| `GET /api/logs`     | `since`, `limit`, `level`, `target`, `text` | [Log query result](#logs)    | None          |
+| `GET /api/events`   | `limit`                                     | `{ "events": [Event, ...] }` | 400, 503      |
+| `GET /api/logs`     | `since`, `limit`, `level`, `target`, `text` | [Log query result](#logs)    | 400           |
 | `GET /api/updates`  | None                                        | [Update status](#updates)    | None          |
 
 An error response has this body:
