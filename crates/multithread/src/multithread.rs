@@ -88,7 +88,7 @@ use num_bigint::BigInt;
 use rand::Rng;
 use tracing::{debug, error, info, warn};
 
-use crate::effect_gate::ComputeEffectGate;
+use crate::effect_gate::{ComputeEffectGate, RunningJob, RunningJobs};
 
 /// Multithread actor
 pub struct Multithread {
@@ -100,6 +100,8 @@ pub struct Multithread {
     report: Option<Addr<MultithreadReport>>,
     zk_prover: Option<Arc<ZkProver>>,
     retry_logs: Arc<RetryLogLimiter>,
+    /// The requests that this worker runs, which the effect gate reads.
+    running: RunningJobs,
 }
 
 impl Multithread {
@@ -120,6 +122,7 @@ impl Multithread {
             report,
             zk_prover: None,
             retry_logs: Arc::new(RetryLogLimiter::default()),
+            running: RunningJobs::default(),
         }
     }
 
@@ -149,15 +152,16 @@ impl Multithread {
         lifecycle_stages: HashMap<E3id, E3Stage>,
         canonical_keys: e3_request::canonical_key::CanonicalPublicKeys,
     ) -> Addr<Self> {
-        let addr = Self::new(
+        let actor = Self::new(
             bus.clone(),
             rng.clone(),
             cipher.clone(),
             task_pool,
             task_scope,
             report,
-        )
-        .start();
+        );
+        let running = actor.running.clone();
+        let addr = actor.start();
 
         Self::subscribe_to_lifecycle(bus, &addr);
         ComputeEffectGate::attach(
@@ -165,6 +169,7 @@ impl Multithread {
             addr.clone().recipient(),
             lifecycle_stages,
             canonical_keys,
+            running,
         );
         info!("Multithread actor waiting behind the replay-safe effect gate.");
 
@@ -193,6 +198,7 @@ impl Multithread {
             report,
         )
         .with_zk_prover(zk_prover);
+        let running = actor.running.clone();
         let addr = actor.start();
         Self::subscribe_to_lifecycle(bus, &addr);
 
@@ -201,6 +207,7 @@ impl Multithread {
             addr.clone().recipient(),
             lifecycle_stages,
             canonical_keys,
+            running,
         );
         info!("Multithread actor with ZK waiting behind the replay-safe effect gate.");
 
@@ -401,6 +408,64 @@ mod task_group_tests {
         Ok(())
     }
 
+    /// The worker notes a request as running from its intake until its result, also while the
+    /// request waits in the pool's queue, so the effect gate does not send it again meanwhile.
+    #[actix::test]
+    async fn a_request_runs_from_its_intake_until_its_result() -> anyhow::Result<()> {
+        use e3_events::{CorrelationId, EventConstructorWithTimestamp, EventSource, Unsequenced};
+        use rand::SeedableRng;
+
+        let (bus, _history) = crate::effect_gate::tests::test_bus();
+        let rng: SharedRng = Arc::new(Mutex::new(rand_chacha::ChaCha20Rng::seed_from_u64(7)));
+        let cipher = Arc::new(Cipher::from_password("test-password").await?);
+        let pool = TaskPool::new(1, 8);
+        let worker = Multithread::new(bus, rng, cipher, pool.clone(), "node".to_string(), None);
+        let running = worker.running.clone();
+        let worker = worker.start();
+
+        // A long task holds the pool's one thread, so the request waits in the queue.
+        let blocked = actix::spawn(async move {
+            pool.spawn("blocker".to_string(), TaskTimeouts::default(), || {
+                thread::sleep(Duration::from_millis(400))
+            })
+            .await
+        });
+        actix::clock::sleep(Duration::from_millis(50)).await;
+        let request = ComputeRequest::zk(
+            ZkRequest::VerifyShareProofs(VerifyShareProofsRequest {
+                party_proofs: vec![],
+                params_preset: e3_fhe_params::BfvPreset::default(),
+                committee_size: e3_zk_helpers::CiphernodesCommitteeSize::Micro,
+            }),
+            CorrelationId::new(),
+            E3id::new("7", 1),
+        );
+        let id = request.correlation_id;
+        worker
+            .send(
+                InterfoldEvent::<Unsequenced>::new_with_timestamp(
+                    request.into(),
+                    None,
+                    1,
+                    None,
+                    EventSource::Local,
+                )
+                .into_sequenced(1),
+            )
+            .await?;
+        actix::clock::sleep(Duration::from_millis(100)).await;
+        assert!(running.any(&[id]), "a queued request runs");
+
+        // Without a prover, the request ends with an error result once it gets the thread.
+        blocked.await?.map_err(|error| anyhow::anyhow!("{error}"))?;
+        actix::clock::sleep(Duration::from_millis(200)).await;
+        assert!(
+            !running.any(&[id]),
+            "a request with a result no longer runs"
+        );
+        Ok(())
+    }
+
     #[test]
     fn shared_pool_groups_are_isolated_by_node() {
         let e3_id = E3id::new("round", 1);
@@ -513,11 +578,13 @@ impl Handler<TypedEvent<ComputeRequest>> for Multithread {
         let zk_prover = self.zk_prover.clone();
         let task_scope = self.task_scope.clone();
         let retry_logs = self.retry_logs.clone();
+        // The request runs, queued or in a worker, until its future ends.
+        let running = self.running.start(msg.correlation_id);
         trap_fut(
             EType::Computation,
             &self.bus.clone(),
             handle_compute_request_event(
-                msg, bus, cipher, rng, pool, task_scope, report, zk_prover, retry_logs,
+                msg, bus, cipher, rng, pool, task_scope, report, zk_prover, retry_logs, running,
             ),
         )
     }
@@ -534,6 +601,7 @@ async fn handle_compute_request_event(
     report: Option<Addr<MultithreadReport>>,
     zk_prover: Option<Arc<ZkProver>>,
     retry_logs: Arc<RetryLogLimiter>,
+    _running: RunningJob,
 ) -> anyhow::Result<()> {
     let msg_string = msg.to_string();
     let job_name = msg_string.clone();

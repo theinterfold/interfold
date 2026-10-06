@@ -60,9 +60,11 @@ CiphernodeSelected event arrives at ThresholdKeyshare
 │   │     e3_id, party_id, bfv_public_key
 │   │   }
 │   │   → ZK proof actor picks this up
-│   │   → Only once effects run: in replay, resume publishes it. When the log
-│   │     holds another key of this node, the node lost the secret of the key that
-│   │     its peers hold, and publishes no second key (it abstains)
+│   │   → Only once effects run: in replay, resume publishes it. When replay has
+│   │     delivered another key of this node from the log, the node lost the secret
+│   │     of the key that its peers hold, and publishes no second key (it abstains).
+│   │     When that key arrives after the publication, the node has published a
+│   │     second key; the collection check (1a) then stops its share generation
 │   │
 │   └─ Collector schedules use the frozen per-E3 window and absolute deadline:
 │         ├─ EncryptionKeyCollector: hard cutoff at 10% of the window
@@ -663,10 +665,10 @@ starts, a roster from a lower party ID replaces a roster from a higher party ID.
 roster is never dropped, so the commitment checker keeps its selection; until C4 starts, an
 expelled dealer is not an honest party, also when a restart restores the roster, and a fixed
 roster is restored with every dealer. C4 starts when the node sends its decryption-key
-calculation. It saves that fact with the selected parties. The logged calculation request saves
-the state again at its own position, also when the store refused the dispatch write as stale and
-memory already holds the fact, and replay delivers that request again, so a restart that loses the
-calculation keeps the roster fixed. A held
+calculation. It saves that fact with the selected parties. A store that refuses that write as
+stale, after a restart whose context trails the saved snapshot cursor, loses the fact; a
+lower-ranked roster that arrives later can then replace the roster that the calculation used. This
+case is not handled. A held
 roster with an expelled member gives way to a later roster of the same proposer. A promoted
 aggregator re-proposes the accepted dealer list instead of deriving
 a different list from its local delivery order.
@@ -979,7 +981,11 @@ phase.
      → A restart replays the intent, so an unfinished publication still reaches the chain.
        The public-key aggregator also sends its saved publication again when effects resume,
        whatever its role now, since replay can start after the publication event; the writer
-       skips a commitment that is already on chain and finishes the chunks.
+       skips a commitment that is already on chain and sends every chunk again.
+     → Once the node assembles the whole key from the chain's chunks (CommitteePublished), the
+       aggregator clears its saved publication, and the writer drops the intent and ignores
+       later key results of the E3. A restart after that sends no chunk; a restart in the
+       middle of the chunks sends all of them again.
        E3RequestComplete that arrives before EffectsEnabled comes from that same replay and
        drops the intent: a completed request published its candidate in an earlier run, and
        repeating it only spends gas
@@ -1330,7 +1336,8 @@ InterfoldSolReader decodes CiphertextOutputPublished event
       │     redelivery at once, also while its cleanup retries.
       │   → `ComputeEffectGate` runs one compute per request payload and answers every
       │     correlation ID. A request under a new ID whose result has not reached the gate 10
-      │     minutes after it went to the worker goes to the worker again.
+      │     minutes after it went to the worker goes to the worker again, once no run of it is
+      │     left in the worker, queued ones included.
       │   → `ProofRequestActor` asks for the proof again for each new nonzero `redelivery`, also
       │     after the proof completed, and ignores copies. `DecryptionShareProofSigned` carries
       │     the `redelivery` it answers, so EventBus deduplication passes a second completion.

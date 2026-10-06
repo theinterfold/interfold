@@ -818,6 +818,56 @@ async fn a_demoted_aggregator_sends_its_saved_key_publication_again_after_a_rest
     Ok(())
 }
 
+/// Once every node assembled the whole key from the chain's chunks, the saved key publication is
+/// cleared, and a restart does not send it again. Without that, the restart sends it.
+#[actix::test]
+async fn a_key_on_chain_clears_the_saved_key_publication() -> Result<()> {
+    for on_chain in [false, true] {
+        let (mut aggregator, history, e3_id) =
+            build_public_key_aggregator(complete_state()).await?;
+        aggregator
+            .recovery
+            .try_mutate_without_context(|mut recovery| {
+                recovery.pending_publication = Some(PublicKeyAggregated {
+                    e3_id: e3_id.clone(),
+                    pubkey: ArcBytes::from_bytes(&[1, 2, 3]),
+                    nodes: OrderedSet::new(),
+                    committee_addresses: Vec::new(),
+                    honest_committee_addresses: Vec::new(),
+                    pk_commitment: [7; 32],
+                    dkg_aggregator_proof: None,
+                    dkg_attestation_bundle: None,
+                });
+                Ok(recovery)
+            })?;
+        let bus = aggregator.bus.clone();
+        let actor = aggregator.start();
+        let published = InterfoldEventData::from(e3_events::CommitteePublished {
+            e3_id: e3_id.clone(),
+            nodes: Vec::new(),
+            public_key: ArcBytes::from_bytes(&[1, 2, 3]),
+            proof: ArcBytes::from_bytes(&[]),
+        });
+        let events = on_chain
+            .then_some(published)
+            .into_iter()
+            .chain([InterfoldEventData::from(EffectsEnabled::new())]);
+        for event in events {
+            actor
+                .send(bus.event_from(event, None)?.into_sequenced(0))
+                .await?;
+        }
+        actix::clock::sleep(std::time::Duration::from_millis(100)).await;
+        let sent_again = history
+            .send(GetEvents::<InterfoldEvent>::new())
+            .await?
+            .iter()
+            .any(|event| matches!(event.get_data(), InterfoldEventData::PublicKeyAggregated(_)));
+        assert_eq!(sent_again, !on_chain, "key on chain: {on_chain}");
+    }
+    Ok(())
+}
+
 #[actix::test]
 async fn mock_publication_carries_registry_roster() -> Result<()> {
     let mut state = generating_c5_state(CorrelationId::new());

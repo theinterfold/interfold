@@ -57,6 +57,9 @@ impl Handler<InterfoldEvent> for PublicKeyAggregator {
             InterfoldEventData::E3RequestComplete(_) => self.notify_sync(ctx, Die),
             InterfoldEventData::CommitteePublished(data) if data.e3_id == self.e3_id => {
                 self.observe_stage(&E3Stage::KeyPublished);
+                trap(EType::PublickeyAggregation, &self.bus.with_ec(&ec), || {
+                    self.forget_saved_publication(&ec)
+                });
             }
             // The aggregation of an ended E3 does not resume, also when the context stays for
             // accusation work.

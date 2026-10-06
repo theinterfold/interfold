@@ -34,16 +34,17 @@
 //! that is not mounted. Another file or a link with the marker's name stops the purge before it
 //! deletes anything.
 //!
-//! `interfold start` records the path of its store next to the key file (`store_record`). For a
-//! key file with a record, the purge holds the lock of the recorded store and checks that store,
-//! also when the node ran with another `E3_DATA_DIR`, `data_dir`, or working directory. The store
-//! at the configured path is then checked for key shares only. A key file that no configured node
-//! uses, in a key folder or directly in the configuration folder, is checked through its record.
+//! `interfold start` records the path of its store next to the key file (`store_record`), after
+//! the stores of the node's earlier starts. For a key file with a record, the purge holds the lock
+//! of each recorded store and checks it, also when the node ran with another `E3_DATA_DIR`,
+//! `data_dir`, or working directory. The store of the last start must hold the operator key; the
+//! other stores, and the store at the configured path, are checked for key shares. A key file that
+//! no configured node uses, in a key folder or directly in the configuration folder, is checked
+//! through its record. A recorded store that is not there is a refusal that the override covers.
 //!
 //! Limits:
 //! - A key file without a record, as of a node that has not started with this release, is checked
 //!   through the store at the configured path, which a stale copy of the store can pass.
-//! - The record names the store of the node's last start only.
 //! - The purge finds stores directly inside each node folder in the data folder, not deeper.
 
 mod effects;

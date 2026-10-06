@@ -127,6 +127,11 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<InterfoldEvent>
                     ctx.notify(data);
                 }
             }
+            InterfoldEventData::CommitteePublished(data) => {
+                if self.provider.chain_id() == data.e3_id.chain_id() {
+                    self.notify_sync(ctx, data);
+                }
+            }
             InterfoldEventData::CommitteeFinalizeRequested(data) => {
                 if self.provider.chain_id() == data.e3_id.chain_id() {
                     ctx.notify(data);
@@ -202,7 +207,21 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<E3RequestComplete>
             &msg.e3_id,
             publication_pending,
         );
-        self.completed_e3s.insert(msg.e3_id);
+        self.settled_keys.insert(msg.e3_id);
+    }
+}
+
+/// Every node assembles the key from the chain's chunks and then publishes `CommitteePublished`.
+/// With the whole key on chain, this node's own publication adds nothing: the writer drops it,
+/// also when a restart replays it or the aggregator sends its saved publication again.
+impl<P: Provider + WalletProvider + Clone + 'static> Handler<CommitteePublished>
+    for CiphernodeRegistrySolWriter<P>
+{
+    type Result = ();
+
+    fn handle(&mut self, msg: CommitteePublished, _: &mut Self::Context) -> Self::Result {
+        self.publication.finish(&msg.e3_id, true);
+        self.settled_keys.insert(msg.e3_id);
     }
 }
 
@@ -545,6 +564,40 @@ mod tests {
         Ok(())
     }
 
+    /// A restart replays this node's key result and then the key that the node assembled from the
+    /// chain's chunks. The writer keeps no publication, so it sends no chunk again, also when the
+    /// aggregator sends its saved publication again once effects run.
+    #[actix::test]
+    async fn a_key_on_chain_ends_the_publication() -> anyhow::Result<()> {
+        let (bus, _rng, _seed, _params, _crp, _errors, _history) = get_common_setup(None)?;
+        let e3_id = E3id::new("14", 1);
+        let writer = mocked_writer(&bus, &e3_id).await?;
+
+        writer
+            .send(local_event(publication_intent(&e3_id), 1))
+            .await?;
+        assert_eq!(writer.send(RetainedPublications).await?, 1);
+        writer
+            .send(local_event(
+                e3_events::CommitteePublished {
+                    e3_id: e3_id.clone(),
+                    nodes: vec![],
+                    public_key: ArcBytes::from_bytes(&[1, 2, 3]),
+                    proof: ArcBytes::from_bytes(&[]),
+                },
+                2,
+            ))
+            .await?;
+        assert_eq!(writer.send(RetainedPublications).await?, 0);
+
+        writer.send(local_event(EffectsEnabled::new(), 3)).await?;
+        writer
+            .send(local_event(publication_intent(&e3_id), 4))
+            .await?;
+        assert_eq!(writer.send(RetainedPublications).await?, 0);
+        Ok(())
+    }
+
     #[actix::test]
     async fn submits_its_own_key_without_being_the_active_aggregator() -> anyhow::Result<()> {
         let (bus, _rng, _seed, _params, _crp, errors, _history) = get_common_setup(None)?;
@@ -589,8 +642,8 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<PublicKeyAggregated
 
     fn handle(&mut self, msg: PublicKeyAggregated, ctx: &mut Self::Context) -> Self::Result {
         let e3_id = msg.e3_id.clone();
-        if self.completed_e3s.contains(&e3_id) {
-            info!(e3_id = %e3_id, "Ignoring a public-key result for a completed request");
+        if self.settled_keys.contains(&e3_id) {
+            info!(e3_id = %e3_id, "Ignoring a public-key result: the key is on chain or the request completed");
             return;
         }
         self.publication.record(e3_id.clone(), msg);

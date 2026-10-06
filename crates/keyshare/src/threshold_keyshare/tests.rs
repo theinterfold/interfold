@@ -1917,7 +1917,7 @@ async fn committee_actor(
 ) -> Result<CommitteeActor> {
     let (bus, history) = test_bus();
     let state_store = InMemStore::new(false).start();
-    let (state, state_repo) = test_state_in(
+    let (state, _) = test_state_in(
         &state_store,
         e3_id,
         KeyshareState::AggregatingDecryptionKey(current),
@@ -1959,8 +1959,6 @@ async fn committee_actor(
         bus,
         history,
         recovery_repo,
-        state_repo,
-        state_store,
     })
 }
 
@@ -1969,8 +1967,6 @@ struct CommitteeActor {
     bus: BusHandle,
     history: Addr<HistoryCollector<InterfoldEvent>>,
     recovery_repo: Repository<ThresholdKeyshareRecoveryState>,
-    state_repo: Repository<ThresholdKeyshareState>,
-    state_store: Addr<InMemStore>,
 }
 
 fn three_signers() -> [alloy::signers::local::PrivateKeySigner; 3] {
@@ -2168,7 +2164,7 @@ async fn retired_share_batch(
 ) -> Result<CommitteeActor> {
     let (bus, history) = test_bus();
     let state_store = InMemStore::new(false).start();
-    let (state, state_repo) = test_state_in(
+    let (state, _) = test_state_in(
         &state_store,
         e3_id,
         KeyshareState::ReadyForDecryption(ready_for_c4_test()),
@@ -2197,8 +2193,6 @@ async fn retired_share_batch(
         bus,
         history,
         recovery_repo,
-        state_repo,
-        state_store,
     })
 }
 
@@ -3404,177 +3398,6 @@ async fn a_restored_roster_leaves_out_an_expelled_dealer_until_c4_started() -> R
             "{case}"
         );
     }
-    Ok(())
-}
-
-/// The flag that fixes the roster can be lost at dispatch, when the write's context trails the
-/// saved snapshot cursor. Replay delivers the logged calculation request, which sets the flag
-/// again, so a lower-ranked roster that arrives later does not replace the roster that the
-/// calculation used.
-#[actix::test]
-async fn a_logged_key_calculation_fixes_the_roster_again() -> Result<()> {
-    let e3_id = E3id::new("58", 1);
-    let signers = three_signers();
-    let sign = |party_id: u64, kind, dealer_ids: &[u64]| {
-        DkgCoordination::sign(
-            e3_id.clone(),
-            Address::ZERO,
-            party_id,
-            kind,
-            dealers(dealer_ids),
-            &signers[party_id as usize],
-        )
-    };
-    let own_ready = sign(0, DkgCoordinationKind::Ready, &[0, 1, 2])?;
-    let accepted = sign(1, DkgCoordinationKind::Roster, &[1, 2])?;
-    let outranking = sign(0, DkgCoordinationKind::Roster, &[0, 1])?;
-    let cipher = Arc::new(Cipher::from_password("test-password").await?);
-    let committee = committee_actor(
-        &e3_id,
-        &signers,
-        aggregating_decryption_key_for_roster_test(),
-        cipher,
-        |recovery| {
-            recovery.dkg_ready = Some(own_ready.clone());
-            recovery.ready_by_party.insert(0, own_ready.clone());
-            for party_id in [1, 2] {
-                recovery
-                    .ready_by_party
-                    .insert(party_id, ready_message(party_id, &[0, 1, 2], &e3_id));
-            }
-            recovery.dkg_roster = Some(accepted.clone());
-            recovery.active_aggregator_party_id = Some(1);
-        },
-    )
-    .await?;
-    let actor = committee.actor.start();
-
-    let calculation = ComputeRequest::trbfv(
-        TrBFVRequest::CalculateDecryptionKey(
-            e3_trbfv::calculate_decryption_key::CalculateDecryptionKeyRequest {
-                trbfv_config: TrBFVConfig::new(ArcBytes::from_bytes(b"params"), 3, 1),
-                sk_sss_collected: Vec::new(),
-                esi_sss_collected: Vec::new(),
-            },
-        ),
-        CorrelationId::new(),
-        e3_id.clone(),
-    );
-    actor
-        .send(keyshare_event(calculation, 2, EventSource::Local))
-        .await?;
-    actor
-        .send(keyshare_event(outranking, 3, EventSource::Net))
-        .await?;
-
-    actix::clock::sleep(std::time::Duration::from_millis(100)).await;
-    let recovery = committee
-        .recovery_repo
-        .read()
-        .await?
-        .expect("saved recovery state");
-    assert_eq!(recovery.dkg_roster, Some(accepted));
-    assert!(!recovery.pending_rosters.contains_key(&0));
-    Ok(())
-}
-
-/// The writes that start C4 are refused as stale when the saved snapshot cursor of the E3's
-/// aggregate is ahead of their context, and memory keeps the accepted roster and the flag. The
-/// logged calculation request saves both again at its own position, so a restart loads the flag
-/// with the roster that C4 used.
-#[actix::test]
-async fn a_logged_key_calculation_saves_the_flag_that_a_stale_dispatch_write_lost() -> Result<()> {
-    let e3_id = E3id::new("60", 1);
-    let signers = three_signers();
-    let cipher = Arc::new(Cipher::from_password("test-password").await?);
-    let sign = |party_id: u64, dealer_ids: &[u64]| {
-        DkgCoordination::sign(
-            e3_id.clone(),
-            Address::ZERO,
-            party_id,
-            DkgCoordinationKind::Roster,
-            dealers(dealer_ids),
-            &signers[party_id as usize],
-        )
-    };
-    let (earlier, used) = (sign(1, &[1, 2])?, sign(0, &[0, 1])?);
-    let mut committee = committee_actor(
-        &e3_id,
-        &signers,
-        aggregating_decryption_key_for_roster_test(),
-        cipher,
-        |recovery| recovery.dkg_roster = Some(earlier.clone()),
-    )
-    .await?;
-    let calculation = ComputeRequest::trbfv(
-        TrBFVRequest::CalculateDecryptionKey(
-            e3_trbfv::calculate_decryption_key::CalculateDecryptionKeyRequest {
-                trbfv_config: TrBFVConfig::new(ArcBytes::from_bytes(b"params"), 3, 1),
-                sk_sss_collected: Vec::new(),
-                esi_sss_collected: Vec::new(),
-            },
-        ),
-        CorrelationId::new(),
-        e3_id.clone(),
-    );
-    let logged = keyshare_event(calculation.clone(), 101, EventSource::Local);
-    // A later event of the E3's aggregate moved the saved snapshot cursor to 100.
-    committee
-        .state_store
-        .send(Insert::new(
-            e3_events::StoreKeys::aggregate_seq(logged.aggregate_id()),
-            100u64.to_le_bytes().to_vec(),
-        ))
-        .await?;
-    // Settlement at a stale position accepts another roster and starts C4 from it: the store
-    // refuses both writes, and memory keeps them.
-    let stale = keyshare_event(calculation, 5, EventSource::Local)
-        .get_ctx()
-        .clone();
-    committee
-        .actor
-        .recovery
-        .try_mutate(&stale, |mut recovery| {
-            recovery.dkg_roster = Some(used.clone());
-            Ok(recovery)
-        })?;
-    committee.actor.state.try_mutate(&stale, |mut state| {
-        state.dkg_roster_fixed = true;
-        Ok(state)
-    })?;
-    let saved = || async {
-        Ok::<_, anyhow::Error>(
-            committee
-                .state_repo
-                .read()
-                .await?
-                .expect("saved keyshare state")
-                .dkg_roster_fixed,
-        )
-    };
-    assert!(
-        !saved().await?,
-        "the store refuses the stale dispatch write"
-    );
-
-    let saved_roster = || async {
-        Ok::<_, anyhow::Error>(
-            committee
-                .recovery_repo
-                .read()
-                .await?
-                .expect("saved recovery state")
-                .dkg_roster,
-        )
-    };
-    assert_eq!(saved_roster().await?, Some(earlier.clone()));
-
-    let actor = committee.actor.start();
-    actor.send(logged).await?;
-    actix::clock::sleep(std::time::Duration::from_millis(100)).await;
-    // A restart loads the flag with the roster that C4 used.
-    assert!(saved().await?);
-    assert_eq!(saved_roster().await?, Some(used));
     Ok(())
 }
 

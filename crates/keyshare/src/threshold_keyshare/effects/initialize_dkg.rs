@@ -120,9 +120,11 @@ impl ThresholdKeyshare {
         Ok(())
     }
 
-    /// Publish this node's encryption key for its proof. When the log holds another key of this
-    /// node, the node lost the secret of the key that its peers hold: it abstains instead of
-    /// publishing a second key, and the protocol treats it as absent.
+    /// Publish this node's encryption key for its proof. When replay has delivered another key of
+    /// this node from the log, the node lost the secret of the key that its peers hold: it abstains
+    /// instead of publishing a second key, and the protocol treats it as absent. A key from the log
+    /// that arrives after this publication is caught at collection, which starts no share
+    /// generation.
     pub(in crate::actors::threshold_keyshare) fn publish_own_encryption_key(
         &mut self,
         ec: EventContext<Sequenced>,

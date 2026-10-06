@@ -34,10 +34,10 @@ use alloy::{
 };
 use anyhow::{Context as _, Result};
 use e3_events::{
-    prelude::*, BusHandle, CommitteeFinalizeRequested, DkgFoldAttestationContextEstablished,
-    E3RequestComplete, E3id, EType, EffectsEnabled, EventSubscriber, EventType, InterfoldEvent,
-    InterfoldEventData, Proof, PublicKeyAggregated, Shutdown, TicketGenerated, TicketId,
-    DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
+    prelude::*, BusHandle, CommitteeFinalizeRequested, CommitteePublished,
+    DkgFoldAttestationContextEstablished, E3RequestComplete, E3id, EType, EffectsEnabled,
+    EventSubscriber, EventType, InterfoldEvent, InterfoldEventData, Proof, PublicKeyAggregated,
+    Shutdown, TicketGenerated, TicketId, DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
 };
 use e3_utils::{require_successful_receipt, ArcBytes, NotifySync, MAILBOX_LIMIT};
 use std::collections::{HashMap, HashSet};
@@ -324,23 +324,24 @@ impl<P: Provider + Clone + 'static> Handler<InterfoldEvmEvent> for CiphernodeReg
     }
 }
 
-/// Bound on remembered completed requests. A late key result follows its completion closely.
-const MAX_COMPLETED_E3S: usize = 1_024;
+/// Bound on remembered requests whose key publication is settled. A late key result follows the
+/// settlement closely.
+const MAX_SETTLED_KEYS: usize = 1_024;
 
-/// Completed requests, oldest first, at most [`MAX_COMPLETED_E3S`].
+/// Requests whose key publication is settled, oldest first, at most [`MAX_SETTLED_KEYS`].
 #[derive(Default)]
-pub(crate) struct CompletedE3s {
+pub(crate) struct SettledKeys {
     order: std::collections::VecDeque<E3id>,
     set: HashSet<E3id>,
 }
 
-impl CompletedE3s {
+impl SettledKeys {
     pub(crate) fn insert(&mut self, e3_id: E3id) {
         if !self.set.insert(e3_id.clone()) {
             return;
         }
         self.order.push_back(e3_id);
-        if self.order.len() > MAX_COMPLETED_E3S {
+        if self.order.len() > MAX_SETTLED_KEYS {
             if let Some(oldest) = self.order.pop_front() {
                 self.set.remove(&oldest);
             }
@@ -358,9 +359,11 @@ pub struct CiphernodeRegistrySolWriter<P> {
     contract_address: Address,
     bus: BusHandle,
     effects_enabled: bool,
-    /// Recently completed requests. A key result that arrives after its request completed, such as
-    /// one that a demoted aggregator finishes late, is ignored instead of being kept forever.
-    completed_e3s: CompletedE3s,
+    /// Recent requests whose key publication is settled: every node assembled the whole key from
+    /// the chain's chunks, or the request completed. A key result after that, such as one that a
+    /// demoted aggregator finishes late or sends again after a restart, is ignored instead of
+    /// being published again.
+    settled_keys: SettledKeys,
     request_registries: HashMap<E3id, Address>,
     publication: ReplaySubmissionGate<E3id, PublicKeyAggregated>,
     ticket_submissions: ReplaySubmissionGate<E3id, TicketGenerated>,
@@ -399,7 +402,7 @@ impl<P: Provider + WalletProvider + Clone + 'static> CiphernodeRegistrySolWriter
             contract_address,
             bus: bus.clone(),
             effects_enabled: false,
-            completed_e3s: CompletedE3s::default(),
+            settled_keys: SettledKeys::default(),
             request_registries,
             publication: ReplaySubmissionGate::new(),
             ticket_submissions,
@@ -444,6 +447,7 @@ impl<P: Provider + WalletProvider + Clone + 'static> CiphernodeRegistrySolWriter
                 EventType::EffectsEnabled,
                 EventType::DkgFoldAttestationContextEstablished,
                 EventType::PublicKeyAggregated,
+                EventType::CommitteePublished,
                 EventType::CommitteeFinalizeRequested,
                 EventType::TicketGenerated,
                 EventType::E3RequestComplete,

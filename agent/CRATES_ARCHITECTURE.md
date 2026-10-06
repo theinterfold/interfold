@@ -896,8 +896,10 @@ correlation ID, the gate republishes the durable response under that ID instead 
 again. It does not cache replayed `ComputeRequestError` events. An old OOM or process failure must
 therefore retry, while completed C1-C4 proof work and randomized TrBFV output are reused exactly.
 Live, a request under a new ID whose result has not reached the gate 10 minutes after it went to the
-worker goes to the worker again, because EventBus fan-out can drop that result. The first success
-answers the waiting IDs and later requests.
+worker goes to the worker again, because EventBus fan-out can drop that result, but only when no run
+of it is left in the worker (`RunningJobs`: from the worker's intake, queued ones included, until
+the run ends). A slow proof under load therefore runs once. The first success answers the waiting
+IDs and later requests.
 
 A restored plaintext recipient can remain dormant while confirmed key authority is missing. It keeps
 the saved actor state and ordered replay inputs, then validates recovery before forwarding them.

@@ -355,13 +355,13 @@ empties. When the purge stops part of the way, run it again. The second run fini
 that hold this file. If another file or a link has this name, the purge stops and deletes nothing.
 
 `interfold start` writes the path of its store next to the key file, as `<key file>.store-record`.
-For a key file with a record, the purge locks and checks the recorded store, also when the node ran
-with another `E3_DATA_DIR`, `data_dir`, or working directory. A key file that no configured node
-uses is checked through its record.
+The record keeps the store of each start. For a key file with a record, the purge locks and checks
+every recorded store, also when the node ran with another `E3_DATA_DIR`, `data_dir`, or working
+directory. A recorded store that is no longer there is a refusal that `--allow-active-e3s`
+overrides. A key file that no configured node uses is checked through its record.
 
 The purge has limits:
 
-- The record names the store of the node's last start only.
 - A key file without a record, as of a node that has not started with this release, is checked
   through the store at the configured path. A stale copy of a store there passes the check.
 - It finds stores only directly inside each node folder in `.interfold/data`.

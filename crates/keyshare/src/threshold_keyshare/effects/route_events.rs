@@ -168,11 +168,6 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
                     warn!("Could not propose the DKG roster: {err}");
                 }
             }
-            InterfoldEventData::ComputeRequest(data) => {
-                trap(EType::KeyGeneration, &self.bus.with_ec(&ec), || {
-                    self.record_logged_key_calculation(&data, &ec)
-                });
-            }
             _ => (),
         }
     }

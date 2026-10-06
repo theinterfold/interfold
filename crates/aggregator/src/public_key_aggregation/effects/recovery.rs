@@ -6,6 +6,25 @@ use super::super::*;
 use anyhow::ensure;
 
 impl PublicKeyAggregator {
+    /// Every node assembled the whole key from the chain's chunks, so a restart has no key
+    /// publication left to send again.
+    pub(in crate::actors::publickey_aggregator) fn forget_saved_publication(
+        &mut self,
+        ec: &EventContext<Sequenced>,
+    ) -> Result<()> {
+        if self
+            .recovery
+            .get()
+            .is_none_or(|recovery| recovery.pending_publication.is_none())
+        {
+            return Ok(());
+        }
+        self.recovery.try_mutate(ec, |mut recovery| {
+            recovery.pending_publication = None;
+            Ok(recovery)
+        })
+    }
+
     pub(in crate::actors::publickey_aggregator) fn resume_in_flight_work(
         &mut self,
         effects_context: EventContext<Sequenced>,
@@ -35,8 +54,9 @@ impl PublicKeyAggregator {
         }
 
         // A saved key publication is this node's finished result, whatever its role now: send it
-        // again, so the registry writer finishes publishing the key. The writer skips a commitment
-        // that is already on chain.
+        // again until the whole key is on chain, so that the registry writer publishes it. The
+        // writer skips a commitment that is already on chain and sends every chunk again.
+        // `CommitteePublished` clears the saved publication.
         if matches!(state, PublicKeyAggregatorState::Complete { .. }) {
             if let Some(publication) = recovery.pending_publication {
                 self.bus
