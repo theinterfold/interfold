@@ -231,3 +231,35 @@ async fn event_reader_rejects_older_schema_before_log_recovery() -> Result<()> {
     system.eventstore_reader()?;
     Ok(())
 }
+
+/// A store folder with other content than a store is a damaged store, not a node that has not
+/// started; and the event log of a chain that the configuration no longer has still counts.
+#[actix::test]
+async fn validate_reports_a_damaged_store_and_every_event_log() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let config = node_config(root.path())?;
+    std::fs::create_dir_all(config.db_file())?;
+    std::fs::write(config.db_file().join("conf"), b"partial")?;
+    let report = validate_node(&config, false).await?;
+    let store = report
+        .checks
+        .iter()
+        .find(|check| check.name == "store")
+        .expect("a store check");
+    assert_eq!(store.severity, Severity::Fail, "{}", report.render());
+
+    let root = tempfile::tempdir()?;
+    let config = node_config(root.path())?;
+    let path = e3_utils::enumerate_path(&config.log_file(), 7);
+    let mut log = CommitLog::new(LogOptions::new(&path))?;
+    log.append_msg(b"an event")?;
+    log.flush()?;
+    let report = validate_node(&config, false).await?;
+    let store = report
+        .checks
+        .iter()
+        .find(|check| check.name == "store")
+        .expect("a store check");
+    assert_eq!(store.severity, Severity::Fail, "{}", report.render());
+    Ok(())
+}

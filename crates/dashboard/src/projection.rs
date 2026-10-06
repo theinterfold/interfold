@@ -519,8 +519,15 @@ impl TelemetryProjection {
                 state.failure = Some(failure);
             }
             InterfoldEventData::CommitteeFormationFailed(event) => {
-                state.status = "failed".to_owned();
-                state.failed_at_us.get_or_insert(view.timestamp_us);
+                // After the chain ended the E3, its terminal status stays.
+                if !state
+                    .canonical_stage
+                    .as_ref()
+                    .is_some_and(E3Stage::is_terminal)
+                {
+                    state.status = "failed".to_owned();
+                    state.failed_at_us.get_or_insert(view.timestamp_us);
+                }
                 state.failed_phase = Some(E3Phase::Committee);
                 state.failure = Some(json!({
                     "reason": "CommitteeFormationFailed",
