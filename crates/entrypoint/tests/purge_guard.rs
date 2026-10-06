@@ -267,6 +267,13 @@ async fn unconfigured_key_file_with_a_record() -> Result<()> {
     assert_refused(&targets, &[], true, &["is running", "holds its lock"]).await;
     drop(running);
 
+    // A record that the purge cannot read is a refusal, not an error that ends the purge.
+    let record = e3_entrypoint::store_record::record_path(&used.key_file());
+    let saved = std::fs::read(&record)?;
+    std::fs::write(&record, b"not a store path\n")?;
+    assert_refused(&targets, &[], false, &["cannot read the store record"]).await;
+    std::fs::write(&record, saved)?;
+
     let flat = project.path().join(".interfold/config/flat.key");
     std::fs::write(&flat, b"operator key")?;
     assert_refused(&targets, &[], false, &["no configured node uses"]).await;

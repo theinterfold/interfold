@@ -8,6 +8,7 @@
 
 use anyhow::{anyhow, Result};
 use e3_config::AppConfig;
+use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use tokio::fs::{self, DirEntry};
 
@@ -176,24 +177,31 @@ async fn node_facts_of(targets: &PurgeTargets, node: &AppConfig) -> Result<NodeF
 }
 
 /// The store that the record of `key_file` names.
+/// The store that the record of `key_file` names. A record, or a store that it names, that the
+/// purge cannot read or inspect is a refusal, not an error that ends the purge.
 async fn recorded(key_file: &Path) -> Result<Recorded> {
+    let record = crate::store_record::record_path(key_file);
     let db_file = match crate::store_record::read(key_file) {
         Ok(Some(db_file)) => db_file,
         Ok(None) => return Ok(Recorded::Nothing),
-        Err(_) => {
-            return Ok(Recorded::Unreadable(crate::store_record::record_path(
-                key_file,
-            )))
-        }
+        Err(_) => return Ok(Recorded::Unreadable(record)),
     };
-    Ok(Recorded::Store {
-        store: if fs::try_exists(&db_file).await? {
+    let inspected = async {
+        let store = if fs::try_exists(&db_file).await? {
             Some(Location::of(db_file.clone())?)
         } else {
             None
+        };
+        anyhow::Ok((store, Location::of(lock_path_for(&db_file))?))
+    }
+    .await;
+    Ok(match inspected {
+        Ok((store, lock)) => Recorded::Store {
+            db_file,
+            store,
+            lock,
         },
-        lock: Location::of(lock_path_for(&db_file))?,
-        db_file,
+        Err(_) => Recorded::Unreadable(record),
     })
 }
 
@@ -294,19 +302,24 @@ async fn config_entries(config: &Path) -> Result<Vec<ConfigEntry>> {
         let location = Location::of(path.clone())?;
         if path.is_dir() {
             let mut records = Vec::new();
-            for inner in entries(&path).await? {
-                let record = inner.path();
-                if record.is_file() && crate::store_record::is_record(&record) {
-                    let key_file = record.with_file_name(
-                        record
-                            .file_name()
-                            .map(|name| name.to_string_lossy().into_owned())
-                            .unwrap_or_default()
-                            .trim_end_matches(crate::store_record::RECORD_SUFFIX),
-                    );
-                    let recorded = recorded(&key_file).await?;
-                    records.push((key_file, recorded));
+            match entries(&path).await {
+                Ok(inner_entries) => {
+                    for inner in inner_entries {
+                        let record = inner.path();
+                        if !(record.is_file() && crate::store_record::is_record(&record)) {
+                            continue;
+                        }
+                        // The key file's name is the record's without the suffix, byte for byte.
+                        let name = record.file_name().unwrap_or_default().as_bytes();
+                        let key_name = std::ffi::OsStr::from_bytes(
+                            &name[..name.len() - crate::store_record::RECORD_SUFFIX.len()],
+                        );
+                        let key_file = record.with_file_name(key_name);
+                        let recorded = recorded(&key_file).await?;
+                        records.push((key_file, recorded));
+                    }
                 }
+                Err(_) => records.push((path.clone(), Recorded::Unreadable(path.clone()))),
             }
             found.push(ConfigEntry::Folder {
                 name,

@@ -95,9 +95,11 @@ impl fmt::Display for Reason {
                 "the node last started with the store {}, and the store is not there",
                 path.display()
             ),
-            Reason::UnreadableRecord(path) => {
-                write!(f, "the purge cannot read the store record {}", path.display())
-            }
+            Reason::UnreadableRecord(path) => write!(
+                f,
+                "the purge cannot read the store record {}, or inspect the store that it names",
+                path.display()
+            ),
         }
     }
 }
