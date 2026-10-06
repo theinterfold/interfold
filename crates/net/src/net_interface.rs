@@ -1939,6 +1939,11 @@ fn admit_replica(
     if record.value.len() > MAX_DHT_DOCUMENT_BYTES {
         return Err("record too large");
     }
+    // A record that names this node as its publisher is not a replica: reconciliation would drop
+    // it from the ledger and leave it in the store outside every replica limit.
+    if record.publisher == Some(local_peer_id) {
+        return Err("record claims this node as its publisher");
+    }
     if let Some(existing) = store.get(&record.key) {
         // Remote puts cannot replace our records or shorten a replica's lifetime.
         if existing.publisher == Some(local_peer_id)
@@ -2701,6 +2706,31 @@ mod tests {
         let promoted = document(b"second", expires);
         super::store_local_record(&mut store, &mut replicas, promoted.clone(), now).unwrap();
         assert!(!replicas.contains(promoted.key.as_ref()));
+    }
+
+    /// A sender cannot name this node as the publisher of a replica: the record would leave the
+    /// ledger at the next reconciliation and stay in the store outside every replica limit.
+    #[test]
+    fn an_inbound_replica_that_names_this_node_as_its_publisher_is_refused() {
+        let mut store = small_store(10);
+        let mut replicas = ledger(5, 5, 1024);
+        let (local, sender) = (PeerId::random(), PeerId::random());
+        let now = Instant::now();
+        let mut claimed = document(b"claimed", now + Duration::from_secs(3600));
+        claimed.publisher = Some(local);
+
+        assert!(super::admit_replica(
+            &mut store,
+            &mut replicas,
+            10,
+            local,
+            sender,
+            claimed.clone(),
+            now,
+        )
+        .is_err());
+        assert!(store.get(&claimed.key).is_none());
+        assert!(!replicas.contains(claimed.key.as_ref()));
     }
 
     /// An inbound replica makes room: expired records go first, then the sender at its own limit
