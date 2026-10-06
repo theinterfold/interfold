@@ -494,7 +494,15 @@ impl TelemetryProjection {
             }
             InterfoldEventData::E3Failed(event) => {
                 let chain_failure = view.source == "evm";
-                state.status = if chain_failure { "failed" } else { "degraded" }.to_owned();
+                // A local failure that the log records after the chain ended the E3 keeps the
+                // chain's terminal status.
+                let ended_on_chain = state
+                    .canonical_stage
+                    .as_ref()
+                    .is_some_and(E3Stage::is_terminal);
+                if chain_failure || !ended_on_chain {
+                    state.status = if chain_failure { "failed" } else { "degraded" }.to_owned();
+                }
                 if chain_failure {
                     state.failed_at_us.get_or_insert(view.timestamp_us);
                 }
@@ -1344,6 +1352,27 @@ mod tests {
                 .e3_active,
             1
         );
+        assert_eq!(
+            projection.overview_at(failed + REPORT_WINDOW_US).e3_active,
+            0
+        );
+
+        // A local failure that the log records after the chain's failure keeps the E3 failed, so
+        // it still stops counting a day after the chain's failure.
+        let local = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            E3Failed {
+                e3_id: E3id::new("3", 31337),
+                failed_at_stage: E3Stage::CommitteeFinalized,
+                reason: FailureReason::DKGTimeout,
+            }
+            .into(),
+            None,
+            (failed + 10) as u128,
+            Some(1_000),
+            EventSource::Local,
+        )
+        .into_sequenced(1_000);
+        projection.apply(local);
         assert_eq!(
             projection.overview_at(failed + REPORT_WINDOW_US).e3_active,
             0
