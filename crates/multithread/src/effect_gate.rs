@@ -13,8 +13,8 @@ use e3_events::{
     InterfoldEventData, ProofType, VerifyShareProofsRequest, ZkRequest,
 };
 use e3_utils::MAILBOX_LIMIT;
-use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 use tracing::{debug, info};
 
@@ -41,19 +41,17 @@ struct ForwardedRequest {
 /// later ID waiting for good.
 const REFORWARD_AFTER: Duration = Duration::from_secs(10 * 60);
 
-/// The IDs of the compute requests that the worker runs, queued ones included. The gate sends a
-/// request to the worker again only when no earlier run of it is left, so a slow proof under load
-/// runs once instead of once per retry.
+/// The compute requests that the worker runs, queued ones included, by correlation ID with the
+/// number of runs: IDs restart from 1 in each process, so a replayed request can share its ID with
+/// a new one. The gate sends a request to the worker again only when no earlier run of it is left,
+/// so a slow proof under load runs once instead of once per retry.
 #[derive(Clone, Default)]
-pub(crate) struct RunningJobs(Arc<Mutex<HashSet<CorrelationId>>>);
+pub(crate) struct RunningJobs(Arc<Mutex<HashMap<CorrelationId, usize>>>);
 
 impl RunningJobs {
     /// Note that the worker runs `id` until the returned guard drops.
     pub(crate) fn start(&self, id: CorrelationId) -> RunningJob {
-        self.0
-            .lock()
-            .expect("running jobs lock poisoned")
-            .insert(id);
+        *self.lock().entry(id).or_default() += 1;
         RunningJob {
             jobs: self.clone(),
             id,
@@ -61,8 +59,12 @@ impl RunningJobs {
     }
 
     pub(crate) fn any(&self, ids: &[CorrelationId]) -> bool {
-        let running = self.0.lock().expect("running jobs lock poisoned");
-        ids.iter().any(|id| running.contains(id))
+        let running = self.lock();
+        ids.iter().any(|id| running.contains_key(id))
+    }
+
+    fn lock(&self) -> MutexGuard<'_, HashMap<CorrelationId, usize>> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -74,8 +76,12 @@ pub(crate) struct RunningJob {
 
 impl Drop for RunningJob {
     fn drop(&mut self) {
-        if let Ok(mut running) = self.jobs.0.lock() {
-            running.remove(&self.id);
+        let mut running = self.jobs.lock();
+        if let Some(runs) = running.get_mut(&self.id) {
+            *runs -= 1;
+            if *runs == 0 {
+                running.remove(&self.id);
+            }
         }
     }
 }
@@ -1052,6 +1058,20 @@ pub(crate) mod tests {
             next_outcome(&history).await.into_data(),
             InterfoldEventData::ComputeResponse(result) if result.correlation_id == waiting
         ));
+    }
+
+    /// A replayed run can share its correlation ID with a new run, since IDs restart in each
+    /// process. The ID runs until both end.
+    #[test]
+    fn an_id_runs_until_its_last_run_ends() {
+        let running = RunningJobs::default();
+        let id = CorrelationId::new();
+        let replayed = running.start(id);
+        let new = running.start(id);
+        drop(replayed);
+        assert!(running.any(&[id]));
+        drop(new);
+        assert!(!running.any(&[id]));
     }
 
     #[actix::test]

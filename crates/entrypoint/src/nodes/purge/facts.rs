@@ -77,6 +77,9 @@ pub(super) struct RecordedStore {
     pub(super) store: Option<Location>,
     /// The lock that `start` takes for the store.
     pub(super) lock: Location,
+    /// The store is gone, and its folder in the data folder holds the marker of an earlier purge
+    /// that checked it and stopped part of the way.
+    pub(super) purged: bool,
 }
 
 /// A path as the purge uses it, and two forms of it to compare locations.
@@ -156,7 +159,7 @@ pub(super) async fn gather(targets: &PurgeTargets, nodes: &[AppConfig]) -> Resul
     Ok(Facts {
         nodes: node_facts,
         data: data_entries(&targets.data).await?,
-        config: config_entries(&targets.config).await?,
+        config: config_entries(targets).await?,
     })
 }
 
@@ -185,7 +188,7 @@ async fn node_facts_of(targets: &PurgeTargets, node: &AppConfig) -> Result<NodeF
         lock_folder_in_data: resolve(&lock_folder)?.starts_with(&targets.data),
         in_scope,
         key_file_in_target,
-        recorded: recorded(&key_file).await?,
+        recorded: recorded(targets, &key_file).await?,
         key_file,
         event_log_in_target,
         db_file,
@@ -194,7 +197,7 @@ async fn node_facts_of(targets: &PurgeTargets, node: &AppConfig) -> Result<NodeF
 
 /// The stores that the record of `key_file` names. A record, or a store that it names, that the
 /// purge cannot read or inspect is a refusal, not an error that ends the purge.
-async fn recorded(key_file: &Path) -> Result<Recorded> {
+async fn recorded(targets: &PurgeTargets, key_file: &Path) -> Result<Recorded> {
     let record = crate::store_record::record_path(key_file);
     let db_files = match crate::store_record::read(key_file) {
         Ok(db_files) if db_files.is_empty() => return Ok(Recorded::Nothing),
@@ -204,16 +207,21 @@ async fn recorded(key_file: &Path) -> Result<Recorded> {
     let inspected = async {
         let mut stores = Vec::with_capacity(db_files.len());
         for db_file in db_files {
+            let lock = lock_path_for(&db_file);
+            let lock_folder = lock.parent().map(Path::to_path_buf).unwrap_or_default();
             let store = if fs::try_exists(&db_file).await? {
                 Some(Location::of(db_file.clone())?)
             } else {
                 None
             };
-            let lock = Location::of(lock_path_for(&db_file))?;
+            let purged = store.is_none()
+                && folder_state(&lock_folder).await? == FolderState::Purging
+                && resolve(&lock_folder)?.starts_with(&targets.data);
             stores.push(RecordedStore {
                 db_file,
                 store,
-                lock,
+                lock: Location::of(lock)?,
+                purged,
             });
         }
         anyhow::Ok(stores)
@@ -313,9 +321,9 @@ async fn data_entries(data: &Path) -> Result<Vec<DataEntry>> {
     Ok(found)
 }
 
-async fn config_entries(config: &Path) -> Result<Vec<ConfigEntry>> {
+async fn config_entries(targets: &PurgeTargets) -> Result<Vec<ConfigEntry>> {
     let mut found = Vec::new();
-    for entry in entries(config).await? {
+    for entry in entries(&targets.config).await? {
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().into_owned();
         // `is_dir` and `is_file` follow a link. A link that points to nothing is neither.
@@ -335,7 +343,7 @@ async fn config_entries(config: &Path) -> Result<Vec<ConfigEntry>> {
                             &name[..name.len() - crate::store_record::RECORD_SUFFIX.len()],
                         );
                         let key_file = record.with_file_name(key_name);
-                        let recorded = recorded(&key_file).await?;
+                        let recorded = recorded(targets, &key_file).await?;
                         records.push((key_file, recorded));
                     }
                 }
@@ -349,7 +357,7 @@ async fn config_entries(config: &Path) -> Result<Vec<ConfigEntry>> {
         } else if path.is_file() && !is_store_record(&path) {
             found.push(ConfigEntry::File {
                 name,
-                recorded: recorded(&path).await?,
+                recorded: recorded(targets, &path).await?,
                 location,
             });
         }

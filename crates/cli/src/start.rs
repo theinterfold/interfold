@@ -35,8 +35,8 @@ pub async fn execute(mut config: AppConfig, peers: Vec<String>, bootstrap: bool)
     if let Err(error) = e3_entrypoint::store_record::write(&config.key_file(), &config.db_file()) {
         warn!(
             %error,
-            "Could not record the node's store next to its key file; a purge checks the store at \
-             the configured path only"
+            "Could not record the node's store next to its key file, so a purge may not check \
+             this store"
         );
     }
 

@@ -40,7 +40,8 @@
 //! `data_dir`, or working directory. The store of the last start must hold the operator key; the
 //! other stores, and the store at the configured path, are checked for key shares. A key file that
 //! no configured node uses, in a key folder or directly in the configuration folder, is checked
-//! through its record. A recorded store that is not there is a refusal that the override covers.
+//! through its record. A recorded store that is not there is a refusal that the override covers,
+//! unless its folder holds the marker of an earlier purge, which deleted it.
 //!
 //! Limits:
 //! - A key file without a record, as of a node that has not started with this release, is checked

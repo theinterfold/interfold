@@ -64,7 +64,8 @@ CiphernodeSelected event arrives at ThresholdKeyshare
 │   │     delivered another key of this node from the log, the node lost the secret
 │   │     of the key that its peers hold, and publishes no second key (it abstains).
 │   │     When that key arrives after the publication, the node has published a
-│   │     second key; the collection check (1a) then stops its share generation
+│   │     second key. If the log's key reached the key collector first, the
+│   │     collection check (AllEncryptionKeysCollected) stops its share generation
 │   │
 │   └─ Collector schedules use the frozen per-E3 window and absolute deadline:
 │         ├─ EncryptionKeyCollector: hard cutoff at 10% of the window
@@ -665,10 +666,11 @@ starts, a roster from a lower party ID replaces a roster from a higher party ID.
 roster is never dropped, so the commitment checker keeps its selection; until C4 starts, an
 expelled dealer is not an honest party, also when a restart restores the roster, and a fixed
 roster is restored with every dealer. C4 starts when the node sends its decryption-key
-calculation. It saves that fact with the selected parties. A store that refuses that write as
-stale, after a restart whose context trails the saved snapshot cursor, loses the fact; a
-lower-ranked roster that arrives later can then replace the roster that the calculation used. This
-case is not handled. A held
+calculation. It saves that fact with the selected parties. After a restart, the store can refuse
+that write as stale when its context trails the saved snapshot cursor; memory keeps the fact, and
+the next state write saves it. If the node restarts again before that write, a lower-ranked roster
+that arrives later can replace the roster that the calculation used. This case is not handled. A
+held
 roster with an expelled member gives way to a later roster of the same proposer. A promoted
 aggregator re-proposes the accepted dealer list instead of deriving
 a different list from its local delivery order.
@@ -982,13 +984,13 @@ phase.
        The public-key aggregator also sends its saved publication again when effects resume,
        whatever its role now, since replay can start after the publication event; the writer
        skips a commitment that is already on chain and sends every chunk again.
-     → Once the node assembles the whole key from the chain's chunks (CommitteePublished), the
-       aggregator clears its saved publication, and the writer drops the intent and ignores
-       later key results of the E3. A restart after that sends no chunk; a restart in the
-       middle of the chunks sends all of them again.
        E3RequestComplete that arrives before EffectsEnabled comes from that same replay and
        drops the intent: a completed request published its candidate in an earlier run, and
        repeating it only spends gas
+     → Once the node assembles the whole key from the chain's chunks (CommitteePublished), the
+       aggregator clears its saved publication, and the writer drops the intent and ignores
+       later key results of the E3. A restart after that sends no chunk; a restart in the
+       middle of the chunks sends all of them again
         │
         │  ┌─── ON-CHAIN (CiphernodeRegistryOwnable) ──────────┐
         │  │                                                     │

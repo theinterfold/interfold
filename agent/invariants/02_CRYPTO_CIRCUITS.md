@@ -141,9 +141,11 @@ every section.
   whose party ID is at most the active party ID from `AggregatorChanged`, and only when its local
   Ready state supports that roster. Before C4 starts, a roster from a lower party ID replaces an
   accepted roster from a higher one, and an expelled dealer of an accepted roster is not an honest
-  party; after C4 starts, the accepted roster is fixed, also after a restart that loses the
-  decryption-key calculation. Accepting a roster ends only the DKG-roster failover phase. Public-key
-  aggregation receives a new readiness-gated failover budget. —
+  party; after C4 starts, the accepted roster is fixed. **Gap:** after a restart, the store can
+  refuse the write that fixes it as stale; memory keeps it and the next state write saves it, but a
+  second restart before that write lets a lower-ranked roster replace the roster that C4 used.
+  Accepting a roster ends only the DKG-roster failover phase. Public-key aggregation receives a new
+  readiness-gated failover budget. —
   `crates/keyshare/src/threshold_keyshare/effects/coordinate_roster.rs`; `flow-trace/04`; INDEX
   concerns #42 and #52
 - DKG dealer identity binds the public proof statement, not randomized proof bytes. Replacing a

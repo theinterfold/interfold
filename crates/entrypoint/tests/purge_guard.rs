@@ -712,12 +712,13 @@ async fn decoy_store_removed_after_the_refusal() -> Result<()> {
 }
 
 /// An earlier purge marked the node folder and stopped while it emptied the folder. A second run
-/// finishes without an override.
+/// finishes without an override, also though the node's store record names the deleted store.
 async fn rerun_after_a_partly_emptied_folder() -> Result<()> {
     let project = tempfile::tempdir()?;
     let targets = PurgeTargets::in_dir(project.path());
     let nodes = vec![project_node(project.path(), "cn1")?];
     write_key_file(&nodes[0])?;
+    e3_entrypoint::store_record::write(&nodes[0].key_file(), &nodes[0].db_file())?;
     let node_folder = project.path().join(".interfold/data/cn1");
     std::fs::create_dir_all(&node_folder)?;
     std::fs::write(node_folder.join(MARKER_FILE_NAME), MARKER_TEXT)?;

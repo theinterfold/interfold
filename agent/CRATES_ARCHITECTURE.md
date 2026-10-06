@@ -898,8 +898,10 @@ therefore retry, while completed C1-C4 proof work and randomized TrBFV output ar
 Live, a request under a new ID whose result has not reached the gate 10 minutes after it went to the
 worker goes to the worker again, because EventBus fan-out can drop that result, but only when no run
 of it is left in the worker (`RunningJobs`: from the worker's intake, queued ones included, until
-the run ends). A slow proof under load therefore runs once. The first success answers the waiting
-IDs and later requests.
+the run ends, counted per correlation ID because IDs restart in each process). A slow proof under
+load therefore runs once. A run that hangs holds back the re-send until it ends; the prover's own
+cap (`bb_timeout_secs`, 12 hours by default) bounds that. The first success answers the waiting IDs
+and later requests.
 
 A restored plaintext recipient can remain dormant while confirmed key authority is missing. It keeps
 the saved actor state and ordered replay inputs, then validates recovery before forwarding them.
@@ -914,11 +916,13 @@ Their process-local gates are rebuilt from replay, coalesce by E3, and release w
 `EffectsEnabled`. Neither intent has a role gate: failover demotes an aggregator after a fixed
 budget even while it is still proving, so the node that computed the key or the plaintext submits it
 after a demotion too. A local result exists only when the node started that work as the active
-aggregator. A key result for a request that already completed is ignored. The key writer publishes
-the committee proof only while the registry has no commitment, and the plaintext writer submits only
-while the E3 is at `CiphertextReady` with no plaintext, so the first valid result wins.
-Contract-state preflights provide cross-restart idempotency. Terminal outcomes remove the intent;
-retryable failures retain it and retry after 30 seconds.
+aggregator. A key result for a request that already completed, or whose whole key the node already
+assembled from the chain (`CommitteePublished`), is ignored, and `CommitteePublished` drops a
+pending key intent. The key writer publishes the committee proof only while the registry has no
+commitment, and the plaintext writer submits only while the E3 is at `CiphertextReady` with no
+plaintext, so the first valid result wins. Contract-state preflights provide cross-restart
+idempotency. Terminal outcomes remove the intent; retryable failures retain it and retry after 30
+seconds.
 
 Plaintext admission compares the final-proof domain with confirmed key authority and ciphertext
 hashes before the publication gate retains an intent. Missing authority defers admission. A mismatch

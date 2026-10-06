@@ -185,7 +185,8 @@ impl Planner {
     }
 
     /// Hold the lock of each store that a key file's record names, and check the store. The store
-    /// of the last start holds the operator key; the earlier ones are checked for key shares.
+    /// of the last start holds the operator key; the earlier ones are checked for key shares. A
+    /// store that an earlier purge deleted, which left its marker, needs no check.
     fn add_recorded(&mut self, recorded: &Recorded, node: &str, needs_identity: bool) {
         match recorded {
             Recorded::Nothing => {}
@@ -197,6 +198,7 @@ impl Planner {
                             self.add_lock(&recorded.lock, node, false);
                             self.add_store(store, node, needs_identity && last);
                         }
+                        None if recorded.purged => self.add_lock(&recorded.lock, node, false),
                         None => self.add_unchecked(
                             node,
                             Reason::RecordedStoreNotFound(recorded.db_file.clone()),
@@ -404,6 +406,7 @@ mod tests {
                         "{}/interfold.lock",
                         Path::new(db_file).parent().unwrap().display()
                     )),
+                    purged: false,
                 })
                 .collect(),
         )
@@ -760,6 +763,7 @@ mod tests {
             db_file: PathBuf::from("/elsewhere/cn1/db"),
             store: None,
             lock: at("/elsewhere/cn1/interfold.lock"),
+            purged: false,
         }]);
         assert_eq!(
             plan(&facts(vec![gone], vec![], vec![])).unchecked,
@@ -784,6 +788,24 @@ mod tests {
                 Reason::UnreadableRecord(PathBuf::from(format!("{CONFIG}/cn2/key.store-record")))
             )]
         );
+    }
+
+    /// A recorded store that an earlier purge deleted, which left its marker, is no refusal: the
+    /// purge holds its lock and finishes.
+    #[test]
+    fn a_recorded_store_that_an_earlier_purge_deleted_is_finished() {
+        let mut rerun = node("cn1");
+        rerun.store = None;
+        rerun.lock_folder = FolderState::Purging;
+        rerun.recorded = Recorded::Stores(vec![RecordedStore {
+            db_file: PathBuf::from(format!("{DATA}/cn1/db")),
+            store: None,
+            lock: at(&format!("{DATA}/cn1/interfold.lock")),
+            purged: true,
+        }]);
+        let plan = plan(&facts(vec![rerun], vec![], vec![]));
+        assert!(plan.unchecked.is_empty());
+        assert_eq!(plan.locks.len(), 1);
     }
 
     /// A key file that no configured node uses is checked through its record, instead of refused.

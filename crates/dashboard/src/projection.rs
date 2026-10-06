@@ -244,8 +244,9 @@ struct E3State {
     last_seen_us: u64,
 }
 
-/// How long after its failure the dashboard counts an E3 for its slash reports. They can be due
-/// longer, until one day after the E3's lifecycle deadline, which the projection does not know.
+/// How long after its failure the dashboard counts an E3 for its slash reports. They are due until
+/// one day after the E3's lifecycle deadline, which the projection does not know, so this is an
+/// estimate.
 const REPORT_WINDOW_US: u64 = 24 * 60 * 60 * 1_000_000;
 
 impl E3State {
@@ -349,8 +350,8 @@ impl TelemetryProjection {
                 .collect(),
             e3_total: summaries.len(),
             // E3s that still need this node, also a failed E3 for a day after the failure, since
-            // its slash reports can be due: a node that stops then cannot send them. The count is
-            // a lower bound for failed E3s (`REPORT_WINDOW_US`).
+            // its slash reports can be due: a node that stops then cannot send them. For failed
+            // E3s the count is an estimate (`REPORT_WINDOW_US`).
             e3_active: self
                 .e3s
                 .values()
