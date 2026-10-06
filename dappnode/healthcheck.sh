@@ -71,8 +71,12 @@ for heartbeat in "$INGESTION_DIR"/chain-*.heartbeat; do
     [ $((now - progressed_at)) -le "$INGESTION_STALL_MAX_SECS" ] || exit 1
 done
 
-# After the startup grace, every enabled chain must have a heartbeat.
+# After the startup grace, every enabled chain must have a heartbeat. The node writes the
+# expectation before it starts any reader, so a heartbeat without it means the expectation was lost.
 expected="$INGESTION_DIR/expected"
+if [ ! -e "$expected" ] && [ "$heartbeats" -gt 0 ]; then
+    exit 1
+fi
 if [ -e "$expected" ]; then
     chains=$(sed -n 's/^chains=//p' "$expected")
     started_at=$(sed -n 's/^started_at=//p' "$expected")

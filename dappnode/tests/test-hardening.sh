@@ -388,6 +388,15 @@ run_healthcheck() {
 run_healthcheck || fail "a node without a heartbeat yet was considered unhealthy"
 
 write_heartbeat 500 499 999990 999900
+if run_healthcheck; then
+    fail "a heartbeat without the ingestion expectation was considered healthy"
+fi
+
+# The node writes its expectation before it starts any reader.
+printf 'chains=1\nstarted_at=999500\n' > "$health_dir/data/ingestion/expected"
+run_healthcheck || fail "a fresh ingestion heartbeat was rejected"
+
+write_heartbeat 500 499 999990 999900
 run_healthcheck || fail "a fresh ingestion heartbeat was rejected"
 
 write_heartbeat 500 499 999800 999800

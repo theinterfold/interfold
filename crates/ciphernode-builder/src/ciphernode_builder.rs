@@ -1781,6 +1781,15 @@ async fn setup_evm_system(
         kept_failures,
         committee_finalizer,
     } = recovery;
+    // One reader per chain: the ingestion heartbeats and the health check's expectation count
+    // chains by their resolved ID. A full node checks this when it builds its aggregate
+    // configuration; a bootstrap node reaches this point without that step.
+    let mut resolved = Vec::new();
+    for chain in chains.iter().filter(|chain| chain.enabled.unwrap_or(true)) {
+        let provider = provider_cache.ensure_read_provider(chain).await?;
+        resolved.push((chain.name.as_str(), provider.chain_id()));
+    }
+    ensure_one_entry_per_chain(resolved)?;
     let mut evm_config = EvmEventConfig::new();
     let mut gateways = Vec::new();
     let finished = work_ended_on_restart(lifecycle_stages, kept_failures);

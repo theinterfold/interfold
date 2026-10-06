@@ -269,8 +269,9 @@ it refuses to start when it cannot write them. At startup the node also writes `
 folder (`chains=<enabled chains>`, `started_at=<Unix seconds>`). Once `INGESTION_START_GRACE_SECS`
 (900) have passed since then, every enabled chain must have a heartbeat, so a reader that never
 reaches its first successful read, as against an RPC endpoint that never answers, fails the check
-instead of passing as a starting node. The node refuses to start with two enabled entries of one
-chain, so each entry has its own heartbeat file. A write that fails later leaves the previous file
+instead of passing as a starting node. The node writes `expected` before it starts any reader, so a
+heartbeat without `expected` fails the check. The node refuses to start with two enabled entries of
+one chain, also in bootstrap mode, so each entry has its own heartbeat file. A write that fails later leaves the previous file
 in place, which then goes stale.
 
 This remains a liveness check, not proof of healthy RPC responses, honest peers, registration, or
