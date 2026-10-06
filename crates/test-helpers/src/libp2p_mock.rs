@@ -311,6 +311,7 @@ mod tests {
                 expires: None,
                 value: ArcBytes::from_bytes(b"offline"),
                 key: offline_key.clone(),
+                deadline: std::time::Instant::now() + Duration::from_secs(240),
             })
             .unwrap();
         tokio::time::timeout(Duration::from_secs(1), dropped.changed())
@@ -329,6 +330,7 @@ mod tests {
                 expires: None,
                 value: ArcBytes::from_bytes(b"online"),
                 key: online_key.clone(),
+                deadline: std::time::Instant::now() + Duration::from_secs(240),
             })
             .unwrap();
         tokio::time::timeout(Duration::from_secs(1), async {
@@ -465,6 +467,7 @@ mod tests {
                 expires: None,
                 value: ArcBytes::from_bytes(value),
                 key: key.clone(),
+                deadline: std::time::Instant::now() + Duration::from_secs(240),
             })
             .unwrap();
         tokio::time::timeout(Duration::from_secs(1), async {
@@ -652,6 +655,7 @@ mod tests {
                 expires: None,
                 value: ArcBytes::from_bytes(b"stale"),
                 key: stale_key.clone(),
+                deadline: std::time::Instant::now() + Duration::from_secs(240),
             })
             .unwrap();
         tokio::time::timeout(Duration::from_secs(1), dropped.changed())

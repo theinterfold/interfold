@@ -216,6 +216,7 @@ async fn put_record(
             expires,
             value,
             key,
+            deadline: std::time::Instant::now() + DHT_PUT_DEADLINE,
         },
         |event| match event {
             NetEvent::DhtPutRecordSucceeded { .. } => Some(Ok(())),
