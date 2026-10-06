@@ -312,8 +312,10 @@ the code does not meet yet.
   reader reports each successful head read to an `IngestionProgressSink`; `interfold start` writes
   one heartbeat file per chain under `<node data dir>/ingestion/`, and `dappnode/healthcheck.sh`
   fails when a heartbeat is older than 120 s or neither its head nor its cursor moved for 600 s.
-  **Gap:** a node whose reader never reaches its first read (no heartbeat) still passes the check,
-  and a heartbeat write that fails after the startup probe is only logged. —
+  `start` first records how many chain readers it starts, and when (`<node data dir>/ingestion/expected`);
+  after a 900 s startup grace the check requires a heartbeat from each, so a reader that never
+  reaches its first read fails it too. **Gap:** a heartbeat write that fails after the startup
+  probe is only logged. —
   `crates/evm/src/chain_reader/progress.rs`; `dappnode/healthcheck.sh`; `flow-trace/03`;
   `flow-trace/06`
 - A network event cannot create a request context for an unknown E3. Only chain events or restored

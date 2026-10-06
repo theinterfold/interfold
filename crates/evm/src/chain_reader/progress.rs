@@ -119,6 +119,38 @@ pub fn ingestion_heartbeat_files_with_clock(
     }))
 }
 
+/// Name of the file under the heartbeat directory that states how many chain readers the node
+/// starts, and when it started.
+pub const INGESTION_EXPECTATION_FILE: &str = "expected";
+
+/// Record, before the node builds anything, that it starts `chains` chain readers now: `chains`
+/// and `started_at` (Unix seconds) as `key=value` lines, written atomically. After a startup grace,
+/// the health check requires a heartbeat for every one of them, so a reader that never reaches its
+/// first successful read fails the check instead of passing as a node that is still starting.
+pub fn write_ingestion_expectation(dir: &Path, chains: usize) -> io::Result<()> {
+    write_ingestion_expectation_at(dir, chains, unix_now())
+}
+
+/// [`write_ingestion_expectation`] at `started_at`, for tests.
+pub fn write_ingestion_expectation_at(
+    dir: &Path,
+    chains: usize,
+    started_at: u64,
+) -> io::Result<()> {
+    fs::create_dir_all(dir)?;
+    let path = dir.join(INGESTION_EXPECTATION_FILE);
+    let tmp = dir.join(format!("{INGESTION_EXPECTATION_FILE}.tmp"));
+    fs::write(
+        &tmp,
+        format!(
+            "chains={chains}
+started_at={started_at}
+"
+        ),
+    )?;
+    fs::rename(&tmp, &path)
+}
+
 fn unix_now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -164,6 +196,22 @@ fn write_heartbeat(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The expectation names the chain readers and the start time, and the heartbeat sink, which
+    /// removes the heartbeats of an earlier run, keeps it.
+    #[test]
+    fn the_expectation_survives_the_heartbeat_reset() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join(heartbeat_file_name(1)), b"chain_id=1\n").unwrap();
+        write_ingestion_expectation_at(dir.path(), 2, 1_000).unwrap();
+        let _sink = ingestion_heartbeat_files(dir.path().to_path_buf()).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(dir.path().join(INGESTION_EXPECTATION_FILE)).unwrap(),
+            "chains=2\nstarted_at=1000\n"
+        );
+        assert!(!dir.path().join(heartbeat_file_name(1)).exists());
+    }
 
     fn read_fields(dir: &Path, chain_id: u64) -> HashMap<String, String> {
         fs::read_to_string(dir.join(heartbeat_file_name(chain_id)))

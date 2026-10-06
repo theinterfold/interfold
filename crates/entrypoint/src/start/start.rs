@@ -43,6 +43,24 @@ pub fn ingestion_heartbeat_dir(config: &AppConfig) -> PathBuf {
     config.node_data_dir().join("ingestion")
 }
 
+/// Record that this start runs one chain reader per enabled chain, from now. After a startup
+/// grace, `dappnode/healthcheck.sh` requires a heartbeat from each, so a reader that never reaches
+/// its first successful read fails the check instead of passing as a node that is still starting.
+pub fn write_ingestion_expectation(config: &AppConfig) -> Result<()> {
+    let enabled_chains = config
+        .chains()
+        .iter()
+        .filter(|chain| chain.enabled.unwrap_or(true))
+        .count();
+    let dir = ingestion_heartbeat_dir(config);
+    e3_evm::write_ingestion_expectation(&dir, enabled_chains).with_context(|| {
+        format!(
+            "failed to write the ingestion expectation for the health check in {}",
+            dir.display()
+        )
+    })
+}
+
 /// Start the node. With `bootstrap`, the node only runs networking and chain reads, so peers can
 /// use it to discover each other. It does not join committees, generate proofs, sign votes, or
 /// send transactions, so it needs neither the prover's memory nor ETH. Its data directory is
@@ -50,6 +68,7 @@ pub fn ingestion_heartbeat_dir(config: &AppConfig) -> PathBuf {
 #[instrument(name = "app", skip_all)]
 pub async fn execute(config: &AppConfig, bootstrap: bool) -> Result<CiphernodeHandle> {
     validate_proof_aggregation_mode(config.skip_proof_aggregation())?;
+    write_ingestion_expectation(config)?;
 
     let rng = Arc::new(Mutex::new(
         ChaCha20Rng::try_from_os_rng().context("failed to seed ChaCha20 RNG from OS")?,
@@ -187,5 +206,45 @@ mod tests {
     fn test_feature_allows_proof_aggregation_skip() {
         assert!(validate_proof_aggregation_mode(true).is_ok());
         assert!(validate_proof_aggregation_mode(false).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod ingestion_expectation_tests {
+    use super::*;
+
+    fn chain(name: &str, enabled: bool) -> String {
+        format!(
+            "  - name: \"{name}\"\n    enabled: {enabled}\n    rpc_url: \"ws://localhost:8545\"\n    \
+             contracts:\n      interfold: \"0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0\"\n      \
+             ciphernode_registry:\n        address: \"0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9\"\n        \
+             deploy_block: 1\n      bonding_registry: \"0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9\"\n"
+        )
+    }
+
+    /// `start` records one chain reader for each enabled chain, before it builds anything.
+    #[test]
+    fn the_expectation_counts_the_enabled_chains() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let yaml = format!(
+            "chains:\n{}{}nodes:\n  cn1:\n    network: local\n",
+            chain("hardhat", true),
+            chain("devnet", false)
+        );
+        let config: e3_config::UnscopedAppConfig = serde_yaml::from_str(&yaml)?;
+        let config = config.into_scoped_with_defaults(
+            "cn1",
+            &dir.path().join("data"),
+            &dir.path().join("config"),
+            &dir.path().to_path_buf(),
+        )?;
+
+        write_ingestion_expectation(&config)?;
+
+        let written = std::fs::read_to_string(
+            ingestion_heartbeat_dir(&config).join(e3_evm::INGESTION_EXPECTATION_FILE),
+        )?;
+        assert!(written.starts_with("chains=1\nstarted_at="), "{written}");
+        Ok(())
     }
 }
