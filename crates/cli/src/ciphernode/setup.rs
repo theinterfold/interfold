@@ -11,6 +11,7 @@ use dialoguer::{theme::ColorfulTheme, Input};
 use e3_config::AppConfig;
 use e3_console::{log, Console};
 use e3_utils::{colorize, Color};
+use std::io::IsTerminal;
 use std::path::PathBuf;
 use tracing::instrument;
 
@@ -23,9 +24,31 @@ pub async fn execute(
     out: Console,
     network: String,
     rpc_url: Option<String>,
+    config_dir: Option<PathBuf>,
     password_stdin: bool,
     private_key_stdin: bool,
 ) -> Result<()> {
+    // Refuse a network that setup cannot write before anything is read.
+    crate::config_setup::network_chain(&network)?;
+    // A prompt needs a terminal. Without one, every value must come from a flag or stdin, which
+    // the command checks before it reads stdin.
+    if !std::io::stdin().is_terminal() {
+        let missing: Vec<&str> = [
+            (rpc_url.is_none(), "--rpc-url"),
+            (config_dir.is_none(), "--config-dir"),
+            (!password_stdin, "--password-stdin"),
+            (!private_key_stdin, "--private-key-stdin"),
+        ]
+        .into_iter()
+        .filter_map(|(missing, flag)| missing.then_some(flag))
+        .collect();
+        if !missing.is_empty() {
+            anyhow::bail!(
+                "`interfold ciphernode setup` runs without a terminal, so it cannot prompt. Pass {}.",
+                missing.join(", ")
+            );
+        }
+    }
     let mut password = None;
     let mut private_key = None;
     if password_stdin || private_key_stdin {
@@ -61,21 +84,29 @@ pub async fn execute(
         .ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?
         .join("interfold");
 
-    let config_dir: PathBuf = Input::with_theme(&ColorfulTheme::default())
-        .with_prompt("Enter config directory")
-        .default(default_config_dir.display().to_string())
-        .validate_with(|input: &String| -> Result<(), &str> {
-            let path = PathBuf::from(input);
-            if input.is_empty() {
-                Err("Path cannot be empty")
-            } else if path.is_file() {
-                Err("Path is a file, not a directory")
-            } else {
-                Ok(())
+    let config_dir: PathBuf = match config_dir {
+        Some(dir) => {
+            if dir.as_os_str().is_empty() || dir.is_file() {
+                anyhow::bail!("--config-dir {} is not a directory", dir.display());
             }
-        })
-        .interact_text()?
-        .into();
+            dir
+        }
+        None => Input::with_theme(&ColorfulTheme::default())
+            .with_prompt("Enter config directory")
+            .default(default_config_dir.display().to_string())
+            .validate_with(|input: &String| -> Result<(), &str> {
+                let path = PathBuf::from(input);
+                if input.is_empty() {
+                    Err("Path cannot be empty")
+                } else if path.is_file() {
+                    Err("Path is a file, not a directory")
+                } else {
+                    Ok(())
+                }
+            })
+            .interact_text()?
+            .into(),
+    };
 
     // Derive the node address from the private key so it can be written into
     // the generated config (the loader reads it from `node.address`).

@@ -27,7 +27,7 @@ struct TestNode {
     peer_failures: super::PeerConnectionFailures,
     admission: super::PeerAdmission,
     peer_addresses: HashMap<PeerId, super::PeerAddresses>,
-    dht_records: HashMap<PeerId, HashSet<Vec<u8>>>,
+    replicas: super::ReplicaLedger,
     seen_gossip: super::GossipIngress,
     dht_puts: super::DhtPuts,
 }
@@ -52,7 +52,7 @@ impl TestNode {
             peer_failures: super::PeerConnectionFailures::new(),
             admission: super::PeerAdmission::default(),
             peer_addresses: HashMap::new(),
-            dht_records: Default::default(),
+            replicas: super::ReplicaLedger::new(super::DHT_REPLICA_LIMITS),
             seen_gossip: super::GossipIngress::new(),
             dht_puts: super::DhtPuts::default(),
         })
@@ -89,7 +89,7 @@ impl TestNode {
             &mut self.admission,
             &mut self.peer_addresses,
             &mut [],
-            &mut self.dht_records,
+            &mut self.replicas,
             &mut self.seen_gossip,
             &mut self.dht_puts,
             &self.interface.network,
@@ -105,6 +105,7 @@ impl TestNode {
             &self.interface.event_tx,
             &mut self.correlator,
             &mut self.dht_puts,
+            &mut self.replicas,
             &self.admission,
             &self.interface.network,
             command,
@@ -517,6 +518,7 @@ async fn check_inbound_put_expiry(published_here: bool) -> anyhow::Result<()> {
     if published_here {
         super::handle_store_local(
             &mut node.interface.swarm,
+            &mut node.replicas,
             &node.interface.event_tx,
             e3_events::CorrelationId::new(),
             key,

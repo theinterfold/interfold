@@ -10,4 +10,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct DecryptionShareProofSigned {
     pub e3_id: E3id,
+    /// The `redelivery` of the request that this proof answers. A redelivered request gets its own
+    /// completion event, which EventBus deduplication does not drop.
+    pub redelivery: u64,
 }

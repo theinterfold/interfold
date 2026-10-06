@@ -323,11 +323,13 @@ where
             .context("historical sync page size does not fit usize")?;
         budget.record_page(batch.events.len(), page_bytes)?;
         // A responder that restarts or resets between two pages serves the rest from another log,
-        // and its time changes. Its pages then do not form one history, so the source fails.
+        // and loses the time that it had. Its pages then do not form one history, so the source
+        // fails. A responder that ends its own startup during the fetch keeps its log; the source
+        // keeps the time of its first page, `None`, so it vouches for nothing.
         if first_page {
             observed_from = batch.observed_from;
             first_page = false;
-        } else {
+        } else if observed_from.is_some() {
             ensure!(
                 batch.observed_from == observed_from,
                 "sync peer changed its live-history time from {observed_from:?} to {:?} between \

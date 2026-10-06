@@ -8,6 +8,7 @@
 
 use anyhow::{anyhow, Result};
 use e3_config::AppConfig;
+use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use tokio::fs::{self, DirEntry};
 
@@ -42,6 +43,24 @@ pub(super) struct NodeFacts {
     pub(super) key_file: PathBuf,
     /// An event log of the node exists and is in a target.
     pub(super) event_log_in_target: bool,
+    /// The store that the record next to the key file names.
+    pub(super) recorded: Recorded,
+}
+
+/// The store that a key file's record names (`store_record`): the store that the node used at
+/// its last start.
+#[derive(Debug)]
+pub(super) enum Recorded {
+    /// The key file has no record, as for a node that has not started with this release.
+    Nothing,
+    /// The record names `db_file`. `store` is the store when it exists.
+    Store {
+        db_file: PathBuf,
+        store: Option<Location>,
+        lock: Location,
+    },
+    /// The record exists, and the purge cannot read it.
+    Unreadable(PathBuf),
 }
 
 /// A path as the purge uses it, and two forms of it to compare locations.
@@ -100,8 +119,17 @@ pub(super) struct Link {
 
 /// An entry of the configuration folder. A folder holds a node's key file.
 pub(super) enum ConfigEntry {
-    Folder { name: String, location: Location },
-    File { name: String, location: Location },
+    Folder {
+        name: String,
+        location: Location,
+        /// The store records in the folder, by the key file that each belongs to.
+        records: Vec<(PathBuf, Recorded)>,
+    },
+    File {
+        name: String,
+        location: Location,
+        recorded: Recorded,
+    },
 }
 
 pub(super) async fn gather(targets: &PurgeTargets, nodes: &[AppConfig]) -> Result<Facts> {
@@ -141,9 +169,39 @@ async fn node_facts_of(targets: &PurgeTargets, node: &AppConfig) -> Result<NodeF
         lock_folder_in_data: resolve(&lock_folder)?.starts_with(&targets.data),
         in_scope,
         key_file_in_target,
+        recorded: recorded(&key_file).await?,
         key_file,
         event_log_in_target,
         db_file,
+    })
+}
+
+/// The store that the record of `key_file` names.
+/// The store that the record of `key_file` names. A record, or a store that it names, that the
+/// purge cannot read or inspect is a refusal, not an error that ends the purge.
+async fn recorded(key_file: &Path) -> Result<Recorded> {
+    let record = crate::store_record::record_path(key_file);
+    let db_file = match crate::store_record::read(key_file) {
+        Ok(Some(db_file)) => db_file,
+        Ok(None) => return Ok(Recorded::Nothing),
+        Err(_) => return Ok(Recorded::Unreadable(record)),
+    };
+    let inspected = async {
+        let store = if fs::try_exists(&db_file).await? {
+            Some(Location::of(db_file.clone())?)
+        } else {
+            None
+        };
+        anyhow::Ok((store, Location::of(lock_path_for(&db_file))?))
+    }
+    .await;
+    Ok(match inspected {
+        Ok((store, lock)) => Recorded::Store {
+            db_file,
+            store,
+            lock,
+        },
+        Err(_) => Recorded::Unreadable(record),
     })
 }
 
@@ -243,9 +301,37 @@ async fn config_entries(config: &Path) -> Result<Vec<ConfigEntry>> {
         // `is_dir` and `is_file` follow a link. A link that points to nothing is neither.
         let location = Location::of(path.clone())?;
         if path.is_dir() {
-            found.push(ConfigEntry::Folder { name, location });
-        } else if path.is_file() {
-            found.push(ConfigEntry::File { name, location });
+            let mut records = Vec::new();
+            match entries(&path).await {
+                Ok(inner_entries) => {
+                    for inner in inner_entries {
+                        let record = inner.path();
+                        if !(record.is_file() && crate::store_record::is_record(&record)) {
+                            continue;
+                        }
+                        // The key file's name is the record's without the suffix, byte for byte.
+                        let name = record.file_name().unwrap_or_default().as_bytes();
+                        let key_name = std::ffi::OsStr::from_bytes(
+                            &name[..name.len() - crate::store_record::RECORD_SUFFIX.len()],
+                        );
+                        let key_file = record.with_file_name(key_name);
+                        let recorded = recorded(&key_file).await?;
+                        records.push((key_file, recorded));
+                    }
+                }
+                Err(_) => records.push((path.clone(), Recorded::Unreadable(path.clone()))),
+            }
+            found.push(ConfigEntry::Folder {
+                name,
+                location,
+                records,
+            });
+        } else if path.is_file() && !is_store_record(&path) {
+            found.push(ConfigEntry::File {
+                name,
+                recorded: recorded(&path).await?,
+                location,
+            });
         }
     }
     Ok(found)
@@ -266,6 +352,11 @@ fn link(path: &Path, node: &str) -> Result<Link> {
 }
 
 /// A sled store is a folder with a `conf` file and a `db` file.
+/// A store record, or the temporary file of one that a start writes.
+fn is_store_record(path: &Path) -> bool {
+    crate::store_record::is_record(path) || crate::store_record::is_record(&path.with_extension(""))
+}
+
 fn is_sled_store(folder: &Path) -> bool {
     folder.join("conf").is_file() && folder.join("db").is_file()
 }

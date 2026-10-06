@@ -12,6 +12,10 @@ impl ProofRequestActor {
     ) {
         let (mut msg, ec) = msg.into_components();
         let e3_id = msg.e3_id.clone();
+        // Terminal cleanup ran already; a late request must not leave pending work behind.
+        if self.finished_e3s.contains(&e3_id) {
+            return;
+        }
 
         if self
             .canonical_keys
@@ -25,23 +29,34 @@ impl ProofRequestActor {
         }
         self.held_share_decryption.remove(&e3_id);
 
-        if self.pending_share_decryption.contains_key(&e3_id) {
-            warn!(
-                "Duplicate ShareDecryptionProofPending for E3 {} — ignoring",
-                e3_id
+        if let Some(pending) = self.pending_share_decryption.get_mut(&e3_id) {
+            // The keyshare redelivers its request when the proof result did not reach it. A lost
+            // compute request or response leaves this proof pending, so request it again under a
+            // new correlation ID: the compute gate runs it once and answers every ID.
+            if msg.redelivery == 0 || msg.redelivery == pending.redelivery {
+                warn!(
+                    "Duplicate ShareDecryptionProofPending for E3 {} — ignoring",
+                    e3_id
+                );
+                return;
+            }
+            pending.redelivery = msg.redelivery;
+            info!(
+                redelivery = msg.redelivery,
+                "Requesting the C6 proof again for E3 {}", e3_id
             );
-            return;
+        } else {
+            self.pending_share_decryption.insert(
+                e3_id.clone(),
+                PendingShareDecryptionProof {
+                    party_id: msg.party_id,
+                    node: msg.node,
+                    decryption_share: msg.decryption_share,
+                    ec: ec.clone(),
+                    redelivery: msg.redelivery,
+                },
+            );
         }
-
-        self.pending_share_decryption.insert(
-            e3_id.clone(),
-            PendingShareDecryptionProof {
-                party_id: msg.party_id,
-                node: msg.node,
-                decryption_share: msg.decryption_share,
-                ec: ec.clone(),
-            },
-        );
 
         let correlation_id = CorrelationId::new();
         self.share_decryption_correlation
@@ -61,7 +76,13 @@ impl ProofRequestActor {
         ) {
             error!("Failed to publish C6 proof request: {err}");
             self.share_decryption_correlation.remove(&correlation_id);
-            self.pending_share_decryption.remove(&e3_id);
+            if !self
+                .share_decryption_correlation
+                .values()
+                .any(|pending_e3| pending_e3 == &e3_id)
+            {
+                self.pending_share_decryption.remove(&e3_id);
+            }
         }
     }
 
@@ -99,7 +120,10 @@ impl ProofRequestActor {
             signed_proofs.push(signed);
         }
 
-        self.share_decryption_correlation.remove(correlation_id);
+        // A redelivered request added more correlation IDs for this proof; their answers are
+        // late copies of this one.
+        self.share_decryption_correlation
+            .retain(|_, pending_e3| pending_e3 != &e3_id);
         self.pending_share_decryption.remove(&e3_id);
 
         info!(
@@ -125,6 +149,7 @@ impl ProofRequestActor {
                 if let Err(err) = self.bus.publish(
                     DecryptionShareProofSigned {
                         e3_id: e3_id.clone(),
+                        redelivery: pending.redelivery,
                     },
                     ec,
                 ) {

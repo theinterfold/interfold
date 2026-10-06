@@ -232,10 +232,17 @@ with that marker as its own leftover and finishes the deletion. An empty folder 
 such as the mount point of a volume that is not mounted, still needs its store. Another file or a
 link with the marker's name stops the purge before it deletes anything.
 
-The purge has limits. It finds stores with its own configuration and environment, so it cannot see a
-node that runs with another `E3_DATA_DIR`, `data_dir`, or working directory. It cannot tell whether
-an operator key is the node's own, so a stale copy of a store at the configured path passes. It
-finds stores only directly inside node folders.
+`interfold start` writes the path of its store next to the key file, as `<key file>.store-record`.
+For a key file with a record, the purge holds the lock of the recorded store and checks that store
+for key shares and the operator key, also when the node ran with another `E3_DATA_DIR`, `data_dir`,
+or working directory; the store at the configured path is then checked for key shares only. A key
+file that no configured node uses, in a node's key folder or directly in the configuration folder,
+is checked through its record. Without a record, a key file directly in the configuration folder
+is a refusal, and a key folder needs a node folder of the same name with a store. The record names
+the store of the last start only. A key file without a record, as of a node that has not started
+with this release, is checked through the store at the configured path or in its node folder,
+which a stale copy of the store can pass. The purge finds stores only directly inside node
+folders.
 
 `interfold node reset-data` is the supported path. It takes the same `ProcessFence` as `start`, so
 it refuses while a node runs, copies both secrets out as ciphertext without the password, backs them

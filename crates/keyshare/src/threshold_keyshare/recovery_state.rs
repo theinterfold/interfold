@@ -12,6 +12,17 @@ use e3_events::{
 
 pub const THRESHOLD_KEYSHARE_RECOVERY_SCHEMA_VERSION: u32 = 8;
 
+/// This node's BFV encryption keypair for one E3, recorded durably before the node publishes the
+/// public key. Peers encrypt their DKG shares to the published key, so a restart that lost the
+/// keyshare's snapshot must reuse this keypair instead of generating another: a second key could
+/// not decrypt the shares for the first. It goes when the E3 ends.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct BfvKeyIntent {
+    /// The secret key, encrypted with the node's cipher.
+    pub sk_bfv: e3_crypto::SensitiveBytes,
+    pub pk_bfv: e3_utils::utility_types::ArcBytes,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RecoveryPayloadRef {
     pub encoded_len: u64,
@@ -37,6 +48,11 @@ pub struct ThresholdKeyshareRecoveryState {
     pub decryption_verification_complete: Option<TypedEvent<ShareVerificationComplete>>,
     pub dkg_ready: Option<DkgCoordination>,
     pub ready_by_party: BTreeMap<u64, DkgCoordination>,
+    /// Per reporter, refused Ready updates that add a dealer but lack a dealer of the held Ready
+    /// report, oldest first, at most one per committee member. Expulsions that this node has not
+    /// seen yet can make them valid, and the network resends the same events, which EventBus
+    /// deduplication drops. A reporter that saw several expulsions sends several such updates.
+    pub held_ready_updates: BTreeMap<u64, Vec<DkgCoordination>>,
     pub pending_rosters: BTreeMap<u64, DkgCoordination>,
     pub dkg_roster: Option<DkgCoordination>,
     pub active_aggregator_party_id: Option<u64>,
@@ -63,6 +79,7 @@ impl Default for ThresholdKeyshareRecoveryState {
             decryption_verification_complete: None,
             dkg_ready: None,
             ready_by_party: BTreeMap::new(),
+            held_ready_updates: BTreeMap::new(),
             pending_rosters: BTreeMap::new(),
             dkg_roster: None,
             active_aggregator_party_id: None,

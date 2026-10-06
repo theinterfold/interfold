@@ -124,6 +124,7 @@ impl E3Extension for ThresholdKeyshareExtension {
                     interfold_address,
                     recovery,
                     recovery_payloads,
+                    bfv_key: ctx.repositories().threshold_keyshare_bfv_key(&e3_id),
                     dkg_timing_reader: self.dkg_timing_reader.clone(),
                     signer: self.signer.clone(),
                     effects_enabled: true,
@@ -202,6 +203,9 @@ impl E3Extension for ThresholdKeyshareExtension {
             interfold_address,
             recovery,
             recovery_payloads,
+            bfv_key: ctx
+                .repositories()
+                .threshold_keyshare_bfv_key(&snapshot.e3_id),
             dkg_timing_reader: self.dkg_timing_reader.clone(),
             signer: self.signer.clone(),
             effects_enabled: false,

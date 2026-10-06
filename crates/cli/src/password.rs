@@ -13,7 +13,8 @@ use crate::{helpers::read_secret_line, password_delete, password_set};
 
 #[derive(Subcommand, Clone, Debug)]
 pub enum PasswordCommands {
-    /// Set (or overwrite) a password
+    /// Set the password when none is set. Refuses when the key file exists; `password delete`
+    /// removes it first
     Set {
         /// Read the new password from one line on stdin
         #[arg(long)]

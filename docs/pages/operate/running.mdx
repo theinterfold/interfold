@@ -132,6 +132,8 @@ The node applies these rules when it loads the file:
 - Every enabled chain must belong to the `node.network` profile. `chain_id: 1` belongs to `mainnet`
   and `chain_id: 11155111` belongs to `sepolia`. One node serves one network. To keep an entry for
   another network in the file, set `enabled: false` on it.
+- Each enabled entry must be a different chain. The node refuses to start when two enabled entries
+  resolve to the same chain ID.
 - Each contract must have a nonzero `deploy_block` when `rpc_url` is not a local address. Otherwise,
   startup stops with
   `Misconfiguration: Attempted to query historical events from genesis on a non-local node`.
@@ -257,7 +259,8 @@ state and does not need a new upload. An upload with a different password stops 
 The package health check confirms that the process runs, the files exist, the QUIC listener is
 bound, and chain ingestion moves: the node writes a heartbeat file per chain after every successful
 read of the chain head, and the check fails when the heartbeat is older than 120 seconds or neither
-the head nor the cursor moved for 10 minutes. It does not prove that the node is registered. Read
+the head nor the cursor moved for 10 minutes. From 15 minutes after the node started, every enabled
+chain must have a heartbeat, so a chain whose RPC endpoint never answers fails the check too. It does not prove that the node is registered. Read
 the logs and the [on-chain status](/operate/registration) to confirm that.
 
   </Tabs.Tab>
@@ -334,9 +337,11 @@ arguments.
 <Callout type='info'>
   On Sepolia, `interfold ciphernode setup --network sepolia` does the file, password, and key steps
   in one command. It asks for the password, the WebSocket RPC URL, the private key, and the
-  configuration directory. It writes the Sepolia addresses that the CLI was built with. It does not
-  write `data_availability`, so add that entry before you start the node. The command supports only
-  `sepolia` and `local`, and it refuses to run when a configuration file already exists.
+  configuration directory, unless `--password-stdin`, `--rpc-url`, `--private-key-stdin`, and
+  `--config-dir` give them. Without a terminal, it needs all four. It writes the Sepolia addresses
+  that the CLI was built with, and a `data_availability` block for Avail Turing. The command
+  supports only `sepolia`; for a local chain, start from the project template's
+  `interfold.config.yaml`. It refuses to run when a configuration file already exists.
 </Callout>
 
 Run the node under a process manager, for example systemd. The node exits with an error when a chain

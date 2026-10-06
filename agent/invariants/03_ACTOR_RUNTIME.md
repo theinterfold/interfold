@@ -60,8 +60,10 @@ the code does not meet yet.
   → execute intents outside the critical section → persist correlated results before they unlock the
   next transition. Never mutate memory and rely on fire-and-forget persistence. **Gap:**
   `Persistable::try_mutate` enqueues its snapshot write and does not wait for it. Slash submissions
-  have a durable intent record; no general transactional outbox exists. — `ARCHITECTURE.md`;
-  `crates/data/src/persistable.rs`
+  have a durable intent record, and threshold-keyshare records its BFV encryption keypair with
+  `DurableIntent` (written and flushed outside the snapshot batches) before it publishes the key;
+  no general transactional outbox exists. — `ARCHITECTURE.md`; `crates/data/src/persistable.rs`;
+  `crates/data/src/durable_intent.rs`
 - The append-only event log is the durable source of truth; snapshots and the timestamp index are
   derived optimizations. Replay-from-checkpoint and snapshot-hydration at the same logical point
   must produce equivalent state and pending intents. **Gap:** startup replays only the suffix after
@@ -268,13 +270,18 @@ the code does not meet yet.
   order. Startup fences `EffectsEnabled` → `SyncEffect` → canonical history → `SyncEnded` in that
   order. `ComputeEffectGate` buffers and deduplicates until `EffectsEnabled`. It sends a live
   response or error to every waiting correlation ID. It reuses a response seen during replay, but
-  not a replayed error, so the regenerated request runs again. —
+  not a replayed error, so the regenerated request runs again. A request under a new ID whose
+  result has not reached the gate 10 minutes after it went to the worker goes to the worker again,
+  because fan-out can drop that result. —
   `crates/multithread/src/effect_gate.rs`; `CRATES_ARCHITECTURE.md`
 - Keyshare coalesces decryption work per phase in each process. Admission of an already-retained
   canonical key is a no-op. Repeated chain observations and resume signals cannot add share
   correlations or repeat C6 proof intents. Hydration clears the dispatch markers, and the worker
-  retains the same request for local retries. —
-  `crates/keyshare/src/threshold_keyshare/effects/create_decryption_share.rs`; `flow-trace/04`
+  retains the same request for local retries. A phase whose result has not arrived for 5 minutes
+  sends its request again, at most 6 times, because EventBus fan-out can lose a request or a result.
+  Each C6 redelivery has a fresh random value that a restart cannot repeat, and its completion
+  carries that value so EventBus deduplication passes it. A terminal event stops redelivery at once.
+  — `crates/keyshare/src/threshold_keyshare/effects/create_decryption_share.rs`; `flow-trace/04`
 - A terminal E3 cancels its local node-scoped compute-task group. Work already executing may finish,
   but queued proof jobs from that E3 must not consume task-pool capacity ahead of a later active E3.
   Accusation re-verification runs in its own group: a failure does not cancel it, so a node can
@@ -312,8 +319,10 @@ the code does not meet yet.
   reader reports each successful head read to an `IngestionProgressSink`; `interfold start` writes
   one heartbeat file per chain under `<node data dir>/ingestion/`, and `dappnode/healthcheck.sh`
   fails when a heartbeat is older than 120 s or neither its head nor its cursor moved for 600 s.
-  **Gap:** a node whose reader never reaches its first read (no heartbeat) still passes the check,
-  and a heartbeat write that fails after the startup probe is only logged. —
+  `start` first records how many chain readers it starts, and when (`<node data dir>/ingestion/expected`);
+  after a 900 s startup grace the check requires a heartbeat from each, so a reader that never
+  reaches its first read fails it too. **Gap:** a heartbeat write that fails after the startup
+  probe is only logged. —
   `crates/evm/src/chain_reader/progress.rs`; `dappnode/healthcheck.sh`; `flow-trace/03`;
   `flow-trace/06`
 - A network event cannot create a request context for an unknown E3. Only chain events or restored
@@ -328,7 +337,16 @@ the code does not meet yet.
   its last connection closes. Only newly admitted connections receive admission notifications. —
   `crates/net/src/net_interface.rs`
 - An inbound DHT put must not replace a locally published record or shorten a stored replica's
-  expiry. No expiry means an unlimited lifetime. — `crates/net/src/net_interface.rs`
+  expiry. No expiry means an unlimited lifetime. Inbound replicas are bounded per sender (160), in
+  total (3,040) and in value bytes (a 2 GiB ceiling), from four concurrent N=19 E3s with a 2x
+  margin. At a limit a new replica evicts others instead of being refused: expired records go first,
+  then the sender at its own limit gives up its oldest replica, and under node-wide pressure the
+  sender over its share in the short dimension gives up its oldest, as many as the new replica
+  needs; it is refused only when nothing it may evict makes room. This node's records and the
+  documents it restored are never evicted for a replica, and a local write that finds the store full
+  evicts a replica. The replica ledger follows every store change: removal, expiry pruning,
+  Kademlia's own removal of expired records, and a replica that becomes this node's record. —
+  `crates/net/src/replica_ledger.rs`; `crates/net/src/net_interface.rs`
 - A periodic network re-send backs off to a cap, stops when its phase ends, and has a lifetime
   bound. It does not start for one of the last 1,024 E3s whose terminal stage came from the chain,
   also from replayed history. After a restart, local replay schedules the re-sends again in log

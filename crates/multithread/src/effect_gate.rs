@@ -14,6 +14,7 @@ use e3_events::{
 };
 use e3_utils::MAILBOX_LIMIT;
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 use tracing::{debug, info};
 
 type RequestKey = (E3id, ComputeRequestKind);
@@ -26,10 +27,17 @@ enum ComputeOutcome {
 }
 
 struct ForwardedRequest {
-    correlation_id: CorrelationId,
+    /// IDs under which the request went to the worker, the first one first.
+    correlation_ids: Vec<CorrelationId>,
+    forwarded_at: Instant,
     waiting: Vec<CorrelationId>,
     outcome: Option<ComputeOutcome>,
 }
+
+/// A request that comes again under a new ID this long after it went to the worker, with no
+/// result in the gate, goes to the worker again. EventBus fan-out can drop the result on its way
+/// to the gate, and the gate would otherwise keep every later ID waiting for good.
+const REFORWARD_AFTER: Duration = Duration::from_secs(10 * 60);
 
 /// Buffers compute effects observed during EventStore replay. Identical
 /// semantic requests are deduplicated independently of their correlation ID;
@@ -52,6 +60,7 @@ pub(crate) struct ComputeEffectGate {
     replayed_responses: HashMap<RequestKey, ComputeOutcome>,
     stages: HashMap<E3id, E3Stage>,
     canonical_keys: e3_request::canonical_key::CanonicalPublicKeys,
+    reforward_after: Duration,
 }
 
 impl ComputeEffectGate {
@@ -66,6 +75,7 @@ impl ComputeEffectGate {
             replayed_responses: HashMap::new(),
             stages: initial_stages,
             canonical_keys: Default::default(),
+            reforward_after: REFORWARD_AFTER,
         }
     }
 
@@ -217,23 +227,34 @@ impl ComputeEffectGate {
                 return false;
             }
             match self.forwarded.get_mut(&key) {
-                Some(forwarded) if forwarded.correlation_id == correlation_id => {
+                Some(forwarded) if forwarded.correlation_ids.contains(&correlation_id) => {
                     debug!("dropping duplicate compute effect with the same correlation ID");
                     return false;
                 }
                 Some(forwarded) => {
                     if let Some(outcome) = forwarded.outcome.clone() {
                         self.publish_outcome(&outcome, correlation_id, &event);
-                    } else if !forwarded.waiting.contains(&correlation_id) {
-                        forwarded.waiting.push(correlation_id);
+                        return false;
                     }
-                    return false;
+                    if forwarded.forwarded_at.elapsed() < self.reforward_after {
+                        if !forwarded.waiting.contains(&correlation_id) {
+                            forwarded.waiting.push(correlation_id);
+                        }
+                        return false;
+                    }
+                    info!(
+                        e3_id = %key.0,
+                        "Sending a compute request to the worker again: its result has not reached the gate"
+                    );
+                    forwarded.correlation_ids.push(correlation_id);
+                    forwarded.forwarded_at = Instant::now();
                 }
                 None => {
                     self.forwarded.insert(
                         key,
                         ForwardedRequest {
-                            correlation_id,
+                            correlation_ids: vec![correlation_id],
+                            forwarded_at: Instant::now(),
                             waiting: Vec::new(),
                             outcome: None,
                         },
@@ -264,7 +285,7 @@ impl ComputeEffectGate {
         let forwarded_key = key.as_ref().filter(|key| {
             self.forwarded
                 .get(*key)
-                .is_some_and(|forwarded| forwarded.correlation_id == correlation_id)
+                .is_some_and(|forwarded| forwarded.correlation_ids.contains(&correlation_id))
         });
         let Some(forwarded_key) = forwarded_key else {
             // During EventStore replay, a successful response can arrive before effects are
@@ -282,7 +303,12 @@ impl ComputeEffectGate {
             .forwarded
             .get_mut(forwarded_key)
             .expect("forwarded key was checked above");
+        if matches!(forwarded.outcome, Some(ComputeOutcome::Response(_))) {
+            // A request sent to the worker again can finish twice. Keep the first success.
+            return;
+        }
         forwarded.outcome = Some(outcome.clone());
+        // The worker answers each ID it ran itself.
         let waiting = std::mem::take(&mut forwarded.waiting);
         for waiting_id in waiting {
             self.publish_outcome(&outcome, waiting_id, event);
@@ -906,6 +932,44 @@ pub(crate) mod tests {
         gate.send(effects_enabled()).await.unwrap();
 
         assert_eq!(recorder.send(Received).await.unwrap(), vec![accusation]);
+    }
+
+    #[actix::test]
+    async fn stalled_request_goes_to_the_worker_again() {
+        let (bus, history) = test_bus();
+        let recorder = Recorder::default().start();
+        let mut gate =
+            ComputeEffectGate::new(recorder.clone().recipient(), HashMap::new()).with_bus(bus);
+        gate.reforward_after = Duration::from_millis(500);
+        let gate = gate.start();
+        let lost = CorrelationId::new();
+        let waiting = CorrelationId::new();
+        let again = CorrelationId::new();
+        let late = CorrelationId::new();
+
+        // The answer to `lost` never reaches the gate. A new ID soon after waits for it, and a
+        // new ID after the window sends the request to the worker again.
+        gate.send(compute(lost, 10)).await.unwrap();
+        gate.send(effects_enabled()).await.unwrap();
+        gate.send(compute(waiting, 40)).await.unwrap();
+        assert_eq!(recorder.send(Received).await.unwrap(), vec![lost]);
+        actix::clock::sleep(Duration::from_millis(600)).await;
+        gate.send(compute(again, 50)).await.unwrap();
+        gate.send(compute(again, 50)).await.unwrap();
+        assert_eq!(recorder.send(Received).await.unwrap(), vec![lost, again]);
+
+        // The second run answers the waiting ID. A late error from the first run does not
+        // replace that success.
+        gate.send(outcome_event(response(again))).await.unwrap();
+        gate.send(outcome_event(failure(lost))).await.unwrap();
+        gate.send(compute(late, 60)).await.unwrap();
+        for expected in [waiting, late] {
+            assert!(matches!(
+                next_outcome(&history).await.into_data(),
+                InterfoldEventData::ComputeResponse(result) if result.correlation_id == expected
+            ));
+        }
+        assert_eq!(recorder.send(Received).await.unwrap(), vec![lost, again]);
     }
 
     #[actix::test]

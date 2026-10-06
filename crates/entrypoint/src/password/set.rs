@@ -17,7 +17,14 @@ pub async fn preflight(config: &AppConfig) -> Result<()> {
     let pm = FilePasswordManager::new(key_file);
 
     if pm.is_set() {
-        bail!("Keyfile already exists. Try using `interfold password set` to set a new password or `interfold password delete` to remove the existing one.")
+        bail!(
+            "The key file {} already exists, and `interfold password set` does not replace a \
+             password. To set another one, run `interfold password delete` first. The stored \
+             wallet key and libp2p key are encrypted with the current password: keep a copy of \
+             the wallet private key, and run `interfold wallet set` again after you set the new \
+             password.",
+            config.key_file().display()
+        )
     }
 
     Ok(())

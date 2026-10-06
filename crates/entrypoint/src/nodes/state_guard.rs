@@ -67,10 +67,11 @@ pub(crate) struct ActiveE3 {
 }
 
 /// Key prefixes of the records that hold one E3's key-share state. The E3 ID follows each prefix.
-const KEY_SHARE_PREFIXES: [&str; 3] = [
+const KEY_SHARE_PREFIXES: [&str; 4] = [
     StoreKeys::THRESHOLD_KEYSHARE_PREFIX,
     StoreKeys::THRESHOLD_KEYSHARE_RECOVERY_PREFIX,
     StoreKeys::THRESHOLD_KEYSHARE_RECOVERY_PAYLOADS_PREFIX,
+    StoreKeys::THRESHOLD_KEYSHARE_BFV_KEY_PREFIX,
 ];
 
 /// Find each E3 that has key-share state on this node and that this node has not seen complete.

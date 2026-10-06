@@ -53,7 +53,7 @@ use e3_sync::{
 };
 use e3_utils::enumerate_path;
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Outcome severity for a single validation check.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -162,12 +162,141 @@ impl ValidationReport {
 
 /// Run every validation check against the node configured by `config`.
 ///
+/// Whether `path` holds a sled store: its `conf` and `db` files exist.
+/// What the store path holds.
+enum StorePresence {
+    /// Nothing, or an empty folder such as a mount point.
+    Absent,
+    /// A sled store: its `conf` and `db` files.
+    Present,
+    /// Other content, or content that validation cannot read.
+    Damaged(String),
+}
+
+fn store_presence(path: &std::path::Path) -> StorePresence {
+    let entries = match std::fs::read_dir(path) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return StorePresence::Absent,
+        Err(error) => return StorePresence::Damaged(format!("validation cannot read it: {error}")),
+    };
+    let mut empty = true;
+    for entry in entries {
+        if let Err(error) = entry {
+            return StorePresence::Damaged(format!("validation cannot read it: {error}"));
+        }
+        empty = false;
+    }
+    if empty {
+        return StorePresence::Absent;
+    }
+    let file = |name: &str| std::fs::metadata(path.join(name)).map(|metadata| metadata.is_file());
+    match (file("conf"), file("db")) {
+        (Ok(true), Ok(true)) => StorePresence::Present,
+        (Err(error), _) | (_, Err(error)) if error.kind() != std::io::ErrorKind::NotFound => {
+            StorePresence::Damaged(format!("validation cannot read it: {error}"))
+        }
+        _ => StorePresence::Damaged("it lacks the store's `conf` or `db` file".to_owned()),
+    }
+}
+
+/// The node's event logs: the configured chains', and any other one on disk, as of a chain that
+/// the configuration no longer has.
+fn event_logs_on_disk(config: &AppConfig, aggregate_ids: &[AggregateId]) -> Vec<PathBuf> {
+    let log_file = config.log_file();
+    let mut paths: Vec<PathBuf> = aggregate_ids
+        .iter()
+        .map(|agg| enumerate_path(&log_file, agg.to_usize()))
+        .collect();
+    let (Some(folder), Some(name)) = (
+        log_file.parent(),
+        log_file.file_name().and_then(|name| name.to_str()),
+    ) else {
+        return paths;
+    };
+    let (stem, extension) = name.rfind('.').map_or((name, ""), |dot| name.split_at(dot));
+    let Ok(entries) = std::fs::read_dir(folder) else {
+        return paths;
+    };
+    for entry in entries.flatten() {
+        let Some(file) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        let index = file
+            .strip_prefix(stem)
+            .and_then(|rest| rest.strip_prefix('.'))
+            .and_then(|rest| rest.strip_suffix(extension));
+        if index.is_some_and(|index| !index.is_empty() && index.bytes().all(|b| b.is_ascii_digit()))
+            && !paths.contains(&entry.path())
+        {
+            paths.push(entry.path());
+        }
+    }
+    paths
+}
+
 /// Opens the persisted stores while holding the node's exclusive process fence.
 /// Returns the full report; callers decide how to surface it (the CLI prints it
 /// and exits non-zero on failure).
 pub async fn validate_node(config: &AppConfig, repair: bool) -> Result<ValidationReport> {
     let aggregate_ids = aggregate_ids(config);
     let mut report = ValidationReport::default();
+
+    // Opening the store creates it. Without one, report what the data directory holds instead. An
+    // empty folder at the store path, such as a mount point, holds no store either; other content
+    // there is a damaged store.
+    match store_presence(&config.db_file()) {
+        StorePresence::Present => {}
+        StorePresence::Damaged(reason) => {
+            report.push(CheckResult::fail(
+                "store",
+                format!(
+                    "the node store at {} is damaged: {reason}",
+                    config.db_file().display()
+                ),
+            ));
+            return Ok(report);
+        }
+        StorePresence::Absent => {
+            let mut logs_with_events = Vec::new();
+            let mut unreadable = Vec::new();
+            for path in event_logs_on_disk(config, &aggregate_ids) {
+                match CommitLogEventLog::has_records(&path) {
+                    Ok(true) => logs_with_events.push(path.display().to_string()),
+                    Ok(false) => {}
+                    Err(error) => unreadable.push(format!("{}: {error:#}", path.display())),
+                }
+            }
+            report.push(if !unreadable.is_empty() {
+                CheckResult::fail(
+                    "store",
+                    format!(
+                        "no node store at {}, and the event log(s) cannot be read: {}",
+                        config.db_file().display(),
+                        unreadable.join("; ")
+                    ),
+                )
+            } else if logs_with_events.is_empty() {
+                CheckResult::warn(
+                    "store",
+                    format!(
+                        "no node store at {}: the node has not started, so there is nothing to \
+                     validate",
+                        config.db_file().display()
+                    ),
+                )
+            } else {
+                CheckResult::fail(
+                    "store",
+                    format!(
+                        "no node store at {}, but the event log(s) {} hold events",
+                        config.db_file().display(),
+                        logs_with_events.join(", ")
+                    ),
+                )
+            });
+            return Ok(report);
+        }
+    }
 
     let schema = check_schema_compatibility(inspect_persisted_schema_version(
         &config.db_file(),
@@ -231,14 +360,45 @@ pub async fn validate_node(config: &AppConfig, repair: bool) -> Result<Validatio
 
     // 2. Only open the snapshot store after every source-of-truth log passed its
     // framing and decode checks. Cross-check each persisted replay cursor.
-    let repositories = get_repositories(config)?;
+    let repositories = match get_repositories(config) {
+        Ok(repositories) => repositories,
+        Err(error) => {
+            report.push(CheckResult::fail(
+                "store",
+                format!("the node store could not be opened: {error:#}"),
+            ));
+            return Ok(report);
+        }
+    };
     let mut snapshot_cursors = HashMap::new();
+    let mut unreadable_cursors = 0usize;
     for (agg, events) in &events_by_aggregate {
         let seqs: Vec<u64> = events.iter().map(|e| e.seq()).collect();
 
-        let cursor = repositories.aggregate_seq(*agg).read().await?.unwrap_or(0);
+        let cursor = match repositories.aggregate_seq(*agg).read().await {
+            Ok(cursor) => cursor.unwrap_or(0),
+            Err(error) => {
+                unreadable_cursors += 1;
+                report.push(CheckResult::fail(
+                    "snapshot-cursor",
+                    format!(
+                        "aggregate {}: the stored cursor could not be read: {error:#}",
+                        agg.to_usize()
+                    ),
+                ));
+                continue;
+            }
+        };
         snapshot_cursors.insert(*agg, cursor);
         report.push(check_cursor_consistency(*agg, cursor, &seqs));
+    }
+    if unreadable_cursors > 0 {
+        report.push(CheckResult::warn(
+            "skipped",
+            "the sortition-projection and open-loop checks did not run, because they need every \
+             snapshot cursor",
+        ));
+        return Ok(report);
     }
     report.push(CheckResult::pass(
         "event-store",
@@ -259,11 +419,26 @@ pub async fn validate_node(config: &AppConfig, repair: bool) -> Result<Validatio
             repair,
             source_state_is_valid,
         )
-        .await?,
+        .await
+        .unwrap_or_else(|error| {
+            CheckResult::fail(
+                "sortition-projection",
+                format!("the stored projection could not be read or repaired: {error:#}"),
+            )
+        }),
     );
 
     // 4. Open-loop / loose-ends audit against the persisted sortition state.
-    report.push(check_open_loops(&repositories, &terminal_keys).await?);
+    report.push(
+        check_open_loops(&repositories, &terminal_keys)
+            .await
+            .unwrap_or_else(|error| {
+                CheckResult::fail(
+                    "open-loops",
+                    format!("the stored node state could not be read: {error:#}"),
+                )
+            }),
+    );
 
     Ok(report)
 }

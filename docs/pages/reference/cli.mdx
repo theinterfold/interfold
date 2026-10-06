@@ -255,35 +255,38 @@ Makes a configuration file for one ciphernode and stores its password and wallet
 runs only when the CLI finds no configuration file.
 
 ```bash
-interfold ciphernode setup [--network <sepolia|local>] [-r <RPC_URL>] [--password-stdin] [--private-key-stdin]
+interfold ciphernode setup [--network sepolia] [-r <RPC_URL>] [--config-dir <PATH>] [--password-stdin] [--private-key-stdin]
 ```
 
-| Flag                  | Value              | Default   | Description                                                                                                               |
-| --------------------- | ------------------ | --------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `--network`           | `sepolia`, `local` | `sepolia` | P2P network profile and chain for the file. The value `sepolia` uses chain ID `11155111`. The value `local` uses `31337`. |
-| `-r`, `--rpc-url`     | `<RPC_URL>`        | Prompt    | Ethereum RPC URL. The scheme must be `http`, `https`, `ws`, or `wss`.                                                     |
-| `--password-stdin`    | None               | Off       | Reads the password from the first requested line of standard input.                                                       |
-| `--private-key-stdin` | None               | Off       | Reads the wallet key from the next requested line of standard input.                                                      |
+| Flag                  | Value       | Default   | Description                                                                               |
+| --------------------- | ----------- | --------- | ----------------------------------------------------------------------------------------- |
+| `--network`           | `sepolia`   | `sepolia` | P2P network profile and chain for the file. The value `sepolia` uses chain ID `11155111`. |
+| `-r`, `--rpc-url`     | `<RPC_URL>` | Prompt    | Ethereum RPC URL. The scheme must be `http`, `https`, `ws`, or `wss`.                     |
+| `--password-stdin`    | None        | Off       | Reads the password from the first requested line of standard input.                       |
+| `--private-key-stdin` | None        | Off       | Reads the wallet key from the next requested line of standard input.                      |
+| `--config-dir`        | `<PATH>`    | Prompt    | Folder for the configuration file.                                                        |
 
 Without a stdin flag, the command uses a hidden prompt for that secret. It rejects secret values in
 command arguments. The password must not be blank. The wallet key must contain 32 bytes in
-hexadecimal. The RPC prompt proposes `wss://ethereum-sepolia-rpc.publicnode.com` for `sepolia` and
-`ws://127.0.0.1:8545` for `local`. The last prompt asks for the configuration folder. The default is
-`interfold` in the operating system configuration folder, for example `~/.config/interfold` on
-Linux.
+hexadecimal. The RPC prompt proposes `wss://ethereum-sepolia-rpc.publicnode.com`. Without
+`--config-dir`, the last prompt asks for the configuration folder. The default is `interfold` in the
+operating system configuration folder, for example `~/.config/interfold` on Linux. Without a
+terminal, the command cannot prompt: give `--rpc-url`, `--config-dir`, `--password-stdin`, and
+`--private-key-stdin`.
 
 The command writes `interfold.config.yaml` with these values:
 
 - `node.network` and `node.address`, which comes from the private key
 - One chain named after the network, with `chain_id` and `rpc_url`
+- A `data_availability` block that reads the Sepolia deployment's data from Avail Turing
+  (`https://turing-rpc.avail.so/rpc`)
 - The `interfold`, `ciphernode_registry`, `bonding_registry`, and `slashing_manager` contracts with
   their deploy blocks
 
-The contract addresses are the Sepolia deployment that was built into the binary. The file uses
-these addresses also with `--network local`, so replace them with the addresses of your local
-deployment. To compare them with the current deployment, run `interfold config check`. The file does
-not contain a `data_availability` block, and `interfold start` needs one. See
-[data availability](/reference/configuration#data-availability).
+The contract addresses are the Sepolia deployment that was built into the binary. To compare them
+with the current deployment, run `interfold config check`. The binary has no local deployment, so
+the command refuses a local network: for a local chain, start from the project template's
+`interfold.config.yaml`. See [data availability](/reference/configuration#data-availability).
 
 <Callout type='info'>
   Use a hidden prompt or pipe secrets from a file or secret manager with `--password-stdin` and
@@ -351,16 +354,20 @@ Before the first deletion, the purge writes a `purge-in-progress` file into each
 empties. When the purge stops part of the way, run it again. The second run finishes the folders
 that hold this file. If another file or a link has this name, the purge stops and deletes nothing.
 
+`interfold start` writes the path of its store next to the key file, as `<key file>.store-record`.
+For a key file with a record, the purge locks and checks the recorded store, also when the node ran
+with another `E3_DATA_DIR`, `data_dir`, or working directory. A key file that no configured node
+uses is checked through its record.
+
 The purge has limits:
 
-- It finds each store with its own configuration and environment. It cannot see a node that runs
-  with another `E3_DATA_DIR`, `data_dir`, or working directory. Before you use `--allow-active-e3s`,
-  make sure that no node runs with such a setting.
-- It cannot tell whether an operator key is the node's own. A stale copy of a store at the
-  configured path passes the check.
+- The record names the store of the node's last start only.
+- A key file without a record, as of a node that has not started with this release, is checked
+  through the store at the configured path. A stale copy of a store there passes the check.
 - It finds stores only directly inside each node folder in `.interfold/data`.
 
-The detached supervisor does not receive the `--otel` flag.
+The detached supervisor does not receive the `--otel` flag. Set `otel` in the configuration file, or
+`E3_OTEL`, for the nodes that it runs.
 
 <Callout type='warning'>
   `interfold nodes purge` deletes the key files, the stored wallet keys, and the event history of

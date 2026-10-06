@@ -3853,7 +3853,6 @@ dependencies = [
  "serde",
  "serde_yaml",
  "shellexpand",
- "tempfile",
  "toml",
  "tracing",
  "url",

@@ -28,8 +28,15 @@ impl StoreKeys {
         )
     }
 
+    pub fn threshold_keyshare_bfv_key(e3_id: &E3id) -> String {
+        format!("{}{e3_id}", Self::THRESHOLD_KEYSHARE_BFV_KEY_PREFIX)
+    }
+
     /// Key prefix of the key-share state of one E3. The E3 ID follows it.
     pub const THRESHOLD_KEYSHARE_PREFIX: &'static str = "//threshold_keyshare/";
+
+    /// Key prefix of this node's BFV encryption keypair for one E3. The E3 ID follows it.
+    pub const THRESHOLD_KEYSHARE_BFV_KEY_PREFIX: &'static str = "//threshold_keyshare_bfv_key/v1/";
 
     /// Key prefix of the key-share recovery state of one E3. The E3 ID follows it.
     pub const THRESHOLD_KEYSHARE_RECOVERY_PREFIX: &'static str =

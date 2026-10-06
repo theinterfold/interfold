@@ -295,6 +295,44 @@ impl DataStore {
         Ok(inserted)
     }
 
+    /// Write `value` at the scope location and flush it, only when nothing is stored there.
+    /// Returns whether it wrote.
+    pub async fn write_if_absent_sync<T: Serialize>(&self, value: T) -> Result<bool> {
+        let serialized = bincode::serialize(&value).with_context(|| {
+            let str_key = self.get_scope().unwrap_or(Cow::Borrowed("<bad key>"));
+            anyhow!("Could not serialize value passed to {}", str_key)
+        })?;
+        let inserted = self
+            .insert_batch_if_absent
+            .send(InsertBatchIfAbsent::new(vec![Insert::new(
+                self.scope.clone(),
+                serialized,
+            )]))
+            .await??;
+        if inserted {
+            self.flush.send(Flush).await??;
+        }
+        Ok(inserted)
+    }
+
+    /// Flush every write that the backing store accepted so far.
+    pub async fn flush_sync(&self) -> Result<()> {
+        self.flush.send(Flush).await?
+    }
+
+    /// The same store with another flush recipient, to observe or fail its flushes in tests.
+    pub fn with_flush_recipient(mut self, flush: Recipient<Flush>) -> Self {
+        self.flush = flush;
+        self
+    }
+
+    /// Remove the data at the scope location and flush the removal.
+    pub async fn remove_sync(&self) -> Result<()> {
+        self.remove.send(Remove::new(&self.scope)).await?;
+        self.flush.send(Flush).await??;
+        Ok(())
+    }
+
     /// Drain the snapshot buffer and durably close the backing store.
     pub async fn shutdown(&self) -> Result<()> {
         if let Some(flush_pending) = &self.flush_pending_snapshots {

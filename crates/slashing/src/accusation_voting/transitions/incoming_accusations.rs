@@ -22,76 +22,13 @@ impl AccusationVoting {
         ec: &EventContext<Sequenced>,
         actions: &mut Vec<VoteAction>,
     ) {
-        // Ignore accusations for other E3s
-        if accusation.e3_id != self.e3_id {
-            return;
-        }
-
-        // The accusation signature binds addresses, not accused_party_id.
-        if accusation.accuser == accusation.accused {
-            return;
-        }
-
-        // Only per-recipient C3 proofs can accompany a forwarded accusation.
-        if accusation.signed_payload.is_some() && !Self::can_forward_proof(accusation.proof_type) {
-            return;
-        }
-
-        let now = self.clock.unix_now_secs();
-        if !Self::is_peer_deadline_acceptable(
-            accusation.issued_at,
-            accusation.deadline,
-            now,
-            self.vote_validity_secs,
-            self.accusation_deadline_skew_secs,
-        ) {
-            let max_deadline = now
-                .saturating_add(self.vote_validity_secs)
-                .saturating_add(self.accusation_deadline_skew_secs);
-            warn!(
-                "Ignoring accusation from {} — deadline {} outside local validity window \
-                 (now={}, vote_validity_secs={}, skew_secs={}, max_accepted_deadline={})",
-                accusation.accuser,
-                accusation.deadline,
-                now,
-                self.vote_validity_secs,
-                self.accusation_deadline_skew_secs,
-                max_deadline
-            );
-            return;
-        }
-
-        // Verify accuser is in committee
-        if !self.committee.contains(&accusation.accuser) {
-            warn!(
-                "Ignoring accusation from non-committee member {}",
-                accusation.accuser
-            );
-            return;
-        }
-
-        // Verify accused is a committee member (defense-in-depth)
-        if !self.committee.contains(&accusation.accused) {
-            warn!(
-                "Ignoring accusation against non-committee member {}",
-                accusation.accused
-            );
-            return;
-        }
-
-        // Ignore our own accusations (we already voted)
-        if accusation.accuser == self.my_address {
-            return;
-        }
-
-        // Verify accuser's ECDSA signature
-        if !self.verify_accusation_signature(&accusation) {
-            warn!(
-                "Invalid signature on accusation from {} — ignoring",
-                accusation.accuser
-            );
-            return;
-        }
+        let accusation = match self.admit_accusation(accusation) {
+            Ok(accusation) => accusation.into_inner(),
+            Err(rejection) => {
+                rejection.log();
+                return;
+            }
+        };
 
         let accusation_id = Self::accusation_id(&accusation);
 

@@ -13,8 +13,11 @@ use std::path::PathBuf;
 
 #[derive(Subcommand, Clone, Debug)]
 pub enum NoirCommands {
+    /// Print the path, version, and install state of `bb` and the circuits, and what to do next
     Status,
+    /// Install or update `bb` and the circuits. Does nothing when both are current
     Setup {
+        /// Install `bb` and the circuits again, also when they are current
         #[arg(long, short)]
         force: bool,
 

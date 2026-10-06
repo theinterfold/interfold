@@ -31,7 +31,9 @@ pub use domain::error_decoder;
 
 pub use actors::*;
 pub use adapters::ingestion_progress::{
-    heartbeat_file_name, ingestion_heartbeat_files, IngestionProgress, IngestionProgressSink,
+    heartbeat_file_name, ingestion_heartbeat_files, write_ingestion_expectation,
+    write_ingestion_expectation_at, IngestionProgress, IngestionProgressSink,
+    INGESTION_EXPECTATION_FILE,
 };
 pub use contracts::ICiphernodeRegistry;
 pub use dkg_timing::{read_canonical_dkg_timing, CanonicalDkgTiming};

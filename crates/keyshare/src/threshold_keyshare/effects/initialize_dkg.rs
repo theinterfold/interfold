@@ -4,13 +4,17 @@
 
 use super::*;
 
+/// The delay before a selection whose BFV keypair record failed records the keypair again.
+pub(crate) const BFV_KEY_RECORD_RETRY: std::time::Duration = std::time::Duration::from_secs(1);
+
 impl ThresholdKeyshare {
     /// Generate BFV keys for a selected ciphernode and publish `EncryptionKeyPending`.
     pub fn handle_ciphernode_selected(
         &mut self,
         msg: TypedEvent<CiphernodeSelected>,
-        address: Addr<Self>,
+        ctx: &mut <Self as Actor>::Context,
     ) -> Result<()> {
+        let address = ctx.address();
         let (msg, ec) = msg.into_components();
         let state = self.state.try_get()?;
         if !matches!(state.state, KeyshareState::Init) {
@@ -52,35 +56,106 @@ impl ThresholdKeyshare {
         self.replay_encryption_keys(&collector)?;
         self.ensure_collector(address.clone(), &ec, now)?;
 
-        let BfvKeypairMaterial {
-            sk_bfv: sk_bfv_encrypted,
-            pk_bfv: pk_bfv_bytes,
-        } = generate_bfv_keypair(&self.share_enc_preset, &self.cipher)?;
+        // Peers encrypt their DKG shares to the key that this node publishes, so a start that
+        // lost the keyshare's snapshot reuses the recorded keypair instead of generating another.
+        if let Some(key) = self.bfv_key.clone() {
+            return self.collect_with_bfv_key(key, msg, ec);
+        }
+        // A keypair whose record failed is recorded again: the store can hold it without its
+        // flush, and refuses another keypair.
+        let key = match self.pending.bfv_key.take() {
+            Some(key) => key,
+            None => {
+                let BfvKeypairMaterial { sk_bfv, pk_bfv } =
+                    generate_bfv_keypair(&self.share_enc_preset, &self.cipher)?;
+                BfvKeyIntent { sk_bfv, pk_bfv }
+            }
+        };
+        // The keypair is on disk before anything uses it, and the actor handles no other message
+        // until then.
+        let keys = self.bfv_keys.clone();
+        let recorded = key.clone();
+        let retry = TypedEvent::new(msg.clone(), ec.clone());
+        ctx.wait(
+            async move { keys.record(&recorded).await }
+                .into_actor(self)
+                .map(move |result, actor, ctx| {
+                    if let Err(error) = result {
+                        // The selection runs again with the same keypair until the encryption-key
+                        // cutoff refuses a fresh start.
+                        warn!(%error, "Could not record this node's BFV keypair; retrying");
+                        actor.pending.bfv_key = Some(key);
+                        ctx.notify_later(retry, BFV_KEY_RECORD_RETRY);
+                        return;
+                    }
+                    actor.bfv_key = Some(key.clone());
+                    if let Err(error) = actor.collect_with_bfv_key(key, msg, ec.clone()) {
+                        actor.bus.with_ec(&ec).err(EType::KeyGeneration, error);
+                    }
+                }),
+        );
+        Ok(())
+    }
 
-        let e3_id = state.e3_id.clone();
-
+    /// Enter encryption-key collection with this node's recorded keypair, and publish its public
+    /// key once effects run. In replay, resume publishes it when effects start.
+    fn collect_with_bfv_key(
+        &mut self,
+        key: BfvKeyIntent,
+        selected: CiphernodeSelected,
+        ec: EventContext<Sequenced>,
+    ) -> Result<()> {
         self.state.try_mutate(&ec, |s| {
             s.new_state(KeyshareState::CollectingEncryptionKeys(
                 CollectingEncryptionKeysData {
-                    sk_bfv: sk_bfv_encrypted.clone(),
-                    pk_bfv: pk_bfv_bytes.clone(),
-                    ciphernode_selected: msg,
+                    sk_bfv: key.sk_bfv.clone(),
+                    pk_bfv: key.pk_bfv.clone(),
+                    ciphernode_selected: selected,
                 },
             ))
         })?;
+        if self.effects_enabled {
+            self.publish_own_encryption_key(ec)?;
+        }
+        Ok(())
+    }
 
-        let committee_size = state.committee_size()?;
+    /// Publish this node's encryption key for its proof. When the log holds another key of this
+    /// node, the node lost the secret of the key that its peers hold: it abstains instead of
+    /// publishing a second key, and the protocol treats it as absent.
+    pub(in crate::actors::threshold_keyshare) fn publish_own_encryption_key(
+        &mut self,
+        ec: EventContext<Sequenced>,
+    ) -> Result<()> {
+        let state = self.state.try_get()?;
+        let KeyshareState::CollectingEncryptionKeys(data) = &state.state else {
+            return Ok(());
+        };
+        if let Some(logged) = self
+            .recovery
+            .try_get()?
+            .encryption_keys
+            .get(&state.party_id)
+        {
+            if logged.key.pk_bfv != data.pk_bfv {
+                error!(
+                    e3_id = %state.e3_id,
+                    party_id = state.party_id,
+                    "The log holds another encryption key of this node, whose secret is lost. This \
+                     node publishes no second key and takes no further part in this E3's DKG."
+                );
+                return Ok(());
+            }
+        }
         self.bus.publish(
             EncryptionKeyPending {
-                e3_id,
-                key: Arc::new(EncryptionKey::new(state.party_id, pk_bfv_bytes)),
+                e3_id: state.e3_id.clone(),
+                key: Arc::new(EncryptionKey::new(state.party_id, data.pk_bfv.clone())),
                 params_preset: self.share_enc_preset,
-                committee_size,
+                committee_size: state.committee_size()?,
             },
             ec,
-        )?;
-
-        Ok(())
+        )
     }
 
     /// 1a. AllEncryptionKeysCollected - All BFV keys received, start share generation
@@ -96,6 +171,23 @@ impl ThresholdKeyshare {
 
         let state = self.state.try_get()?;
         let current: CollectingEncryptionKeysData = state.clone().try_into()?;
+
+        // The collected key of this node must be the one whose secret it holds. Another one means
+        // that the node lost the secret of the key that its peers encrypt to: it starts no share
+        // generation and takes no further part in this E3's DKG, which treats it as absent.
+        if msg
+            .keys
+            .iter()
+            .any(|key| key.party_id == state.party_id && key.pk_bfv != current.pk_bfv)
+        {
+            error!(
+                e3_id = %state.e3_id,
+                party_id = state.party_id,
+                "The collected encryption key of this node is not the one whose secret it holds. \
+                 This node takes no further part in this E3's DKG."
+            );
+            return self.stop_threshold_share_collector();
+        }
 
         // Filter out any keys from parties expelled after collection started
         let filtered_keys: Vec<_> = if state.expelled_parties.is_empty() {

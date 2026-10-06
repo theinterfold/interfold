@@ -485,12 +485,17 @@ every section.
   `accused_party_id` is not in the accusation digest and cannot decide received self-accusation
   admission. Forwarded payloads are admitted only for C3a/C3b; other proof types require local
   evidence without a forwarded payload. These checks precede evidence caching, vote creation, and
-  pending-window changes in `AccusationVoting`. Lane A is **attestation-based** (ECDSA per voter),
-  not on-chain ZK re-verification. Vote digest / EIP-712 type hashes must match the Solidity
-  constants exactly (Rust ↔ Solidity). — `flow-trace/05`; `SlashingManager.sol`
+  pending-window changes in `AccusationVoting`; each input passes its typed admission check
+  (`crates/slashing/src/accusation_voting/transitions/admission.rs`) before a transition uses it.
+  Lane A is **attestation-based** (ECDSA per voter), not on-chain ZK re-verification. Vote digest /
+  EIP-712 type hashes must match the Solidity constants exactly (Rust ↔ Solidity). —
+  `flow-trace/05`; `SlashingManager.sol`
 - Staggered slash submission: agreeing voters rank by ascending address. Ranks 0–2 submit, and rank
-  N waits N × 30 s. Restarts must not reset the fallback delay. **Gap:** the slashing writer
-  persists the intent but not its due time, so a restart waits the full delay again
+  N waits N × 30 s. Every node reads the policy first: a disabled policy excludes the member locally
+  on every node, and a failed read never invents an exclusion. These decisions are one pure workflow
+  (`SlashSubmission` in `crates/evm/src/slashing_writing/workflow.rs`); the writer only runs its
+  effects. Restarts must not reset the fallback delay. **Gap:** the slashing writer persists the
+  intent but not its due time, so a restart waits the full delay again
   (`crates/evm/src/slashing_writing/handlers.rs`). — `flow-trace/05`
 - **Deferred-slash collateral gate:** every manager atomically records proposal locks in
   `BondingRegistry`. Ticket withdrawal, ciphernode bond unbonding, deregistration, and exit claims

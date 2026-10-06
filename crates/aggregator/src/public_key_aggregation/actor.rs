@@ -51,6 +51,9 @@ pub struct PublicKeyAggregator {
     committee_size: CiphernodesCommitteeSize,
     dkg_fold_attestation_context: Option<DkgFoldAttestationContext>,
     is_aggregator: bool,
+    /// This node started the in-flight aggregation as the active aggregator. A failover that
+    /// demotes it does not discard that work: the chain accepts the first valid key publication.
+    started_as_aggregator: bool,
     effects_enabled: bool,
     /// Canonical publication is independent of this node's local DKG phase.
     key_published: bool,
@@ -58,6 +61,16 @@ pub struct PublicKeyAggregator {
     early_c1_verification: Option<(BTreeSet<u64>, TypedEvent<ShareVerificationComplete>)>,
     /// DKG recursive aggregation events received before entering GeneratingC5Proof.
     early_dkg_proofs: Vec<TypedEvent<DKGRecursiveAggregationComplete>>,
+}
+
+/// States that only an active aggregator reaches: C1 verification completed and this node
+/// computed the aggregate key.
+pub(crate) fn aggregation_started(state: &PublicKeyAggregatorState) -> bool {
+    matches!(
+        state,
+        PublicKeyAggregatorState::GeneratingC5Proof { .. }
+            | PublicKeyAggregatorState::Complete { .. }
+    )
 }
 
 pub struct PublicKeyAggregatorParams {
@@ -81,6 +94,7 @@ impl PublicKeyAggregator {
         params: PublicKeyAggregatorParams,
         state: Persistable<PublicKeyAggregatorState>,
     ) -> Self {
+        let started_as_aggregator = state.get().as_ref().is_some_and(aggregation_started);
         let mut actor = PublicKeyAggregator {
             fhe: params.fhe,
             bus: params.bus,
@@ -91,6 +105,7 @@ impl PublicKeyAggregator {
             committee_size: params.committee_size,
             dkg_fold_attestation_context: params.dkg_fold_attestation_context,
             is_aggregator: params.initial_is_aggregator,
+            started_as_aggregator,
             effects_enabled: params.effects_enabled,
             key_published: false,
             early_c1_verification: None,
@@ -118,8 +133,24 @@ impl PublicKeyAggregator {
         )
     }
 
+    /// Whether this node may start aggregation work: only the active aggregator does.
     fn can_run_aggregation_effects(&self) -> bool {
         self.effects_enabled && self.is_aggregator
+    }
+
+    /// Whether this node may continue aggregation work that is already in flight. A node that
+    /// started the work as the active aggregator continues it after a failover demotes it, until a
+    /// key is published on chain.
+    fn can_continue_aggregation_effects(&self) -> bool {
+        self.effects_enabled
+            && (self.is_aggregator || (self.started_as_aggregator && !self.key_published))
+    }
+
+    /// Record that this node, as the active aggregator, starts aggregation work.
+    fn mark_started_as_aggregator(&mut self) {
+        if self.can_run_aggregation_effects() {
+            self.started_as_aggregator = true;
+        }
     }
 
     fn publish_inputs_ready(&self, ec: EventContext<Sequenced>) -> Result<()> {

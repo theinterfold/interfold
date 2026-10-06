@@ -159,3 +159,80 @@ fn ciphernode_setup_rejects_argv_secrets() -> Result<()> {
         "--private-key-stdin",
     )
 }
+
+/// Without a terminal, setup takes every value from its flags and stdin, and writes a configuration
+/// with a data-availability reader, which `start` needs. When a flag that replaces a prompt is
+/// missing, it names the flag and reads and writes nothing, instead of failing at a prompt. It
+/// refuses a local network, for which the binary has no deployment, before it reads anything, and
+/// names the template.
+#[test]
+fn ciphernode_setup_runs_without_a_terminal() -> Result<()> {
+    let home = tempfile::tempdir()?;
+    let config_dir = home.path().join("node-config");
+    let config_dir_arg = config_dir.to_str().unwrap().to_owned();
+    let secrets = format!("{PASSWORD}\n{WALLET_KEY}\n");
+    let setup = |args: &[&str], input: &str| -> Result<(bool, String)> {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_interfold"))
+            .current_dir(home.path())
+            .env("HOME", home.path())
+            .env("XDG_CONFIG_HOME", home.path().join(".config"))
+            .env("XDG_DATA_HOME", home.path().join(".local/share"))
+            .env_remove("E3_CONFIG_DIR")
+            .env_remove("E3_DATA_DIR")
+            .args(["ciphernode", "setup"])
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+        // The command may stop before it reads stdin.
+        let _ = child.stdin.take().unwrap().write_all(input.as_bytes());
+        let output = child.wait_with_output()?;
+        let message = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(!message.contains(PASSWORD) && !message.contains(WALLET_KEY));
+        Ok((output.status.success(), message))
+    };
+    let flags: [&[&str]; 4] = [
+        &["--rpc-url", "ws://127.0.0.1:8545"],
+        &["--config-dir", config_dir_arg.as_str()],
+        &["--password-stdin"],
+        &["--private-key-stdin"],
+    ];
+
+    for (omitted, flag) in flags.iter().enumerate() {
+        let args: Vec<&str> = flags
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| *index != omitted)
+            .flat_map(|(_, flag)| flag.iter().copied())
+            .collect();
+        let (succeeded, message) = setup(&args, &secrets)?;
+        assert!(!succeeded, "{message}");
+        assert!(
+            message.contains("cannot prompt") && message.contains(flag[0]),
+            "{message}"
+        );
+        assert!(!config_dir.exists());
+    }
+
+    let all: Vec<&str> = flags.iter().flat_map(|flag| flag.iter().copied()).collect();
+    let local: Vec<&str> = ["--network", "local"]
+        .into_iter()
+        .chain(all.iter().copied())
+        .collect();
+    // With nothing on stdin, a read would fail first.
+    let (succeeded, message) = setup(&local, "")?;
+    assert!(!succeeded, "{message}");
+    assert!(message.contains("project template"), "{message}");
+    assert!(!config_dir.exists());
+
+    let (succeeded, message) = setup(&all, &secrets)?;
+    assert!(succeeded, "{message}");
+    let config = std::fs::read_to_string(config_dir.join("interfold.config.yaml"))?;
+    assert!(config.contains("data_availability:"), "{config}");
+    Ok(())
+}

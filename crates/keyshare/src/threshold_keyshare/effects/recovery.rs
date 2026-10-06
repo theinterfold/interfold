@@ -64,6 +64,41 @@ impl ThresholdKeyshare {
             && (recovery.keyshare_publish_authorized || state.keyshare_published)
     }
 
+    /// Admit the key of a `PublicKeyAggregated` that matches the canonical key authority.
+    pub(in crate::actors::threshold_keyshare) fn handle_public_key_aggregated(
+        &mut self,
+        data: e3_events::PublicKeyAggregated,
+        ec: &EventContext<Sequenced>,
+    ) -> Result<()> {
+        let Some(key) = self.canonical_keys.get(&data.e3_id) else {
+            return Ok(());
+        };
+        if !key.accepts(&data) {
+            return Ok(());
+        }
+        self.admit_public_key(data.pubkey, ec)
+    }
+
+    /// Record the key publication stage of a chain `CommitteePublished`, and admit its key when it
+    /// matches the canonical key authority. A peer copy establishes nothing.
+    pub(in crate::actors::threshold_keyshare) fn handle_committee_published(
+        &mut self,
+        data: e3_events::CommitteePublished,
+        ec: &EventContext<Sequenced>,
+    ) -> Result<()> {
+        if ec.source() == e3_events::EventSource::Net {
+            return Ok(());
+        }
+        self.observe_canonical_stage(&data.e3_id, &E3Stage::KeyPublished);
+        let Some(key) = self.canonical_keys.get(&data.e3_id) else {
+            return Ok(());
+        };
+        if !validation::committee_publication_matches(&key, &data) {
+            return Ok(());
+        }
+        self.admit_public_key(data.public_key, ec)
+    }
+
     pub(in crate::actors::threshold_keyshare) fn admit_public_key(
         &mut self,
         pk: ArcBytes,
@@ -182,7 +217,13 @@ impl ThresholdKeyshare {
     ) -> Result<bool> {
         let ec = event.get_ctx().clone();
         let ids: BTreeSet<u64> = event.shares.iter().map(|share| share.party_id).collect();
-        let expelled = self.state.try_get()?.expelled_parties;
+        let state = self.state.try_get()?;
+        // A collector can send its result before it stops; after the decryption-key calculation
+        // retired the batch, that result must not restore it.
+        if !state.state.share_collection_is_open() {
+            return Ok(false);
+        }
+        let expelled = state.expelled_parties;
         let mut accepted = false;
         self.recovery.try_mutate(&ec, |mut recovery| {
             let verification_in_flight = recovery.collected_threshold_share_ids.is_some()
@@ -475,6 +516,10 @@ impl ThresholdKeyshare {
             recovery.schema_version
         );
         let ec = recovery.last_ec.clone().unwrap_or(effects_context);
+        // The saved expulsions can already explain a held Ready update: the write that applies it
+        // is separate from the expulsion's, and a refused write must not strand the update.
+        self.apply_held_ready_updates(ec.clone())?;
+        let recovery = self.recovery.try_get()?;
         self.restore_public_key_context(&ec)?;
         let state = self.state.try_get()?;
         info!(
@@ -483,9 +528,6 @@ impl ThresholdKeyshare {
             c4_proof_intent = recovery.decryption_share_proofs_pending.is_some(),
             "resuming persisted threshold keyshare work"
         );
-        // Derived before the match moves `state.state`; only the CollectingEncryptionKeys arm
-        // needs it, so an error surfaces there and nowhere else.
-        let committee_size = state.committee_size();
 
         match state.state {
             KeyshareState::Init => {
@@ -495,22 +537,13 @@ impl ThresholdKeyshare {
                 self_addr.try_send(selected)?;
                 Ok(())
             }
-            KeyshareState::CollectingEncryptionKeys(data) => {
+            KeyshareState::CollectingEncryptionKeys(_) => {
                 let collector = self.recover_encryption_key_collector(self_addr.clone(), &ec)?;
                 self.replay_encryption_keys(&collector)?;
                 // Selection creates the threshold-share collector too. A peer can send this node
                 // its share while this node still collects encryption keys.
                 self.rebuild_threshold_share_collector(self_addr, &ec)?;
-                let committee_size = committee_size?;
-                self.bus.publish(
-                    EncryptionKeyPending {
-                        e3_id: state.e3_id,
-                        key: Arc::new(EncryptionKey::new(state.party_id, data.pk_bfv)),
-                        params_preset: self.share_enc_preset,
-                        committee_size,
-                    },
-                    ec,
-                )
+                self.publish_own_encryption_key(ec)
             }
             KeyshareState::GeneratingThresholdShare(data) => {
                 self.replay_threshold_shares(self_addr, &ec)?;

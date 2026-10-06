@@ -56,6 +56,7 @@ async fn late_selection_does_not_fail_the_shared_e3() -> Result<()> {
     let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let read_calls = Arc::clone(&calls);
     let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
         bus,
         cipher: Arc::new(Cipher::from_password("test-password").await?),
         state,
@@ -126,12 +127,9 @@ async fn peer_keys_that_arrive_before_selection_count_toward_collection() -> Res
     actor
         .send(keyshare_event(selection(&e3_id), 3, EventSource::Evm))
         .await?;
-    wait_for_keyshare_state(&repo, |state| {
-        matches!(state, KeyshareState::CollectingEncryptionKeys(_))
-    })
-    .await?;
+    let own_key = wait_for_own_key(&e3_id, &repo).await?;
     actor
-        .send(keyshare_event(peer_key(&e3_id, 0), 4, EventSource::Local))
+        .send(keyshare_event(own_key, 4, EventSource::Local))
         .await?;
 
     // The collector holds all three keys, so the DKG continues before the 10% cutoff.
@@ -390,11 +388,8 @@ async fn a_restart_after_the_key_cutoff_continues_with_h_recorded_keys() -> Resu
         &[],
     )
     .await?;
-    for party_id in [0, 1] {
-        actor.record_encryption_key(&TypedEvent::new(
-            peer_key(&e3_id, party_id),
-            test_ec(party_id + 1),
-        ))?;
+    for (seq, key) in [(1, own_key(&e3_id)), (2, peer_key(&e3_id, 1))] {
+        actor.record_encryption_key(&TypedEvent::new(key, test_ec(seq)))?;
     }
     let actor = actor.start();
     actor
@@ -571,16 +566,17 @@ async fn a_key_collector_created_after_an_expulsion_does_not_wait_for_that_party
     // The encryption-key cutoff (10% of 7,200 s) is 720 s after selection.
     let (actor, repo) = start_actor_before_selection(&e3_id, 7_200).await?;
     actor
-        .send(keyshare_event(peer_key(&e3_id, 0), 1, EventSource::Local))
+        .send(keyshare_event(peer_key(&e3_id, 2), 1, EventSource::Net))
         .await?;
     actor
-        .send(keyshare_event(peer_key(&e3_id, 2), 2, EventSource::Net))
+        .send(keyshare_event(expulsion_of(&e3_id, 1), 2, EventSource::Evm))
         .await?;
     actor
-        .send(keyshare_event(expulsion_of(&e3_id, 1), 3, EventSource::Evm))
+        .send(keyshare_event(selection(&e3_id), 3, EventSource::Evm))
         .await?;
+    let own_key = wait_for_own_key(&e3_id, &repo).await?;
     actor
-        .send(keyshare_event(selection(&e3_id), 4, EventSource::Evm))
+        .send(keyshare_event(own_key, 4, EventSource::Local))
         .await?;
 
     // The new collector knows that party 1 is expelled, so keys 0 and 2 complete the collection
@@ -650,11 +646,8 @@ async fn a_restarted_key_collector_does_not_wait_for_an_expelled_party() -> Resu
         &[1],
     )
     .await?;
-    for party_id in [0, 2] {
-        actor.record_encryption_key(&TypedEvent::new(
-            peer_key(&e3_id, party_id),
-            test_ec(party_id + 1),
-        ))?;
+    for (seq, key) in [(1, own_key(&e3_id)), (3, peer_key(&e3_id, 2))] {
+        actor.record_encryption_key(&TypedEvent::new(key, test_ec(seq)))?;
     }
     let actor = actor.start();
     actor
@@ -738,9 +731,7 @@ async fn an_expulsion_that_leaves_fewer_than_h_keys_fails_the_dkg() -> Result<()
     let actor = actor.start();
 
     // The collector completed with H = 2 keys before party 1's expulsion reached it.
-    let keys = [0, 1]
-        .map(|party_id| peer_key(&e3_id, party_id).key)
-        .to_vec();
+    let keys = vec![own_key(&e3_id).key, peer_key(&e3_id, 1).key];
     actor
         .send(TypedEvent::new(
             AllEncryptionKeysCollected { keys },
@@ -840,6 +831,7 @@ async fn start_unwritable_actor(
     })
     .await;
     let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
         bus,
         cipher: Arc::new(Cipher::from_password("test-password").await?),
         state,
@@ -975,6 +967,7 @@ async fn build_actor(
         Ok(recovery)
     })?;
     let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
         bus,
         cipher: Arc::new(Cipher::from_password("test-password").await?),
         state,
@@ -1028,6 +1021,7 @@ async fn start_actor_before_selection_with_recovery(
         Ok(recovery)
     })?;
     let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
         bus,
         cipher: Arc::new(Cipher::from_password("test-password").await?),
         state,
@@ -1050,6 +1044,188 @@ async fn start_actor_before_selection_with_recovery(
     Ok((actor, repo, recovery_repo))
 }
 
+/// A keyshare before its selection, with its state, recovery state and recorded BFV key in
+/// `store`, so that a second one over the same store is a restart. The saved state is `Init`, as
+/// after a crash that lost the snapshot of the selection.
+async fn keyshare_in_init_over(
+    store: &Addr<InMemStore>,
+    e3_id: &E3id,
+    bus: BusHandle,
+    cipher: Arc<Cipher>,
+    effects_enabled: bool,
+) -> Result<ThresholdKeyshare> {
+    let (mut state, _) = test_state_in(store, e3_id, KeyshareState::Init);
+    state.try_mutate_without_context(|mut state| {
+        let now = crate::domain::timeout_policy::now_unix_secs();
+        state.dkg_deadline_unix_secs = Some(now + 7_200);
+        state.dkg_window_secs = Some(3_600);
+        state.params = insecure_threshold_params();
+        Ok(state)
+    })?;
+    let (mut recovery, _) = test_recovery_in(store);
+    recovery.try_mutate_without_context(|mut recovery| {
+        recovery.ciphernode_selected = Some(TypedEvent::new(selection(e3_id), test_ec(0)));
+        Ok(recovery)
+    })?;
+    Ok(ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key_in(store),
+        bus,
+        cipher,
+        state,
+        share_enc_preset: BfvPreset::InsecureDkg512,
+        interfold_address: Address::ZERO,
+        signer: dealer_signer(0),
+        effects_enabled,
+        recovery,
+        recovery_payloads: test_recovery_payloads(),
+        dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
+    }))
+}
+
+/// Wait until `history` holds `count` `EncryptionKeyPending` events, and return their keys. With
+/// `count` zero, wait a while and return what arrived.
+async fn wait_for_pending_keys(
+    history: &Addr<HistoryCollector<InterfoldEvent>>,
+    count: usize,
+) -> Result<Vec<ArcBytes>> {
+    if count == 0 {
+        actix::clock::sleep(std::time::Duration::from_millis(200)).await;
+        return pending_keys(history).await;
+    }
+    actix::clock::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let keys = pending_keys(history).await?;
+            if keys.len() >= count {
+                return Ok::<_, anyhow::Error>(keys);
+            }
+            actix::clock::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await?
+}
+
+/// The public keys of the `EncryptionKeyPending` events in `history`.
+async fn pending_keys(history: &Addr<HistoryCollector<InterfoldEvent>>) -> Result<Vec<ArcBytes>> {
+    Ok(history
+        .send(GetEvents::<InterfoldEvent>::new())
+        .await?
+        .into_iter()
+        .filter_map(|event| match event.into_data() {
+            InterfoldEventData::EncryptionKeyPending(pending) => Some(pending.key.pk_bfv.clone()),
+            _ => None,
+        })
+        .collect())
+}
+
+/// Peers encrypt their DKG shares to the key that this node publishes. The node records its
+/// keypair before it publishes the key, and a restart that lost the snapshot of the selection
+/// reuses the recorded keypair. In replay it publishes nothing; resume publishes the same key.
+#[actix::test]
+async fn a_restart_reuses_the_recorded_bfv_key() -> Result<()> {
+    let e3_id = E3id::new("70", 1);
+    let store = InMemStore::new(false).start();
+    let cipher = Arc::new(Cipher::from_password("test-password").await?);
+    let state_repo = Repository::<ThresholdKeyshareState>::new(DataStore::from_in_mem(&store));
+    let (bus, history) = test_bus();
+    let first = keyshare_in_init_over(&store, &e3_id, bus.clone(), cipher.clone(), true)
+        .await?
+        .start();
+    first
+        .send(TypedEvent::new(selection(&e3_id), test_ec(1)))
+        .await?;
+    wait_for_keyshare_state(&state_repo, |state| {
+        matches!(state, KeyshareState::CollectingEncryptionKeys(_))
+    })
+    .await?;
+    let published = wait_for_pending_keys(&history, 1).await?;
+    assert_eq!(published.len(), 1, "the selection publishes the key");
+    first.send(Die).await?;
+
+    // A new process over the same store, whose saved state lost the selection.
+    let (bus, history) = test_bus();
+    let second = keyshare_in_init_over(&store, &e3_id, bus.clone(), cipher, false)
+        .await?
+        .start();
+    second
+        .send(TypedEvent::new(selection(&e3_id), test_ec(1)))
+        .await?;
+    wait_for_keyshare_state(&state_repo, |state| {
+        matches!(state, KeyshareState::CollectingEncryptionKeys(_))
+    })
+    .await?;
+    assert!(
+        wait_for_pending_keys(&history, 0).await?.is_empty(),
+        "replay publishes no key"
+    );
+    second
+        .send(keyshare_event(EffectsEnabled::new(), 2, EventSource::Local))
+        .await?;
+    assert_eq!(
+        wait_for_pending_keys(&history, 1).await?,
+        published,
+        "resume publishes the recorded key"
+    );
+    Ok(())
+}
+
+/// When the log holds another encryption key of this node, the node lost the secret of the key
+/// that its peers hold. It publishes no second key at resume. With its own key in the log, it
+/// publishes that key again.
+#[actix::test]
+async fn a_node_that_lost_its_key_publishes_no_second_one() -> Result<()> {
+    for (logged, expected) in [(&[2_u8][..], 1), (&[9_u8][..], 0)] {
+        let e3_id = E3id::new("71", 1);
+        let (bus, history) = test_bus();
+        let (mut state, _) = test_state(&e3_id, collecting_encryption_keys_state(&e3_id));
+        state.try_mutate_without_context(|mut state| {
+            let now = crate::domain::timeout_policy::now_unix_secs();
+            state.dkg_deadline_unix_secs = Some(now + 7_200);
+            state.dkg_window_secs = Some(3_600);
+            state.params = insecure_threshold_params();
+            Ok(state)
+        })?;
+        let (mut recovery, _) = test_recovery_with_repo();
+        recovery.try_mutate_without_context(|mut recovery| {
+            recovery.ciphernode_selected = Some(TypedEvent::new(selection(&e3_id), test_ec(0)));
+            recovery.encryption_keys.insert(
+                0,
+                TypedEvent::new(
+                    EncryptionKeyCreated {
+                        e3_id: e3_id.clone(),
+                        key: Arc::new(EncryptionKey::new(0, ArcBytes::from_bytes(logged))),
+                        external: false,
+                    },
+                    test_ec(1),
+                ),
+            );
+            Ok(recovery)
+        })?;
+        let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+            bfv_key: test_bfv_key(),
+            bus: bus.clone(),
+            cipher: Arc::new(Cipher::from_password("test-password").await?),
+            state,
+            share_enc_preset: BfvPreset::InsecureDkg512,
+            interfold_address: Address::ZERO,
+            signer: dealer_signer(0),
+            effects_enabled: false,
+            recovery,
+            recovery_payloads: test_recovery_payloads(),
+            dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
+        })
+        .start();
+        actor
+            .send(keyshare_event(EffectsEnabled::new(), 2, EventSource::Local))
+            .await?;
+        assert_eq!(
+            wait_for_pending_keys(&history, expected).await?.len(),
+            expected,
+            "logged key {logged:?}"
+        );
+    }
+    Ok(())
+}
+
 fn keyshare_event(
     data: impl Into<InterfoldEventData>,
     seq: u64,
@@ -1070,6 +1246,62 @@ fn dealer_signer(party_id: u64) -> alloy::signers::local::PrivateKeySigner {
     alloy::signers::local::PrivateKeySigner::from_bytes(&bytes.into()).unwrap()
 }
 
+/// Fails the first flush that reaches it, and passes the others to the store.
+struct FailFirstFlush {
+    store: Addr<InMemStore>,
+    failed: bool,
+}
+
+impl Actor for FailFirstFlush {
+    type Context = actix::Context<Self>;
+}
+
+impl Handler<e3_events::Flush> for FailFirstFlush {
+    type Result = actix::ResponseFuture<Result<()>>;
+
+    fn handle(&mut self, flush: e3_events::Flush, _: &mut Self::Context) -> Self::Result {
+        if !std::mem::replace(&mut self.failed, true) {
+            return Box::pin(async { Err(anyhow::anyhow!("the disk is full")) });
+        }
+        let store = self.store.clone();
+        Box::pin(async move { store.send(flush).await? })
+    }
+}
+
+/// The record of this node's new BFV keypair fails its flush. The selection runs again with the
+/// same keypair, which the store holds already and the next flush makes durable, and the node then
+/// collects with it and publishes it.
+#[actix::test]
+async fn a_failed_record_of_the_new_bfv_keypair_is_retried() -> Result<()> {
+    let e3_id = E3id::new("80", 1);
+    let (bus, history) = test_bus();
+    let store = InMemStore::new(false).start();
+    let cipher = Arc::new(Cipher::from_password("test-password").await?);
+    let mut keyshare = keyshare_in_init_over(&store, &e3_id, bus, cipher, true).await?;
+    let flushes = FailFirstFlush {
+        store: store.clone(),
+        failed: false,
+    }
+    .start();
+    keyshare.bfv_keys = DurableIntent::new(
+        DataStore::from_in_mem(&store)
+            .with_flush_recipient(flushes.recipient())
+            .scope("bfv_key"),
+    );
+    let actor = keyshare.start();
+    actor
+        .send(keyshare_event(selection(&e3_id), 1, EventSource::Local))
+        .await?;
+
+    let published = wait_for_pending_keys(&history, 1).await?;
+    let recorded = test_bfv_key_in(&store)
+        .restore()
+        .await?
+        .expect("the recorded keypair");
+    assert_eq!(published, vec![recorded.pk_bfv]);
+    Ok(())
+}
+
 fn selection(e3_id: &E3id) -> CiphernodeSelected {
     CiphernodeSelected {
         e3_id: e3_id.clone(),
@@ -1078,6 +1310,37 @@ fn selection(e3_id: &E3id) -> CiphernodeSelected {
             .collect(),
         ..CiphernodeSelected::default()
     }
+}
+
+/// This node's (party 0's) key: the public key that `collecting_encryption_keys_state` collects
+/// with. A key of party 0 with another public key means that this node lost its key's secret.
+fn own_key(e3_id: &E3id) -> EncryptionKeyCreated {
+    own_key_with(e3_id, ArcBytes::from_bytes(&[2]))
+}
+
+/// This node's (party 0's) key with the public key `pk_bfv`.
+fn own_key_with(e3_id: &E3id, pk_bfv: ArcBytes) -> EncryptionKeyCreated {
+    EncryptionKeyCreated {
+        e3_id: e3_id.clone(),
+        key: Arc::new(EncryptionKey::new(0, pk_bfv)),
+        external: false,
+    }
+}
+
+/// Wait until a freshly selected node collects encryption keys, and return its key, with the public
+/// key that it generated.
+async fn wait_for_own_key(
+    e3_id: &E3id,
+    repo: &Repository<ThresholdKeyshareState>,
+) -> Result<EncryptionKeyCreated> {
+    let KeyshareState::CollectingEncryptionKeys(data) = wait_for_keyshare_state(repo, |state| {
+        matches!(state, KeyshareState::CollectingEncryptionKeys(_))
+    })
+    .await?
+    else {
+        unreachable!("the wait returns only a matching state");
+    };
+    Ok(own_key_with(e3_id, data.pk_bfv))
 }
 
 fn peer_key(e3_id: &E3id, party_id: u64) -> EncryptionKeyCreated {
@@ -1174,8 +1437,18 @@ fn test_state(
     Persistable<ThresholdKeyshareState>,
     Repository<ThresholdKeyshareState>,
 ) {
-    let store = InMemStore::new(false).start();
-    let repo = Repository::<ThresholdKeyshareState>::new(DataStore::from_in_mem(&store));
+    test_state_in(&InMemStore::new(false).start(), e3_id, keyshare_state)
+}
+
+fn test_state_in(
+    store: &Addr<InMemStore>,
+    e3_id: &E3id,
+    keyshare_state: KeyshareState,
+) -> (
+    Persistable<ThresholdKeyshareState>,
+    Repository<ThresholdKeyshareState>,
+) {
+    let repo = Repository::<ThresholdKeyshareState>::new(DataStore::from_in_mem(store));
     let mut state = ThresholdKeyshareState::new(
         e3_id.clone(),
         0,
@@ -1207,9 +1480,34 @@ fn test_recovery_with_repo() -> (
     )
 }
 
+/// A recovery record in `store`, next to the keyshare state, as in production storage.
+fn test_recovery_in(
+    store: &Addr<InMemStore>,
+) -> (
+    Persistable<ThresholdKeyshareRecoveryState>,
+    Repository<ThresholdKeyshareRecoveryState>,
+) {
+    let repo = Repository::<ThresholdKeyshareRecoveryState>::new(
+        DataStore::from_in_mem(store).scope("recovery"),
+    );
+    (
+        repo.send(Some(ThresholdKeyshareRecoveryState::default())),
+        repo,
+    )
+}
+
 fn test_recovery_payloads() -> ThresholdKeyshareRecoveryPayloads {
     let store = InMemStore::new(false).start();
     ThresholdKeyshareRecoveryPayloads::new(DataStore::from_in_mem(&store))
+}
+
+fn test_bfv_key() -> DurableIntent<BfvKeyIntent> {
+    test_bfv_key_in(&InMemStore::new(false).start())
+}
+
+/// The recorded BFV keypair in `store`, so that an actor that restarts over the store reads it.
+fn test_bfv_key_in(store: &Addr<InMemStore>) -> DurableIntent<BfvKeyIntent> {
+    DurableIntent::new(DataStore::from_in_mem(store).scope("bfv_key"))
 }
 
 fn test_ec(seq: u64) -> EventContext<Sequenced> {
@@ -1223,6 +1521,55 @@ fn test_ec(seq: u64) -> EventContext<Sequenced> {
     .into_sequenced(seq)
     .get_ctx()
     .clone()
+}
+
+/// A key collection with another key of this node than the one whose secret it holds starts no
+/// share generation: the node lost the secret of the key that its peers encrypt to.
+#[actix::test]
+async fn a_collection_with_another_key_of_this_node_starts_no_share_generation() -> Result<()> {
+    for (own, generates) in [(9_u8, false), (2_u8, true)] {
+        let e3_id = E3id::new("72", 1);
+        let (bus, _history) = test_bus();
+        let (mut state, _) = test_state(&e3_id, collecting_encryption_keys_state(&e3_id));
+        state.try_mutate_without_context(|mut state| {
+            let now = crate::domain::timeout_policy::now_unix_secs();
+            state.dkg_deadline_unix_secs = Some(now + 7_200);
+            state.dkg_window_secs = Some(3_600);
+            state.params = insecure_threshold_params();
+            Ok(state)
+        })?;
+        let mut actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+            bfv_key: test_bfv_key(),
+            bus,
+            cipher: Arc::new(Cipher::from_password("test-password").await?),
+            state,
+            share_enc_preset: BfvPreset::InsecureDkg512,
+            interfold_address: Address::ZERO,
+            signer: dealer_signer(0),
+            effects_enabled: true,
+            recovery: test_recovery(),
+            recovery_payloads: test_recovery_payloads(),
+            dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
+        });
+        let key = |party_id: u64, pk: u8| {
+            Arc::new(EncryptionKey::new(party_id, ArcBytes::from_bytes(&[pk])))
+        };
+        let _ = actor.handle_all_encryption_keys_collected(TypedEvent::new(
+            AllEncryptionKeysCollected {
+                keys: vec![key(0, own), key(1, 11), key(2, 12)],
+            },
+            test_ec(1),
+        ));
+        assert_eq!(
+            !matches!(
+                actor.state.get().map(|state| state.state),
+                Some(KeyshareState::CollectingEncryptionKeys(_))
+            ),
+            generates,
+            "own key {own}"
+        );
+    }
+    Ok(())
 }
 
 fn collecting_encryption_keys_state(e3_id: &E3id) -> KeyshareState {
@@ -1277,6 +1624,7 @@ async fn replayed_dkg_outputs_wait_for_their_prerequisites() -> Result<()> {
     let cipher = Arc::new(Cipher::from_password("test-password").await?);
     let (state, _) = test_state(&e3_id, collecting_encryption_keys_state(&e3_id));
     let mut actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
         bus,
         cipher: cipher.clone(),
         state,
@@ -1316,6 +1664,7 @@ async fn recovered_encryption_keys_reuse_the_replayed_key_output() -> Result<()>
     let cipher = Arc::new(Cipher::from_password("test-password").await?);
     let (state, _) = test_state(&e3_id, collecting_encryption_keys_state(&e3_id));
     let mut actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
         bus,
         cipher: cipher.clone(),
         state,
@@ -1331,9 +1680,7 @@ async fn recovered_encryption_keys_reuse_the_replayed_key_output() -> Result<()>
     actor.handle_gen_pk_share_and_sk_sss_response(gen_pk_response(&cipher, &e3_id, 2)?)?;
     actor.handle_all_encryption_keys_collected(TypedEvent::new(
         AllEncryptionKeysCollected {
-            keys: [0, 1]
-                .map(|party_id| peer_key(&e3_id, party_id).key)
-                .to_vec(),
+            keys: vec![own_key(&e3_id).key, peer_key(&e3_id, 1).key],
         },
         test_ec(1),
     ))?;
@@ -1401,6 +1748,7 @@ async fn early_threshold_share_batch_is_verified_after_own_shares_exist() -> Res
         }),
     );
     let mut actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
         bus,
         cipher: cipher.clone(),
         state,
@@ -1508,6 +1856,7 @@ async fn replayed_signed_c3_proof_is_stored_once() -> Result<()> {
         &signer,
     )?;
     let mut actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
         bus,
         cipher: Arc::new(Cipher::from_password("test-password").await?),
         state,
@@ -1557,24 +1906,29 @@ fn ready_message(party_id: u64, dealer_ids: &[u64], e3_id: &E3id) -> DkgCoordina
     }
 }
 
-/// A keyshare for party 0 in `AggregatingDecryptionKey(current)`, in a committee of the three
+/// A keyshare for party 0 in `AggregatingDecryptionKey(current)`, in a committee of the
 /// `signers`. It signs as party 0. `setup` edits the recovery state.
 async fn committee_actor(
     e3_id: &E3id,
-    signers: &[alloy::signers::local::PrivateKeySigner; 3],
+    signers: &[alloy::signers::local::PrivateKeySigner],
     current: AggregatingDecryptionKey,
     cipher: Arc<Cipher>,
     setup: impl FnOnce(&mut ThresholdKeyshareRecoveryState),
 ) -> Result<CommitteeActor> {
     let (bus, history) = test_bus();
-    let (state, _) = test_state(e3_id, KeyshareState::AggregatingDecryptionKey(current));
-    let (mut recovery, recovery_repo) = test_recovery_with_repo();
+    let state_store = InMemStore::new(false).start();
+    let (state, state_repo) = test_state_in(
+        &state_store,
+        e3_id,
+        KeyshareState::AggregatingDecryptionKey(current),
+    );
+    let (mut recovery, recovery_repo) = test_recovery_in(&state_store);
     recovery.try_mutate_without_context(|mut recovery| {
         recovery.ciphernode_selected = Some(TypedEvent::new(
             CiphernodeSelected {
                 e3_id: e3_id.clone(),
                 threshold_m: 1,
-                threshold_n: 3,
+                threshold_n: signers.len(),
                 party_id: 0,
                 committee: signers
                     .iter()
@@ -1597,6 +1951,7 @@ async fn committee_actor(
         effects_enabled: false,
         recovery,
         recovery_payloads: test_recovery_payloads(),
+        bfv_key: test_bfv_key(),
         dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
     });
     Ok(CommitteeActor {
@@ -1604,6 +1959,8 @@ async fn committee_actor(
         bus,
         history,
         recovery_repo,
+        state_repo,
+        state_store,
     })
 }
 
@@ -1612,6 +1969,8 @@ struct CommitteeActor {
     bus: BusHandle,
     history: Addr<HistoryCollector<InterfoldEvent>>,
     recovery_repo: Repository<ThresholdKeyshareRecoveryState>,
+    state_repo: Repository<ThresholdKeyshareState>,
+    state_store: Addr<InMemStore>,
 }
 
 fn three_signers() -> [alloy::signers::local::PrivateKeySigner; 3] {
@@ -1729,6 +2088,17 @@ async fn batch_with_an_expelled_dealer(e3_id: &E3id, verified: bool) -> Result<C
     Ok(committee)
 }
 
+/// Save `dispatch` as a C2/C3 dispatch of the current batch, as the actor does when it sends one.
+fn record_share_dispatch(
+    actor: &mut ThresholdKeyshare,
+    dispatch: &EventContext<Sequenced>,
+) -> Result<()> {
+    actor.recovery.try_mutate_without_context(|mut recovery| {
+        recovery.share_dispatch_ids.push(dispatch.id());
+        Ok(recovery)
+    })
+}
+
 /// The context of the C2/C3 dispatch that the actor sent for `dealers`.
 async fn share_dispatch_of(
     history: &Addr<HistoryCollector<InterfoldEvent>>,
@@ -1791,6 +2161,160 @@ async fn wait_for_kept_share_verdicts(actor: &Addr<ThresholdKeyshare>, count: us
     .await?
 }
 
+/// A keyshare that finished its decryption-key calculation: its C2/C3 batch is retired.
+async fn retired_share_batch(
+    e3_id: &E3id,
+    setup: impl FnOnce(&mut ThresholdKeyshareRecoveryState),
+) -> Result<CommitteeActor> {
+    let (bus, history) = test_bus();
+    let state_store = InMemStore::new(false).start();
+    let (state, state_repo) = test_state_in(
+        &state_store,
+        e3_id,
+        KeyshareState::ReadyForDecryption(ready_for_c4_test()),
+    );
+    let (mut recovery, recovery_repo) = test_recovery_with_repo();
+    recovery.try_mutate_without_context(|mut recovery| {
+        recovery.verified_dealer_ids = Some(BTreeSet::from([1]));
+        setup(&mut recovery);
+        Ok(recovery)
+    })?;
+    let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
+        bus: bus.clone(),
+        cipher: Arc::new(Cipher::from_password("test-password").await?),
+        state,
+        share_enc_preset: BfvPreset::InsecureDkg512,
+        interfold_address: Address::ZERO,
+        signer: alloy::signers::local::PrivateKeySigner::random(),
+        effects_enabled: true,
+        recovery,
+        recovery_payloads: test_recovery_payloads(),
+        dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
+    });
+    Ok(CommitteeActor {
+        actor,
+        bus,
+        history,
+        recovery_repo,
+        state_repo,
+        state_store,
+    })
+}
+
+async fn assert_no_keyshare_error(history: &Addr<HistoryCollector<InterfoldEvent>>) -> Result<()> {
+    actix::clock::sleep(std::time::Duration::from_millis(50)).await;
+    let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event.get_data(), InterfoldEventData::InterfoldError(_))),
+        "unexpected error: {events:?}"
+    );
+    Ok(())
+}
+
+#[actix::test]
+async fn a_c2_c3_result_after_the_batch_retired_changes_nothing() -> Result<()> {
+    let e3_id = E3id::new("retired-share-batch", 1);
+    // The calculation ran from the first verified batch while a grown batch's check still ran.
+    let grown_dispatch = keyshare_event(TestEvent::new("grown batch", 1), 10, EventSource::Local)
+        .get_ctx()
+        .clone();
+    let CommitteeActor {
+        actor,
+        history,
+        recovery_repo,
+        ..
+    } = retired_share_batch(&e3_id, |recovery| {
+        recovery.share_dispatch_ids = vec![grown_dispatch.id()];
+    })
+    .await?;
+    let before = recovery_repo.read().await?.expect("saved recovery state");
+    let actor = actor.start();
+
+    let verdict = ShareVerificationComplete {
+        e3_id,
+        kind: VerificationKind::ShareProofs,
+        dishonest_parties: BTreeSet::new(),
+    };
+    actor.send(TypedEvent::new(verdict, grown_dispatch)).await?;
+
+    assert_no_keyshare_error(&history).await?;
+    let after = recovery_repo.read().await?.expect("saved recovery state");
+    assert_eq!(after.verified_dealer_ids, before.verified_dealer_ids);
+    assert!(after.share_verification_complete.is_none());
+    assert!(after.collected_threshold_share_ids.is_none());
+    assert_eq!(actor.send(KeptShareVerdicts).await?, 0);
+    Ok(())
+}
+
+#[actix::test]
+async fn a_queued_share_collection_cannot_reopen_a_retired_batch() -> Result<()> {
+    let e3_id = E3id::new("queued-share-collection", 1);
+    let CommitteeActor {
+        actor,
+        history,
+        recovery_repo,
+        ..
+    } = retired_share_batch(&e3_id, |_| {}).await?;
+    let actor = actor.start();
+
+    // The collector sent its result before the calculation stopped it.
+    let share = peer_share(&e3_id, 1);
+    let collected = AllThresholdSharesCollected::new(
+        HashMap::from([(1, share.share.clone())]),
+        HashMap::from([(
+            1,
+            ReceivedShareProofs {
+                signed_c2a_proof: None,
+                signed_c2b_proof: None,
+                signed_c3a_proofs: Vec::new(),
+                signed_c3b_proofs: Vec::new(),
+            },
+        )]),
+    );
+    actor.send(TypedEvent::new(collected, test_ec(5))).await?;
+
+    assert_no_keyshare_error(&history).await?;
+    let recovery = recovery_repo.read().await?.expect("saved recovery state");
+    assert!(recovery.collected_threshold_share_ids.is_none());
+    assert!(recovery.share_dispatch_ids.is_empty());
+    Ok(())
+}
+
+#[actix::test]
+async fn a_first_c2_c3_result_applies_only_to_the_batch_of_its_dispatch() -> Result<()> {
+    let e3_id = E3id::new("first-share-verdict", 1);
+    // A restart restored batch `{1}`; this node has not sent its dispatch again yet.
+    let CommitteeActor {
+        actor,
+        recovery_repo,
+        ..
+    } = committee_with_two_shares(&e3_id, |recovery| {
+        recovery.collected_threshold_share_ids = Some(BTreeSet::from([1]));
+    })
+    .await?;
+    let actor = actor.start();
+
+    // The result of a dispatch for another batch, such as one that only the earlier run sent.
+    let other_batch = keyshare_event(TestEvent::new("other batch", 1), 10, EventSource::Local)
+        .get_ctx()
+        .clone();
+    let verdict = ShareVerificationComplete {
+        e3_id,
+        kind: VerificationKind::ShareProofs,
+        dishonest_parties: BTreeSet::new(),
+    };
+    actor.send(TypedEvent::new(verdict, other_batch)).await?;
+
+    assert_eq!(actor.send(KeptShareVerdicts).await?, 1);
+    let recovery = recovery_repo.read().await?.expect("saved recovery state");
+    assert!(recovery.verified_dealer_ids.is_none());
+    assert!(recovery.share_verification_complete.is_none());
+    Ok(())
+}
+
 #[actix::test]
 async fn a_share_batch_grows_past_a_dealer_that_was_expelled() -> Result<()> {
     let e3_id = E3id::new("batch-past-expelled", 1);
@@ -1823,16 +2347,12 @@ async fn a_share_batch_grows_past_a_dealer_that_was_expelled() -> Result<()> {
 async fn a_grown_batch_completes_when_its_verdict_equals_the_first() -> Result<()> {
     let e3_id = E3id::new("grown-batch-verdict", 1);
     let CommitteeActor {
-        actor,
+        mut actor,
         bus,
         history,
         recovery_repo,
+        ..
     } = batch_with_an_expelled_dealer(&e3_id, false).await?;
-    let actor = actor.start();
-    bus.subscribe(
-        EventType::ShareVerificationComplete,
-        actor.clone().recipient(),
-    );
     // Each verdict comes from its own dispatch, as in production; the payloads are equal.
     let verdict = ShareVerificationComplete {
         e3_id: e3_id.clone(),
@@ -1844,6 +2364,12 @@ async fn a_grown_batch_completes_when_its_verdict_equals_the_first() -> Result<(
             .get_ctx()
             .clone()
     };
+    record_share_dispatch(&mut actor, &dispatch_before_restart("first batch"))?;
+    let actor = actor.start();
+    bus.subscribe(
+        EventType::ShareVerificationComplete,
+        actor.clone().recipient(),
+    );
 
     // The verdict for `{1}` arrives after dealer 1's expulsion, so the batch grows to `{2}`.
     bus.publish(verdict.clone(), dispatch_before_restart("first batch"))?;
@@ -1882,6 +2408,7 @@ async fn a_verdict_of_an_earlier_batch_does_not_complete_a_grown_batch() -> Resu
         bus,
         history,
         recovery_repo,
+        ..
     } = committee_with_two_shares(&e3_id, |recovery| {
         recovery.collected_threshold_share_ids = Some(BTreeSet::from([2]));
     })
@@ -1935,15 +2462,16 @@ async fn a_kept_verdict_applies_when_restart_sends_its_batch_again() -> Result<(
         dishonest_parties: BTreeSet::new(),
     };
     // Before the restart, the batch grew past expelled dealer 1 to `{2}` and was sent.
-    let before = batch_with_an_expelled_dealer(&e3_id, false).await?;
+    let mut before = batch_with_an_expelled_dealer(&e3_id, false).await?;
+    let first_dispatch = keyshare_event(TestEvent::new("first batch", 1), 10, EventSource::Local)
+        .get_ctx()
+        .clone();
+    record_share_dispatch(&mut before.actor, &first_dispatch)?;
     let first_actor = before.actor.start();
     before.bus.subscribe(
         EventType::ShareVerificationComplete,
         first_actor.recipient(),
     );
-    let first_dispatch = keyshare_event(TestEvent::new("first batch", 1), 10, EventSource::Local)
-        .get_ctx()
-        .clone();
     before.bus.publish(verdict.clone(), first_dispatch)?;
     let grown_dispatch = share_dispatch_of(&before.history, &[2]).await?;
 
@@ -1992,15 +2520,16 @@ async fn a_restart_applies_the_result_of_a_dispatch_sent_before_it() -> Result<(
         dishonest_parties: BTreeSet::new(),
     };
     // Before the restart, the batch grew past expelled dealer 1 to `{2}` and was sent.
-    let before = batch_with_an_expelled_dealer(&e3_id, false).await?;
+    let mut before = batch_with_an_expelled_dealer(&e3_id, false).await?;
+    let first_dispatch = keyshare_event(TestEvent::new("first batch", 1), 10, EventSource::Local)
+        .get_ctx()
+        .clone();
+    record_share_dispatch(&mut before.actor, &first_dispatch)?;
     let first_actor = before.actor.start();
     before.bus.subscribe(
         EventType::ShareVerificationComplete,
         first_actor.recipient(),
     );
-    let first_dispatch = keyshare_event(TestEvent::new("first batch", 1), 10, EventSource::Local)
-        .get_ctx()
-        .clone();
     before.bus.publish(verdict.clone(), first_dispatch)?;
     let grown_dispatch = share_dispatch_of(&before.history, &[2]).await?;
     let persisted = wait_for_record(&before.recovery_repo, |recovery| {
@@ -2153,6 +2682,7 @@ async fn a_logged_dispatch_of_an_earlier_batch_is_not_recorded_for_a_grown_batch
         bus,
         history,
         recovery_repo,
+        ..
     } = committee_with_two_shares(&e3_id, |recovery| {
         recovery.collected_threshold_share_ids = Some(BTreeSet::from([2]));
     })
@@ -2257,6 +2787,7 @@ async fn only_the_active_aggregator_proposes_a_ready_roster() -> Result<()> {
         Ok(recovery)
     })?;
     let mut actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
         bus,
         cipher: Arc::new(Cipher::from_password("test-password").await?),
         state,
@@ -2422,6 +2953,7 @@ async fn roster_from_future_aggregator_is_held_until_promotion() -> Result<()> {
         Ok(recovery)
     })?;
     let mut actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
         bus,
         cipher: Arc::new(Cipher::from_password("test-password").await?),
         state,
@@ -2462,6 +2994,761 @@ async fn roster_from_future_aggregator_is_held_until_promotion() -> Result<()> {
         actor.state.try_get()?.honest_parties,
         Some(BTreeSet::from([0, 1]))
     );
+    Ok(())
+}
+
+#[actix::test]
+async fn own_ready_grows_past_an_expelled_dealer() -> Result<()> {
+    let e3_id = E3id::new("50", 1);
+    let signers = three_signers();
+    let cipher = Arc::new(Cipher::from_password("test-password").await?);
+    let current = AggregatingDecryptionKey {
+        signed_sk_share_computation_proof: Some(c2_proof(
+            &e3_id,
+            ProofType::C2aSkShareComputation,
+            0,
+        )),
+        signed_e_sm_share_computation_proof: Some(c2_proof(
+            &e3_id,
+            ProofType::C2bESmShareComputation,
+            0,
+        )),
+        ..aggregating_decryption_key_for_roster_test()
+    };
+    let CommitteeActor { mut actor, .. } =
+        committee_actor(&e3_id, &signers, current, cipher, |recovery| {
+            recovery.share_verification_complete = Some(share_proofs_verified(&e3_id));
+            recovery.verified_dealer_ids = Some(BTreeSet::from([1]));
+        })
+        .await?;
+    for party_id in [1, 2] {
+        actor.record_threshold_share(&TypedEvent::new(
+            ThresholdShareCreated {
+                signed_c2a_proof: Some(c2_proof(
+                    &e3_id,
+                    ProofType::C2aSkShareComputation,
+                    party_id,
+                )),
+                signed_c2b_proof: Some(c2_proof(
+                    &e3_id,
+                    ProofType::C2bESmShareComputation,
+                    party_id,
+                )),
+                ..peer_share(&e3_id, party_id)
+            },
+            test_ec(party_id + 1),
+        ))?;
+    }
+    let ready_parties = |actor: &ThresholdKeyshare| -> Result<Vec<u64>> {
+        Ok(actor
+            .recovery
+            .try_get()?
+            .dkg_ready
+            .map(|ready| ready.dealers.iter().map(|dealer| dealer.party_id).collect())
+            .unwrap_or_default())
+    };
+    actor.maybe_publish_dkg_ready(test_ec(10))?;
+    assert_eq!(ready_parties(&actor)?, vec![0, 1]);
+
+    // Dealer 1 is expelled, and the grown batch verifies dealer 2.
+    actor.handle_committee_member_expelled(expulsion_of(&e3_id, 1), test_ec(11))?;
+    actor.recovery.try_mutate_without_context(|mut recovery| {
+        recovery.verified_dealer_ids = Some(BTreeSet::from([1, 2]));
+        Ok(recovery)
+    })?;
+    actor.maybe_publish_dkg_ready(test_ec(12))?;
+
+    assert_eq!(ready_parties(&actor)?, vec![0, 2]);
+    Ok(())
+}
+
+#[actix::test]
+async fn ready_update_past_an_expelled_dealer_waits_for_the_expulsion() -> Result<()> {
+    let e3_id = E3id::new("49", 1);
+    let signers = three_signers();
+    let sign = |party_id: u64, kind, dealer_ids: &[u64]| {
+        DkgCoordination::sign(
+            e3_id.clone(),
+            Address::ZERO,
+            party_id,
+            kind,
+            dealers(dealer_ids),
+            &signers[party_id as usize],
+        )
+    };
+    let own_ready = sign(0, DkgCoordinationKind::Ready, &[0, 1])?;
+    // Party 1 reported dealer 2, then saw dealer 2 expelled and verified this party.
+    let stale_ready = sign(1, DkgCoordinationKind::Ready, &[1, 2])?;
+    let ready_update = sign(1, DkgCoordinationKind::Ready, &[0, 1])?;
+    let roster = sign(1, DkgCoordinationKind::Roster, &[0, 1])?;
+    let cipher = Arc::new(Cipher::from_password("test-password").await?);
+    let mut committee = committee_actor(
+        &e3_id,
+        &signers,
+        aggregating_decryption_key_for_roster_test(),
+        cipher,
+        |recovery| {
+            recovery.dkg_ready = Some(own_ready.clone());
+            recovery.ready_by_party.insert(0, own_ready.clone());
+            recovery.ready_by_party.insert(1, stale_ready.clone());
+            recovery.active_aggregator_party_id = Some(1);
+        },
+    )
+    .await?;
+
+    // This node has not seen the expulsion yet: the update lacks dealer 2, and the roster is
+    // contradicted by the held Ready report of its proposer.
+    committee
+        .actor
+        .record_dkg_coordination(ready_update.clone(), test_ec(2))?;
+    committee
+        .actor
+        .record_dkg_coordination(roster.clone(), test_ec(3))?;
+    let recovery = committee.actor.recovery.try_get()?;
+    assert_eq!(recovery.ready_by_party.get(&1), Some(&stale_ready));
+    assert_eq!(
+        recovery.held_ready_updates.get(&1),
+        Some(&vec![ready_update.clone()])
+    );
+    assert_eq!(recovery.pending_rosters.get(&1), Some(&roster));
+    assert!(recovery.dkg_roster.is_none());
+
+    committee
+        .actor
+        .handle_committee_member_expelled(expulsion_of(&e3_id, 2), test_ec(4))?;
+
+    let recovery = committee.actor.recovery.try_get()?;
+    assert_eq!(recovery.ready_by_party.get(&1), Some(&ready_update));
+    assert!(recovery.held_ready_updates.is_empty());
+    assert_eq!(recovery.dkg_roster, Some(roster));
+    assert_eq!(
+        committee.actor.state.try_get()?.honest_parties,
+        Some(BTreeSet::from([0, 1]))
+    );
+    Ok(())
+}
+
+#[actix::test]
+async fn a_roster_with_an_expelled_dealer_is_not_accepted() -> Result<()> {
+    let e3_id = E3id::new("51", 1);
+    let signers = three_signers();
+    let sign = |party_id: u64, kind, dealer_ids: &[u64]| {
+        DkgCoordination::sign(
+            e3_id.clone(),
+            Address::ZERO,
+            party_id,
+            kind,
+            dealers(dealer_ids),
+            &signers[party_id as usize],
+        )
+    };
+    let own_ready = sign(0, DkgCoordinationKind::Ready, &[0, 1, 2])?;
+    let reporter_ready = sign(1, DkgCoordinationKind::Ready, &[1, 2])?;
+    let dealer_ready = sign(2, DkgCoordinationKind::Ready, &[1, 2])?;
+    let roster = sign(1, DkgCoordinationKind::Roster, &[1, 2])?;
+    let cipher = Arc::new(Cipher::from_password("test-password").await?);
+    let mut committee = committee_actor(
+        &e3_id,
+        &signers,
+        aggregating_decryption_key_for_roster_test(),
+        cipher,
+        |recovery| {
+            recovery.dkg_ready = Some(own_ready.clone());
+            recovery.ready_by_party.insert(0, own_ready.clone());
+            recovery.ready_by_party.insert(1, reporter_ready.clone());
+            recovery.ready_by_party.insert(2, dealer_ready.clone());
+            recovery.pending_rosters.insert(1, roster.clone());
+            recovery.active_aggregator_party_id = Some(1);
+        },
+    )
+    .await?;
+
+    // Dealer 2 of the held roster is expelled; the roster can no longer finish.
+    committee
+        .actor
+        .handle_committee_member_expelled(expulsion_of(&e3_id, 2), test_ec(4))?;
+
+    let recovery = committee.actor.recovery.try_get()?;
+    assert!(recovery.dkg_roster.is_none());
+    assert!(recovery.pending_rosters.is_empty());
+    Ok(())
+}
+
+#[actix::test]
+async fn promotion_does_not_accept_a_held_roster_with_an_expelled_dealer() -> Result<()> {
+    let e3_id = E3id::new("53", 1);
+    let signers = three_signers();
+    let sign = |party_id: u64, kind, dealer_ids: &[u64]| {
+        DkgCoordination::sign(
+            e3_id.clone(),
+            Address::ZERO,
+            party_id,
+            kind,
+            dealers(dealer_ids),
+            &signers[party_id as usize],
+        )
+    };
+    let own_ready = sign(0, DkgCoordinationKind::Ready, &[0, 1, 2])?;
+    let reporter_ready = sign(1, DkgCoordinationKind::Ready, &[1, 2])?;
+    let roster = sign(1, DkgCoordinationKind::Roster, &[1, 2])?;
+    let cipher = Arc::new(Cipher::from_password("test-password").await?);
+    let mut committee = committee_actor(
+        &e3_id,
+        &signers,
+        aggregating_decryption_key_for_roster_test(),
+        cipher,
+        |recovery| {
+            recovery.dkg_ready = Some(own_ready.clone());
+            recovery.ready_by_party.insert(0, own_ready.clone());
+            recovery.ready_by_party.insert(1, reporter_ready.clone());
+            recovery.pending_rosters.insert(1, roster.clone());
+        },
+    )
+    .await?;
+    committee
+        .actor
+        .state
+        .try_mutate_without_context(|mut state| {
+            state.expelled_parties.insert(2);
+            Ok(state)
+        })?;
+
+    // The roster's proposer becomes the active aggregator after dealer 2 was expelled.
+    committee.actor.handle_aggregator_changed(
+        AggregatorChanged {
+            e3_id: e3_id.clone(),
+            active_party_id: Some(1),
+            is_aggregator: false,
+        },
+        test_ec(5),
+    )?;
+
+    assert!(committee.actor.recovery.try_get()?.dkg_roster.is_none());
+    Ok(())
+}
+
+#[actix::test]
+async fn effects_apply_a_held_ready_update_that_a_saved_expulsion_explains() -> Result<()> {
+    let e3_id = E3id::new("52", 1);
+    let signers = three_signers();
+    let sign = |party_id: u64, dealer_ids: &[u64]| {
+        DkgCoordination::sign(
+            e3_id.clone(),
+            Address::ZERO,
+            party_id,
+            DkgCoordinationKind::Ready,
+            dealers(dealer_ids),
+            &signers[party_id as usize],
+        )
+    };
+    let stale_ready = sign(1, &[1, 2])?;
+    let ready_update = sign(1, &[0, 1])?;
+    let cipher = Arc::new(Cipher::from_password("test-password").await?);
+    let mut committee = committee_actor(
+        &e3_id,
+        &signers,
+        aggregating_decryption_key_for_roster_test(),
+        cipher,
+        |recovery| {
+            recovery.ready_by_party.insert(1, stale_ready.clone());
+            recovery
+                .held_ready_updates
+                .insert(1, vec![ready_update.clone()]);
+        },
+    )
+    .await?;
+    // The expulsion was saved, but the write that applies the held update was not.
+    committee
+        .actor
+        .state
+        .try_mutate_without_context(|mut state| {
+            state.expelled_parties.insert(2);
+            Ok(state)
+        })?;
+    let actor = committee.actor.start();
+
+    actor
+        .send(keyshare_event(EffectsEnabled::new(), 3, EventSource::Local))
+        .await?;
+
+    let recovery = wait_for_record(&committee.recovery_repo, |recovery| {
+        recovery.held_ready_updates.is_empty()
+    })
+    .await?;
+    assert_eq!(recovery.ready_by_party.get(&1), Some(&ready_update));
+    Ok(())
+}
+
+/// The node started C4 from the roster of proposer 1 and restarted before the calculation
+/// returned. A roster of proposer 0 that arrives later must not replace the fixed roster.
+#[actix::test]
+async fn a_restart_keeps_the_roster_that_its_c4_started_from() -> Result<()> {
+    let e3_id = E3id::new("54", 1);
+    let signers = three_signers();
+    let sign = |party_id: u64, kind, dealer_ids: &[u64]| {
+        DkgCoordination::sign(
+            e3_id.clone(),
+            Address::ZERO,
+            party_id,
+            kind,
+            dealers(dealer_ids),
+            &signers[party_id as usize],
+        )
+    };
+    let own_ready = sign(0, DkgCoordinationKind::Ready, &[0, 1, 2])?;
+    let accepted = sign(1, DkgCoordinationKind::Roster, &[1, 2])?;
+    let outranking = sign(0, DkgCoordinationKind::Roster, &[0, 1])?;
+    let cipher = Arc::new(Cipher::from_password("test-password").await?);
+    let mut committee = committee_actor(
+        &e3_id,
+        &signers,
+        aggregating_decryption_key_for_roster_test(),
+        cipher,
+        |recovery| {
+            recovery.dkg_ready = Some(own_ready.clone());
+            recovery.ready_by_party.insert(0, own_ready.clone());
+            for party_id in [1, 2] {
+                recovery
+                    .ready_by_party
+                    .insert(party_id, ready_message(party_id, &[0, 1, 2], &e3_id));
+            }
+            recovery.dkg_roster = Some(accepted.clone());
+            recovery.active_aggregator_party_id = Some(1);
+        },
+    )
+    .await?;
+    committee
+        .actor
+        .state
+        .try_mutate_without_context(|mut state| {
+            state.dkg_roster_fixed = true;
+            Ok(state)
+        })?;
+
+    committee
+        .actor
+        .record_dkg_coordination(outranking.clone(), test_ec(2))?;
+
+    let recovery = committee.actor.recovery.try_get()?;
+    assert_eq!(recovery.dkg_roster, Some(accepted));
+    assert!(!recovery.pending_rosters.contains_key(&0));
+    Ok(())
+}
+
+/// After a restart, a restored roster keeps every dealer once C4 started from it: the calculation
+/// used them all. Before that, as live, an expelled dealer is not an honest party. The roster stays
+/// accepted either way, also when only its proposer was expelled, so the commitment checker keeps
+/// the same selection.
+#[actix::test]
+async fn a_restored_roster_leaves_out_an_expelled_dealer_until_c4_started() -> Result<()> {
+    for (fixed, expelled, honest) in [
+        (false, 1, BTreeSet::from([0])),
+        (true, 1, BTreeSet::from([0, 1])),
+        (false, 2, BTreeSet::from([0, 1])),
+    ] {
+        let e3_id = E3id::new("55", 1);
+        let signers = three_signers();
+        let own_ready = DkgCoordination::sign(
+            e3_id.clone(),
+            Address::ZERO,
+            0,
+            DkgCoordinationKind::Ready,
+            dealers(&[0, 1]),
+            &signers[0],
+        )?;
+        // Party 2 proposed the dealers 0 and 1.
+        let roster = DkgCoordination::sign(
+            e3_id.clone(),
+            Address::ZERO,
+            2,
+            DkgCoordinationKind::Roster,
+            dealers(&[0, 1]),
+            &signers[2],
+        )?;
+        let cipher = Arc::new(Cipher::from_password("test-password").await?);
+        let mut committee = committee_actor(
+            &e3_id,
+            &signers,
+            aggregating_decryption_key_for_roster_test(),
+            cipher,
+            |recovery| {
+                recovery.dkg_ready = Some(own_ready.clone());
+                recovery.ready_by_party.insert(0, own_ready.clone());
+                recovery.dkg_roster = Some(roster.clone());
+            },
+        )
+        .await?;
+        // A party was expelled after the acceptance was saved.
+        committee
+            .actor
+            .state
+            .try_mutate_without_context(|mut state| {
+                state.expelled_parties.insert(expelled);
+                state.dkg_roster_fixed = fixed;
+                Ok(state)
+            })?;
+
+        committee
+            .actor
+            .accept_dkg_roster(roster.clone(), test_ec(3))?;
+
+        let case = format!("fixed={fixed} expelled={expelled}");
+        assert_eq!(
+            committee.actor.recovery.try_get()?.dkg_roster,
+            Some(roster.clone()),
+            "{case}"
+        );
+        assert_eq!(
+            committee.actor.state.try_get()?.honest_parties,
+            Some(honest),
+            "{case}"
+        );
+    }
+    Ok(())
+}
+
+/// The flag that fixes the roster can be lost at dispatch, when the write's context trails the
+/// saved snapshot cursor. Replay delivers the logged calculation request, which sets the flag
+/// again, so a lower-ranked roster that arrives later does not replace the roster that the
+/// calculation used.
+#[actix::test]
+async fn a_logged_key_calculation_fixes_the_roster_again() -> Result<()> {
+    let e3_id = E3id::new("58", 1);
+    let signers = three_signers();
+    let sign = |party_id: u64, kind, dealer_ids: &[u64]| {
+        DkgCoordination::sign(
+            e3_id.clone(),
+            Address::ZERO,
+            party_id,
+            kind,
+            dealers(dealer_ids),
+            &signers[party_id as usize],
+        )
+    };
+    let own_ready = sign(0, DkgCoordinationKind::Ready, &[0, 1, 2])?;
+    let accepted = sign(1, DkgCoordinationKind::Roster, &[1, 2])?;
+    let outranking = sign(0, DkgCoordinationKind::Roster, &[0, 1])?;
+    let cipher = Arc::new(Cipher::from_password("test-password").await?);
+    let committee = committee_actor(
+        &e3_id,
+        &signers,
+        aggregating_decryption_key_for_roster_test(),
+        cipher,
+        |recovery| {
+            recovery.dkg_ready = Some(own_ready.clone());
+            recovery.ready_by_party.insert(0, own_ready.clone());
+            for party_id in [1, 2] {
+                recovery
+                    .ready_by_party
+                    .insert(party_id, ready_message(party_id, &[0, 1, 2], &e3_id));
+            }
+            recovery.dkg_roster = Some(accepted.clone());
+            recovery.active_aggregator_party_id = Some(1);
+        },
+    )
+    .await?;
+    let actor = committee.actor.start();
+
+    let calculation = ComputeRequest::trbfv(
+        TrBFVRequest::CalculateDecryptionKey(
+            e3_trbfv::calculate_decryption_key::CalculateDecryptionKeyRequest {
+                trbfv_config: TrBFVConfig::new(ArcBytes::from_bytes(b"params"), 3, 1),
+                sk_sss_collected: Vec::new(),
+                esi_sss_collected: Vec::new(),
+            },
+        ),
+        CorrelationId::new(),
+        e3_id.clone(),
+    );
+    actor
+        .send(keyshare_event(calculation, 2, EventSource::Local))
+        .await?;
+    actor
+        .send(keyshare_event(outranking, 3, EventSource::Net))
+        .await?;
+
+    actix::clock::sleep(std::time::Duration::from_millis(100)).await;
+    let recovery = committee
+        .recovery_repo
+        .read()
+        .await?
+        .expect("saved recovery state");
+    assert_eq!(recovery.dkg_roster, Some(accepted));
+    assert!(!recovery.pending_rosters.contains_key(&0));
+    Ok(())
+}
+
+/// The writes that start C4 are refused as stale when the saved snapshot cursor of the E3's
+/// aggregate is ahead of their context, and memory keeps the accepted roster and the flag. The
+/// logged calculation request saves both again at its own position, so a restart loads the flag
+/// with the roster that C4 used.
+#[actix::test]
+async fn a_logged_key_calculation_saves_the_flag_that_a_stale_dispatch_write_lost() -> Result<()> {
+    let e3_id = E3id::new("60", 1);
+    let signers = three_signers();
+    let cipher = Arc::new(Cipher::from_password("test-password").await?);
+    let sign = |party_id: u64, dealer_ids: &[u64]| {
+        DkgCoordination::sign(
+            e3_id.clone(),
+            Address::ZERO,
+            party_id,
+            DkgCoordinationKind::Roster,
+            dealers(dealer_ids),
+            &signers[party_id as usize],
+        )
+    };
+    let (earlier, used) = (sign(1, &[1, 2])?, sign(0, &[0, 1])?);
+    let mut committee = committee_actor(
+        &e3_id,
+        &signers,
+        aggregating_decryption_key_for_roster_test(),
+        cipher,
+        |recovery| recovery.dkg_roster = Some(earlier.clone()),
+    )
+    .await?;
+    let calculation = ComputeRequest::trbfv(
+        TrBFVRequest::CalculateDecryptionKey(
+            e3_trbfv::calculate_decryption_key::CalculateDecryptionKeyRequest {
+                trbfv_config: TrBFVConfig::new(ArcBytes::from_bytes(b"params"), 3, 1),
+                sk_sss_collected: Vec::new(),
+                esi_sss_collected: Vec::new(),
+            },
+        ),
+        CorrelationId::new(),
+        e3_id.clone(),
+    );
+    let logged = keyshare_event(calculation.clone(), 101, EventSource::Local);
+    // A later event of the E3's aggregate moved the saved snapshot cursor to 100.
+    committee
+        .state_store
+        .send(Insert::new(
+            e3_events::StoreKeys::aggregate_seq(logged.aggregate_id()),
+            100u64.to_le_bytes().to_vec(),
+        ))
+        .await?;
+    // Settlement at a stale position accepts another roster and starts C4 from it: the store
+    // refuses both writes, and memory keeps them.
+    let stale = keyshare_event(calculation, 5, EventSource::Local)
+        .get_ctx()
+        .clone();
+    committee
+        .actor
+        .recovery
+        .try_mutate(&stale, |mut recovery| {
+            recovery.dkg_roster = Some(used.clone());
+            Ok(recovery)
+        })?;
+    committee.actor.state.try_mutate(&stale, |mut state| {
+        state.dkg_roster_fixed = true;
+        Ok(state)
+    })?;
+    let saved = || async {
+        Ok::<_, anyhow::Error>(
+            committee
+                .state_repo
+                .read()
+                .await?
+                .expect("saved keyshare state")
+                .dkg_roster_fixed,
+        )
+    };
+    assert!(
+        !saved().await?,
+        "the store refuses the stale dispatch write"
+    );
+
+    let saved_roster = || async {
+        Ok::<_, anyhow::Error>(
+            committee
+                .recovery_repo
+                .read()
+                .await?
+                .expect("saved recovery state")
+                .dkg_roster,
+        )
+    };
+    assert_eq!(saved_roster().await?, Some(earlier.clone()));
+
+    let actor = committee.actor.start();
+    actor.send(logged).await?;
+    actix::clock::sleep(std::time::Duration::from_millis(100)).await;
+    // A restart loads the flag with the roster that C4 used.
+    assert!(saved().await?);
+    assert_eq!(saved_roster().await?, Some(used));
+    Ok(())
+}
+
+/// A refused write can keep a pending roster after one of its dealers was expelled. A later roster
+/// of the same proposer replaces it: the old one can never be accepted.
+#[actix::test]
+async fn a_pending_roster_with_an_expelled_dealer_is_replaced() -> Result<()> {
+    let e3_id = E3id::new("59", 1);
+    let signers = three_signers();
+    let sign = |party_id: u64, kind, dealer_ids: &[u64]| {
+        DkgCoordination::sign(
+            e3_id.clone(),
+            Address::ZERO,
+            party_id,
+            kind,
+            dealers(dealer_ids),
+            &signers[party_id as usize],
+        )
+    };
+    let own_ready = sign(0, DkgCoordinationKind::Ready, &[0, 1, 2])?;
+    let obsolete = sign(1, DkgCoordinationKind::Roster, &[1, 2])?;
+    let replacement = sign(1, DkgCoordinationKind::Roster, &[0, 1])?;
+    let cipher = Arc::new(Cipher::from_password("test-password").await?);
+    let mut committee = committee_actor(
+        &e3_id,
+        &signers,
+        aggregating_decryption_key_for_roster_test(),
+        cipher,
+        |recovery| {
+            recovery.dkg_ready = Some(own_ready.clone());
+            recovery.ready_by_party.insert(0, own_ready.clone());
+            recovery
+                .ready_by_party
+                .insert(1, ready_message(1, &[0, 1, 2], &e3_id));
+            recovery.pending_rosters.insert(1, obsolete.clone());
+        },
+    )
+    .await?;
+    committee
+        .actor
+        .state
+        .try_mutate_without_context(|mut state| {
+            state.expelled_parties.insert(2);
+            Ok(state)
+        })?;
+
+    committee
+        .actor
+        .record_dkg_coordination(replacement.clone(), test_ec(2))?;
+
+    let recovery = committee.actor.recovery.try_get()?;
+    assert_eq!(recovery.pending_rosters.get(&1), Some(&replacement));
+    Ok(())
+}
+
+/// A saved terminal failure is redriven at `EffectsEnabled` even when a held Ready update could
+/// be settled and the recovery store refuses every write.
+#[actix::test]
+async fn a_saved_failure_is_redriven_before_any_ready_settlement() -> Result<()> {
+    let e3_id = E3id::new("56", 1);
+    let (bus, history) = test_bus();
+    let (state, _) = test_state(
+        &e3_id,
+        KeyshareState::Failed {
+            failed_at_stage: E3Stage::CommitteeFinalized,
+            reason: FailureReason::DKGTimeout,
+        },
+    );
+    let mut state = state.try_get()?;
+    state.expelled_parties.insert(1);
+    let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
+        bus,
+        cipher: Arc::new(Cipher::from_password("test-password").await?),
+        state: unwritable(state).await,
+        share_enc_preset: BfvPreset::InsecureDkg512,
+        interfold_address: Address::ZERO,
+        signer: alloy::signers::local::PrivateKeySigner::random(),
+        effects_enabled: false,
+        recovery: unwritable(ThresholdKeyshareRecoveryState {
+            ciphernode_selected: Some(TypedEvent::new(selection(&e3_id), test_ec(0))),
+            // The reporter is expelled, so settlement would drop its held update.
+            held_ready_updates: std::collections::BTreeMap::from([(
+                1,
+                vec![ready_message(1, &[0, 1], &e3_id)],
+            )]),
+            ..Default::default()
+        })
+        .await,
+        recovery_payloads: test_recovery_payloads(),
+        dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
+    })
+    .start();
+
+    actor
+        .send(keyshare_event(EffectsEnabled::new(), 1, EventSource::Local))
+        .await?;
+
+    let event = next_event(&history).await?;
+    assert!(matches!(
+        event.into_data(),
+        InterfoldEventData::E3Failed(data) if data.e3_id == e3_id
+    ));
+    Ok(())
+}
+
+/// A reporter sends a Ready update after each of two expulsions. Both updates reach this node
+/// through its intake before either expulsion, and the saved state reloads in between. Each
+/// order of the expulsions settles on the latest list without a resend.
+#[actix::test]
+async fn two_held_ready_updates_settle_through_intake_in_both_expulsion_orders() -> Result<()> {
+    for expulsions in [[2, 3], [3, 2]] {
+        let e3_id = E3id::new("57", 1);
+        let signers: [alloy::signers::local::PrivateKeySigner; 4] =
+            std::array::from_fn(|_| alloy::signers::local::PrivateKeySigner::random());
+        let sign = |dealer_ids: &[u64]| {
+            DkgCoordination::sign(
+                e3_id.clone(),
+                Address::ZERO,
+                1,
+                DkgCoordinationKind::Ready,
+                dealers(dealer_ids),
+                &signers[1],
+            )
+        };
+        let first = sign(&[1, 2])?;
+        // After dealer 2 is expelled, then after dealer 3 is expelled.
+        let second = sign(&[1, 3])?;
+        let third = sign(&[0, 1])?;
+        let cipher = Arc::new(Cipher::from_password("test-password").await?);
+        let mut committee = committee_actor(
+            &e3_id,
+            &signers,
+            aggregating_decryption_key_for_roster_test(),
+            cipher.clone(),
+            |recovery| {
+                recovery.ready_by_party.insert(1, first.clone());
+            },
+        )
+        .await?;
+        committee
+            .actor
+            .record_dkg_coordination(second.clone(), test_ec(2))?;
+        committee
+            .actor
+            .record_dkg_coordination(third.clone(), test_ec(3))?;
+
+        // Reload the saved recovery state, as after a restart.
+        let saved = wait_for_record(&committee.recovery_repo, |recovery| {
+            recovery.held_ready_updates.get(&1).map(Vec::len) == Some(2)
+        })
+        .await?;
+        let mut reloaded = committee_actor(
+            &e3_id,
+            &signers,
+            aggregating_decryption_key_for_roster_test(),
+            cipher,
+            |recovery| *recovery = saved.clone(),
+        )
+        .await?;
+        for (seq, party_id) in (4u64..).zip(expulsions) {
+            reloaded
+                .actor
+                .handle_committee_member_expelled(expulsion_of(&e3_id, party_id), test_ec(seq))?;
+        }
+
+        let recovery = reloaded.actor.recovery.try_get()?;
+        assert_eq!(
+            recovery.ready_by_party.get(&1),
+            Some(&third),
+            "expulsions {expulsions:?}"
+        );
+        assert!(recovery.held_ready_updates.is_empty());
+    }
     Ok(())
 }
 
@@ -2539,6 +3826,7 @@ async fn held_roster_starts_failover_without_every_peer_ready_report() -> Result
         Ok(recovery)
     })?;
     let mut actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
         bus,
         cipher: Arc::new(Cipher::from_password("test-password").await?),
         state,
@@ -2644,6 +3932,7 @@ async fn lower_ranked_roster_replaces_an_accepted_roster_before_c4() -> Result<(
         Ok(recovery)
     })?;
     let mut actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
         bus,
         cipher: Arc::new(Cipher::from_password("test-password").await?),
         state,
@@ -2756,6 +4045,7 @@ async fn conflicting_roster_after_acceptance_is_ignored() -> Result<()> {
         Ok(recovery)
     })?;
     let mut actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
         bus,
         cipher: Arc::new(Cipher::from_password("test-password").await?),
         state,
@@ -2813,6 +4103,7 @@ async fn start_actor_with_state(
         Ok(state)
     })?;
     let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
         bus,
         cipher: Arc::new(Cipher::from_password("test-password").await?),
         state,
@@ -3037,6 +4328,7 @@ async fn stale_threshold_share_deadline_preserves_decryption(decrypting: bool) -
         bus,
         history,
         recovery_repo,
+        ..
     } = committee_with_two_shares(&e3_id, |_| {}).await?;
     let (mut state, repo) = test_state(&e3_id, actor.state.try_get()?.state);
     state.try_mutate_without_context(|mut state| {
@@ -3141,6 +4433,7 @@ async fn stale_threshold_share_deadline_preserves_decryption(decrypting: bool) -
 
     parent.send(Die).await?;
     let recovered = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
         bus: bus.clone(),
         cipher,
         state: repo.load().await?,
@@ -3555,7 +4848,15 @@ async fn encryption_deadline_after_publication_intent(restart: bool) -> Result<(
         &[],
     )
     .await?;
-    actor.record_encryption_key(&TypedEvent::new(peer_key(&e3_id, 0), test_ec(1)))?;
+    // This node's own key, with the public key of its state.
+    actor.record_encryption_key(&TypedEvent::new(
+        EncryptionKeyCreated {
+            e3_id: e3_id.clone(),
+            key: Arc::new(EncryptionKey::new(0, ArcBytes::from_bytes(&[2]))),
+            external: false,
+        },
+        test_ec(1),
+    ))?;
     actor.state.try_mutate_without_context(|mut state| {
         // The 10% encryption-key cutoff is three seconds away in this 7,200-second window.
         state.dkg_deadline_unix_secs = Some(crate::domain::timeout_policy::now_unix_secs() + 6_483);
@@ -3589,6 +4890,7 @@ async fn encryption_deadline_after_publication_intent(restart: bool) -> Result<(
     if restart {
         parent.send(Die).await?;
         parent = ThresholdKeyshare::new(ThresholdKeyshareParams {
+            bfv_key: test_bfv_key(),
             bus,
             cipher,
             state: repo.load().await?,
@@ -3993,6 +5295,264 @@ async fn restart_redrives_a_decryption_share_compute_request() -> Result<()> {
     Ok(())
 }
 
+/// Correlation IDs of the decryption-share requests in `events`.
+fn share_request_ids(events: &[InterfoldEvent]) -> Vec<CorrelationId> {
+    events
+        .iter()
+        .filter_map(|event| match event.get_data() {
+            InterfoldEventData::ComputeRequest(data)
+                if matches!(
+                    data.request,
+                    ComputeRequestKind::TrBFV(TrBFVRequest::CalculateDecryptionShare(_))
+                ) =>
+            {
+                Some(data.correlation_id)
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// Redelivery values of the C6 proof requests in `events`.
+fn proof_request_redeliveries(events: &[InterfoldEvent]) -> Vec<u64> {
+    events
+        .iter()
+        .filter_map(|event| match event.get_data() {
+            InterfoldEventData::ShareDecryptionProofPending(data) => Some(data.redelivery),
+            _ => None,
+        })
+        .collect()
+}
+
+struct RedeliveryActor {
+    actor: Addr<ThresholdKeyshare>,
+    bus: BusHandle,
+    history: Addr<HistoryCollector<InterfoldEvent>>,
+    repo: Repository<ThresholdKeyshareState>,
+    id: E3id,
+}
+
+impl RedeliveryActor {
+    /// A decrypting keyshare with recovered key authority whose first share request is issued.
+    async fn start() -> Result<Self> {
+        let id = E3id::new("78", 1);
+        let (keys, publication) = canonical_key_fixture(&id).await?;
+        let canonical = keys.get(&id).unwrap();
+        let ready = ready_for_c4_test();
+        let bus = decryption_bus(&id)?;
+        // Observe each emitted request before transport deduplication.
+        let history = HistoryCollector::<InterfoldEvent>::new().start();
+        bus.event_bus()
+            .send(e3_events::SubscribePreFanout::new(
+                history.clone().recipient(),
+            ))
+            .await?;
+        let (mut state, repo) = test_state(
+            &id,
+            KeyshareState::Decrypting(Decrypting {
+                pk_share: ready.pk_share.clone(),
+                sk_poly_sum: ready.sk_poly_sum.clone(),
+                es_poly_sum: ready.es_poly_sum.clone(),
+                ciphertext_output: vec![ArcBytes::from_bytes(&[5])],
+                signed_pk_generation_proof: None,
+                signed_sk_share_computation_proof: None,
+                signed_e_sm_share_computation_proof: None,
+                signed_sk_share_encryption_proofs: vec![],
+                signed_e_sm_share_encryption_proofs: vec![],
+            }),
+        );
+        state.try_mutate_without_context(|mut state| {
+            state.aggregated_pk = Some(publication.pubkey.clone());
+            state.decryption_domain = Some(canonical.domain(Address::repeat_byte(9)));
+            Ok(state)
+        })?;
+        let (_, recovery_repo) = test_recovery_with_repo();
+        let actor = start_decryption_actor(
+            bus.clone(),
+            repo.load().await?,
+            recovery_repo.load().await?,
+            keys,
+            Arc::new(Cipher::from_password("test-password").await?),
+            false,
+        );
+        actor
+            .send(keyshare_event(EffectsEnabled::new(), 2, EventSource::Local))
+            .await?;
+        Ok(Self {
+            actor,
+            bus,
+            history,
+            repo,
+            id,
+        })
+    }
+
+    async fn events(&self) -> Result<Vec<InterfoldEvent>> {
+        self.bus.flush_event_pipeline().await?;
+        Ok(self
+            .history
+            .send(GetEvents::<InterfoldEvent>::new())
+            .await?)
+    }
+
+    async fn answer_share_request(&self, correlation_id: CorrelationId) -> Result<()> {
+        self.actor
+            .send(keyshare_event(
+                ComputeResponse::trbfv(
+                    TrBFVResponse::CalculateDecryptionShare(CalculateDecryptionShareResponse {
+                        d_share_poly: vec![ArcBytes::from_bytes(&[4])],
+                    }),
+                    correlation_id,
+                    self.id.clone(),
+                ),
+                4,
+                EventSource::Local,
+            ))
+            .await?;
+        wait_for_keyshare_state(&self.repo, |state| {
+            matches!(state, KeyshareState::GeneratingDecryptionProof(_))
+        })
+        .await
+        .map(|_| ())
+    }
+}
+
+#[actix::test]
+async fn a_lost_decryption_share_result_is_redelivered() -> Result<()> {
+    let keyshare = RedeliveryActor::start().await?;
+    let start = std::time::Instant::now();
+    assert_eq!(share_request_ids(&keyshare.events().await?).len(), 1);
+
+    // The result of the first request never arrives. An early check sends nothing.
+    for at in [
+        start + DECRYPTION_REDELIVERY_DELAY / 2,
+        start + DECRYPTION_REDELIVERY_DELAY + std::time::Duration::from_secs(1),
+    ] {
+        keyshare.actor.send(RedeliverDecryptionWork(at)).await?;
+    }
+    let ids = share_request_ids(&keyshare.events().await?);
+    assert_eq!(ids.len(), 2, "expected one redelivered request");
+    assert_ne!(ids[0], ids[1]);
+
+    // The answer to the redelivered request completes the phase without a restart.
+    keyshare.answer_share_request(ids[1]).await
+}
+
+#[actix::test]
+async fn a_lost_c6_proof_result_is_redelivered_a_bounded_number_of_times() -> Result<()> {
+    // A restarted process counts its redeliveries from zero again, and replay can bring back the
+    // values of the process before. Each process stands for one side of a restart.
+    let mut earlier_values = HashSet::new();
+    for _process in 0..2 {
+        let keyshare = RedeliveryActor::start().await?;
+        let ids = share_request_ids(&keyshare.events().await?);
+        keyshare.answer_share_request(ids[0]).await?;
+
+        // The C6 proof result never arrives.
+        let start = std::time::Instant::now();
+        for step in 1..=MAX_DECRYPTION_REDELIVERIES + 2 {
+            keyshare
+                .actor
+                .send(RedeliverDecryptionWork(
+                    start + DECRYPTION_REDELIVERY_DELAY * step + std::time::Duration::from_secs(1),
+                ))
+                .await?;
+        }
+        // The first request has no redelivery value. Each redelivery has a fresh one, also
+        // across processes.
+        let redeliveries = proof_request_redeliveries(&keyshare.events().await?);
+        assert_eq!(redeliveries.len(), 1 + MAX_DECRYPTION_REDELIVERIES as usize);
+        assert_eq!(redeliveries[0], 0);
+        for value in &redeliveries[1..] {
+            assert!(
+                *value != 0 && earlier_values.insert(*value),
+                "{redeliveries:?}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[actix::test]
+async fn a_terminal_event_stops_decryption_redelivery_while_its_cleanup_retries() -> Result<()> {
+    let e3_id = E3id::new("79", 1);
+    let (keys, _) = canonical_key_fixture(&e3_id).await?;
+    let canonical = keys.get(&e3_id).unwrap();
+    let (bus, history) = test_bus();
+    let ready = ready_for_c4_test();
+    let generating = GeneratingDecryptionProof {
+        pk_share: ready.pk_share.clone(),
+        decryption_share: vec![ArcBytes::from_bytes(&[4])],
+        signed_pk_generation_proof: None,
+        signed_sk_share_computation_proof: None,
+        signed_e_sm_share_computation_proof: None,
+        signed_sk_share_encryption_proofs: Vec::new(),
+        signed_e_sm_share_encryption_proofs: Vec::new(),
+    };
+    let (state, _) = test_state(&e3_id, KeyshareState::GeneratingDecryptionProof(generating));
+    let pending = ShareDecryptionProofPending {
+        e3_id: e3_id.clone(),
+        party_id: 0,
+        node: Address::repeat_byte(1).to_string(),
+        decryption_share: vec![ArcBytes::from_bytes(&[4])],
+        proof_request: ThresholdShareDecryptionProofRequest {
+            ciphertext_bytes: vec![ArcBytes::from_bytes(&[5])],
+            aggregated_pk_bytes: ArcBytes::from_bytes(&[7]),
+            sk_poly_sum: ready.sk_poly_sum,
+            es_poly_sum: ready.es_poly_sum,
+            d_share_bytes: vec![ArcBytes::from_bytes(&[4])],
+            decryption_domain: canonical.domain(Address::ZERO),
+            params_preset: canonical.params_preset,
+            committee_size: canonical.committee_size,
+        },
+        redelivery: 0,
+    };
+    // Every write fails, so the terminal cleanup retries later.
+    let mut keyshare = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
+        bus,
+        cipher: Arc::new(Cipher::from_password("test-password").await?),
+        state: unwritable(state.try_get()?).await,
+        share_enc_preset: BfvPreset::InsecureDkg512,
+        interfold_address: Address::ZERO,
+        signer: alloy::signers::local::PrivateKeySigner::random(),
+        effects_enabled: true,
+        recovery: unwritable(ThresholdKeyshareRecoveryState {
+            ciphernode_selected: Some(TypedEvent::new(selection(&e3_id), test_ec(0))),
+            share_decryption_proof_pending: Some(TypedEvent::new(pending, test_ec(1))),
+            ..Default::default()
+        })
+        .await,
+        recovery_payloads: test_recovery_payloads(),
+        dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
+    });
+    let issued_at = std::time::Instant::now();
+    keyshare.pending.decryption_proof_request = Some(IssuedDecryptionWork {
+        ec: test_ec(1),
+        last_sent: issued_at,
+        redeliveries: 0,
+    });
+    let actor = keyshare.start();
+
+    actor
+        .send(keyshare_event(
+            E3RequestComplete {
+                e3_id: e3_id.clone(),
+            },
+            2,
+            EventSource::Local,
+        ))
+        .await?;
+    actor
+        .send(RedeliverDecryptionWork(
+            issued_at + DECRYPTION_REDELIVERY_DELAY * 2,
+        ))
+        .await?;
+
+    assert!(proof_request_redeliveries(&history.send(GetEvents::new()).await?).is_empty());
+    Ok(())
+}
+
 #[actix::test]
 async fn a_replayed_decryption_share_response_does_not_fault_after_the_state_advances() -> Result<()>
 {
@@ -4060,6 +5620,7 @@ async fn restart_rebuilds_c4_collector_before_peer_share_arrives() -> Result<()>
         Ok(recovery)
     })?;
     let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
         bus,
         cipher: Arc::new(Cipher::from_password("test-password").await?),
         state,
@@ -4122,6 +5683,7 @@ async fn duplicate_c4_after_collection_does_not_start_another_collector() -> Res
         Ok(recovery)
     })?;
     let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
         bus,
         cipher: Arc::new(Cipher::from_password("test-password").await?),
         state,
@@ -4147,6 +5709,7 @@ async fn recovery_keeps_the_first_c0_and_c4_from_each_party() -> Result<()> {
     let (bus, _) = test_bus();
     let (state, _) = test_state(&e3_id, KeyshareState::Init);
     let mut actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
         bus,
         cipher: Arc::new(Cipher::from_password("test-password").await?),
         state,
@@ -4379,6 +5942,7 @@ async fn keyshare_keeps_chain_key_when_network_publication_conflicts() -> Result
     let (bus, history) = test_bus();
     let (state, repo) = test_state(&id, KeyshareState::ReadyForDecryption(ready_for_c4_test()));
     let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
         bus,
         cipher: Arc::new(Cipher::from_password("test-password").await?),
         state,
@@ -4490,6 +6054,7 @@ async fn keyshare_restart_revalidates_snapshot_public_key_context() -> Result<()
         })?;
         // Reload the unchanged snapshot layout, as a node does on restart.
         let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+            bfv_key: test_bfv_key(),
             bus,
             cipher: Arc::new(Cipher::from_password("test-password").await?),
             state: repo.load().await?,
@@ -4573,6 +6138,7 @@ async fn retained_c6_work_recovers_key_bytes_in_every_decryption_phase() -> Resu
                     params_preset: canonical.params_preset,
                     committee_size: canonical.committee_size,
                 },
+                redelivery: 0,
             };
             let state_kind = match phase {
                 "Decrypting" => KeyshareState::Decrypting(Decrypting {
@@ -4617,6 +6183,7 @@ async fn retained_c6_work_recovers_key_bytes_in_every_decryption_phase() -> Resu
                 recovered_keys.clone()
             };
             let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+                bfv_key: test_bfv_key(),
                 bus,
                 cipher: Arc::new(Cipher::from_password("test-password").await?),
                 state: repo.load().await?,
@@ -4720,6 +6287,7 @@ fn start_decryption_actor(
     effects_enabled: bool,
 ) -> Addr<ThresholdKeyshare> {
     ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bfv_key: test_bfv_key(),
         bus,
         cipher,
         state,
@@ -5030,6 +6598,7 @@ async fn decryption_proof_recovery_coalesces_repeated_resume_triggers() -> Resul
             params_preset: canonical.params_preset,
             committee_size: canonical.committee_size,
         },
+        redelivery: 0,
     };
     for phase in ["Decrypting", "GeneratingDecryptionProof", "Completed"] {
         for late_authority in [false, true] {

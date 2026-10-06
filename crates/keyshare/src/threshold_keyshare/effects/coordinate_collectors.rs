@@ -268,7 +268,7 @@ impl ThresholdKeyshare {
 
     /// Record the expulsion, then remove the party from the transient state and from every
     /// running collector. A failed write is returned after the collectors are told, so that they
-    /// still stop waiting for the party.
+    /// still stop waiting for the party. Then apply the held Ready updates that it explains.
     fn handle_party_excluded(&mut self, party_id: u64, ec: EventContext<Sequenced>) -> Result<()> {
         // Record permanently so late-arriving data is rejected even if
         // collectors haven't been created or have already completed.
@@ -303,9 +303,14 @@ impl ThresholdKeyshare {
         }
 
         if let Some(ref collector) = self.decryption_key_shared_collector {
-            collector.do_send(ExpelPartyFromDecryptionKeySharedCollection { party_id, ec });
+            collector.do_send(ExpelPartyFromDecryptionKeySharedCollection {
+                party_id,
+                ec: ec.clone(),
+            });
         }
-        recorded
+        recorded?;
+        // The expulsion can explain a dealer that a held Ready update lacks.
+        self.apply_held_ready_updates(ec)
     }
 
     pub fn handle_threshold_share_created(

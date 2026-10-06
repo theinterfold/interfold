@@ -408,8 +408,8 @@ jobs:
       - name: Run the entrypoint guard and older-schema tests and the CLI tests
         if: matrix.suite == 'doc'
         run:
-          cargo nextest run -p e3-entrypoint --test reset_data_guard --test purge_guard --test validate_older_schema -p e3-cli --bins --test
-          cli_secrets
+          cargo nextest run -p e3-entrypoint --test reset_data_guard --test purge_guard --test validate_older_schema --test
+          validate_snapshot_errors -p e3-cli --bins --test cli_secrets
 
       # `parallel` is off by default, so the library tests compile the sequential fallback of
       # `recompute_commitments` and the rayon body of that function ships untested. This step is
