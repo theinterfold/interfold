@@ -33,10 +33,10 @@ then uses the address of the configured wallet. If the bond owner is a Safe, use
 [contract calls](#buy-tickets) through the Safe interface.
 
 On Sepolia, the fee token and the ticket collateral are the same token: `MockUSDC`, a test USDC that
-anyone can mint. Run `interfold faucet --chain sepolia` to get 1000 USDC and 1000 FOLD. You can also
-call `faucet()` on the `Faucet` contract, or call `mint` on `MockUSDC`. One faucet call provides
-enough FOLD for the 100 FOLD Sepolia bond. FOLD transfers are restricted before the token generation
-event, so the Interfold team sends the bond FOLD to operators.
+anyone can mint. The faucet sends tokens to the wallet of the configuration, so use the bond-owner
+configuration: `interfold --config /path/to/owner.yaml faucet --chain sepolia`. One call gives 1000
+USDC and 1000 FOLD, which is enough for the 100 FOLD Sepolia bond. You can also call `faucet()` on
+the `Faucet` contract from the bond owner, or call `mint` on `MockUSDC`.
 
 <Callout type='info'>
   The `--amount` values are token amounts, not ticket counts. `tickets buy` takes an amount of
