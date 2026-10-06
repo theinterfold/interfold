@@ -61,14 +61,10 @@ struct NodeInputs {
     c1_data: e3_zk_helpers::threshold::pk_generation::PkGenerationCircuitData,
     c1_proof: Proof,
     c2a_proof: Proof,
-    c2b_proof: Proof,
     c3a_inner_proofs: Vec<Proof>,
-    c3b_inner_proofs: Vec<Proof>,
     c3_slot_indices: Vec<u32>,
     c3a_ciphertexts: Vec<Option<Ciphertext>>,
-    c3b_ciphertexts: Vec<Option<Ciphertext>>,
     sk_inputs: ShareComputationInputs,
-    esm_inputs: ShareComputationInputs,
     lbfv_pk_share: LbfvPublicKeyShare,
     rlk_share: RelinKeyShare,
     generation_fold: Proof,
@@ -181,6 +177,7 @@ fn c4_data_for_recipient(
         dkg_input_type: input_type,
         chunk_size: 512,
         committee,
+        prf_keys: Vec::new(),
     }
 }
 
@@ -331,7 +328,7 @@ fn build_node(
     artifacts_dir: &str,
 ) -> NodeInputs {
     report_phase(&format!("node {party_id} C1 start"));
-    let (c1_data, esi, secret_key, mbfv_share) =
+    let (c1_data, _esi, secret_key, mbfv_share) =
         node_fold_witness::pk_generation_sample_with_esi_and_share(preset, committee.clone())
             .expect("correlated C1 data");
     let c1_proof = PkGenerationCircuit
@@ -353,15 +350,7 @@ fn build_node(
         &secret_key,
     )
     .expect("correlated C2a data");
-    let share_esm = node_fold_witness::share_computation_esm_from_esi(
-        preset,
-        committee.clone(),
-        &c1_data,
-        &esi,
-    )
-    .expect("correlated C2b data");
     let sk_inputs = ShareComputationInputs::compute(preset, &share_sk).expect("C2a inputs");
-    let esm_inputs = ShareComputationInputs::compute(preset, &share_esm).expect("C2b inputs");
 
     let c2a_proof = prove_chunked_share_computation(
         prover,
@@ -371,15 +360,6 @@ fn build_node(
         artifacts_dir,
     )
     .expect("C2a proof")
-    .proof;
-    let c2b_proof = prove_chunked_share_computation(
-        prover,
-        preset,
-        &share_esm,
-        &format!("v2-final-c2b-{party_id}"),
-        artifacts_dir,
-    )
-    .expect("C2b proof")
     .proof;
     report_phase(&format!("node {party_id} C2 complete"));
 
@@ -395,19 +375,6 @@ fn build_node(
         artifacts_dir,
         &format!("v2-final-a-{party_id}"),
     );
-    let (c3b_inner_proofs, c3b_slot_indices, c3b_ciphertexts) = prove_c3_chain(
-        prover,
-        preset,
-        committee.clone(),
-        &esm_inputs,
-        dkg_secret_key,
-        dkg_public_key,
-        DkgInputType::SmudgingNoise,
-        party_id,
-        artifacts_dir,
-        &format!("v2-final-b-{party_id}"),
-    );
-    assert_eq!(c3_slot_indices, c3b_slot_indices);
     report_phase(&format!("node {party_id} C3 complete"));
 
     let (threshold_params, _) = build_pair_for_preset(preset).expect("threshold parameters");
@@ -453,14 +420,10 @@ fn build_node(
         c1_data,
         c1_proof,
         c2a_proof,
-        c2b_proof,
         c3a_inner_proofs,
-        c3b_inner_proofs,
         c3_slot_indices,
         c3a_ciphertexts,
-        c3b_ciphertexts,
         sk_inputs,
-        esm_inputs,
         lbfv_pk_share,
         rlk_share,
         generation_fold,
@@ -551,7 +514,6 @@ async fn secure_dkg_aggregator_v2_proves_and_verifies_evm() {
         .moduli()
         .to_vec();
     let mut c4a_proofs = Vec::with_capacity(committee.h);
-    let mut c4b_proofs = Vec::with_capacity(committee.h);
     for recipient in 0..committee.h {
         report_phase(&format!("C4 recipient {recipient} start"));
         let c4a_data = c4_data_for_recipient(
@@ -569,21 +531,6 @@ async fn secure_dkg_aggregator_v2_proves_and_verifies_evm() {
             committee.clone(),
             &threshold_moduli,
         );
-        let c4b_data = c4_data_for_recipient(
-            &nodes
-                .iter()
-                .map(|node| node.esm_inputs.clone())
-                .collect::<Vec<_>>(),
-            &nodes
-                .iter()
-                .map(|node| node.c3b_ciphertexts.clone())
-                .collect::<Vec<_>>(),
-            &dkg_secret_key,
-            recipient,
-            DkgInputType::SmudgingNoise,
-            committee.clone(),
-            &threshold_moduli,
-        );
         c4a_proofs.push(
             ShareDecryptionCircuit
                 .prove_with_variant(
@@ -595,18 +542,6 @@ async fn secure_dkg_aggregator_v2_proves_and_verifies_evm() {
                     artifacts_dir.as_str(),
                 )
                 .expect("C4a proof"),
-        );
-        c4b_proofs.push(
-            ShareDecryptionCircuit
-                .prove_with_variant(
-                    &prover,
-                    &preset,
-                    &c4b_data,
-                    &format!("v2-final-c4b-{recipient}"),
-                    CircuitVariant::Recursive,
-                    artifacts_dir.as_str(),
-                )
-                .expect("C4b proof"),
         );
         report_phase(&format!("C4 recipient {recipient} complete"));
     }
@@ -620,14 +555,11 @@ async fn secure_dkg_aggregator_v2_proves_and_verifies_evm() {
                 c0_proof: &c0_proof,
                 c1_proof: &node.c1_proof,
                 c2a_proof: &node.c2a_proof,
-                c2b_proof: &node.c2b_proof,
                 c3a_inner_proofs: &node.c3a_inner_proofs,
-                c3b_inner_proofs: &node.c3b_inner_proofs,
                 c3_slot_indices_a: &node.c3_slot_indices,
-                c3_slot_indices_b: &node.c3_slot_indices,
                 c3_total_slots: committee.n * preset.metadata().num_moduli,
+                c3_n_parties: committee.n,
                 c4a_proof: &c4a_proofs[index],
-                c4b_proof: &c4b_proofs[index],
                 party_id: node.party_id,
             },
             &format!("v2-final-legacy-node-{index}"),

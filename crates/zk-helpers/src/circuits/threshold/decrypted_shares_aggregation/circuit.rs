@@ -22,7 +22,8 @@ impl Circuit for DecryptedSharesAggregationCircuit {
 }
 
 /// Raw input for circuit input computation: decryption share polynomials from T+1 parties,
-/// party IDs (1-based), and decoded message. Inputs::compute runs Lagrange + CRT.
+/// party IDs (1-based), ciphertext component `c0`, and the decoded message.
+/// Inputs::compute adds `c0` to the sum of the shares, then runs CRT.
 #[derive(Debug, Clone)]
 pub struct DecryptedSharesAggregationCircuitData {
     pub committee: CiphernodesCommittee,
@@ -32,4 +33,6 @@ pub struct DecryptedSharesAggregationCircuitData {
     pub reconstructing_parties: Vec<usize>,
     /// Decoded message polynomial coefficients.
     pub message_vec: Vec<u64>,
+    /// Ciphertext component `b` (`c0`). Final decryption adds it once.
+    pub ct0: Poly<PowerBasis>,
 }

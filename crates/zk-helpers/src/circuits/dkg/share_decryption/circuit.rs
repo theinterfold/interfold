@@ -47,4 +47,7 @@ pub struct ShareDecryptionCircuitData {
     pub chunk_size: u32,
     /// Committee this data was generated for (validated against the canonical table).
     pub committee: CiphernodesCommittee,
+    /// One key per honest slot, in the same order as `honest_ciphertexts`.
+    /// Empty means the zero key.
+    pub prf_keys: Vec<Vec<u8>>,
 }

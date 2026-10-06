@@ -13,7 +13,9 @@ derivative.workspace = true
 e3-bfv-client.workspace = true
 e3-fhe-params = { workspace = true, features = ["abi-encoding"] }
 e3-crypto.workspace = true
+e3-polynomial = { workspace = true, features = ["serde"] }
 e3-utils.workspace = true
+e3-zk-helpers.workspace = true
 fhe-math.workspace = true
 fhe-traits.workspace = true
 fhe.workspace = true

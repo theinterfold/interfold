@@ -25,12 +25,17 @@ pub mod insecure {
         pub const ERROR1_VARIANCE: &str = "50471587840";
     }
 
-    /// Encrypted-share BFV parameters
+    /// Encrypted-share BFV parameters.
+    ///
+    /// `PLAINTEXT_MODULUS` is twice the largest threshold modulus. The first
+    /// `PRF_KEY_BITS` coefficients of that limb store one key bit each.
     pub mod dkg {
-        pub const PLAINTEXT_MODULUS: u64 = 72_057_594_037_913_089;
-        pub const MODULI: &[u64] = &[0x01ff_ffff_ffff_9001, 0x01ff_ffff_ffff_9501];
+        pub const PLAINTEXT_MODULUS: u64 = 144_115_188_075_826_178;
+        pub const MODULI: &[u64] = &[0x0400_0000_0027_0001, 0x0400_0000_0035_0001];
         pub const ERROR1_VARIANCE: &str = "10";
         pub const VARIANCE: u32 = 10;
+        /// The degree-128 limb has room for 32 key bits.
+        pub const PRF_KEY_BITS: usize = 32;
     }
 }
 
@@ -46,11 +51,15 @@ pub mod secure_8192 {
         pub const ERROR1_VARIANCE: &str = "17723039943798878305460955570711717478400";
     }
 
-    /// DKG parameters
+    /// DKG parameters.
+    ///
+    /// `PLAINTEXT_MODULUS` is twice the largest threshold modulus. The first
+    /// `PRF_KEY_BITS` coefficients of that limb store one key bit each.
     pub mod dkg {
-        pub const PLAINTEXT_MODULUS: u64 = 288230376164294657;
-        pub const MODULI: &[u64] = &[0x1000000000024001, 0x1000000000054001];
+        pub const PLAINTEXT_MODULUS: u64 = 576_460_752_328_589_314;
+        pub const MODULI: &[u64] = &[0x1fff_ffff_ffd0_8001, 0x1fff_ffff_ffdd_0001];
         pub const ERROR1_VARIANCE: &str = "10";
+        pub const PRF_KEY_BITS: usize = 256;
     }
 }
 
@@ -76,11 +85,15 @@ pub mod secure_16384 {
         pub const ERROR1_VARIANCE: &str = "264093875047547791978479834453333";
     }
 
-    /// DKG parameters
+    /// DKG parameters.
+    ///
+    /// `PLAINTEXT_MODULUS` is twice the largest threshold modulus. The first
+    /// `PRF_KEY_BITS` coefficients of that limb store one key bit each.
     pub mod dkg {
-        pub const PLAINTEXT_MODULUS: u64 = 1125899917262849;
-        pub const MODULI: &[u64] = &[0x0010000000060001, 0x00100000000f0001];
+        pub const PLAINTEXT_MODULUS: u64 = 2_251_799_834_525_698;
+        pub const MODULI: &[u64] = &[0x0020_0000_000e_0001, 0x0020_0000_0014_0001];
         pub const ERROR1_VARIANCE: &str = "10";
+        pub const PRF_KEY_BITS: usize = 256;
     }
 }
 

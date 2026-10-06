@@ -1,7 +1,8 @@
 # `share_decryption` — C6
 
-Threshold **decryption share** for the homomorphic result ciphertext, using aggregated `sk` / `e_sm`
-commitments from C4.
+Threshold decryption share for one ciphertext. The partial share is the Lagrange coefficient times
+`c1` times the secret share, plus fresh noise and the PRF mask. `c0` is not in this share. The
+Lagrange coefficient comes from the public decryptor set.
 
 |           |                                                                                                     |
 | --------- | --------------------------------------------------------------------------------------------------- |

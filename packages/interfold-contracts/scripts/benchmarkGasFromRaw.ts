@@ -20,7 +20,8 @@ import {
   committeeHashFromLimbs,
   getBfvDecryptionSubCircuitVkHashPaths,
   getBfvPkSubCircuitVkHashPaths,
-  getBfvPkVkBindingHashPaths,
+  readBfvPkVkBindingHashes,
+  ZERO_VK_HASH,
   getBfvV2SubCircuitVkHashPaths,
   getBfvV2VkBindingHashPaths,
   getRepoRoot,
@@ -439,13 +440,8 @@ async function main() {
     pkPaths.skC2Chunk,
     benchmarkConfig,
   );
-  const expectedESmC2ChunkKeyHash = readVkRecursiveHash(
-    pkPaths.esmC2Chunk,
-    benchmarkConfig,
-  );
-  const expectedVkBinding = getBfvPkVkBindingHashPaths(benchmarkConfig).map(
-    (filePath) => readVkRecursiveHash(filePath, benchmarkConfig),
-  );
+  const expectedESmC2ChunkKeyHash = ZERO_VK_HASH;
+  const expectedVkBinding = readBfvPkVkBindingHashes(benchmarkConfig);
   const expectedV2VkBinding = useV2Dkg
     ? getBfvV2VkBindingHashPaths(benchmarkConfig).map((filePath) =>
         readVkRecursiveHash(filePath, benchmarkConfig),
@@ -464,7 +460,6 @@ async function main() {
     dkgPublicInputs[0] !== expectedNodesFoldKeyHash ||
     dkgPublicInputs[1] !== expectedC5KeyHash ||
     dkgPublicInputs[21 + benchmarkConfig.h] !== expectedSkC2ChunkKeyHash ||
-    dkgPublicInputs[22 + benchmarkConfig.h] !== expectedESmC2ChunkKeyHash ||
     expectedVkBinding.some(
       (value, index) =>
         dkgPublicInputs[4 + benchmarkConfig.h + index] !== value,

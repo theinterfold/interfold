@@ -90,12 +90,11 @@ contract BfvPkVerifierV2 is IPkVerifier {
         if (
             _expectedNodesFoldKeyHash == bytes32(0) ||
             _expectedC5KeyHash == bytes32(0) ||
-            _expectedSkC2ChunkKeyHash == bytes32(0) ||
-            _expectedESmC2ChunkKeyHash == bytes32(0)
+            _expectedSkC2ChunkKeyHash == bytes32(0)
         ) revert InvalidVerificationKeyHash();
 
         for (uint256 i = 0; i < LEGACY_VK_BINDING_LEN; ++i) {
-            if (_expectedLegacyVkBinding[i] == bytes32(0)) {
+            if (i != 7 && i != 10 && _expectedLegacyVkBinding[i] == bytes32(0)) {
                 revert InvalidVerificationKeyHash();
             }
             expectedLegacyVkBinding[i] = _expectedLegacyVkBinding[i];
@@ -173,9 +172,6 @@ contract BfvPkVerifierV2 is IPkVerifier {
             revert VkHashMismatch();
         }
         if (publicInputs[21 + h] != expectedSkC2ChunkKeyHash) {
-            revert VkHashMismatch();
-        }
-        if (publicInputs[22 + h] != expectedESmC2ChunkKeyHash) {
             revert VkHashMismatch();
         }
         for (uint256 i = 0; i < LEGACY_VK_BINDING_LEN; ++i) {

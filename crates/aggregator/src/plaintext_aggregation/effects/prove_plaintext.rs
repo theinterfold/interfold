@@ -10,6 +10,7 @@ impl ThresholdPlaintextAggregator {
         &mut self,
         shares: Vec<(u64, Vec<ArcBytes>)>,
         plaintext: Vec<ArcBytes>,
+        ciphertext_output: Vec<ArcBytes>,
         threshold_m: u64,
         threshold_n: u64,
         ec: EventContext<Sequenced>,
@@ -20,6 +21,7 @@ impl ThresholdPlaintextAggregator {
                 proof_request: DecryptedSharesAggregationProofRequest {
                     d_share_polys: shares.clone(),
                     plaintext: plaintext.clone(),
+                    ciphertext_output: ciphertext_output.clone(),
                     params_preset: self.params_preset,
                     threshold_m,
                     threshold_n,
@@ -232,9 +234,11 @@ impl ThresholdPlaintextAggregator {
                 // Publish pending event before transitioning state so a publish
                 // failure leaves us in Computing (retryable) rather than
                 // GeneratingC7Proof (no retry path).
+                let ciphertext_output = state.ciphertext_output.clone();
                 self.dispatch_c7_proof_request(
                     shares.clone(),
                     plaintext.clone(),
+                    ciphertext_output.clone(),
                     threshold_m,
                     threshold_n,
                     ec.clone(),
@@ -248,6 +252,7 @@ impl ThresholdPlaintextAggregator {
                             threshold_n,
                             shares,
                             plaintext,
+                            ciphertext_output,
                         },
                     ))
                 })?;

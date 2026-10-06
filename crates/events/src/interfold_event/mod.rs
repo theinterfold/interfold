@@ -595,6 +595,7 @@ mod serialization_tests {
         let outcome: InterfoldEventData = ShareVerificationComplete {
             e3_id: E3id::new("1", 1),
             kind: VerificationKind::ThresholdDecryptionProofs,
+            verification_id: None,
             dishonest_parties: Default::default(),
         }
         .into();

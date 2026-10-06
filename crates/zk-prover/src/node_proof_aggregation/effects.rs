@@ -117,7 +117,7 @@ impl NodeProofAggregator {
         }
 
         let sk_enc_count = msg.sk_share_encryption_requests.len();
-        let e_sm_enc_count = msg.e_sm_share_encryption_requests.len();
+        let e_sm_enc_count = 0;
         let total_expected = total_expected_for(sk_enc_count, e_sm_enc_count);
 
         let committee = msg.proof_request.committee_size.values();
@@ -142,7 +142,7 @@ impl NodeProofAggregator {
             sk_enc_count,
             e_sm_enc_count,
             sk_share_encryption_requests: msg.sk_share_encryption_requests.clone(),
-            e_sm_share_encryption_requests: msg.e_sm_share_encryption_requests.clone(),
+            e_sm_share_encryption_requests: Vec::new(),
             committee_n,
             committee_h,
             n_moduli,

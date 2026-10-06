@@ -28,9 +28,10 @@ import { CommitteeHashLib } from "../../lib/CommitteeHashLib.sol";
  *        [5]                = decryption_domain_lo
  *        [6]                = ciphertext_commitment
  *        [7]                = aggregate recursive VK key hash
- *        [8 .. 8+3*(T+1))  = party_ids, expected_sk, expected_esm columns
- *        [last 100]         = plaintext message coefficients (100 u64 LE)
- *        Total: expectedPublicInputsLen = 7 + 1 + 3*(T+1) + 100.
+ *        [8 .. 8+3*(T+1))  = party_ids, expected_sk, expected_c0 columns
+ *        [8+3*(T+1) .. +100) = plaintext message coefficients
+ *        then two PRF-key grids, each (T+1)*N fields
+ *        Total: 108 + (T+1)*(3 + 2*N).
  *
  *      The two VK-hash slots are checked against contract immutables set at
  *      construction; this anchors the recursive aggregation trust and
@@ -133,11 +134,14 @@ contract BfvDecryptionVerifier is IDecryptionVerifier {
             _expectedC7KeyHash == bytes32(0)
         ) revert InvalidVerificationKeyHash();
         threshold = _threshold;
+        uint256 n = _committeeN(_threshold);
+        uint256 slots = _threshold + 1;
         expectedPublicInputsLen =
             7 +
             DEC_RETURN_PREFIX_LEN +
-            (DEC_RETURN_COLUMN_COUNT * (_threshold + 1)) +
-            MESSAGE_COEFFS_COUNT;
+            (DEC_RETURN_COLUMN_COUNT * slots) +
+            MESSAGE_COEFFS_COUNT +
+            (2 * slots * n);
 
         partyIdColOffset = 7 + DEC_RETURN_PREFIX_LEN;
         skColOffset = partyIdColOffset + (_threshold + 1);
@@ -225,13 +229,17 @@ contract BfvDecryptionVerifier is IDecryptionVerifier {
     function _validatePublicInputs(
         bytes32[] memory publicInputs
     ) internal view {
-        uint256 messageOffset = expectedPublicInputsLen - MESSAGE_COEFFS_COUNT;
+        uint256 messageOffset = _messageOffset();
         for (uint256 i = 0; i < publicInputs.length; ++i) {
             uint256 value = uint256(publicInputs[i]);
             if (value >= BN254_SCALAR_MODULUS) {
                 revert NonCanonicalPublicInput(i);
             }
-            if (i >= messageOffset && value > type(uint64).max) {
+            if (
+                i >= messageOffset &&
+                i < messageOffset + MESSAGE_COEFFS_COUNT &&
+                value > type(uint64).max
+            ) {
                 revert MessageCoefficientOutOfRange(i);
             }
         }
@@ -241,7 +249,7 @@ contract BfvDecryptionVerifier is IDecryptionVerifier {
         bytes32[] memory publicInputs,
         bytes32 expected
     ) internal view returns (bool) {
-        uint256 offset = expectedPublicInputsLen - MESSAGE_COEFFS_COUNT;
+        uint256 offset = _messageOffset();
         bytes memory plaintext = new bytes(MESSAGE_COEFFS_COUNT * 8);
         for (uint256 i = 0; i < MESSAGE_COEFFS_COUNT; i++) {
             uint64 coeff = uint64(uint256(publicInputs[offset + i]));
@@ -270,6 +278,13 @@ contract BfvDecryptionVerifier is IDecryptionVerifier {
             bytes32[] memory dkgSkAggCommits,
             bytes32[] memory dkgEsmAggCommits
         ) = ciphernodeRegistry.getDkgAnchors(e3Id);
+        bytes32[] memory keys = ciphernodeRegistry.getDkgPrfKeyCommitments(
+            e3Id
+        );
+        uint256 n = _committeeN(threshold);
+        if (keys.length != dkgPartyIds.length * n) {
+            revert DkgAnchorMismatch();
+        }
 
         for (uint256 i = 0; i < threshold + 1; i++) {
             uint256 circuitPartyId = uint256(
@@ -288,12 +303,69 @@ contract BfvDecryptionVerifier is IDecryptionVerifier {
                 revert DkgAnchorNotFound();
             }
 
+            if (publicInputs[skColOffset + i] != dkgSkAggCommits[matchedIdx]) {
+                revert DkgAnchorMismatch();
+            }
+            _verifyPartyKeys(
+                publicInputs,
+                keys,
+                dkgPartyIds,
+                i,
+                matchedIdx,
+                registryPartyId,
+                n
+            );
+        }
+    }
+
+    function _verifyPartyKeys(
+        bytes32[] memory publicInputs,
+        bytes32[] memory keys,
+        uint256[] memory dkgPartyIds,
+        uint256 slot,
+        uint256 matchedIdx,
+        uint256 selfId,
+        uint256 n
+    ) internal view {
+        uint256 outBase = _messageOffset() + MESSAGE_COEFFS_COUNT;
+        uint256 inBase = outBase + ((threshold + 1) * n);
+        for (uint256 col = 0; col < n; col++) {
             if (
-                publicInputs[skColOffset + i] != dkgSkAggCommits[matchedIdx] ||
-                publicInputs[esmColOffset + i] != dkgEsmAggCommits[matchedIdx]
+                publicInputs[outBase + (slot * n) + col] !=
+                keys[(matchedIdx * n) + col]
             ) {
                 revert DkgAnchorMismatch();
             }
         }
+        for (uint256 k = 0; k < threshold + 1; k++) {
+            uint256 otherId = uint256(publicInputs[partyIdColOffset + k]) - 1;
+            uint256 otherRow = type(uint256).max;
+            for (uint256 j = 0; j < dkgPartyIds.length; j++) {
+                if (dkgPartyIds[j] == otherId) {
+                    otherRow = j;
+                    break;
+                }
+            }
+            if (otherRow == type(uint256).max || otherId >= n) {
+                revert DkgAnchorMismatch();
+            }
+            if (
+                publicInputs[inBase + (slot * n) + otherId] !=
+                keys[(otherRow * n) + selfId]
+            ) {
+                revert DkgAnchorMismatch();
+            }
+        }
+    }
+
+    function _messageOffset() internal view returns (uint256) {
+        return 8 + (3 * (threshold + 1));
+    }
+
+    function _committeeN(uint256 t) private pure returns (uint256) {
+        if (t == 1) return 3;
+        if (t == 4) return 9;
+        if (t == 9) return 19;
+        revert("BfvDecryptionVerifier: unknown threshold");
     }
 }

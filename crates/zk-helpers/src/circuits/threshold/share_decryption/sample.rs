@@ -261,6 +261,11 @@ impl ShareDecryptionCircuitData {
             d_share: CrtPolynomial::from_fhe_polynomial(&d_share_rns),
             domain_hi: 1,
             domain_lo: 2,
+            committee,
+            party_idx: 0,
+            decryptors: Vec::new(),
+            outgoing_prf_keys: Vec::new(),
+            incoming_prf_keys: Vec::new(),
         })
     }
 }

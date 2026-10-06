@@ -26,15 +26,12 @@ use fhe::bfv::SecretKey;
 use fhe::mbfv::PublicKeyShare;
 use fhe::trbfv::ShareManager;
 use fhe::{bfv::Plaintext, bfv::PublicKey};
-use fhe_math::rq::{Poly, PowerBasis};
 use fhe_traits::FheEncoder;
 use fhe_traits::Serialize;
 use ndarray::Array2;
 use num_bigint::BigInt;
 use num_traits::{Signed, ToPrimitive};
 use rand::rng;
-use std::ops::Deref;
-
 /// Same as [`PkGenerationCircuitData::generate_sample`], plus smudging coefficients for C2b.
 ///
 /// Returns the [`SecretKey`] used for [`PublicKeyShare::new_extended`] so correlated C2a shares can
@@ -106,19 +103,10 @@ pub fn pk_generation_sample_with_esi_and_share(
     )
     .map_err(|e| CircuitsErrors::Sample(format!("Failed to generate smudging error: {:?}", e)))?;
 
-    let e_sm = Poly::<PowerBasis>::from_bigints(
-        &esi_coeffs,
-        threshold_params
-            .context_at_level(0)
-            .map_err(|e| CircuitsErrors::Sample(format!("context_at_level: {:?}", e)))?,
-    )
-    .map_err(|e| CircuitsErrors::Sample(format!("from_bigints: {:?}", e)))?;
-
     let pk = PkGenerationCircuitData {
         committee,
         pk0_share: CrtPolynomial::from_fhe_polynomial(&pk0_share),
         eek: CrtPolynomial::from_fhe_polynomial(&e),
-        e_sm: CrtPolynomial::from_fhe_polynomial(e_sm.deref()),
         sk: sk_crt,
     };
 
@@ -166,53 +154,7 @@ pub fn share_computation_sk_from_pk(
         n_parties: committee.n as u32,
         threshold: committee.threshold as u32,
         chunk_size: DEFAULT_C2_CHUNK_SIZE as u32,
-    })
-}
-
-/// C2b: `esi_coeffs` from [`pk_generation_sample_with_esi`]; `secret` matches [`PkGenerationCircuitData::e_sm`].
-pub fn share_computation_esm_from_esi(
-    preset: BfvPreset,
-    committee: CiphernodesCommittee,
-    pk: &PkGenerationCircuitData,
-    esi_coeffs: &[BigInt],
-) -> Result<ShareComputationCircuitData, CircuitsErrors> {
-    let (threshold_params, _) = build_pair_for_preset(preset)
-        .map_err(|e| CircuitsErrors::Sample(format!("Failed to build pair for preset: {:?}", e)))?;
-    let mut rng = rng();
-
-    let parity_matrix =
-        compute_parity_matrix(threshold_params.moduli(), committee.n, committee.threshold)
-            .map_err(CircuitsErrors::Sample)?;
-
-    let share_manager =
-        ShareManager::new(committee.n, committee.threshold, threshold_params.clone()).map_err(
-            |e| CircuitsErrors::Sample(format!("Failed to create ShareManager: {:?}", e)),
-        )?;
-
-    let esi_poly = Poly::<PowerBasis>::from_bigints(
-        esi_coeffs,
-        threshold_params
-            .context_at_level(0)
-            .map_err(|e| CircuitsErrors::Sample(format!("context_at_level: {:?}", e)))?,
-    )
-    .map_err(|e| CircuitsErrors::Sample(format!("from_bigints: {:?}", e)))?;
-    let esi_sss_u64 = share_manager
-        .generate_secret_key_shares(esi_poly, &mut rng)
-        .map(|shares| shares.into_transport())
-        .map_err(|e| CircuitsErrors::Sample(format!("generate_secret_key_shares: {:?}", e)))?;
-    let secret_sss: Vec<Array2<BigInt>> = esi_sss_u64
-        .into_iter()
-        .map(|a| a.mapv(BigInt::from))
-        .collect();
-
-    Ok(ShareComputationCircuitData {
-        dkg_input_type: DkgInputType::SmudgingNoise,
-        secret: pk.e_sm.clone(),
-        secret_sss,
-        parity_matrix,
-        n_parties: committee.n as u32,
-        threshold: committee.threshold as u32,
-        chunk_size: DEFAULT_C2_CHUNK_SIZE as u32,
+        prf_keys: Vec::new(),
     })
 }
 
@@ -271,5 +213,6 @@ pub fn share_encryption_for_slot(
         mod_idx: mod_ix as u32,
         chunk_size: DEFAULT_C2_CHUNK_SIZE as u32,
         committee,
+        prf_key: Vec::new(),
     })
 }

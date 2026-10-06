@@ -68,6 +68,20 @@ impl ShamirShare {
     pub fn new(data: Array2<u64>) -> Self {
         Self { data }
     }
+
+    /// Replace one modulus row. The row length must match the polynomial degree.
+    pub fn replace_row(&mut self, row: usize, values: &[u64]) -> Result<()> {
+        if row >= self.data.nrows() || values.len() != self.data.ncols() {
+            bail!(
+                "share row {row} cannot be replaced with {} coefficients",
+                values.len()
+            );
+        }
+        for (column, value) in values.iter().enumerate() {
+            self.data[[row, column]] = *value;
+        }
+        Ok(())
+    }
 }
 
 impl Deref for ShamirShare {

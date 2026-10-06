@@ -32,6 +32,7 @@ contract MockCiphernodeRegistry is ICiphernodeRegistry {
     mapping(uint256 e3Id => uint256[] partyIds) private _dkgPartyIds;
     mapping(uint256 e3Id => bytes32[] skAggCommits) private _dkgSkAggCommits;
     mapping(uint256 e3Id => bytes32[] esmAggCommits) private _dkgEsmAggCommits;
+    mapping(uint256 e3Id => bytes32[] keyCommitments) private _dkgPrfKeyCommits;
     mapping(uint256 e3Id => bool unreleased) private _unreleasedCommittees;
     bool private _revertActiveCommitteeNodes;
 
@@ -82,6 +83,22 @@ contract MockCiphernodeRegistry is ICiphernodeRegistry {
         for (uint256 i = 0; i < esmAggCommits.length; i++) {
             _dkgEsmAggCommits[e3Id].push(esmAggCommits[i]);
         }
+    }
+
+    function setDkgPrfKeyCommitments(
+        uint256 e3Id,
+        bytes32[] calldata keyCommitments
+    ) external {
+        delete _dkgPrfKeyCommits[e3Id];
+        for (uint256 i = 0; i < keyCommitments.length; i++) {
+            _dkgPrfKeyCommits[e3Id].push(keyCommitments[i]);
+        }
+    }
+
+    function getDkgPrfKeyCommitments(
+        uint256 e3Id
+    ) external view returns (bytes32[] memory keyCommitments) {
+        return _dkgPrfKeyCommits[e3Id];
     }
 
     function requestCommittee(
@@ -435,6 +452,12 @@ contract MockCiphernodeRegistryEmptyKey is ICiphernodeRegistry {
         )
     {
         return (partyIds, skAggCommits, esmAggCommits);
+    }
+
+    function getDkgPrfKeyCommitments(
+        uint256
+    ) external pure returns (bytes32[] memory keyCommitments) {
+        return keyCommitments;
     }
 
     function root() external pure returns (uint256) {

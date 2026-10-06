@@ -607,6 +607,12 @@ interface ICiphernodeRegistry {
             bytes32[] memory esmAggCommits
         );
 
+    /// @notice C2 PRF-key commitments from the DKG proof, row-major over the honest set.
+    /// @dev Row `i` is dealer `partyIds[i]`. Column `j` is that dealer's key for recipient `j`.
+    function getDkgPrfKeyCommitments(
+        uint256 e3Id
+    ) external view returns (bytes32[] memory keyCommitments);
+
     /// @notice This function should be called by the Interfold contract to get the public key of a committee.
     /// @dev This function MUST revert if no committee has been requested for the given E3.
     /// @dev This function MUST revert if the committee has not yet published a public key.

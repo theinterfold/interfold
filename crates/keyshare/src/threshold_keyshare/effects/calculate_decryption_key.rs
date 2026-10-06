@@ -74,7 +74,9 @@ impl ThresholdKeyshare {
                 sk_request,
                 esm_requests,
                 honest_party_ids,
+                incoming_prf_keys,
             } => {
+                self.pending.incoming_prf_keys = incoming_prf_keys;
                 // Persist the selected set before dispatch. Restart reissues the
                 // calculation from the durable verification batch.
                 let event = ComputeRequest::trbfv(
@@ -152,6 +154,7 @@ impl ThresholdKeyshare {
         })?;
 
         // Transition to ReadyForDecryption only after the recovery input is accepted.
+        let incoming_prf_keys = self.pending.incoming_prf_keys.clone();
         self.state.try_mutate(&ec, |s| {
             use KeyshareState as K;
             info!("Try store decryption key");
@@ -167,6 +170,8 @@ impl ThresholdKeyshare {
                 signed_e_sm_share_computation_proof: current.signed_e_sm_share_computation_proof,
                 signed_sk_share_encryption_proofs: current.signed_sk_share_encryption_proofs,
                 signed_e_sm_share_encryption_proofs: current.signed_e_sm_share_encryption_proofs,
+                outgoing_prf_keys: current.outgoing_prf_keys,
+                incoming_prf_keys,
             });
 
             s.new_state(next)

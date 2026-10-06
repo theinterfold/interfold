@@ -13,11 +13,11 @@ use bb_proof_verification::{
 use lib::math::commitments::compute_vk_hash;
 
 pub use lib::configs::default::threshold::L as LBFV_ROWS;
-pub global NODE_FOLD_PUBLIC_LEN: u32 = 14
-    + lib::configs::default::N_PARTIES
+pub global NODE_FOLD_PUBLIC_LEN: u32 = 12
+    + (2 * lib::configs::default::N_PARTIES)
+    + lib::configs::default::H
     + (
-        2
-            * (lib::configs::default::N_PARTIES + lib::configs::default::H)
+        (lib::configs::default::N_PARTIES + lib::configs::default::H)
             * lib::configs::default::dkg::L_THRESHOLD
     );
 pub global NODE_FOLD_V2_APPEND_LEN: u32 = 3 + (3 * LBFV_ROWS);
@@ -89,7 +89,7 @@ fn main(
     node_fold_public: [Field; NODE_FOLD_PUBLIC_LEN],
     c1_vk: UltraHonkVerificationKey,
     c1_proof: UltraHonkZKProof,
-    c1_public: [Field; 3],
+    c1_public: [Field; 2],
     generation_vk: UltraHonkVerificationKey,
     generation_proof: UltraHonkProof,
     generation_public: [Field; GENERATION_FOLD_PUBLIC_LEN],

@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 //! Public IO layout for [`CircuitName::NodeFold`] (must stay aligned with `node_fold/src/main.nr`).
-//! The final field is the recursive VK manifest after the SK/ESM aggregate commitments.
+//! The final field is the recursive VK manifest. The SK commitment sits before the PRF-key grids.
 
 use crate::circuits::utils::bytes_to_field_strings;
 use crate::error::ZkError;
@@ -15,7 +15,11 @@ const NODE_FOLD_V2_PUBLIC_PREFIX_LEN: usize = 4;
 
 /// Total public field count for `node_fold` at committee size `n`, honest `h`, threshold moduli `l`.
 pub fn node_fold_public_field_count(n: usize, h: usize, l: usize) -> usize {
-    14 + n + 2 * (n + h) * l
+    12 + (2 * n) + h + ((n + h) * l)
+}
+
+fn node_fold_sk_tail(n: usize, h: usize) -> usize {
+    2 + n + h
 }
 
 /// Total public field count for the V2 node fold.
@@ -78,18 +82,14 @@ pub fn extract_node_fold_agg_commits(
     };
     let party_id = field_hex_to_u64(&fields[v2_prefix_len])?;
     let legacy_field_count = node_fold_public_field_count(committee_n, committee_h, n_moduli);
+    let sk_tail = node_fold_sk_tail(committee_n, committee_h);
     let sk_commitment_idx = if is_v2 {
-        v2_prefix_len + legacy_field_count - 3
+        v2_prefix_len + legacy_field_count - sk_tail
     } else {
-        fields.len() - 3
-    };
-    let esm_commitment_idx = if is_v2 {
-        v2_prefix_len + legacy_field_count - 2
-    } else {
-        fields.len() - 2
+        fields.len() - sk_tail
     };
     let sk_agg_commit = field_hex_to_bytes32(&fields[sk_commitment_idx])?;
-    let esm_agg_commit = field_hex_to_bytes32(&fields[esm_commitment_idx])?;
+    let esm_agg_commit = [0u8; 32];
     Ok((
         party_id,
         DkgFoldAggCommits {
@@ -115,8 +115,8 @@ mod tests {
 
         let mut fields = vec![[0u8; 32]; field_count];
         fields[0][31] = 2; // party_id = 2
-        fields[field_count - 3] = [0x11; 32];
-        fields[field_count - 2] = [0x22; 32];
+        let sk_tail = node_fold_sk_tail(n, h);
+        fields[field_count - sk_tail] = [0x11; 32];
 
         let mut public_signals = Vec::with_capacity(field_count * 32);
         for f in fields {
@@ -133,7 +133,7 @@ mod tests {
             extract_node_fold_agg_commits(&proof, n, h, l).expect("extract should succeed");
         assert_eq!(party_id, 2);
         assert_eq!(commits.sk_agg_commit, [0x11; 32]);
-        assert_eq!(commits.esm_agg_commit, [0x22; 32]);
+        assert_eq!(commits.esm_agg_commit, [0u8; 32]);
     }
 
     #[test]
@@ -146,8 +146,8 @@ mod tests {
 
         let mut fields = vec![[0u8; 32]; field_count];
         fields[NODE_FOLD_V2_PUBLIC_PREFIX_LEN][31] = 2;
-        fields[NODE_FOLD_V2_PUBLIC_PREFIX_LEN + legacy_field_count - 3] = [0x11; 32];
-        fields[NODE_FOLD_V2_PUBLIC_PREFIX_LEN + legacy_field_count - 2] = [0x22; 32];
+        let sk_tail = node_fold_sk_tail(n, h);
+        fields[NODE_FOLD_V2_PUBLIC_PREFIX_LEN + legacy_field_count - sk_tail] = [0x11; 32];
         fields[field_count - 3] = [0x33; 32];
         fields[field_count - 2] = [0x44; 32];
 
@@ -166,12 +166,12 @@ mod tests {
             extract_node_fold_agg_commits(&proof, n, h, l).expect("extract should succeed");
         assert_eq!(party_id, 2);
         assert_eq!(commits.sk_agg_commit, [0x11; 32]);
-        assert_eq!(commits.esm_agg_commit, [0x22; 32]);
+        assert_eq!(commits.esm_agg_commit, [0u8; 32]);
     }
 
     #[test]
     fn v2_field_count_uses_the_preset_row_count() {
-        assert_eq!(node_fold_v2_public_field_count(3, 2, 3), 63);
-        assert_eq!(node_fold_v2_public_field_count(3, 2, 5), 89);
+        assert_eq!(node_fold_v2_public_field_count(3, 2, 3), 51);
+        assert_eq!(node_fold_v2_public_field_count(3, 2, 5), 67);
     }
 }

@@ -144,6 +144,7 @@ fn generating_c7_state() -> ThresholdPlaintextAggregatorState {
         threshold_n: 2,
         shares: vec![(0, vec![ArcBytes::from_bytes(&[7])])],
         plaintext: vec![ArcBytes::from_bytes(&[9])],
+        ciphertext_output: vec![ArcBytes::from_bytes(&[8])],
     })
 }
 

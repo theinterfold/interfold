@@ -13,7 +13,7 @@ use crate::{
     threshold::pk_generation::PkGenerationCircuitData, CiphernodesCommittee, CircuitsErrors,
 };
 use e3_fhe_params::{
-    build_pair_for_preset, create_deterministic_crp_from_default_seed, generate_smudging_error,
+        build_pair_for_preset, create_deterministic_crp_from_default_seed,
     BfvPreset,
 };
 use e3_polynomial::CrtPolynomial;
@@ -52,33 +52,12 @@ impl PkGenerationCircuitData {
             .lambda()
             .map_err(|e| CircuitsErrors::Sample(e.to_string()))?;
 
-        // Generate smudging error coefficients
-        let esi_coeffs = generate_smudging_error(
-            threshold_params.clone(),
-            num_parties,
-            num_ciphertexts as usize,
-            defaults.mult_depth,
-            lambda,
-            &mut rng,
-        )?;
-
-        // Convert to polynomial in RNS representation
-        // bigints_to_poly returns Zeroizing<Poly>, we need to clone the inner Poly
-        let e_sm_rns_zeroizing = Poly::<PowerBasis>::from_bigints(
-            &esi_coeffs,
-            threshold_params
-                .context_at_level(0)
-                .map_err(|e| CircuitsErrors::Sample(e.to_string()))?,
-        )
-        .map_err(|e| CircuitsErrors::Sample(e.to_string()))?;
-
-        let e_sm = e_sm_rns_zeroizing.deref().clone();
+        let _ = (num_parties, num_ciphertexts, lambda);
 
         Ok(PkGenerationCircuitData {
             committee,
             pk0_share: CrtPolynomial::from_fhe_polynomial(&pk0_share),
             eek: CrtPolynomial::from_fhe_polynomial(&e),
-            e_sm: CrtPolynomial::from_fhe_polynomial(&e_sm),
             sk: CrtPolynomial::from_fhe_polynomial(&sk),
         })
     }
@@ -106,7 +85,6 @@ mod tests {
         let bounds = Bounds::compute(BfvPreset::InsecureThreshold, &sample.committee).unwrap();
 
         assert_eq!(inputs.pk0is.limbs.len(), 3);
-        assert_eq!(inputs.e_sm.limbs.len(), 3);
         assert_eq!(inputs.r1is.limbs.len(), 3);
         assert_eq!(inputs.r2is.limbs.len(), 3);
         for coefficient in inputs.eek.coefficients() {
@@ -120,14 +98,6 @@ mod tests {
                 coefficient.abs() <= BigInt::from(bounds.sk_bound.clone()),
                 "secret key exceeds the C1 bound"
             );
-        }
-        for limb in &inputs.e_sm.limbs {
-            for coefficient in limb.coefficients() {
-                assert!(
-                    coefficient.abs() <= BigInt::from(bounds.e_sm_bound.clone()),
-                    "smudging error exceeds the C1 bound"
-                );
-            }
         }
         for (limb, bound) in inputs.r1is.limbs.iter().zip(&bounds.r1_bounds) {
             for coefficient in limb.coefficients() {

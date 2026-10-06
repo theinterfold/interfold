@@ -6,7 +6,8 @@ import {
   bfvConfigsForChain,
   getBfvDecryptionSubCircuitVkHashPaths,
   getBfvPkSubCircuitVkHashPaths,
-  getBfvPkVkBindingHashPaths,
+  readBfvPkVkBindingHashes,
+  ZERO_VK_HASH,
   getBfvV2SubCircuitVkHashPaths,
   getBfvV2VkBindingHashPaths,
   readVkRecursiveHash,
@@ -492,10 +493,8 @@ async function deployBfvVerifierRoute(
     readVkRecursiveHash(pkPaths.nodesFold, config),
     readVkRecursiveHash(pkPaths.c5, config),
     readVkRecursiveHash(pkPaths.skC2Chunk, config),
-    readVkRecursiveHash(pkPaths.esmC2Chunk, config),
-    getBfvPkVkBindingHashPaths(config).map((filePath) =>
-      readVkRecursiveHash(filePath, config),
-    ),
+    ZERO_VK_HASH,
+    readBfvPkVkBindingHashes(config),
     config.h,
   );
   await pk.waitForDeployment();
@@ -515,10 +514,8 @@ async function deployBfvVerifierRoute(
       readVkRecursiveHash(v2SubCircuitPaths.nodesFold, config),
       readVkRecursiveHash(pkPaths.c5, config),
       readVkRecursiveHash(pkPaths.skC2Chunk, config),
-      readVkRecursiveHash(pkPaths.esmC2Chunk, config),
-      getBfvPkVkBindingHashPaths(config).map((filePath) =>
-        readVkRecursiveHash(filePath, config),
-      ),
+      ZERO_VK_HASH,
+      readBfvPkVkBindingHashes(config),
       v2VkBindingPaths.map((filePath) => readVkRecursiveHash(filePath, config)),
     );
     await pkV2.waitForDeployment();

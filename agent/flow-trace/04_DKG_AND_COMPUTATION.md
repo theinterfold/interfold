@@ -14,6 +14,8 @@ Delegated bonding does not alter cryptographic identity. Every ECDSA proof signa
 by the hot operator key and verified against the operator address snapshotted into the committee.
 The bond owner never signs DKG, key-publication, computation, or decryption messages.
 
+DKG deals the secret key and one PRF key per recipient. It does not sample or share smudging noise, and it does not build C2b, C3b, or C4b. C1 publishes the secret-key commitment and the public-key commitment. At decryption, each party in the decryptor set computes its Lagrange coefficient from that public set. The partial share is that coefficient times `c1` times the secret share, plus fresh noise, plus the PRF mask. `c0` is not in the partial share. C7 adds `c0` to the sum of partial shares and decodes. C7 does not apply Lagrange again. The decryptor set is the lowest T+1 honest party ids. The C6 fold copies that set and each party's outgoing and incoming PRF-key commitments into the decryption proof. The registry stores the C2 PRF-key matrix from the DKG proof, and the decryption verifier checks the opened keys against it.
+
 ---
 
 ## Phase 1: DKG — Distributed Key Generation
@@ -176,40 +178,26 @@ ThresholdKeyshare receives AllEncryptionKeysCollected
 │   │  │     → Splits sk into N shares; T+1 reconstruct         │
 │   │  │     → One share per committee member                    │
 │   │  │                                                         │
-│   │  │  3. Generate smudging noise (e_sm_raw):                │
-│   │  │     → Statistical security parameter                    │
-│   │  │     → Prevents information leakage during decryption    │
-│   │  │                                                         │
-│   │  │  4. Extract raw polynomials for ZK proof:              │
+│   │  │  3. Extract raw polynomials for ZK proof:              │
 │   │  │     pk0_share_raw, sk_raw, eek_raw                     │
 │   │  │                                                         │
-│   │  │  5. Encrypt all secrets with node's Cipher              │
+│   │  │  4. Encrypt the secrets with the node's Cipher          │
 │   │  │                                                         │
-│   │  │  Output: pk_share, sk_sss[N], e_sm_raw, raw_polys     │
+│   │  │  Output: pk_share, sk_sss[N], raw_polys                │
 │   │  └─────────────────────────────────────────────────────────┘
-│
-└─ COMPUTE REQUEST 2: GenEsiSss (immediately after)
-    │
-    │  ┌─── TrBFV Computation ──────────────────────────────────┐
-    │  │                                                         │
-    │  │  Generate Shamir shares of Error Smudging Info (ESI):  │
-    │  │  → Multiple sets, one per ciphertext                    │
-    │  │  → Each set: N shares, T+1 threshold to reconstruct    │
-    │  │                                                         │
-    │  │  Output: esi_sss[num_ciphertexts][N]                   │
-    │  └─────────────────────────────────────────────────────────┘
 ```
 
-During restart replay, the durable `GenPkShareAndSkSss` and `GenEsiSss` responses can reach
+The pk response publishes the share plan. DKG does not request `GenEsiSss`.
+
+During restart replay, the durable `GenPkShareAndSkSss` response can reach
 `ThresholdKeyshare` before the rebuilt encryption-key collector reports completion. While effects
-are disabled, the actor holds those exact responses. It applies them when their prerequisites are
-restored instead of dispatching new randomized computations. An identical replay is idempotent; a
+are disabled, the actor holds that response. It applies the response when its prerequisites are
+restored instead of dispatching a new randomized computation. An identical replay is idempotent; a
 different response for the same stage fails closed.
 
     │
-    ├─ ThresholdKeyshare tracks the correlation id for both TrBFV requests:
-    │   ├─ `GenPkShareAndSkSss`
-    │   └─ `GenEsiSss`
+    ├─ ThresholdKeyshare tracks the correlation id for the TrBFV request:
+    │   └─ `GenPkShareAndSkSss`
     │   → A local worker or task-pool failure retries the same live request.
     │   → Retry warnings are limited to one per minute.
     │   → The node does not report local failure as invalid committee data.
@@ -217,7 +205,7 @@ different response for the same stage fails closed.
 ### Step 5: Encrypt & Broadcast Shares (with C1, C2, C3 Proofs)
 
 ```
-Both GenPkShareAndSkSss and GenEsiSss complete
+GenPkShareAndSkSss completes and the share plan is published
     │
     ├─ `ThresholdKeyshare` tracks the `CalculateDecryptionKey` correlation id:
     │   → A local worker or task-pool failure retries the same request.
@@ -237,28 +225,21 @@ Both GenPkShareAndSkSss and GenEsiSss complete
 │   │     {
 │   │       party_id,
 │   │       pk_share,          // public key share (public)
-│   │       encrypted_sk_sss,  // encrypted for each target party
-│   │       encrypted_esi_sss  // encrypted for each target party
+│   │       encrypted_sk_sss   // encrypted for each target party
 │   │     }
 │   │
-│   ├─ 3. Build proof requests for FIVE circuit types:
+│   ├─ 3. Build proof requests for three circuit types:
 │   │     ├─ C1: PkGenerationProofRequest
 │   │     │   → Proves TrBFV pk_share was generated correctly from sk
 │   │     ├─ C2a: ShareComputationProofRequest (SK)
 │   │     │   → Proves Shamir shares of sk were computed correctly
-│   │     ├─ C2b: ShareComputationProofRequest (ESM)
-│   │     │   → Proves Shamir shares of smudging noise were computed correctly
-│   │     ├─ C3a: ShareEncryptionProofRequests (SK, one per recipient × row)
-│   │     │   → Proves each sk_sss share was encrypted correctly under recipient's BFV key
-│   │     └─ C3b: ShareEncryptionProofRequests (ESM, one per ESI × recipient × row)
-│   │         → Proves each esi_sss share was encrypted correctly
+│   │     └─ C3a: ShareEncryptionProofRequests (SK, one per recipient × row)
+│   │         → Proves each sk_sss share was encrypted correctly under recipient's BFV key
 │   │
 │   ├─ 4. Publish ThresholdSharePending {
 │   │       full_share, proof_request(C1),
 │   │       sk_share_computation_request(C2a),
-│   │       e_sm_share_computation_request(C2b),
 │   │       sk_share_encryption_requests(C3a[]),
-│   │       e_sm_share_encryption_requests(C3b[]),
 │   │       recipient_party_ids // parties with collected C0 keys, not placeholder slots
 │   │     }
 │   │     → ProofRequestActor picks this up
@@ -274,19 +255,15 @@ Both GenPkShareAndSkSss and GenEsiSss complete
 ProofRequestActor receives ThresholdSharePending
 │
 ├─ 1. Creates PendingThresholdProofs tracker:
-│     expected = 1 (C1) + 1 (C2a) + 1 (C2b) + SK_ENC_COUNT (C3a) + ESM_ENC_COUNT (C3b)
+│     expected = 1 (C1) + 1 (C2a) + SK_ENC_COUNT (C3a)
 │     → All proofs must complete before publishing ThresholdShareCreated
 │
 ├─ 2. Dispatches ALL proof requests in parallel:
 │     ├─ C1:  ComputeRequest::zk(ZkRequest::PkGeneration {...})
 │     ├─ C2a: ComputeRequest::zk(ZkRequest::ShareComputation { kind: SK })
-│     ├─ C2b: ComputeRequest::zk(ZkRequest::ShareComputation { kind: ESM })
-│     ├─ C3a[i]: ComputeRequest::zk(ZkRequest::ShareEncryption { recipient, row })
-│     │   → One per recipient party × threshold-secret modulus row; the paired DKG parameters
-│     │     define the ciphertext CRT limbs
-│     └─ C3b[i]: ComputeRequest::zk(ZkRequest::ShareEncryption { esi_idx, recipient, row })
-│         → One per ESI × recipient party × threshold-secret modulus row; the paired DKG
-│           parameters define the ciphertext CRT limbs
+│     └─ C3a[i]: ComputeRequest::zk(ZkRequest::ShareEncryption { recipient, row })
+│         → One per recipient party × threshold-secret modulus row; the paired DKG parameters
+│           define the ciphertext CRT limbs
 │
 ├─ 3. ZkActor generates proofs via bb binary (in parallel via multithread):
 │     → Each proof takes 1-10 seconds depending on circuit complexity
@@ -295,25 +272,21 @@ ProofRequestActor receives ThresholdSharePending
 │     ├─ Store proof in PendingThresholdProofs map
 │     ├─ Check is_complete():
 │     │   all of: pk_generation_proof(C1), sk_share_computation_proof(C2a),
-│     │           e_sm_share_computation_proof(C2b),
-│     │           ALL sk_share_encryption_proofs(C3a),
-│     │           ALL e_sm_share_encryption_proofs(C3b)
+│     │           ALL sk_share_encryption_proofs(C3a)
 │     └─ When ALL proofs complete (is_complete() → true):
 │
 ├─ 5. Sign all proofs via sign_and_group_proofs():
 │     → Each proof gets its own SignedProofPayload with ECDSA signature
-│     → C3a/C3b proofs indexed by (real recipient_party_id, row_index)
+│     → C3a proofs indexed by (real recipient_party_id, row_index)
 │
 ├─ 6. Publish events:
 │     ├─ PkGenerationProofSigned { e3_id, party_id, signed_proof(C1) }
-│     ├─ DkgProofSigned { signed_proof } × (C2a, C2b, each C3a, each C3b)
+│     ├─ DkgProofSigned { signed_proof } × (C2a, each C3a)
 │     └─ ThresholdShareCreated for each recipient with a collected C0 key {
 │          e3_id, party_id, target_party_id,
-│          threshold_share,               // pk_share + this recipient's encrypted shares
+│          threshold_share,               // pk_share + this recipient's encrypted sk share
 │          signed_sk_computation_proof,    // C2a
-│          signed_esm_computation_proof,   // C2b
-│          signed_sk_encryption_proofs,    // C3a[] for this recipient
-│          signed_esm_encryption_proofs    // C3b[] for this recipient
+│          signed_sk_encryption_proofs     // C3a[] for this recipient
 │        }
 │        → Broadcast to nodes via libp2p gossip; the recipient filters by target_party_id
 │
@@ -321,10 +294,10 @@ ProofRequestActor receives ThresholdSharePending
    → Ensures no incomplete data is gossiped
 ```
 
-**C2 proofs:** For each C2a/C2b request, the prover builds chunk proofs and a type-bound terminal
-proof for `sk_share_computation_chunk` / `esm_share_computation_chunk`. That terminal `Proof` is
+**C2 proofs:** For each C2a request, the prover builds chunk proofs and a type-bound terminal
+proof for `sk_share_computation_chunk`. That terminal `Proof` is
 what `PendingThresholdProofs` stores and what gets ECDSA-signed for gossip
-(`ProofType::C2aSkShareComputation` / `C2bESmShareComputation`). The old generic
+(`ProofType::C2aSkShareComputation`). The old generic
 `recursive_aggregation/wrapper/*` circuits and two-proof `recursive_aggregation/fold` were removed;
 aggregation is done by ad-hoc Noir bins under `circuits/bin/recursive_aggregation/` (e.g.
 `c2ab_chunk_fold`, `c3ab_fold`, `c6_fold`, `node_fold`, `nodes_fold`, `dkg_aggregator`,
@@ -333,16 +306,18 @@ aggregation is done by ad-hoc Noir bins under `circuits/bin/recursive_aggregatio
 `wrapper/` Noir step was removed; aggregator response structs no longer carry a `wrapped_proof`
 field — the inner recursive proof itself is what flows between stages.
 
-The chunked C2 path keeps the same signed proof multiplicity. For each C2a/C2b request, Rust
+The chunked C2 path keeps one signed terminal proof per C2a request. Rust
 generates one type-bound recursive proof per chunk. The default chunk size is the smaller of 512
 coefficients and the preset polynomial degree. The insecure degree-128 preset therefore uses 128
 coefficients per chunk. The `--chunk-size` option accepts any nonzero divisor of the preset
 polynomial degree for generated circuit configuration. The production multithread path selects the
 preset default chunk size. Rust groups the chunk proofs into fixed recursive batches and verifies
-all batches in a type-bound terminal circuit. The terminal circuits reconstruct a root commitment
-for the secret and for each recipient share. The signed response contains only the type-bound
-terminal `SkC2ChunkFinalize` or `ESmC2ChunkFinalize` proof. `C2ChunkBatch` binds the ordered chunk
-indices and chunk commitments.
+all batches in a type-bound terminal circuit. The terminal circuit reconstructs a root commitment
+for the secret and for each recipient share. The terminal also publishes one PRF-key commitment
+per recipient. The SK path commits the key packed into the largest threshold limb. `C2ChunkBatch` binds the ordered chunk
+indices and chunk commitments. C3 checks the encrypted limb-0 plaintext against the share
+commitment and the key commitment. C4 removes those bits before the aggregate commitment. C6
+evaluates the same keys in the decryption equation.
 
 The chunk size is one value across the DKG pipeline: it threads from the sample into the C2 (share
 computation), C3 (share encryption), and C4 (share decryption) witness computation and into the
@@ -433,7 +408,7 @@ ThresholdShareCollector collects this recipient's shares from the other N−1 pa
         │
         └─ Publishes ShareVerificationDispatched {
              kind: ShareProofs,
-             party_proofs: [all C2a, C2b, C3a, C3b proofs per party],
+             party_proofs: [all C2a and C3a proofs per party],
              pre_dishonest: [parties with missing/incomplete proofs]
            }
            → ShareVerificationActor picks this up
@@ -485,7 +460,6 @@ ShareVerificationActor receives ShareVerificationDispatched(kind=ShareProofs)
 │   │   │     C0→C3   (SourceMustExistInTargets): local-cache absence accusations are disabled;
 │   │   │                                          each recipient checks its own C0 against C3
 │   │   │     C1→C2a  (SameParty):                C1's sk_commitment == C2a's expected_secret_commitment
-│   │   │     C1→C2b  (SameParty):                C1's e_sm_commitment == C2b's expected_secret_commitment
 │   │   │     C1→C5   (CrossParty):               C1's pk_commitment ∈ C5 expected pk inputs
 │   │   │     l-BFV→C1 (SameParty):               each l-BFV PK row uses C1's sk_commitment
 │   │   │     C2→C3   (SameParty):                C3's expected_message_commitment ∈ C2's share commitments
@@ -493,7 +467,6 @@ ShareVerificationActor receives ShareVerificationDispatched(kind=ShareProofs)
 │   │   │                                          C2's L share commitments for recipient R match
 │   │   │                                          C4_R's row for sender X in the H-roster order
 │   │   │     C4a→C6  (SameParty):                C4a's commitment == C6's expected_sk_commitment
-│   │   │     C4b→C6  (SameParty):                C4b's commitment == C6's expected_e_sm_commitment
 │   │   │     C6→C7   (CrossParty):               C6's d_commitment matches C7's expected_d_commitment
 │   │   │     (on-chain / E3 state)              C3/C6 ciphertext commitments are checked against their ciphertext witnesses;
 │   │   │                                      the final decryption proof exposes the SAFE commitment and the wrapper compares it with
@@ -667,27 +640,21 @@ ThresholdKeyshare accepts an H-dealer roster after C2/C3 verification
 ├─ 1. Each selected party decrypts its shares from the selected dealers:
 │     For each other selected party j:
 │       sk_sss_j = BFV::decrypt(encrypted_sk_sss_j, my_bfv_sk)
-│       esi_sss_j = BFV::decrypt(encrypted_esi_sss_j, my_bfv_sk)
 │
 ├─ 2. COMPUTE REQUEST: CalculateDecryptionKey
 │     │
 │     │  ┌─── TrBFV Computation ──────────────────────────────┐
 │     │  │                                                     │
-│     │  │  Inputs: selected sk_sss and esi_sss shares       │
+│     │  │  Inputs: selected sk_sss shares                     │
 │     │  │                                                     │
-│     │  │  1. Reconstruct summed secret key polynomial:       │
+│     │  │  Reconstruct summed secret key polynomial:          │
 │     │  │     sk_poly_sum = Shamir::reconstruct(              │
 │     │  │       [sk_sss_j for j in the accepted H roster]   │
 │     │  │     )                                               │
 │     │  │     → This is NOT the full secret key               │
 │     │  │     → It's this node's PORTION of the summed key    │
 │     │  │                                                     │
-│     │  │  2. Reconstruct summed ESI polynomials:             │
-│     │  │     es_poly_sum = Shamir::reconstruct(              │
-│     │  │       [esi_sss_j for j in the accepted H roster]  │
-│     │  │     )                                               │
-│     │  │                                                     │
-│     │  │  Output: (sk_poly_sum, es_poly_sum)                 │
+│     │  │  Output: sk_poly_sum. es_poly_sum is empty.         │
 │     │  │  → Stored encrypted locally for later decryption    │
 │     │  └─────────────────────────────────────────────────────┘
 │
@@ -700,31 +667,29 @@ ThresholdKeyshare accepts an H-dealer roster after C2/C3 verification
 ├─ 3. PUBLISH C4 PROOF REQUESTS:
 │     DecryptionShareProofsPending {
 │       sk_request:   DkgShareDecryptionProofRequest (C4a),
-│       esm_requests: Vec<DkgShareDecryptionProofRequest> (C4b, one per ESI),
-│       sk_poly_sum, es_poly_sum  // decrypted aggregates for proof inputs
+│       esm_requests: empty,
+│       sk_poly_sum, es_poly_sum  // es_poly_sum is empty
 │     }
 │     → ProofRequestActor picks this up
 │
 ├─ 4. C4 PROOF GENERATION (ProofRequestActor):
 │     │
 │     │  ├─ Creates PendingDecryptionProofs:
-│     │  │   expected = 1 (C4a for SK) + num_esi (C4b for each ESM)
+│     │  │   expected = 1 (C4a for SK)
 │     │  │
 │     │  ├─ Dispatches proof requests:
 │     │  │   C4a: ComputeRequest::zk(ZkRequest::DkgShareDecryption { kind: SK })
-│     │  │   C4b[i]: ComputeRequest::zk(ZkRequest::DkgShareDecryption { kind: ESM, esi_idx })
 │     │  │   → Proves share decryption was performed correctly
 │     │  │   → Proves the reconstructed key portion is valid
 │     │  │
-│     │  ├─ ZkActor generates all C4 proofs
+│     │  ├─ ZkActor generates the C4a proof
 │     │  │
-│     │  └─ When is_complete() (all C4a + C4b proofs):
-│     │      ├─ Signs all proofs
+│     │  └─ When is_complete() (the C4a proof):
+│     │      ├─ Signs the proof
 │     │      └─ Publishes DecryptionKeyShared {
 │     │           e3_id, party_id,
-│     │           sk_poly_sum, es_poly_sum,        // protocol data
-│     │           signed_sk_decryption_proof,       // C4a
-│     │           signed_esm_decryption_proofs[]    // C4b per ESI
+│     │           sk_poly_sum, es_poly_sum,        // es_poly_sum is empty
+│     │           signed_sk_decryption_proof       // C4a
 │     │         }
 │     │         → Broadcast to all committee nodes via P2P gossip
 │     │         → This is Protocol Exchange #3 (decryption key sharing)
@@ -755,11 +720,11 @@ ThresholdKeyshare accepts an H-dealer roster after C2/C3 verification
 │     │
 │     └─ Publishes ShareVerificationDispatched {
 │          kind: DecryptionProofs,
-│          party_proofs: [C4a + C4b proofs per party]
+│          party_proofs: [C4a proof per party]
 │        }
 │        → ShareVerificationActor performs same 2-phase verification:
 │          Phase 1: ECDSA signature recovery
-│          Phase 2: Commitment consistency check (C2→C4, C4a→C6, C4b→C6)
+│          Phase 2: Commitment consistency check (C2→C4, C4a→C6)
 │          Phase 3: ZK proof verification via bb binary
 │        → On failure: SignedProofFailed → accusation pipeline
 │        → On pass: ProofVerificationPassed (cached)
@@ -1377,18 +1342,17 @@ InterfoldSolReader decodes CiphertextOutputPublished event
     │   │
     │   │  ┌─── TrBFV Computation ──────────────────────────────┐
     │   │  │                                                     │
-    │   │  │  Inputs:                                            │
-    │   │  │    - ciphertext (encrypted computation output)      │
-    │   │  │    - sk_poly_sum (this node's secret key portion)   │
-    │   │  │    - es_poly_sum (this node's smudging noise)       │
-    │   │  │                                                     │
-    │   │  │  Compute:                                           │
-    │   │  │    decryption_share = ShareManager::compute_share(  │
-    │   │  │      ciphertext, sk_poly_sum, es_poly_sum           │
-    │   │  │    )                                                │
-    │   │  │    → One decryption share polynomial per ciphertext │
-    │   │  │    → Smudging noise prevents info leakage           │
-    │   │  │    → Share alone reveals NOTHING about plaintext    │
+│   │  │  Inputs:                                            │
+│   │  │    - ciphertext (encrypted computation output)      │
+│   │  │    - sk_poly_sum (this node's secret key portion)   │
+│   │  │    - fresh smudging noise sampled at decryption     │
+│   │  │    - PRF mask from the C2 keys                      │
+│   │  │                                                     │
+│   │  │  Compute:                                           │
+│   │  │    p = lambda * c1 * sk + fresh noise + PRF mask    │
+│   │  │    → lambda comes from the public decryptor set     │
+│   │  │    → c0 is not in the partial share                 │
+│   │  │    → Share alone reveals NOTHING about plaintext    │
     │   │  │                                                     │
     │   │  │  Output: Vec<decryption_share_polynomial>           │
     │   │  └─────────────────────────────────────────────────────┘
@@ -1491,10 +1455,9 @@ InterfoldSolReader decodes CiphertextOutputPublished event
 │   │   │  │    - party IDs                                      │
 │   │   │  │                                                     │
 │   │   │  │  Compute:                                           │
-│   │   │  │  1. Lagrange interpolation on share polynomials     │
-│   │   │  │     → Shamir threshold reconstruction               │
-│   │   │  │  2. Combine to recover full decryption              │
-│   │   │  │  3. BFV decode plaintext to output bytes            │
+│   │   │  │  1. Add c0 to the sum of partial shares             │
+│   │   │  │     → Lagrange was applied in each C6 share         │
+│   │   │  │  2. BFV decode plaintext to output bytes            │
 │   │   │  │                                                     │
 │   │   │  │  Output: plaintext_bytes                            │
 │   │   │  └─────────────────────────────────────────────────────┘
@@ -1642,19 +1605,12 @@ InterfoldSolReader decodes CiphertextOutputPublished event
 ├──────┼────────────────────────────┼───────────────────┼──────────────────────────────┤
 │ C1   │ TrBFV PK Generation        │ DKG: Share Gen    │ Threshold pk_share derived   │
 │      │                            │                   │ correctly from sk; outputs   │
-│      │                            │                   │ sk_commitment, pk_commitment,│
-│      │                            │                   │ e_sm_commitment              │
+│      │                            │                   │ sk_commitment, pk_commitment │
 ├──────┼────────────────────────────┼───────────────────┼──────────────────────────────┤
 │ C2a  │ SK Share Computation       │ DKG: Share Gen    │ Shamir shares of sk computed │
 │      │                            │                   │ correctly                    │
 ├──────┼────────────────────────────┼───────────────────┼──────────────────────────────┤
-│ C2b  │ ESM Share Computation      │ DKG: Share Gen    │ Shamir shares of smudging    │
-│      │                            │                   │ noise computed correctly     │
-├──────┼────────────────────────────┼───────────────────┼──────────────────────────────┤
 │ C3a  │ SK Share Encryption        │ DKG: Share Gen    │ sk_sss encrypted correctly   │
-│      │                            │                   │ under recipient's BFV key   │
-├──────┼────────────────────────────┼───────────────────┼──────────────────────────────┤
-│ C3b  │ ESM Share Encryption       │ DKG: Share Gen    │ esi_sss encrypted correctly  │
 │      │                            │                   │ under recipient's BFV key   │
 ├──────┼────────────────────────────┼───────────────────┼──────────────────────────────┤
 │ C4a  │ SK Decryption Share (T2)   │ DKG: Key Calc     │ Verifies H decrypted shares  │
@@ -1663,10 +1619,6 @@ InterfoldSolReader decodes CiphertextOutputPublished event
 │      │                            │                   │ q, reverse, center) before   │
 │      │                            │                   │ hashing; output commitment   │
 │      │                            │                   │ consumed by C6               │
-├──────┼────────────────────────────┼───────────────────┼──────────────────────────────┤
-│ C4b  │ ESM Decryption Share (T2)  │ DKG: Key Calc     │ Same as C4a for e_sm branch; │
-│      │                            │                   │ output commitment consumed   │
-│      │                            │                   │ by C6                        │
 ├──────┼────────────────────────────┼───────────────────┼──────────────────────────────┤
 │ C5   │ PK Aggregation             │ Aggregation       │ Aggregate PK correctly       │
 │      │                            │                   │ computed from H canonical    │

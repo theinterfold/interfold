@@ -9,8 +9,10 @@
 //! Searches for BFV (Brakerski–Fan–Vercauteren) parameters over the fixed
 //! ring dimension N = 16384 using NTT-friendly CRT primes. The first parameter
 //! set models multiplicative depth (`z` is the total circuit depth) with a
-//! relinearization-noise recursion (Proposition 20 of the White Paper), and the
-//! second set satisfies the centered-RNS "large gap" rule `qi > 2·max_qi_first`.
+//! relinearization-noise recursion (Proposition 20 of the White Paper). The
+//! second set uses plaintext modulus `2 * max(q_i)` so one coefficient can
+//! store a share residue and one PRF-key bit. Each of its primes satisfies
+//! `qi > 2 * plaintext_modulus`.
 
 use num_bigint::BigUint;
 use num_traits::{One, ToPrimitive, Zero};
@@ -420,9 +422,10 @@ pub fn finalize_first_param(
 
 /// Search for the second BFV parameter set.
 ///
-/// k_second = max(qi_first); the centered-RNS rule requires every second-set
-/// prime `qi > 2·max_qi_first` (large gap), and second-set primes must be
-/// disjoint from the first set. The smallest valid primes are chosen.
+/// The plaintext modulus is `2 * max(q_i)` of the first set. Every second-set
+/// prime must be greater than twice that plaintext modulus, and the primes
+/// must be disjoint from the first set. The search selects the smallest
+/// primes that pass the fresh-noise check.
 pub fn bfv_search_second_param(
     config: &BfvSearchConfig,
     first: &BfvSearchResult,
@@ -438,19 +441,21 @@ pub fn bfv_search_second_param(
         .clone();
     let max_qi_bits = log2_big(&max_qi_first);
 
-    let k_second: u128 = max_qi_first.to_u128().unwrap_or(u128::MAX);
-
-    // fhe.rs centered RNS requires qi_second > 2·max(qi_first) to avoid
-    // sign-flip errors in the centered-representation scaler.
-    let min_qi_second = &max_qi_first << 1;
+    // One extra bit above the largest share residue: t = 2 * max(q_i).
+    // fhe.rs keeps the u64 decryption reduction exact only while q_0 >= 2t.
+    let k_second_big: BigUint = max_qi_first.clone() << 1;
+    let k_second: u128 = k_second_big.to_u128().unwrap_or(u128::MAX);
+    let min_qi_second = k_second_big << 1;
     let min_qi_log2 = log2_big(&min_qi_second);
 
     let log2_b = (config.b as f64).log2();
     let log2_q_limit = log2_b + ((d as f64) - 75.0) / 37.5;
 
     if config.verbose {
-        println!("\n[BFV-2nd] Fixed d={d}, k = max_qi_first = {k_second} ({max_qi_bits:.2} bits)");
-        println!("  Minimum qi required: {min_qi_log2:.2} bits (fhe.rs centered RNS: qi > 2*k)");
+        println!(
+            "\n[BFV-2nd] Fixed d={d}, k = 2*max(q_i) = {k_second} (max q_i = {max_qi_bits:.2} bits)"
+        );
+        println!("  Minimum qi required: {min_qi_log2:.2} bits (fhe.rs: qi > 2*k)");
         println!("  Security limit: log2(q) <= {log2_q_limit:.1}");
     }
 
@@ -626,7 +631,7 @@ pub fn finalize_second_param(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use num_traits::One;
+    use num_traits::{One, Zero};
 
     fn create_test_config() -> BfvSearchConfig {
         BfvSearchConfig {
@@ -717,5 +722,46 @@ mod tests {
             let res = finalize_second_param(&config, d, small, k_plain, false);
             assert_eq!(res.is_some(), expected);
         }
+    }
+
+    #[test]
+    fn second_param_plaintext_is_twice_the_largest_first_modulus() {
+        let max_qi = 0x0004_0000_009f_0001u64;
+        let first = BfvSearchResult {
+            d: 16384,
+            k_plain_eff: 0,
+            q_bfv: BigUint::zero(),
+            selected_primes: vec![PrimeItem {
+                bitlen: 51,
+                value: BigUint::from(max_qi),
+                log2: 51.0,
+                hex: format!("0x{max_qi:016x}"),
+            }],
+            rkq: 0,
+            delta: BigUint::zero(),
+            benc_min: BigUint::zero(),
+            b_fresh: BigUint::zero(),
+            b_c: BigUint::zero(),
+            b_c_final: BigUint::zero(),
+            b_sm_min: BigUint::zero(),
+            b_relin: BigUint::zero(),
+            mult_depth: 0,
+            lhs_log2: 0.0,
+            rhs_log2: 0.0,
+        };
+
+        let second = bfv_search_second_param(&create_test_config(), &first)
+            .expect("second parameter set exists");
+
+        assert_eq!(second.k_plain_eff, u128::from(max_qi) * 2);
+        assert_eq!(
+            second.qi_values(),
+            vec![0x0020_0000_000e_0001, 0x0020_0000_0014_0001]
+        );
+        let two_t = BigUint::from(second.k_plain_eff) << 1;
+        assert!(second
+            .selected_primes
+            .iter()
+            .all(|prime| prime.value > two_t));
     }
 }

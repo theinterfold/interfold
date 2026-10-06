@@ -23,29 +23,66 @@ use crate::math::polynomial::Polynomial;
 ///
 /// `BIT_MSG` hashes per-share plaintexts (aligned with C2). `BIT_AGG` hashes the CRT aggregate
 /// (`compute_aggregated_shares_commitment`) and must match threshold C6 `BIT_SK` / `BIT_E_SM`.
-pub struct ShareDecryption<let N: u32, let L: u32, let H: u32, let BIT_MSG: u32, let BIT_AGG: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32> {
+pub struct ShareDecryption<let N: u32, let L: u32, let H: u32, let BIT_MSG: u32, let BIT_AGG: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32, let KEY_BITS: u32> {
     /// Expected commitments to the share polynomials, produced in C2a (for C4a) or C2b (for C4b)
     /// via commit_to_party_shares. Organised as [party_idx][mod_idx], covering all H honest
     /// parties and L CRT moduli.
     /// (public witnesses)
     expected_commitments: [[Field; L]; H],
 
+    /// PRF-key commitments for the H dealers, opened from limb 0.
+    expected_key_commitments: [Field; H],
+
     /// Decrypted share polynomials from H honest parties.
     /// Organised as [party_idx][mod_idx].
     /// (secret witnesses)
     decrypted_shares: [[Polynomial<N>; L]; H],
 
+    /// Key bits packed into limb 0 of each dealer share. Bit 0 is the least significant bit.
+    key_bits: [[Field; KEY_BITS]; H],
+
     /// Zero-based recipient party index used in the C2 commitment domain.
     recipient_party_idx: u32,
 }
 
-impl<let N: u32, let L: u32, let H: u32, let BIT_MSG: u32, let BIT_AGG: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32> ShareDecryption<N, L, H, BIT_MSG, BIT_AGG, N_CHUNKS, CHUNK_SIZE> {
+impl<let N: u32, let L: u32, let H: u32, let BIT_MSG: u32, let BIT_AGG: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32, let KEY_BITS: u32> ShareDecryption<N, L, H, BIT_MSG, BIT_AGG, N_CHUNKS, CHUNK_SIZE, KEY_BITS> {
     pub fn new(
         expected_commitments: [[Field; L]; H],
+        expected_key_commitments: [Field; H],
         decrypted_shares: [[Polynomial<N>; L]; H],
+        key_bits: [[Field; KEY_BITS]; H],
         recipient_party_idx: u32,
     ) -> Self {
-        ShareDecryption { expected_commitments, decrypted_shares, recipient_party_idx }
+        ShareDecryption {
+            expected_commitments,
+            expected_key_commitments,
+            decrypted_shares,
+            key_bits,
+            recipient_party_idx,
+        }
+    }
+
+    /// Remove key bits from limb 0. Later limbs stay unchanged.
+    fn stripped_shares(self, key_modulus: Field) -> [[Polynomial<N>; L]; H] {
+        let mut shares = self.decrypted_shares;
+        for party_idx in 0..H {
+            let packed = shares[party_idx][0];
+            let mut residues: [Field; N] = [0; N];
+            for i in 0..N {
+                let mut bit = 0;
+                if i < KEY_BITS {
+                    bit = self.key_bits[party_idx][i];
+                    assert(bit * (bit - 1) == 0, "PRF key bit is not binary");
+                }
+                let residue = packed.coefficients[i] - (bit * key_modulus);
+                residue.assert_max_bit_size::<64>();
+                (key_modulus - 1 - residue).assert_max_bit_size::<64>();
+                residues[i] = residue;
+            }
+            shares[party_idx][0] = Polynomial::new(residues);
+            let _ = self.expected_key_commitments[party_idx];
+        }
+        shares
     }
 
     /// Verifies that each decrypted share matches its expected commitment from C2a/C2b.
@@ -54,12 +91,12 @@ impl<let N: u32, let L: u32, let H: u32, let BIT_MSG: u32, let BIT_AGG: u32, let
     /// and confirms it equals the commitment produced in C2 via commit_to_party_shares.
     /// Since commitments are binding, any substitution or tampering, claiming a different
     /// decrypted value or using the wrong secret key, will cause this assertion to fail.
-    fn verify_commitments(self) {
+    fn verify_commitments(self, shares: [[Polynomial<N>; L]; H]) {
         for party_idx in 0..H {
             for mod_idx in 0..L {
                 // Reverse the share polynomial to match the commitment format used by C2's
                 // commit_to_party_shares, which stores coefficients highest-degree-first.
-                let share = self.decrypted_shares[party_idx][mod_idx];
+                let share = shares[party_idx][mod_idx];
                 let mut reversed_coeffs: [Field; N] = [0; N];
                 for i in 0..N {
                     reversed_coeffs[N - 1 - i] = share.coefficients[i];
@@ -89,7 +126,7 @@ impl<let N: u32, let L: u32, let H: u32, let BIT_MSG: u32, let BIT_AGG: u32, let
     ///
     /// This reflects the threshold key construction: sk = sum(sk_i) for i in H.
     /// Each ciphernode now holds a share of this sum, used during threshold decryption in P4.
-    fn compute_aggregated_shares(self) -> [Polynomial<N>; L] {
+    fn compute_aggregated_shares(self, shares: [[Polynomial<N>; L]; H]) -> [Polynomial<N>; L] {
         let mut sum: [Polynomial<N>; L] = [Polynomial::new([0; N]); L];
 
         for mod_idx in 0..L {
@@ -97,8 +134,7 @@ impl<let N: u32, let L: u32, let H: u32, let BIT_MSG: u32, let BIT_AGG: u32, let
             for coeff_idx in 0..N {
                 let mut total = 0 as Field;
                 for party_idx in 0..H {
-                    total =
-                        total + self.decrypted_shares[party_idx][mod_idx].coefficients[coeff_idx];
+                    total = total + shares[party_idx][mod_idx].coefficients[coeff_idx];
                 }
                 coeffs[coeff_idx] = total;
             }
@@ -120,11 +156,12 @@ impl<let N: u32, let L: u32, let H: u32, let BIT_MSG: u32, let BIT_AGG: u32, let
     /// Rust witness (which operates on sk coefficients already reduced to `[0, q_l)`
     /// and then applies `.reverse()` and `.center(&qi)` before hashing).
     pub fn execute(self, moduli: [Field; L]) -> Field {
-        // Step 1: Verify decrypted shares match expected C2 commitments.
-        self.verify_commitments();
+        // Step 1: Strip key bits from limb 0, then match the residue commitments from C2.
+        let shares = self.stripped_shares(moduli[0]);
+        self.verify_commitments(shares);
 
-        // Step 2: Sum shares coefficient-wise per CRT limb.
-        let aggregated = self.compute_aggregated_shares();
+        // Step 2: Sum residue shares coefficient-wise per CRT limb.
+        let aggregated = self.compute_aggregated_shares(shares);
 
         // Step 3: Normalize to match C6's representation: reduce mod q, reverse, center.
         let normalized = normalize_aggregated::<N, L>(aggregated, moduli);

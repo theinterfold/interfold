@@ -8,8 +8,9 @@ import { buildModule } from "@nomicfoundation/hardhat-ignition/modules";
 import {
   BFV_DKG_H,
   getBfvPkSubCircuitVkHashPaths,
-  getBfvPkVkBindingHashPaths,
+  readBfvPkVkBindingHashes,
   readVkRecursiveHash,
+  ZERO_VK_HASH,
 } from "../../scripts/utils";
 import dkgAggregatorVerifierModule from "./dkgAggregatorVerifier";
 
@@ -23,12 +24,8 @@ export default buildModule("BfvPkVerifier", (m) => {
   const skC2ChunkKeyHash = readVkRecursiveHash(
     getBfvPkSubCircuitVkHashPaths().skC2Chunk,
   );
-  const esmC2ChunkKeyHash = readVkRecursiveHash(
-    getBfvPkSubCircuitVkHashPaths().esmC2Chunk,
-  );
-  const vkBinding = getBfvPkVkBindingHashPaths().map((filePath) =>
-    readVkRecursiveHash(filePath),
-  );
+  const esmC2ChunkKeyHash = ZERO_VK_HASH;
+  const vkBinding = readBfvPkVkBindingHashes();
 
   const bfvPkVerifier = m.contract("BfvPkVerifier", [
     dkgAggregatorVerifier,

@@ -12,7 +12,7 @@ use crate::{
 };
 use anyhow::Result;
 use e3_crypto::{Cipher, SensitiveBytes};
-use e3_fhe_params::{generate_smudging_error, LambdaConfig};
+use e3_fhe_params::LambdaConfig;
 use e3_utils::utility_types::ArcBytes;
 use fhe::{
     bfv::SecretKey,
@@ -76,8 +76,6 @@ pub struct GenPkShareAndSkSssResponse {
     pub sk_raw: SensitiveBytes,
     /// Raw error polynomial from key generation (RNS form) for ZK proof generation (C1) — encrypted at rest.
     pub eek_raw: SensitiveBytes,
-    /// Raw smudging noise polynomial (RNS form) for ZK proof generation (C1) — encrypted at rest.
-    pub e_sm_raw: SensitiveBytes,
 }
 
 impl TryFrom<(InnerResponse, &Cipher)> for GenPkShareAndSkSssResponse {
@@ -93,7 +91,6 @@ impl TryFrom<(InnerResponse, &Cipher)> for GenPkShareAndSkSssResponse {
             pk0_share_raw: value.pk0_share_raw,
             sk_raw: SensitiveBytes::new(value.sk_raw.to_vec(), cipher)?,
             eek_raw: SensitiveBytes::new(value.eek_raw.to_vec(), cipher)?,
-            e_sm_raw: SensitiveBytes::new(value.e_sm_raw.to_vec(), cipher)?,
         })
     }
 }
@@ -109,8 +106,6 @@ struct InnerResponse {
     pub sk_raw: ArcBytes,
     /// Raw error polynomial bytes for ZK proof.
     pub eek_raw: ArcBytes,
-    /// Raw smudging noise polynomial bytes for ZK proof.
-    pub e_sm_raw: ArcBytes,
 }
 
 pub fn gen_pk_share_and_sk_sss<R: RngCore + CryptoRng>(
@@ -134,19 +129,7 @@ pub fn gen_pk_share_and_sk_sss<R: RngCore + CryptoRng>(
     let (pk0_share, _, _, eek) = PublicKeyShare::new_extended(&sk_share, crp.clone(), rng)?;
 
     let pk_share = PublicKeyShare::deserialize(&pk0_share.to_bytes(), &params, crp.clone())?;
-
-    // Generate smudging noise
-    let lambda = req.lambda.into_lambda()?;
-    let esi_coeffs = generate_smudging_error(
-        params.clone(),
-        num_ciphernodes as usize,
-        req.num_ciphertexts,
-        req.mult_depth,
-        lambda,
-        rng,
-    )?;
-    let e_sm_rns = Poly::<PowerBasis>::from_bigints(&esi_coeffs, params.context_at_level(0)?)?;
-    let e_sm_raw = ArcBytes::from_bytes(&e_sm_rns.deref().to_bytes());
+    let _ = (req.lambda, req.num_ciphertexts, req.mult_depth);
 
     let pk0_share_raw = ArcBytes::from_bytes(&pk0_share.to_bytes());
     let eek_raw = ArcBytes::from_bytes(&eek.to_bytes());
@@ -171,7 +154,6 @@ pub fn gen_pk_share_and_sk_sss<R: RngCore + CryptoRng>(
             pk0_share_raw,
             sk_raw,
             eek_raw,
-            e_sm_raw,
         },
         cipher,
     )

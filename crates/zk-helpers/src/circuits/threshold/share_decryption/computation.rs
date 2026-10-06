@@ -13,6 +13,7 @@
 use crate::calculate_bit_width;
 use crate::circuits::commitments::{
     compute_aggregated_shares_commitment, compute_ciphertext_commitment,
+    compute_partial_decryption_c0_commitment,
 };
 use crate::circuits::threshold::decrypted_shares_aggregation::MAX_MSG_NON_ZERO_COEFFS;
 use crate::compute_modulus_bit;
@@ -123,17 +124,21 @@ pub struct Inputs {
     pub ct0: CrtPolynomial,
     pub ct1: CrtPolynomial,
     pub sk: CrtPolynomial,
-    pub e_sm: CrtPolynomial,
+    pub e_fresh: CrtPolynomial,
     pub r1: CrtPolynomial,
     pub r2: CrtPolynomial,
     pub d: CrtPolynomial,
     /// Native truncated `d` per limb (C7-compatible); hashed for public `d_commitment`.
     pub d_native_trunc: CrtPolynomial,
     pub expected_sk_commitment: BigInt,
-    pub expected_e_sm_commitment: BigInt,
+    pub c0_commitment: BigInt,
     pub ct_commitment: BigInt,
     pub domain_hi: BigInt,
     pub domain_lo: BigInt,
+    pub party_idx: u32,
+    pub decryptors: Vec<u32>,
+    pub outgoing_prf_keys: Vec<Vec<u8>>,
+    pub incoming_prf_keys: Vec<Vec<u8>>,
 }
 
 impl Computation for Configs {
@@ -273,10 +278,65 @@ impl Computation for Inputs {
         )
         .map_err(|e| CircuitsErrors::Other(format!("C6 CRT shape mismatch: {e}")))?;
 
+        let outgoing_prf_keys = crate::circuits::prf::resolve_keys(
+            preset,
+            &data.outgoing_prf_keys,
+            data.committee.n,
+        )
+        .map_err(CircuitsErrors::Other)?;
+        let incoming_prf_keys = crate::circuits::prf::resolve_keys(
+            preset,
+            &data.incoming_prf_keys,
+            data.committee.n,
+        )
+        .map_err(CircuitsErrors::Other)?;
+        let decryptors = if data.decryptors.is_empty() {
+            (1..=(data.committee.threshold as u32 + 1)).collect::<Vec<_>>()
+        } else {
+            data.decryptors.clone()
+        };
+        let moduli_u64: Vec<u64> = threshold_params.moduli().to_vec();
+        let reverse_limbs = |poly: &CrtPolynomial| {
+            poly.limbs
+                .iter()
+                .map(|limb| {
+                    let mut reversed = limb.clone();
+                    reversed.reverse();
+                    reversed
+                })
+                .collect::<Vec<_>>()
+        };
+        let mask = crate::circuits::prf::circuit_order_mask(
+            &crate::circuits::prf::decryption_mask_low_degree(
+                data.party_idx as usize,
+                &decryptors,
+                &outgoing_prf_keys,
+                &incoming_prf_keys,
+                &reverse_limbs(&ct0),
+                &reverse_limbs(&ct1),
+                &moduli_u64,
+            )
+            .map_err(CircuitsErrors::Other)?,
+        );
+
         // Create cyclotomic polynomial x^N + 1
         let mut cyclo = vec![BigInt::from(0u64); (n + 1) as usize];
         cyclo[0] = BigInt::from(1u64); // constant (x^0) term
         cyclo[n as usize] = BigInt::from(1u64); // x^N term
+
+        let lambdas = moduli
+            .iter()
+            .map(|qi| {
+                let modulus = qi.to_u64().ok_or_else(|| {
+                    CircuitsErrors::Other("CRT modulus does not fit u64".into())
+                })?;
+                crate::circuits::threshold::decrypted_shares_aggregation::utils::lagrange_coeff_at_zero(
+                    &decryptors,
+                    data.party_idx + 1,
+                    modulus,
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
 
         // Perform the main computation logic
         #[allow(clippy::type_complexity)]
@@ -315,15 +375,19 @@ impl Computation for Inputs {
             d_share.reverse();
             d_share.center(&qi);
 
-            // Compute d_share_hat = ct0 + ct1 * s + e
-            // This is the expected value before lifting to Z
+            // p = λ·c1·sh + e_fresh + mask. c0 is added later, in C7.
             let d_share_hat = {
-                // ct1 * s (degree 2*(n-1))
                 let ct1_s_times = ct1.mul(&s);
                 assert_eq!((ct1_s_times.coefficients().len() as u64) - 1, 2 * (n - 1));
-
-                // ct0 + ct1 * s + e
-                ct0.add(&ct1_s_times).add(&e)
+                let lambda = &lambdas[i];
+                let scaled = Polynomial::new(
+                    ct1_s_times
+                        .coefficients()
+                        .iter()
+                        .map(|coeff| coeff * lambda)
+                        .collect(),
+                );
+                scaled.add(&e).add(&mask[i])
             };
             assert_eq!((d_share_hat.coefficients().len() as u64) - 1, 2 * (n - 1));
 
@@ -338,7 +402,7 @@ impl Computation for Inputs {
         let mut ct0 = CrtPolynomial::new(vec![]);
         let mut ct1 = CrtPolynomial::new(vec![]);
         let mut sk = CrtPolynomial::new(vec![]);
-        let mut e_sm = CrtPolynomial::new(vec![]);
+        let mut e_fresh = CrtPolynomial::new(vec![]);
         let mut r1 = CrtPolynomial::new(vec![]);
         let mut r2 = CrtPolynomial::new(vec![]);
         let mut d = CrtPolynomial::new(vec![]);
@@ -347,7 +411,7 @@ impl Computation for Inputs {
             ct0.add_limb(ct0i);
             ct1.add_limb(ct1i);
             sk.add_limb(si);
-            e_sm.add_limb(ei);
+            e_fresh.add_limb(ei);
             r1.add_limb(r1i);
             r2.add_limb(r2i);
             d.add_limb(d_sharei);
@@ -356,10 +420,14 @@ impl Computation for Inputs {
         // Compute commitments to s and e (matches circuit's commitment functions)
         let modulus_bit = compute_modulus_bit(&threshold_params);
         let expected_sk_commitment = compute_aggregated_shares_commitment(&sk, modulus_bit);
-        let expected_e_sm_commitment = compute_aggregated_shares_commitment(&e_sm, modulus_bit);
-
         let bounds = Bounds::compute(preset, &())?;
         let bits = Bits::compute(preset, &bounds)?;
+        let c0_source = CrtPolynomial::from_fhe_polynomial(&data.ciphertext[0]);
+        let c0_commitment = compute_partial_decryption_c0_commitment(
+            &c0_source,
+            bits.d_native_bit,
+            MAX_MSG_NON_ZERO_COEFFS,
+        );
         let ct_commitment = compute_ciphertext_commitment(&ct0, &ct1, bits.ct_bit);
 
         let moduli_u64: Vec<u64> = threshold_params.moduli().to_vec();
@@ -370,16 +438,20 @@ impl Computation for Inputs {
             ct0,
             ct1,
             sk,
-            e_sm,
+            e_fresh,
             r1,
             r2,
             d,
             d_native_trunc,
             expected_sk_commitment,
-            expected_e_sm_commitment,
+            c0_commitment,
             ct_commitment,
             domain_hi: BigInt::from(data.domain_hi),
             domain_lo: BigInt::from(data.domain_lo),
+            party_idx: data.party_idx,
+            decryptors,
+            outgoing_prf_keys,
+            incoming_prf_keys,
         })
     }
 
@@ -387,31 +459,62 @@ impl Computation for Inputs {
         let ct0 = crt_polynomial_to_toml_json(&self.ct0);
         let ct1 = crt_polynomial_to_toml_json(&self.ct1);
         let sk = crt_polynomial_to_toml_json(&self.sk);
-        let e_sm = crt_polynomial_to_toml_json(&self.e_sm);
+        let e_fresh = crt_polynomial_to_toml_json(&self.e_fresh);
         let r1 = crt_polynomial_to_toml_json(&self.r1);
         let r2 = crt_polynomial_to_toml_json(&self.r2);
         let d = crt_polynomial_to_toml_json(&self.d);
         let d_native_trunc = crt_polynomial_to_toml_json(&self.d_native_trunc);
         let expected_sk_commitment = self.expected_sk_commitment.to_string();
-        let expected_e_sm_commitment = self.expected_e_sm_commitment.to_string();
+        let c0_commitment = self.c0_commitment.to_string();
         let ct_commitment = self.ct_commitment.to_string();
         let domain_hi = self.domain_hi.to_string();
         let domain_lo = self.domain_lo.to_string();
+        let outgoing_key_commitments = self
+            .outgoing_prf_keys
+            .iter()
+            .enumerate()
+            .map(|(index, key)| {
+                crate::circuits::prf::prf_key_commitment_bigint(index as u32, key).to_string()
+            })
+            .collect::<Vec<_>>();
+        let incoming_key_commitments = self
+            .incoming_prf_keys
+            .iter()
+            .map(|key| {
+                crate::circuits::prf::prf_key_commitment_bigint(self.party_idx, key).to_string()
+            })
+            .collect::<Vec<_>>();
+        let outgoing_key_bits = self
+            .outgoing_prf_keys
+            .iter()
+            .map(|key| crate::circuits::prf::prf_key_bits_json(key))
+            .collect::<Vec<_>>();
+        let incoming_key_bits = self
+            .incoming_prf_keys
+            .iter()
+            .map(|key| crate::circuits::prf::prf_key_bits_json(key))
+            .collect::<Vec<_>>();
 
         let json = serde_json::json!({
             "ct0": ct0,
             "ct1": ct1,
             "sk": sk,
-            "e_sm": e_sm,
+            "e_fresh": e_fresh,
             "r1": r1,
             "r2": r2,
             "d": d,
             "d_native_trunc": d_native_trunc,
             "expected_sk_commitment": expected_sk_commitment,
-            "expected_e_sm_commitment": expected_e_sm_commitment,
+            "c0_commitment": c0_commitment,
             "ct_commitment": ct_commitment,
             "domain_hi": domain_hi,
             "domain_lo": domain_lo,
+            "party_idx": self.party_idx,
+            "decryptors": self.decryptors,
+            "outgoing_key_commitments": outgoing_key_commitments,
+            "incoming_key_commitments": incoming_key_commitments,
+            "outgoing_key_bits": outgoing_key_bits,
+            "incoming_key_bits": incoming_key_bits,
         });
 
         Ok(json)

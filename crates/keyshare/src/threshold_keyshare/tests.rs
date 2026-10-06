@@ -22,6 +22,7 @@ use e3_events::{
 };
 use e3_fhe_params::{BfvPreset, DEFAULT_BFV_PRESET};
 use e3_trbfv::{
+    gen_esi_sss::{GenEsiSssRequest, GenEsiSssResponse},
     gen_lbfv_key_shares::{EncryptedRlkWitness, GenLbfvKeySharesRequest, GenLbfvKeySharesResponse},
     lbfv_operation::LbfvOperationId,
     TrBFVError, TrBFVFailure, TrBFVRequest,
@@ -197,6 +198,8 @@ fn ready_state() -> ReadyForDecryption {
         signed_e_sm_share_computation_proof: None,
         signed_sk_share_encryption_proofs: Vec::new(),
         signed_e_sm_share_encryption_proofs: Vec::new(),
+        outgoing_prf_keys: Vec::new(),
+        incoming_prf_keys: Vec::new(),
     }
 }
 
@@ -241,7 +244,6 @@ fn gen_pk_response(cipher: &Cipher, e3_id: &E3id, seq: u64) -> Result<TypedEvent
                 pk0_share_raw: ArcBytes::from_bytes(&[4]),
                 sk_raw: SensitiveBytes::new([5], cipher)?,
                 eek_raw: SensitiveBytes::new([6], cipher)?,
-                e_sm_raw: SensitiveBytes::new([7], cipher)?,
             }),
             CorrelationId::new(),
             e3_id.clone(),
@@ -286,16 +288,13 @@ async fn replayed_dkg_outputs_wait_for_their_prerequisites() -> Result<()> {
     let pk_response = gen_pk_response(&cipher, &e3_id, 2)?;
     let esi_response = gen_esi_response(&e3_id, 3);
     actor.handle_gen_pk_share_and_sk_sss_response(pk_response.clone())?;
-    actor.handle_gen_esi_sss_response(esi_response.clone())?;
+    actor.handle_gen_esi_sss_response(esi_response)?;
     let (mut repeated_pk, repeated_pk_ec) = pk_response.clone().into_components();
     repeated_pk.correlation_id = CorrelationId::new();
     actor.handle_gen_pk_share_and_sk_sss_response(TypedEvent::new(repeated_pk, repeated_pk_ec))?;
-    let (mut repeated_esi, repeated_esi_ec) = esi_response.clone().into_components();
-    repeated_esi.correlation_id = CorrelationId::new();
-    actor.handle_gen_esi_sss_response(TypedEvent::new(repeated_esi, repeated_esi_ec))?;
 
     assert_eq!(actor.pending.gen_pk_response, Some(pk_response));
-    assert_eq!(actor.pending.gen_esi_response, Some(esi_response));
+    assert!(actor.pending.gen_esi_response.is_none());
     assert!(matches!(
         actor.state.try_get()?.state,
         KeyshareState::CollectingEncryptionKeys(_)
@@ -305,7 +304,7 @@ async fn replayed_dkg_outputs_wait_for_their_prerequisites() -> Result<()> {
 
 #[actix::test]
 async fn recovered_encryption_keys_reuse_the_replayed_key_output() -> Result<()> {
-    let (bus, history) = test_bus();
+    let (bus, _history) = test_bus();
     let e3_id = E3id::new("replay-output", 1);
     let cipher = Arc::new(Cipher::from_password("test-password").await?);
     let (state, _) = test_state(&e3_id, collecting_encryption_keys_state(&e3_id));
@@ -313,7 +312,7 @@ async fn recovered_encryption_keys_reuse_the_replayed_key_output() -> Result<()>
         bus,
         cipher: cipher.clone(),
         state,
-        share_enc_preset: DEFAULT_BFV_PRESET,
+        share_enc_preset: BfvPreset::InsecureDkg,
         interfold_address: Address::ZERO,
         signer: alloy::signers::local::PrivateKeySigner::random(),
         effects_enabled: false,
@@ -324,26 +323,22 @@ async fn recovered_encryption_keys_reuse_the_replayed_key_output() -> Result<()>
     });
 
     actor.handle_gen_pk_share_and_sk_sss_response(gen_pk_response(&cipher, &e3_id, 2)?)?;
-    actor.handle_all_encryption_keys_collected(TypedEvent::new(
-        AllEncryptionKeysCollected { keys: Vec::new() },
-        test_ec(1),
-    ))?;
+    let error = actor
+        .handle_all_encryption_keys_collected(TypedEvent::new(
+            AllEncryptionKeysCollected { keys: Vec::new() },
+            test_ec(1),
+        ))
+        .expect_err("dummy keys cannot build the share plan");
+    assert!(error
+        .to_string()
+        .contains("missing from collected encryption keys"));
 
     let state = actor.state.try_get()?;
     let KeyshareState::GeneratingThresholdShare(data) = state.state else {
-        panic!("expected threshold-share generation state");
+        panic!("expected the replayed pk output to be stored");
     };
     assert_eq!(data.pk_share, Some(ArcBytes::from_bytes(&[3])));
     assert!(actor.pending.gen_pk_response.is_none());
-
-    let event = next_event(&history).await?;
-    assert!(matches!(
-        event.into_data(),
-        InterfoldEventData::ComputeRequest(ComputeRequest {
-            request: ComputeRequestKind::TrBFV(TrBFVRequest::GenEsiSss(_)),
-            ..
-        })
-    ));
     Ok(())
 }
 
@@ -352,12 +347,12 @@ fn aggregating_decryption_key_for_roster_test() -> AggregatingDecryptionKey {
         pk_share: ArcBytes::from_bytes(&[1]),
         sk_bfv: SensitiveBytes::from_encrypted(&[2]),
         own_sk_share_raw: SensitiveBytes::from_encrypted(&[3]),
-        own_esi_shares_raw: vec![SensitiveBytes::from_encrypted(&[4])],
         signed_pk_generation_proof: None,
         signed_sk_share_computation_proof: None,
         signed_e_sm_share_computation_proof: None,
         signed_sk_share_encryption_proofs: Vec::new(),
         signed_e_sm_share_encryption_proofs: Vec::new(),
+        outgoing_prf_keys: Vec::new(),
     }
 }
 
@@ -1400,6 +1395,8 @@ async fn restart_redrives_a_decryption_share_compute_request() -> Result<()> {
         signed_e_sm_share_computation_proof: None,
         signed_sk_share_encryption_proofs: Vec::new(),
         signed_e_sm_share_encryption_proofs: Vec::new(),
+        outgoing_prf_keys: Vec::new(),
+        incoming_prf_keys: Vec::new(),
     };
     let (actor, history, e3_id, _) =
         start_actor_with_state(KeyshareState::Decrypting(decrypting)).await?;
@@ -1457,6 +1454,7 @@ async fn a_replayed_decryption_share_response_does_not_fault_after_the_state_adv
             ComputeResponse::trbfv(
                 TrBFVResponse::CalculateDecryptionShare(CalculateDecryptionShareResponse {
                     d_share_poly: vec![ArcBytes::from_bytes(&[3])],
+                    e_fresh: vec![SensitiveBytes::from_encrypted(&[4])],
                 }),
                 CorrelationId::new(),
                 e3_id,
@@ -1489,6 +1487,8 @@ async fn restart_skips_dkg_work_after_public_key_context_is_persisted() -> Resul
         signed_e_sm_share_computation_proof: None,
         signed_sk_share_encryption_proofs: Vec::new(),
         signed_e_sm_share_encryption_proofs: Vec::new(),
+        outgoing_prf_keys: Vec::new(),
+        incoming_prf_keys: Vec::new(),
     };
     let (bus, history) = test_bus();
     let (mut state, _) = test_state(&e3_id, KeyshareState::ReadyForDecryption(ready));
@@ -1927,6 +1927,8 @@ fn ready_for_c4_test() -> ReadyForDecryption {
         signed_e_sm_share_computation_proof: None,
         signed_sk_share_encryption_proofs: Vec::new(),
         signed_e_sm_share_encryption_proofs: Vec::new(),
+        outgoing_prf_keys: Vec::new(),
+        incoming_prf_keys: Vec::new(),
     }
 }
 

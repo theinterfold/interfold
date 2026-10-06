@@ -251,13 +251,23 @@ export function bfvParamSetConfigsForChain(chainId: number): ActiveBfvConfig[] {
   return configs;
 }
 
+export function bfvCommitteeN(h: number): number {
+  if (h === 2) return 3;
+  if (h === 5) return 9;
+  if (h === 14) return 19;
+  throw new Error(`unknown honest-set size ${h}`);
+}
+
+function bfvNFromThreshold(threshold: number): number {
+  if (threshold === 1) return 3;
+  if (threshold === 4) return 9;
+  if (threshold === 9) return 19;
+  throw new Error(`unknown threshold ${threshold}`);
+}
+
 /** `dkg_aggregator` EVM public-input count for honest-set size `h`. */
 export function bfvPkExpectedPublicInputsLen(h: number): number {
-  // dkg_aggregator public inputs: nodes_fold + c5 key hashes (2), party_ids (h),
-  // committee hash limbs (2), vk_binding (16), returned key hash (1),
-  // C2A/C2B chunk hashes (2), sk/esm agg commits (2h), aggregated pk commit (1).
-  // The generated Honk VK includes eight pairing-point slots outside the public-input array.
-  return 3 * h + 24;
+  return 23 + 2 * h + h * bfvCommitteeN(h);
 }
 
 /** `publicInputs` indices for `committee_hash_hi` / `committee_hash_lo` (matches `BfvPkVerifier`). */
@@ -270,7 +280,12 @@ export function bfvDkgCommitteeHashIndices(h: number): {
 
 /** `decryption_aggregator` EVM public-input count for BFV threshold `t`. */
 export function bfvDecExpectedPublicInputsLen(threshold: number): number {
-  return 111 + 3 * threshold;
+  const slots = threshold + 1;
+  return 108 + slots * (3 + 2 * bfvNFromThreshold(threshold));
+}
+
+export function bfvDecMessageOffset(threshold: number): number {
+  return 8 + 3 * (threshold + 1);
 }
 
 /** `publicInputs` indices for decryption-aggregator committee hash limbs. */
@@ -476,6 +491,20 @@ export function getBfvPkVkBindingHashPaths(config?: ActiveBfvConfig) {
   ] as const;
 }
 
+/** Indices 7 and 10 are unused. The prover writes zero. */
+export const ZERO_VK_HASH = `0x${"0".repeat(64)}`;
+const UNUSED_DKG_VK_BINDING_INDICES = new Set([7, 10]);
+
+export function readBfvPkVkBindingHashes(
+  config?: ActiveBfvConfig,
+): string[] {
+  return getBfvPkVkBindingHashPaths(config).map((filePath, index) =>
+    UNUSED_DKG_VK_BINDING_INDICES.has(index)
+      ? ZERO_VK_HASH
+      : readVkRecursiveHash(filePath, config),
+  );
+}
+
 /** Recursive VK hashes used by the V2 DKG aggregation wrapper. */
 export function getBfvV2SubCircuitVkHashPaths(config?: ActiveBfvConfig) {
   const root = config ? distCircuitRoot(config) : getRepoRoot();
@@ -621,13 +650,8 @@ export async function assertBfvPkVerifierSubCircuitVkHashes(
     getBfvPkSubCircuitVkHashPaths(config).skC2Chunk,
     config,
   );
-  const expectedESmC2Chunk = readVkRecursiveHash(
-    getBfvPkSubCircuitVkHashPaths(config).esmC2Chunk,
-    config,
-  );
-  const expectedVkBinding = getBfvPkVkBindingHashPaths(config).map((filePath) =>
-    readVkRecursiveHash(filePath, config),
-  );
+  const expectedESmC2Chunk = ZERO_VK_HASH;
+  const expectedVkBinding = readBfvPkVkBindingHashes(config);
   const [onChainNodesFold, onChainC5, onChainSkC2Chunk, onChainESmC2Chunk] =
     await Promise.all([
       verifier.expectedNodesFoldKeyHash(),
@@ -677,10 +701,8 @@ export async function assertBfvPkVerifierV2VkHashes(
   const pkPaths = getBfvPkSubCircuitVkHashPaths(config);
   const expectedC5 = readVkRecursiveHash(pkPaths.c5, config);
   const expectedSkC2Chunk = readVkRecursiveHash(pkPaths.skC2Chunk, config);
-  const expectedESmC2Chunk = readVkRecursiveHash(pkPaths.esmC2Chunk, config);
-  const expectedLegacyVkBinding = getBfvPkVkBindingHashPaths(config).map(
-    (filePath) => readVkRecursiveHash(filePath, config),
-  );
+  const expectedESmC2Chunk = ZERO_VK_HASH;
+  const expectedLegacyVkBinding = readBfvPkVkBindingHashes(config);
   const expectedV2VkBinding = getBfvV2VkBindingHashPaths(config).map(
     (filePath) => readVkRecursiveHash(filePath, config),
   );

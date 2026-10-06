@@ -4,7 +4,9 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::math::commitments::compute_threshold_decryption_share_commitment;
+use crate::math::commitments::{
+    compute_partial_decryption_c0_commitment, compute_threshold_decryption_share_commitment,
+};
 use crate::math::modulo::U64::ModU64;
 use crate::math::polynomial::Polynomial;
 use ::bignum::BigNum;
@@ -34,7 +36,7 @@ impl<let L: u32> Configs<L> {
 ///
 /// **Consumes:** C6 `d` commitments for each reconstructing party (same order as shares).
 ///
-/// **Verifies:** Share binding to C6; Lagrange combine per limb; CRT glue; decode mod `t`.
+/// **Verifies:** Share binding to C6; sum of partial shares plus `c0`; CRT glue; decode mod `t`.
 pub struct DecryptedSharesAggregation<let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let T: u32, let BIT_NOISE: u32, let BIT_D_NATIVE: u32> {
     /// Circuit parameters including crypto constants
     configs: Configs<L>,
@@ -57,6 +59,12 @@ pub struct DecryptedSharesAggregation<let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u
 
     /// CRT quotient polynomials (secret witnesses)
     crt_quotients: [Polynomial<MAX_MSG_NON_ZERO_COEFFS>; L],
+
+    /// Low-degree `c0` coefficients, ascending degree. Same order as `decryption_shares`.
+    ct0: [Polynomial<MAX_MSG_NON_ZERO_COEFFS>; L],
+
+    /// Commitment to that `c0` prefix. C6 publishes the same value.
+    c0_commitment: Field,
 }
 
 impl<let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let T: u32, let BIT_NOISE: u32, let BIT_D_NATIVE: u32> DecryptedSharesAggregation<MAX_MSG_NON_ZERO_COEFFS, L, T, BIT_NOISE, BIT_D_NATIVE> {
@@ -68,6 +76,8 @@ impl<let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let T: u32, let BIT_NOISE: u3
         message: Polynomial<MAX_MSG_NON_ZERO_COEFFS>,
         u_global: Polynomial<MAX_MSG_NON_ZERO_COEFFS>,
         crt_quotients: [Polynomial<MAX_MSG_NON_ZERO_COEFFS>; L],
+        ct0: [Polynomial<MAX_MSG_NON_ZERO_COEFFS>; L],
+        c0_commitment: Field,
     ) -> Self {
         DecryptedSharesAggregation {
             configs,
@@ -77,6 +87,8 @@ impl<let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let T: u32, let BIT_NOISE: u3
             message,
             u_global,
             crt_quotients,
+            ct0,
+            c0_commitment,
         }
     }
 
@@ -88,15 +100,16 @@ impl<let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let T: u32, let BIT_NOISE: u3
             );
             assert(computed == self.expected_d_commitments[party_idx], "d commitment mismatch");
         }
+        let computed_c0 = compute_partial_decryption_c0_commitment::<MAX_MSG_NON_ZERO_COEFFS, L, BIT_D_NATIVE>(
+            self.ct0,
+        );
+        assert(computed_c0 == self.c0_commitment, "c0 commitment mismatch");
 
-        // Step 1: Compute Lagrange coefficients in-circuit
-        let lagrange_coeffs = compute_all_lagrange_coeffs::<T, L>(self.configs.qis, self.party_ids);
-
-        // Step 2: Compute u^{(l)} for each CRT basis via Lagrange interpolation
-        let u_crts = compute_crt_components::<MAX_MSG_NON_ZERO_COEFFS, L, T>(
+        // Sum the partial shares and add c0 once. Lagrange already sits inside each share.
+        let u_crts = sum_partial_shares::<MAX_MSG_NON_ZERO_COEFFS, L, T>(
             self.configs.qis,
             self.decryption_shares,
-            lagrange_coeffs,
+            self.ct0,
         );
 
         // Step 3: Verify CRT reconstruction: u^{(l)} + r^{(l)} * q_l = u_global
@@ -174,108 +187,84 @@ fn assert_decoded_coefficient(computed_message: Field, claimed_message: Field) {
     assert(computed_message == claimed_message, "decoded message mismatch");
 }
 
-/// Computes all Lagrange coefficients using optimized modular arithmetic
-pub fn compute_all_lagrange_coeffs<let T: u32, let L: u32>(
-    qis: [Field; L],
-    party_ids: [Field; T + 1],
-) -> [[Field; T + 1]; L] {
-    let mut lagrange_coeffs = [[0 as Field; T + 1]; L];
-
-    // Step 1: Cache |x_i - x_j| factors for all party pairs
-    let mut diffs = [[0 as Field; T + 1]; T + 1];
-    for i in 0..(T + 1) {
-        for j in (i + 1)..(T + 1) {
-            let diff = party_ids[j] - party_ids[i];
-            diffs[i][j] = diff;
-            diffs[j][i] = diff;
-        }
-    }
-
-    // Step 2: Determine signs (same for all parties within a basis)
-    let numerator_sign_negative = (T % 2) == 1;
-
-    // Step 3: For each CRT basis, compute Lagrange coefficients
-    for basis_idx in 0..L {
-        let q_l = qis[basis_idx];
-        // party_ids are small (1-indexed, <= T+1); quotient < T+1 << 2^64: safe for ModU64.
-        let m = ModU64::new(q_l as u64);
-
-        // Compute product of all party IDs: PRODUCT(j=0..T) x_j mod q_l
-        let mut product_x = 1 as Field;
-        for j in 0..(T + 1) {
-            product_x = m.mul_mod(product_x, party_ids[j]);
-        }
-
-        // For each party i, compute L_i(0) mod q_l
-        for party_idx in 0..(T + 1) {
-            // Numerator (absolute value): PRODUCT(j!=party_idx) x_j
-            let numerator_abs = m.div_mod(product_x, party_ids[party_idx]);
-
-            // Denominator (absolute value): PRODUCT(j!=party_idx) |x_party_idx - x_j|
-            let mut denominator_abs = 1 as Field;
-            for j in 0..(T + 1) {
-                if j != party_idx {
-                    denominator_abs = m.mul_mod(denominator_abs, diffs[party_idx][j]);
-                }
-            }
-
-            // Determine denominator sign
-            let num_greater = T - party_idx;
-            let denom_sign_negative = (num_greater % 2) == 1;
-
-            // Compute unsigned result: |numerator| / |denominator| mod q_l
-            let result_abs = m.div_mod(numerator_abs, denominator_abs);
-
-            // Apply combined sign
-            let should_negate = numerator_sign_negative != denom_sign_negative;
-            let result = if should_negate {
-                m.reduce_mod(q_l - result_abs)
-            } else {
-                result_abs
-            };
-
-            lagrange_coeffs[basis_idx][party_idx] = result;
-        }
-    }
-
-    lagrange_coeffs
-}
-
-/// Computes u^{(l)} for each CRT basis via Lagrange interpolation
-pub fn compute_crt_components<let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let T: u32>(
+/// `u^{(l)} = c0^{(l)} + Σ_i p_i^{(l)}` modulo `q_l`.
+///
+/// Coefficient 0 is the constant term. `c0` and each partial share use that order.
+pub fn sum_partial_shares<let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let T: u32>(
     qis: [Field; L],
     decryption_shares: [[Polynomial<MAX_MSG_NON_ZERO_COEFFS>; L]; T + 1],
-    lagrange_coeffs: [[Field; T + 1]; L],
+    ct0: [Polynomial<MAX_MSG_NON_ZERO_COEFFS>; L],
 ) -> [Polynomial<MAX_MSG_NON_ZERO_COEFFS>; L] {
     let mut u_crts: [Polynomial<MAX_MSG_NON_ZERO_COEFFS>; L] =
         [Polynomial::new([0; MAX_MSG_NON_ZERO_COEFFS]); L];
 
     for basis_idx in 0..L {
         let q_l = qis[basis_idx];
-        // d_coeff < 2^59 (BIT_D_NATIVE=59), l_i_0 < q_l < 2^62; quotient < 2^59: safe for ModU64.
         let m = ModU64::new(q_l as u64);
         let mut u_coeffs = [0 as Field; MAX_MSG_NON_ZERO_COEFFS];
-
-        // For each coefficient position
         for coeff_idx in 0..MAX_MSG_NON_ZERO_COEFFS {
-            let mut u_coeff = 0 as Field;
-
-            // Sum all contributions: u = SUM(i=0..T) [d_i * L_i(0)] mod q_l
+            let mut u_coeff = ct0[basis_idx].coefficients[coeff_idx];
             for party_idx in 0..(T + 1) {
-                let d_coeff = decryption_shares[party_idx][basis_idx].coefficients[coeff_idx];
-                let l_i_0 = lagrange_coeffs[basis_idx][party_idx];
-
-                let term = m.mul_mod(d_coeff, l_i_0);
-                u_coeff = m.reduce_mod(u_coeff + term);
+                u_coeff = u_coeff + decryption_shares[party_idx][basis_idx].coefficients[coeff_idx];
             }
-
-            u_coeffs[coeff_idx] = u_coeff;
+            u_coeffs[coeff_idx] = m.reduce_mod(u_coeff);
         }
-
         u_crts[basis_idx] = Polynomial::new(u_coeffs);
     }
 
     u_crts
+}
+
+/// Lagrange coefficients `L_i(0)` for a designated decryptor set.
+///
+/// `party_ids` are 1-based Shamir points. The result is one coefficient per
+/// party, reduced modulo each CRT prime.
+pub fn lagrange_coeffs_for_set<let SET: u32, let L: u32>(
+    qis: [Field; L],
+    party_ids: [Field; SET],
+) -> [[Field; SET]; L] {
+    let mut lagrange_coeffs = [[0 as Field; SET]; L];
+    let mut diffs = [[0 as Field; SET]; SET];
+    for i in 0..SET {
+        for j in (i + 1)..SET {
+            let diff = party_ids[j] - party_ids[i];
+            diffs[i][j] = diff;
+            diffs[j][i] = diff;
+        }
+    }
+
+    let threshold = SET - 1;
+    let numerator_sign_negative = (threshold % 2) == 1;
+
+    for basis_idx in 0..L {
+        let q_l = qis[basis_idx];
+        let m = ModU64::new(q_l as u64);
+        let mut product_x = 1 as Field;
+        for j in 0..SET {
+            product_x = m.mul_mod(product_x, party_ids[j]);
+        }
+        for party_idx in 0..SET {
+            let numerator_abs = m.div_mod(product_x, party_ids[party_idx]);
+            let mut denominator_abs = 1 as Field;
+            for j in 0..SET {
+                if j != party_idx {
+                    denominator_abs = m.mul_mod(denominator_abs, diffs[party_idx][j]);
+                }
+            }
+            let num_greater = threshold - party_idx;
+            let denom_sign_negative = (num_greater % 2) == 1;
+            let result_abs = m.div_mod(numerator_abs, denominator_abs);
+            let should_negate = numerator_sign_negative != denom_sign_negative;
+            let result = if should_negate {
+                m.reduce_mod(q_l - result_abs)
+            } else {
+                result_abs
+            };
+            lagrange_coeffs[basis_idx][party_idx] = result;
+        }
+    }
+
+    lagrange_coeffs
 }
 
 /// Verifies CRT reconstruction: u^{(l)} + r^{(l)} * q_l = u_global for all bases l

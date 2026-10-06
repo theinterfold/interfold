@@ -15,7 +15,9 @@
 pub const MAX_MSG_NON_ZERO_COEFFS: usize = 100;
 
 use crate::calculate_bit_width;
-use crate::circuits::commitments::compute_threshold_decryption_share_commitment;
+use crate::circuits::commitments::{
+    compute_partial_decryption_c0_commitment, compute_threshold_decryption_share_commitment,
+};
 use crate::compute_q_mod_t;
 use crate::compute_q_mod_t_centered;
 use crate::get_zkp_modulus;
@@ -30,7 +32,7 @@ use e3_polynomial::reduce;
 use e3_polynomial::{CrtPolynomial, Polynomial};
 use fhe_math::rq::{Poly, PowerBasis};
 use num_bigint::{BigInt, BigUint};
-use num_traits::Zero;
+use num_traits::{ToPrimitive, Zero};
 use serde::{Deserialize, Serialize};
 /// Output of [`CircuitComputation::compute`] for [`DecryptedSharesAggregationCircuit`].
 #[derive(Debug)]
@@ -107,6 +109,10 @@ pub struct Inputs {
     pub u_global: Polynomial,
     /// CRT quotient polynomials per modulus (secret witnesses)
     pub crt_quotients: CrtPolynomial,
+    /// Low-degree native `c0`, ascending degree.
+    pub ct0: CrtPolynomial,
+    /// Commitment to `ct0`. Must match the value published by C6.
+    pub c0_commitment: BigInt,
 }
 
 impl Computation for Bounds {
@@ -287,21 +293,23 @@ impl Computation for Inputs {
         let mut message: Vec<BigInt> = data.message_vec.iter().map(|&x| BigInt::from(x)).collect();
         message.resize(degree, BigInt::zero());
 
-        // u^{(l)} per modulus via Lagrange at zero
-        let reconstructing_parties = &data.reconstructing_parties;
+        // u^{(l)} = c0 + Σ p_i, reduced modulo q_l. Lagrange is already inside each share.
+        let ct0_coeffs = data.ct0.coefficients();
         let mut u_per_modulus: Vec<Vec<u64>> = Vec::new();
         for (m, &modulus) in moduli.iter().enumerate().take(num_moduli) {
+            let modulus_big = BigInt::from(modulus);
             let mut u_modulus_coeffs = Vec::with_capacity(degree);
+            let ct0_row = ct0_coeffs.row(m);
             for coeff_idx in 0..degree {
-                let shares: Vec<BigInt> = (0..=threshold)
-                    .map(|party_idx| {
-                        let coeffs = d_share_polys[party_idx].coefficients();
-                        let row = coeffs.row(m);
-                        BigInt::from(row[coeff_idx])
-                    })
-                    .collect();
-                let u_coeff_u64 =
-                    utils::lagrange_recover_at_zero(reconstructing_parties, &shares, modulus)?;
+                let mut u_coeff = BigInt::from(ct0_row[coeff_idx]);
+                for party_idx in 0..=threshold {
+                    let coeffs = d_share_polys[party_idx].coefficients();
+                    u_coeff += BigInt::from(coeffs.row(m)[coeff_idx]);
+                }
+                let reduced = ((u_coeff % &modulus_big) + &modulus_big) % &modulus_big;
+                let u_coeff_u64 = reduced.to_u64().ok_or_else(|| {
+                    CircuitsErrors::Other("partial-share sum does not fit u64".into())
+                })?;
                 u_modulus_coeffs.push(u_coeff_u64);
             }
             u_per_modulus.push(u_modulus_coeffs);
@@ -373,6 +381,16 @@ impl Computation for Inputs {
             })
             .collect();
 
+        let ct0 = truncate_crt_to_max_coeffs(
+            CrtPolynomial::from_fhe_polynomial(&data.ct0),
+            max_msg_non_zero_coeffs,
+        );
+        let c0_commitment = compute_partial_decryption_c0_commitment(
+            &ct0,
+            configs.bits.d_native_bit,
+            max_msg_non_zero_coeffs,
+        );
+
         Ok(Inputs {
             expected_d_commitments,
             decryption_shares,
@@ -380,6 +398,8 @@ impl Computation for Inputs {
             message,
             u_global,
             crt_quotients,
+            ct0,
+            c0_commitment,
         })
     }
 
@@ -406,6 +426,8 @@ impl Computation for Inputs {
             "message": message_json,
             "u_global": u_global_json,
             "crt_quotients": crt_quotients_json,
+            "ct0": crt_polynomial_to_toml_json(&self.ct0),
+            "c0_commitment": self.c0_commitment.to_string(),
         });
 
         Ok(json)

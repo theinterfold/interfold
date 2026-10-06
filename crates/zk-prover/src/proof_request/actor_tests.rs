@@ -160,6 +160,7 @@ fn threshold_share_pending(e3_id: E3id, marker: u8) -> ThresholdSharePending {
         dkg_input_type: DkgInputType::SecretKey,
         params_preset: BfvPreset::InsecureThreshold,
         committee_size: CiphernodesCommitteeSize::Minimum,
+        prf_keys: vec![],
     };
 
     ThresholdSharePending {
@@ -168,20 +169,16 @@ fn threshold_share_pending(e3_id: E3id, marker: u8) -> ThresholdSharePending {
             party_id: 0,
             pk_share: ArcBytes::from_bytes(&[marker]),
             sk_sss: BfvEncryptedShares::default(),
-            esi_sss: vec![],
         }),
         proof_request: PkGenerationProofRequest {
             pk0_share: ArcBytes::from_bytes(&[marker]),
             sk: sensitive(),
             eek: sensitive(),
-            e_sm: sensitive(),
             params_preset: BfvPreset::InsecureThreshold,
             committee_size: CiphernodesCommitteeSize::Minimum,
         },
         sk_share_computation_request: share_request(),
-        e_sm_share_computation_request: share_request(),
         sk_share_encryption_requests: vec![],
-        e_sm_share_encryption_requests: vec![],
         recipient_party_ids: vec![0],
     }
 }

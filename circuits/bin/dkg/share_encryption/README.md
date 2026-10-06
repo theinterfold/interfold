@@ -1,7 +1,8 @@
-# `share_encryption` — C3a / C3b
+# `share_encryption` — C3a
 
-BFV-encrypts each Shamir share under the recipient’s **individual** public key. Same Nargo package
-for both variants; witnesses differ (`expected_message_commitment` from C2a vs C2b).
+BFV-encrypts each packed Shamir share under the recipient's individual public key. The packed
+plaintext is `residue + bit·q`. The circuit checks the residue against the C2 share commitment and
+the PRF-key bits against the C2 key commitment.
 
 |           |                                                                                         |
 | --------- | --------------------------------------------------------------------------------------- |

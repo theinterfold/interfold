@@ -44,7 +44,9 @@ use fhe::bfv::BfvParameters;
 /// **DKG Parameters**: Used during Distributed Key Generation (Phases 0-1). Each ciphernode
 /// generates a standard (non-threshold) BFV key-pair using these parameters. These keys are
 /// used exclusively for encrypting secret shares during DKG, since the threshold public key
-/// doesn't exist yet. After DKG completes, these keys are no longer needed.
+/// doesn't exist yet. After DKG completes, these keys are no longer needed. The plaintext
+/// modulus is twice the largest threshold modulus, so one coefficient can hold a share
+/// residue and one PRF-key bit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub enum BfvPreset {
     /// Insecure threshold BFV parameters (degree 128) - DO NOT USE IN PRODUCTION

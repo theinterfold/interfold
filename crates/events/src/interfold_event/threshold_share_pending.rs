@@ -23,12 +23,8 @@ pub struct ThresholdSharePending {
     pub proof_request: PkGenerationProofRequest,
     /// The proof request for C2a (SkShareComputation)
     pub sk_share_computation_request: ShareComputationProofRequest,
-    /// The proof request for C2b (ESmShareComputation)
-    pub e_sm_share_computation_request: ShareComputationProofRequest,
     /// C3a: SK share encryption proof requests (one per recipient per modulus row)
     pub sk_share_encryption_requests: Vec<ShareEncryptionProofRequest>,
-    /// C3b: E_SM share encryption proof requests (per ESI, per recipient, per modulus row)
-    pub e_sm_share_encryption_requests: Vec<ShareEncryptionProofRequest>,
     /// Party IDs with collected C0 keys. Shares are sent only to these parties.
     /// `full_share` retains N-wide recipient slots for C3 proofs.
     /// Placeholder ciphertexts for absent recipients are not delivered.

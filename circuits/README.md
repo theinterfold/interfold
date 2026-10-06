@@ -43,21 +43,19 @@ how phases, commitments, and circuit IDs line up end to end, read
 [Cryptography](https://docs.theinterfold.com/learn/cryptography) (source:
 [`docs/pages/learn/cryptography.mdx`](../docs/pages/learn/cryptography.mdx)).
 
-**C2** uses chunk proofs and recursive aggregation: `sk_share_computation_chunk` (**C2a**) and
-`esm_share_computation_chunk` (**C2b**) prove the Shamir-share computation one coefficient chunk at a
-time. `c2_chunk_batch` groups chunk proofs, and the type-bound finalizer circuits reconstruct the
-root commitments used by the remaining fold pipeline. Gossip and threshold signing use one terminal
-C2 proof per type.
+**C2** uses chunk proofs and recursive aggregation. `sk_share_computation_chunk` (**C2a**) proves
+the Shamir-share computation one coefficient chunk at a time. `c2_chunk_batch` groups chunk proofs,
+and the finalizer reconstructs the root commitment used by the remaining fold pipeline. Gossip and
+threshold signing use one terminal C2 proof.
 
 ### DKG (`bin/dkg/`)
 
 | Path                     | ID  | `CircuitName`         | Role                                          |
 | ------------------------ | --- | --------------------- | --------------------------------------------- |
 | `pk`                     | C0  | `PkBfv`               | Commit to individual BFV public key           |
-| `sk_share_computation_chunk`   | C2a | `SkShareComputationChunk`  | Secret-key track Shamir-share coefficient chunk (`y`) |
-| `esm_share_computation_chunk` | C2b | `ESmShareComputationChunk` | Smudging-noise track coefficient chunk (`y`)          |
-| `share_encryption`       | C3  | `ShareEncryption`     | BFV encryption of shares under recipient keys |
-| `share_decryption`       | C4  | `DkgShareDecryption`  | Decrypt shares; aggregate; commitments for P4 |
+| `sk_share_computation_chunk`   | C2a | `SkShareComputationChunk`  | Secret-key Shamir-share coefficient chunk (`y`) |
+| `share_encryption`       | C3a | `ShareEncryption`     | BFV encryption of packed shares under recipient keys |
+| `share_decryption`       | C4a | `DkgShareDecryption`  | Sum received residues and commit to the Shamir share |
 
 ### Threshold (`bin/threshold/`)
 
@@ -68,15 +66,15 @@ C2 proof per type.
 | `user_data_encryption_ct0`     | P3         | —                            | User ciphertext (first leg)                       |
 | `user_data_encryption_ct1`     | P3         | —                            | User ciphertext (second leg)                      |
 | `user_data_encryption`         | P3 wrapper | —                            | Wrapper: ct0, ct1, shared randomness              |
-| `share_decryption`             | C6         | `ThresholdShareDecryption`   | Partial decryption share                          |
-| `decrypted_shares_aggregation` | C7         | `DecryptedSharesAggregation` | Combine shares; CRT; decode                       |
+| `share_decryption`             | C6         | `ThresholdShareDecryption`   | Partial decryption: Lagrange on `c1·sk`, plus fresh noise and the PRF mask |
+| `decrypted_shares_aggregation` | C7         | `DecryptedSharesAggregation` | Add `c0` to the partial shares; CRT; decode       |
 
 ### Recursive aggregation (`bin/recursive_aggregation/`)
 
 | Path                            | `CircuitName`      | Role                                                                               |
 | ------------------------------- | ------------------ | ---------------------------------------------------------------------------------- |
 | `fold`                          | `Fold`             | Fold two wrapper outputs                                                           |
-| `wrapper/dkg/share_computation` | `ShareComputation` | C2 wrapper: one inner C2a or C2b proof per wrap; VK genealogy + compressed outputs |
+| `wrapper/dkg/share_computation` | `ShareComputation` | C2 wrapper: one inner C2a proof per wrap; VK genealogy + compressed outputs |
 | `wrapper/dkg/*`                 | —                  | Verifies inner DKG proofs; compresses public inputs                                |
 | `wrapper/threshold/*`           | —                  | Verifies inner threshold proofs; compresses public inputs                          |
 

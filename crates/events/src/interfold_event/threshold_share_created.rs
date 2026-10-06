@@ -30,25 +30,16 @@ pub struct ThresholdShare {
     pub pk_share: ArcBytes,
     /// BFV-encrypted sk_sss - each recipient can decrypt their share
     pub sk_sss: BfvEncryptedShares,
-    /// BFV-encrypted esi_sss - one per secret key (sk), each recipient can decrypt their share
-    pub esi_sss: Vec<BfvEncryptedShares>,
 }
 
 impl ThresholdShare {
     /// Extract only the shares meant for a specific party.
     pub fn extract_for_party(&self, recipient_party_id: usize) -> Option<Self> {
         let sk_sss = self.sk_sss.extract_for_party(recipient_party_id)?;
-        let esi_sss: Option<Vec<_>> = self
-            .esi_sss
-            .iter()
-            .map(|shares| shares.extract_for_party(recipient_party_id))
-            .collect();
-
-        esi_sss.map(|esi_sss| Self {
+        Some(Self {
             party_id: self.party_id,
             pk_share: self.pk_share.clone(),
             sk_sss,
-            esi_sss,
         })
     }
 
@@ -66,8 +57,6 @@ pub struct ThresholdShareCreated {
     pub external: bool,
     /// Signed C2a proof (sk share computation) from the sender.
     pub signed_c2a_proof: Option<SignedProofPayload>,
-    /// Signed C2b proof (e_sm share computation) from the sender.
-    pub signed_c2b_proof: Option<SignedProofPayload>,
     /// Signed C3a proofs (sk share encryption per modulus row) for this recipient.
     pub signed_c3a_proofs: Vec<SignedProofPayload>,
     /// Signed C3b proofs (e_sm share encryption per modulus row) for this recipient.

@@ -96,7 +96,6 @@ pub global {}_CONFIGS: PkGenerationConfigs<N, L> = PkGenerationConfigs::new(
     QIS,
     {}_EEK_BOUND,
     {}_SK_BOUND,
-    {}_E_SM_BOUND,
     {}_R1_BOUNDS,
     {}_R2_BOUNDS,
 );
@@ -129,7 +128,6 @@ pub global {}_CONFIGS: PkGenerationConfigs<N, L> = PkGenerationConfigs::new(
         r2_bounds_str,
         prefix,
         b_enc,
-        prefix,
         prefix,
         prefix,
         prefix,

@@ -15,7 +15,12 @@
 // Schema 6 can contain sortition checkpoints derived from the merged event clock.
 // A controlled chain resync must rebuild those checkpoints from source timestamps.
 // Schema 7 also adds durable decryption backup shares and batch-bound C6 results.
-pub const SCHEMA_VERSION: u32 = 7;
+// Schema 8 adds PRF key fields on DKG proof requests and decryption state.
+// Schema 9 adds the ciphertext to the C7 proof request and to GeneratingC7Proof.
+// Schema 10 removes dealt smudging from DKG key generation, share plans, and proof requests.
+// Schema 11 removes the smudging proofs from the node-fold request.
+// Schema 12 removes dealt-smudging fields from keyshare state, threshold shares, and decryption-key requests.
+pub const SCHEMA_VERSION: u32 = 12;
 
 /// The action a node should take after reading the persisted schema version.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -67,10 +72,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn current_schema_is_v7() {
-        assert_eq!(SCHEMA_VERSION, 7);
+    fn current_schema_is_v12() {
+        assert_eq!(SCHEMA_VERSION, 12);
         assert!(matches!(
-            decide_schema_version(Some(6), SCHEMA_VERSION, true),
+            decide_schema_version(Some(7), SCHEMA_VERSION, true),
             SchemaVersionDecision::Halt(_)
         ));
     }

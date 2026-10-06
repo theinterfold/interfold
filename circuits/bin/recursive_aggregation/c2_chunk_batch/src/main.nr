@@ -14,7 +14,7 @@ use lib::configs::default::dkg::{
 use lib::configs::default::N_PARTIES;
 use lib::math::commitments::compute_recursive_aggregation_commitment;
 
-pub global CHUNK_COMMITMENT_LEN: u32 = 1 + (N_PARTIES * L_THRESHOLD);
+pub global CHUNK_COMMITMENT_LEN: u32 = 1 + (N_PARTIES * L_THRESHOLD) + N_PARTIES;
 pub global CHUNK_PUBLIC_LEN: u32 = 1 + CHUNK_COMMITMENT_LEN;
 pub global BATCH_RETURN_LEN: u32 = 2 + (CHUNKS_PER_BATCH * CHUNK_COMMITMENT_LEN);
 

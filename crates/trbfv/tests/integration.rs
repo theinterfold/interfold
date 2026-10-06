@@ -87,7 +87,7 @@ async fn test_trbfv_isolation() -> Result<()> {
     for party_id in [1, 4, 2] {
         let (es_poly_sum, sk_poly_sum) = decryption_keys.get(&party_id).unwrap();
         println!("calculate_decryption_share for party_id={}", party_id);
-        let CalculateDecryptionShareResponse { d_share_poly } = calculate_decryption_share(
+        let CalculateDecryptionShareResponse { d_share_poly, .. } = calculate_decryption_share(
             &cipher,
             CalculateDecryptionShareRequest {
                 name: format!("party_id({})", party_id),
@@ -95,6 +95,10 @@ async fn test_trbfv_isolation() -> Result<()> {
                 trbfv_config: trbfv_config.clone(),
                 es_poly_sum: es_poly_sum.clone(),
                 ciphertexts: ciphertexts.clone(),
+                party_idx: 0,
+                decryptors: vec![],
+                outgoing_prf_keys: vec![],
+                incoming_prf_keys: vec![],
             },
         )?;
 

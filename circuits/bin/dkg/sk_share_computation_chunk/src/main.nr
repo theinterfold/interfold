@@ -5,23 +5,26 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use lib::configs::default::dkg::{
-    L_THRESHOLD, N, PARITY_MATRIX, SHARE_COMPUTATION_BIT_SHARE, SHARE_COMPUTATION_CHUNK_SIZE,
-    SHARE_COMPUTATION_N_CHUNKS, SHARE_COMPUTATION_SK_BIT_SECRET, SHARE_COMPUTATION_SK_CONFIGS,
+    L_THRESHOLD, N, PARITY_MATRIX, PRF_KEY_BITS, SHARE_COMPUTATION_BIT_SHARE,
+    SHARE_COMPUTATION_CHUNK_SIZE, SHARE_COMPUTATION_N_CHUNKS, SHARE_COMPUTATION_SK_BIT_SECRET,
+    SHARE_COMPUTATION_SK_CONFIGS,
 };
 use lib::configs::default::{N_PARTIES, T};
 use lib::core::dkg::share_computation::check_range_bounds;
 use lib::core::dkg::share_computation::verify_parity_check;
 use lib::math::commitments::{
-    compute_sc_party_share_chunk_commitment, compute_sc_secret_chunk_commitment,
+    compute_prf_key_commitment, compute_sc_party_share_chunk_commitment,
+    compute_sc_secret_chunk_commitment,
 };
 use lib::math::polynomial::Polynomial;
 
-pub global CHUNK_PUBLIC_LEN: u32 = 1 + (N_PARTIES * L_THRESHOLD);
+pub global CHUNK_PUBLIC_LEN: u32 = 1 + (N_PARTIES * L_THRESHOLD) + N_PARTIES;
 
 fn main(
     chunk_idx: pub u32,
     secret_chunk: Polynomial<SHARE_COMPUTATION_CHUNK_SIZE>,
     y_chunk: [[[Field; N_PARTIES + 1]; L_THRESHOLD]; SHARE_COMPUTATION_CHUNK_SIZE],
+    key_bits: [[Field; PRF_KEY_BITS]; N_PARTIES],
 ) -> pub [Field; CHUNK_PUBLIC_LEN] {
     assert(chunk_idx < SHARE_COMPUTATION_N_CHUNKS);
 
@@ -70,6 +73,8 @@ fn main(
                 Polynomial::new(reversed_share),
             );
         }
+        out[1 + (N_PARTIES * L_THRESHOLD) + party_idx] =
+            compute_prf_key_commitment(party_idx as Field, key_bits[party_idx]);
     }
 
     out

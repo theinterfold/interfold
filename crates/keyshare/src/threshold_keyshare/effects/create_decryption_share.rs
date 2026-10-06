@@ -65,6 +65,8 @@ impl ThresholdKeyshare {
                 signed_e_sm_share_computation_proof: current.signed_e_sm_share_computation_proof,
                 signed_sk_share_encryption_proofs: current.signed_sk_share_encryption_proofs,
                 signed_e_sm_share_encryption_proofs: current.signed_e_sm_share_encryption_proofs,
+                outgoing_prf_keys: current.outgoing_prf_keys,
+                incoming_prf_keys: current.incoming_prf_keys,
             });
 
             s.new_state(next)
@@ -81,6 +83,21 @@ impl ThresholdKeyshare {
                 sk_poly_sum: decrypting.sk_poly_sum,
                 es_poly_sum: decrypting.es_poly_sum,
                 trbfv_config,
+                party_idx: u32::try_from(state.party_id).unwrap_or(0),
+                decryptors: canonical_decryptors(
+                    state.honest_parties.as_ref(),
+                    usize::try_from(state.threshold_m).unwrap_or(0) + 1,
+                ),
+                outgoing_prf_keys: decrypting
+                    .outgoing_prf_keys
+                    .iter()
+                    .map(|key| key.access_raw(&self.cipher).unwrap_or_default())
+                    .collect(),
+                incoming_prf_keys: decrypting
+                    .incoming_prf_keys
+                    .iter()
+                    .map(|key| key.access_raw(&self.cipher).unwrap_or_default())
+                    .collect(),
             }),
             CorrelationId::new(),
             e3_id.clone(),
@@ -108,6 +125,21 @@ impl ThresholdKeyshare {
                 sk_poly_sum: decrypting.sk_poly_sum,
                 es_poly_sum: decrypting.es_poly_sum,
                 trbfv_config,
+                party_idx: u32::try_from(state.party_id).unwrap_or(0),
+                decryptors: canonical_decryptors(
+                    state.honest_parties.as_ref(),
+                    usize::try_from(state.threshold_m).unwrap_or(0) + 1,
+                ),
+                outgoing_prf_keys: decrypting
+                    .outgoing_prf_keys
+                    .iter()
+                    .map(|key| key.access_raw(&self.cipher).unwrap_or_default())
+                    .collect(),
+                incoming_prf_keys: decrypting
+                    .incoming_prf_keys
+                    .iter()
+                    .map(|key| key.access_raw(&self.cipher).unwrap_or_default())
+                    .collect(),
             }),
             CorrelationId::new(),
             e3_id.clone(),
@@ -171,11 +203,18 @@ impl ThresholdKeyshare {
                 ciphertext_bytes: decrypting.ciphertext_output,
                 aggregated_pk_bytes,
                 sk_poly_sum: decrypting.sk_poly_sum,
-                es_poly_sum: decrypting.es_poly_sum,
+                es_poly_sum: msg.e_fresh,
                 d_share_bytes: d_share_poly.clone(),
                 decryption_domain,
                 params_preset: threshold_preset,
                 committee_size,
+                party_idx: u32::try_from(state.party_id).unwrap_or(0),
+                decryptors: canonical_decryptors(
+                    state.honest_parties.as_ref(),
+                    usize::try_from(state.threshold_m).unwrap_or(0) + 1,
+                ),
+                outgoing_prf_keys: decrypting.outgoing_prf_keys.clone(),
+                incoming_prf_keys: decrypting.incoming_prf_keys.clone(),
             },
         };
         self.recovery.try_mutate(&ec, |mut recovery| {
@@ -224,4 +263,18 @@ impl ThresholdKeyshare {
 
         Ok(())
     }
+}
+
+fn canonical_decryptors(
+    honest: Option<&std::collections::BTreeSet<u64>>,
+    reconstruction: usize,
+) -> Vec<u32> {
+    let Some(honest) = honest else {
+        return Vec::new();
+    };
+    honest
+        .iter()
+        .take(reconstruction)
+        .map(|id| u32::try_from(*id).unwrap_or(0).saturating_add(1))
+        .collect()
 }

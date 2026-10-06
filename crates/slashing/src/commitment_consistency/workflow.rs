@@ -240,9 +240,7 @@ impl CommitmentConsistency {
         }
         self.roster = Some(event.party_ids);
         self.dirty = true;
-        let mut violations = self.check_links(ProofType::C4aSkShareDecryption);
-        violations.extend(self.check_links(ProofType::C4bESmShareDecryption));
-        violations
+        self.check_links(ProofType::C4aSkShareDecryption)
     }
 
     fn source_row(&self, link: &dyn CommitmentLink, party_id: u64) -> Option<u64> {

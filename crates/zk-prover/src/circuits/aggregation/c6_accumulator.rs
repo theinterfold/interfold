@@ -9,8 +9,8 @@
 //! runtime to obtain a valid genesis `UltraHonkProof` (see `circuits/bin/recursive_aggregation/c6_fold_kernel`).
 
 use crate::circuits::aggregation::helpers::{
-    extract_single_field, field_keys, parse_acc_public_field_strings, sequential_fold,
-    zero_field_hex_strings, ACC_NONZK_PROOF_FIELDS,
+    parse_acc_public_field_strings_flat, sequential_fold, zero_field_hex_strings,
+    ACC_NONZK_PROOF_FIELDS,
 };
 use crate::circuits::utils::{bytes_to_field_strings, inputs_json_to_input_map};
 use crate::circuits::vk;
@@ -20,15 +20,13 @@ use crate::witness::{CompiledCircuit, WitnessGenerator};
 use e3_events::{CircuitName, CircuitVariant, Proof};
 use serde::Serialize;
 
-/// `total_slots` = `T + 1` (one slot per party index in the C6 leaf layout).
-fn c6_fold_public_input_field_count(total_slots: usize) -> usize {
-    6 + 4 * total_slots
+/// `total_slots` = `T + 1`. The tail holds four columns plus two PRF-key grids.
+fn c6_fold_public_input_field_count(total_slots: usize, n_parties: usize) -> usize {
+    6 + 5 * total_slots + 2 * total_slots * n_parties
 }
 
-/// Public-signal layout of `c6_fold`: four fold parameters, two common domain
-/// limbs, then a four-field-wide per-slot tail.
+/// Public-signal layout of `c6_fold`: four fold parameters and two domain limbs.
 const C6_FOLD_PREFIX_LEN: usize = 6;
-const C6_FOLD_SLOT_WIDTH: usize = 4;
 
 struct C6FoldVks {
     inner_vk: vk::VkArtifacts,
@@ -60,6 +58,7 @@ fn generate_c6_fold_kernel_genesis_proof(
     inner: &Proof,
     slot_index: u32,
     total_slots: usize,
+    n_parties: usize,
     artifacts_dir: &str,
     job_id: &str,
 ) -> Result<Proof, ZkError> {
@@ -72,7 +71,7 @@ fn generate_c6_fold_kernel_genesis_proof(
         CircuitName::C6FoldKernel,
     )?;
     let c6_public_inputs = threshold_share_decryption_inner_public_inputs(inner)?;
-    let expected_acc_pub = c6_fold_public_input_field_count(total_slots);
+    let expected_acc_pub = c6_fold_public_input_field_count(total_slots, n_parties);
     let acc_pi = zero_field_hex_strings(expected_acc_pub)?;
     let acc_pf = zero_field_hex_strings(ACC_NONZK_PROOF_FIELDS)?;
 
@@ -111,29 +110,21 @@ fn generate_c6_fold_kernel_genesis_proof(
     Ok(proof)
 }
 
-fn threshold_share_decryption_inner_public_inputs(proof: &Proof) -> Result<[String; 6], ZkError> {
+fn threshold_share_decryption_inner_public_inputs(proof: &Proof) -> Result<Vec<String>, ZkError> {
     if proof.circuit != CircuitName::ThresholdShareDecryption {
         return Err(ZkError::InvalidInput(format!(
             "expected ThresholdShareDecryption inner proof, got {}",
             proof.circuit
         )));
     }
-    let ctx = "C6 inner ThresholdShareDecryption proof";
-    Ok([
-        extract_single_field(proof, "input", field_keys::EXPECTED_SK_COMMITMENT, ctx)?,
-        extract_single_field(proof, "input", field_keys::EXPECTED_E_SM_COMMITMENT, ctx)?,
-        extract_single_field(proof, "input", field_keys::CT_COMMITMENT, ctx)?,
-        extract_single_field(proof, "input", field_keys::DOMAIN_HI, ctx)?,
-        extract_single_field(proof, "input", field_keys::DOMAIN_LO, ctx)?,
-        extract_single_field(proof, "output", field_keys::D_COMMITMENT, ctx)?,
-    ])
+    bytes_to_field_strings(proof.public_signals.as_ref())
 }
 
 #[derive(Serialize)]
 struct C6FoldStepInput {
     inner_vk: Vec<String>,
     inner_proof: Vec<String>,
-    c6_public_inputs: [String; 6],
+    c6_public_inputs: Vec<String>,
     acc_vk: Vec<String>,
     acc_proof: Vec<String>,
     acc_public_inputs: Vec<String>,
@@ -144,12 +135,7 @@ struct C6FoldStepInput {
 }
 
 fn parse_c6_fold_public_field_strings(proof: &Proof) -> Result<Vec<String>, ZkError> {
-    parse_acc_public_field_strings(
-        proof,
-        CircuitName::C6Fold,
-        C6_FOLD_PREFIX_LEN,
-        C6_FOLD_SLOT_WIDTH,
-    )
+    parse_acc_public_field_strings_flat(proof, CircuitName::C6Fold, C6_FOLD_PREFIX_LEN)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -159,6 +145,7 @@ fn generate_c6_fold_step_with_vks(
     prior_fold: Option<&Proof>,
     slot_index: u32,
     total_slots: usize,
+    n_parties: usize,
     e3_id: &str,
     artifacts_dir: &str,
     vks: &C6FoldVks,
@@ -166,7 +153,7 @@ fn generate_c6_fold_step_with_vks(
     let is_first_step = prior_fold.is_none();
 
     let c6_public_inputs = threshold_share_decryption_inner_public_inputs(inner)?;
-    let expected_acc_pub = c6_fold_public_input_field_count(total_slots);
+    let expected_acc_pub = c6_fold_public_input_field_count(total_slots, n_parties);
 
     let (acc_vk_fields, acc_vk_hash, acc_proof, acc_public_inputs) = if is_first_step {
         let kernel_job_id = format!("{e3_id}-c6fold-kernel");
@@ -175,6 +162,7 @@ fn generate_c6_fold_step_with_vks(
             inner,
             slot_index,
             total_slots,
+            n_parties,
             artifacts_dir,
             &kernel_job_id,
         )?;
@@ -196,18 +184,6 @@ fn generate_c6_fold_step_with_vks(
     } else {
         let p = prior_fold.expect("prior_fold required when is_first_step is false");
         let acc_pi = parse_c6_fold_public_field_strings(p)?;
-        let prior_slots = (acc_pi.len() - C6_FOLD_PREFIX_LEN) / C6_FOLD_SLOT_WIDTH;
-        if prior_slots == 0 {
-            return Err(ZkError::InvalidInput(
-                "c6_fold proof implies zero slots".into(),
-            ));
-        }
-        if prior_slots != total_slots {
-            return Err(ZkError::InvalidInput(format!(
-                "prior c6_fold slot count {} != expected {}",
-                prior_slots, total_slots
-            )));
-        }
         if acc_pi.len() != expected_acc_pub {
             return Err(ZkError::InvalidInput(format!(
                 "prior c6_fold public field count {} != expected {} for total_slots={}",
@@ -268,6 +244,7 @@ pub fn generate_sequential_c6_fold(
     inner_proofs: &[Proof],
     slot_indices: &[u32],
     total_slots: usize,
+    n_parties: usize,
     e3_id: &str,
     artifacts_dir: &str,
 ) -> Result<Proof, ZkError> {
@@ -306,6 +283,7 @@ pub fn generate_sequential_c6_fold(
                 prior,
                 slot,
                 total_slots,
+                n_parties,
                 e3_id,
                 artifacts_dir,
                 &vks,

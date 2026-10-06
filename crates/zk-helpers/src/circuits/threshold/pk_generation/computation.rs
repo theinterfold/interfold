@@ -93,7 +93,6 @@ pub struct Bounds {
 pub struct Inputs {
     pub eek: Polynomial,
     pub sk: Polynomial,
-    pub e_sm: CrtPolynomial,
     pub r1is: CrtPolynomial,
     pub r2is: CrtPolynomial,
     pub pk0is: CrtPolynomial,
@@ -260,7 +259,7 @@ impl Computation for Inputs {
         let l = threshold_params.moduli().len();
         let a = deterministic_crp_crt_polynomial(&threshold_params)?;
         crate::utils::verify_crt_shapes(
-            &[&data.pk0_share, &a, &data.eek, &data.e_sm, &data.sk],
+            &[&data.pk0_share, &a, &data.eek, &data.sk],
             l,
             n,
         )
@@ -276,25 +275,21 @@ impl Computation for Inputs {
         let cyclo = cyclotomic_polynomial(n);
 
         // Perform the main computation logic
-        let mut results: Vec<(usize, Polynomial, Polynomial, Polynomial, Polynomial)> = izip!(
+        let mut results: Vec<(usize, Polynomial, Polynomial, Polynomial)> = izip!(
             moduli.clone(),
             data.pk0_share.limbs.clone(),
             a.limbs.clone(),
             data.eek.limbs.clone(),
-            data.e_sm.limbs.clone(),
             data.sk.limbs.clone(),
         )
         .enumerate()
         .par_bridge()
-        .map(|(i, (qi, mut pk0_share, a, mut eek, mut e_sm, mut sk))| {
+        .map(|(i, (qi, mut pk0_share, a, mut eek, mut sk))| {
             pk0_share.reverse();
             pk0_share.center(&qi);
 
             eek.reverse();
             eek.center(&qi);
-
-            e_sm.reverse();
-            e_sm.center(&qi);
 
             sk.reverse();
             sk.center(&qi);
@@ -313,16 +308,15 @@ impl Computation for Inputs {
 
             let (r1, r2) = decompose_residue(&pk0_share, &pk0_share_hat, &qi, &cyclo, n);
 
-            (i, r2, r1, pk0_share.clone(), e_sm.clone())
+            (i, r2, r1, pk0_share.clone())
         })
         .collect();
 
-        results.sort_by_key(|(i, _, _, _, _)| *i);
+        results.sort_by_key(|(i, _, _, _)| *i);
 
         let mut r2 = CrtPolynomial::new(vec![]);
         let mut r1 = CrtPolynomial::new(vec![]);
         let mut pk0_share = CrtPolynomial::new(vec![]);
-        let mut e_sm = CrtPolynomial::new(vec![]);
 
         let mut sk = data.sk.limbs[0].clone();
         let mut eek = data.eek.limbs[0].clone();
@@ -332,17 +326,15 @@ impl Computation for Inputs {
         eek.reverse();
         eek.center(&moduli[0]);
 
-        for (_i, r2i, r1i, pk0_sharei, e_smi) in results {
+        for (_i, r2i, r1i, pk0_sharei) in results {
             r2.add_limb(r2i);
             r1.add_limb(r1i);
             pk0_share.add_limb(pk0_sharei);
-            e_sm.add_limb(e_smi);
         }
 
         Ok(Inputs {
             eek,
             sk,
-            e_sm,
             r1is: r1,
             r2is: r2,
             pk0is: pk0_share,
@@ -353,7 +345,6 @@ impl Computation for Inputs {
         let pk0is = crt_polynomial_to_toml_json(&self.pk0is);
         let e = polynomial_to_toml_json(&self.eek);
         let sk = polynomial_to_toml_json(&self.sk);
-        let e_sm = crt_polynomial_to_toml_json(&self.e_sm);
         let r1is = crt_polynomial_to_toml_json(&self.r1is);
         let r2is = crt_polynomial_to_toml_json(&self.r2is);
 
@@ -361,7 +352,6 @@ impl Computation for Inputs {
             "pk0is": pk0is,
             "eek": e,
             "sk": sk,
-            "e_sm": e_sm,
             "r1is": r1is,
             "r2is": r2is,
         });

@@ -33,7 +33,6 @@ fn pending_small_work_plan() -> ThresholdSharePending {
         pk0_share: ArcBytes::from_bytes(&[]),
         sk: empty.clone(),
         eek: empty.clone(),
-        e_sm: empty.clone(),
         params_preset: preset,
         committee_size: committee,
     };
@@ -43,6 +42,7 @@ fn pending_small_work_plan() -> ThresholdSharePending {
         dkg_input_type: kind,
         params_preset: preset,
         committee_size: committee,
+        prf_keys: vec![],
     };
 
     // Small has 18 external recipients and three secure-8192 modulus rows.
@@ -63,6 +63,7 @@ fn pending_small_work_plan() -> ThresholdSharePending {
         recipient_party_id: party_id,
         row_index,
         esi_index: 0,
+        prf_key: empty.clone(),
     };
     let mut sk_requests = Vec::new();
     let mut esm_requests = Vec::new();
@@ -88,13 +89,10 @@ fn pending_small_work_plan() -> ThresholdSharePending {
             party_id: 0,
             pk_share: ArcBytes::from_bytes(&[]),
             sk_sss: BfvEncryptedShares::default(),
-            esi_sss: vec![],
         }),
         proof_request,
         sk_share_computation_request: computation(DkgInputType::SecretKey),
-        e_sm_share_computation_request: computation(DkgInputType::SmudgingNoise),
         sk_share_encryption_requests: sk_requests,
-        e_sm_share_encryption_requests: esm_requests,
         recipient_party_ids: (0..n as u64).collect(),
     }
 }

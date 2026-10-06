@@ -27,6 +27,8 @@ import {
   getBfvDecryptionSubCircuitVkHashPaths,
   getBfvPkSubCircuitVkHashPaths,
   getBfvPkVkBindingHashPaths,
+  readBfvPkVkBindingHashes,
+  ZERO_VK_HASH,
   getBfvV2SubCircuitVkHashPaths,
   getBfvV2VkBindingHashPaths,
   readVkRecursiveHash,
@@ -51,8 +53,7 @@ const INSECURE_INTEGRATION_SUMMARY = path.join(
   repoRoot,
   "circuits/benchmarks/results_insecure_minimum/integration_summary.json",
 );
-const readExpectedVkBinding = () =>
-  getBfvPkVkBindingHashPaths().map((filePath) => readVkRecursiveHash(filePath));
+const readExpectedVkBinding = () => readBfvPkVkBindingHashes();
 
 const hasActiveCircuitSelection = (
   preset: string,
@@ -165,9 +166,9 @@ const loadFoldedArtifacts = (): FoldedArtifacts | null =>
 
 const hasCompiledVkArtifacts = (): boolean =>
   hasActiveCircuitSelection("insecure", "minimum") &&
-  Object.values(getBfvPkSubCircuitVkHashPaths()).every((p) =>
-    fs.existsSync(p),
-  ) &&
+  Object.values(getBfvPkSubCircuitVkHashPaths())
+    .filter((p) => !p.includes("esm_share_computation_chunk"))
+    .every((p) => fs.existsSync(p)) &&
   Object.values(getBfvDecryptionSubCircuitVkHashPaths()).every((p) =>
     fs.existsSync(p),
   );
@@ -176,8 +177,14 @@ const hasCompiledV2VkArtifacts = (): boolean =>
   hasActiveCircuitSelection("secure-16384", "minimum") &&
   [
     getBfvV2SubCircuitVkHashPaths().nodesFold,
-    ...Object.values(getBfvPkSubCircuitVkHashPaths()),
-    ...getBfvPkVkBindingHashPaths(),
+    ...Object.values(getBfvPkSubCircuitVkHashPaths()).filter(
+      (p) => !p.includes("esm_share_computation_chunk"),
+    ),
+    ...getBfvPkVkBindingHashPaths().filter(
+      (p) =>
+        !p.includes("esm_share_computation_chunk") &&
+        !p.includes("esm_c2_chunk_finalize"),
+    ),
     ...getBfvV2VkBindingHashPaths(),
   ].every((p) => fs.existsSync(p));
 
@@ -293,9 +300,7 @@ describe("BfvVkBindingIntegration", function () {
     const expectedSkC2ChunkKeyHash = readVkRecursiveHash(
       getBfvPkSubCircuitVkHashPaths().skC2Chunk,
     );
-    const expectedESmC2ChunkKeyHash = readVkRecursiveHash(
-      getBfvPkSubCircuitVkHashPaths().esmC2Chunk,
-    );
+    const expectedESmC2ChunkKeyHash = ZERO_VK_HASH;
     const expectedVkBinding = readExpectedVkBinding();
     const expectedC6FoldKeyHash = readVkRecursiveHash(
       getBfvDecryptionSubCircuitVkHashPaths().c6Fold,
@@ -375,7 +380,7 @@ describe("BfvVkBindingIntegration", function () {
         ethers.id("stale-nodes-fold"),
         ethers.id("stale-c5"),
         readVkRecursiveHash(getBfvPkSubCircuitVkHashPaths().skC2Chunk),
-        readVkRecursiveHash(getBfvPkSubCircuitVkHashPaths().esmC2Chunk),
+        ZERO_VK_HASH,
         expectedVkBinding,
         BFV_DKG_H,
       );
@@ -434,12 +439,8 @@ describe("BfvVkBindingIntegration", function () {
         const pkPaths = getBfvPkSubCircuitVkHashPaths();
         const expectedC5KeyHash = readVkRecursiveHash(pkPaths.c5);
         const expectedSkC2ChunkKeyHash = readVkRecursiveHash(pkPaths.skC2Chunk);
-        const expectedESmC2ChunkKeyHash = readVkRecursiveHash(
-          pkPaths.esmC2Chunk,
-        );
-        const expectedLegacyVkBinding = getBfvPkVkBindingHashPaths().map(
-          (filePath) => readVkRecursiveHash(filePath),
-        );
+        const expectedESmC2ChunkKeyHash = ZERO_VK_HASH;
+        const expectedLegacyVkBinding = readBfvPkVkBindingHashes();
         const expectedV2VkBinding = getBfvV2VkBindingHashPaths().map(
           (filePath) => readVkRecursiveHash(filePath),
         );
@@ -528,9 +529,7 @@ describe("BfvVkBindingIntegration", function () {
       const expectedSkC2ChunkKeyHash = readVkRecursiveHash(
         getBfvPkSubCircuitVkHashPaths().skC2Chunk,
       );
-      const expectedESmC2ChunkKeyHash = readVkRecursiveHash(
-        getBfvPkSubCircuitVkHashPaths().esmC2Chunk,
-      );
+      const expectedESmC2ChunkKeyHash = ZERO_VK_HASH;
       const expectedVkBinding = readExpectedVkBinding();
       const expectedC6FoldKeyHash = readVkRecursiveHash(
         getBfvDecryptionSubCircuitVkHashPaths().c6Fold,
@@ -750,7 +749,7 @@ describe("BfvVkBindingIntegration", function () {
         wrongNodesFold,
         expectedC5KeyHash,
         readVkRecursiveHash(getBfvPkSubCircuitVkHashPaths().skC2Chunk),
-        readVkRecursiveHash(getBfvPkSubCircuitVkHashPaths().esmC2Chunk),
+        ZERO_VK_HASH,
         readExpectedVkBinding(),
         BFV_DKG_H,
       );

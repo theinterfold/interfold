@@ -27,7 +27,6 @@ fn full_share() -> Arc<ThresholdShare> {
         party_id: 0,
         pk_share: ArcBytes::from_bytes(&[]),
         sk_sss: BfvEncryptedShares::default(),
-        esi_sss: vec![],
     })
 }
 
@@ -38,6 +37,7 @@ fn share_computation_req() -> ShareComputationProofRequest {
         dkg_input_type: DkgInputType::SecretKey,
         params_preset: BfvPreset::default(),
         committee_size: CiphernodesCommitteeSize::Micro,
+        prf_keys: vec![],
     }
 }
 
@@ -46,7 +46,6 @@ fn pk_generation_req() -> PkGenerationProofRequest {
         pk0_share: ArcBytes::from_bytes(&[]),
         sk: sensitive(),
         eek: sensitive(),
-        e_sm: sensitive(),
         params_preset: BfvPreset::default(),
         committee_size: CiphernodesCommitteeSize::Micro,
     }
@@ -70,6 +69,7 @@ fn share_encryption_req(
         recipient_party_id,
         row_index,
         esi_index,
+        prf_key: sensitive(),
     }
 }
 
@@ -85,6 +85,7 @@ fn dkg_share_decryption_req() -> DkgShareDecryptionProofRequest {
         dkg_input_type: DkgInputType::SecretKey,
         params_preset: BfvPreset::default(),
         committee_size: CiphernodesCommitteeSize::Micro,
+        prf_keys: vec![],
     }
 }
 
@@ -111,7 +112,7 @@ fn pending(sk: usize, esm: usize) -> PendingThresholdProofs {
 fn threshold_completes_only_when_all_proofs_present() {
     let mut p = pending(1, 1);
     assert!(!p.is_complete());
-    assert_eq!(p.total_expected(), 3 + 1 + 1);
+    assert_eq!(p.total_expected(), 2 + 1);
     assert_eq!(p.total_received(), 0);
 
     p.store_proof(&ThresholdProofKind::PkGeneration, proof(1));
@@ -127,7 +128,7 @@ fn threshold_completes_only_when_all_proofs_present() {
         },
         proof(4),
     );
-    assert!(!p.is_complete());
+    assert!(p.is_complete());
     p.store_proof(
         &ThresholdProofKind::ESmShareEncryption {
             esi_index: 0,
@@ -165,15 +166,12 @@ fn decryption_completes_when_sk_and_all_esm_present() {
     };
     assert!(!d.is_complete());
     d.sk_proof = Some(proof(1));
-    d.esm_proofs.insert(0, proof(2));
-    assert!(!d.is_complete());
-    d.esm_proofs.insert(1, proof(3));
     assert!(d.is_complete());
 }
 
 #[test]
 fn decryption_requires_contiguous_esm_indices() {
-    let mut d = PendingDecryptionProofs {
+    let d = PendingDecryptionProofs {
         party_id: 7,
         node: "n".into(),
         ec: ec(),
@@ -181,22 +179,19 @@ fn decryption_requires_contiguous_esm_indices() {
         esm_proofs: HashMap::new(),
         expected_esm_count: 2,
     };
-    // Two entries but indices {0,2} — count matches but index 1 missing.
-    d.esm_proofs.insert(0, proof(2));
-    d.esm_proofs.insert(2, proof(3));
-    assert!(!d.is_complete());
+    assert!(d.is_complete());
 }
 
 #[test]
 fn node_agg_meta_seq_helpers() {
-    assert_eq!(total_expected_for(2, 1), 4 + 2 + 1 + 2);
+    assert_eq!(total_expected_for(2, 1), 4 + 2);
     let meta = NodeAggregationMeta {
         party_id: 0,
         total_expected: total_expected_for(2, 1),
         pending_c0: None,
     };
-    // c4_base_seq sits just after C0..C3 = total_expected - 2.
-    assert_eq!(meta.c4_base_seq(), 4 + 2 + 1);
+    // c4_base_seq sits just after C0..C3 = total_expected - 1.
+    assert_eq!(meta.c4_base_seq(), 4 + 2 - 1);
 }
 
 #[test]
@@ -205,20 +200,14 @@ fn threshold_plan_assigns_canonical_seqs() {
     let plan = plan_threshold_dispatch(
         pk_generation_req(),
         share_computation_req(),
-        share_computation_req(),
         vec![enc(2, 0, 0), enc(3, 0, 0)],
-        vec![enc(2, 0, 0)],
     );
     let seqs: Vec<usize> = plan.iter().map(|i| i.seq).collect();
-    assert_eq!(seqs, vec![1, 2, 3, 4, 5, 6]);
+    assert_eq!(seqs, vec![1, 2, 3, 4]);
     assert!(matches!(plan[0].kind, ThresholdProofKind::PkGeneration));
     assert!(matches!(
         plan[3].kind,
         ThresholdProofKind::SkShareEncryption { .. }
-    ));
-    assert!(matches!(
-        plan[5].kind,
-        ThresholdProofKind::ESmShareEncryption { .. }
     ));
 }
 
@@ -230,10 +219,6 @@ fn decryption_plan_assigns_offset_seqs() {
         7,
     );
     let seqs: Vec<usize> = plan.iter().map(|i| i.seq).collect();
-    assert_eq!(seqs, vec![7, 8, 9]);
+    assert_eq!(seqs, vec![7]);
     assert!(matches!(plan[0].kind, DecryptionProofKind::SecretKey));
-    assert!(matches!(
-        plan[1].kind,
-        DecryptionProofKind::SmudgingNoise { esi_idx: 0 }
-    ));
 }

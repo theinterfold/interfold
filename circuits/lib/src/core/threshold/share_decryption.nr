@@ -6,8 +6,11 @@
 
 use crate::math::commitments::{
     compute_aggregated_shares_commitment, compute_ciphertext_commitment,
-    compute_threshold_decryption_share_commitment, compute_threshold_share_decryption_challenge,
+    compute_partial_decryption_c0_commitment, compute_threshold_decryption_share_commitment,
+    compute_threshold_share_decryption_challenge,
 };
+use crate::core::threshold::decrypted_shares_aggregation::lagrange_coeffs_for_set;
+use crate::math::prf::prf_decryption_mask;
 use crate::math::helpers::flatten;
 use crate::math::polynomial::Polynomial;
 
@@ -19,24 +22,33 @@ pub struct Configs<let L: u32> {
     pub r1_bounds: [Field; L],
     /// Bounds for r2 polynomials (cyclotomic reduction quotients) for each CRT basis
     pub r2_bounds: [Field; L],
+    /// Absolute bound on each fresh smudging coefficient.
+    pub e_fresh_bound: Field,
 }
 
 impl<let L: u32> Configs<L> {
     pub fn new(qis: [Field; L], r1_bounds: [Field; L], r2_bounds: [Field; L]) -> Self {
-        Configs { qis, r1_bounds, r2_bounds }
+        Configs { qis, r1_bounds, r2_bounds, e_fresh_bound: 0 }
+    }
+
+    pub fn with_fresh_bound(mut self, e_fresh_bound: Field) -> Self {
+        self.e_fresh_bound = e_fresh_bound;
+        self
     }
 }
 
 /// Threshold share decryption (C6).
 ///
-/// **Role:** Prove one party's partial decryption share `d` is consistent with the ciphertext and
-/// with aggregate `sk` / `e_sm` commitments from C4.
+/// **Role:** Prove one party's partial decryption share.
 ///
-/// **Consumes:** `expected_sk_commitment`, `expected_e_sm_commitment` (C4), `ct_commitment` (cross-phase /
-/// user data encryption); ciphertext limbs `ct0`, `ct1` as witness.
+/// The share is `λ · c1 · sh + e_fresh + r`. `λ` is `L_i(0)` for this party in the
+/// public decryptor set. `e_fresh` is local smudging. `r` is the PRF mask. `c0` is
+/// not part of the share.
 ///
-/// **Produces:** Truncated-`d` commitment for C7 (`decrypted_shares_aggregation`).
-pub struct ShareDecryption<let N: u32, let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let BIT_CT: u32, let BIT_SK: u32, let BIT_E_SM: u32, let BIT_R1: u32, let BIT_R2: u32, let BIT_D: u32, let BIT_D_NATIVE: u32> {
+/// **Consumes:** `expected_sk_commitment` (C4a) and `ct_commitment`.
+///
+/// **Produces:** Truncated-`d` commitment for C7, and the `c0` prefix commitment C7 adds.
+pub struct ShareDecryption<let N: u32, let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let BIT_CT: u32, let BIT_SK: u32, let BIT_E_SM: u32, let BIT_R1: u32, let BIT_R2: u32, let BIT_D: u32, let BIT_D_NATIVE: u32, let KEY_BITS: u32, let N_PARTIES: u32, let H: u32> {
     /// Circuit parameters including bounds and cryptographic constants
     configs: Configs<L>,
 
@@ -44,12 +56,11 @@ pub struct ShareDecryption<let N: u32, let MAX_MSG_NON_ZERO_COEFFS: u32, let L: 
     /// (public witness)
     expected_sk_commitment: Field,
 
-    /// Expected commitment to aggregated e_sm shares (from C4 / protocol transcript)
-    /// (public witness)
-    expected_e_sm_commitment: Field,
-
     /// Expected commitment to the full ciphertext (ct0 limbs + ct1 limbs), aligned with C3 / user_data_encryption.
     ct_commitment: Field,
+
+    /// Commitment to the low-degree native `c0` prefix. C7 adds this polynomial once.
+    c0_commitment: Field,
 
     /// Ciphertext components (witness-only)
     /// ct0 components for each CRT basis (degree N-1 polynomials with N coefficients)
@@ -60,9 +71,8 @@ pub struct ShareDecryption<let N: u32, let MAX_MSG_NON_ZERO_COEFFS: u32, let L: 
     /// Aggregated sum of sk shares (secret witness)
     sk: [Polynomial<N>; L],
 
-    /// Aggregated sum of e_sm shares (secret witness, direct input)
-    /// e_sm[basis] - sum of e_sm shares for each CRT basis (degree N-1 with N coefficients)
-    e_sm: [Polynomial<N>; L],
+    /// Fresh smudging noise. Not scaled by `λ` and not a DKG secret.
+    e_fresh: [Polynomial<N>; L],
 
     /// Quotient polynomials for lifting to Z (secret witnesses)
     r1: [Polynomial<2 * N - 1>; L],
@@ -76,37 +86,58 @@ pub struct ShareDecryption<let N: u32, let MAX_MSG_NON_ZERO_COEFFS: u32, let L: 
     /// as C7 (ascending degree within each limb). `d_commitment` hashes this, not the
     /// reversed+centered `d` prefix, so DecryptionAggregator can link C6 fold to C7.
     d_native_trunc: [Polynomial<MAX_MSG_NON_ZERO_COEFFS>; L],
+
+    /// 0-based party that produces this decryption share.
+    party_idx: u32,
+    /// Strictly increasing 1-based decryptor ids.
+    decryptors: [Field; H],
+    outgoing_key_bits: [[Field; KEY_BITS]; N_PARTIES],
+    incoming_key_bits: [[Field; KEY_BITS]; N_PARTIES],
+    outgoing_key_commitments: [Field; N_PARTIES],
+    incoming_key_commitments: [Field; N_PARTIES],
 }
 
-impl<let N: u32, let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let BIT_CT: u32, let BIT_SK: u32, let BIT_E_SM: u32, let BIT_R1: u32, let BIT_R2: u32, let BIT_D: u32, let BIT_D_NATIVE: u32> ShareDecryption<N, MAX_MSG_NON_ZERO_COEFFS, L, BIT_CT, BIT_SK, BIT_E_SM, BIT_R1, BIT_R2, BIT_D, BIT_D_NATIVE> {
+impl<let N: u32, let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let BIT_CT: u32, let BIT_SK: u32, let BIT_E_SM: u32, let BIT_R1: u32, let BIT_R2: u32, let BIT_D: u32, let BIT_D_NATIVE: u32, let KEY_BITS: u32, let N_PARTIES: u32, let H: u32> ShareDecryption<N, MAX_MSG_NON_ZERO_COEFFS, L, BIT_CT, BIT_SK, BIT_E_SM, BIT_R1, BIT_R2, BIT_D, BIT_D_NATIVE, KEY_BITS, N_PARTIES, H> {
     pub fn new(
         configs: Configs<L>,
         expected_sk_commitment: Field,
-        expected_e_sm_commitment: Field,
         ct_commitment: Field,
+        c0_commitment: Field,
         ct0: [Polynomial<N>; L],
         ct1: [Polynomial<N>; L],
         sk: [Polynomial<N>; L],
-        e_sm: [Polynomial<N>; L],
+        e_fresh: [Polynomial<N>; L],
         r1: [Polynomial<2 * N - 1>; L],
         r2: [Polynomial<N - 1>; L],
         d: [Polynomial<N>; L],
         d_native_trunc: [Polynomial<MAX_MSG_NON_ZERO_COEFFS>; L],
+        party_idx: u32,
+        decryptors: [Field; H],
+        outgoing_key_bits: [[Field; KEY_BITS]; N_PARTIES],
+        incoming_key_bits: [[Field; KEY_BITS]; N_PARTIES],
+        outgoing_key_commitments: [Field; N_PARTIES],
+        incoming_key_commitments: [Field; N_PARTIES],
     ) -> Self {
         assert(MAX_MSG_NON_ZERO_COEFFS <= N);
         ShareDecryption {
             configs,
             expected_sk_commitment,
-            expected_e_sm_commitment,
             ct_commitment,
+            c0_commitment,
             ct0,
             ct1,
             sk,
-            e_sm,
+            e_fresh,
             r1,
             r2,
             d,
             d_native_trunc,
+            party_idx,
+            decryptors,
+            outgoing_key_bits,
+            incoming_key_bits,
+            outgoing_key_commitments,
+            incoming_key_commitments,
         }
     }
 
@@ -147,13 +178,25 @@ impl<let N: u32, let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let BIT_CT: u32, 
         );
     }
 
-    /// Verifies that aggregated noise shares hash to expected_e_sm_commitment
-    fn verify_agg_e_sm_commitment(self) {
-        assert(
-            compute_aggregated_shares_commitment::<N, L, BIT_E_SM>(self.e_sm)
-                == self.expected_e_sm_commitment,
-            "E commitment mismatch",
+    /// Low-degree native `c0`, ascending degree, matching the C7 witness order.
+    fn ct0_low(self) -> [Polynomial<MAX_MSG_NON_ZERO_COEFFS>; L] {
+        let mut limbs: [Polynomial<MAX_MSG_NON_ZERO_COEFFS>; L] =
+            [Polynomial::new([0; MAX_MSG_NON_ZERO_COEFFS]); L];
+        for limb in 0..L {
+            let mut coeffs = [0; MAX_MSG_NON_ZERO_COEFFS];
+            for j in 0..MAX_MSG_NON_ZERO_COEFFS {
+                coeffs[j] = self.ct0[limb].coefficients[N - 1 - j];
+            }
+            limbs[limb] = Polynomial::new(coeffs);
+        }
+        limbs
+    }
+
+    fn verify_c0_commitment(self) {
+        let computed = compute_partial_decryption_c0_commitment::<MAX_MSG_NON_ZERO_COEFFS, L, BIT_D_NATIVE>(
+            self.ct0_low(),
         );
+        assert(computed == self.c0_commitment, "c0 commitment mismatch");
     }
 
     fn verify_ct_commitment(self) {
@@ -185,7 +228,10 @@ impl<let N: u32, let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let BIT_CT: u32, 
     /// ready for hashing to generate the Fiat-Shamir challenge.
     fn payload(self) -> [Field] {
         // Use commitments instead of full polynomials (saves constraints)
-        let mut inputs = [self.expected_sk_commitment, self.expected_e_sm_commitment].as_vector();
+        let mut inputs = [
+            self.expected_sk_commitment, self.ct_commitment, self.c0_commitment,
+        ]
+            .as_vector();
 
         // Flatten ciphertext components (witness)
         inputs = flatten::<_, _, BIT_CT>(inputs, self.ct0);
@@ -197,6 +243,10 @@ impl<let N: u32, let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let BIT_CT: u32, 
 
         // Full `d` fixes the C7 prefix commitment (computed separately as the public output)
         inputs = flatten::<N, L, BIT_D>(inputs, self.d);
+        for party in 0..N_PARTIES {
+            inputs = inputs.push_back(self.outgoing_key_commitments[party]);
+            inputs = inputs.push_back(self.incoming_key_commitments[party]);
+        }
 
         inputs
     }
@@ -206,15 +256,8 @@ impl<let N: u32, let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let BIT_CT: u32, 
         // Step 1: Verify sk commitment matches expected
         self.verify_agg_sk_commitment();
 
-        // Step 2: Verify e_sm commitment matches expected
-        self.verify_agg_e_sm_commitment();
-
-        // Step 3: Bind witness ciphertext to the public ct_commitment
         self.verify_ct_commitment();
-
-        // Step 4: Range-check quotient polynomials (r1, r2).
-        // sk and e_sm are enforced only via `verify_agg_*_commitment` against C4 outputs; C4
-        // aggregated per-party shares that passed verification against C2 (see `dkg/share_decryption`).
+        self.verify_c0_commitment();
         self.check_range_bounds();
 
         self.verify_d_native_trunc_binding();
@@ -223,13 +266,40 @@ impl<let N: u32, let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let BIT_CT: u32, 
         );
 
         // Step 5: Generate Fiat-Shamir challenge from the transcript
+        let mask = prf_decryption_mask(
+            self.party_idx,
+            self.decryptors,
+            self.outgoing_key_bits,
+            self.incoming_key_bits,
+            self.outgoing_key_commitments,
+            self.incoming_key_commitments,
+            self.ct0,
+            self.ct1,
+            self.configs.qis,
+        );
+
         let gamma = self.generate_challenge();
 
         // Step 6: Verify decryption share computation for each CRT basis.
         // cyclo_at_gamma is identical across all bases (same gamma, same N); compute once.
         let cyclo_at_gamma = gamma.pow_32(N as Field) + 1;
+        let lambdas = lagrange_coeffs_for_set::<H, L>(self.configs.qis, self.decryptors);
+        let self_id = (self.party_idx + 1) as Field;
+        let mut slot = 0;
+        let mut found = false;
+        for i in 0..H {
+            if self.decryptors[i] == self_id {
+                slot = i;
+                found = true;
+            }
+        }
+        assert(found, "Party is outside the decryptor set");
+        let mut lambda_by_limb = [0; L];
+        for basis_idx in 0..L {
+            lambda_by_limb[basis_idx] = lambdas[basis_idx][slot];
+        }
         for i in 0..L {
-            self.verify_decryption_share_computation(i, gamma, cyclo_at_gamma);
+            self.verify_decryption_share_computation(i, gamma, cyclo_at_gamma, mask, lambda_by_limb);
         }
 
         d_commitment
@@ -251,8 +321,11 @@ impl<let N: u32, let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let BIT_CT: u32, 
     /// This function will cause the circuit to fail if any quotient coefficient is
     /// outside its expected bounds.
     fn check_range_bounds(self) {
-        // Check quotient polynomials are within bounds
         for basis_idx in 0..L {
+            self.e_fresh[basis_idx].range_check_2bounds::<BIT_E_SM>(
+                self.configs.e_fresh_bound,
+                self.configs.e_fresh_bound,
+            );
             // r_1 quotients can be negative (modulus quotients)
             self.r1[basis_idx].range_check_2bounds::<BIT_R1>(
                 self.configs.r1_bounds[basis_idx],
@@ -313,24 +386,21 @@ impl<let N: u32, let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let BIT_CT: u32, 
         basis_idx: u32,
         gamma: Field,
         cyclo_at_gamma: Field,
+        mask: [Polynomial<N>; L],
+        lambda_by_limb: [Field; L],
     ) {
-        // Evaluate ciphertext components at gamma
-        let c_0_at_gamma = self.ct0[basis_idx].eval(gamma);
         let c_1_at_gamma = self.ct1[basis_idx].eval(gamma);
 
-        // Evaluate aggregated sums at gamma
         let sk_at_gamma = self.sk[basis_idx].eval(gamma);
-        let e_sm_at_gamma = self.e_sm[basis_idx].eval(gamma);
-
-        // Evaluate quotient polynomials at gamma
+        let e_fresh_at_gamma = self.e_fresh[basis_idx].eval(gamma);
         let r_1_at_gamma = self.r1[basis_idx].eval(gamma);
         let r_2_at_gamma = self.r2[basis_idx].eval(gamma);
+        let lambda = lambda_by_limb[basis_idx];
 
-        // Compute expected decryption share using the lifted formula:
-        // d_i = c_0i + c_1i * sk_i + e_sm_i + r_2i * (X^N + 1) + r_1i * q_i
-        let expected_decryption_share = c_0_at_gamma
-            + c_1_at_gamma * sk_at_gamma
-            + e_sm_at_gamma
+        // p = λ·c1·sh + e_fresh + mask + r2·(X^N+1) + r1·q
+        let expected_decryption_share = lambda * c_1_at_gamma * sk_at_gamma
+            + e_fresh_at_gamma
+            + mask[basis_idx].eval(gamma)
             + r_2_at_gamma * cyclo_at_gamma
             + r_1_at_gamma * self.configs.qis[basis_idx];
 

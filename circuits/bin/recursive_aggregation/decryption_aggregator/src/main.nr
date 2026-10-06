@@ -23,9 +23,10 @@ use lib::math::committee_hash::committee_hash_limbs;
 
 /// Must match `c6_fold::C6_FOLD_PUBLIC_LEN`: pub params, common domain limbs,
 /// and flattened `(out_sk, out_esm, out_ct, out_d)`.
-pub global C6_FOLD_PUBLIC_LEN: u32 = 6 + (4 * (T + 1));
+pub global C6_KEY_SLOTS: u32 = (T + 1) * N_PARTIES;
+pub global C6_FOLD_PUBLIC_LEN: u32 = 6 + (5 * (T + 1)) + (2 * C6_KEY_SLOTS);
 
-pub global C6_FOLD_PREFIX_LEN: u32 = C6_FOLD_PUBLIC_LEN - (4 * (T + 1));
+pub global C6_FOLD_PREFIX_LEN: u32 = 6;
 
 /// Column offsets inside the `c6_fold` flattened tail (after `C6_FOLD_PREFIX_LEN`):
 /// `(out_sk, out_esm, out_ct, out_d)`, each `C6_FOLD_COL_WIDTH = T + 1` long.
@@ -40,7 +41,7 @@ pub global C7_D_COMMITMENT_OFFSET: u32 = 0;
 pub global C7_PARTY_ID_OFFSET: u32 = T + 1;
 pub global C7_MESSAGE_OFFSET: u32 = 2 * (T + 1);
 
-pub global C7_PUBLIC_LEN: u32 = (2 * (T + 1)) + MAX_MSG_NON_ZERO_COEFFS;
+pub global C7_PUBLIC_LEN: u32 = (2 * (T + 1)) + MAX_MSG_NON_ZERO_COEFFS + 1;
 
 /// Validates a single circuit-side `party_id`: must be a 1-indexed Shamir x-coordinate
 /// in `[1, N_PARTIES]`. `x=0` is reserved for the secret itself (see DKG
@@ -79,7 +80,7 @@ fn main(
     domain_hi: pub Field,
     domain_lo: pub Field,
     ciphertext_commitment: pub Field,
-) -> pub (Field, [Field; T + 1], [Field; T + 1], [Field; T + 1], [Field; MAX_MSG_NON_ZERO_COEFFS]) {
+) -> pub (Field, [Field; T + 1], [Field; T + 1], [Field; T + 1], [Field; MAX_MSG_NON_ZERO_COEFFS], [Field; C6_KEY_SLOTS], [Field; C6_KEY_SLOTS]) {
     let (expected_hi, expected_lo) = committee_hash_limbs(committee_members);
     assert(expected_hi == committee_hash_hi);
     assert(expected_lo == committee_hash_lo);
@@ -94,9 +95,13 @@ fn main(
 
     // Every C6 leaf commits to the same decoded BFV ciphertext. Expose that
     // canonical commitment as a final public input for the EVM wrapper.
+    let c0_commitment = c7_public[C7_PUBLIC_LEN - 1];
     for i in 0..(T + 1) {
         assert(
             c6_fold_public[C6_FOLD_PREFIX_LEN + C6_FOLD_CT_COL_OFFSET + i] == ciphertext_commitment,
+        );
+        assert(
+            c6_fold_public[C6_FOLD_PREFIX_LEN + C6_FOLD_ESM_COL_OFFSET + i] == c0_commitment,
         );
     }
 
@@ -137,7 +142,21 @@ fn main(
         message[k] = c7_public[C7_MESSAGE_OFFSET + k];
     }
 
-    (key_hash, party_ids, expected_sk, expected_esm, message)
+    let key_base = C6_FOLD_PREFIX_LEN + (4 * (T + 1));
+    let mut outgoing_keys: [Field; C6_KEY_SLOTS] = [0; C6_KEY_SLOTS];
+    let mut incoming_keys: [Field; C6_KEY_SLOTS] = [0; C6_KEY_SLOTS];
+    for i in 0..C6_KEY_SLOTS {
+        outgoing_keys[i] = c6_fold_public[key_base + i];
+        incoming_keys[i] = c6_fold_public[key_base + C6_KEY_SLOTS + i];
+    }
+    let decryptor_base = key_base + (2 * C6_KEY_SLOTS);
+    for i in 0..(T + 1) {
+        assert(c6_fold_public[decryptor_base + i] == party_ids[i]);
+    }
+
+    (
+        key_hash, party_ids, expected_sk, expected_esm, message, outgoing_keys, incoming_keys,
+    )
 }
 
 // ------------------------------ TESTS ------------------------------

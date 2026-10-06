@@ -83,7 +83,7 @@ C2 sender is accused — not the C4 recipient.
 
 ## Registered Links
 
-The protocol registers 12 commitment links at startup. The `l` parameter (number of CRT moduli) is
+The protocol registers 8 commitment links at startup. The `l` parameter (number of CRT moduli) is
 derived from the E3's BFV preset:
 
 ### DKG Phase Links
@@ -91,21 +91,21 @@ derived from the E3's BFV preset:
 | Link          | Scope                    | What it checks                                                         |
 | ------------- | ------------------------ | ---------------------------------------------------------------------- |
 | **C1 → C2a**  | SameParty                | C1's `sk_commitment` matches C2a's `expected_secret_commitment`        |
-| **C1 → C2b**  | SameParty                | C1's `e_sm_commitment` matches C2b's `expected_secret_commitment`      |
+| **C1 → C2b**  | —                        | Not registered. No C2b proof is produced                                |
 | **C1 → C5**   | CrossParty               | C1's `pk_commitment` appears in C5's expected pk inputs                |
 | **C3a → C0**  | SourceMustExistInTargets | C3a's `expected_pk_commitment` must exist in some C0's `pk_commitment` |
-| **C3b → C0**  | SourceMustExistInTargets | Same for C3b                                                           |
-| **C3a → C2a** | SameParty                | C3a's `expected_message_commitment` matches C2a's share commitments    |
-| **C3b → C2b** | SameParty                | Same for the smudging noise branch                                     |
+| **C3b → C0**  | —                        | Not registered. No C3b proof is produced                                |
+| **C3a → C2a** | SameParty                | C3a's residue commitment matches C2a's share commitment                |
+| **C3b → C2b** | —                        | Not registered. No C3b proof is produced                                |
 | **C2a → C4a** | SourceMustExistInTargets | C2a's L share commitments for recipient R match C4a's row for sender X |
-| **C2b → C4b** | SourceMustExistInTargets | Same for smudging noise                                                |
+| **C2b → C4b** | —                        | Not registered. No C4b proof is produced                                |
 
 ### Threshold Decryption Links
 
 | Link         | Scope      | What it checks                                                             |
 | ------------ | ---------- | -------------------------------------------------------------------------- |
 | **C4a → C6** | SameParty  | C4a's aggregated `sk_commitment` matches C6's `expected_sk_commitment`     |
-| **C4b → C6** | SameParty  | C4b's aggregated `e_sm_commitment` matches C6's `expected_e_sm_commitment` |
+| **C4b → C6** | —          | Not registered. No C4b proof is produced                                   |
 | **C6 → C7**  | CrossParty | C6's `d_commitment` matches C7's `expected_d_commitment`                   |
 
 ---

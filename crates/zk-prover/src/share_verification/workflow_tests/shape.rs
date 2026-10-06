@@ -236,28 +236,19 @@ fn canonical_shape_rejects_cross_phase_and_singleton_multiplicity() {
         BfvPreset::SecureThreshold8192,
     ));
 
-    let c4_bundle = vec![
-        signed_proof(&s, &e3, ProofType::C4aSkShareDecryption, 6),
-        signed_proof(&s, &e3, ProofType::C4bESmShareDecryption, 7),
-    ];
+    let c4 = signed_proof(&s, &e3, ProofType::C4aSkShareDecryption, 6);
     assert!(ShareVerifier::has_canonical_proof_shape(
         &VerificationKind::DecryptionProofs,
-        &c4_bundle,
+        std::slice::from_ref(&c4),
         BfvPreset::InsecureDkg,
     ));
+    let c4b = signed_proof(&s, &e3, ProofType::C4bESmShareDecryption, 7);
     assert!(!ShareVerifier::has_canonical_proof_shape(
         &VerificationKind::DecryptionProofs,
-        &c4_bundle[1..],
+        &[c4.clone(), c4b],
         BfvPreset::InsecureDkg,
     ));
-    let mut extra_c4b = c4_bundle.clone();
-    extra_c4b.push(c4_bundle[1].clone());
-    assert!(ShareVerifier::has_canonical_proof_shape(
-        &VerificationKind::DecryptionProofs,
-        &extra_c4b,
-        BfvPreset::InsecureDkg,
-    ));
-    let mut wrong_c4_tail = c4_bundle.clone();
+    let mut wrong_c4_tail = vec![c4];
     wrong_c4_tail.push(c6);
     assert!(!ShareVerifier::has_canonical_proof_shape(
         &VerificationKind::DecryptionProofs,

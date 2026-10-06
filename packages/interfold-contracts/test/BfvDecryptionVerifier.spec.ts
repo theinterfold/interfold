@@ -11,6 +11,7 @@ import MockCircuitVerifierModule from "../ignition/modules/mockSlashingVerifier"
 import {
   BFV_THRESHOLD_T,
   bfvDecExpectedPublicInputsLen,
+  bfvDecMessageOffset,
   bfvDecPartyColOffsets,
 } from "../scripts/utils";
 import {
@@ -122,7 +123,7 @@ function buildPublicInputsWithMessage(
   }
   arr[DECRYPTION_DOMAIN_HI_IDX] = committeeHashHi(decryptionDomain);
   arr[DECRYPTION_DOMAIN_LO_IDX] = committeeHashLo(decryptionDomain);
-  const offset = totalInputs - MESSAGE_COEFFS_COUNT;
+  const offset = bfvDecMessageOffset(THRESHOLD);
   for (let i = 0; i < messageCoeffs.length && i < MESSAGE_COEFFS_COUNT; i++) {
     arr[offset + i] = "0x" + messageCoeffs[i].toString(16).padStart(64, "0");
   }
@@ -174,6 +175,10 @@ describe("BfvDecryptionVerifier", function () {
       DEFAULT_REGISTRY_PARTY_IDS,
       DEFAULT_SK_COMMITS,
       DEFAULT_ESM_COMMITS,
+    );
+    await registry.setDkgPrfKeyCommitments(
+      E3_ID,
+      Array((THRESHOLD + 1) * 3).fill(ethers.ZeroHash),
     );
 
     const bfvDecryptionVerifier = await (
@@ -340,7 +345,7 @@ describe("BfvDecryptionVerifier", function () {
         deployWithMockCircuit,
       );
       const { decryptionDomain } = ctx();
-      const messageOffset = EXPECTED_PUBLIC_INPUTS_LEN - MESSAGE_COEFFS_COUNT;
+      const messageOffset = bfvDecMessageOffset(THRESHOLD);
       const verifyAlias = (alias: bigint) => {
         const publicInputs = buildPublicInputsWithMessage([]);
         publicInputs[messageOffset] = ethers.toBeHex(alias, 32);

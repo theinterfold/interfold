@@ -5,8 +5,8 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::math::commitments::{
-    compute_ciphertext_commitment, compute_sc_party_share_root_from_polynomial,
-    compute_share_encryption_challenge,
+    compute_ciphertext_commitment, compute_prf_key_commitment,
+    compute_sc_party_share_root_from_polynomial, compute_share_encryption_challenge,
 };
 use crate::math::commitments::compute_dkg_pk_commitment;
 use crate::math::helpers::flatten;
@@ -89,7 +89,7 @@ impl<let L: u32> Configs<L> {
 /// **Consumes:** `expected_pk_commitment` (C0); `expected_message_commitment` (C2 sk or C2 e_sm).
 ///
 /// **Produces:** Public `ct_commitment` (hash of ct0/ct1 limbs) for cross-phase binding; witness ct0/ct1 feed C4 off-transcript.
-pub struct ShareEncryption<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, let BIT_E0: u32, let BIT_E1: u32, let BIT_MSG: u32, let BIT_R1: u32, let BIT_R2: u32, let BIT_P1: u32, let BIT_P2: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32> {
+pub struct ShareEncryption<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, let BIT_E0: u32, let BIT_E1: u32, let BIT_MSG: u32, let BIT_R1: u32, let BIT_R2: u32, let BIT_P1: u32, let BIT_P2: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32, let BIT_SHARE: u32, let KEY_BITS: u32> {
     /// Circuit parameters
     configs: Configs<L>,
     party_idx: u32,
@@ -102,6 +102,12 @@ pub struct ShareEncryption<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: 
     /// - C3b: commit(e_sm_share[party_idx][mod_idx]) produced by C2b
     /// (public witness)
     expected_message_commitment: Field,
+    /// Commitment of the PRF key packed into limb 0. Other limbs ignore this value.
+    expected_key_commitment: Field,
+    /// Largest threshold modulus. Limb 0 stores residue + bit * prf_key_modulus.
+    prf_key_modulus: Field,
+    /// Key bits for this recipient. Bit 0 is the least significant bit.
+    key_bits: [Field; KEY_BITS],
     /// Public key component 0 for each CRT basis (committed witnesses)
     pk0is: [Polynomial<N>; L],
     /// Public key component 1 for each CRT basis (committed witnesses)
@@ -131,11 +137,14 @@ pub struct ShareEncryption<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: 
     p2is: [Polynomial<N - 1>; L],
 }
 
-impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, let BIT_E0: u32, let BIT_E1: u32, let BIT_MSG: u32, let BIT_R1: u32, let BIT_R2: u32, let BIT_P1: u32, let BIT_P2: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32> ShareEncryption<N, L, BIT_PK, BIT_CT, BIT_U, BIT_E0, BIT_E1, BIT_MSG, BIT_R1, BIT_R2, BIT_P1, BIT_P2, N_CHUNKS, CHUNK_SIZE> {
+impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, let BIT_E0: u32, let BIT_E1: u32, let BIT_MSG: u32, let BIT_R1: u32, let BIT_R2: u32, let BIT_P1: u32, let BIT_P2: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32, let BIT_SHARE: u32, let KEY_BITS: u32> ShareEncryption<N, L, BIT_PK, BIT_CT, BIT_U, BIT_E0, BIT_E1, BIT_MSG, BIT_R1, BIT_R2, BIT_P1, BIT_P2, N_CHUNKS, CHUNK_SIZE, BIT_SHARE, KEY_BITS> {
     pub fn new(
         configs: Configs<L>,
         expected_pk_commitment: Field,
         expected_message_commitment: Field,
+        expected_key_commitment: Field,
+        prf_key_modulus: Field,
+        key_bits: [Field; KEY_BITS],
         party_idx: u32,
         mod_idx: u32,
         pk0is: [Polynomial<N>; L],
@@ -157,6 +166,9 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
             mod_idx,
             expected_pk_commitment,
             expected_message_commitment,
+            expected_key_commitment,
+            prf_key_modulus,
+            key_bits,
             pk0is,
             pk1is,
             ct0is,
@@ -190,16 +202,44 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
     /// This is the binding check: the plaintext being encrypted must be exactly the share
     /// that was verified in C2. Any deviation, encrypting a different value, substituting
     /// a forged share, will cause this assertion to fail.
+    /// Split limb 0 into residues and key bits. Other limbs keep the message unchanged.
+    fn share_residues(self) -> Polynomial<N> {
+        let q = self.prf_key_modulus;
+        let mut residues: [Field; N] = [0; N];
+        for i in 0..N {
+            // Witness coefficients are highest degree first. Key bit `source` sits in fhe coefficient `source`.
+            let source = N - 1 - i;
+            let mut bit = 0;
+            if (self.mod_idx == 0) & (source < KEY_BITS) {
+                bit = self.key_bits[source];
+                assert(bit * (bit - 1) == 0, "PRF key bit is not binary");
+            }
+            let residue = self.message.coefficients[i] - (bit * q);
+            residue.assert_max_bit_size::<64>();
+            (q - 1 - residue).assert_max_bit_size::<64>();
+            residues[i] = residue;
+        }
+        Polynomial::new(residues)
+    }
+
     fn verify_message_commitment(self) {
+        let residues = self.share_residues();
         assert(
-            compute_sc_party_share_root_from_polynomial::<N, N_CHUNKS, CHUNK_SIZE, BIT_MSG>(
+            compute_sc_party_share_root_from_polynomial::<N, N_CHUNKS, CHUNK_SIZE, BIT_SHARE>(
                 self.party_idx,
                 self.mod_idx,
-                self.message,
+                residues,
             )
                 == self.expected_message_commitment,
             "Message commitment mismatch",
         );
+        if self.mod_idx == 0 {
+            assert(
+                compute_prf_key_commitment(self.party_idx as Field, self.key_bits)
+                    == self.expected_key_commitment,
+                "PRF key commitment mismatch",
+            );
+        }
     }
 
     /// Computes the scaled message polynomial k1 from the raw share.

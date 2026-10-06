@@ -10,7 +10,7 @@ use e3_events::{
     ShareVerificationComplete, TypedEvent,
 };
 
-pub const THRESHOLD_KEYSHARE_RECOVERY_SCHEMA_VERSION: u32 = 6;
+pub const THRESHOLD_KEYSHARE_RECOVERY_SCHEMA_VERSION: u32 = 9;
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RecoveryPayloadRef {

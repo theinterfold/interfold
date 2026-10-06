@@ -60,12 +60,12 @@
 10. DKG         Selected nodes perform distributed key generation:
                   a. BFV keygen → C0 proof (binds the individual public key)
                   b. Exchange BFV public keys (C0 verified on receipt)
-                  c. TrBFV key + Shamir shares → C1/C2a/C2b/C3a/C3b proofs
+                  c. TrBFV key + Shamir shares → C1/C2a/C3a proofs
                   d. Broadcast ThresholdShareCreated (all proofs attached)
                   e. Collect shares → verify C2/C3 proofs (2-phase)
                   f. Publish signed readiness for mutually complete dealers
                   g. Active aggregator proposes one canonical H-dealer roster
-                  h. Selected roster members decrypt shares → calc decryption key → C4a/C4b proofs
+                  h. Selected roster members decrypt shares → calc decryption key → C4a proofs
                   i. Exchange DecryptionKeyShared → verify C4 proofs
                   j. For secure-16384, persist and publish the signed l-BFV manifest and documents;
                      the local proof aggregator folds the five row proofs into the V2 node fold

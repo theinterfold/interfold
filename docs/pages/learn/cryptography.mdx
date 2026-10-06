@@ -70,9 +70,8 @@ decrypts after homomorphic evaluation.
 - **P1 — Distributed key generation** is the heavy chapter. Each ciphernode builds its **secret key
   contribution** and matching **public key share**, splits the sensitive parts into **Shamir**
   shares, and sends those shares encrypted under each peer’s **individual** BFV public key—because
-  shares must not travel in the clear. Parallel **smudging noise** material follows the same
-  pattern, since decryption later relies on noise that is also shared and proved. Proofs accompany
-  generation, share computation, encryption, and the local decrypt-and-aggregate step. After at
+  shares must not travel in the clear. Each share also carries one bit of a PRF key. Proofs accompany
+  generation, share computation, encryption, and the local sum of received residues. After at
   least H mutually ready dealer contributions exist, the active aggregator proposes the fixed roster
   `S` that all later DKG proofs use.
 
@@ -492,30 +491,25 @@ manageable.
 ties each partial decryption to **C4**’s aggregated material and to the homomorphic output
 ciphertext.
 [**C7**](https://github.com/theinterfold/interfold/tree/main/circuits/bin/threshold/decrypted_shares_aggregation)
-collects at least **T+1** such shares, applies Lagrange weights, reconstructs across CRT, and
-decodes modulo **t**; it runs once at the aggregator after enough valid **C6** proofs are available.
+collects **T+1** such shares, adds `c0` once, reconstructs across CRT, and
+decodes modulo **t**. It runs once at the aggregator. C7 does not apply Lagrange weights.
 
-**C6** proves a partial decryption share **d** built from the output ciphertext, the node’s Shamir
-shares of the threshold secret and smudging noise (from **C4**), and reduction quotients. Each C6
-proof also carries the common E3 decryption-domain limbs that are preserved through folding and
-checked by the on-chain wrapper. C6 also recomputes the circuit-compatible SAFE commitment from the
-decoded `ct0`/`ct1` CRT polynomials; the final decryption proof exposes that commitment for
-comparison with the off-chain commitment stored at ciphertext publication—schematically per CRT limb
-(see `verify_decryption_share_computation` in `share_decryption.nr`):
+**C6** proves a partial decryption share. The decryptor set is the lowest **T+1** honest party ids.
+C6 computes the Lagrange coefficient from that public set and multiplies only `c1` times the secret
+share. Fresh noise and the PRF mask are added after that product. `c0` is not in the partial share.
+Each C6 proof also carries the common E3 decryption-domain limbs that are preserved through folding
+and checked by the on-chain wrapper. Schematically, per CRT limb:
 
 ```math
-d^{[\ell]}(\gamma) = \mathrm{ct}_0^{[\ell]}(\gamma) + \mathrm{ct}_1^{[\ell]}(\gamma)\,\mathrm{sk}^{[\ell]}(\gamma) + e_{\mathrm{sm}}^{[\ell]}(\gamma) + r_2^{[\ell]}(\gamma)(\gamma^N+1) + r_1^{[\ell]}(\gamma)\,q_\ell
+p_i^{[\ell]}(\gamma) = \lambda_i^{[\ell]}\,\mathrm{ct}_1^{[\ell]}(\gamma)\,\mathrm{sk}^{[\ell]}(\gamma) + e_i^{[\ell]}(\gamma) + r_i^{[\ell]}(\gamma) + r_2^{[\ell]}(\gamma)(\gamma^N+1) + r_1^{[\ell]}(\gamma)\,q_\ell
 ```
 
-**C7** first recombines partials with Lagrange coefficients at zero for the participating party
-indices **x_i**. The decryption aggregator requires these Shamir coordinates to be 1-indexed,
-strictly increasing, and unique. It then stitches limbs and decodes to the plaintext ring. In short:
+**C7** adds `c0` to the sum of those partial shares. The decryption aggregator requires the Shamir
+coordinates to be 1-indexed, strictly increasing, and equal to the C6 decryptor set. It then
+stitches limbs and decodes to the plaintext ring:
 
 ```math
-\begin{aligned}
-L_i(0) &= \prod_{j \neq i} \frac{-x_j}{x_i - x_j} \pmod{q_\ell} \\
-u^{(\ell)} &= \sum_i d_i^{(\ell)}\,L_i(0) \pmod{q_\ell}
-\end{aligned}
+u^{(\ell)} = \mathrm{ct}_0^{(\ell)} + \sum_i p_i^{(\ell)} \pmod{q_\ell}
 ```
 
 (`decrypted_shares_aggregation.nr` computes the same **L_i(0)** values with an equivalent

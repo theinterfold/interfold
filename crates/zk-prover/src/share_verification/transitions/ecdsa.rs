@@ -320,34 +320,20 @@ impl ShareVerifier {
                     && signed_proofs[0].payload.proof_type == ProofType::C1PkGeneration
             }
             VerificationKind::ShareProofs => {
-                // Canonical order is C2a, C2b, C3a x L, C3b x L. Each C3 proof encrypts one
-                // modulus row of the threshold-parameter Shamir secret, even though encryption
-                // itself uses the paired DKG parameters. The dispatch currently carries that DKG
-                // preset, so recover its threshold counterpart before deriving L.
+                // Canonical order is C2a, then one C3a proof per modulus row.
                 let threshold_preset = params_preset
                     .threshold_counterpart()
                     .unwrap_or(params_preset);
                 let num_share_rows = threshold_preset.metadata().num_moduli;
-                signed_proofs.len() == 2 + (2 * num_share_rows)
+                signed_proofs.len() == 1 + num_share_rows
                     && signed_proofs[0].payload.proof_type == ProofType::C2aSkShareComputation
-                    && signed_proofs[1].payload.proof_type == ProofType::C2bESmShareComputation
-                    && signed_proofs[2..2 + num_share_rows]
-                        .iter()
-                        .all(|signed| signed.payload.proof_type == ProofType::C3aSkShareEncryption)
-                    && signed_proofs[2 + num_share_rows..]
-                        .iter()
-                        .all(|signed| signed.payload.proof_type == ProofType::C3bESmShareEncryption)
-            }
-            VerificationKind::DecryptionProofs => {
-                // PartyShareDecryptionProofsToVerify has one distinguished C4a slot followed
-                // by one or more C4b slots. The producer checks the exact C4b count against
-                // `es_poly_sum`; here we bind every signed payload to its structural role because
-                // C4a/C4b share a CircuitName.
-                signed_proofs.len() >= 2
-                    && signed_proofs[0].payload.proof_type == ProofType::C4aSkShareDecryption
                     && signed_proofs[1..]
                         .iter()
-                        .all(|signed| signed.payload.proof_type == ProofType::C4bESmShareDecryption)
+                        .all(|signed| signed.payload.proof_type == ProofType::C3aSkShareEncryption)
+            }
+            VerificationKind::DecryptionProofs => {
+                signed_proofs.len() == 1
+                    && signed_proofs[0].payload.proof_type == ProofType::C4aSkShareDecryption
             }
             VerificationKind::ThresholdDecryptionProofs => {
                 !signed_proofs.is_empty()

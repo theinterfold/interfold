@@ -5,8 +5,8 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::math::commitments::{
-    compute_sc_esm_secret_root_from_polynomial, compute_sc_sk_secret_root_from_polynomial,
-    compute_threshold_pk_challenge, compute_threshold_pk_commitment,
+    compute_sc_sk_secret_root_from_polynomial, compute_threshold_pk_challenge,
+    compute_threshold_pk_commitment,
 };
 use crate::math::helpers::flatten;
 use crate::math::polynomial::Polynomial;
@@ -19,8 +19,6 @@ pub struct Configs<let N: u32, let L: u32> {
     pub eek_bound: Field,
     /// Bound for secret key polynomial (sk) coefficients
     pub sk_bound: Field,
-    /// Bound for smudging noise polynomial (e_sm) coefficients
-    pub e_sm_bound: Field,
     /// Bounds for r1 polynomials (modulus switching quotients) for each CRT basis
     pub r1_bounds: [Field; L],
     /// Bounds for r2 polynomials (cyclotomic reduction quotients) for each CRT basis
@@ -32,26 +30,24 @@ impl<let N: u32, let L: u32> Configs<N, L> {
         qis: [Field; L],
         eek_bound: Field,
         sk_bound: Field,
-        e_sm_bound: Field,
         r1_bounds: [Field; L],
         r2_bounds: [Field; L],
     ) -> Self {
-        Configs { qis, eek_bound, sk_bound, e_sm_bound, r1_bounds, r2_bounds }
+        Configs { qis, eek_bound, sk_bound, r1_bounds, r2_bounds }
     }
 }
 
 /// Threshold public key contribution (C1).
 ///
-/// **Role:** Prove one party's TrBFV public-key contribution from hidden `sk`, `eek`, `e_sm`, and
+/// **Role:** Prove one party's TrBFV public-key contribution from hidden `sk`, `eek`, and
 /// quotients (`pk1` limb is the CRS `a`).
 ///
 /// **Verifies:** Range checks on witnesses; evaluation form of `pk0 = -a*sk + eek + ...` at the FS challenge.
 ///
 /// **Produces (tuple order):**
-/// - `commit(sk)` -> C2a (share computation).
+/// - `commit(sk)` -> C2 (share computation).
 /// - `commit(pk_trbfv)` -> C5 (pk aggregation).
-/// - `commit(e_sm)` -> C2b (share computation).
-pub struct PkGeneration<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u32, let BIT_R1: u32, let BIT_R2: u32, let BIT_PK: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32> {
+pub struct PkGeneration<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_R1: u32, let BIT_R2: u32, let BIT_PK: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32> {
     /// Cryptographic parameters including bounds, moduli, and constants.
     configs: Configs<N, L>,
 
@@ -67,10 +63,6 @@ pub struct PkGeneration<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u3
     /// Small coefficients sampled from CBD (Centered Binomial Distribution)
     sk: Polynomial<N>,
 
-    /// Smudging noise polynomial (secret witness)
-    /// Used for threshold decryption security
-    e_sm: [Polynomial<N>; L],
-
     /// Quotients from polynomial operations (secret witnesses)
     /// r1[i] are quotients from modulus switching for modulus i (can be negative, degree 2*N-1)
     r1: [Polynomial<2 * N - 1>; L],
@@ -81,18 +73,17 @@ pub struct PkGeneration<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u3
     pk0: [Polynomial<N>; L],
 }
 
-impl<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u32, let BIT_R1: u32, let BIT_R2: u32, let BIT_PK: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32> PkGeneration<N, L, BIT_EEK, BIT_SK, BIT_E_SM, BIT_R1, BIT_R2, BIT_PK, N_CHUNKS, CHUNK_SIZE> {
+impl<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_R1: u32, let BIT_R2: u32, let BIT_PK: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32> PkGeneration<N, L, BIT_EEK, BIT_SK, BIT_R1, BIT_R2, BIT_PK, N_CHUNKS, CHUNK_SIZE> {
     pub fn new(
         configs: Configs<N, L>,
         a: [Polynomial<N>; L],
         eek: Polynomial<N>,
         sk: Polynomial<N>,
-        e_sm: [Polynomial<N>; L],
         r1: [Polynomial<2 * N - 1>; L],
         r2: [Polynomial<N - 1>; L],
         pk0: [Polynomial<N>; L],
     ) -> Self {
-        PkGeneration { configs, a, eek, sk, e_sm, r1, r2, pk0 }
+        PkGeneration { configs, a, eek, sk, r1, r2, pk0 }
     }
 
     /// Flattens all witness data into a single array for Fiat-Shamir challenge generation.
@@ -121,25 +112,16 @@ impl<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u3
 
     /// Executes the threshold public key generation circuit.
     ///
-    /// Returns `(commit(sk), commit(pk_trbfv), commit(e_sm))` as documented on the struct.
-    pub fn execute(self) -> (Field, Field, Field) {
-        // Step 1: Range-check secret witnesses (sk, eek, e_sm, quotients).
+    /// Returns `(commit(sk), commit(pk_trbfv))`.
+    pub fn execute(self) -> (Field, Field) {
         self.perform_range_checks();
 
-        // Step 2: Derive commitments for the FS transcript.
         let sk_commitment =
             compute_sc_sk_secret_root_from_polynomial::<N, N_CHUNKS, CHUNK_SIZE, BIT_SK>(self.sk);
-        let e_sm_commitment = compute_sc_esm_secret_root_from_polynomial::<N, L, N_CHUNKS, CHUNK_SIZE, BIT_E_SM>(
-            self.e_sm,
-        );
         let pk_commitment = compute_threshold_pk_commitment::<N, L, BIT_PK>(self.pk0);
-
-        // Step 3: Fiat-Shamir challenge and per-modulus evaluation checks.
         let gamma = self.generate_challenge(sk_commitment, pk_commitment);
         self.verify_evaluations(gamma);
-
-        // Step 4: Return commitments for downstream circuits.
-        (sk_commitment, pk_commitment, e_sm_commitment)
+        (sk_commitment, pk_commitment)
     }
 
     /// Generates Fiat-Shamir challenge values using the SAFE cryptographic sponge.
@@ -165,11 +147,6 @@ impl<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u3
 
         // Check quotient terms are within expected bounds (per modulus)
         for i in 0..L {
-            self.e_sm[i].range_check_2bounds::<BIT_E_SM>(
-                self.configs.e_sm_bound,
-                self.configs.e_sm_bound,
-            );
-
             self.r1[i].range_check_2bounds::<BIT_R1>(
                 self.configs.r1_bounds[i],
                 self.configs.r1_bounds[i],

@@ -84,6 +84,8 @@ pub struct GeneratingC7Proof {
     pub(crate) threshold_n: u64,
     pub(crate) shares: Vec<(u64, Vec<ArcBytes>)>,
     pub(crate) plaintext: Vec<ArcBytes>,
+    /// Ciphertexts whose `c0` the C7 proof adds to the partial shares.
+    pub(crate) ciphertext_output: Vec<ArcBytes>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

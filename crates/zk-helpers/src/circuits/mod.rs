@@ -9,6 +9,7 @@ pub mod commitments;
 pub mod computation;
 pub mod errors;
 pub mod output_layout;
+pub mod prf;
 
 pub use codegen::{
     write_artifacts, write_toml, Artifacts, CircuitCodegen, CodegenConfigs, CodegenToml,

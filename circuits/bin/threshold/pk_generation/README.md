@@ -1,7 +1,7 @@
 # `pk_generation` — C1
 
-TrBFV **threshold public key** contribution: proves correct generation of `pk` share, `sk`, and
-smudging noise commitments (Schwartz–Zippel style checks).
+TrBFV threshold public-key contribution. The circuit proves `pk0 = -a·sk + e + quotients` and
+publishes `commit(sk)` and `commit(pk)`.
 
 |           |                                                                                               |
 | --------- | --------------------------------------------------------------------------------------------- |

@@ -110,8 +110,6 @@ impl ThresholdKeyshare {
                 GeneratingThresholdShareData {
                     sk_sss: None,
                     pk_share: None,
-                    esi_sss: None,
-                    e_sm_raw: None,
                     sk_bfv: current.sk_bfv,
                     pk_bfv: current.pk_bfv,
                     collected_encryption_keys: filtered_keys,
@@ -187,7 +185,6 @@ impl ThresholdKeyshare {
             KeyshareState::GeneratingThresholdShare(data)
                 if data.pk_share.is_none()
                     && data.sk_sss.is_none()
-                    && data.e_sm_raw.is_none()
                     && data.proof_request_data.is_none() => {}
             KeyshareState::GeneratingThresholdShare(data) => {
                 if let Some(proof_data) = data.proof_request_data.clone() {
@@ -234,11 +231,7 @@ impl ThresholdKeyshare {
             .context("Error extracting data from compute process")?;
 
         let lbfv_secret_key = output.sk_raw.clone();
-        let (pk_share, sk_sss, e_sm_raw) = (
-            output.pk_share.clone(),
-            output.sk_sss,
-            output.e_sm_raw.clone(),
-        );
+        let (pk_share, sk_sss) = (output.pk_share.clone(), output.sk_sss);
 
         // Store proof request data for later use by ProofRequestActor
         let proof_request_data = ProofRequestData {
@@ -254,7 +247,6 @@ impl ThresholdKeyshare {
                 GeneratingThresholdShareData {
                     pk_share: Some(pk_share),
                     sk_sss: Some(sk_sss),
-                    e_sm_raw: Some(e_sm_raw.clone()),
                     proof_request_data: Some(proof_request_data),
                     ..current
                 },
@@ -262,24 +254,7 @@ impl ThresholdKeyshare {
         })?;
 
         let lbfv_result = self.start_lbfv_generation(lbfv_secret_key, ec.clone());
-
-        if let Some(response) = self.pending.gen_esi_response.take() {
-            self.handle_gen_esi_sss_response(response)?;
-        } else {
-            // Fire gen_esi_sss with the e_sm_raw
-            let current_state: GeneratingThresholdShareData = self.state.try_get()?.try_into()?;
-            if let Some(ciphernode_selected) = current_state.ciphernode_selected {
-                self.handle_gen_esi_sss_requested(TypedEvent::new(
-                    GenEsiSss {
-                        ciphernode_selected,
-                        e_sm_raw: current_state
-                            .e_sm_raw
-                            .expect("e_sm_raw should be set at this point"),
-                    },
-                    ec.clone(),
-                ))?;
-            }
-        }
+        self.publish_generated_threshold_shares(ec.clone())?;
 
         if let Err(error) = lbfv_result {
             error!("Failed to start local l-BFV generation: {error}");

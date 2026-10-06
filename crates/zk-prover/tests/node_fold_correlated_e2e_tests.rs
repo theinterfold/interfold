@@ -37,7 +37,7 @@ use e3_zk_prover::{
     generate_sequential_c3_fold, CircuitVariant, NodeDkgFoldInput, Provable, ZkProver,
 };
 use node_fold_witness::{
-    pk_generation_sample_with_esi, share_computation_esm_from_esi, share_computation_sk_from_pk,
+    pk_generation_sample_with_esi, share_computation_sk_from_pk,
     share_encryption_for_slot,
 };
 
@@ -119,7 +119,6 @@ async fn run_node_fold_correlated_sparse_self_slot(preset: BfvPreset) {
     for g in [
         "pk",
         "sk_share_computation_chunk",
-        "esm_share_computation_chunk",
         "share_encryption",
         "share_decryption",
     ] {
@@ -131,7 +130,6 @@ async fn run_node_fold_correlated_sparse_self_slot(preset: BfvPreset) {
     for c in [
         CircuitName::C2ChunkBatch,
         CircuitName::SkC2ChunkFinalize,
-        CircuitName::ESmC2ChunkFinalize,
         CircuitName::C2abChunkFold,
         CircuitName::C3Fold,
         CircuitName::C3FoldKernel,
@@ -142,15 +140,12 @@ async fn run_node_fold_correlated_sparse_self_slot(preset: BfvPreset) {
         setup_recursive_aggregation_fold_circuit_for_preset(&backend, c, preset, "minimum").await;
     }
 
-    let (pk_gen, esi, pk_secret_key) = pk_generation_sample_with_esi(preset, committee.clone())
-        .expect("pk + esi correlated sample");
+    let (pk_gen, _esi, pk_secret_key) = pk_generation_sample_with_esi(preset, committee.clone())
+        .expect("pk correlated sample");
     let share_sk = share_computation_sk_from_pk(preset, committee.clone(), &pk_gen, &pk_secret_key)
         .expect("correlated C2a data");
-    let share_esm = share_computation_esm_from_esi(preset, committee.clone(), &pk_gen, &esi)
-        .expect("correlated C2b data");
 
     let sk_inputs = ShareComputationInputs::compute(preset, &share_sk).expect("C2a inputs");
-    let esm_inputs = ShareComputationInputs::compute(preset, &share_esm).expect("C2b inputs");
 
     let pk_bfv_data = PkCircuitData::generate_sample(preset).expect("C0 pk sample");
     let c0_e3 = "e3-nf-c0";
@@ -189,7 +184,6 @@ async fn run_node_fold_correlated_sparse_self_slot(preset: BfvPreset) {
     let own_party_id = 0usize;
 
     let mut c3a_inners = Vec::new();
-    let mut c3b_inners = Vec::new();
     let mut slot_indices = Vec::new();
     for slot in 0..total_slots {
         if slot / slots_per_party == own_party_id {
@@ -206,16 +200,6 @@ async fn run_node_fold_correlated_sparse_self_slot(preset: BfvPreset) {
             committee.clone(),
         )
         .expect("C3a slot encrypt");
-        let db = share_encryption_for_slot(
-            preset,
-            &dkg_sk,
-            &dkg_pk,
-            &esm_inputs,
-            slot,
-            DkgInputType::SmudgingNoise,
-            committee.clone(),
-        )
-        .expect("C3b slot encrypt");
 
         c3a_inners.push(
             ShareEncryptionCircuit
@@ -229,18 +213,6 @@ async fn run_node_fold_correlated_sparse_self_slot(preset: BfvPreset) {
                 )
                 .expect("C3a inner"),
         );
-        c3b_inners.push(
-            ShareEncryptionCircuit
-                .prove_with_variant(
-                    &prover,
-                    &preset,
-                    &db,
-                    &format!("e3-nf-c3b-{slot}"),
-                    CircuitVariant::Recursive,
-                    &artifacts_dir,
-                )
-                .expect("C3b inner"),
-        );
         slot_indices.push(slot as u32);
     }
     let expected_slot_indices: Vec<u32> = (slots_per_party..total_slots)
@@ -253,32 +225,18 @@ async fn run_node_fold_correlated_sparse_self_slot(preset: BfvPreset) {
         &c3a_inners,
         &slot_indices,
         total_slots,
+        committee.n,
         "e3-nf-c3fold-a",
         &artifacts_dir,
     )
     .expect("c3 fold sk chain");
-    let c3b_folded = generate_sequential_c3_fold(
-        &prover,
-        &c3b_inners,
-        &slot_indices,
-        total_slots,
-        "e3-nf-c3fold-b",
-        &artifacts_dir,
-    )
-    .expect("c3 fold e_sm chain");
 
     let c3a_pub = proof_public_fields(&c3a_folded);
-    let c3b_pub = proof_public_fields(&c3b_folded);
     let c3_prefix_len = c3a_pub.len() - (3 * total_slots);
     for slot in 0..slots_per_party {
         assert_eq!(c3a_pub[c3_prefix_len + slot], field_str_zero());
         assert_eq!(
             c3a_pub[c3_prefix_len + total_slots + slot],
-            field_str_zero()
-        );
-        assert_eq!(c3b_pub[c3_prefix_len + slot], field_str_zero());
-        assert_eq!(
-            c3b_pub[c3_prefix_len + total_slots + slot],
             field_str_zero()
         );
     }
@@ -288,17 +246,9 @@ async fn run_node_fold_correlated_sparse_self_slot(preset: BfvPreset) {
         DkgInputType::SecretKey,
     )
     .expect("c4a sample");
-    let c4b_sample = ShareDecryptionCircuitData::generate_sample(
-        preset,
-        committee.clone(),
-        DkgInputType::SmudgingNoise,
-    )
-    .expect("c4b sample");
     let c4a_data = triplicate_honest_rows(c4a_sample);
-    let c4b_data = triplicate_honest_rows(c4b_sample);
 
     let c4a_e3 = "e3-nf-c4a";
-    let c4b_e3 = "e3-nf-c4b";
     let c4a_proof = ShareDecryptionCircuit
         .prove_with_variant(
             &prover,
@@ -309,16 +259,6 @@ async fn run_node_fold_correlated_sparse_self_slot(preset: BfvPreset) {
             &artifacts_dir,
         )
         .expect("C4a");
-    let c4b_proof = ShareDecryptionCircuit
-        .prove_with_variant(
-            &prover,
-            &preset,
-            &c4b_data,
-            c4b_e3,
-            CircuitVariant::Recursive,
-            &artifacts_dir,
-        )
-        .expect("C4b");
 
     let c2a_chunked = e3_zk_prover::prove_chunked_share_computation(
         &prover,
@@ -328,19 +268,9 @@ async fn run_node_fold_correlated_sparse_self_slot(preset: BfvPreset) {
         &artifacts_dir,
     )
     .expect("chunked C2a proof");
-    let c2b_chunked = e3_zk_prover::prove_chunked_share_computation(
-        &prover,
-        preset,
-        &share_esm,
-        "e3-nf-c2b-chunked",
-        &artifacts_dir,
-    )
-    .expect("chunked C2b proof");
     assert_eq!(c2a_chunked.proof.circuit, CircuitName::SkC2ChunkFinalize);
-    assert_eq!(c2b_chunked.proof.circuit, CircuitName::ESmC2ChunkFinalize);
     let expected_chunk_count = preset.metadata().degree / 512;
     assert_eq!(c2a_chunked.chunk_count, expected_chunk_count);
-    assert_eq!(c2b_chunked.chunk_count, expected_chunk_count);
 
     let chunked_node = e3_zk_prover::prove_node_dkg_fold(
         &prover,
@@ -348,14 +278,11 @@ async fn run_node_fold_correlated_sparse_self_slot(preset: BfvPreset) {
             c0_proof: &c0_proof,
             c1_proof: &c1_proof,
             c2a_proof: &c2a_chunked.proof,
-            c2b_proof: &c2b_chunked.proof,
             c3a_inner_proofs: &c3a_inners,
-            c3b_inner_proofs: &c3b_inners,
             c3_slot_indices_a: &slot_indices,
-            c3_slot_indices_b: &slot_indices,
             c3_total_slots: total_slots,
+            c3_n_parties: committee.n,
             c4a_proof: &c4a_proof,
-            c4b_proof: &c4b_proof,
             party_id: own_party_id as u64,
         },
         "e3-nf-node-chunked",
@@ -392,14 +319,12 @@ async fn node_fold_correlated_secure_multi_chunk_proves_and_verifies() {
     let dkg_circuits = [
         "pk",
         "sk_share_computation_chunk",
-        "esm_share_computation_chunk",
         "share_encryption",
         "share_decryption",
     ];
     let recursive_circuits = [
         CircuitName::C2ChunkBatch,
         CircuitName::SkC2ChunkFinalize,
-        CircuitName::ESmC2ChunkFinalize,
         CircuitName::C2abChunkFold,
         CircuitName::C3Fold,
         CircuitName::C3FoldKernel,

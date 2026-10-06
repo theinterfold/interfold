@@ -45,6 +45,7 @@ impl ThresholdPlaintextAggregator {
                     self.dispatch_c7_proof_request(
                         state.shares,
                         state.plaintext,
+                        state.ciphertext_output,
                         state.threshold_m,
                         state.threshold_n,
                         causal_context.clone(),

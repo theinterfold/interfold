@@ -184,6 +184,7 @@ contract CiphernodeRegistryOwnable is
     mapping(uint256 e3Id => uint256[] partyIds) internal dkgPartyIds;
     mapping(uint256 e3Id => bytes32[] skAggCommits) internal dkgSkAggCommits;
     mapping(uint256 e3Id => bytes32[] esmAggCommits) internal dkgEsmAggCommits;
+    mapping(uint256 e3Id => bytes32[] keyCommitments) internal dkgPrfKeyCommits;
 
     struct CommitteeDependencies {
         IInterfold interfoldContract;
@@ -470,6 +471,7 @@ contract CiphernodeRegistryOwnable is
         dkgPartyIds[e3Id] = partyIds;
         dkgSkAggCommits[e3Id] = skAgg;
         dkgEsmAggCommits[e3Id] = esmAgg;
+        dkgPrfKeyCommits[e3Id] = _prfKeysFromProof(proof, partyIds.length);
     }
 
     /// @notice Propose a new DKG fold-attestation verifier. The change becomes active
@@ -1117,6 +1119,34 @@ contract CiphernodeRegistryOwnable is
                 dkgSkAggCommits[e3Id],
                 dkgEsmAggCommits[e3Id]
             );
+    }
+
+    /// @inheritdoc ICiphernodeRegistry
+    function getDkgPrfKeyCommitments(
+        uint256 e3Id
+    ) external view returns (bytes32[] memory keyCommitments) {
+        return dkgPrfKeyCommits[e3Id];
+    }
+
+    function _prfKeysFromProof(
+        bytes calldata proof,
+        uint256 honest
+    ) private pure returns (bytes32[] memory keys) {
+        (, bytes32[] memory publicInputs) = abi.decode(
+            proof,
+            (bytes, bytes32[])
+        );
+        uint256 n;
+        if (publicInputs.length == 33) n = 3;
+        else if (publicInputs.length == 78) n = 9;
+        else if (publicInputs.length == 317) n = 19;
+        else return keys;
+        uint256 start = 23 + (2 * honest);
+        if (publicInputs.length < start + (honest * n)) return keys;
+        keys = new bytes32[](honest * n);
+        for (uint256 i = 0; i < keys.length; i++) {
+            keys[i] = publicInputs[start + i];
+        }
     }
 
     /// @notice Returns the current size of the ciphernode IMT

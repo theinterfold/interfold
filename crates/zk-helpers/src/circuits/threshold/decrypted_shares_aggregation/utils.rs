@@ -22,6 +22,34 @@ pub use math::{
     compute_t_inv_mod_q, mod_inverse_bigint,
 };
 
+/// `L_i(0)` for one 1-based party in `party_ids`, reduced into `[0, modulus)`.
+pub fn lagrange_coeff_at_zero(
+    party_ids: &[u32],
+    party_id: u32,
+    modulus: u64,
+) -> Result<BigInt, CircuitsErrors> {
+    let m = BigInt::from(modulus);
+    let mut lambda_i = BigInt::from(1);
+    let mut found = false;
+    for &x_j in party_ids {
+        if x_j == party_id {
+            found = true;
+            continue;
+        }
+        let num = BigInt::from(0) - BigInt::from(x_j);
+        let den = BigInt::from(party_id) - BigInt::from(x_j);
+        let den_inv = crate::math::mod_inverse_bigint(&den, &m)
+            .ok_or_else(|| CircuitsErrors::Other("lagrange: den not invertible".into()))?;
+        lambda_i = (&lambda_i * &num % &m * &den_inv % &m + &m) % &m;
+    }
+    if !found {
+        return Err(CircuitsErrors::Other(
+            "lagrange: party is outside the decryptor set".into(),
+        ));
+    }
+    Ok(lambda_i)
+}
+
 /// Lagrange interpolation at 0: given shares (party_id, value) mod modulus, returns the recovered secret.
 /// Party IDs are 1-based (1, 2, ..., T+1). Formula: f(0) = sum_i y_i * L_i(0) with
 /// L_i(0) = prod_{j != i} (0 - x_j) / (x_i - x_j) mod modulus. Used only by this circuit (Shamir recovery).

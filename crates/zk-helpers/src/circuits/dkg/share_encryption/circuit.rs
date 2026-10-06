@@ -54,4 +54,6 @@ pub struct ShareEncryptionCircuitData {
     pub chunk_size: u32,
     /// Committee this data was generated for (validated against the canonical table).
     pub committee: CiphernodesCommittee,
+    /// Outgoing PRF key packed into this ciphertext. Empty means the zero key.
+    pub prf_key: Vec<u8>,
 }

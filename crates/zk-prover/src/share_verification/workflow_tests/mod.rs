@@ -57,15 +57,14 @@ fn signed_share_bundle(
     e3_id: &E3id,
     num_share_rows: usize,
 ) -> Vec<SignedProofPayload> {
-    let mut proofs = vec![
-        signed_proof(s, e3_id, ProofType::C2aSkShareComputation, 2),
-        signed_proof(s, e3_id, ProofType::C2bESmShareComputation, 3),
-    ];
+    let mut proofs = vec![signed_proof(
+        s,
+        e3_id,
+        ProofType::C2aSkShareComputation,
+        2,
+    )];
     for _ in 0..num_share_rows {
         proofs.push(signed_proof(s, e3_id, ProofType::C3aSkShareEncryption, 4));
-    }
-    for _ in 0..num_share_rows {
-        proofs.push(signed_proof(s, e3_id, ProofType::C3bESmShareEncryption, 5));
     }
     proofs
 }

@@ -172,6 +172,7 @@ impl ShareDecryptionCircuitData {
             dkg_input_type,
             chunk_size: dkg_params.degree().min(512) as u32,
             committee,
+            prf_keys: Vec::new(),
         })
     }
 }

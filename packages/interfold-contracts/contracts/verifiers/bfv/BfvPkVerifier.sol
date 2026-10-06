@@ -26,11 +26,11 @@ import { CommitteeHashLib } from "../../lib/CommitteeHashLib.sol";
  *        [3+H]              = committee_hash_lo
  *        [4+H .. 20+H)      = recursive VK binding manifest (16 fields)
  *        [20+H]             = DKG return VK hash
- *        [21+H]             = expected SK C2 chunk VK hash
- *        [22+H]             = expected ESM C2 chunk VK hash
- *        [23+H .. 23+3H)    = expected SK/ESM anchors (2*H slots)
- *        [23+3H]            = pk_commitment
- *        Total: expectedPublicInputsLen = 3*H + 24.
+ *        [21+H]             = C2 batch statement hash
+ *        [22+H .. 22+2H)    = secret-key aggregate commitments
+ *        [22+2H]            = pk_commitment
+ *        [23+2H ..)         = C2 PRF-key commitments, H*N fields
+ *        Total: 23 + 2*H + H*N.
  *
  *      The direct VK slots and the recursive VK binding manifest are checked
  *      against deployment-time values. This anchors the complete recursive
@@ -103,11 +103,11 @@ contract BfvPkVerifier is IPkVerifier {
         if (
             _expectedNodesFoldKeyHash == bytes32(0) ||
             _expectedC5KeyHash == bytes32(0) ||
-            _expectedSkC2ChunkKeyHash == bytes32(0) ||
-            _expectedESmC2ChunkKeyHash == bytes32(0)
+            _expectedSkC2ChunkKeyHash == bytes32(0)
         ) revert InvalidVerificationKeyHash();
         for (uint256 i = 0; i < _expectedVkBinding.length; i++) {
-            if (_expectedVkBinding[i] == bytes32(0)) {
+            // Indices 7 and 10 are unused. The prover writes zero.
+            if (i != 7 && i != 10 && _expectedVkBinding[i] == bytes32(0)) {
                 revert InvalidVerificationKeyHash();
             }
             expectedVkBinding[i] = _expectedVkBinding[i];
@@ -115,9 +115,9 @@ contract BfvPkVerifier is IPkVerifier {
         h = _h;
         committeeHashHiIdx = 2 + _h;
         committeeHashLoIdx = 3 + _h;
-        // The generated Honk VK includes eight pairing-point slots outside the public-input array.
-        expectedPublicInputsLen = (3 * _h) + 24;
-        pkCommitmentIdx = expectedPublicInputsLen - 1;
+        uint256 n = _committeeN(_h);
+        expectedPublicInputsLen = 23 + (2 * _h) + (_h * n);
+        pkCommitmentIdx = 22 + (2 * _h);
 
         circuitVerifier = ICircuitVerifier(_circuitVerifier);
         expectedNodesFoldKeyHash = _expectedNodesFoldKeyHash;
@@ -156,13 +156,6 @@ contract BfvPkVerifier is IPkVerifier {
                 revert VkHashMismatch();
             }
         }
-        if (publicInputs[21 + h] != expectedSkC2ChunkKeyHash) {
-            revert VkHashMismatch();
-        }
-        if (publicInputs[22 + h] != expectedESmC2ChunkKeyHash) {
-            revert VkHashMismatch();
-        }
-
         // Bind to the on-chain committee hash (hi/lo split per Noir field convention).
         if (
             publicInputs[committeeHashHiIdx] !=
@@ -177,7 +170,7 @@ contract BfvPkVerifier is IPkVerifier {
             revert DomainBindingMismatch();
         }
 
-        // Aggregated PK commitment is the last slot.
+        // Aggregated PK commitment sits after the secret-key commitments.
         if (publicInputs[pkCommitmentIdx] != pkCommitment) {
             revert PkCommitmentMismatch();
         }
@@ -193,5 +186,12 @@ contract BfvPkVerifier is IPkVerifier {
             revert InvalidProof();
         }
         return true;
+    }
+
+    function _committeeN(uint256 honest) private pure returns (uint256) {
+        if (honest == 2) return 3;
+        if (honest == 5) return 9;
+        if (honest == 14) return 19;
+        revert("BfvPkVerifier: unknown h");
     }
 }

@@ -18,7 +18,6 @@ const METADATA_FILES = new Set(['.git', 'SOURCE_HASH', 'SHA256SUMS', 'checksums.
 export const RELEASE_REQUIRED_PAIRS = RELEASE_PRESET_COMMITTEE_PAIRS.map(({ preset, committee }) => [preset, committee] as const)
 
 const REQUIRED_BASE_CIRCUITS = [
-  'dkg/esm_share_computation_chunk/esm_share_computation_chunk',
   'dkg/pk/pk',
   'dkg/share_decryption/share_decryption',
   'dkg/share_encryption/share_encryption',
@@ -46,7 +45,6 @@ const REQUIRED_BASE_CIRCUITS = [
   'threshold/user_data_encryption/user_data_encryption',
   'threshold/user_data_encryption_ct0/user_data_encryption_ct0',
   'threshold/user_data_encryption_ct1/user_data_encryption_ct1',
-  'recursive_aggregation/esm_c2_chunk_finalize/esm_c2_chunk_finalize',
   'recursive_aggregation/sk_c2_chunk_finalize/sk_c2_chunk_finalize',
 ] as const
 

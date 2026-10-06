@@ -18,7 +18,7 @@ use crate::dkg::share_encryption::ShareEncryptionCircuitData;
 use crate::math::{compute_k0is, compute_q_mod_t_centered, plaintext_poly_u64};
 use crate::math::{cyclotomic_polynomial, decompose_residue};
 use crate::polynomial_to_toml_json;
-use crate::utils::{compute_modulus_bit, compute_msg_bit};
+use crate::utils::compute_modulus_bit;
 use crate::CircuitsErrors;
 use crate::{calculate_bit_width, crt_polynomial_to_toml_json};
 use crate::{compute_q_mod_t, compute_q_product};
@@ -147,6 +147,9 @@ pub struct Inputs {
     pub message: Polynomial,
     pub pk_commitment: BigInt,
     pub msg_commitment: BigInt,
+    /// Outgoing PRF key for this recipient.
+    pub prf_key: Vec<u8>,
+    pub expected_key_commitment: BigInt,
 }
 
 impl Computation for Configs {
@@ -335,6 +338,34 @@ impl Computation for Bounds {
     }
 }
 
+fn residues_for_key_commitment(
+    message: &Polynomial,
+    key: &[u8],
+    q: u64,
+) -> Result<Polynomial, CircuitsErrors> {
+    let bits = e3_fhe_params::prf_key_bits(key);
+    let degree = message.coefficients().len();
+    let mut residues = Vec::with_capacity(degree);
+    for (index, coefficient) in message.coefficients().iter().enumerate() {
+        let source = degree - 1 - index;
+        let bit = if source < bits.len() { bits[source] } else { 0 };
+        let packed = coefficient.to_u64().ok_or_else(|| {
+            CircuitsErrors::Other(format!(
+                "packed share coefficient {index} does not fit in u64"
+            ))
+        })?;
+        let (residue, got) = e3_fhe_params::unpack_share_coefficient(packed, q)
+            .map_err(|error| CircuitsErrors::Other(error.to_string()))?;
+        if got != bit {
+            return Err(CircuitsErrors::Other(format!(
+                "PRF key bit {source} does not match the packed share coefficient"
+            )));
+        }
+        residues.push(BigInt::from(residue));
+    }
+    Ok(Polynomial::new(residues))
+}
+
 impl Computation for Inputs {
     type Preset = BfvPreset;
     type Data = ShareEncryptionCircuitData;
@@ -512,8 +543,16 @@ impl Computation for Inputs {
         let p2is = CrtPolynomial::new(p2is);
 
         let pk_bit = compute_modulus_bit(&dkg_params);
-        let msg_bit = compute_msg_bit(&dkg_params);
+        let share_bit = threshold_params.moduli().iter().fold(0u32, |acc, qi| {
+            acc.max(calculate_bit_width(BigInt::from(*qi - 1)))
+        });
         let pk_commitment = compute_dkg_pk_commitment(&pk0is, &pk1is, pk_bit);
+        let prf_key = crate::circuits::prf::resolve_key(_preset, &data.prf_key);
+        let committed_message = if data.mod_idx == 0 {
+            residues_for_key_commitment(&message, &prf_key, e3_fhe_params::prf_key_modulus(_preset))?
+        } else {
+            message.clone()
+        };
         if data.chunk_size == 0 {
             return Err(CircuitsErrors::Sample(
                 "C3 chunk size must be greater than zero".to_string(),
@@ -533,10 +572,12 @@ impl Computation for Inputs {
         let msg_commitment = compute_sc_party_share_root_commitment(
             data.party_idx as usize,
             data.mod_idx as usize,
-            &message,
-            msg_bit,
+            &committed_message,
+            share_bit,
             data.chunk_size as usize,
         );
+        let expected_key_commitment =
+            crate::circuits::prf::prf_key_commitment_bigint(data.party_idx, &prf_key);
 
         Ok(Inputs {
             party_idx: data.party_idx,
@@ -555,6 +596,8 @@ impl Computation for Inputs {
             message,
             pk_commitment,
             msg_commitment,
+            prf_key,
+            expected_key_commitment,
         })
     }
 
@@ -574,6 +617,8 @@ impl Computation for Inputs {
         let p2is = crt_polynomial_to_toml_json(&self.p2is);
         let pk_commitment = self.pk_commitment.to_string();
         let msg_commitment = self.msg_commitment.to_string();
+        let key_commitment = self.expected_key_commitment.to_string();
+        let key_bits = crate::circuits::prf::prf_key_bits_json(&self.prf_key);
 
         let json = serde_json::json!({
             "pk0is": pk0is,
@@ -590,6 +635,8 @@ impl Computation for Inputs {
             "p2is": p2is,
             "expected_pk_commitment": pk_commitment,
             "expected_message_commitment": msg_commitment,
+            "expected_key_commitment": key_commitment,
+            "key_bits": key_bits,
             "party_idx": self.party_idx,
             "mod_idx": self.mod_idx,
         });
@@ -624,7 +671,7 @@ mod tests {
         let max_pk_bound = bounds.pk_bounds.iter().max().unwrap();
         let expected_bits = calculate_bit_width(BigInt::from(max_pk_bound.clone()));
 
-        assert_eq!(max_pk_bound.clone(), BigUint::from(72057594037914240u128));
+        assert_eq!(max_pk_bound.clone(), BigUint::from(144115188077592576u128));
         assert_eq!(bits.pk_bit, expected_bits);
     }
 

@@ -25,6 +25,5 @@ pub struct PkGenerationCircuitData {
     pub committee: CiphernodesCommittee,
     pub pk0_share: CrtPolynomial,
     pub eek: CrtPolynomial,
-    pub e_sm: CrtPolynomial,
     pub sk: CrtPolynomial,
 }

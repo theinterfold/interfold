@@ -1265,6 +1265,16 @@ fn handle_threshold_share_decryption_proof(
             format!("invalid numeric E3 id for decryption domain: {e}"),
         )
     })?;
+    let decrypt_keys = |keys: &[e3_crypto::SensitiveBytes]| -> Result<Vec<Vec<u8>>, ComputeRequestError> {
+        keys.iter()
+            .map(|key| {
+                key.access_raw(cipher)
+                    .map_err(|e| make_zk_error(&request, format!("prf key decrypt: {e}")))
+            })
+            .collect()
+    };
+    let outgoing_prf_keys = decrypt_keys(&req.outgoing_prf_keys)?;
+    let incoming_prf_keys = decrypt_keys(&req.incoming_prf_keys)?;
 
     for i in 0..num_indices {
         // Deserialize ciphertext
@@ -1305,6 +1315,11 @@ fn handle_threshold_share_decryption_proof(
             d_share,
             domain_hi: domain.hi,
             domain_lo: domain.lo,
+            committee: req.committee_size.values(),
+            party_idx: req.party_idx,
+            decryptors: req.decryptors.clone(),
+            outgoing_prf_keys: outgoing_prf_keys.clone(),
+            incoming_prf_keys: incoming_prf_keys.clone(),
         };
 
         // Generate proof
@@ -1645,14 +1660,11 @@ fn handle_node_dkg_fold_proof(
         c0_proof: &req.c0_proof,
         c1_proof: &req.c1_proof,
         c2a_proof: &req.c2a_proof,
-        c2b_proof: &req.c2b_proof,
         c3a_inner_proofs: &req.c3a_inner_proofs,
-        c3b_inner_proofs: &req.c3b_inner_proofs,
         c3_slot_indices_a: &req.c3_slot_indices_a,
-        c3_slot_indices_b: &req.c3_slot_indices_b,
         c3_total_slots: req.c3_total_slots,
+        c3_n_parties: req.committee_size.values().n,
         c4a_proof: &req.c4a_proof,
-        c4b_proof: &req.c4b_proof,
         party_id: req.party_id,
     };
     let NodeDkgFoldProveResult {
@@ -2040,6 +2052,12 @@ fn handle_share_computation_proof(
         n_parties: committee.n as u32,
         threshold: committee.threshold as u32,
         chunk_size: c2_chunk_size_for_preset(req.params_preset) as u32,
+        prf_keys: req
+            .prf_keys
+            .iter()
+            .map(|key| key.access_raw(cipher).map(|bytes| bytes.to_vec()))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| make_zk_error(&request, format!("prf_keys decrypt: {e}")))?,
     };
 
     let bb_work = zk_bb_work_id(&request);
@@ -2092,11 +2110,6 @@ fn handle_pk_generation_proof(
         .eek
         .access_raw(cipher)
         .map_err(|e| make_zk_error(&request, format!("eek decrypt: {}", e)))?;
-    let e_sm_bytes = req
-        .e_sm
-        .access_raw(cipher)
-        .map_err(|e| make_zk_error(&request, format!("e_sm decrypt: {}", e)))?;
-
     // 3. Deserialize raw polynomial bytes → Poly
     let pk0_share_poly = try_poly_ntt_from_bytes(&req.pk0_share, &params)
         .map_err(|e| make_zk_error(&request, format!("pk0_share: {}", e)))?;
@@ -2107,14 +2120,10 @@ fn handle_pk_generation_proof(
     let eek_poly = try_poly_ntt_from_bytes(&eek_bytes, &params)
         .map_err(|e| make_zk_error(&request, format!("eek: {}", e)))?;
 
-    let e_sm_poly = try_poly_pb_from_bytes(&e_sm_bytes, &params)
-        .map_err(|e| make_zk_error(&request, format!("e_sm: {}", e)))?;
-
     // 3. Convert Poly → CrtPolynomial
     let pk0_share = CrtPolynomial::from_fhe_polynomial(&pk0_share_poly);
     let sk = CrtPolynomial::from_fhe_polynomial(&sk_poly);
     let eek = CrtPolynomial::from_fhe_polynomial(&eek_poly);
-    let e_sm = CrtPolynomial::from_fhe_polynomial(&e_sm_poly);
 
     // 4. Build circuit data
     let committee = req.committee_size.values();
@@ -2122,7 +2131,6 @@ fn handle_pk_generation_proof(
         committee,
         pk0_share,
         eek,
-        e_sm,
         sk,
     };
 
@@ -2296,6 +2304,11 @@ fn handle_share_encryption_proof(
         mod_idx,
         chunk_size: c2_chunk_size_for_preset(req.params_preset) as u32,
         committee: committee_val,
+        prf_key: req
+            .prf_key
+            .access_raw(cipher)
+            .map(|bytes| bytes.to_vec())
+            .map_err(|e| make_zk_error(&request, format!("prf_key decrypt: {e}")))?,
     };
 
     // 6. Generate proof (preset = threshold preset; Inputs::compute derives DKG internally)
@@ -2464,6 +2477,12 @@ fn handle_dkg_share_decryption_proof(
         dkg_input_type: req.dkg_input_type,
         chunk_size: c2_chunk_size_for_preset(req.params_preset) as u32,
         committee: req.committee_size.values(),
+        prf_keys: req
+            .prf_keys
+            .iter()
+            .map(|key| key.access_raw(cipher).map(|bytes| bytes.to_vec()))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| make_zk_error(&request, format!("prf_keys decrypt: {e}")))?,
     };
 
     let circuit = ShareDecryptionCircuit;
@@ -2805,11 +2824,14 @@ fn handle_decrypted_shares_aggregation_proof(
         // e. C7 uses noir-recursive-no-zk (non-ZK recursive); it is verified inside
         // `DecryptionAggregator` via `verify_honk_proof_non_zk`. The EVM-facing proof for on-chain
         // is `CircuitName::DecryptionAggregator`.
+        let ciphertext = Ciphertext::from_bytes(&req.ciphertext_output[i], &threshold_params)
+            .map_err(|e| make_zk_error(&request, format!("ciphertext[{i}] deserialize: {e}")))?;
         let circuit_data = DecryptedSharesAggregationCircuitData {
             committee,
             d_share_polys,
             reconstructing_parties,
             message_vec,
+            ct0: ciphertext[0].clone().into_power_basis(),
         };
 
         let circuit = DecryptedSharesAggregationCircuit;

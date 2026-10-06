@@ -12,16 +12,17 @@ use bb_proof_verification::{UltraHonkProof, UltraHonkVerificationKey, verify_hon
 use lib::configs::default::dkg::L_THRESHOLD;
 use lib::configs::default::{H, N_PARTIES};
 
-pub global C2_PUBLIC_LEN: u32 = 1 + (N_PARTIES * L_THRESHOLD);
+pub global C2_PUBLIC_LEN: u32 = 1 + (N_PARTIES * L_THRESHOLD) + N_PARTIES;
 pub global C2AB_FOLD_PUBLIC_LEN: u32 = 6 + (2 * C2_PUBLIC_LEN);
 /// Must match `c3ab_fold::C3AB_FOLD_PUBLIC_LEN` (one C3 slot per party and CRT limb).
 pub global C3_SLOTS: u32 = N_PARTIES * L_THRESHOLD;
-pub global C3AB_FOLD_PUBLIC_LEN: u32 = 2 + 2 + (6 * C3_SLOTS);
-pub global C4_PUBLIC_LEN: u32 = (H * L_THRESHOLD) + 1;
+pub global C3AB_FOLD_PUBLIC_LEN: u32 = 2 + 2 + (6 * C3_SLOTS) + (2 * N_PARTIES);
+pub global C4_PUBLIC_LEN: u32 = (H * L_THRESHOLD) + H + 1;
 pub global C4AB_FOLD_PUBLIC_LEN: u32 = 3 + (2 * C4_PUBLIC_LEN);
 
 /// Must match `node_fold::NODE_FOLD_PUBLIC_LEN`.
-pub global NODE_FOLD_PUBLIC_LEN: u32 = 14 + N_PARTIES + (2 * (N_PARTIES + H) * L_THRESHOLD);
+pub global NODE_FOLD_PUBLIC_LEN: u32 =
+    12 + (2 * N_PARTIES) + H + ((N_PARTIES + H) * L_THRESHOLD);
 
 /// Same shape as `nodes_fold`: 6 pub parameters + `H` full `node_fold` public rows (flattened).
 pub global NODES_FOLD_PUBLIC_LEN: u32 = 6 + (H * NODE_FOLD_PUBLIC_LEN);

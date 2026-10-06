@@ -33,8 +33,9 @@ pub fn build_prime_items() -> Vec<PrimeItem> {
 
 /// Build the prime pool for the second parameter set (50–62 bits).
 ///
-/// The second set needs `qi > 1.25 × max_qi_first`, so the 50-bit floor matches
-/// `first`'s minimum prime size and avoids the marginal 49-bit primes.
+/// The plaintext modulus is `2 * max(q_i)` of the first set, and each prime
+/// must exceed twice that modulus. The 50-bit floor is the start of the scan.
+/// The search drops every prime that is too small.
 pub fn build_prime_items_for_second() -> Vec<PrimeItem> {
     build_in_range(50, 62)
 }

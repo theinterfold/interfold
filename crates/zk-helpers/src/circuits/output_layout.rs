@@ -283,6 +283,7 @@ impl DkgAggregatorV2PublicLayout {
 pub const SHARE_ENCRYPTION_INPUTS: &[OutputField] = &[
     f("expected_pk_commitment"),
     f("expected_message_commitment"),
+    f("expected_key_commitment"),
     f("party_idx"),
     f("mod_idx"),
 ];

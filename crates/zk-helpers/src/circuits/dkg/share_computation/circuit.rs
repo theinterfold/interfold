@@ -34,4 +34,6 @@ pub struct ShareComputationCircuitData {
     /// C2 coefficient chunk size (must divide the polynomial degree). Must equal the
     /// `SHARE_COMPUTATION_CHUNK_SIZE` compiled into the Noir circuit.
     pub chunk_size: u32,
+    /// Outgoing PRF keys, one per recipient. Empty means the zero key on the SK path.
+    pub prf_keys: Vec<Vec<u8>>,
 }

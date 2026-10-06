@@ -210,6 +210,24 @@ pub fn prove_chunked_share_computation_with_chunk_size(
                 "y_chunk".into(),
                 Value::Array(y[start..start + chunk_size].to_vec()),
             );
+            if data.dkg_input_type == DkgInputType::SecretKey {
+                let keys = e3_zk_helpers::circuits::prf::resolve_keys(
+                    preset,
+                    &data.prf_keys,
+                    data.n_parties as usize,
+                )
+                .map_err(|error| ZkError::InvalidInput(error))?;
+                chunk_json.insert(
+                    "key_bits".into(),
+                    Value::Array(
+                        keys.into_iter()
+                            .map(|key| {
+                                Value::Array(e3_zk_helpers::circuits::prf::prf_key_bits_json(&key))
+                            })
+                            .collect(),
+                    ),
+                );
+            }
             let input_map = inputs_json_to_input_map(&Value::Object(chunk_json))?;
             let circuit_path = prover
                 .circuits_dir(e3_events::CircuitVariant::Recursive, artifacts_dir)

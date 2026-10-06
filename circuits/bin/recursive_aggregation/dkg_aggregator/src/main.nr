@@ -21,17 +21,18 @@ use lib::math::commitments::compute_vk_hash;
 use lib::math::committee_hash::committee_hash_limbs;
 
 /// Must match `node_fold::NODE_FOLD_PUBLIC_LEN`.
-pub global NODE_FOLD_PUBLIC_LEN: u32 = 14 + N_PARTIES + (2 * (N_PARTIES + H) * L_THRESHOLD);
+pub global NODE_FOLD_PUBLIC_LEN: u32 =
+    12 + (2 * N_PARTIES) + H + ((N_PARTIES + H) * L_THRESHOLD);
 
 /// Must match `nodes_fold::NODES_FOLD_PUBLIC_LEN` (pub params + flattened `H` node-fold rows).
 pub global NODES_FOLD_PUBLIC_LEN: u32 = 6 + (H * NODE_FOLD_PUBLIC_LEN);
 
-/// Flattened `node_fold` return tuple length (key hash + pks + share grids + agg commits).
+/// Flattened `node_fold` return tuple length.
 pub global NODE_FOLD_RETURN_PUBLIC_LEN: u32 =
-    8 + N_PARTIES + (2 * N_PARTIES * L_THRESHOLD) + (2 * H * L_THRESHOLD);
+    6 + (2 * N_PARTIES) + H + (N_PARTIES * L_THRESHOLD) + (H * L_THRESHOLD);
 
 /// Leading `node_fold` public inputs (party id + five key hashes) before the return tuple.
-pub global NODE_FOLD_PARAM_PUBLIC_LEN: u32 = NODE_FOLD_PUBLIC_LEN - NODE_FOLD_RETURN_PUBLIC_LEN;
+pub global NODE_FOLD_PARAM_PUBLIC_LEN: u32 = 6;
 
 /// Leading `nodes_fold` public inputs before the `H` full `node_fold` rows.
 pub global NODES_FOLD_PARAM_PUBLIC_LEN: u32 = NODES_FOLD_PUBLIC_LEN - (H * NODE_FOLD_PUBLIC_LEN);
@@ -39,17 +40,15 @@ pub global NODES_FOLD_PARAM_PUBLIC_LEN: u32 = NODES_FOLD_PUBLIC_LEN - (H * NODE_
 /// Indices within one `node_fold` public row (length `NODE_FOLD_PUBLIC_LEN`).
 pub global NF_PARTY_ID_IDX: u32 = 0;
 pub global NF_C2A_CHUNK_HASH_IDX: u32 = NODE_FOLD_PARAM_PUBLIC_LEN + 1;
-pub global NF_C2B_CHUNK_HASH_IDX: u32 = NODE_FOLD_PARAM_PUBLIC_LEN + 2;
-pub global NF_C0_PK_IDX: u32 = NODE_FOLD_PARAM_PUBLIC_LEN + 3;
-pub global NF_C1_PK_IDX: u32 = NODE_FOLD_PARAM_PUBLIC_LEN + 4;
-pub global NF_C3_PK_BASE_IDX: u32 = NODE_FOLD_PARAM_PUBLIC_LEN + 5;
-pub global NF_C2A_BASE_IDX: u32 = NODE_FOLD_PARAM_PUBLIC_LEN + 5 + N_PARTIES;
-pub global NF_C2B_BASE_IDX: u32 = NF_C2A_BASE_IDX + (N_PARTIES * L_THRESHOLD);
-pub global NF_C4A_BASE_IDX: u32 = NF_C2B_BASE_IDX + (N_PARTIES * L_THRESHOLD);
-pub global NF_C4B_BASE_IDX: u32 = NF_C4A_BASE_IDX + (H * L_THRESHOLD);
-pub global NF_SK_AGG_IDX: u32 = NF_C4B_BASE_IDX + (H * L_THRESHOLD);
-pub global NF_ESM_AGG_IDX: u32 = NF_SK_AGG_IDX + 1;
+pub global NF_C0_PK_IDX: u32 = NODE_FOLD_PARAM_PUBLIC_LEN + 2;
+pub global NF_C1_PK_IDX: u32 = NODE_FOLD_PARAM_PUBLIC_LEN + 3;
+pub global NF_C3_PK_BASE_IDX: u32 = NODE_FOLD_PARAM_PUBLIC_LEN + 4;
+pub global NF_C2A_BASE_IDX: u32 = NF_C3_PK_BASE_IDX + N_PARTIES;
+pub global NF_C4A_BASE_IDX: u32 = NF_C2A_BASE_IDX + (N_PARTIES * L_THRESHOLD);
+pub global NF_SK_AGG_IDX: u32 = NF_C4A_BASE_IDX + (H * L_THRESHOLD);
 pub global NF_NODE_VK_MANIFEST_IDX: u32 = NODE_FOLD_PUBLIC_LEN - 1;
+pub global NF_C4A_KEY_BASE_IDX: u32 = NF_NODE_VK_MANIFEST_IDX - H;
+pub global NF_C2A_KEY_BASE_IDX: u32 = NF_C4A_KEY_BASE_IDX - N_PARTIES;
 
 /// Expected recursive VK hashes, in the order used by the node manifest.
 /// The values are public inputs and the Solidity wrapper anchors them.
@@ -85,7 +84,7 @@ fn main(
     committee_hash_hi: pub Field,
     committee_hash_lo: pub Field,
     vk_binding: pub [Field; VK_BINDING_LEN],
-) -> pub (Field, Field, Field, [Field; H], [Field; H], Field) {
+) -> pub (Field, Field, [Field; H], Field, [Field; H * N_PARTIES]) {
     let (expected_hi, expected_lo) = committee_hash_limbs(committee_members);
     assert(expected_hi == committee_hash_hi);
     assert(expected_lo == committee_hash_lo);
@@ -103,38 +102,16 @@ fn main(
     assert(nodes_fold_public[4] == vk_binding[VK_NODES_FOLD_KERNEL]);
     assert(nodes_fold_public[5] == nodes_fold_key_hash);
 
-    let expected_c2_manifest = compute_vk_hash([
-        vk_binding[VK_C2A_FINALIZE],
-        vk_binding[VK_C2B_FINALIZE],
-        vk_binding[VK_C2_BATCH],
-        vk_binding[VK_C2_BATCH],
-        vk_binding[VK_C2A_CHUNK],
-        vk_binding[VK_C2B_CHUNK],
-    ]
-        .as_vector());
-    let expected_c3_manifest = compute_vk_hash([
-        vk_binding[VK_C3_FOLD],
-        vk_binding[VK_C3_FOLD],
-        vk_binding[VK_SHARE_ENCRYPTION],
-        vk_binding[VK_SHARE_ENCRYPTION],
-        vk_binding[VK_C3_FOLD],
-        vk_binding[VK_C3_FOLD],
-        vk_binding[VK_C3_FOLD_KERNEL],
-        vk_binding[VK_C3_FOLD_KERNEL],
-        vk_binding[VK_C3_FOLD],
-        vk_binding[VK_C3_FOLD],
-    ]
-        .as_vector());
-    let expected_c4_manifest = compute_vk_hash([vk_binding[VK_C4], vk_binding[VK_C4]].as_vector());
     let expected_node_manifest = compute_vk_hash([
         vk_binding[VK_C0],
         vk_binding[VK_C1],
-        vk_binding[VK_C2AB],
-        vk_binding[VK_C3AB],
-        vk_binding[VK_C4AB],
-        expected_c2_manifest,
-        expected_c3_manifest,
-        expected_c4_manifest,
+        vk_binding[VK_C2A_FINALIZE],
+        vk_binding[VK_C3_FOLD],
+        vk_binding[VK_C4],
+        vk_binding[VK_C2A_CHUNK],
+        vk_binding[VK_C2_BATCH],
+        vk_binding[VK_SHARE_ENCRYPTION],
+        vk_binding[VK_C3_FOLD_KERNEL],
     ]
         .as_vector());
 
@@ -142,9 +119,9 @@ fn main(
         let row = NODES_FOLD_PARAM_PUBLIC_LEN + i * NODE_FOLD_PUBLIC_LEN;
         assert(nodes_fold_public[row + 1] == vk_binding[VK_C0]);
         assert(nodes_fold_public[row + 2] == vk_binding[VK_C1]);
-        assert(nodes_fold_public[row + 3] == vk_binding[VK_C2AB]);
-        assert(nodes_fold_public[row + 4] == vk_binding[VK_C3AB]);
-        assert(nodes_fold_public[row + 5] == vk_binding[VK_C4AB]);
+        assert(nodes_fold_public[row + 3] == vk_binding[VK_C2A_FINALIZE]);
+        assert(nodes_fold_public[row + 4] == vk_binding[VK_C3_FOLD]);
+        assert(nodes_fold_public[row + 5] == vk_binding[VK_C4]);
         assert(nodes_fold_public[row + NF_NODE_VK_MANIFEST_IDX] == expected_node_manifest);
     }
 
@@ -154,12 +131,6 @@ fn main(
                 + i * NODE_FOLD_PUBLIC_LEN
                 + NF_C2A_CHUNK_HASH_IDX]
                 == nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN + NF_C2A_CHUNK_HASH_IDX],
-        );
-        assert(
-            nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN
-                + i * NODE_FOLD_PUBLIC_LEN
-                + NF_C2B_CHUNK_HASH_IDX]
-                == nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN + NF_C2B_CHUNK_HASH_IDX],
         );
     }
 
@@ -203,21 +174,23 @@ fn main(
     let key_hash = compute_vk_hash(vk_hashes);
 
     let mut sk_agg_commits: [Field; H] = [0; H];
-    let mut esm_agg_commits: [Field; H] = [0; H];
+    let mut c2_keys: [Field; H * N_PARTIES] = [0; H * N_PARTIES];
     for i in 0..H {
         sk_agg_commits[i] = nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN
             + i * NODE_FOLD_PUBLIC_LEN
             + NF_SK_AGG_IDX];
-        esm_agg_commits[i] = nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN
-            + i * NODE_FOLD_PUBLIC_LEN
-            + NF_ESM_AGG_IDX];
+        for j in 0..N_PARTIES {
+            c2_keys[i * N_PARTIES + j] = nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN
+                + i * NODE_FOLD_PUBLIC_LEN
+                + NF_C2A_KEY_BASE_IDX
+                + j];
+        }
     }
     let aggregated_pk_commit = c5_public[H];
 
     (
         key_hash, nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN + NF_C2A_CHUNK_HASH_IDX],
-        nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN + NF_C2B_CHUNK_HASH_IDX], sk_agg_commits,
-        esm_agg_commits, aggregated_pk_commit,
+        sk_agg_commits, aggregated_pk_commit, c2_keys,
     )
 }
 
@@ -275,27 +248,16 @@ fn assert_selected_c2_c4_links(
                             + l],
                 );
             }
-        }
-    }
-
-    // Cross-party C2 to C4 (second chain).
-    for i in 0..H {
-        for j in 0..H {
-            let recipient_id = party_ids[j] as u32;
-            for l in 0..L_THRESHOLD {
-                assert(
-                    nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN
-                        + j * NODE_FOLD_PUBLIC_LEN
-                        + NF_C4B_BASE_IDX
-                        + i * L_THRESHOLD
-                        + l]
-                        == nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN
-                            + i * NODE_FOLD_PUBLIC_LEN
-                            + NF_C2B_BASE_IDX
-                            + recipient_id * L_THRESHOLD
-                            + l],
-                );
-            }
+            assert(
+                nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN
+                    + j * NODE_FOLD_PUBLIC_LEN
+                    + NF_C4A_KEY_BASE_IDX
+                    + i]
+                    == nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN
+                        + i * NODE_FOLD_PUBLIC_LEN
+                        + NF_C2A_KEY_BASE_IDX
+                        + recipient_id],
+            );
         }
     }
 }
@@ -378,9 +340,10 @@ fn non_prefix_fixture() -> ([Field; NODES_FOLD_PUBLIC_LEN], [Field; H]) {
                 let value = (1000 + sender_row * N_PARTIES * L_THRESHOLD + c2_slot) as Field;
                 nodes_fold_public[sender_base + NF_C2A_BASE_IDX + c2_slot] = value;
                 nodes_fold_public[recipient_base + NF_C4A_BASE_IDX + c4_slot] = value;
-                nodes_fold_public[sender_base + NF_C2B_BASE_IDX + c2_slot] = value + 1000;
-                nodes_fold_public[recipient_base + NF_C4B_BASE_IDX + c4_slot] = value + 1000;
             }
+            let key = (7000 + sender_row * N_PARTIES + recipient_id) as Field;
+            nodes_fold_public[sender_base + NF_C2A_KEY_BASE_IDX + recipient_id] = key;
+            nodes_fold_public[recipient_base + NF_C4A_KEY_BASE_IDX + sender_row] = key;
         }
     }
 

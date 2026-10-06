@@ -34,7 +34,6 @@ use e3_trbfv::{
     calculate_decryption_share::{
         CalculateDecryptionShareRequest, CalculateDecryptionShareResponse,
     },
-    gen_esi_sss::{GenEsiSssRequest, GenEsiSssResponse},
     gen_lbfv_key_shares::GenLbfvKeySharesRequest,
     gen_pk_share_and_sk_sss::{GenPkShareAndSkSssRequest, GenPkShareAndSkSssResponse},
     lbfv_operation::LbfvOperationId,
@@ -115,7 +114,6 @@ impl AllThresholdSharesCollected {
             .map(|pid| {
                 proofs.get(pid).cloned().unwrap_or(ReceivedShareProofs {
                     signed_c2a_proof: None,
-                    signed_c2b_proof: None,
                     signed_c3a_proofs: Vec::new(),
                     signed_c3b_proofs: Vec::new(),
                 })
@@ -162,7 +160,11 @@ struct PendingKeyshareWork {
     /// Peer C4 artifacts awaiting verification.
     c4_verification_shares: Option<HashMap<u64, DecryptionKeyShared>>,
     /// Own plaintext DKG shares awaiting the aggregation transition.
-    own_dkg_shares: Option<(SensitiveBytes, Vec<SensitiveBytes>)>,
+    own_dkg_shares: Option<SensitiveBytes>,
+    /// Outgoing PRF keys awaiting the aggregation transition.
+    outgoing_prf_keys: Vec<SensitiveBytes>,
+    /// Incoming PRF keys learned while decrypting honest shares.
+    incoming_prf_keys: Vec<SensitiveBytes>,
     /// C4 completed before the signed C1 artifact became available.
     keyshare_publish: bool,
 }

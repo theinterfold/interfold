@@ -147,8 +147,6 @@ fn gts() -> GeneratingThresholdShareData {
     GeneratingThresholdShareData {
         pk_share: None,
         sk_sss: None,
-        esi_sss: None,
-        e_sm_raw: None,
         sk_bfv: sens(),
         pk_bfv: arc(b"pk"),
         collected_encryption_keys: Vec::new(),
@@ -162,12 +160,12 @@ fn adk() -> AggregatingDecryptionKey {
         pk_share: arc(b"pk"),
         sk_bfv: sens(),
         own_sk_share_raw: sens(),
-        own_esi_shares_raw: Vec::new(),
         signed_pk_generation_proof: None,
         signed_sk_share_computation_proof: None,
         signed_e_sm_share_computation_proof: None,
         signed_sk_share_encryption_proofs: Vec::new(),
         signed_e_sm_share_encryption_proofs: Vec::new(),
+        outgoing_prf_keys: Vec::new(),
     }
 }
 
@@ -181,6 +179,8 @@ fn rfd() -> ReadyForDecryption {
         signed_e_sm_share_computation_proof: None,
         signed_sk_share_encryption_proofs: Vec::new(),
         signed_e_sm_share_encryption_proofs: Vec::new(),
+        outgoing_prf_keys: Vec::new(),
+        incoming_prf_keys: Vec::new(),
     }
 }
 
@@ -195,6 +195,8 @@ fn decrypting() -> Decrypting {
         signed_e_sm_share_computation_proof: None,
         signed_sk_share_encryption_proofs: Vec::new(),
         signed_e_sm_share_encryption_proofs: Vec::new(),
+        outgoing_prf_keys: Vec::new(),
+        incoming_prf_keys: Vec::new(),
     }
 }
 

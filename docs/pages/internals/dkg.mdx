@@ -34,8 +34,7 @@ full cryptographic specification, see the
 | **Public key share**            | The BFV public key corresponding to a secret key contribution                                                 |
 | **Secret key share**            | A ciphernode's _Shamir_ share of the threshold secret key (received from other nodes, aggregated locally)     |
 | **Threshold public key**        | The jointly generated BFV public key; no single party holds the corresponding secret key                      |
-| **Smudging noise contribution** | A ciphernode's contribution to the collective smudging noise (prevents information leakage during decryption) |
-| **Smudging noise share**        | A ciphernode's _Shamir_ share of the smudging noise                                                           |
+| **PRF key**                     | A private key packed into the encrypted Shamir share. Decryption uses it to mask the partial share            |
 | **Partial decryption**          | A ciphernode's share over a decrypted value, computed before the rounding step                                |
 | **Committee size (N)**          | The number of ciphernodes finalized on-chain for the E3                                                       |
 | **Decryption threshold (T)**    | The maximum polynomial degree; decryption requires `T+1` valid shares                                         |
@@ -61,15 +60,12 @@ the circuit shape and liveness budget. They do not prove that an omitted node wa
 | ------- | ---------------------------- | ------ | -------------------------------------------------------------------------------------------- | -------------------------- |
 | **C0**  | `PkBfv`                      | P1 DKG | Commits to individual BFV public key (binding for C3)                                        | Each node → all peers      |
 | **C1**  | `PkGeneration`               | P1 DKG | Public key share correctly derived from secret key contribution (Schwartz-Zippel on BFV eq.) | Each node → all peers      |
-| **C2a** | `SkShareComputation`         | P1 DKG | Secret key Shamir shares consistent with C1 commitment and satisfy Reed-Solomon parity       | Each node → all peers      |
-| **C2b** | `ESmShareComputation`        | P1 DKG | Smudging noise Shamir shares consistent with C1 commitment and satisfy Reed-Solomon parity   | Each node → all peers      |
-| **C3a** | `ShareEncryption` (sk)       | P1 DKG | BFV encryption of secret key share uses correct share (C2) and correct recipient pk (C0)     | Per sender → per recipient |
-| **C3b** | `ShareEncryption` (e_sm)     | P1 DKG | BFV encryption of smudging noise share uses correct share (C2) and correct recipient pk (C0) | Per sender → per recipient |
-| **C4a** | `DkgShareDecryption` (sk)    | P1 DKG | Decrypted shares match C2 commitments; aggregated into local secret key share                | Each node → all peers      |
-| **C4b** | `DkgShareDecryption` (e_sm)  | P1 DKG | Decrypted shares match C2 commitments; aggregated into local smudging noise share            | Each node → all peers      |
+| **C2a** | `SkShareComputation`         | P1 DKG | Secret-key Shamir shares and PRF-key commitments match C1 and the witness                   | Each node → all peers      |
+| **C3a** | `ShareEncryption`            | P1 DKG | Packed share encryption uses the C2 residue, the C2 PRF key, and the recipient pk from C0   | Per sender → per recipient |
+| **C4a** | `DkgShareDecryption`         | P1 DKG | Received residues match C2 commitments and sum to this party's Shamir share                 | Each node → all peers      |
 | **C5**  | `PkAggregation`              | P2 Agg | Sum of the accepted H pk shares equals the published threshold public key                    | Aggregator → on-chain      |
-| **C6**  | `ThresholdShareDecryption`   | P4 Dec | Partial decryption uses correct secret key share and smudging noise share from C4            | Each node → aggregator     |
-| **C7**  | `DecryptedSharesAggregation` | P4 Dec | Lagrange interpolation + CRT reconstruction + decoding is correct                            | Aggregator → on-chain      |
+| **C6**  | `ThresholdShareDecryption`   | P4 Dec | Partial share is Lagrange on `c1·sk`, plus fresh noise and the PRF mask                     | Each node → aggregator     |
+| **C7**  | `DecryptedSharesAggregation` | P4 Dec | `c0` plus the partial shares, then CRT reconstruction and decoding                           | Aggregator → on-chain      |
 
 ### Proof Count Per E3
 
@@ -80,11 +76,8 @@ For a committee of **N** nodes, an accepted roster of **H** nodes, and **L** CRT
 | C0      | 1                   | Up to N                         |
 | C1      | 1                   | Up to N                         |
 | C2a     | 1                   | Up to N                         |
-| C2b     | 1                   | Up to N                         |
 | C3a     | (N-1) × L           | Up to N × (N-1) × L             |
-| C3b     | (N-1) × L × ESI     | Up to N × (N-1) × L × ESI       |
 | C4a     | 1                   | H consumed; up to N generated   |
-| C4b     | 1                   | H consumed; up to N generated   |
 | C5      | 1 (aggregator only) | 1                               |
 | C6      | 1                   | Up to H generated; T+1 consumed |
 | C7      | 1 (aggregator only) | 1                               |
@@ -187,8 +180,8 @@ individual public key for later verification.
 The node starts contribution generation when it has all N individual public keys or when the C0
 cutoff leaves at least H keys, including its own.
 
-Each ciphernode generates its secret key contribution, the corresponding public key share, and its
-smudging noise contribution. **C1** proves that the public key share was correctly derived from the
+Each ciphernode generates its secret key contribution and the corresponding public key share.
+**C1** proves that the public key share was correctly derived from the
 secret key contribution using the BFV key generation equation:
 
 ```
@@ -202,21 +195,19 @@ at a single random challenge point via the
 [Schwartz-Zippel Lemma](https://en.wikipedia.org/wiki/Schwartz%E2%80%93Zippel_lemma), avoiding the
 cost of checking every coefficient individually.
 
-The node then Shamir-splits its secret key contribution and smudging noise contribution into N
-shares each (this happens outside the circuit). C1 outputs three commitments that feed downstream
+The node then Shamir-splits its secret key contribution into N
+shares (this happens outside the circuit). C1 outputs two commitments that feed downstream
 circuits:
 
 1. `commit(sk_contribution)` → consumed by **C2a**
-2. `commit(e_sm_contribution)` → consumed by **C2b**
-3. `commit(pk_share)` → consumed by **C5** in P2
+2. `commit(pk_share)` → consumed by **C5** in P2
 
-### Share Computation (C2a / C2b)
+### Share Computation (C2a)
 
-C2 runs separately for the secret key shares (C2a) and smudging noise shares (C2b). Each C2 circuit
+C2a proves the secret-key Shamir shares. The circuit
 verifies two properties:
 
-1. **Consistency with C1**: the shares were built from the correct secret (the committed
-   `sk_contribution` or `e_sm_contribution`)
+1. **Consistency with C1**: the shares were built from the committed `sk_contribution`
 2. **Valid secret sharing**: the shares form a valid Reed-Solomon codeword. A parity check matrix
    `H` is constructed such that: `H_j · y_{i,j}^T ≡ 0 (mod q_j)` — guaranteeing the shares lie on a
    polynomial of degree at most T without ever reconstructing the polynomial itself
@@ -225,10 +216,10 @@ The circuit outputs a commitment for each party's share per CRT modulus — an `
 commitment values. These commitments are the bridge to C4: the recipient verifies the decrypted
 shares match what was committed here.
 
-### Share Encryption (C3a / C3b)
+### Share Encryption (C3a)
 
-Each share must be encrypted before transmission. C3a handles secret key shares and C3b handles
-smudging noise shares. The circuit verifies two commitment links simultaneously:
+Each share must be encrypted before transmission. The plaintext is the residue plus one PRF-key bit
+times `q`. The circuit verifies two commitment links simultaneously:
 
 - The **plaintext** being encrypted matches the share commitment from C2
 - The **recipient's individual public key** matches the commitment from C0
@@ -336,31 +327,28 @@ output, along with a proof of correct execution, is published on-chain.
 
 After the homomorphic computation completes, the encrypted output must be decrypted. No single party
 can do this alone. Members recorded by `publishCommittee` independently compute **partial
-decryptions** from their secret key and smudging-noise shares.
+decryptions** from their secret-key share.
 
 ### C6 — Partial Decryption
 
 ```
-d[ℓ] = ct0[ℓ] + ct1[ℓ] · sk[ℓ] + e_sm[ℓ] + r₂[ℓ] · (X^N + 1) + r₁[ℓ] · q_ℓ
+p_i[ℓ] = λ_i[ℓ] · ct1[ℓ] · sk[ℓ] + e_i[ℓ] + r_i[ℓ] + r₂[ℓ] · (X^N + 1) + r₁[ℓ] · q_ℓ
 ```
 
-The smudging noise `e_sm` prevents information leakage — without it, the partial decryption share
-would reveal information about the node's secret key share. C6 first verifies that `sk` and `e_sm`
-match their commitments from C4a and C4b (range checks are not repeated — P1 already performed them,
-and commitment binding guarantees they are unchanged). The decryption equation is verified via
-Schwartz-Zippel at a Fiat-Shamir challenge point, following the same pattern as C1 and C3.
+`λ_i` is the Lagrange coefficient of this party in the public decryptor set. It multiplies only
+`ct1·sk`. `e_i` is fresh noise sampled at decryption time. `r_i` is the PRF mask. `ct0` is added
+once in C7. C6 checks `sk` against the C4a commitment. The decryption equation is verified via
+Schwartz-Zippel at a Fiat-Shamir challenge point.
 
 The circuit outputs `commit(d)`, passed to C7 for aggregation. This circuit runs at least `T+1`
 times — once for each ciphernode contributing a valid partial decryption.
 
-### C7 — Lagrange Reconstruction
+### C7 — Reconstruction
 
-The aggregator collects ≥ `T+1` valid partial decryptions and reconstructs the plaintext in three
+The aggregator collects `T+1` valid partial decryptions and reconstructs the plaintext in three
 steps:
 
-1. **Lagrange interpolation** at zero: `u[ℓ] = Σ_i d_i[ℓ] · L_i(0) (mod q_ℓ)` where
-   `L_i(0) = ∏_{j≠i} (-x_j) / (x_i - x_j)`. The Lagrange coefficients are computed in-circuit,
-   preventing any party from manipulating them
+1. **Sum**: `u[ℓ] = ct0[ℓ] + Σ_i p_i[ℓ] (mod q_ℓ)`. Lagrange is already inside each partial share.
 2. **CRT reconstruction**: stitch `u[0..L-1]` into a single global value `u_global` via the Chinese
    Remainder Theorem: `u[ℓ] + r[ℓ] · q_ℓ = u_global`
 3. **Decoding**: `message = -Q⁻¹ · (t · u_global)_Q mod t` where Q is the product of all CRT moduli
@@ -720,17 +708,13 @@ commitment is published.
 The full dependency graph:
 
 ```
-C0 ──────────────────────────────────────→ C3 (pk_commitment verified)
+C0 ──────────────────────────────────────→ C3a (pk_commitment verified)
 C1 ──→ C2a (sk_commitment)
-C1 ──→ C2b (e_sm_commitment)
 C1 ──→ C5  (pk_commitment)
-C2a ─→ C3a (share_commitment)
-C2b ─→ C3b (share_commitment)
-C2a ─→ C4a (expected_commitments for all L moduli)
-C2b ─→ C4b (expected_commitments for all L moduli)
+C2a ─→ C3a (share commitment and PRF-key commitment)
+C2a ─→ C4a (expected share commitments for all L moduli)
 C4a ─→ C6  (sk_commitment)
-C4b ─→ C6  (e_sm_commitment)
-C6  ─→ C7  (d_commitment)
+C6  ─→ C7  (partial-share commitment and c0 commitment)
 ```
 
 These dependencies are enforced by the [commitment consistency checker](./commitment-consistency),

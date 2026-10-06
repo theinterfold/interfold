@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 pub mod polynomial;
+pub mod prf;
 pub mod safe;
 pub mod helpers;
 pub mod modulo;

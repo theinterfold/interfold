@@ -14,6 +14,18 @@ use num_bigint::BigUint;
 use rand::{CryptoRng, RngCore};
 use std::sync::Arc;
 
+/// Sample one fresh smudging polynomial with the operating-system generator.
+pub fn sample_fresh_smudging_error(
+    params: Arc<BfvParameters>,
+    n: usize,
+    num_ciphertexts: usize,
+    mult_depth: u32,
+    lambda: usize,
+) -> Result<Vec<BigInt>, fhe::Error> {
+    let mut rng = rand::rng();
+    generate_smudging_error(params, n, num_ciphertexts, mult_depth, lambda, &mut rng)
+}
+
 /// Generate centered smudging coefficients for one threshold-BFV operation.
 ///
 /// The upstream generator owns its sampled polynomial so that callers cannot reuse it. The

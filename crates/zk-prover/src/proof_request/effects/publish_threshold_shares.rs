@@ -33,15 +33,7 @@ impl ProofRequestActor {
             return false;
         };
 
-        // Sign C2b (ESmShareComputation)
-        let Some(signed_c2b) = self.sign_proof(
-            e3_id,
-            ProofType::C2bESmShareComputation,
-            pending.e_sm_share_computation_proof.expect("checked"),
-        ) else {
-            error!("Failed to sign the local C2b proof; pending work is preserved");
-            return false;
-        };
+        let _ = pending.e_sm_share_computation_proof;
 
         let Some(signed_c3a_map) = self.sign_and_group_proofs(
             e3_id,
@@ -55,17 +47,7 @@ impl ProofRequestActor {
             return false;
         };
 
-        let Some(signed_c3b_map) = self.sign_and_group_proofs(
-            e3_id,
-            ProofType::C3bESmShareEncryption,
-            pending
-                .e_sm_share_encryption_proofs
-                .iter()
-                .map(|((_esi, recipient, _row), proof)| (*recipient, proof.clone())),
-        ) else {
-            error!("Failed to sign the local C3b proofs; pending work is preserved");
-            return false;
-        };
+        let _ = pending.e_sm_share_encryption_proofs;
 
         info!(
             "All proofs signed for E3 {} party {} (signer: {})",
@@ -97,17 +79,6 @@ impl ProofRequestActor {
             error!("Failed to publish SkDkgProofSigned: {err}");
         }
 
-        if let Err(err) = self.bus.publish(
-            DkgProofSigned {
-                e3_id: e3_id.clone(),
-                party_id,
-                signed_proof: signed_c2b.clone(),
-            },
-            ec.clone(),
-        ) {
-            error!("Failed to publish ESmDkgProofSigned: {err}");
-        }
-
         // Publish C3a signed proofs (reuse already-signed proofs from signed_c3a_map)
         for signed_proofs in signed_c3a_map.values() {
             for signed in signed_proofs {
@@ -120,22 +91,6 @@ impl ProofRequestActor {
                     ec.clone(),
                 ) {
                     error!("Failed to publish SkShareEncryptionProofSigned: {err}");
-                }
-            }
-        }
-
-        // Publish C3b signed proofs (reuse already-signed proofs from signed_c3b_map)
-        for signed_proofs in signed_c3b_map.values() {
-            for signed in signed_proofs {
-                if let Err(err) = self.bus.publish(
-                    DkgProofSigned {
-                        e3_id: e3_id.clone(),
-                        party_id,
-                        signed_proof: signed.clone(),
-                    },
-                    ec.clone(),
-                ) {
-                    error!("Failed to publish ESmShareEncryptionProofSigned: {err}");
                 }
             }
         }
@@ -153,7 +108,6 @@ impl ProofRequestActor {
                 Some(party_share) => {
                     let proof_key = real_party_id as usize;
                     let c3a_proofs = signed_c3a_map.get(&proof_key).cloned().unwrap_or_default();
-                    let c3b_proofs = signed_c3b_map.get(&proof_key).cloned().unwrap_or_default();
 
                     if let Err(err) = self.bus.publish(
                         ThresholdShareCreated {
@@ -162,9 +116,8 @@ impl ProofRequestActor {
                             target_party_id: real_party_id,
                             external: false,
                             signed_c2a_proof: Some(signed_c2a.clone()),
-                            signed_c2b_proof: Some(signed_c2b.clone()),
                             signed_c3a_proofs: c3a_proofs,
-                            signed_c3b_proofs: c3b_proofs,
+                            signed_c3b_proofs: Vec::new(),
                         },
                         ec.clone(),
                     ) {

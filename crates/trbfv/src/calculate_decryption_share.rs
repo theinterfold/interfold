@@ -5,19 +5,21 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use std::hash::Hash;
-use std::sync::Arc;
+use std::ops::Deref;
 
 use crate::helpers::{try_poly_from_sensitive_bytes, try_polys_from_sensitive_bytes_vec};
 /// This module defines event payloads that will generate a decryption share for the given ciphertext for this node
 use crate::TrBFVConfig;
 use anyhow::*;
 use e3_crypto::{Cipher, SensitiveBytes};
+use e3_fhe_params::sample_fresh_smudging_error;
+use e3_polynomial::{center, reduce, CrtPolynomial, Polynomial};
 use e3_utils::utility_types::ArcBytes;
-use fhe::{
-    bfv::Ciphertext,
-    trbfv::{SecretKeyShare, ShareManager, SmudgingShare},
-};
+use e3_zk_helpers::circuits::prf::{circuit_order_mask, decryption_mask_low_degree};
+use e3_zk_helpers::circuits::threshold::decrypted_shares_aggregation::utils::lagrange_coeff_at_zero;
+use fhe::bfv::Ciphertext;
 use fhe_math::rq::{Poly, PowerBasis};
+use num_bigint::BigInt;
 use fhe_traits::DeserializeParametrized;
 use fhe_traits::Serialize;
 use tracing::info;
@@ -34,6 +36,14 @@ pub struct CalculateDecryptionShareRequest {
     pub sk_poly_sum: SensitiveBytes,
     /// A vector of summed polynomials for this parties smudging noise
     pub es_poly_sum: Vec<SensitiveBytes>,
+    /// Zero-based party index. Empty key lists select the zero mask.
+    pub party_idx: u32,
+    /// Strictly increasing 1-based decryptor ids.
+    pub decryptors: Vec<u32>,
+    /// Outgoing PRF keys indexed by recipient.
+    pub outgoing_prf_keys: Vec<Vec<u8>>,
+    /// Incoming PRF keys indexed by sender.
+    pub incoming_prf_keys: Vec<Vec<u8>>,
 }
 
 struct InnerRequest {
@@ -84,21 +94,29 @@ impl TryFrom<(&Cipher, CalculateDecryptionShareRequest)> for InnerRequest {
 pub struct CalculateDecryptionShareResponse {
     /// The decryption share for the given ciphertext
     pub d_share_poly: Vec<ArcBytes>,
+    /// Fresh noise used in each share. The C6 witness must reuse these bytes.
+    pub e_fresh: Vec<SensitiveBytes>,
 }
 
 struct InnerResponse {
     pub d_share_poly: Vec<Poly<PowerBasis>>,
+    pub e_fresh: Vec<Poly<PowerBasis>>,
 }
 
-impl From<InnerResponse> for CalculateDecryptionShareResponse {
-    fn from(value: InnerResponse) -> Self {
-        CalculateDecryptionShareResponse {
-            d_share_poly: value
+impl InnerResponse {
+    fn encrypt(self, cipher: &Cipher) -> Result<CalculateDecryptionShareResponse> {
+        Ok(CalculateDecryptionShareResponse {
+            d_share_poly: self
                 .d_share_poly
                 .into_iter()
                 .map(|p| ArcBytes::from_bytes(&p.to_bytes()))
                 .collect(),
-        }
+            e_fresh: self
+                .e_fresh
+                .into_iter()
+                .map(|p| SensitiveBytes::new(p.to_bytes(), cipher))
+                .collect::<Result<Vec<_>>>()?,
+        })
     }
 }
 
@@ -107,71 +125,151 @@ pub fn calculate_decryption_share(
     req: CalculateDecryptionShareRequest,
 ) -> Result<CalculateDecryptionShareResponse> {
     info!("Calculating decryption share: `{}`...", req.name);
-    validate_smudging_share_count(req.ciphertexts.len(), req.es_poly_sum.len())?;
+    let party_idx = req.party_idx as usize;
+    let decryptors = req.decryptors.clone();
+    let outgoing_prf_keys = req.outgoing_prf_keys.clone();
+    let incoming_prf_keys = req.incoming_prf_keys.clone();
     let req: InnerRequest = (cipher, req).try_into()?;
 
-    let num_ciphernodes = req.trbfv_config.num_parties() as usize;
-    let threshold = req.trbfv_config.threshold() as usize;
+    let _ = req.es_poly_sum.len();
     let params = req.trbfv_config.params();
-    let sk_poly_sum = req.sk_poly_sum;
-    let es_poly_sum = req.es_poly_sum;
+    let sk = CrtPolynomial::from_fhe_polynomial(&req.sk_poly_sum);
+    let mut e_fresh = Vec::with_capacity(req.ciphertexts.len());
+    for _ in 0..req.ciphertexts.len() {
+        let coeffs = sample_fresh_smudging_error(
+            params.clone(),
+            req.trbfv_config.num_parties() as usize,
+            1,
+            0,
+            128,
+        )?;
+        let noise = Poly::<PowerBasis>::from_bigints(&coeffs, params.context_at_level(0)?)?;
+        e_fresh.push(noise.deref().clone());
+    }
 
     info!("Calculating d_share_poly...");
-    let d_share_poly =
-        req.ciphertexts
-            .into_iter()
-            .enumerate()
-            .map(|(index, ciphertext)| {
-                let share_manager = ShareManager::new(num_ciphernodes, threshold, params.clone())?;
-                let sk_aggregate = share_manager.aggregate_secret_key_shares(vec![
-                    SecretKeyShare::from_transport(sk_poly_sum.coefficients().to_owned()),
-                ])?;
-                info!("Create decryption share for ct index {}...", index);
-                // Currently there is a single smudging noise polynomial shared across all
-                // ciphertexts. When multiple per-ciphertext noises are supported, the
-                // index mapping here will need to change.
-                let es_idx = index % es_poly_sum.len();
-                let es_aggregate = share_manager.aggregate_smudging_shares(vec![
-                    SmudgingShare::from_transport(es_poly_sum[es_idx].coefficients().to_owned()),
-                ])?;
-                share_manager
-                    .decryption_share(Arc::new(ciphertext), &sk_aggregate, es_aggregate)
-                    .context(format!("Could not decrypt ciphertext {}", index))
-            })
-            .collect::<Result<Vec<Poly<PowerBasis>>>>()?;
+    let d_share_poly = req
+        .ciphertexts
+        .iter()
+        .zip(e_fresh.iter())
+        .enumerate()
+        .map(|(index, (ciphertext, noise))| {
+            info!("Create decryption share for ct index {}...", index);
+            partial_decryption_share(
+                ciphertext,
+                &sk,
+                noise,
+                party_idx,
+                &decryptors,
+                &outgoing_prf_keys,
+                &incoming_prf_keys,
+                params.moduli(),
+            )
+        })
+        .collect::<Result<Vec<Poly<PowerBasis>>>>()?;
     info!("Returning successful result...");
 
-    Ok(InnerResponse { d_share_poly }.into())
+    InnerResponse {
+        d_share_poly,
+        e_fresh,
+    }
+    .encrypt(cipher)
 }
 
-fn validate_smudging_share_count(
-    ciphertext_count: usize,
-    smudging_share_count: usize,
-) -> Result<()> {
-    ensure!(
-        ciphertext_count == 0 || smudging_share_count > 0,
-        "At least one smudging polynomial is required"
-    );
-    Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::validate_smudging_share_count;
-
-    #[test]
-    fn nonempty_ciphertexts_require_a_smudging_polynomial() {
-        let error = validate_smudging_share_count(1, 0)
-            .expect_err("a nonempty ciphertext set must not use an empty smudging-share set");
-        assert_eq!(
-            error.to_string(),
-            "At least one smudging polynomial is required"
+fn partial_decryption_share(
+    ciphertext: &Ciphertext,
+    sk: &CrtPolynomial,
+    noise: &Poly<PowerBasis>,
+    party_idx: usize,
+    decryptors: &[u32],
+    outgoing_keys: &[Vec<u8>],
+    incoming_keys: &[Vec<u8>],
+    moduli: &[u64],
+) -> Result<Poly<PowerBasis>> {
+    let ct0 = CrtPolynomial::from_fhe_polynomial(&ciphertext[0]);
+    let ct1 = CrtPolynomial::from_fhe_polynomial(&ciphertext[1]);
+    let noise_crt = CrtPolynomial::from_fhe_polynomial(noise);
+    let reverse_limbs = |poly: &CrtPolynomial| -> Vec<Polynomial> {
+        poly.limbs
+            .iter()
+            .map(|limb| {
+                let mut reversed = limb.clone();
+                reversed.reverse();
+                reversed
+            })
+            .collect()
+    };
+    let low_mask = decryption_mask_low_degree(
+        party_idx,
+        decryptors,
+        outgoing_keys,
+        incoming_keys,
+        &reverse_limbs(&ct0),
+        &reverse_limbs(&ct1),
+        moduli,
+    )
+    .map_err(|error| anyhow!(error))?;
+    let mask = circuit_order_mask(&low_mask);
+    let n = ct1
+        .limbs
+        .first()
+        .map(|limb| limb.coefficients().len())
+        .unwrap_or(0);
+    let mut coeffs = noise.coefficients().to_owned();
+    for (limb, modulus) in moduli.iter().enumerate() {
+        let q = BigInt::from(*modulus);
+        let lambda = lagrange_coeff_at_zero(decryptors, (party_idx as u32) + 1, *modulus)
+            .map_err(|error| anyhow!(error.to_string()))?;
+        let mut c1 = ct1.limbs[limb].clone();
+        c1.reverse();
+        c1.center(&q);
+        let mut sk_limb = sk.limbs[limb].clone();
+        sk_limb.reverse();
+        sk_limb.center(&q);
+        let product = c1.mul(&sk_limb);
+        let scaled = Polynomial::new(
+            product
+                .coefficients()
+                .iter()
+                .map(|coeff| coeff * &lambda)
+                .collect(),
         );
+        let mut fresh = noise_crt.limbs[limb].clone();
+        fresh.reverse();
+        fresh.center(&q);
+        let hat = scaled.add(&fresh).add(&mask[limb]);
+        let residue = reduce_hat_to_power_basis(hat.coefficients(), n, &q)?;
+        for (column, value) in residue.iter().enumerate() {
+            coeffs[[limb, column]] = *value;
+        }
     }
+    let mut share = noise.clone();
+    share.set_coefficients(coeffs);
+    Ok(share)
+}
 
-    #[test]
-    fn empty_ciphertexts_do_not_require_a_smudging_polynomial() {
-        assert!(validate_smudging_share_count(0, 0).is_ok());
-        assert!(validate_smudging_share_count(1, 1).is_ok());
+/// Reduce a high-degree-first product into the power basis, low degree first.
+fn reduce_hat_to_power_basis(hat: &[BigInt], n: usize, q: &BigInt) -> Result<Vec<u64>> {
+    ensure!(
+        hat.len() == 2 * n - 1,
+        "partial decryption product has length {}, expected {}",
+        hat.len(),
+        2 * n - 1
+    );
+    let mut low = vec![0u64; n];
+    for j in 0..n {
+        let mut reduced = hat[n - 1 + j].clone();
+        if j > 0 {
+            reduced -= &hat[j - 1];
+        }
+        let centered = center(&reduce(&reduced, q), q);
+        let positive = if centered.sign() == num_bigint::Sign::Minus {
+            &centered + q
+        } else {
+            centered
+        };
+        let (_, digits) = positive.to_u64_digits();
+        low[n - 1 - j] = digits.first().copied().unwrap_or(0);
     }
+    Ok(low)
 }

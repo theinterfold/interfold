@@ -15,12 +15,12 @@ use lib::math::commitments::compute_vk_hash;
 pub global C3_SLOTS: u32 = N_PARTIES * L_THRESHOLD;
 
 /// Must match `c3_fold`: `6 + 3*C3_SLOTS` public fields per final proof.
-pub global C3_FOLD_PUBLIC_LEN: u32 = 6 + (3 * C3_SLOTS);
+pub global C3_FOLD_PUBLIC_LEN: u32 = 6 + (3 * C3_SLOTS) + N_PARTIES;
 
-pub global C3_FOLD_PREFIX_LEN: u32 = C3_FOLD_PUBLIC_LEN - (3 * C3_SLOTS);
+pub global C3_FOLD_PREFIX_LEN: u32 = C3_FOLD_PUBLIC_LEN - (3 * C3_SLOTS) - N_PARTIES;
 
 /// Total public fields for `c3ab_fold` (two key hashes + flattened return tuple).
-pub global C3AB_FOLD_PUBLIC_LEN: u32 = 2 + 2 + (6 * C3_SLOTS);
+pub global C3AB_FOLD_PUBLIC_LEN: u32 = 2 + 2 + (6 * C3_SLOTS) + (2 * N_PARTIES);
 
 fn main(
     c3a_vk: UltraHonkVerificationKey,
@@ -31,7 +31,7 @@ fn main(
     c3b_public: [Field; C3_FOLD_PUBLIC_LEN],
     c3a_key_hash: pub Field,
     c3b_key_hash: pub Field,
-    ) -> pub (Field, [Field; C3_SLOTS], [Field; C3_SLOTS], [Field; C3_SLOTS], [Field; C3_SLOTS], [Field; C3_SLOTS], [Field; C3_SLOTS], Field) {
+    ) -> pub (Field, [Field; C3_SLOTS], [Field; C3_SLOTS], [Field; C3_SLOTS], [Field; C3_SLOTS], [Field; C3_SLOTS], [Field; C3_SLOTS], [Field; N_PARTIES], [Field; N_PARTIES], Field) {
     verify_honk_proof_non_zk(c3a_vk, c3a_proof, c3a_public, c3a_key_hash);
     verify_honk_proof_non_zk(c3b_vk, c3b_proof, c3b_public, c3b_key_hash);
 
@@ -57,6 +57,9 @@ fn main(
     let mut pk_b: [Field; C3_SLOTS] = [0; C3_SLOTS];
     let mut msg_b: [Field; C3_SLOTS] = [0; C3_SLOTS];
     let mut ct_b: [Field; C3_SLOTS] = [0; C3_SLOTS];
+    let mut key_a: [Field; N_PARTIES] = [0; N_PARTIES];
+    let mut key_b: [Field; N_PARTIES] = [0; N_PARTIES];
+    let key_start = C3_FOLD_PREFIX_LEN + (3 * C3_SLOTS);
 
     for j in 0..C3_SLOTS {
         pk_a[j] = c3a_public[C3_FOLD_PREFIX_LEN + j];
@@ -66,6 +69,10 @@ fn main(
         msg_b[j] = c3b_public[C3_FOLD_PREFIX_LEN + C3_SLOTS + j];
         ct_b[j] = c3b_public[C3_FOLD_PREFIX_LEN + C3_SLOTS + C3_SLOTS + j];
     }
+    for party in 0..N_PARTIES {
+        key_a[party] = c3a_public[key_start + party];
+        key_b[party] = c3b_public[key_start + party];
+    }
 
-    (key_hash, pk_a, msg_a, ct_a, pk_b, msg_b, ct_b, vk_manifest)
+    (key_hash, pk_a, msg_a, ct_a, pk_b, msg_b, ct_b, key_a, key_b, vk_manifest)
 }

@@ -131,10 +131,14 @@ every section.
 - A recipient outside the selected H dealers builds C4 from all H encrypted dealer shares. It must
   not replace a selected dealer share with its own plaintext share. A selected recipient uses its
   plaintext share only at its own row. — `flow-trace/04`
-- Proof multiplicity: C2a/C2b singleton per recipient; C3a/C3b follow configured Shamir
-  multiplicities. Witness dimensions come from the **active preset**, never incidental vector sizes.
-  — `ARCHITECTURE.md`; `CRATES_ARCHITECTURE.md`
-- The local C1, C2a, C2b, and every C3a and C3b proof must complete and be signed before any
+- Proof multiplicity: one C2a per recipient; C3a follows the configured Shamir multiplicity.
+  DKG does not produce C2b, C3b, or C4b. Witness dimensions come from the **active preset**, never
+  incidental vector sizes. — `ARCHITECTURE.md`; `CRATES_ARCHITECTURE.md`
+- The decryption set is the lowest `T+1` honest party ids. C6 computes the Lagrange coefficient
+  from that public set and multiplies only `c1·sh`. C7 adds `c0` to the sum and does not apply
+  Lagrange again. The DKG proof stores the C2 PRF-key matrix, and the decryption verifier checks
+  each decryptor's opened keys against that matrix. — `flow-trace/04`
+- The local C1, C2a, and every C3a proof must complete and be signed before any
   `ThresholdShareCreated` is published. C4 through C7 belong to later phases. —
   `crates/zk-prover/src/proof_request/effects/publish_threshold_shares.rs`; `flow-trace/04`
 - The decrypted plaintext is exactly 100 u64 coefficients in every layer: `MAX_MSG_NON_ZERO_COEFFS`

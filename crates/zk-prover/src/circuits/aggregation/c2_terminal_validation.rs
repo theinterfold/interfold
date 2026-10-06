@@ -56,7 +56,11 @@ impl C2TerminalAnchors {
     ) -> Result<Self, ZkError> {
         let chunk_circuit = match proof_type {
             ProofType::C2aSkShareComputation => CircuitName::SkShareComputationChunk,
-            ProofType::C2bESmShareComputation => CircuitName::ESmShareComputationChunk,
+            ProofType::C2bESmShareComputation => {
+                return Err(ZkError::InvalidInput(
+                    "C2b smudging share computation is not produced".to_string(),
+                ));
+            }
             _ => {
                 return Err(ZkError::InvalidInput(format!(
                     "C2 terminal anchors requested for non-C2 proof type {proof_type:?}"
@@ -88,7 +92,7 @@ fn expected_public_field_count(
         .unwrap_or(preset)
         .metadata()
         .num_moduli;
-    1 + n_parties * l + 2
+    1 + n_parties * l + n_parties + 2
 }
 
 /// Validates a C2 terminal proof against its deployment-time VK anchors before
@@ -106,7 +110,11 @@ pub fn validate_c2_terminal_proof(
 ) -> Result<(), ZkError> {
     let expected_circuit = match proof_type {
         ProofType::C2aSkShareComputation => CircuitName::SkC2ChunkFinalize,
-        ProofType::C2bESmShareComputation => CircuitName::ESmC2ChunkFinalize,
+        ProofType::C2bESmShareComputation => {
+            return Err(ZkError::InvalidInput(
+                "C2b smudging share computation is not produced".to_string(),
+            ));
+        }
         _ => return Ok(()),
     };
     if proof.circuit != expected_circuit {
@@ -201,6 +209,7 @@ mod tests {
     fn valid_signals(chunk_hash: &BigUint, batch_hash: &BigUint) -> Vec<BigUint> {
         let mut fields = vec![chunk_hash.clone(), BigUint::from(3u8)];
         fields.extend(std::iter::repeat_with(|| BigUint::from(7u8)).take(9));
+        fields.extend(std::iter::repeat_with(|| BigUint::from(9u8)).take(3));
         fields.push(batch_hash.clone());
         fields
     }
@@ -209,18 +218,18 @@ mod tests {
     fn expected_field_count_matches_compiled_layouts() {
         assert_eq!(
             expected_public_field_count(BfvPreset::InsecureDkg, CiphernodesCommitteeSize::Minimum),
-            12
+            15
         );
         assert_eq!(
             expected_public_field_count(
                 BfvPreset::SecureDkg8192,
                 CiphernodesCommitteeSize::Minimum
             ),
-            12
+            15
         );
         assert_eq!(
             expected_public_field_count(BfvPreset::InsecureDkg, CiphernodesCommitteeSize::Micro),
-            30
+            39
         );
     }
 

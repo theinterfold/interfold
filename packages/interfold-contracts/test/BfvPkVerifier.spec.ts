@@ -49,10 +49,10 @@ function minimalDkgPublicInputs(
     lo,
     ...EXPECTED_VK_BINDING,
     ethers.ZeroHash,
-    EXPECTED_SK_C2_CHUNK_KEY_HASH,
-    EXPECTED_ESM_C2_CHUNK_KEY_HASH,
-    ...Array(2 * H).fill(ethers.ZeroHash),
+    ethers.ZeroHash,
+    ...Array(H).fill(ethers.ZeroHash),
     pkCommitment,
+    ...Array(H * 3).fill(ethers.ZeroHash),
   ];
 }
 
@@ -285,12 +285,15 @@ describe("BfvPkVerifier", function () {
       ).to.be.revertedWithCustomError(bfvPkVerifier, "VkHashMismatch");
     });
 
-    it("reverts VkHashMismatch when the SK C2 chunk key hash does not match", async function () {
-      const { bfvPkVerifier } = await loadFixture(deployWithMockCircuit);
+    it("accepts a changed batch-hash slot when the circuit verifier accepts", async function () {
+      const { bfvPkVerifier, mockCircuit } = await loadFixture(
+        deployWithMockCircuit,
+      );
+      await mockCircuit.setReturnValue(true);
       const { e3Id, root, nodes } = ctx();
       const pkCommitment = ethers.keccak256("0xabcd");
       const publicInputs = minimalDkgPublicInputs(pkCommitment).map((v, i) =>
-        i === 21 + H ? ethers.id("wrong-sk-c2-chunk") : v,
+        i === 21 + H ? ethers.id("batch-hash") : v,
       );
       const proof = encodeProof("0x01", publicInputs);
 
@@ -303,7 +306,7 @@ describe("BfvPkVerifier", function () {
           ethers.ZeroHash,
           proof,
         ),
-      ).to.be.revertedWithCustomError(bfvPkVerifier, "VkHashMismatch");
+      ).to.equal(true);
     });
 
     it("reverts VkHashMismatch when a recursive VK manifest field does not match", async function () {

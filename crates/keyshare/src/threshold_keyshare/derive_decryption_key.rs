@@ -16,14 +16,13 @@
 use anyhow::{anyhow, bail, Context, Result};
 use e3_crypto::Cipher;
 use e3_events::{DkgShareDecryptionProofRequest, E3id, ThresholdShare};
-use e3_fhe_params::{BfvParamSet, BfvPreset};
+use e3_fhe_params::{build_pair_for_preset, BfvParamSet, BfvPreset};
 use e3_trbfv::{
     calculate_decryption_key::CalculateDecryptionKeyRequest,
     helpers::deserialize_secret_key,
     shares::{EncryptableVec, ShamirShare},
     TrBFVConfig,
 };
-use e3_utils::utility_types::ArcBytes;
 use e3_zk_helpers::computation::DkgInputType;
 use e3_zk_helpers::CiphernodesCommitteeSize;
 use std::collections::{BTreeSet, HashSet};
@@ -44,6 +43,7 @@ pub(crate) enum DecryptionKeyPlan {
         sk_request: DkgShareDecryptionProofRequest,
         esm_requests: Vec<DkgShareDecryptionProofRequest>,
         honest_party_ids: BTreeSet<u64>,
+        incoming_prf_keys: Vec<e3_crypto::SensitiveBytes>,
     },
 }
 
@@ -77,23 +77,8 @@ pub(crate) fn build_decryption_key_plan(
     let own_sk_rows: Vec<Vec<u64>> =
         bincode::deserialize(&current.own_sk_share_raw.access_raw(cipher)?)
             .context("Failed to deserialize own_sk_share_raw")?;
-    let own_esi_rows_per_esi: Vec<Vec<Vec<u64>>> = current
-        .own_esi_shares_raw
-        .iter()
-        .map(|sb| {
-            let bytes = sb.access_raw(cipher)?;
-            bincode::deserialize::<Vec<Vec<u64>>>(&bytes)
-                .context("Failed to deserialize own esi share")
-        })
-        .collect::<Result<_>>()?;
 
-    // Expected dimensions derived from own (trusted) shares.
-    let expected_num_esi = own_esi_rows_per_esi.len();
     let expected_num_moduli_sk = own_sk_rows.len();
-    let expected_num_moduli_esi = own_esi_rows_per_esi
-        .first()
-        .map(|rows| rows.len())
-        .unwrap_or(0);
 
     // Filter to honest external parties (collector already excludes self).
     let honest_shares: Vec<_> = shares
@@ -110,14 +95,6 @@ pub(crate) fn build_decryption_key_plan(
     let mut honest_shares: Vec<_> = honest_shares
         .into_iter()
         .filter(|ts| {
-            if ts.esi_sss.len() != expected_num_esi {
-                warn!(
-                    "Party {} has wrong esi_sss count ({} vs expected {}) — excluding from honest set",
-                    ts.party_id, ts.esi_sss.len(), expected_num_esi
-                );
-                dimension_excluded.push(ts.party_id);
-                return false;
-            }
             let idx = if ts.sk_sss.len() == 1 { 0 } else { party_id };
             match ts.sk_sss.clone_share(idx) {
                 Some(share) if share.num_moduli() != expected_num_moduli_sk => {
@@ -137,28 +114,6 @@ pub(crate) fn build_decryption_key_plan(
                     return false;
                 }
                 _ => {}
-            }
-            for (esi_idx, esi_shares) in ts.esi_sss.iter().enumerate() {
-                let idx = if esi_shares.len() == 1 { 0 } else { party_id };
-                match esi_shares.clone_share(idx) {
-                    Some(share) if share.num_moduli() != expected_num_moduli_esi => {
-                        warn!(
-                            "Party {} has wrong esi num_moduli at index {} ({} vs expected {}) — excluding from honest set",
-                            ts.party_id, esi_idx, share.num_moduli(), expected_num_moduli_esi
-                        );
-                        dimension_excluded.push(ts.party_id);
-                        return false;
-                    }
-                    None => {
-                        warn!(
-                            "Party {} has no esi_sss share at index {} (esi {}) — excluding from honest set",
-                            ts.party_id, idx, esi_idx
-                        );
-                        dimension_excluded.push(ts.party_id);
-                        return false;
-                    }
-                    _ => {}
-                }
             }
             true
         })
@@ -230,23 +185,19 @@ pub(crate) fn build_decryption_key_plan(
         }
     }
 
-    // C4b: esi_sss external ciphertexts — one set per smudging noise
-    let num_esi = expected_num_esi;
-    let num_moduli_esi = expected_num_moduli_esi;
-    let mut esi_ciphertexts_raw: Vec<Vec<ArcBytes>> = vec![Vec::new(); num_esi];
-    for ts in external_for_c4 {
-        for (esi_idx, esi_shares) in ts.esi_sss.iter().enumerate() {
-            let idx = if esi_shares.len() == 1 { 0 } else { party_id };
-            let share = esi_shares
-                .clone_share(idx)
-                .ok_or(anyhow!("No esi_sss share at index {}", idx))?;
-            for ct_bytes in share.ciphertext_bytes() {
-                esi_ciphertexts_raw[esi_idx].push(ct_bytes.clone());
-            }
-        }
-    }
-
     // Decrypt our share row from each external honest sender using BFV.
+    let threshold_preset = share_enc_preset
+        .threshold_counterpart()
+        .ok_or_else(|| anyhow!("No threshold counterpart for {:?}", share_enc_preset))?;
+    let (threshold_params, _) = build_pair_for_preset(threshold_preset)?;
+    let key_modulus = e3_fhe_params::prf_key_modulus(threshold_preset);
+    let key_limb = threshold_params
+        .moduli()
+        .iter()
+        .position(|modulus| *modulus == key_modulus)
+        .ok_or_else(|| anyhow!("PRF key modulus is not a threshold modulus"))?;
+    let mut incoming_keys = vec![e3_fhe_params::zero_prf_key(threshold_preset); committee.n];
+    let mut slot_keys = Vec::with_capacity(num_honest);
     let mut sk_sss_collected: Vec<ShamirShare> = external_for_c4
         .iter()
         .map(|ts| {
@@ -255,64 +206,48 @@ pub(crate) fn build_decryption_key_plan(
                 .sk_sss
                 .clone_share(idx)
                 .ok_or(anyhow!("No sk_sss share at index {}", idx))?;
-            encrypted.decrypt(&sk_bfv, &params, degree)
+            let mut share = encrypted.decrypt(&sk_bfv, &params, degree)?;
+            let packed: Vec<u64> = share.row(key_limb).iter().copied().collect();
+            let (residues, key) =
+                e3_fhe_params::unpack_prf_key(threshold_preset, &packed, key_modulus)
+                    .map_err(|error| anyhow!(error))?;
+            share.replace_row(key_limb, &residues)?;
+            let sender = usize::try_from(ts.party_id)?;
+            if sender < incoming_keys.len() {
+                incoming_keys[sender] = key.clone();
+            }
+            slot_keys.push(key);
+            Ok(share)
         })
         .collect::<Result<_>>()?;
 
     if let Some(idx) = own_plaintext_idx {
         let own_sk_shamir = vec_of_rows_to_shamir_share(&own_sk_rows, degree)?;
         sk_sss_collected.insert(idx, own_sk_shamir);
+        let own_key = current
+            .outgoing_prf_keys
+            .get(party_id)
+            .map(|key| key.access_raw(cipher).unwrap_or_default())
+            .unwrap_or_else(|| e3_fhe_params::zero_prf_key(threshold_preset));
+        if party_id < incoming_keys.len() {
+            incoming_keys[party_id] = own_key.clone();
+        }
+        slot_keys.insert(idx, own_key);
     }
 
-    // Decrypt per-party ESI shares: shape [external_party][esm_idx]
-    let mut per_party_esi: Vec<Vec<ShamirShare>> = external_for_c4
-        .iter()
-        .map(|ts| {
-            ts.esi_sss
-                .iter()
-                .map(|esi_shares| {
-                    let idx = if esi_shares.len() == 1 { 0 } else { party_id };
-                    let encrypted = esi_shares
-                        .clone_share(idx)
-                        .ok_or(anyhow!("No esi_sss share at index {}", idx))?;
-                    encrypted.decrypt(&sk_bfv, &params, degree)
-                })
-                .collect::<Result<Vec<_>>>()
-        })
-        .collect::<Result<_>>()?;
-
-    if let Some(idx) = own_plaintext_idx {
-        let own_esi_shamirs: Vec<ShamirShare> = own_esi_rows_per_esi
-            .iter()
-            .map(|rows| vec_of_rows_to_shamir_share(rows, degree))
-            .collect::<Result<_>>()?;
-        per_party_esi.insert(idx, own_esi_shamirs);
-    }
-
-    // Transpose to [esm_idx][party] — CalculateDecryptionKey aggregates per smudging noise
-    let esi_sss_collected: Vec<Vec<ShamirShare>> = (0..num_esi)
-        .map(|esm_idx| {
-            per_party_esi
-                .iter()
-                .map(|party_esi| party_esi[esm_idx].clone())
-                .collect()
-        })
-        .collect();
-
-    // Build CalculateDecryptionKey request
     let calc_request = CalculateDecryptionKeyRequest {
         trbfv_config,
-        esi_sss_collected: esi_sss_collected
-            .into_iter()
-            .map(|s| s.encrypt(cipher))
-            .collect::<Result<_>>()?,
         sk_sss_collected: sk_sss_collected.encrypt(cipher)?,
     };
 
-    // Build C4 proof requests — stored for sending after CalculateDecryptionKey completes
-    let threshold_preset = share_enc_preset
-        .threshold_counterpart()
-        .ok_or_else(|| anyhow!("No threshold counterpart for {:?}", share_enc_preset))?;
+    let slot_key_bytes = slot_keys
+        .iter()
+        .map(|key| e3_crypto::SensitiveBytes::new(key.clone(), cipher))
+        .collect::<Result<Vec<_>>>()?;
+    let incoming_prf_keys = incoming_keys
+        .iter()
+        .map(|key| e3_crypto::SensitiveBytes::new(key.clone(), cipher))
+        .collect::<Result<Vec<_>>>()?;
 
     let sk_request = DkgShareDecryptionProofRequest {
         sk_bfv: current.sk_bfv.clone(),
@@ -325,29 +260,16 @@ pub(crate) fn build_decryption_key_plan(
         dkg_input_type: DkgInputType::SecretKey,
         params_preset: threshold_preset,
         committee_size,
+        prf_keys: slot_key_bytes,
     };
 
-    let esm_requests: Vec<DkgShareDecryptionProofRequest> = esi_ciphertexts_raw
-        .into_iter()
-        .enumerate()
-        .map(|(esi_idx, esi_cts)| DkgShareDecryptionProofRequest {
-            sk_bfv: current.sk_bfv.clone(),
-            honest_ciphertexts_raw: esi_cts,
-            num_honest_parties: num_honest,
-            num_moduli: num_moduli_esi,
-            own_plaintext_idx,
-            recipient_party_id: party_id as u64,
-            own_share_raw: own_plaintext_idx.map(|_| current.own_esi_shares_raw[esi_idx].clone()),
-            dkg_input_type: DkgInputType::SmudgingNoise,
-            params_preset: threshold_preset,
-            committee_size,
-        })
-        .collect();
+    let esm_requests = Vec::new();
 
     Ok(DecryptionKeyPlan::Proceed {
         calc_request,
         sk_request,
         esm_requests,
         honest_party_ids,
+        incoming_prf_keys,
     })
 }

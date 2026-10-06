@@ -13,6 +13,7 @@ pub mod crp;
 pub mod encoding;
 pub mod lbfv;
 pub mod presets;
+pub mod prf_key;
 pub mod search;
 pub mod smudging;
 
@@ -31,4 +32,11 @@ pub use presets::{
     default_param_set, BfvParamSet, BfvPreset, LambdaConfig, ParameterType, PresetError,
     PresetMetadata, PresetSearchDefaults, SecurityTier, DEFAULT_BFV_PRESET,
 };
-pub use smudging::{calculate_smudging_bound, generate_smudging_error};
+pub use prf_key::{
+    pack_prf_key, pack_share_coefficient, prf_key_bit_len, prf_key_bits, prf_key_modulus,
+    unpack_prf_key, zero_prf_key,
+    unpack_share_coefficient, PrfKeyPackError,
+};
+pub use smudging::{
+    calculate_smudging_bound, generate_smudging_error, sample_fresh_smudging_error,
+};

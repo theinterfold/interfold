@@ -433,13 +433,9 @@ pub struct NodeDkgFoldRequest {
     pub c0_proof: Proof,
     pub c1_proof: Proof,
     pub c2a_proof: Proof,
-    pub c2b_proof: Proof,
     pub c3a_inner_proofs: Vec<Proof>,
-    pub c3b_inner_proofs: Vec<Proof>,
     pub c4a_proof: Proof,
-    pub c4b_proof: Proof,
     pub c3_slot_indices_a: Vec<u32>,
-    pub c3_slot_indices_b: Vec<u32>,
     pub c3_total_slots: usize,
     pub party_id: u64,
     pub params_preset: BfvPreset,
@@ -579,6 +575,8 @@ pub struct ShareComputationProofRequest {
     pub params_preset: BfvPreset,
     /// The size of the committee.
     pub committee_size: CiphernodesCommitteeSize,
+    /// Outgoing PRF keys, one per recipient. Empty selects the zero key.
+    pub prf_keys: Vec<SensitiveBytes>,
 }
 
 /// Request to generate a proof for share encryption (C3a or C3b).
@@ -611,6 +609,8 @@ pub struct ShareEncryptionProofRequest {
     pub row_index: usize,
     /// ESI index (for C3b only; 0 for C3a). Disambiguates proofs across multiple ESI entries.
     pub esi_index: usize,
+    /// Outgoing PRF key packed into this ciphertext. Empty bytes select the zero key.
+    pub prf_key: SensitiveBytes,
 }
 
 impl ShareEncryptionProofRequest {
@@ -683,6 +683,8 @@ pub struct DkgShareDecryptionProofRequest {
     pub params_preset: BfvPreset,
     /// Committee size for circuit artifact resolution.
     pub committee_size: CiphernodesCommitteeSize,
+    /// One PRF key per honest slot. Empty selects the zero key.
+    pub prf_keys: Vec<SensitiveBytes>,
 }
 
 /// Request to generate a proof for BFV public key generation (C0).
@@ -707,8 +709,6 @@ pub struct PkGenerationProofRequest {
     pub sk: SensitiveBytes,
     /// Raw error polynomial bytes (witness — encrypted at rest).
     pub eek: SensitiveBytes,
-    /// Raw smudging noise polynomial bytes (witness — encrypted at rest).
-    pub e_sm: SensitiveBytes,
     /// BFV preset for parameter resolution.
     pub params_preset: BfvPreset,
     /// The size of the committee
@@ -734,7 +734,6 @@ impl PkGenerationProofRequest {
         pk0_share: impl Into<ArcBytes>,
         sk: SensitiveBytes,
         eek: SensitiveBytes,
-        e_sm: SensitiveBytes,
         params_preset: BfvPreset,
         committee_size: CiphernodesCommitteeSize,
     ) -> Self {
@@ -743,7 +742,6 @@ impl PkGenerationProofRequest {
             sk,
             eek,
             params_preset,
-            e_sm,
             committee_size,
         }
     }
@@ -927,6 +925,14 @@ pub struct ThresholdShareDecryptionProofRequest {
     pub params_preset: BfvPreset,
     /// Committee size for per-committee circuit artifact resolution.
     pub committee_size: CiphernodesCommitteeSize,
+    /// Zero-based index of the party that produces this decryption share.
+    pub party_idx: u32,
+    /// Strictly increasing 1-based decryptor ids. Empty selects `1..=H`.
+    pub decryptors: Vec<u32>,
+    /// Outgoing PRF keys indexed by recipient. Empty selects the zero key.
+    pub outgoing_prf_keys: Vec<SensitiveBytes>,
+    /// Incoming PRF keys indexed by sender. Empty selects the zero key.
+    pub incoming_prf_keys: Vec<SensitiveBytes>,
 }
 
 /// Response containing generated proofs for threshold share decryption (C6).
@@ -1088,6 +1094,8 @@ pub struct DecryptedSharesAggregationProofRequest {
     pub d_share_polys: Vec<(u64, Vec<ArcBytes>)>,
     /// Decoded plaintext per ciphertext index.
     pub plaintext: Vec<ArcBytes>,
+    /// Serialized ciphertexts. C7 reads component `c0` from each one.
+    pub ciphertext_output: Vec<ArcBytes>,
     /// BFV preset (parameters for witness / circuit config).
     pub params_preset: BfvPreset,
     /// Threshold required for decryption.

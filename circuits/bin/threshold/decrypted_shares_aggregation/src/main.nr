@@ -19,6 +19,8 @@ fn main(
     decryption_shares: [[Polynomial<MAX_MSG_NON_ZERO_COEFFS>; L]; T + 1],
     u_global: Polynomial<MAX_MSG_NON_ZERO_COEFFS>,
     crt_quotients: [Polynomial<MAX_MSG_NON_ZERO_COEFFS>; L],
+    ct0: [Polynomial<MAX_MSG_NON_ZERO_COEFFS>; L],
+    c0_commitment: pub Field,
 ) {
     let decrypted_shares_aggregation: DecryptedSharesAggregation<MAX_MSG_NON_ZERO_COEFFS, L, T, DECRYPTED_SHARES_AGGREGATION_BIT_NOISE, DECRYPTED_SHARES_AGGREGATION_BIT_D_NATIVE> = DecryptedSharesAggregation::new(
         DECRYPTED_SHARES_AGGREGATION_CONFIGS,
@@ -28,6 +30,8 @@ fn main(
         message,
         u_global,
         crt_quotients,
+        ct0,
+        c0_commitment,
     );
 
     decrypted_shares_aggregation.execute();

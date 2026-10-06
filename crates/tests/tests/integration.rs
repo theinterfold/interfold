@@ -605,8 +605,6 @@ async fn setup_test_zk_backend(
             let dkg_pk_target = circuit_target("dkg", "pk");
             let dkg_sk_share_computation_chunk_target =
                 circuit_target("dkg", "sk_share_computation_chunk");
-            let dkg_esm_share_computation_chunk_target =
-                circuit_target("dkg", "esm_share_computation_chunk");
             let dkg_share_encryption_target = circuit_target("dkg", "share_encryption");
             let dkg_share_decryption_target = circuit_target("dkg", "share_decryption");
             let threshold_pk_generation_target = circuit_target("threshold", "pk_generation");
@@ -647,10 +645,6 @@ async fn setup_test_zk_backend(
             let sk_c2_chunk_finalize_target = circuits_build_root
                 .join("recursive_aggregation")
                 .join("sk_c2_chunk_finalize")
-                .join("target");
-            let esm_c2_chunk_finalize_target = circuits_build_root
-                .join("recursive_aggregation")
-                .join("esm_c2_chunk_finalize")
                 .join("target");
             let c2ab_chunk_fold_target = circuits_build_root
                 .join("recursive_aggregation")
@@ -792,15 +786,6 @@ async fn setup_test_zk_backend(
                 ".vk_noir_hash",
             )
             .await?;
-            // C2b chunk (esm_share_computation_chunk)
-            copy_circuit(
-                &dkg_esm_share_computation_chunk_target,
-                &rv.join("dkg/esm_share_computation_chunk"),
-                "esm_share_computation_chunk",
-                ".vk_noir",
-                ".vk_noir_hash",
-            )
-            .await?;
             // C3 (share_encryption)
             copy_circuit(
                 &dkg_share_encryption_target,
@@ -929,14 +914,6 @@ async fn setup_test_zk_backend(
                 &sk_c2_chunk_finalize_target,
                 &dv.join("recursive_aggregation/sk_c2_chunk_finalize"),
                 "sk_c2_chunk_finalize",
-                ".vk_recursive",
-                ".vk_recursive_hash",
-            )
-            .await?;
-            copy_circuit(
-                &esm_c2_chunk_finalize_target,
-                &dv.join("recursive_aggregation/esm_c2_chunk_finalize"),
-                "esm_c2_chunk_finalize",
                 ".vk_recursive",
                 ".vk_recursive_hash",
             )

@@ -13,7 +13,6 @@ use e3_trbfv::{
     calculate_decryption_key::{
         calculate_decryption_key, CalculateDecryptionKeyRequest, CalculateDecryptionKeyResponse,
     },
-    gen_esi_sss::{gen_esi_sss, GenEsiSssRequest, GenEsiSssResponse},
     gen_pk_share_and_sk_sss::{
         gen_pk_share_and_sk_sss, GenPkShareAndSkSssRequest, GenPkShareAndSkSssResponse,
     },
@@ -65,7 +64,6 @@ pub fn generate_shares_hash_map(
         let GenPkShareAndSkSssResponse {
             sk_sss,
             pk_share,
-            e_sm_raw,
             ..
         } = {
             let mut rng_guard = rng.lock().unwrap();
@@ -82,24 +80,7 @@ pub fn generate_shares_hash_map(
             )
         }?;
 
-        let GenEsiSssResponse { esi_sss } = {
-            let mut rng_guard = rng.lock().unwrap();
-            gen_esi_sss(
-                &mut *rng_guard,
-                cipher,
-                GenEsiSssRequest {
-                    trbfv_config: trbfv_config.clone(),
-                    e_sm_raw: e_sm_raw.clone(),
-                },
-            )?
-        };
-
-        // Decrypt locally stored secrets
         let decrypted_sk_sss: SharedSecret = sk_sss.decrypt(cipher)?;
-        let decrypted_esi_sss: Vec<SharedSecret> = esi_sss
-            .into_iter()
-            .map(|s| s.decrypt(cipher))
-            .collect::<Result<_>>()?;
 
         // Encrypt shares for all recipients using BFV
         let encrypted_sk_sss = BfvEncryptedShares::encrypt_all(
@@ -109,18 +90,10 @@ pub fn generate_shares_hash_map(
             &mut bfv_rng,
         )?;
 
-        let encrypted_esi_sss: Vec<BfvEncryptedShares> = decrypted_esi_sss
-            .iter()
-            .map(|esi| {
-                BfvEncryptedShares::encrypt_all(esi, &bfv_public_keys, &bfv_params, &mut bfv_rng)
-            })
-            .collect::<Result<_>>()?;
-
         shares_hash_map.insert(
             party_id,
             ThresholdShare {
                 party_id,
-                esi_sss: encrypted_esi_sss,
                 sk_sss: encrypted_sk_sss,
                 pk_share,
             },
@@ -176,33 +149,6 @@ pub fn get_decryption_keys(
             })
             .collect::<Result<_>>()?;
 
-        // Similarly decrypt esi_sss — shape [sender][esi_idx]
-        let per_sender_esi: Vec<Vec<ShamirShare>> = shares
-            .iter()
-            .map(|ts| {
-                ts.esi_sss
-                    .iter()
-                    .map(|esi_shares| {
-                        let encrypted = esi_shares.clone_share(party_id).ok_or_else(|| {
-                            anyhow::anyhow!("No esi_sss share for party {}", party_id)
-                        })?;
-                        encrypted.decrypt(sk_bfv, bfv_params, degree)
-                    })
-                    .collect::<Result<Vec<_>>>()
-            })
-            .collect::<Result<_>>()?;
-
-        // Transpose to [esi_idx][sender] — CalculateDecryptionKey aggregates per smudging noise
-        let num_esi = per_sender_esi.first().map_or(0, |v| v.len());
-        let esi_sss_collected: Vec<Vec<ShamirShare>> = (0..num_esi)
-            .map(|esi_idx| {
-                per_sender_esi
-                    .iter()
-                    .map(|sender_esi| sender_esi[esi_idx].clone())
-                    .collect()
-            })
-            .collect();
-
         let CalculateDecryptionKeyResponse {
             es_poly_sum,
             sk_poly_sum,
@@ -210,10 +156,6 @@ pub fn get_decryption_keys(
             cipher,
             CalculateDecryptionKeyRequest {
                 trbfv_config: trbfv_config.clone(),
-                esi_sss_collected: esi_sss_collected
-                    .into_iter()
-                    .map(|s| s.encrypt(cipher))
-                    .collect::<Result<_>>()?,
                 sk_sss_collected: sk_sss_collected.encrypt(cipher)?,
             },
         )?;

@@ -18,9 +18,8 @@ impl ThresholdKeyshare {
         if recovery.share_verification_complete.is_none() {
             return Ok(());
         }
-        let (Some(own_c2a), Some(own_c2b), Some(verified)) = (
+        let (Some(own_c2a), Some(verified)) = (
             current.signed_sk_share_computation_proof.as_ref(),
-            current.signed_e_sm_share_computation_proof.as_ref(),
             recovery.verified_dealer_ids.as_ref(),
         ) else {
             return Ok(());
@@ -45,7 +44,6 @@ impl ThresholdKeyshare {
             state.party_id,
             &current.pk_share,
             own_c2a,
-            own_c2b,
         )?];
         for party_id in verified
             .iter()
@@ -54,18 +52,14 @@ impl ThresholdKeyshare {
             let Some(event) = self.recovery_payloads.share(*party_id) else {
                 return Err(anyhow!("verified DKG share is missing from recovery state"));
             };
-            let (Some(c2a), Some(c2b)) = (
-                event.signed_c2a_proof.as_ref(),
-                event.signed_c2b_proof.as_ref(),
-            ) else {
-                return Err(anyhow!("verified DKG share has no C2 proof pair"));
+            let Some(c2a) = event.signed_c2a_proof.as_ref() else {
+                return Err(anyhow!("verified DKG share has no C2 proof"));
             };
             dealers.push(dealer_identity(
                 &state.e3_id,
                 *party_id,
                 &event.share.pk_share,
                 c2a,
-                c2b,
             )?);
         }
         dealers.sort_unstable_by_key(|dealer| dealer.party_id);

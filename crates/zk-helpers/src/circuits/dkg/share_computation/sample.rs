@@ -133,6 +133,7 @@ impl ShareComputationCircuitData {
             secret,
             secret_sss,
             parity_matrix,
+            prf_keys: Vec::new(),
         })
     }
 }

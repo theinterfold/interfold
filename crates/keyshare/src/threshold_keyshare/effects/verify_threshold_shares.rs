@@ -54,13 +54,6 @@ impl ThresholdKeyshare {
             bincode::deserialize(&current.own_sk_share_raw.access_raw(&self.cipher)?)
                 .context("Failed to deserialize own_sk_share_raw")?;
         let expected_c3a = own_sk_rows.len();
-        let expected_num_esi = current.own_esi_shares_raw.len();
-        let mut expected_c3b: usize = 0;
-        for esi_raw in current.own_esi_shares_raw.iter() {
-            let rows: Vec<Vec<u64>> = bincode::deserialize(&esi_raw.access_raw(&self.cipher)?)
-                .context("Failed to deserialize own esi share")?;
-            expected_c3b += rows.len();
-        }
 
         // Build verification requests for other parties' proofs
         let mut party_proofs_to_verify: Vec<PartyProofsToVerify> = Vec::new();
@@ -73,7 +66,6 @@ impl ThresholdKeyshare {
             }
 
             let has_any_proof = proofs.signed_c2a_proof.is_some()
-                || proofs.signed_c2b_proof.is_some()
                 || !proofs.signed_c3a_proofs.is_empty()
                 || !proofs.signed_c3b_proofs.is_empty();
 
@@ -86,20 +78,15 @@ impl ThresholdKeyshare {
             // A malicious sender could omit proofs that would fail verification,
             // so we must check that all expected proofs are present.
             let is_complete = proofs.signed_c2a_proof.is_some()
-                && proofs.signed_c2b_proof.is_some()
-                && proofs.signed_c3a_proofs.len() == expected_c3a
-                && proofs.signed_c3b_proofs.len() == expected_c3b
-                && share.esi_sss.len() == expected_num_esi;
+                && proofs.signed_c3a_proofs.len() == expected_c3a;
 
             if !is_complete {
                 warn!(
-                    "Party {} has incomplete proof set (c2a={}, c2b={}, c3a={}/{}, c3b={}/{}, esi={}/{}), treating as dishonest",
+                    "Party {} has incomplete proof set (c2a={}, c3a={}/{}), treating as dishonest",
                     share.party_id,
                     proofs.signed_c2a_proof.is_some(),
-                    proofs.signed_c2b_proof.is_some(),
-                    proofs.signed_c3a_proofs.len(), expected_c3a,
-                    proofs.signed_c3b_proofs.len(), expected_c3b,
-                    share.esi_sss.len(), expected_num_esi,
+                    proofs.signed_c3a_proofs.len(),
+                    expected_c3a,
                 );
                 incomplete_proof_parties.insert(share.party_id);
                 continue;
@@ -125,7 +112,6 @@ impl ThresholdKeyshare {
             let mut signed_proofs = Vec::new();
             // SAFETY: is_complete guarantees c2a and c2b are Some
             signed_proofs.push(proofs.signed_c2a_proof.clone().unwrap());
-            signed_proofs.push(proofs.signed_c2b_proof.clone().unwrap());
             signed_proofs.extend(proofs.signed_c3a_proofs.iter().cloned());
             signed_proofs.extend(proofs.signed_c3b_proofs.iter().cloned());
 

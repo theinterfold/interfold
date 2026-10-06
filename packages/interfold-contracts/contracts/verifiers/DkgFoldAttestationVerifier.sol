@@ -199,15 +199,17 @@ contract DkgFoldAttestationVerifier is IDkgFoldAttestationVerifier {
         if (v2H > 0 && _isV2Statement(registry, e3Id, publicInputs, v2H)) {
             return v2H;
         }
-        require(
-            publicInputs.length >= 27 && (publicInputs.length - 24) % 3 == 0,
-            ICiphernodeRegistry.InvalidFoldAttestation()
-        );
-        h = (publicInputs.length - 24) / 3;
-        // Defense in depth: the BFV pk-verifier already rejects `h == 0`, but
-        // a zero-honest-party proof would otherwise pass this verifier with no
-        // attestations to check and write empty anchors to the registry.
+        (h, ) = _v1CommitteeParams(publicInputs.length);
         require(h > 0, ICiphernodeRegistry.InvalidFoldAttestation());
+    }
+
+    function _v1CommitteeParams(
+        uint256 publicInputLength
+    ) private pure returns (uint256 v1H, uint256 v1N) {
+        if (publicInputLength == 33) return (2, 3);
+        if (publicInputLength == 78) return (5, 9);
+        if (publicInputLength == 317) return (14, 19);
+        return (0, 0);
     }
 
     function _isV2Statement(
@@ -321,8 +323,7 @@ contract DkgFoldAttestationVerifier is IDkgFoldAttestationVerifier {
         );
 
         uint256 partyIdOffset = 2;
-        uint256 skOffset = 23 + data.h;
-        uint256 esmOffset = 23 + (2 * data.h);
+        uint256 skOffset = 22 + data.h;
 
         slot = _partySlot(
             data.publicInputs,
@@ -332,8 +333,7 @@ contract DkgFoldAttestationVerifier is IDkgFoldAttestationVerifier {
         );
 
         require(
-            data.publicInputs[skOffset + slot] == att.skAggCommit &&
-                data.publicInputs[esmOffset + slot] == att.esmAggCommit,
+            data.publicInputs[skOffset + slot] == att.skAggCommit,
             ICiphernodeRegistry.InvalidFoldAttestation()
         );
 

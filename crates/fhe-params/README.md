@@ -249,7 +249,7 @@ This will output the same parameter set as the preset, including:
 The CLI displays:
 
 - **First BFV Parameter Set**: The main threshold encryption parameters with all noise budgets
-- **Second BFV Parameter Set**: Additional parameters for simpler conditions (if found)
+- **Second BFV Parameter Set**: Share-encryption parameters. The plaintext modulus is twice the largest first-set modulus. Each ciphertext prime is larger than twice that plaintext modulus.
 - Distribution types (CBD/Uniform) and variance values for error bounds
 - Complete parameter details including moduli, noise budgets, and validation metrics
 

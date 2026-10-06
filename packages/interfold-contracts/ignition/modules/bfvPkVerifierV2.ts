@@ -7,7 +7,8 @@ import { buildModule } from "@nomicfoundation/hardhat-ignition/modules";
 
 import {
   getBfvPkSubCircuitVkHashPaths,
-  getBfvPkVkBindingHashPaths,
+  readBfvPkVkBindingHashes,
+  ZERO_VK_HASH,
   getBfvV2SubCircuitVkHashPaths,
   getBfvV2VkBindingHashPaths,
   ACTIVE_BFV_PARAM_SET,
@@ -33,10 +34,8 @@ export default buildModule("BfvPkVerifierV2", (m) => {
     readVkRecursiveHash(getBfvV2SubCircuitVkHashPaths().nodesFold),
     readVkRecursiveHash(pkPaths.c5),
     readVkRecursiveHash(pkPaths.skC2Chunk),
-    readVkRecursiveHash(pkPaths.esmC2Chunk),
-    getBfvPkVkBindingHashPaths().map((filePath) =>
-      readVkRecursiveHash(filePath),
-    ),
+    ZERO_VK_HASH,
+    readBfvPkVkBindingHashes(),
     getBfvV2VkBindingHashPaths().map((filePath) =>
       readVkRecursiveHash(filePath),
     ),

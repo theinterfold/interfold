@@ -12,7 +12,7 @@ use anyhow::Result;
 /// This module defines event payloads that will generate the decryption key material to create a decryption share
 use anyhow::*;
 use e3_crypto::{Cipher, SensitiveBytes};
-use fhe::trbfv::{SecretKeyShare, ShareManager, SmudgingShare};
+use fhe::trbfv::{SecretKeyShare, ShareManager};
 use fhe_math::rq::{Poly, PowerBasis};
 use fhe_math::zq::Modulus;
 use fhe_traits::Serialize;
@@ -26,14 +26,11 @@ pub struct CalculateDecryptionKeyRequest {
     pub trbfv_config: TrBFVConfig,
     /// All collected secret key shamir shares where SensitiveBytes is Vec<Array2<u64>>
     pub sk_sss_collected: Vec<Encrypted<ShamirShare>>,
-    /// All collected smudging noise shamir shares where SensitiveBytes is Vec<Array2<u64>>
-    pub esi_sss_collected: Vec<Vec<Encrypted<ShamirShare>>>,
 }
 
 struct InnerRequest {
     pub trbfv_config: TrBFVConfig,
     pub sk_sss_collected: Vec<ShamirShare>,
-    pub esi_sss_collected: Vec<Vec<ShamirShare>>,
 }
 
 impl TryFrom<(&Cipher, CalculateDecryptionKeyRequest)> for InnerRequest {
@@ -47,15 +44,9 @@ impl TryFrom<(&Cipher, CalculateDecryptionKeyRequest)> for InnerRequest {
 
         // convert to collected
         let sk_sss_collected = req.sk_sss_collected.decrypt(cipher)?;
-        let esi_sss_collected = req
-            .esi_sss_collected
-            .into_iter()
-            .map(|item| item.decrypt(cipher))
-            .collect::<Result<_>>()?;
 
         Ok(InnerRequest {
             sk_sss_collected,
-            esi_sss_collected,
             trbfv_config: req.trbfv_config,
         })
     }
@@ -121,16 +112,7 @@ pub fn calculate_decryption_key(
     info!("Calculating sk_poly_sum...");
     let sk_poly_sum = aggregate_secret_key_to_poly(&share_manager, &req.sk_sss_collected)?;
 
-    info!("Calculating es_poly_sum...");
-    let es_poly_sum = req
-        .esi_sss_collected
-        .into_iter()
-        .map(|shares| -> Result<_> {
-            let share_manager = ShareManager::new(num_ciphernodes, threshold, params.clone())?;
-            aggregate_smudging_to_poly(&share_manager, &shares)
-                .context("Failed to aggregate es_sss")
-        })
-        .collect::<Result<Vec<_>>>()?;
+    let es_poly_sum = Vec::new();
 
     info!("Returning successful result! Encrypting for transit...");
 
@@ -156,23 +138,6 @@ fn aggregate_secret_key_to_poly(
             .iter()
             .cloned()
             .map(SecretKeyShare::from_transport)
-            .collect(),
-    )?;
-    sum_validated_transport(manager, &transport)
-}
-
-/// Validate smudging shares with fhe.rs, then materialize the legacy polynomial transport used by
-/// the circuit and decryption-share messages.
-fn aggregate_smudging_to_poly(
-    manager: &ShareManager,
-    shares: &[ShamirShare],
-) -> Result<Poly<PowerBasis>> {
-    let transport = shares.to_array_data();
-    manager.aggregate_smudging_shares(
-        transport
-            .iter()
-            .cloned()
-            .map(SmudgingShare::from_transport)
             .collect(),
     )?;
     sum_validated_transport(manager, &transport)

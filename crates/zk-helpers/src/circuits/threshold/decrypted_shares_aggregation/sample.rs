@@ -310,6 +310,7 @@ impl DecryptedSharesAggregationCircuitData {
             d_share_polys,
             reconstructing_parties,
             message_vec,
+            ct0: ciphertext[0].clone().into_power_basis(),
         })
     }
 }

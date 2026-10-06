@@ -21,8 +21,6 @@ use tracing::info;
 pub struct ReceivedShareProofs {
     /// Signed C2a proof (sk share computation) from the sender.
     pub signed_c2a_proof: Option<SignedProofPayload>,
-    /// Signed C2b proof (e_sm share computation) from the sender.
-    pub signed_c2b_proof: Option<SignedProofPayload>,
     /// Signed C3a proofs (sk share encryption per modulus row).
     pub signed_c3a_proofs: Vec<SignedProofPayload>,
     /// Signed C3b proofs (e_sm share encryption per modulus row).
@@ -198,7 +196,6 @@ mod tests {
     fn proofs() -> ReceivedShareProofs {
         ReceivedShareProofs {
             signed_c2a_proof: None,
-            signed_c2b_proof: None,
             signed_c3a_proofs: Vec::new(),
             signed_c3b_proofs: Vec::new(),
         }
@@ -209,7 +206,6 @@ mod tests {
             party_id,
             pk_share: e3_utils::utility_types::ArcBytes::from_bytes(&[]),
             sk_sss: Default::default(),
-            esi_sss: Vec::new(),
         })
     }
 

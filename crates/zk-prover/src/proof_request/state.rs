@@ -40,7 +40,7 @@ pub(crate) struct NodeAggregationMeta {
 impl NodeAggregationMeta {
     /// Base `seq` for the first C4 proof: just after all C0..C3 proofs.
     pub(crate) fn c4_base_seq(&self) -> usize {
-        self.total_expected.saturating_sub(2)
+        self.total_expected.saturating_sub(1)
     }
 }
 
@@ -95,9 +95,7 @@ impl PendingThresholdProofs {
     pub(crate) fn is_complete(&self) -> bool {
         self.pk_generation_proof.is_some()
             && self.sk_share_computation_proof.is_some()
-            && self.e_sm_share_computation_proof.is_some()
             && self.sk_share_encryption_proofs.len() == self.expected_sk_enc_count
-            && self.e_sm_share_encryption_proofs.len() == self.expected_e_sm_enc_count
     }
 
     pub(crate) fn store_proof(&mut self, kind: &ThresholdProofKind, proof: Proof) {
@@ -126,7 +124,7 @@ impl PendingThresholdProofs {
     }
 
     pub(crate) fn total_expected(&self) -> usize {
-        3 + self.expected_sk_enc_count + self.expected_e_sm_enc_count
+        2 + self.expected_sk_enc_count
     }
 
     pub(crate) fn total_received(&self) -> usize {
@@ -156,8 +154,6 @@ pub(crate) struct PendingDecryptionProofs {
 impl PendingDecryptionProofs {
     pub(crate) fn is_complete(&self) -> bool {
         self.sk_proof.is_some()
-            && self.esm_proofs.len() == self.expected_esm_count
-            && (0..self.expected_esm_count).all(|i| self.esm_proofs.contains_key(&i))
     }
 }
 

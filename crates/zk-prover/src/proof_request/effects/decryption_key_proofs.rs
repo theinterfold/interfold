@@ -140,24 +140,7 @@ impl ProofRequestActor {
             return false;
         };
 
-        // Sign C4b (ESM decryption proofs) in esi_idx order
-        let mut signed_esms = Vec::with_capacity(pending.expected_esm_count);
-        for idx in 0..pending.expected_esm_count {
-            let proof = pending
-                .esm_proofs
-                .get(&idx)
-                .expect("checked in is_complete")
-                .clone();
-            let Some(signed) = self.sign_proof(e3_id, ProofType::C4bESmShareDecryption, proof)
-            else {
-                error!(
-                    "Failed to sign the local C4b proof [{}]; pending work is preserved",
-                    idx
-                );
-                return false;
-            };
-            signed_esms.push(signed);
-        }
+        let signed_esms = Vec::new();
 
         info!(
             "All C4 proofs signed for E3 {} party {} (signer: {})",

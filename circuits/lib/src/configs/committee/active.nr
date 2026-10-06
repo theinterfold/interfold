@@ -21,6 +21,8 @@ pub global N_PARTIES: u32 = crate::configs::committee::minimum::N_PARTIES;
 pub global T: u32 = crate::configs::committee::minimum::T;
 /// Honest-party count expected during the DKG (`H <= N_PARTIES`).
 pub global H: u32 = crate::configs::committee::minimum::H;
+/// Parties in one decryption. This is `T + 1`, the Shamir reconstruction size.
+pub global DECRYPTOR_COUNT: u32 = T + 1;
 
 /// Parity matrices for the secret-sharing scheme, sized for the active committee.
 /// `configs::{insecure,secure_8192,secure_16384}::dkg` re-exports the relevant one as `PARITY_MATRIX`.

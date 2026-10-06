@@ -8,7 +8,7 @@
 
 // Committee size (N_PARTIES / T / H) is routed through `committee::active`,
 // which `build-circuits.ts` regenerates atomically with this file.
-pub use super::committee::active::{H, N_PARTIES, T};
+pub use super::committee::active::{DECRYPTOR_COUNT, H, N_PARTIES, T};
 pub use super::insecure::dkg;
 pub use super::insecure::threshold;
 

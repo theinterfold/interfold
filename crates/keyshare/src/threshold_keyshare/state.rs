@@ -47,8 +47,6 @@ pub struct ProofRequestData {
 pub struct GeneratingThresholdShareData {
     pub(crate) pk_share: Option<ArcBytes>,
     pub(crate) sk_sss: Option<Encrypted<SharedSecret>>,
-    pub(crate) esi_sss: Option<Vec<Encrypted<SharedSecret>>>,
-    pub(crate) e_sm_raw: Option<SensitiveBytes>,
     pub(crate) sk_bfv: SensitiveBytes,
     pub(crate) pk_bfv: ArcBytes,
     pub(crate) collected_encryption_keys: Vec<Arc<EncryptionKey>>,
@@ -63,13 +61,13 @@ pub struct AggregatingDecryptionKey {
     /// Bincode-serialised `Vec<Vec<u64>>` of shape `[L][N]` — own party's plaintext sk
     /// share row per modulus. Used by C4a in lieu of self-encryption.
     pub(crate) own_sk_share_raw: SensitiveBytes,
-    /// One bincode-serialised `Vec<Vec<u64>>` per smudging-noise (esi). Used by C4b.
-    pub(crate) own_esi_shares_raw: Vec<SensitiveBytes>,
     pub(crate) signed_pk_generation_proof: Option<SignedProofPayload>,
     pub(crate) signed_sk_share_computation_proof: Option<SignedProofPayload>,
     pub(crate) signed_e_sm_share_computation_proof: Option<SignedProofPayload>,
     pub(crate) signed_sk_share_encryption_proofs: Vec<SignedProofPayload>,
     pub(crate) signed_e_sm_share_encryption_proofs: Vec<SignedProofPayload>,
+    /// Outgoing PRF keys, one per recipient, encrypted at rest.
+    pub(crate) outgoing_prf_keys: Vec<SensitiveBytes>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -82,6 +80,10 @@ pub struct ReadyForDecryption {
     pub(crate) signed_e_sm_share_computation_proof: Option<SignedProofPayload>,
     pub(crate) signed_sk_share_encryption_proofs: Vec<SignedProofPayload>,
     pub(crate) signed_e_sm_share_encryption_proofs: Vec<SignedProofPayload>,
+    /// Outgoing PRF keys, one per recipient, encrypted at rest.
+    pub(crate) outgoing_prf_keys: Vec<SensitiveBytes>,
+    /// Incoming PRF keys indexed by sender. Empty selects the zero key.
+    pub(crate) incoming_prf_keys: Vec<SensitiveBytes>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -96,6 +98,10 @@ pub struct Decrypting {
     pub(crate) signed_e_sm_share_computation_proof: Option<SignedProofPayload>,
     pub(crate) signed_sk_share_encryption_proofs: Vec<SignedProofPayload>,
     pub(crate) signed_e_sm_share_encryption_proofs: Vec<SignedProofPayload>,
+    /// Outgoing PRF keys, one per recipient, encrypted at rest.
+    pub(crate) outgoing_prf_keys: Vec<SensitiveBytes>,
+    /// Incoming PRF keys indexed by sender. Empty selects the zero key.
+    pub(crate) incoming_prf_keys: Vec<SensitiveBytes>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]

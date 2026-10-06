@@ -182,8 +182,9 @@ For secure mode, use `--mode secure` and the `results_secure_<committee>/` direc
 
 `results_*/report.md` now includes protocol-oriented sections in addition to raw category tables:
 
-- `Circuit Benchmarks` with rows in fixed order: `C0`, `C1`, `C2a`, `C2b`, `C3a`, `C3b`, `C4a`,
-  `C4b`, `C5`, `user-data-encryption`, `C6`, `C7`.
+- `Circuit Benchmarks` with rows in fixed order: `C0`, `C1`, `C2a`, `C3a`, `C4a`, `C5`,
+  `user-data-encryption`, `C6`, `C7`. Stored `results_*/report.md` files can still list `C2b`,
+  `C3b`, and `C4b` from earlier runs.
 - `Artifacts` for `Π_DKG`, `Π_user`, `Π_dec` with proof/public-input sizes and gas columns.
 - `Role / Phase / Activity` for P1..P4 operational cost summaries.
 - When `integration_summary` is present, the report also includes:
@@ -204,10 +205,10 @@ For secure mode, use `--mode secure` and the `results_secure_<committee>/` direc
 
 Split rows are deterministic:
 
-- `C2a` and `C2b` benchmark one configured share-computation chunk. The insecure preset uses 128
+- `C2a` benchmarks one configured share-computation chunk. The insecure preset uses 128
   coefficients. Secure presets use 512 coefficients.
-- `C3a` and `C3b` both map to `dkg/share_encryption` benchmark output.
-- `C4a` and `C4b` both map to `dkg/share_decryption` benchmark output.
+- `C3a` maps to `dkg/share_encryption`.
+- `C4a` maps to `dkg/share_decryption`.
 - The P3 benchmark first generates the recursive child proofs. It then benchmarks the top-level
   `user_data_encryption_ct0` and `user_data_encryption_ct1` circuits with those proofs.
 

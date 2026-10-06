@@ -40,14 +40,14 @@ flowchart LR
 | Module                                       | Circuits  | Role                                                                                                                             |
 | -------------------------------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | `dkg/pk`                                     | C0        | Individual pk commitment                                                                                                         |
-| `dkg/share_computation.nr`                   | C2a / C2b | Unified SK/ESM share computation; secret commitment consistency, range checks, and Reed–Solomon parity; `execute()` entry points |
+| `dkg/share_computation.nr`                   | C2a       | Secret-key Shamir-share computation; secret commitment, PRF-key commitment, range checks, and Reed-Solomon parity |
 | `dkg/share_encryption`                       | C3        | Encrypt share under recipient pk                                                                                                 |
-| `dkg/share_decryption`                       | C4        | Decrypt and aggregate                                                                                                            |
+| `dkg/share_decryption`                       | C4a       | Sum received residues and commit to the Shamir share                                                                            |
 | `threshold/pk_generation`                    | C1        | TrBFV contribution                                                                                                               |
 | `threshold/pk_aggregation`                   | C5        | Aggregate pk shares                                                                                                              |
 | `threshold/user_data_encryption_ct0` / `ct1` | P3        | User encryption legs                                                                                                             |
-| `threshold/share_decryption`                 | C6        | Threshold decryption share                                                                                                       |
-| `threshold/decrypted_shares_aggregation`     | C7        | Final plaintext                                                                                                                  |
+| `threshold/share_decryption`                 | C6        | Partial decryption: Lagrange on `c1·sk`, plus fresh noise and the PRF mask                                                      |
+| `threshold/decrypted_shares_aggregation`     | C7        | Add `c0` to the partial shares, then CRT decode                                                                                 |
 
 ## configs
 

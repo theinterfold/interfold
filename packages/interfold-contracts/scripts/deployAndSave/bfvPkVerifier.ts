@@ -19,7 +19,8 @@ import {
   assertBfvPkVerifierSubCircuitVkHashes,
   assertBfvPkVerifierV2VkHashes,
   getBfvPkSubCircuitVkHashPaths,
-  getBfvPkVkBindingHashPaths,
+  readBfvPkVkBindingHashes,
+  ZERO_VK_HASH,
   getBfvV2SubCircuitVkHashPaths,
   getBfvV2VkBindingHashPaths,
   readDeploymentArgs,
@@ -89,12 +90,8 @@ export const deployAndSaveBfvPkVerifier = async (
   const expectedSkC2ChunkKeyHash = readVkRecursiveHash(
     getBfvPkSubCircuitVkHashPaths().skC2Chunk,
   );
-  const expectedESmC2ChunkKeyHash = readVkRecursiveHash(
-    getBfvPkSubCircuitVkHashPaths().esmC2Chunk,
-  );
-  const expectedVkBinding = getBfvPkVkBindingHashPaths().map((filePath) =>
-    readVkRecursiveHash(filePath),
-  );
+  const expectedESmC2ChunkKeyHash = ZERO_VK_HASH;
+  const expectedVkBinding = readBfvPkVkBindingHashes();
 
   const bfvPkVerifierFactory = await ethers.getContractFactory("BfvPkVerifier");
   const bfvPkVerifier = await bfvPkVerifierFactory.deploy(
@@ -171,10 +168,8 @@ export const deployAndSaveBfvPkVerifierV2 = async (
   const pkPaths = getBfvPkSubCircuitVkHashPaths();
   const expectedC5KeyHash = readVkRecursiveHash(pkPaths.c5);
   const expectedSkC2ChunkKeyHash = readVkRecursiveHash(pkPaths.skC2Chunk);
-  const expectedESmC2ChunkKeyHash = readVkRecursiveHash(pkPaths.esmC2Chunk);
-  const expectedLegacyVkBinding = getBfvPkVkBindingHashPaths().map((filePath) =>
-    readVkRecursiveHash(filePath),
-  );
+  const expectedESmC2ChunkKeyHash = ZERO_VK_HASH;
+  const expectedLegacyVkBinding = readBfvPkVkBindingHashes();
   const expectedV2VkBinding = getBfvV2VkBindingHashPaths().map((filePath) =>
     readVkRecursiveHash(filePath),
   );

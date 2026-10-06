@@ -102,8 +102,12 @@ pub struct Bounds {}
 pub struct Inputs {
     /// Expected message commitments from share-encryption (CIRCUIT 3) for H honest parties: [party_idx][mod_idx].
     pub expected_commitments: Vec<Vec<BigInt>>, // [H][L]
+    /// One PRF-key commitment per honest slot, bound to the recipient.
+    pub expected_key_commitments: Vec<BigInt>,
     /// Decrypted share coefficients per party and modulus: [party_idx][mod_idx][coeff_idx].
     pub decrypted_shares: Vec<Vec<Vec<BigInt>>>, // [H][L][N]
+    /// One PRF key per honest slot.
+    pub prf_keys: Vec<Vec<u8>>,
     /// Zero-based recipient party index used in the C2 commitment domain.
     pub recipient_party_idx: u64,
 }
@@ -161,13 +165,33 @@ impl Computation for Bounds {
     }
 }
 
+fn limb_residues(
+    coeffs: &[u64],
+    mod_idx: usize,
+    key: &[u8],
+    preset: BfvPreset,
+    key_modulus: u64,
+) -> Result<Vec<u64>, CircuitsErrors> {
+    if mod_idx != 0 {
+        return Ok(coeffs.to_vec());
+    }
+    let (residues, recovered) = e3_fhe_params::unpack_prf_key(preset, coeffs, key_modulus)
+        .map_err(|error| CircuitsErrors::Other(error.to_string()))?;
+    if recovered != key {
+        return Err(CircuitsErrors::Other(
+            "PRF key does not match the packed share limb".into(),
+        ));
+    }
+    Ok(residues)
+}
+
 impl Computation for Inputs {
     type Preset = BfvPreset;
     type Data = ShareDecryptionCircuitData;
     type Error = CircuitsErrors;
 
     fn compute(preset: Self::Preset, data: &Self::Data) -> Result<Self, Self::Error> {
-        let (threshold_params, dkg_params) =
+        let (threshold_params, _dkg_params) =
             build_pair_for_preset(preset).map_err(|e| CircuitsErrors::Sample(e.to_string()))?;
         let threshold_l = threshold_params.moduli().len();
 
@@ -189,9 +213,19 @@ impl Computation for Inputs {
         }
 
         let mut expected_commitments: Vec<Vec<BigInt>> = Vec::new();
+        let mut expected_key_commitments: Vec<BigInt> = Vec::new();
         let mut decrypted_shares: Vec<Vec<Vec<BigInt>>> = Vec::new();
 
-        let msg_bit = compute_msg_bit(&dkg_params);
+        let share_bit = threshold_params.moduli().iter().fold(0u32, |acc, qi| {
+            acc.max(crate::calculate_bit_width(BigInt::from(*qi - 1)))
+        });
+        let key_modulus = e3_fhe_params::prf_key_modulus(preset);
+        let slot_keys = crate::circuits::prf::resolve_keys(
+            preset,
+            &data.prf_keys,
+            data.honest_ciphertexts.len(),
+        )
+        .map_err(CircuitsErrors::Other)?;
 
         // Validate own-plaintext shape against L only when an own slot is present.
         let has_own_slot = data.honest_ciphertexts.iter().any(|s| s.is_none());
@@ -211,7 +245,7 @@ impl Computation for Inputs {
                 "C4 chunk size must be greater than zero".to_string(),
             ));
         }
-        for slot in data.honest_ciphertexts.iter() {
+        for (slot_index, slot) in data.honest_ciphertexts.iter().enumerate() {
             let mut party_commitments = Vec::with_capacity(threshold_l);
             let mut party_shares = Vec::with_capacity(threshold_l);
 
@@ -233,14 +267,20 @@ impl Computation for Inputs {
                             ))
                         })?;
                         let share_coeffs = plaintext_poly_u64(&decrypted_pt)?;
-                        // Reverse to match C3's reversed commitment convention.
-                        let mut reversed_coeffs = share_coeffs.clone();
+                        let residues = limb_residues(
+                            &share_coeffs,
+                            mod_idx,
+                            &slot_keys[slot_index],
+                            preset,
+                            key_modulus,
+                        )?;
+                        let mut reversed_coeffs = residues.clone();
                         reversed_coeffs.reverse();
                         party_commitments.push(compute_sc_party_share_root_commitment(
                             data.recipient_party_id as usize,
                             mod_idx,
                             &Polynomial::from_u64_vector(reversed_coeffs),
-                            msg_bit,
+                            share_bit,
                             chunk_size,
                         ));
                         party_shares.push(
@@ -253,15 +293,30 @@ impl Computation for Inputs {
                 }
                 None => {
                     for mod_idx in 0..threshold_l {
-                        let share_coeffs = &data.own_plaintext_share[mod_idx];
-                        // Same reverse-then-commit as the BFV-decrypted branch.
-                        let mut reversed_coeffs = share_coeffs.clone();
+                        let mut share_coeffs = data.own_plaintext_share[mod_idx].clone();
+                        if mod_idx == 0 {
+                            share_coeffs = e3_fhe_params::pack_prf_key(
+                                preset,
+                                &share_coeffs,
+                                &slot_keys[slot_index],
+                                key_modulus,
+                            )
+                            .map_err(|error| CircuitsErrors::Other(error.to_string()))?;
+                        }
+                        let residues = limb_residues(
+                            &share_coeffs,
+                            mod_idx,
+                            &slot_keys[slot_index],
+                            preset,
+                            key_modulus,
+                        )?;
+                        let mut reversed_coeffs = residues.clone();
                         reversed_coeffs.reverse();
                         party_commitments.push(compute_sc_party_share_root_commitment(
                             data.recipient_party_id as usize,
                             mod_idx,
                             &Polynomial::from_u64_vector(reversed_coeffs),
-                            msg_bit,
+                            share_bit,
                             chunk_size,
                         ));
                         party_shares.push(
@@ -275,12 +330,18 @@ impl Computation for Inputs {
             }
 
             expected_commitments.push(party_commitments);
+            expected_key_commitments.push(crate::circuits::prf::prf_key_commitment_bigint(
+                data.recipient_party_id as u32,
+                &slot_keys[slot_index],
+            ));
             decrypted_shares.push(party_shares);
         }
 
         Ok(Inputs {
             expected_commitments,
+            expected_key_commitments,
             decrypted_shares,
+            prf_keys: slot_keys,
             recipient_party_idx: data.recipient_party_id,
         })
     }
@@ -301,9 +362,21 @@ impl Computation for Inputs {
             })
             .collect::<Vec<_>>();
 
+        let key_commitments = self
+            .expected_key_commitments
+            .iter()
+            .map(|value| serde_json::Value::String(value.to_string()))
+            .collect::<Vec<_>>();
+        let key_bits = self
+            .prf_keys
+            .iter()
+            .map(|key| serde_json::Value::Array(crate::circuits::prf::prf_key_bits_json(key)))
+            .collect::<Vec<_>>();
         let json = serde_json::json!({
             "expected_commitments": expected_commitments,
+            "expected_key_commitments": key_commitments,
             "decrypted_shares": decrypted_shares,
+            "key_bits": key_bits,
             "recipient_party_idx": self.recipient_party_idx,
         });
 
