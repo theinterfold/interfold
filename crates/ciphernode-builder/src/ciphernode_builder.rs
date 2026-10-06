@@ -640,6 +640,11 @@ impl CiphernodeBuilder {
             chain_providers.push((chain.clone(), provider.chain_id()));
             chain_ids.push(provider.chain_id());
         }
+        ensure_one_entry_per_chain(
+            chain_providers
+                .iter()
+                .map(|(chain, chain_id)| (chain.name.as_str(), *chain_id)),
+        )?;
 
         let delays = create_aggregate_delays(&chain_providers)?;
         Ok((AggregateConfig::new(delays), chain_ids))
@@ -1692,6 +1697,21 @@ fn choose_slashing_manager(
     }
 }
 
+/// Each enabled chain entry must be another chain. Two entries of one chain would run two readers
+/// into that chain's one event log, and the health check expects one heartbeat per entry, while
+/// the readers of one chain write one heartbeat file.
+fn ensure_one_entry_per_chain<'a>(chains: impl IntoIterator<Item = (&'a str, u64)>) -> Result<()> {
+    let mut names = HashMap::new();
+    for (name, chain_id) in chains {
+        if let Some(other) = names.insert(chain_id, name) {
+            anyhow::bail!(
+                "the enabled chains `{other}` and `{name}` are both chain {chain_id}; enable one entry per chain"
+            );
+        }
+    }
+    Ok(())
+}
+
 fn validate_vrf_chain_id(chain_id: u64) -> Result<()> {
     ensure!(
         matches!(chain_id, 1 | 1_337 | 31_337 | 11_155_111),
@@ -2019,9 +2039,10 @@ async fn wait_for_evm_gateways(gateways: Vec<EvmChainGatewayHandle>) -> Result<(
 #[cfg(test)]
 mod tests {
     use super::{
-        choose_slashing_manager, compute_gate_stages, create_aggregate_delay, event_clock,
-        fail_on_restart, reconcile_committee_snapshots, recovered_ciphernode_selections,
-        validate_vrf_chain_id, work_ended_on_restart, SlashingManagerChoice,
+        choose_slashing_manager, compute_gate_stages, create_aggregate_delay,
+        ensure_one_entry_per_chain, event_clock, fail_on_restart, reconcile_committee_snapshots,
+        recovered_ciphernode_selections, validate_vrf_chain_id, work_ended_on_restart,
+        SlashingManagerChoice,
     };
     use e3_config::{
         chain_config::ChainConfig,
@@ -2458,6 +2479,59 @@ mod tests {
         for chain_id in [1, 11_155_111, 31_337, 1_337] {
             assert!(validate_vrf_chain_id(chain_id).is_ok());
         }
+    }
+
+    #[test]
+    fn two_enabled_entries_of_one_chain_are_refused() {
+        assert!(ensure_one_entry_per_chain([("hardhat", 31_337), ("sepolia", 11_155_111)]).is_ok());
+
+        let error = ensure_one_entry_per_chain([
+            ("hardhat", 31_337),
+            ("sepolia", 11_155_111),
+            ("local", 31_337),
+        ])
+        .expect_err("two entries of one chain");
+        assert!(
+            error
+                .to_string()
+                .contains("`hardhat` and `local` are both chain 31337"),
+            "{error:#}"
+        );
+    }
+
+    /// The build resolves each enabled entry's chain ID and refuses two entries of one chain.
+    #[actix::test]
+    async fn the_build_refuses_two_enabled_entries_of_one_chain() -> anyhow::Result<()> {
+        let anvil = alloy::node_bindings::Anvil::new().try_spawn()?;
+        let entry = |name: &str| ChainConfig {
+            name: name.to_owned(),
+            rpc_url: anvil.endpoint(),
+            chain_id: None,
+            ..chain_with_finalization_ms(None)
+        };
+        let cipher =
+            std::sync::Arc::new(e3_crypto::Cipher::from_password("test-only-chains").await?);
+        let builder = |chains: &[ChainConfig]| {
+            super::CiphernodeBuilder::new(e3_test_helpers::derive_shared_rng(1, 1), cipher.clone())
+                .with_chains(chains)
+        };
+
+        builder(&[entry("first")])
+            .create_aggregate_config(&mut super::ProviderCache::new())
+            .await?;
+        let Err(error) = builder(&[entry("first"), entry("second")])
+            .create_aggregate_config(&mut super::ProviderCache::new())
+            .await
+        else {
+            panic!("two enabled entries of one chain must stop the build");
+        };
+        assert!(
+            error
+                .to_string()
+                .contains("`first` and `second` are both chain 31337"),
+            "{error:#}"
+        );
+        Ok(())
     }
 
     #[test]

@@ -132,6 +132,8 @@ The node applies these rules when it loads the file:
 - Every enabled chain must belong to the `node.network` profile. `chain_id: 1` belongs to `mainnet`
   and `chain_id: 11155111` belongs to `sepolia`. One node serves one network. To keep an entry for
   another network in the file, set `enabled: false` on it.
+- Each enabled entry must be a different chain. The node refuses to start when two enabled entries
+  resolve to the same chain ID.
 - Each contract must have a nonzero `deploy_block` when `rpc_url` is not a local address. Otherwise,
   startup stops with
   `Misconfiguration: Attempted to query historical events from genesis on a non-local node`.

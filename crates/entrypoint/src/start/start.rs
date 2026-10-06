@@ -222,29 +222,72 @@ mod ingestion_expectation_tests {
         )
     }
 
+    fn scoped_config(dir: &std::path::Path, chains: &[String]) -> Result<AppConfig> {
+        let yaml = format!(
+            "chains:\n{}nodes:\n  cn1:\n    network: local\n",
+            chains.concat()
+        );
+        let config: e3_config::UnscopedAppConfig = serde_yaml::from_str(&yaml)?;
+        config.into_scoped_with_defaults(
+            "cn1",
+            &dir.join("data"),
+            &dir.join("config"),
+            &dir.to_path_buf(),
+        )
+    }
+
+    fn expectation(config: &AppConfig) -> Result<String> {
+        Ok(std::fs::read_to_string(
+            ingestion_heartbeat_dir(config).join(e3_evm::INGESTION_EXPECTATION_FILE),
+        )?)
+    }
+
     /// `start` records one chain reader for each enabled chain, before it builds anything.
     #[test]
     fn the_expectation_counts_the_enabled_chains() -> Result<()> {
         let dir = tempfile::tempdir()?;
-        let yaml = format!(
-            "chains:\n{}{}nodes:\n  cn1:\n    network: local\n",
-            chain("hardhat", true),
-            chain("devnet", false)
-        );
-        let config: e3_config::UnscopedAppConfig = serde_yaml::from_str(&yaml)?;
-        let config = config.into_scoped_with_defaults(
-            "cn1",
-            &dir.path().join("data"),
-            &dir.path().join("config"),
-            &dir.path().to_path_buf(),
+        let config = scoped_config(
+            dir.path(),
+            &[chain("hardhat", true), chain("devnet", false)],
         )?;
 
         write_ingestion_expectation(&config)?;
 
-        let written = std::fs::read_to_string(
-            ingestion_heartbeat_dir(&config).join(e3_evm::INGESTION_EXPECTATION_FILE),
-        )?;
+        let written = expectation(&config)?;
         assert!(written.starts_with("chains=1\nstarted_at="), "{written}");
+        Ok(())
+    }
+
+    /// A start records the expectation before anything that can wait on a chain: a start that
+    /// stops at its key file has written it, and a start that cannot write it fails.
+    #[actix::test]
+    async fn a_start_records_the_expectation_before_it_reads_a_chain() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let config = scoped_config(dir.path(), &[chain("hardhat", true), chain("devnet", true)])?;
+        // There is no key file, so the start stops before it builds a provider.
+        let Err(error) = execute(&config, false).await else {
+            panic!("a start without a key file must fail");
+        };
+        assert!(
+            !format!("{error:#}").contains("ingestion expectation"),
+            "{error:#}"
+        );
+        let written = expectation(&config)?;
+        assert!(written.starts_with("chains=2\nstarted_at="), "{written}");
+
+        // A file where the heartbeat directory belongs: the expectation cannot be written.
+        let blocked = tempfile::tempdir()?;
+        let config = scoped_config(blocked.path(), &[chain("hardhat", true)])?;
+        let heartbeats = ingestion_heartbeat_dir(&config);
+        std::fs::create_dir_all(heartbeats.parent().expect("the directory has a parent"))?;
+        std::fs::write(&heartbeats, b"not a directory")?;
+        let Err(error) = execute(&config, false).await else {
+            panic!("a start that cannot write its expectation must fail");
+        };
+        assert!(
+            format!("{error:#}").contains("failed to write the ingestion expectation"),
+            "{error:#}"
+        );
         Ok(())
     }
 }
