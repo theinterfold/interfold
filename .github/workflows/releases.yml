@@ -353,10 +353,10 @@ jobs:
     name: Create GitHub Release
     runs-on: ubuntu-latest
     needs: [validate-and-prepare, build-binaries, download-circuits, publication-gate]
-    # The DAppNode job is skipped for a pre-release. Without this condition, the skip makes GitHub
-    # skip this job as well.
+    # The DAppNode job is skipped for a pre-release. The implicit success() check fails on that skip.
+    # failure() still stops this job when any earlier job fails.
     if: >-
-      ${{ always() && !cancelled() && needs.build-binaries.result == 'success' &&
+      ${{ !cancelled() && !failure() && needs.build-binaries.result == 'success' &&
       needs.download-circuits.result == 'success' && needs.publication-gate.result == 'success' }}
     steps:
       - name: Checkout
