@@ -242,27 +242,38 @@ async fn store_recorded_at_start() -> Result<()> {
     Ok(())
 }
 
-/// A key file that no configured node uses is checked through its record: the store that it names
-/// holds an active share. Without a record, it stays a refusal.
+/// A key file that no configured node uses is checked through its record. The node of a removed
+/// profile ran with its store elsewhere, which holds an active share, and left a completed stale
+/// store in its node folder: the purge checks the recorded store, also holds its lock, and not the
+/// stale one. A flat key file without a record stays a refusal.
 async fn unconfigured_key_file_with_a_record() -> Result<()> {
     let project = tempfile::tempdir()?;
     let elsewhere = tempfile::tempdir()?;
     let targets = PurgeTargets::in_dir(project.path());
-    let removed = node_with(
+    let stale = project_node(project.path(), "removed")?;
+    let used = node_with(
         project.path(),
         &elsewhere.path().join("data"),
         &project.path().join(".interfold/config"),
         "removed",
         "",
     )?;
-    write_state(&removed, E3Stage::KeyPublished).await?;
-    let key_file = project.path().join(".interfold/config/removed.key");
-    std::fs::write(&key_file, b"operator key")?;
-    e3_entrypoint::store_record::write(&key_file, &removed.db_file())?;
+    write_state(&stale, E3Stage::Complete).await?;
+    write_state(&used, E3Stage::KeyPublished).await?;
+    e3_entrypoint::store_record::write(&used.key_file(), &used.db_file())?;
 
-    assert_refused(&targets, &[], false, &["removed.key", "KeyPublished"]).await;
-    std::fs::remove_file(e3_entrypoint::store_record::record_path(&key_file))?;
+    assert_refused(&targets, &[], false, &["removed", "KeyPublished"]).await;
+    let running = ProcessFence::acquire(&used.db_file(), "removed")?;
+    assert_refused(&targets, &[], true, &["is running", "holds its lock"]).await;
+    drop(running);
+
+    let flat = project.path().join(".interfold/config/flat.key");
+    std::fs::write(&flat, b"operator key")?;
     assert_refused(&targets, &[], false, &["no configured node uses"]).await;
+    std::fs::remove_file(&flat)?;
+    execute(&targets, &[], true).await?;
+    assert!(purged(project.path()));
+    assert!(used.db_file().exists());
     Ok(())
 }
 

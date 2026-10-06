@@ -38,7 +38,7 @@
 //! key file with a record, the purge holds the lock of the recorded store and checks that store,
 //! also when the node ran with another `E3_DATA_DIR`, `data_dir`, or working directory. The store
 //! at the configured path is then checked for key shares only. A key file that no configured node
-//! uses is checked through its record; without one, it is a refusal.
+//! uses, in a key folder or directly in the configuration folder, is checked through its record.
 //!
 //! Limits:
 //! - A key file without a record, as of a node that has not started with this release, is checked

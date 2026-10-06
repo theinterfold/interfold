@@ -121,6 +121,8 @@ pub(super) enum ConfigEntry {
     Folder {
         name: String,
         location: Location,
+        /// The store records in the folder, by the key file that each belongs to.
+        records: Vec<(PathBuf, Recorded)>,
     },
     File {
         name: String,
@@ -291,7 +293,26 @@ async fn config_entries(config: &Path) -> Result<Vec<ConfigEntry>> {
         // `is_dir` and `is_file` follow a link. A link that points to nothing is neither.
         let location = Location::of(path.clone())?;
         if path.is_dir() {
-            found.push(ConfigEntry::Folder { name, location });
+            let mut records = Vec::new();
+            for inner in entries(&path).await? {
+                let record = inner.path();
+                if record.is_file() && crate::store_record::is_record(&record) {
+                    let key_file = record.with_file_name(
+                        record
+                            .file_name()
+                            .map(|name| name.to_string_lossy().into_owned())
+                            .unwrap_or_default()
+                            .trim_end_matches(crate::store_record::RECORD_SUFFIX),
+                    );
+                    let recorded = recorded(&key_file).await?;
+                    records.push((key_file, recorded));
+                }
+            }
+            found.push(ConfigEntry::Folder {
+                name,
+                location,
+                records,
+            });
         } else if path.is_file() && !is_store_record(&path) {
             found.push(ConfigEntry::File {
                 name,

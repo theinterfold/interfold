@@ -207,12 +207,24 @@ impl Planner {
 
     fn add_config_entry(&mut self, entry: &ConfigEntry, facts: &Facts) {
         match entry {
-            ConfigEntry::Folder { name, location } => {
+            ConfigEntry::Folder {
+                name,
+                location,
+                records,
+            } => {
                 let configured = facts
                     .nodes
                     .iter()
                     .any(|node| node.key_file.parent() == Some(location.resolved.as_path()));
                 if configured {
+                    return;
+                }
+                // A key file in the folder with a record is checked through the store that the
+                // record names, before the store of a node folder of the same name.
+                if !records.is_empty() {
+                    for (_, recorded) in records {
+                        self.add_recorded(recorded, name, true);
+                    }
                     return;
                 }
                 // A node folder of the same name must hold the store that the key protects, or be
@@ -403,6 +415,7 @@ mod tests {
         ConfigEntry::Folder {
             name: name.to_string(),
             location: at(&format!("{CONFIG}/{name}")),
+            records: Vec::new(),
         }
     }
 
