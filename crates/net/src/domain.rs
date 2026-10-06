@@ -31,6 +31,8 @@ pub(crate) mod net_event_batch;
 mod network_status;
 #[path = "peer_failure_tracker.rs"]
 pub(crate) mod peer_failure_tracker;
+#[path = "replica_ledger.rs"]
+pub(crate) mod replica_ledger;
 #[path = "network_sync/workflow.rs"]
 pub(crate) mod sync_coordinator;
 #[path = "network_sync/wire.rs"]

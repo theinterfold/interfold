@@ -552,19 +552,24 @@ protocol names. Each built-in ID is the hardcoded SHA-256 digest of a documented
 label. The label makes the ID reproducible, but the released ID remains immutable. A connection does
 not enter network status, Kademlia, gossip, or direct sync until Identify reports the exact network
 and required capabilities. Connection counts, Kademlia records, record size, record lifetime,
-provider records, and per-peer insertions are bounded. An inbound put cannot replace a record this
-node published. For an existing replica, it can extend the expiry but cannot shorten it or replace
-the publisher. A record without an expiry keeps its unlimited lifetime. Production network policies
-require an explicit deployment set; only the local test policy can be unrestricted. Identify retains
-all staged connections for a peer, permanently rejects incompatible peers, and applies a short
-retryable cooldown after an Identify timeout. Gossipsub uses strict signatures and application
-validation before forwarding. The gossipsub duplicate cache keeps its 60-second default. The node
-also ignores, without forwarding, a message ID while it remains in the six-hour seen window. Each
-cache holds 341,696 IDs and admits every new ID. Peers borrow unused space. At capacity, a peer at
-its fair share replaces its own oldest entry; a peer below its share reclaims space from the largest
-owner. Duplicates retain their first timestamp and owner, also when another peer delivers them.
-`seen_ids_early_evictions_total` is a cumulative structured log metric, labeled by cache. WARN logs
-report it at powers of two to bound log volume. These windows are local to the running process.
+provider records, and per-peer insertions are bounded. The store holds a document of exactly the 25
+MiB limit. Inbound replicas are bounded per sender, in total and in value bytes, and a new one
+evicts older replicas instead of being refused (`ReplicaLedger`); this node's own records are never
+evicted for one. The store keeps 1,024 records beyond the replicas for them, and a local write that
+still finds it full evicts a replica; it is refused only when this node's records fill the store. An
+inbound put cannot replace a record this node published. For an existing replica, it can extend the
+expiry but cannot shorten it or replace the publisher. A record without an expiry keeps its
+unlimited lifetime. Production network policies require an explicit deployment set; only the local
+test policy can be unrestricted. Identify retains all staged connections for a peer, permanently
+rejects incompatible peers, and applies a short retryable cooldown after an Identify timeout.
+Gossipsub uses strict signatures and application validation before forwarding. The gossipsub
+duplicate cache keeps its 60-second default. The node also ignores, without forwarding, a message ID
+while it remains in the six-hour seen window. Each cache holds 341,696 IDs and admits every new ID.
+Peers borrow unused space. At capacity, a peer at its fair share replaces its own oldest entry; a
+peer below its share reclaims space from the largest owner. Duplicates retain their first timestamp
+and owner, also when another peer delivers them. `seen_ids_early_evictions_total` is a cumulative
+structured log metric, labeled by cache. WARN logs report it at powers of two to bound log volume.
+These windows are local to the running process.
 
 `ingress_limits.rs` owns the capacity calculation. An N=19, H=14 E3 has 380 document notifications
 and up to 173 ordinary publications, including six Ready updates per party. Four concurrent E3s with

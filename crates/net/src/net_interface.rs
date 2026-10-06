@@ -19,6 +19,7 @@ use crate::{
         correlator::Correlator,
         dht_puts::{DhtPutResult, DhtPutStep, DhtPuts, EndedQuery, MAX_DHT_PUTS},
         peer_failure_tracker::PeerFailureTracker,
+        replica_ledger::{ReplicaLedger, ReplicaLimits},
         wire::{encode_gossip, MAX_DHT_DOCUMENT_BYTES, MAX_GOSSIP_BYTES},
     },
     events::{IncomingResponse, OutgoingRequest, ProtocolResponse},
@@ -74,8 +75,15 @@ const DHT_SUBSTREAM_TIMEOUT: Duration = Duration::from_secs(60);
 /// gossipsub heartbeat. The library's tick-based defaults (message history, gossip windows,
 /// graft timing) assume one second.
 const GOSSIP_HEARTBEAT: Duration = Duration::from_secs(1);
-const DHT_MAX_RECORDS: usize = 1024;
-const DHT_MAX_RECORDS_PER_PEER: usize = 64;
+/// Records that this node publishes or restored, beyond the inbound replicas. A local write that
+/// finds no room evicts a replica.
+const DHT_LOCAL_RECORDS: usize = 1024;
+const DHT_MAX_RECORDS: usize = crate::ingress_limits::REPLICAS + DHT_LOCAL_RECORDS;
+const DHT_REPLICA_LIMITS: ReplicaLimits = ReplicaLimits {
+    per_owner: crate::ingress_limits::REPLICAS_PER_PEER,
+    records: crate::ingress_limits::REPLICAS,
+    bytes: crate::ingress_limits::REPLICA_BYTES,
+};
 const DHT_MAX_TTL: Duration = Duration::from_secs(31 * 24 * 60 * 60);
 const DHT_MAX_PROVIDERS_PER_KEY: usize = 20;
 const MAX_CONSECUTIVE_DIAL_FAILURES: u32 = 3;
@@ -480,7 +488,7 @@ impl Libp2pNetInterface {
         let mut peer_failures = PeerConnectionFailures::new();
         let mut peer_admission = PeerAdmission::default();
         let mut peer_addresses = HashMap::<libp2p::PeerId, PeerAddresses>::new();
-        let mut dht_records_by_peer: HashMap<libp2p::PeerId, HashSet<Vec<u8>>> = HashMap::new();
+        let mut replicas = ReplicaLedger::new(DHT_REPLICA_LIMITS);
         let mut seen_gossip = GossipIngress::new();
         let mut admission_tick = tokio::time::interval(Duration::from_secs(5));
         admission_tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
@@ -562,7 +570,7 @@ impl Libp2pNetInterface {
                 biased;
 
                 _ = admission_tick.tick() => {
-                    prune_dht_peer_quotas(&mut self.swarm, &mut dht_records_by_peer);
+                    reconcile_replicas(&mut self.swarm, &mut replicas);
                     for peer_id in peer_failures.quarantined_peers() {
                         self.swarm.behaviour_mut().kademlia.remove_peer(&peer_id);
                     }
@@ -582,7 +590,7 @@ impl Libp2pNetInterface {
                 }
                 _ = dht_expiry_tick.tick() => {
                     prune_expired_dht_records(&mut self.swarm);
-                    prune_dht_peer_quotas(&mut self.swarm, &mut dht_records_by_peer);
+                    reconcile_replicas(&mut self.swarm, &mut replicas);
                 }
                 _ = configured_peer_tick.tick() => {
                     redial_disconnected_configured_peers(
@@ -646,6 +654,7 @@ impl Libp2pNetInterface {
                         &event_tx,
                         &mut correlator,
                         &mut dht_puts,
+                        &mut replicas,
                         &peer_admission,
                         &self.network,
                         command,
@@ -664,7 +673,7 @@ impl Libp2pNetInterface {
                         &mut peer_admission,
                         &mut peer_addresses,
                         &mut configured_peers,
-                        &mut dht_records_by_peer,
+                        &mut replicas,
                         &mut seen_gossip,
                         &mut dht_puts,
                         &self.network,
@@ -861,13 +870,7 @@ fn create_behaviour(
         .set_kbucket_inserts(kad::BucketInserts::Manual)
         .set_replication_interval(None)
         .set_publication_interval(None);
-    let store_config = MemoryStoreConfig {
-        max_records: DHT_MAX_RECORDS,
-        max_value_bytes: MAX_DHT_DOCUMENT_BYTES,
-        max_providers_per_key: DHT_MAX_PROVIDERS_PER_KEY,
-        max_provided_keys: DHT_MAX_RECORDS,
-    };
-    let store = MemoryStore::with_config(peer_id, store_config);
+    let store = dht_store(peer_id);
     let mut kademlia = KademliaBehaviour::with_config(peer_id, store, config);
     kademlia.set_mode(Some(kad::Mode::Server));
 
@@ -892,7 +895,7 @@ async fn process_swarm_event(
     peer_admission: &mut PeerAdmission,
     peer_addresses: &mut HashMap<libp2p::PeerId, PeerAddresses>,
     configured_peers: &mut [ConfiguredPeer],
-    dht_records_by_peer: &mut HashMap<libp2p::PeerId, HashSet<Vec<u8>>>,
+    replicas: &mut ReplicaLedger,
     seen_gossip: &mut GossipIngress,
     dht_puts: &mut DhtPuts,
     network: &NetworkPolicy,
@@ -1111,63 +1114,26 @@ async fn process_swarm_event(
             request:
                 InboundRequest::PutRecord {
                     source,
-                    record: Some(mut record),
+                    record: Some(record),
                     ..
                 },
         })) => {
-            let key_bytes = record.key.to_vec();
-            let now = Instant::now();
-            let valid_expiry = record
-                .expires
-                .is_some_and(|expires| expires > now && expires <= now + DHT_MAX_TTL);
-            let key_matches = key_bytes.len() == 32
-                && ContentHash::from_content(&record.value).as_ref() == key_bytes.as_slice();
             if !peer_admission.is_admitted(&source) {
                 debug!(%source, "Rejected an inbound DHT record from an unadmitted peer");
                 return Ok(());
             }
-            let peer_keys = dht_records_by_peer.entry(source).or_default();
-            let within_quota =
-                peer_keys.contains(&key_bytes) || peer_keys.len() < DHT_MAX_RECORDS_PER_PEER;
-            if record.value.len() <= MAX_DHT_DOCUMENT_BYTES
-                && valid_expiry
-                && key_matches
-                && within_quota
-            {
-                let local_peer_id = *swarm.local_peer_id();
-                let store = swarm.behaviour_mut().kademlia.store_mut();
-                let key_exists = if let Some(existing) = store.get(&record.key) {
-                    // Remote puts cannot replace our publications or shorten a replica's lifetime.
-                    if existing.publisher == Some(local_peer_id)
-                        || existing.expires.is_none()
-                        || existing.expires >= record.expires
-                    {
-                        return Ok(());
-                    }
-                    record = Record {
-                        expires: record.expires,
-                        ..existing.into_owned()
-                    };
-                    true
-                } else {
-                    false
-                };
-                match store.put(record) {
-                    Ok(()) if !key_exists => {
-                        peer_keys.insert(key_bytes);
-                    }
-                    Ok(()) => {}
-                    Err(error) => debug!(%source, %error, "Rejected DHT record at the local store"),
-                }
-            } else {
-                debug!(
-                    %source,
-                    valid_expiry,
-                    key_matches,
-                    within_quota,
-                    value_bytes = record.value.len(),
-                    "Rejected an inbound DHT record"
-                );
+            let local_peer_id = *swarm.local_peer_id();
+            let store = swarm.behaviour_mut().kademlia.store_mut();
+            if let Err(reason) = admit_replica(
+                store,
+                replicas,
+                DHT_MAX_RECORDS,
+                local_peer_id,
+                source,
+                record,
+                Instant::now(),
+            ) {
+                debug!(%source, reason, "Rejected an inbound DHT record");
             }
         }
 
@@ -1644,11 +1610,13 @@ async fn process_swarm_event(
 }
 
 /// Process all swarm commands except shutdown.
+#[allow(clippy::too_many_arguments)]
 async fn process_swarm_command(
     swarm: &mut Swarm<NodeBehaviour>,
     event_tx: &NetEventSender,
     correlator: &mut Correlator,
     dht_puts: &mut DhtPuts,
+    replicas: &mut ReplicaLedger,
     peer_admission: &PeerAdmission,
     network: &NetworkPolicy,
     command: NetCommand,
@@ -1682,7 +1650,15 @@ async fn process_swarm_command(
             expires,
             value,
         } => {
-            handle_store_local(swarm, event_tx, correlation_id, key, expires, value)?;
+            handle_store_local(
+                swarm,
+                replicas,
+                event_tx,
+                correlation_id,
+                key,
+                expires,
+                value,
+            )?;
             Ok(())
         }
         NetCommand::DhtPutRecord {
@@ -1696,6 +1672,7 @@ async fn process_swarm_command(
                 swarm,
                 event_tx,
                 dht_puts,
+                replicas,
                 correlation_id,
                 key,
                 expires,
@@ -1720,7 +1697,7 @@ async fn process_swarm_command(
             Ok(())
         }
         NetCommand::DhtRemoveRecords { keys } => {
-            handle_remove_records(swarm, keys);
+            handle_remove_records(swarm, replicas, keys);
             Ok(())
         }
         NetCommand::OutgoingRequest(OutgoingRequest {
@@ -1843,11 +1820,16 @@ fn handle_dial(
 ///
 /// Called when an E3 completes to free up local DHT store space.
 /// Records on remote peers are left to expire naturally.
-fn handle_remove_records(swarm: &mut Swarm<NodeBehaviour>, keys: Vec<ContentHash>) {
+fn handle_remove_records(
+    swarm: &mut Swarm<NodeBehaviour>,
+    replicas: &mut ReplicaLedger,
+    keys: Vec<ContentHash>,
+) {
     let store = swarm.behaviour_mut().kademlia.store_mut();
     let mut removed = 0usize;
     for key in &keys {
         store.remove(&RecordKey::new(key));
+        replicas.remove(key.as_ref());
         removed += 1;
     }
     if removed > 0 {
@@ -1886,21 +1868,139 @@ fn prune_expired_records(store: &mut MemoryStore, now: Instant) -> usize {
     before - store.records().count()
 }
 
-/// Store a record in this node's own DHT store. When the store is full, remove the expired
-/// records and try once more. Local stores and puts both write through here.
+/// Store a record in this node's own DHT store. A replica of the same key becomes this node's
+/// record, and the ledger releases it. When the store is full, remove the expired records, and
+/// then the oldest replica of the sender with the most, so this node's records always fit. Local
+/// stores and puts both write through here.
 fn store_local_record(
     store: &mut MemoryStore,
+    replicas: &mut ReplicaLedger,
     record: Record,
     now: Instant,
 ) -> Result<(), kad::store::Error> {
+    replicas.remove(record.key.as_ref());
     match store.put(record.clone()) {
         Err(kad::store::Error::MaxRecords) => {
             let pruned = prune_expired_records(store, now);
-            warn!("DHT store full: removed {pruned} expired records, storing once more");
-            store.put(record)
+            reconcile_store_replicas(store, replicas, None);
+            if let Err(kad::store::Error::MaxRecords) = store.put(record.clone()) {
+                let Some(victim) = replicas.room_for_local() else {
+                    return Err(kad::store::Error::MaxRecords);
+                };
+                store.remove(&RecordKey::from(victim.clone()));
+                replicas.remove(&victim);
+                warn!("DHT store full: removed {pruned} expired records and a replica");
+                return store.put(record);
+            }
+            warn!("DHT store full: removed {pruned} expired records");
+            Ok(())
         }
         result => result,
     }
+}
+
+/// This node's DHT store.
+fn dht_store(peer_id: libp2p::PeerId) -> MemoryStore {
+    MemoryStore::with_config(
+        peer_id,
+        MemoryStoreConfig {
+            max_records: DHT_MAX_RECORDS,
+            // The store refuses a value of this size or more, so the largest document fits.
+            max_value_bytes: MAX_DHT_DOCUMENT_BYTES + 1,
+            max_providers_per_key: DHT_MAX_PROVIDERS_PER_KEY,
+            max_provided_keys: DHT_MAX_RECORDS,
+        },
+    )
+}
+
+/// Store an inbound replica from `source`, making room by evicting other replicas when a limit
+/// is reached. A refresh of a held replica only extends its expiry; this node's own records are
+/// never replaced. `max_records` is the store's record limit. Returns why the record was refused.
+fn admit_replica(
+    store: &mut MemoryStore,
+    replicas: &mut ReplicaLedger,
+    max_records: usize,
+    local_peer_id: libp2p::PeerId,
+    source: libp2p::PeerId,
+    record: Record,
+    now: Instant,
+) -> Result<(), &'static str> {
+    let valid_expiry = record
+        .expires
+        .is_some_and(|expires| expires > now && expires <= now + DHT_MAX_TTL);
+    if !valid_expiry {
+        return Err("invalid expiry");
+    }
+    if record.key.as_ref().len() != 32
+        || ContentHash::from_content(&record.value).as_ref() != record.key.as_ref()
+    {
+        return Err("key does not match the content");
+    }
+    if record.value.len() > MAX_DHT_DOCUMENT_BYTES {
+        return Err("record too large");
+    }
+    // A record that names this node as its publisher is not a replica: reconciliation would drop
+    // it from the ledger and leave it in the store outside every replica limit.
+    if record.publisher == Some(local_peer_id) {
+        return Err("record claims this node as its publisher");
+    }
+    if let Some(existing) = store.get(&record.key) {
+        // Remote puts cannot replace our records or shorten a replica's lifetime.
+        if existing.publisher == Some(local_peer_id)
+            || existing.expires.is_none()
+            || existing.expires >= record.expires
+        {
+            return Ok(());
+        }
+        let refreshed = Record {
+            expires: record.expires,
+            ..existing.into_owned()
+        };
+        return store
+            .put(refreshed)
+            .map_err(|_| "store refused the refresh");
+    }
+    // The store does not hold the key, so a ledger entry for it is stale: Kademlia removed the
+    // expired record during a lookup. The new replica gets its own owner and place.
+    replicas.remove(record.key.as_ref());
+    let bytes = record.value.len();
+    let free = |store: &MemoryStore| max_records.saturating_sub(store.records().count());
+    let mut victims = replicas.room_for(source, bytes, free(store));
+    if victims.as_ref().is_none_or(|victims| !victims.is_empty()) {
+        // Expired records give their room back before a live replica is evicted.
+        prune_expired_records(store, now);
+        reconcile_store_replicas(store, replicas, Some(local_peer_id));
+        victims = replicas.room_for(source, bytes, free(store));
+    }
+    let victims = victims.ok_or("no room among the replicas")?;
+    for victim in victims {
+        store.remove(&RecordKey::from(victim.clone()));
+        replicas.remove(&victim);
+    }
+    let key = record.key.to_vec();
+    store.put(record).map_err(|_| "store refused the record")?;
+    replicas.insert(key, source, bytes);
+    Ok(())
+}
+
+/// Forget the replicas that the store no longer holds as replicas: removed, expired and removed by
+/// Kademlia, or now this node's own record.
+fn reconcile_replicas(swarm: &mut Swarm<NodeBehaviour>, replicas: &mut ReplicaLedger) {
+    let local_peer_id = *swarm.local_peer_id();
+    let store = swarm.behaviour_mut().kademlia.store_mut();
+    reconcile_store_replicas(store, replicas, Some(local_peer_id));
+}
+
+fn reconcile_store_replicas(
+    store: &MemoryStore,
+    replicas: &mut ReplicaLedger,
+    local_peer_id: Option<libp2p::PeerId>,
+) {
+    replicas.retain(|key| {
+        store
+            .get(&RecordKey::from(key.to_vec()))
+            .is_some_and(|record| local_peer_id.is_none() || record.publisher != local_peer_id)
+    });
 }
 
 /// Store a document in this node's own DHT store, as the publisher, without uploading it to other
@@ -1908,6 +2008,7 @@ fn store_local_record(
 /// succeeded yet.
 fn handle_store_local(
     swarm: &mut Swarm<NodeBehaviour>,
+    replicas: &mut ReplicaLedger,
     event_tx: &NetEventSender,
     correlation_id: CorrelationId,
     key: ContentHash,
@@ -1921,7 +2022,7 @@ fn handle_store_local(
         expires,
     };
     let store = swarm.behaviour_mut().kademlia.store_mut();
-    match store_local_record(store, record, Instant::now()) {
+    match store_local_record(store, replicas, record, Instant::now()) {
         Ok(()) => {
             debug!("DHT STORE LOCAL OK cid={}", correlation_id);
             event_tx.send(NetEvent::DhtStoreLocalSucceeded {
@@ -1938,18 +2039,6 @@ fn handle_store_local(
         }
     }
     Ok(())
-}
-
-/// Release per-peer quota entries after the corresponding local record is removed.
-fn prune_dht_peer_quotas(
-    swarm: &mut Swarm<NodeBehaviour>,
-    records_by_peer: &mut HashMap<libp2p::PeerId, HashSet<Vec<u8>>>,
-) {
-    let store = swarm.behaviour_mut().kademlia.store_mut();
-    for keys in records_by_peer.values_mut() {
-        keys.retain(|key| store.get(&RecordKey::new(key)).is_some());
-    }
-    records_by_peer.retain(|_, keys| !keys.is_empty());
 }
 
 /// A progress step of the lookup that checks a put. Only another peer's copy of the requested
@@ -1992,6 +2081,7 @@ fn handle_put_record(
     swarm: &mut Swarm<NodeBehaviour>,
     event_tx: &NetEventSender,
     dht_puts: &mut DhtPuts,
+    replicas: &mut ReplicaLedger,
     correlation_id: CorrelationId,
     key: ContentHash,
     expires: Option<Instant>,
@@ -2022,16 +2112,17 @@ fn handle_put_record(
     // the helper that makes room in a full store, lets put_record replace it instead of failing
     // on the record limit.
     let store = swarm.behaviour_mut().kademlia.store_mut();
-    let result = store_local_record(store, record.clone(), Instant::now()).and_then(|()| {
-        swarm
-            .behaviour_mut()
-            .kademlia
-            // Quorum::Majority calculates quorum from the Kademlia routing table size,
-            // not the actual cluster size. With a routing table of ~21 entries,
-            // it required 11 peers to acknowledge the record, which is impossible
-            // in a 4-node cluster.
-            .put_record(record, Quorum::One)
-    });
+    let result =
+        store_local_record(store, replicas, record.clone(), Instant::now()).and_then(|()| {
+            swarm
+                .behaviour_mut()
+                .kademlia
+                // Quorum::Majority calculates quorum from the Kademlia routing table size,
+                // not the actual cluster size. With a routing table of ~21 entries,
+                // it required 11 peers to acknowledge the record, which is impossible
+                // in a 4-node cluster.
+                .put_record(record, Quorum::One)
+        });
     match result {
         Ok(qid) => {
             dht_puts.start(correlation_id, key, qid, deadline);
@@ -2516,13 +2607,32 @@ mod tests {
         }
     }
 
+    fn ledger(per_owner: usize, records: usize, bytes: usize) -> super::ReplicaLedger {
+        super::ReplicaLedger::new(super::ReplicaLimits {
+            per_owner,
+            records,
+            bytes,
+        })
+    }
+
+    /// A record whose key is the hash of its value, as peers store documents.
+    fn document(value: &[u8], expires: Instant) -> Record {
+        Record {
+            key: RecordKey::new(&super::ContentHash::from_content(value)),
+            value: value.to_vec(),
+            publisher: None,
+            expires: Some(expires),
+        }
+    }
+
     #[test]
     fn a_local_record_can_be_read_back_from_the_store() {
         let mut store = small_store(5);
         let now = Instant::now();
         let document = record("document", now + Duration::from_secs(3600));
 
-        super::store_local_record(&mut store, document.clone(), now).unwrap();
+        super::store_local_record(&mut store, &mut ledger(5, 5, 1024), document.clone(), now)
+            .unwrap();
 
         assert_eq!(
             store.get(&document.key).map(|stored| stored.value.clone()),
@@ -2541,7 +2651,8 @@ mod tests {
             .unwrap();
         let document = record("document", now + Duration::from_secs(3600));
 
-        super::store_local_record(&mut store, document.clone(), now).unwrap();
+        super::store_local_record(&mut store, &mut ledger(5, 5, 1024), document.clone(), now)
+            .unwrap();
 
         assert!(store.get(&document.key).is_some());
         assert!(store.get(&RecordKey::new(&b"live".to_vec())).is_some());
@@ -2549,7 +2660,7 @@ mod tests {
     }
 
     #[test]
-    fn a_full_store_of_live_records_refuses_a_local_record() {
+    fn a_full_store_of_this_nodes_records_refuses_a_local_record() {
         let mut store = small_store(1);
         let now = Instant::now();
         store
@@ -2558,9 +2669,250 @@ mod tests {
         let document = record("document", now + Duration::from_secs(3600));
 
         assert!(matches!(
-            super::store_local_record(&mut store, document, now),
+            super::store_local_record(&mut store, &mut ledger(5, 5, 1024), document, now),
             Err(libp2p::kad::store::Error::MaxRecords)
         ));
+    }
+
+    /// A local write in a store full of live records evicts a replica, the oldest of the sender
+    /// with the most, so this node's records always fit. A replica of the same key becomes this
+    /// node's record, and the ledger releases it.
+    #[test]
+    fn a_local_write_evicts_a_replica_and_takes_over_its_own_key() {
+        let mut store = small_store(2);
+        let mut replicas = ledger(5, 5, 1024);
+        let (local, sender) = (PeerId::random(), PeerId::random());
+        let now = Instant::now();
+        let expires = now + Duration::from_secs(3600);
+        for value in [b"first".as_slice(), b"second".as_slice()] {
+            super::admit_replica(
+                &mut store,
+                &mut replicas,
+                2,
+                local,
+                sender,
+                document(value, expires),
+                now,
+            )
+            .unwrap();
+        }
+        let own = document(b"own", expires);
+
+        super::store_local_record(&mut store, &mut replicas, own.clone(), now).unwrap();
+        assert!(store.get(&own.key).is_some());
+        assert!(store.get(&document(b"first", expires).key).is_none());
+        assert!(replicas.contains(document(b"second", expires).key.as_ref()));
+
+        let promoted = document(b"second", expires);
+        super::store_local_record(&mut store, &mut replicas, promoted.clone(), now).unwrap();
+        assert!(!replicas.contains(promoted.key.as_ref()));
+    }
+
+    /// A sender cannot name this node as the publisher of a replica: the record would leave the
+    /// ledger at the next reconciliation and stay in the store outside every replica limit.
+    #[test]
+    fn an_inbound_replica_that_names_this_node_as_its_publisher_is_refused() {
+        let mut store = small_store(10);
+        let mut replicas = ledger(5, 5, 1024);
+        let (local, sender) = (PeerId::random(), PeerId::random());
+        let now = Instant::now();
+        let mut claimed = document(b"claimed", now + Duration::from_secs(3600));
+        claimed.publisher = Some(local);
+
+        assert!(super::admit_replica(
+            &mut store,
+            &mut replicas,
+            10,
+            local,
+            sender,
+            claimed.clone(),
+            now,
+        )
+        .is_err());
+        assert!(store.get(&claimed.key).is_none());
+        assert!(!replicas.contains(claimed.key.as_ref()));
+    }
+
+    /// An inbound replica makes room: expired records go first, then the sender at its own limit
+    /// gives up its oldest replica. This node's records are never replaced or evicted.
+    #[test]
+    fn an_inbound_replica_reclaims_expired_records_then_its_senders_oldest() {
+        let mut store = small_store(10);
+        let mut replicas = ledger(2, 10, 1024);
+        let (local, sender) = (PeerId::random(), PeerId::random());
+        let now = Instant::now();
+        let expires = now + Duration::from_secs(3600);
+        let past = now.checked_sub(Duration::from_secs(1)).unwrap();
+        let mut own = document(b"own", expires);
+        own.publisher = Some(local);
+        store.put(own.clone()).unwrap();
+        let admit = |store: &mut MemoryStore, replicas: &mut super::ReplicaLedger, value: &[u8]| {
+            super::admit_replica(
+                store,
+                replicas,
+                10,
+                local,
+                sender,
+                document(value, expires),
+                now,
+            )
+        };
+        admit(&mut store, &mut replicas, b"one").unwrap();
+        // A replica that expired still counts until the store removes it.
+        let mut stale = document(b"stale", expires);
+        super::admit_replica(
+            &mut store,
+            &mut replicas,
+            10,
+            local,
+            sender,
+            stale.clone(),
+            now,
+        )
+        .unwrap();
+        stale.expires = Some(past);
+        store.put(stale.clone()).unwrap();
+
+        admit(&mut store, &mut replicas, b"two").unwrap();
+        assert!(
+            store.get(&stale.key).is_none(),
+            "the expired replica goes first"
+        );
+        assert!(store.get(&document(b"one", expires).key).is_some());
+
+        admit(&mut store, &mut replicas, b"three").unwrap();
+        assert!(
+            store.get(&document(b"one", expires).key).is_none(),
+            "the oldest goes next"
+        );
+        assert_eq!(replicas.owned_by(&sender), 2);
+
+        // A remote put never replaces this node's record.
+        let mut replacement = own.clone();
+        replacement.publisher = Some(sender);
+        replacement.expires = Some(expires + Duration::from_secs(60));
+        super::admit_replica(
+            &mut store,
+            &mut replicas,
+            10,
+            local,
+            sender,
+            replacement,
+            now,
+        )
+        .unwrap();
+        assert_eq!(store.get(&own.key).unwrap().publisher, Some(local));
+        assert!(!replicas.contains(own.key.as_ref()));
+    }
+
+    /// Kademlia removes an expired record during a lookup without telling the ledger. A peer that
+    /// then stores the key again owns the new replica.
+    #[test]
+    fn a_replica_stored_again_after_kademlia_removed_it_gets_a_new_owner_and_place() {
+        let mut store = small_store(10);
+        let mut replicas = ledger(5, 10, 1024);
+        let (local, first, second) = (PeerId::random(), PeerId::random(), PeerId::random());
+        let now = Instant::now();
+        let expires = now + Duration::from_secs(3600);
+        let again = document(b"stored again", expires);
+        super::admit_replica(
+            &mut store,
+            &mut replicas,
+            10,
+            local,
+            first,
+            again.clone(),
+            now,
+        )
+        .unwrap();
+        super::admit_replica(
+            &mut store,
+            &mut replicas,
+            10,
+            local,
+            first,
+            document(b"other", expires),
+            now,
+        )
+        .unwrap();
+        // As Kademlia does with an expired record during a lookup.
+        store.remove(&again.key);
+
+        super::admit_replica(
+            &mut store,
+            &mut replicas,
+            10,
+            local,
+            second,
+            again.clone(),
+            now,
+        )
+        .unwrap();
+        assert_eq!(replicas.owned_by(&first), 1);
+        assert_eq!(replicas.owned_by(&second), 1);
+    }
+
+    /// One dealer's documents for four concurrent E3s fit its share of the replicas.
+    #[test]
+    fn a_dealers_documents_for_four_e3s_are_all_admitted() {
+        let mut store = super::dht_store(PeerId::random());
+        let mut replicas = super::ReplicaLedger::new(super::DHT_REPLICA_LIMITS);
+        let (local, dealer) = (PeerId::random(), PeerId::random());
+        let now = Instant::now();
+        let expires = now + Duration::from_secs(3600);
+        for index in 0..crate::ingress_limits::REPLICAS_PER_PEER {
+            let value = format!("document {index}");
+            super::admit_replica(
+                &mut store,
+                &mut replicas,
+                super::DHT_MAX_RECORDS,
+                local,
+                dealer,
+                document(value.as_bytes(), expires),
+                now,
+            )
+            .unwrap();
+        }
+        assert_eq!(replicas.owned_by(&dealer), 160);
+        assert_eq!(store.records().count(), 160);
+    }
+
+    /// The store holds a document of exactly the largest size, and refuses one byte more.
+    #[test]
+    fn a_document_of_the_largest_size_is_stored_and_one_byte_more_is_not() {
+        let mut store = super::dht_store(PeerId::random());
+        let mut replicas = super::ReplicaLedger::new(super::DHT_REPLICA_LIMITS);
+        let (local, sender) = (PeerId::random(), PeerId::random());
+        let now = Instant::now();
+        let expires = now + Duration::from_secs(3600);
+        let largest = vec![7u8; super::MAX_DHT_DOCUMENT_BYTES];
+        let mut too_large = largest.clone();
+        too_large.push(7);
+
+        super::admit_replica(
+            &mut store,
+            &mut replicas,
+            super::DHT_MAX_RECORDS,
+            local,
+            sender,
+            document(&largest, expires),
+            now,
+        )
+        .unwrap();
+        assert!(super::admit_replica(
+            &mut store,
+            &mut replicas,
+            super::DHT_MAX_RECORDS,
+            local,
+            sender,
+            document(&too_large, expires),
+            now
+        )
+        .is_err());
+        let mut own = document(&too_large, expires);
+        own.publisher = Some(local);
+        assert!(super::store_local_record(&mut store, &mut replicas, own, now).is_err());
+        assert_eq!(store.records().count(), 1);
     }
 
     /// A cancelled put reports at DEBUG and stays out of the upload summary, while a real failure

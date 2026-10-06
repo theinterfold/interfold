@@ -328,7 +328,16 @@ the code does not meet yet.
   its last connection closes. Only newly admitted connections receive admission notifications. —
   `crates/net/src/net_interface.rs`
 - An inbound DHT put must not replace a locally published record or shorten a stored replica's
-  expiry. No expiry means an unlimited lifetime. — `crates/net/src/net_interface.rs`
+  expiry. No expiry means an unlimited lifetime. Inbound replicas are bounded per sender (160), in
+  total (3,040) and in value bytes (a 2 GiB ceiling), from four concurrent N=19 E3s with a 2x
+  margin. At a limit a new replica evicts others instead of being refused: expired records go first,
+  then the sender at its own limit gives up its oldest replica, and under node-wide pressure the
+  sender over its share in the short dimension gives up its oldest, as many as the new replica
+  needs; it is refused only when nothing it may evict makes room. This node's records and the
+  documents it restored are never evicted for a replica, and a local write that finds the store full
+  evicts a replica. The replica ledger follows every store change: removal, expiry pruning,
+  Kademlia's own removal of expired records, and a replica that becomes this node's record. —
+  `crates/net/src/replica_ledger.rs`; `crates/net/src/net_interface.rs`
 - A periodic network re-send backs off to a cap, stops when its phase ends, and has a lifetime
   bound. It does not start for one of the last 1,024 E3s whose terminal stage came from the chain,
   also from replayed history. After a restart, local replay schedules the re-sends again in log
