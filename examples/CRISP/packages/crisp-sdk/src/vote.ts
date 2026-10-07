@@ -5,7 +5,8 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 import { type Vote, type CensusVariant, type PrepareBallotInputs, type PreparedBallot, ProofData } from './types'
-import { getMaxVoteValue, proofToFields } from './utils'
+import { proofToFields } from './utils'
+import { checkVoteWeights, getPlaintextModulus } from './encoding'
 import { attachSignatureImpl, prepareCircuitInputsImpl } from './circuitInputs'
 import { MASK_SIGNATURE } from './constants'
 export { encodeVote, encryptVote, decodeTally, decryptVote, generateBFVKeys } from './encoding'
@@ -257,16 +258,8 @@ export const generateProof = async (circuitInputs: any, censusMode: CensusVarian
  */
 export const validateVote = (vote: Vote, balance: bigint): void => {
   const numChoices = vote.length
-  const maxValue = getMaxVoteValue(numChoices)
 
-  for (let i = 0; i < vote.length; i++) {
-    if (vote[i] < 0) {
-      throw new Error(`Invalid vote: choice ${i} is negative`)
-    }
-    if (vote[i] > maxValue) {
-      throw new Error(`Invalid vote: choice ${i} exceeds maximum encodable value`)
-    }
-  }
+  checkVoteWeights(vote, getPlaintextModulus())
 
   if (numChoices === 2) {
     // Binary: mutually exclusive

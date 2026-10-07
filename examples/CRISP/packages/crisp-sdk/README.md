@@ -62,7 +62,7 @@ const sdk = new CrispSDK(serverUrl)
 // Generate a vote proof (automatically fetches previous ciphertext if needed)
 const voteProof = await sdk.generateVoteProof({
   e3Id: 1n,
-  vote: { yes: 100n, no: 0n },
+  vote: [100, 0], // one weight per option
   publicKey: publicKeyBytes,
   signature: '0x...',
   messageHash: '0x...',
@@ -108,7 +108,7 @@ const merkleLeaves = await getTreeData(serverUrl, e3Id)
 import { generateVoteProof } from '@crisp-e3/sdk'
 
 const proof = await generateVoteProof({
-  vote: { yes: 100n, no: 0n },
+  vote: [100, 0], // one weight per option
   publicKey: publicKeyBytes,
   signature: '0x...',
   messageHash: '0x...',
@@ -141,14 +141,26 @@ import { verifyProof } from '@crisp-e3/sdk'
 const isValid = await verifyProof(proof)
 ```
 
-#### Decode Tally
+#### Ballot Encoding and Decode Tally
+
+A ballot stores one integer per option: coefficient `o` of the message polynomial is the weight on
+option `o`, and every other coefficient up to the BFV degree is zero. BFV adds ballots coefficient
+by coefficient, so the decrypted tally holds one total per option in the same positions. Each weight
+is a non-negative integer below the BFV plaintext modulus `t` of the active preset, and a round has
+2 to `MAX_VOTE_OPTIONS` options. `CRISPProgram` keeps every option total below `t`.
 
 ```typescript
-import { decodeTally } from '@crisp-e3/sdk'
+import { encodeVote, decodeTally } from '@crisp-e3/sdk'
+
+const coefficients = encodeVote([3, 0, 7]) // coefficient 0 = 3, coefficient 2 = 7, the rest 0
 
 const tally = decodeTally(tallyBytes, numOptions)
-// Returns: bigint[] — one total per option
+// Returns: bigint[] — the first numOptions coefficients, one total per option
 ```
+
+`decodeTally` reads the first `numOptions` of the `MAX_MSG_NON_ZERO_COEFFS` published coefficients.
+`CRISPProgram.decodeTally` (Solidity) and `crisp_utils::decode_tally` (Rust) read the same layout.
+The interfold dashboard calls `CRISPProgram.decodeTally`.
 
 #### Cryptographic Utilities
 
@@ -250,8 +262,13 @@ const { stage, retryOffered } = getSubmissionStage({
 - `generateMaskVoteProof(maskVoteProofInputs: MaskVoteProofInputs): Promise<ProofData>` - Generate a
   mask vote proof (low-level)
 - `verifyProof(proof: ProofData): Promise<boolean>` - Verify a proof locally
+- `encodeVote(vote: Vote): number[]` - Encode one weight per option into message coefficients,
+  padded to the BFV degree. Rejects a weight that is not a non-negative integer below the plaintext
+  modulus
 - `decodeTally(tallyBytes: string | number[] | bigint[], numChoices: number): TallyResult` - Decode
-  an encoded tally into one total per option
+  the first `numChoices` coefficients of a tally into one total per option
+- `validateVote(vote: Vote, balance: bigint): void` - Check the weights against the plaintext
+  modulus and the voting-power rules; throws on an invalid vote
 - `generatePublicKey(): Uint8Array` - Generate a random public key
 - `encryptVote(vote: Vote, publicKey: Uint8Array): Uint8Array` - Encrypt a vote
 - `encodeSolidityProof(proof: ProofData): Hex` - Encode proof for Solidity contract
@@ -280,7 +297,8 @@ const { stage, retryOffered } = getSubmissionStage({
 
 - `MERKLE_TREE_MAX_DEPTH` - Maximum depth of the merkle tree
 - `SIGNATURE_MESSAGE` - Message used for signature verification
-- `MAXIMUM_VOTE_VALUE` - Maximum allowed vote value
+- `MAX_VOTE_OPTIONS` - Maximum number of options in a round
+- `MAX_MSG_NON_ZERO_COEFFS` - Number of plaintext coefficients published as the tally
 - `SIGNATURE_MESSAGE_HASH` - Hash of the signature message
 
 ### Types
@@ -288,6 +306,6 @@ const { stage, retryOffered } = getSubmissionStage({
 - `RoundDetails` - Round details type
 - `RoundDetailsResponse` - Server response type for round details
 - `TokenDetails` - Token details type
-- `Vote` - Vote type with `yes` and `no` bigint fields
+- `Vote` - One non-negative integer weight per option, indexed by option
 - `MaskVoteProofInputs` - Inputs for mask vote proof generation
 - `VoteProofInputs` - Inputs for vote proof generation

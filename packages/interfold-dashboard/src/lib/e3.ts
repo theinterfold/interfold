@@ -46,21 +46,14 @@ const CRISP_INPUT_PUBLISHED = {
   ],
 } as const
 
-// Minimal CRISPProgram view. The option count is round configuration set in
-// `validate()`; the tally layout cannot be decoded without it.
-const CRISP_GET_ROUND_DATA = {
+// Minimal CRISPProgram view. The program that ran a round decodes its own tally, so
+// the dashboard holds no copy of the ballot layout and reads every deployment right.
+const CRISP_DECODE_TALLY = {
   type: 'function',
-  name: 'getRoundData',
+  name: 'decodeTally',
   stateMutability: 'view',
   inputs: [{ name: 'e3Id', type: 'uint256' }],
-  outputs: [
-    { name: 'merkleRoot', type: 'uint256' },
-    { name: 'paramsHash', type: 'bytes32' },
-    { name: 'numOptions', type: 'uint256' },
-    { name: 'creditMode', type: 'uint8' },
-    { name: 'inputRoot', type: 'uint256' },
-    { name: 'numberOfVotes', type: 'uint40' },
-  ],
+  outputs: [{ name: 'votes', type: 'uint256[]' }],
 } as const
 
 // Public RPCs cap getLogs range. 9_500 keeps us safely under common 10k limits.
@@ -217,9 +210,9 @@ export type E3FullDetails = E3Summary & {
   committeePublicKey: `0x${string}`
   ciphertextOutput: `0x${string}`
   plaintextOutput: `0x${string}`
-  // Option count for CRISP rounds, read from CRISPProgram. Undefined for non-CRISP
-  // programs or when the round was never initialised. Required to decode the tally.
-  numOptions?: number
+  // Per-option totals of a CRISP round, decoded by CRISPProgram. Undefined for
+  // non-CRISP programs and for rounds without a published, decodable output.
+  tally?: bigint[]
   requestedAt?: number // unix seconds (block.timestamp of the request)
   // Block number of the E3Requested log (distinct from `requestBlock` which on
   // this contract version is actually a Unix timestamp, not a block number).
@@ -418,18 +411,24 @@ export async function fetchE3Details(e3Id: bigint, toBlock?: bigint): Promise<E3
     }).catch(() => FailureReason.None) as Promise<number>,
   ])
 
-  // CRISP round configuration. Only CRISP E3s expose it, and an uninitialised round
-  // reports 0 options — in both cases the tally stays undecodable rather than guessed.
-  const numOptions = isCrispE3(e3.e3Program)
-    ? await ((publicClient.readContract as any)({
-        address: CONTRACTS.CRISPProgram,
-        abi: [CRISP_GET_ROUND_DATA],
-        functionName: 'getRoundData',
-        args: [e3Id],
-      })
-        .then((data: readonly unknown[]) => Number(data[2] as bigint) || undefined)
-        .catch(() => undefined) as Promise<number | undefined>)
-    : undefined
+  // CRISP tally. Only CRISP E3s have one, and only once the plaintext output is
+  // published. A round the program cannot decode reverts or returns no totals; in
+  // both cases the tally stays undefined rather than guessed.
+  const tally =
+    isCrispE3(e3.e3Program) && e3.plaintextOutput && e3.plaintextOutput !== '0x'
+      ? await publicClient
+          .readContract({
+            address: CONTRACTS.CRISPProgram,
+            abi: [CRISP_DECODE_TALLY],
+            functionName: 'decodeTally',
+            args: [e3Id],
+            // viem's types require this EIP-7702 field for this client. A read carries no
+            // authorizations.
+            authorizationList: undefined,
+          })
+          .then((votes) => (votes.length > 0 ? [...votes] : undefined))
+          .catch(() => undefined)
+      : undefined
 
   // `e3.requestBlock` is misnamed: on this contract version it stores
   // `block.timestamp` (EIP-6372 timestamp clock), not a block number. Using it
@@ -595,7 +594,7 @@ export async function fetchE3Details(e3Id: bigint, toBlock?: bigint): Promise<E3
     committeePublicKey: e3.committeePublicKey,
     ciphertextOutput: e3.ciphertextOutput,
     plaintextOutput: e3.plaintextOutput,
-    numOptions,
+    tally,
     committeeThreshold: threshold,
     committeeDecryptionThreshold: committeeDecryptionThreshold(threshold),
     committeeMembers: members,
@@ -630,58 +629,5 @@ export async function fetchE3Details(e3Id: bigint, toBlock?: bigint): Promise<E3
       txHash: l.transactionHash,
       timestamp: at(l.blockNumber),
     })),
-  }
-}
-
-// Number of leading plaintext coefficients that carry the vote payload. Must match
-// MAX_MSG_NON_ZERO_COEFFS in the CRISP SDK, server and program contract.
-const MAX_MSG_NON_ZERO_COEFFS = 50
-
-// Decode a CRISP tally from `plaintextOutput`.
-//
-// The field is the decrypted BFV polynomial, packed as one little-endian uint64 per
-// coefficient (Rust `encode_vec_u64_to_bytes`) — NOT an abi-encoded array. Only the
-// first MAX_MSG_NON_ZERO_COEFFS coefficients carry the payload: each option gets
-// floor(MAX_MSG_NON_ZERO_COEFFS / numOptions) binary coefficients, most significant
-// first, and the rest of the polynomial is zero padding.
-//
-// Totals are bigint: after aggregation a coefficient is a ballot count rather than a
-// bit, so an option total can exceed Number.MAX_SAFE_INTEGER.
-export function decodeCrispTally(plaintextOutput: `0x${string}`, numOptions: number): bigint[] | null {
-  if (!plaintextOutput || plaintextOutput === '0x') return null
-  if (!Number.isInteger(numOptions) || numOptions <= 0) return null
-
-  const hex = plaintextOutput.slice(2)
-  // 8 bytes (16 hex chars) per coefficient.
-  if (hex.length === 0 || hex.length % 16 !== 0) return null
-
-  try {
-    const coefficients: bigint[] = []
-    for (let i = 0; i < hex.length; i += 16) {
-      const word = hex.slice(i, i + 16)
-      let bigEndian = ''
-      for (let b = 14; b >= 0; b -= 2) bigEndian += word.slice(b, b + 2)
-      coefficients.push(BigInt(`0x${bigEndian}`))
-    }
-
-    if (coefficients.length < MAX_MSG_NON_ZERO_COEFFS) return null
-
-    const segmentSize = Math.floor(MAX_MSG_NON_ZERO_COEFFS / numOptions)
-    // More options than payload coefficients leaves nothing to decode.
-    if (segmentSize === 0) return null
-
-    const totals: bigint[] = []
-    for (let optIdx = 0; optIdx < numOptions; optIdx++) {
-      const segmentStart = optIdx * segmentSize
-      let value = 0n
-      for (let i = 0; i < segmentSize; i++) {
-        value += coefficients[segmentStart + i] << BigInt(segmentSize - 1 - i)
-      }
-      totals.push(value)
-    }
-
-    return totals
-  } catch {
-    return null
   }
 }

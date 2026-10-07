@@ -23,7 +23,8 @@ const FINALIZATION_WINDOW = 30
 const PRODUCTION_FINALIZATION_WINDOW = 10_800
 
 describe('CRISP input availability flow', function () {
-  async function openRound() {
+  /// Opens a round with the mock's default parameters, or with the given `customParams`.
+  async function openRound(customParams?: string) {
     const mockInterfold = await deployMockInterfold()
     const mockHonk = (await deployContract('MockHonkVerifier')) as unknown as HonkVerifier
     const program = await deployCRISPProgram({
@@ -37,7 +38,10 @@ describe('CRISP input availability flow', function () {
     const end = start + 3_700
     await (await mockInterfold.setInputWindow(start, end)).wait()
     const e3Id = await mockInterfold.nextE3Id()
-    await (await mockInterfold.request(await program.getAddress())).wait()
+    const programAddress = await program.getAddress()
+    await (
+      await (customParams ? mockInterfold.requestWithParams(programAddress, 2, customParams) : mockInterfold.request(programAddress))
+    ).wait()
     await (await mockInterfold.setCommitteePublicKey(ethers.id('committee-key'))).wait()
     await (await program.setMerkleRoot(e3Id, 1)).wait()
     await increaseTimeTo(start)
@@ -397,5 +401,47 @@ describe('CRISP input availability flow', function () {
     await expect(program.inputCommitmentDeadline(e3Id))
       .to.be.revertedWithCustomError(program, 'InputWindowTooShort')
       .withArgs(e3Id, FINALIZATION_WINDOW, FINALIZATION_WINDOW + 1)
+  })
+
+  /// Every input adds one ciphertext to a slot's chain, and a CONSTANT round carries `credits` per
+  /// input, so its input count is capped to keep their sum below the plaintext modulus. Both entry
+  /// points must refuse alike: a service that pre-checks with `validateInputProof` must not see an
+  /// input accepted that `publishInput` then rejects.
+  it('accepts inputs up to the round limit and rejects the next from both entry points', async function () {
+    const t = await (await deployMockInterfold()).plaintextModulus()
+    // The largest input count that keeps `credits * count` below `t` is 2 for these credits.
+    const credits = (t - 1n) / 2n
+    const limit = (t - 1n) / credits
+    const params = abiCoder.encode(
+      ['address', 'uint256', 'uint256', 'uint256', 'uint256', 'uint256', 'uint256'],
+      [ethers.ZeroAddress, 0n, 2, 0, credits, 0, 0],
+    )
+    const { program, e3Id } = await openRound(params)
+
+    for (let i = 0; i < Number(limit); i++) {
+      const accepted = await input(program, e3Id, `within-limit-${i}`)
+      expect(
+        await program.validateInputProof(
+          e3Id,
+          '0x01',
+          accepted.slotAddress,
+          accepted.encryptedVoteCommitment,
+          accepted.encryptedVoteHash,
+          0,
+        ),
+      ).to.equal(true)
+      await expect(program.publishInput(e3Id, accepted.commitmentPayload)).to.emit(program, 'InputCommitted')
+    }
+    expect((await program.getRoundData(e3Id)).numberOfVotes).to.equal(limit)
+
+    const refused = await input(program, e3Id, 'over-limit')
+    await expect(
+      program.validateInputProof(e3Id, '0x01', refused.slotAddress, refused.encryptedVoteCommitment, refused.encryptedVoteHash, 0),
+    )
+      .to.be.revertedWithCustomError(program, 'InputLimitReached')
+      .withArgs(e3Id, limit)
+    await expect(program.publishInput(e3Id, refused.commitmentPayload))
+      .to.be.revertedWithCustomError(program, 'InputLimitReached')
+      .withArgs(e3Id, limit)
   })
 })

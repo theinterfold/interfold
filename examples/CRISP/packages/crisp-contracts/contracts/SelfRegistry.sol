@@ -8,9 +8,9 @@ pragma solidity >=0.8.27;
 /// @notice An open self-registration census for `CensusMode.ONCHAIN` rounds.
 /// @dev Anyone may register themselves, once, and registration is permanent. The contract answers
 /// the `IVotesToken` surface `CRISPProgram._eligibility` reads: `getPastVotes` returns 1 for a
-/// registered account and 0 otherwise. It has no `decimals()`, so the voting-power divisor
-/// derives to 1, and no `clock()`, so the round snapshot falls back to block numbers — both
-/// fallbacks `CRISPProgram` already implements.
+/// registered account and 0 otherwise. It has no `clock()`, so the round snapshot falls back to
+/// block numbers, which `CRISPProgram` already implements. It has no `getPastTotalSupply`, so it
+/// serves `CreditMode.CONSTANT` rounds only, the round shape this census is meant for.
 ///
 /// `getPastVotes` deliberately ignores the timepoint. An honest checkpointed answer would fix the
 /// electorate at the round's snapshot, which is taken in the transaction that requests the round —

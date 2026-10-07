@@ -80,12 +80,11 @@ describe('CRISP on-chain census', function () {
     creditMode: number
     credits: bigint
     censusMode: number
-    /// 0 means "derive the divisor from the token's decimals".
-    votingPowerDivisor?: bigint
   }) =>
     ethers.AbiCoder.defaultAbiCoder().encode(
       ['address', 'uint256', 'uint256', 'uint256', 'uint256', 'uint256', 'uint256'],
-      [opts.token, opts.minVotingPower, opts.numOptions, opts.creditMode, opts.credits, opts.censusMode, opts.votingPowerDivisor ?? 0n],
+      // A divisor of 0 asks for the smallest one that keeps the round below the plaintext modulus.
+      [opts.token, opts.minVotingPower, opts.numOptions, opts.creditMode, opts.credits, opts.censusMode, 0n],
     )
 
   before(async function () {
@@ -106,6 +105,8 @@ describe('CRISP on-chain census', function () {
     await ethers.provider.send('evm_mine', [])
 
     e3Id = await mockInterfold.nextE3Id()
+    // The smallest divisor `validate` accepts. The floor must be worth at least one ballot unit.
+    const minimumDivisor = (await token.totalSupply()) / (await mockInterfold.plaintextModulus()) + 1n
     // CUSTOM credits, so the weight the circuit enforces is the token balance itself rather than a
     // flat per-voter allowance. That is what makes this exercise the token read.
     const requestTx = await mockInterfold.requestWithParams(
@@ -113,7 +114,7 @@ describe('CRISP on-chain census', function () {
       numOptions,
       encodeParams({
         token: await token.getAddress(),
-        minVotingPower: 10n ** 17n,
+        minVotingPower: minimumDivisor,
         numOptions,
         creditMode: CUSTOM,
         credits: 1n,
@@ -134,9 +135,12 @@ describe('CRISP on-chain census', function () {
     // prover has to use the same value. Read the divisor from the round rather than recomputing
     // it, which also pins the getter clients depend on.
     const divisor = await crispProgram.votingPowerDivisorOf(e3Id)
-    expect(divisor, 'derived from the token decimals: 10 ** (18 - 1)').to.equal(10n ** 17n)
+    expect(divisor, 'the minimum: supply / t + 1').to.equal(minimumDivisor)
 
     votingPower = rawPower / divisor
+    // The voter holds most of the supply, so the scaled power carries the weight the ballot proves
+    // and stays below the plaintext modulus.
+    expect(votingPower, 'voter must carry the ballot weight').to.be.greaterThanOrEqual(BigInt(Math.max(...vote)))
 
     voteProof = await buildOnchainProof(votingPower)
   })
@@ -215,53 +219,22 @@ describe('CRISP on-chain census', function () {
   })
 
   /// The contract reads the power from the token rather than trusting the ballot. A proof built
-  /// for a different power therefore fails, which is what stops a voter inflating their own weight.
+  /// for a different power therefore fails, which is what stops a voter choosing their own weight.
+  /// The mismatched power stays below the plaintext modulus, so the ballot is valid in every other
+  /// way.
   ///
-  /// The inflated ballot goes first, while the slot is empty. After the honest ballot the slot would
-  /// already hold a vote, so the inflated ballot would also mismatch on `prev_ct_commitment` and
+  /// The mismatched ballot goes first, while the slot is empty. After the honest ballot the slot would
+  /// already hold a vote, so the mismatched ballot would also mismatch on `prev_ct_commitment` and
   /// `is_first_vote`: it would still revert, but not for the reason under test.
   it('publishes an ONCHAIN ballot and rejects one that proves a power the token does not report', async function () {
-    const inflated = await buildOnchainProof(votingPower * 2n)
-    await (await mockInterfold.setCommitteePublicKey(inflated.publicInputs[8])).wait()
-    await expect(publishAvailableInput(crispProgram, e3Id, encodeSolidityProof(inflated))).to.be.revert(ethers)
+    const mismatched = await buildOnchainProof(votingPower - 1n)
+    await (await mockInterfold.setCommitteePublicKey(mismatched.publicInputs[8])).wait()
+    await expect(publishAvailableInput(crispProgram, e3Id, encodeSolidityProof(mismatched))).to.be.revert(ethers)
 
     // Positive control in the same round and the same slot: the honest power publishes. The only
     // difference between the two ballots is the power, so the revert above is attributable to it.
     await (await mockInterfold.setCommitteePublicKey(voteProof.publicInputs[8])).wait()
     await publishAvailableInput(crispProgram, e3Id, encodeSolidityProof(voteProof))
-  })
-
-  /// A requester that needs different precision names its own divisor; 0 means "derive it".
-  it('honours an explicit divisor', async function () {
-    const id = await mockInterfold.nextE3Id()
-    await (
-      await mockInterfold.requestWithParams(
-        await crispProgram.getAddress(),
-        numOptions,
-        encodeParams({
-          token: await token.getAddress(),
-          // A coarser divisor demands a proportionally higher floor: the round is refused unless
-          // clearing it is worth at least one ballot unit.
-          minVotingPower: 10n ** 18n,
-          numOptions,
-          creditMode: CUSTOM,
-          credits: 1n,
-          censusMode: ONCHAIN,
-          votingPowerDivisor: 10n ** 18n,
-        }),
-      )
-    ).wait()
-
-    expect(await crispProgram.votingPowerDivisorOf(id)).to.equal(10n ** 18n)
-  })
-
-  /// Only ONCHAIN scales. A Merkle round records no divisor, because its bound comes from the
-  /// census leaf the coordinator has already scaled.
-  it('records no divisor for a non-ONCHAIN round', async function () {
-    const id = await mockInterfold.nextE3Id()
-    await (await mockInterfold.request(await crispProgram.getAddress())).wait()
-
-    expect(await crispProgram.votingPowerDivisorOf(id)).to.equal(0n)
   })
 
   /// The check the shared-verifier substitution can never make: the two verifiers are not

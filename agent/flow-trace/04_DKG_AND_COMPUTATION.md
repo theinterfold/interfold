@@ -2134,17 +2134,52 @@ server that lost its database, or one of several instances, can report `not_inde
 Closing the gap entirely would need the guest to tell a replace from an add, which means publishing
 that distinction — the thing the whole design exists to hide.
 
-Capacity: `TREE_DEPTH = 20` gives 2^20 entries, against a physical ceiling of roughly three writes
-per block at the secure preset — append-only is not capacity-bound.
+Capacity: `TREE_DEPTH = 20` gives 2^20 entries. Every input, whether a vote, an update, or a mask,
+appends one entry, and `_verifyInputProof` refuses an input once the round holds `inputLimit`
+entries (`InputLimitReached`), on both `publishInput` and `validateInputProof`. The limit is at most
+`MAX_INPUTS_PER_ROUND` (100,000). Every input adds at most one fresh ciphertext to the sum that the
+committee decrypts. Every secure parameter set must keep that decryption correct for at least
+100,000 additions (`SEARCH_Z` is 100,000 for secure-8192). The insecure-512 test preset is sized
+for 1,024 additions. A CUSTOM round on it, or a CONSTANT round with zero credits, can accept more
+inputs than that.
+
+A mask needs no voter signature, and the contract cannot tell a mask from a vote, so it cannot count
+votes alone. Thus any account can send masks to eligible slots until the round reaches `inputLimit`,
+and every later input reverts. Each mask still needs a valid proof, an availability attestation, and
+a `publishInput` transaction. A CONSTANT round with large `credits` has the smallest limit, so it is
+the cheapest round to fill.
 
 **Plaintext modulus bound.** The committee decrypts each tally coefficient modulo the plaintext
-modulus `t` of the round's BFV parameters: 100 for insecure-512 and 17,000,000 for secure-8192. Every
-ballot coefficient is 0 or 1 and the tally adds one ballot per selected slot, so a coefficient
-counts the ballots that set that bit, and the decoded count is exact only while fewer than `t`
-ballots set it. `CRISPProgram` does not enforce the bound, and the input tree (`2^20` entries) does
-not prevent a round past it. At secure-8192 a wrong count needs 17 million ballots in one round; at
-insecure-512 it needs 100, so a round on that preset with 100 or more voters for one option can
-decode a wrong result with every proof valid.
+modulus `t` of the round's BFV parameters: 100 for insecure-512 and 17,000,000 for secure-8192. A
+ballot holds one weight in `[0, t)` for each option, so the decrypted tally holds per-option totals:
+coefficient `o` is the total weight on option `o`, exact only while it is below `t`.
+`CRISPProgram.validate` decodes `t` from `e3ProgramParams` (the `BfvParameters` tuple that
+`encode_bfv_params` and `encodeBfvParams` write) and sizes the round so that no total reaches it:
+
+- CONSTANT credits: `credits >= t` reverts with `CreditsExceedPlaintextModulus`. A ballot's weights
+  sum to at most `credits`, so the input limit is `(t - 1) / credits`, capped at
+  `MAX_INPUTS_PER_ROUND`. Zero credits carry no weight and take `MAX_INPUTS_PER_ROUND`. No divisor
+  is recorded.
+- CUSTOM credits: the round records the token snapshot and a divisor of at least
+  `getPastTotalSupply(snapshot) / t + 1`. A requested 0 takes that minimum, and a smaller request
+  reverts with `VotingPowerDivisorBelowMinimum`. A slot's weight bound is
+  `getPastVotes(slot, snapshot) / divisor`, and the votes of all accounts sum to at most the total
+  supply, so the bounds of all slots sum to less than `t`. A token that does not answer
+  `getPastTotalSupply` reverts with `CustomCreditsRequireVotesToken`.
+
+An ONCHAIN round takes each slot's bound from the contract, so the bound holds without trusting the
+coordinator. A census-tree round takes it from the census leaf, so it also relies on the coordinator
+writing `credits` (CONSTANT) or the scaled voting power (CUSTOM) into each leaf, the same trust the
+census already carries. The server reads CUSTOM leaf balances at a timepoint that it derives from
+the request timestamp. For a timestamp-clock token, that timepoint is the contract's snapshot. For a
+block-number clock, the server takes the last block at or before the request timestamp minus one. On
+a chain with several blocks per second, that block can be earlier than the contract's snapshot. A
+CUSTOM round also relies on the token: at the snapshot, `getPastVotes` over all accounts must not
+sum above `getPastTotalSupply`. ERC20Votes meets this. `BondedVotes` with an escrow votes source
+does not guarantee it. Its vesting-locked term reads the current locks and the present wallet
+balance, not a checkpointed history. After a slash leaves a lock larger than its bond, that term can
+count FOLD that another account also counts at the snapshot. The bound still holds while that
+overlap is at most the FOLD that carries no vote at the snapshot.
 
 A round where _every_ entry is unusable fails at the output commitment, because the processor's
 empty ciphertext does not deserialize. That is only reachable when no honest input exists, and is
@@ -2186,8 +2221,8 @@ derived from the commitments accepted a mask that published its ballot alone: th
 second opening of the parent commitment that satisfied the single equation. A per-coefficient linear
 relation, aligned across three ciphertexts that pack with the same `BIT_CT`, proves the same
 statement for the committed coefficients under any opening that keeps the carriers, so the circuit
-needs no `pack_checked` digit asserts. At secure-8192 the `crisp` circuit is 1,844,049 gates and
-`crisp_onchain` 1,824,326, under the `2^21` browser ceiling. With the checked helper on the three
+needs no `pack_checked` digit asserts. At secure-8192 the `crisp` circuit is 1,750,827 gates and
+`crisp_onchain` 1,731,104, under the `2^21` browser ceiling. With the checked helper on the three
 commitments, the secure `crisp` circuit measured 2,520,034 gates.
 
 The circuit returns `sum_ct_commitment` on every path, so the public inputs, the stored commitment,
@@ -2196,9 +2231,15 @@ them apart would mean distinguishing a fresh BFV ciphertext from a sum, which th
 hides. The SDK has one code path for all three, and `CrispSDK.prepareBallot` makes the same
 `state/previous-ciphertext` request either way, so the request pattern says nothing either.
 
-The plaintext is fully constrained on both branches. `check_coefficient_values_with_balance` binds
-every coefficient of `k1`: those inside an option segment must be binary, and every coefficient
-outside the ballot region must be zero. `check_coefficient_zero` requires the whole polynomial to be
-zero for a mask. Both read the payload at `k1[D - MAX_MSG_NON_ZERO_COEFFS ..]`, because the witness
-generator reverses the message over the full BFV degree — the ballot occupies the **last** 50
-coefficients, and the options appear back to front.
+The plaintext is fully constrained on both branches. The witness generator reverses the message over
+the full BFV degree, so option `o` is `k1[D - 1 - o]`. `check_coefficient_values_with_balance`
+requires every coefficient outside the first `num_options` message positions to be zero and decodes
+each option weight with `decode_weight`. The prover hints the weight `v` and a quotient `r`.
+`check_weight` range-checks the coefficient, `v`, and `r` to `[0, t)` and checks
+`k1 + t * r == Q_MOD_T * v`. With every value below `t`, the equation holds over the integers, so
+`v` is the value that the coefficient decrypts to. The fold binds this `k1` to the plaintext of
+`user_data_encryption_ct0` through `k1_commitment`. A packed commitment has one opening only while
+every coefficient fits its slot. `user_data_encryption_ct0` range-checks its `k1` to `[0, t)`, and
+the ballot circuit bounds every coefficient of its own `k1`. The weights must sum to at most the
+slot's bound, and with two options at most one weight is nonzero. `check_coefficient_zero` requires
+the whole polynomial to be zero for a mask.

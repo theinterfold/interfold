@@ -255,8 +255,6 @@ describe('CRISP Contracts', function () {
   describe('get round data', () => {
     // The dynamic input tree has a minimum depth of one (InternalLazyIMT.Z_1).
     const EMPTY_TREE_ROOT = 14744269619966411208579211824598458697587494354926760081771325075741142829156n
-    // MockInterfold calls validate with empty e3ProgramParams
-    const EMPTY_PARAMS_HASH = ethers.keccak256('0x')
 
     it('should return empty data for an e3 which was not initialized', async () => {
       const e3Id = await mockInterfold.nextE3Id()
@@ -278,7 +276,8 @@ describe('CRISP Contracts', function () {
       const [merkleRoot, paramsHash, numOptions, creditMode, inputRoot, numberOfVotes] = await crispProgram.getRoundData(e3Id)
 
       expect(merkleRoot).to.equal(0n)
-      expect(paramsHash).to.equal(EMPTY_PARAMS_HASH)
+      // The program hashes the BFV parameter blob that MockInterfold passes to `validate`.
+      expect(paramsHash).to.equal(ethers.keccak256(await mockInterfold.e3ProgramParams()))
       expect(numOptions).to.equal(2n)
       // CreditMode.CONSTANT
       expect(creditMode).to.equal(0n)

@@ -7,7 +7,7 @@
 import { poseidon2 } from 'poseidon-lite'
 import { LeanIMT } from '@zk-kit/lean-imt'
 import type { MerkleProof } from './types'
-import { MAX_MSG_NON_ZERO_COEFFS, MERKLE_TREE_MAX_DEPTH, SIGNATURE_MESSAGE_HASH } from './constants'
+import { MERKLE_TREE_MAX_DEPTH, SIGNATURE_MESSAGE_HASH } from './constants'
 import { publicKeyToAddress } from 'viem/utils'
 import { hexToBytes, recoverPublicKey } from 'viem'
 
@@ -79,19 +79,6 @@ export const generateMerkleProof = (balance: bigint, address: string, leaves: bi
 }
 
 /**
- * Convert a number to its binary representation
- * @param number The number to convert to binary
- * @returns The binary representation of the number as a string
- */
-export const toBinary = (number: number): string => {
-  if (number < 0) {
-    throw new Error('Value cannot be negative')
-  }
-
-  return number.toString(2)
-}
-
-/**
  * Given a signature, extract the signature components for the Noir signature verification circuit.
  * @param signature The signature to extract the components from.
  * @returns The extracted signature components.
@@ -131,16 +118,6 @@ export const getAddressFromSignature = async (signature: `0x${string}`, messageH
   const publicKey = await recoverPublicKey({ hash: messageHash || SIGNATURE_MESSAGE_HASH, signature })
 
   return publicKeyToAddress(publicKey)
-}
-
-/**
- * Get the maximum vote value for a given number of choices.
- * @param numChoices Number of choices.
- * @returns Maximum value per choice.
- */
-export const getMaxVoteValue = (numChoices: number): number => {
-  const segmentSize = Math.floor(MAX_MSG_NON_ZERO_COEFFS / numChoices)
-  return 2 ** segmentSize - 1
 }
 
 /**
@@ -194,16 +171,4 @@ export const proofToFields = (proof: Uint8Array): string[] => {
     fields.push('0x' + Buffer.from(chunk).toString('hex'))
   }
   return fields
-}
-
-/**
- * Scale down the raw balance to 1 decimal precision
- * @param balance - The raw balance (with all tokens decimals)
- * @param decimals - The decimals of the token
- * @returns The balance as a .1 precision scaled value
- */
-export const getScaledBalance = (balance: bigint, decimals: bigint): bigint => {
-  const precision = decimals > 1n ? decimals - 1n : 0n
-
-  return balance / 10n ** precision
 }

@@ -49,7 +49,10 @@ every section.
   original behaviour) or an escrow adapter (only locked FOLD votes, so holders must lock to
   participate while operators keep weight by bonding). Reading the denominator off the escrow
   instead would omit the bonded half and let participation exceed 100%. Summed voting power must
-  never exceed total supply. — `BondedVotes.sol`; `flow-trace/02`
+  never exceed total supply. **Gap:** under an escrow source, the vesting-locked term reads the
+  current locks and the present wallet balance. After a slash leaves a lock larger than its bond, a
+  past answer can count FOLD that another account also counts at that timepoint. The CUSTOM-credit
+  divisor of a CRISP round relies on this sum. — `BondedVotes.sol`; `flow-trace/02`; `flow-trace/04`
 - **Bonded delegation moves weight; it never copies it.** An owner's bonded weight is its bonded
   FOLD, plus its vesting-locked FOLD under an escrow source. At every timepoint it counts at the
   owner or at exactly one delegate. Two functions write the links, each at the token's clock in one

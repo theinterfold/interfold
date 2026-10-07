@@ -9,11 +9,10 @@ import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 /// @title MockVotingToken
 /// @notice A mock voting token for testing purposes
-/// @dev Public mint function that allows to keep balances to 1e9.
-/// @dev by default CRISP server will scale down voting power by 1e18/2
-/// @dev in this case leaving everyone with a balance of 1 to vote yes or no
+/// @dev Public mint grants 1e9 base units to an account that holds none, and caps every balance at
+/// `MAX_BALANCE`. A plain ERC20 without checkpoints: it cannot back a round that reads voting
+/// power at a snapshot (`CensusMode.ONCHAIN` or `CreditMode.CUSTOM`). Use `MockVotesToken` there.
 contract MockVotingToken is ERC20 {
-  // half of 10e18
   uint256 public constant MAX_BALANCE = 1e9;
 
   constructor() ERC20("Mock Voting Token", "MVT") {
@@ -26,9 +25,5 @@ contract MockVotingToken is ERC20 {
       return;
     }
     _mint(to, 1e9);
-  }
-
-  function decimals() public pure override returns (uint8) {
-    return 18;
   }
 }

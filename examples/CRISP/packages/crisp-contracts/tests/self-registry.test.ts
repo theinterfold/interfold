@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 import { expect } from 'chai'
-import { deployContract, deployCRISPProgram, ethers } from './utils'
+import { deployContract, deployCRISPProgram, deployMockInterfold, ethers } from './utils'
 import type { CRISPProgram } from '../types'
 
 const CONSTANT = 0
@@ -77,11 +77,13 @@ describe('SelfRegistry', function () {
     await expect(registry.connect(accounts[2]).register()).to.emit(registry, 'Registered').withArgs(accounts[2].address, 1)
   })
 
-  /// The registry has no `decimals()` and no `clock()`, so `CRISPProgram.validate` must accept it
-  /// through both fallbacks: a divisor of 1 and a block-number snapshot. This is the round shape
-  /// the registry is meant for — CONSTANT credits of 1 and a floor of 1, one registrant one vote.
+  /// The registry has no `clock()`, so `CRISPProgram.validate` must accept it through the
+  /// block-number snapshot fallback. This is the round shape the registry is meant for — CONSTANT
+  /// credits of 1 and a floor of 1, one registrant one vote. Constant credits are never scaled, so
+  /// the round records no divisor and a slot's voting power is the credits themselves.
   it('validates as the token of an ONCHAIN round', async () => {
-    const crispProgram: CRISPProgram = await deployCRISPProgram()
+    const mockInterfold = await deployMockInterfold()
+    const crispProgram: CRISPProgram = await deployCRISPProgram({ mockInterfold })
     const registryAddress = await registry.getAddress()
 
     const params = ethers.AbiCoder.defaultAbiCoder().encode(
@@ -89,11 +91,10 @@ describe('SelfRegistry', function () {
       [registryAddress, 1n, 2, CONSTANT, 1n, ONCHAIN, 0n],
     )
 
-    await (await crispProgram.validate(1, 0, '0x', '0x', params)).wait()
+    await (await crispProgram.validate(1, 0, await mockInterfold.e3ProgramParams(), '0x', params)).wait()
 
     expect(await crispProgram.censusModeOf(1)).to.equal(ONCHAIN)
-    // No `decimals()` on the registry, so the divisor derives to 1.
-    expect(await crispProgram.votingPowerDivisorOf(1)).to.equal(1n)
+    expect(await crispProgram.votingPowerDivisorOf(1)).to.equal(0n)
     // CONSTANT credits: every eligible slot weighs the configured 1.
     expect(await crispProgram.votingPowerOf(1, accounts[0].address)).to.equal(1n)
   })

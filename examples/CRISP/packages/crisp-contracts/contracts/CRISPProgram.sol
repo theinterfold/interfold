@@ -30,6 +30,20 @@ interface IInterfoldRegistryView {
   function ciphernodeRegistry() external view returns (ICiphernodeRegistry);
 }
 
+/// @notice The BFV parameter blob that Interfold passes to `validate` as `e3ProgramParams`.
+/// @dev Mirrors the encoding of one `abi.encode` tuple `(degree, plaintext_modulus, moduli,
+/// error1_variance)`. Every encoder must keep this field order: `encode_bfv_params` in
+/// `crates/fhe-params/src/encoding.rs`, and `encodeBfvParams` in both
+/// `packages/interfold-contracts/scripts/protocol/values.ts` and `packages/interfold-sdk/src/utils.ts`.
+/// `CRISPProgram.validate` reads `plaintextModulus` only; the other fields are decoded to keep the
+/// layout checked.
+struct BfvParameters {
+  uint256 degree;
+  uint256 plaintextModulus;
+  uint256[] moduli;
+  string error1Variance;
+}
+
 contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownable, EIP712 {
   using InternalLazyIMT for LazyIMTData;
 
@@ -96,8 +110,8 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     /// commitment, not who submits it, so anyone who observes a committed input can resubmit the
     /// identical calldata: the proof still verifies and {_processVote} appends again. The tally
     /// does not change — the replay names the same parent as the original, which is no longer the
-    /// head, so the Secure Process drops it — but the tree is fixed-depth, so enough replays reach
-    /// capacity and every later input reverts, denying the round.
+    /// head, so the Secure Process drops it — but every append counts toward `inputLimit`, so
+    /// enough replays reach the limit and every later input reverts, denying the round.
     ///
     /// Keyed by the leaf rather than the proof because the leaf is exactly what an append adds.
     /// Two genuinely distinct inputs differ in bytes, commitment, slot or parent, so they differ
@@ -115,7 +129,8 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     uint256 numOptions;
     CreditMode creditMode;
     CensusMode censusMode;
-    /// @notice The token that voting power is read from. Only used by `CensusMode.ONCHAIN`.
+    /// @notice The token that voting power is read from. Used by `CensusMode.ONCHAIN` and by every
+    /// `CreditMode.CUSTOM` round.
     address token;
     /// @notice The smallest voting power that may cast an input. Only used by
     /// `CensusMode.ONCHAIN`, where eligibility is checked per input instead of by a census.
@@ -123,11 +138,21 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     /// @notice Credits given to each eligible voter under `CreditMode.CONSTANT`.
     uint256 credits;
     /// @notice The timepoint that voting power is read at, in the ERC-6372 clock units of the
-    /// token. Recorded when the round is requested, so it is the same for every input.
+    /// token. Recorded when the round is requested, so it is the same for every input. Set for
+    /// `CensusMode.ONCHAIN` rounds and for `CreditMode.CUSTOM` rounds, where the divisor is sized
+    /// against the total supply at this timepoint. Zero otherwise.
     uint48 snapshot;
-    /// @notice Divides raw token voting power into the units the ballot is encoded in. Only used
-    /// by `CensusMode.ONCHAIN`. Never zero for such a round.
+    /// @notice Divides raw token voting power into the units the ballot is encoded in. Never
+    /// zero for a `CreditMode.CUSTOM` round, and zero for a `CreditMode.CONSTANT` round, where no
+    /// scaling happens. At least `getPastTotalSupply(snapshot) / plaintextModulus + 1`, so the sum
+    /// of all scaled voting power stays below the plaintext modulus.
     uint256 votingPowerDivisor;
+    /// @notice The most inputs the round accepts. Every input (vote, update, mask) counts.
+    /// @dev `MAX_INPUTS_PER_ROUND` for a `CreditMode.CUSTOM` round. For a `CreditMode.CONSTANT`
+    /// round with non-zero credits it is lowered so that `credits` times the input count stays
+    /// below the plaintext modulus. A mask needs no signature, so any account can use up the limit.
+    /// The contract cannot tell a mask from a vote, so it cannot count votes alone.
+    uint256 inputLimit;
   }
 
   // Constants
@@ -137,18 +162,23 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
   uint8 public constant TREE_DEPTH = 20;
   /// @notice Minimum time available to create new input commitments after a worst-case key setup.
   uint256 public constant MIN_VOTING_DURATION = 1 hours;
-  /// @notice Number of leading plaintext coefficients that carry the vote payload.
+  /// @notice Number of leading plaintext coefficients that carry the tally.
   /// @dev Must stay aligned with `@crisp-e3/sdk` and `crisp_utils` (`MAX_MSG_NON_ZERO_COEFFS`).
-  /// The remaining coefficients up to the BFV degree are zero padding.
+  /// Coefficient `o` for `o < numOptions` is the total on option `o`; the rest of these
+  /// coefficients, and the coefficients up to the BFV degree, are zero padding.
   uint256 constant MAX_MSG_NON_ZERO_COEFFS = 50;
   /// @notice Maximum number of vote options a round may configure.
   /// @dev Bounded by the Noir circuit, which asserts `num_options <= MAX_OPTIONS`
   /// (`circuits/lib/src/constants.nr`). A round above this accepts no ballot, because every
   /// vote proof fails. Must stay aligned with the SDK constant of the same name.
   uint256 constant MAX_VOTE_OPTIONS = 10;
-  /// @notice Largest `decimals` a divisor can be derived from: `10 ** 77` is the last power of ten
-  /// that fits in a uint256.
-  uint8 constant MAX_DERIVABLE_DECIMALS = 78;
+  /// @notice The most inputs any round accepts.
+  /// @dev Every input (vote, update, mask) adds one fresh ciphertext to a slot's chain, so the
+  /// input count bounds the fresh ciphertexts that the tally sums. The BFV parameters keep the
+  /// decryption correct for a fixed number of such additions (`SEARCH_Z` in
+  /// `crates/fhe-params/src/constants.rs`). Every secure parameter set that CRISP runs on must
+  /// allow at least this many. The insecure-512 test preset allows fewer.
+  uint256 public constant MAX_INPUTS_PER_ROUND = 100_000;
   // State variables
   IInterfold public interfold;
   IOpenVmReceiptVerifier public openVmVerifier;
@@ -215,9 +245,23 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
   error SlotNotEligible();
   error InvalidCensusMode();
 
-  /// @notice A token reports more decimals than a divisor can be derived from.
-  /// @dev `10 ** (decimals - 1)` must fit in a uint256. Pass an explicit divisor for such a token.
-  error UnsupportedTokenDecimals(uint8 decimals);
+  /// @notice A `CreditMode.CONSTANT` round grants credits that do not fit in the BFV plaintext
+  /// modulus.
+  /// @dev One ballot of `credits` or more could wrap an option total, so the round is refused.
+  error CreditsExceedPlaintextModulus(uint256 credits, uint256 plaintextModulus);
+
+  /// @notice The requested voting-power divisor would let the scaled voting power sum to the
+  /// plaintext modulus or more.
+  /// @dev `minimum` is `getPastTotalSupply(snapshot) / plaintextModulus + 1`.
+  error VotingPowerDivisorBelowMinimum(uint256 divisor, uint256 minimum);
+
+  /// @notice A `CreditMode.CUSTOM` round needs a votes token that answers `getPastTotalSupply`.
+  /// @dev The divisor is sized against the total supply at the snapshot, so a round without such
+  /// a token cannot be sized and is refused in the request transaction.
+  error CustomCreditsRequireVotesToken();
+
+  /// @notice The round already holds as many inputs as it accepts.
+  error InputLimitReached(uint256 e3Id, uint256 limit);
 
   /// @notice An ONCHAIN round's floor is below one ballot unit.
   /// @dev `minVotingPower` must be at least the divisor, so every slot that clears the floor
@@ -405,10 +449,12 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     numberOfVotes = round.votes.numberOfLeaves;
   }
 
-  /// @notice The divisor applied to raw token voting power for a `CensusMode.ONCHAIN` round.
-  /// @dev A client must divide by exactly this before proving, because the contract passes the
-  /// scaled value to the circuit as public input 4 and the proof is checked against it. Zero for
-  /// rounds that are not ONCHAIN, where no scaling happens.
+  /// @notice The divisor applied to raw token voting power in a `CreditMode.CUSTOM` round.
+  /// @dev A client must divide by exactly this before proving. For an ONCHAIN round the contract
+  /// passes the scaled value to the circuit as public input 4 and the proof is checked against
+  /// it; for a TOKEN round the coordinator scales every census leaf by it. Never zero for a
+  /// `CreditMode.CUSTOM` round, whatever the census mode. Zero for a `CreditMode.CONSTANT` round,
+  /// where no scaling happens.
   /// @param e3Id The E3 to look up.
   /// @return The divisor recorded at validation.
   function votingPowerDivisorOf(uint256 e3Id) external view returns (uint256) {
@@ -460,9 +506,11 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     // this check the owner can create parallel CRISP round state for another program's E3.
     _requireAssignedE3(e3Id);
 
-    // Delegated to its own frame rather than scoped inline: `validate` is close enough to the
-    // stack limit that holding the six decoded values alongside the parameters exceeds it.
-    _initRound(e3Id, customParams);
+    // The plaintext modulus bounds every option total of the round. It comes from the registered
+    // BFV parameters, so the contract sizes the round against the ciphertext arithmetic that will
+    // actually run. Delegated to its own frame rather than scoped inline: `validate` is close
+    // enough to the stack limit that holding the decoded values alongside the parameters exceeds it.
+    _initRound(e3Id, customParams, abi.decode(e3ProgramParams, (BfvParameters)).plaintextModulus);
     _validateInputTiming(e3Id);
 
     e3Data[e3Id].paramsHash = keccak256(e3ProgramParams);
@@ -542,7 +590,9 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
   /// instead of a bare panic.
   /// @param e3Id The E3 being configured.
   /// @param customParams The ABI-encoded round configuration.
-  function _initRound(uint256 e3Id, bytes calldata customParams) internal {
+  /// @param plaintextModulus The BFV plaintext modulus `t` of the round. Every option total is
+  /// kept below it.
+  function _initRound(uint256 e3Id, bytes calldata customParams, uint256 plaintextModulus) internal {
     (
       address token,
       uint256 minVotingPower,
@@ -550,7 +600,7 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
       CreditMode creditMode,
       uint256 credits,
       uint256 rawCensusMode,
-      uint256 votingPowerDivisor
+      uint256 requestedDivisor
     ) = abi.decode(customParams, (address, uint256, uint256, CreditMode, uint256, uint256, uint256));
 
     // The circuit asserts `num_options <= MAX_OPTIONS`, so a round configured above it accepts no
@@ -589,49 +639,130 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     round.minVotingPower = minVotingPower;
     round.credits = credits;
 
-    // The snapshot is taken here rather than supplied by the requester. This function runs in the
-    // transaction that requests the E3, so `clock() - 1` is the last finalized timepoint of the
-    // round, and a requester cannot name a timepoint that suits it. Recording it once also makes
-    // every input of the round read the same electorate.
-    if (CensusMode(rawCensusMode) == CensusMode.ONCHAIN) {
-      // Checked before any call is attempted. A call to an address with no code succeeds and
-      // returns nothing, so `clock()` fails while decoding the empty return data rather than
-      // inside the call — and a decode failure is not what `try/catch` is there to catch. An EOA
-      // would otherwise be refused by a bare panic instead of a named error.
-      if (token.code.length == 0) revert CensusModeRequiresToken();
+    _initCredits(round, requestedDivisor, plaintextModulus);
+  }
 
-      uint48 snapshot = _previousTimepoint(token);
+  /// @notice Record how the round weighs a ballot and how many inputs it accepts, so every
+  /// option total stays below the plaintext modulus.
+  /// @dev A decrypted coefficient is exact only below `t`, the plaintext modulus. The tally holds
+  /// one total per option, so the bound is on the sum of all weights in the round:
+  ///
+  /// - CONSTANT credits: each input carries at most `credits` weight, so `(t - 1) / credits`
+  ///   inputs keep the sum below `t`. No divisor is recorded.
+  /// - CUSTOM credits: the scaled voting power of every holder sums to at most
+  ///   `totalSupply / divisor`, so a divisor of at least `totalSupply / t + 1` keeps the sum below
+  ///   `t`. The supply is read at the snapshot, the timepoint every voting-power read uses. This
+  ///   relies on the token: its past votes over all accounts must not sum above its past supply,
+  ///   which ERC20Votes guarantees.
+  ///
+  /// The snapshot is taken here rather than supplied by the requester. This function runs in the
+  /// transaction that requests the E3, so `clock() - 1` is the last finalized timepoint of the
+  /// round, and a requester cannot name a timepoint that suits it. Recording it once also makes
+  /// every input of the round read the same electorate.
+  /// @param round The round being configured. Its census mode, credit mode, token, credits and
+  /// floor are already recorded.
+  /// @param requestedDivisor The divisor the requester asked for, or zero for the minimum. Ignored
+  /// by a CONSTANT round.
+  /// @param plaintextModulus The BFV plaintext modulus `t`.
+  function _initCredits(RoundData storage round, uint256 requestedDivisor, uint256 plaintextModulus) internal {
+    bool onchain = round.censusMode == CensusMode.ONCHAIN;
 
-      // Probe the exact call every input will make. `_previousTimepoint` swallows a missing
-      // `clock()` and falls back to block numbers, which is right for a token that predates
-      // ERC-6372 but also lets an address that is not a votes token pass validation — and then
-      // every `publishInput` reverts inside `getPastVotes`, after the fee is paid.
+    if (round.creditMode == CreditMode.CONSTANT) {
+      round.inputLimit = _constantCreditsInputLimit(round.credits, plaintextModulus);
+      // A CONSTANT round hands the circuit `credits`, but ONCHAIN still reads eligibility from
+      // the token at the snapshot.
+      if (onchain) round.snapshot = _tokenSnapshot(round.token, true);
+      return;
+    }
+
+    uint48 snapshot = _tokenSnapshot(round.token, onchain);
+    uint256 divisor = _customCreditsDivisor(round.token, snapshot, requestedDivisor, plaintextModulus);
+
+    // Where the floor and the divisor meet, the floor is raw and the bound is scaled, so they only
+    // agree when the floor is worth at least one ballot unit. Requiring it here means every slot
+    // that passes `_eligibility` carries weight, and it costs nothing: this reverts in the
+    // transaction that requests the E3, not per input after the fee is paid. It also keeps masks
+    // working — they run the same eligibility check as real votes, so a slot that scaled to zero
+    // could not be masked without revealing which inputs were masks. A Merkle round takes its
+    // floor from the census, so the check applies to ONCHAIN only.
+    if (onchain && round.minVotingPower < divisor) revert MinVotingPowerBelowScale();
+
+    round.snapshot = snapshot;
+    round.votingPowerDivisor = divisor;
+    round.inputLimit = MAX_INPUTS_PER_ROUND;
+  }
+
+  /// @notice The number of inputs a CONSTANT-credit round accepts.
+  /// @dev Zero credits carry no weight into the tally, so only the global limit applies. Otherwise
+  /// `credits` times the limit stays at most `t - 1`, below the plaintext modulus.
+  /// @param credits The credits every voter carries.
+  /// @param plaintextModulus The BFV plaintext modulus `t`.
+  /// @return The input limit of the round.
+  function _constantCreditsInputLimit(uint256 credits, uint256 plaintextModulus) internal pure returns (uint256) {
+    if (credits == 0) return MAX_INPUTS_PER_ROUND;
+    // One ballot of `t` credits or more already wraps an option total on its own.
+    if (credits >= plaintextModulus) revert CreditsExceedPlaintextModulus(credits, plaintextModulus);
+
+    uint256 limit = (plaintextModulus - 1) / credits;
+    return limit < MAX_INPUTS_PER_ROUND ? limit : MAX_INPUTS_PER_ROUND;
+  }
+
+  /// @notice Resolve the snapshot of a round that reads voting power from a token.
+  /// @dev Checked before any call is attempted. A call to an address with no code succeeds and
+  /// returns nothing, so `clock()` fails while decoding the empty return data rather than inside
+  /// the call — and a decode failure is not what `try/catch` is there to catch. An EOA would
+  /// otherwise be refused by a bare panic instead of a named error.
+  ///
+  /// An ONCHAIN round also probes the exact call every input will make. `_previousTimepoint`
+  /// swallows a missing `clock()` and falls back to block numbers, which is right for a token that
+  /// predates ERC-6372 but also lets an address that is not a votes token pass validation — and
+  /// then every `publishInput` reverts inside `getPastVotes`, after the fee is paid.
+  /// @param token The token voting power is read from.
+  /// @param onchain Whether the round is `CensusMode.ONCHAIN`, which names its own errors.
+  /// @return The last finalized timepoint of the token.
+  function _tokenSnapshot(address token, bool onchain) internal view returns (uint48) {
+    if (token.code.length == 0) {
+      if (onchain) revert CensusModeRequiresToken();
+      revert CustomCreditsRequireVotesToken();
+    }
+
+    uint48 snapshot = _previousTimepoint(token);
+
+    if (onchain) {
       try IVotesToken(token).getPastVotes(address(0), snapshot) returns (uint256) {} catch {
         revert CensusModeRequiresToken();
       }
-
-      round.snapshot = snapshot;
-
-      // Derived only after the code check above. `decimals()` on a codeless address returns empty
-      // data, and the failure happens while decoding rather than inside the call, which `try` does
-      // not catch — deriving any earlier would refuse an EOA with a bare panic instead of the
-      // named error the check above raises.
-      uint256 divisor = votingPowerDivisor == 0 ? _defaultVotingPowerDivisor(token) : votingPowerDivisor;
-
-      // Only CUSTOM credits take the circuit bound from scaled power; a CONSTANT round hands the
-      // circuit `credits` and never reads the scaled value, so the floor and the divisor have
-      // nothing to agree about there.
-      //
-      // Where they do meet, the floor is raw and the bound is scaled, so they only agree when the
-      // floor is worth at least one ballot unit. Requiring it here means every slot that passes
-      // `_eligibility` carries weight, and it costs nothing: this reverts in the transaction that
-      // requests the E3, not per input after the fee is paid. It also keeps masks working — they
-      // run the same eligibility check as real votes, so a slot that scaled to zero could not be
-      // masked without revealing which inputs were masks.
-      if (creditMode == CreditMode.CUSTOM && minVotingPower < divisor) revert MinVotingPowerBelowScale();
-
-      round.votingPowerDivisor = divisor;
     }
+
+    return snapshot;
+  }
+
+  /// @notice The divisor of a CUSTOM-credit round: the requested one, or the minimum.
+  /// @dev The minimum is `totalSupply / t + 1`. The scaled power of all holders sums to at most
+  /// `totalSupply / divisor`, which is below `t` exactly when the divisor exceeds
+  /// `totalSupply / t`. Runs after the code check in {_tokenSnapshot}: `getPastTotalSupply` on a
+  /// codeless address fails while decoding, which `try` does not catch.
+  /// @param token The votes token.
+  /// @param snapshot The timepoint the supply is read at.
+  /// @param requestedDivisor The requested divisor, or zero to take the minimum.
+  /// @param plaintextModulus The BFV plaintext modulus `t`.
+  /// @return divisor The divisor to record, never zero.
+  function _customCreditsDivisor(
+    address token,
+    uint48 snapshot,
+    uint256 requestedDivisor,
+    uint256 plaintextModulus
+  ) internal view returns (uint256 divisor) {
+    uint256 supply;
+    try IVotesToken(token).getPastTotalSupply(snapshot) returns (uint256 pastSupply) {
+      supply = pastSupply;
+    } catch {
+      revert CustomCreditsRequireVotesToken();
+    }
+
+    uint256 minimum = supply / plaintextModulus + 1;
+    divisor = requestedDivisor == 0 ? minimum : requestedDivisor;
+    if (divisor < minimum) revert VotingPowerDivisorBelowMinimum(divisor, minimum);
   }
 
   /// @inheritdoc IE3Program
@@ -787,6 +918,11 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     bytes32 encryptedVoteHash,
     uint40 parentIndexPlusOne
   ) internal view {
+    // Checked on every proof path, so `validateInputProof` cannot accept an input that
+    // `publishInput` rejects. Every leaf the tree holds is an input, pending or finalized.
+    uint256 limit = e3Data[e3Id].inputLimit;
+    if (e3Data[e3Id].votes.numberOfLeaves >= limit) revert InputLimitReached(e3Id, limit);
+
     // A zero content hash matches an Avail padding leaf. Refuse it on every proof path so that
     // no committed input can later finalize against data that no party published, and so that
     // `validateInputProof` cannot accept a statement that `publishInput` rejects.
@@ -851,7 +987,8 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
   /// address are the whole difference between the two paths.
   /// @param e3Id The E3 the input belongs to.
   /// @param slotAddress The slot the input is written to.
-  /// @return eligibility The Merkle root of the census, or the voting power of the slot.
+  /// @return eligibility The Merkle root of the census, or the voting power of the slot in the
+  /// units the circuit bounds the ballot by.
   /// @return verifier The verifier that matches the circuit of this round.
   function _eligibility(uint256 e3Id, address slotAddress) internal view returns (bytes32 eligibility, IHonkVerifier verifier) {
     RoundData storage round = e3Data[e3Id];
@@ -870,38 +1007,15 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     uint256 threshold = round.minVotingPower == 0 ? 1 : round.minVotingPower;
     if (rawPower < threshold) revert SlotNotEligible();
 
-    // Scaled only for the circuit. It enforces `vote <= voting_power`, and the BFV encoding caps
-    // each choice at `2**(100/numOptions) - 1` — about 8.6e9 for three options. Raw power from an
-    // 18-decimal token is ~1e18 per token, so handing it over unscaled would put every holder
-    // above the cap and collapse token weighting into a flat ceiling. Dividing mirrors what the
-    // coordinator does when it builds a Merkle census (`balance / 10**(decimals - 1)`), so both
-    // census families encode ballots in the same units and a tally decodes the same way.
-    uint256 power = rawPower / round.votingPowerDivisor;
-
     // Eligibility comes from the power at the snapshot. The weight the circuit enforces comes from
-    // the credit mode, so a CONSTANT round gives every eligible slot the same credits.
-    return (bytes32(round.creditMode == CreditMode.CONSTANT ? round.credits : power), onchainHonkVerifier);
-  }
+    // the credit mode: a CONSTANT round gives every eligible slot the same credits, unscaled.
+    if (round.creditMode == CreditMode.CONSTANT) return (bytes32(round.credits), onchainHonkVerifier);
 
-  /// @notice The divisor to apply to raw voting power when the requester does not name one.
-  /// @dev Mirrors the coordinator's census scaling (`balance / 10**(decimals - 1)`), so an ONCHAIN
-  /// round and a Merkle round over the same token encode ballots in identical units. `decimals()`
-  /// is optional on an ERC20, so a token without it is left unscaled rather than rejected — a
-  /// requester that needs scaling for such a token passes an explicit divisor.
-  /// @param token The token voting power is read from.
-  /// @return The divisor, never zero.
-  function _defaultVotingPowerDivisor(address token) internal view returns (uint256) {
-    try IVotesToken(token).decimals() returns (uint8 dec) {
-      // `10 ** 78` does not fit in a uint256, and the exponentiation happens in the success body
-      // of the `try`, where a revert is NOT caught — an absurd `decimals` would surface as a bare
-      // arithmetic panic instead of a named error, which is the failure mode the code check above
-      // exists to avoid. Refused explicitly; such a token can still be used by naming a divisor.
-      if (dec > MAX_DERIVABLE_DECIMALS) revert UnsupportedTokenDecimals(dec);
-
-      return dec > 1 ? 10 ** (uint256(dec) - 1) : 1;
-    } catch {
-      return 1;
-    }
+    // Scaled only for the circuit, which enforces `vote <= voting_power` in ballot units. Raw
+    // power from an 18-decimal token is ~1e18 per token, far above the plaintext modulus. The
+    // divisor, at least `totalSupply / t + 1` since `validate`, keeps the sum of all scaled voting
+    // power below `t`, which keeps every option total exact.
+    return (bytes32(rawPower / round.votingPowerDivisor), onchainHonkVerifier);
   }
 
   /// @notice The last finalized timepoint of a token, in its ERC-6372 clock units.
@@ -918,12 +1032,14 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
   }
 
   /// @notice Decode the tally from the plaintext output
-  /// @dev Each coefficient counts the selected slots whose ballot sets that bit, modulo the
-  /// plaintext modulus that the committee decrypts under: 100 for insecure-512 and 17,000,000 for
-  /// secure-8192. The count is exact only while fewer ballots than the modulus set the same bit in
-  /// one round. This contract does not enforce that bound.
+  /// @dev The decrypted polynomial holds one coefficient per option, so the decrypted tally holds
+  /// per-option totals: coefficient `o` is the total weight on option `o`. The total is exact
+  /// because `validate` keeps it below the plaintext modulus `t` that the committee decrypts
+  /// under. A CUSTOM-credit round bounds it through the divisor, which keeps the sum of all
+  /// scaled voting power below `t`. A CONSTANT-credit round bounds it through the input limit,
+  /// which keeps `credits` times the input count below `t`.
   /// @param e3Id The E3 program ID
-  /// @return votes - an array of vote counts for each option
+  /// @return votes - an array with the total weight of each option
   function decodeTally(uint256 e3Id) public view returns (uint256[] memory votes) {
     E3 memory e3 = interfold.getE3(e3Id);
 
@@ -941,23 +1057,10 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     // the polynomial is zero padding and must not be read.
     if (tally.length < MAX_MSG_NON_ZERO_COEFFS) revert InvalidTallyLength();
 
-    uint256 segmentSize = MAX_MSG_NON_ZERO_COEFFS / numOptions;
-    // More options than payload coefficients leaves nothing to decode.
-    if (segmentSize == 0) return new uint256[](0);
-
     votes = new uint256[](numOptions);
 
     for (uint256 optIdx = 0; optIdx < numOptions; optIdx++) {
-      uint256 segmentStart = optIdx * segmentSize;
-      uint256 value = 0;
-
-      // Each segment holds the count in binary, most significant coefficient first.
-      for (uint256 i = 0; i < segmentSize; i++) {
-        uint256 weight = 2 ** (segmentSize - 1 - i);
-        value += uint256(tally[segmentStart + i]) * weight;
-      }
-
-      votes[optIdx] = value;
+      votes[optIdx] = tally[optIdx];
     }
 
     return votes;

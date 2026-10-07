@@ -11,9 +11,10 @@ import { ERC20Votes } from "@openzeppelin/contracts/token/ERC20/extensions/ERC20
 import { Nonces } from "@openzeppelin/contracts/utils/Nonces.sol";
 
 /// @title MockVotesToken
-/// @notice An ERC20Votes token for exercising `CensusMode.ONCHAIN`.
-/// @dev `MockVotingToken` is a plain ERC20 with no `getPastVotes`, which makes it the negative
-/// case for the token probe in `CRISPProgram._initRound`. This one is the positive case.
+/// @notice An ERC20Votes token for exercising `CensusMode.ONCHAIN` and `CreditMode.CUSTOM` rounds.
+/// @dev `MockVotingToken` is a plain ERC20 with no `getPastVotes` or `getPastTotalSupply`, which
+/// makes it the negative case for the token probes in `CRISPProgram._initRound`. This one is the
+/// positive case.
 ///
 /// Uses the timestamp clock, matching `InterfoldToken`. A round records its snapshot in whatever
 /// units the token reports, so a mock on the default block-number clock would exercise a

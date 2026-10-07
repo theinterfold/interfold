@@ -153,9 +153,10 @@ fn main(
 ```
 
 The input `k1` is the plaintext polynomial scaled to `[q * m]_t` (`k1 = [q*m]_t` in
-`crates/zk-helpers/src/circuits/threshold/user_data_encryption/computation.rs`). CRISP uses the same
-test for each vote bit in `check_coefficient_values_with_balance`. The two commitment functions are
-the ones that `user_data_encryption` uses, so equal inputs give equal outputs.
+`crates/zk-helpers/src/circuits/threshold/user_data_encryption/computation.rs`). A CRISP ballot
+holds one weight per option. For each option, `check_coefficient_values_with_balance` proves that
+the coefficient in `k1` is a weight in `[0, t)` scaled the same way. The two commitment functions
+are the ones that `user_data_encryption` uses, so equal inputs give equal outputs.
 
 Check the circuit:
 

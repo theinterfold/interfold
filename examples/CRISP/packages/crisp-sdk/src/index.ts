@@ -9,15 +9,7 @@ export * from './token'
 export * from './state'
 export * from './api'
 export { MAX_MSG_NON_ZERO_COEFFS, MAX_VOTE_OPTIONS, MERKLE_TREE_MAX_DEPTH, SIGNATURE_MESSAGE, SIGNATURE_MESSAGE_HASH } from './constants'
-export {
-  hashLeaf,
-  generateMerkleProof,
-  generateMerkleTree,
-  getAddressFromSignature,
-  getMaxVoteValue,
-  getZeroVote,
-  getScaledBalance,
-} from './utils'
+export { hashLeaf, generateMerkleProof, generateMerkleTree, getAddressFromSignature, getZeroVote } from './utils'
 export {
   encodeVote,
   decodeTally,

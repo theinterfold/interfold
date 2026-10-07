@@ -261,17 +261,51 @@ its receipt.
 ## Decode the tally
 
 The plaintext output is a list of polynomial coefficients. The first 50 coefficients
-(`MAX_MSG_NON_ZERO_COEFFS`) carry the result. Each option has `floor(50 / numOptions)` coefficients
-that hold a binary number, with the most significant coefficient first. Homomorphic addition adds
-the coefficients of all ballots, so each segment decodes to the total for its option. With 2
-options, each option has 25 coefficients, so one ballot can give an option at most `2^25 - 1`.
+(`MAX_MSG_NON_ZERO_COEFFS`) carry the result. A ballot has one coefficient for each option, so the
+decrypted tally holds one total for each option. Coefficient `o` is the total weight on option `o`.
+The other coefficients are zero.
 
 The committee decrypts each coefficient modulo the plaintext modulus `t` of the parameter set: 100
-for `insecure-512` and 17,000,000 for `secure-8192`. Each ballot sets a coefficient to 0 or 1, so a
-coefficient counts the ballots that set that bit. The total is exact only while fewer than `t`
-ballots in the round set the same bit. `CRISPProgram` does not enforce this limit, and a round past
-it decodes a total that is too low, with every proof valid. Each eligible address has one slot, so
-use `insecure-512` only for rounds with fewer than 100 eligible addresses.
+for `insecure-512` and 17,000,000 for `secure-8192`. A total is correct only while it is less than
+`t`. `CRISPProgram.validate` reads `t` from the BFV parameters of the request. Then it sets limits
+for the credit mode of the round:
+
+- With `CONSTANT` credits, each voter has the same voting power, `credits`.
+- With `CUSTOM` credits, the voting power of a voter is `getPastVotes(voter, snapshot)` divided by
+  the voting-power divisor of the round.
+
+The limits keep each total less than `t`:
+
+| Credit mode | Limits                                                                                                                                                                       |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `CONSTANT`  | `credits` must be less than `t`. The round accepts at most `(t - 1) / credits` inputs, rounded down, and not more than `MAX_INPUTS_PER_ROUND` (100,000).                     |
+| `CUSTOM`    | The divisor must be at least `getPastTotalSupply(snapshot) / t + 1`. A requested divisor of 0 selects this minimum. The round accepts at most `MAX_INPUTS_PER_ROUND` inputs. |
+
+Every input counts toward the limit. This includes a new vote that replaces an earlier vote, and a
+mask. When a round has its maximum number of inputs, `publishInput` reverts with
+`InputLimitReached`. The CLI requests `CONSTANT` credits of 1. Thus, an `insecure-512` round accepts
+99 inputs, and a `secure-8192` round accepts 100,000 inputs.
+
+A mask does not need a signature from the voter. Thus, any account can send masks to eligible slots
+until the round has its maximum number of inputs. After that, the round accepts no more votes. A
+round with a small limit costs less to fill in this way. A `CONSTANT` round with large `credits` has
+a small limit.
+
+`CRISPProgram.validate` rejects a request with these errors:
+
+| Error                            | Condition                                                                                     |
+| -------------------------------- | --------------------------------------------------------------------------------------------- |
+| `CreditsExceedPlaintextModulus`  | A `CONSTANT` round has `credits` of `t` or more.                                              |
+| `VotingPowerDivisorBelowMinimum` | A `CUSTOM` round requests a divisor that is less than `getPastTotalSupply(snapshot) / t + 1`. |
+| `CustomCreditsRequireVotesToken` | A `CUSTOM` round names a token that does not answer `getPastTotalSupply`.                     |
+
+In a census tree round, the census leaf of each voter holds the voting power of that voter. The
+CRISP server writes `credits` for a `CONSTANT` round. For a `CUSTOM` round, it writes
+`getPastVotes(voter, snapshot) / divisor`. The limits hold only when the census holds these values.
+
+The `CUSTOM` limit also relies on the token. At the snapshot, the sum of the voting power of all
+accounts must not be more than `getPastTotalSupply(snapshot)`. An ERC20Votes token satisfies this
+condition.
 
 Three decoders give the same result (`packages/crisp-contracts/tests/tally.decoding.test.ts`):
 

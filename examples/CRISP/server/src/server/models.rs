@@ -221,10 +221,11 @@ pub struct CustomParams {
     pub credit_mode: CreditMode,
     pub credits: Option<String>,
     pub census_mode: CensusMode,
-    /// Divides raw token power into ballot units for a `CensusMode::Onchain` round. `"0"` means
-    /// the contract derives it from the token's decimals. Recorded because a round may name its
-    /// own: scaling by the decimals then puts every served balance in different units from the
-    /// ones `publishInput` will enforce.
+    /// The divisor requested for a `CreditMode::Custom` round, of either census mode. It divides
+    /// raw token power into ballot units. `"0"` asks the contract for the smallest divisor that
+    /// keeps every option total below the plaintext modulus. The contract stores the value that
+    /// it uses, and `votingPowerDivisorOf` returns that stored value. A `CreditMode::Constant`
+    /// round ignores the field.
     pub voting_power_divisor: String,
 }
 

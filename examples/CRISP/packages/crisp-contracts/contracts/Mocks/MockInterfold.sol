@@ -11,6 +11,7 @@ import { IE3Program } from "@interfold/contracts/contracts/interfaces/IE3Program
 import { IDecryptionVerifier } from "@interfold/contracts/contracts/interfaces/IDecryptionVerifier.sol";
 import { IPkVerifier } from "@interfold/contracts/contracts/interfaces/IPkVerifier.sol";
 import { ICiphernodeRegistry } from "@interfold/contracts/contracts/interfaces/ICiphernodeRegistry.sol";
+import { BfvParameters } from "../CRISPProgram.sol";
 
 contract MockInterfold {
   bytes32 public constant ENCRYPTION_SCHEME_ID = keccak256("fhe.rs:BFV");
@@ -23,6 +24,33 @@ contract MockInterfold {
   uint256 public mockDkgWindow;
   /// @dev Defaults to the value the timing tests relied on before it was settable.
   uint256 public mockComputeWindow = 100;
+
+  /// @notice The BFV parameter blob that every request passes to `validate` as `e3ProgramParams`.
+  /// @dev Decoded by `CRISPProgram` as a {BfvParameters}, so it must be the encoding Interfold
+  /// hands a program. Insecure-512 (degree 512, plaintext modulus 100), the preset the deploy
+  /// scripts and tests run against. A test that needs another plaintext modulus passes `validate`
+  /// the blob from {bfvParamsWithPlaintextModulus}.
+  bytes public e3ProgramParams;
+
+  constructor() {
+    uint256[] memory moduli = new uint256[](2);
+    moduli[0] = 0xffffee001;
+    moduli[1] = 0xffffc4001;
+    e3ProgramParams = abi.encode(BfvParameters({ degree: 512, plaintextModulus: 100, moduli: moduli, error1Variance: "3" }));
+  }
+
+  /// @notice The plaintext modulus of {e3ProgramParams}, which every round is sized against.
+  function plaintextModulus() external view returns (uint256) {
+    return abi.decode(e3ProgramParams, (BfvParameters)).plaintextModulus;
+  }
+
+  /// @notice {e3ProgramParams} with another plaintext modulus, encoded by the struct `validate`
+  /// decodes.
+  function bfvParamsWithPlaintextModulus(uint256 modulus) external view returns (bytes memory) {
+    BfvParameters memory params = abi.decode(e3ProgramParams, (BfvParameters));
+    params.plaintextModulus = modulus;
+    return abi.encode(params);
+  }
 
   uint256 public nextE3Id;
 
@@ -90,7 +118,7 @@ contract MockInterfold {
       ciphertextCommitment: bytes32(0)
     });
 
-    IE3Program(program).validate(nextE3Id, 0, bytes(""), bytes(""), params);
+    IE3Program(program).validate(nextE3Id, 0, e3ProgramParams, bytes(""), params);
 
     nextE3Id++;
     numOptions; // silence unused-parameter warning; the count travels inside `params`
@@ -116,7 +144,7 @@ contract MockInterfold {
       ciphertextCommitment: bytes32(0)
     });
 
-    IE3Program(program).validate(nextE3Id, 0, bytes(""), bytes(""), abi.encode(address(0), nextE3Id, numOptions, 0, 0, 0, 0));
+    IE3Program(program).validate(nextE3Id, 0, e3ProgramParams, bytes(""), abi.encode(address(0), nextE3Id, numOptions, 0, 0, 0, 0));
 
     nextE3Id++;
   }
