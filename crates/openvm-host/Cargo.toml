@@ -10,5 +10,7 @@ repository.workspace = true
 anyhow = { workspace = true }
 e3-compute-provider = { workspace = true, features = ["parallel"] }
 e3-openvm-types = { workspace = true }
+# A range, not the workspace pin: the CRISP and template workspaces lock a newer 0.2 release.
+libc = "0.2"
 tempfile = { workspace = true }
 tokio = { workspace = true }

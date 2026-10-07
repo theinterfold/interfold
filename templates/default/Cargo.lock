@@ -1343,6 +1343,7 @@ dependencies = [
  "anyhow",
  "e3-compute-provider",
  "e3-openvm-types",
+ "libc",
  "tempfile",
  "tokio",
 ]

@@ -131,26 +131,60 @@ impl WorkerConfig {
 }
 
 /// Runs the worker and waits for it, stopping it at the deadline.
+///
+/// The worker leads its own process group, and the deadline stops the whole group. A wrapper script
+/// that starts the prover as a child, for example to set `LD_LIBRARY_PATH` for CUDA, therefore
+/// cannot leave the prover running and holding the GPU.
 async fn run_worker(worker: &Path, args: &[&OsStr], timeout: Duration, action: &str) -> Result<()> {
-    let mut child = tokio::process::Command::new(worker)
-        .args(args)
-        .kill_on_drop(true)
+    let mut command = tokio::process::Command::new(worker);
+    command.args(args).kill_on_drop(true);
+    #[cfg(unix)]
+    command.process_group(0);
+    let mut child = command
         .spawn()
         .with_context(|| format!("cannot start the OpenVM worker {}", worker.display()))?;
+    let mut group = WorkerGroup(child.id());
     match tokio::time::timeout(timeout, child.wait()).await {
         Ok(status) => {
+            // The worker has exited and been reaped, so its id may be reused: stop tracking it.
+            group.0 = None;
             let status = status.context("cannot wait for the OpenVM worker")?;
             ensure!(status.success(), "OpenVM {action} failed ({status})");
             Ok(())
         }
         Err(_) => {
-            // `kill` also reaps the process, so a stopped worker leaves no zombie behind.
+            group.stop();
+            // `kill` also reaps the worker, so a stopped worker leaves no zombie behind.
             let _ = child.kill().await;
             bail!(
                 "OpenVM {action} did not finish within {} seconds; the worker was stopped",
                 timeout.as_secs()
             )
         }
+    }
+}
+
+/// The process group of a running worker. Dropping it, as a cancelled request does, stops the
+/// whole group, not only the worker that `kill_on_drop` reaches.
+struct WorkerGroup(Option<u32>);
+
+impl WorkerGroup {
+    fn stop(&mut self) {
+        #[cfg(unix)]
+        if let Some(id) = self.0.take() {
+            // The worker was started with `process_group(0)`, so its id is the group's id, and the
+            // group exists while the worker runs. The return value is ignored: an empty group is
+            // already stopped.
+            unsafe {
+                libc::killpg(id as libc::pid_t, libc::SIGKILL);
+            }
+        }
+    }
+}
+
+impl Drop for WorkerGroup {
+    fn drop(&mut self) {
+        self.stop();
     }
 }
 
@@ -486,5 +520,43 @@ mod tests {
 
         assert!(error.to_string().contains("did not finish"), "{error}");
         assert!(started.elapsed() < Duration::from_secs(10));
+    }
+
+    /// A wrapper script that starts the prover as a child does not leave it running after the
+    /// deadline: the whole process group is stopped.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn the_deadline_also_stops_a_wrapper_scripts_prover() {
+        let directory = tempfile::tempdir().unwrap();
+        let pid_file = directory.path().join("prover.pid");
+        let wrapper = worker(
+            directory.path(),
+            "wrapper",
+            &format!("sleep 30 &\necho $! > {}\nwait", pid_file.display()),
+        );
+
+        run_worker(
+            &wrapper,
+            &[],
+            Duration::from_millis(500),
+            "proof generation",
+        )
+        .await
+        .unwrap_err();
+
+        let pid: libc::pid_t = fs::read_to_string(&pid_file)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        // A stopped process can stay a zombie until init reaps it, so wait for it to disappear.
+        while unsafe { libc::kill(pid, 0) } == 0 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the prover {pid} outlived its wrapper"
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
     }
 }
