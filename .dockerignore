@@ -31,3 +31,9 @@ target/
 
 # Explicitly ignore node_modules
 **/node_modules/
+
+# Never send local secrets to an image: a checkout's .env files can hold deployment keys. These
+# rules come last so that no allow rule above can bring a .env file back.
+**/.env
+**/.env.*
+!**/.env.example
