@@ -8,7 +8,9 @@ use bb_proof_verification::{UltraHonkVerificationKey, UltraHonkZKProof, verify_h
 use lib::configs::default::N_PARTIES;
 use lib::configs::default::threshold::{GADGET_DIM, L, N, PK_GENERATION_BIT_PK};
 use lib::core::threshold::lbfv_proof_domain::{LbfvProofSession, validate_generation_statement};
-use lib::math::commitments::{compute_lbfv_pk_limb_commitment, compute_threshold_pk_commitment};
+use lib::math::commitments::{
+    compute_lbfv_pk_limb_commitment, compute_threshold_pk_commitment_checked,
+};
 use lib::math::polynomial::Polynomial;
 
 pub global LBFV_PK_LIMB_PUBLIC_LEN: u32 = 8;
@@ -56,6 +58,6 @@ fn main(
         );
     }
 
-    let pk_commitment = compute_threshold_pk_commitment::<N, L, PK_GENERATION_BIT_PK>(pk0);
+    let pk_commitment = compute_threshold_pk_commitment_checked::<N, L, PK_GENERATION_BIT_PK>(pk0);
     (limb_public_inputs[0][5], pk_commitment, limb_key_hash)
 }
