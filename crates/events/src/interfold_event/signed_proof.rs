@@ -104,22 +104,55 @@ impl ProofType {
         Self::RlkAggregation,
     ];
 
-    /// Map this proof type to its corresponding circuit names.
+    /// Circuits that may produce this proof type on either proving path, trBFV first.
+    ///
+    /// Verification that knows the E3's preset uses [`ProofType::circuit_names_for`], which admits
+    /// only that path's circuits.
     pub fn circuit_names(&self) -> Vec<CircuitName> {
+        let mut names = self.circuit_names_for_path(false);
+        for name in self.circuit_names_for_path(true) {
+            if !names.contains(&name) {
+                names.push(name);
+            }
+        }
+        names
+    }
+
+    /// Circuits that may produce this proof type for an E3 on `preset` (threshold or DKG preset):
+    /// the l-BFV path's chunked circuits on that path, otherwise the trBFV circuits.
+    pub fn circuit_names_for(&self, preset: e3_fhe_params::BfvPreset) -> Vec<CircuitName> {
+        self.circuit_names_for_path(e3_fhe_params::is_lbfv_path(preset))
+    }
+
+    fn circuit_names_for_path(&self, lbfv: bool) -> Vec<CircuitName> {
+        let pick =
+            |trbfv: CircuitName, chunked: CircuitName| vec![if lbfv { chunked } else { trbfv }];
         match self {
             ProofType::C0PkBfv => vec![CircuitName::PkBfv],
-            ProofType::C1PkGeneration => vec![CircuitName::PkGeneration],
-            ProofType::C2aSkShareComputation => vec![CircuitName::SkC2ChunkFinalize],
-            ProofType::C2bESmShareComputation => vec![CircuitName::ESmC2ChunkFinalize],
-            ProofType::C3aSkShareEncryption => vec![CircuitName::ShareEncryption],
-            ProofType::C3bESmShareEncryption => vec![CircuitName::ShareEncryption],
-            ProofType::C4aSkShareDecryption | ProofType::C4bESmShareDecryption => {
-                vec![CircuitName::DkgShareDecryption]
+            ProofType::C1PkGeneration => {
+                pick(CircuitName::PkGeneration, CircuitName::PkGenerationChunked)
             }
+            ProofType::C2aSkShareComputation => pick(
+                CircuitName::SkShareComputation,
+                CircuitName::SkC2ChunkFinalize,
+            ),
+            ProofType::C2bESmShareComputation => pick(
+                CircuitName::ESmShareComputation,
+                CircuitName::ESmC2ChunkFinalize,
+            ),
+            ProofType::C3aSkShareEncryption | ProofType::C3bESmShareEncryption => pick(
+                CircuitName::ShareEncryption,
+                CircuitName::ShareEncryptionChunked,
+            ),
+            ProofType::C4aSkShareDecryption | ProofType::C4bESmShareDecryption => pick(
+                CircuitName::DkgShareDecryption,
+                CircuitName::DkgShareDecryptionChunked,
+            ),
             ProofType::C6ThresholdShareDecryption => vec![CircuitName::ThresholdShareDecryption],
-            ProofType::C7DecryptedSharesAggregation => {
-                vec![CircuitName::DecryptedSharesAggregation]
-            }
+            ProofType::C7DecryptedSharesAggregation => pick(
+                CircuitName::DecryptedSharesAggregation,
+                CircuitName::DecryptedSharesAggregationWide,
+            ),
             ProofType::C5PkAggregation => vec![CircuitName::PkAggregation],
             ProofType::LbfvPkGeneration => vec![CircuitName::LbfvPkGeneration],
             ProofType::RlkGeneration => vec![CircuitName::RlkGeneration],
@@ -541,51 +574,107 @@ mod tests {
 
     #[test]
     fn proof_type_circuit_names_mapping_is_complete() {
+        use e3_fhe_params::BfvPreset;
+        use CircuitName as C;
+        // (proof type, trBFV circuit, l-BFV circuit)
         let expected = [
-            (ProofType::C0PkBfv, CircuitName::PkBfv),
-            (ProofType::C1PkGeneration, CircuitName::PkGeneration),
+            (ProofType::C0PkBfv, C::PkBfv, C::PkBfv),
+            (
+                ProofType::C1PkGeneration,
+                C::PkGeneration,
+                C::PkGenerationChunked,
+            ),
             (
                 ProofType::C2aSkShareComputation,
-                CircuitName::SkC2ChunkFinalize,
+                C::SkShareComputation,
+                C::SkC2ChunkFinalize,
             ),
             (
                 ProofType::C2bESmShareComputation,
-                CircuitName::ESmC2ChunkFinalize,
+                C::ESmShareComputation,
+                C::ESmC2ChunkFinalize,
             ),
             (
                 ProofType::C3aSkShareEncryption,
-                CircuitName::ShareEncryption,
+                C::ShareEncryption,
+                C::ShareEncryptionChunked,
             ),
             (
                 ProofType::C3bESmShareEncryption,
-                CircuitName::ShareEncryption,
+                C::ShareEncryption,
+                C::ShareEncryptionChunked,
             ),
             (
                 ProofType::C4aSkShareDecryption,
-                CircuitName::DkgShareDecryption,
+                C::DkgShareDecryption,
+                C::DkgShareDecryptionChunked,
             ),
             (
                 ProofType::C4bESmShareDecryption,
-                CircuitName::DkgShareDecryption,
+                C::DkgShareDecryption,
+                C::DkgShareDecryptionChunked,
             ),
-            (ProofType::C5PkAggregation, CircuitName::PkAggregation),
+            (
+                ProofType::C5PkAggregation,
+                C::PkAggregation,
+                C::PkAggregation,
+            ),
             (
                 ProofType::C6ThresholdShareDecryption,
-                CircuitName::ThresholdShareDecryption,
+                C::ThresholdShareDecryption,
+                C::ThresholdShareDecryption,
             ),
             (
                 ProofType::C7DecryptedSharesAggregation,
-                CircuitName::DecryptedSharesAggregation,
+                C::DecryptedSharesAggregation,
+                C::DecryptedSharesAggregationWide,
             ),
-            (ProofType::LbfvPkGeneration, CircuitName::LbfvPkGeneration),
-            (ProofType::RlkGeneration, CircuitName::RlkGeneration),
-            (ProofType::LbfvPkAggregation, CircuitName::LbfvPkAggregation),
-            (ProofType::RlkAggregation, CircuitName::RlkAggregation),
+            (
+                ProofType::LbfvPkGeneration,
+                C::LbfvPkGeneration,
+                C::LbfvPkGeneration,
+            ),
+            (ProofType::RlkGeneration, C::RlkGeneration, C::RlkGeneration),
+            (
+                ProofType::LbfvPkAggregation,
+                C::LbfvPkAggregation,
+                C::LbfvPkAggregation,
+            ),
+            (
+                ProofType::RlkAggregation,
+                C::RlkAggregation,
+                C::RlkAggregation,
+            ),
         ];
 
-        assert_eq!(ProofType::ALL, expected.map(|(proof_type, _)| proof_type));
-        for (proof_type, circuit) in expected {
-            assert_eq!(proof_type.circuit_names(), vec![circuit], "{proof_type:?}");
+        assert_eq!(
+            ProofType::ALL,
+            expected.map(|(proof_type, _, _)| proof_type)
+        );
+        for (proof_type, trbfv, lbfv) in expected {
+            for preset in [BfvPreset::InsecureThreshold, BfvPreset::SecureThreshold8192] {
+                assert_eq!(
+                    proof_type.circuit_names_for(preset),
+                    vec![trbfv],
+                    "{proof_type:?}"
+                );
+            }
+            for preset in [
+                BfvPreset::InsecureThresholdLbfv,
+                BfvPreset::SecureThreshold16384,
+            ] {
+                assert_eq!(
+                    proof_type.circuit_names_for(preset),
+                    vec![lbfv],
+                    "{proof_type:?}"
+                );
+            }
+            let union = if trbfv == lbfv {
+                vec![trbfv]
+            } else {
+                vec![trbfv, lbfv]
+            };
+            assert_eq!(proof_type.circuit_names(), union, "{proof_type:?}");
         }
     }
 

@@ -8,8 +8,11 @@
 import { execFileSync, execSync } from 'child_process'
 import { createHash } from 'crypto'
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'fs'
-import { join, relative, resolve, sep } from 'path'
-import { CIRCUIT_PRESETS, RELEASE_PRESET_COMMITTEE_PAIRS } from './circuit-constants'
+import { join, relative, resolve } from 'path'
+import type { CircuitCommittee, CircuitPreset } from './circuit-constants'
+import requiredArtifacts from '../crates/zk-prover/required-artifacts.json'
+import requiredLbfvArtifacts from '../crates/zk-prover/required-artifacts-lbfv.json'
+import supportedConfigurations from '../crates/zk-prover/supported-configurations.json'
 
 const BRANCH = 'circuit-artifacts'
 const ROOT = resolve(__dirname, '../..')
@@ -225,17 +228,12 @@ function stampFiles(dir: string): string[] {
   return stamps
 }
 
+// Preset directories that also serve the l-BFV path; the Rust installer applies the same rule.
+const LBFV_PRESET_DIRS = new Set(['insecure', 'secure-16384'])
+
 export function requiredArtifactMarkers(preset: string, committee: string): string[] {
-  const circuits =
-    preset === CIRCUIT_PRESETS.INSECURE || preset === CIRCUIT_PRESETS.SECURE_16384
-      ? [
-          ...REQUIRED_VARIANT_CIRCUITS,
-          ...REQUIRED_LBFV_VARIANT_CIRCUITS,
-          ...REQUIRED_LBFV_RECURSIVE_CIRCUITS,
-          ...REQUIRED_LBFV_EVM_CIRCUITS,
-        ]
-      : REQUIRED_VARIANT_CIRCUITS
-  return circuits.flatMap((circuit) => REQUIRED_ARTIFACT_EXTENSIONS.map((extension) => join(preset, committee, `${circuit}${extension}`)))
+  const artifacts = LBFV_PRESET_DIRS.has(preset) ? [...requiredArtifacts, ...requiredLbfvArtifacts] : requiredArtifacts
+  return artifacts.map((artifact) => join(preset, committee, artifact))
 }
 
 type BuildStamp = {

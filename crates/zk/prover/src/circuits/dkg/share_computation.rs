@@ -12,15 +12,45 @@ use crate::circuits::aggregation::node_dkg_fold::FoldProveStepTiming;
 use crate::circuits::utils::inputs_json_to_input_map;
 use crate::error::ZkError;
 use crate::prover::ZkProver;
+use crate::traits::Provable;
 use e3_events::CircuitName;
 use e3_fhe_params::BfvPreset;
 use e3_zk_helpers::computation::{Computation, DkgInputType};
-use e3_zk_helpers::dkg::share_computation::{Inputs, ShareComputationCircuitData};
+use e3_zk_helpers::dkg::share_computation::{
+    Inputs, ShareComputationCircuit, ShareComputationCircuitData,
+};
 use rayon::prelude::*;
 use serde_json::Value;
 use std::time::Instant;
 
 pub use crate::circuits::aggregation::c2_chunk_config::DEFAULT_C2_CHUNK_SIZE;
+
+/// The trBFV path's single-proof C2: one `sk_share_computation` or `e_sm_share_computation`
+/// proof per dealer. The l-BFV path proves C2 in chunks instead
+/// ([`prove_chunked_share_computation`]).
+impl Provable for ShareComputationCircuit {
+    type Params = BfvPreset;
+    type Input = ShareComputationCircuitData;
+    type Inputs = Inputs;
+
+    fn resolve_circuit_name(&self, _params: &Self::Params, input: &Self::Input) -> CircuitName {
+        match input.dkg_input_type {
+            DkgInputType::SecretKey => CircuitName::SkShareComputation,
+            DkgInputType::SmudgingNoise => CircuitName::ESmShareComputation,
+        }
+    }
+
+    fn valid_circuits(&self) -> Vec<CircuitName> {
+        vec![
+            CircuitName::SkShareComputation,
+            CircuitName::ESmShareComputation,
+        ]
+    }
+
+    fn circuit(&self) -> CircuitName {
+        CircuitName::SkShareComputation
+    }
+}
 
 fn validate_c2_chunk_layout(degree: usize, chunk_size: usize) -> Result<(usize, usize), ZkError> {
     let layout = C2ChunkLayout::from_degree_chunk_size(degree, chunk_size)?;

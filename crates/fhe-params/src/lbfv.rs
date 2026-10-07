@@ -17,6 +17,12 @@ pub fn supports_lbfv(preset: BfvPreset) -> bool {
     lbfv_crs_seed(preset).is_some() && lbfv_urs_seed(preset).is_some()
 }
 
+/// Whether an E3 on `preset` runs the l-BFV protocol path. Accepts the threshold preset or its
+/// DKG counterpart, which names the same path.
+pub fn is_lbfv_path(preset: BfvPreset) -> bool {
+    supports_lbfv(preset.threshold_counterpart().unwrap_or(preset))
+}
+
 /// Return the number of CRT rows required by the l-BFV preset.
 ///
 /// The row count comes from the threshold parameter metadata. Callers must use
@@ -100,6 +106,10 @@ mod tests {
         assert!(lbfv_urs_seed(BfvPreset::SecureThreshold16384).is_some());
         assert!(lbfv_crs_seed(BfvPreset::SecureThreshold8192).is_none());
         assert!(lbfv_urs_seed(BfvPreset::InsecureDkg).is_none());
+        assert!(is_lbfv_path(BfvPreset::InsecureDkgLbfv));
+        assert!(is_lbfv_path(BfvPreset::SecureDkg16384));
+        assert!(!is_lbfv_path(BfvPreset::InsecureDkg));
+        assert!(!is_lbfv_path(BfvPreset::SecureDkg8192));
         assert_eq!(lbfv_row_count(BfvPreset::InsecureThresholdLbfv), Some(3));
         assert_eq!(lbfv_row_count(BfvPreset::InsecureThreshold), None);
         assert_eq!(lbfv_row_count(BfvPreset::SecureThreshold16384), Some(5));

@@ -373,7 +373,7 @@ fn prove_node_dkg_fold_v2_with_shape(
     let generation_fields = generation_fold_public_fields(row_count);
     let node_fold_public = checked_public_fields(
         legacy_node_fold_proof,
-        CircuitName::NodeFold,
+        CircuitName::NodeFoldChunked,
         node_fields,
         "V2 legacy node fold",
     )?;
@@ -381,11 +381,11 @@ fn prove_node_dkg_fold_v2_with_shape(
         prover,
         CircuitVariant::Default,
         artifacts_dir,
-        CircuitName::NodeFold,
+        CircuitName::NodeFoldChunked,
     )?;
     let c1_public = checked_public_fields(
         c1_proof,
-        CircuitName::PkGeneration,
+        CircuitName::PkGenerationChunked,
         C1_PUBLIC_FIELDS,
         "V2 legacy C1",
     )?;
@@ -393,7 +393,7 @@ fn prove_node_dkg_fold_v2_with_shape(
         prover,
         CircuitVariant::Recursive,
         artifacts_dir,
-        CircuitName::PkGeneration,
+        CircuitName::PkGenerationChunked,
     )?;
     let generation_vk = load_vk(
         prover,
@@ -881,21 +881,21 @@ fn legacy_vk_binding(
     artifacts_dir: &str,
 ) -> Result<Vec<vk::VkArtifacts>, ZkError> {
     let circuits = [
-        CircuitName::NodeFold,
+        CircuitName::NodeFoldChunked,
         CircuitName::PkBfv,
-        CircuitName::PkGeneration,
+        CircuitName::PkGenerationChunked,
         CircuitName::C2abChunkFold,
-        CircuitName::C3abFold,
+        CircuitName::C3abFoldChunked,
         CircuitName::C4abFold,
         CircuitName::SkC2ChunkFinalize,
         CircuitName::ESmC2ChunkFinalize,
         CircuitName::C2ChunkBatch,
         CircuitName::SkShareComputationChunk,
         CircuitName::ESmShareComputationChunk,
-        CircuitName::C3Fold,
-        CircuitName::ShareEncryption,
-        CircuitName::DkgShareDecryption,
-        CircuitName::C3FoldKernel,
+        CircuitName::C3FoldChunked,
+        CircuitName::ShareEncryptionChunked,
+        CircuitName::DkgShareDecryptionChunked,
+        CircuitName::C3FoldKernelChunked,
         CircuitName::NodesFoldKernel,
     ];
     circuits
@@ -903,13 +903,13 @@ fn legacy_vk_binding(
         .map(|circuit| {
             let variant = match circuit {
                 CircuitName::PkBfv
-                | CircuitName::PkGeneration
+                | CircuitName::PkGenerationChunked
                 | CircuitName::SkC2ChunkFinalize
                 | CircuitName::ESmC2ChunkFinalize
                 | CircuitName::SkShareComputationChunk
                 | CircuitName::ESmShareComputationChunk
-                | CircuitName::ShareEncryption
-                | CircuitName::DkgShareDecryption => CircuitVariant::Recursive,
+                | CircuitName::ShareEncryptionChunked
+                | CircuitName::DkgShareDecryptionChunked => CircuitVariant::Recursive,
                 _ => CircuitVariant::Default,
             };
             load_vk(prover, variant, artifacts_dir, circuit)
@@ -1120,7 +1120,7 @@ mod tests {
     #[test]
     fn checked_public_fields_rejects_the_wrong_circuit() {
         let fields = node_fold_v2_public_fields(CiphernodesCommitteeSize::Minimum, 5);
-        let proof = proof_with_public_fields(CircuitName::NodeFold, fields);
+        let proof = proof_with_public_fields(CircuitName::NodeFoldChunked, fields);
         let error = checked_public_fields(&proof, CircuitName::NodeFoldV2, fields, "V2 node proof")
             .expect_err("the wrong circuit must fail");
         assert!(matches!(

@@ -50,7 +50,8 @@ fn signed_fields(
             e3_id: e3_id.clone(),
             proof_type,
             proof: e3_events::Proof::new(
-                proof_type.circuit_names()[0],
+                // Only l-BFV bundles are built here, so the circuits are that path's.
+                proof_type.circuit_names_for(BfvPreset::SecureThreshold16384)[0],
                 ArcBytes::from_bytes(&[1]),
                 ArcBytes::from_bytes(&public_signals),
             ),
@@ -662,4 +663,54 @@ fn prepare_collapses_identical_party_replay_and_rejects_conflict() {
     assert!(conflict.ecdsa_passed_parties.is_empty());
     assert_eq!(conflict.ecdsa_dishonest, HashSet::from([0]));
     assert!(conflict.failures.is_empty());
+}
+
+/// A bundle passes only on the protocol path its circuits belong to. The DKG preset names the
+/// path, so the two insecure DKG labels, which share every parameter, still tell them apart.
+#[test]
+fn canonical_shape_binds_circuits_to_the_protocol_path() {
+    let s = signer();
+    let e3 = e3();
+    let rows = BfvPreset::InsecureThreshold.metadata().num_moduli;
+    let trbfv_bundle = signed_share_bundle(&s, &e3, rows);
+    assert!(ShareVerifier::has_canonical_proof_shape(
+        &VerificationKind::ShareProofs,
+        &trbfv_bundle,
+        BfvPreset::InsecureDkg,
+    ));
+    assert!(!ShareVerifier::has_canonical_proof_shape(
+        &VerificationKind::ShareProofs,
+        &trbfv_bundle,
+        BfvPreset::InsecureDkgLbfv,
+    ));
+
+    let lbfv_bundle = trbfv_bundle
+        .iter()
+        .map(|signed| {
+            let proof_type = signed.payload.proof_type;
+            SignedProofPayload::sign(
+                e3_events::ProofPayload {
+                    e3_id: e3.clone(),
+                    proof_type,
+                    proof: e3_events::Proof::new(
+                        proof_type.circuit_names_for(BfvPreset::InsecureThresholdLbfv)[0],
+                        signed.payload.proof.data.clone(),
+                        signed.payload.proof.public_signals.clone(),
+                    ),
+                },
+                &s,
+            )
+            .unwrap()
+        })
+        .collect::<Vec<_>>();
+    assert!(ShareVerifier::has_canonical_proof_shape(
+        &VerificationKind::ShareProofs,
+        &lbfv_bundle,
+        BfvPreset::InsecureDkgLbfv,
+    ));
+    assert!(!ShareVerifier::has_canonical_proof_shape(
+        &VerificationKind::ShareProofs,
+        &lbfv_bundle,
+        BfvPreset::InsecureDkg,
+    ));
 }

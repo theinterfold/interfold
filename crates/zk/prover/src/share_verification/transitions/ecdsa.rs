@@ -11,9 +11,10 @@ use e3_events::{CircuitName, LbfvVerificationContext};
 use e3_zk_helpers::{LbfvPkAggregationPublicLayout, RlkAggregationPublicLayout};
 
 impl ShareVerifier {
+    /// The C1 proof that heads an l-BFV generation bundle: the chunk-root C1 of the l-BFV path.
     fn has_exact_legacy_c1_shape(signed: &SignedProofPayload) -> bool {
         signed.payload.proof_type == ProofType::C1PkGeneration
-            && signed.payload.proof.circuit == CircuitName::PkGeneration
+            && signed.payload.proof.circuit == CircuitName::PkGenerationChunked
             && signed.payload.proof.public_signals.len()
                 == e3_zk_helpers::PK_GENERATION_OUTPUTS.len() * e3_zk_helpers::FIELD_BYTE_LEN
     }
@@ -314,6 +315,19 @@ impl ShareVerifier {
         signed_proofs: &[SignedProofPayload],
         params_preset: e3_fhe_params::BfvPreset,
     ) -> bool {
+        // Every proof must come from its type's circuit on this E3's protocol path; a circuit of
+        // the other path never satisfies the phase. C2-C4 dispatches carry the DKG preset, which
+        // names the path as well.
+        let on_path = signed_proofs.iter().all(|signed| {
+            signed
+                .payload
+                .proof_type
+                .circuit_names_for(params_preset)
+                .contains(&signed.payload.proof.circuit)
+        });
+        if !on_path {
+            return false;
+        }
         match kind {
             VerificationKind::PkGenerationProofs => {
                 signed_proofs.len() == 1

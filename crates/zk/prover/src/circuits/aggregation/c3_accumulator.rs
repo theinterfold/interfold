@@ -64,7 +64,6 @@ impl C3FoldVks {
 fn generate_c3_fold_kernel_genesis_proof(
     prover: &ZkProver,
     inner: &Proof,
-    slot_index: u32,
     total_slots: usize,
     artifacts_dir: &str,
     job_id: &str,
@@ -96,13 +95,7 @@ fn generate_c3_fold_kernel_genesis_proof(
         inner_key_hash: inner_vk.key_hash,
         acc_key_hash: kernel_vk.key_hash.clone(),
         is_first_step: true,
-        slot_index,
-        expected_kernel_key_hash: kernel_vk.key_hash.clone(),
-        expected_fold_key_hash: vk::load_vk_artifacts(
-            &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
-            CircuitName::C3Fold,
-        )?
-        .key_hash,
+        slot_index: 0,
     };
 
     let circuit_path = prover
@@ -126,8 +119,8 @@ fn generate_c3_fold_kernel_genesis_proof(
     Ok(proof)
 }
 
-/// Inner C3 public transcript: two commitments, two slot indices, and `ct_commitment`.
-fn share_encryption_inner_public_inputs(proof: &Proof) -> Result<[String; 5], ZkError> {
+/// Inner C3 public transcript: two inputs + `ct_commitment` output.
+fn share_encryption_inner_public_inputs(proof: &Proof) -> Result<[String; 3], ZkError> {
     if proof.circuit != CircuitName::ShareEncryption {
         return Err(ZkError::InvalidInput(format!(
             "expected ShareEncryption inner proof, got {}",
@@ -135,21 +128,18 @@ fn share_encryption_inner_public_inputs(proof: &Proof) -> Result<[String; 5], Zk
         )));
     }
     let ctx = "C3 inner ShareEncryption proof";
-    let fields = [
+    Ok([
         extract_single_field(proof, "input", field_keys::EXPECTED_PK_COMMITMENT, ctx)?,
         extract_single_field(proof, "input", field_keys::EXPECTED_MESSAGE_COMMITMENT, ctx)?,
-        extract_single_field(proof, "input", "party_idx", ctx)?,
-        extract_single_field(proof, "input", "mod_idx", ctx)?,
         extract_single_field(proof, "output", field_keys::CT_COMMITMENT, ctx)?,
-    ];
-    Ok(fields)
+    ])
 }
 
 #[derive(Serialize)]
 struct C3FoldStepInput {
     inner_vk: Vec<String>,
     inner_proof: Vec<String>,
-    c3_public_inputs: [String; 5],
+    c3_public_inputs: [String; 3],
     acc_vk: Vec<String>,
     acc_proof: Vec<String>,
     acc_public_inputs: Vec<String>,
@@ -192,7 +182,6 @@ fn generate_c3_fold_step_with_vks(
         let kernel_proof = generate_c3_fold_kernel_genesis_proof(
             prover,
             inner,
-            slot_index,
             total_slots,
             artifacts_dir,
             &kernel_job_id,
@@ -214,12 +203,7 @@ fn generate_c3_fold_step_with_vks(
     } else {
         let p = prior_fold.expect("prior_fold required when is_first_step is false");
         let acc_pi = parse_c3_fold_public_field_strings(p)?;
-        if acc_pi.len() < C3_FOLD_PREFIX_LEN {
-            return Err(ZkError::InvalidInput(
-                "c3_fold proof public inputs are shorter than the prefix".into(),
-            ));
-        }
-        let prior_slots = (acc_pi.len() - C3_FOLD_PREFIX_LEN) / 3;
+        let prior_slots = (acc_pi.len() - C3_FOLD_PREFIX_LEN) / C3_FOLD_SLOT_WIDTH;
         if prior_slots == 0 {
             return Err(ZkError::InvalidInput(
                 "c3_fold proof implies zero slots".into(),
@@ -340,33 +324,4 @@ pub fn generate_sequential_c3_fold(
             )
         },
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn zero_input() -> C3FoldStepInput {
-        C3FoldStepInput {
-            inner_vk: Vec::new(),
-            inner_proof: Vec::new(),
-            c3_public_inputs: std::array::from_fn(|_| "0".to_string()),
-            acc_vk: Vec::new(),
-            acc_proof: Vec::new(),
-            acc_public_inputs: Vec::new(),
-            inner_key_hash: "0".to_string(),
-            acc_key_hash: "0".to_string(),
-            is_first_step: true,
-            slot_index: 0,
-            expected_kernel_key_hash: "0".to_string(),
-            expected_fold_key_hash: "0".to_string(),
-        }
-    }
-
-    #[test]
-    fn c3_kernel_witness_includes_accumulator_binding_parameters() {
-        let value = serde_json::to_value(zero_input()).unwrap();
-        assert!(value.get("expected_kernel_key_hash").is_some());
-        assert!(value.get("expected_fold_key_hash").is_some());
-    }
 }

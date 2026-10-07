@@ -931,7 +931,7 @@ mod tests {
             2 * lbfv_row_count(state.params_preset).unwrap()
         );
 
-        let c1 = proof(&state, CircuitName::PkGeneration, 0);
+        let c1 = proof(&state, CircuitName::PkGenerationChunked, 0);
         let signed_c1 = signed_proof(&state, ProofType::C1PkGeneration, c1);
         state.record_c1_proof(signed_c1.clone()).unwrap();
         let mut late_pk_row = None;
@@ -1003,7 +1003,7 @@ mod tests {
         let encoded = bincode::serialize(&state).unwrap();
         assert_eq!(
             keccak256(&encoded),
-            "0xa1a380bd2cc86ecc2520d50af66cbe5fbe52bc02e01b958eb371c1968eddcd29"
+            "0xfdb31b94986d29c6fc1e34889173082852797c5a87a0bcca2322a32483959467"
                 .parse::<B256>()
                 .unwrap()
         );
@@ -1069,14 +1069,14 @@ mod tests {
             .record_generation_response(generation_response(&request))
             .unwrap();
 
-        let c1_proof = proof(&state, CircuitName::PkGeneration, 0);
+        let c1_proof = proof(&state, CircuitName::PkGenerationChunked, 0);
         let c1 = signed_proof(&state, ProofType::C1PkGeneration, c1_proof.clone());
         state.record_c1_proof(c1.clone()).unwrap();
         let conflicting_c1 = signed_proof(
             &state,
             ProofType::C1PkGeneration,
             Proof::new(
-                CircuitName::PkGeneration,
+                CircuitName::PkGenerationChunked,
                 ArcBytes::from_bytes(&[0xbb]),
                 c1_proof.public_signals,
             ),
