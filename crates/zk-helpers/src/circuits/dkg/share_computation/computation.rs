@@ -354,9 +354,9 @@ mod tests {
     fn insecure_smudging_ranges_match_pk_generation() {
         let preset = BfvPreset::InsecureThreshold;
         for (size, expected_bits) in [
-            (CiphernodesCommitteeSize::Minimum, 140),
-            (CiphernodesCommitteeSize::Micro, 148),
-            (CiphernodesCommitteeSize::Small, 154),
+            (CiphernodesCommitteeSize::Minimum, 55),
+            (CiphernodesCommitteeSize::Micro, 55),
+            (CiphernodesCommitteeSize::Small, 55),
         ] {
             let committee = size.values();
             let sample = ShareComputationCircuitData::generate_sample(

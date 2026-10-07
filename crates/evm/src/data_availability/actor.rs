@@ -37,7 +37,7 @@ fn validate_committee_public_key(
     expected_commitment: [u8; 32],
     preset: BfvPreset,
 ) -> anyhow::Result<()> {
-    if preset == BfvPreset::SecureThreshold16384 {
+    if e3_fhe_params::supports_lbfv(preset) {
         e3_bfv_client::validate_lbfv_key_envelope(public_key, expected_commitment, preset)?;
         return Ok(());
     }
@@ -678,7 +678,7 @@ mod tests {
 
     /// Store a complete, valid committee key assembly for each E3.
     fn complete_assemblies(e3_ids: &[&E3id]) -> DataAvailabilityRecoveryState {
-        let preset = BfvPreset::InsecureThreshold512;
+        let preset = BfvPreset::InsecureThreshold;
         let params = BfvParamSet::from(preset);
         let public_key = generate_public_key(
             params.degree,

@@ -508,11 +508,12 @@ async fn store_committee_public_key<S: DataStore, R: ProviderType>(
     if e3.encryptionSchemeId == keccak256("fhe.rs:BFV") {
         let decoded_params = decode_bfv_params(&e3_params)
             .map_err(|error| eyre!("invalid BFV parameters for E3 {e3_id}: {error}"))?;
-        let validation = if params_preset == Some(BfvPreset::SecureThreshold16384) {
+        let lbfv_preset = params_preset.filter(|preset| e3_fhe_params::supports_lbfv(*preset));
+        let validation = if let Some(preset) = lbfv_preset {
             e3_bfv_client::validate_lbfv_key_envelope(
                 &event.publicKey,
                 event.pkCommitment.0,
-                BfvPreset::SecureThreshold16384,
+                preset,
             )
             .map(|_| ())
         } else {

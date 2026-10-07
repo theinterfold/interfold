@@ -916,7 +916,7 @@ mod tests {
         assert_eq!(
             bounds.msg_bound,
             BigUint::from(
-                BfvPreset::InsecureThreshold512
+                BfvPreset::InsecureThreshold
                     .build_pair()
                     .unwrap()
                     .1
@@ -949,7 +949,7 @@ mod tests {
 
     #[test]
     fn generated_share_encryption_witness_respects_ct0_r_bounds() {
-        let preset = BfvPreset::InsecureThreshold512;
+        let preset = BfvPreset::InsecureThreshold;
         let sample = ShareEncryptionCircuitData::generate_sample(
             preset,
             CiphernodesCommitteeSize::Minimum.values(),
@@ -1066,17 +1066,18 @@ mod scaled_quotient_tests {
         }
     }
 
-    /// `L = 1` makes `DELTA` smaller than `q`, so no `k >= 1` gives a small `SMALL_D`.
+    /// The insecure DKG set pairs two ~57-bit moduli with a ~56-bit `T`, which fails the
+    /// derivation's checks, so `derive` must report the form unavailable.
     ///
-    /// The circuit keeps the direct `k1` path for this preset. Insecure-512 is a test parameter
-    /// set, so the fallback costs nothing that matters.
+    /// The circuit keeps the direct `k1` path for this preset. The insecure set is test-only, so the
+    /// fallback costs nothing that matters.
     #[test]
     fn insecure_is_excluded_rather_than_approximated() {
-        let (sq, moduli, _) = derive_for(BfvPreset::InsecureThreshold512);
-        assert_eq!(moduli.len(), 1, "insecure-512 has a single DKG modulus");
+        let (sq, moduli, _) = derive_for(BfvPreset::InsecureThreshold);
+        assert_eq!(moduli.len(), 2, "the insecure set has two DKG moduli");
         assert!(
             !sq.available,
-            "insecure-512 must fall back, not derive bogus constants"
+            "the insecure set must fall back, not derive bogus constants"
         );
     }
 }

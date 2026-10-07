@@ -279,6 +279,7 @@ fn c1_verified(
         e3_id: e3_id.clone(),
         kind: VerificationKind::PkGenerationProofs,
         dishonest_parties,
+        verification_id: None,
     };
     TypedEvent::new(verified.clone(), test_ctx(verified))
 }

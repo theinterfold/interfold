@@ -100,6 +100,7 @@ fn c4(kind: DkgInputType) -> DkgShareDecryptionProofRequest {
         num_honest_parties: H,
         num_moduli: LIMBS,
         own_plaintext_idx: None,
+        recipient_party_id: 0,
         own_share_raw: None,
         dkg_input_type: kind,
         params_preset: PRESET,

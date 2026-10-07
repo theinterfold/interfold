@@ -2725,8 +2725,8 @@ async fn test_trbfv_actor() -> Result<()> {
         let proof = e3_evm::encode_zk_proof(dkg_aggregator_proof.as_ref().unwrap())?;
         let observation = e3_evm::ICiphernodeRegistry::CommitteeProofPublished {
             e3Id: U256::ZERO,
-            nodes: pubkey_event.committee_addresses.clone(),
-            pkCommitment: pubkey_event.pk_commitment.into(),
+            nodes: publication_committee_addresses.clone(),
+            pkCommitment: publication_pk_commitment.into(),
             proof,
         }
         .encode_log_data();
@@ -2753,8 +2753,7 @@ async fn test_trbfv_actor() -> Result<()> {
         )?;
         bus.publish_without_context(e3_events::CommitteePublished {
             e3_id: e3_id.clone(),
-            nodes: pubkey_event
-                .committee_addresses
+            nodes: publication_committee_addresses
                 .iter()
                 .map(ToString::to_string)
                 .collect(),

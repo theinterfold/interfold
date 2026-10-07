@@ -53,6 +53,7 @@ fn accusation_from_failure(
         deadline: issued_at + VALIDITY,
         signed_payload: forwarded.then(|| failure.signed_payload.clone()),
         signature: ArcBytes::default(),
+        proof_instance: 0,
     };
     let sig = accuser
         .sign_message_sync(&AccusationVoting::accusation_digest(&accusation))
@@ -260,6 +261,7 @@ fn local_self_accusations_are_ignored() {
                             proof_type: failure.proof_type,
                             data_hash: failure.data_hash,
                             evidence: Bytes::from(vec![0x11; 32]),
+                            proof_instance: 0,
                         },
                         &ctx(),
                     )

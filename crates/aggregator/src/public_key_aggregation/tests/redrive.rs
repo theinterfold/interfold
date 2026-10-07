@@ -48,6 +48,7 @@ fn redrive_fixture(
             lbfv_aggregation: None,
             lbfv_publication: None,
             initial_is_aggregator: true,
+            initial_stage: E3Stage::None,
             effects_enabled: true,
         },
         test_state(generating_c5_state(CorrelationId::new())),

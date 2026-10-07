@@ -2063,6 +2063,7 @@ fn share_proofs_verified(e3_id: &E3id) -> TypedEvent<ShareVerificationComplete> 
             e3_id: e3_id.clone(),
             kind: VerificationKind::ShareProofs,
             dishonest_parties: BTreeSet::new(),
+            verification_id: None,
         },
         test_ec(1),
     )
@@ -2296,6 +2297,7 @@ async fn a_c2_c3_result_after_the_batch_retired_changes_nothing() -> Result<()> 
         e3_id,
         kind: VerificationKind::ShareProofs,
         dishonest_parties: BTreeSet::new(),
+        verification_id: None,
     };
     actor.send(TypedEvent::new(verdict, grown_dispatch)).await?;
 
@@ -2364,6 +2366,7 @@ async fn a_first_c2_c3_result_applies_only_to_the_batch_of_its_dispatch() -> Res
         e3_id,
         kind: VerificationKind::ShareProofs,
         dishonest_parties: BTreeSet::new(),
+        verification_id: None,
     };
     actor.send(TypedEvent::new(verdict, other_batch)).await?;
 
@@ -2417,6 +2420,7 @@ async fn a_grown_batch_completes_when_its_verdict_equals_the_first() -> Result<(
         e3_id: e3_id.clone(),
         kind: VerificationKind::ShareProofs,
         dishonest_parties: BTreeSet::new(),
+        verification_id: None,
     };
     let dispatch_before_restart = |batch: &str| {
         keyshare_event(TestEvent::new(batch, 1), 10, EventSource::Local)
@@ -2483,6 +2487,7 @@ async fn a_verdict_of_an_earlier_batch_does_not_complete_a_grown_batch() -> Resu
         e3_id: e3_id.clone(),
         kind: VerificationKind::ShareProofs,
         dishonest_parties,
+        verification_id: None,
     };
 
     // `{2}` is verified, and the batch grows to `{1, 2}`.
@@ -2519,6 +2524,7 @@ async fn a_kept_verdict_applies_when_restart_sends_its_batch_again() -> Result<(
         e3_id: e3_id.clone(),
         kind: VerificationKind::ShareProofs,
         dishonest_parties: BTreeSet::new(),
+        verification_id: None,
     };
     // Before the restart, the batch grew past expelled dealer 1 to `{2}` and was sent.
     let mut before = batch_with_an_expelled_dealer(&e3_id, false).await?;
@@ -2577,6 +2583,7 @@ async fn a_restart_applies_the_result_of_a_dispatch_sent_before_it() -> Result<(
         e3_id: e3_id.clone(),
         kind: VerificationKind::ShareProofs,
         dishonest_parties: BTreeSet::new(),
+        verification_id: None,
     };
     // Before the restart, the batch grew past expelled dealer 1 to `{2}` and was sent.
     let mut before = batch_with_an_expelled_dealer(&e3_id, false).await?;
@@ -2671,6 +2678,7 @@ async fn replay_records_a_logged_dispatch_that_the_saved_state_lacks() -> Result
             e3_id: e3_id.clone(),
             kind: VerificationKind::ShareProofs,
             dishonest_parties: BTreeSet::new(),
+            verification_id: None,
         },
         dispatch_ec.clone(),
     )?;
@@ -2759,6 +2767,7 @@ async fn a_logged_dispatch_of_an_earlier_batch_is_not_recorded_for_a_grown_batch
         e3_id: e3_id.clone(),
         kind: VerificationKind::ShareProofs,
         dishonest_parties,
+        verification_id: None,
     };
 
     // `{2}` is verified, and the batch grows to `{1, 2}`.
@@ -3708,6 +3717,7 @@ async fn a_saved_failure_is_redriven_before_any_ready_settlement() -> Result<()>
     state.expelled_parties.insert(1);
     let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
         bfv_key: test_bfv_key(),
+        lbfv_generation: test_lbfv_generation(),
         bus,
         cipher: Arc::new(Cipher::from_password("test-password").await?),
         state: unwritable(state).await,
@@ -4412,6 +4422,7 @@ async fn stale_threshold_share_deadline_preserves_decryption(decrypting: bool) -
         num_honest_parties: 2,
         num_moduli: 1,
         own_plaintext_idx: Some(0),
+        recipient_party_id: actor.state.try_get()?.party_id,
         own_share_raw: Some(current.own_sk_share_raw),
         dkg_input_type: e3_zk_helpers::computation::DkgInputType::SecretKey,
         params_preset: BfvPreset::InsecureDkg,
@@ -4770,6 +4781,7 @@ async fn collector_failures_ignore_superseded_phases() -> Result<()> {
                             e3_id: e3_id.clone(),
                             kind: VerificationKind::DecryptionProofs,
                             dishonest_parties: BTreeSet::new(),
+                            verification_id: None,
                         },
                         test_ec(1),
                     ));
@@ -5577,6 +5589,7 @@ async fn a_terminal_event_stops_decryption_redelivery_while_its_cleanup_retries(
     // Every write fails, so the terminal cleanup retries later.
     let mut keyshare = ThresholdKeyshare::new(ThresholdKeyshareParams {
         bfv_key: test_bfv_key(),
+        lbfv_generation: test_lbfv_generation(),
         bus,
         cipher: Arc::new(Cipher::from_password("test-password").await?),
         state: unwritable(state.try_get()?).await,

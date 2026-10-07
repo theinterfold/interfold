@@ -110,7 +110,7 @@ pub(super) async fn check_c0_restart(
                     committees,
                     e3_cache: HashMap::from([(e3_id.clone(), E3Meta {
                         threshold_m: 1, threshold_n: 3, seed: Seed([0; 32]),
-                        params_preset: BfvPreset::InsecureThreshold512,
+                        params_preset: BfvPreset::InsecureThreshold,
                         params: ArcBytes::default(), error_size: ArcBytes::default(),
                     })]),
                     ..Default::default()
@@ -125,7 +125,7 @@ pub(super) async fn check_c0_restart(
             let history = bus.history();
             let actors = setup_zk_actors(&bus, &backend, observer.clone(), HashMap::new(), recovery, false, repositories.clone());
             let accusations = AccusationManager::setup(&bus, e3_id.clone(), observer,
-                Address::repeat_byte(9), members, 1, 300, 30, BfvPreset::InsecureThreshold512);
+                Address::repeat_byte(9), members, 1, 300, 30, BfvPreset::InsecureThreshold);
             EventConverter::setup(&bus);
             let recovered_documents = recover_document_state(&reader, &aggregates, &HashSet::from([e3_id.clone()])).await.unwrap();
             let hash = ContentHash::from_content(&document.value);

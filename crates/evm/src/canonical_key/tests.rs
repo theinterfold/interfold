@@ -47,7 +47,7 @@ fn proof_observation(
 #[actix::test]
 async fn confirmed_observations_admit_publications_in_either_order() -> Result<()> {
     let id = E3id::new("81", 1);
-    let preset = BfvPreset::InsecureThreshold512;
+    let preset = BfvPreset::InsecureThreshold;
     let params = BfvParamSet::from(preset);
     let bytes = e3_bfv_client::client::generate_public_key(
         params.degree,

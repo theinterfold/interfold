@@ -356,9 +356,10 @@ async fn c4_dispatch_before_the_seq_layout_is_held_until_threshold_share_pending
         num_honest_parties: 0,
         num_moduli: 0,
         own_plaintext_idx: None,
+        recipient_party_id: 0,
         own_share_raw: None,
         dkg_input_type,
-        params_preset: BfvPreset::InsecureThreshold512,
+        params_preset: BfvPreset::InsecureThreshold,
         committee_size: CiphernodesCommitteeSize::Minimum,
     };
     let c4 = DecryptionShareProofsPending {
@@ -397,7 +398,7 @@ fn c6_fixture(
     use e3_events::{ShareDecryptionProofPending, ThresholdShareDecryptionProofRequest};
     use e3_fhe_params::{BfvParamSet, BfvPreset};
     use e3_request::canonical_key::{CanonicalPublicKey, CanonicalPublicKeys};
-    let params = BfvParamSet::from(BfvPreset::InsecureThreshold512);
+    let params = BfvParamSet::from(BfvPreset::InsecureThreshold);
     let pk = generate_public_key(
         params.degree,
         params.plaintext_modulus,
@@ -416,7 +417,7 @@ fn c6_fixture(
             Address::repeat_byte(3),
         ],
         honest_committee: vec![Address::repeat_byte(1), Address::repeat_byte(3)],
-        params_preset: BfvPreset::InsecureThreshold512,
+        params_preset: BfvPreset::InsecureThreshold,
         committee_size: CiphernodesCommitteeSize::Minimum,
         interfold_address: Address::repeat_byte(9),
         sk_agg_commits: vec![],

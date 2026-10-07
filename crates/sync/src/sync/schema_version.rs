@@ -84,10 +84,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn current_schema_is_v7() {
-        assert_eq!(SCHEMA_VERSION, 7);
+    fn current_schema_is_v8() {
+        assert_eq!(SCHEMA_VERSION, 8);
         assert!(matches!(
-            decide_schema_version(Some(6), SCHEMA_VERSION, true),
+            decide_schema_version(Some(7), SCHEMA_VERSION, true),
             SchemaVersionDecision::Halt(_)
         ));
     }

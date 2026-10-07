@@ -241,8 +241,10 @@ async fn unauthenticated_share_proofs_do_not_emit_accusations() {
             share_proofs: Vec::new(),
             decryption_proofs: vec![proof],
             pre_dishonest: BTreeSet::new(),
-            params_preset: BfvPreset::InsecureDkg512,
+            params_preset: BfvPreset::InsecureDkg,
             committee_size: CiphernodesCommitteeSize::Minimum,
+            lbfv_context: None,
+            verification_id: None,
         };
         let ec = EventContext::<Unsequenced>::from(InterfoldEventData::from(dispatch(bad.clone())))
             .sequence(0);
@@ -295,8 +297,10 @@ async fn failed_worker_payload_cannot_borrow_a_verified_signer() {
         }],
         decryption_proofs: Vec::new(),
         pre_dishonest: BTreeSet::new(),
-        params_preset: BfvPreset::InsecureDkg512,
+        params_preset: BfvPreset::InsecureDkg,
         committee_size: CiphernodesCommitteeSize::Minimum,
+        lbfv_context: None,
+        verification_id: None,
     };
     let ec =
         EventContext::<Unsequenced>::from(InterfoldEventData::from(dispatch.clone())).sequence(0);

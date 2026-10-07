@@ -318,6 +318,8 @@ mod tests {
     use crate::ciphernodes_committee::CiphernodesCommitteeSize;
     use crate::computation::DkgInputType;
     use e3_fhe_params::BfvPreset;
+    use fhe::bfv::{Encoding, Plaintext, PublicKey};
+    use fhe_traits::{FheEncoder, FheEncrypter};
 
     #[test]
     fn test_bound_and_bits_computation_consistency() {
@@ -362,7 +364,7 @@ mod tests {
     #[test]
     fn test_recipient_outside_dealer_set_decrypts_every_row() {
         let committee = CiphernodesCommitteeSize::Small.values();
-        let preset = BfvPreset::InsecureThreshold512;
+        let preset = BfvPreset::InsecureThreshold;
         let (mut sample, dkg_params) = ShareDecryptionCircuitData::generate_sample_with_params(
             preset,
             committee,
@@ -377,23 +379,15 @@ mod tests {
             .iter()
             .position(Option::is_none)
             .unwrap();
-        let replacement = sample
+        let encrypted_row = sample
             .own_plaintext_share
             .iter()
-            .enumerate()
-            .map(|(mod_idx, _)| {
-                sample
-                    .honest_ciphertexts
-                    .iter()
-                    .filter_map(|slot| slot.as_ref())
-                    .next()
-                    .and_then(|party_cts| party_cts.get(mod_idx))
-                    .cloned()
-                    .unwrap()
+            .map(|row| {
+                let plaintext = Plaintext::try_encode(row, Encoding::poly(), &dkg_params).unwrap();
+                public_key.try_encrypt(&plaintext, &mut rng).unwrap()
             })
             .collect();
-        sample.honest_ciphertexts[own_idx] = Some(replacement);
-        let expected = Inputs::compute(preset, &sample).unwrap();
+        sample.honest_ciphertexts[own_idx] = Some(encrypted_row);
         sample.own_plaintext_share.clear();
 
         let inputs = Inputs::compute(preset, &sample).unwrap();

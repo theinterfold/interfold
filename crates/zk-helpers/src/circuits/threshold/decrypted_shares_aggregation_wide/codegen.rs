@@ -132,12 +132,12 @@ mod tests {
         assert!(!artifacts.toml.is_empty());
         assert!(artifacts
             .configs
-            .contains("DECRYPTED_SHARES_AGGREGATION_BIT_NOISE"));
+            .contains("DECRYPTED_SHARES_AGGREGATION_WIDE_BIT_NOISE"));
         assert!(artifacts
             .configs
-            .contains("DECRYPTED_SHARES_AGGREGATION_BIT_D_NATIVE"));
+            .contains("DECRYPTED_SHARES_AGGREGATION_WIDE_BIT_D_NATIVE"));
         assert!(artifacts
             .configs
-            .contains("DECRYPTED_SHARES_AGGREGATION_CONFIGS"));
+            .contains("DECRYPTED_SHARES_AGGREGATION_WIDE_CONFIGS"));
     }
 }

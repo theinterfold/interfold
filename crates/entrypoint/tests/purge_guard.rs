@@ -513,6 +513,7 @@ async fn store_without_identity_lists_slash_reports() -> Result<()> {
         votes_for: Vec::new(),
         outcome: e3_events::AccusationOutcome::AccusedFaulted,
         evidence: alloy::primitives::Bytes::new(),
+        proof_instance: 0,
     })?;
     repositories
         .slashing_writer_recovery(1)

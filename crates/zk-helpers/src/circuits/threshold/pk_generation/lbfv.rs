@@ -226,6 +226,13 @@ fn compute_inputs(
     for (index, modulus) in params.moduli().iter().enumerate() {
         let modulus = BigInt::from(*modulus);
         let expected = data.a.limb(index).neg().mul(&data.sk).add(&data.eek);
+        // `mul` collapses a zero factor to one coefficient; the decomposition needs all `2N - 1`.
+        let short = (2 * n - 1).saturating_sub(expected.coefficients().len());
+        let expected = Polynomial::new(
+            std::iter::repeat_n(BigInt::from(0), short)
+                .chain(expected.coefficients().iter().cloned())
+                .collect(),
+        );
         let mut expected_residue = expected
             .reduce_by_cyclotomic(&cyclotomic)
             .map_err(|error| CircuitsErrors::Other(error.to_string()))?;

@@ -363,7 +363,7 @@ mod tests {
     );
 
     fn operational_key_material() -> Result<OperationalKeyMaterial> {
-        let preset = BfvPreset::InsecureThreshold;
+        let preset = BfvPreset::InsecureThresholdLbfv;
         let (params, _) = build_pair_for_preset(preset)?;
         let crs = CommonRandomPolyVec::from_seed(
             &params,
@@ -406,13 +406,13 @@ mod tests {
     fn envelope_round_trips_and_validates() -> Result<()> {
         let envelope = envelope()?;
         let (commitments, encryption_key) =
-            inspect_lbfv_key_envelope(&envelope, BfvPreset::InsecureThreshold)?;
+            inspect_lbfv_key_envelope(&envelope, BfvPreset::InsecureThresholdLbfv)?;
         validate_lbfv_key_envelope(
             &envelope,
             commitments.envelope,
-            BfvPreset::InsecureThreshold,
+            BfvPreset::InsecureThresholdLbfv,
         )?;
-        let (params, _) = build_pair_for_preset(BfvPreset::InsecureThreshold)?;
+        let (params, _) = build_pair_for_preset(BfvPreset::InsecureThresholdLbfv)?;
         PublicKey::from_bytes(&encryption_key, &params)?;
         Ok(())
     }
@@ -478,8 +478,9 @@ mod tests {
     #[test]
     fn envelope_rejects_a_different_proof_commitment() -> Result<()> {
         let envelope = envelope()?;
-        let error = validate_lbfv_key_envelope(&envelope, [0x55; 32], BfvPreset::InsecureThreshold)
-            .expect_err("a different proof commitment must fail");
+        let error =
+            validate_lbfv_key_envelope(&envelope, [0x55; 32], BfvPreset::InsecureThresholdLbfv)
+                .expect_err("a different proof commitment must fail");
         assert!(error
             .to_string()
             .contains("does not match the proof commitment"));
@@ -523,7 +524,7 @@ mod tests {
 
     #[test]
     fn contribution_envelopes_round_trip_and_do_not_cross_key_boundaries() -> Result<()> {
-        let preset = BfvPreset::InsecureThreshold;
+        let preset = BfvPreset::InsecureThresholdLbfv;
         let (params, _) = build_pair_for_preset(preset)?;
         let crs = CommonRandomPolyVec::from_seed(
             &params,
