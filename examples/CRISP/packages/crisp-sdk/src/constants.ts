@@ -32,8 +32,7 @@ export const CRISP_SERVER_CHAIN_BLOCK_AT_TIMESTAMP_ENDPOINT = 'chain/block-at-ti
 export const MERKLE_TREE_MAX_DEPTH = 20 // static, hardcoded in the circuit.
 
 // @note Must stay aligned with CRISP circuits / threshold message layout (Rust & Noir MAX_MSG_NON_ZERO_COEFFS).
-// The committee publishes this many plaintext coefficients as the tally. Option `o` is coefficient `o`,
-// so a round can have at most this many options; the rest of the polynomial is zero padding.
+// The committee publishes this many plaintext coefficients as the tally; option `o` is coefficient `o`.
 export const MAX_MSG_NON_ZERO_COEFFS = 50
 // Hard limit on the maximum number of vote options supported.
 export const MAX_VOTE_OPTIONS = 10

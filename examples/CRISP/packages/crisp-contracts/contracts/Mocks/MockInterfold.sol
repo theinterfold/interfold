@@ -25,31 +25,25 @@ contract MockInterfold {
   /// @dev Defaults to the value the timing tests relied on before it was settable.
   uint256 public mockComputeWindow = 100;
 
-  /// @notice The BFV parameter blob that every request passes to `validate` as `e3ProgramParams`.
-  /// @dev Decoded by `CRISPProgram` as a {BfvParameters}, so it must be the encoding Interfold
-  /// hands a program. Insecure-512 (degree 512, plaintext modulus 100), the preset the deploy
-  /// scripts and tests run against. A test that needs another plaintext modulus passes `validate`
-  /// the blob from {bfvParamsWithPlaintextModulus}.
-  bytes public e3ProgramParams;
+  uint256 constant PLAINTEXT_MODULUS = 100;
 
-  constructor() {
+  /// @notice The BFV parameter blob that every request passes to `validate` as `e3ProgramParams`.
+  /// @dev Insecure-512 (degree 512, plaintext modulus 100), the preset the deploy scripts and tests
+  /// run against. A test that needs another plaintext modulus passes `validate` the blob from
+  /// {bfvParamsWithPlaintextModulus}.
+  bytes public e3ProgramParams = bfvParamsWithPlaintextModulus(PLAINTEXT_MODULUS);
+
+  /// @notice The plaintext modulus of {e3ProgramParams}, which every round is sized against.
+  function plaintextModulus() external pure returns (uint256) {
+    return PLAINTEXT_MODULUS;
+  }
+
+  /// @notice The blob that `validate` decodes as {BfvParameters}, with the given plaintext modulus.
+  function bfvParamsWithPlaintextModulus(uint256 modulus) public pure returns (bytes memory) {
     uint256[] memory moduli = new uint256[](2);
     moduli[0] = 0xffffee001;
     moduli[1] = 0xffffc4001;
-    e3ProgramParams = abi.encode(BfvParameters({ degree: 512, plaintextModulus: 100, moduli: moduli, error1Variance: "3" }));
-  }
-
-  /// @notice The plaintext modulus of {e3ProgramParams}, which every round is sized against.
-  function plaintextModulus() external view returns (uint256) {
-    return abi.decode(e3ProgramParams, (BfvParameters)).plaintextModulus;
-  }
-
-  /// @notice {e3ProgramParams} with another plaintext modulus, encoded by the struct `validate`
-  /// decodes.
-  function bfvParamsWithPlaintextModulus(uint256 modulus) external view returns (bytes memory) {
-    BfvParameters memory params = abi.decode(e3ProgramParams, (BfvParameters));
-    params.plaintextModulus = modulus;
-    return abi.encode(params);
+    return abi.encode(BfvParameters({ degree: 512, plaintextModulus: modulus, moduli: moduli, error1Variance: "3" }));
   }
 
   uint256 public nextE3Id;

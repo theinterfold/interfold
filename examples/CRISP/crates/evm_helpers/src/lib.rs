@@ -651,25 +651,13 @@ impl CRISPContract<CRISPReadProvider> {
         Ok(contract.pendingInputCount(e3_id).call().await?.to::<u64>())
     }
 
-    /// The voting-power divisor `CRISPProgram` stored for a CUSTOM-credit round.
-    ///
-    /// The authority on the divisor. The contract resolves it once, in the transaction that
-    /// requests the E3, and every voter's power is then scaled by exactly this value. Reading it
-    /// keeps the coordinator from deriving a second value that could disagree with the chain.
-    ///
-    /// Call it only for a CUSTOM-credit round, whatever its census mode. A CONSTANT-credit round
-    /// stores no divisor.
-    ///
-    /// `Ok(None)` when the contract holds no divisor for the round, which is not authoritative.
+    /// The voting-power divisor `CRISPProgram` stored for a CUSTOM-credit round at request time;
+    /// every voter's power is scaled by exactly it. `Ok(None)` when the contract holds zero: a
+    /// CONSTANT-credit round, a round it never initialized, or a node that lacks the request block.
     pub async fn stored_voting_power_divisor(&self, e3_id: U256) -> Result<Option<U256>> {
         let contract = CRISPProgram::new(self.contract_address, self.provider.as_ref());
-
-        let divisor = contract.votingPowerDivisorOf(e3_id).call().await?;
-        if divisor.is_zero() {
-            return Ok(None);
-        }
-
-        Ok(Some(divisor))
+        Ok(Some(contract.votingPowerDivisorOf(e3_id).call().await?)
+            .filter(|divisor| !divisor.is_zero()))
     }
 }
 

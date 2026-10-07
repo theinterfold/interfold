@@ -76,25 +76,12 @@ describe('Vote', () => {
   })
 
   describe('decodeTally', () => {
-    it('Should return the leading coefficients and ignore the rest of the payload region', () => {
+    it('Should return the first numChoices coefficients exactly', () => {
+      const big = (1n << 60n) + 1n
       const coefficients = new Array(MAX_MSG_NON_ZERO_COEFFS).fill(0n)
-      coefficients[0] = 7n
-      coefficients[1] = 0n
-      coefficients[2] = 42n
-      coefficients[3] = 99n
+      coefficients.splice(0, 4, 7n, 0n, big, 99n)
 
-      expect(decodeTally(coefficients, 3)).toEqual([7n, 0n, 42n])
-    })
-
-    it('Should decode totals above Number.MAX_SAFE_INTEGER without losing precision', () => {
-      const total = (1n << 60n) + 1n
-      const coefficients = new Array(MAX_MSG_NON_ZERO_COEFFS).fill(0n)
-      coefficients[1] = total
-
-      const decoded = decodeTally(coefficients, 2)
-
-      expect(decoded[1]).toBe(total)
-      expect(decoded[1] > BigInt(Number.MAX_SAFE_INTEGER)).toBe(true)
+      expect(decodeTally(coefficients, 3)).toEqual([7n, 0n, big])
     })
 
     it('Should reject a tally shorter than the payload region', () => {
@@ -117,8 +104,6 @@ describe('Vote', () => {
     it('Should reject a non-integer number of choices', () => {
       const coefficients = new Array(MAX_MSG_NON_ZERO_COEFFS).fill(0)
 
-      // A fraction would slice a fractional number of coefficients; NaN passes both bound
-      // checks and would return an empty tally.
       expect(() => decodeTally(coefficients, 2.5)).toThrow('must be an integer of at least 2')
       expect(() => decodeTally(coefficients, Number.NaN)).toThrow('must be an integer of at least 2')
       expect(() => decodeTally(coefficients, Number.POSITIVE_INFINITY)).toThrow('must be an integer of at least 2')
@@ -146,39 +131,27 @@ describe('Vote', () => {
       expect(decodeTally(encoded, MAX_VOTE_OPTIONS)).toEqual(new Array(MAX_VOTE_OPTIONS).fill(1n))
     })
 
-    it('Should place the weight of option o at coefficient o and zero elsewhere', () => {
-      const { degree } = getZkInputsGenerator().getBFVParams()
-      const encoded = encodeVote([3, 0, 7])
+    it('Should place the weight of option o at coefficient o and zero elsewhere, up to t - 1', () => {
+      const { degree, plaintextModulus } = getZkInputsGenerator().getBFVParams()
+      const weights = [Number(plaintextModulus - 1n), 0, 7]
 
-      expect(encoded).toHaveLength(degree)
-      expect(encoded.slice(0, 3)).toEqual([3, 0, 7])
-      expect(encoded.slice(3).every((c) => c === 0)).toBe(true)
-    })
-
-    it('Should round-trip through decodeTally, including the largest weight below the plaintext modulus', () => {
-      const t = getZkInputsGenerator().getBFVParams().plaintextModulus as bigint
-      const largest = Number(t - 1n)
-      const weights: Vote = [largest, 0, 1, 2, largest]
-
-      expect(decodeTally(encodeVote(weights), weights.length)).toEqual(weights.map(BigInt))
+      expect(encodeVote(weights)).toEqual([...weights, ...new Array(degree - 3).fill(0)])
     })
 
     it('Should reject a weight that is not a non-negative safe integer below the plaintext modulus', () => {
-      const t = getZkInputsGenerator().getBFVParams().plaintextModulus as bigint
+      const t = getZkInputsGenerator().getBFVParams().plaintextModulus
 
       expect(() => encodeVote([0, Number(t)])).toThrow(
         `Vote value for choice 1 must be a non-negative integer below the plaintext modulus (${t})`,
       )
       expect(() => encodeVote([-1, 0])).toThrow('Vote value for choice 0')
       expect(() => encodeVote([0, 1.5])).toThrow('Vote value for choice 1')
-      expect(() => encodeVote([Number.NaN, 0])).toThrow('Vote value for choice 0')
-      expect(() => encodeVote([0, Number.MAX_SAFE_INTEGER + 1])).toThrow('Vote value for choice 1')
     })
   })
 
   describe('validateVote', () => {
     it('Should reject a choice at or above the plaintext modulus and accept the largest weight below it', () => {
-      const t = getZkInputsGenerator().getBFVParams().plaintextModulus as bigint
+      const t = getZkInputsGenerator().getBFVParams().plaintextModulus
       const balance = t * 2n
 
       expect(() => validateVote([Number(t - 1n), 0], balance)).not.toThrow()

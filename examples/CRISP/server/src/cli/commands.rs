@@ -279,9 +279,8 @@ pub async fn initialize_crisp_round(
     // `SelfRegistry`, whose power is 1 or 0. BY_REQUESTER is not offered: the requester here is
     // this CLI's EOA, which cannot answer `getCensus`.
     let census_mode = U256::from(if onchain { 2u64 } else { 0u64 });
-    // Seventh field: the requested voting-power divisor. Constant credits ignore it, so zero here.
-    // It is not optional: `_initRound` decodes exactly seven fields, so a six-field encoding
-    // reverts the request with empty data rather than defaulting to anything.
+    // Seventh field: the requested voting-power divisor, which constant credits ignore. Required:
+    // `_initRound` decodes exactly seven fields and reverts a shorter encoding.
     let voting_power_divisor = U256::from(0);
     let custom_params_bytes = Bytes::from(
         (

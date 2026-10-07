@@ -50,17 +50,9 @@ export const getZkInputsGenerator = () => {
 }
 
 /**
- * Returns the BFV plaintext modulus `t` of the active preset. A choice weight, and every option
- * total of a round, must stay below it.
- */
-export const getPlaintextModulus = (): bigint => BigInt(getZkInputsGenerator().getBFVParams().plaintextModulus)
-
-/**
  * Checks every choice weight against the plaintext modulus `t`. A weight at or above `t` wraps
  * around in the plaintext ring and no longer adds as an integer.
  *
- * @param vote - Weight per option
- * @param plaintextModulus - The plaintext modulus `t` of the active preset
  * @throws If a weight is not a non-negative safe integer below `t`
  */
 export const checkVoteWeights = (vote: Vote, plaintextModulus: bigint): void => {
@@ -73,10 +65,6 @@ export const checkVoteWeights = (vote: Vote, plaintextModulus: bigint): void => 
 
 /**
  * Encodes vote choices into a polynomial coefficient array for BFV encryption.
- * Coefficient `o` is the weight on option `o`; every other coefficient, up to the BFV degree, is zero.
- *
- * Decoded by `decodeTally`, and by the other tally decoders that share this layout:
- * `CRISPProgram.decodeTally` (Solidity) and `crisp_utils::decode_tally` (Rust).
  *
  * @param vote - Weight per option, for example [10, 0] for 2 options. Each weight is a non-negative
  *        safe integer below the BFV plaintext modulus.
@@ -91,25 +79,19 @@ export const encodeVote = (vote: Vote): number[] => {
     throw new Error('Vote must have at least two choices')
   }
 
-  // The Noir circuit asserts num_options <= MAX_OPTIONS, so a vote beyond this can never
-  // produce a valid proof. Reject it here rather than encoding an unprovable vote.
+  // The circuit asserts num_options <= MAX_OPTIONS, so a larger vote can never be proved.
   if (numChoices > MAX_VOTE_OPTIONS) {
     throw new Error(`Number of choices (${numChoices}) exceeds MAX_VOTE_OPTIONS (${MAX_VOTE_OPTIONS})`)
   }
 
-  const { degree, plaintextModulus } = getZkInputsGenerator().getBFVParams() as { degree: number; plaintextModulus: bigint }
+  const { degree, plaintextModulus } = getZkInputsGenerator().getBFVParams()
   if (degree < MAX_MSG_NON_ZERO_COEFFS) {
     throw new Error(`BFV degree (${degree}) must be at least MAX_MSG_NON_ZERO_COEFFS (${MAX_MSG_NON_ZERO_COEFFS})`)
   }
 
   checkVoteWeights(vote, plaintextModulus)
 
-  const voteArray: number[] = new Array(degree).fill(0)
-  for (let choiceIdx = 0; choiceIdx < numChoices; choiceIdx += 1) {
-    voteArray[choiceIdx] = vote[choiceIdx]
-  }
-
-  return voteArray
+  return [...vote, ...new Array(degree - numChoices).fill(0)]
 }
 
 /**
@@ -126,12 +108,9 @@ export const encryptVote = (vote: Vote, publicKey: Uint8Array): Uint8Array => {
 }
 
 /**
- * Decodes raw tally bytes (or coefficients) into a total per choice.
- * Expects the layout `encodeVote` produces: coefficient `o` holds the total weight on option `o`.
- *
- * Same layout as `CRISPProgram.decodeTally` (Solidity) and `crisp_utils::decode_tally` (Rust).
- * Only the first MAX_MSG_NON_ZERO_COEFFS coefficients are published as the tally; the first
- * `numChoices` of them are the totals and the rest are ignored.
+ * Decodes raw tally bytes (or coefficients) into one total per choice: the first `numChoices` of the
+ * MAX_MSG_NON_ZERO_COEFFS published coefficients, in the layout `encodeVote` produces. Same layout as
+ * `CRISPProgram.decodeTally` (Solidity) and `crisp_utils::decode_tally` (Rust).
  *
  * @param tallyBytes - Hex string, or the polynomial coefficients from tally/decryption
  * @param numChoices - Number of vote options: an integer from 2 to MAX_VOTE_OPTIONS
@@ -140,16 +119,12 @@ export const encryptVote = (vote: Vote, publicKey: Uint8Array): Uint8Array => {
  *         coefficients than MAX_MSG_NON_ZERO_COEFFS
  */
 export const decodeTally = (tallyBytes: string | number[] | bigint[], numChoices: number): TallyResult => {
-  // `CRISPProgram.validate` rejects a round outside 2..MAX_VOTE_OPTIONS, and `encodeVote` refuses
-  // to encode fewer than two choices, so no tally in that range can exist. `Number.isInteger` also
-  // screens out NaN, Infinity, and fractions: a fractional count would slice a fractional number of
-  // coefficients, and NaN passes both bound checks to return an empty tally.
+  // CRISPProgram.validate rejects a round outside 2..MAX_VOTE_OPTIONS. Number.isInteger also screens
+  // out NaN, Infinity, and fractions.
   if (!Number.isInteger(numChoices) || numChoices < 2) {
     throw new Error(`Number of choices (${numChoices}) must be an integer of at least 2`)
   }
 
-  // Rounds cannot exceed MAX_VOTE_OPTIONS (the circuit's MAX_OPTIONS), so a larger count
-  // is a caller error rather than a tally to decode.
   if (numChoices > MAX_VOTE_OPTIONS) {
     throw new Error(`Number of choices (${numChoices}) exceeds MAX_VOTE_OPTIONS (${MAX_VOTE_OPTIONS})`)
   }

@@ -176,6 +176,9 @@ const MIN_REQUEST_INTERVAL: Duration = Duration::from_millis(500);
 /// How many times a rate-limited request is retried before giving up.
 const RATE_LIMIT_RETRIES: u32 = 5;
 
+/// A zero divisor would divide by zero, and the contract never stores one for a CUSTOM round.
+const ZERO_DIVISOR: &str = "The voting-power divisor must be non-zero";
+
 /// Client for querying token holder data from Etherscan API.
 pub struct EtherscanClient {
     client: reqwest::Client,
@@ -881,14 +884,6 @@ impl EtherscanClient {
         potential_voters.into_values().collect()
     }
 
-    /// Reject a zero divisor before it reaches a division.
-    fn ensure_nonzero_divisor(divisor: U256) -> Result<()> {
-        if divisor.is_zero() {
-            return Err(eyre!("The voting-power divisor must be non-zero"));
-        }
-        Ok(())
-    }
-
     /// Verify voting power for multiple addresses at an EIP-6372 timepoint.
     ///
     /// `divisor` is the value `CRISPProgram` stored for the round. The contract chose it so that
@@ -905,7 +900,7 @@ impl EtherscanClient {
         threshold: U256,
         divisor: U256,
     ) -> Result<Vec<TokenHolder>> {
-        Self::ensure_nonzero_divisor(divisor)?;
+        eyre::ensure!(!divisor.is_zero(), ZERO_DIVISOR);
         let mut token_holders: Vec<TokenHolder> = Vec::new();
 
         log::info!(
@@ -1132,7 +1127,7 @@ impl EtherscanClient {
         // The divisor `CRISPProgram` stored for the round.
         divisor: U256,
     ) -> Result<Vec<TokenHolder>> {
-        Self::ensure_nonzero_divisor(divisor)?;
+        eyre::ensure!(!divisor.is_zero(), ZERO_DIVISOR);
         log::info!("Starting token holder discovery for {}", token_address);
 
         let sources = Self::resolve_voting_power_sources(token_address, rpc_url)
@@ -1909,35 +1904,15 @@ mod voting_power_divisor_tests {
     use super::EtherscanClient;
     use alloy::primitives::{Address, U256};
 
-    fn client() -> EtherscanClient {
-        EtherscanClient::new("test_key".to_string(), 1)
-    }
-
     /// A zero divisor would divide by zero, and the contract never stores one for a CUSTOM round.
     #[tokio::test]
     async fn a_zero_divisor_is_refused() {
-        let refused = client()
-            .verify_voting_power(
-                Address::repeat_byte(1),
-                &[],
-                1,
-                "http://127.0.0.1:1",
-                U256::ZERO,
-                U256::ZERO,
-            )
-            .await;
-        assert!(refused.is_err());
-
-        let accepted = client()
-            .verify_voting_power(
-                Address::repeat_byte(1),
-                &[],
-                1,
-                "http://127.0.0.1:1",
-                U256::ZERO,
-                U256::from(1),
-            )
-            .await;
-        assert!(accepted.unwrap().is_empty());
+        let verify = |divisor| async move {
+            EtherscanClient::new("test_key".to_string(), 1)
+                .verify_voting_power(Address::repeat_byte(1), &[], 1, "", U256::ZERO, divisor)
+                .await
+        };
+        assert!(verify(U256::ZERO).await.is_err());
+        assert!(verify(U256::from(1)).await.unwrap().is_empty());
     }
 }

@@ -143,11 +143,10 @@ const isValid = await verifyProof(proof)
 
 #### Ballot Encoding and Decode Tally
 
-A ballot stores one integer per option: coefficient `o` of the message polynomial is the weight on
-option `o`, and every other coefficient up to the BFV degree is zero. BFV adds ballots coefficient
-by coefficient, so the decrypted tally holds one total per option in the same positions. Each weight
-is a non-negative integer below the BFV plaintext modulus `t` of the active preset, and a round has
-2 to `MAX_VOTE_OPTIONS` options. `CRISPProgram` keeps every option total below `t`.
+Coefficient `o` of the message polynomial is the weight on option `o`. Every other coefficient up to
+the BFV degree is zero. BFV adds ballots coefficient by coefficient, so the decrypted tally holds
+one total per option. A weight is a non-negative integer below the BFV plaintext modulus `t`, and a
+round has 2 to `MAX_VOTE_OPTIONS` options. `CRISPProgram` keeps every option total below `t`.
 
 ```typescript
 import { encodeVote, decodeTally } from '@crisp-e3/sdk'
@@ -157,10 +156,6 @@ const coefficients = encodeVote([3, 0, 7]) // coefficient 0 = 3, coefficient 2 =
 const tally = decodeTally(tallyBytes, numOptions)
 // Returns: bigint[] — the first numOptions coefficients, one total per option
 ```
-
-`decodeTally` reads the first `numOptions` of the `MAX_MSG_NON_ZERO_COEFFS` published coefficients.
-`CRISPProgram.decodeTally` (Solidity) and `crisp_utils::decode_tally` (Rust) read the same layout.
-The interfold dashboard calls `CRISPProgram.decodeTally`.
 
 #### Cryptographic Utilities
 
@@ -263,8 +258,7 @@ const { stage, retryOffered } = getSubmissionStage({
   mask vote proof (low-level)
 - `verifyProof(proof: ProofData): Promise<boolean>` - Verify a proof locally
 - `encodeVote(vote: Vote): number[]` - Encode one weight per option into message coefficients,
-  padded to the BFV degree. Rejects a weight that is not a non-negative integer below the plaintext
-  modulus
+  padded to the BFV degree
 - `decodeTally(tallyBytes: string | number[] | bigint[], numChoices: number): TallyResult` - Decode
   the first `numChoices` coefficients of a tally into one total per option
 - `validateVote(vote: Vote, balance: bigint): void` - Check the weights against the plaintext

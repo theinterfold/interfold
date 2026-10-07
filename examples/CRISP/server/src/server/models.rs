@@ -221,11 +221,10 @@ pub struct CustomParams {
     pub credit_mode: CreditMode,
     pub credits: Option<String>,
     pub census_mode: CensusMode,
-    /// The divisor requested for a `CreditMode::Custom` round, of either census mode. It divides
-    /// raw token power into ballot units. `"0"` asks the contract for the smallest divisor that
-    /// keeps every option total below the plaintext modulus. The contract stores the value that
-    /// it uses, and `votingPowerDivisorOf` returns that stored value. A `CreditMode::Constant`
-    /// round ignores the field.
+    /// The divisor requested for a `CreditMode::Custom` round, of either census mode; `"0"` asks
+    /// for the smallest one that keeps every option total below the plaintext modulus. The
+    /// contract stores the value it uses (`votingPowerDivisorOf`). A `CreditMode::Constant` round
+    /// ignores it.
     pub voting_power_divisor: String,
 }
 

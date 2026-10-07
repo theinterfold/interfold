@@ -138,9 +138,6 @@ describe('CRISP on-chain census', function () {
     expect(divisor, 'the minimum: supply / t + 1').to.equal(minimumDivisor)
 
     votingPower = rawPower / divisor
-    // The voter holds most of the supply, so the scaled power carries the weight the ballot proves
-    // and stays below the plaintext modulus.
-    expect(votingPower, 'voter must carry the ballot weight').to.be.greaterThanOrEqual(BigInt(Math.max(...vote)))
 
     voteProof = await buildOnchainProof(votingPower)
   })

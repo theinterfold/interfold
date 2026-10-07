@@ -55,14 +55,11 @@ export function adaptHistoryEntries(list: E3Summary[], detailsCache: Map<string,
 // we have the result; otherwise reflects the on-chain stage (failed / expired /
 // in progress / completed) rather than a blanket "Pending".
 function historyResult(s: E3Summary, detail: E3FullDetails | undefined, meta: ReturnType<typeof pollMetaFor>): string {
-  // The tally comes from the CRISPProgram that ran the round, so it is never
-  // guessed from the off-chain label list.
   const tally = detail?.tally
-  if (tally && tally.length > 0) {
+  if (tally?.length) {
     const total = tally.reduce((a, b) => a + b, 0n)
     const max = tally.reduce((a, b) => (b > a ? b : a), 0n)
-    // Integer division truncates, so bias the numerator by half a percentage point
-    // to round half-up — matching the display before totals became bigint.
+    // Integer division truncates, so bias the numerator by half a percentage point to round half-up.
     const pct = total > 0n ? Number((max * 200n + total) / (total * 2n)) : 0
     const winnerLabel = meta.options[tally.indexOf(max)]?.label ?? 'Outcome'
     const verdict = /^no/i.test(winnerLabel) ? 'Declined' : /^abs/i.test(winnerLabel) ? 'Inconclusive' : 'Approved'

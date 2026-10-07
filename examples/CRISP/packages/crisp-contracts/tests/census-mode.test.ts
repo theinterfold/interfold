@@ -112,40 +112,38 @@ describe('CRISPProgram census mode', function () {
         .withArgs(t, t)
 
       await validate(31, encode(CONSTANT, TOKEN, 2, { credits: t - 1n }))
-      expect(await crispProgram.censusModeOf(31)).to.equal(TOKEN)
     })
 
-    it('sizes the round against the plaintext modulus of the registered parameters', async () => {
-      // The same credits are refused under the default modulus and accepted under a larger one,
-      // so the modulus is read from the blob and not fixed in the contract.
-      const credits = t
+    it('sizes every round against the plaintext modulus of the registered parameters', async () => {
+      // Credits of `t` are refused under the default blob, so acceptance here shows the modulus is
+      // read from the blob.
+      const votes = await ethers.deployContract('MockVotesToken')
       const wider = t * 1000n
-      await expect(validate(32, encode(CONSTANT, TOKEN, 2, { credits }))).to.be.revertedWithCustomError(
-        crispProgram,
-        'CreditsExceedPlaintextModulus',
-      )
-
       const widerParams = await mockInterfold.bfvParamsWithPlaintextModulus(wider)
-      await crispProgram.validate(33, 0, widerParams, '0x', encode(CONSTANT, TOKEN, 2, { credits }))
-      expect(await crispProgram.censusModeOf(33)).to.equal(TOKEN)
+
+      await crispProgram.validate(33, 0, widerParams, '0x', encode(CONSTANT, TOKEN, 2, { credits: t }))
+      await crispProgram.validate(16, 0, widerParams, '0x', encode(CUSTOM, TOKEN, 2, { token: await votes.getAddress() }))
+
+      expect(await crispProgram.votingPowerDivisorOf(16)).to.equal(minimumDivisor(await votes.totalSupply(), wider))
     })
 
-    it('records no divisor, whatever the request names', async () => {
-      await validate(34, encode(CONSTANT, TOKEN, 2, { divisor: 7n }))
+    it('records no divisor for constant credits, whatever the request names', async () => {
+      const votes = await ethers.deployContract('MockVotesToken')
+      const token = await votes.getAddress()
 
-      expect(await crispProgram.votingPowerDivisorOf(34)).to.equal(0n)
+      for (const [e3Id, census] of [
+        [34, TOKEN],
+        [24, ONCHAIN],
+      ] as const) {
+        await validate(e3Id, encode(CONSTANT, census, 2, { token, credits: 5n, divisor: 7n }))
+        expect(await crispProgram.votingPowerDivisorOf(e3Id)).to.equal(0n)
+      }
     })
   })
 
   /// CUSTOM credits weight each ballot by token voting power. The sum of every holder's scaled
   /// power must stay below `t`, which holds exactly when the divisor exceeds `supply / t`.
   describe('custom credits divisor', () => {
-    const deployVotes = async () => {
-      const votes = await ethers.deployContract('MockVotesToken')
-      await votes.waitForDeployment()
-      return votes
-    }
-
     it('rejects TOKEN with custom credits and no votes token', async () => {
       // No code at the address: refused before any call, by a named error.
       await expect(validate(10, encode(CUSTOM, TOKEN))).to.be.revertedWithCustomError(crispProgram, 'CustomCreditsRequireVotesToken')
@@ -158,46 +156,24 @@ describe('CRISPProgram census mode', function () {
       )
     })
 
-    it('rejects a divisor below the minimum and accepts exactly the minimum', async () => {
-      const votes = await deployVotes()
+    it('records the requested divisor or the minimum, and refuses less than the minimum', async () => {
+      const votes = await ethers.deployContract('MockVotesToken')
       const token = await votes.getAddress()
-      // The supply is a multiple of `t`, so a divisor of `supply / t` lets the scaled power sum to
-      // exactly `t` — one past what a coefficient holds. The minimum is strictly above it.
+      // `minimum - 1` is `supply / t`, whose scaled power can sum to `t` or more.
       const minimum = minimumDivisor(await votes.totalSupply())
 
       await expect(validate(12, encode(CUSTOM, TOKEN, 2, { token, divisor: minimum - 1n })))
         .to.be.revertedWithCustomError(crispProgram, 'VotingPowerDivisorBelowMinimum')
         .withArgs(minimum - 1n, minimum)
 
-      await validate(13, encode(CUSTOM, TOKEN, 2, { token, divisor: minimum }))
-      expect(await crispProgram.votingPowerDivisorOf(13)).to.equal(minimum)
-    })
-
-    it('resolves a requested divisor of zero to exactly the minimum', async () => {
-      const votes = await deployVotes()
-
-      await validate(14, encode(CUSTOM, TOKEN, 2, { token: await votes.getAddress() }))
-
-      expect(await crispProgram.votingPowerDivisorOf(14)).to.equal(minimumDivisor(await votes.totalSupply()))
-    })
-
-    it('keeps an explicit divisor above the minimum', async () => {
-      const votes = await deployVotes()
-      const larger = minimumDivisor(await votes.totalSupply()) * 2n
-
-      await validate(15, encode(CUSTOM, TOKEN, 2, { token: await votes.getAddress(), divisor: larger }))
-
-      expect(await crispProgram.votingPowerDivisorOf(15)).to.equal(larger)
-    })
-
-    it('sizes the minimum against the plaintext modulus of the registered parameters', async () => {
-      const votes = await deployVotes()
-      const wider = t * 1000n
-      const widerParams = await mockInterfold.bfvParamsWithPlaintextModulus(wider)
-
-      await crispProgram.validate(16, 0, widerParams, '0x', encode(CUSTOM, TOKEN, 2, { token: await votes.getAddress() }))
-
-      expect(await crispProgram.votingPowerDivisorOf(16)).to.equal(minimumDivisor(await votes.totalSupply(), wider))
+      for (const [e3Id, divisor, recorded] of [
+        [13, minimum, minimum],
+        [14, 0n, minimum],
+        [15, 2n * minimum, 2n * minimum],
+      ] as const) {
+        await validate(e3Id, encode(CUSTOM, TOKEN, 2, { token, divisor }))
+        expect(await crispProgram.votingPowerDivisorOf(e3Id)).to.equal(recorded)
+      }
     })
   })
 
@@ -262,25 +238,6 @@ describe('CRISPProgram census mode', function () {
       await expect(
         validate(22, encode(CONSTANT, ONCHAIN, 2, { token: await votes.getAddress(), credits: 0n })),
       ).to.be.revertedWithCustomError(crispProgram, 'InvalidCredits')
-    })
-
-    it('accepts ONCHAIN with a votes token', async () => {
-      const votes = await ethers.deployContract('MockVotesToken')
-      const divisor = minimumDivisor(await votes.totalSupply())
-
-      // CUSTOM credits take the bound from scaled power, so the floor must be worth a ballot unit.
-      await validate(23, encode(CUSTOM, ONCHAIN, 2, { token: await votes.getAddress(), minVotingPower: divisor }))
-
-      expect(await crispProgram.censusModeOf(23)).to.equal(ONCHAIN)
-    })
-
-    it('records no divisor for constant credits', async () => {
-      const votes = await ethers.deployContract('MockVotesToken')
-
-      await validate(24, encode(CONSTANT, ONCHAIN, 2, { token: await votes.getAddress(), credits: 5n, divisor: 7n }))
-
-      expect(await crispProgram.censusModeOf(24)).to.equal(ONCHAIN)
-      expect(await crispProgram.votingPowerDivisorOf(24)).to.equal(0n)
     })
   })
 

@@ -10,8 +10,8 @@ use num_bigint::BigUint;
 
 /// Number of leading polynomial coefficients that carry the tally (must match `@crisp-e3/sdk` / circuits).
 ///
-/// Coefficient `o` holds option `o`'s total, so a round has at most this many options. The remaining
-/// coefficients up to the BFV polynomial degree are zero padding.
+/// Coefficient `o` holds option `o`'s total; the rest, up to the BFV polynomial degree, is zero
+/// padding.
 pub const MAX_MSG_NON_ZERO_COEFFS: usize = 50;
 
 /// Represents decoded vote counts from a tally
@@ -25,10 +25,8 @@ pub struct VoteCounts {
 ///
 /// # Layout
 ///
-/// Coefficient `o` of the decrypted polynomial is the total weight on option `o`, for
-/// `o < num_choices`. Homomorphic addition is coefficient-wise, so the sum of the ballots holds the sum
-/// of each option's weights in that option's coefficient. Coefficients at or after `num_choices` are
-/// ignored.
+/// Coefficient `o` of the decrypted polynomial is option `o`'s total weight, for `o < num_choices`,
+/// because homomorphic addition is coefficient-wise. Later coefficients are ignored.
 ///
 /// # Arguments
 ///
@@ -72,48 +70,27 @@ pub fn decode_tally(tally_bytes: &[u8], num_choices: usize) -> Result<Vec<BigUin
 mod tests {
     use super::*;
 
-    fn coeffs_to_le_bytes(coeffs: &[u64]) -> Vec<u8> {
+    fn le_bytes(coeffs: &[u64]) -> Vec<u8> {
         coeffs.iter().flat_map(|c| c.to_le_bytes()).collect()
-    }
-
-    /// A tally polynomial of `degree` coefficients with `totals` in the leading coefficients and
-    /// `noise` in every coefficient from `totals.len()` through the message region and the padding.
-    fn tally_bytes(totals: &[u64], noise: u64, degree: usize) -> Vec<u8> {
-        let mut coeffs = vec![noise; degree];
-        coeffs[..totals.len()].copy_from_slice(totals);
-        coeffs_to_le_bytes(&coeffs)
     }
 
     #[test]
     fn decode_tally_reads_coefficient_per_option_and_ignores_the_rest() {
-        let totals = [3u64, 0, 17_000_000, u64::MAX];
-        let bytes = tally_bytes(&totals, 99, 512);
-        let result = decode_tally(&bytes, totals.len()).unwrap();
+        let mut coeffs = vec![99u64; 512];
+        coeffs[..4].copy_from_slice(&[3, 0, 17_000_000, u64::MAX]);
+        let expected: Vec<BigUint> = coeffs[..4].iter().map(|&t| BigUint::from(t)).collect();
 
-        let expected: Vec<BigUint> = totals.iter().map(|&t| BigUint::from(t)).collect();
-        assert_eq!(result, expected);
+        assert_eq!(decode_tally(&le_bytes(&coeffs), 4).unwrap(), expected);
     }
 
     #[test]
-    fn decode_tally_accepts_exactly_max_choices_at_minimum_length() {
-        let totals: Vec<u64> = (1..=MAX_MSG_NON_ZERO_COEFFS as u64).collect();
-        let bytes = coeffs_to_le_bytes(&totals);
-        let result = decode_tally(&bytes, MAX_MSG_NON_ZERO_COEFFS).unwrap();
+    fn decode_tally_bounds() {
+        let min = le_bytes(&[7; MAX_MSG_NON_ZERO_COEFFS]);
 
-        assert_eq!(result.len(), MAX_MSG_NON_ZERO_COEFFS);
-        assert_eq!(
-            result[MAX_MSG_NON_ZERO_COEFFS - 1],
-            BigUint::from(MAX_MSG_NON_ZERO_COEFFS as u64)
-        );
-    }
-
-    #[test]
-    fn decode_tally_rejects_invalid_arguments() {
-        let bytes = tally_bytes(&[1, 2], 0, 512);
-        assert!(decode_tally(&bytes, 0).is_err());
-        assert!(decode_tally(&bytes, MAX_MSG_NON_ZERO_COEFFS + 1).is_err());
-
-        let short = coeffs_to_le_bytes(&vec![0u64; MAX_MSG_NON_ZERO_COEFFS - 1]);
-        assert!(decode_tally(&short, 2).is_err());
+        let all = decode_tally(&min, MAX_MSG_NON_ZERO_COEFFS).unwrap();
+        assert_eq!(all.len(), MAX_MSG_NON_ZERO_COEFFS);
+        assert!(decode_tally(&min, 0).is_err());
+        assert!(decode_tally(&min, MAX_MSG_NON_ZERO_COEFFS + 1).is_err());
+        assert!(decode_tally(&min[8..], 2).is_err());
     }
 }

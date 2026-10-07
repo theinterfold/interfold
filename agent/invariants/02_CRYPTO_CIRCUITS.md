@@ -575,14 +575,15 @@ every section.
   the committee decrypts it modulo the plaintext modulus `t` of the round's BFV parameters.
   `CRISPProgram.validate` must read `t` from `e3ProgramParams`, not from a constant, and size the
   round so that no total reaches `t`. A CONSTANT-credit round must refuse `credits >= t` and accept
-  at most `(t - 1) / credits` inputs, capped at `MAX_INPUTS_PER_ROUND`. A CUSTOM-credit round must
-  record a divisor of at least `getPastTotalSupply(snapshot) / t + 1`, which bounds the totals only
-  while the past votes of all accounts sum to at most the past supply. ERC20Votes meets this.
-  `BondedVotes` with an escrow votes source does not guarantee it (`flow-trace/04`). Every input
-  counts toward the limit, including updates and masks, on both `publishInput` and
-  `validateInputProof`. A mask needs no signature, so any account can fill the limit. A census-tree
-  round also relies on the coordinator writing `credits` or the scaled voting power at the snapshot
-  into each leaf. A change to the tally format, the credit modes, or the parameter sets needs a new
+  at most `(t - 1) / credits` inputs, capped at `MAX_INPUTS_PER_ROUND`. Each input adds one fresh
+  ciphertext to the decrypted sum, so every secure preset must be searched with `SEARCH_Z` of at
+  least `MAX_INPUTS_PER_ROUND`. A CUSTOM-credit round must record a divisor of at least
+  `getPastTotalSupply(snapshot) / t + 1`, which bounds the totals only while the past votes of all
+  accounts sum to at most the past supply. ERC20Votes meets this. `BondedVotes` with an escrow votes
+  source does not guarantee it (`01_PROTOCOL_ONCHAIN.md`). Every input counts toward the limit,
+  including updates and masks, on both `publishInput` and `validateInputProof`. A census-tree round
+  also relies on the coordinator writing `credits` or the scaled voting power at the snapshot into
+  each leaf. A change to the tally format, the credit modes, or the parameter sets needs a new
   bound. **Gap:** the server derives its census timepoint from the request timestamp. For a token
   with a block-number clock, on a chain with several blocks per second, the census block can precede
   the snapshot. — `flow-trace/04`

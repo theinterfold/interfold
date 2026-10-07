@@ -6,7 +6,7 @@
 
 import { type Vote, type CensusVariant, type PrepareBallotInputs, type PreparedBallot, ProofData } from './types'
 import { proofToFields } from './utils'
-import { checkVoteWeights, getPlaintextModulus } from './encoding'
+import { checkVoteWeights, getZkInputsGenerator } from './encoding'
 import { attachSignatureImpl, prepareCircuitInputsImpl } from './circuitInputs'
 import { MASK_SIGNATURE } from './constants'
 export { encodeVote, encryptVote, decodeTally, decryptVote, generateBFVKeys } from './encoding'
@@ -259,7 +259,7 @@ export const generateProof = async (circuitInputs: any, censusMode: CensusVarian
 export const validateVote = (vote: Vote, balance: bigint): void => {
   const numChoices = vote.length
 
-  checkVoteWeights(vote, getPlaintextModulus())
+  checkVoteWeights(vote, getZkInputsGenerator().getBFVParams().plaintextModulus)
 
   if (numChoices === 2) {
     // Binary: mutually exclusive

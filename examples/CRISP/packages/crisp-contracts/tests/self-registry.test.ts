@@ -79,8 +79,7 @@ describe('SelfRegistry', function () {
 
   /// The registry has no `clock()`, so `CRISPProgram.validate` must accept it through the
   /// block-number snapshot fallback. This is the round shape the registry is meant for — CONSTANT
-  /// credits of 1 and a floor of 1, one registrant one vote. Constant credits are never scaled, so
-  /// the round records no divisor and a slot's voting power is the credits themselves.
+  /// credits of 1 and a floor of 1, one registrant one vote.
   it('validates as the token of an ONCHAIN round', async () => {
     const mockInterfold = await deployMockInterfold()
     const crispProgram: CRISPProgram = await deployCRISPProgram({ mockInterfold })
@@ -94,7 +93,6 @@ describe('SelfRegistry', function () {
     await (await crispProgram.validate(1, 0, await mockInterfold.e3ProgramParams(), '0x', params)).wait()
 
     expect(await crispProgram.censusModeOf(1)).to.equal(ONCHAIN)
-    expect(await crispProgram.votingPowerDivisorOf(1)).to.equal(0n)
     // CONSTANT credits: every eligible slot weighs the configured 1.
     expect(await crispProgram.votingPowerOf(1, accounts[0].address)).to.equal(1n)
   })

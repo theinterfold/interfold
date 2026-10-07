@@ -46,8 +46,8 @@ const CRISP_INPUT_PUBLISHED = {
   ],
 } as const
 
-// Minimal CRISPProgram view. The program that ran a round decodes its own tally, so
-// the dashboard holds no copy of the ballot layout and reads every deployment right.
+// Minimal CRISPProgram view. The program decodes the tallies of its own rounds, so the
+// dashboard holds no copy of the ballot layout.
 const CRISP_DECODE_TALLY = {
   type: 'function',
   name: 'decodeTally',
@@ -210,9 +210,9 @@ export type E3FullDetails = E3Summary & {
   committeePublicKey: `0x${string}`
   ciphertextOutput: `0x${string}`
   plaintextOutput: `0x${string}`
-  // Per-option totals of a CRISP round, decoded by CRISPProgram. Undefined for
-  // non-CRISP programs and for rounds without a published, decodable output.
-  tally?: bigint[]
+  // Per-option totals of a CRISP round, decoded by CRISPProgram. Undefined or empty
+  // when the round has no decodable output.
+  tally?: readonly bigint[]
   requestedAt?: number // unix seconds (block.timestamp of the request)
   // Block number of the E3Requested log (distinct from `requestBlock` which on
   // this contract version is actually a Unix timestamp, not a block number).
@@ -411,23 +411,15 @@ export async function fetchE3Details(e3Id: bigint, toBlock?: bigint): Promise<E3
     }).catch(() => FailureReason.None) as Promise<number>,
   ])
 
-  // CRISP tally. Only CRISP E3s have one, and only once the plaintext output is
-  // published. A round the program cannot decode reverts or returns no totals; in
-  // both cases the tally stays undefined rather than guessed.
-  const tally =
-    isCrispE3(e3.e3Program) && e3.plaintextOutput && e3.plaintextOutput !== '0x'
-      ? await publicClient
-          .readContract({
-            address: CONTRACTS.CRISPProgram,
-            abi: [CRISP_DECODE_TALLY],
-            functionName: 'decodeTally',
-            args: [e3Id],
-            // viem's types require this EIP-7702 field for this client. A read carries no
-            // authorizations.
-            authorizationList: undefined,
-          })
-          .then((votes) => (votes.length > 0 ? [...votes] : undefined))
-          .catch(() => undefined)
+  // A round that the program cannot decode reverts, so its tally stays undefined.
+  const tally: readonly bigint[] | undefined =
+    isCrispE3(e3.e3Program) && e3.plaintextOutput !== '0x'
+      ? await (publicClient.readContract as any)({
+          address: CONTRACTS.CRISPProgram,
+          abi: [CRISP_DECODE_TALLY],
+          functionName: 'decodeTally',
+          args: [e3Id],
+        }).catch(() => undefined)
       : undefined
 
   // `e3.requestBlock` is misnamed: on this contract version it stores

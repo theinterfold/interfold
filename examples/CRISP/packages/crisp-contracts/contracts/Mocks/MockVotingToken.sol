@@ -9,9 +9,8 @@ import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 /// @title MockVotingToken
 /// @notice A mock voting token for testing purposes
-/// @dev Public mint grants 1e9 base units to an account that holds none, and caps every balance at
-/// `MAX_BALANCE`. A plain ERC20 without checkpoints: it cannot back a round that reads voting
-/// power at a snapshot (`CensusMode.ONCHAIN` or `CreditMode.CUSTOM`). Use `MockVotesToken` there.
+/// @dev Public mint grants 1e9 base units to an account that holds none, up to `MAX_BALANCE`. No
+/// checkpoints: use `MockVotesToken` for `CensusMode.ONCHAIN` or `CreditMode.CUSTOM`.
 contract MockVotingToken is ERC20 {
   uint256 public constant MAX_BALANCE = 1e9;
 

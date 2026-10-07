@@ -15,7 +15,6 @@ describe('CRISP journal', () => {
     const encryptionSchemeId = ethers.keccak256(ethers.toUtf8Bytes('fhe.rs:BFV'))
 
     const mockInterfold = await deployMockInterfold()
-    // The program hashes the BFV parameter blob that Interfold passes to `validate`.
     const paramsHash = ethers.keccak256(await mockInterfold.e3ProgramParams())
     await mockInterfold.setCommitteePublicKey(committeePublicKey)
     const chainId = (await ethers.provider.getNetwork()).chainId

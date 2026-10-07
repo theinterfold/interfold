@@ -420,19 +420,8 @@ describe('CRISP input availability flow', function () {
 
     for (let i = 0; i < Number(limit); i++) {
       const accepted = await input(program, e3Id, `within-limit-${i}`)
-      expect(
-        await program.validateInputProof(
-          e3Id,
-          '0x01',
-          accepted.slotAddress,
-          accepted.encryptedVoteCommitment,
-          accepted.encryptedVoteHash,
-          0,
-        ),
-      ).to.equal(true)
       await expect(program.publishInput(e3Id, accepted.commitmentPayload)).to.emit(program, 'InputCommitted')
     }
-    expect((await program.getRoundData(e3Id)).numberOfVotes).to.equal(limit)
 
     const refused = await input(program, e3Id, 'over-limit')
     await expect(

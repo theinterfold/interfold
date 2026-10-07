@@ -276,7 +276,6 @@ describe('CRISP Contracts', function () {
       const [merkleRoot, paramsHash, numOptions, creditMode, inputRoot, numberOfVotes] = await crispProgram.getRoundData(e3Id)
 
       expect(merkleRoot).to.equal(0n)
-      // The program hashes the BFV parameter blob that MockInterfold passes to `validate`.
       expect(paramsHash).to.equal(ethers.keccak256(await mockInterfold.e3ProgramParams()))
       expect(numOptions).to.equal(2n)
       // CreditMode.CONSTANT

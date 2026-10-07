@@ -14,23 +14,9 @@ use interfold_lib::math::polynomial::Polynomial;
 
 use crate::constants::MAX_OPTIONS;
 
-/// Checks the option count of a round, and that the ballot layout fits the compiled degree.
-///
-/// A ballot holds one coefficient per option: message coefficient `o` is the weight on option `o`,
-/// so the decrypted tally holds one total per option. `k1` reaches this circuit as the whole BFV
-/// plaintext polynomial, of degree `D`, reversed, so option `o` is `k1[D - 1 - o]`:
-///
-/// ```text
-///   [ ------------------ zero ------------------ | option n-1 | ... | option 1 | option 0 ]
-///   0                                                                                    D
-/// ```
-///
-/// The committee publishes the first `MAX_MSG_NON_ZERO_COEFFS` message coefficients as the tally,
-/// so every option must sit inside that region. `D` and both bounds are compile-time values, so the
-/// last two assertions are decided when the circuit is built.
-///
-/// # Arguments
-/// * `num_options` - Number of voting options
+/// Checks the option count of a round. Every option must sit inside the first
+/// `MAX_MSG_NON_ZERO_COEFFS` message coefficients, which the committee publishes as the tally, and
+/// the degree `D` must hold them. The last two assertions are decided when the circuit is built.
 fn check_option_count<let D: u32>(num_options: u32) {
     assert(num_options > 1);
     assert(num_options <= MAX_OPTIONS);
@@ -38,43 +24,17 @@ fn check_option_count<let D: u32>(num_options: u32) {
     assert(MAX_MSG_NON_ZERO_COEFFS <= D);
 }
 
-/// Reads the weight that one option coefficient of `k1` carries.
+/// Checks that `weight` is the value the committee decrypts the option coefficient to.
 ///
-/// The witness generator scales each message coefficient `m` to the non-centered residue
-/// `k1 = (Q_MOD_T * m) mod t`, so the weight is the `v` in `[0, t)` with
-/// `k1 + t * r == Q_MOD_T * v` for a quotient `r` in `[0, t)`. The prover supplies `v` and `r`,
-/// and [`check_weight`] constrains them.
+/// The witness generator scales each message coefficient `m` to `k1 = (Q_MOD_T * m) mod t`, so
+/// `k1 + t * quotient == Q_MOD_T * weight`. With all three values in `[0, t)`, neither side reaches
+/// `t * t`, so the equation holds over the integers, and one weight solves it because `Q_MOD_T` is
+/// invertible modulo `t`.
 ///
-/// # Arguments
-/// * `coefficient` - The `k1` coefficient of one option
-///
-/// # Returns
-/// The weight.
-fn decode_weight(coefficient: Field) -> Field {
-    // Safety: `check_weight` constrains both values.
-    let (weight, quotient) = unsafe { decode_weight_hint(coefficient) };
-    check_weight(coefficient, weight, quotient);
-
-    weight
-}
-
-/// Checks that `weight` is the value the committee decrypts `coefficient` to.
-///
-/// The coefficient, the weight and the quotient must all be in `[0, t)`.
-///
-/// The bound on the coefficient makes this `k1` the plaintext that `user_data_encryption_ct0`
-/// encrypts. That circuit range-checks its `k1` to `[0, t)`, and the fold only checks that the two
-/// `k1_commitment` values are equal. Plain packing gives a commitment one opening only while every
-/// coefficient fits its slot. Every other coefficient of this `k1` must be zero, so this bound
-/// keeps all of them in their slots.
-///
-/// With every value below `t`, neither side of the equation reaches `t * t`, so the field
-/// equation holds over the integers. `Q_MOD_T` is invertible modulo `t`, so one weight solves it.
-///
-/// # Arguments
-/// * `coefficient` - The `k1` coefficient of one option
-/// * `weight` - The weight the coefficient carries
-/// * `quotient` - The quotient `r` of `Q_MOD_T * weight` by `t`
+/// The bound on the coefficient also makes this `k1` the plaintext that `user_data_encryption_ct0`
+/// encrypts. That circuit bounds its `k1` to `[0, t)`, the fold only checks that the two
+/// `k1_commitment` values are equal, and a packed commitment has one opening only while every
+/// coefficient fits its slot.
 fn check_weight(coefficient: Field, weight: Field, quotient: Field) {
     assert_in_range::<USER_DATA_ENCRYPTION_BIT_K>(coefficient, PLAINTEXT_MODULUS);
     assert_in_range::<USER_DATA_ENCRYPTION_BIT_K>(weight, PLAINTEXT_MODULUS);
@@ -86,19 +46,21 @@ fn check_weight(coefficient: Field, weight: Field, quotient: Field) {
 unconstrained fn decode_weight_hint(coefficient: Field) -> (Field, Field) {
     let (_, weight) = __compute_mod_reduction(coefficient * Q_INVERSE_MOD_T, PLAINTEXT_MODULUS);
     let (quotient, _) = __compute_mod_reduction(Q_MOD_T * weight, PLAINTEXT_MODULUS);
-
     (weight, quotient)
 }
 
 /// Validates a ballot against the voter's balance.
 ///
-/// Constrains the whole plaintext, not only the options: every coefficient outside the options of
-/// the round must be zero, and every option coefficient is decoded to its weight.
+/// A ballot holds one coefficient per option, so the decrypted tally holds per-option totals. `k1`
+/// is the whole BFV plaintext of degree `D`, reversed, so option `o` is `k1[D - 1 - o]`:
 ///
-/// Rules:
-/// - 2 options: Mutually exclusive (at most one weight is non-zero)
-/// - 3+ options: Weights can be split between options
-/// In both cases the weights must sum to at most the balance.
+/// ```text
+///   [ ------------------ zero ------------------ | option n-1 | ... | option 1 | option 0 ]
+///   0                                                                                    D
+/// ```
+///
+/// Every other coefficient must be zero, so no payload outside the ballot reaches the tally. The
+/// weights must sum to at most `balance`, and with two options at most one weight is non-zero.
 ///
 /// # Arguments
 /// * `k1` - The plaintext polynomial encoding the vote
@@ -112,20 +74,17 @@ pub fn check_coefficient_values_with_balance<let D: u32>(
     check_option_count::<D>(num_options);
 
     let mut valid = true;
-
-    // Everything below the option coefficients is outside the ballot. A payload there survives
-    // homomorphic addition and is decrypted with the tally, so it would both corrupt the slot and
-    // give a coercer a channel to read a receipt out of.
     for i in 0..(D - MAX_OPTIONS) {
         valid = valid & (k1.coefficients[i] == 0);
     }
 
     let mut total: Field = 0;
     let mut non_zero_count: u32 = 0;
-
     for option in 0..MAX_OPTIONS {
         let coefficient = k1.coefficients[D - 1 - option];
-        let weight = decode_weight(coefficient);
+        // Safety: `check_weight` constrains both values.
+        let (weight, quotient) = unsafe { decode_weight_hint(coefficient) };
+        check_weight(coefficient, weight, quotient);
 
         if option < num_options {
             total += weight;
@@ -133,12 +92,10 @@ pub fn check_coefficient_values_with_balance<let D: u32>(
                 non_zero_count += 1;
             }
         } else {
-            // An option the round does not have carries nothing.
             valid = valid & (coefficient == 0);
         }
     }
 
-    // With two options the ballot picks one side, so its only non-zero weight is the total.
     if num_options == 2 {
         valid = valid & (non_zero_count <= 1);
     }
@@ -148,45 +105,24 @@ pub fn check_coefficient_values_with_balance<let D: u32>(
     valid & ((total as u64) <= (balance as u64))
 }
 
-/// Checks that the plaintext carries no ballot at all.
-///
-/// Every coefficient of `k1` must be zero, not only the option coefficients. A mask needs no
-/// signature, so anyone may write one to any eligible slot; a mask that could carry a payload
-/// outside the options would let anyone corrupt a slot they cannot vote in, and would give a
-/// coercer a channel to mark a ballot with. Checking the whole polynomial closes both.
-///
-/// `num_options` is still taken, and still range-checked, so a caller cannot reach this function
-/// with a round configuration the vote rules would refuse.
-///
-/// # Arguments
-/// * `k1` - The plaintext polynomial encoding the vote
-/// * `num_options` - Number of voting options
-///
-/// # Returns
-/// Returns `true` if every coefficient is zero, `false` otherwise.
-///
+/// Checks that every coefficient of `k1` is zero, not only the option coefficients. A mask needs no
+/// signature, so anyone may write one to any eligible slot, and a payload anywhere in it would
+/// reach that slot. `num_options` is still checked, so a mask cannot pass for a round that the
+/// vote rules refuse.
 pub fn check_coefficient_zero<let D: u32>(k1: Polynomial<D>, num_options: u32) -> bool {
     check_option_count::<D>(num_options);
 
     let mut valid = true;
-
     for i in 0..D {
         valid = valid & (k1.coefficients[i] == 0);
     }
-
     valid
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-//
-// Every test builds `k1` the way the witness generator does — SDK message layout, scaled by
-// `Q_MOD_T` modulo `t`, reversed over the full BFV degree — and takes `t` and `Q_MOD_T` from the
-// compiled preset, so the suite holds for any plaintext modulus of at least 100.
+// Tests build `k1` the way the witness generator does and take `t` and `Q_MOD_T` from the compiled
+// preset, so they hold for any plaintext modulus of at least 100.
 
-/// The BFV degree of the `insecure-512` preset. The option coefficients sit at the top of the
-/// reversed polynomial, so a degree well above `MAX_OPTIONS` checks that the layout is read from
+/// The degree of the `insecure-512` preset, well above `MAX_OPTIONS`, so the layout is read from
 /// the real degree.
 global TEST_DEGREE: u32 = 512;
 
@@ -195,164 +131,94 @@ fn scale(m: u64) -> Field {
     (((Q_MOD_T as u64) * m) % (PLAINTEXT_MODULUS as u64)) as Field
 }
 
-/// Builds `k1` for a ballot: `encodeVote` from `@crisp-e3/sdk` writes the weight of option `o` to
-/// message coefficient `o`, and the witness generator scales every coefficient and reverses the
-/// polynomial over the full degree.
-///
-/// # Arguments
-/// * `weights` - One weight per option, in option order; entries past `num_options` are ignored
-/// * `num_options` - Number of voting options
-fn encode_ballot<let D: u32>(weights: [u64; MAX_OPTIONS], num_options: u32) -> Polynomial<D> {
-    let mut coefficients: [Field; D] = [0; D];
-
-    for option in 0..MAX_OPTIONS {
-        if option < num_options {
-            coefficients[D - 1 - option] = scale(weights[option]);
-        }
+/// Builds `k1` the way `encodeVote` and the witness generator do: the weight of option `o`, scaled,
+/// at `k1[D - 1 - o]`, and zero everywhere else.
+fn encode_ballot<let N: u32>(weights: [u64; N]) -> Polynomial<TEST_DEGREE> {
+    let mut coefficients = [0; TEST_DEGREE];
+    for option in 0..N {
+        coefficients[TEST_DEGREE - 1 - option] = scale(weights[option]);
     }
-
     Polynomial { coefficients }
 }
 
+/// Each row: the weights of options 0 to 2, the option count, the balance, and whether the vote
+/// rules accept the ballot.
 #[test]
-fn test_2_options_vote_first() {
-    let pol = encode_ballot::<TEST_DEGREE>([5, 0, 0, 0, 0, 0, 0, 0, 0, 0], 2);
-    assert(check_coefficient_values_with_balance(pol, 10, 2));
+fn test_vote_rules() {
+    let top = (PLAINTEXT_MODULUS as u64) - 1;
+    let rows: [([u64; 3], u32, u64, bool); 7] = [
+        ([0, 3, 0], 2, 10, true),
+        ([1, 1, 0], 2, 10, false),
+        // The largest weight decodes exactly, so the balance bound is tight.
+        ([top, 0, 0], 2, top, true),
+        ([top, 0, 0], 2, top - 1, false),
+        ([40, 0, 60], 3, 100, true),
+        ([60, 60, 0], 3, 100, false),
+        ([0, 0, 0], 3, 100, true),
+    ];
+    for row in rows {
+        let (weights, num_options, balance, accepted) = row;
+        let pol = encode_ballot(weights);
+        assert(
+            check_coefficient_values_with_balance(pol, balance as Field, num_options) == accepted,
+        );
+    }
 }
 
+/// The last option of the largest round sits next to the coefficients that must be zero.
 #[test]
-fn test_2_options_vote_second() {
-    let pol = encode_ballot::<TEST_DEGREE>([0, 3, 0, 0, 0, 0, 0, 0, 0, 0], 2);
-    assert(check_coefficient_values_with_balance(pol, 10, 2));
+fn test_last_option_of_largest_round_counts() {
+    let pol = encode_ballot([0, 0, 0, 0, 0, 0, 0, 0, 0, 7]);
+    assert(check_coefficient_values_with_balance(pol, 7, MAX_OPTIONS));
+    assert(!check_coefficient_values_with_balance(pol, 6, MAX_OPTIONS));
 }
 
+/// A payload below the options, or in an option the round does not have, is refused.
 #[test]
-fn test_2_options_both_voted_fails() {
-    let pol = encode_ballot::<TEST_DEGREE>([1, 1, 0, 0, 0, 0, 0, 0, 0, 0], 2);
-    assert(!check_coefficient_values_with_balance(pol, 10, 2));
+fn test_coefficient_outside_the_round_options_fails() {
+    let mut below = encode_ballot([1, 0]);
+    below.coefficients[0] = 1;
+    assert(!check_coefficient_values_with_balance(below, 10, 2));
+
+    // Option 3 is the first one that a three-option round does not have.
+    assert(!check_coefficient_values_with_balance(encode_ballot([1, 0, 0, 1]), 10, 3));
 }
 
-#[test]
-fn test_2_options_exceeds_balance_fails() {
-    let pol = encode_ballot::<TEST_DEGREE>([10, 0, 0, 0, 0, 0, 0, 0, 0, 0], 2);
-    assert(!check_coefficient_values_with_balance(pol, 5, 2));
-}
-
-#[test]
-fn test_2_options_at_balance_passes() {
-    let pol = encode_ballot::<TEST_DEGREE>([5, 0, 0, 0, 0, 0, 0, 0, 0, 0], 2);
-    assert(check_coefficient_values_with_balance(pol, 5, 2));
-}
-
-/// The largest weight a coefficient can carry is `t - 1`. It decodes to exactly that value, so a
-/// balance one below it refuses the ballot.
-#[test]
-fn test_largest_weight_decodes_exactly() {
-    let largest = (PLAINTEXT_MODULUS as u64) - 1;
-    let pol = encode_ballot::<TEST_DEGREE>([largest, 0, 0, 0, 0, 0, 0, 0, 0, 0], 2);
-
-    assert(check_coefficient_values_with_balance(pol, largest as Field, 2));
-    assert(!check_coefficient_values_with_balance(pol, (largest - 1) as Field, 2));
-}
-
-/// The prover supplies the weight and the quotient. This pair solves the decode equation for the
-/// coefficient `Q_MOD_T - 2 * t`, which is below zero. A coefficient outside `[0, t)` could open
-/// `k1_commitment` to a polynomial other than the encrypted plaintext, so it is refused.
+/// The pair solves the equation for the coefficient `Q_MOD_T - 2 * t`, which is below zero, so
+/// only the coefficient bound refuses it.
 #[test(should_fail)]
 fn test_coefficient_below_zero_is_refused() {
     check_weight(Q_MOD_T - 2 * PLAINTEXT_MODULUS, 1, 2);
 }
 
-/// The prover supplies the weight. A weight the coefficient does not carry is refused, also with
-/// the quotient that belongs to that weight.
+/// The weight `t` solves the equation for the coefficient 0 with the quotient `Q_MOD_T`, so only
+/// the weight bound refuses it.
+#[test(should_fail)]
+fn test_weight_outside_range_is_refused() {
+    check_weight(0, PLAINTEXT_MODULUS, Q_MOD_T);
+}
+
+/// A weight the coefficient does not carry is refused, also with the quotient of that weight.
 #[test(should_fail)]
 fn test_weight_the_coefficient_does_not_carry_is_refused() {
     let quotient = ((Q_MOD_T as u64) * 6) / (PLAINTEXT_MODULUS as u64);
-
     check_weight(scale(5), 6, quotient as Field);
 }
 
-// --- 3+ Options (Split Voting) ---
-
-#[test]
-fn test_3_options_split_vote() {
-    let pol = encode_ballot::<TEST_DEGREE>([40, 0, 60, 0, 0, 0, 0, 0, 0, 0], 3);
-    assert(check_coefficient_values_with_balance(pol, 100, 3));
+/// A quotient outside `[0, t)` solves the equation for any weight, so only the quotient bound
+/// refuses this weight of zero.
+#[test(should_fail)]
+fn test_quotient_outside_range_is_refused() {
+    check_weight(scale(5), 0, -scale(5) / PLAINTEXT_MODULUS);
 }
 
+/// A mask must be zero everywhere: in the option coefficients and below them.
 #[test]
-fn test_3_options_vote_all_three() {
-    let pol = encode_ballot::<TEST_DEGREE>([30, 30, 30, 0, 0, 0, 0, 0, 0, 0], 3);
-    assert(check_coefficient_values_with_balance(pol, 100, 3));
-}
+fn test_check_coefficient_zero() {
+    assert(check_coefficient_zero(encode_ballot([0, 0]), 3));
+    assert(!check_coefficient_zero(encode_ballot([1, 0]), 3));
 
-#[test]
-fn test_3_options_total_exceeds_balance_fails() {
-    let pol = encode_ballot::<TEST_DEGREE>([60, 60, 0, 0, 0, 0, 0, 0, 0, 0], 3);
-    assert(!check_coefficient_values_with_balance(pol, 100, 3));
-}
-
-#[test]
-fn test_5_options_single_vote() {
-    let pol = encode_ballot::<TEST_DEGREE>([0, 0, 50, 0, 0, 0, 0, 0, 0, 0], 5);
-    assert(check_coefficient_values_with_balance(pol, 100, 5));
-}
-
-/// The last option of the largest round sits at the bottom of the option region, next to the
-/// coefficients that must be zero.
-#[test]
-fn test_last_option_of_largest_round_counts() {
-    let pol = encode_ballot::<TEST_DEGREE>([0, 0, 0, 0, 0, 0, 0, 0, 0, 7], MAX_OPTIONS);
-
-    assert(check_coefficient_values_with_balance(pol, 7, MAX_OPTIONS));
-    assert(!check_coefficient_values_with_balance(pol, 6, MAX_OPTIONS));
-}
-
-#[test]
-fn test_zero_vote_passes() {
-    let pol = encode_ballot::<TEST_DEGREE>([0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 3);
-    assert(check_coefficient_values_with_balance(pol, 100, 3));
-}
-
-/// Coefficients below the option region must be zero, or a submitter could attach a payload the
-/// vote rules never look at.
-#[test]
-fn test_payload_outside_ballot_region_fails() {
-    let mut pol: Polynomial<TEST_DEGREE> = encode_ballot([1, 0, 0, 0, 0, 0, 0, 0, 0, 0], 2);
+    let mut pol = encode_ballot([0, 0]);
     pol.coefficients[0] = 1;
-
-    assert(!check_coefficient_values_with_balance(pol, 10, 2));
-}
-
-/// An option the round does not have must carry nothing, although its coefficient sits inside the
-/// option region.
-#[test]
-fn test_unused_option_coefficient_fails() {
-    let mut pol: Polynomial<TEST_DEGREE> = encode_ballot([1, 0, 0, 0, 0, 0, 0, 0, 0, 0], 3);
-    // Option 3, the first one a three-option round does not have.
-    pol.coefficients[TEST_DEGREE - 1 - 3] = scale(1);
-
-    assert(!check_coefficient_values_with_balance(pol, 10, 3));
-}
-
-#[test]
-fn test_check_coefficient_zero_passes() {
-    let pol: Polynomial<TEST_DEGREE> = Polynomial { coefficients: [0; TEST_DEGREE] };
-    assert(check_coefficient_zero(pol, 3));
-}
-
-#[test]
-fn test_check_coefficient_zero_fails() {
-    let pol = encode_ballot::<TEST_DEGREE>([1, 0, 0, 0, 0, 0, 0, 0, 0, 0], 3);
-    assert(!check_coefficient_zero(pol, 3));
-}
-
-/// A mask must be zero everywhere, not only where the vote rules look. This coefficient is outside
-/// every option.
-#[test]
-fn test_check_coefficient_zero_outside_ballot_region_fails() {
-    let mut pol: Polynomial<TEST_DEGREE> = Polynomial { coefficients: [0; TEST_DEGREE] };
-    pol.coefficients[0] = 1;
-
     assert(!check_coefficient_zero(pol, 3));
 }
