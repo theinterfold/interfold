@@ -777,14 +777,38 @@ mod server_tests {
         }
     }
 
-    /// A body that stops arriving is refused at the deadline, so the slot it holds is released.
+    /// The handler applies the body deadline: a stalled upload is refused with 408 and gives its
+    /// slot back, so it cannot hold the server's capacity.
     #[actix_web::test]
-    async fn a_stalled_body_is_refused_at_the_deadline() {
-        let stalled = futures_util::stream::pending::<Result<web::Bytes, std::io::Error>>();
-        let error = read_body(stalled, 1024, Duration::from_millis(50))
+    async fn a_stalled_upload_is_refused_and_frees_its_slot() {
+        use actix_web::FromRequest;
+        use std::pin::Pin;
+
+        let server = E3ProgramServer::builder(|_| async { Ok((vec![], vec![])) })
+            .with_body_timeout(Duration::from_millis(50))
+            .build()
+            .unwrap();
+        let stalled: Pin<
+            Box<
+                dyn futures_util::Stream<Item = Result<web::Bytes, actix_web::error::PayloadError>>,
+            >,
+        > = Box::pin(futures_util::stream::pending());
+        let mut payload = actix_web::dev::Payload::from(stalled);
+        let request = actix_web::test::TestRequest::post().to_http_request();
+        let body = web::Payload::from_request(&request, &mut payload)
             .await
-            .unwrap_err();
+            .unwrap();
+
+        let error = tokio::time::timeout(
+            Duration::from_secs(10),
+            handle_compute(web::Data::new(app_config(&server)), body),
+        )
+        .await
+        .expect("the handler must not wait past its body deadline")
+        .unwrap_err();
+
         assert_eq!(error.as_response_error().status_code(), 408);
+        assert_eq!(server.jobs.available_permits(), 1);
     }
 
     /// A caller over capacity is refused before its body is read, so it cannot make the server

@@ -107,11 +107,17 @@ jobs:
               - 'crates/compute-provider/**'
               - 'crates/fhe-params/**'
               - 'crates/openvm-types/**'
+              - 'crates/parity-matrix/**'
               - 'crates/polynomial/**'
               - 'crates/safe/**'
               - 'crates/zk-helpers/**'
+              # The programs inherit dependencies from their project workspace, and the native
+              # fixture builds in CRISP's.
+              - 'examples/CRISP/Cargo.toml'
+              - 'examples/CRISP/Cargo.lock'
               - 'examples/CRISP/guest/**'
               - 'examples/CRISP/program/**'
+              - 'templates/default/Cargo.toml'
               - 'templates/default/guest/**'
               - 'templates/default/program/**'
               - 'scripts/run-openvm.sh'
