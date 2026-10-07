@@ -31,7 +31,7 @@ use e3_sdk::{
             CommitteePublicKeyChunkPublished, CommitteePublished, E3Requested,
             PlaintextOutputPublished,
         },
-        retry::{call_with_retry, call_with_retry_attempts},
+        retry::call_with_retry_attempts,
     },
     indexer::{DataStore, IndexerContext, InterfoldIndexer, SharedStore},
 };
@@ -50,14 +50,14 @@ static DISCOVERY_OWED: LazyLock<Notify> = LazyLock::new(Notify::new);
 
 type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 
-/// Attempts of the `getE3` read that confirms the provider has the block of an `E3Requested`
-/// event.
+/// Attempts of a read that needs the block of an `E3Requested` event: `getE3`, and the stored
+/// divisor of a CUSTOM-credit round.
 ///
 /// The subscription delivers the event when one node has the block. The HTTP provider spreads
-/// reads over nodes that can trail that node by most of a block, and until they have it every read
-/// of the round reverts with `E3DoesNotExist`. Five attempts wait 2 + 4 + 8 + 16 = 30 s in total,
-/// which covers more than two Sepolia blocks. A live handler error is not retried later, so a
-/// shorter wait loses the round.
+/// reads over nodes that can trail that node by most of a block. Until they have it, `getE3`
+/// reverts with `E3DoesNotExist` and the stored divisor reads as zero. Five attempts wait
+/// 2 + 4 + 8 + 16 = 30 s in total, which covers more than two Sepolia blocks. A live handler error
+/// is not retried later, so a shorter wait loses the round.
 const E3_VISIBLE_ATTEMPTS: u32 = 5;
 
 fn is_configured_e3_program(event_program: Address, configured_program: Address) -> bool {
@@ -75,22 +75,32 @@ fn stage_ends_input_retrieval(stage: &E3Stage) -> bool {
 ///
 /// `CRISPProgram` resolves and stores this value at request time and scales every voter's power by
 /// exactly it. A transient RPC failure must not leave the coordinator scaling balances in other
-/// units, so the read retries with backoff. On exhaustion it returns `None`, which
-/// `resolve_divisor_override` answers from the requested field when the round named one.
+/// units, so the read retries with backoff. The contract never stores zero for a CUSTOM-credit
+/// round, so a zero read comes from a node that does not have the request block yet, and is
+/// retried the same way. On exhaustion it returns `None`, which `resolve_divisor_override` answers
+/// from the requested field when the round named one.
 async fn read_stored_divisor(
     crisp: &CRISPContract<CRISPReadProvider>,
     e3_id: U256,
     label: &str,
 ) -> Option<U256> {
-    match call_with_retry("stored_voting_power_divisor", &[], || async {
-        crisp
-            .stored_voting_power_divisor(e3_id)
-            .await
-            .map_err(|error| anyhow::anyhow!(error.to_string()))
-    })
+    match call_with_retry_attempts(
+        "stored_voting_power_divisor",
+        &[],
+        E3_VISIBLE_ATTEMPTS,
+        || async {
+            crisp
+                .stored_voting_power_divisor(e3_id)
+                .await
+                .map_err(|error| anyhow::anyhow!(error.to_string()))?
+                .ok_or_else(|| {
+                    anyhow::anyhow!("the provider holds no stored divisor for the round")
+                })
+        },
+    )
     .await
     {
-        Ok(divisor) => divisor,
+        Ok(divisor) => Some(divisor),
         Err(error) => {
             warn!(
                 "[e3_id={}] Failed to read the stored voting-power divisor after retries: {:#}",
@@ -2055,6 +2065,95 @@ mod e3_request_tests {
         assert!(stage_ends_input_retrieval(&E3Stage::Complete));
         assert!(stage_ends_input_retrieval(&E3Stage::Failed));
         assert!(!stage_ends_input_retrieval(&E3Stage::KeyPublished));
+    }
+}
+
+#[cfg(test)]
+mod stored_divisor_tests {
+    use super::read_stored_divisor;
+    use alloy_primitives::U256;
+    use evm_helpers::CRISPContractFactory;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    /// A JSON-RPC node over HTTP that does not have the round at its first read. It answers the
+    /// first `eth_call` with zero and every later one with `stored`.
+    async fn lagging_node(listener: TcpListener, stored: u64) {
+        let reads = Arc::new(AtomicUsize::new(0));
+        loop {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let reads = reads.clone();
+            tokio::spawn(async move {
+                let mut buffer = Vec::new();
+                let mut chunk = [0u8; 4096];
+                loop {
+                    let header_end = loop {
+                        if let Some(at) = buffer.windows(4).position(|bytes| bytes == b"\r\n\r\n") {
+                            break at + 4;
+                        }
+                        let read = socket.read(&mut chunk).await.unwrap();
+                        if read == 0 {
+                            return;
+                        }
+                        buffer.extend_from_slice(&chunk[..read]);
+                    };
+                    let body_end = header_end
+                        + String::from_utf8_lossy(&buffer[..header_end])
+                            .to_ascii_lowercase()
+                            .lines()
+                            .find_map(|line| line.strip_prefix("content-length:"))
+                            .map_or(0, |length| length.trim().parse::<usize>().unwrap());
+                    while buffer.len() < body_end {
+                        let read = socket.read(&mut chunk).await.unwrap();
+                        if read == 0 {
+                            return;
+                        }
+                        buffer.extend_from_slice(&chunk[..read]);
+                    }
+                    let request: serde_json::Value =
+                        serde_json::from_slice(&buffer[header_end..body_end]).unwrap();
+                    buffer.drain(..body_end);
+
+                    let value = if reads.fetch_add(1, Ordering::SeqCst) == 0 {
+                        0
+                    } else {
+                        stored
+                    };
+                    let response = serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "id": request["id"],
+                        "result": format!("0x{value:064x}"),
+                    })
+                    .to_string();
+                    let reply = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{response}",
+                        response.len()
+                    );
+                    socket.write_all(reply.as_bytes()).await.unwrap();
+                }
+            });
+        }
+    }
+
+    /// `CRISPProgram` never stores a zero divisor for a CUSTOM-credit round. A zero read is a node
+    /// that does not have the request block yet, and taking it as final drops the round.
+    #[tokio::test]
+    async fn a_zero_read_from_a_lagging_node_is_retried() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(lagging_node(listener, 5));
+
+        let crisp =
+            CRISPContractFactory::create_read(&url, "0x0000000000000000000000000000000000000001")
+                .await
+                .unwrap();
+
+        assert_eq!(
+            read_stored_divisor(&crisp, U256::from(1), "1").await,
+            Some(U256::from(5))
+        );
     }
 }
 
