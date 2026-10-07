@@ -140,7 +140,7 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
   /// @notice Number of leading plaintext coefficients that carry the vote payload.
   /// @dev Must stay aligned with `@crisp-e3/sdk` and `crisp_utils` (`MAX_MSG_NON_ZERO_COEFFS`).
   /// The remaining coefficients up to the BFV degree are zero padding.
-  uint256 constant MAX_MSG_NON_ZERO_COEFFS = 100;
+  uint256 constant MAX_MSG_NON_ZERO_COEFFS = 50;
   /// @notice Maximum number of vote options a round may configure.
   /// @dev Bounded by the Noir circuit, which asserts `num_options <= MAX_OPTIONS`
   /// (`circuits/lib/src/constants.nr`). A round above this accepts no ballot, because every
@@ -919,7 +919,7 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
 
   /// @notice Decode the tally from the plaintext output
   /// @dev Each coefficient counts the selected slots whose ballot sets that bit, modulo the
-  /// plaintext modulus that the committee decrypts under: 100 for insecure-512 and 1,000,000 for
+  /// plaintext modulus that the committee decrypts under: 100 for insecure-512 and 17,000,000 for
   /// secure-8192. The count is exact only while fewer ballots than the modulus set the same bit in
   /// one round. This contract does not enforce that bound.
   /// @param e3Id The E3 program ID

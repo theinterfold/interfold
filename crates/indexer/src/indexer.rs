@@ -440,7 +440,7 @@ fn request_bfv_params(
 
     if let Some(preset) = BfvPreset::from_on_chain_param_set(param_set) {
         let params = encode_bfv_params(&BfvParamSet::from(preset).build_arc());
-        if request_config_id == config_id(&params, b"interfold-bfv-v4") {
+        if request_config_id == config_id(&params, b"interfold-bfv-v5") {
             return Ok(params);
         }
     }
@@ -1240,7 +1240,7 @@ mod public_key_chunk_tests {
             (
                 keccak256(b"fhe.rs:BFV"),
                 keccak256(&params),
-                keccak256(b"interfold-bfv-v4"),
+                keccak256(b"interfold-bfv-v5"),
             )
                 .abi_encode(),
         );
@@ -1303,7 +1303,7 @@ mod public_key_chunk_tests {
             (
                 keccak256(b"fhe.rs:BFV"),
                 keccak256(&params),
-                keccak256(b"interfold-bfv-v4"),
+                keccak256(b"interfold-bfv-v5"),
             )
                 .abi_encode(),
         );

@@ -43,6 +43,7 @@ import {
   PRODUCTION_BFV_CONFIG,
   activeBfvConfigForChain,
   bfvConfigsForChain,
+  bfvDecExpectedPublicInputsLen,
   getBfvDecryptionSubCircuitVkHashPaths,
   getBfvPkSubCircuitVkHashPaths,
   readVkRecursiveHash,
@@ -902,7 +903,7 @@ export async function validateSecureCrispUpgrade(): Promise<void> {
     );
     equalValue(
       decryptionRoute[1],
-      111 + 3 * expected.t,
+      bfvDecExpectedPublicInputsLen(expected.t),
       `decryption route ${index} public input count`,
     );
 

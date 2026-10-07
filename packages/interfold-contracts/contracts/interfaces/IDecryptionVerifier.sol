@@ -28,13 +28,13 @@ interface IDecryptionVerifier {
     error InvalidProof();
     /// @notice `publicInputs` is shorter than the layout the wrapper expects
     ///         (must hold the two VK-hash slots, domain and ciphertext-binding
-    ///         slots, and the 100 message-coefficient slots).
+    ///         slots, and the 50 message-coefficient slots).
     error InvalidPublicInputsLength();
     /// @notice One of the recursive-aggregation sub-circuit VK hashes embedded
     ///         in the proof does not match the immutable value committed at
     ///         construction time.
     error VkHashMismatch();
-    /// @notice The 100 plaintext-coefficient slots do not hash to
+    /// @notice The 50 plaintext-coefficient slots do not hash to
     ///         `plaintextOutputHash`.
     error PlaintextHashMismatch();
     /// @notice The domain-binding public-input slot does not equal the value

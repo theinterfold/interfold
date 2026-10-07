@@ -30,7 +30,7 @@ fn crypto_config_id(params: &[u8]) -> B256 {
         (
             keccak256(b"fhe.rs:BFV"),
             keccak256(params),
-            keccak256(b"interfold-bfv-v4"),
+            keccak256(b"interfold-bfv-v5"),
         )
             .abi_encode(),
     )
@@ -555,11 +555,11 @@ mod tests {
         let expected = [
             (
                 0,
-                "0x119c9bde7d7a31aaeef3e696ea29f8590c611d431921b6981434bd2c0fb5f7d1",
+                "0x7d3f52af7ad13baa9f34ce2426e980907ffeb86b4b374308e6c590d5d43f9e41",
             ),
             (
                 2,
-                "0x5ebb3432396f21cd97fca47e006b9dd38c021bf2902d3e555cf74cb91b28e44e",
+                "0xa174862efd4487031d423ca96516807775ade0191c714e513aab93d0cc289baa",
             ),
         ];
 
@@ -597,6 +597,7 @@ mod tests {
                 b"interfold-bfv-v1",
                 b"interfold-bfv-v2",
                 b"interfold-bfv-v3",
+                b"interfold-bfv-v4",
             ] {
                 let mut legacy_event = event.clone();
                 legacy_event.cryptoConfigId = keccak256(

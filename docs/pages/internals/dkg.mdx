@@ -433,7 +433,7 @@ The smudging noise $e_{sm}$ hides the secret key share. C6 first checks that $sk
 the C4 commitments. It binds the witness ciphertext to `ct_commitment` and checks the relation at a
 Fiat-Shamir challenge point. Its public inputs are `expected_sk_commitment`,
 `expected_e_sm_commitment`, `ct_commitment`, `domain_hi`, and `domain_lo`. Its output is
-`d_commitment`, a commitment to the first 100 coefficients of $d$ for each modulus.
+`d_commitment`, a commitment to the first 50 coefficients of $d$ for each modulus.
 
 The decryption domain binds each C6 proof to one E3:
 
@@ -689,7 +689,7 @@ public inputs:
 | 6               | `ciphertext_commitment`                              |
 | 7               | Aggregate verification key hash                      |
 | next $3(T + 1)$ | `party_ids`, then `expected_sk`, then `expected_esm` |
-| last 100        | Plaintext coefficients                               |
+| last 50         | Plaintext coefficients                               |
 
 `decryption_aggregator` requires one domain and one ciphertext commitment across all C6 leaves. It
 requires each C6 `d_commitment` to equal the matching C7 input. Its party IDs must be 1-indexed,
@@ -698,7 +698,7 @@ strictly increasing, and at most N. The wrapper then checks:
 - Every public input is a canonical BN254 field element, and each plaintext coefficient fits in 64
   bits.
 - The VK hashes, the committee hash limbs, the domain limbs, and the stored ciphertext commitment.
-- `keccak256` of the 100 coefficients, each as 8 little-endian bytes, equals the plaintext hash.
+- `keccak256` of the 50 coefficients, each as 8 little-endian bytes, equals the plaintext hash.
 - For each party, `party_id - 1` is in the DKG anchors, and the proof commitments equal the stored
   `dkgSkAggCommits` and `dkgEsmAggCommits`.
 
@@ -854,8 +854,8 @@ the party at fault.
 | Ring degree $d$                          | 512                              | 8192          |
 | Threshold CRT moduli L                   | 2                                | 3             |
 | DKG CRT moduli                           | 1                                | 2             |
-| Threshold plaintext modulus $t$          | 100                              | 1000000       |
-| Statistical security parameter $\lambda$ | 2                                | 50            |
+| Threshold plaintext modulus $t$          | 100                              | 17000000      |
+| Statistical security parameter $\lambda$ | 2                                | 45            |
 | Use                                      | Local development and tests only | Production    |
 
 Circuit artifacts are compiled separately for each preset and committee. The prover and the verifier

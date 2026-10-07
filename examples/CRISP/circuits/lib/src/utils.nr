@@ -264,12 +264,12 @@ fn test_2_options_at_balance_passes() {
 }
 
 /// The top bit of an option segment. The old index arithmetic read the zero padding instead, so a
-/// ballot worth `2**49` passed against any balance.
+/// ballot worth `2**24` passed against any balance.
 #[test]
 fn test_2_options_top_bit_is_bounded() {
-    let pol = encode_ballot::<TEST_DEGREE>([562949953421312, 0, 0, 0, 0, 0, 0, 0, 0, 0], 2, 1);
+    let pol = encode_ballot::<TEST_DEGREE>([16777216, 0, 0, 0, 0, 0, 0, 0, 0, 0], 2, 1);
     assert(!check_coefficient_values_with_balance(pol, 1, 1, 2));
-    assert(check_coefficient_values_with_balance(pol, 1, 562949953421312, 2));
+    assert(check_coefficient_values_with_balance(pol, 1, 16777216, 2));
 }
 
 // --- 3+ Options (Split Voting) ---
@@ -323,12 +323,12 @@ fn test_payload_outside_ballot_region_fails() {
     assert(!check_coefficient_values_with_balance(pol, 1, 100, 2));
 }
 
-/// With three options the SDK leaves one message coefficient unused, which the reversal puts at the
-/// bottom of the ballot region. It belongs to no option, so it must be zero.
+/// With three options the SDK leaves two message coefficients unused, which the reversal puts at
+/// the bottom of the ballot region. They belong to no option, so they must be zero.
 #[test]
 fn test_unused_message_coefficient_fails() {
     let mut pol: Polynomial<TEST_DEGREE> = encode_ballot([1, 0, 0, 0, 0, 0, 0, 0, 0, 0], 3, 1);
-    // MAX_MSG_NON_ZERO_COEFFS is 100 and three segments of 33 leave one coefficient over.
+    // MAX_MSG_NON_ZERO_COEFFS is 50 and three segments of 16 leave two coefficients over.
     pol.coefficients[TEST_DEGREE - MAX_MSG_NON_ZERO_COEFFS] = 1;
 
     assert(!check_coefficient_values_with_balance(pol, 1, 100, 3));

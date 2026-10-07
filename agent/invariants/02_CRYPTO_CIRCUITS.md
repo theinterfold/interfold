@@ -203,7 +203,7 @@ every section.
 - The local C1, C2a, C2b, and every C3a and C3b proof must complete and be signed before any
   `ThresholdShareCreated` is published. C4 through C7 belong to later phases. —
   `crates/zk-prover/src/proof_request/effects/publish_threshold_shares.rs`; `flow-trace/04`
-- The decrypted plaintext is exactly 100 u64 coefficients in every layer: `MAX_MSG_NON_ZERO_COEFFS`
+- The decrypted plaintext is exactly 50 u64 coefficients in every layer: `MAX_MSG_NON_ZERO_COEFFS`
   in Noir (`configs/default/mod.nr`, written by `scripts/build-circuits.ts`) and in `zk-helpers`,
   and `MESSAGE_COEFFS_COUNT` in `BfvDecryptionVerifier.sol`. **Gap:** no gate compares these copies.
 - A CRT consistency equation of the form `lifted[j] == limb[i][j] + quotient[i][j] * q_i` constrains
@@ -573,12 +573,12 @@ every section.
 - **A CRISP tally coefficient is exact only below the plaintext modulus.** Every ballot coefficient
   is 0 or 1, and the tally adds one ballot per selected slot, so each decrypted coefficient counts
   the ballots that set that bit of that option. The committee decrypts it modulo the plaintext
-  modulus `t` of the round's BFV parameters: 100 at insecure-512 and 1,000,000 at secure-8192.
+  modulus `t` of the round's BFV parameters: 100 at insecure-512 and 17,000,000 at secure-8192.
   Voting power does not change the bound, because a ballot adds at most 1 to each coefficient. A
   tally format that is not one bit per coefficient per ballot needs a new bound. **Gap:**
   `CRISPProgram` does not limit the slots of a round. When `t` or more ballots in one round set the
   same bit, `decodeTally` reads the residue and the count is wrong with every proof valid. That
-  takes 100 ballots at insecure-512 and a million at secure-8192. — `flow-trace/04`
+  takes 100 ballots at insecure-512 and 17 million at secure-8192. — `flow-trace/04`
 - **CRISP constrains every coefficient of the ballot plaintext, at the real BFV degree.** The
   witness generator reverses the message over the full degree, so the payload starts at
   `D - MAX_MSG_NON_ZERO_COEFFS + (MAX_MSG_NON_ZERO_COEFFS mod num_options)` with the options back to

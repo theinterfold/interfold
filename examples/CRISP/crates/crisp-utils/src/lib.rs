@@ -10,8 +10,8 @@ use num_bigint::BigUint;
 
 /// Number of polynomial coefficients used for the vote payload (must match `@crisp-e3/sdk` / circuits).
 ///
-/// Splits evenly across options: `segment_size = MAX_MSG_NON_ZERO_COEFFS / num_choices` (e.g. 2 → 50 bits each).
-pub const MAX_MSG_NON_ZERO_COEFFS: usize = 100;
+/// Splits evenly across options: `segment_size = MAX_MSG_NON_ZERO_COEFFS / num_choices` (e.g. 2 → 25 bits each).
+pub const MAX_MSG_NON_ZERO_COEFFS: usize = 50;
 
 /// Represents decoded vote counts from a tally
 #[derive(Debug, Clone)]
@@ -131,22 +131,22 @@ mod tests {
     #[test]
     fn test_decode_tally_matches_sdk_layout() {
         let degree = 512;
-        let coeffs = encode_vote_like_sdk(&[10_000_000_000u64, 30_000_000_000u64], degree);
+        let coeffs = encode_vote_like_sdk(&[10_000_000u64, 30_000_000u64], degree);
         let bytes = coeffs_to_le_bytes(&coeffs);
         let result = decode_tally(&bytes, 2).unwrap();
 
-        assert_eq!(result[0], BigUint::from(10_000_000_000u64));
-        assert_eq!(result[1], BigUint::from(30_000_000_000u64));
+        assert_eq!(result[0], BigUint::from(10_000_000u64));
+        assert_eq!(result[1], BigUint::from(30_000_000u64));
     }
 
     #[test]
     fn test_decode_tally_wrong_num_options_differs() {
         let degree = 512;
-        let coeffs = encode_vote_like_sdk(&[10_000_000_000u64, 30_000_000_000u64], degree);
+        let coeffs = encode_vote_like_sdk(&[10_000_000u64, 30_000_000u64], degree);
         let bytes = coeffs_to_le_bytes(&coeffs);
         let result = decode_tally(&bytes, 3).unwrap();
 
-        assert_ne!(result[0], BigUint::from(10_000_000_000u64));
-        assert_ne!(result[1], BigUint::from(30_000_000_000u64));
+        assert_ne!(result[0], BigUint::from(10_000_000u64));
+        assert_ne!(result[1], BigUint::from(30_000_000u64));
     }
 }

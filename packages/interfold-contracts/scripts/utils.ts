@@ -122,11 +122,11 @@ export interface ActiveBfvConfig {
 const INSECURE_PARAM_SET_HASH =
   "0x18c6d8650486b997d48aa2d285fae878fb267b268332d056a3e8527d50e87b4f";
 const INSECURE_CONFIG_ID =
-  "0x119c9bde7d7a31aaeef3e696ea29f8590c611d431921b6981434bd2c0fb5f7d1";
+  "0x7d3f52af7ad13baa9f34ce2426e980907ffeb86b4b374308e6c590d5d43f9e41";
 const SECURE_PARAM_SET_HASH =
-  "0x80775a19b6126a12943f9c1c53f92299f0c92ece819b625026ab1406bbbe0721";
+  "0x1b2620f6a5919d5ee19a51f34026369816f479efd0404b56585ad37d31c52317";
 const SECURE_CONFIG_ID =
-  "0x5ebb3432396f21cd97fca47e006b9dd38c021bf2902d3e555cf74cb91b28e44e";
+  "0xa174862efd4487031d423ca96516807775ade0191c714e513aab93d0cc289baa";
 
 function bfvConfig(
   preset: BfvArtifactPreset,
@@ -267,7 +267,7 @@ export function bfvDkgCommitteeHashIndices(h: number): {
 
 /** `decryption_aggregator` EVM public-input count for BFV threshold `t`. */
 export function bfvDecExpectedPublicInputsLen(threshold: number): number {
-  return 111 + 3 * threshold;
+  return 61 + 3 * threshold;
 }
 
 /** `publicInputs` indices for decryption-aggregator committee hash limbs. */

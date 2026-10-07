@@ -39,7 +39,7 @@ import {
   type CircuitPreset,
 } from './circuit-constants'
 
-const CIRCUIT_VERSION = 'interfold-bfv-v4'
+const CIRCUIT_VERSION = 'interfold-bfv-v5'
 
 /**
  * Reduce Cargo.lock to the external crate pins that the circuit generators compile against.
@@ -339,7 +339,7 @@ class NoirCircuitBuilder {
       '',
       '/// Max number of non-zero coefficients in the message polynomial.',
       '/// This is a conservative estimate that should be okay for most use cases.',
-      'pub global MAX_MSG_NON_ZERO_COEFFS: u32 = 100;',
+      'pub global MAX_MSG_NON_ZERO_COEFFS: u32 = 50;',
       '',
     ].join('\n')
     writeFileSync(modNrPath, content)
@@ -523,14 +523,14 @@ class NoirCircuitBuilder {
       },
       { circuit: 'share-decryption', file: 'dkg.nr', prefix: 'SHARE_DECRYPTION_', common: [] },
       { circuit: 'user-data-encryption', file: 'threshold.nr', prefix: 'USER_DATA_ENCRYPTION_', common: [] },
-      { circuit: 'pk-generation', file: 'threshold.nr', prefix: 'PK_GENERATION_', common: ['N', 'L', 'QIS', 'PLAINTEXT_MODULUS', 'CRP'] },
+      { circuit: 'pk-generation', file: 'threshold.nr', prefix: 'PK_GENERATION_', common: ['N', 'L', 'QIS', 'CRP'] },
       { circuit: 'pk-aggregation', file: 'threshold.nr', prefix: 'PK_AGGREGATION_', common: [] },
       { circuit: 'threshold-share-decryption', file: 'threshold.nr', prefix: 'THRESHOLD_SHARE_DECRYPTION_', common: [] },
       {
         circuit: 'decrypted-shares-aggregation',
         file: 'threshold.nr',
         prefix: 'DECRYPTED_SHARES_AGGREGATION_',
-        common: ['Q_MOD_T', 'Q_MOD_T_CENTERED', 'Q_INVERSE_MOD_T'],
+        common: ['PLAINTEXT_MODULUS', 'Q_MOD_T', 'Q_MOD_T_CENTERED', 'Q_INVERSE_MOD_T'],
       },
     ]
     const originals = new Map<string, string>()

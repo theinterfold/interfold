@@ -133,7 +133,7 @@ const HONK_VERIFY_GAS_LIMIT = 1_000_000_000n;
 const isCoverageRun = process.argv.includes("--coverage");
 
 function plaintextHashFromPublicInputs(publicInputs: string[]): string {
-  const messageCoeffsCount = 100;
+  const messageCoeffsCount = 50;
   const offset = publicInputs.length - messageCoeffsCount;
   const plaintext = new Uint8Array(messageCoeffsCount * 8);
   for (let i = 0; i < messageCoeffsCount; i++) {

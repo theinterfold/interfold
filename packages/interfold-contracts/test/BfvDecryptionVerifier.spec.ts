@@ -24,7 +24,7 @@ const { loadFixture } = networkHelpers;
 const [testSigner] = await ethers.getSigners();
 
 /** Must match `BfvDecryptionVerifier.MESSAGE_COEFFS_COUNT` / circuit `MAX_MSG_NON_ZERO_COEFFS`. */
-const MESSAGE_COEFFS_COUNT = 100;
+const MESSAGE_COEFFS_COUNT = 50;
 const BN254_SCALAR_MODULUS =
   21888242871839275222246405745257275088548364400416034343698204186575808495617n;
 
@@ -893,7 +893,7 @@ describe("BfvDecryptionVerifier", function () {
       expect(result).to.equal(true);
     });
 
-    it("verifies all 100 message coefficients", async function () {
+    it("verifies all 50 message coefficients", async function () {
       const { bfvDecryptionVerifier, mockCircuit } = await loadFixture(
         deployWithMockCircuit,
       );

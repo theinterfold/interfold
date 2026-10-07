@@ -260,14 +260,14 @@ its receipt.
 
 ## Decode the tally
 
-The plaintext output is a list of polynomial coefficients. The first 100 coefficients
-(`MAX_MSG_NON_ZERO_COEFFS`) carry the result. Each option has `floor(100 / numOptions)` coefficients
+The plaintext output is a list of polynomial coefficients. The first 50 coefficients
+(`MAX_MSG_NON_ZERO_COEFFS`) carry the result. Each option has `floor(50 / numOptions)` coefficients
 that hold a binary number, with the most significant coefficient first. Homomorphic addition adds
 the coefficients of all ballots, so each segment decodes to the total for its option. With 2
-options, each option has 50 coefficients.
+options, each option has 25 coefficients, so one ballot can give an option at most `2^25 - 1`.
 
 The committee decrypts each coefficient modulo the plaintext modulus `t` of the parameter set: 100
-for `insecure-512` and 1,000,000 for `secure-8192`. Each ballot sets a coefficient to 0 or 1, so a
+for `insecure-512` and 17,000,000 for `secure-8192`. Each ballot sets a coefficient to 0 or 1, so a
 coefficient counts the ballots that set that bit. The total is exact only while fewer than `t`
 ballots in the round set the same bit. `CRISPProgram` does not enforce this limit, and a round past
 it decodes a total that is too low, with every proof valid. Each eligible address has one slot, so
@@ -303,7 +303,7 @@ console.log(result.tally)
 ```
 
 `decodeTally` throws an error when `numChoices` is outside 2 to 10 or is not an integer. It also
-throws an error when the output has fewer than 100 coefficients.
+throws an error when the output has fewer than 50 coefficients.
 
 ## Other ways to request a round
 

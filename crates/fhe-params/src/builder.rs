@@ -189,22 +189,22 @@ mod tests {
             .fold(BigUint::from(1u8), |product, &qi| product * qi);
 
         assert_eq!(threshold.degree(), 8192);
-        assert_eq!(threshold.plaintext(), 1000000);
+        assert_eq!(threshold.plaintext(), 17000000);
         assert_eq!(
             threshold.moduli(),
-            &[0x0400000000c00001, 0x0400000000a40001, 0x0400000000990001]
+            &[0x0800000000db4001, 0x0800000000d54001, 0x0800000000cbc001]
         );
         assert_eq!(
             threshold_q.to_string(),
-            "23945242828800773257389952748588677348507873795964929"
+            "191561942622092406273068928635395424157847567961178113"
         );
         assert_eq!(
             (&threshold_q / threshold.plaintext()).to_string(),
-            "23945242828800773257389952748588677348507873795"
+            "11268349566005435663121701684435024950461621644"
         );
         assert_eq!(
             &threshold_q % threshold.plaintext(),
-            BigUint::from(964929u64)
+            BigUint::from(13178113u64)
         );
         assert_eq!(
             threshold.get_error1_variance().to_string(),
@@ -212,14 +212,14 @@ mod tests {
         );
 
         assert_eq!(dkg.degree(), 8192);
-        assert_eq!(dkg.plaintext(), 288230376164294657);
-        assert_eq!(dkg.moduli(), &[0x1000000000024001, 0x1000000000054001]);
-        assert_eq!(dkg_q.to_string(), "1329227995785482559187594477654474753");
+        assert_eq!(dkg.plaintext(), 576460752317792257);
+        assert_eq!(dkg.moduli(), &[0x2000000000104001, 0x200000000013c001]);
+        assert_eq!(dkg_q.to_string(), "5316911983145103662415181469253369857");
         assert_eq!(
             (&dkg_q / dkg.plaintext()).to_string(),
-            "4611686018228027384"
+            "9223372036634312696"
         );
-        assert_eq!(&dkg_q % dkg.plaintext(), BigUint::from(2508586813587465u64));
+        assert_eq!(&dkg_q % dkg.plaintext(), BigUint::from(3169161947774985u64));
         assert_eq!(BfvPreset::SecureThreshold8192.metadata().lambda, 45);
         assert_eq!(BfvPreset::SecureDkg8192.metadata().lambda, 45);
 
@@ -236,9 +236,9 @@ mod tests {
             .unwrap();
         assert_eq!(
             smudging_bound.to_string(),
-            "132922799578495921427264261134328266752000000"
+            "13292279957850296184850092126921713254400000"
         );
-        let b_c = BigUint::parse_bytes(b"230584300921376913729000000", 10).unwrap();
+        let b_c = BigUint::parse_bytes(b"23058430092138912691300000", 10).unwrap();
         let delta = &threshold_q / threshold.plaintext();
         assert!(BigUint::from(2u8) * (b_c + BigUint::from(defaults.n) * smudging_bound) < delta);
     }

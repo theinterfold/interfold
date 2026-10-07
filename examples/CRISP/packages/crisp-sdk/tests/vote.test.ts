@@ -76,7 +76,7 @@ describe('Vote', () => {
 
   describe('decodeTally', () => {
     it('Should decode an encoded tally into its decimal representation', () => {
-      const expected: Vote = [10000000000, 30000000000]
+      const expected: Vote = [10000000, 30000000]
       const encoded = encodeVote(expected)
       const decoded = decodeTally(encoded, 2)
 
@@ -85,16 +85,16 @@ describe('Vote', () => {
     })
 
     it('Should decode totals above Number.MAX_SAFE_INTEGER without losing precision', () => {
-      // After aggregation a coefficient is a ballot count, not a bit. This models 4096
+      // After aggregation a coefficient is a ballot count, not a bit. This models 2**30
       // ballots landing on the top coefficient of option 0 and one on its bottom coefficient,
       // giving a total that a double cannot represent exactly.
       const coefficients = new Array(MAX_MSG_NON_ZERO_COEFFS).fill(0)
-      coefficients[0] = 4096
-      coefficients[49] = 1
+      coefficients[0] = 2 ** 30
+      coefficients[MAX_MSG_NON_ZERO_COEFFS / 2 - 1] = 1
 
       const decoded = decodeTally(coefficients, 2)
 
-      expect(decoded[0]).toBe((1n << 61n) + 1n)
+      expect(decoded[0]).toBe((1n << 54n) + 1n)
       expect(decoded[0] > BigInt(Number.MAX_SAFE_INTEGER)).toBe(true)
     })
 

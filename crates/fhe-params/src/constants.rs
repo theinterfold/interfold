@@ -38,15 +38,15 @@ pub mod secure_8192 {
 
     /// Threshold BFV parameters
     pub mod threshold {
-        pub const PLAINTEXT_MODULUS: u64 = 1000000;
-        pub const MODULI: &[u64] = &[0x0400000000c00001, 0x0400000000a40001, 0x0400000000990001];
+        pub const PLAINTEXT_MODULUS: u64 = 17000000;
+        pub const MODULI: &[u64] = &[0x0800000000db4001, 0x0800000000d54001, 0x0800000000cbc001];
         pub const ERROR1_VARIANCE: &str = "17723039943798878305460955570711717478400";
     }
 
     /// DKG parameters
     pub mod dkg {
-        pub const PLAINTEXT_MODULUS: u64 = 288230376164294657;
-        pub const MODULI: &[u64] = &[0x1000000000024001, 0x1000000000054001];
+        pub const PLAINTEXT_MODULUS: u64 = 576460752317792257;
+        pub const MODULI: &[u64] = &[0x2000000000104001, 0x200000000013c001];
         pub const ERROR1_VARIANCE: &str = "10";
     }
 }
@@ -59,8 +59,8 @@ pub mod search_defaults {
     pub const B: u128 = 20;
     pub const B_CHI: u128 = 1;
     pub const SEARCH_N: u128 = 20;
-    pub const SEARCH_K: u128 = 1000000;
-    pub const SEARCH_Z: u128 = 1000000;
+    pub const SEARCH_K: u128 = 17000000;
+    pub const SEARCH_Z: u128 = 100000;
 }
 
 /// Search defaults for the InsecureThreshold512 preset (test-only, small scale).

@@ -135,7 +135,7 @@ fn crypto_config_id_for_params(params: &BfvParameters) -> B256 {
         (
             keccak256(b"fhe.rs:BFV"),
             keccak256(encode_bfv_params(params)),
-            keccak256(b"interfold-bfv-v4"),
+            keccak256(b"interfold-bfv-v5"),
         )
             .abi_encode(),
     )
@@ -4176,7 +4176,7 @@ mod tests {
         let (insecure, insecure_config_id) = bfv_parameters_for_param_set(0).unwrap();
         assert_eq!(
             insecure_config_id,
-            "0x119c9bde7d7a31aaeef3e696ea29f8590c611d431921b6981434bd2c0fb5f7d1"
+            "0x7d3f52af7ad13baa9f34ce2426e980907ffeb86b4b374308e6c590d5d43f9e41"
                 .parse::<B256>()
                 .unwrap(),
             "insecure-512 must reproduce ActiveCryptoConfig.INSECURE_CONFIG_ID"
@@ -4185,7 +4185,7 @@ mod tests {
         let (_, secure_config_id) = bfv_parameters_for_param_set(2).unwrap();
         assert_eq!(
             secure_config_id,
-            "0x5ebb3432396f21cd97fca47e006b9dd38c021bf2902d3e555cf74cb91b28e44e"
+            "0xa174862efd4487031d423ca96516807775ade0191c714e513aab93d0cc289baa"
                 .parse::<B256>()
                 .unwrap(),
             "secure-8192 must reproduce ActiveCryptoConfig.SECURE_CONFIG_ID"

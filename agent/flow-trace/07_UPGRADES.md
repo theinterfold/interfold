@@ -24,7 +24,7 @@ The fhe.rs v0.4.1 upgrade sets `protocol_version` to 7. Its smudging bound and B
 change the DKG and proof inputs. Its non-centered plaintext scale also changes the CRISP ballot
 check and its circuit artifacts. Drain active E3s and install matching circuit artifacts and
 verifier routes before requests resume. Both parameter sets use the circuit ID domain
-`interfold-bfv-v4`. Old clients must update their expected configuration IDs before they submit new
+`interfold-bfv-v5`. Old clients must update their expected configuration IDs before they submit new
 requests. The OpenVM guest builds from the same tree. A change to its sources or its fhe.rs pin
 changes its application commitments, so rebuild the guest, regenerate its keys and provenance
 record, and deploy matching receipt verifiers before such a change serves a live program.
@@ -34,7 +34,7 @@ Version 7 uses parameter-set index 2 for the new secure tuple. Keep index 1 inta
 records. While requests are paused and all E3s have drained, register index 2 in the same governance
 batch that installs the version-7 implementation and verifier routes. Validate the registered bytes
 against the new secure tuple before requests resume. Version-7 ciphernodes and request clients
-reject index 1. The indexer reads current index-0 and index-2 public keys with local v4 parameters.
+reject index 1. The indexer reads current index-0 and index-2 public keys with local v5 parameters.
 For historical index-0 and index-1 public-key events, it reads the append-only registry bytes and
 checks their v1 configuration ID against the request before it validates the key.
 
@@ -129,10 +129,10 @@ On a testnet, a fresh protocol, CRISP, and DAO stack is an acceptable alternativ
 upgrade. It must still pass the same route and verification-key validation before it accepts an E3.
 The old and new stacks must use separate addresses so clients cannot silently combine them.
 
-The BFV circuits use `interfold-bfv-v4` with compiled `protocol_version = 7` and
+The BFV circuits use `interfold-bfv-v5` with compiled `protocol_version = 7` and
 `node_generation = 2`. The configuration ID binds this circuit version even when BFV parameters stay
 unchanged. The builder generates both precomputed IDs. Runtime readers, CRISP intake, request
-tooling, and the SDK use the same IDs and reject v1, v2, and v3 requests. The indexer also accepts
+tooling, and the SDK use the same IDs and reject v1 through v4 requests. The indexer also accepts
 v1 keys of historical index-0 and index-1 E3s, as the version model describes. It skips keys for
 other unsupported configuration IDs without storing them. This lets its catch-up cursor advance
 across drained unsupported rounds to recover supported rounds. Recursive folds carry fixed leaf,

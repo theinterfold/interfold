@@ -635,7 +635,7 @@ export async function fetchE3Details(e3Id: bigint, toBlock?: bigint): Promise<E3
 
 // Number of leading plaintext coefficients that carry the vote payload. Must match
 // MAX_MSG_NON_ZERO_COEFFS in the CRISP SDK, server and program contract.
-const MAX_MSG_NON_ZERO_COEFFS = 100
+const MAX_MSG_NON_ZERO_COEFFS = 50
 
 // Decode a CRISP tally from `plaintextOutput`.
 //

@@ -14,4 +14,4 @@ pub use super::insecure::threshold;
 
 /// Max number of non-zero coefficients in the message polynomial.
 /// This is a conservative estimate that should be okay for most use cases.
-pub global MAX_MSG_NON_ZERO_COEFFS: u32 = 100;
+pub global MAX_MSG_NON_ZERO_COEFFS: u32 = 50;

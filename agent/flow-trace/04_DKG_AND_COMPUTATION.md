@@ -211,16 +211,17 @@ EncryptionKeyCollector collects verified EncryptionKeyCreated events
 
 ### Step 4: Generate TrBFV Key Shares + Shamir Secret Shares
 
-For `secure-8192`, the threshold key uses plaintext modulus 1,000,000 and three 59-bit CRT primes
-(`0x0400000000c00001`, `0x0400000000a40001`, `0x0400000000990001`). The paired share-encryption key
-uses plaintext modulus 288230376164294657 and two 61-bit primes (`0x1000000000024001`,
-`0x1000000000054001`). Both use ring degree 8192 and statistical security parameter 45. The
-threshold encryption error variance is 17723039943798878305460955570711717478400. These values bind
-the C1-C7 witness dimensions and the on-chain BFV parameter hash. C7 uses
-`Q_INVERSE_MOD_T = 663169`, the inverse of the product of the three threshold primes modulo
-1,000,000. New secure E3s use on-chain parameter-set index 2. Index 1 retains the previous secure
-tuple for historical requests. C3 share encryption and user-data encryption use non-centered `k1`
-residues in `[0, t - 1]`; the Rust witness, Noir equation, and quotient bounds must agree.
+For `secure-8192`, the threshold key uses plaintext modulus 17,000,000 and three 60-bit CRT primes
+(`0x0800000000db4001`, `0x0800000000d54001`, `0x0800000000cbc001`). The paired share-encryption key
+uses plaintext modulus 576460752317792257 (the largest threshold prime) and two 62-bit primes
+(`0x2000000000104001`, `0x200000000013c001`). Both use ring degree 8192 and statistical security
+parameter 45. The threshold encryption error variance is
+17723039943798878305460955570711717478400. These values bind the C1-C7 witness dimensions and the
+on-chain BFV parameter hash. C7 uses `Q_INVERSE_MOD_T = 3898177`, the inverse of the product of the
+three threshold primes modulo 17,000,000. New secure E3s use on-chain parameter-set index 2. Index 1
+retains the previous secure tuple for historical requests. C3 share encryption and user-data
+encryption use non-centered `k1` residues in `[0, t - 1]`; the Rust witness, Noir equation, and
+quotient bounds must agree.
 
 ```
 ThresholdKeyshare receives AllEncryptionKeysCollected
@@ -2137,11 +2138,11 @@ Capacity: `TREE_DEPTH = 20` gives 2^20 entries, against a physical ceiling of ro
 per block at the secure preset — append-only is not capacity-bound.
 
 **Plaintext modulus bound.** The committee decrypts each tally coefficient modulo the plaintext
-modulus `t` of the round's BFV parameters: 100 for insecure-512 and 1,000,000 for secure-8192. Every
+modulus `t` of the round's BFV parameters: 100 for insecure-512 and 17,000,000 for secure-8192. Every
 ballot coefficient is 0 or 1 and the tally adds one ballot per selected slot, so a coefficient
 counts the ballots that set that bit, and the decoded count is exact only while fewer than `t`
 ballots set it. `CRISPProgram` does not enforce the bound, and the input tree (`2^20` entries) does
-not prevent a round past it. At secure-8192 a wrong count needs a million ballots in one round; at
+not prevent a round past it. At secure-8192 a wrong count needs 17 million ballots in one round; at
 insecure-512 it needs 100, so a round on that preset with 100 or more voters for one option can
 decode a wrong result with every proof valid.
 
@@ -2199,5 +2200,5 @@ The plaintext is fully constrained on both branches. `check_coefficient_values_w
 every coefficient of `k1`: those inside an option segment must be binary, and every coefficient
 outside the ballot region must be zero. `check_coefficient_zero` requires the whole polynomial to be
 zero for a mask. Both read the payload at `k1[D - MAX_MSG_NON_ZERO_COEFFS ..]`, because the witness
-generator reverses the message over the full BFV degree — the ballot occupies the **last** 100
+generator reverses the message over the full BFV degree — the ballot occupies the **last** 50
 coefficients, and the options appear back to front.

@@ -260,7 +260,7 @@ set for the individual keys. The values come from `crates/fhe-params/src/constan
 | Preset         | `paramSet` | Threshold degree | Threshold CRT moduli | Plaintext modulus $t$ | DKG degree | DKG CRT moduli |
 | -------------- | ---------: | ---------------: | -------------------: | --------------------: | ---------: | -------------: |
 | `insecure-512` |          0 |              512 |                    2 |                   100 |        512 |              1 |
-| `secure-8192`  |          2 |             8192 |                    3 |             1,000,000 |       8192 |              2 |
+| `secure-8192`  |          2 |             8192 |                    3 |            17,000,000 |       8192 |              2 |
 
 `insecure-512` is for development and tests only. The code marks it as not for production. The
 deployment script refuses to deploy it on a chain that is not a known test or local chain.
@@ -280,7 +280,7 @@ configuration sets `minCommitteeSize` to 19. With that value, `getE3Quote` rejec
 `Micro` requests on mainnet, so only `Small` can be requested.
 
 Each request must name the expected circuit configuration in `expectedCryptoConfigId`. The ID binds
-the scheme, the parameter hash, and the circuit version (`keccak256("interfold-bfv-v4")`).
+the scheme, the parameter hash, and the circuit version (`keccak256("interfold-bfv-v5")`).
 
 ## Next steps
 

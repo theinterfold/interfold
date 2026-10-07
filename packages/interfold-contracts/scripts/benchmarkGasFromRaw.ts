@@ -318,7 +318,7 @@ function plaintextHashFromPublicInputs(
   publicInputs: string[],
   ethersLib: any,
 ): string {
-  const messageCoeffsCount = 100;
+  const messageCoeffsCount = 50;
   if (publicInputs.length < messageCoeffsCount) {
     throw new Error(`Not enough public inputs: ${publicInputs.length}`);
   }

@@ -12,7 +12,7 @@
 //! [0, zkp_modulus) with [`e3_polynomial::reduce`] inside [`Inputs::compute`].
 
 /// Max message coefficients in the C7 circuit (matches Noir's MAX_MSG_NON_ZERO_COEFFS).
-pub const MAX_MSG_NON_ZERO_COEFFS: usize = 100;
+pub const MAX_MSG_NON_ZERO_COEFFS: usize = 50;
 
 use crate::calculate_bit_width;
 use crate::circuits::commitments::compute_threshold_decryption_share_commitment;

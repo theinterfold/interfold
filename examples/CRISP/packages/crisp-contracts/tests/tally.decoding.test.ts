@@ -73,7 +73,7 @@ describe('Tally decoding (SDK vs CRISPProgram)', function () {
 
   describe('contract agreement', function () {
     it('should decode a single encoded ballot the same way the SDK does', async function () {
-      const vote = [10000000000, 30000000000]
+      const vote = [10000000, 30000000]
       const coefficients = encodeVote(vote)
 
       const onChain = await decodeOnChain(coefficients, 2)

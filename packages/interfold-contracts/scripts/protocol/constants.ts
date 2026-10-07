@@ -22,8 +22,8 @@ export const BFV_PARAMS = {
   },
   secure8192: {
     degree: 8192n,
-    plaintextModulus: 1000000n,
-    moduli: [0x0400000000c00001n, 0x0400000000a40001n, 0x0400000000990001n],
+    plaintextModulus: 17000000n,
+    moduli: [0x0800000000db4001n, 0x0800000000d54001n, 0x0800000000cbc001n],
     error1Variance: "17723039943798878305460955570711717478400",
   },
 } as const;

@@ -29,8 +29,8 @@ import { CommitteeHashLib } from "../../lib/CommitteeHashLib.sol";
  *        [6]                = ciphertext_commitment
  *        [7]                = aggregate recursive VK key hash
  *        [8 .. 8+3*(T+1))  = party_ids, expected_sk, expected_esm columns
- *        [last 100]         = plaintext message coefficients (100 u64 LE)
- *        Total: expectedPublicInputsLen = 7 + 1 + 3*(T+1) + 100.
+ *        [last 50]          = plaintext message coefficients (50 u64 LE)
+ *        Total: expectedPublicInputsLen = 7 + 1 + 3*(T+1) + 50.
  *
  *      The two VK-hash slots are checked against contract immutables set at
  *      construction; this anchors the recursive aggregation trust and
@@ -60,8 +60,8 @@ contract BfvDecryptionVerifier is IDecryptionVerifier {
     uint256 internal constant BN254_SCALAR_MODULUS =
         21888242871839275222246405745257275088548364400416034343698204186575808495617;
 
-    /// @dev Message is always the last 100 public inputs (100 uint64 coeffs = 800 bytes plaintext).
-    uint256 internal constant MESSAGE_COEFFS_COUNT = 100;
+    /// @dev Message is always the last 50 public inputs (50 uint64 coeffs = 400 bytes plaintext).
+    uint256 internal constant MESSAGE_COEFFS_COUNT = 50;
 
     /// @dev `decryption_aggregator` return tail: `1 + 3*(T+1) + MESSAGE_COEFFS_COUNT` fields.
     uint256 internal constant DEC_RETURN_PREFIX_LEN = 1;
@@ -205,7 +205,7 @@ contract BfvDecryptionVerifier is IDecryptionVerifier {
             revert CiphertextCommitmentMismatch();
         }
 
-        // Plaintext hash check: 100-coefficient plaintext must hash to the claimed value.
+        // Plaintext hash check: 50-coefficient plaintext must hash to the claimed value.
         if (!_verifyPlaintextHash(publicInputs, plaintextOutputHash)) {
             revert PlaintextHashMismatch();
         }

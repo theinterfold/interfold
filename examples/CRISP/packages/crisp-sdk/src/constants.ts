@@ -33,8 +33,8 @@ export const MERKLE_TREE_MAX_DEPTH = 20 // static, hardcoded in the circuit.
 
 // @note Must stay aligned with CRISP circuits / threshold message layout (Rust & Noir MAX_MSG_NON_ZERO_COEFFS).
 // Vote payload uses only the first MAX_MSG_NON_ZERO_COEFFS polynomial coeffs, split evenly across options
-// (e.g. 2 options → 50 binary coeffs each within those 100).
-export const MAX_MSG_NON_ZERO_COEFFS = 100
+// (e.g. 2 options → 25 binary coeffs each within those 50).
+export const MAX_MSG_NON_ZERO_COEFFS = 50
 // Hard limit on the maximum number of vote options supported.
 export const MAX_VOTE_OPTIONS = 10
 
