@@ -674,8 +674,10 @@ jobs:
           tags: ${{ steps.tags.outputs.tags }}
           cache-from: |
             type=gha,scope=e3-support
-          cache-to: |
-            type=gha,mode=max,scope=e3-support
+          # Pull requests read the layer cache and do not write it. Exporting the whole graph
+          # (`mode=max`) took 13 of the ciphernode job's 27 minutes, and a pull request's cache is
+          # readable only by reruns of that pull request.
+          cache-to: ${{ github.event_name != 'pull_request' && 'type=gha,mode=max,scope=e3-support' || '' }}
 
   build_ciphernode_image:
     needs: [detect_changes]
@@ -723,8 +725,10 @@ jobs:
           tags: ${{ steps.tags.outputs.tags }}
           cache-from: |
             type=gha,scope=ciphernode
-          cache-to: |
-            type=gha,mode=max,scope=ciphernode
+          # Pull requests read the layer cache and do not write it. Exporting the whole graph
+          # (`mode=max`) took 13 of the ciphernode job's 27 minutes, and a pull request's cache is
+          # readable only by reruns of that pull request.
+          cache-to: ${{ github.event_name != 'pull_request' && 'type=gha,mode=max,scope=ciphernode' || '' }}
 
   test_contracts:
     needs: [detect_changes]
