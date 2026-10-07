@@ -37,7 +37,6 @@ contract OpenVmReceiptVerifier is IOpenVmReceiptVerifier {
     error InvalidSealVersion();
     error InvalidSealEncoding();
     error InvalidProofDataLength();
-    error JournalDigestMismatch();
 
     constructor(
         IOpenVmHalo2Verifier verifier_,
@@ -64,25 +63,24 @@ contract OpenVmReceiptVerifier is IOpenVmReceiptVerifier {
         );
     }
 
-    /// @notice Check the caller's journal digest and verify the corresponding OpenVM public values.
-    /// @dev The seal contains a version, Halo2 proof data, and all nine journal words.
+    /// @notice Verify the Halo2 proof for the caller's journal digest.
+    /// @dev The seal is `abi.encode(uint8 version, bytes proofData)`. The digest is the proof's only
+    /// public value, so the Halo2 verifier binds it, and the seal does not repeat the journal.
     function verify(
         bytes calldata seal,
         bytes32 expectedImageId,
         bytes32 expectedJournalDigest
     ) external view {
         if (expectedImageId != imageId) revert WrongImageId();
-        (uint8 version, bytes memory proofData, bytes32[9] memory words) = abi
-            .decode(seal, (uint8, bytes, bytes32[9]));
+        (uint8 version, bytes memory proofData) = abi.decode(
+            seal,
+            (uint8, bytes)
+        );
         if (version != 1) revert InvalidSealVersion();
-        if (keccak256(seal) != keccak256(abi.encode(version, proofData, words)))
+        if (keccak256(seal) != keccak256(abi.encode(version, proofData)))
             revert InvalidSealEncoding();
         if (proofData.length != PROOF_DATA_LENGTH)
             revert InvalidProofDataLength();
-
-        bytes memory callerJournal = abi.encode(words);
-        if (sha256(callerJournal) != expectedJournalDigest)
-            revert JournalDigestMismatch();
 
         verifier.verify(
             abi.encodePacked(expectedJournalDigest),

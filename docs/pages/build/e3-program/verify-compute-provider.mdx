@@ -36,10 +36,9 @@ openVmVerifier.verify(proof.seal, imageId, sha256(journal));
 ```
 
 `OpenVmReceiptVerifier` (`contracts/verifiers/OpenVmReceiptVerifier.sol`) checks that `imageId` is
-its own identity, decodes the seal, checks that the nine journal words in the seal hash to the
-expected digest, and calls the Halo2 verifier with the digest as the public values and its two
-application commitments. The Halo2 verifier reverts when the proof does not show that the guest with
-those commitments revealed that digest.
+its own identity, decodes the seal, and calls the Halo2 verifier with the digest as the public
+values and its two application commitments. The Halo2 verifier reverts when the proof does not show
+that the guest with those commitments revealed that digest.
 
 ## What each check binds
 

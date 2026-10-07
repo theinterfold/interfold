@@ -290,13 +290,27 @@ if (enabled) {
       const reference = abi.decode(['tuple(bytes32,bytes32,bytes,bytes)'], decoded.args[1])[0]
       const computeProof = reference[2]
       const envelope = abi.decode(['bytes', 'bytes32', 'bytes32'], computeProof)
-      const seal = abi.decode(['uint8', 'bytes', 'bytes32[9]'], envelope[0])
-      expect(seal[2][8]).to.equal(fixture.input_root)
-      expect(seal[2][4]).to.equal(keyCommitment)
-      await expect(receipt.verify(envelope[0], identityId, ethers.sha256(abi.encode(['bytes32[9]'], [seal[2]])))).not.to.revert(ethers)
+      const seal = abi.decode(['uint8', 'bytes'], envelope[0])
+      expect(seal[0]).to.equal(1n)
+      expect(envelope[2]).to.equal(fixture.input_root)
+      // Rebuild the nine journal words from the chain, as OpenVmBfvCiphertextVerifier does. The proof
+      // verifies only for their digest.
+      const journal = [
+        ethers.zeroPadValue(ethers.toBeHex((await ethers.provider.getNetwork()).chainId), 32),
+        ethers.zeroPadValue(await interfold.getAddress(), 32),
+        ethers.zeroPadValue(ethers.toBeHex(e3Id), 32),
+        output.encryptionSchemeId,
+        keyCommitment,
+        output.ciphertextOutput,
+        output.ciphertextCommitment,
+        envelope[1],
+        envelope[2],
+      ]
+      const journalDigest = ethers.sha256(abi.encode(['bytes32[9]'], [journal]))
+      await expect(receipt.verify(envelope[0], identityId, journalDigest)).not.to.revert(ethers)
       const changed = ethers.getBytes(seal[1])
       changed[changed.length - 1] ^= 1
-      const invalidSeal = abi.encode(['uint8', 'bytes', 'bytes32[9]'], [1, changed, seal[2]])
+      const invalidSeal = abi.encode(['uint8', 'bytes'], [1, changed])
       writeFileSync(path.join(directory, 'seal.bin'), ethers.getBytes(envelope[0]))
       save('ciphertext published and verified', {
         real_compute_proof_verified: true,
@@ -313,11 +327,7 @@ if (enabled) {
       const trace = await ethers.provider.send('debug_traceCall', [
         {
           to: await receipt.getAddress(),
-          data: receipt.interface.encodeFunctionData('verify', [
-            invalidSeal,
-            identityId,
-            ethers.sha256(abi.encode(['bytes32[9]'], [seal[2]])),
-          ]),
+          data: receipt.interface.encodeFunctionData('verify', [invalidSeal, identityId, journalDigest]),
         },
         'latest',
         { disableMemory: true, disableStack: true, disableStorage: true },

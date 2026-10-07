@@ -234,9 +234,9 @@ The guest reveals SHA-256 of nine 32-byte ABI words, 288 bytes (`lib/OpenVmCompu
 9. Input root
 
 The CP returns the proof as `abi.encode(bytes seal, bytes32 paramsHash, bytes32 inputRoot)`. The
-seal is `abi.encode(uint8(1), bytes(halo2ProofData), bytes32[9](journalWords))`, 2,144 bytes.
-`OpenVmComputeProof.decode` reads the envelope on-chain. The verifiers rebuild the other seven
-fields from on-chain state. See
+seal is `abi.encode(uint8(1), bytes(halo2ProofData))`, 1,856 bytes. It does not repeat the journal:
+the Halo2 proof's only public value is the journal digest. `OpenVmComputeProof.decode` reads the
+envelope on-chain. The verifiers rebuild the other seven fields from on-chain state. See
 [Verify the Compute Provider](/build/e3-program/verify-compute-provider).
 
 ## The guest must match your E3 program

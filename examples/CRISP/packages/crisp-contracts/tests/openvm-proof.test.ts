@@ -17,7 +17,7 @@ if (process.env.OPENVM_REQUIRE_PROOF_TEST === '1' && !enabled) {
 }
 ;(enabled ? describe : describe.skip)('OpenVM real EVM proof', function () {
   this.timeout(300_000)
-  it('accepts the proof and rejects changed journal words, identities, and proof bytes', async () => {
+  it('accepts the proof and rejects changed journal digests, identities, and proof bytes', async () => {
     const connection = await network.connect()
     expect(connection.networkConfig.type).to.equal('edr-simulated')
     const { ethers } = connection
@@ -33,11 +33,10 @@ if (process.env.OPENVM_REQUIRE_PROOF_TEST === '1' && !enabled) {
     let data: string
     if (process.env.OPENVM_TEST_SEAL) {
       const encoded = ethers.hexlify(readFileSync(process.env.OPENVM_TEST_SEAL))
-      const decoded = abi.decode(['uint8', 'bytes', 'bytes32[9]'], encoded)
+      const decoded = abi.decode(['uint8', 'bytes'], encoded)
       expect(decoded[0]).to.equal(1n)
-      expect(Array.from(decoded[2])).to.deep.equal(words)
       data = decoded[1]
-      expect(abi.encode(['uint8', 'bytes', 'bytes32[9]'], [1, data, words])).to.equal(encoded)
+      expect(abi.encode(['uint8', 'bytes'], [1, data])).to.equal(encoded)
     } else {
       const proof = JSON.parse(readFileSync(process.env.OPENVM_TEST_PROOF!, 'utf8'))
       expect(proof.app_exe_commit).to.equal(commits.app_exe_commit)
@@ -51,7 +50,7 @@ if (process.env.OPENVM_REQUIRE_PROOF_TEST === '1' && !enabled) {
       OPENVM_APP_EXE_COMMIT: commits.app_exe_commit,
       OPENVM_APP_VM_COMMIT: commits.app_vm_commit,
     })
-    const seal = (values = words, bytes = data) => abi.encode(['uint8', 'bytes', 'bytes32[9]'], [1, bytes, values])
+    const seal = (bytes = data) => abi.encode(['uint8', 'bytes'], [1, bytes])
     const digest = (values = words) => ethers.sha256(abi.encode(['bytes32[9]'], [values]))
     const imageId = await receipt.imageId()
     await expect(receipt.verify(seal(), imageId, digest())).not.to.revert(ethers)
@@ -64,14 +63,15 @@ if (process.env.OPENVM_REQUIRE_PROOF_TEST === '1' && !enabled) {
       data: protocol.interface.encodeFunctionData('verify', [BigInt(words[2]), words[3], words[7], words[4], words[5], words[6], envelope]),
     })
     expect(abi.decode(['bool'], result)[0]).to.equal(true)
+    // The Halo2 proof binds the digest: the same proof fails for any other journal.
     for (let i = 0; i < words.length; i++) {
       const changed = [...words]
       changed[i] = ethers.zeroPadValue(ethers.toBeHex(BigInt(changed[i]) ^ 1n), 32)
-      await expect(receipt.verify(seal(changed), imageId, digest(changed))).to.revert(ethers)
+      await expect(receipt.verify(seal(), imageId, digest(changed))).to.revert(ethers)
     }
     const changed = ethers.getBytes(data)
     changed[changed.length - 1] ^= 1
-    await expect(receipt.verify(seal(words, ethers.hexlify(changed)), imageId, digest())).to.revert(ethers)
+    await expect(receipt.verify(seal(ethers.hexlify(changed)), imageId, digest())).to.revert(ethers)
     for (const field of ['app_exe_commit', 'app_vm_commit'] as const) {
       const other = { ...commits, [field]: ethers.zeroPadValue(ethers.toBeHex(BigInt(commits[field]) ^ 1n), 32) }
       const wrong = await ethers.deployContract('OpenVmReceiptVerifier', [halo2Verifier, other.app_exe_commit, other.app_vm_commit])

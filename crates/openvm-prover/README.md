@@ -155,7 +155,8 @@ The guest reveals SHA-256 of nine consecutive 32-byte ABI words:
 8. Parameter hash
 9. Input root
 
-The seal is `abi.encode(uint8(1), bytes(halo2ProofData), bytes32[9](journalWords))`, 2,144 bytes.
+The seal is `abi.encode(uint8(1), bytes(halo2ProofData))`, 1,856 bytes. It does not repeat the
+journal: the proof's only public value is the journal digest, which the contracts recompute.
 
 The receipt identity binds the Halo2 verifier address, the executable commitment and the VM
 commitment. The protocol BFV verifier and the program's verifier must use the same identity, and

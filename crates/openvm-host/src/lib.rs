@@ -28,8 +28,8 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::Duration;
 
-/// The length of the seal the worker writes: version, proof data and the nine journal words.
-pub const SEAL_BYTES: usize = 2144;
+/// The length of the seal the worker writes: `abi.encode(uint8 version, bytes proofData)`.
+pub const SEAL_BYTES: usize = 1856;
 
 /// How long a CUDA worker gets to open a GPU.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(60);
@@ -422,7 +422,7 @@ mod tests {
         let seal = vec![0xaa; SEAL_BYTES];
         let envelope = encode_compute_proof(&seal, &journal()).unwrap();
 
-        assert_eq!(envelope.len(), 2272);
+        assert_eq!(envelope.len(), 1984);
         assert_eq!(envelope[31], 0x60);
         assert_eq!(&envelope[32..64], &[8; 32]);
         assert_eq!(&envelope[64..96], &[9; 32]);

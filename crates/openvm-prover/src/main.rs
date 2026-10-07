@@ -177,15 +177,28 @@ fn word(value: usize) -> [u8; 32] {
     bytes
 }
 
-/// Encode a verified receipt as (version, proof data, nine journal words).
-fn seal(proof: &EvmProof, journal: &[u8]) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(2144);
+/// Encode a verified receipt as `abi.encode(uint8 version, bytes proofData)`.
+///
+/// The proof's only public value is the journal digest, which the contract recomputes from chain
+/// state and passes to the Halo2 verifier, so the seal does not repeat the journal.
+fn seal(proof: &EvmProof) -> Vec<u8> {
+    encode_seal(
+        &[
+            proof.proof_data.accumulator.as_slice(),
+            proof.proof_data.proof.as_slice(),
+        ]
+        .concat(),
+    )
+}
+
+/// `abi.encode(uint8(1), proofData)` for the 1,760 bytes of Halo2 proof data. No padding is needed:
+/// the length is a multiple of 32.
+fn encode_seal(proof_data: &[u8]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(96 + proof_data.len());
     bytes.extend_from_slice(&word(1));
-    bytes.extend_from_slice(&word(352));
-    bytes.extend_from_slice(journal);
-    bytes.extend_from_slice(&word(1760));
-    bytes.extend_from_slice(&proof.proof_data.accumulator);
-    bytes.extend_from_slice(&proof.proof_data.proof);
+    bytes.extend_from_slice(&word(64));
+    bytes.extend_from_slice(&word(proof_data.len()));
+    bytes.extend_from_slice(proof_data);
     bytes
 }
 
@@ -413,9 +426,9 @@ fn main() -> Result<()> {
         .create_new(true)
         .write(true)
         .open(&paths[2])?;
-    file.write_all(&seal(&proof, &journal))?;
+    file.write_all(&seal(&proof))?;
     file.sync_all()?;
-    eprintln!("OpenVM: verified the proof, application identity, and all nine journal words");
+    eprintln!("OpenVM: verified the proof, the application identity, and the journal digest");
     Ok(())
 }
 
@@ -454,6 +467,22 @@ mod tests {
         let mut input = 1u32.to_le_bytes().to_vec();
         input.extend_from_slice(&(MAX_ITEM_BYTES + 1).to_le_bytes());
         assert!(read_items(input.as_slice()).is_err());
+    }
+
+    /// The seal is `abi.encode(uint8(1), proofData)`: the layout `OpenVmReceiptVerifier` decodes and
+    /// the 1,856 bytes `e3_openvm_host::SEAL_BYTES` expects.
+    #[test]
+    fn the_seal_is_the_abi_encoding_of_the_version_and_the_proof_data() {
+        let proof_data = [0xab; 1760];
+        let seal = encode_seal(&proof_data);
+
+        assert_eq!(seal.len(), 1856);
+        let mut head = [0u8; 96];
+        head[31] = 1;
+        head[63] = 0x40;
+        head[94..96].copy_from_slice(&[0x06, 0xe0]);
+        assert_eq!(&seal[..96], head.as_slice());
+        assert_eq!(&seal[96..], proof_data.as_slice());
     }
 
     #[cfg(not(feature = "cuda"))]

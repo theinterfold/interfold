@@ -14,10 +14,8 @@ const word = (value: number | bigint) => ethers.zeroPadValue(ethers.toBeHex(valu
 const exeCommit = word(1)
 const vmCommit = word(2)
 const proofData = `0x${'ab'.repeat(1760)}`
-const seal = (words: string[], data = proofData, version = 1) => abi.encode(['uint8', 'bytes', 'bytes32[9]'], [version, data, words])
-const publicValues = (words: string[]) => ethers.sha256(abi.encode(['bytes32[9]'], [words]))
-
-const journalDigest = publicValues
+const seal = (data = proofData, version = 1) => abi.encode(['uint8', 'bytes'], [version, data])
+const journalDigest = (words: string[]) => ethers.sha256(abi.encode(['bytes32[9]'], [words]))
 
 async function deployAdapter() {
   const verifier = await ethers.deployContract('MockOpenVmCallVerifier')
@@ -25,24 +23,26 @@ async function deployAdapter() {
   return { verifier, adapter, imageId: await adapter.imageId() }
 }
 
+async function programFactory() {
+  const poseidon = await ethers.deployContract('PoseidonT3')
+  return ethers.getContractFactory('CRISPProgram', {
+    libraries: {
+      'npm/poseidon-solidity@0.0.5/PoseidonT3.sol:PoseidonT3': await poseidon.getAddress(),
+    },
+  })
+}
+
 describe('OpenVM receipt verifier (call oracle, not proof verification)', () => {
-  it('binds all nine journal words to the OpenVM digest', async () => {
+  it('passes the journal digest to the Halo2 verifier as its only public value', async () => {
     const { verifier, adapter, imageId } = await deployAdapter()
     const words = Array.from({ length: 9 }, (_, index) => word(index + 1))
-    await verifier.setExpectedCall(publicValues(words), proofData, exeCommit, vmCommit)
-    await expect(adapter.verify(seal(words), imageId, journalDigest(words))).not.to.revert(ethers)
+    await verifier.setExpectedCall(journalDigest(words), proofData, exeCommit, vmCommit)
+    await expect(adapter.verify(seal(), imageId, journalDigest(words))).not.to.revert(ethers)
 
     for (let index = 0; index < words.length; index++) {
       const changed = [...words]
       changed[index] = word(BigInt(changed[index]) ^ 1n)
-      await expect(adapter.verify(seal(changed), imageId, journalDigest(words))).to.be.revertedWithCustomError(
-        adapter,
-        'JournalDigestMismatch',
-      )
-      await expect(adapter.verify(seal(changed), imageId, journalDigest(changed))).to.be.revertedWithCustomError(
-        verifier,
-        'UnexpectedOpenVmCall',
-      )
+      await expect(adapter.verify(seal(), imageId, journalDigest(changed))).to.be.revertedWithCustomError(verifier, 'UnexpectedOpenVmCall')
     }
   })
 
@@ -58,7 +58,7 @@ describe('OpenVM receipt verifier (call oracle, not proof verification)', () => 
     )
     const secondVerifier = await ethers.deployContract('MockOpenVmCallVerifier')
     const words = Array.from({ length: 9 }, (_, index) => word(index))
-    await verifier.setExpectedCall(publicValues(words), proofData, exeCommit, vmCommit)
+    await verifier.setExpectedCall(journalDigest(words), proofData, exeCommit, vmCommit)
     for (const args of [
       [await secondVerifier.getAddress(), exeCommit, vmCommit],
       [await verifier.getAddress(), word(3), vmCommit],
@@ -66,12 +66,12 @@ describe('OpenVM receipt verifier (call oracle, not proof verification)', () => 
     ]) {
       const other = await ethers.deployContract('OpenVmReceiptVerifier', args)
       expect(await other.imageId()).not.to.equal(imageId)
-      await expect(other.verify(seal(words), await other.imageId(), journalDigest(words))).to.be.revertedWithCustomError(
+      await expect(other.verify(seal(), await other.imageId(), journalDigest(words))).to.be.revertedWithCustomError(
         verifier,
         'UnexpectedOpenVmCall',
       )
     }
-    await expect(adapter.verify(seal(words), word(100), journalDigest(words))).to.be.revertedWithCustomError(adapter, 'WrongImageId')
+    await expect(adapter.verify(seal(), word(100), journalDigest(words))).to.be.revertedWithCustomError(adapter, 'WrongImageId')
   })
 
   it('rejects invalid configuration and noncanonical seals', async () => {
@@ -90,12 +90,15 @@ describe('OpenVM receipt verifier (call oracle, not proof verification)', () => 
     }
     const words = Array.from({ length: 9 }, (_, index) => word(index))
     const digest = journalDigest(words)
-    await verifier.setExpectedCall(publicValues(words), proofData, exeCommit, vmCommit)
-    await expect(adapter.verify(seal(words, proofData, 2), imageId, digest)).to.be.revertedWithCustomError(adapter, 'InvalidSealVersion')
-    await expect(adapter.verify(`${seal(words)}00`, imageId, digest)).to.be.revertedWithCustomError(adapter, 'InvalidSealEncoding')
-    await expect(adapter.verify(seal(words, '0x'), imageId, digest)).to.be.revertedWithCustomError(adapter, 'InvalidProofDataLength')
+    await verifier.setExpectedCall(digest, proofData, exeCommit, vmCommit)
+    await expect(adapter.verify(seal(proofData, 2), imageId, digest)).to.be.revertedWithCustomError(adapter, 'InvalidSealVersion')
+    await expect(adapter.verify(`${seal()}00`, imageId, digest)).to.be.revertedWithCustomError(adapter, 'InvalidSealEncoding')
+    // The earlier layout also carried the nine journal words. It decodes, but it is not canonical.
+    const withWords = abi.encode(['uint8', 'bytes', 'bytes32[9]'], [1, proofData, words])
+    await expect(adapter.verify(withWords, imageId, digest)).to.be.revertedWithCustomError(adapter, 'InvalidSealEncoding')
+    await expect(adapter.verify(seal('0x'), imageId, digest)).to.be.revertedWithCustomError(adapter, 'InvalidProofDataLength')
     await expect(adapter.verify('0x', imageId, digest)).to.revert(ethers)
-    await expect(adapter.verify(seal(words, `0x${'cd'.repeat(1760)}`), imageId, digest)).to.be.revertedWithCustomError(
+    await expect(adapter.verify(seal(`0x${'cd'.repeat(1760)}`), imageId, digest)).to.be.revertedWithCustomError(
       verifier,
       'UnexpectedOpenVmCall',
     )
@@ -107,12 +110,7 @@ describe('OpenVM receipt verifier (call oracle, not proof verification)', () => 
     const controller = await ethers.deployContract('MockInterfold')
     const honk = await ethers.deployContract('MockHonkVerifier')
     const availability = await ethers.deployContract('MockCrispDataAvailabilityVerifier')
-    const poseidon = await ethers.deployContract('PoseidonT3')
-    const factory = await ethers.getContractFactory('CRISPProgram', {
-      libraries: {
-        'npm/poseidon-solidity@0.0.5/PoseidonT3.sol:PoseidonT3': await poseidon.getAddress(),
-      },
-    })
+    const factory = await programFactory()
     const program = await factory.deploy(
       await owner.getAddress(),
       await adapter.getAddress(),
@@ -140,9 +138,9 @@ describe('OpenVM receipt verifier (call oracle, not proof verification)', () => 
       ethers.keccak256('0x'),
       '0x2098f5fb9e239eab3ceac3f27b81e481dc3124d55ffed523a839ee8446b64864',
     ]
-    await verifier.setExpectedCall(publicValues(words), proofData, exeCommit, vmCommit)
-    const envelope = (sealWords = words, paramsHash = words[7], inputRoot = words[8]) =>
-      abi.encode(['bytes', 'bytes32', 'bytes32'], [seal(sealWords), paramsHash, inputRoot])
+    await verifier.setExpectedCall(journalDigest(words), proofData, exeCommit, vmCommit)
+    const envelope = (paramsHash = words[7], inputRoot = words[8]) =>
+      abi.encode(['bytes', 'bytes32', 'bytes32'], [seal(), paramsHash, inputRoot])
     const protocolCall = (values = words, proof = envelope(), caller?: string) =>
       ethers.provider.call({
         to: protocol.target,
@@ -160,29 +158,23 @@ describe('OpenVM receipt verifier (call oracle, not proof verification)', () => 
     expect(abi.decode(['bool'], await protocolCall())[0]).to.equal(true)
     expect(await program.verify(0, words[5], words[6], envelope())).to.equal(true)
 
+    // A changed journal field changes the digest, which the Halo2 verifier then rejects.
     for (const index of [2, 3, 4, 5, 6]) {
       const changed = [...words]
       changed[index] = word(BigInt(changed[index]) ^ 1n)
-      await expect(protocolCall(changed)).to.be.revertedWithCustomError(adapter, 'JournalDigestMismatch')
+      await expect(protocolCall(changed)).to.be.revertedWithCustomError(verifier, 'UnexpectedOpenVmCall')
     }
     expect(abi.decode(['bool'], await protocolCall([...words.slice(0, 7), word(999), words[8]]))[0]).to.equal(false)
-    await expect(protocolCall(words, envelope(), await owner.getAddress())).to.be.revertedWithCustomError(adapter, 'JournalDigestMismatch')
-    await expect(program.verify(0, word(999), words[6], envelope())).to.be.revertedWithCustomError(adapter, 'JournalDigestMismatch')
-    await expect(program.verify(0, words[5], word(999), envelope())).to.be.revertedWithCustomError(adapter, 'JournalDigestMismatch')
-    await expect(program.verify(0, words[5], words[6], envelope(words, word(999)))).to.be.revertedWithCustomError(
+    await expect(protocolCall(words, envelope(), await owner.getAddress())).to.be.revertedWithCustomError(verifier, 'UnexpectedOpenVmCall')
+    await expect(program.verify(0, word(999), words[6], envelope())).to.be.revertedWithCustomError(verifier, 'UnexpectedOpenVmCall')
+    await expect(program.verify(0, words[5], word(999), envelope())).to.be.revertedWithCustomError(verifier, 'UnexpectedOpenVmCall')
+    await expect(program.verify(0, words[5], words[6], envelope(word(999)))).to.be.revertedWithCustomError(program, 'InvalidComputeContext')
+    await expect(program.verify(0, words[5], words[6], envelope(words[7], word(999)))).to.be.revertedWithCustomError(
       program,
       'InvalidComputeContext',
     )
-    await expect(program.verify(0, words[5], words[6], envelope(words, words[7], word(999)))).to.be.revertedWithCustomError(
-      program,
-      'InvalidComputeContext',
-    )
-    const changed = [...words]
-    changed[8] = word(999)
-    await expect(protocolCall(words, envelope(changed, words[7], changed[8]))).to.be.revertedWithCustomError(
-      verifier,
-      'UnexpectedOpenVmCall',
-    )
+    await expect(protocolCall(words, envelope(words[7], word(999)))).to.be.revertedWithCustomError(verifier, 'UnexpectedOpenVmCall')
+
     await program.setImageId(word(999))
     await expect(program.verify(0, words[5], words[6], envelope())).to.be.revertedWithCustomError(adapter, 'WrongImageId')
   })
