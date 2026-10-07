@@ -1,3 +1,5 @@
 #!/usr/bin/env bash
 
-cargo build --locked --bin e3-support-scripts-dev
+# Not --locked: `interfold init` points the project's Interfold crates at git, so the lock file a
+# new project copies is out of date until cargo updates it.
+cargo build --bin e3-support-scripts-dev
