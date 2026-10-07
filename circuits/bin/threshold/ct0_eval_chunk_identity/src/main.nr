@@ -27,8 +27,8 @@ use bb_proof_verification::{
 use lib::configs::default::threshold::{L, N, QIS, USER_DATA_ENCRYPTION_CHUNKED_K0IS};
 
 // `ct0_eval_chunk_main_root` public inputs: leaf key hash, gamma, 5 roots, u_at_gamma,
-// k1_at_gamma, then e0is/r2i/r1i evaluations (L each).
-global ROOTS_LEN: u32 = 9 + (3 * L);
+// k1_at_gamma, e0_at_gamma, then r2i/r1i evaluations (L each).
+global ROOTS_LEN: u32 = 10 + (2 * L);
 // `ct0_eval_pk_ct` public inputs: gamma, pk0 commitment, pk0is evaluations (L), ct0 commitment,
 // ct0is evaluations (L).
 global PK_CT_LEN: u32 = 3 + (2 * L);
@@ -59,13 +59,13 @@ fn main(
     let r1_root = roots_public_inputs[6];
     let u_at_gamma = roots_public_inputs[7];
     let k1_at_gamma = roots_public_inputs[8];
-    let mut e0is_at_gamma: [Field; L] = [0; L];
+    // The committed, lifted `e0` serves every CRT limb; `r1` absorbs its multiple of `q_i`.
+    let e0_at_gamma = roots_public_inputs[9];
     let mut r2i_at_gamma: [Field; L] = [0; L];
     let mut r1i_at_gamma: [Field; L] = [0; L];
     for i in 0..L {
-        e0is_at_gamma[i] = roots_public_inputs[9 + i];
-        r2i_at_gamma[i] = roots_public_inputs[9 + L + i];
-        r1i_at_gamma[i] = roots_public_inputs[9 + (2 * L) + i];
+        r2i_at_gamma[i] = roots_public_inputs[10 + i];
+        r1i_at_gamma[i] = roots_public_inputs[10 + L + i];
     }
 
     let pk0_commitment = pk_ct_public_inputs[1];
@@ -82,7 +82,7 @@ fn main(
     let cyclo_at_gamma = gamma.pow_32(N as Field) + 1;
     let mut sum = (0, 0);
     for i in 0..L {
-        let mut ct0_rhs = pk0is_at_gamma[i] * u_at_gamma + e0is_at_gamma[i];
+        let mut ct0_rhs = pk0is_at_gamma[i] * u_at_gamma + e0_at_gamma;
         ct0_rhs += k1_at_gamma * USER_DATA_ENCRYPTION_CHUNKED_K0IS[i];
         ct0_rhs += r1i_at_gamma[i] * QIS[i];
         ct0_rhs += r2i_at_gamma[i] * cyclo_at_gamma;

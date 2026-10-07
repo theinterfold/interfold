@@ -71,7 +71,6 @@ pub global {prefix}_BIT_R1: u32 = {bit_r1};
 pub global {prefix}_BIT_R2: u32 = {bit_r2};
 pub global {prefix}_BIT_P1: u32 = {bit_p1};
 pub global {prefix}_BIT_P2: u32 = {bit_p2};
-pub global {prefix}_BIT_E0_QUOTIENT: u32 = {bit_e0_quotient};
 
 pub global {prefix}_K0IS: [Field; L] = [{k0is}];
 pub global {prefix}_PK_BOUNDS: [Field; L] = [{pk_bounds}];
@@ -85,7 +84,6 @@ pub global {prefix}_R1_UP_BOUNDS: [Field; L] = [{r1_up_bounds}];
 pub global {prefix}_R2_BOUNDS: [Field; L] = [{r2_bounds}];
 pub global {prefix}_P1_BOUNDS: [Field; L] = [{p1_bounds}];
 pub global {prefix}_P2_BOUNDS: [Field; L] = [{p2_bounds}];
-pub global {prefix}_E0_QUOTIENT_BOUNDS: [Field; L] = [{e0_quotient_bounds}];
 
 /************************************
 -------------------------------------
@@ -103,7 +101,6 @@ pub global {prefix}_CT0_CONFIGS: UserDataEncryptionCt0Configs<N, L> = UserDataEn
     {prefix}_R2_BOUNDS,
     {prefix}_K1_LOW_BOUND,
     {prefix}_K1_UP_BOUND,
-    {prefix}_E0_QUOTIENT_BOUNDS,
 );
 
 /************************************
@@ -130,7 +127,6 @@ pub global {prefix}_CT0_CHUNK_CONFIGS: UserDataEncryptionCt0ChunkConfigs<L> = Us
     {prefix}_R1_LOW_BOUNDS,
     {prefix}_R1_UP_BOUNDS,
     {prefix}_R2_BOUNDS,
-    {prefix}_E0_QUOTIENT_BOUNDS,
 );
 pub global {prefix}_CT1_CHUNK_CONFIGS: UserDataEncryptionCt1ChunkConfigs<L> = UserDataEncryptionCt1ChunkConfigs::new(
     {prefix}_U_BOUND,
@@ -153,7 +149,6 @@ pub global {prefix}_CT1_CHUNK_CONFIGS: UserDataEncryptionCt1ChunkConfigs<L> = Us
         bit_r2 = configs.bits.r2_bit,
         bit_p1 = configs.bits.p1_bit,
         bit_p2 = configs.bits.p2_bit,
-        bit_e0_quotient = configs.bits.e0_quotient_bit,
         k0is = join_display(&configs.k0is, ", "),
         pk_bounds = join_display(&configs.bounds.pk_bounds, ", "),
         e0_bound = configs.bounds.e0_bound,
@@ -166,7 +161,6 @@ pub global {prefix}_CT1_CHUNK_CONFIGS: UserDataEncryptionCt1ChunkConfigs<L> = Us
         r2_bounds = join_display(&configs.bounds.r2_bounds, ", "),
         p1_bounds = join_display(&configs.bounds.p1_bounds, ", "),
         p2_bounds = join_display(&configs.bounds.p2_bounds, ", "),
-        e0_quotient_bounds = join_display(&configs.bounds.e0_quotient_bounds, ", "),
     )
 }
 

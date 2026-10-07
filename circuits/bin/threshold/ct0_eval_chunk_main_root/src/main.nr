@@ -8,7 +8,7 @@
 //! pair level is needed. Both leaves hold raw sensitive witness data, so both are ZK-verified.
 //! Checks they agree on `gamma`, computes the five root commitments (for binding against Round
 //! A's `ct0_chunk_main_root`), and sums the two chunks' partial evaluations into the full
-//! `u_at_gamma`/`k1_at_gamma`/`e0is_at_gamma`/`r2i_at_gamma`/`r1i_at_gamma`. This output feeds
+//! `u_at_gamma`/`k1_at_gamma`/`e0_at_gamma`/`r2i_at_gamma`/`r1i_at_gamma`. This output feeds
 //! directly into `ct0_eval_chunk_identity`.
 //!
 //! Both leaf proofs verify against one `leaf_vk` and one `leaf_key_hash`, so both chunks must come
@@ -21,7 +21,7 @@ use lib::core::threshold::user_data_encryption_chunk::ct0_chunk_roots;
 
 global CHUNK_SIZE: u32 = N / N_CHUNKS;
 global R1_CHUNK_SIZE: u32 = 2 * CHUNK_SIZE;
-global LEAF_LEN: u32 = 9 + (3 * L);
+global LEAF_LEN: u32 = 10 + (2 * L);
 
 fn main(
     leaf_vk: UltraHonkVerificationKey,
@@ -35,7 +35,7 @@ fn main(
     leaf0_r1: Field,
     leaf0_u_partial: Field,
     leaf0_k1_partial: Field,
-    leaf0_e0is_partial: [Field; L],
+    leaf0_e0_partial: Field,
     leaf0_r2i_partial: [Field; L],
     leaf0_r1i_partial: [Field; L],
     leaf1_proof: UltraHonkZKProof,
@@ -47,10 +47,10 @@ fn main(
     leaf1_r1: Field,
     leaf1_u_partial: Field,
     leaf1_k1_partial: Field,
-    leaf1_e0is_partial: [Field; L],
+    leaf1_e0_partial: Field,
     leaf1_r2i_partial: [Field; L],
     leaf1_r1i_partial: [Field; L],
-    ) -> pub (Field, Field, Field, Field, Field, Field, Field, Field, Field, [Field; L], [Field; L], [Field; L]) {
+    ) -> pub (Field, Field, Field, Field, Field, Field, Field, Field, Field, Field, [Field; L], [Field; L]) {
     let mut leaf0_inputs: [Field; LEAF_LEN] = [0; LEAF_LEN];
     leaf0_inputs[0] = 0;
     leaf0_inputs[1] = leaf0_gamma;
@@ -61,10 +61,10 @@ fn main(
     leaf0_inputs[6] = leaf0_r1;
     leaf0_inputs[7] = leaf0_u_partial;
     leaf0_inputs[8] = leaf0_k1_partial;
+    leaf0_inputs[9] = leaf0_e0_partial;
     for i in 0..L {
-        leaf0_inputs[9 + i] = leaf0_e0is_partial[i];
-        leaf0_inputs[9 + L + i] = leaf0_r2i_partial[i];
-        leaf0_inputs[9 + (2 * L) + i] = leaf0_r1i_partial[i];
+        leaf0_inputs[10 + i] = leaf0_r2i_partial[i];
+        leaf0_inputs[10 + L + i] = leaf0_r1i_partial[i];
     }
     verify_honk_proof(leaf_vk, leaf0_proof, leaf0_inputs, leaf_key_hash);
 
@@ -78,10 +78,10 @@ fn main(
     leaf1_inputs[6] = leaf1_r1;
     leaf1_inputs[7] = leaf1_u_partial;
     leaf1_inputs[8] = leaf1_k1_partial;
+    leaf1_inputs[9] = leaf1_e0_partial;
     for i in 0..L {
-        leaf1_inputs[9 + i] = leaf1_e0is_partial[i];
-        leaf1_inputs[9 + L + i] = leaf1_r2i_partial[i];
-        leaf1_inputs[9 + (2 * L) + i] = leaf1_r1i_partial[i];
+        leaf1_inputs[10 + i] = leaf1_r2i_partial[i];
+        leaf1_inputs[10 + L + i] = leaf1_r1i_partial[i];
     }
     verify_honk_proof(leaf_vk, leaf1_proof, leaf1_inputs, leaf_key_hash);
 
@@ -100,17 +100,16 @@ fn main(
 
     let u_at_gamma = leaf0_u_partial + leaf1_u_partial;
     let k1_at_gamma = leaf0_k1_partial + leaf1_k1_partial;
-    let mut e0is_at_gamma: [Field; L] = [0; L];
+    let e0_at_gamma = leaf0_e0_partial + leaf1_e0_partial;
     let mut r2i_at_gamma: [Field; L] = [0; L];
     let mut r1i_at_gamma: [Field; L] = [0; L];
     for i in 0..L {
-        e0is_at_gamma[i] = leaf0_e0is_partial[i] + leaf1_e0is_partial[i];
         r2i_at_gamma[i] = leaf0_r2i_partial[i] + leaf1_r2i_partial[i];
         r1i_at_gamma[i] = leaf0_r1i_partial[i] + leaf1_r1i_partial[i];
     }
 
     (
         leaf_key_hash, leaf0_gamma, u_root, e0_root, k1_root, r2_root, r1_root, u_at_gamma,
-        k1_at_gamma, e0is_at_gamma, r2i_at_gamma, r1i_at_gamma,
+        k1_at_gamma, e0_at_gamma, r2i_at_gamma, r1i_at_gamma,
     )
 }
